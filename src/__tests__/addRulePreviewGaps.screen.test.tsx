@@ -15,7 +15,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
-import type { AppContext, FileByShopOutcome } from '../context';
+import type { AppContext, FilingResult, FilingTarget, FilingWhen } from '../context';
 import type { ApplyRulesResult } from '../api';
 import { APPLY_RULES_MAX_WRITES } from '../context';
 import { ApiError } from '../apiError';
@@ -33,8 +33,8 @@ const fns = {
   setSheet: jest.fn(),
   showToast: jest.fn(),
   saveManualRule: jest.fn(),
-  previewNewRule: jest.fn<(pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<FileByShopOutcome>>(),
-  fileNewRule: jest.fn<(pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<FileByShopOutcome>>(),
+  previewFiling: jest.fn<(target: FilingTarget) => Promise<FilingResult>>(),
+  fileCharges: jest.fn<(target: FilingTarget, when: FilingWhen) => Promise<FilingResult>>(),
 };
 
 const CATEGORIES = [
@@ -72,7 +72,7 @@ beforeEach(() => { jest.clearAllMocks(); });
 // non-null sheet transition) can be edited. Fail-on-revert: point goBack at setSheet(null) and the
 // {mode:'addrule'} assertion reddens.
 it('[A30] "Back" returns to the add-rule form', async () => {
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 12 }) });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 12 }) });
   await mountConfirm('COLES', 'groceries');
 
   fireEvent.press(screen.getByTestId('add-rule-confirm-back'));
@@ -86,16 +86,16 @@ it('[A30] "Back" returns to the add-rule form', async () => {
 // FRESH preview that can succeed into the preview card. Fail-on-revert: drop the previewFailed arm
 // and the busy spinner never resolves here; drop the retry wiring and the second preview never fires.
 it('[A31] shows the preview-failed card and retries into a fresh preview', async () => {
-  fns.previewNewRule
-    .mockResolvedValueOnce({ ok: false, clash: null })
-    .mockResolvedValueOnce({ ok: true, report: report({ matched: 12 }) });
+  fns.previewFiling
+    .mockResolvedValueOnce({ status: 'failed', background: false })
+    .mockResolvedValueOnce({ status: 'filed', report: report({ matched: 12 }) });
   await mountConfirm();
 
   expect(screen.getByText("Couldn't check this rule")).toBeTruthy();
   expect(screen.queryByTestId('add-rule-confirm-file')).toBeNull();
 
   await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-retry')); });
-  expect(fns.previewNewRule).toHaveBeenCalledTimes(2);
+  expect(fns.previewFiling).toHaveBeenCalledTimes(2);
   expect(screen.getByTestId('add-rule-confirm-file')).toBeTruthy();
 });
 
@@ -105,8 +105,8 @@ it('[A31] shows the preview-failed card and retries into a fresh preview', async
 // card — NOT the clash card, NOT a success close. Fail-on-revert: drop the writeFailed arm and the
 // sheet is stuck on the "Adding your rule…" spinner.
 it('[A32] shows the "Couldn\'t finish" card when the write fails non-clash', async () => {
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 12 }) });
-  fns.fileNewRule.mockResolvedValue({ ok: false, clash: null });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 12 }) });
+  fns.fileCharges.mockResolvedValue({ status: 'failed', background: false });
   await mountConfirm();
 
   await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
@@ -119,8 +119,8 @@ it('[A32] shows the "Couldn\'t finish" card when the write fails non-clash', asy
 // between preview and write). Distinct from [A32]'s writeFailed and from the implementer's PREVIEW
 // clash. Fail-on-revert: collapse the write clash into writeFailed and the clash title reddens.
 it('[A33] shows the clash card when the write reports a 409 clash', async () => {
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 12 }) });
-  fns.fileNewRule.mockResolvedValue({ ok: false, clash: new ApiError(409, null) });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 12 }) });
+  fns.fileCharges.mockResolvedValue({ status: 'clash', error: new ApiError(409, null), background: false });
   await mountConfirm();
 
   await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
@@ -134,16 +134,16 @@ it('[A33] shows the clash card when the write reports a 409 clash', async () => 
 // still toast, but must NOT setSheet(null) against a dismissed sheet. Fail-on-revert: remove the
 // `if (onScreen.current)` guard on the success close and setSheet(null) fires.
 it('[A34] dismissed mid-write: success toasts but does not setSheet(null)', async () => {
-  const pending = deferred<FileByShopOutcome>();
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 2 }) });
-  fns.fileNewRule.mockReturnValue(pending.promise);
+  const pending = deferred<FilingResult>();
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 2 }) });
+  fns.fileCharges.mockReturnValue(pending.promise);
   const { rerender } = await mountConfirm();
 
   await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
   mockState = { ...mockState, sheet: null } as unknown as AppContext;
   await act(async () => { rerender(<Overlays />); });
 
-  await act(async () => { pending.resolve({ ok: true, report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) }); });
+  await act(async () => { pending.resolve({ status: 'filed', report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) }); });
 
   expect(fns.showToast).toHaveBeenCalledWith('Rule added — filed 2 past charges as Groceries.');
   expect(fns.setSheet).not.toHaveBeenCalledWith(null);
@@ -153,16 +153,16 @@ it('[A34] dismissed mid-write: success toasts but does not setSheet(null)', asyn
 // else-branch [A34] can't reach (its success toast fires before the guard). Fail-on-revert: drop the
 // `else showToast(...)` on the writeFailed path and the outcome vanishes with no toast.
 it('[A35] dismissed mid-write: non-clash failure toasts off screen', async () => {
-  const pending = deferred<FileByShopOutcome>();
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 2 }) });
-  fns.fileNewRule.mockReturnValue(pending.promise);
+  const pending = deferred<FilingResult>();
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 2 }) });
+  fns.fileCharges.mockReturnValue(pending.promise);
   const { rerender } = await mountConfirm('COLES', 'groceries');
 
   await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
   mockState = { ...mockState, sheet: null } as unknown as AppContext;
   await act(async () => { rerender(<Overlays />); });
 
-  await act(async () => { pending.resolve({ ok: false, clash: null }); });
+  await act(async () => { pending.resolve({ status: 'failed', background: false }); });
 
   expect(fns.showToast).toHaveBeenCalledWith('Couldn\'t add the rule for “COLES”. Some charges may already have been filed.');
 });
@@ -171,16 +171,16 @@ it('[A35] dismissed mid-write: non-clash failure toasts off screen', async () =>
 // generic-failure toast. Fail-on-revert: drop the `else showToast(...)` on the clash path and a
 // clash that lands off screen is dropped silently.
 it('[A36] dismissed mid-write: 409-clash toasts off screen', async () => {
-  const pending = deferred<FileByShopOutcome>();
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 2 }) });
-  fns.fileNewRule.mockReturnValue(pending.promise);
+  const pending = deferred<FilingResult>();
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 2 }) });
+  fns.fileCharges.mockReturnValue(pending.promise);
   const { rerender } = await mountConfirm('COLES', 'groceries');
 
   await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
   mockState = { ...mockState, sheet: null } as unknown as AppContext;
   await act(async () => { rerender(<Overlays />); });
 
-  await act(async () => { pending.resolve({ ok: false, clash: new ApiError(409, null) }); });
+  await act(async () => { pending.resolve({ status: 'clash', error: new ApiError(409, null), background: false }); });
 
   expect(fns.showToast).toHaveBeenCalledWith('You already have a rule for “COLES”.');
 });
@@ -192,8 +192,8 @@ it('[A36] dismissed mid-write: 409-clash toasts off screen', async () => {
 // and the toast reads a plain "…as Groceries." with no "More to go".
 it('[A37] capped success toast points at "Apply my rules" to finish', async () => {
   const over = APPLY_RULES_MAX_WRITES + 50;
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: over }) });
-  fns.fileNewRule.mockResolvedValue({ ok: true, report: report({ dryRun: false, matched: over, filed: Array.from({ length: APPLY_RULES_MAX_WRITES }, (_, i) => ({ id: `t${i}`, category: 'groceries' })), remaining: 50 }) });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: over }) });
+  fns.fileCharges.mockResolvedValue({ status: 'filed', report: report({ dryRun: false, matched: over, filed: Array.from({ length: APPLY_RULES_MAX_WRITES }, (_, i) => ({ id: `t${i}`, category: 'groceries' })), remaining: 50 }) });
   await mountConfirm();
 
   await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
@@ -204,8 +204,8 @@ it('[A37] capped success toast points at "Apply my rules" to finish', async () =
 // the rule was still minted) uses the "it files as X" copy — never "filed 0 past charges".
 // Fail-on-revert: collapse the filed===0 branch in addRuleFiledMessage and this reddens.
 it('[A38] success that filed zero rows uses the "it files as X" copy', async () => {
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 2 }) });
-  fns.fileNewRule.mockResolvedValue({ ok: true, report: report({ dryRun: false, matched: 0, filed: [] }) });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 2 }) });
+  fns.fileCharges.mockResolvedValue({ status: 'filed', report: report({ dryRun: false, matched: 0, filed: [] }) });
   await mountConfirm();
 
   await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
@@ -219,9 +219,9 @@ it('[A38] success that filed zero rows uses the "it files as X" copy', async () 
 // once (useInFlightGuard's synchronous latch). Fail-on-revert: drop the runGuarded wrapper on onFile
 // and the second press fires a second fileNewRule → a duplicate mint+file.
 it('[A39] double-tapping the file button fires fileNewRule exactly once', async () => {
-  const pending = deferred<FileByShopOutcome>();
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 2 }) });
-  fns.fileNewRule.mockReturnValue(pending.promise);
+  const pending = deferred<FilingResult>();
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 2 }) });
+  fns.fileCharges.mockReturnValue(pending.promise);
   await mountConfirm();
 
   await act(async () => {
@@ -229,9 +229,9 @@ it('[A39] double-tapping the file button fires fileNewRule exactly once', async 
     fireEvent.press(btn);
     fireEvent.press(btn); // same frame, before the disabled state / phase flip lands
   });
-  expect(fns.fileNewRule).toHaveBeenCalledTimes(1);
+  expect(fns.fileCharges).toHaveBeenCalledTimes(1);
 
-  await act(async () => { pending.resolve({ ok: true, report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) }); });
+  await act(async () => { pending.resolve({ status: 'filed', report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) }); });
 });
 
 // --- sample rendering edge -----------------------------------------------------
@@ -240,7 +240,7 @@ it('[A39] double-tapping the file button fires fileNewRule exactly once', async 
 // only real strings, never a blank row. Fail-on-revert: drop the `.filter((s): s is string => !!s)`
 // and the null renders as an empty <Text> row (and could crash numberOfLines on non-strings).
 it('[A40] filters out null sample descriptions', async () => {
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({
     matched: 3,
     byRule: [{ ruleId: null, value: 'coles', categoryId: 'groceries', count: 3, samples: ['COLES RICHMOND', null as unknown as string, 'COLES CBD'] }],
   }) });
@@ -260,26 +260,26 @@ it('[A40] filters out null sample descriptions', async () => {
 // the same button. Fail-on-revert: give the rule-only action its OWN useInFlightGuard (a separate
 // latch) and both fire → a rule minted twice.
 it('[A41] a cross-action double-tap (file then rule-only) fires exactly one write', async () => {
-  const pending = deferred<FileByShopOutcome>();
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 2 }) });
-  fns.fileNewRule.mockReturnValue(pending.promise); // holds the shared latch
+  const pending = deferred<FilingResult>();
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 2 }) });
+  fns.fileCharges.mockReturnValue(pending.promise); // holds the shared latch
   await mountConfirm();
 
   await act(async () => {
     fireEvent.press(screen.getByTestId('add-rule-confirm-file'));
     fireEvent.press(screen.getByTestId('add-rule-confirm-rule-only')); // same frame — latch held
   });
-  expect(fns.fileNewRule).toHaveBeenCalledTimes(1);
+  expect(fns.fileCharges).toHaveBeenCalledTimes(1);
   expect(fns.saveManualRule).toHaveBeenCalledTimes(0);
 
-  await act(async () => { pending.resolve({ ok: true, report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) }); });
+  await act(async () => { pending.resolve({ status: 'filed', report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) }); });
 });
 
 // [A42] The same guarantee the other way round: rule-only first holds the latch, so a following File
 // tap in the same frame is swallowed. Fail-on-revert: same as [A41].
 it('[A42] a cross-action double-tap (rule-only then file) fires exactly one write', async () => {
   const pending = deferred<void>();
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 2 }) });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 2 }) });
   fns.saveManualRule.mockReturnValue(pending.promise); // holds the shared latch
   await mountConfirm();
 
@@ -288,7 +288,7 @@ it('[A42] a cross-action double-tap (rule-only then file) fires exactly one writ
     fireEvent.press(screen.getByTestId('add-rule-confirm-file')); // same frame — latch held
   });
   expect(fns.saveManualRule).toHaveBeenCalledTimes(1);
-  expect(fns.fileNewRule).toHaveBeenCalledTimes(0);
+  expect(fns.fileCharges).toHaveBeenCalledTimes(0);
 
   await act(async () => { pending.resolve(); });
 });

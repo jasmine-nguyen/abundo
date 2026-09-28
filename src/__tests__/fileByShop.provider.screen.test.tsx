@@ -17,7 +17,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
-import type { Transaction, ApplyRulesResult } from '../context';
+import type { Transaction, ApplyRulesResult, FilingResult, FilingTarget } from '../context';
 import type { UncategorizedMerchantGroup } from '../api';
 import { ApiError } from '../apiError';
 import { queryClient } from '../queryClient';
@@ -33,6 +33,7 @@ jest.mock('../auth', () => ({
 }));
 import * as api from '../api';
 const mockApi = api as jest.Mocked<typeof api>;
+const SWEEP: FilingTarget = { kind: 'sweep' };
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -82,7 +83,7 @@ it('sends the inline rule (value = the group pattern, category = the pick) with 
   mockApi.applyRulesToUncategorized.mockResolvedValue(report());
 
   const result = mount();
-  await act(async () => { await result.current.fileByShop(GROUP, 'groceries'); });
+  await act(async () => { await result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true }); });
 
   expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(false, { value: 'coles', categoryId: 'groceries' });
 });
@@ -92,10 +93,10 @@ it('patches the filed row and returns { ok, report } on success', async () => {
   mockApi.applyRulesToUncategorized.mockResolvedValue(report({ filed: [{ id: 't1', category: 'groceries' }] }));
 
   const result = mount();
-  let outcome: Awaited<ReturnType<typeof result.current.fileByShop>> | null = null;
-  await act(async () => { outcome = await result.current.fileByShop(GROUP, 'groceries'); });
+  let outcome: FilingResult | null = null;
+  await act(async () => { outcome = await result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true }); });
 
-  expect(outcome).toEqual({ ok: true, report: expect.objectContaining({ filed: [{ id: 't1', category: 'groceries' }] }) });
+  expect(outcome).toEqual({ status: 'filed', report: expect.objectContaining({ filed: [{ id: 't1', category: 'groceries' }] }) });
   const byId = new Map(rowsIn('transactions').map((r) => [r.transaction_id, r.category]));
   expect(byId.get('t1')).toBe('groceries');
   expect(byId.get('untouched')).toBeNull();
@@ -109,7 +110,7 @@ it('invalidates the shop list and the rules list after a successful file', async
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  await act(async () => { await result.current.fileByShop(GROUP, 'groceries'); });
+  await act(async () => { await result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true }); });
 
   expect(invalidatedKeys(spy)).toEqual(expect.arrayContaining(['uncategorizedMerchants', 'rules', 'uncategorizedCount']));
   spy.mockRestore();
@@ -125,10 +126,10 @@ it('returns { clash } and refreshes nothing on a 409 clash', async () => {
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  let outcome: Awaited<ReturnType<typeof result.current.fileByShop>> | null = null;
-  await act(async () => { outcome = await result.current.fileByShop(GROUP, 'groceries'); });
+  let outcome: FilingResult | null = null;
+  await act(async () => { outcome = await result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true }); });
 
-  expect(outcome).toEqual({ ok: false, clash: expect.any(ApiError) });
+  expect(outcome).toEqual({ status: 'clash', error: expect.any(ApiError), background: false });
   expect(spy).not.toHaveBeenCalled();               // nothing was minted → nothing to refresh
   expect(rowsIn('transactions')[0].category).toBeNull();
   spy.mockRestore();
@@ -143,10 +144,10 @@ it('returns { clash: null } and still refreshes on a non-clash failure', async (
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  let outcome: Awaited<ReturnType<typeof result.current.fileByShop>> | null = null;
-  await act(async () => { outcome = await result.current.fileByShop(GROUP, 'groceries'); });
+  let outcome: FilingResult | null = null;
+  await act(async () => { outcome = await result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true }); });
 
-  expect(outcome).toEqual({ ok: false, clash: null });
+  expect(outcome).toEqual({ status: 'failed', background: false });
   expect(invalidatedKeys(spy)).toContain('uncategorizedCount');
   spy.mockRestore();
 });
@@ -161,9 +162,9 @@ it('shares the in-flight latch with applyRulesToHistory', async () => {
 
   const result = mount();
   await act(async () => {
-    const first = result.current.fileByShop(GROUP, 'groceries');   // holds the latch
-    const blocked = await result.current.applyRulesToHistory();     // must be turned away
-    expect(blocked).toBeNull();
+    const first = result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true });   // holds the latch
+    const blocked = await result.current.fileCharges(SWEEP, { now: true });     // must be turned away
+    expect(blocked).toEqual({ status: 'failed', background: false });
     pending.resolve(report());
     await first;
   });
@@ -179,11 +180,11 @@ it('previews with dryRun true and the inline rule, writing nothing', async () =>
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  let outcome: Awaited<ReturnType<typeof result.current.previewFileByShop>> | null = null;
-  await act(async () => { outcome = await result.current.previewFileByShop(GROUP, 'groceries'); });
+  let outcome: FilingResult | null = null;
+  await act(async () => { outcome = await result.current.previewFiling({ kind: 'shop', group: GROUP, categoryId: 'groceries' }); });
 
   expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(true, { value: 'coles', categoryId: 'groceries' });
-  expect(outcome!.ok).toBe(true);
+  expect(outcome).toEqual({ status: 'filed', report: expect.anything() });
   expect(spy).not.toHaveBeenCalled();                        // a preview reconciles nothing
   expect(rowsIn('transactions')[0].category).toBeNull();     // ...and touches no row
   spy.mockRestore();
@@ -194,10 +195,10 @@ it('surfaces a 409 clash from the preview (distinct from a generic failure)', as
   mockApi.applyRulesToUncategorized.mockRejectedValue(new ApiError(409, null));
 
   const result = mount();
-  let outcome: Awaited<ReturnType<typeof result.current.previewFileByShop>> | null = null;
-  await act(async () => { outcome = await result.current.previewFileByShop(GROUP, 'groceries'); });
+  let outcome: FilingResult | null = null;
+  await act(async () => { outcome = await result.current.previewFiling({ kind: 'shop', group: GROUP, categoryId: 'groceries' }); });
 
-  expect(outcome).toEqual({ ok: false, clash: expect.any(ApiError) });
+  expect(outcome).toEqual({ status: 'clash', error: expect.any(ApiError), background: false });
 });
 
 it('returns { clash: null } when the preview fails for any other reason', async () => {
@@ -205,10 +206,10 @@ it('returns { clash: null } when the preview fails for any other reason', async 
   mockApi.applyRulesToUncategorized.mockRejectedValue(new Error('API error: 502'));
 
   const result = mount();
-  let outcome: Awaited<ReturnType<typeof result.current.previewFileByShop>> | null = null;
-  await act(async () => { outcome = await result.current.previewFileByShop(GROUP, 'groceries'); });
+  let outcome: FilingResult | null = null;
+  await act(async () => { outcome = await result.current.previewFiling({ kind: 'shop', group: GROUP, categoryId: 'groceries' }); });
 
-  expect(outcome).toEqual({ ok: false, clash: null });
+  expect(outcome).toEqual({ status: 'failed', background: false });
 });
 
 // --- session safety -----------------------------------------------------------
@@ -220,15 +221,15 @@ it('bails without painting when a file settles after sign-out', async () => {
   mockApi.applyRulesToUncategorized.mockReturnValue(pending.promise);
   const result = mount();
 
-  let outcome: Awaited<ReturnType<typeof result.current.fileByShop>> | null = null;
+  let outcome: FilingResult | null = null;
   await act(async () => {
-    const inFlight = result.current.fileByShop(GROUP, 'groceries');
+    const inFlight = result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true });
     mockSetStatus('anon');
     seedTransactionsCache(queryClient, [txn()]);
     pending.resolve(report({ filed: [{ id: 't1', category: 'groceries' }] }));
     outcome = await inFlight;
   });
 
-  expect(outcome).toEqual({ ok: false, clash: null });
+  expect(outcome).toEqual({ status: 'failed', background: false });
   expect(rowsIn('transactions')[0].category).toBeNull();
 });

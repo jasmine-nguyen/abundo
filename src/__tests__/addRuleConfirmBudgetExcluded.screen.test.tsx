@@ -8,7 +8,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
-import type { AppContext, FileByShopOutcome } from '../context';
+import type { AppContext, FilingResult, FilingTarget, FilingWhen } from '../context';
 import type { ApplyRulesResult } from '../api';
 
 let mockState: AppContext;
@@ -24,8 +24,8 @@ const fns = {
   setSheet: jest.fn(),
   showToast: jest.fn(),
   saveManualRule: jest.fn(),
-  previewNewRule: jest.fn<(pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<FileByShopOutcome>>(),
-  fileNewRule: jest.fn<(pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<FileByShopOutcome>>(),
+  previewFiling: jest.fn<(target: FilingTarget) => Promise<FilingResult>>(),
+  fileCharges: jest.fn<(target: FilingTarget, when: FilingWhen) => Promise<FilingResult>>(),
 };
 
 const CATEGORIES = [
@@ -52,21 +52,21 @@ async function mountConfirm(budgetExcluded: boolean, pattern = 'COLES', category
 beforeEach(() => { jest.clearAllMocks(); });
 
 it('previews (dry-run) with budgetExcluded:true from the sheet payload', async () => {
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report() });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report() });
   await mountConfirm(true);
-  expect(fns.previewNewRule).toHaveBeenCalledWith('COLES', 'groceries', true);
+  expect(fns.previewFiling).toHaveBeenCalledWith({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: true });
 });
 
 it('"Add rule + file N" commits via fileNewRule with budgetExcluded:true', async () => {
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report() });
-  fns.fileNewRule.mockResolvedValue({ ok: true, report: report({ dryRun: false, matched: 12, filed: [{ id: 't0', category: 'groceries' }] }) });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report() });
+  fns.fileCharges.mockResolvedValue({ status: 'filed', report: report({ dryRun: false, matched: 12, filed: [{ id: 't0', category: 'groceries' }] }) });
   await mountConfirm(true);
   await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
-  expect(fns.fileNewRule).toHaveBeenCalledWith('COLES', 'groceries', true);
+  expect(fns.fileCharges).toHaveBeenCalledWith({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: true }, { now: true });
 });
 
 it('"Add rule only" saves via saveManualRule with budgetExcluded:true', async () => {
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report() });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report() });
   await mountConfirm(true);
   fireEvent.press(screen.getByTestId('add-rule-confirm-rule-only'));
   expect(fns.saveManualRule).toHaveBeenCalledWith('COLES', 'groceries', true);

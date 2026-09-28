@@ -6,8 +6,8 @@ import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, render } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AppProvider, useAppContext } from '../context';
-import type { ApplyRulesJob } from '../context';
+import { AppProvider, useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
+import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';
 import { queryClient } from '../queryClient';
 import type { ChatJob } from '../api';
 
@@ -20,6 +20,8 @@ jest.mock('../auth', () => ({
 }));
 import * as api from '../api';
 import { CHAT_ERROR_TEXT, CHAT_MAX_WAIT_MS, CHAT_POLL_DELAY_MS, ChatProvider, useChat } from '../chat/ChatContext';
+const SWEEP: FilingTarget = { kind: 'sweep' };
+const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
 import type { ChatContextValue } from '../chat/ChatContext';
 const mockApi = api as jest.Mocked<typeof api>;
 
@@ -51,7 +53,7 @@ it('[A10] dropped connections before a dismiss still count after the sheet is re
 
   const r = renderHook(() => useAppContext(), { wrapper }).result;
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(3); // 3 of the 5 allowed drops
   expect(r.current.applyRulesJob?.status).toBe('running');
 
@@ -70,7 +72,7 @@ it('[A11] a new job after a network give-up starts its dropped-connection count 
 
   const r = renderHook(() => useAppContext(), { wrapper }).result;
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(5);
   expect(r.current.applyRulesJob).toMatchObject({ status: 'failed', error: 'network' });
 
@@ -92,7 +94,7 @@ it('[A12] a dismiss after a good check carries zero drops, not a stale count', a
 
   const r = renderHook(() => useAppContext(), { wrapper }).result;
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(4);
   await act(async () => { r.current.setSheet(null); });
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });

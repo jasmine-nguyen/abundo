@@ -13,7 +13,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
-import type { AppContext, FileByShopOutcome } from '../context';
+import type { AppContext, FilingResult, FilingTarget, FilingWhen } from '../context';
 import type { ApplyRulesResult } from '../api';
 import { APPLY_RULES_MAX_WRITES } from '../context';
 import { ApiError } from '../apiError';
@@ -31,8 +31,8 @@ const fns = {
   setSheet: jest.fn(),
   showToast: jest.fn(),
   saveManualRule: jest.fn(),
-  previewNewRule: jest.fn<(pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<FileByShopOutcome>>(),
-  fileNewRule: jest.fn<(pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<FileByShopOutcome>>(),
+  previewFiling: jest.fn<(target: FilingTarget) => Promise<FilingResult>>(),
+  fileCharges: jest.fn<(target: FilingTarget, when: FilingWhen) => Promise<FilingResult>>(),
 };
 
 const CATEGORIES = [
@@ -59,10 +59,10 @@ async function mountConfirm(pattern = 'COLES', categoryId = 'groceries') {
 beforeEach(() => { jest.clearAllMocks(); });
 
 it('previews on mount and shows the matched count with sample descriptions', async () => {
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 12 }) });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 12 }) });
   await mountConfirm('COLES', 'groceries');
 
-  expect(fns.previewNewRule).toHaveBeenCalledWith('COLES', 'groceries', false);
+  expect(fns.previewFiling).toHaveBeenCalledWith({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: false });
   expect(screen.getByTestId('add-rule-confirm-file')).toBeTruthy();
   expect(screen.getByText('Add rule + file 12 charges')).toBeTruthy();
   expect(screen.getByText('COLES 1234 RICHMOND')).toBeTruthy();
@@ -71,13 +71,13 @@ it('previews on mount and shows the matched count with sample descriptions', asy
 // The load-bearing action: "Add rule + file N" must mint-and-file via fileNewRule with the captured
 // pair, then toast + close. Fail-on-revert: wire it to saveManualRule and this reddens.
 it('"Add rule + file N" calls fileNewRule with the captured pair, then toasts and closes', async () => {
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 12 }) });
-  fns.fileNewRule.mockResolvedValue({ ok: true, report: report({ dryRun: false, matched: 12, filed: Array.from({ length: 12 }, (_, i) => ({ id: `t${i}`, category: 'groceries' })) }) });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 12 }) });
+  fns.fileCharges.mockResolvedValue({ status: 'filed', report: report({ dryRun: false, matched: 12, filed: Array.from({ length: 12 }, (_, i) => ({ id: `t${i}`, category: 'groceries' })) }) });
   await mountConfirm('COLES', 'groceries');
 
   await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
 
-  expect(fns.fileNewRule).toHaveBeenCalledWith('COLES', 'groceries', false);
+  expect(fns.fileCharges).toHaveBeenCalledWith({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: false }, { now: true });
   expect(fns.showToast).toHaveBeenCalledWith('Rule added — filed 12 past charges as Groceries.');
   expect(fns.setSheet).toHaveBeenCalledWith(null);
 });
@@ -85,19 +85,19 @@ it('"Add rule + file N" calls fileNewRule with the captured pair, then toasts an
 // The future-only path: "Add rule only" saves the rule and files nothing. Fail-on-revert: wire it to
 // fileNewRule and this reddens.
 it('"Add rule only" calls saveManualRule and never files', async () => {
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 12 }) });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 12 }) });
   await mountConfirm('COLES', 'groceries');
 
   fireEvent.press(screen.getByTestId('add-rule-confirm-rule-only'));
 
   expect(fns.saveManualRule).toHaveBeenCalledWith('COLES', 'groceries', false);
-  expect(fns.fileNewRule).not.toHaveBeenCalled();
+  expect(fns.fileCharges).not.toHaveBeenCalled();
 });
 
 // Nothing to file: offer only "Add rule" (future-only), never a no-op "+ file 0".
 // Fail-on-revert: drop the matched===0 arm and the "+ file" button shows.
 it('says nothing matches and offers no "+ file" button when matched is 0', async () => {
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 0, byRule: [] }) });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 0, byRule: [] }) });
   await mountConfirm('ZZZNOPE', 'groceries');
 
   expect(screen.getByText('No past charges match')).toBeTruthy();
@@ -110,7 +110,7 @@ it('says nothing matches and offers no "+ file" button when matched is 0', async
 // count. Fail-on-revert: drop the `capped` label and it reads the full count.
 it('says "up to N" (not the full count) when the match exceeds the write cap', async () => {
   const over = APPLY_RULES_MAX_WRITES + 200;
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: over }) });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: over }) });
   await mountConfirm();
 
   expect(screen.getByText(`Add rule + file up to ${APPLY_RULES_MAX_WRITES}`)).toBeTruthy();
@@ -120,7 +120,7 @@ it('says "up to N" (not the full count) when the match exceeds the write cap', a
 // A clash surfaced by the preview (a rule the client didn't know about already files this pattern):
 // show the clash card, no file button. Fail-on-revert: collapse the clash outcome and the file button returns.
 it('shows the clash card and no file button when the preview reports a clash', async () => {
-  fns.previewNewRule.mockResolvedValue({ ok: false, clash: new ApiError(409, null) });
+  fns.previewFiling.mockResolvedValue({ status: 'clash', error: new ApiError(409, null), background: false });
   await mountConfirm();
 
   expect(screen.getByText('You already have a rule for this')).toBeTruthy();
@@ -131,7 +131,7 @@ it('shows the clash card and no file button when the preview reports a clash', a
 // double-tap or it would mint two rules. Fail-on-revert: drop the runGuarded wrapper on onRuleOnly
 // and the second press fires a second saveManualRule.
 it('double-tapping "Add rule only" calls saveManualRule exactly once', async () => {
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 12 }) });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 12 }) });
   fns.saveManualRule.mockReturnValue(new Promise(() => {})); // never resolves → latch stays held
   await mountConfirm('COLES', 'groceries');
 

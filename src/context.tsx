@@ -4,7 +4,7 @@ import { normalizeColorSlot } from './chartColors';
 import { colorForCategory } from './categoryColors';
 import { writeFailureMessage, ApiError } from './apiError';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, utcDayMsToISO, MS_PER_DAY } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, applyRulesToUncategorized, ApplyRulesResult, startApplyRulesJob as apiStartApplyRulesJob, getApplyRulesJob as apiGetApplyRulesJob, ApplyRulesJob, UncategorizedMerchantGroup } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup } from './api';
 import * as Crypto from 'expo-crypto';
 import { usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
@@ -13,21 +13,8 @@ import { RULE_FIELD_OPERATORS } from './ruleVocabulary';
 export type { LoanFacts, LoanFactsInput } from './api';
 export type { ApplyRulesResult, ApplyRulesJob } from './api';
 export { unionById, budgetSubtreeContains } from './transactionCache';
-// WHIT-517: the outcome of a "file by shop" preview or write. On failure, `clash` carries the
-// server's 409 ApiError when an existing rule would fight this one (so the sheet can explain it),
-// and is null for any other failure. Kept distinct from applyRulesToHistory's plain null, which
-// erases that difference.
-export type FileByShopOutcome =
-  | { ok: true; report: ApplyRulesResult }
-  | { ok: false; clash: ApiError | null };
-// WHIT-560: the outcome of STARTING an async apply-rules job. `ok` means the job was accepted
-// (202) and polling has begun; on failure `clash` carries the 409 ApiError when an existing rule
-// would fight an inline "file this shop / add rule" job (null for a bad-rule 400 or a 502 the sheet
-// shows as a generic "couldn't start"). The job's own running/done/failed state is read separately
-// from `applyRulesJob`.
-export type ApplyRulesJobStart =
-  | { ok: true }
-  | { ok: false; clash: ApiError | null };
+export type { FilingResult, FilingTarget, FilingWhen } from './filingRun';
+export { APPLY_RULES_MAX_WRITES } from './filingRun';
 // WHIT-190a: the categorise write double-writes the query cache (for the migrated
 // Transactions list) alongside the old store (for the tab badge + budget detail).
 // Import the singleton directly (not the ['transactions'] key from ./queries) to avoid
@@ -35,7 +22,7 @@ export type ApplyRulesJobStart =
 import { queryClient } from './queryClient';
 import { readTransactionCopies, findTransaction, patchTransactionsCache, patchAllCopies, optimisticRefile, refreshAfter } from './transactionCache';
 import { runOptimisticSave, type SaveSteps } from './optimisticSave';
-import { pollJob, type PollHandle } from './jobPoller';
+import { useFilingRun, type FilingResult, type FilingTarget, type FilingWhen } from './filingRun';
 import { getStatus, subscribe } from './auth';
 
 // The empty loan-facts shape shown until the user saves the form. Kept as a
@@ -178,28 +165,6 @@ export const BUCKETS: Bucket[] = ['Living', 'Lifestyle', 'Income', 'Savings'];
 // of this size so a large merchant spans multiple requests instead of tripping the
 // server's per-request cap. Keep the two equal.
 const CATEGORY_BATCH_LIMIT = 100;
-
-// Max charges ONE apply-rules request writes. Mirrors the server's APPLY_RULES_MAX_WRITES
-// (lambda_api/api_constants.py) — the parity is asserted by applyRulesCap.logic.test.ts, since a
-// comment alone drifts. With ~639 unfiled charges the FIRST run is expected to be partial, so
-// the preview says so UP FRONT instead of promising a number one tap can't deliver. The server
-// can stop even earlier (a wall-clock budget), hence "up to" in the copy. Keep the two equal.
-export const APPLY_RULES_MAX_WRITES = 300;
-
-// WHIT-560: the async "apply rules over all history" background job (no cap). The app polls the
-// job's status on a SELF-SCHEDULING loop — the next poll is armed only after the current one
-// resolves — so polls can never overlap or land out of order regardless of the per-poll timeout.
-const APPLY_RULES_JOB_POLL_DELAY_MS = 2500;
-// A dropped poll (offline/airplane) is NOT a job failure — the sweep keeps running server-side.
-// Tolerate this many CONSECUTIVE network throws, then give up so the sheet isn't stuck polling a
-// truly unreachable server. A server `status:"failed"` or a 404 (expired) is terminal immediately.
-const APPLY_RULES_JOB_MAX_NET_ERRORS = 5;
-// WHIT-565: a job stuck at `running` with no advancing progress for this many consecutive polls
-// (~60s at 2500ms) shows a NON-destructive "taking longer than expected" nudge. Generous on
-// purpose: a large history's planning phase reports 0 progress until the whole plan lands, so a
-// smaller window would nag a healthy job. The nudge does NOT stop the poll loop — the job keeps
-// running and the nudge self-clears the moment progress resumes (or a terminal state arrives).
-const APPLY_RULES_JOB_MAX_STALL_POLLS = 24;
 
 // WHIT-292: the batch category write shared by applyCategory('all') and applyCategoryToMany.
 // Chunk the ids under the server's per-request cap (CATEGORY_BATCH_LIMIT), send the chunks
@@ -654,30 +619,14 @@ export interface AppContext {
   applyCategory: (scope: 'one' | 'all') => Promise<void>;
   // WHIT-291: re-file every id under one category in a single batch (partial rollback on failure).
   applyCategoryToMany: (txIds: string[], categoryId: string) => Promise<void>;
-  // WHIT-508: preview what the existing rules would file across stored history. Writes nothing.
-  previewRuleApplication: () => Promise<ApplyRulesResult | null>;
-  // WHIT-508: file what the rules cover, capped at APPLY_RULES_MAX_WRITES per call. Returns the
-  // server's report (null on failure, where the outcome is unknown and the caches are refreshed).
-  applyRulesToHistory: () => Promise<ApplyRulesResult | null>;
-  // WHIT-517: preview / file one shop from the "File by shop" screen. Both return a distinct 409
-  // clash outcome (an existing rule would fight this one) instead of a bare null.
-  previewFileByShop: (group: UncategorizedMerchantGroup, categoryId: string) => Promise<FileByShopOutcome>;
-  fileByShop: (group: UncategorizedMerchantGroup, categoryId: string) => Promise<FileByShopOutcome>;
-  // WHIT-538: preview / file the stored charges a NOT-YET-CREATED rule would catch. previewNewRule
-  // dry-runs the typed pattern (writes nothing); fileNewRule mints the rule AND files those charges
-  // in one call. Both return the same 409-clash-aware outcome as the file-by-shop pair.
-  previewNewRule: (pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<FileByShopOutcome>;
-  fileNewRule: (pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<FileByShopOutcome>;
-  // WHIT-560: the async "apply my rules over all history" job (no 300/15s cap). `applyRulesJob` is
-  // the live status the sheet renders (null when idle); the three starters begin a job and kick off
-  // polling — the plain sweep, and the inline "file this shop" / "add rule" variants (which mint a
-  // rule and can clash 409). A running job blocks the sync writers above (one heavy run at a time).
+  // WHIT-629: the one filing run behind the three filing sheets (see filingRun.ts). A sheet says what
+  // to file; the run picks "file now" or "background job" and answers with one FilingResult.
+  // `applyRulesJob` is the live job status the sheets render (null when idle).
+  previewFiling: (target: FilingTarget) => Promise<FilingResult>;
+  fileCharges: (target: FilingTarget, when: FilingWhen) => Promise<FilingResult>;
+  retryApplyRulesJob: () => Promise<FilingResult>;
   applyRulesJob: ApplyRulesJob | null;
   applyRulesStalled: boolean;
-  startApplyRulesSweep: () => Promise<ApplyRulesJobStart>;
-  startFileByShopJob: (group: UncategorizedMerchantGroup, categoryId: string) => Promise<ApplyRulesJobStart>;
-  startNewRuleJob: (pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<ApplyRulesJobStart>;
-  retryApplyRulesJob: () => Promise<ApplyRulesJobStart>;
   applyTransactionEdit: (txId: string, patch: { notes?: string; tags?: string[]; budget_excluded?: boolean }) => Promise<void>;
   saveBudget: (categoryId: string, value: number, rollover?: boolean) => Promise<boolean>;
   deleteBudget: (categoryId: string) => Promise<boolean>;
@@ -801,47 +750,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // keystroke writes it with zero re-renders, and the sheet reads it once on remount (post-unlock).
   // Cleared when any sheet closes (submit/cancel) and on sign-out, so nothing leaks to the next session.
   const sheetDrafts = useRef<Map<string, unknown>>(new Map());
-  // WHIT-508: one apply-rules run at a time, held here rather than in the sheet — see the writer.
-  const applyRulesInFlight = useRef(false);
-  // WHIT-560: the async background job. `applyRulesJob` is the status the sheet renders; the refs
-  // drive the self-scheduling poll loop and the "one heavy run at a time" lock, which must live in
-  // the provider (it outlives the sheet, which unmounts on dismiss/lock). `applyRulesJobActive`
-  // stays true from the accepted POST until the job is terminal OR the session ends — the sync
-  // writers check it too, so a sync sweep can't start on top of a running job even after the sheet
-  // is dismissed (polling stops on dismiss and resumes on reopen; the lock does not).
-  const [applyRulesJob, setApplyRulesJob] = useState<ApplyRulesJob | null>(null);
-  // WHIT-565: true when a running job has made no progress for APPLY_RULES_JOB_MAX_STALL_POLLS polls.
-  // A non-terminal hint the job view shows (the job stays `running` and keeps polling); the refs
-  // below drive it — `applyRulesLastProgress` is the last-seen matched:attempted signature.
-  const [applyRulesStalled, setApplyRulesStalled] = useState(false);
-  const applyRulesStallPolls = useRef(0);
-  const applyRulesLastProgress = useRef('');
-  const applyRulesJobId = useRef<string | null>(null);
-  // WHIT-629: the live job poller. Stopping it (terminal, dismiss, lock, sign-out) cuts off a GET
-  // that was in flight, so it can't re-arm — a dismiss-then-reopen never leaves two live chains.
-  const applyRulesPoller = useRef<PollHandle | null>(null);
-  // Dropped connections carried across a dismiss-then-reopen, so the resumed poller keeps counting.
-  const applyRulesNetErrors = useRef(0);
-  const applyRulesJobActive = useRef(false);
-  // The variant + args of the RUNNING job, so "Try again" always restarts the SAME sweep — even when
-  // the job view is rendered from a different sheet than the one that started it (applyRulesJob is
-  // global). Without this, a failed file-this-shop job's retry from the plain sheet would run a
-  // whole-rules sweep instead.
-  const applyRulesJobRetryArgs = useRef<{ rule?: { value: string; categoryId: string; budgetExcluded?: boolean }; prependRule: boolean } | null>(null);
-  const applyRulesJobStartEpoch = useRef(0);
-  // True only for the "add rule" (Rules screen) variant: on success prepend the minted rule with
-  // its NEW badge (like fileNewRule), skipping the rules refetch. False for the plain sweep and
-  // "file this shop", which refresh rules normally.
-  const applyRulesJobPrependRule = useRef(false);
-  // WHIT-566: the shared core of every apply-rules poll teardown — keep the dropped-connection count,
-  // stop the poller (an in-flight poll then bails without re-arming) and forget it. All three teardown
-  // sites (sign-out/lock, sheet-dismiss, endApplyRulesJob) route through this so the delicate order
-  // lives once. Ref-only → stable identity (empty deps), so it perturbs no effect's dependencies.
-  const stopApplyRulesPolling = useCallback(() => {
-    applyRulesNetErrors.current = applyRulesPoller.current?.netErrors() ?? applyRulesNetErrors.current;
-    applyRulesPoller.current?.stop();
-    applyRulesPoller.current = null;
-  }, []);
   const readSheetDraft = useCallback((key: string): unknown => sheetDrafts.current.get(key), []);
   const writeSheetDraft = useCallback((key: string, value: unknown) => { sheetDrafts.current.set(key, value); }, []);
   // WHIT-192: rule edits are mirrored straight into the ['rules'] query cache the Rules
@@ -872,6 +780,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		const epoch = sessionEpoch.current;
 		return runOptimisticSave(() => epoch === sessionEpoch.current, steps);
 	}, []);
+
+	// WHIT-629: the filing run (preview, file now or in the background, the job view) lives in
+	// filingRun.ts. A new rule's minted rule shows straight away with its NEW badge.
+	const prependMintedRule = useCallback((rule: CreatedRule) => {
+		patchRules((prev) => [{ ...toRule(rule as RuleRecord), isNew: true }, ...prev]);
+	}, [patchRules]);
+	const { previewFiling, fileCharges, retryApplyRulesJob, applyRulesJob, applyRulesStalled, endOnLock } =
+		useFilingRun({ sessionEpoch, prependMintedRule, sheetOpen: sheet !== null });
 
 	// AI spending insights (WHIT-104). `refreshAiInsights` reads the per-cycle cache
 	// (free); `generateAiInsights` is the paid "Analyse my spending" action. Error is
@@ -918,7 +834,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // that also kept the jest worker alive between tests).
   useEffect(() => () => {
     clearTimeout(toastTimer.current);
-    applyRulesPoller.current?.stop(); // WHIT-560: no zombie poll after the provider unmounts
   }, []);
 
   // WHIT-268: overlays render OUTSIDE the auth gate in app/_layout.tsx, so the gate's
@@ -946,11 +861,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setSheet((prev) => (prev?.mode === 'applyRules' ? null : prev));
       // WHIT-560: a lock (or sign-out) unmounts the sheet, so stop polling and drop the job view —
       // the job keeps running server-side; on unlock the reopened sheet previews fresh. Releasing
-      // the lock here matches the sheet's own lock→fresh-start model (WHIT-508). WHIT-566: the full
-      // teardown (poll stop + id/net-errors/lock reset, plus the WHIT-565 stall reset) is
-      // endApplyRulesJob; drop the view too.
-      endApplyRulesJob();
-      setApplyRulesJob(null);
+      // the lock here matches the sheet's own lock→fresh-start model (WHIT-508).
+      endOnLock();
     }
     if (getStatus() !== 'anon') return;
     sessionEpoch.current += 1;
@@ -963,25 +875,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setAiInsightsError(false);
     setAiInsightsLoading(false);
   }), []);
-
-  // WHIT-560: polling follows an open overlay. While any sheet is open and a job is active but no
-  // timer is armed (e.g. the sheet was just reopened after a dismiss), resume the poll from the
-  // stored id. When the overlay is fully dismissed, STOP polling — the job keeps running server-side
-  // and the lock stays held (block until it finishes) — and drop a terminal frame so the next open
-  // previews fresh.
-  useEffect(() => {
-    if (sheet !== null) {
-      if (applyRulesJobActive.current && applyRulesJobId.current && !applyRulesPoller.current) {
-        startApplyRulesPolling(applyRulesJobId.current);
-      }
-      return;
-    }
-    // WHIT-566: stop polling only (supersede any in-flight poll so it can't re-arm after dismiss);
-    // deliberately partial — the job keeps running server-side and the lock stays held so a reopen
-    // resumes the same job. Never route this through endApplyRulesJob (that releases the lock).
-    stopApplyRulesPolling();
-    if (!applyRulesJobActive.current) setApplyRulesJob(null);
-  }, [sheet]);
 
   const showToast = useCallback((m: string) => {
     setToast(m);
@@ -1348,7 +1241,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // up to their 45s staleTime — accepted: the storm argument still holds, the Uncategorized tab and
   // the badge (the numbers this feature is about) are correct immediately, and focus reconciles the
   // rest. The sheet's failure copy is worded to match, claiming only the unfiled list and count.
-  // `skipRules` leaves the ['rules'] cache alone. WHIT-538's fileNewRule has already prepended the
+  // `skipRules` leaves the ['rules'] cache alone. WHIT-538's new-rule filing has already prepended the
   // minted rule optimistically (with its "NEW" badge); invalidating here would refetch and reset
   // that badge to false, so it flashes then vanishes. Every other caller mints no rule (or mints
   // one it does NOT show optimistically), so they invalidate as before.
@@ -1356,319 +1249,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     (opts?: { skipRules?: boolean }) => refreshAfter('rulesApplied', opts),
     [],
   );
-
-  // WHIT-508: preview what the user's existing rules would file, writing nothing. Lives here
-  // rather than in the sheet so the component never imports the api layer directly: it keeps the
-  // `../api` mock seam every screen test relies on, and it gets the same session-epoch bail every
-  // other awaited call has — a preview landing after a sign-out must not paint the next session.
-  const previewRuleApplication = useCallback(async (): Promise<ApplyRulesResult | null> => {
-    const epoch = sessionEpoch.current;
-    try {
-      const result = await applyRulesToUncategorized(true);
-      if (epoch !== sessionEpoch.current) return null;
-      return result;
-    } catch {
-      return null; // a preview writes nothing, so there is nothing to reconcile
-    }
-  }, []);
-
-  // WHIT-508: file every charge the rules cover. The server has already committed by the time it
-  // answers and tells us exactly which rows landed, so — unlike applyCategory/applyCategoryToMany
-  // — there is no optimistic write, no previous-category snapshot and no rollback to build.
-  // Returns the server's own report (null on failure) so the sheet can offer "Apply the rest"
-  // after a capped run without paying for a second whole-history preview.
-  const applyRulesToHistory = useCallback(async (): Promise<ApplyRulesResult | null> => {
-    // The latch lives HERE, not in the sheet: dismissing the sheet mid-write unmounts it, and
-    // reopening would otherwise mint a fresh component latch and let a second 300-write run start
-    // on top of the first. The provider outlives the sheet, so one run at a time really means one.
-    if (applyRulesInFlight.current || applyRulesJobActive.current) return null;
-    applyRulesInFlight.current = true;
-    const epoch = sessionEpoch.current;
-    try {
-      const result = await applyRulesToUncategorized(false);
-      if (epoch !== sessionEpoch.current) return null; // signed out mid-flight
-
-      const filedBy = new Map(result.filed.map((row) => [row.id, row.category]));
-      const vanished = new Set(result.vanished);
-      if (filedBy.size > 0 || vanished.size > 0) {
-        // One pass over all three list caches. A filed row stops matching the Uncategorized tab's
-        // client re-filter and disappears instantly; a vanished row is gone server-side, so leaving
-        // it would show a phantom charge until the next refetch.
-        // Deliberately NOT touching `alreadyFiled`: unlike `vanished`, those rows still exist and
-        // now carry the category the user just chose. Dropping them would delete a charge they can
-        // see, and the invalidation below does not bring the general feed back.
-        patchTransactions((prev) => prev
-          .filter((existing) => !vanished.has(existing.transaction_id))
-          .map((existing) => (filedBy.has(existing.transaction_id)
-            ? { ...existing, category: filedBy.get(existing.transaction_id)! }
-            : existing)));
-      }
-      refreshAfterApplyRules();
-      return result;
-    } catch {
-      if (epoch !== sessionEpoch.current) return null;
-      // The outcome is UNKNOWN, not "nothing happened": the server writes row by row and only
-      // reports at the end, so an abort, a dropped connection or a late 5xx can leave up to
-      // APPLY_RULES_MAX_WRITES charges filed. The count has a 5-minute staleTime, so without this
-      // the badge, tab list and budgets would keep the old numbers until a manual pull. Refresh
-      // and let the sheet say the outcome is uncertain.
-      refreshAfterApplyRules();
-      return null;
-    } finally {
-      applyRulesInFlight.current = false;
-    }
-  }, [patchTransactions, refreshAfterApplyRules]);
-
-  // WHIT-517: preview one shop's file-by-shop run — mint-and-file with dryRun, writing nothing —
-  // so the confirm sheet can show the count + overlap before she commits. A 409 (an existing rule
-  // would fight this one) is kept DISTINCT from a generic failure so the sheet can explain it; the
-  // server runs its clash check before the dry-run branch, so a clash surfaces even here.
-  const previewFileByShop = useCallback(
-    async (group: UncategorizedMerchantGroup, categoryId: string): Promise<FileByShopOutcome> => {
-      const epoch = sessionEpoch.current;
-      try {
-        const report = await applyRulesToUncategorized(true, { value: group.rulePattern, categoryId });
-        if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
-        return { ok: true, report };
-      } catch (e) {
-        if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
-        return { ok: false, clash: e instanceof ApiError && e.status === 409 ? e : null };
-      }
-    }, []);
-
-  // WHIT-517: file one shop — mint the rule AND file that shop's stored charges in one call. Shares
-  // applyRulesInFlight with applyRulesToHistory, so "Apply my rules" and "File by shop" can never
-  // run at once. A 409 clash returns { clash } and writes/refreshes NOTHING (the server minted
-  // nothing). Unlike applyRulesToHistory, this does NOT collapse the 409 to a bare null.
-  const fileByShop = useCallback(
-    async (group: UncategorizedMerchantGroup, categoryId: string): Promise<FileByShopOutcome> => {
-      if (applyRulesInFlight.current || applyRulesJobActive.current) return { ok: false, clash: null };
-      applyRulesInFlight.current = true;
-      const epoch = sessionEpoch.current;
-      try {
-        const report = await applyRulesToUncategorized(false, { value: group.rulePattern, categoryId });
-        if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
-
-        const filedBy = new Map(report.filed.map((row) => [row.id, row.category]));
-        const vanished = new Set(report.vanished);
-        if (filedBy.size > 0 || vanished.size > 0) {
-          patchTransactions((prev) => prev
-            .filter((existing) => !vanished.has(existing.transaction_id))
-            .map((existing) => (filedBy.has(existing.transaction_id)
-              ? { ...existing, category: filedBy.get(existing.transaction_id)! }
-              : existing)));
-        }
-        refreshAfterApplyRules();
-        return { ok: true, report };
-      } catch (e) {
-        if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
-        // A 409 clash wrote nothing — surface it, refresh nothing. Any other error has an unknown
-        // outcome (row-by-row writes, late failure), so refresh like applyRulesToHistory does.
-        if (e instanceof ApiError && e.status === 409) return { ok: false, clash: e };
-        refreshAfterApplyRules();
-        return { ok: false, clash: null };
-      } finally {
-        applyRulesInFlight.current = false;
-      }
-    }, [patchTransactions, refreshAfterApplyRules]);
-
-  // WHIT-538: dry-run the typed pattern before the rule exists, so the add-rule confirm sheet can
-  // show how many stored charges it would file. Mirrors previewFileByShop but takes the raw pattern
-  // (a shop passes its precomputed rulePattern; here the user typed it). Writes nothing.
-  const previewNewRule = useCallback(
-    async (pattern: string, categoryId: string, budgetExcluded = false): Promise<FileByShopOutcome> => {
-      const epoch = sessionEpoch.current;
-      try {
-        const report = await applyRulesToUncategorized(true, { value: pattern.trim(), categoryId, budgetExcluded });
-        if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
-        return { ok: true, report };
-      } catch (e) {
-        if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
-        return { ok: false, clash: e instanceof ApiError && e.status === 409 ? e : null };
-      }
-    }, []);
-
-  // WHIT-538: mint the typed rule AND file the stored charges it catches, in one call. Mirrors
-  // fileByShop (shared applyRulesInFlight guard, same filed/vanished patch, same 409-clash outcome),
-  // with one addition: the user is on the Rules screen, so the minted rule (returned as createdRule)
-  // is prepended to the ['rules'] cache with its "NEW" badge and the refresh SKIPS re-fetching rules,
-  // so the badge survives. When the server omits createdRule (older build), fall back to the normal
-  // refresh so the rule still lands in the list on refetch.
-  const fileNewRule = useCallback(
-    async (pattern: string, categoryId: string, budgetExcluded = false): Promise<FileByShopOutcome> => {
-      if (applyRulesInFlight.current || applyRulesJobActive.current) return { ok: false, clash: null };
-      applyRulesInFlight.current = true;
-      const epoch = sessionEpoch.current;
-      try {
-        const report = await applyRulesToUncategorized(false, { value: pattern.trim(), categoryId, budgetExcluded });
-        if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
-
-        const filedBy = new Map(report.filed.map((row) => [row.id, row.category]));
-        const vanished = new Set(report.vanished);
-        if (filedBy.size > 0 || vanished.size > 0) {
-          patchTransactions((prev) => prev
-            .filter((existing) => !vanished.has(existing.transaction_id))
-            .map((existing) => (filedBy.has(existing.transaction_id)
-              ? { ...existing, category: filedBy.get(existing.transaction_id)! }
-              : existing)));
-        }
-        if (report.createdRule) {
-          const minted = report.createdRule;
-          patchRules((prev) => [{ ...toRule(minted as RuleRecord), isNew: true }, ...prev]);
-          refreshAfterApplyRules({ skipRules: true });
-        } else {
-          refreshAfterApplyRules();
-        }
-        return { ok: true, report };
-      } catch (e) {
-        if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
-        if (e instanceof ApiError && e.status === 409) return { ok: false, clash: e };
-        refreshAfterApplyRules();
-        return { ok: false, clash: null };
-      } finally {
-        applyRulesInFlight.current = false;
-      }
-    }, [patchTransactions, patchRules, refreshAfterApplyRules]);
-
-  // WHIT-560: async apply-rules background job. Stop the poll timer and release the "one run at a
-  // time" lock. Does NOT clear `applyRulesJob` state — a terminal frame stays on screen; the
-  // dismiss effect drops it when the sheet closes.
-  const endApplyRulesJob = useCallback(() => {
-    stopApplyRulesPolling();
-    applyRulesJobId.current = null;
-    applyRulesNetErrors.current = 0;
-    applyRulesStallPolls.current = 0;
-    applyRulesLastProgress.current = '';
-    setApplyRulesStalled(false);
-    applyRulesJobActive.current = false;
-  }, [stopApplyRulesPolling]);
-
-  // A terminal job (server `status` succeeded/failed): end polling, then reconcile the caches. The
-  // async path can only INVALIDATE (the GET returns counts, not id lists — so no per-row patch like
-  // the sync writers). A failed job may still have filed some rows before dying, so it refreshes
-  // too. The "add rule" variant prepends the minted rule with its NEW badge (skipping the rules
-  // refetch), exactly like fileNewRule; every other variant refreshes rules normally.
-  const finishApplyRulesJob = useCallback((job: ApplyRulesJob) => {
-    endApplyRulesJob();
-    setApplyRulesJob(job);
-    if (job.status === 'succeeded' && job.createdRule && applyRulesJobPrependRule.current) {
-      const minted = job.createdRule;
-      patchRules((prev) => [{ ...toRule(minted as RuleRecord), isNew: true }, ...prev]);
-      refreshAfterApplyRules({ skipRules: true });
-    } else {
-      refreshAfterApplyRules();
-    }
-  }, [endApplyRulesJob, patchRules, refreshAfterApplyRules]);
-
-  // The job stopped without a server verdict — an expired/unknown id (404) or too many consecutive
-  // network drops. Mark the last-known frame failed (so the sheet shows the failed arm + retry) and
-  // still refresh, since a lost-contact job may have landed rows server-side.
-  const failApplyRulesJob = useCallback((error: string) => {
-    endApplyRulesJob();
-    setApplyRulesJob((prev) => (prev ? { ...prev, status: 'failed', error } : prev));
-    refreshAfterApplyRules();
-  }, [endApplyRulesJob, refreshAfterApplyRules]);
-
-  // Poll the running job through the shared poller (WHIT-629): one check at a time, a thrown fetch
-  // (offline) retried up to the net-error cap, and only a server `status` or a 404 ends the job. A
-  // callback bails if the job was torn down (id cleared) or the session changed under it.
-  const startApplyRulesPolling = useCallback((jobId: string) => {
-    const startEpoch = applyRulesJobStartEpoch.current;
-    const superseded = () => applyRulesJobId.current !== jobId || startEpoch !== sessionEpoch.current;
-    const poller: PollHandle = pollJob<ApplyRulesJob>({
-      jobId,
-      check: (id) => apiGetApplyRulesJob(id),
-      isRunning: (job) => job.status === 'running',
-      delayMs: APPLY_RULES_JOB_POLL_DELAY_MS,
-      maxNetErrors: APPLY_RULES_JOB_MAX_NET_ERRORS,
-      initialNetErrors: applyRulesNetErrors.current,
-      onProgress: (job) => {
-        if (superseded()) { poller.stop(); return; }
-        setApplyRulesJob(job);
-        // WHIT-565: stall nudge. Reset the counter whenever progress advances (and clear any
-        // existing nudge); otherwise count unchanged polls and raise the nudge at the threshold.
-        // Non-destructive — the job keeps polling either way.
-        const progress = `${job.matched}:${job.attempted}`;
-        if (progress !== applyRulesLastProgress.current) {
-          applyRulesLastProgress.current = progress;
-          applyRulesStallPolls.current = 0;
-          setApplyRulesStalled(false);
-        } else {
-          applyRulesStallPolls.current += 1;
-          if (applyRulesStallPolls.current >= APPLY_RULES_JOB_MAX_STALL_POLLS) setApplyRulesStalled(true);
-        }
-      },
-      onDone: (job) => {
-        if (superseded()) return;
-        finishApplyRulesJob(job); // succeeded or failed — terminal
-      },
-      onFail: (reason) => {
-        if (superseded()) return;
-        failApplyRulesJob(reason);
-      },
-    });
-    applyRulesPoller.current = poller;
-  }, [finishApplyRulesJob, failApplyRulesJob]);
-
-  // Start a background job (the plain sweep passes no rule; the inline variants pass one). Blocks if
-  // any apply-rules run — sync OR a still-active async job — is already going. On the accepted 202 it
-  // records the id, shows the first `running` frame, and arms the poll loop. A 409 surfaces as a
-  // clash for the confirm sheets; a 400/502 is a generic "couldn't start". `prependRule` is set only
-  // for the "add rule" variant so its success prepends the minted rule (see finishApplyRulesJob).
-  const beginApplyRulesJob = useCallback(async (
-    rule: { value: string; categoryId: string; budgetExcluded?: boolean } | undefined,
-    prependRule: boolean,
-  ): Promise<ApplyRulesJobStart> => {
-    if (applyRulesInFlight.current || applyRulesJobActive.current) return { ok: false, clash: null };
-    applyRulesJobActive.current = true;
-    applyRulesJobStartEpoch.current = sessionEpoch.current;
-    applyRulesJobPrependRule.current = prependRule;
-    // Remember THIS run's variant, so "Try again" restarts the SAME sweep. `applyRulesJob` is global,
-    // so a failed job can be shown (and retried) from a different sheet than the one that started it.
-    applyRulesJobRetryArgs.current = { rule, prependRule };
-    applyRulesNetErrors.current = 0;
-    applyRulesStallPolls.current = 0;
-    applyRulesLastProgress.current = '';
-    setApplyRulesStalled(false);
-    try {
-      const job = await apiStartApplyRulesJob(rule);
-      // A teardown during the POST wins. Sign-out bumps sessionEpoch; a Face-ID lock does NOT — it
-      // only flips applyRulesJobActive false (context lock effect). Checking BOTH means a lock (or
-      // sign-out) mid-POST discards this start instead of resurrecting a job the teardown just
-      // cleared and leaving a poll loop live with the lock released.
-      if (!applyRulesJobActive.current || applyRulesJobStartEpoch.current !== sessionEpoch.current) {
-        applyRulesJobActive.current = false;
-        return { ok: false, clash: null };
-      }
-      applyRulesJobId.current = job.jobId;
-      setApplyRulesJob(job);
-      startApplyRulesPolling(job.jobId);
-      return { ok: true };
-    } catch (e) {
-      applyRulesJobActive.current = false;
-      if (applyRulesJobStartEpoch.current !== sessionEpoch.current) return { ok: false, clash: null };
-      return { ok: false, clash: e instanceof ApiError && e.status === 409 ? e : null };
-    }
-  }, [startApplyRulesPolling]);
-
-  const startApplyRulesSweep = useCallback(() => beginApplyRulesJob(undefined, false), [beginApplyRulesJob]);
-  const startFileByShopJob = useCallback(
-    (group: UncategorizedMerchantGroup, categoryId: string) =>
-      beginApplyRulesJob({ value: group.rulePattern, categoryId }, false), [beginApplyRulesJob]);
-  const startNewRuleJob = useCallback(
-    (pattern: string, categoryId: string, budgetExcluded = false) =>
-      beginApplyRulesJob({ value: pattern.trim(), categoryId, budgetExcluded }, true), [beginApplyRulesJob]);
-  // "Try again" re-runs the ORIGINAL variant (sweep / file-this-shop / add-rule), whichever started
-  // it — never a plain sweep by default. The three sheets all call this. It tears the current run
-  // down FIRST (endApplyRulesJob) so it works from BOTH the failed arm and the WHIT-565 stall hint:
-  // a stalled job is still `running` and holds the one-heavy-run lock, which would otherwise refuse
-  // the restart. On an already-terminal (failed) job the teardown is a harmless no-op.
-  const retryApplyRulesJob = useCallback((): Promise<ApplyRulesJobStart> => {
-    const a = applyRulesJobRetryArgs.current;
-    if (!a) return Promise.resolve({ ok: false, clash: null });
-    endApplyRulesJob();
-    return beginApplyRulesJob(a.rule, a.prependRule);
-  }, [endApplyRulesJob, beginApplyRulesJob]);
 
   // WHIT-275: edit one transaction's note and/or tags, mirroring applyCategory's
   // single-transaction path — snapshot the current values, optimistically patch the
@@ -2187,9 +1767,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     requestUncategorizedSelect, clearUncategorizedSelect,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, previewNewRule, fileNewRule, applyRulesJob, applyRulesStalled, startApplyRulesSweep, startFileByShopJob, startNewRuleJob, retryApplyRulesJob, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
+    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewFiling, fileCharges, retryApplyRulesJob, applyRulesJob, applyRulesStalled, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [alerts, sheet, toast, pendingUncategorizedSelect, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, requestUncategorizedSelect, clearUncategorizedSelect, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, previewNewRule, fileNewRule, applyRulesJob, applyRulesStalled, startApplyRulesSweep, startFileByShopJob, startNewRuleJob, retryApplyRulesJob, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [alerts, sheet, toast, pendingUncategorizedSelect, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, requestUncategorizedSelect, clearUncategorizedSelect, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewFiling, fileCharges, retryApplyRulesJob, applyRulesJob, applyRulesStalled, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

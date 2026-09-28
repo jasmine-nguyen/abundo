@@ -6,13 +6,15 @@ import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
-import type { Transaction } from '../context';
+import type { Transaction, FilingTarget } from '../context';
 import type { TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
 
 jest.mock('../api');
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
 import * as api from '../api';
+
+const SWEEP: FilingTarget = { kind: 'sweep' };
 const mockApi = api as jest.Mocked<typeof api>;
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
@@ -40,7 +42,7 @@ it('[A10] apply-rules patches + invalidates the search result', async () => {
   const result = renderHook(() => useAppContext(), { wrapper }).result;
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
-  await act(async () => { await result.current.applyRulesToHistory(); });
+  await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
 
   const rows = queryClient.getQueryData<TransactionSearchResult>(SEARCH_KEY)!.transactions;
   expect(rows.map((t) => [t.transaction_id, t.category])).toEqual([['deep1', 'groceries'], ['deep3', null]]);
