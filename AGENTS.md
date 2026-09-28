@@ -108,7 +108,3 @@ Recurring traps — check these before changing the touched area:
   so two callers in one process (lambda_api reads the BankSync AND Anthropic keys)
   never collide. Each lambda keeps a one-line wrapper passing its own path — don't
   re-copy the SSM fetch.
-- **`lambda_api/` files ship from an allow-list** — a new `lambda_api/*.py` must be listed in BOTH
-  `LAMBDA_API_SOURCES` (`scripts/build_terraform_artifacts.sh`) and `.gitignore`'s `!lambda_api/…`
-  lines, or it is never committed or never deployed and the API 500s on import. Guarded by
-  `scripts/tests/build_artifacts_test.sh` and `test_lambda_api_bundle_completeness.py`.

@@ -9,21 +9,17 @@ are static (nothing is imported):
   [G2] no constant is defined in both api_constants.py and shared/constants.py
   [G3] every name a lambda_api module imports from either constants file exists there
 
-Fail-on-revert: re-add constants.py to LAMBDA_API_SOURCES (or create lambda_api/constants.py)
--> G1 reddens; re-add a mirror such as MAX_PAGE_SIZE to api_constants.py -> G2 reddens.
+Fail-on-revert: create lambda_api/constants.py -> G1 reddens; re-add a mirror such as MAX_PAGE_SIZE to api_constants.py -> G2 reddens.
 """
 
 import ast
 import pathlib
-import re
 
 from _lambda_api_constants import constants_namespace
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _LAMBDA_API = _ROOT / "lambda_api"
 _SHARED = _ROOT / "shared"
-_BUILD_SCRIPT = _ROOT / "scripts" / "build_terraform_artifacts.sh"
-_ALLOWLIST = re.compile(r"^LAMBDA_API_SOURCES=\(([^)]*)\)", re.MULTILINE)
 _CONSTANT_FILES = {
     "constants": _SHARED / "constants.py",
     "api_constants": _LAMBDA_API / "api_constants.py",
@@ -31,12 +27,8 @@ _CONSTANT_FILES = {
 
 
 def _lambda_api_names() -> set[str]:
-    match = _ALLOWLIST.search(_BUILD_SCRIPT.read_text())
-    assert match, "LAMBDA_API_SOURCES is no longer a single-line bash array in the build script"
-    shipped = {pathlib.Path(name).stem for name in match.group(1).split()}
-    # On disk too: tests put lambda_api/ first on the import path, so a stray file changes them.
-    on_disk = {path.stem for path in _LAMBDA_API.glob("*.py")}
-    return shipped | on_disk
+    # On disk, not just tracked: tests put lambda_api/ first on the import path, so a stray file changes them.
+    return {path.stem for path in _LAMBDA_API.glob("*.py")}
 
 
 def _shared_names() -> set[str]:
