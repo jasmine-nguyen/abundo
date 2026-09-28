@@ -190,7 +190,7 @@ function endpoint<A extends unknown[], R>(
   run: (send: Send, ...args: A) => Promise<R>,
 ): (...args: A) => Promise<R> {
   const send: Send = (spec) => request(spec, errors);
-  return Object.assign((...args: A) => run(send, ...args), { errors });
+  return Object.assign(async (...args: A) => run(send, ...args), { errors });
 }
 
 /** One condition of a categorisation rule (WHIT-541 multi-condition). */
