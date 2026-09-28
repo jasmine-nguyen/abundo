@@ -34,13 +34,17 @@ data "archive_file" "lambda_zip" {
 # dir from tracked files keeps the package deterministic regardless of local cruft.
 #
 # The copy lives in scripts/build_terraform_artifacts.sh (the single recipe CI and
-# local apply share). The trigger below hashes the on-disk lambda_api/*.py with a
-# glob: that only decides WHEN we rebuild — the script still stages only tracked
-# files, so on-disk cruft never ships. If you untrack a file but keep it on disk, a
-# local apply won't notice until another lambda_api file changes. CI always builds fresh.
+# local apply share). The triggers below decide WHEN we rebuild: `sources` hashes the
+# on-disk lambda_api/*.py contents, and `tracked` hashes git's list of tracked ones, so
+# `git rm --cached` on a file that stays on disk still rebuilds (and drops it).
+data "external" "lambda_api_tracked" {
+  program = ["bash", "-c", "printf '{\"hash\":\"%s\"}' \"$(git -C \"$1\" ls-files -- ':(glob)lambda_api/*.py' | git hash-object --stdin)\"", "bash", "${path.module}/.."]
+}
+
 resource "null_resource" "prepare_lambda_api" {
   triggers = {
     sources      = sha256(join("", [for f in fileset("${path.module}/../lambda_api", "*.py") : filesha256("${path.module}/../lambda_api/${f}")]))
+    tracked      = data.external.lambda_api_tracked.result.hash
     build_script = filesha256("${path.module}/../scripts/build_terraform_artifacts.sh")
   }
 
