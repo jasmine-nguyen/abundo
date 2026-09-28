@@ -12,10 +12,13 @@
 #                      code_critic      qa
 #                             \        /
 #                           fix_or_ship
-#                          /           \
-#                   implementer        END
-#                (NEEDS REWORK      (all good)
+#                          /     |     \
+#                   implementer  |     END
+#                (NEEDS REWORK   |   (failed)
 #                  & attempts < 2)
+#                              ship  (both passed: commit, push, open PR)
+#                                |
+#                               END
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
@@ -23,6 +26,7 @@ from claude_agent_sdk import (
     ToolUseBlock,
     query,
 )
+import subprocess
 import sys
 from typing import NotRequired, TypedDict
 
@@ -35,6 +39,7 @@ from langgraph.types import Command, interrupt
 class BuildState(TypedDict):
     card_number: str
     card_details: str
+    card_type: NotRequired[str]
     plan: NotRequired[str]
     plan_verdict: NotRequired[str]
     plan_attempts: NotRequired[int]
@@ -50,6 +55,8 @@ class BuildState(TypedDict):
     escalation: NotRequired[str]
     escalation_source: NotRequired[str]
     escalation_answer: NotRequired[str]
+    pr_url: NotRequired[str]
+    pr_error: NotRequired[str]
 
 
 # --- helpers ---
@@ -71,6 +78,7 @@ NODE_LABELS = {
     "qa": "QA",
     "escalation": "Escalation",
     "fix_or_ship": "Fix or Ship",
+    "ship": "Open PR",
 }
 
 
@@ -97,6 +105,7 @@ def print_resume_recap(state: dict):
         ("implementer", "implementation"),
         ("code_critic", "code_verdict"),
         ("qa", "qa_verdict"),
+        ("ship", "pr_url"),
     ]
     print("Resuming — completed stages:")
     for node, key in stages:
@@ -166,7 +175,8 @@ def sign_off(state: BuildState):
     print(plan, flush=True)
     print(f"{'=' * 60}\n", flush=True)
     answer = interrupt("Approve the plan above?")
-    if answer == "go":
+    normalized = answer.strip().lower()
+    if normalized in ("go", "approve", "approved", "yes", "y", "lgtm", "ok"):
         return {"plan_decision": "APPROVED", "plan_feedback": ""}
     else:
         return {
@@ -283,6 +293,85 @@ def fix_or_ship(state: BuildState):
     return {"failed": False}
 
 
+def git(*cmd: str) -> str:
+    return subprocess.run(
+        cmd, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def default_branch() -> str:
+    try:
+        ref = git("git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+        return ref.removeprefix("origin/")
+    except subprocess.CalledProcessError:
+        return "main"
+
+
+# Card type (board "Type" field) -> conventional commit prefix.
+TYPE_PREFIXES = {
+    "story": "feat",
+    "feature": "feat",
+    "feat": "feat",
+    "bug": "fix",
+    "defect": "fix",
+    "fix": "fix",
+    "chore": "chore",
+    "refactor": "refactor",
+    "docs": "docs",
+}
+
+
+def change_prefix(card_type: str) -> str:
+    return TYPE_PREFIXES.get(card_type.strip().lower(), "feat")
+
+
+def ship(state: BuildState, config: RunnableConfig):
+    node_start("ship")
+    card = state.get("card_number", "")
+    details = state.get("card_details", "").strip()
+    first_line = details.splitlines()[0] if details else "build"
+    title = f"{card} {first_line}".strip()[:72]
+    prefix = change_prefix(state.get("card_type", ""))
+    thread_id = config["configurable"]["thread_id"]
+
+    try:
+        base = default_branch()
+        branch = git("git", "rev-parse", "--abbrev-ref", "HEAD")
+        if branch in (base, "HEAD"):
+            branch = f"{prefix}/{thread_id.lower()}"
+            git("git", "checkout", "-B", branch)
+
+        # Keep the checkpoint DB out of the commit.
+        git("git", "add", "-A", "--", ".", ":(exclude)build_graph.db*")
+        if git("git", "diff", "--cached", "--name-only"):
+            git("git", "commit", "-m", f"{prefix}: {title}")
+        git("git", "push", "-u", "origin", branch)
+
+        body = (
+            f"{details}\n\n"
+            f"## Implementation\n{state.get('implementation', '')}\n\n"
+            "Code review: passed · QA: passed"
+        )
+        existing = subprocess.run(
+            ["gh", "pr", "view", branch, "--json", "url", "-q", ".url"],
+            capture_output=True, text=True,
+        )
+        if existing.returncode == 0 and existing.stdout.strip():
+            pr_url = existing.stdout.strip()
+        else:
+            pr_url = git(
+                "gh", "pr", "create",
+                "--base", base, "--head", branch,
+                "--title", f"{prefix}: {title}", "--body", body,
+            ).splitlines()[-1]
+    except subprocess.CalledProcessError as e:
+        node_done("ship")
+        return {"pr_error": f"{' '.join(e.cmd)}\n{e.stderr or e.stdout}".strip()}
+
+    node_done("ship")
+    return {"pr_url": pr_url, "pr_error": ""}
+
+
 # --- routing ---
 
 
@@ -323,7 +412,10 @@ def after_code_critic_and_qa(state: BuildState):
         and state.get("implementation_attempts", 0) < 2
     ):
         return "implementer"
-    return END
+
+    if state.get("failed"):
+        return END
+    return "ship"
 
 
 # --- graph ---
@@ -337,11 +429,13 @@ builder.add_node("code_critic", code_critic)
 builder.add_node("qa", qa)
 builder.add_node("escalation", escalation)
 builder.add_node("fix_or_ship", fix_or_ship)
+builder.add_node("ship", ship)
 
 builder.add_edge(START, "designer")
 builder.add_edge("designer", "plan_critic")
 builder.add_edge("code_critic", "fix_or_ship")
 builder.add_edge("qa", "fix_or_ship")
+builder.add_edge("ship", END)
 
 builder.add_conditional_edges("plan_critic", after_critic)
 builder.add_conditional_edges("sign_off", after_sign_off)
@@ -352,7 +446,7 @@ builder.add_conditional_edges("fix_or_ship", after_code_critic_and_qa)
 # --- cli ---
 #
 # Usage:
-#   python3 build_graph.py --card WHIT-123                     → existing card
+#   python3 build_graph.py --card WHIT-123 --type Bug          → existing card
 #   python3 build_graph.py "add a chat button for spending"    → ad-hoc request
 #   python3 build_graph.py --thread abc123 --resume "go"       → resume
 #   python3 build_graph.py --thread abc123 --status            → show pause point
@@ -368,6 +462,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("request", nargs="?", default=None)
 parser.add_argument("--card", default=None)
 parser.add_argument("--details", default=None)
+parser.add_argument("--type", default="", help="card type, e.g. Story or Bug")
 parser.add_argument("--thread", default=None)
 parser.add_argument("--resume", default=None)
 parser.add_argument("--status", action="store_true")
@@ -420,6 +515,8 @@ async def main():
                 print(f"Implementation: present ({len(values['implementation'])} chars)")
             print(f"Code verdict: {values.get('code_verdict', 'pending')}")
             print(f"QA verdict: {values.get('qa_verdict', 'pending')}")
+            if values.get("pr_url"):
+                print(f"PR: {values['pr_url']}")
             if values.get("escalation"):
                 print(f"Escalation: {values['escalation'][:100]}...")
             return
@@ -433,7 +530,11 @@ async def main():
             await saver.adelete_thread(thread_id)
             print(f"Starting build (thread {thread_id})...\n")
             result = await graph.ainvoke(
-                {"card_number": card_number, "card_details": card_details},
+                {
+                    "card_number": card_number,
+                    "card_details": card_details,
+                    "card_type": args.type,
+                },
                 config,
             )
 
@@ -452,7 +553,14 @@ async def main():
             if result.get("qa_feedback"):
                 print(f"\n## QA:\n{result['qa_feedback']}")
             print("=" * 60)
+        elif result.get("pr_error"):
+            print("\n" + "=" * 60)
+            print("BUILD PASSED but opening the PR failed:")
+            print(result["pr_error"])
+            print("=" * 60)
         else:
+            if result.get("pr_url"):
+                print(f"\nPR opened: {result['pr_url']}")
             print("\nDone.")
 
 
