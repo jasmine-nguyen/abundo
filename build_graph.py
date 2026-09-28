@@ -35,6 +35,7 @@ from langgraph.types import Command, interrupt
 class BuildState(TypedDict):
     card_number: str
     card_details: str
+    card_type: NotRequired[str]
     plan: NotRequired[str]
     plan_verdict: NotRequired[str]
     plan_attempts: NotRequired[int]
@@ -182,10 +183,22 @@ def sign_off(state: BuildState):
         }
 
 
+TYPE_TO_PREFIX = {
+    "story": "feat", "feature": "feat",
+    "bug": "fix", "defect": "fix",
+    "chore": "chore",
+    "refactor": "refactor",
+    "docs": "docs", "test": "chore",
+    "tech debt": "chore",
+}
+
+
 async def implementer(state: BuildState):
     node_start("implementer")
     plan = state.get("plan", "")
-    prompt = f"Card: {state.get('card_number')}\n\nApproved plan:\n{plan}"
+    card_type = state.get("card_type", "")
+    prefix = TYPE_TO_PREFIX.get(card_type.lower(), "feat") if card_type else "feat"
+    prompt = f"Card: {state.get('card_number')}\nType: {card_type}\nBranch/commit prefix: {prefix}\n\nApproved plan:\n{plan}"
 
     code_feedback = state.get("code_feedback", "")
     qa_feedback = state.get("qa_feedback", "")
@@ -358,8 +371,8 @@ builder.add_conditional_edges("fix_or_ship", after_code_critic_and_qa)
 # --- cli ---
 #
 # Usage:
-#   python3 build_graph.py --card WHIT-123                     → existing card
-#   python3 build_graph.py "add a chat button for spending"    → ad-hoc request
+#   python3 build_graph.py --card WHIT-123 --type Feature       → existing card
+#   python3 build_graph.py "add a chat button for spending"    → ad-hoc request (type defaults to Feature)
 #   python3 build_graph.py --thread abc123 --resume "go"       → resume
 #   python3 build_graph.py --thread abc123 --status            → show pause point
 #
@@ -373,6 +386,7 @@ import hashlib
 parser = argparse.ArgumentParser()
 parser.add_argument("request", nargs="?", default=None)
 parser.add_argument("--card", default=None)
+parser.add_argument("--type", default="Feature")
 parser.add_argument("--details", default=None)
 parser.add_argument("--thread", default=None)
 parser.add_argument("--resume", default=None)
@@ -439,7 +453,11 @@ async def main():
             await saver.adelete_thread(thread_id)
             print(f"Starting build (thread {thread_id})...\n")
             result = await graph.ainvoke(
-                {"card_number": card_number, "card_details": card_details},
+                {
+                    "card_number": card_number,
+                    "card_details": card_details,
+                    "card_type": args.type,
+                },
                 config,
             )
 

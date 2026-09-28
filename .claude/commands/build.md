@@ -23,7 +23,7 @@ Then continue from step 3 below.
    **a) Card number given** — `$ARGUMENTS` looks like a card number
    (matches the card prefix from project-context.md, e.g. CAD-92, WHIT-42)
    or a bare number (e.g. 92). Look the card up by "Card ID". Fetch its
-   title and description.
+   title, description, and Type.
 
    If project-context.md has a blocker relation, check whether all
    blockers have Status = 'Done'. If not, warn the user, list the
@@ -31,8 +31,10 @@ Then continue from step 3 below.
 
    **b) Plain-text request** — `$ARGUMENTS` is not a card number. Create
    a new card on the board: use `notion-create-pages` with the board data
-   source, set Type to the default card type from project-context.md,
-   Status = 'To Do', and a clear title. Leave the sort field empty. Tell
+   source, Status = 'To Do', and a clear title. Set Type from the request:
+   if it reports something broken or asks to look into an issue, use
+   `Bug` (or `Defect` if that's the board's option); if it asks for new behaviour, use `Story`; otherwise use the
+   default card type from project-context.md. Leave the sort field empty. Tell
    the user to set the sort field and blockers on the board later. Fetch
    the card to get its assigned number.
 
@@ -67,7 +69,11 @@ Then continue from step 3 below.
    Echo which card you're building and why before continuing.
 
 2. Run the script:
-   `python3 build_graph.py --card <number> --details "<title and description>"`
+   `python3 build_graph.py --card <number> --type "<card Type>" --details "<title and description>"`
+
+   `--type` sets the branch, commit and PR prefix: Story/Feature → `feat`,
+   Bug/Defect → `fix`, Chore → `chore`, Refactor → `refactor`, Docs → `docs`.
+   Anything else falls back to `feat`.
 
    While it runs, give the user short status updates based on the output.
    The script prints which node is running and what tools it's using. Relay
@@ -104,5 +110,10 @@ Then continue from step 3 below.
    to see the build is alive and which stage it's at.
 
 5. Repeat steps 3-4 until the script prints "Done."
+
+   When both code review and QA pass, the script commits, pushes, and
+   opens the PR itself — don't ask the user for confirmation. Relay the
+   "PR opened: <url>" line. If it prints "opening the PR failed", show
+   the error and stop.
 
 6. Once done, update the card's Status to 'Done' on the board.
