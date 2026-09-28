@@ -1,11 +1,10 @@
 """Tests for the pay-cycle endpoints (GET /paycycle, PUT /paycycle) and
 PayCycleRepository.
 
-Handler-level tests inject a FakePayCycleRepo directly (no patching). Repository
-tests inject a tiny in-memory fake DynamoDB table into PayCycleRepository. Unlike
+Every test runs the REAL PayCycleRepository over the shared FakeTable (WHIT-625):
+handler-level tests inject it directly, repository tests drive it on its own. Unlike
 BudgetRepository the pay cycle is one settings object, not a per-key `items` map,
-so the write REPLACES both `length` and `last_pay_date` together under the version guard
-— the fake table's update branch reflects that.
+so the write REPLACES both `length` and `last_pay_date` together under the version guard.
 
 The `handler` fixture (conftest.py) makes lambda_api importable in isolation and
 puts `shared/` on the path, so `import repository` inside a test resolves to
@@ -16,16 +15,12 @@ import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from botocore.exceptions import ClientError
-
 
 def _today_utc():
     return datetime.now(timezone.utc).date()
 
 
-# FakePayCycleRepo lives in tests/shared/_paycycle_fakes.py so this impl suite and the parity
-# gap suite share ONE definition (WHIT-445); resolved via pytest.ini's pythonpath.
-from _paycycle_fakes import FakePayCycleRepo
+from _paycycle_fakes import paycycle_repo, stored_cycle
 
 
 def _put_paycycle_event(body='{"length": 7, "last_pay_date": "2024-06-05"}', is_b64=False):
@@ -41,29 +36,29 @@ def _put_paycycle_event(body='{"length": 7, "last_pay_date": "2024-06-05"}', is_
 
 
 def test_set_paycycle_success(handler):
-    repo = FakePayCycleRepo()
+    table, repo = paycycle_repo()
 
     resp = handler.set_paycycle(_put_paycycle_event(), repo)
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"length": 7, "last_pay_date": "2024-06-05"}
-    assert repo.set_calls == [(7, "2024-06-05")]
+    assert stored_cycle(table) == (7, "2024-06-05")
 
 
 def test_set_paycycle_last_pay_date_today_accepted(handler):
     # A payday of "today" is valid (only the future is rejected).
-    repo = FakePayCycleRepo()
+    table, repo = paycycle_repo()
     body = json.dumps({"length": 14, "last_pay_date": _today_utc().isoformat()})
 
     resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
 
     assert resp["statusCode"] == 200
-    assert repo.set_calls == [(14, _today_utc().isoformat())]
+    assert stored_cycle(table) == (14, _today_utc().isoformat())
 
 
 def test_set_paycycle_last_pay_date_at_future_ceiling_accepted(handler):
     # The ceiling is today + 1 day (AEST-runs-ahead-of-UTC slack); exactly that is OK.
-    repo = FakePayCycleRepo()
+    _, repo = paycycle_repo()
     body = json.dumps({"length": 30, "last_pay_date": (_today_utc() + timedelta(days=1)).isoformat()})
 
     resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
@@ -72,28 +67,28 @@ def test_set_paycycle_last_pay_date_at_future_ceiling_accepted(handler):
 
 
 def test_set_paycycle_future_last_pay_date_400(handler):
-    repo = FakePayCycleRepo()
+    table, repo = paycycle_repo()
     body = json.dumps({"length": 14, "last_pay_date": (_today_utc() + timedelta(days=5)).isoformat()})
 
     resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
 
     assert resp["statusCode"] == 400
-    assert repo.set_calls == []
+    assert table.update_calls == []  # validation stops it before any write
 
 
 def test_set_paycycle_bad_length_400(handler):
-    repo = FakePayCycleRepo()
+    table, repo = paycycle_repo()
     body = json.dumps({"length": 10, "last_pay_date": "2024-06-05"})
 
     resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
 
     assert resp["statusCode"] == 400
-    assert repo.set_calls == []
+    assert table.update_calls == []  # validation stops it before any write
 
 
 def test_set_paycycle_bool_length_400(handler):
     # bool is an int subclass -> must be rejected before the membership check.
-    repo = FakePayCycleRepo()
+    _, repo = paycycle_repo()
     body = json.dumps({"length": True, "last_pay_date": "2024-06-05"})
 
     resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
@@ -102,7 +97,7 @@ def test_set_paycycle_bool_length_400(handler):
 
 
 def test_set_paycycle_missing_length_400(handler):
-    repo = FakePayCycleRepo()
+    _, repo = paycycle_repo()
     body = json.dumps({"last_pay_date": "2024-06-05"})
 
     resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
@@ -111,7 +106,7 @@ def test_set_paycycle_missing_length_400(handler):
 
 
 def test_set_paycycle_missing_last_pay_date_400(handler):
-    repo = FakePayCycleRepo()
+    _, repo = paycycle_repo()
     body = json.dumps({"length": 14})
 
     resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
@@ -120,7 +115,7 @@ def test_set_paycycle_missing_last_pay_date_400(handler):
 
 
 def test_set_paycycle_non_string_last_pay_date_400(handler):
-    repo = FakePayCycleRepo()
+    _, repo = paycycle_repo()
     body = json.dumps({"length": 14, "last_pay_date": 20240605})
 
     resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
@@ -129,17 +124,17 @@ def test_set_paycycle_non_string_last_pay_date_400(handler):
 
 
 def test_set_paycycle_malformed_last_pay_date_400(handler):
-    repo = FakePayCycleRepo()
+    table, repo = paycycle_repo()
     body = json.dumps({"length": 14, "last_pay_date": "05/06/2024"})
 
     resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
 
     assert resp["statusCode"] == 400
-    assert repo.set_calls == []
+    assert table.update_calls == []  # validation stops it before any write
 
 
 def test_set_paycycle_invalid_json_400(handler):
-    repo = FakePayCycleRepo()
+    _, repo = paycycle_repo()
 
     resp = handler.set_paycycle(_put_paycycle_event(body="not json"), repo)
 
@@ -148,13 +143,13 @@ def test_set_paycycle_invalid_json_400(handler):
 
 def test_set_paycycle_base64_body(handler):
     import base64
-    repo = FakePayCycleRepo()
+    table, repo = paycycle_repo()
     raw = base64.b64encode(b'{"length": 30, "last_pay_date": "2024-06-05"}').decode()
 
     resp = handler.set_paycycle(_put_paycycle_event(body=raw, is_b64=True), repo)
 
     assert resp["statusCode"] == 200
-    assert repo.set_calls == [(30, "2024-06-05")]
+    assert stored_cycle(table) == (30, "2024-06-05")
 
 
 # --- dispatch through lambda_handler -----------------------------------------
@@ -164,7 +159,7 @@ def test_get_paycycle_dispatch(handler, monkeypatch):
     from datetime import date
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 10))
-    repo = FakePayCycleRepo(cycle={"length": 14, "last_pay_date": "2024-01-03"})
+    table, repo = paycycle_repo({"length": 14, "last_pay_date": "2024-01-03"})
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: repo)
 
     resp = handler.lambda_handler({
@@ -175,7 +170,7 @@ def test_get_paycycle_dispatch(handler, monkeypatch):
     assert resp["statusCode"] == 200
     # days_left = next payday (03 + 14 = 17) - today (10) = 7.
     assert json.loads(resp["body"]) == {"length": 14, "last_pay_date": "2024-01-03", "days_left": 7}
-    assert repo.get_calls == 1  # a single read; the window is computed in-process, not re-read
+    assert table.get_item_calls == 1  # a single read; the window is computed in-process, not re-read
 
 
 def test_get_paycycle_view_days_left(handler, monkeypatch):
@@ -184,7 +179,7 @@ def test_get_paycycle_view_days_left(handler, monkeypatch):
 
     def _view(length, last_pay_date, today):
         monkeypatch.setattr(spend, "melbourne_today", lambda: today)
-        return handler.get_paycycle_view(FakePayCycleRepo(cycle={"length": length, "last_pay_date": last_pay_date}))
+        return handler.get_paycycle_view(paycycle_repo({"length": length, "last_pay_date": last_pay_date})[1])
 
     # On payday -> a full cycle remains.
     assert _view(14, "2024-01-03", date(2024, 1, 17))["days_left"] == 14
@@ -197,18 +192,18 @@ def test_get_paycycle_view_days_left(handler, monkeypatch):
 
 
 def test_put_paycycle_dispatch(handler, monkeypatch):
-    repo = FakePayCycleRepo()
+    table, repo = paycycle_repo()
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: repo)
 
     resp = handler.lambda_handler(_put_paycycle_event(), None)
 
     assert resp["statusCode"] == 200
-    assert repo.set_calls == [(7, "2024-06-05")]
+    assert stored_cycle(table) == (7, "2024-06-05")
 
 
 def test_unknown_paycycle_method_falls_through_404(handler, monkeypatch):
     # DELETE /paycycle isn't a route -> catch-all 404.
-    monkeypatch.setattr(handler, "PayCycleRepository", lambda: FakePayCycleRepo())
+    monkeypatch.setattr(handler, "PayCycleRepository", lambda: paycycle_repo()[1])
 
     resp = handler.lambda_handler({
         "rawPath": "/paycycle",
@@ -221,7 +216,8 @@ def test_unknown_paycycle_method_falls_through_404(handler, monkeypatch):
 def test_set_paycycle_conflict_returns_409(handler, monkeypatch):
     # A repo that exhausts its retry budget raises VersionConflictError; the shared
     # dispatch wrapper maps it to 409.
-    repo = FakePayCycleRepo(conflict_exc=handler.VersionConflictError)
+    table, repo = paycycle_repo()
+    table.always_race()
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: repo)
 
     resp = handler.lambda_handler(_put_paycycle_event(), None)
@@ -232,55 +228,9 @@ def test_set_paycycle_conflict_returns_409(handler, monkeypatch):
 # --- repository-level: storage logic via an in-memory fake table -------------
 
 
-def _ccfe():
-    err = ClientError()
-    err.response = {"Error": {"Code": "ConditionalCheckFailedException"}}
-    return err
-
-
-class FakePayCycleTable:
-    """In-memory table emulating the calls PayCycleRepository makes: get_item,
-    conditional seed put_item, and the whole-object update_item (SET length,
-    last_pay_date, version under the version guard)."""
-
-    def __init__(self):
-        self.store = {}  # (pk, sk) -> item
-        # Queue of callables(item) run just before each update_item evaluation,
-        # to simulate a concurrent writer mutating the row between read and write.
-        self.before_update = []
-
-    def get_item(self, Key):
-        import copy
-        item = self.store.get((Key["pk"], Key["sk"]))
-        return {"Item": copy.deepcopy(item)} if item is not None else {}
-
-    def put_item(self, Item, ConditionExpression=None):
-        import copy
-        k = (Item["pk"], Item["sk"])
-        if ConditionExpression == "attribute_not_exists(pk)" and k in self.store:
-            raise _ccfe()
-        self.store[k] = copy.deepcopy(Item)
-
-    def update_item(self, Key, UpdateExpression, ConditionExpression,
-                    ExpressionAttributeNames, ExpressionAttributeValues):
-        item = self.store.get((Key["pk"], Key["sk"]))
-        if self.before_update and item is not None:
-            self.before_update.pop(0)(item)  # simulate a concurrent writer
-        values = ExpressionAttributeValues
-
-        # attribute_exists(pk) AND #v = :expected — the optimistic-lock guard.
-        if item is None or item["version"] != values[":expected"]:
-            raise _ccfe()
-
-        item["length"] = values[":length"]
-        item["last_pay_date"] = values[":last_pay_date"]
-        item["version"] = values[":next"]
-
-
 def _repo_with_fake_table(handler):
     import repository
-    repo = repository.PayCycleRepository()
-    repo._table = FakePayCycleTable()
+    _, repo = paycycle_repo()
     return repository, repo
 
 
@@ -329,13 +279,9 @@ def test_repo_set_paycycle_replaces_both_fields(handler):
     assert config["version"] == 3
 
 
-def _bump_version(item):
-    item["version"] = item["version"] + 1  # Decimal + int -> Decimal
-
-
 def test_repo_set_paycycle_retries_after_version_race(handler):
     repository, repo = _repo_with_fake_table(handler)
-    repo._table.before_update.append(_bump_version)
+    repo._table.race_next_update()
 
     repo.set_paycycle(7, "2024-06-05")
 
@@ -347,7 +293,7 @@ def test_repo_set_paycycle_retries_after_version_race(handler):
 def test_repo_set_paycycle_raises_under_sustained_contention(handler):
     # Every attempt sees a fresh version bump -> never converges -> 409.
     repository, repo = _repo_with_fake_table(handler)
-    repo._table.before_update.extend([_bump_version, _bump_version])
+    repo._table.always_race()
 
     try:
         repo.set_paycycle(7, "2024-06-05")

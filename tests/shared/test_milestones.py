@@ -11,8 +11,8 @@ import pytest
 # The milestone fakes + FACTS + the send_push recorder live in tests/shared/_milestone_fakes.py
 # so the whole milestone family shares ONE definition of each (WHIT-445).
 from _milestone_fakes import (
-    FACTS, FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, FakeNotifyRepo,
-    _row, recorder,
+    FACTS, FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, notify_repo,
+    _row, recorder, removal_calls, removed_markers, scopes_marked, scopes_read, stored_markers,
 )
 
 
@@ -86,13 +86,13 @@ def _notify(shared, *, old, new, facts=FACTS, tokens=("tok",), fired=None, notif
         Decimal(new),
         loanfacts_repo=FakeLoanFactsRepo(facts),
         device_repo=FakeDeviceRepo(tokens),
-        notify_repo=notify if notify is not None else FakeNotifyRepo(fired),
+        notify_repo=notify if notify is not None else notify_repo(fired),
         milestone_repo=milestone_repo,
     )
 
 
 def test_single_crossing_sends_one_push_with_both_numbers(shared, recorder):
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     sent = shared.milestones.notify_milestone_crossing(
         Decimal("545000"), Decimal("544000"),
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]), notify_repo=notify)
@@ -104,7 +104,7 @@ def test_single_crossing_sends_one_push_with_both_numbers(shared, recorder):
     assert "$56,000 down on your mortgage" in body
     assert "$72,000 in equity unlocked" in body
     assert "Keep building!" in body
-    assert notify.fired == {"0"}
+    assert stored_markers(notify) == {"0"}
 
 
 def test_crossing_push_carries_milestone_deeplink_data(shared, monkeypatch):
@@ -116,19 +116,19 @@ def test_crossing_push_carries_milestone_deeplink_data(shared, monkeypatch):
     shared.milestones.notify_milestone_crossing(
         Decimal("545000"), Decimal("544000"),
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]),
-        notify_repo=FakeNotifyRepo())
+        notify_repo=notify_repo())
     assert captured == [{"type": "milestone"}]
 
 
 def test_lump_sum_sends_furthest_and_marks_all(shared, recorder):
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     sent = shared.milestones.notify_milestone_crossing(
         Decimal("600000"), Decimal("290000"),
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]), notify_repo=notify)
     assert sent == 1
     assert len(recorder) == 1
     assert recorder[0][0] == "\U0001f389 Milestone reached — Halfway!"  # furthest crossed (295k)
-    assert notify.fired == {"0", "1", "2"}  # all three crossed are marked
+    assert stored_markers(notify) == {"0", "1", "2"}  # all three crossed are marked
 
 
 def test_lump_sum_push_carries_milestone_deeplink_data(shared, monkeypatch):
@@ -139,14 +139,14 @@ def test_lump_sum_push_carries_milestone_deeplink_data(shared, monkeypatch):
     monkeypatch.setattr(shared.milestones, "send_push",
                         lambda title, body, tokens, **kw: captured.append(kw.get("data")) or
                         {"sent": len(tokens), "ok": len(tokens), "pruned": []})
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     sent = shared.milestones.notify_milestone_crossing(
         Decimal("600000"), Decimal("290000"),
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]),
         notify_repo=notify)
     assert sent == 1
     assert captured == [{"type": "milestone"}]  # one push, carrying the deep-link tag
-    assert notify.fired == {"0", "1", "2"}       # all crossed still marked
+    assert stored_markers(notify) == {"0", "1", "2"}       # all crossed still marked
 
 
 def test_already_fired_milestone_does_not_resend(shared, recorder):
@@ -156,13 +156,13 @@ def test_already_fired_milestone_does_not_resend(shared, recorder):
 
 
 def test_no_device_short_circuits(shared, recorder):
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     sent = shared.milestones.notify_milestone_crossing(
         Decimal("545000"), Decimal("544000"),
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo([]), notify_repo=notify)
     assert sent == 0
     assert recorder == []
-    assert notify.fired == set()  # nothing marked when there was no one to send to
+    assert stored_markers(notify) == set()  # nothing marked when there was no one to send to
 
 
 def test_expo_not_ok_still_marks_no_permanent_loss(shared, monkeypatch):
@@ -170,12 +170,12 @@ def test_expo_not_ok_still_marks_no_permanent_loss(shared, monkeypatch):
     # milestone forever-unmarked (the crossing is never re-detected to retry).
     monkeypatch.setattr(shared.milestones, "send_push",
                         lambda *a, **k: {"sent": 1, "ok": 0, "pruned": []})
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     sent = shared.milestones.notify_milestone_crossing(
         Decimal("545000"), Decimal("544000"),
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]), notify_repo=notify)
     assert sent == 1
-    assert notify.fired == {"0"}  # marked even though Expo accepted nothing
+    assert stored_markers(notify) == {"0"}  # marked even though Expo accepted nothing
 
 
 def test_loan_facts_unset_sends_bare_body_no_crash(shared, recorder):
@@ -200,7 +200,7 @@ def test_first_poll_none_sends_nothing(shared, recorder):
 # WHIT-301 — [A20] fail-on-revert: the once-ever dedup survives a down/up/down wobble.
 
 def test_oscillation_across_boundary_never_refires(shared, recorder):
-    repo = FakeNotifyRepo()  # persists across the three polls
+    repo = notify_repo()  # persists across the three polls
     # poll 1: 545k -> 544k crosses Kickoff, fires + marks "0"
     assert _notify(shared, old="545000", new="544000", notify=repo) == 1
     # poll 2: a market correction pushes the balance back UP over the line -> nothing
@@ -208,7 +208,7 @@ def test_oscillation_across_boundary_never_refires(shared, recorder):
     # poll 3: it dips back through the SAME boundary -> crosses again, but "0" is marked
     assert _notify(shared, old="546000", new="544000", notify=repo) == 0
     assert len(recorder) == 1          # exactly one celebration across the whole wobble
-    assert repo.fired == {"0"}
+    assert stored_markers(repo) == {"0"}
 
 
 # --- Decimal-with-cents vs int target at the >= boundary ----------------------
@@ -228,13 +228,13 @@ def test_one_cent_above_target_is_not_yet_crossed(shared):
 # WHIT-301 — [A22] fail-on-revert: sends the furthest FRESH (not the furthest crossed) + marks all fresh.
 
 def test_lump_sum_sends_nearer_fresh_when_furthest_already_fired(shared, recorder):
-    repo = FakeNotifyRepo(fired={"2"})  # Halfway (295k, the furthest) already celebrated
+    repo = notify_repo(fired={"2"})  # Halfway (295k, the furthest) already celebrated
     # 600k -> 290k crosses Kickoff(0), Quarter(1), Halfway(2); only 0 & 1 are fresh.
     sent = _notify(shared, old="600000", new="290000", notify=repo)
     assert sent == 1
     assert len(recorder) == 1
     assert recorder[0][0] == "\U0001f389 Milestone reached — Quarter way!"  # furthest FRESH (420k)
-    assert repo.fired == {"0", "1", "2"}  # both fresh ones now marked too
+    assert stored_markers(repo) == {"0", "1", "2"}  # both fresh ones now marked too
 
 
 # --- loan facts present but original < new_balance: paid clamps at $0 ---------
@@ -243,7 +243,7 @@ def test_lump_sum_sends_nearer_fresh_when_furthest_already_fired(shared, recorde
 
 def test_negative_paid_down_clamps_to_zero(shared, recorder):
     facts = {"original": 500000.0, "homeValue": 770000.0, "lvr": 0.8}
-    repo = FakeNotifyRepo()
+    repo = notify_repo()
     sent = _notify(shared, old="545000", new="544000", notify=repo, facts=facts)
     assert sent == 1
     _, body, _ = recorder[0]
@@ -278,27 +278,27 @@ def test_stale_swept_and_fresh_crossing_fires_same_poll(shared, recorder):
     # [G-A1] milestone m1 was re-targeted 300000 → 280000; its old "id:m1:bal:300000.00" marker is
     # stale and the plan now points at 280000, which this poll crosses. Reconcile must sweep the
     # dead key AND the fresh crossing must fire — the swept key must NOT be re-added by the mark.
-    notify = FakeNotifyRepo({"id:m1:bal:300000.00"})
+    notify = notify_repo({"id:m1:bal:300000.00"})
     sent = _notify(shared, old="285000", new="280000",
                 milestone_repo=FakeMilestoneRepo(stored=[_row("House", "280000")]), notify=notify)
     assert sent == 1
     assert recorder[0][0] == "\U0001f389 Milestone reached — House!"
-    assert notify.removed == {"id:m1:bal:300000.00"}
-    assert notify.fired == {"id:m1:bal:280000.00"}    # stale gone, fresh added, stale not re-added
+    assert removed_markers(notify) == {"id:m1:bal:300000.00"}
+    assert stored_markers(notify) == {"id:m1:bal:280000.00"}    # stale gone, fresh added, stale not re-added
 
 
 def test_reconcile_and_dedup_coexist_live_fired_not_refired(shared, recorder):
     # [G-A2] Hardest interleave: fired = {id:x:300000 (stale), id:d:480000 (LIVE + already fired)};
     # plan = [480000 id:d (already), 280000 id:h (fresh)]; a lump-sum poll crosses BOTH. The moved-up
     # `fired` read must still dedup id:d (no re-fire) while id:x:300000 is swept and id:h fires.
-    notify = FakeNotifyRepo({"id:x:bal:300000.00", "id:d:bal:480000.00"})
+    notify = notify_repo({"id:x:bal:300000.00", "id:d:bal:480000.00"})
     sent = _notify(shared, old="500000", new="280000",
                 milestone_repo=FakeMilestoneRepo(stored=[_row("Deposit", "480000", id="d"), _row("House", "280000", id="h")]),
                 notify=notify)
     assert sent == 1
     assert recorder[0][0] == "\U0001f389 Milestone reached — House!"   # furthest FRESH (480000 suppressed)
-    assert notify.removed == {"id:x:bal:300000.00"}
-    assert notify.fired == {"id:d:bal:480000.00", "id:h:bal:280000.00"}   # id:d kept (not re-fired)
+    assert removed_markers(notify) == {"id:x:bal:300000.00"}
+    assert stored_markers(notify) == {"id:d:bal:480000.00", "id:h:bal:280000.00"}   # id:d kept (not re-fired)
 
 
 # --- Gap B: reconcile runs on the SEED poll (old_balance is None) ----------------------------
@@ -306,12 +306,12 @@ def test_reconcile_and_dedup_coexist_live_fired_not_refired(shared, recorder):
 def test_reconcile_runs_on_seed_poll_old_balance_none(shared, recorder):
     # [G-B1] Characterization: reconcile is placed BEFORE crossed_milestones, so even a seed poll
     # (old_balance None → nothing can cross) still sweeps a dead custom marker. Desirable/harmless.
-    notify = FakeNotifyRepo({"bal:300000.00"})
+    notify = notify_repo({"bal:300000.00"})
     sent = _notify(shared, old=None, new="250000",
                 milestone_repo=FakeMilestoneRepo(stored=[_row("House", "280000")]), notify=notify)
     assert sent == 0
     assert recorder == []
-    assert notify.removed == {"bal:300000.00"}
+    assert removed_markers(notify) == {"bal:300000.00"}
 
 
 # --- Gap C: duplicate targets collapse in `live`; a dup-target live marker is not swept -------
@@ -320,12 +320,12 @@ def test_duplicate_live_target_preserved_while_stale_removed(shared, recorder):
     # [G-C1] Two rows share target 280000 but with distinct ids → two DISTINCT live markers (id-
     # keying, WHIT-369, so no collapse). Both live markers must be preserved, while a genuinely
     # dead one (id:z:300000) is swept.
-    notify = FakeNotifyRepo({"id:a:bal:280000.00", "id:b:bal:280000.00", "id:z:bal:300000.00"})
+    notify = notify_repo({"id:a:bal:280000.00", "id:b:bal:280000.00", "id:z:bal:300000.00"})
     _notify(shared, old="285000", new="284000",
          milestone_repo=FakeMilestoneRepo(stored=[_row("A", "280000", id="a"), _row("B", "280000", id="b")]),
          notify=notify)
-    assert notify.removed == {"id:z:bal:300000.00"}
-    assert notify.fired == {"id:a:bal:280000.00", "id:b:bal:280000.00"}
+    assert removed_markers(notify) == {"id:z:bal:300000.00"}
+    assert stored_markers(notify) == {"id:a:bal:280000.00", "id:b:bal:280000.00"}
 
 
 # --- Gap D: malformed / legacy "bal:" keys are swept as dead (self-heal) ---------------------
@@ -336,11 +336,11 @@ def test_malformed_bal_keys_are_swept_as_stale(shared, recorder):
     # plan row is a LEGACY row with no id, so its live marker is the amount-only "bal:280000.00",
     # which is preserved while the garbage keys are swept.
     legacy_row = {"label": "House", "targetBalance": Decimal("280000"), "targetDate": "2027-01-01"}
-    notify = FakeNotifyRepo({"bal:", "bal:oops", "bal:280000.00"})
+    notify = notify_repo({"bal:", "bal:oops", "bal:280000.00"})
     _notify(shared, old="285000", new="284000",
          milestone_repo=FakeMilestoneRepo(stored=[legacy_row]), notify=notify)
-    assert notify.removed == {"bal:", "bal:oops"}
-    assert notify.fired == {"bal:280000.00"}
+    assert removed_markers(notify) == {"bal:", "bal:oops"}
+    assert stored_markers(notify) == {"bal:280000.00"}
 
 
 # --- Gap E: reconcile runs BEFORE the device-token check -------------------------------------
@@ -348,14 +348,14 @@ def test_malformed_bal_keys_are_swept_as_stale(shared, recorder):
 def test_reconcile_runs_even_when_no_device_tokens(shared, recorder):
     # [G-E1] No device registered. Reconcile is placed before crossed/dedup/token checks, so a dead
     # marker is still swept even though a would-be fresh crossing sends nothing (and isn't marked).
-    notify = FakeNotifyRepo({"bal:300000.00"})
+    notify = notify_repo({"bal:300000.00"})
     sent = _notify(shared, old="285000", new="280000",
                 milestone_repo=FakeMilestoneRepo(stored=[_row("House", "280000")]),
                 notify=notify, tokens=())
     assert sent == 0
     assert recorder == []
-    assert notify.removed == {"bal:300000.00"}   # reconcile happened before the token short-circuit
-    assert notify.fired == set()                 # fresh crossing NOT marked (returned at token check)
+    assert removed_markers(notify) == {"bal:300000.00"}   # reconcile happened before the token short-circuit
+    assert stored_markers(notify) == set()                 # fresh crossing NOT marked (returned at token check)
 
 
 # ==========================================================================
@@ -367,23 +367,23 @@ def test_authoritative_empty_plan_sweeps_nothing(shared, recorder):
     # [G-386a] fail-on-revert: an authoritative [] with custom markers present must leave EVERY
     # marker intact and never call remove_milestone_markers (the guard short-circuits before any
     # delete I/O). Revert `and plan` at shared/milestones.py and both markers get wiped → this fails.
-    notify = FakeNotifyRepo({"id:m1:bal:300000.00", "bal:120000.00", "0"})
+    notify = notify_repo({"id:m1:bal:300000.00", "bal:120000.00", "0"})
     sent = _notify(shared, old="250000", new="249000",
                 milestone_repo=FakeMilestoneRepo(stored=[]), notify=notify)
     assert sent == 0
-    assert notify.removed == set()
-    assert notify.remove_calls == 0
-    assert notify.fired == {"id:m1:bal:300000.00", "bal:120000.00", "0"}
+    assert removed_markers(notify) == set()
+    assert removal_calls(notify) == 0
+    assert stored_markers(notify) == {"id:m1:bal:300000.00", "bal:120000.00", "0"}
 
 
 def test_populated_plan_still_sweeps_a_dead_marker(shared, recorder):
     # [G-386b] regression: the guard must NOT disable legitimate self-heal. A populated authoritative
     # plan (one row) with a dead custom marker still reconciles it away, exactly as WHIT-385 does.
-    notify = FakeNotifyRepo({"id:m1:bal:300000.00"})
+    notify = notify_repo({"id:m1:bal:300000.00"})
     _notify(shared, old="250000", new="249000",
          milestone_repo=FakeMilestoneRepo(stored=[_row("House", "280000")]), notify=notify)
-    assert notify.removed == {"id:m1:bal:300000.00"}
-    assert notify.remove_calls == 1
+    assert removed_markers(notify) == {"id:m1:bal:300000.00"}
+    assert removal_calls(notify) == 1
 
 
 # --- QA gap tests (adversarial) — added alongside the implementer's G-386a/b -----------------
@@ -400,38 +400,28 @@ def test_empty_plan_suppresses_a_default_crossing_and_sweeps_nothing(shared, rec
     # custom marker is swept -> removed != set() -> fails.
     # NB: no built-in sprint marker is seeded, so `sent == 0` genuinely discriminates the leak — if
     # an empty [] fell back to the default and crossed Kickoff (544000), it WOULD fire (sent==1).
-    notify = FakeNotifyRepo({"id:m1:bal:400000.00"})
+    notify = notify_repo({"id:m1:bal:400000.00"})
     sent = _notify(shared, old="545000", new="544000",
                 milestone_repo=FakeMilestoneRepo(stored=[]), notify=notify)
     assert sent == 0                       # empty plan does NOT fall back to the default crossing
     assert recorder == []
-    assert notify.remove_calls == 0
-    assert notify.removed == set()
-    assert notify.fired == {"id:m1:bal:400000.00"}
+    assert removal_calls(notify) == 0
+    assert removed_markers(notify) == set()
+    assert stored_markers(notify) == {"id:m1:bal:400000.00"}
 
 
 def test_empty_plan_never_touches_the_notify_store(shared, recorder):
     # [G-386e] The guard short-circuits BEFORE the reconcile try, so on an authoritative [] the
-    # notify store is never read (fired_milestones is never called) -- a raising repo is never even
-    # entered. The read counter is the fail-on-revert lever: revert `and plan` -> the reconcile
-    # enters the try and calls fired_milestones -> read_calls==1 -> fails. (A raising
-    # fired_milestones alone would NOT distinguish: the reconcile try swallows the exception and
-    # still returns 0.)
-    class CountingNotifyRepo(FakeNotifyRepo):
-        def __init__(self, fired=None):
-            super().__init__(fired)
-            self.read_calls = 0
-
-        def fired_milestones(self, scope=None):
-            self.read_calls += 1
-            raise RuntimeError("notify store must not be read on the empty-plan path")
-
-    notify = CountingNotifyRepo({"id:m1:bal:400000.00"})
+    # notify store is never read (fired_milestones is never called). The table's read log is the
+    # fail-on-revert lever: revert `and plan` -> the reconcile enters the try and calls
+    # fired_milestones -> one get_item -> fails. (A failing read alone would NOT distinguish: the
+    # reconcile try swallows the exception and still returns 0.)
+    notify = notify_repo({"id:m1:bal:400000.00"})
     sent = _notify(shared, old="250000", new="249000",
                 milestone_repo=FakeMilestoneRepo(stored=[]), notify=notify)
     assert sent == 0
-    assert notify.read_calls == 0          # short-circuited before ANY notify I/O
-    assert notify.remove_calls == 0
+    assert notify._table.get_item_calls == 0   # short-circuited before ANY notify I/O
+    assert notify._table.update_calls == []
 
 
 # ==========================================================================
@@ -445,16 +435,16 @@ def test_scope_is_threaded_to_plan_read_fired_state_and_mark(shared, recorder):
     # mark. The repo-level test proves isolation; this proves notify_milestone_crossing actually
     # PASSES the caller's scope to all three seams (not None / not a hardcoded owner).
     milestone_repo = FakeMilestoneRepo(stored=[_row("My House", "480000", id="m1")])
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     sent = shared.milestones.notify_milestone_crossing(
         Decimal("490000"), Decimal("480000"),
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
         notify_repo=notify, milestone_repo=milestone_repo, scope="user-42")
     assert sent == 1
     assert milestone_repo.scopes_read == ["user-42"]     # resolve_plan threaded scope
-    assert notify.fired_scopes == ["user-42"]            # dedup read threaded scope
-    assert notify.mark_scopes == ["user-42"]             # mark threaded the SAME scope
-    assert notify.fired == {"id:m1:bal:480000.00"}
+    assert scopes_read(notify) == ["user-42"]            # dedup read threaded scope
+    assert scopes_marked(notify) == ["user-42"]             # mark threaded the SAME scope
+    assert stored_markers(notify) == {"id:m1:bal:480000.00"}
 
 
 def test_scope_none_default_threads_none_to_every_seam(shared, recorder):
@@ -462,28 +452,28 @@ def test_scope_none_default_threads_none_to_every_seam(shared, recorder):
     # so the repo's own "SHARED" default owns both the plan and the fired-state. Guards against a
     # future edit hardcoding one side to a literal that the other doesn't share.
     milestone_repo = FakeMilestoneRepo(stored=[_row("My House", "480000", id="m1")])
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     shared.milestones.notify_milestone_crossing(
         Decimal("490000"), Decimal("480000"),
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
         notify_repo=notify, milestone_repo=milestone_repo)  # no scope
     assert milestone_repo.scopes_read == [None]
-    assert notify.fired_scopes == [None]
-    assert notify.mark_scopes == [None]
+    assert scopes_read(notify) == ["FIRED"]     # the shared tenant's marker item
+    assert scopes_marked(notify) == ["FIRED"]
 
 
 def test_dedup_read_is_scoped_so_another_owners_marker_does_not_suppress(shared, recorder):
     # WHIT-369 — [A-SCOPE-3] a marker already fired but read back under the caller's scope still
     # suppresses; the seam must not leak a different owner's fired-state. Here the SAME key is
     # pre-seeded and the caller's scope reads it → no resend.
-    notify = FakeNotifyRepo(fired={"id:m1:bal:480000.00"})
+    notify = notify_repo(fired={"id:m1:bal:480000.00"}, scope="user-42")
     sent = shared.milestones.notify_milestone_crossing(
         Decimal("490000"), Decimal("480000"),
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
         notify_repo=notify, milestone_repo=FakeMilestoneRepo(stored=[_row("My House", "480000")]),
         scope="user-42")
     assert sent == 0
-    assert notify.fired_scopes == ["user-42"]  # the read that suppressed used the caller's scope
+    assert scopes_read(notify) == ["user-42"]  # the read that suppressed used the caller's scope
 
 
 # --- mark-regardless-of-send-outcome survives scope threading, across a lump sum ------------
@@ -494,15 +484,15 @@ def test_marks_all_fresh_regardless_of_send_outcome_under_a_scope(shared, monkey
     # transient outage must not leave a crossing forever-unmarked (never re-detected).
     monkeypatch.setattr(shared.milestones, "send_push",
                         lambda *a, **k: {"sent": 1, "ok": 0, "pruned": []})
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     plan = [_row("Deposit", "480000", id="a"), _row("Halfway", "300000", id="b")]
     sent = shared.milestones.notify_milestone_crossing(
         Decimal("500000"), Decimal("290000"),
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
         notify_repo=notify, milestone_repo=FakeMilestoneRepo(stored=plan), scope="u1")
     assert sent == 1
-    assert notify.fired == {"id:a:bal:480000.00", "id:b:bal:300000.00"}  # both marked
-    assert notify.mark_scopes == ["u1", "u1"]                            # both under the scope
+    assert stored_markers(notify) == {"id:a:bal:480000.00", "id:b:bal:300000.00"}  # both marked
+    assert scopes_marked(notify) == ["u1", "u1"]                            # both under the scope
 
 
 # --- a SAVED plan is NOT guarded by the strictly-paid-down import assert --------------------
@@ -512,14 +502,14 @@ def test_out_of_order_user_plan_still_fires_furthest_and_marks_each(shared, reco
     # import; a user's SAVED plan is used as-is. crossed_milestones re-sorts by target, so an
     # out-of-order plan must still fire the furthest crossed and mark every crossed one.
     plan = [_row("Mid", "300000", id="b"), _row("Far", "120000", id="c"), _row("Near", "480000", id="a")]
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     sent = shared.milestones.notify_milestone_crossing(
         Decimal("500000"), Decimal("100000"),
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
         notify_repo=notify, milestone_repo=FakeMilestoneRepo(stored=plan))
     assert sent == 1
     assert recorder[0][0] == "\U0001f389 Milestone reached — Far!"  # furthest = lowest (120000)
-    assert notify.fired == {
+    assert stored_markers(notify) == {
         "id:a:bal:480000.00", "id:b:bal:300000.00", "id:c:bal:120000.00"}
 
 

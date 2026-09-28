@@ -1,26 +1,30 @@
-"""Shared fakes for the milestone test family (WHIT-445).
+"""Shared fakes for the milestone test family (WHIT-445, WHIT-625).
 
-A dozen milestone suites (test_milestones*, test_milestone_rows*, the resolve/live-keys/
-custom-plan gap suites) each carried their own near-identical copies of these repo fakes.
-A copied fake drifts — a FakeNotifyRepo that quietly drops the marker String-Set assert, or
-a FakeMilestoneRepo that stops honouring `scope`, starts passing what the real repositories
-reject. They live here now, in ONE definition each, so every suite imports them.
+The milestone suites (test_milestones*, test_milestone_rows*) share these in ONE definition each:
 
-The classes are SUPERSETS: they carry the union of every counter / scope-log the suites
-assert on (`reads`, `remove_calls`, `removed`, `fired_scopes`, `mark_scopes`, `scopes_read`),
-all inert when unused, and the widest constructor signature, so a suite that used a narrower
-copy imports this one unchanged. The per-suite `_notify` / `_run` harness helpers stay local
-to each file — they call the real notify_milestone_crossing with different contracts (some
-return the sent count, some the (sent, notify) pair) and are scaffolding, not drift-prone fakes.
+  * the marker store is the REAL NotifyRepository over a FakeTable (``notify_repo``), so the
+    String-Set ADD/DELETE and the per-owner keys run as production wrote them. The views
+    (``stored_markers``, ``removed_markers``, ``scopes_read``, ...) read the table and its
+    recorders, not a copied rule;
+  * FakeDeviceRepo, FakeLoanFactsRepo and FakeMilestoneRepo are read-only canned stubs.
+
+The per-suite `_notify` / `_run` harness helpers stay local to each file — they call the real
+notify_milestone_crossing with different contracts and are scaffolding, not drift-prone fakes.
 
 Resolved by pytest.ini's `pythonpath = tests/shared`. `recorder` needs the `shared` fixture
-(conftest.py) to monkeypatch send_push; importing a fixture into a test module registers it.
+(conftest.py) to monkeypatch send_push; importing a fixture into a test module registers it. The
+shared layer is imported lazily, inside ``notify_repo``.
 """
 
 from decimal import Decimal
 
 import pytest
 
+from _dynamo_fakes import FakeTable
+
+
+# The partition key of the milestone marker items, one per owner (shared/repository_notify.py).
+_MARKERS_PK = "NOTIFY#MILESTONE"
 
 # The loanfacts figures the crossing maths reads. One shape, shared by every plan-family suite.
 FACTS = {"original": 600000.0, "homeValue": 770000.0, "lvr": 0.8,
@@ -54,37 +58,62 @@ class FakeLoanFactsRepo:
         return self._facts
 
 
-class FakeNotifyRepo:
-    """Superset stand-in for NotifyRepository's milestone-marker String Set.
+def notify_repo(fired=None, scope=None):
+    """The REAL NotifyRepository over its own FakeTable (WHIT-625), with ``fired`` already
+    celebrated for ``scope`` through the real ``mark_milestone_fired``. The table's write log is
+    cleared after that setup, so the views below see only what the code under test did."""
+    from repository_notify import NotifyRepository
 
-    Records reads and reconcile calls and logs the scope each was made under, so the plain,
-    counting, and scope-recording suites are all served by this one fake. mark keeps the
-    isinstance(str) assert that mirrors DynamoDB's String-Set constraint (a marker that isn't
-    a str is the very regression the assert exists to catch)."""
+    repo = NotifyRepository()
+    repo._table = FakeTable()
+    for marker in fired or ():
+        repo.mark_milestone_fired(marker, scope)
+    repo._table.update_calls.clear()
+    repo._table.update_keys.clear()
+    return repo
 
-    def __init__(self, fired=None):
-        self.fired = set(fired or set())
-        self.removed = set()      # every key ever passed to remove_milestone_markers
-        self.reads = 0            # fired_milestones call count
-        self.remove_calls = 0     # remove_milestone_markers call count
-        self.fired_scopes = []    # scope logged on each read
-        self.mark_scopes = []     # scope logged on each mark
 
-    def fired_milestones(self, scope=None):
-        self.reads += 1
-        self.fired_scopes.append(scope)
-        return set(self.fired)
+def _marker_writes(repo, verb):
+    return [(key, values) for key, (expression, _names, values)
+            in zip(repo._table.update_keys, repo._table.update_calls)
+            if key["pk"] == _MARKERS_PK and expression.startswith(verb)]
 
-    def mark_milestone_fired(self, key, scope=None):
-        assert isinstance(key, str), "marker must be a string (String Set)"
-        self.mark_scopes.append(scope)
-        self.fired.add(key)
 
-    def remove_milestone_markers(self, keys, scope=None):
-        assert keys, "must guard empty before calling remove_milestone_markers"
-        self.remove_calls += 1
-        self.removed |= set(keys)
-        self.fired -= set(keys)
+def stored_markers(repo):
+    """Every milestone marker the table holds now, across every owner (scope)."""
+    markers = set()
+    for (pk, _sk), item in repo._table.store.items():
+        if pk == _MARKERS_PK:
+            markers |= item.get("fired", set())
+    return markers
+
+
+def removed_markers(repo):
+    """Every marker the code asked to remove (the DELETE writes)."""
+    removed = set()
+    for _key, values in _marker_writes(repo, "DELETE"):
+        removed |= values[":m"]
+    return removed
+
+
+def removal_calls(repo):
+    """How many DELETE writes reached the table."""
+    return len(_marker_writes(repo, "DELETE"))
+
+
+def marker_reads(repo):
+    """How many times the marker set was read."""
+    return len(scopes_read(repo))
+
+
+def scopes_read(repo):
+    """The sort key (owner) of each marker-set read, in order. The shared tenant's is "FIRED"."""
+    return [key["sk"] for key in repo._table.get_item_keys if key["pk"] == _MARKERS_PK]
+
+
+def scopes_marked(repo):
+    """The sort key (owner) of each marker ADD, in order. The shared tenant's is "FIRED"."""
+    return [key["sk"] for key, _values in _marker_writes(repo, "ADD")]
 
 
 class FakeMilestoneRepo:

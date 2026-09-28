@@ -22,7 +22,7 @@ import pytest
 
 from _chart_ramp import assignment_order as client_assignment_order
 from _category_fakes import (
-    FakeBudgetRepo, _ccfe, _before_next_update,
+    _ccfe, _before_next_update, budget_repo,
     _CFG, _SLOT, _cat, _categories_event,
     _drain, _piled_store, _random_legacy_store, _repo_with_fake_table, _schema,
     _slot_histogram,
@@ -2816,7 +2816,7 @@ def test_post_categories_mid_repaint_returns_201_and_a_plain_integer_slot(handle
     repository, repo = _repo_with_fake_table(handler)
     _piled_store(repo, repository, 60)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
-    monkeypatch.setattr(handler, "BudgetRepository", lambda: FakeBudgetRepo())
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: budget_repo())
 
     response = handler.lambda_handler(_categories_event(), None)
 

@@ -7,7 +7,7 @@ really comes from the widened read. Cycle: 14 days, payday 2026-07-01, today 202
 from datetime import date
 from decimal import Decimal
 
-from _budget_alert_fakes import FakeNotifyRepo
+from _budget_alert_fakes import notify_repo
 
 _TODAY = date(2026, 7, 14)
 _ACCT = "up-spending"
@@ -74,7 +74,7 @@ def _fire(lam, monkeypatch, budgets, stored, new):
         window_repo=_DateRangeRepo(stored), webhook_repo=_NoTwins(),
     )
     ba.fire_budget_alerts(ctx, new, webhook_repo=_NoTwins(), category_repo=_Categories(),
-                          notify_repo=FakeNotifyRepo())
+                          notify_repo=notify_repo())
     return sent
 
 

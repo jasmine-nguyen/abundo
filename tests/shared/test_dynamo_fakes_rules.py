@@ -1,5 +1,5 @@
-"""FakeTable behaviour beyond the pinned grammar (WHIT-625 slice 1): DynamoDB's unused-name rule,
-the one-shot write queue, clearing failures, and the call recorders."""
+"""FakeTable behaviour beyond the pinned grammar (WHIT-625): DynamoDB's unused-name and set-type
+rules, the one-shot write queue, clearing failures, and the call recorders."""
 
 import pytest
 from botocore.exceptions import ClientError
@@ -48,6 +48,32 @@ def test_a_set_under_a_missing_parent_map_is_rejected_and_writes_nothing():
 
     assert _code(invalid) == "ValidationException"
     assert table.get_item(Key={"pk": "A", "sk": "A"})["Item"] == {"pk": "A", "sk": "A", "version": 1}
+
+
+def test_a_number_added_to_a_string_set_is_rejected_and_writes_nothing():
+    table = FakeTable()
+    table.seed({"pk": "A", "sk": "A", "fired": {"0"}})
+
+    with pytest.raises(ClientError) as into_existing:
+        table.update_item(Key={"pk": "A", "sk": "A"}, UpdateExpression="ADD #f :m",
+                          ExpressionAttributeNames={"#f": "fired"}, ExpressionAttributeValues={":m": {1}})
+    with pytest.raises(ClientError) as mixed:
+        table.update_item(Key={"pk": "B", "sk": "B"}, UpdateExpression="ADD #f :m",
+                          ExpressionAttributeNames={"#f": "fired"}, ExpressionAttributeValues={":m": {"a", 1}})
+
+    assert _code(into_existing) == "ValidationException"
+    assert _code(mixed) == "ValidationException"
+    assert table.get_item(Key={"pk": "A", "sk": "A"})["Item"]["fired"] == {"0"}
+    assert table.get_item(Key={"pk": "B", "sk": "B"}) == {}
+
+
+def test_get_item_records_each_key_in_call_order():
+    table = FakeTable()
+
+    table.get_item(Key={"pk": "A", "sk": "1"})
+    table.get_item(Key={"pk": "B", "sk": "2"})
+
+    assert table.get_item_keys == [{"pk": "A", "sk": "1"}, {"pk": "B", "sk": "2"}]
 
 
 def test_queued_one_shot_writers_take_successive_writes_in_order():

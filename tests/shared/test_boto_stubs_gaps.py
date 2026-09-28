@@ -1,8 +1,7 @@
 """WHIT-466 gap coverage — the consolidated _boto_stubs helpers + the invariants AST helper.
 
-The implementer's own checks prove the five guards ([G1]/[G1b]/[G2-static]/[G2-botocore]/[G3])
-go red on violation, that the meta-guard reddens on an unregistered importer, and that the
-installer is load-bearing. These cover the pieces the fold INTRODUCED that nothing else
+The implementer's own checks prove the guards ([G2-static]/[G2-botocore]/[G3]) go red on
+violation, and that the installer is load-bearing. These cover the pieces the fold INTRODUCED that nothing else
 exercises directly:
 
   * ``use_condition_fields()`` — its save/restore is the only thing stopping a leaked ``_Field``
@@ -14,16 +13,16 @@ exercises directly:
   * ``_Field`` / ``_Predicate`` query semantics — the fake query engine the ``shared``/``lambda``
     repo suites lean on; its boundaries (``between`` inclusive, ``.get(name, "")`` default) are
     exactly the kind of thing a "tidy" could silently shift.
-  * ``_top_level_binding_list``'s AnnAssign branch — the fold's [G1]/[G1b]/[G3] read names through
+  * ``_top_level_binding_list``'s AnnAssign branch — the [G3] guards read names through
     it, and it claims to cover the annotated form, but every real fake uses a plain
     ``_UNSET = object()`` so that branch is otherwise unexercised.
 """
 
-import importlib
 import os
 import sys
 import types
 
+from _ast_bindings import _top_level_binding_list
 from _boto_stubs import _Field, install_import_satisfiers, use_condition_fields
 
 
@@ -134,11 +133,10 @@ def test_field_missing_attribute_uses_empty_string_default():
 # --- _top_level_binding_list: the AnnAssign branch no real fake exercises -----------------------
 
 def test_binding_list_captures_annotated_top_level_names(tmp_path):
-    # The fold's [G1]/[G1b]/[G3] read names via _top_level_binding_list, whose docstring promises the
+    # The [G3] fold-drift guards read names via _top_level_binding_list, whose docstring promises the
     # annotated form. Every real fake uses a plain `_UNSET = object()`, so this branch is otherwise
-    # unexercised; a future annotated shared fake would slip past [G1] if it regressed. Assert an
+    # unexercised; a future annotated duplicate would slip past [G3] if it regressed. Assert an
     # `X: T = ...` top-level binding is captured (and duplicates are preserved for [G3]).
-    invariants = importlib.import_module("test_fakes_invariants")
     source = (
         "import copy\n"
         "_SENTINEL: object = object()\n"       # AnnAssign with value
@@ -149,8 +147,7 @@ def test_binding_list_captures_annotated_top_level_names(tmp_path):
     )
     sample = tmp_path / "sample_module.py"
     sample.write_text(source)
-    names = invariants._top_level_binding_list(sample)
+    names = _top_level_binding_list(sample)
     assert "_SENTINEL" in names            # annotated-with-value captured
     assert "_ONLY_ANNOTATED" in names      # bare annotation captured
     assert names.count("dup") == 2         # list form preserves the duplicate [G3] relies on
-    assert set(invariants._top_level_bindings(sample)) == set(names)  # set view is the deduped list

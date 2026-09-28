@@ -10,7 +10,7 @@ Fortnightly cycle, paydays land …Jul4, Jul18, Aug1, Aug15; "today" = Sat 11 Ju
 
 from decimal import Decimal
 
-from _goal_nudge_fakes import CYCLE, TODAY, FakeNotifyRepo, _grow, _manual, _run
+from _goal_nudge_fakes import CYCLE, TODAY, notify_repo, _grow, _manual, _run
 
 
 # --- is_behind (option A) ----------------------------------------------------
@@ -79,7 +79,7 @@ class TestNotifyBehindGoals:
         assert rec.calls[0]["body"] == "Your Car loan needs $6,000/payday to hit July."
 
     def test_dedupe_same_cycle_does_not_resend(self, shared, monkeypatch):
-        notify = FakeNotifyRepo()
+        notify = notify_repo()
         notify.mark_fired(CYCLE["last_pay_date"], CYCLE["length"], "GOAL#g1")
         sent, rec, *_ = _run(shared, monkeypatch, {"g1": _grow()},
                              balances={"up-spending": Decimal(4000)}, notify=notify)
@@ -87,7 +87,7 @@ class TestNotifyBehindGoals:
         assert rec.calls == []
 
     def test_rearm_next_cycle_resends(self, shared, monkeypatch):
-        notify = FakeNotifyRepo()
+        notify = notify_repo()
         s1, *_ = _run(shared, monkeypatch, {"g1": _grow()},
                       balances={"up-spending": Decimal(4000)}, notify=notify)
         # A new pay cycle (different last_pay_date) -> new marker key -> re-arms.
@@ -97,7 +97,7 @@ class TestNotifyBehindGoals:
         assert s1 == 1 and s2 == 1
 
     def test_mark_on_landing_send_fails_then_retries(self, shared, monkeypatch):
-        notify = FakeNotifyRepo()
+        notify = notify_repo()
         # First sweep: Expo outage (ok=0) -> not marked -> not counted.
         s1, *_ = _run(shared, monkeypatch, {"g1": _grow()},
                       balances={"up-spending": Decimal(4000)}, notify=notify, send_ok=0)
@@ -202,7 +202,7 @@ class TestStaleNudge:
         # The behind marker fired earlier this cycle; stale is independent and must STILL fire.
         # (Fail-on-revert for the per-trigger marker split — a single shared guard would swallow
         # this.) target_date near so the goal is also behind, its behind marker pre-seeded.
-        notify = FakeNotifyRepo()
+        notify = notify_repo()
         notify.mark_fired(CYCLE["last_pay_date"], CYCLE["length"], "GOAL#m1")
         goal = _manual(target_date="2026-07-18")  # behind AND stale
         sent, rec, notify, *_ = _run(shared, monkeypatch, {"m1": goal}, notify=notify)
@@ -221,14 +221,14 @@ class TestStaleNudge:
         assert {"GOAL#m1", "GOAL#m1#stale"} <= markers
 
     def test_stale_dedupe_same_cycle(self, shared, monkeypatch):
-        notify = FakeNotifyRepo()
+        notify = notify_repo()
         notify.mark_fired(CYCLE["last_pay_date"], CYCLE["length"], "GOAL#m1#stale")
         sent, rec, *_ = _run(shared, monkeypatch, {"m1": _manual()}, notify=notify)
         assert sent == 0
         assert rec.calls == []
 
     def test_stale_mark_on_landing_outage_leaves_unmarked(self, shared, monkeypatch):
-        notify = FakeNotifyRepo()
+        notify = notify_repo()
         sent, rec, notify, *_ = _run(shared, monkeypatch, {"m1": _manual()}, notify=notify, send_ok=0)
         assert sent == 0
         assert notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"]) == set()
@@ -324,7 +324,7 @@ class TestNotifyMultiAndCollisions:
         # [A35] goal_nudge shares the per-cycle FIRED set with budget alerts. A budget
         # "groceries#80" marker present must NOT be mistaken for the goal's "GOAL#g1"
         # marker: the goal still fires, and both markers coexist afterwards.
-        notify = FakeNotifyRepo(seed={(CYCLE["last_pay_date"], CYCLE["length"]): {"groceries#80"}})
+        notify = notify_repo(seed={(CYCLE["last_pay_date"], CYCLE["length"]): {"groceries#80"}})
         sent, rec, notify, *_ = _run(shared, monkeypatch, {"g1": _grow()},
                                  balances={"up-spending": Decimal(4000)}, notify=notify)
         assert sent == 1
@@ -333,7 +333,7 @@ class TestNotifyMultiAndCollisions:
     def test_stale_marker_for_deleted_goal_is_harmless(self, shared, monkeypatch):
         # [A36] a leftover "GOAL#gone" marker for a goal that no longer exists neither
         # fires nor errors; the live behind goal still fires normally.
-        notify = FakeNotifyRepo(seed={(CYCLE["last_pay_date"], CYCLE["length"]): {"GOAL#gone"}})
+        notify = notify_repo(seed={(CYCLE["last_pay_date"], CYCLE["length"]): {"GOAL#gone"}})
         sent, rec, notify, *_ = _run(shared, monkeypatch, {"g1": _grow()},
                                  balances={"up-spending": Decimal(4000)}, notify=notify)
         assert sent == 1
@@ -385,7 +385,7 @@ class TestStaleNudgeGaps:
         # WHIT-259 — the stale marker lives in the SAME per-cycle FIRED set as budget alerts'
         # "<cat>#<pct>" markers. A pre-existing "groceries#80" must not be mistaken for the stale
         # marker: the stale nudge still fires and both markers coexist afterwards.
-        notify = FakeNotifyRepo(seed={(CYCLE["last_pay_date"], CYCLE["length"]): {"groceries#80"}})
+        notify = notify_repo(seed={(CYCLE["last_pay_date"], CYCLE["length"]): {"groceries#80"}})
         sent, rec, notify, *_ = _run(shared, monkeypatch, {"m1": _manual()}, notify=notify)
         assert sent == 1
         assert notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"]) == {
@@ -395,7 +395,7 @@ class TestStaleNudgeGaps:
         # WHIT-259 — the SYMMETRIC independence case the implementer's suite omits: the STALE marker
         # is already set this cycle, so only the BEHIND trigger may fire on the same goal. A single
         # shared guard (or a marker collapse) would swallow it.
-        notify = FakeNotifyRepo()
+        notify = notify_repo()
         notify.mark_fired(CYCLE["last_pay_date"], CYCLE["length"], "GOAL#m1#stale")
         goal = _manual(target_date="2026-07-18")  # behind AND stale
         sent, rec, notify, *_ = _run(shared, monkeypatch, {"m1": goal}, notify=notify)

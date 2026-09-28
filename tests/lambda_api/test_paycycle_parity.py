@@ -20,12 +20,11 @@ from datetime import date, timedelta
 
 import pytest
 
-# FakePayCycleRepo is imported from the shared tests/shared/_paycycle_fakes.py so this parity
-# suite and the impl suite share ONE definition (WHIT-445). get_paycycle_view only reads the
-# cycle, so the shared fake's call recorders are unused here. `_client_days_left` below stays
-# LOCAL on purpose: it is a deliberately INDEPENDENT re-implementation of the client's clock —
-# sharing it would defeat the parity check (see module docstring).
-from _paycycle_fakes import FakePayCycleRepo
+# The server reads the cycle through the real PayCycleRepository over a FakeTable (WHIT-625).
+# `_client_days_left` below stays LOCAL on purpose: it is a deliberately INDEPENDENT
+# re-implementation of the client's clock — sharing it would defeat the parity check (see module
+# docstring).
+from _paycycle_fakes import paycycle_repo
 
 
 def _client_days_left(last_pay_date: str, length: int, today: date) -> int:
@@ -51,9 +50,8 @@ def test_server_days_left_equals_client_cycleclock_across_dst(handler, monkeypat
     for i in range(14):
         today = start + timedelta(days=i)
         monkeypatch.setattr(spend, "melbourne_today", lambda t=today: t)
-        server = handler.get_paycycle_view(
-            FakePayCycleRepo(cycle={"length": length, "last_pay_date": last_pay_date})
-        )["days_left"]
+        _, repo = paycycle_repo({"length": length, "last_pay_date": last_pay_date})
+        server = handler.get_paycycle_view(repo)["days_left"]
         assert server == _client_days_left(last_pay_date, length, today), (
             f"drift on {today} for pay={last_pay_date} len={length}: "
             f"server={server} client={_client_days_left(last_pay_date, length, today)}"
@@ -68,9 +66,10 @@ def test_server_days_left_is_always_within_1_to_length(handler, monkeypatch):
 
     pay, length = "2026-01-01", 14
     start = date.fromisoformat("2026-01-01")
+    _, repo = paycycle_repo({"length": length, "last_pay_date": pay})
     seen = set()
     for i in range(60):
         today = start + timedelta(days=i)
         monkeypatch.setattr(spend, "melbourne_today", lambda t=today: t)
-        seen.add(handler.get_paycycle_view(FakePayCycleRepo(cycle={"length": length, "last_pay_date": pay}))["days_left"])
+        seen.add(handler.get_paycycle_view(repo)["days_left"])
     assert min(seen) == 1 and max(seen) == length

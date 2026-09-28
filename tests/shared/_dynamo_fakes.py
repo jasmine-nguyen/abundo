@@ -13,8 +13,9 @@ instead of matching whitelisted strings, so the REAL repositories run over it un
 Anything outside that grammar raises AssertionError: a drifted expression must fail loudly, never
 pass with its guard dead.
 
-It also enforces two of DynamoDB's validation rules: an UpdateExpression over the 4KB ceiling,
-and a declared ExpressionAttributeName/Value that no expression uses, raise ValidationException.
+It also enforces three of DynamoDB's validation rules: an UpdateExpression over the 4KB ceiling,
+a declared ExpressionAttributeName/Value that no expression uses, and an ADD/DELETE that mixes
+set types (a number into a String Set) raise ValidationException.
 Reads and writes are deep copies.
 
 Test hooks: ``fail`` (make a call raise), ``before_write`` / ``before_next_write`` (simulate a
@@ -147,6 +148,8 @@ def _apply_clause(item, action, clause, names, values, expression):
     operand = _value(operand.strip(), values)
     parent = _parent(item, path)
     current = parent.get(path[-1], _MISSING)
+    if isinstance(operand, set):
+        _check_set_type(operand, current)
     if action == "ADD":
         if current is _MISSING:
             parent[path[-1]] = operand
@@ -163,6 +166,19 @@ def _apply_clause(item, action, clause, names, values, expression):
         parent[path[-1]] = remaining
     else:
         del parent[path[-1]]
+
+
+def _set_type(members):
+    return {"string" if isinstance(member, str) else "number" for member in members}
+
+
+def _check_set_type(operand, current):
+    """A DynamoDB set holds one type (String Set or Number Set); ADD/DELETE must match it."""
+    types = _set_type(operand)
+    if isinstance(current, set):
+        types |= _set_type(current)
+    if len(types) > 1:
+        raise _client_error("ValidationException", "Type mismatch for attribute to update")
 
 
 _CONDITION_TOKEN = re.compile(r"\s*(<>|=|\(|\)|,|[#:]?[A-Za-z_][\w.#]*)")
@@ -281,6 +297,7 @@ class FakeTable:
         self.query_calls = 0          # count, for the older checks
         self.queries: list = []       # each query's kwargs
         self.get_item_calls = 0
+        self.get_item_keys: list = []  # the Key of each get_item call, in call order
         self.consistent_reads: list = []
         self.update_calls: list = []  # (UpdateExpression, names, values) per update_item call
         self.update_keys: list = []   # the Key of each update_item call, in the same order
@@ -380,6 +397,7 @@ class FakeTable:
 
     def get_item(self, Key, ConsistentRead=False):
         self.get_item_calls += 1
+        self.get_item_keys.append(dict(Key))
         self.consistent_reads.append(ConsistentRead)
         self._check_failure("get_item", Key)
         item = self.store.get(_store_key(Key))

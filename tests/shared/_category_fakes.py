@@ -1,6 +1,7 @@
 """Shared fakes and store builders for the category test suites.
 
-The category suites need the same store builders and table wiring. They live here, in ONE
+The category suites need the same store builders and table wiring, plus the real
+BudgetRepository the category handlers cascade into (``budget_repo``). They live here, in ONE
 definition, so every suite `import`s them instead of copying them or re-exec'ing the 4,000-line
 impl suite through importlib (WHIT-440). The table is the shared FakeTable (_dynamo_fakes), whose
 4KB UpdateExpression guard is what makes the expression-size tests mean anything (WHIT-625).
@@ -8,7 +9,7 @@ impl suite through importlib (WHIT-440). The table is the shared FakeTable (_dyn
 Resolved by pytest.ini's `pythonpath = tests/shared`, the same way test_categories.py
 already imports `_chart_ramp` from here — no `handler`-fixture sys.path juggling needed
 to import THIS module. The `import repository` / `import repository_category` inside
-_repo_with_fake_table and _schema are lazy on purpose: they run at test time, under the
+_repo_with_fake_table, budget_repo and _schema are lazy on purpose: they run at test time, under the
 `handler` fixture that puts shared/ on the path.
 """
 
@@ -18,6 +19,7 @@ from decimal import Decimal
 from _dynamo_fakes import FakeTable, _client_error
 
 _CFG = ("CATEGORIES", "CATEGORIES")
+_BUDGETS = ("BUDGETS", "BUDGETS")
 _SLOT = "colorSlot"
 
 
@@ -35,41 +37,20 @@ def _before_next_update(table, mutate):
     table.before_next_write(run)
 
 
-class FakeBudgetRepo:
-    """Handler-level stand-in for BudgetRepository — records the cascade delete
-    (WHIT-73) and serves a stored-target map so update_category's WHIT-202 Savings
-    re-bucket guard can check whether a category is still budgeted. Can be armed to
-    raise, to exercise the best-effort cascade path."""
+def budget_repo(budgets=None):
+    """The REAL BudgetRepository over its own FakeTable holding ``budgets`` ({id: entry}), so the
+    delete cascade and the rollover/spread clears run as production wrote them (WHIT-625)."""
+    from repository import BudgetRepository
 
-    def __init__(self, raises=None, budgets=None):
-        self._raises = raises
-        self._budgets = budgets or {}  # {id: {"target": Decimal}}
-        self.delete_calls = []
-        self.clear_rollover_calls = []
-        self.clear_spread_calls = []
-        self.list_calls = 0
+    repo = BudgetRepository()
+    repo._table = FakeTable()
+    repo._table.seed({"pk": "BUDGETS", "sk": "BUDGETS", "items": budgets or {}, "version": Decimal(1)})
+    return repo
 
-    def list_budgets(self):
-        self.list_calls += 1
-        return {k: dict(v) for k, v in self._budgets.items()}
 
-    def delete_budget(self, cat_id):
-        self.delete_calls.append(cat_id)
-        if self._raises is not None:
-            raise self._raises
-
-    def clear_rollover(self, cat_id):
-        # The rollover-clear cascade on a re-bucket out of spend (WHIT-474). Records the
-        # call; honours the same `raises` arm so a test can exercise the best-effort swallow.
-        self.clear_rollover_calls.append(cat_id)
-        if self._raises is not None:
-            raise self._raises
-
-    def clear_spread(self, cat_id):
-        # The bill-spread-clear cascade on the same re-bucket (WHIT-504); same `raises` arm.
-        self.clear_spread_calls.append(cat_id)
-        if self._raises is not None:
-            raise self._raises
+def stored_budgets(repo):
+    """The budget entries the table holds now ({id: entry})."""
+    return repo._table.store[_BUDGETS]["items"]
 
 
 def _repo_with_fake_table(handler):

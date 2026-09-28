@@ -29,7 +29,7 @@ or from the repo's own existing fixtures. No invented merchants.
 from decimal import Decimal
 
 import pytest
-from _budget_alert_fakes import FakeNotifyRepo
+from _budget_alert_fakes import notify_repo
 
 _BANK_ACCOUNT_ID = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"  # -> anz-rewards-black-visa
 
@@ -371,7 +371,7 @@ def _run_alerts(lam, monkeypatch, *, budgets, before, normalised, webhook_repo, 
                         lambda t, b, toks, data=None: (sent.append((t, b)),
                                                        {"sent": len(list(toks)), "ok": 1,
                                                         "pruned": []})[1])
-    notify = notify or FakeNotifyRepo()
+    notify = notify or notify_repo()
     ctx = ba.capture_pre_write(
         normalised,
         device_repo=_FakeRepo(["ExpoPushToken[a]"]),
@@ -399,7 +399,7 @@ def test_budget_alert_preview_does_not_double_count_a_full_column_settlement(lam
     posted = _woolies_posted(lam, txn_id="POST")
     posted = dict(posted)
     posted["category"] = "groceries"
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     notify.mark_fired("2026-07-15", 14, "groceries#80")
 
     sent, notify = _run_alerts(lam, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},

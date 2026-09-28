@@ -20,8 +20,8 @@ import pytest
 # call-time `import repository` inside these still runs under the `handler` fixture.
 # (The colorSlot fakes moved to test_category_color_slots.py with their tests — WHIT-462.)
 from _category_fakes import (
-    FakeBudgetRepo, _CFG, _SLOT, _before_next_update, _cat, _categories_event,
-    _repo_with_fake_table,
+    _CFG, _SLOT, _before_next_update, _cat, _categories_event,
+    _repo_with_fake_table, budget_repo, stored_budgets,
 )
 from _dynamo_fakes import _MAX_UPDATE_EXPRESSION_BYTES
 
@@ -135,7 +135,7 @@ def test_get_categories_dispatch(handler, monkeypatch):
 def test_create_success(handler):
     repo = FakeCategoryRepo()
 
-    resp = handler.create_category(_categories_event(), repo, FakeBudgetRepo())
+    resp = handler.create_category(_categories_event(), repo, budget_repo())
 
     assert resp["statusCode"] == 201
     body = json.loads(resp["body"])
@@ -147,7 +147,7 @@ def test_create_slugifies_multiword_name(handler):
     repo = FakeCategoryRepo()
 
     resp = handler.create_category(
-        _categories_event('{"name": "Gym Membership!", "bucket": "Living", "icon": "dumbbell"}'), repo, FakeBudgetRepo())
+        _categories_event('{"name": "Gym Membership!", "bucket": "Living", "icon": "dumbbell"}'), repo, budget_repo())
 
     assert resp["statusCode"] == 201
     assert repo.create_calls[0][0] == "gymmembership"
@@ -156,7 +156,7 @@ def test_create_slugifies_multiword_name(handler):
 def test_create_icon_optional_defaults(handler):
     repo = FakeCategoryRepo()
 
-    resp = handler.create_category(_categories_event('{"name": "Gym", "bucket": "Living"}'), repo, FakeBudgetRepo())
+    resp = handler.create_category(_categories_event('{"name": "Gym", "bucket": "Living"}'), repo, budget_repo())
 
     assert resp["statusCode"] == 201
     assert repo.create_calls[0][3] == "tag"  # DEFAULT_CATEGORY_ICON
@@ -174,7 +174,7 @@ def test_create_icon_optional_defaults(handler):
 def test_create_bad_body_400(handler, body):
     repo = FakeCategoryRepo()
 
-    resp = handler.create_category(_categories_event(body), repo, FakeBudgetRepo())
+    resp = handler.create_category(_categories_event(body), repo, budget_repo())
 
     assert resp["statusCode"] == 400
     assert repo.create_calls == []
@@ -183,7 +183,7 @@ def test_create_bad_body_400(handler, body):
 def test_create_duplicate_409(handler):
     repo = FakeCategoryRepo(duplicate_exc=handler.DuplicateCategoryError)
 
-    resp = handler.create_category(_categories_event(), repo, FakeBudgetRepo())
+    resp = handler.create_category(_categories_event(), repo, budget_repo())
 
     assert resp["statusCode"] == 409
 
@@ -192,7 +192,7 @@ def test_create_base64_body(handler):
     repo = FakeCategoryRepo()
     encoded = base64.b64encode(b'{"name": "Gym", "bucket": "Living", "icon": "dumbbell"}').decode()
 
-    resp = handler.create_category(_categories_event(body=encoded, is_b64=True), repo, FakeBudgetRepo())
+    resp = handler.create_category(_categories_event(body=encoded, is_b64=True), repo, budget_repo())
 
     assert resp["statusCode"] == 201
     assert repo.create_calls == [("gym", "Gym", "Living", "dumbbell")]
@@ -204,7 +204,7 @@ def test_create_savings_over_orphan_budget_rejected_400(handler):
     # resurrect the un-renderable phantom. The third write-path guard rejects it, and the
     # category is never created. Slug of "Gym" is "gym", so the orphan is keyed there.
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(budgets={"gym": {"target": 58}})
+    budget = budget_repo({"gym": {"target": 58}})
 
     resp = handler.create_category(
         _categories_event('{"name": "Gym", "bucket": "Savings", "icon": "dumbbell"}'), repo, budget)
@@ -217,7 +217,7 @@ def test_create_savings_without_orphan_budget_allowed(handler):
     # A Savings category with NO pre-existing budget target is a normal, allowed create —
     # the guard blocks only the create-onto-an-orphan-target case.
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(budgets={})
+    budget = budget_repo({})
 
     resp = handler.create_category(
         _categories_event('{"name": "Gym", "bucket": "Savings", "icon": "dumbbell"}'), repo, budget)
@@ -230,7 +230,7 @@ def test_create_non_savings_over_orphan_budget_allowed(handler):
     # A NON-Savings category can be created over an orphan budget target (the target simply
     # becomes a live budget) — the guard must not over-reach and block that normal case.
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(budgets={"gym": {"target": 58}})
+    budget = budget_repo({"gym": {"target": 58}})
 
     resp = handler.create_category(
         _categories_event('{"name": "Gym", "bucket": "Lifestyle", "icon": "dumbbell"}'), repo, budget)
@@ -242,7 +242,7 @@ def test_create_non_savings_over_orphan_budget_allowed(handler):
 def test_post_categories_dispatch(handler, monkeypatch):
     repo = FakeCategoryRepo()
     monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
-    monkeypatch.setattr(handler, "BudgetRepository", lambda: FakeBudgetRepo())
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: budget_repo())
 
     resp = handler.lambda_handler(_categories_event(), None)
 
@@ -259,7 +259,7 @@ def test_post_categories_dispatch(handler, monkeypatch):
 def test_update_success(handler):
     repo = FakeCategoryRepo()
 
-    resp = handler.update_category(_category_item_event("PATCH"), repo, FakeBudgetRepo())
+    resp = handler.update_category(_category_item_event("PATCH"), repo, budget_repo())
 
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])
@@ -272,7 +272,7 @@ def test_update_missing_id_returns_404(handler):
     event = _category_item_event("PATCH")
     event["pathParameters"] = {}
 
-    resp = handler.update_category(event, repo, FakeBudgetRepo())
+    resp = handler.update_category(event, repo, budget_repo())
 
     assert resp["statusCode"] == 404
     assert repo.update_calls == []
@@ -288,7 +288,7 @@ def test_update_missing_id_returns_404(handler):
 def test_update_bad_body_400(handler, body):
     repo = FakeCategoryRepo()
 
-    resp = handler.update_category(_category_item_event("PATCH", body=body), repo, FakeBudgetRepo())
+    resp = handler.update_category(_category_item_event("PATCH", body=body), repo, budget_repo())
 
     assert resp["statusCode"] == 400
     assert repo.update_calls == []
@@ -298,7 +298,7 @@ def test_update_icon_optional_defaults(handler):
     repo = FakeCategoryRepo()
 
     resp = handler.update_category(
-        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Living"}'), repo, FakeBudgetRepo())
+        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Living"}'), repo, budget_repo())
 
     assert resp["statusCode"] == 200
     assert repo.update_calls[0][3] == "tag"  # DEFAULT_CATEGORY_ICON
@@ -307,7 +307,7 @@ def test_update_icon_optional_defaults(handler):
 def test_update_unknown_id_returns_404(handler):
     repo = FakeCategoryRepo(not_found_exc=handler.CategoryNotFoundError)
 
-    resp = handler.update_category(_category_item_event("PATCH"), repo, FakeBudgetRepo())
+    resp = handler.update_category(_category_item_event("PATCH"), repo, budget_repo())
 
     assert resp["statusCode"] == 404
 
@@ -315,12 +315,20 @@ def test_update_unknown_id_returns_404(handler):
 def test_update_dispatch(handler, monkeypatch):
     repo = FakeCategoryRepo()
     monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
-    monkeypatch.setattr(handler, "BudgetRepository", lambda: FakeBudgetRepo())
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: budget_repo())
 
     resp = handler.lambda_handler(_category_item_event("PATCH"), None)
 
     assert resp["statusCode"] == 200
     assert repo.update_calls == [("coffee", "Coffee & Cake", "Living", "coffee")]
+
+
+# A budget entry carrying rollover fields, and one carrying a bill spread — what the re-bucket
+# cascade strips (keeping the target).
+_ROLLOVER = {"rollover": True, "carryover": Decimal("5"), "carryover_from": "2026-07-01",
+             "carryover_len": Decimal(14), "carryover_paydate": "2026-07-01"}
+_SPREAD = {"spread_amount": Decimal(100), "spread_cycles": Decimal(4), "spread_from": "2026-07-01",
+           "spread_len": Decimal(14), "spread_paydate": "2026-07-01"}
 
 
 def test_update_rebucket_to_savings_while_budgeted_rejected_400(handler):
@@ -329,21 +337,21 @@ def test_update_rebucket_to_savings_while_budgeted_rejected_400(handler):
     # invisible phantom (and resurrect it on a move back). Reject, NOT cascade-delete:
     # the category update never runs and the stored budget is preserved untouched.
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(budgets={"coffee": {"target": 58}})
+    budget = budget_repo({"coffee": {"target": 58}})
 
     resp = handler.update_category(
         _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Savings"}'), repo, budget)
 
     assert resp["statusCode"] == 400
     assert repo.update_calls == []       # the re-bucket did NOT go through
-    assert budget.delete_calls == []     # and the budget was NOT destroyed
+    assert stored_budgets(budget) == {"coffee": {"target": 58}}   # and the budget was NOT destroyed
 
 
 def test_update_rebucket_to_savings_without_budget_allowed(handler):
     # A category with NO budget can move into Savings freely — the guard blocks only a
     # still-budgeted one (icon omitted → defaults to "tag").
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(budgets={})  # coffee not budgeted
+    budget = budget_repo({})  # coffee not budgeted
 
     resp = handler.update_category(
         _category_item_event("PATCH", body='{"name": "Nest Egg", "bucket": "Savings"}'), repo, budget)
@@ -356,7 +364,7 @@ def test_update_budgeted_category_to_non_savings_bucket_unaffected(handler):
     # A budgeted category can still be re-bucketed to any NON-Savings bucket — the guard
     # must not over-reach and block ordinary edits of a budgeted category.
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(budgets={"coffee": {"target": 58}})
+    budget = budget_repo({"coffee": {"target": 58}})
 
     resp = handler.update_category(
         _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Lifestyle"}'), repo, budget)
@@ -371,39 +379,42 @@ def test_update_rebucket_to_income_clears_rollover(handler):
     # The target itself is kept (an Income budget is a valid earn-target) — that is
     # clear_rollover's job, tested at the repo level; here we prove the cascade fires.
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(budgets={"coffee": {"target": 58}})
+    budget = budget_repo({"coffee": {"target": 58, **_ROLLOVER}})
 
     resp = handler.update_category(
         _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Income"}'), repo, budget)
 
     assert resp["statusCode"] == 200
-    assert budget.clear_rollover_calls == ["coffee"]
+    assert stored_budgets(budget) == {"coffee": {"target": 58}}   # rollover stripped, target kept
 
 
 def test_update_within_spend_bucket_does_not_clear_rollover(handler):
     # A plain edit that stays in a spend bucket (Living) must NOT clear rollover — the buffer
     # is still valid. Fail-on-revert: gating the cascade on "any edit" would wrongly wipe it.
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(budgets={"coffee": {"target": 58}})
+    budget = budget_repo({"coffee": {"target": 58, **_ROLLOVER}})
 
     resp = handler.update_category(_category_item_event("PATCH"), repo, budget)  # bucket "Living"
 
     assert resp["statusCode"] == 200
-    assert budget.clear_rollover_calls == []
+    assert stored_budgets(budget) == {"coffee": {"target": 58, **_ROLLOVER}}
 
 
 def test_update_rebucket_clear_rollover_is_best_effort(handler):
     # The clear is best-effort (category-first, like the delete cascade): a version race or
     # DB fault must not fail the bucket edit — a stale anchor is inert while non-spend and
-    # recoverable, never corruption. Armed to raise VersionConflictError; still 200.
+    # recoverable, never corruption. Every write loses its version race, so the real repository
+    # raises VersionConflictError; still 200.
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(raises=handler.VersionConflictError("contention"))
+    budget = budget_repo({"coffee": {"target": 58, **_ROLLOVER}})
+    budget._table.always_race()
 
     resp = handler.update_category(
         _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Income"}'), repo, budget)
 
     assert resp["statusCode"] == 200
-    assert budget.clear_rollover_calls == ["coffee"]  # it attempted the clear
+    assert budget._table.update_calls != []                   # it attempted the clear
+    assert "rollover" in stored_budgets(budget)["coffee"]     # which lost the race
     assert repo.update_calls == [("coffee", "Coffee", "Income", "tag")]  # the re-bucket stuck
 
 
@@ -411,37 +422,44 @@ def test_update_rebucket_to_income_clears_the_bill_spread_too(handler):
     # A bill spread is spend-only like rollover (WHIT-504): moving the category to Income
     # strips it, so a stale plan can't keep adjusting a spendable on a later move back.
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(budgets={"coffee": {"target": 58, "spread_amount": 100}})
+    budget = budget_repo({"coffee": {"target": 58, **_SPREAD}})
 
     resp = handler.update_category(
         _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Income"}'), repo, budget)
 
     assert resp["statusCode"] == 200
-    assert budget.clear_spread_calls == ["coffee"]
+    assert stored_budgets(budget) == {"coffee": {"target": 58}}
 
 
 def test_update_within_spend_bucket_does_not_clear_the_bill_spread(handler):
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(budgets={"coffee": {"target": 58, "spread_amount": 100}})
+    budget = budget_repo({"coffee": {"target": 58, **_SPREAD}})
 
     resp = handler.update_category(_category_item_event("PATCH"), repo, budget)  # bucket "Living"
 
     assert resp["statusCode"] == 200
-    assert budget.clear_spread_calls == []
+    assert stored_budgets(budget) == {"coffee": {"target": 58, **_SPREAD}}
 
 
 def test_update_rebucket_still_attempts_the_spread_clear_when_the_rollover_clear_fails(handler):
     # Each clear is its own best-effort attempt: a failing rollover clear must not skip the
-    # spread clear (or vice-versa), and neither may fail the bucket edit.
+    # spread clear (or vice-versa), and neither may fail the bucket edit. The rollover clear
+    # runs first; only that first write fails (a DB fault), so the spread clear must still land.
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(raises=handler.VersionConflictError("contention"))
+    budget = budget_repo({"coffee": {"target": 58, **_ROLLOVER, **_SPREAD}})
+    writes = []
+
+    def first_write(key):
+        writes.append(key)
+        return len(writes) == 1
+
+    budget._table.fail("update_item", when=first_write)
 
     resp = handler.update_category(
         _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Income"}'), repo, budget)
 
     assert resp["statusCode"] == 200
-    assert budget.clear_rollover_calls == ["coffee"]
-    assert budget.clear_spread_calls == ["coffee"]
+    assert stored_budgets(budget) == {"coffee": {"target": 58, **_ROLLOVER}}   # spread cleared
 
 
 def test_update_rebucket_to_savings_with_zero_target_still_rejected(handler):
@@ -450,14 +468,14 @@ def test_update_rebucket_to_savings_with_zero_target_still_rejected(handler):
     # never stranding even a $0 phantom. (The client treats 0 as "no budget", so the server
     # is deliberately the stricter side.) Fail-on-revert: drop the guard and this 200s.
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(budgets={"coffee": {"target": 0}})
+    budget = budget_repo({"coffee": {"target": 0}})
 
     resp = handler.update_category(
         _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Savings"}'), repo, budget)
 
     assert resp["statusCode"] == 400
     assert repo.update_calls == []
-    assert budget.delete_calls == []
+    assert stored_budgets(budget) == {"coffee": {"target": 0}}
 
 
 def test_update_dispatch_rejects_rebucket_to_savings_when_budgeted(handler, monkeypatch):
@@ -468,7 +486,7 @@ def test_update_dispatch_rejects_rebucket_to_savings_when_budgeted(handler, monk
     repo = FakeCategoryRepo()
     monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
     monkeypatch.setattr(
-        handler, "BudgetRepository", lambda: FakeBudgetRepo(budgets={"coffee": {"target": 58}}))
+        handler, "BudgetRepository", lambda: budget_repo({"coffee": {"target": 58}}))
 
     resp = handler.lambda_handler(
         _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Savings"}'), None)
@@ -482,19 +500,19 @@ def test_update_dispatch_rejects_rebucket_to_savings_when_budgeted(handler, monk
 
 def test_delete_success(handler):
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo()
+    budget = budget_repo({"coffee": {"target": 58}})
 
     resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget)
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"id": "coffee"}
     assert repo.delete_calls == ["coffee"]
-    assert budget.delete_calls == ["coffee"]           # WHIT-73: cascade the target
+    assert stored_budgets(budget) == {}                # WHIT-73: cascade the target
 
 
 def test_delete_missing_id_returns_404(handler):
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo()
+    budget = budget_repo({"coffee": {"target": 58}})
     event = _category_item_event("DELETE", body=None)
     event["pathParameters"] = {}
 
@@ -502,42 +520,46 @@ def test_delete_missing_id_returns_404(handler):
 
     assert resp["statusCode"] == 404
     assert repo.delete_calls == []
-    assert budget.delete_calls == []                   # nothing deleted -> no cascade
+    assert stored_budgets(budget) == {"coffee": {"target": 58}}   # nothing deleted -> no cascade
 
 
 def test_delete_unknown_id_returns_404(handler):
     repo = FakeCategoryRepo(not_found_exc=handler.CategoryNotFoundError)
-    budget = FakeBudgetRepo()
+    budget = budget_repo({"coffee": {"target": 58}})
 
     resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget)
 
     assert resp["statusCode"] == 404
     # Category delete failed -> the cascade must NOT run (never touch the budget of a
     # category that still exists).
-    assert budget.delete_calls == []
+    assert stored_budgets(budget) == {"coffee": {"target": 58}}
 
 
 def test_delete_cascade_conflict_is_best_effort(handler):
     # A version conflict on the cascade must NOT fail the delete — the category is
     # already gone; the orphan just persists (today's behaviour). Returns 200.
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(raises=handler.VersionConflictError("contention"))
+    budget = budget_repo({"coffee": {"target": 58}})
+    budget._table.always_race()          # every write loses → VersionConflictError
 
     resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget)
 
     assert resp["statusCode"] == 200
-    assert budget.delete_calls == ["coffee"]
+    assert budget._table.update_calls != []                       # the cascade was attempted
+    assert stored_budgets(budget) == {"coffee": {"target": 58}}   # and the orphan persists
 
 
 def test_delete_cascade_db_error_is_best_effort(handler):
     # Same tolerance for a DB fault surfaced as DatabaseError by handle_database_error
     # (WHIT-127): the narrowed cascade catch must still swallow it and return 200.
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(raises=handler.DatabaseError("Database delete budget failed"))
+    budget = budget_repo({"coffee": {"target": 58}})
+    budget._table.fail("update_item")    # a throttle → the repository raises DatabaseError
 
     resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget)
 
     assert resp["statusCode"] == 200
+    assert budget._table.update_calls != []                       # the cascade was attempted
 
 
 def test_delete_cascade_non_db_runtimeerror_is_not_swallowed(handler):
@@ -546,7 +568,8 @@ def test_delete_cascade_non_db_runtimeerror_is_not_swallowed(handler):
     # be masked as a best-effort 200 — it propagates (→ Lambda 500) so the bug
     # surfaces. Fail-on-revert: widening the catch back to RuntimeError reddens this.
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(raises=RuntimeError("bug: not a DB error"))
+    budget = budget_repo({"coffee": {"target": 58}})
+    budget._table.fail("update_item", error=RuntimeError("bug: not a DB error"))
 
     with pytest.raises(RuntimeError, match="bug"):
         handler.delete_category(_category_item_event("DELETE", body=None), repo, budget)
@@ -554,7 +577,7 @@ def test_delete_cascade_non_db_runtimeerror_is_not_swallowed(handler):
 
 def test_delete_dispatch(handler, monkeypatch):
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo()
+    budget = budget_repo({"coffee": {"target": 58}})
     monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
     monkeypatch.setattr(handler, "BudgetRepository", lambda: budget)
 
@@ -562,7 +585,7 @@ def test_delete_dispatch(handler, monkeypatch):
 
     assert resp["statusCode"] == 200
     assert repo.delete_calls == ["coffee"]
-    assert budget.delete_calls == ["coffee"]           # route wires the cascade
+    assert stored_budgets(budget) == {}                # route wires the cascade
 
 
 def test_repo_create_on_empty_table_preserves_seeds(handler):
@@ -673,7 +696,7 @@ def test_create_version_conflict_returns_409(handler, monkeypatch):
             raise handler.VersionConflictError("boom")
 
     monkeypatch.setattr(handler, "CategoryRepository", lambda: ConflictingRepo())
-    monkeypatch.setattr(handler, "BudgetRepository", lambda: FakeBudgetRepo())
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: budget_repo())
 
     resp = handler.lambda_handler(_categories_event(), None)
 
@@ -967,7 +990,7 @@ def test_create_passes_parent_through(handler):
 
     resp = handler.create_category(
         _categories_event('{"name": "Parking", "bucket": "Living", "icon": "car", "parent": "transport"}'),
-        repo, FakeBudgetRepo())
+        repo, budget_repo())
 
     assert resp["statusCode"] == 201
     assert repo.create_parents == ["transport"]
@@ -977,7 +1000,7 @@ def test_create_passes_parent_through(handler):
 def test_create_without_parent_defaults_to_none(handler):
     repo = FakeCategoryRepo()
 
-    resp = handler.create_category(_categories_event(), repo, FakeBudgetRepo())
+    resp = handler.create_category(_categories_event(), repo, budget_repo())
 
     assert resp["statusCode"] == 201
     assert repo.create_parents == [None]
@@ -988,7 +1011,7 @@ def test_create_invalid_parent_type_400(handler):
 
     resp = handler.create_category(
         _categories_event('{"name": "Parking", "bucket": "Living", "icon": "car", "parent": 5}'),
-        repo, FakeBudgetRepo())
+        repo, budget_repo())
 
     assert resp["statusCode"] == 400
     assert repo.create_calls == []  # never reached the repo
@@ -999,7 +1022,7 @@ def test_create_parent_rejected_by_repo_400(handler):
 
     resp = handler.create_category(
         _categories_event('{"name": "Parking", "bucket": "Living", "icon": "car", "parent": "transport"}'),
-        repo, FakeBudgetRepo())
+        repo, budget_repo())
 
     assert resp["statusCode"] == 400
 
@@ -1010,7 +1033,7 @@ def test_update_omitting_parent_leaves_link_untouched(handler):
     # a stored link.
     repo = FakeCategoryRepo()
 
-    resp = handler.update_category(_category_item_event("PATCH"), repo, FakeBudgetRepo())
+    resp = handler.update_category(_category_item_event("PATCH"), repo, budget_repo())
 
     assert resp["statusCode"] == 200
     assert repo.update_parents == [_UNSET_FAKE]
@@ -1021,7 +1044,7 @@ def test_update_passes_parent_when_present(handler):
 
     resp = handler.update_category(
         _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Living", "parent": "transport"}'),
-        repo, FakeBudgetRepo())
+        repo, budget_repo())
 
     assert resp["statusCode"] == 200
     assert repo.update_parents == ["transport"]
@@ -1032,7 +1055,7 @@ def test_update_explicit_null_parent_detaches(handler):
 
     resp = handler.update_category(
         _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Living", "parent": null}'),
-        repo, FakeBudgetRepo())
+        repo, budget_repo())
 
     assert resp["statusCode"] == 200
     assert repo.update_parents == [None]
@@ -1043,7 +1066,7 @@ def test_update_parent_rejected_by_repo_400(handler):
 
     resp = handler.update_category(
         _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Living", "parent": "transport"}'),
-        repo, FakeBudgetRepo())
+        repo, budget_repo())
 
     assert resp["statusCode"] == 400
 
@@ -1260,7 +1283,7 @@ def test_delete_parent_promotes_children_and_cascades_only_parent_budget(handler
     repository, repo = _repo_with_fake_table(handler)
     repo.list_categories()  # seed
     repo.update_category("groceries", "Groceries", "Living", "cart", parent="transport")
-    budget = FakeBudgetRepo(budgets={"transport": {"target": 100}, "groceries": {"target": 50}})
+    budget = budget_repo({"transport": {"target": 100}, "groceries": {"target": 50}})
 
     resp = handler.delete_category(
         _category_item_event("DELETE", cat_id="transport", body=None), repo, budget)
@@ -1269,7 +1292,7 @@ def test_delete_parent_promotes_children_and_cascades_only_parent_budget(handler
     items = repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]
     assert "transport" not in items
     assert items["groceries"]["parent"] is None   # child promoted, not deleted
-    assert budget.delete_calls == ["transport"]   # only the parent's budget cascaded
+    assert stored_budgets(budget) == {"groceries": {"target": 50}}   # only the parent's budget cascaded
 
 
 def test_create_whitespace_only_parent_400_repo_untouched(handler):
@@ -1278,7 +1301,7 @@ def test_create_whitespace_only_parent_400_repo_untouched(handler):
     repo = FakeCategoryRepo()
     resp = handler.create_category(
         _categories_event('{"name": "Parking", "bucket": "Living", "icon": "car", "parent": "   "}'),
-        repo, FakeBudgetRepo())
+        repo, budget_repo())
     assert resp["statusCode"] == 400
     assert repo.create_calls == []
 
@@ -1289,7 +1312,7 @@ def test_update_whitespace_only_parent_400_repo_untouched(handler):
     repo = FakeCategoryRepo()
     resp = handler.update_category(
         _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Living", "parent": "\\t"}'),
-        repo, FakeBudgetRepo())
+        repo, budget_repo())
     assert resp["statusCode"] == 400
     assert repo.update_parents == []  # never reached the repo
 
@@ -1300,7 +1323,7 @@ def test_create_parent_is_trimmed_before_storage(handler):
     repo = FakeCategoryRepo()
     resp = handler.create_category(
         _categories_event('{"name": "Parking", "bucket": "Living", "icon": "car", "parent": "  transport  "}'),
-        repo, FakeBudgetRepo())
+        repo, budget_repo())
     assert resp["statusCode"] == 201
     assert repo.create_parents == ["transport"]  # trimmed, not "  transport  "
 
@@ -1313,7 +1336,7 @@ def test_create_parent_is_trimmed_before_storage(handler):
 #   [gap7] the same-parent no-op re-parent (no double-count on legal chains; and the
 #          adversarial contrast on a grandfathered over-deep chain);
 #   [gap8] a LONG corrupt down-cycle still terminating with a decision.
-# Reuses _repo_with_fake_table / FakeCategoryRepo / FakeBudgetRepo / event builders.
+# Reuses _repo_with_fake_table / FakeCategoryRepo / budget_repo / event builders.
 
 
 def test_handler_create_depth_breach_surfaces_plain_message_400(handler):
@@ -1330,7 +1353,7 @@ def test_handler_create_depth_breach_surfaces_plain_message_400(handler):
 
     resp = handler.create_category(
         _categories_event('{"name": "L6", "bucket": "Living", "icon": "car", "parent": "l5"}'),
-        repo, FakeBudgetRepo())
+        repo, budget_repo())
 
     assert resp["statusCode"] == 400
     assert "5 levels" in json.loads(resp["body"])["error"]
@@ -1350,7 +1373,7 @@ def test_handler_update_depth_breach_surfaces_plain_message_400(handler):
     resp = handler.update_category(
         _category_item_event("PATCH", cat_id="groceries",
             body='{"name": "Groceries", "bucket": "Living", "icon": "cart", "parent": "l4"}'),
-        repo, FakeBudgetRepo())
+        repo, budget_repo())
 
     assert resp["statusCode"] == 400  # 4 + 2 = 6 rejected
     assert "5 levels" in json.loads(resp["body"])["error"]
@@ -1546,7 +1569,7 @@ def test_deleting_an_over_wide_parent_returns_400_not_a_crash(handler):
     _parent_with_children(repo, repository, 123)
 
     resp = handler.delete_category(_category_item_event("DELETE", body=None),
-                                   repo, FakeBudgetRepo())
+                                   repo, budget_repo())
 
     assert resp["statusCode"] == 400
     assert "move some out" in json.loads(resp["body"])["error"]
@@ -1940,7 +1963,7 @@ def test_the_delete_400_names_a_fix_the_user_can_actually_carry_out(handler):
     _parent_with_children(repo, repository, frontier + 2)
     event = _category_item_event("DELETE", body=None)
 
-    refused = handler.delete_category(event, repo, FakeBudgetRepo())
+    refused = handler.delete_category(event, repo, budget_repo())
     assert refused["statusCode"] == 400
     message = json.loads(refused["body"])["error"]
     assert "coffee" in message and "move some out" in message
@@ -1951,10 +1974,10 @@ def test_the_delete_400_names_a_fix_the_user_can_actually_carry_out(handler):
                                  body=json.dumps({"name": f"Kid {index}",
                                                   "bucket": "Lifestyle",
                                                   "parent": None})),
-            repo, FakeBudgetRepo())
+            repo, budget_repo())
         assert moved["statusCode"] == 200, moved["body"]
 
-    allowed = handler.delete_category(event, repo, FakeBudgetRepo())
+    allowed = handler.delete_category(event, repo, budget_repo())
 
     assert allowed["statusCode"] == 200
     stored = repo._table.store[_CFG]["items"]
@@ -1968,12 +1991,12 @@ def test_a_refused_delete_does_not_cascade_delete_the_budget(handler):
     category that is still there. The 400 is raised before the cascade — pin it."""
     repository, repo = _repo_with_fake_table(handler)
     _parent_with_children(repo, repository, _UNDELETABLY_WIDE)
-    budgets = FakeBudgetRepo(budgets={"coffee": {"target": Decimal(100)}})
+    budgets = budget_repo({"coffee": {"target": Decimal(100)}})
 
     resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budgets)
 
     assert resp["statusCode"] == 400
-    assert budgets.delete_calls == []
+    assert stored_budgets(budgets) == {"coffee": {"target": Decimal(100)}}
 
 
 def test_the_create_and_reparent_refusals_reach_the_client_as_400s(handler):
@@ -1988,7 +2011,7 @@ def test_the_create_and_reparent_refusals_reach_the_client_as_400s(handler):
     posted = handler.create_category(
         _categories_event(json.dumps({"name": "Wine", "bucket": "Lifestyle",
                                       "icon": "glass", "parent": "coffee"})),
-        repo, FakeBudgetRepo())
+        repo, budget_repo())
     assert posted["statusCode"] == 400
     assert "sub-categories" in json.loads(posted["body"])["error"]
 
@@ -1996,7 +2019,7 @@ def test_the_create_and_reparent_refusals_reach_the_client_as_400s(handler):
         _category_item_event("PATCH", cat_id="loner",
                              body=json.dumps({"name": "Loner", "bucket": "Lifestyle",
                                               "parent": "coffee"})),
-        repo, FakeBudgetRepo())
+        repo, budget_repo())
     assert patched["statusCode"] == 400
     assert "sub-categories" in json.loads(patched["body"])["error"]
 

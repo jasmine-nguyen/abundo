@@ -44,8 +44,7 @@ What it does NOT lock, and this file does:
           owns "no rule is offered"; this owns "and no count lies". Before the fix this fixture
           previewed 2 while the rule filed 3.
 
-Reuses the shared paged date-index fake (_feed_fakes), so this suite is registered in the
-`feed` domain tuple of tests/shared/test_fakes_invariants.py.
+Runs the real repositories over the shared FakeTable (_feed_fakes.real_repos).
 """
 
 import json

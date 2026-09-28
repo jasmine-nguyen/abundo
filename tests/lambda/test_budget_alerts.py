@@ -14,7 +14,8 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
-from _budget_alert_fakes import FakeNotifyRepo
+from _budget_alert_fakes import claimed_meanwhile, fail_nth_write, notify_repo, released_markers
+from _dynamo_fakes import _client_error
 
 # Cycle: last_pay_date 2026-07-01, length 14, pinned "today" 2026-07-14 →
 # window [2026-07-01, 2026-07-14]. All test transactions are dated inside it.
@@ -99,7 +100,7 @@ def _run(alerts, monkeypatch, *, budgets, before, normalised, tokens=("ExpoPushT
         return {"sent": len(list(toks)), "ok": send_ok, "pruned": []}
 
     monkeypatch.setattr(ba, "send_push", fake_send)
-    notify = notify or FakeNotifyRepo()
+    notify = notify or notify_repo()
     webhook_repo = webhook_repo or NoTwinRepo()
     ctx = ba.capture_pre_write(
         normalised,
@@ -153,7 +154,7 @@ def test_crossing_push_carries_budget_deeplink_data(alerts, monkeypatch):
     ba.fire_budget_alerts(
         ctx, [new], webhook_repo=NoTwinRepo(),
         category_repo=FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
-        notify_repo=FakeNotifyRepo(),
+        notify_repo=notify_repo(),
     )
     assert captured == [{"type": "budget", "category": "groceries"}]
 
@@ -313,7 +314,7 @@ def test_spend_alert_still_fires_alongside_an_excluded_income_target(alerts, mon
 
 
 def test_debounce_blocks_a_second_event_same_threshold(alerts, monkeypatch):
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     notify.mark_fired("2026-07-01", 14, "groceries#80")  # already fired this cycle
     before = [_txn("old", "groceries", -70, "posted")]
     new = _txn("new1", "groceries", -15, "posted")
@@ -323,7 +324,7 @@ def test_debounce_blocks_a_second_event_same_threshold(alerts, monkeypatch):
 
 
 def test_new_cycle_rearms_the_alert(alerts, monkeypatch):
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     notify.mark_fired("2026-07-01", 14, "groceries#80")  # fired in a PRIOR cycle
     before = [_txn("old", "groceries", -70, "posted")]
     new = _txn("new1", "groceries", -15, "posted")
@@ -376,7 +377,7 @@ def test_primary_already_fired_repairs_secondary_without_a_new_send(alerts, monk
     # missing (e.g. it crossed both at once but only 100% was marked before a crash).
     # A re-ingest that re-detects the double crossing must repair the 80% marker
     # WITHOUT sending again — the `send_marker in fired` branch treats it as landed.
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     notify.mark_fired("2026-07-01", 14, "groceries#100")  # delivered earlier
     new = _txn("new1", "groceries", -100, "posted")
     sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
@@ -393,12 +394,12 @@ def test_budget_send_failure_retries_at_the_next_delivery(alerts, monkeypatch):
     new = _txn("new1", "groceries", -15, "posted")
 
     # Delivery 1: Expo down. $70 → $85 reaches 80% → attempted, claim released.
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     before_lagging = [_txn("old", "groceries", -70, "posted")]
     sent1, notify, _ = _run(alerts, monkeypatch, budgets=budgets,
                             before=before_lagging, normalised=[new], notify=notify, send_ok=0)
     assert len(sent1) == 1 and notify.fired_markers("2026-07-01", 14) == set()
-    assert notify.released == ["groceries#80"]
+    assert released_markers(notify) == ["groceries#80"]
 
     # Delivery 2: the GSI has caught up ($85 already stored). Still at 80%, still unmarked → retried.
     before_caught_up = [_txn("old", "groceries", -70, "posted"), _txn("new1", "groceries", -15, "posted")]
@@ -423,7 +424,7 @@ def test_combined_push_that_fails_releases_every_claim(alerts, monkeypatch):
                            cats=cats, send_ok=0)
     assert len(sent) == 1                                               # one combined attempt
     assert notify.fired_markers("2026-07-01", 14) == set()
-    assert sorted(notify.released) == ["dining#80", "groceries#80"]
+    assert sorted(released_markers(notify)) == ["dining#80", "groceries#80"]
 
 
 def test_budget_fully_pruned_ok_zero_leaves_unmarked(alerts, monkeypatch):
@@ -440,7 +441,7 @@ def test_budget_fully_pruned_ok_zero_leaves_unmarked(alerts, monkeypatch):
         return {"sent": len(toks), "ok": 0, "pruned": toks}  # all dead tokens
 
     monkeypatch.setattr(ba, "send_push", fake_send)
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     webhook_repo = NoTwinRepo()
     before = [_txn("old", "groceries", -70, "posted")]
     new = _txn("new1", "groceries", -15, "posted")            # -> $85, crosses 80%
@@ -461,7 +462,7 @@ def test_higher_send_fails_leaves_100_eligible_with_lower_fired(alerts, monkeypa
     # 100% but that send fails (ok == 0). The `continue` must run BEFORE the secondary
     # loop, so NO groceries#100 marker is written — 100% stays eligible to retry within
     # GSI lag, and the stale 80% marker is untouched. Fail-on-revert writes groceries#100.
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     notify.mark_fired("2026-07-01", 14, "groceries#80")       # 80% delivered earlier
     before = [_txn("old", "groceries", -85, "posted")]        # already past 80%
     new = _txn("new1", "groceries", -20, "posted")            # -> $105, crosses 100%
@@ -477,7 +478,7 @@ def test_claim_precedes_send_and_lower_marks_follow_it(alerts, monkeypatch):
     ba = alerts.budget_alerts
     order = []
     monkeypatch.setattr(ba, "send_push", lambda *a, **k: (order.append("send"), {"sent": 1, "ok": 1, "pruned": []})[1])
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     original_claim, original_mark = notify.claim_fired, notify.mark_fired
     notify.claim_fired = lambda *a: (order.append("claim"), original_claim(*a))[1]
     notify.mark_fired = lambda *a: (order.append("mark"), original_mark(*a))[1]
@@ -538,7 +539,7 @@ def test_fire_budget_alerts_ignores_a_none_context(alerts, monkeypatch):
     ba = alerts.budget_alerts
     monkeypatch.setattr(ba, "send_push", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no send")))
     ba.fire_budget_alerts(None, [], webhook_repo=NoTwinRepo(),
-                       category_repo=FakeCategoryRepo([]), notify_repo=FakeNotifyRepo())  # no raise
+                       category_repo=FakeCategoryRepo([]), notify_repo=notify_repo())  # no raise
 
 
 # --- the webhook straddle is best-effort: an alert failure never breaks the write --
@@ -736,7 +737,7 @@ def test_already_over_but_never_warned_fires_once_then_stays_quiet(alerts, monke
     # (before < line <= after) and the first run is silent.
     before = [_txn("old", "groceries", -85, "posted")]
     more = _txn("new1", "groceries", -5, "posted")
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     sent1, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
                             before=before, normalised=[more], notify=notify)
     assert [title for title, _, _ in sent1] == ["Heads up \U0001f440"]
@@ -861,7 +862,7 @@ def test_window_read_accumulates_every_cursor_page(alerts, monkeypatch):
     assert len(ctx["before_rows"]) == 2  # both pages accumulated
     ba.fire_budget_alerts(ctx, [new], webhook_repo=NoTwinRepo(),
                        category_repo=FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
-                       notify_repo=FakeNotifyRepo())
+                       notify_repo=notify_repo())
     assert len(sent) == 1
 
 
@@ -918,7 +919,7 @@ def test_stale_prior_cycle_marker_does_not_suppress_this_cycle(alerts, monkeypat
     # code keyed on the raw payday, so it read that stale marker and stayed silent.
     before = [_txn("old", "groceries", -70, "posted")]
     new = _txn("new1", "groceries", -15, "posted")
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     notify.mark_fired("2026-06-04", 14, "groceries#80")   # stale marker under the raw payday
     sent, notify, ctx = _run(alerts, monkeypatch,
                              budgets={"groceries": {"target": Decimal("100")}},
@@ -1190,7 +1191,7 @@ def test_parent_marker_is_parent_keyed_across_different_leaves(alerts, monkeypat
     #          DIFFERENT leaf crosses the parent again -> suppressed (no second push).
     #   run B: only fuel#80 present (a leaf marker); the parent crossing on fuel spend
     #          still fires car#80 -> proves the marker is parent-keyed, not leaf-keyed.
-    notify_a = FakeNotifyRepo()
+    notify_a = notify_repo()
     notify_a.mark_fired("2026-07-01", 14, "car#80")               # parent already alerted
     sent_a, notify_a, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
                                before=[_txn("old", "fuel", -70, "posted")],
@@ -1198,7 +1199,7 @@ def test_parent_marker_is_parent_keyed_across_different_leaves(alerts, monkeypat
                                cats=_CAR_TREE, notify=notify_a)
     assert sent_a == []                                          # parent marker debounces
 
-    notify_b = FakeNotifyRepo()
+    notify_b = notify_repo()
     notify_b.mark_fired("2026-07-01", 14, "fuel#80")             # a LEAF marker, not the parent
     sent_b, notify_b, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
                                before=[_txn("old", "fuel", -70, "posted")],
@@ -1378,7 +1379,7 @@ def test_skewed_pair_stays_silent_on_every_resend_of_the_settled_row(alerts, rep
                         category="groceries", date="2026-07-14", authorized_date="2026-07-10",
                         description="SQ *KKV INTERNATIONAL PTY Sunshine",
                         merchant_name="SQ *KKV INTERNATIONAL PTY ")
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     budgets = {"groceries": {"target": Decimal("100")}}
 
     all_sent = []
@@ -1809,7 +1810,7 @@ def test_whit545_preview_buckets_a_settlement_under_the_landed_category(alerts, 
     ba.fire_budget_alerts(
         ctx, [posted], webhook_repo=repo,
         category_repo=FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
-        notify_repo=FakeNotifyRepo())
+        notify_repo=notify_repo())
 
     assert len(sent) == 1
     assert sent[0][1] == "Groceries is at 80% of its budget this cycle."
@@ -1847,10 +1848,12 @@ def test_a_claim_lost_to_an_overlapping_delivery_sends_nothing(alerts, monkeypat
     # Two feeds sync on the same tick; the other delivery claimed the marker first.
     # Fail-on-revert: send without claiming (read-then-mark) → a second, duplicate push.
     before = [_txn("old", "groceries", -90, "posted")]
+    notify = notify_repo()
+    notify._table.fail("update_item", error=_client_error("ConditionalCheckFailedException"))
     sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
-                           before=before, normalised=[], notify=FakeNotifyRepo(lose_claims=True))
+                           before=before, normalised=[], notify=notify)
     assert sent == []
-    assert notify.released == []
+    assert released_markers(notify) == []
 
 
 def test_combined_push_names_three_budgets_then_counts_the_rest(alerts, monkeypatch):
@@ -1875,7 +1878,7 @@ def test_combined_push_opens_the_app_not_one_budget(alerts, monkeypatch):
                                paycycle_repo=FakePaycycleRepo(), window_repo=FakeWindowRepo(before),
                                webhook_repo=NoTwinRepo())
     ba.fire_budget_alerts(ctx, [], webhook_repo=NoTwinRepo(), category_repo=FakeCategoryRepo(cats),
-                          notify_repo=FakeNotifyRepo())
+                          notify_repo=notify_repo())
     assert pushed == [{"type": "budget"}]
 
 
@@ -1889,7 +1892,7 @@ def test_one_budget_already_warned_leaves_a_single_budget_push_with_its_deep_lin
     cats = [{"id": "groceries", "name": "Groceries"}, {"id": "coffee", "name": "Coffee"}]
     budgets = {"groceries": {"target": Decimal("100")}, "coffee": {"target": Decimal("50")}}
     before = [_txn("g", "groceries", -90, "posted"), _txn("c", "coffee", -45, "posted")]
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     notify.mark_fired("2026-07-01", 14, "coffee#80")
     ctx = ba.capture_pre_write([], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo(budgets),
                                paycycle_repo=FakePaycycleRepo(), window_repo=FakeWindowRepo(before),
@@ -1903,36 +1906,12 @@ def test_a_new_cycle_key_warns_an_already_over_budget_again(alerts, monkeypatch)
     # Editing the payday changes the cycle key, so the markers start empty and a budget
     # already over warns once more under the new cycle. Documented, accepted behaviour.
     before = [_txn("old", "groceries", -90, "posted")]
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     notify.mark_fired("2026-06-17", 14, "groceries#80")               # the old cycle's marker
     sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
                            before=before, normalised=[], notify=notify)
     assert len(sent) == 1
     assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}
-
-
-class _RaisingNotifyRepo(FakeNotifyRepo):
-    """Raises `error` on the Nth claim or release, to drive the partial-failure paths."""
-
-    def __init__(self, error, fail_claim_number=None, fail_release_number=None):
-        super().__init__()
-        self._error = error
-        self._fail_claim_number = fail_claim_number
-        self._fail_release_number = fail_release_number
-        self._claims = 0
-        self._releases = 0
-
-    def claim_fired(self, cycle_start, length, marker):
-        self._claims += 1
-        if self._claims == self._fail_claim_number:
-            raise self._error("throttled")
-        return super().claim_fired(cycle_start, length, marker)
-
-    def release_fired(self, cycle_start, length, marker):
-        self._releases += 1
-        if self._releases == self._fail_release_number:
-            raise self._error("throttled")
-        super().release_fired(cycle_start, length, marker)
 
 
 _THREE_OVER = {
@@ -1946,12 +1925,13 @@ def test_a_claim_that_raises_releases_the_earlier_claims(alerts, monkeypatch):
     # The 2nd claim is throttled: nothing is sent and the 1st claim must be released, or that
     # budget stays silent all cycle. Fail-on-revert: drop the except-release → 1st stays claimed.
     import repository_errors
-    notify = _RaisingNotifyRepo(repository_errors.DatabaseError, fail_claim_number=2)
+    notify = notify_repo()
+    fail_nth_write(notify, "ADD", 2)
     with pytest.raises(repository_errors.DatabaseError):
         _run(alerts, monkeypatch, budgets=_THREE_OVER["budgets"], before=_THREE_OVER["before"],
              normalised=[], cats=_THREE_OVER["cats"], notify=notify)
     assert notify.fired_markers("2026-07-01", 14) == set()
-    assert len(notify.released) == 1
+    assert len(released_markers(notify)) == 1
 
 
 class _ReadTimeoutError(OSError):
@@ -1963,38 +1943,18 @@ class _ReadTimeoutError(OSError):
 def test_one_failed_release_does_not_strand_the_others(alerts, monkeypatch, error_name):
     # A combined push that didn't land: the 1st release is throttled (or times out), the rest
     # still release. Fail-on-revert: a bare loop, or catching only DatabaseError, strands claims.
-    import repository_errors
-    error = {"DatabaseError": repository_errors.DatabaseError, "ReadTimeoutError": _ReadTimeoutError}[error_name]
-    notify = _RaisingNotifyRepo(error, fail_release_number=1)
+    # A throttle ClientError reaches budget_alerts as the repository's DatabaseError.
+    error = {"DatabaseError": None, "ReadTimeoutError": _ReadTimeoutError("read timed out")}[error_name]
+    notify = notify_repo()
+    fail_nth_write(notify, "DELETE", 1, error)
     sent, notify, _ = _run(alerts, monkeypatch, budgets=_THREE_OVER["budgets"], before=_THREE_OVER["before"],
                            normalised=[], cats=_THREE_OVER["cats"], notify=notify, send_ok=0)
     assert len(sent) == 1
-    assert len(notify.released) == 2
+    assert len(released_markers(notify)) == 3                 # every claim's release was attempted
     assert len(notify.fired_markers("2026-07-01", 14)) == 1   # only the failed release is left behind
 
 
 # --- WHIT-577 gaps (qa): send failures, partial claim loss, empty deliveries ------------------
-
-
-class _StaleSnapshotNotifyRepo(FakeNotifyRepo):
-    """Counts claims, and hides markers another in-flight delivery claimed AFTER this
-    delivery's snapshot read (`pre_claimed`)."""
-
-    def __init__(self, *, pre_claimed=()):
-        super().__init__()
-        self.claim_calls = 0
-        self._pre_claimed = set(pre_claimed)
-
-    def fired_markers(self, cycle_start, length):
-        return super().fired_markers(cycle_start, length) - self._pre_claimed
-
-    def claim_fired(self, cycle_start, length, marker):
-        self.claim_calls += 1
-        return super().claim_fired(cycle_start, length, marker)
-
-
-
-
 
 
 def test_send_that_raises_releases_its_claim(alerts, monkeypatch):
@@ -2003,7 +1963,7 @@ def test_send_that_raises_releases_its_claim(alerts, monkeypatch):
         raise RuntimeError("push blew up")
 
     ba = alerts.budget_alerts
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     before = [_txn("old", "groceries", -90, "posted")]
     ctx = ba.capture_pre_write([], device_repo=FakeDeviceRepo(),
                                budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
@@ -2021,7 +1981,7 @@ def test_no_80_nag_after_100_already_sent(alerts, monkeypatch):
     # groceries#100 landed but its 80 mark was lost; a refund drops spend to $85. An 80%
     # "Heads up" after "Budget hit" would be backwards. Fail-on-revert: check only the exact
     # marker → the 80% push goes out.
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     notify.mark_fired("2026-07-01", 14, "groceries#100")
     before = [_txn("old", "groceries", -105, "posted")]
     refund = _txn("r1", "groceries", 20, "posted")
@@ -2033,15 +1993,15 @@ def test_no_80_nag_after_100_already_sent(alerts, monkeypatch):
 def test_failed_push_never_releases_a_claim_another_delivery_owns(alerts, monkeypatch):
     # Overlapping deliveries: another delivery claimed coffee#100 after this one's snapshot.
     # This one's combined push fails and must release ONLY its own two claims.
-    notify = _StaleSnapshotNotifyRepo(pre_claimed={"coffee#100"})
-    notify.store[("2026-07-01", 14)] = {"coffee#100"}
+    notify = notify_repo()
+    claimed_meanwhile(notify, "2026-07-01", 14, "coffee#100")
     before = [_txn("a", "alpha", -90, "posted"), _txn("b", "bravo", -90, "posted"),
               _txn("c", "coffee", -110, "posted")]
     sent, notify, _ = _run(alerts, monkeypatch, budgets=_THREE_OVER["budgets"], before=before, normalised=[],
                            cats=_THREE_OVER["cats"], notify=notify, send_ok=0)
     assert [title for title, _, _ in sent] == ["2 budgets need a look"]
-    assert sorted(notify.released) == ["alpha#80", "bravo#80"]
-    assert notify.store[("2026-07-01", 14)] == {"coffee#100"}
+    assert sorted(released_markers(notify)) == ["alpha#80", "bravo#80"]
+    assert notify.fired_markers("2026-07-01", 14) == {"coffee#100"}
 
 
 def test_single_survivor_of_a_claim_race_gets_its_own_copy(alerts, monkeypatch):
@@ -2051,8 +2011,8 @@ def test_single_survivor_of_a_claim_race_gets_its_own_copy(alerts, monkeypatch):
     pushed = []
     monkeypatch.setattr(ba, "send_push", lambda t, b, toks, data=None:
                         (pushed.append((t, b, data)), {"sent": 1, "ok": 1, "pruned": []})[1])
-    notify = _StaleSnapshotNotifyRepo(pre_claimed={"bravo#80"})
-    notify.store[("2026-07-01", 14)] = {"bravo#80"}
+    notify = notify_repo()
+    claimed_meanwhile(notify, "2026-07-01", 14, "bravo#80")
     before = [_txn("a", "alpha", -110, "posted"), _txn("b", "bravo", -85, "posted")]
     budgets = {"alpha": {"target": Decimal("100")}, "bravo": {"target": Decimal("100")}}
     ctx = ba.capture_pre_write([], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo(budgets),
@@ -2062,19 +2022,20 @@ def test_single_survivor_of_a_claim_race_gets_its_own_copy(alerts, monkeypatch):
                           notify_repo=notify)
     assert pushed == [("Budget hit", "You've spent your whole Alpha budget for this cycle.",
                        {"type": "budget", "category": "alpha"})]
-    assert notify.store[("2026-07-01", 14)] == {"alpha#100", "alpha#80", "bravo#80"}
+    assert notify.fired_markers("2026-07-01", 14) == {"alpha#100", "alpha#80", "bravo#80"}
 
 
 def test_repeat_delivery_skips_claims_for_already_fired_budgets(alerts, monkeypatch):
     # Every budget is over and already warned; each hourly delivery re-checks them, and must
     # not issue a doomed conditional write per budget per delivery.
-    notify = _StaleSnapshotNotifyRepo()
+    notify = notify_repo()
     for cat in ("alpha", "bravo", "coffee"):
         notify.mark_fired("2026-07-01", 14, f"{cat}#80")
+    seeded_writes = len(notify._table.update_calls)
     sent, _, _ = _run(alerts, monkeypatch, budgets=_THREE_OVER["budgets"], before=_THREE_OVER["before"], normalised=[],
                       cats=_THREE_OVER["cats"], notify=notify)
     assert sent == []
-    assert notify.claim_calls == 0
+    assert len(notify._table.update_calls) == seeded_writes   # no claim attempted
 
 
 def test_dataless_delivery_still_runs_the_alert_check(lam, monkeypatch):
