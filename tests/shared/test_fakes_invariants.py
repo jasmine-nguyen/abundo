@@ -1,7 +1,7 @@
 """WHIT-466 — consolidated durable guards on the shared test-fakes modules.
 
 WHIT-440 / WHIT-445 moved each domain's copy-pasted test fakes into ONE module under
-tests/shared/ (``_feed_fakes``, ``_handler_patch_fakes``, ``_paycycle_fakes``,
+tests/shared/ (``_handler_patch_fakes``, ``_paycycle_fakes``,
 ``_category_fakes``, ``_milestone_fakes``, ``_milestone_row_fakes``) so their consuming
 suites import them instead of carrying a copy that could drift. Those refactors each left a
 near-identical guard file behind; WHIT-466 folds all five into this one registry-driven file,
@@ -86,111 +86,6 @@ class _Domain:
 
 
 _REGISTRY = [
-    _Domain(
-        "feed",
-        [_Module("_feed_fakes",
-                 {"ANZ", "SPENDING", "HOMELOAN", "WESTPAC", "_row", "FakeFeedRepo",
-                  "_feed_event", "WritableFeedRepo", "FakeCategoryRepo"})],
-        # WHIT-469 folded test_transactions_feed_gaps.py into the main.
-        # WHIT-500: the uncategorized-count suite reuses FakeFeedRepo for the deep-page case.
-        # The paged uncategorized-feed suite reuses FakeFeedRepo the same way.
-        (_API_TESTS / "test_transactions_feed.py",
-         _API_TESTS / "test_uncategorized_count.py",
-         _API_TESTS / "test_uncategorized_feed.py",
-         _API_TESTS / "test_uncategorized_feed_gaps.py",
-         # WHIT-576: the full-history search reads every account through FakeFeedRepo.
-         _API_TESTS / "test_transaction_search.py",
-         _API_TESTS / "test_transaction_search_gaps.py",
-         _API_TESTS / "test_apply_rules.py",
-         _API_TESTS / "test_apply_rules_gaps.py",
-         _API_TESTS / "test_apply_rules_budget_excluded.py",
-         _API_TESTS / "test_apply_rules_multi_condition.py",
-         _API_TESTS / "test_apply_rules_multi_condition_gaps.py",
-         _API_TESTS / "test_apply_rules_inline_rule.py",
-         _API_TESTS / "test_apply_rules_inline_rule_gaps.py",
-         _API_TESTS / "test_apply_rules_orphan_sweep.py",
-         _API_TESTS / "test_apply_rules_sweep_deleted_target.py",
-         _API_TESTS / "test_apply_rules_job.py",
-         _API_TESTS / "test_apply_rules_worker.py",
-         _API_TESTS / "test_apply_rules_worker_gaps.py",
-         _API_TESTS / "test_apply_rules_write_phase.py",
-         _API_TESTS / "test_rule_refile.py",
-         _API_TESTS / "test_rule_refile_gaps.py",
-         _API_TESTS / "test_rule_refile_budget_excluded.py",
-         _API_TESTS / "test_rule_refile_multi_condition_gaps.py",
-         _API_TESTS / "test_uncategorized_merchants.py",
-         _API_TESTS / "test_uncategorized_merchants_gaps.py",
-         _API_TESTS / "test_filing_suggestions.py",
-         _API_TESTS / "test_filing_suggestions_gaps.py",
-         _API_TESTS / "test_rules_routes.py",
-         _API_TESTS / "test_rules_routes_gaps.py",
-         _API_TESTS / "test_rules_routes_legacy_rows.py",
-         _API_TESTS / "test_rules_routes_budget_excluded.py",
-         _API_TESTS / "test_rules_routes_multi_condition.py",
-         _API_TESTS / "test_rules_routes_multi_condition_gaps.py",
-         _API_TESTS / "test_rules_routes_amount_normalisation.py",
-         _API_TESTS / "test_rules_routes_amount_normalisation_gaps.py",
-         _API_TESTS / "test_rules_routes_or_equal_operators_gaps.py",
-         _API_TESTS / "test_enrichments_routes_removed.py",
-         # WHIT-559: the recurring-bill detector suites reuse _row/ANZ to build charge history.
-         _API_TESTS / "test_recurring_bills.py",
-         _API_TESTS / "test_recurring_bills_gaps.py",
-         # WHIT-569: the nameless direct-debit (description-stem) detector gap suite.
-         _API_TESTS / "test_recurring_bills_nameless_gaps.py",
-         # WHIT-559: the spread-rule route suite seeds charges via _row for the create-time capture.
-         _API_TESTS / "test_rules_routes_spread.py",
-         _API_TESTS / "test_rules_routes_spread_gaps.py",
-         _API_TESTS / "test_apply_rules_spread.py",
-         # WHIT-559 PR2a gap suite: sweep + async-worker auto-spreading edges.
-         _API_TESTS / "test_apply_rules_spread_gaps.py",
-         # WHIT-623 QA: every rule reply drops spreadSeeded.
-         _API_TESTS / "test_rule_reply_shape_gaps.py",
-         # WHIT-623 slice 3 QA: the callers' wiring onto RuleBook.
-         _API_TESTS / "test_rule_book_callers_qa.py"),
-    ),
-    _Domain(
-        "rule",
-        [_Module("_rule_fakes", {"FakeRuleRepo"})],
-        # WHIT-531 repointed apply-rules at RuleRepository; these suites drive FakeRuleRepo. They
-        # ALSO appear in the `feed` domain (they use FakeFeedRepo/FakeCategoryRepo) — allowed: [G1]
-        # checks each domain's owned names independently and the suites only import each fake.
-        (_API_TESTS / "test_apply_rules.py",
-         _API_TESTS / "test_apply_rules_gaps.py",
-         _API_TESTS / "test_apply_rules_budget_excluded.py",
-         _API_TESTS / "test_apply_rules_multi_condition.py",
-         _API_TESTS / "test_apply_rules_multi_condition_gaps.py",
-         _API_TESTS / "test_apply_rules_inline_rule.py",
-         _API_TESTS / "test_apply_rules_inline_rule_gaps.py",
-         _API_TESTS / "test_filing_suggestions.py",
-         _API_TESTS / "test_filing_suggestions_gaps.py",
-         _API_TESTS / "test_apply_rules_repoint_gaps.py",
-         _API_TESTS / "test_apply_rules_orphan_sweep.py",
-         _API_TESTS / "test_apply_rules_sweep_deleted_target.py",
-         _API_TESTS / "test_apply_rules_job.py",
-         _API_TESTS / "test_apply_rules_worker.py",
-         _API_TESTS / "test_apply_rules_worker_gaps.py",
-         _API_TESTS / "test_rule_refile.py",
-         _API_TESTS / "test_rule_refile_gaps.py",
-         _API_TESTS / "test_rule_refile_budget_excluded.py",
-         _API_TESTS / "test_rule_refile_multi_condition_gaps.py",
-         _API_TESTS / "test_rules_routes.py",
-         _API_TESTS / "test_rules_routes_gaps.py",
-         _API_TESTS / "test_rules_routes_legacy_rows.py",
-         _API_TESTS / "test_rules_routes_budget_excluded.py",
-         _API_TESTS / "test_rules_routes_multi_condition.py",
-         _API_TESTS / "test_rules_routes_multi_condition_gaps.py",
-         _API_TESTS / "test_rules_routes_amount_normalisation.py",
-         _API_TESTS / "test_rules_routes_amount_normalisation_gaps.py",
-         _API_TESTS / "test_rules_routes_or_equal_operators_gaps.py",
-         _API_TESTS / "test_enrichments_routes_removed.py",
-         _API_TESTS / "test_rules_routes_spread.py",
-         _API_TESTS / "test_rules_routes_spread_gaps.py",
-         _API_TESTS / "test_apply_rules_spread.py",
-         _API_TESTS / "test_apply_rules_spread_gaps.py",
-         _SHARED_TESTS / "test_rule_fake_contract_gaps.py",
-         _API_TESTS / "test_rule_reply_shape_gaps.py",
-         _API_TESTS / "test_rule_book_callers_qa.py"),
-    ),
     _Domain(
         "handler_patch",
         [_Module("_handler_patch_fakes", {"_UNSET", "FakeRepo", "_patch_event"})],

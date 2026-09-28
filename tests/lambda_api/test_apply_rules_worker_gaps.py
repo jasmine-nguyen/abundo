@@ -11,19 +11,22 @@ progress-every-50, failure, idempotency, inline mint and no-rules. These add the
   * a matched set carrying vanished / write-error / already-filed / changed-back-to-unfiled rows,
     so every outcome bucket (filed/vanished/failed/alreadyFiled) the job reports is real.
 
-Reuses the promoted shared fakes (_feed_fakes / _rule_fakes) via the lambda_api conftest's
-`apply_rules_worker` fixture. FakeJobRepo is a per-file recorder (as in the impl suite): the
-cadence assertions need the ORDERED list of progress writes, which the real repo would overwrite.
+Runs the real TransactionRepository and RuleRepository over one FakeTable (_feed_fakes.real_repos)
+via the lambda_api conftest's `apply_rules_worker` fixture. FakeJobRepo is a per-file recorder (as
+in the impl suite): the cadence assertions need the ORDERED list of progress writes, which the real
+repo would overwrite.
 """
 
 import pytest
 
-from _feed_fakes import SPENDING, _row, WritableFeedRepo, FakeCategoryRepo
-from _rule_fakes import FakeRuleRepo
+from _feed_fakes import (
+    SPENDING, FakeCategoryRepo, fail_writes, real_repos, _row, stored, vanish_on_write,
+)
 
 
-def _rule(value, category_id="groceries", rule_id="r1"):
-    return {"id": rule_id, "field": "description", "operator": "contains", "value": value,
+def _rule(value, category_id="groceries"):
+    # The kwargs of one real RuleRepository.create_rule call.
+    return {"field": "description", "operator": "contains", "value": value,
             "category_id": category_id}
 
 
@@ -51,15 +54,14 @@ class FakeJobRepo:
 
 
 def _wire(worker, monkeypatch, *, transactions, rules, categories=frozenset({"groceries"})):
-    txn_repo = WritableFeedRepo(transactions)
-    rule_repo = FakeRuleRepo(rules=list(rules))
+    table, txn_repo, rule_repo = real_repos(transactions, rules=rules)
     job_repo = FakeJobRepo()
     job_repo.create_job("job1")
     monkeypatch.setattr(worker, "TransactionRepository", lambda: txn_repo)
     monkeypatch.setattr(worker, "CategoryRepository", lambda: FakeCategoryRepo(categories))
     monkeypatch.setattr(worker, "RuleRepository", lambda: rule_repo)
     monkeypatch.setattr(worker, "JobRepository", lambda: job_repo)
-    return txn_repo, job_repo
+    return table, job_repo
 
 
 # --- progress cadence exactness ----------------------------------------------
@@ -68,7 +70,7 @@ def _wire(worker, monkeypatch, *, transactions, rules, categories=frozenset({"gr
 def test_progress_writes_exactly_every_50_over_900_rows(apply_rules_worker, monkeypatch):
     # [A-G1] 900 filed => 1 initial "matched" write + 18 mid-run writes at filed 50,100,...,900.
     worker = apply_rules_worker
-    rows = [_row(SPENDING, "2026-07-01", f"t{i:04d}", description="COLES", category=None)
+    rows = [_row(SPENDING, "2026-07-01", f"t{i:04d}", description="COLES")
             for i in range(900)]
     _, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: rows}, rules=[_rule("COLES")])
 
@@ -87,10 +89,10 @@ def test_progress_writes_exactly_every_50_over_900_rows(apply_rules_worker, monk
 def test_a_run_under_50_writes_only_the_initial_progress_no_mid_writes(apply_rules_worker, monkeypatch):
     # [A-G2] 30 filed (< PROGRESS_EVERY) => only the initial matched write; the bar jumps at finish.
     worker = apply_rules_worker
-    rows = [_row(SPENDING, "2026-07-01", f"t{i:02d}", description="COLES", category=None)
+    rows = [_row(SPENDING, "2026-07-01", f"t{i:02d}", description="COLES")
             for i in range(30)]
-    txn_repo, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: rows},
-                               rules=[_rule("COLES")])
+    table, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: rows},
+                            rules=[_rule("COLES")])
 
     worker.lambda_handler({"jobId": "job1"})
 
@@ -98,7 +100,7 @@ def test_a_run_under_50_writes_only_the_initial_progress_no_mid_writes(apply_rul
     assert len(job_repo.progress_calls) == 1
     assert job_repo.progress_calls[0]["matched"] == 30 and job_repo.progress_calls[0]["filed"] == 0
     # But everything was still filed and the finished counts are complete.
-    assert len(txn_repo.writes) == 30
+    assert len(table.update_calls) == 30
     assert job_repo.jobs["job1"]["filed"] == 30 and job_repo.jobs["job1"]["remaining"] == 0
 
 
@@ -114,17 +116,16 @@ def test_worker_clears_a_500_row_reconcile_tail_the_300_cap_would_leave(apply_ru
                     category="oldcat", filed_by_rule="r_dead") for i in range(500)]
     # A live rule must exist (else the worker returns before the write phase) but it targets COLES,
     # so it matches NONE of the MYER orphans — the only writes are reconcile clears.
-    txn_repo, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: orphans},
-                               rules=[_rule("COLES", rule_id="r_live")])
+    table, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: orphans},
+                            rules=[_rule("COLES")])
 
     result = worker.lambda_handler({"jobId": "job1"})
 
     assert result["status"] == "succeeded"
     # FAIL-ON-REVERT: swap the worker's max_writes=None for APPLY_RULES_MAX_WRITES and this drops to
     # 300 clears with 200 orphans left stamped.
-    assert len(txn_repo.writes) == 500
-    remaining_stamps = [r for rows in txn_repo._rows.values() for r in rows
-                        if r.get("filed_by_rule") == "r_dead"]
+    assert len(table.update_calls) == 500
+    remaining_stamps = [r for r in table.store.values() if r.get("filed_by_rule") == "r_dead"]
     assert remaining_stamps == []          # every orphan stamp cleared, none left behind
     # The reconcile clears are NOT counted as `filed` (they climb `attempted` only, not the bar).
     assert job_repo.jobs["job1"]["filed"] == 0
@@ -143,22 +144,23 @@ def test_worker_counts_filed_vanished_failed_and_alreadyfiled_in_one_sweep(apply
     #   a1     -> changed to a filed category underneath (alreadyFiled=1)
     worker = apply_rules_worker
     rows = [
-        _row(SPENDING, "2026-07-01", "f1", description="COLES", category=None),
-        _row(SPENDING, "2026-07-01", "f2", description="COLES", category=None),
-        _row(SPENDING, "2026-07-01", "v1", description="COLES", category=None),
-        _row(SPENDING, "2026-07-01", "e1", description="COLES", category=None),
+        _row(SPENDING, "2026-07-01", "f1", description="COLES"),
+        _row(SPENDING, "2026-07-01", "f2", description="COLES"),
+        _row(SPENDING, "2026-07-01", "v1", description="COLES"),
+        _row(SPENDING, "2026-07-01", "e1", description="COLES"),
         # Store already holds a filed category; the scan is behind and still shows it unfiled.
         _row(SPENDING, "2026-07-01", "a1", description="COLES", category="coffee"),
         # Store holds the bank's raw label (still unfiled); the scan is behind and shows None.
         _row(SPENDING, "2026-07-01", "c1", description="COLES", category="RAW-EFTPOS"),
     ]
-    txn_repo, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: rows},
-                               rules=[_rule("COLES")],
-                               categories=frozenset({"groceries", "coffee"}))
-    txn_repo.vanished_ids = {"v1"}
-    txn_repo.error_ids = {"e1"}
+    table, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: rows},
+                            rules=[_rule("COLES")],
+                            categories=frozenset({"groceries", "coffee"}))
+    vanish_on_write(table, "v1")
+    fail_writes(table, "e1")
     # Make a1/c1 planned (scan shows them unfiled) while the store holds the changed value.
-    txn_repo.scan_shows = {"a1": None, "c1": None}
+    for transaction_id in ("a1", "c1"):
+        table.stale_index(stored(table, transaction_id), category=None)
 
     result = worker.lambda_handler({"jobId": "job1"})
 

@@ -3,12 +3,11 @@
 The engine now evaluates less_than_or_equal / greater_than_or_equal, and RULE_FIELD_OPERATORS was
 widened in lockstep. This proves the HTTP layer actually accepts them now (a body that was 400
 before the widening) and still rejects a bogus amount operator. Driven through lambda_handler with
-a FakeRuleRepo, exactly like test_rules_routes_multi_condition.py."""
+the real RuleRepository over a FakeTable, exactly like test_rules_routes_multi_condition.py."""
 
 import json
 
-from _feed_fakes import FakeCategoryRepo, WritableFeedRepo
-from _rule_fakes import FakeRuleRepo
+from _feed_fakes import FakeCategoryRepo, Repos
 
 
 _CATEGORIES = ("transport", "groceries")
@@ -22,10 +21,11 @@ def _event(method, path, body, path_params=None):
     return event
 
 
-def _inject(handler, monkeypatch, repo, categories=_CATEGORIES):
-    monkeypatch.setattr(handler, "RuleRepository", lambda: repo)
+def _inject(handler, monkeypatch, store, categories=_CATEGORIES):
+    """Point the handler at the real repositories over the store's one FakeTable."""
+    monkeypatch.setattr(handler, "RuleRepository", lambda: store.rule_repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(categories))
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: WritableFeedRepo({}))
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: store.transaction_repo)
 
 
 def _body(operator, category_id="transport"):
@@ -35,18 +35,18 @@ def _body(operator, category_id="transport"):
 
 def test_post_rule_with_less_than_or_equal_is_accepted(handler, monkeypatch):
     # [A10] Previously 400 (not in the vocab); now the validator accepts it -> 201 and it is stored.
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     resp = handler.lambda_handler(_event("POST", "/rules", _body("less_than_or_equal")), None)
     assert resp["statusCode"] == 201, resp["body"]
     out = json.loads(resp["body"])
     assert out["conditions"][0]["operator"] == "less_than_or_equal"
-    assert repo.minted[0]["conditions"][0]["operator"] == "less_than_or_equal"
+    assert repo.minted_rules()[0]["conditions"][0]["operator"] == "less_than_or_equal"
 
 
 def test_post_rule_with_greater_than_or_equal_is_accepted(handler, monkeypatch):
     # [A11] Same for >=.
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     resp = handler.lambda_handler(_event("POST", "/rules", _body("greater_than_or_equal")), None)
     assert resp["statusCode"] == 201, resp["body"]
@@ -56,11 +56,11 @@ def test_post_rule_with_greater_than_or_equal_is_accepted(handler, monkeypatch):
 def test_post_rule_with_a_bogus_amount_operator_is_still_400(handler, monkeypatch):
     # [A12] The widening must not open the gate to arbitrary operators: an unknown amount operator
     # the engine can't evaluate is still rejected (guards an over-broad frozenset edit).
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     resp = handler.lambda_handler(_event("POST", "/rules", _body("at_most")), None)
     assert resp["statusCode"] == 400
-    assert repo.minted == []
+    assert repo.minted_rules() == []
 
 
 def test_put_rule_can_move_a_condition_to_a_new_or_equal_operator(handler, monkeypatch):
@@ -69,8 +69,8 @@ def test_put_rule_can_move_a_condition_to_a_new_or_equal_operator(handler, monke
     seed = {"field": "amount", "operator": "less_than", "value": "30",
             "category_id": "transport", "conditions":
                 [{"field": "amount", "operator": "less_than", "value": "30"}], "logic": "all"}
-    repo = FakeRuleRepo([seed])
-    rule_id = repo.list_rules()[0]["id"]
+    repo = Repos(rules=[seed])
+    rule_id = repo.rule_repo.list_rules()[0]["id"]
     _inject(handler, monkeypatch, repo)
     resp = handler.lambda_handler(
         _event("PUT", f"/rules/{rule_id}",

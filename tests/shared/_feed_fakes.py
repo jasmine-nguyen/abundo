@@ -1,27 +1,16 @@
-"""Shared fakes for the GET /transactions/feed suites.
+"""Shared helpers for the feed, uncategorized, search, apply-rules and rule-route suites.
 
-Two suites need the same realistic date-index feed fake: the impl suite
-tests/lambda_api/test_transactions_feed.py and its adversarial gap suite
-test_transactions_feed_gaps.py. They live here, in ONE definition, so both `import`
-them instead of copying FakeFeedRepo (a copy drifts, and the multi-page no-dupe/no-gap
-assertions only mean anything while the fake models DynamoDB's resume-strictly-after
-ExclusiveStartKey exactly — WHIT-445).
+``real_repos`` builds the REAL TransactionRepository and RuleRepository over one FakeTable
+(WHIT-625), so the database rules — the "only if unchanged" write, the rule stamp, rule ids and
+dedup — run as production wrote them, not as a hand-written fake copied them. ``_row`` builds a
+stored transaction row; ``FakeCategoryRepo`` is a read-only taxonomy stub.
 
-Also hosts FakeCategoryRepo — the trivial `list_categories()` taxonomy stub the
-uncategorized / apply-rules / merchant suites all need alongside the feed fake. It lives
-HERE (not in _category_fakes) on purpose: those suites are the "feed" domain in
-test_fakes_invariants.py, so the anti-drift guard [G1] only forbids re-copying it when the
-owned name sits in the feed module. WHIT-520 promoted it after nine suites each carried a
-byte-identical private copy (the same drift WHIT-508 promoted WritableFeedRepo for).
-
-Resolved by pytest.ini's `pythonpath = tests/shared`, the same way the category suites
-import `_category_fakes`. This module imports nothing from the shared layer at MODULE scope
-(stdlib `copy` only), so it imports with no shared/-layer module on the path and needs no
-conftest `_REIMPORT` entry. WritableFeedRepo's one shared import is deferred into the method
-body to keep that true — see [G2].
+Resolved by pytest.ini's `pythonpath = tests/shared`. Nothing from the shared layer is imported at
+module scope: ``real_repos`` imports ``repository`` lazily, so inside a ``handler``-style fixture it
+builds the repositories from the same freshly loaded copy the handler uses.
 """
 
-import copy
+from _dynamo_fakes import FakeTable
 
 # The internal account ids, in ACCOUNT_ID_MAP order.
 ANZ = "anz-rewards-black-visa"
@@ -38,44 +27,105 @@ def _row(account_id, date, txn_id, **extra):
     }
 
 
-class FakeFeedRepo:
-    """Realistic stand-in modelling a date-index newest-first query with ExclusiveStartKey.
+def real_repos(rows_by_account=None, rules=()):
+    """``(table, TransactionRepository, RuleRepository)`` over one seeded FakeTable.
 
-    Holds each account's rows sorted newest-first (date desc, sk desc as the intra-date
-    tiebreak, mirroring how DynamoDB disambiguates equal sort-key values by the base key)
-    and resumes STRICTLY AFTER the row a cursor names. Returns a LastEvaluatedKey only when
-    genuine rows remain past the page, and hands out deep copies (the handler mutates rows
-    in place: pop pk/sk, setdefault category)."""
+    ``rows_by_account`` maps an account id to its ``_row`` rows. Each of ``rules`` is the kwargs of
+    one real ``RuleRepository.create_rule`` call, so ids and dedup come from production."""
+    from repository import RuleRepository, TransactionRepository
 
-    def __init__(self, rows_by_account):
-        self._rows = {
-            account_id: sorted(rows, key=lambda r: (r["date"], r["sk"]), reverse=True)
-            for account_id, rows in rows_by_account.items()
-        }
-        self.calls = []
+    table = FakeTable()
+    for rows in (rows_by_account or {}).values():
+        table.seed(*rows)
+    transaction_repo = TransactionRepository()
+    transaction_repo._table = table
+    rule_repo = RuleRepository()
+    rule_repo._table = table
+    for rule in rules:
+        rule_repo.create_rule(**rule)
+    return table, transaction_repo, rule_repo
 
-    @staticmethod
-    def _key(row):
-        return {
-            "account_id": row["account_id"], "date": row["date"],
-            "pk": row["pk"], "sk": row["sk"],
-        }
 
-    def get_transactions_by_date_range(
-        self, account_id, start_date, end_date, limit=20, cursor=None
-    ):
-        self.calls.append((account_id, start_date, end_date, limit, cursor))
-        rows = self._rows.get(account_id, [])
-        start = 0
-        if cursor is not None:
-            for index, row in enumerate(rows):
-                if row["pk"] == cursor["pk"] and row["sk"] == cursor["sk"]:
-                    start = index + 1
-                    break
-        page = rows[start:start + limit]
-        has_more = (start + limit) < len(rows) and bool(page)
-        next_key = self._key(page[-1]) if has_more else None
-        return copy.deepcopy(page), next_key
+class Repos:
+    """``real_repos`` plus the views the rule suites assert on."""
+
+    def __init__(self, rows_by_account=None, rules=()):
+        self.table, self.transaction_repo, self.rule_repo = real_repos(rows_by_account, rules)
+        self.seeded_rule_ids = {rule["id"] for rule in self.stored_rules()}
+
+    def stored_rules(self):
+        """Every rule row, read straight from the store — so it adds nothing to the query log and
+        still works while a test makes the table's queries fail."""
+        return sorted((row for row in self.table.store.values() if row["pk"] == "RULE"),
+                      key=lambda row: row["sk"])
+
+    def rule_id(self, value):
+        """The id the store minted for the rule with this value."""
+        return next(rule["id"] for rule in self.stored_rules() if rule["value"] == value)
+
+    def minted_rules(self):
+        """Rule rows added to the store since setup."""
+        return [rule for rule in self.stored_rules() if rule["id"] not in self.seeded_rule_ids]
+
+
+def _key(account_id, transaction_id):
+    return f"ACCOUNT#{account_id}", f"TXN#{transaction_id}"
+
+
+def stored(table, transaction_id, account_id=SPENDING):
+    """The row as the table holds it now (not a copy)."""
+    return table.store[_key(account_id, transaction_id)]
+
+
+def set_category(table, transaction_id, category, account_id=SPENDING):
+    """Write a category behind the handler's back — the user's tap, mid-run."""
+    stored(table, transaction_id, account_id)["category"] = category
+
+
+def charge_writes(table):
+    """(pk, sk) of every update_item on a charge row, in call order — rule-row writes left out."""
+    return [(key["pk"], key["sk"]) for key in table.update_keys if key["pk"].startswith("ACCOUNT#")]
+
+
+def date_queries(table):
+    """The kwargs of each date-index read (the history scan), in call order."""
+    return [query for query in table.queries if query.get("IndexName") == "date-index"]
+
+
+def date_reads(table):
+    """Each history read as ``(account_id, start_date, end_date, Limit, cursor)``, in call order —
+    read back from the date-index queries the real repository sent."""
+    reads = []
+    for query in date_queries(table):
+        asked = {(name, operator): values
+                 for name, operator, *values in query["KeyConditionExpression"].conditions}
+        start, end = asked.get(("date", "between")) or (asked.get(("date", "gte"), [None])[0], None)
+        reads.append((asked[("account_id", "eq")][0], start, end, query["Limit"],
+                      query.get("ExclusiveStartKey")))
+    return reads
+
+
+def fail_writes(table, *transaction_ids):
+    """Every write to these charges raises a retryable database error."""
+    targets = {f"TXN#{transaction_id}" for transaction_id in transaction_ids}
+    table.fail("update_item", when=lambda key: key["sk"] in targets)
+
+
+def vanish_on_write(table, *transaction_ids):
+    """These charges are deleted just before their write lands (aged out / replaced mid-run)."""
+    targets = {f"TXN#{transaction_id}" for transaction_id in transaction_ids}
+
+    def delete(key, tbl):
+        if key["sk"] in targets:
+            tbl.store.pop((key["pk"], key["sk"]), None)
+
+    table.before_write(delete)
+
+
+def on_write(table, transaction_id, action):
+    """Run ``action(table)`` just before the write to ``transaction_id`` — a mid-run edit."""
+    table.before_write(
+        lambda key, tbl: action(tbl) if key["sk"] == f"TXN#{transaction_id}" else None)
 
 
 def _feed_event(params=None):
@@ -84,123 +134,6 @@ def _feed_event(params=None):
         "requestContext": {"http": {"method": "GET"}},
         "queryStringParameters": params,
     }
-
-
-class WritableFeedRepo(FakeFeedRepo):
-    """FakeFeedRepo plus the conditional category write, so a second run really sees the first
-    run's effect. Promoted here in WHIT-508 — test_apply_rules.py and test_apply_rules_gaps.py
-    each carried a byte-identical private copy, which is exactly the drift this module prevents.
-
-    The conditional is implemented for REAL against the fake's own rows rather than keyed off an
-    id set, so the fake cannot lie: a handler that passed the wrong expected value (the rule's
-    target instead of the value the scan saw) fails here.
-
-      error_ids    — raise DatabaseError (a retryable database failure).
-      vanished_ids — the row was deleted between the scan and the write.
-      refile_hook  — called once before each write with (transaction_id, repo), so a test can
-                     simulate the user tapping a category mid-run.
-      scan_shows   — transaction_id -> the category the SCAN reports, while the store holds the
-                     real one. The scan reads a secondary index that cannot be read consistently,
-                     so "the scan is behind the stored row" is the everyday case, not an exotic one.
-    """
-
-    def __init__(self, rows_by_account):
-        super().__init__(rows_by_account)
-        self.writes = []
-        self.vanished_ids = set()
-        self.error_ids = set()
-        self.refile_hook = None
-        self.scan_shows = {}
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        page, next_key = super().get_transactions_by_date_range(
-            account_id, start_date, end_date, limit, cursor)
-        for row in page:
-            transaction_id = row["sk"].split("#", 1)[1]
-            if transaction_id in self.scan_shows:
-                row["category"] = self.scan_shows[transaction_id]
-        return page, next_key
-
-    def _find_row(self, pk, sk):
-        """Resolve a row by its FULL key. Matching on sk alone would silently cross accounts —
-        ids like "t1" repeat per account in these fixtures, so a multi-account test would write
-        to the wrong row and still look green."""
-        for rows in self._rows.values():
-            for row in rows:
-                if row["pk"] == pk and row["sk"] == sk:
-                    return row
-        return None
-
-    def set_category(self, transaction_id, category, account_id=SPENDING):
-        """Write a category behind the handler's back — the user's tap, mid-run."""
-        row = self._find_row(f"ACCOUNT#{account_id}", f"TXN#{transaction_id}")
-        if row is None:
-            raise AssertionError(f"no row {transaction_id!r} in account {account_id!r}")
-        row["category"] = category
-
-    def update_transaction_category_if_unchanged(self, pk, sk, category, expected_category,
-                                                  filed_by_rule=None, budget_excluded=False):
-        transaction_id = sk.split("#", 1)[1]
-        if self.refile_hook is not None:
-            self.refile_hook(transaction_id, self)
-        self.writes.append((pk, sk, category, expected_category))
-        if transaction_id in self.error_ids:
-            # Imported lazily: _feed_fakes must stay importable with no shared/ layer on the
-            # path ([G2]), so this may not move to module scope.
-            from repository import DatabaseError
-            raise DatabaseError("write failed")
-        if transaction_id in self.vanished_ids:
-            return "gone", None
-        row = self._find_row(pk, sk)
-        if row is None:
-            return "gone", None
-        if row.get("category") != expected_category:
-            return "changed", row.get("category")
-        row["category"] = category
-        if filed_by_rule is not None:
-            row["filed_by_rule"] = filed_by_rule
-        # WHIT-558: a rule keeps the charge out of budget. Only ever SET True (never False), in the
-        # SAME conditional write — matching production, so a test asserting the flag lands only on a
-        # non-refused write reads true behaviour.
-        if budget_excluded:
-            row["budget_excluded"] = True
-        return "written", category
-
-    def clear_rule_fill(self, pk, sk, rule_id):
-        """WHIT-540 undo: REMOVE category + stamp, but ONLY while the stamp still equals rule_id.
-        Implemented against the fake's OWN rows (not an id set), so a handler that conditioned on
-        the wrong thing fails here. error_ids raise; a stamp mismatch / vanished row returns False."""
-        transaction_id = sk.split("#", 1)[1]
-        if self.refile_hook is not None:
-            self.refile_hook(transaction_id, self)
-        self.writes.append((pk, sk, "clear", rule_id))
-        if transaction_id in self.error_ids:
-            from repository import DatabaseError
-            raise DatabaseError("write failed")
-        row = self._find_row(pk, sk)
-        if row is None or row.get("filed_by_rule") != rule_id:
-            return False
-        row.pop("category", None)
-        row.pop("filed_by_rule", None)
-        return True
-
-    def refile_rule_fill(self, pk, sk, category, old_rule_id, new_rule_id):
-        """WHIT-540 re-file: SET category + re-key the stamp to new_rule_id, but ONLY while the
-        stamp still equals old_rule_id (the tap-wins guard). Returns False on a mismatch/vanished
-        row. error_ids raise."""
-        transaction_id = sk.split("#", 1)[1]
-        if self.refile_hook is not None:
-            self.refile_hook(transaction_id, self)
-        self.writes.append((pk, sk, category, new_rule_id))
-        if transaction_id in self.error_ids:
-            from repository import DatabaseError
-            raise DatabaseError("write failed")
-        row = self._find_row(pk, sk)
-        if row is None or row.get("filed_by_rule") != old_rule_id:
-            return False
-        row["category"] = category
-        row["filed_by_rule"] = new_rule_id
-        return True
 
 
 class FakeCategoryRepo:

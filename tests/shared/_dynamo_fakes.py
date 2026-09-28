@@ -283,6 +283,7 @@ class FakeTable:
         self.get_item_calls = 0
         self.consistent_reads: list = []
         self.update_calls: list = []  # (UpdateExpression, names, values) per update_item call
+        self.update_keys: list = []   # the Key of each update_item call, in the same order
         self.put_calls: list = []     # each put_item Item
         self._failures: list = []
         self._before_write: list = []
@@ -391,6 +392,7 @@ class FakeTable:
         names = ExpressionAttributeNames or {}
         values = ExpressionAttributeValues or {}
         self.update_calls.append((UpdateExpression, dict(names), dict(values)))
+        self.update_keys.append(dict(Key))
         self._run_before_write(Key)
         self._check_failure("update_item", Key)
         expression_bytes = len(UpdateExpression.encode())

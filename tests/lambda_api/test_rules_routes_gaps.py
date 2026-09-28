@@ -6,16 +6,15 @@ the value-floor boundary + its enforcement on PUT, a rule whose category was lat
 precedence, and the VersionConflictError->409 dispatch wiring. Nothing here re-checks a case
 test_rules_routes.py already covers.
 
-Same doubles/harness as the sibling: lambda_handler with FakeRuleRepo injected as
-handler.RuleRepository and FakeCategoryRepo as handler.CategoryRepository.
+Same harness as the sibling: lambda_handler with the real RuleRepository (over a FakeTable) injected
+as handler.RuleRepository and FakeCategoryRepo as handler.CategoryRepository.
 """
 
 import json
 
 import pytest
 
-from _feed_fakes import FakeCategoryRepo, WritableFeedRepo
-from _rule_fakes import FakeRuleRepo
+from _feed_fakes import FakeCategoryRepo, Repos
 
 
 _CATEGORIES = ("groceries", "petrol")
@@ -34,14 +33,11 @@ def _event(method, path, body=None, path_params=None):
     return event
 
 
-def _inject(handler, monkeypatch, rule_repo, categories=_CATEGORIES, transaction_repo=None):
-    monkeypatch.setattr(handler, "RuleRepository", lambda: rule_repo)
+def _inject(handler, monkeypatch, store, categories=_CATEGORIES):
+    """Point the handler at the real repositories over the store's one FakeTable."""
+    monkeypatch.setattr(handler, "RuleRepository", lambda: store.rule_repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(categories))
-    # WHIT-540: PUT/DELETE re-file the stored charges a rule touched, so the routes build a
-    # TransactionRepository. Default to an empty store here (this suite tests routing/validation,
-    # not the re-file — that's test_rule_refile.py).
-    monkeypatch.setattr(
-        handler, "TransactionRepository", lambda: transaction_repo or WritableFeedRepo({}))
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: store.transaction_repo)
 
 
 # --- mapper + fold round-trip -------------------------------------------------
@@ -51,7 +47,7 @@ def test_create_then_get_preserves_display_value_verbatim(handler, monkeypatch):
     # WHIT-529 — [A1] the handler only strips the ENDS of the value; it must NOT collapse internal
     # whitespace or change case for the stored/displayed value (only the derived id folds). A GET
     # must hand the value back exactly as stored, with categoryId mapped from category_id.
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
 
     handler.lambda_handler(
@@ -68,13 +64,13 @@ def test_case_and_spacing_variant_dedups_through_the_http_layer(handler, monkeyp
     # an existing rule is the SAME rule at the store: same category -> 201 dedup (nothing written),
     # different category -> 409. Proves the fold reaches dedup through create_rule_route, not just
     # the repo contract test.
-    repo = FakeRuleRepo(rules=[_rule("COLES  EXPRESS", "groceries")])
+    repo = Repos(rules=[_rule("COLES  EXPRESS", "groceries")])
     _inject(handler, monkeypatch, repo)
 
     same = handler.lambda_handler(
         _event("POST", "/rules", {"value": "coles express", "categoryId": "groceries"}), None)
     assert same["statusCode"] == 201
-    assert repo.minted == []                            # folded variant deduped, nothing written
+    assert repo.minted_rules() == []                            # folded variant deduped, nothing written
 
     clash = handler.lambda_handler(
         _event("POST", "/rules", {"value": "coles express", "categoryId": "petrol"}), None)
@@ -85,7 +81,7 @@ def test_case_and_spacing_variant_dedups_through_the_http_layer(handler, monkeyp
 def test_create_non_ascii_value_passes_floor_and_round_trips(handler, monkeypatch):
     # WHIT-529 — [A3] a non-ASCII value with >= 4 alphanumerics ("Café" = C,a,f,é) clears the floor
     # (isalnum() counts é) and round-trips through the mapper unchanged.
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
 
     resp = handler.lambda_handler(
@@ -107,7 +103,7 @@ def test_value_floor_counts_alphanumerics_only(handler, monkeypatch, value, expe
     # WHIT-529 — [A4] pins the floor at exactly 4 letters/digits, punctuation excluded. The sibling
     # only tests a hard-fail (".") and the category/equals bypass; this locks the 3-vs-4 boundary so
     # a drift to MIN=3 reddens.
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     resp = handler.lambda_handler(
         _event("POST", "/rules", {"value": value, "categoryId": "groceries"}), None)
@@ -117,8 +113,9 @@ def test_value_floor_counts_alphanumerics_only(handler, monkeypatch, value, expe
 def test_value_floor_is_enforced_on_put_text_edit(handler, monkeypatch):
     # WHIT-529 — [A5] the floor guards PUT too, not just POST: editing a safe rule's text down to a
     # near-empty value is rejected 400 BEFORE the store is touched (the old rule survives intact).
-    repo = FakeRuleRepo(rules=[_rule("COLESWORTH", "groceries")])
-    rule_id = repo.list_rules()[0]["id"]
+    repo = Repos(rules=[_rule("COLESWORTH", "groceries")])
+    rule_id = repo.rule_repo.list_rules()[0]["id"]
+    before = repo.stored_rules()
     _inject(handler, monkeypatch, repo)
 
     resp = handler.lambda_handler(
@@ -126,8 +123,8 @@ def test_value_floor_is_enforced_on_put_text_edit(handler, monkeypatch):
                path_params={"id": rule_id}), None)
     assert resp["statusCode"] == 400
     assert "letters or digits" in json.loads(resp["body"])["error"]
-    assert repo.updated == [] and repo.deleted == []        # store untouched
-    assert repo.list_rules()[0]["value"] == "COLESWORTH"    # original still there
+    assert repo.stored_rules() == before                    # store untouched
+    assert repo.rule_repo.list_rules()[0]["value"] == "COLESWORTH"    # original still there
 
 
 # --- a rule whose category was later deleted from the taxonomy ----------------
@@ -137,7 +134,7 @@ def test_get_still_returns_a_rule_whose_category_was_deleted(handler, monkeypatc
     # WHIT-529 — [A7] GET does NOT filter by the taxonomy, so a rule filing into a category the user
     # has since deleted is still returned (the app decides how to surface a dangling category). Pins
     # the "no filter" behaviour so a future taxonomy filter on GET reddens this.
-    repo = FakeRuleRepo(rules=[_rule("COLES", "ghost-category")])
+    repo = Repos(rules=[_rule("COLES", "ghost-category")])
     _inject(handler, monkeypatch, repo, categories=_CATEGORIES)   # taxonomy has NO "ghost-category"
 
     body = json.loads(handler.lambda_handler(_event("GET", "/rules"), None)["body"])
@@ -149,8 +146,9 @@ def test_put_text_only_edit_with_stale_deleted_category_is_400(handler, monkeypa
     # WHIT-529 — [A8] the trap the card flags: a rule's category was deleted, the client edits only
     # the rule's TEXT and resends the (now stale) categoryId. The category guard rejects it 400, so a
     # pure text edit is blocked until the user also picks a live category. Documents the coupling.
-    repo = FakeRuleRepo(rules=[_rule("COLES", "ghost-category")])
-    rule_id = repo.list_rules()[0]["id"]
+    repo = Repos(rules=[_rule("COLES", "ghost-category")])
+    rule_id = repo.rule_repo.list_rules()[0]["id"]
+    before = repo.stored_rules()
     _inject(handler, monkeypatch, repo, categories=_CATEGORIES)
 
     resp = handler.lambda_handler(
@@ -159,7 +157,7 @@ def test_put_text_only_edit_with_stale_deleted_category_is_400(handler, monkeypa
                path_params={"id": rule_id}), None)
     assert resp["statusCode"] == 400
     assert "categoryId" in json.loads(resp["body"])["error"]
-    assert repo.updated == [] and repo.deleted == []        # no move happened
+    assert repo.stored_rules() == before                    # no move happened
 
 
 # --- guard precedence ---------------------------------------------------------
@@ -168,7 +166,7 @@ def test_put_text_only_edit_with_stale_deleted_category_is_400(handler, monkeypa
 def test_below_floor_value_and_unknown_category_returns_the_floor_error_first(handler, monkeypatch):
     # WHIT-529 — [A6] when BOTH guards would fail, the value-floor check runs before the category
     # check, so the client gets the "letters or digits" 400, not the category one. Pins the order.
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
 
     resp = handler.lambda_handler(
@@ -184,8 +182,8 @@ def test_case_only_value_edit_keeps_the_id_and_updates_in_place(handler, monkeyp
     # WHIT-529 — [A9] editing only the CASE of the value folds to the same id, so it is an in-place
     # update: the response keeps the old id but carries the new (lower-cased) display value, and no
     # row is moved/deleted. Distinct from the sibling's category-change-keeps-id case.
-    repo = FakeRuleRepo(rules=[_rule("COLES", "groceries")])
-    rule_id = repo.list_rules()[0]["id"]
+    repo = Repos(rules=[_rule("COLES", "groceries")])
+    rule_id = repo.rule_repo.list_rules()[0]["id"]
     _inject(handler, monkeypatch, repo)
 
     resp = handler.lambda_handler(
@@ -196,5 +194,5 @@ def test_case_only_value_edit_keeps_the_id_and_updates_in_place(handler, monkeyp
     assert resp["statusCode"] == 200
     assert body["id"] == rule_id                     # id folds the same, unchanged
     assert body["value"] == "coles"                  # new display value
-    assert repo.deleted == []                        # in place, no move
-    assert {r["id"] for r in repo.list_rules()} == {rule_id}
+    assert repo.minted_rules() == []                 # in place, no move to a new row
+    assert {r["id"] for r in repo.rule_repo.list_rules()} == {rule_id}

@@ -8,7 +8,7 @@ calls get_transactions_search directly):
 
 import pytest
 
-from _feed_fakes import ANZ, _row, FakeFeedRepo
+from _feed_fakes import ANZ, date_reads, real_repos, _row
 
 
 class _NamedCategoryRepo:
@@ -31,15 +31,15 @@ def _event(params, method="GET"):
 @pytest.fixture
 def routed(handler, monkeypatch):
     """lambda_handler wired to fakes, so the REAL get_transactions_search runs behind the router."""
-    repo = FakeFeedRepo({ANZ: [_row(ANZ, "2026-07-10", "a1", description="STEVEN", amount=-1)]})
+    table, repo, _ = real_repos({ANZ: [_row(ANZ, "2026-07-10", "a1", description="STEVEN", amount=-1)]})
     categories = _NamedCategoryRepo()
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: categories)
-    return handler, repo, categories
+    return handler, table, categories
 
 
 def test_post_to_the_search_path_never_runs_the_search(routed, monkeypatch):
-    handler, repo, _categories = routed
+    handler, table, _categories = routed
     ran = []
     monkeypatch.setattr(handler, "get_transactions_search", lambda *args: ran.append(args))
 
@@ -47,7 +47,7 @@ def test_post_to_the_search_path_never_runs_the_search(routed, monkeypatch):
 
     assert ran == []
     assert response["statusCode"] != 200
-    assert repo.calls == []
+    assert date_reads(table) == []
 
 
 def test_rows_without_a_date_sort_last_and_do_not_crash(transaction_search):

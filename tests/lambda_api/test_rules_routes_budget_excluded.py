@@ -6,13 +6,13 @@ disagrees ONLY on the flag must 409 through the route and surface the existing r
 body; the create/update round-trips carry it; and a legacy row written before the field reads back
 budgetExcluded:false (never KeyErrors) through rule_book.rule_from_row.
 
-Driven through lambda_handler with a FakeRuleRepo injected, exactly like test_rules_routes.py.
+Driven through lambda_handler with the real RuleRepository over a FakeTable injected, exactly like
+test_rules_routes.py.
 """
 
 import json
 
-from _feed_fakes import FakeCategoryRepo, WritableFeedRepo
-from _rule_fakes import FakeRuleRepo
+from _feed_fakes import FakeCategoryRepo, Repos
 
 
 _CATEGORIES = ("groceries", "petrol")
@@ -32,14 +32,15 @@ def _event(method, path, body=None, path_params=None):
     return event
 
 
-def _inject(handler, monkeypatch, rule_repo, categories=_CATEGORIES):
-    monkeypatch.setattr(handler, "RuleRepository", lambda: rule_repo)
+def _inject(handler, monkeypatch, store, categories=_CATEGORIES):
+    """Point the handler at the real repositories over the store's one FakeTable."""
+    monkeypatch.setattr(handler, "RuleRepository", lambda: store.rule_repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(categories))
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: WritableFeedRepo({}))
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: store.transaction_repo)
 
 
 def test_create_rule_round_trips_budget_excluded_true(handler, monkeypatch):
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     resp = handler.lambda_handler(
         _event("POST", "/rules",
@@ -47,7 +48,7 @@ def test_create_rule_round_trips_budget_excluded_true(handler, monkeypatch):
     body = json.loads(resp["body"])
     assert resp["statusCode"] == 201
     assert body["budgetExcluded"] is True
-    assert repo.minted[0]["budget_excluded"] is True
+    assert repo.minted_rules()[0]["budget_excluded"] is True
 
 
 def test_create_rule_same_text_same_category_different_flag_is_a_409(handler, monkeypatch):
@@ -55,7 +56,7 @@ def test_create_rule_same_text_same_category_different_flag_is_a_409(handler, mo
     # DIFFERENT flag would fight over whether the charge is kept out of budget. The 409 body must
     # carry the EXISTING rule's flag (False here) so the app shows the truth, not the attempted True.
     # FAIL-ON-REVERT: drop the flag term from create_rule's clash test and this returns 201.
-    repo = FakeRuleRepo(rules=[_rule("COLES", "groceries", budget_excluded=False)])
+    repo = Repos(rules=[_rule("COLES", "groceries", budget_excluded=False)])
     _inject(handler, monkeypatch, repo)
     resp = handler.lambda_handler(
         _event("POST", "/rules",
@@ -64,30 +65,30 @@ def test_create_rule_same_text_same_category_different_flag_is_a_409(handler, mo
     assert resp["statusCode"] == 409
     assert body["existingRule"]["value"] == "COLES"
     assert body["existingRule"]["budgetExcluded"] is False   # the stored winner, not the attempt
-    assert len(repo.list_rules()) == 1
+    assert len(repo.rule_repo.list_rules()) == 1
 
 
 def test_update_rule_toggles_the_flag_in_place_and_returns_it(handler, monkeypatch):
-    repo = FakeRuleRepo(rules=[_rule("COLES", "groceries", budget_excluded=False)])
+    repo = Repos(rules=[_rule("COLES", "groceries", budget_excluded=False)])
     _inject(handler, monkeypatch, repo)
-    rule_id = repo.list_rules()[0]["id"]
+    rule_id = repo.rule_repo.list_rules()[0]["id"]
     resp = handler.lambda_handler(
         _event("PUT", "/rules/x", {"value": "COLES", "categoryId": "groceries",
                                    "budgetExcluded": True}, path_params={"id": rule_id}), None)
     body = json.loads(resp["body"])
     assert resp["statusCode"] == 200
     assert body["budgetExcluded"] is True
-    assert repo.get_rule(rule_id)["budget_excluded"] is True
+    assert repo.rule_repo.get_rule(rule_id)["budget_excluded"] is True
 
 
 def test_legacy_row_without_the_field_reads_back_budget_excluded_false(handler, monkeypatch):
     # A rule written before WHIT-558 has no budget_excluded key. rule_book.rule_from_row must default it via
     # .get, never KeyError. FAIL-ON-REVERT: change bool(row.get("budget_excluded")) to
     # bool(row["budget_excluded"]) in rule_book.rule_from_row and the GET 500s on the legacy row.
-    legacy = {"id": "r-legacy", "field": "description", "operator": "contains",
-              "value": "OLDRULE", "category_id": "groceries", "source": "app"}
-    repo = FakeRuleRepo(rules=[])
-    repo._rows["r-legacy"] = legacy
+    legacy = {"pk": "RULE", "sk": "RULE#r-legacy", "id": "r-legacy", "field": "description",
+              "operator": "contains", "value": "OLDRULE", "category_id": "groceries", "source": "app"}
+    repo = Repos()
+    repo.table.seed(legacy)
     _inject(handler, monkeypatch, repo)
     resp = handler.lambda_handler(_event("GET", "/rules"), None)
     body = json.loads(resp["body"])

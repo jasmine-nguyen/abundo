@@ -11,12 +11,12 @@ import json
 
 import pytest
 
-from _feed_fakes import FakeCategoryRepo
-from _rule_fakes import FakeRuleRepo
+from _feed_fakes import FakeCategoryRepo, real_repos
 
 
-def _rule(value, category_id="groceries", rule_id="r1"):
-    return {"id": rule_id, "field": "description", "operator": "contains", "value": value,
+def _rule(value, category_id="groceries"):
+    # The kwargs of one real RuleRepository.create_rule call.
+    return {"field": "description", "operator": "contains", "value": value,
             "category_id": category_id}
 
 
@@ -87,9 +87,9 @@ def worker_env(handler, monkeypatch):
 
 
 def _start(handler, job_repo, body, rules=(), categories=frozenset({"groceries", "coffee"})):
+    _, _, rule_repo = real_repos(rules=rules)
     return handler.start_apply_rules_job(
-        _post_event(body), FakeCategoryRepo(categories),
-        FakeRuleRepo(rules=list(rules)), job_repo)
+        _post_event(body), FakeCategoryRepo(categories), rule_repo, job_repo)
 
 
 # --- POST: start a job --------------------------------------------------------
@@ -147,8 +147,9 @@ def test_post_refuses_a_clashing_inline_rule(handler, worker_env):
 
 def test_post_rejects_a_missing_body(handler, worker_env):
     job_repo = FakeJobRepo()
+    _, _, rule_repo = real_repos()
     resp = handler.start_apply_rules_job(
-        _post_event(), FakeCategoryRepo({"groceries"}), FakeRuleRepo(rules=[]), job_repo)
+        _post_event(), FakeCategoryRepo({"groceries"}), rule_repo, job_repo)
 
     assert resp["statusCode"] == 400
     assert job_repo.created == [] and worker_env.calls == []

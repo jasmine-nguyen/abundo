@@ -1,22 +1,26 @@
 """WHIT-559: the "Apply my rules" sweep auto-spreads a bill when the winning rule is a spread one —
 creating the category's spread plan ONCE across the whole run, create-only so a user's plan is never
-clobbered. Reuses WritableFeedRepo + FakeRuleRepo like test_apply_rules_budget_excluded.py; a fake
+clobbered. Runs the real TransactionRepository and RuleRepository over one FakeTable; a fake
 budget + pay-cycle repo record the seed."""
 
 import json
 from decimal import Decimal
 
-from _feed_fakes import SPENDING, _row, WritableFeedRepo, FakeCategoryRepo
-from _rule_fakes import FakeRuleRepo
+from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row
 
 
-def _spread_rule(value="ORIGIN", category_id="insurance", *, rule_id="r1", spread=True,
-                 spread_seeded=False):
-    row = {"id": rule_id, "field": "description", "operator": "contains", "value": value,
-           "category_id": category_id, "spread": spread, "spread_seeded": spread_seeded}
+def _spread_rule(value="ORIGIN", category_id="insurance", *, spread=True):
+    # The kwargs of one real RuleRepository.create_rule call.
+    rule = {"field": "description", "operator": "contains", "value": value,
+            "category_id": category_id, "spread": spread}
     if spread:
-        row.update(spread_amount=Decimal("42.50"), spread_gap_days=30)
-    return row
+        rule.update(spread_amount=Decimal("42.50"), spread_gap_days=30)
+    return rule
+
+
+def _seed_marks(table):
+    """How many times the store's spread_seeded marker was written."""
+    return len([names for _, names, _ in table.update_calls if "spread_seeded" in names.values()])
 
 
 def _event(body):
@@ -43,56 +47,57 @@ class FakePaycycle:
         return {"length": 14, "last_pay_date": "2026-01-07"}
 
 
-def _call(handler, repo, rules, *, budget=None, paycycle=None,
+def _call(handler, rows, rules, *, budget=None, paycycle=None, already_seeded=False,
           categories=frozenset({"insurance", "coffee"})):
-    rule_repo = FakeRuleRepo(rules=rules)
-    resp = handler.apply_rules_to_uncategorized(
+    """Run the sweep; returns (table, the stored rule after the run)."""
+    table, repo, rule_repo = real_repos({SPENDING: rows}, rules=rules)
+    [rule] = rule_repo.list_rules()
+    if already_seeded:
+        rule_repo.mark_spread_seeded(rule["id"])
+    handler.apply_rules_to_uncategorized(
         _event({"dryRun": False}), repo, FakeCategoryRepo(categories), rule_repo,
         budget or FakeBudget(), paycycle or FakePaycycle())
-    return resp, rule_repo
+    return table, rule_repo.get_rule(rule["id"])
 
 
 def _origin(txn_id, date="2026-07-01"):
-    return _row(SPENDING, date, txn_id, description="ORIGIN ENERGY BILL", category=None)
+    return _row(SPENDING, date, txn_id, description="ORIGIN ENERGY BILL")
 
 
 def test_sweep_seeds_a_spread_rules_plan_and_marks_it(handler):
-    repo = WritableFeedRepo({SPENDING: [_origin("t1")]})
     budget = FakeBudget()
-    _, rule_repo = _call(handler, repo, [_spread_rule()], budget=budget)
+    table, rule = _call(handler, [_origin("t1")], [_spread_rule()], budget=budget)
 
     assert len(budget.calls) == 1
     cat, amount, cycles, _from, length, _paydate = budget.calls[0]
     assert (cat, amount, cycles, length) == ("insurance", Decimal("42.50"), 2, 14)
-    assert rule_repo.spread_seeded_ids == ["r1"]
+    assert rule["spread_seeded"] is True and _seed_marks(table) == 1
 
 
 def test_a_spread_rule_matching_many_charges_seeds_once(handler):
     # FAIL-ON-REVERT for the per-run dedup: three matching charges, one seed.
-    repo = WritableFeedRepo({SPENDING: [
-        _origin("t1", "2026-07-01"), _origin("t2", "2026-07-02"), _origin("t3", "2026-07-03")]})
     budget, paycycle = FakeBudget(), FakePaycycle()
-    _call(handler, repo, [_spread_rule()], budget=budget, paycycle=paycycle)
+    _call(handler, [_origin("t1", "2026-07-01"), _origin("t2", "2026-07-02"),
+                    _origin("t3", "2026-07-03")],
+          [_spread_rule()], budget=budget, paycycle=paycycle)
     assert len(budget.calls) == 1 and paycycle.reads == 1
 
 
 def test_a_no_op_create_does_not_mark_the_rule(handler):
     # set_spread_if_absent returns None (category already has a spread / no target) -> stay unseeded.
-    repo = WritableFeedRepo({SPENDING: [_origin("t1")]})
     budget = FakeBudget(result=None)
-    _, rule_repo = _call(handler, repo, [_spread_rule()], budget=budget)
-    assert budget.calls and rule_repo.spread_seeded_ids == []
+    table, rule = _call(handler, [_origin("t1")], [_spread_rule()], budget=budget)
+    assert budget.calls and rule["spread_seeded"] is False and _seed_marks(table) == 0
 
 
 def test_a_non_spread_rule_never_touches_budget(handler):
-    repo = WritableFeedRepo({SPENDING: [_origin("t1")]})
     budget, paycycle = FakeBudget(), FakePaycycle()
-    _call(handler, repo, [_spread_rule(spread=False)], budget=budget, paycycle=paycycle)
+    _call(handler, [_origin("t1")], [_spread_rule(spread=False)], budget=budget, paycycle=paycycle)
     assert budget.calls == [] and paycycle.reads == 0
 
 
 def test_an_already_seeded_rule_does_not_reseed(handler):
-    repo = WritableFeedRepo({SPENDING: [_origin("t1")]})
     budget, paycycle = FakeBudget(), FakePaycycle()
-    _call(handler, repo, [_spread_rule(spread_seeded=True)], budget=budget, paycycle=paycycle)
+    _call(handler, [_origin("t1")], [_spread_rule()], budget=budget, paycycle=paycycle,
+          already_seeded=True)
     assert budget.calls == [] and paycycle.reads == 0

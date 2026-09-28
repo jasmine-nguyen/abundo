@@ -15,8 +15,7 @@ that id and the rule is PUT-edited. Probes:
 
 import json
 
-from _feed_fakes import SPENDING, _row, WritableFeedRepo, FakeCategoryRepo
-from _rule_fakes import FakeRuleRepo
+from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
 
 
 _CATEGORIES = frozenset({"transport", "groceries", "petrol"})
@@ -36,16 +35,12 @@ def _put_event(rule_id, conditions, logic="all", category_id="transport"):
                                 "categoryId": category_id})}
 
 
-def _mint(handler, rule_repo, conditions, logic="all", category_id="transport"):
-    # A non-spread create never touches the transaction repo; an empty one satisfies the signature.
+def _mint(handler, rule_repo, transaction_repo, conditions, logic="all", category_id="transport"):
+    # A non-spread create never reads the transaction repo; it only satisfies the signature.
     resp = handler.create_rule_route(
         _create_event(conditions, logic, category_id), rule_repo, FakeCategoryRepo(_CATEGORIES),
-        WritableFeedRepo({}))
+        transaction_repo)
     return json.loads(resp["body"])["id"]
-
-
-def _row_at(repo, txn_id):
-    return repo._find_row(f"ACCOUNT#{SPENDING}", f"TXN#{txn_id}")
 
 
 _UBER_UNDER_30 = [{"field": "merchant", "operator": "contains", "value": "uber"},
@@ -56,12 +51,12 @@ def test_in_place_category_edit_preserves_conditions_and_keeps_the_id(handler):
     # [G-rf1] Edit ONLY the target category of a multi rule. The conditions are unchanged, so the id
     # is stable; the stored row must keep its conditions/logic (the in-place update re-writes them so
     # they can't go stale), and the owned charge is re-filed to the new target under the SAME id.
-    rule_repo = FakeRuleRepo()
-    rid = _mint(handler, rule_repo, _UBER_UNDER_30, category_id="transport")
+    table, repo, rule_repo = real_repos()
+    rid = _mint(handler, rule_repo, repo, _UBER_UNDER_30, category_id="transport")
 
-    repo = WritableFeedRepo({SPENDING: [
+    table.seed(
         _row(SPENDING, "2026-07-01", "t1", description="UBER TRIP", merchant_name="UBER",
-             amount=-25, category="transport", filed_by_rule=rid)]})
+             amount=-25, category="transport", filed_by_rule=rid))
 
     resp = handler.update_rule_route(
         _put_event(rid, _UBER_UNDER_30, category_id="groceries"),
@@ -71,10 +66,10 @@ def test_in_place_category_edit_preserves_conditions_and_keeps_the_id(handler):
     assert resp["statusCode"] == 200
     assert body["id"] == rid                                   # id stable
     assert body["conditions"] == _UBER_UNDER_30 and body["logic"] == "all"
-    stored = rule_repo.get_rule(rid)
-    assert stored["conditions"] == _UBER_UNDER_30              # conditions preserved on the row
-    assert stored["category_id"] == "groceries"
-    row = _row_at(repo, "t1")
+    rule_row = rule_repo.get_rule(rid)
+    assert rule_row["conditions"] == _UBER_UNDER_30            # conditions preserved on the row
+    assert rule_row["category_id"] == "groceries"
+    row = stored(table, "t1")
     assert row["category"] == "groceries" and row["filed_by_rule"] == rid   # re-filed in place
 
 
@@ -85,10 +80,9 @@ def test_conditions_change_moves_the_id_and_deletes_the_old_row(handler):
                   {"field": "amount", "operator": "less_than", "value": "30"}]
     tighter = [{"field": "description", "operator": "contains", "value": "uber"},
                {"field": "amount", "operator": "less_than", "value": "10"}]
-    rule_repo = FakeRuleRepo()
-    old = _mint(handler, rule_repo, conditions)
+    table, repo, rule_repo = real_repos()
+    old = _mint(handler, rule_repo, repo, conditions)
 
-    repo = WritableFeedRepo({SPENDING: []})
     resp = handler.update_rule_route(
         _put_event(old, tighter), rule_repo, FakeCategoryRepo(_CATEGORIES), repo)
     body = json.loads(resp["body"])
@@ -97,7 +91,7 @@ def test_conditions_change_moves_the_id_and_deletes_the_old_row(handler):
     assert new != old
     assert rule_repo.get_rule(old) is None                    # old row deleted
     assert rule_repo.get_rule(new)["conditions"] == tighter    # new row written
-    assert old in rule_repo.deleted
+    assert [rule["id"] for rule in rule_repo.list_rules()] == [new]
 
 
 def test_conditions_change_on_a_description_multi_reevaluates_and_clears_a_non_match(handler):
@@ -110,17 +104,17 @@ def test_conditions_change_on_a_description_multi_reevaluates_and_clears_a_non_m
                   {"field": "amount", "operator": "less_than", "value": "30"}]
     tighter = [{"field": "description", "operator": "contains", "value": "uber"},
                {"field": "amount", "operator": "less_than", "value": "10"}]
-    rule_repo = FakeRuleRepo()
-    old = _mint(handler, rule_repo, conditions)
+    table, repo, rule_repo = real_repos()
+    old = _mint(handler, rule_repo, repo, conditions)
 
-    repo = WritableFeedRepo({SPENDING: [
+    table.seed(
         _row(SPENDING, "2026-07-01", "t1", description="UBER TRIP", amount=-25,
-             category="transport", filed_by_rule=old)]})
+             category="transport", filed_by_rule=old))
 
     handler.update_rule_route(_put_event(old, tighter), rule_repo,
                               FakeCategoryRepo(_CATEGORIES), repo)
 
-    row = _row_at(repo, "t1")
+    row = stored(table, "t1")
     assert "category" not in row and "filed_by_rule" not in row   # no longer matches -> cleared
 
 
@@ -131,19 +125,19 @@ def test_conditions_change_on_a_description_multi_reevaluates_and_refiles_a_matc
                   {"field": "amount", "operator": "less_than", "value": "30"}]
     tighter = [{"field": "description", "operator": "contains", "value": "uber"},
                {"field": "amount", "operator": "less_than", "value": "10"}]
-    rule_repo = FakeRuleRepo()
-    old = _mint(handler, rule_repo, conditions, category_id="transport")
+    table, repo, rule_repo = real_repos()
+    old = _mint(handler, rule_repo, repo, conditions, category_id="transport")
 
-    repo = WritableFeedRepo({SPENDING: [
+    table.seed(
         _row(SPENDING, "2026-07-01", "t1", description="UBER TRIP", amount=-5,
-             category="transport", filed_by_rule=old)]})
+             category="transport", filed_by_rule=old))
 
     resp = handler.update_rule_route(
         _put_event(old, tighter, category_id="petrol"), rule_repo,
         FakeCategoryRepo(_CATEGORIES), repo)
     new = json.loads(resp["body"])["id"]
 
-    row = _row_at(repo, "t1")
+    row = stored(table, "t1")
     assert row["category"] == "petrol" and row["filed_by_rule"] == new   # still matches -> re-filed
 
 
@@ -157,18 +151,18 @@ def test_conditions_change_on_a_merchant_first_multi_reevaluates_and_clears_a_no
     # and this charge is wrongly moved to `petrol` instead of cleared.
     tighter = [{"field": "merchant", "operator": "contains", "value": "uber"},
                {"field": "amount", "operator": "less_than", "value": "10"}]
-    rule_repo = FakeRuleRepo()
-    old = _mint(handler, rule_repo, _UBER_UNDER_30, category_id="transport")
+    table, repo, rule_repo = real_repos()
+    old = _mint(handler, rule_repo, repo, _UBER_UNDER_30, category_id="transport")
 
-    repo = WritableFeedRepo({SPENDING: [
+    table.seed(
         _row(SPENDING, "2026-07-01", "t1", description="UBER TRIP", merchant_name="UBER",
-             amount=-25, category="transport", filed_by_rule=old)]})
+             amount=-25, category="transport", filed_by_rule=old))
 
     handler.update_rule_route(
         _put_event(old, tighter, category_id="petrol"), rule_repo,
         FakeCategoryRepo(_CATEGORIES), repo)
 
-    row = _row_at(repo, "t1")
+    row = stored(table, "t1")
     assert "category" not in row and "filed_by_rule" not in row   # no longer matches -> cleared
 
 
@@ -178,17 +172,17 @@ def test_conditions_change_on_a_merchant_first_multi_reevaluates_and_refiles_a_m
     # clearing every merchant-first charge.
     tighter = [{"field": "merchant", "operator": "contains", "value": "uber"},
                {"field": "amount", "operator": "less_than", "value": "10"}]
-    rule_repo = FakeRuleRepo()
-    old = _mint(handler, rule_repo, _UBER_UNDER_30, category_id="transport")
+    table, repo, rule_repo = real_repos()
+    old = _mint(handler, rule_repo, repo, _UBER_UNDER_30, category_id="transport")
 
-    repo = WritableFeedRepo({SPENDING: [
+    table.seed(
         _row(SPENDING, "2026-07-01", "t1", description="UBER TRIP", merchant_name="UBER",
-             amount=-5, category="transport", filed_by_rule=old)]})
+             amount=-5, category="transport", filed_by_rule=old))
 
     resp = handler.update_rule_route(
         _put_event(old, tighter, category_id="petrol"), rule_repo,
         FakeCategoryRepo(_CATEGORIES), repo)
     new = json.loads(resp["body"])["id"]
 
-    row = _row_at(repo, "t1")
+    row = stored(table, "t1")
     assert row["category"] == "petrol" and row["filed_by_rule"] == new   # still matches -> re-filed

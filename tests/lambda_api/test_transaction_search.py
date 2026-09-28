@@ -3,7 +3,8 @@ lambda_api/transaction_search.py and the GET /transactions/search route.
 
 The bug: the app filtered only its loaded feed pages (30 rows each), so an older match showed
 "No matches". The route reads every row once, so a match deep in one account's history is
-found. FakeFeedRepo pages at MAX_PAGE_SIZE, so the deep case genuinely crosses a page boundary.
+found. The real repository pages at MAX_PAGE_SIZE, so the deep case genuinely crosses a page
+boundary.
 """
 
 import json
@@ -11,7 +12,7 @@ import pathlib
 
 import pytest
 
-from _feed_fakes import ANZ, SPENDING, HOMELOAN, WESTPAC, _row, FakeFeedRepo
+from _feed_fakes import ANZ, SPENDING, HOMELOAN, WESTPAC, date_reads, real_repos, _row
 
 _FIXTURE = json.loads(
     (pathlib.Path(__file__).resolve().parents[1] / "fixtures" / "transaction_search_parity.json").read_text()
@@ -72,18 +73,18 @@ def test_finds_a_match_deeper_than_the_first_page(handler):
     newer = [_row(ANZ, f"2026-08-{day:02d}", f"a{index}", merchant_name="Coles", description="COLES", amount=-5)
              for index, day in enumerate([1 + index % 28 for index in range(150)])]
     old = _row(ANZ, "2025-01-03", "old", merchant_name="Steven Nguyen", description="OSKO", amount=-50)
-    repo = FakeFeedRepo({ANZ: newer + [old]})
+    table, repo, _ = real_repos({ANZ: newer + [old]})
 
     body = _body(_search(handler, repo, {"q": "steven"}))
 
     assert [txn["transaction_id"] for txn in body["transactions"]] == ["old"]
     assert body["truncated"] is False
-    anz_cursors = [call[4] for call in repo.calls if call[0] == ANZ]
+    anz_cursors = [call[4] for call in date_reads(table) if call[0] == ANZ]
     assert any(cursor is not None for cursor in anz_cursors), "the scan must page past ANZ's first page"
 
 
 def test_matches_every_account_newest_first_with_feed_tie_order(handler):
-    repo = FakeFeedRepo({
+    table, repo, _ = real_repos({
         ANZ: [_row(ANZ, "2026-07-10", "a1", description="GIFT FOR STEVEN", amount=-1)],
         SPENDING: [_row(SPENDING, "2026-07-12", "s1", description="STEVEN", amount=-1)],
         HOMELOAN: [_row(HOMELOAN, "2026-07-10", "h1", description="steven loan", amount=-1)],
@@ -98,7 +99,7 @@ def test_matches_every_account_newest_first_with_feed_tie_order(handler):
 
 
 def test_rows_are_shaped_like_feed_rows(handler):
-    repo = FakeFeedRepo({ANZ: [_row(ANZ, "2026-07-10", "a1", description="STEVEN", amount=-1)]})
+    table, repo, _ = real_repos({ANZ: [_row(ANZ, "2026-07-10", "a1", description="STEVEN", amount=-1)]})
 
     [txn] = _body(_search(handler, repo, {"q": "steven"}))["transactions"]
 
@@ -107,7 +108,7 @@ def test_rows_are_shaped_like_feed_rows(handler):
 
 
 def test_matches_on_category_name(handler):
-    repo = FakeFeedRepo({ANZ: [_row(ANZ, "2026-07-10", "a1", description="PHO", amount=-1, category="eating_out"),
+    table, repo, _ = real_repos({ANZ: [_row(ANZ, "2026-07-10", "a1", description="PHO", amount=-1, category="eating_out"),
                                _row(ANZ, "2026-07-09", "a2", description="COLES", amount=-1, category="groceries")]})
 
     body = _body(_search(handler, repo, {"q": "eating out"}))
@@ -116,7 +117,7 @@ def test_matches_on_category_name(handler):
 
 
 def test_uncategorized_tab_keeps_only_unfiled_matches(handler):
-    repo = FakeFeedRepo({ANZ: [
+    table, repo, _ = real_repos({ANZ: [
         _row(ANZ, "2026-07-10", "null", description="STEVEN", amount=-1, category=None),
         _row(ANZ, "2026-07-09", "enum", description="STEVEN", amount=-1, category="FOOD_AND_DRINK"),
         _row(ANZ, "2026-07-08", "filed", description="STEVEN", amount=-1, category="groceries"),
@@ -133,7 +134,7 @@ def test_caps_results_and_flags_truncated(handler, transaction_search):
     rows = [_row(ANZ, f"2026-{1 + index // 28 % 12:02d}-{1 + index % 28:02d}", f"a{index}",
                  description="STEVEN", amount=-1) for index in range(limit + 1)]
 
-    body = _body(_search(handler, FakeFeedRepo({ANZ: rows}), {"q": "steven"}))
+    body = _body(_search(handler, real_repos({ANZ: rows})[1], {"q": "steven"}))
 
     assert len(body["transactions"]) == limit
     assert body["truncated"] is True
@@ -145,7 +146,7 @@ def test_exactly_the_limit_is_not_truncated(handler, transaction_search):
     limit = transaction_search.SEARCH_RESULT_LIMIT
     rows = [_row(ANZ, "2026-07-10", f"a{index}", description="STEVEN", amount=-1) for index in range(limit)]
 
-    body = _body(_search(handler, FakeFeedRepo({ANZ: rows}), {"q": "steven"}))
+    body = _body(_search(handler, real_repos({ANZ: rows})[1], {"q": "steven"}))
 
     assert len(body["transactions"]) == limit
     assert body["truncated"] is False
@@ -156,25 +157,25 @@ def test_exactly_the_limit_is_not_truncated(handler, transaction_search):
 
 @pytest.mark.parametrize("params", [None, {}, {"q": ""}, {"q": "   "}])
 def test_blank_query_is_a_400_without_scanning(handler, params):
-    repo = FakeFeedRepo({})
+    table, repo, _ = real_repos({})
     response = handler.get_transactions_search(_search_event(params), repo, _CATEGORIES)
     assert response["statusCode"] == 400
-    assert repo.calls == [], "bad input must not pay for a whole-history scan"
+    assert date_reads(table) == [], "bad input must not pay for a whole-history scan"
 
 
 def test_query_length_limit(handler, transaction_search):
     max_len = transaction_search.SEARCH_QUERY_MAX_LEN
-    assert _search(handler, FakeFeedRepo({}), {"q": "a" * max_len})["statusCode"] == 200
-    too_long = FakeFeedRepo({})
+    assert _search(handler, real_repos()[1], {"q": "a" * max_len})["statusCode"] == 200
+    too_long_table, too_long, _ = real_repos({})
     assert _search(handler, too_long, {"q": "a" * (max_len + 1)})["statusCode"] == 400
-    assert too_long.calls == []
+    assert date_reads(too_long_table) == []
 
 
 @pytest.mark.parametrize("tab", ["budgets", "Uncategorized"])  # case-sensitive: the app sends lower-case
 def test_unknown_tab_is_a_400_without_scanning(handler, tab):
-    repo = FakeFeedRepo({})
+    table, repo, _ = real_repos({})
     assert _search(handler, repo, {"q": "steven", "tab": tab})["statusCode"] == 400
-    assert repo.calls == []
+    assert date_reads(table) == []
 
 
 def test_the_router_dispatches_the_search_path(handler, monkeypatch):

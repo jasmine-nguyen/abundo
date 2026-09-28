@@ -1,7 +1,7 @@
 """WHIT-445 gap coverage — keep each invariants guard's CLOSED suite tuple complete.
 
 The consolidated invariants guard (``test_fakes_invariants.py``) iterates a HARD-CODED registry
-of suites per domain (feed / handler_patch / paycycle / category / milestone) when proving "no
+of suites per domain (handler_patch / paycycle / category / milestone) when proving "no
 suite re-defines the shared fake" ([G1]). That is a closed list: a NEW suite added later that
 IMPORTS the shared fake but is never added to the registry is invisible to [G1] — it could later
 paste a divergent copy of the fake and stay green forever.
@@ -77,8 +77,6 @@ _CONSOLIDATED_GUARD = _SHARED / "test_fakes_invariants.py"
 _DOMAINS = [
     pytest.param(_SHARED, {"_milestone_fakes", "_milestone_row_fakes"},
                  _CONSOLIDATED_GUARD, id="milestone"),
-    pytest.param(_API, {"_feed_fakes"}, _CONSOLIDATED_GUARD, id="feed"),
-    pytest.param(_API, {"_rule_fakes"}, _CONSOLIDATED_GUARD, id="rule"),
     pytest.param(_API, {"_handler_patch_fakes"}, _CONSOLIDATED_GUARD, id="handler_patch"),
     pytest.param(_API, {"_paycycle_fakes"}, _CONSOLIDATED_GUARD, id="paycycle"),
     pytest.param(_API, {"_category_fakes"}, _CONSOLIDATED_GUARD, id="category"),

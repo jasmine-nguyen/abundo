@@ -5,16 +5,14 @@ EDIT boundary, the budget_excluded clash dimension, amount-as-one-of-several mul
 sub-cent trailing-zero boundary, and the flat-path regressions the "route through
 _validate_condition_value" rewrite introduced (direction now validated; text value.strip() parity).
 
-Driven through lambda_handler with a FakeRuleRepo injected, exactly like the sibling suite and
-test_rules_routes.py. FakeRuleRepo keys rows by id (a dedup hit does NOT append to `minted`) and
-records `updated` / `deleted` so an in-place edit (id kept) is distinguishable from a move (id
-changed, old id deleted).
+Driven through lambda_handler with the real RuleRepository over a FakeTable injected, exactly like
+the sibling suite and test_rules_routes.py. Rows are keyed by id (a dedup hit mints no new row), so
+an in-place edit (id kept, one row) is distinguishable from a move (id changed, old row gone).
 """
 
 import json
 
-from _feed_fakes import FakeCategoryRepo, WritableFeedRepo
-from _rule_fakes import FakeRuleRepo
+from _feed_fakes import FakeCategoryRepo, Repos
 
 
 _CATEGORIES = ("transport", "groceries")
@@ -28,10 +26,11 @@ def _event(method, path, body, path_params=None):
     return event
 
 
-def _inject(handler, monkeypatch, repo, categories=_CATEGORIES):
-    monkeypatch.setattr(handler, "RuleRepository", lambda: repo)
+def _inject(handler, monkeypatch, store, categories=_CATEGORIES):
+    """Point the handler at the real repositories over the store's one FakeTable."""
+    monkeypatch.setattr(handler, "RuleRepository", lambda: store.rule_repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(categories))
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: WritableFeedRepo({}))
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: store.transaction_repo)
 
 
 def _amount_body(value, category_id="transport"):
@@ -60,8 +59,8 @@ def test_edit_amount_respelling_keeps_id_in_place(handler, monkeypatch):
     # rule stored "30" to the equivalent "30.00" must normalise back to "30" -> SAME id -> an IN-PLACE
     # update (no move, no delete of the old id), so nothing stamped with the old id orphans.
     # FAIL-ON-REVERT: drop format(...,"f") and "30.00" keeps its zeros -> a new id -> the row MOVES
-    # (repo.deleted gains the old id, body id changes), orphaning every charge the rule filed.
-    repo = FakeRuleRepo()
+    # (the old id's row is deleted, body id changes), orphaning every charge the rule filed.
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     created = json.loads(_post(handler, _amount_body("30"))["body"])
     rule_id = created["id"]
@@ -72,8 +71,7 @@ def test_edit_amount_respelling_keeps_id_in_place(handler, monkeypatch):
     assert resp["statusCode"] == 200
     assert body["id"] == rule_id                 # id unchanged -> no orphaned filed_by_rule stamps
     assert body["value"] == "30"                 # normalisation still reaches the stored value
-    assert repo.deleted == []                    # NOT a move
-    assert [r["id"] for r in repo.list_rules()] == [rule_id]   # still exactly one row
+    assert [r["id"] for r in repo.rule_repo.list_rules()] == [rule_id]   # still exactly one row
 
 
 def test_edit_amount_across_flat_to_multi_boundary_keeps_id(handler, monkeypatch):
@@ -82,7 +80,7 @@ def test_edit_amount_across_flat_to_multi_boundary_keeps_id(handler, monkeypatch
     # an in-place edit across the flat<->multi boundary, not a move onto a new id.
     # FAIL-ON-REVERT: without normalisation the multi "30.00" condition hashes to a different id ->
     # the row moves and the old id (with its history) is orphaned.
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     flat = json.loads(_post(handler, _amount_body("30"))["body"])
     rule_id = flat["id"]
@@ -92,8 +90,7 @@ def test_edit_amount_across_flat_to_multi_boundary_keeps_id(handler, monkeypatch
 
     assert resp["statusCode"] == 200
     assert body["id"] == rule_id
-    assert repo.deleted == []
-    assert [r["id"] for r in repo.list_rules()] == [rule_id]
+    assert [r["id"] for r in repo.rule_repo.list_rules()] == [rule_id]
 
 
 # --- budget_excluded is a clash dimension: two spellings, different flag => 409, not two rows -----
@@ -105,15 +102,15 @@ def test_amount_spelling_with_different_budget_flag_clashes(handler, monkeypatch
     # conflict on the same row -> 409, NOT a silently-stored duplicate row.
     # FAIL-ON-REVERT: without normalisation "30.00" gets its own id -> no clash -> a 201 second row,
     # exactly the duplicate WHIT-564 removes.
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     first = _post(handler, {**_amount_body("30"), "budgetExcluded": False})
     assert first["statusCode"] == 201
 
     second = _post(handler, {**_amount_body("30.00"), "budgetExcluded": True})
     assert second["statusCode"] == 409
-    assert len(repo.minted) == 1
-    assert len(repo.list_rules()) == 1
+    assert len(repo.minted_rules()) == 1
+    assert len(repo.rule_repo.list_rules()) == 1
 
 
 # --- amount as ONE OF SEVERAL conditions: the normalised value must reach the multi id -----------
@@ -130,13 +127,13 @@ def test_multi_amount_condition_among_others_dedups(handler, monkeypatch):
                                {"field": "amount", "operator": "less_than", "value": amount_value}],
                 "logic": "all", "categoryId": "transport"}
 
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     first = json.loads(_post(handler, body("30.00"))["body"])
     second = json.loads(_post(handler, body("30"))["body"])
 
     assert first["id"] == second["id"]
-    assert len(repo.minted) == 1
+    assert len(repo.minted_rules()) == 1
     # the stored amount condition is canonical, not "30.00"
     amount_cond = next(c for c in first["conditions"] if c["field"] == "amount")
     assert amount_cond["value"] == "30"
@@ -148,7 +145,7 @@ def test_multi_amount_condition_among_others_dedups(handler, monkeypatch):
 def test_sub_cent_trailing_zero_dedups_but_distinct_cents_split(handler, monkeypatch):
     # [A12] Boundary the sibling suite skips: below $1. 0.10 and 0.1 are the same -> one row;
     # 0.05 is a different amount from 0.5 (not a trailing-zero variant) -> its own row.
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     a = json.loads(_post(handler, _multi_amount_body("0.10"))["body"])
     b = json.loads(_post(handler, _multi_amount_body("0.1"))["body"])
@@ -159,7 +156,7 @@ def test_sub_cent_trailing_zero_dedups_but_distinct_cents_split(handler, monkeyp
     d = json.loads(_post(handler, _multi_amount_body("0.5", category_id="groceries"))["body"])
     assert c["id"] != d["id"]
     assert len({a["id"], c["id"], d["id"]}) == 3
-    assert len(repo.minted) == 3
+    assert len(repo.minted_rules()) == 3
 
 
 # --- flat path now routes through _validate_condition_value: direction + text regressions ---------
@@ -171,13 +168,13 @@ def test_flat_direction_rule_now_validates_its_value(handler, monkeypatch):
     # the flat value through _validate_condition_value now rejects it (400) while a valid direction is
     # accepted (201).
     # FAIL-ON-REVERT: restore the raw value.strip() flat branch and "banana" is stored -> 201.
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
 
     bad = _post(handler, {"field": "direction", "operator": "is", "value": "banana",
                           "categoryId": "transport"})
     assert bad["statusCode"] == 400
-    assert repo.minted == []
+    assert repo.minted_rules() == []
 
     good = _post(handler, {"field": "direction", "operator": "is", "value": "debit",
                            "categoryId": "transport"})
@@ -189,7 +186,7 @@ def test_flat_text_value_strip_and_empty_parity_preserved(handler, monkeypatch):
     # [A14] Regression parity for the common flat text rule: a surrounding-whitespace value is
     # still trimmed to its stripped form (value.strip() parity), and an empty / whitespace-only value
     # is still a 400 (the "value is required" guard the rewrite must not have dropped).
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
 
     ok = _post(handler, {"field": "description", "operator": "contains", "value": "  COLES  ",
@@ -201,4 +198,4 @@ def test_flat_text_value_strip_and_empty_parity_preserved(handler, monkeypatch):
         resp = _post(handler, {"field": "description", "operator": "contains", "value": empty,
                                "categoryId": "groceries"})
         assert resp["statusCode"] == 400                      # still rejected
-    assert len(repo.minted) == 1                              # only the good rule was written
+    assert len(repo.minted_rules()) == 1                              # only the good rule was written
