@@ -2,10 +2,8 @@
 
 tests/sync_trigger/test_handler.py already covers the generic loop (happy path,
 409 skip, all-409, per-feed isolation on the FIRST feed, URLError). These add the
-edges that only appear once a THIRD feed exists, and lock the claim written into
-shared/constants.py next to the new id: the Westpac feed also runs BankSync's own
-daily schedule, so our hourly tick can overlap it and get a 409 — which must stay
-a harmless skip while the remaining feeds still sync.
+edges that only appear once a THIRD feed exists. A 409 on the Westpac feed (a sync
+already in progress) must stay a harmless skip while the other feeds still sync.
 """
 
 import io
@@ -59,11 +57,11 @@ def test_westpac_feed_is_triggered_by_its_own_url(monkeypatch):
     assert handler.SYNC_FEED_IDS[_WESTPAC_FEED] == "westpac-altitude-qantas-black"
 
 
-# --- the documented overlap with BankSync's own daily schedule ---------------
+# --- a 409 on one feed is a skip ---
 
 
 def test_westpac_409_overlap_is_a_skip_and_the_other_feeds_still_sync(monkeypatch):
-    # Only the Westpac feed 409s (BankSync's own daily job is mid-flight). The
+    # Only the Westpac feed 409s (a sync is already in progress). The
     # invocation must SUCCEED — no RuntimeError, no alarm — and every other feed must
     # still have been POSTed. The existing all-409 test can't catch a regression that
     # turned a partial 409 into a hard failure, because there is no survivor in it.

@@ -127,6 +127,11 @@ def test_trigger_sync_non_409_http_error_is_raised(monkeypatch):
 # --- lambda_handler ----------------------------------------------------------
 
 
+def test_up_spending_feed_replaces_deleted_anz_feed():
+    assert handler.SYNC_FEED_IDS["ZDlL4aShYkOd8A3dw8Tb"] == "up-spending"
+    assert "xXkBR72EKo4Qxkz8667l" not in handler.SYNC_FEED_IDS
+
+
 def test_lambda_handler_all_feeds_succeed(monkeypatch):
     monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
     calls = []
