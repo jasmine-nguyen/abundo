@@ -115,8 +115,13 @@ const REFRESH_BY_CHANGE: Record<'refile' | 'budgetExclusion' | 'categoryDeleted'
   budgetExclusion: [['budgets'], ['breakdown'], ['budgetTransactions'], ['categoryTransactions']],
   // The deleted category's charges become unfiled: they must ENTER the uncategorized feed and
   // search results, which an in-place patch can't do. Budgets are cascaded by hand (a refetch
-  // would resurrect the dropped budget, as the server doesn't cascade).
-  categoryDeleted: [['breakdown'], ['uncategorizedCount'], ['uncategorizedFeed'], ['transactionsSearch']],
+  // would resurrect the dropped budget, as the server doesn't cascade). The charge lists reload so
+  // a charge leaves a parent budget's list and the spend moves; their refetched rows still carry
+  // the dangling id, which shows as Uncategorized through categoryIsUnmapped.
+  categoryDeleted: [
+    ['breakdown'], ['uncategorizedCount'], ['uncategorizedFeed'], ['transactionsSearch'],
+    ['budgetTransactions'], ['categoryTransactions'],
+  ],
   // A server-side run can file rows we never saw, move them into or out of search, mint rules
   // (WHIT-517), shrink the shop groups and suggestions (WHIT-542), and file under a category
   // created in another session — so re-read the taxonomy too.

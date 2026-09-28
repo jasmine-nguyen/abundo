@@ -1941,27 +1941,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const deleteCategory = useCallback(async (id: string): Promise<boolean> => runSave({
-    send: () => apiDeleteCategory(id),
-    onSaved: () => {
+    apply: () => {
       // Client-side cascade into the query caches the migrated screens read (category
       // list, budget screens, tab badge, pickers). setQueryData — NOT invalidate —
       // because the server does no cascade, so a refetch would resurrect the just-dropped
       // budget/rule/txn-tag (cosmetic: those txns re-appear with the dangling id and
       // render as Uncategorized via isUncategorized). The ['budgets'] cache holds the RAW
       // Record<categoryId, BudgetRollup> (not the select'd Budget[]), so drop the deleted
-      // id's KEY from the Record via setQueriesData (prefix ['budgets']) — filtering it as
-      // an array would throw `.filter is not a function` and abort the rest of the cascade.
-      // Rules go through patchRules (same ['rules'] cache).
+      // id's KEY from the Record — filtering it as an array would throw `.filter is not a
+      // function` and abort the rest of the cascade.
+      // The undo restores whole snapshots, so a change to categories/rules/budgets made while
+      // the delete is in flight is lost on failure (rare: the delete is modal).
+      const categoriesBefore = queryClient.getQueryData<Category[]>(['categories']);
+      const rulesBefore = queryClient.getQueryData<Rule[]>(['rules']);
+      const budgetSnapshots = queryClient.getQueriesData<Record<string, BudgetRollup>>({ queryKey: ['budgets'] });
+      const unfiledIds = new Set(
+        readTransactionCopies(queryClient, { includeScopedLists: true })
+          .filter((t) => t.category === id)
+          .map((t) => t.transaction_id),
+      );
       queryClient.setQueryData<Category[]>(['categories'], (prev) => prev?.filter((c) => c.id !== id));
-      queryClient.setQueriesData<Record<string, BudgetRollup>>({ queryKey: ['budgets'] }, (prev) => {
-        if (!prev || !(id in prev)) return prev;
-        const { [id]: _removed, ...rest } = prev;
-        return rest;
+      budgetSnapshots.forEach(([key, data]) => {
+        if (!data || !(id in data)) return;
+        const { [id]: _removed, ...rest } = data;
+        queryClient.setQueryData<Record<string, BudgetRollup>>(key, rest);
       });
       patchRules((prev) => prev.filter((r) => r.categoryId !== id));
-      patchTransactionsCache((prev) => prev.map((t) => (t.category === id ? { ...t, category: null } : t)));
+      patchAllCopies((t) => (t.category === id ? { ...t, category: null } : t));
+      return () => {
+        queryClient.setQueryData(['categories'], categoriesBefore);
+        queryClient.setQueryData(['rules'], rulesBefore);
+        budgetSnapshots.forEach(([key, data]) => queryClient.setQueryData(key, data));
+        patchAllCopies((t) => (unfiledIds.has(t.transaction_id) ? { ...t, category: id } : t));
+      };
+    },
+    send: () => apiDeleteCategory(id),
+    onSaved: () => {
       // The deleted category's spend and charges now count as Uncategorized. Deleting a category
-      // is rare, so refetching the paged uncategorized feed here is cheap and keeps it correct.
+      // is rare, so refetching the paged uncategorized feed and the charge lists here is cheap.
       refreshAfter('categoryDeleted');
       showToast('Category deleted.');
       return true;

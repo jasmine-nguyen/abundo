@@ -242,7 +242,7 @@ it('applyTransactionEdit on a budget-only charge: a note edit refreshes nothing;
 });
 
 // [A8]
-it('deleteCategory unfiles its charges in the main copies and refreshes the category-deleted set', async () => {
+it('deleteCategory unfiles its charges in every copy and refreshes the category-deleted set', async () => {
   mockApi.deleteCategory.mockResolvedValue(undefined as never);
   seedServerDerived();
   queryClient.setQueryData(['transactions'], page([tx('t1'), tx('t2', { category: 'groceries' })]));
@@ -256,11 +256,13 @@ it('deleteCategory unfiles its charges in the main copies and refreshes the cate
 
   expect(categoryOf(feedRows('transactions'))).toEqual({ t1: null, t2: 'groceries' });
   expect(categoryOf(searchRows())).toEqual({ t1: null });
-  for (const key of [BREAKDOWN_KEY, COUNT_KEY, UNCAT_KEY, SEARCH_KEY]) {
+  // WHIT-628: the budget / category charge lists are unfiled too, and reload.
+  expect(categoryOf(listRows(BUDGET_KEY))).toEqual({ t1: null });
+  expect(categoryOf(listRows(CATEGORY_KEY))).toEqual({ t1: null });
+  for (const key of [BREAKDOWN_KEY, COUNT_KEY, UNCAT_KEY, SEARCH_KEY, BUDGET_KEY, CATEGORY_KEY]) {
     expect([key, invalidated(key)]).toEqual([key, true]);
   }
   // Budgets are cascaded by hand (a refetch would resurrect the dropped budget).
   expect(invalidated(BUDGETS_KEY)).toBe(false);
-  expect(invalidated(BUDGET_KEY)).toBe(false);
   expect(invalidated(['transactions'])).toBe(false);
 });
