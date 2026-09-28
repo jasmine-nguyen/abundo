@@ -58,11 +58,10 @@ def _store_charge(transaction_repo, transaction_id, description, **fields):
 
 
 def _plan(book, transaction_repo):
-    import rule_engine
     from repository_transaction import read_window
 
     transactions = read_window(transaction_repo, None, None)
-    return transactions, rule_engine.plan_rule_application(book.rules, transactions, book.is_unfiled)
+    return transactions, book.plan(transactions)
 
 
 def test_write_limit_stops_at_the_cap_and_after_the_clock_but_never_before_one_write(rule_book):

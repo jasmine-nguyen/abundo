@@ -108,7 +108,6 @@ def _store_charge(transaction_repo, transaction_id, description, **fields):
 
 def test_sweep_files_unfiled_charges_by_the_loaded_rule_book_and_undoes_orphan_stamps(
         rule_book, rule_repo, category_repo, repo):
-    import rule_engine
     from repository_transaction import read_window
 
     rule, _ = rule_repo.create_rule("description", "contains", "COLES", "groceries",
@@ -119,7 +118,7 @@ def test_sweep_files_unfiled_charges_by_the_loaded_rule_book_and_undoes_orphan_s
 
     book = rule_book.RuleBook.load(rule_repo, category_repo)
     transactions = read_window(repo, None, None)
-    plan = rule_engine.plan_rule_application(book.rules, transactions, book.is_unfiled)
+    plan = book.plan(transactions)
     progress = []
     filed, vanished, failed, already_filed, matched_remaining = book.sweep(
         repo, transactions, plan, limit=rule_book.WriteLimit.none(), run_reconcile=True,

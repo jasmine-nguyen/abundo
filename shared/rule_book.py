@@ -110,6 +110,10 @@ class RuleBook:
         }]
         return narrowed
 
+    def plan(self, transactions: list[dict]) -> dict:
+        """What this book's rules would do to `transactions` — decided, not done."""
+        return rule_engine.plan_rule_application(self.rules, transactions, self.is_unfiled)
+
     def file_charges(self, rows: list[dict], seeder=None, *, counts_to_budget) -> None:
         """File each unfiled charge in `rows` in place, when exactly one live category is agreed.
 
