@@ -1,34 +1,52 @@
-"""Shared budget-alert debounce fake (WHIT-577).
+"""Shared budget-alert debounce wiring (WHIT-577, WHIT-625).
 
-Three webhook alert suites each carried a private copy of the notify-repo stand-in; the
-WHIT-577 claim/release methods would have had to be added to all three and could drift. They
-import this one instead. Dependency-light: no shared/-layer import.
+The webhook alert suites run the REAL NotifyRepository over a FakeTable, so the conditional claim
+(ADD only when the marker is absent), the release and the String-Set markers run as production
+wrote them. Dependency-light: the shared layer is imported lazily, inside ``notify_repo``.
 """
 
+from _dynamo_fakes import FakeTable
 
-class FakeNotifyRepo:
-    """Debounce markers keyed by (cycle_start, length) so cycles are isolated. `claim_fired`
-    mirrors the conditional ADD: it claims only an absent marker. `lose_claims` models another
-    delivery having claimed first, so every claim returns False."""
 
-    def __init__(self, lose_claims=False):
-        self.store: dict = {}
-        self.lose_claims = lose_claims
-        self.released: list = []
+def notify_repo():
+    """A real NotifyRepository over its own empty FakeTable."""
+    from repository_notify import NotifyRepository
 
-    def fired_markers(self, cycle_start, length):
-        return set(self.store.get((cycle_start, length), set()))
+    repo = NotifyRepository()
+    repo._table = FakeTable()
+    return repo
 
-    def mark_fired(self, cycle_start, length, marker):
-        self.store.setdefault((cycle_start, length), set()).add(marker)
 
-    def claim_fired(self, cycle_start, length, marker):
-        markers = self.store.setdefault((cycle_start, length), set())
-        if self.lose_claims or marker in markers:
+def released_markers(repo):
+    """Every marker the repository asked to release (DELETE from a cycle's set), in call order —
+    a release the table refused still counts, since it was attempted."""
+    released = []
+    for expression, _names, values in repo._table.update_calls:
+        if expression.startswith("DELETE"):
+            released.extend(sorted(values[":m"]))
+    return released
+
+
+def claimed_meanwhile(repo, cycle_start, length, *markers):
+    """Another delivery claims ``markers`` after this one read its snapshot, just before this
+    one's first write lands."""
+    def claim(key, table):
+        for marker in markers:
+            repo.mark_fired(cycle_start, length, marker)
+    repo._table.before_next_write(claim)
+
+
+def fail_nth_write(repo, verb, number, error=None):
+    """The ``number``-th write whose UpdateExpression starts with ``verb`` raises ``error`` (default:
+    a throttle ClientError, which the repository turns into a DatabaseError). ``"ADD"`` is a claim
+    or mark, ``"DELETE"`` a release."""
+    table = repo._table
+    seen = []
+
+    def nth(key):
+        if not table.update_calls[-1][0].startswith(verb):
             return False
-        markers.add(marker)
-        return True
+        seen.append(key)
+        return len(seen) == number
 
-    def release_fired(self, cycle_start, length, marker):
-        self.store.get((cycle_start, length), set()).discard(marker)
-        self.released.append(marker)
+    table.fail("update_item", error=error, when=nth)

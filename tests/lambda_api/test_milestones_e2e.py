@@ -2,7 +2,7 @@
 
 Merges four former per-WHIT e2e gap suites (corrupt_row [A6-A8], live_keys [L6], whit417 [F1-F3],
 whit424 [W1-W3]) into one topical survivor (WHIT-465 Slice 5). Each test drives the REAL
-MilestoneRepository (real _to_client / _resolve_plan) behind an in-memory table, through
+MilestoneRepository (real _to_client / _resolve_plan) and NotifyRepository over a FakeTable, through
 lambda_handler and/or the poller's notify_milestone_crossing over ONE shared store — the seam no
 shared-layer unit test can reach.
 
@@ -31,31 +31,18 @@ from decimal import Decimal
 
 import pytest
 
+from _dynamo_fakes import FakeTable
+from _milestone_fakes import notify_repo, removed_markers, stored_markers
+
 
 # --- harness ----------------------------------------------------------------
-
-class FakeConfigTable:
-    """The single-config-item slice DynamoDB MilestoneRepository uses (get_item/put_item on
-    pk=MILESTONES, sk=<scope>), injected as repo._table so the real set_milestones /
-    _read_milestones / _to_client / _resolve_plan all run unmodified."""
-
-    def __init__(self):
-        self.store = {}
-
-    def get_item(self, Key):
-        item = self.store.get((Key["pk"], Key["sk"]))
-        return {"Item": dict(item)} if item is not None else {}
-
-    def put_item(self, Item, ConditionExpression=None):
-        self.store[(Item["pk"], Item["sk"])] = dict(Item)
-
 
 @pytest.fixture
 def milestone_repo(handler, monkeypatch):
     # Swaps handler.MilestoneRepository to this real repo (backed by an in-memory table) so every
     # test driving lambda_handler / the poller reads and writes the one store.
     repo = handler.MilestoneRepository()
-    repo._table = FakeConfigTable()
+    repo._table = FakeTable()
     monkeypatch.setattr(handler, "MilestoneRepository", lambda: repo)
     return repo
 
@@ -85,27 +72,6 @@ class FakeDeviceRepo:
 class FakeLoanFactsRepo:
     def get_loanfacts(self):
         return None
-
-
-class FakeNotifyRepo:
-    """Reused across polls in a test, so it accumulates fired markers and removals like the real
-    DynamoDB-backed marker set does between daily polls. The empty-guard assert in remove pins that
-    the sweep never calls remove_milestone_markers with an empty set."""
-
-    def __init__(self, fired=None):
-        self.fired = set(fired or set())
-        self.removed = set()
-
-    def fired_milestones(self, scope=None):
-        return set(self.fired)
-
-    def mark_milestone_fired(self, key, scope=None):
-        self.fired.add(key)
-
-    def remove_milestone_markers(self, keys, scope=None):
-        assert keys, "must guard empty before calling remove_milestone_markers"
-        self.removed |= set(keys)
-        self.fired -= set(keys)
 
 
 def _get_event():
@@ -205,7 +171,7 @@ def test_a_hidden_rows_marker_survives_until_the_next_save_drops_the_row(
     pushes = []
     monkeypatch.setattr(poller, "send_push",
                         lambda title, body, tokens, **kw: pushes.append(title))
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
 
     def poll(old, new):
         return poller.notify_milestone_crossing(
@@ -220,7 +186,7 @@ def test_a_hidden_rows_marker_survives_until_the_next_save_drops_the_row(
 
     assert poll("410000", "395000") == 1
     assert pushes == ["\U0001f389 Milestone reached — Quarter down!"]
-    assert notify.fired == {quarter_marker}
+    assert stored_markers(notify) == {quarter_marker}
 
     # 2. That row's stored date is corrupted (a legacy or hand-written value — the save endpoint
     # can't produce one). The row is now unreadable on BOTH paths.
@@ -234,8 +200,8 @@ def test_a_hidden_rows_marker_survives_until_the_next_save_drops_the_row(
     # change. The second row keeps the plan non-empty, so the sweep genuinely runs.
     assert poll("395000", "390000") == 0
     assert poll("390000", "385000") == 0
-    assert notify.removed == set(), "a stored row's marker must survive being unreadable"
-    assert notify.fired == {quarter_marker}
+    assert removed_markers(notify) == set(), "a stored row's marker must survive being unreadable"
+    assert stored_markers(notify) == {quarter_marker}
 
     # 4. The user edits their plan. The app can only send back what it was shown, and PUT
     # replaces the plan whole — so the hidden row is silently dropped from the store.
@@ -248,8 +214,8 @@ def test_a_hidden_rows_marker_survives_until_the_next_save_drops_the_row(
     # step 3 is a stay of execution, not immortality — which is what keeps the once-ever record
     # from growing without bound.
     assert poll("385000", "380000") == 0
-    assert notify.removed == {quarter_marker}
-    assert notify.fired == set()
+    assert removed_markers(notify) == {quarter_marker}
+    assert stored_markers(notify) == set()
     assert pushes == ["\U0001f389 Milestone reached — Quarter down!"], "no second celebration"
 
 
@@ -300,7 +266,7 @@ def test_a_leap_day_row_the_user_saved_still_celebrates(
     assert put["statusCode"] == 200, put["body"]
     leap_id = json.loads(put["body"])[1]["id"]
 
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     sent = poller.notify_milestone_crossing(
         Decimal("600000"), Decimal("595000"),
         loanfacts_repo=FakeLoanFactsRepo(), device_repo=FakeDeviceRepo(),
@@ -308,8 +274,8 @@ def test_a_leap_day_row_the_user_saved_still_celebrates(
 
     assert sent == 1
     assert sent_pushes == ["\U0001f389 Milestone reached — Ünïcödé 🎉 目標!"]
-    assert notify.fired == {f"id:{leap_id}:bal:595413.43"}
-    assert notify.removed == set(), "no live row's marker may be swept"
+    assert stored_markers(notify) == {f"id:{leap_id}:bal:595413.43"}
+    assert removed_markers(notify) == set(), "no live row's marker may be swept"
 
 
 def test_every_date_the_save_endpoint_accepts_is_readable_by_the_poller(handler, poller):
@@ -384,10 +350,10 @@ def test_a_corrupted_target_keeps_its_marker_across_polls_and_never_fires_twice(
     halfway_marker = f"id:{ids[1]}:bal:300000.00"
     deposit_marker = f"id:{ids[0]}:bal:480000.00"
 
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     # First poll crosses BOTH targets -> one push (furthest), both markers recorded.
     assert _poll(poller, milestone_repo, notify, pushes, old="500000", new="250000") == 1
-    assert notify.fired == {deposit_marker, halfway_marker}
+    assert stored_markers(notify) == {deposit_marker, halfway_marker}
 
     # The Halfway row's stored target goes unreadable. Its id still reads.
     _corrupt_target_in_store(milestone_repo, 1)
@@ -396,8 +362,8 @@ def test_a_corrupted_target_keeps_its_marker_across_polls_and_never_fires_twice(
     # the user's, so the WHIT-385 sweep must not reap it as if Halfway were deleted.
     for _ in range(2):
         assert _poll(poller, milestone_repo, notify, pushes, old="240000", new="235000") == 0
-    assert halfway_marker in notify.fired
-    assert halfway_marker not in notify.removed
+    assert halfway_marker in stored_markers(notify)
+    assert halfway_marker not in removed_markers(notify)
 
     # Repair the amount (a fresh PUT preserving ids) and re-cross Halfway. Because the marker was
     # never reaped, the crossing is NOT fresh -> NO second celebration. This is the double-
@@ -408,7 +374,7 @@ def test_a_corrupted_target_keeps_its_marker_across_polls_and_never_fires_twice(
     pushes.clear()
     assert _poll(poller, milestone_repo, notify, pushes, old="310000", new="250000") == 0
     assert pushes == []
-    assert halfway_marker in notify.fired
+    assert halfway_marker in stored_markers(notify)
 
 
 def test_retargeting_through_the_endpoint_sweeps_the_old_marker_and_rearms(
@@ -420,9 +386,9 @@ def test_retargeting_through_the_endpoint_sweeps_the_old_marker_and_rearms(
     old_marker = f"id:{ids[1]}:bal:300000.00"
     new_marker = f"id:{ids[1]}:bal:250000.00"
 
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     _poll(poller, milestone_repo, notify, pushes, old="500000", new="250000")
-    assert old_marker in notify.fired
+    assert old_marker in stored_markers(notify)
 
     # Re-target Halfway 300000 -> 250000 through a real PUT (same id preserved). "Gone" now means
     # the OLD amount is gone: it keys to a new marker, so the old one must be reaped.
@@ -433,14 +399,14 @@ def test_retargeting_through_the_endpoint_sweeps_the_old_marker_and_rearms(
     # A no-crossing poll high above every target: the sweep reaps the stale old marker.
     pushes.clear()
     assert _poll(poller, milestone_repo, notify, pushes, old="600000", new="550000") == 0
-    assert old_marker in notify.removed
-    assert new_marker not in notify.fired            # the new target hasn't been crossed yet
+    assert old_marker in removed_markers(notify)
+    assert new_marker not in stored_markers(notify)            # the new target hasn't been crossed yet
 
     # Cross the NEW target -> a fresh celebration (the re-arm), exactly once.
     pushes.clear()
     assert _poll(poller, milestone_repo, notify, pushes, old="260000", new="240000") == 1
     assert pushes == ["\U0001f389 Milestone reached — Halfway!"]
-    assert new_marker in notify.fired
+    assert new_marker in stored_markers(notify)
 
 
 @pytest.mark.parametrize("bad_date", ["２０３０-01-01", "2030-01-01\n", "2030-00-10"])

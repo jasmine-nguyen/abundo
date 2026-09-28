@@ -12,8 +12,8 @@ everything afterwards.
 
 Unlike the lambda_api fakes (which set ``Key = Attr = object`` because those tests
 never query), this suite exercises ``get_pending_transactions_for_account``, so it
-installs condition-recording ``Key``/``Attr`` (``_Field``) that ``FakeTable`` can
-actually evaluate against a stored item.
+installs condition-recording ``Key``/``Attr`` (``_Field``) that the shared
+``_dynamo_fakes.FakeTable`` can actually evaluate against a stored item.
 """
 
 import os
@@ -24,6 +24,7 @@ import types
 import pytest
 
 from _boto_stubs import use_condition_fields
+from _dynamo_fakes import FakeTable
 
 # The webhook now imports the SHARED repository_transaction / repository_base
 # (for the budget-alert windowed read, WHIT-22), which read these at import time.
@@ -126,108 +127,9 @@ def lam():
                     sys.path.remove(d)
 
 
-class FakeTable:
-    """In-memory DynamoDB table stand-in, injected via ``repo._table``. Emulates the
-    calls the webhook repository makes: get_item, batch_writer put, delete_item, and
-    query with KeyConditionExpression + FilterExpression (evaluated via _Predicate).
-    """
-
-    def __init__(self):
-        self.store: dict = {}  # (pk, sk) -> item
-        self.query_calls = 0
-        # None -> single page (all matches at once, as DynamoDB does under 1MB).
-        # Set to an int to force paging: the KEY-matched set is sliced into pages of
-        # this size BEFORE FilterExpression runs (mirroring DynamoDB's 1MB-then-filter
-        # order), so a row a filter would keep can hide on a later page (WHIT-82).
-        self.page_size = None
-
-    def get_item(self, Key, ConsistentRead=False):
-        item = self.store.get((Key["pk"], Key["sk"]))
-        return {"Item": dict(item)} if item is not None else {}
-
-    def batch_writer(self):
-        store = self.store
-
-        class _Batch:
-            def __enter__(self_):
-                return self_
-
-            def __exit__(self_, *exc):
-                return False
-
-            def put_item(self_, Item):
-                store[(Item["pk"], Item["sk"])] = dict(Item)
-
-        return _Batch()
-
-    def put_item(self, Item, ConditionExpression=None):
-        self.store[(Item["pk"], Item["sk"])] = dict(Item)
-
-    def delete_item(self, Key, ConditionExpression=None):
-        # No attribute_exists guard here → deleting a missing key is a no-op,
-        # matching _delete_pending_if_present's tolerant delete.
-        self.store.pop((Key["pk"], Key["sk"]), None)
-
-    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames,
-                    ExpressionAttributeValues=None, ConditionExpression=None):
-        key = (Key["pk"], Key["sk"])
-        if ConditionExpression is not None:
-            if ConditionExpression != "attribute_exists(pk)":
-                raise AssertionError(f"FakeTable does not know ConditionExpression {ConditionExpression!r}")
-            if key not in self.store:
-                err = sys.modules["botocore.exceptions"].ClientError()
-                err.response = {"Error": {"Code": "ConditionalCheckFailedException", "Message": "boom"}}
-                raise err
-        item = self.store.setdefault(key, {"pk": Key["pk"], "sk": Key["sk"]})
-        values = ExpressionAttributeValues or {}
-        set_part, _, remove_part = UpdateExpression.strip().partition("REMOVE")
-        set_part = set_part.strip()
-        if set_part.startswith("SET"):
-            for pair in set_part[len("SET"):].split(","):
-                if not pair.strip():
-                    continue
-                name_alias, value_alias = (part.strip() for part in pair.split("="))
-                item[ExpressionAttributeNames[name_alias]] = values[value_alias]
-        for name_alias in remove_part.split(","):
-            name_alias = name_alias.strip()
-            if name_alias:
-                item.pop(ExpressionAttributeNames[name_alias], None)
-
-    def query(self, KeyConditionExpression=None, FilterExpression=None,
-              ScanIndexForward=None, Limit=None, IndexName=None,
-              ExclusiveStartKey=None):
-        self.query_calls += 1
-        items = list(self.store.values())
-        if KeyConditionExpression is not None:
-            items = [it for it in items if KeyConditionExpression.evaluate(it)]
-
-        result: dict = {}
-        # Page the key-matched set (before filtering) when page_size is set, resuming
-        # after ExclusiveStartKey. Matches DynamoDB: the 1MB limit + LastEvaluatedKey
-        # are about the queried keys; the filter is applied to each page afterward.
-        if self.page_size is not None:
-            if ExclusiveStartKey is not None:
-                after = next(
-                    (i for i, it in enumerate(items)
-                     if it["pk"] == ExclusiveStartKey["pk"]
-                     and it["sk"] == ExclusiveStartKey["sk"]),
-                    -1,
-                )
-                items = items[after + 1:]
-            if len(items) > self.page_size:
-                items = items[:self.page_size]
-                last = items[-1]
-                result["LastEvaluatedKey"] = {"pk": last["pk"], "sk": last["sk"]}
-
-        if FilterExpression is not None:
-            items = [it for it in items if FilterExpression.evaluate(it)]
-        result["Items"] = [dict(it) for it in items]
-        return result
-
-
 @pytest.fixture
 def repo(lam):
-    """A webhook TransactionRepository backed by an in-memory FakeTable."""
+    """The webhook's own TransactionRepository subclass over the shared FakeTable."""
     r = lam.repository.TransactionRepository()
     r._table = FakeTable()
     return r

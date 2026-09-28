@@ -2,9 +2,9 @@
 history (get_transactions_feed + _fetch_feed_page).
 
 Unlike test_handler.py's recent-feed tests (which use a queued-pages fake), most of these
-use FakeFeedRepo, a realistic stand-in that models DynamoDB's date-index newest-first query
-with ExclusiveStartKey — resuming STRICTLY AFTER a cursor key. That is what makes the
-multi-page merge assertions meaningful: the feed re-queries each account from its own
+run the real TransactionRepository over a FakeTable, which models DynamoDB's date-index
+newest-first query with ExclusiveStartKey — resuming STRICTLY AFTER a cursor key. That is what
+makes the multi-page merge assertions meaningful: the feed re-queries each account from its own
 resume position every page, so a fake that just pops pre-canned pages could not exercise
 the no-dupe / no-gap / keep-prior-cursor behaviour that is the crux of the design.
 """
@@ -16,9 +16,8 @@ from decimal import Decimal
 
 import pytest
 
-# FakeFeedRepo and friends live in tests/shared/_feed_fakes.py so this impl suite and its
-# gap suite share ONE definition (WHIT-445); resolved via pytest.ini's pythonpath.
-from _feed_fakes import ANZ, SPENDING, HOMELOAN, WESTPAC, _row, FakeFeedRepo, _feed_event
+# Resolved via pytest.ini's pythonpath (tests/shared).
+from _feed_fakes import ANZ, SPENDING, HOMELOAN, WESTPAC, date_reads, _feed_event, real_repos, _row
 
 
 def _drain_feed(handler, repo, limit=None):
@@ -45,7 +44,7 @@ def _drain_feed(handler, repo, limit=None):
 
 
 def test_first_page_queries_every_account_from_newest_with_no_date_floor(handler):
-    repo = FakeFeedRepo({
+    table, repo, _ = real_repos({
         ANZ: [_row(ANZ, "2026-07-10", "a1")],
         SPENDING: [_row(SPENDING, "2026-07-11", "s1")],
         HOMELOAN: [_row(HOMELOAN, "2026-07-09", "h1")],
@@ -55,7 +54,7 @@ def test_first_page_queries_every_account_from_newest_with_no_date_floor(handler
 
     assert resp["statusCode"] == 200
     # Every account queried with start=end=None (no 7-day floor) and cursor=None.
-    queried = {c[0]: c for c in repo.calls}
+    queried = {c[0]: c for c in date_reads(table)}
     assert set(queried) == {ANZ, SPENDING, HOMELOAN, WESTPAC}
     for account_id, call in queried.items():
         assert call[1] is None and call[2] is None   # no start/end date floor
@@ -68,14 +67,14 @@ def test_first_page_queries_every_account_from_newest_with_no_date_floor(handler
 
 
 def test_first_page_defaults_to_feed_page_size_limit(handler):
-    repo = FakeFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
+    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
     handler.get_transactions_feed(_feed_event({}), repo)
     # No ?limit= → the per-account query uses FEED_PAGE_SIZE.
-    assert all(call[3] == handler.FEED_PAGE_SIZE for call in repo.calls)
+    assert all(call[3] == handler.FEED_PAGE_SIZE for call in date_reads(table))
 
 
 def test_row_shape_strips_keys_and_defaults_category(handler):
-    repo = FakeFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "s1", amount="-9.99")]})
+    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1", amount="-9.99")]})
     resp = handler.get_transactions_feed(_feed_event({}), repo)
     txn = json.loads(resp["body"])["transactions"][0]
     assert "pk" not in txn and "sk" not in txn
@@ -104,7 +103,7 @@ def test_paging_reaches_all_history_across_accounts_no_dupes_no_gaps(handler):
         SPENDING: [_row(SPENDING, f"2026-07-{d:02d}", f"s{d}") for d in (2, 5, 8, 11, 14)],
         HOMELOAN: [_row(HOMELOAN, f"2026-07-{d:02d}", f"h{d}") for d in (3, 6, 9)],
     }
-    repo = FakeFeedRepo(rows)
+    table, repo, _ = real_repos(rows)
     expected = [r["transaction_id"] for acc in rows.values() for r in acc]
     _assert_full_history_newest_first(handler, repo, expected, limit=2)
 
@@ -117,7 +116,7 @@ def test_paging_is_correct_across_a_range_of_page_sizes(handler):
     }
     expected = [r["transaction_id"] for acc in rows.values() for r in acc]
     for limit in (1, 2, 3, 5, 7):
-        repo = FakeFeedRepo(rows)
+        table, repo, _ = real_repos(rows)
         _assert_full_history_newest_first(handler, repo, expected, limit=limit)
 
 
@@ -128,7 +127,7 @@ def test_equal_dates_straddling_accounts_are_all_returned_once(handler):
         SPENDING: [_row(SPENDING, "2026-07-01", "s_tie"), _row(SPENDING, "2026-06-20", "s_old")],
         HOMELOAN: [_row(HOMELOAN, "2026-07-01", "h_tie")],
     }
-    repo = FakeFeedRepo(rows)
+    table, repo, _ = real_repos(rows)
     expected = [r["transaction_id"] for acc in rows.values() for r in acc]
     # limit=2 forces the three equal-dated rows to split across pages.
     _assert_full_history_newest_first(handler, repo, expected, limit=2)
@@ -142,7 +141,7 @@ def test_account_with_only_old_rows_contributes_later_not_lost(handler):
         SPENDING: [_row(SPENDING, f"2026-07-{d:02d}", f"s{d}") for d in (10, 11, 12)],
         HOMELOAN: [_row(HOMELOAN, f"2026-07-{d:02d}", f"h{d}") for d in (13, 14)],
     }
-    repo = FakeFeedRepo(rows)
+    table, repo, _ = real_repos(rows)
     drained = _drain_feed(handler, repo, limit=2)
     ids = [t["transaction_id"] for t in drained]
     assert "a_ancient" in ids                          # not lost
@@ -152,13 +151,13 @@ def test_account_with_only_old_rows_contributes_later_not_lost(handler):
 
 def test_single_account_populated(handler):
     rows = {SPENDING: [_row(SPENDING, f"2026-07-{d:02d}", f"s{d}") for d in (1, 2, 3, 4, 5)]}
-    repo = FakeFeedRepo(rows)
+    table, repo, _ = real_repos(rows)
     expected = [r["transaction_id"] for r in rows[SPENDING]]
     _assert_full_history_newest_first(handler, repo, expected, limit=2)
 
 
 def test_empty_history_returns_empty_page_and_null_cursor(handler):
-    repo = FakeFeedRepo({})
+    table, repo, _ = real_repos({})
     resp = handler.get_transactions_feed(_feed_event({}), repo)
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"transactions": [], "nextCursor": None}
@@ -166,7 +165,7 @@ def test_empty_history_returns_empty_page_and_null_cursor(handler):
 
 def test_last_page_returns_null_cursor_and_a_follow_up_is_empty(handler):
     rows = {SPENDING: [_row(SPENDING, "2026-07-02", "s2"), _row(SPENDING, "2026-07-01", "s1")]}
-    repo = FakeFeedRepo(rows)
+    table, repo, _ = real_repos(rows)
     # limit=2 fits both rows exactly; nothing remains, so nextCursor is null.
     resp = handler.get_transactions_feed(_feed_event({"limit": "2"}), repo)
     body = json.loads(resp["body"])
@@ -213,7 +212,7 @@ def test_cursor_round_trips_to_the_per_account_resume_map(handler):
         SPENDING: [_row(SPENDING, "2026-07-03", "s3"), _row(SPENDING, "2026-07-01", "s1")],
         ANZ: [_row(ANZ, "2026-07-02", "a2")],
     }
-    repo = FakeFeedRepo(rows)
+    table, repo, _ = real_repos(rows)
     resp1 = handler.get_transactions_feed(_feed_event({"limit": "1"}), repo)
     body1 = json.loads(resp1["body"])
     assert [t["transaction_id"] for t in body1["transactions"]] == ["s3"]   # newest overall
@@ -228,49 +227,49 @@ def test_cursor_round_trips_to_the_per_account_resume_map(handler):
 
 
 def test_limit_above_max_is_clamped(handler):
-    repo = FakeFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
+    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
     handler.get_transactions_feed(_feed_event({"limit": "500"}), repo)
-    assert all(call[3] == handler.MAX_PAGE_SIZE for call in repo.calls)
+    assert all(call[3] == handler.MAX_PAGE_SIZE for call in date_reads(table))
 
 
 def test_limit_zero_is_clamped_to_one(handler):
-    repo = FakeFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
+    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
     handler.get_transactions_feed(_feed_event({"limit": "0"}), repo)
-    assert all(call[3] == 1 for call in repo.calls)
+    assert all(call[3] == 1 for call in date_reads(table))
 
 
 def test_missing_query_params_uses_defaults_not_500(handler):
     # API Gateway sends queryStringParameters: None when the query string is absent.
-    repo = FakeFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
+    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
     event = {"rawPath": "/transactions/feed", "requestContext": {"http": {"method": "GET"}},
              "queryStringParameters": None}
     resp = handler.get_transactions_feed(event, repo)
     assert resp["statusCode"] == 200
-    assert all(call[3] == handler.FEED_PAGE_SIZE for call in repo.calls)
+    assert all(call[3] == handler.FEED_PAGE_SIZE for call in date_reads(table))
 
 
 # --- bad input → 400, never a 500 --------------------------------------------
 
 
 def test_non_numeric_limit_is_400_and_never_hits_repo(handler):
-    repo = FakeFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
+    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
     resp = handler.get_transactions_feed(_feed_event({"limit": "abc"}), repo)
     assert resp["statusCode"] == 400
-    assert repo.calls == []
+    assert date_reads(table) == []
 
 
 def test_malformed_cursor_is_400(handler):
-    repo = FakeFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
+    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
     bad = base64.urlsafe_b64encode(b"not json").decode("ascii")
     resp = handler.get_transactions_feed(_feed_event({"cursor": bad}), repo)
     assert resp["statusCode"] == 400
-    assert repo.calls == []
+    assert date_reads(table) == []
 
 
 def test_cross_account_cursor_key_is_400(handler):
     # A resume key whose account_id contradicts its map slot would be a DynamoDB
     # ValidationException (500) as an ExclusiveStartKey — rejected as a 400 first.
-    repo = FakeFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
+    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
     forged = base64.urlsafe_b64encode(json.dumps({
         "v": 1,
         "a": {SPENDING: {"account_id": ANZ, "date": "2026-07-01",
@@ -278,7 +277,7 @@ def test_cross_account_cursor_key_is_400(handler):
     }).encode()).decode("ascii")
     resp = handler.get_transactions_feed(_feed_event({"cursor": forged}), repo)
     assert resp["statusCode"] == 400
-    assert repo.calls == []
+    assert date_reads(table) == []
 
 
 @pytest.mark.parametrize("payload", [
@@ -293,11 +292,11 @@ def test_cross_account_cursor_key_is_400(handler):
                                "pk": f"ACCOUNT#{SPENDING}", "sk": "s"}}},
 ])
 def test_wrong_shape_feed_cursor_is_400(handler, payload):
-    repo = FakeFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
+    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
     forged = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode("ascii")
     resp = handler.get_transactions_feed(_feed_event({"cursor": forged}), repo)
     assert resp["statusCode"] == 400
-    assert repo.calls == []
+    assert date_reads(table) == []
 
 
 # --- cursor helper unit round-trips ------------------------------------------
@@ -326,7 +325,7 @@ def test_empty_resume_map_encodes_to_null_and_decodes_from_null(handler):
 def test_feed_dispatches_through_lambda_handler(handler, monkeypatch):
     # Proves lambda_handler routes GET /transactions/feed to the feed handler (the merged,
     # cursor-paged shape), NOT the 7-day get_recent_transactions.
-    repo = FakeFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
+    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
     monkeypatch.setattr(handler, "get_recent_transactions",
                         lambda repo: pytest.fail("feed route reached the 7-day feed handler"))
@@ -391,7 +390,7 @@ def test_page_size_larger_than_total_history_is_one_page_null_cursor(handler):
         SPENDING: [_row(SPENDING, f"2026-07-{d:02d}", f"s{d}") for d in (2, 5, 8)],
         HOMELOAN: [_row(HOMELOAN, "2026-07-06", "h1")],
     }
-    repo = FakeFeedRepo(rows)
+    table, repo, _ = real_repos(rows)
     resp = _one_page(handler, repo, limit=100)  # clamped to MAX_PAGE_SIZE, >> 5 rows
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])
@@ -410,7 +409,7 @@ def test_account_exhausts_mid_drain_drops_from_cursor_others_continue(handler):
         ANZ: [_row(ANZ, f"2026-07-{d:02d}", f"a{d}") for d in range(1, 11)],
         HOMELOAN: [_row(HOMELOAN, f"2026-07-{d:02d}", f"h{d}") for d in range(1, 8)],
     }
-    repo = FakeFeedRepo(rows)
+    table, repo, _ = real_repos(rows)
     expected = [r["transaction_id"] for acc in rows.values() for r in acc]
 
     # Walk pages manually so we can inspect the cursor the moment SPENDING is gone.
@@ -443,7 +442,7 @@ def test_page_size_change_mid_pagination_stays_gap_free(handler):
         SPENDING: [_row(SPENDING, f"2026-06-{d:02d}", f"s{d}") for d in range(1, 10)],
         HOMELOAN: [_row(HOMELOAN, f"2026-06-{d:02d}", f"h{d}") for d in range(1, 5)],
     }
-    repo = FakeFeedRepo(rows)
+    table, repo, _ = real_repos(rows)
     expected = [r["transaction_id"] for acc in rows.values() for r in acc]
     got, _ = _drain_with_limits(handler, repo, [1, 5, 2, 7])
     _assert_history(got, expected)
@@ -458,7 +457,7 @@ def test_cursor_from_small_page_resumed_with_large_page(handler):
         SPENDING: [_row(SPENDING, "2026-07-08", "s8"), _row(SPENDING, "2026-07-05", "s5")],
         HOMELOAN: [_row(HOMELOAN, "2026-07-07", "h7"), _row(HOMELOAN, "2026-07-04", "h4")],
     }
-    repo = FakeFeedRepo(rows)
+    table, repo, _ = real_repos(rows)
     page1 = json.loads(_one_page(handler, repo, limit=1)["body"])
     assert [t["transaction_id"] for t in page1["transactions"]] == ["a9"]  # newest overall
     page2 = json.loads(_one_page(handler, repo, cursor=page1["nextCursor"], limit=50)["body"])
@@ -477,7 +476,7 @@ def test_same_date_run_within_one_account_split_by_size_change(handler):
     # resume key lands mid-run. Resume with a different size and the rest must appear once,
     # in a stable order, none dropped or repeated.
     rows = {SPENDING: [_row(SPENDING, "2026-07-01", f"s{i}") for i in range(5)]}
-    repo = FakeFeedRepo(rows)
+    table, repo, _ = real_repos(rows)
     got, _ = _drain_with_limits(handler, repo, [2, 3])   # 2 then 3 straddles the 5-run
     expected = [r["transaction_id"] for r in rows[SPENDING]]
     _assert_history(got, expected)
@@ -492,7 +491,7 @@ def test_same_date_across_accounts_resume_boundary_with_size_change(handler):
         SPENDING: [_row(SPENDING, "2026-07-01", "s_t"), _row(SPENDING, "2026-06-01", "s_o")],
         HOMELOAN: [_row(HOMELOAN, "2026-07-01", "h_t"), _row(HOMELOAN, "2026-06-01", "h_o")],
     }
-    repo = FakeFeedRepo(rows)
+    table, repo, _ = real_repos(rows)
     got, _ = _drain_with_limits(handler, repo, [1, 4, 2])
     expected = [r["transaction_id"] for acc in rows.values() for r in acc]
     _assert_history(got, expected)
@@ -502,34 +501,34 @@ def test_same_date_across_accounts_resume_boundary_with_size_change(handler):
 
 def test_whitespace_padded_limit_is_accepted(handler):
     # int(" 5 ") == 5 in Python -> a padded but numeric limit is honoured, not a 400.
-    repo = FakeFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
+    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
     resp = handler.get_transactions_feed(_feed_event({"limit": "  5  "}), repo)
     assert resp["statusCode"] == 200
-    assert all(call[3] == 5 for call in repo.calls)
+    assert all(call[3] == 5 for call in date_reads(table))
 
 
 def test_float_string_limit_is_400_and_never_hits_repo(handler):
     # "5.5" / "5.0" are not ints -> 400 (mirrors non-numeric), before any DynamoDB call.
-    repo = FakeFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
+    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
     resp = handler.get_transactions_feed(_feed_event({"limit": "5.5"}), repo)
     assert resp["statusCode"] == 400
-    assert repo.calls == []
+    assert date_reads(table) == []
 
 
 def test_whitespace_only_limit_is_400(handler):
-    repo = FakeFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
+    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
     resp = handler.get_transactions_feed(_feed_event({"limit": "   "}), repo)
     assert resp["statusCode"] == 400
-    assert repo.calls == []
+    assert date_reads(table) == []
 
 
 def test_negative_limit_is_clamped_to_one_not_500(handler):
     # A negative Limit is a DynamoDB ValidationException (500); the clamp turns "-3" into 1.
     # Documents CURRENT behaviour: negative is silently clamped, NOT rejected as 400.
-    repo = FakeFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
+    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
     resp = handler.get_transactions_feed(_feed_event({"limit": "-3"}), repo)
     assert resp["statusCode"] == 200
-    assert all(call[3] == 1 for call in repo.calls)
+    assert all(call[3] == 1 for call in date_reads(table))
 
 
 # --- [G6] cursor decodes to valid JSON that isn't an object -----------------------
@@ -538,11 +537,11 @@ def test_negative_limit_is_clamped_to_one_not_500(handler):
 def test_cursor_valid_json_but_not_an_object_is_400(handler, payload):
     # base64 of a JSON list/string/number/bool/null is well-formed JSON but not the
     # {v, a} object -> must be a clean 400, never a 500 on .get()/ExclusiveStartKey.
-    repo = FakeFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
+    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
     forged = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode("ascii")
     resp = handler.get_transactions_feed(_feed_event({"cursor": forged}), repo)
     assert resp["statusCode"] == 400
-    assert repo.calls == []
+    assert date_reads(table) == []
 
 
 # --- [G7] large valid resume map with unknown account ids -------------------------
@@ -559,7 +558,7 @@ def test_large_resume_map_with_unknown_accounts_is_tolerated(handler):
     resume = {SPENDING: None, ANZ: None, **unknown}
     token = handler._encode_feed_cursor(resume)
 
-    repo = FakeFeedRepo({
+    table, repo, _ = real_repos({
         SPENDING: [_row(SPENDING, "2026-07-03", "s3"), _row(SPENDING, "2026-07-01", "s1")],
         ANZ: [_row(ANZ, "2026-07-02", "a2")],
     })
@@ -585,7 +584,7 @@ def test_decimal_amounts_serialise_through_feed_no_500(handler):
         _row(SPENDING, "2026-07-02", "s2", amount=Decimal("-12.34"), balance=Decimal("100")),
         _row(SPENDING, "2026-07-01", "s1", amount=Decimal("0")),
     ]}
-    repo = FakeFeedRepo(rows)
+    table, repo, _ = real_repos(rows)
     resp = handler.get_transactions_feed(_feed_event({}), repo)
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])           # would raise if body weren't valid JSON

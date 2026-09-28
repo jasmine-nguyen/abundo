@@ -27,7 +27,8 @@ import pytest
 # Shared milestone fakes + row fixtures (WHIT-445). The one good stored row (_GOOD) and the
 # raw-row injector are shared so the row shape can't drift between the parity suites.
 from _milestone_fakes import (
-    FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, FakeNotifyRepo, recorder,
+    FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, notify_repo, recorder,
+    marker_reads, removed_markers, stored_markers,
 )
 from _milestone_row_fakes import _GOOD, _row, _store_raw_row
 
@@ -294,7 +295,7 @@ def test_a_huge_target_is_skipped_not_raised_through_the_poller(shared, caplog):
 
 # The crossing-driver both folded suites defined identically; kept once here (WHIT-464).
 def _notify(shared, *, old, new, stored, notify=None):
-    notify = notify or FakeNotifyRepo()
+    notify = notify or notify_repo()
     sent = shared.milestones.notify_milestone_crossing(
         Decimal(old), Decimal(new),
         loanfacts_repo=FakeLoanFactsRepo(),
@@ -330,7 +331,7 @@ def test_a_bad_date_row_is_invisible_on_screen_and_does_not_push(shared, milesto
     sent, notify = _notify(shared, old="130000", new="119000", stored=stored)
     assert sent == 0
     assert recorder == []
-    assert "id:d:bal:120000.00" not in notify.fired
+    assert "id:d:bal:120000.00" not in stored_markers(notify)
 
 
 def test_a_repaired_date_does_not_celebrate_again_because_its_marker_survived(shared, recorder):
@@ -345,13 +346,13 @@ def test_a_repaired_date_does_not_celebrate_again_because_its_marker_survived(sh
     broken = _row(id="dated", label="Dated", targetBalance=Decimal("250000"),
                   targetDate="not-a-date")
     marker = "id:dated:bal:250000.00"
-    notify = FakeNotifyRepo(fired={marker})
+    notify = notify_repo(fired={marker})
 
     # 1. While broken, a no-crossing poll leaves its marker alone. A healthy row sits alongside
     # so the sweep genuinely runs — an empty plan skips it entirely (WHIT-386, pinned by [B1c]).
     _notify(shared, old="500000", new="450000", stored=[_GOOD, broken], notify=notify)
-    assert notify.removed == set()
-    assert marker in notify.fired
+    assert removed_markers(notify) == set()
+    assert marker in stored_markers(notify)
 
     # 2. The date is repaired and the balance crosses the target again — already celebrated.
     repaired = _row(id="dated", label="Dated", targetBalance=Decimal("250000"),
@@ -372,14 +373,14 @@ def test_a_plan_where_every_row_has_a_bad_date_celebrates_nothing(shared, record
     # Fail-on-revert: drop row_date from _resolve_plan -> both rows resolve and push.
     stored = [_row(id="a", label="A", targetBalance=Decimal("300000"), targetDate="not-a-date"),
               _row(id="b", label="B", targetBalance=Decimal("250000"), targetDate="")]
-    notify = FakeNotifyRepo(fired={"0"})
+    notify = notify_repo(fired={"0"})
 
     sent, notify = _notify(shared, old="500000", new="200000", stored=stored, notify=notify)
 
     assert sent == 0
     assert recorder == []
-    assert notify.removed == set()                   # nothing swept on an empty plan
-    assert "0" in notify.fired
+    assert removed_markers(notify) == set()                   # nothing swept on an empty plan
+    assert "0" in stored_markers(notify)
 
 
 # --- [B2] PIN: a row with no `id` KEY diverges (WHIT-378 carve-out) ---------
@@ -420,17 +421,17 @@ def test_an_unreadable_row_keeps_its_marker_but_a_deleted_one_loses_it(
     stored = [_row(id="keep", label="Halfway", targetBalance=Decimal("300000")), bad_row]
     keep_marker, bad_marker = "id:keep:bal:300000.00", "id:bad:bal:250000.00"
     gone_marker = "id:gone:bal:999000.00"            # a row genuinely no longer in the plan
-    notify = FakeNotifyRepo(fired={keep_marker, bad_marker, gone_marker, "0"})
+    notify = notify_repo(fired={keep_marker, bad_marker, gone_marker, "0"})
 
     # A no-crossing poll: the sweep runs on its own, before any celebration logic.
     sent, notify = _notify(shared, old="500000", new="450000", stored=stored, notify=notify)
 
     assert sent == 0
     assert recorder == []
-    assert notify.removed == {gone_marker}, why      # only the row that is actually gone
-    assert bad_marker in notify.fired, why           # unreadable != deleted
-    assert keep_marker in notify.fired               # healthy row's record intact
-    assert "0" in notify.fired                       # built-in sprint marker never swept
+    assert removed_markers(notify) == {gone_marker}, why      # only the row that is actually gone
+    assert bad_marker in stored_markers(notify), why           # unreadable != deleted
+    assert keep_marker in stored_markers(notify)               # healthy row's record intact
+    assert "0" in stored_markers(notify)                       # built-in sprint marker never swept
 
 
 # --- [B4] the nesting trap, for row_date this time --------------------------
@@ -555,7 +556,7 @@ def test_a_bad_date_row_costs_only_itself_wherever_it_sits(shared, recorder, pos
     sent, notify = _notify(shared, old="500000", new="240000", stored=stored)
     assert sent == 1
     assert recorder[-1][0] == "\U0001f389 Milestone reached — B!"     # lowest surviving target
-    assert notify.fired == {"id:a:bal:400000.00", "id:b:bal:300000.00"}
+    assert stored_markers(notify) == {"id:a:bal:400000.00", "id:b:bal:300000.00"}
 
 
 # --- [E4] sweeping a stale marker must not cost the poll its celebration ----
@@ -572,15 +573,15 @@ def test_the_sweep_and_a_real_celebration_survive_the_same_poll(shared, recorder
               _row(id="dated", label="Dated", targetBalance=Decimal("250000"),
                    targetDate="not-a-date")]
     gone = "id:deleted:bal:900000.00"
-    notify = FakeNotifyRepo(fired={gone, "id:dated:bal:250000.00"})
+    notify = notify_repo(fired={gone, "id:dated:bal:250000.00"})
 
     sent, notify = _notify(shared, old="310000", new="240000", stored=stored, notify=notify)
 
     assert sent == 1
     assert recorder[-1][0] == "\U0001f389 Milestone reached — Good!"
-    assert notify.removed == {gone}                       # swept in the same poll
-    assert "id:good:bal:300000.00" in notify.fired        # and the real crossing was recorded
-    assert "id:dated:bal:250000.00" in notify.fired       # the unreadable row kept its record
+    assert removed_markers(notify) == {gone}                       # swept in the same poll
+    assert "id:good:bal:300000.00" in stored_markers(notify)        # and the real crossing was recorded
+    assert "id:dated:bal:250000.00" in stored_markers(notify)       # the unreadable row kept its record
 
 
 # --- [E5] the alarm the card relies on can actually fire --------------------
@@ -618,12 +619,12 @@ def test_an_all_bad_date_plan_does_no_marker_io_whatsoever(shared, recorder):
     # rather than incidental.
     stored = [_row(id="a", label="A", targetDate="not-a-date"),
               _row(id="b", label="B", targetBalance=Decimal("250000"), targetDate=None)]
-    notify = FakeNotifyRepo(fired={"id:a:bal:300000.00", "0"})
+    notify = notify_repo(fired={"id:a:bal:300000.00", "0"})
 
     sent, notify = _notify(shared, old="500000", new="200000", stored=stored, notify=notify)
 
     assert sent == 0
     assert recorder == []
-    assert notify.reads == 0, "an empty plan must not even read the marker set"
-    assert notify.removed == set()
-    assert notify.fired == {"id:a:bal:300000.00", "0"}
+    assert marker_reads(notify) == 0, "an empty plan must not even read the marker set"
+    assert removed_markers(notify) == set()
+    assert stored_markers(notify) == {"id:a:bal:300000.00", "0"}

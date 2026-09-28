@@ -29,16 +29,19 @@ from contextlib import contextmanager
 
 
 class _Predicate:
-    """A boto3 condition stand-in a fake table can evaluate against an item."""
+    """A boto3 condition stand-in a fake table can evaluate against an item. ``conditions`` lists
+    the ``(name, operator, *values)`` it was built from, so a test can read back what was asked."""
 
-    def __init__(self, fn):
+    def __init__(self, fn, conditions=()):
         self._fn = fn
+        self.conditions = list(conditions)
 
     def evaluate(self, item) -> bool:
         return self._fn(item)
 
     def __and__(self, other):
-        return _Predicate(lambda item: self._fn(item) and other.evaluate(item))
+        return _Predicate(lambda item: self._fn(item) and other.evaluate(item),
+                          self.conditions + other.conditions)
 
 
 class _Field:
@@ -51,15 +54,15 @@ class _Field:
 
     def eq(self, value):
         name = self._name
-        return _Predicate(lambda item: item.get(name) == value)
+        return _Predicate(lambda item: item.get(name) == value, [(name, "eq", value)])
 
     def gte(self, lo):
         name = self._name
-        return _Predicate(lambda item: item.get(name, "") >= lo)
+        return _Predicate(lambda item: item.get(name, "") >= lo, [(name, "gte", lo)])
 
     def between(self, lo, hi):
         name = self._name
-        return _Predicate(lambda item: lo <= item.get(name, "") <= hi)
+        return _Predicate(lambda item: lo <= item.get(name, "") <= hi, [(name, "between", lo, hi)])
 
 
 def _install_fake_boto3_botocore():

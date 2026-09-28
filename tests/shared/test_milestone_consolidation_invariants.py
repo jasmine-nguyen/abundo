@@ -5,8 +5,8 @@ balance_poller 3->1), deduping one harness copy per survivor and renaming the co
 const. The implementer proved the fold was faithful ONCE (collect-only diff, AST no-dup scan).
 These guards make two of those invariants DURABLE so a future fold into the same survivors can't
 silently regress them — the same fail-on-revert idea WHIT-466 applies to the shared-fake modules,
-but pointed at the WHIT-465 survivors (which carry their own local harness, so WHIT-466's registry
-does not cover them):
+but pointed at the WHIT-465 survivors (which carry their own local harness, so WHIT-466's guards
+do not cover them):
 
   * [C1] no survivor has two top-level defs/consts with the SAME name. Folding N files into one can
          land two `test_...`/helper/const bindings with one name; Python keeps only the LAST and

@@ -22,11 +22,12 @@ import pytest
 
 from _chart_ramp import assignment_order as client_assignment_order
 from _category_fakes import (
-    FakeTable, FakeBudgetRepo, _ccfe, _validation_error,
-    _MAX_UPDATE_EXPRESSION_BYTES, _CFG, _SLOT, _cat, _categories_event,
+    _ccfe, _before_next_update, budget_repo,
+    _CFG, _SLOT, _cat, _categories_event,
     _drain, _piled_store, _random_legacy_store, _repo_with_fake_table, _schema,
-    _slot_histogram, _throttle,
+    _slot_histogram,
 )
+from _dynamo_fakes import _MAX_UPDATE_EXPRESSION_BYTES
 
 
 # A concurrent-writer stand-in for the optimistic-lock retry paths (shared with
@@ -180,7 +181,7 @@ def test_read_fails_open_when_the_backfill_write_is_throttled(handler):
     """
     repository, repo = _repo_with_fake_table(handler)
     _legacy_store(repo, repository)
-    repo._table.update_error = _throttle()
+    repo._table.fail("update_item")
 
     rows = repo.list_categories()                   # must not raise
 
@@ -193,7 +194,7 @@ def test_read_fails_open_when_the_backfill_write_is_throttled(handler):
 def test_read_fails_open_when_another_writer_wins_the_race(handler):
     repository, repo = _repo_with_fake_table(handler)
     _legacy_store(repo, repository)
-    repo._table.update_error = _ccfe()
+    repo._table.fail("update_item", error=_ccfe())
 
     rows = repo.list_categories()
 
@@ -204,7 +205,7 @@ def test_create_fails_closed_when_the_backfill_write_errors(handler):
     """The write path is the opposite policy: a real DB fault is a real failure."""
     repository, repo = _repo_with_fake_table(handler)
     _legacy_store(repo, repository)
-    repo._table.update_error = _throttle()
+    repo._table.fail("update_item")
 
     with pytest.raises(repository.DatabaseError):
         repo.create_category("wine", "Wine", "Lifestyle", "glass")
@@ -374,7 +375,7 @@ def test_read_fails_open_when_the_backfill_hits_a_network_error(handler):
 
     class NetworkBlip(Exception):
         pass
-    repo._table.update_error = NetworkBlip("connect timeout")
+    repo._table.fail("update_item", error=NetworkBlip("connect timeout"))
 
     rows = repo.list_categories()  # must not raise
 
@@ -433,7 +434,7 @@ def test_create_cannot_steal_a_slot_the_deferred_backfill_still_owes(handler):
     read repaints one of them."""
     repository, repo = _repo_with_fake_table(handler)
     _legacy_store(repo, repository)
-    repo._table.before_update.append(_bump_version)  # backfill write -> CCFE, silent no-op
+    _before_next_update(repo._table, _bump_version)  # backfill write -> CCFE, silent no-op
 
     created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
 
@@ -452,7 +453,7 @@ def test_two_creates_racing_never_land_on_the_same_slot(handler):
     def concurrent_create(item):
         item["items"]["beer"] = _cat("beer", "Lifestyle", colorSlot=Decimal(2))
         item["version"] = item["version"] + 1
-    repo._table.before_update.append(concurrent_create)
+    _before_next_update(repo._table, concurrent_create)
 
     created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
 
@@ -756,7 +757,7 @@ def test_a_throttled_chunk_leaves_earlier_chunks_intact_and_recovers(handler):
                  for cid, cat in repo._table.store[_CFG]["items"].items() if "colorSlot" in cat}
     assert len(persisted) == 50
 
-    repo._table.update_error = _throttle()
+    repo._table.fail("update_item")
     rows = repo.list_categories()                # chunk 2 is throttled — must not raise
 
     assert len(rows) == 213                      # response is still complete and correct
@@ -767,7 +768,7 @@ def test_a_throttled_chunk_leaves_earlier_chunks_intact_and_recovers(handler):
             for cid, cat in repo._table.store[_CFG]["items"].items()
             if "colorSlot" in cat} == persisted
 
-    repo._table.update_error = None
+    repo._table.clear_failures()
     _drain(repo)
     assert repo._table.store[_CFG]["colorSlotSchema"] == _schema()
 
@@ -996,7 +997,8 @@ def test_a_create_mid_drain_still_survives_one_concurrent_version_bump(handler):
     _unslotted_store(repo, repository, 200)
     repo.list_categories()                                   # mid-drain
     # Skip the create's own backfill write, then race its first create attempt.
-    repo._table.before_update = [lambda item: None, _bump_version]
+    _before_next_update(repo._table, lambda item: None)
+    _before_next_update(repo._table, _bump_version)
 
     created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
 
@@ -1074,7 +1076,7 @@ def test_a_chunk_that_loses_the_version_race_writes_nothing_and_a_later_read_rec
     # half-stamped rows, no marker — and the next read must still converge.
     repository, repo = _repo_with_fake_table(handler)
     _unslotted_store(repo, repository, 200)
-    repo._table.before_update.append(_bump_version)
+    _before_next_update(repo._table, _bump_version)
 
     repo.list_categories()
 
@@ -1110,7 +1112,7 @@ def test_a_create_on_a_saturated_store_cannot_steal_a_slot_the_backfill_owes(han
     owed = repository.plan_color_slot_backfill(items)["aaa"]
     assert owed == 2, "fixture drifted: the unslotted row must be owed a non-seed slot"
     # The pre-loop backfill loses its race, so aaa is still unslotted when the slot is chosen.
-    repo._table.before_update.append(_bump_version)
+    _before_next_update(repo._table, _bump_version)
 
     created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
 
@@ -1192,7 +1194,7 @@ def test_two_creates_racing_on_a_saturated_store_still_land_on_different_slots(h
     def concurrent_create(item):
         item["items"]["beer"] = _cat("beer", "Lifestyle", colorSlot=Decimal(2))
         item["version"] = item["version"] + 1
-    repo._table.before_update.append(concurrent_create)
+    _before_next_update(repo._table, concurrent_create)
 
     created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
 
@@ -1379,7 +1381,7 @@ def test_a_create_may_never_take_a_free_slot_a_builtin_is_owed_even_when_all_are
     owed = repository.plan_color_slot_backfill(items)
     assert set(owed.values()) == set(range(20)), "fixture drifted: not every slot is owed"
     assert owed["travel"] == 1
-    repo._table.before_update.append(_bump_version)   # the pre-loop backfill loses its race
+    _before_next_update(repo._table, _bump_version)   # the pre-loop backfill loses its race
 
     created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
 
@@ -1417,7 +1419,7 @@ def test_a_create_cannot_rob_a_builtin_when_the_spread_backfill_owes_every_slot(
     assert set(owed.values()) == set(range(20)), "fixture drifted: not every slot is owed"
     protected = repository_category._designated_builtin_slots(owed)
     assert protected == frozenset(SEED_SLOTS.values()), "every built-in should be owed its hue"
-    repo._table.before_update.append(_bump_version)   # the pre-loop backfill loses its race
+    _before_next_update(repo._table, _bump_version)   # the pre-loop backfill loses its race
 
     created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
 
@@ -2411,7 +2413,7 @@ class _NetworkError(Exception):
 def _only_the_migration_write_fails(repo, error):
     """Make ONLY the colour-slot write fail, leaving create/update/delete healthy.
 
-    Setting FakeTable.update_error makes EVERY write fail, so create's own conditional write
+    FakeTable.fail("update_item") makes EVERY write fail, so create's own conditional write
     would raise the same exception and a test could not tell which call site propagated it.
     Routed on the ABSENCE of #id — the same discriminator FakeTable itself uses to recognise
     the migration's write shape."""
@@ -2448,7 +2450,7 @@ def test_a_read_fails_open_when_the_repaint_chunk_is_throttled(handler):
     _piled_store(repo, repository, 40)               # 53 rows, all customs on slot 0
     before = {cid: int(cat[_SLOT])
               for cid, cat in repo._table.store[_CFG]["items"].items()}
-    repo._table.update_error = _throttle()
+    repo._table.fail("update_item")
 
     rows = repo.list_categories()                    # must not raise
 
@@ -2460,7 +2462,7 @@ def test_a_read_fails_open_when_the_repaint_chunk_is_throttled(handler):
             for cid, cat in repo._table.store[_CFG]["items"].items()} == before
     assert repo._table.store[_CFG]["colorSlotSchema"] == 1
 
-    repo._table.update_error = None
+    repo._table.clear_failures()
     _drain(repo, limit=40)
     assert _levelled(repo)
     assert repo._table.store[_CFG]["colorSlotSchema"] == _schema()
@@ -2472,7 +2474,7 @@ def test_a_read_fails_open_when_the_repaint_chunk_hits_a_network_error(handler):
     budget-alert path all 500 on a store that has simply not finished levelling."""
     repository, repo = _repo_with_fake_table(handler)
     _piled_store(repo, repository, 40)
-    repo._table.update_error = _NetworkError("connection reset by peer")
+    repo._table.fail("update_item", error=_NetworkError("connection reset by peer"))
 
     rows = repo.list_categories()                    # must not raise
 
@@ -2512,7 +2514,7 @@ def test_a_version_race_inside_a_repaint_chunk_writes_nothing_and_recovers(handl
     before = {cid: int(cat[_SLOT])
               for cid, cat in repo._table.store[_CFG]["items"].items()}
     # A concurrent writer lands between our get_item and our update_item.
-    repo._table.before_update.append(
+    _before_next_update(repo._table, 
         lambda item: item.__setitem__("version", item["version"] + Decimal(1)))
 
     rows = repo.list_categories()                    # must not raise, must not 409
@@ -2541,7 +2543,7 @@ def test_two_readers_racing_one_repaint_chunk_agree_on_every_colour(handler):
     def _b_goes_first(_item):
         seen["b"] = {row["id"]: row[_SLOT] for row in repo_b.list_categories()}
 
-    repo_a._table.before_update.append(_b_goes_first)
+    _before_next_update(repo_a._table, _b_goes_first)
 
     seen["a"] = {row["id"]: row[_SLOT] for row in repo_a.list_categories()}
 
@@ -2792,7 +2794,7 @@ def test_get_categories_mid_repaint_is_a_200_even_when_the_write_is_throttled(ha
     failing."""
     repository, repo = _repo_with_fake_table(handler)
     _piled_store(repo, repository, 60)
-    repo._table.update_error = _throttle()
+    repo._table.fail("update_item")
     monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
 
     response = handler.lambda_handler(
@@ -2814,7 +2816,7 @@ def test_post_categories_mid_repaint_returns_201_and_a_plain_integer_slot(handle
     repository, repo = _repo_with_fake_table(handler)
     _piled_store(repo, repository, 60)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
-    monkeypatch.setattr(handler, "BudgetRepository", lambda: FakeBudgetRepo())
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: budget_repo())
 
     response = handler.lambda_handler(_categories_event(), None)
 
@@ -3056,7 +3058,7 @@ def test_patch_replans_on_the_second_read_after_losing_a_version_race(handler):
             item["items"].pop(f"cat{index:04d}", None)
         item["version"] += Decimal(1)          # PATCH attempt 1 now fails its version check
 
-    repo._table.before_update.append(_another_invocation_deletes_40_categories)
+    _before_next_update(repo._table, _another_invocation_deletes_40_categories)
 
     edited = repo.update_category(victim, "Renamed", "Living", "tag")
 
@@ -3079,7 +3081,7 @@ def test_a_concurrent_delete_mid_repaint_is_a_clean_404_that_writes_nothing(hand
     before = {cid: int(cat[_SLOT])
               for cid, cat in repo._table.store[_CFG]["items"].items()}
     repo._table.update_calls.clear()
-    repo._table.before_update.append(lambda item: item["items"].pop("cat0000", None))
+    _before_next_update(repo._table, lambda item: item["items"].pop("cat0000", None))
 
     with pytest.raises(repository.CategoryNotFoundError):
         repo.update_category("cat0000", "Renamed", "Living", "tag")

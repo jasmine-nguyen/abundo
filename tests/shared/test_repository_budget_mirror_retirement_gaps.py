@@ -23,6 +23,8 @@ from decimal import Decimal
 
 import pytest
 
+_KEY = ("BUDGETS", "BUDGETS")  # the config item's store key in FakeTable
+
 
 @pytest.fixture
 def budget_repo(shared):
@@ -76,7 +78,7 @@ def test_set_budget_amount_edit_carries_orphan_buffer_keys_through(shared, budge
 
     budget_repo.set_budget("groceries", Decimal(300))
 
-    entry = table.item["items"]["groceries"]
+    entry = table.store[_KEY]["items"]["groceries"]
     assert entry["target"] == Decimal(300)
     assert entry["rollover"] is True
     assert entry["carryover"] == Decimal("50")
@@ -90,7 +92,7 @@ def test_set_budget_amount_edit_carries_orphan_payback_keys_through(shared, budg
 
     budget_repo.set_budget("insurance", Decimal(300))
 
-    entry = table.item["items"]["insurance"]
+    entry = table.store[_KEY]["items"]["insurance"]
     assert entry["target"] == Decimal(300)
     assert entry["spread_amount"] == Decimal("1390.91")
     assert entry["payback_amount"] == Decimal("1390.91")
@@ -102,7 +104,7 @@ def test_clear_rollover_does_not_strip_orphan_buffer_keys(shared, budget_repo, c
 
     budget_repo.clear_rollover("groceries")
 
-    entry = table.item["items"]["groceries"]
+    entry = table.store[_KEY]["items"]["groceries"]
     assert entry["target"] == Decimal(250)
     assert "rollover" not in entry
     assert "carryover" not in entry
@@ -111,7 +113,7 @@ def test_clear_rollover_does_not_strip_orphan_buffer_keys(shared, budget_repo, c
     assert entry["buffer_from"] == "2026-07-01"
     assert entry["buffer_len"] == Decimal(14)
     assert entry["buffer_paydate"] == "2026-07-01"
-    assert table.update_calls == 1
+    assert len(table.update_calls) == 1
 
 
 def test_clear_spread_does_not_strip_orphan_payback_keys(shared, budget_repo, config_item_table):
@@ -120,7 +122,7 @@ def test_clear_spread_does_not_strip_orphan_payback_keys(shared, budget_repo, co
 
     budget_repo.clear_spread("insurance")
 
-    entry = table.item["items"]["insurance"]
+    entry = table.store[_KEY]["items"]["insurance"]
     assert entry["target"] == Decimal(250)
     assert "spread_amount" not in entry
     assert "spread_cycles" not in entry
@@ -129,7 +131,7 @@ def test_clear_spread_does_not_strip_orphan_payback_keys(shared, budget_repo, co
     assert entry["payback_from"] == "2026-08-06"
     assert entry["payback_len"] == Decimal(30)
     assert entry["payback_paydate"] == "2026-01-01"
-    assert table.update_calls == 1
+    assert len(table.update_calls) == 1
 
 
 def test_settle_carryover_does_not_update_orphan_buffer(shared, budget_repo, config_item_table):
@@ -138,7 +140,7 @@ def test_settle_carryover_does_not_update_orphan_buffer(shared, budget_repo, con
 
     budget_repo.settle_carryover("groceries", Decimal("-100.50"), "2026-08-01", 30, "2026-08-01")
 
-    entry = table.item["items"]["groceries"]
+    entry = table.store[_KEY]["items"]["groceries"]
     assert entry["carryover"] == Decimal("-100.50")
     assert entry["carryover_from"] == "2026-08-01"
     assert entry["buffer"] == Decimal("50")
@@ -151,7 +153,7 @@ def test_set_budget_rollover_on_strips_spread_but_orphan_payback_survives(shared
 
     budget_repo.set_budget("insurance", Decimal(250), rollover=True, anchor=anchor)
 
-    entry = table.item["items"]["insurance"]
+    entry = table.store[_KEY]["items"]["insurance"]
     assert entry["rollover"] is True
     assert entry["carryover_from"] == "2026-08-06"
     assert "spread_amount" not in entry
@@ -167,7 +169,7 @@ def test_set_spread_strips_rollover_but_orphan_buffer_survives(shared, budget_re
 
     budget_repo.set_spread("groceries", Decimal("100.00"), 2, "2026-09-01", 30, "2026-09-01")
 
-    entry = table.item["items"]["groceries"]
+    entry = table.store[_KEY]["items"]["groceries"]
     assert entry["spread_amount"] == Decimal("100.00")
     assert entry["target"] == Decimal(250)
     assert "rollover" not in entry
@@ -186,8 +188,8 @@ def test_delete_budget_drops_entry_with_orphan_mirror_keys(shared, budget_repo, 
 
     budget_repo.delete_budget("groceries")
 
-    assert "groceries" not in table.item["items"]
-    assert table.item["items"]["food"] == {"target": Decimal(80)}
+    assert "groceries" not in table.store[_KEY]["items"]
+    assert table.store[_KEY]["items"]["food"] == {"target": Decimal(80)}
 
 
 def test_merge_entry_handles_corrupt_entry_with_both_mirror_families(shared, budget_repo, config_item_table):
@@ -205,7 +207,7 @@ def test_merge_entry_handles_corrupt_entry_with_both_mirror_families(shared, bud
 
     budget_repo.set_budget("mixed", Decimal(300))
 
-    entry = table.item["items"]["mixed"]
+    entry = table.store[_KEY]["items"]["mixed"]
     assert entry["target"] == Decimal(300)
     assert entry["rollover"] is True
     assert entry["carryover"] == Decimal("50")
@@ -235,7 +237,7 @@ def test_set_spread_on_entry_with_orphan_buffer_from_cleared_rollover(shared, bu
 
     budget_repo.set_spread("groceries", Decimal("200.00"), 3, "2026-09-01", 14, "2026-09-01")
 
-    entry = table.item["items"]["groceries"]
+    entry = table.store[_KEY]["items"]["groceries"]
     assert entry["spread_amount"] == Decimal("200.00")
     assert entry["spread_cycles"] == Decimal(3)
     assert entry["target"] == Decimal(250)
@@ -260,7 +262,7 @@ def test_xor_drop_still_correct_when_orphan_mirror_keys_present(shared, budget_r
     anchor = {"carryover_from": "2026-09-01", "carryover_len": Decimal(14), "carryover_paydate": "2026-09-01"}
 
     budget_repo.set_budget("cat", Decimal(250), rollover=True, anchor=anchor)
-    entry = table.item["items"]["cat"]
+    entry = table.store[_KEY]["items"]["cat"]
 
     assert entry["rollover"] is True
     assert entry["carryover_from"] == "2026-09-01"
@@ -269,7 +271,7 @@ def test_xor_drop_still_correct_when_orphan_mirror_keys_present(shared, budget_r
     assert "payback_amount" in entry
 
     budget_repo.set_spread("cat", Decimal("500.00"), 2, "2026-09-15", 14, "2026-09-15")
-    entry2 = table.item["items"]["cat"]
+    entry2 = table.store[_KEY]["items"]["cat"]
 
     for f in shared.budget._ROLLOVER_FIELDS:
         assert f not in entry2, f"rollover field {f} should have been dropped"

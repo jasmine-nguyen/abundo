@@ -25,7 +25,7 @@ import json
 
 import pytest
 
-from _feed_fakes import ANZ, SPENDING, _row, FakeFeedRepo, FakeCategoryRepo
+from _feed_fakes import ANZ, SPENDING, FakeCategoryRepo, real_repos, _row
 
 
 def _uncat_event(params=None):
@@ -64,7 +64,7 @@ def test_overshoot_page_returns_all_rows_untruncated_and_resumes_gap_free(handle
     # because the cursor has advanced past all 3 — dropping one would lose it forever (a gap).
     monkeypatch.setattr(handler, "MAX_PAGE_SIZE", 3)  # 3-row raw chunks -> forces the multi-chunk walk
     rows = [_row(SPENDING, f"2026-06-{d:02d}", f"u{d}", category=None) for d in range(6, 0, -1)]
-    repo = FakeFeedRepo({SPENDING: rows})  # 6 uncategorized rows, newest u6 .. oldest u1
+    table, repo, _ = real_repos({SPENDING: rows})  # 6 uncategorized rows, newest u6 .. oldest u1
 
     first = json.loads(
         handler.get_uncategorized_feed(_uncat_event({"limit": "2"}), repo, FakeCategoryRepo(set()))["body"]
@@ -95,7 +95,7 @@ def test_scan_cap_returns_short_nonempty_page_then_completes(handler, monkeypatc
         _row(SPENDING, "2026-06-02", "u2", category=None),
         _row(SPENDING, "2026-06-01", "f1", category="groceries"),
     ]
-    repo = FakeFeedRepo({SPENDING: rows})
+    table, repo, _ = real_repos({SPENDING: rows})
 
     first = json.loads(
         handler.get_uncategorized_feed(_uncat_event({"limit": "3"}), repo, FakeCategoryRepo({"groceries"}))["body"]
@@ -122,7 +122,7 @@ def test_limit_one_walk_across_sparse_and_dense_accounts(handler, monkeypatch):
         _row(SPENDING, "2026-05-30", "s-new", category=None),               # sparse account, recent uncat
         _row(SPENDING, "2019-01-01", "s-old", category="FEES"),             # raw enum -> uncategorized, deep
     ]
-    repo = FakeFeedRepo({ANZ: anz, SPENDING: spending})
+    table, repo, _ = real_repos({ANZ: anz, SPENDING: spending})
 
     drained = _drain(handler, repo, FakeCategoryRepo({"groceries"}), limit=1)
 

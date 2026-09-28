@@ -2,7 +2,7 @@
 list onto our own RuleRepository.
 
 These do NOT duplicate the four rewritten apply-rules suites (test_apply_rules*.py). Those lock
-the sweep/mint/clash behaviour through FakeRuleRepo. This file probes the SEAMS the repoint
+the sweep/mint/clash behaviour end to end. This file probes the SEAMS the repoint
 introduced, which those suites do not isolate:
 
   * [G1] rule_reply(rule_from_row(row)) maps a store row (snake_case) to the client shape and reads
@@ -13,15 +13,14 @@ introduced, which those suites do not isolate:
     100-row first page is still found (the whole point of the repoint).
   * [G5] a rules-read failure on a PREVIEW (the default) is a 500 too, not only on a write run.
 
-Drives FakeRuleRepo (WHIT-531). The clash/read-failure paths return before the history scan, so
-the transaction repo here is a local no-scan / empty stub with DISTINCT names (never the shared
-feed fakes) — this suite is registered only in the `rule` domain of test_fakes_invariants.py.
+Drives the real RuleRepository and TransactionRepository over one FakeTable (WHIT-625). The
+clash/read-failure paths return before the history scan, which the table's query log proves.
 """
 
 import json
 from decimal import Decimal
 
-from _rule_fakes import FakeRuleRepo
+from _feed_fakes import date_queries, real_repos
 
 
 class _Taxonomy:
@@ -34,27 +33,9 @@ class _Taxonomy:
         return [{"id": cid} for cid in self._ids]
 
 
-class _NoScanRepo:
-    """A transaction repo that must never be scanned — the clash/read-failure paths return
-    before the history scan, so any read here is a bug in that ordering."""
-
-    def get_transactions_by_date_range(self, *args, **kwargs):
-        raise AssertionError("history must not be scanned before the clash/read-failure return")
-
-
-class _EmptyTxns:
-    """A transaction repo with no rows — for the preview path that DOES reach the scan."""
-
-    def get_transactions_by_date_range(self, account_id, start, end, limit=None, cursor=None):
-        return [], None
-
-
-def _store_row(value, category_id, *, rule_id=None, field="description", operator="contains",
-               **extra):
-    row = {"id": rule_id, "field": field, "operator": operator, "value": value,
-           "category_id": category_id}
-    row.update(extra)
-    return row
+def _stored_rule(value, category_id, *, field="description", operator="contains"):
+    # The kwargs of one real RuleRepository.create_rule call — the store mints the id.
+    return {"field": field, "operator": operator, "value": value, "category_id": category_id}
 
 
 def _event(body):
@@ -124,40 +105,47 @@ def test_rule_reply_never_raises_on_a_sparse_row(handler):
 
 def test_a_clash_on_a_rule_past_the_old_100_row_page_is_still_found(handler):
     # [G4] FAIL-ON-REVERT for the reason the card exists. BankSync capped list_rules at 100; our
-    # store is uncapped. Seed 150 unrelated rules, then a COLES->petrol clash LAST. A preview of
-    # COLES->groceries must 409 on it. Reintroduce a `[:100]` slice on the read and the clash
-    # (row 151) is dropped -> the preview proceeds and returns 200 -> red. A PREVIEW deliberately:
+    # store is uncapped. Seed 150 unrelated rules plus a COLES->petrol clash that the store lists
+    # past row 100 (rules list in id order). A preview of COLES->groceries must 409 on it.
+    # Reintroduce a `[:100]` slice on the read and the clash is dropped -> the preview proceeds and
+    # returns 200 -> red. A PREVIEW deliberately:
     # it never mints, so create_rule's own dedup can't backstop a dropped pre-scan clash.
-    rules = [_store_row(f"SHOP-{i:03d}-ZZ", "petrol", rule_id=f"d{i}") for i in range(150)]
-    rules.append(_store_row("COLES", "petrol", rule_id="clash"))
-    rule_repo = FakeRuleRepo(rules=rules)
+    rules = [_stored_rule(f"SHOP-{i:03d}-ZZ", "petrol") for i in range(150)]
+    rules.append(_stored_rule("COLES", "petrol"))
+    _, repo, rule_repo = real_repos(rules=rules)
+    listed = rule_repo.list_rules()
+    clash = next(rule for rule in listed if rule["value"] == "COLES")
+    assert listed.index(clash) >= 100                        # the premise: past the old page
 
     resp = handler.apply_rules_to_uncategorized(
         _event({"dryRun": True, "rule": {"value": "COLES", "categoryId": "groceries"}}),
-        _EmptyTxns(), _Taxonomy({"groceries", "petrol"}), rule_repo)
+        repo, _Taxonomy({"groceries", "petrol"}), rule_repo)
     body = json.loads(resp["body"])
 
     assert resp["statusCode"] == 409
-    assert body["existingRule"]["id"] == "clash"
+    assert body["existingRule"]["id"] == clash["id"]
     assert body["existingRule"]["categoryId"] == "petrol"   # mapped from category_id
-    assert rule_repo.minted == []
+    assert len(rule_repo.list_rules()) == 151                # nothing minted
 
 
 def test_the_full_store_read_covers_a_NESTED_clash_beyond_the_first_page(handler):
     # [G4] The nested variant (containment, not equality) is the shape an equality-only or capped
     # read is likeliest to miss. An existing "COLES EXPRESS"->petrol far down the list overlaps an
     # inline "COLES"->groceries, so the preview must 409.
-    rules = [_store_row(f"SHOP-{i:03d}-ZZ", "petrol", rule_id=f"d{i}") for i in range(140)]
-    rules.append(_store_row("COLES EXPRESS", "petrol", rule_id="nested"))
-    rule_repo = FakeRuleRepo(rules=rules)
+    rules = [_stored_rule(f"SHOP-{i:03d}-ZZ", "petrol") for i in range(400)]
+    rules.append(_stored_rule("COLES EXPRESS", "petrol"))
+    _, repo, rule_repo = real_repos(rules=rules)
+    listed = rule_repo.list_rules()
+    nested = next(rule for rule in listed if rule["value"] == "COLES EXPRESS")
+    assert listed.index(nested) >= 100                       # the premise: past the old page
 
     resp = handler.apply_rules_to_uncategorized(
         _event({"dryRun": True, "rule": {"value": "COLES", "categoryId": "groceries"}}),
-        _EmptyTxns(), _Taxonomy({"groceries", "petrol"}), rule_repo)
+        repo, _Taxonomy({"groceries", "petrol"}), rule_repo)
     body = json.loads(resp["body"])
 
     assert resp["statusCode"] == 409
-    assert body["existingRule"]["id"] == "nested"
+    assert body["existingRule"]["id"] == nested["id"]
 
 
 # --- [G5] a rules-read failure is OUR 500 on the PREVIEW path too ----------------------------
@@ -167,10 +155,12 @@ def test_a_rules_read_failure_on_a_preview_is_a_500_and_scans_no_history(handler
     # [G5] The sibling suite proves the read-failure 500 on a WRITE run; preview is the DEFAULT
     # button, and the read happens before the dry-run split, so a preview read failure must 500
     # too (our DB) and never reach the history scan.
-    rule_repo = FakeRuleRepo(list_error=True)
+    table, repo, rule_repo = real_repos()
+    table.fail("query")
 
     resp = handler.apply_rules_to_uncategorized(
-        _event({"dryRun": True}), _NoScanRepo(), _Taxonomy({"groceries"}), rule_repo)
+        _event({"dryRun": True}), repo, _Taxonomy({"groceries"}), rule_repo)
 
     assert resp["statusCode"] == 500
     assert json.loads(resp["body"])["error"] == "could not read your rules"
+    assert date_queries(table) == []

@@ -1,10 +1,10 @@
 """WHIT-561: POST/PUT /rules accept a multi-condition body (conditions + logic) and validate it.
-Driven through lambda_handler with a FakeRuleRepo injected, exactly like test_rules_routes.py."""
+Driven through lambda_handler with the real RuleRepository over a FakeTable injected, exactly like
+test_rules_routes.py."""
 
 import json
 
-from _feed_fakes import FakeCategoryRepo, WritableFeedRepo
-from _rule_fakes import FakeRuleRepo
+from _feed_fakes import FakeCategoryRepo, Repos
 
 
 _CATEGORIES = ("transport", "groceries")
@@ -18,10 +18,11 @@ def _event(method, path, body, path_params=None):
     return event
 
 
-def _inject(handler, monkeypatch, repo, categories=_CATEGORIES):
-    monkeypatch.setattr(handler, "RuleRepository", lambda: repo)
+def _inject(handler, monkeypatch, store, categories=_CATEGORIES):
+    """Point the handler at the real repositories over the store's one FakeTable."""
+    monkeypatch.setattr(handler, "RuleRepository", lambda: store.rule_repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(categories))
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: WritableFeedRepo({}))
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: store.transaction_repo)
 
 
 def _body(conditions=None, logic="all", category_id="transport"):
@@ -32,7 +33,7 @@ def _body(conditions=None, logic="all", category_id="transport"):
 
 
 def test_create_multi_condition_rule_round_trips(handler, monkeypatch):
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     resp = handler.lambda_handler(_event("POST", "/rules", _body()), None)
     out = json.loads(resp["body"])
@@ -41,11 +42,11 @@ def test_create_multi_condition_rule_round_trips(handler, monkeypatch):
     assert [c["field"] for c in out["conditions"]] == ["merchant", "amount"]
     assert out["conditions"][0]["value"] == "UBER"          # text trimmed/kept
     assert out["conditions"][1]["value"] == "30"            # amount normalised to a canonical string
-    assert repo.minted[0]["conditions"][1]["field"] == "amount"
+    assert repo.minted_rules()[0]["conditions"][1]["field"] == "amount"
 
 
 def test_default_logic_is_all(handler, monkeypatch):
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     body = _body()
     del body["logic"]
@@ -54,23 +55,23 @@ def test_default_logic_is_all(handler, monkeypatch):
 
 
 def test_bad_field_operator_pair_is_400(handler, monkeypatch):
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     body = _body(conditions=[{"field": "amount", "operator": "contains", "value": "30"}])
     resp = handler.lambda_handler(_event("POST", "/rules", body), None)
     assert resp["statusCode"] == 400
-    assert repo.minted == []
+    assert repo.minted_rules() == []
 
 
 def test_bad_logic_is_400(handler, monkeypatch):
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     resp = handler.lambda_handler(_event("POST", "/rules", _body(logic="maybe")), None)
     assert resp["statusCode"] == 400
 
 
 def test_non_numeric_amount_is_400(handler, monkeypatch):
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     body = _body(conditions=[{"field": "amount", "operator": "less_than", "value": "lots"}])
     resp = handler.lambda_handler(_event("POST", "/rules", body), None)
@@ -78,7 +79,7 @@ def test_non_numeric_amount_is_400(handler, monkeypatch):
 
 
 def test_non_positive_amount_is_400(handler, monkeypatch):
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     body = _body(conditions=[{"field": "amount", "operator": "less_than", "value": "0"}])
     resp = handler.lambda_handler(_event("POST", "/rules", body), None)
@@ -86,7 +87,7 @@ def test_non_positive_amount_is_400(handler, monkeypatch):
 
 
 def test_bad_direction_value_is_400(handler, monkeypatch):
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     body = _body(conditions=[{"field": "direction", "operator": "is", "value": "sideways"}])
     resp = handler.lambda_handler(_event("POST", "/rules", body), None)
@@ -94,7 +95,7 @@ def test_bad_direction_value_is_400(handler, monkeypatch):
 
 
 def test_empty_conditions_list_is_400(handler, monkeypatch):
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     resp = handler.lambda_handler(_event("POST", "/rules", _body(conditions=[])), None)
     assert resp["statusCode"] == 400
@@ -102,7 +103,7 @@ def test_empty_conditions_list_is_400(handler, monkeypatch):
 
 def test_value_floor_applies_per_description_contains_condition(handler, monkeypatch):
     # A near-empty "description contains" condition would match nearly everything even inside an AND.
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     body = _body(conditions=[{"field": "description", "operator": "contains", "value": "."},
                              {"field": "amount", "operator": "less_than", "value": "30"}])
@@ -115,11 +116,11 @@ def test_value_floor_applies_per_merchant_contains_condition(handler, monkeypatc
     # `merchant contains` is a substring match too, so a near-empty value over-matches identically
     # to `description contains` — the floor must cover it. FAIL-ON-REVERT: narrow the floor back to
     # description only and this near-empty merchant substring is accepted (200/201, not 400).
-    repo = FakeRuleRepo()
+    repo = Repos()
     _inject(handler, monkeypatch, repo)
     body = _body(conditions=[{"field": "merchant", "operator": "contains", "value": "."},
                              {"field": "amount", "operator": "less_than", "value": "30"}])
     resp = handler.lambda_handler(_event("POST", "/rules", body), None)
     assert resp["statusCode"] == 400
     assert "letters or digits" in json.loads(resp["body"])["error"]
-    assert repo.minted == []
+    assert repo.minted_rules() == []

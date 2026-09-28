@@ -10,14 +10,13 @@ charge, so while it's there it brings each rule-owned charge back in line with n
 Only the PLAIN full sweep does this: the "file this shop" (inline-rule) path narrows the rule set
 to the single minted rule, so it can't judge the store and must leave stamps alone.
 
-The live rule's id comes from the FakeRuleRepo that derived it (the lambda_api suite can't import
-rule_engine at collection time — see conftest); an orphan stamp is any id NOT in the store.
+The live rule's id comes from the real RuleRepository that minted it; an orphan stamp is any id
+NOT in the store.
 """
 
 import json
 
-from _feed_fakes import SPENDING, _row, WritableFeedRepo, FakeCategoryRepo
-from _rule_fakes import FakeRuleRepo
+from _feed_fakes import SPENDING, FakeCategoryRepo, charge_writes, real_repos, _row, stored
 
 
 _CATEGORIES = frozenset({"groceries", "petrol"})
@@ -35,31 +34,27 @@ def _apply(handler, repo, rule_repo, body, categories=_CATEGORIES):
     return resp, json.loads(resp["body"])
 
 
-def _row_at(repo, txn_id, account=SPENDING):
-    return repo._find_row(f"ACCOUNT#{account}", f"TXN#{txn_id}")
-
-
 def test_plain_sweep_undoes_charges_stamped_by_a_rule_that_no_longer_exists(handler):
     # "orphan" was filed to groceries by a rule since deleted (its stamp id isn't in the store).
     # A plain "Apply my rules" write clears it back to unfiled. FAIL-ON-REVERT: remove the sweep and
     # the orphan keeps its category and its dead stamp. "onTarget" is stamped by a LIVE rule and
     # already sits on that rule's target, so it is left untouched (no drift).
-    rule_repo = FakeRuleRepo(rules=[_rule("coles", "groceries")])
+    table, repo, rule_repo = real_repos(rules=[_rule("coles", "groceries")])
     live = rule_repo.list_rules()[0]["id"]
-    repo = WritableFeedRepo({SPENDING: [
+    table.seed(
         _row(SPENDING, "2026-07-02", "orphan", description="OLD SHOP",
              category="groceries", filed_by_rule="dead-rule"),
         _row(SPENDING, "2026-07-01", "onTarget", description="COLES",
              category="groceries", filed_by_rule=live),
-    ]})
+    )
 
     _apply(handler, repo, rule_repo, {"dryRun": False})
 
-    orphan = _row_at(repo, "orphan")
+    orphan = stored(table, "orphan")
     assert "category" not in orphan and "filed_by_rule" not in orphan   # undone
-    kept = _row_at(repo, "onTarget")
+    kept = stored(table, "onTarget")
     assert kept["category"] == "groceries" and kept["filed_by_rule"] == live  # on target -> left alone
-    assert repo.writes == [(f"ACCOUNT#{SPENDING}", "TXN#orphan", "clear", "dead-rule")]  # only the orphan
+    assert charge_writes(table) == [(f"ACCOUNT#{SPENDING}", "TXN#orphan")]    # only the orphan
 
 
 def test_plain_sweep_refiles_a_live_rules_drifted_tail(handler):
@@ -68,57 +63,54 @@ def test_plain_sweep_refiles_a_live_rules_drifted_tail(handler):
     # sweep moves it to the rule's CURRENT target without re-evaluating (the stamp already names the
     # rule). FAIL-ON-REVERT: keep only the orphan branch (skip live-rule stamps) and the tail is
     # stranded on groceries forever.
-    rule_repo = FakeRuleRepo(rules=[_rule("coles", "petrol")])
+    table, repo, rule_repo = real_repos(rules=[_rule("coles", "petrol")])
     live = rule_repo.list_rules()[0]["id"]
-    repo = WritableFeedRepo({SPENDING: [
-        _row(SPENDING, "2026-07-01", "drift", description="COLES",
-             category="groceries", filed_by_rule=live),
-    ]})
+    table.seed(_row(SPENDING, "2026-07-01", "drift", description="COLES",
+                    category="groceries", filed_by_rule=live))
 
     _apply(handler, repo, rule_repo, {"dryRun": False})
 
-    row = _row_at(repo, "drift")
+    row = stored(table, "drift")
     assert row["category"] == "petrol"          # moved to the rule's current target
     assert row["filed_by_rule"] == live         # still owned by the same rule
 
 
 def test_plain_sweep_leaves_unstamped_charges_alone(handler):
-    repo = WritableFeedRepo({SPENDING: [
+    table, repo, rule_repo = real_repos({SPENDING: [
         _row(SPENDING, "2026-07-02", "plain", description="CAFE", category="petrol"),  # no stamp
-    ]})
+    ]}, rules=[_rule("coles", "groceries")])
 
-    _apply(handler, repo, FakeRuleRepo(rules=[_rule("coles", "groceries")]), {"dryRun": False})
+    _apply(handler, repo, rule_repo, {"dryRun": False})
 
-    assert _row_at(repo, "plain")["category"] == "petrol"
+    assert stored(table, "plain")["category"] == "petrol"
 
 
 def test_dry_run_never_sweeps(handler):
-    repo = WritableFeedRepo({SPENDING: [
+    table, repo, rule_repo = real_repos({SPENDING: [
         _row(SPENDING, "2026-07-02", "orphan", description="OLD", category="groceries",
              filed_by_rule="dead-rule"),
-    ]})
+    ]}, rules=[_rule("coles", "groceries")])
 
-    _, body = _apply(handler, repo, FakeRuleRepo(rules=[_rule("coles", "groceries")]),
-                     {"dryRun": True})
+    _, body = _apply(handler, repo, rule_repo, {"dryRun": True})
 
     assert body["dryRun"] is True
-    assert _row_at(repo, "orphan")["category"] == "groceries"   # preview writes nothing
-    assert repo.writes == []
+    assert stored(table, "orphan")["category"] == "groceries"   # preview writes nothing
+    assert table.update_calls == []
 
 
 def test_file_this_shop_path_does_not_sweep_orphans(handler):
     # The inline "file this shop" path narrows the rule set to the one minted rule, so it cannot
     # judge which stamps are orphaned — it must leave them. FAIL-ON-REVERT: run the sweep in the
     # inline path too and this orphan is wrongly undone during an unrelated "file WOOLIES".
-    repo = WritableFeedRepo({SPENDING: [
+    table, repo, rule_repo = real_repos({SPENDING: [
         _row(SPENDING, "2026-07-02", "orphan", description="OLD", category="groceries",
              filed_by_rule="dead-rule"),
-        _row(SPENDING, "2026-07-01", "target", description="WOOLIES", category=None),
+        _row(SPENDING, "2026-07-01", "target", description="WOOLIES"),
     ]})
 
-    _apply(handler, repo, FakeRuleRepo(), {"dryRun": False,
+    _apply(handler, repo, rule_repo, {"dryRun": False,
            "rule": {"value": "woolies", "categoryId": "groceries"}})
 
-    assert _row_at(repo, "orphan")["category"] == "groceries"    # left alone
-    assert _row_at(repo, "orphan")["filed_by_rule"] == "dead-rule"
-    assert _row_at(repo, "target")["category"] == "groceries"    # the shop WAS filed
+    assert stored(table, "orphan")["category"] == "groceries"    # left alone
+    assert stored(table, "orphan")["filed_by_rule"] == "dead-rule"
+    assert stored(table, "target")["category"] == "groceries"    # the shop WAS filed

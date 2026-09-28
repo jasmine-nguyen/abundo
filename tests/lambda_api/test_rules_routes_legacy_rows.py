@@ -3,8 +3,8 @@ still carries banksync_enrichment_ids / imported_at / source (and maybe a stray 
 rule_book.rule_from_row and GET /rules must read it back WITHOUT error and map it to the clean client
 shape, dropping the retired fields — so no rewrite of existing DynamoDB rows is needed.
 
-Sibling to test_rules_routes.py / _gaps.py; reuses their handler fixture + FakeRuleRepo (which
-preserves arbitrary seeded keys via dict(rule), so a legacy row survives the round trip faithfully).
+Sibling to test_rules_routes.py / _gaps.py; reuses their handler fixture and the real RuleRepository
+over a FakeTable, with the legacy row seeded straight into the table (no current code writes one).
 
 The DIRECT rule_book.rule_from_row projection is already pinned by
 test_apply_rules_repoint_gaps.py::test_rule_reply_maps_a_full_store_row_to_exactly_the_client_shape
@@ -14,8 +14,7 @@ round trip over a legacy row.
 
 import json
 
-from _feed_fakes import FakeCategoryRepo
-from _rule_fakes import FakeRuleRepo
+from _feed_fakes import FakeCategoryRepo, Repos
 
 
 _CLIENT_KEYS = {"id", "field", "operator", "value", "categoryId", "budgetExcluded",
@@ -25,7 +24,8 @@ _CLIENT_KEYS = {"id", "field", "operator", "value", "categoryId", "budgetExclude
 def _legacy_row(value="COLES", category_id="groceries"):
     """A pre-WHIT-535 stored row: the current fields PLUS the retired import metadata."""
     return {
-        "id": None, "field": "description", "operator": "contains",
+        "pk": "RULE", "sk": "RULE#r-legacy", "id": "r-legacy",
+        "field": "description", "operator": "contains",
         "value": value, "category_id": category_id, "source": "banksync",
         "imported_at": "2026-07-02T00:00:00+00:00",
         "banksync_enrichment_ids": ["enr_1", "enr_2"],
@@ -37,14 +37,18 @@ def _event(method, path):
     return {"rawPath": path, "requestContext": {"http": {"method": method}}}
 
 
-def _inject(handler, monkeypatch, rule_repo):
-    monkeypatch.setattr(handler, "RuleRepository", lambda: rule_repo)
+def _inject(handler, monkeypatch, store):
+    """Point the handler at the real repositories over the store's one FakeTable."""
+    monkeypatch.setattr(handler, "RuleRepository", lambda: store.rule_repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(("groceries",)))
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: store.transaction_repo)
 
 
 def test_get_rules_maps_a_legacy_row_to_the_clean_shape(handler, monkeypatch):
     # End to end through GET /rules: a legacy row reads back fine and clean.
-    _inject(handler, monkeypatch, FakeRuleRepo(rules=[_legacy_row("COLES")]))
+    store = Repos()
+    store.table.seed(_legacy_row("COLES"))
+    _inject(handler, monkeypatch, store)
 
     resp = handler.lambda_handler(_event("GET", "/rules"), None)
     body = json.loads(resp["body"])

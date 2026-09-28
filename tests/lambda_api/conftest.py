@@ -7,9 +7,9 @@ Two things make importing ``lambda_api/handler.py`` in a test non-trivial:
    imports ``boto3`` / ``botocore`` (repository.py:8-10). None of that is needed
    to unit-test the handler's routing/validation, so we set the env vars and
    register lightweight fake boto3/botocore modules before the first import.
-   Handler tests replace the repository wholesale, so the fakes are never
-   exercised — they only satisfy the import chain (same approach the
-   sync_trigger suite uses to avoid a real ssm/boto3 dependency).
+   Most handler tests replace the repository wholesale; the ones that run the
+   real repositories over a FakeTable (``_feed_fakes.real_repos``) query through
+   the fake Key/Attr that ``_isolated_import`` keeps in place.
 
 2. ``lambda_api`` and ``lambda_sync_trigger`` BOTH have a top-level ``handler.py``.
    Running both suites in one pytest process means a bare
@@ -26,24 +26,29 @@ import sys
 
 import pytest
 
-from _boto_stubs import install_import_satisfiers
+from _boto_stubs import install_import_satisfiers, use_condition_fields
 
-# Env vars + fake boto3/botocore/ssm the handler import chain needs. Handler tests
-# monkeypatch the repository, so the fakes are import-satisfiers only.
+# Env vars + fake boto3/botocore/ssm the handler import chain needs.
 install_import_satisfiers(ssm_default="test-api-key")
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _LAMBDA_API_DIR = str(_REPO_ROOT / "lambda_api")
 _SHARED_DIR = str(_REPO_ROOT / "shared")
-# Modules re-imported fresh per test: names that collide with the sibling
-# sync_trigger suite.
-_COLLIDING = (
-    "handler", "constants", "api_constants", "models", "encoders", "repository",
-    "insights_ai", "anthropic_client", "rule_engine",
-    "merchant_groups", "filing_habits", "apply_rules_worker", "repository_job",
-    "spend", "budget_standing", "repayment_rules", "api_key", "recurring_bills", "transaction_search",
-    "chat_tools", "ai_chat",
-)
+# Modules re-imported fresh per test: every lambda_api/ module, plus the shared/ modules whose bare
+# name another lambda folder also defines (e.g. `repository`). Built from the folders so a new
+# module needs no entry here. Shedding every shared/ module too is correct but ~70% slower.
+# `api_key` is always shed: it caches keys and the Anthropic fixtures below stub its get_param.
+# The shared/ modules that bind boto3's Key/Attr are shed too, so they re-bind the fake query
+# helpers (use_condition_fields) and a real repository can run its queries over a FakeTable.
+_OTHER_DIRS = [folder for folder in _REPO_ROOT.glob("lambda*") if folder.name != "lambda_api"]
+_SHARED_MODULES = list(pathlib.Path(_SHARED_DIR).glob("*.py"))
+_COLLIDING = tuple(sorted(
+    {path.stem for path in pathlib.Path(_LAMBDA_API_DIR).glob("*.py")}
+    | ({path.stem for path in _SHARED_MODULES}
+       & {path.stem for folder in _OTHER_DIRS for path in folder.glob("*.py")})
+    | {path.stem for path in _SHARED_MODULES if "boto3.dynamodb.conditions" in path.read_text()}
+    | {"api_key"}
+))
 
 
 @contextlib.contextmanager
@@ -51,7 +56,8 @@ def _isolated_import(module_name):
     """Import one lambda_api (or shared) module fresh for a test, then restore sys.modules.
 
     lambda_api's dir goes first on sys.path (mirrors prod, where the function root precedes the
-    shared layer); constants and repository resolve in shared."""
+    shared layer); constants and repository resolve in shared. The fake Key/Attr stay in place
+    for the whole test, so a real repository built from these modules can query a FakeTable."""
     for d in (_SHARED_DIR, _LAMBDA_API_DIR):
         while d in sys.path:
             sys.path.remove(d)
@@ -60,7 +66,8 @@ def _isolated_import(module_name):
 
     saved = {name: sys.modules.pop(name, None) for name in _COLLIDING}
     try:
-        yield importlib.import_module(module_name)
+        with use_condition_fields():
+            yield importlib.import_module(module_name)
     finally:
         for name in _COLLIDING:
             sys.modules.pop(name, None)

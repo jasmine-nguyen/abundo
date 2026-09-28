@@ -20,36 +20,14 @@ from decimal import Decimal
 
 import pytest
 
+from _budget_fakes import recording_budget_repo
+
 CYCLE_START = "2026-08-06"
 TODAY = "2026-08-10"
 LENGTH = 30
 PAYDATE = "2026-01-01"
 
 BILL = Decimal("1390.91")   # 4-cycle split: index-1 payback slice = -347.73
-
-
-class FakeBudgetRepo:
-    def __init__(self, budgets=None):
-        self._budgets = budgets or {}
-        self.settle_calls = []
-        self.set_spread_calls = []
-        self.clear_spread_calls = []
-
-    def list_budgets(self):
-        return {k: dict(v) for k, v in self._budgets.items()}
-
-    def settle_carryover(self, cat_id, carryover, carryover_from, carryover_len, carryover_paydate):
-        self.settle_calls.append((cat_id, carryover, carryover_from, carryover_len, carryover_paydate))
-        self._budgets.setdefault(cat_id, {}).update({
-            "carryover": carryover, "carryover_from": carryover_from,
-            "carryover_len": Decimal(carryover_len), "carryover_paydate": carryover_paydate,
-        })
-
-    def set_spread(self, cat_id, amount, cycles, spread_from, spread_len, spread_paydate):
-        self.set_spread_calls.append((cat_id, amount, cycles, spread_from, spread_len, spread_paydate))
-
-    def clear_spread(self, cat_id):
-        self.clear_spread_calls.append(cat_id)
 
 
 class FakeTransactionRepo:
@@ -100,7 +78,7 @@ def test_rollover_negative_carryover_makes_available_below_target(handler):
     cats = [{"id": "sink", "bucket": "Lifestyle", "parent": None}]
     entry = {"target": Decimal(100), "rollover": True, "carryover": Decimal(-60),
              "carryover_from": CYCLE_START, "carryover_len": Decimal(LENGTH), "carryover_paydate": PAYDATE}
-    result = _list(handler, FakeBudgetRepo({"sink": entry}), categories=cats)
+    result = _list(handler, recording_budget_repo({"sink": entry}), categories=cats)
 
     assert result["sink"]["carryover"] == Decimal(-60)
     assert result["sink"]["available"] == Decimal(40)
@@ -114,7 +92,7 @@ def test_spread_payback_cycle_available_is_target_minus_slice(handler):
     spread_from = "2026-07-07"   # 30 days before 2026-08-06 -> spread_index == 1
     entry = {"target": Decimal(250), "spread_amount": BILL, "spread_cycles": Decimal(4),
              "spread_from": spread_from, "spread_len": Decimal(LENGTH), "spread_paydate": PAYDATE}
-    result = _list(handler, FakeBudgetRepo({"cat": entry}))
+    result = _list(handler, recording_budget_repo({"cat": entry}))
 
     assert result["cat"]["spread"]["index"] == 1
     assert result["cat"]["spread"]["adjustment"] == Decimal("-347.73")
@@ -129,7 +107,7 @@ def test_reanchored_rollover_still_emits_available(handler):
     cats = [{"id": "moved", "bucket": "Lifestyle", "parent": None}]
     entry = {"target": Decimal(100), "rollover": True, "carryover": Decimal(200),
              "carryover_from": "2026-05-08", "carryover_len": Decimal(14), "carryover_paydate": PAYDATE}
-    result = _list(handler, FakeBudgetRepo({"moved": entry}), categories=cats)
+    result = _list(handler, recording_budget_repo({"moved": entry}), categories=cats)
 
     assert result["moved"]["carryover"] == Decimal(200)
     assert result["moved"]["available"] == Decimal(300)
@@ -144,7 +122,7 @@ def test_income_parent_available_is_own_target_not_child_folded(handler):
         {"id": "salary", "bucket": "Income", "parent": None},
         {"id": "bonus", "bucket": "Income", "parent": "salary"},
     ]
-    budget_repo = FakeBudgetRepo({"salary": {"target": Decimal(5000)}, "bonus": {"target": Decimal(900)}})
+    budget_repo = recording_budget_repo({"salary": {"target": Decimal(5000)}, "bonus": {"target": Decimal(900)}})
     result = _list(handler, budget_repo, [_txn("bonus", 900, "2026-08-08")], cats)
 
     assert result["salary"]["available"] == Decimal(5000)
@@ -160,7 +138,7 @@ def test_available_serialises_as_a_json_number_through_the_real_response(handler
     # with `b.available ?? ...` — not a string, and not silently dropped by the encoder.
     entry = {"target": Decimal(250), "spread_amount": BILL, "spread_cycles": Decimal(4),
              "spread_from": CYCLE_START, "spread_len": Decimal(LENGTH), "spread_paydate": PAYDATE}
-    result = _list(handler, FakeBudgetRepo({"cat": entry}), [_txn("cat", -1390.91, "2026-08-07")])
+    result = _list(handler, recording_budget_repo({"cat": entry}), [_txn("cat", -1390.91, "2026-08-07")])
 
     body = json.loads(handler._json_response(200, result)["body"])
     assert "available" in body["cat"]

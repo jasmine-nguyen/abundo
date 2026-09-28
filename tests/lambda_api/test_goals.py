@@ -14,6 +14,9 @@ import json
 from datetime import date
 from decimal import Decimal
 
+from _dynamo_fakes import FakeTable
+from _milestone_fakes import checkpoints_marked, goal_checkpoint_repo
+
 
 # --- handler-level fake ------------------------------------------------------
 
@@ -606,41 +609,22 @@ def test_delete_empty_string_id_is_404(handler):
 # --- GET-after-PUT round trip through lambda_handler ------------------------
 
 
-class PersistingGoalsRepo:
-    """A repo that actually stores upserts, so GET reflects a prior PUT (real round trip)."""
+def _persisting_goals_repo(handler):
+    """The REAL GoalsRepository over a FakeTable, so GET reflects a prior PUT (real round trip)."""
+    repo = handler.GoalsRepository()
+    repo._table = FakeTable()
+    return repo
 
-    def __init__(self):
-        self.store = {}
 
-    def list_goals(self):
-        return {k: dict(v) for k, v in self.store.items()}
-
-    def upsert_goal(self, goal_id, goal, start_candidate=None):
-        existing = self.store.get(goal_id)
-        # Mirror the real repo's WHIT-476 carry-forward: an omitted ladder keeps the stored
-        # one, an explicit list replaces, an explicit empty list clears.
-        if "checkpoints" in goal:
-            ladder = goal["checkpoints"]
-        elif existing:
-            ladder = existing.get("checkpoints")
-        else:
-            ladder = None
-        merged = {**goal, **(start_candidate or {})}
-        merged.pop("checkpoints", None)
-        if ladder:
-            merged["checkpoints"] = ladder
-        self.store[goal_id] = dict(merged)
-        return {"id": goal_id, **merged}
-
-    def delete_goal(self, goal_id):
-        self.store.pop(goal_id, None)
+def _stored_goal(repo, goal_id):
+    return repo._table.store[("GOALS", "GOALS")]["items"][goal_id]
 
 
 def test_get_after_put_round_trips_numbers_and_echoes_id(handler, monkeypatch):
     # [G15] PUT a manual paydown carrying BOTH baseline and manual_balance, then GET:
     # every numeric must come back as a JSON number (not a string), the id must be
     # echoed from the map key, and no unknown field survives.
-    repo = PersistingGoalsRepo()
+    repo = _persisting_goals_repo(handler)
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
     monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo_gaps)
 
@@ -680,7 +664,7 @@ def test_get_after_put_carries_start_pair_as_json(handler, monkeypatch):
     # a later GET must carry start_date as a JSON STRING and start_balance as a JSON NUMBER
     # (signed) -- i.e. the Decimal start_balance serialises to a number, not a string, and
     # the pair survives the store -> list -> encoder round trip through lambda_handler.
-    repo = PersistingGoalsRepo()
+    repo = _persisting_goals_repo(handler)
     balances = PolledBalanceRepo([{"account_id": "up-spending", "amount": Decimal("-3200")}])
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: balances)
@@ -886,7 +870,7 @@ def test_400_too_many_checkpoints(handler):
 def _ladder_round_trip(handler, monkeypatch, goal_id, body):
     """PUT `body` through the real lambda_handler into a persisting repo, then GET, and
     return the goal as the CLIENT sees it (post JSON encode)."""
-    repo = PersistingGoalsRepo()
+    repo = _persisting_goals_repo(handler)
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
     monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo_gaps)
     put = handler.lambda_handler(_put_event_gaps(goal_id=goal_id, body=body), None)
@@ -926,7 +910,7 @@ def test_an_edit_that_omits_checkpoints_keeps_the_saved_ladder(handler, monkeypa
     # [A3] WHIT-476 option B. A save that does NOT mention checkpoints keeps the stored ladder,
     # so a writer that doesn't know about them (an old app build, a new code path) can't wipe
     # them. Renaming a goal must leave its ladder intact.
-    repo = PersistingGoalsRepo()
+    repo = _persisting_goals_repo(handler)
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
     monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo_gaps)
 
@@ -936,7 +920,7 @@ def test_an_edit_that_omits_checkpoints_keeps_the_saved_ladder(handler, monkeypa
     second = handler.lambda_handler(_put_event_gaps(
         goal_id="hol1", body=_grow_body(name="Bigger holiday")), None)   # no checkpoints sent
     assert second["statusCode"] == 200
-    ladder = repo.store["hol1"]["checkpoints"]
+    ladder = _stored_goal(repo, "hol1")["checkpoints"]
     assert [c["label"] for c in ladder] == ["Halfway"]        # kept, not wiped
     assert json.loads(second["body"])["name"] == "Bigger holiday"
 
@@ -944,7 +928,7 @@ def test_an_edit_that_omits_checkpoints_keeps_the_saved_ladder(handler, monkeypa
 def test_an_explicit_empty_list_clears_the_saved_ladder(handler, monkeypatch):
     # [A3b] The one deliberate way to remove a ladder: send [] (the edit UI does this when the
     # user deletes every rung). Unlike an omission, [] is honoured -- the stored ladder goes.
-    repo = PersistingGoalsRepo()
+    repo = _persisting_goals_repo(handler)
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
     monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo_gaps)
 
@@ -953,7 +937,7 @@ def test_an_explicit_empty_list_clears_the_saved_ladder(handler, monkeypatch):
 
     handler.lambda_handler(_put_event_gaps(
         goal_id="hol1", body=_grow_body(checkpoints=[])), None)
-    assert "checkpoints" not in repo.store["hol1"]            # cleared, stored as no key
+    assert "checkpoints" not in _stored_goal(repo, "hol1")            # cleared, stored as no key
 
 
 def test_explicit_null_checkpoints_is_accepted_and_stores_no_key(handler):
@@ -1203,19 +1187,6 @@ def test_manual_balance_nan_is_rejected(handler):
 
 # --- legacy stored-negative caveat: an old goal saved NEGATIVE before the fix, on a later valid save
 
-class _FakeNotifyRepo:
-    def __init__(self, fired=()):
-        self._fired = set(fired)
-        self.marked = []
-
-    def fired_goal_checkpoints(self, scope=None):
-        return set(self._fired)
-
-    def mark_goal_checkpoint_fired(self, key, scope=None):
-        self.marked.append(key)
-        self._fired.add(key)
-
-
 class _FakeDeviceRepo:
     def __init__(self, tokens=("ExpoTok",)):
         self._tokens = list(tokens)
@@ -1225,8 +1196,8 @@ class _FakeDeviceRepo:
 
 
 def _run_manual_crossing(handler, monkeypatch, *, old_goal, new_body):
-    """Drive upsert_goal through the REAL notify_goal_checkpoint_crossing with fake notify/device
-    repos, capturing any push. Proves the legacy old-balance flows through the real crossing math."""
+    """Drive upsert_goal through the REAL notify_goal_checkpoint_crossing with the real notify repo
+    over a FakeTable and a fake device repo, capturing any push. Proves the legacy old-balance flows through the real crossing math."""
     import sys
     gc_mod = sys.modules[handler.notify_goal_checkpoint_crossing.__module__]
     sent = []
@@ -1234,7 +1205,7 @@ def _run_manual_crossing(handler, monkeypatch, *, old_goal, new_body):
         gc_mod, "send_push",
         lambda title, body, toks, data=None: sent.append((title, body, toks, data)) or {"ok": 1})
     repo = FakeGoalsRepo(goals={"g1": dict(old_goal)})
-    notify = _FakeNotifyRepo()
+    notify = goal_checkpoint_repo()
     resp = handler.upsert_goal(
         _put_event(body=new_body), repo, FakeBalanceRepo(),
         notify_repo=notify, device_repo=_FakeDeviceRepo())
@@ -1258,7 +1229,7 @@ def test_legacy_negative_paydown_later_valid_save_fires_no_burst(handler, monkey
     resp, notify, sent = _run_manual_crossing(handler, monkeypatch, old_goal=old, new_body=new)
     assert resp["statusCode"] == 200
     assert sent == []             # no push
-    assert notify.marked == []    # no rung burned
+    assert checkpoints_marked(notify) == []    # no rung burned
 
 
 def test_legacy_negative_grow_later_valid_save_treats_it_as_zero(handler, monkeypatch):
@@ -1281,5 +1252,5 @@ def test_legacy_negative_grow_later_valid_save_treats_it_as_zero(handler, monkey
     assert resp["statusCode"] == 200
     assert len(sent) == 1                         # one push (the furthest GENUINE rung)
     assert "Halfway" in sent[0][0]                # 4000 is furthest crossed (0 -> 5000), not 8000
-    assert set(notify.marked) == {"g:g1:cp:cp1:bal:2000.00", "g:g1:cp:cp2:bal:4000.00"}
-    assert "g:g1:cp:cp3:bal:8000.00" not in notify.marked   # 8000 above new -> not crossed, no burst
+    assert set(checkpoints_marked(notify)) == {"g:g1:cp:cp1:bal:2000.00", "g:g1:cp:cp2:bal:4000.00"}
+    assert "g:g1:cp:cp3:bal:8000.00" not in checkpoints_marked(notify)   # 8000 above new -> not crossed, no burst

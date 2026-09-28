@@ -1,7 +1,8 @@
 """Shared fakes + helpers for the goal-nudge suites (WHIT-258).
 
 The behind-pace nudge tests (``test_goal_nudge.py``) both
-drive ``shared/goal_nudge.notify_behind_goals`` through in-memory repo fakes. These were
+drive ``shared/goal_nudge.notify_behind_goals`` through read-only repo stubs, plus the REAL
+NotifyRepository over a FakeTable for the debounce markers (WHIT-625). These were
 copy-pasted into both files and had already drifted (counters, ``seed=``, ``_run`` arity), so
 this is the single source — the SUPERSET that satisfies both suites. Leading underscore keeps
 pytest (``python_files = test_*.py``) from collecting it as a test module; ``pythonpath =
@@ -12,6 +13,8 @@ Fortnightly cycle, paydays land …Jul4, Jul18, Aug1, Aug15; "today" = Sat 11 Ju
 
 from datetime import date
 from decimal import Decimal
+
+from _dynamo_fakes import FakeTable
 
 CYCLE = {"length": 14, "last_pay_date": "2026-06-06"}
 TODAY = date(2026, 7, 11)
@@ -55,22 +58,18 @@ class FakeBalanceRepo:
         return [{"account_id": a, "amount": self._balances[a]} for a in account_ids if a in self._balances]
 
 
-class FakeNotifyRepo:
-    """Mirrors the SHARED FIRED set: goal + budget markers share one per-cycle partition.
-    `seed` pre-loads markers ({(last_pay_date, length): {markers}}) — used by the
-    budget-marker-collision test."""
+def notify_repo(seed=None):
+    """A real NotifyRepository over its own FakeTable — goal and budget markers share one
+    per-cycle set, as in production. ``seed`` pre-marks {(last_pay_date, length): {markers}}
+    through the real ``mark_fired`` (used by the budget-marker-collision test)."""
+    from repository_notify import NotifyRepository
 
-    def __init__(self, seed=None):
-        self.store = {}  # (last_pay_date, length) -> set of markers
-        if seed:
-            for (last_pay_date, length), markers in seed.items():
-                self.store[(last_pay_date, length)] = set(markers)
-
-    def fired_markers(self, last_pay_date, length):
-        return set(self.store.get((last_pay_date, length), set()))
-
-    def mark_fired(self, last_pay_date, length, marker):
-        self.store.setdefault((last_pay_date, length), set()).add(marker)
+    repo = NotifyRepository()
+    repo._table = FakeTable()
+    for (last_pay_date, length), markers in (seed or {}).items():
+        for marker in markers:
+            repo.mark_fired(last_pay_date, length, marker)
+    return repo
 
 
 class SendRecorder:
@@ -110,7 +109,7 @@ def _run(shared, monkeypatch, goals, *, balances=None, tokens=("tok-1",), notify
     few unpack with a trailing ``*_``."""
     recorder = SendRecorder(ok=send_ok)
     monkeypatch.setattr(shared.goal_nudge, "send_push", recorder)
-    notify = notify if notify is not None else FakeNotifyRepo()
+    notify = notify if notify is not None else notify_repo()
     device = FakeDeviceRepo(tokens)
     paycycle = FakePayCycleRepo(cycle)
     balance_repo = FakeBalanceRepo(balances or {})

@@ -1,15 +1,15 @@
 """Unit tests for GoalsRepository (WHIT-231): the goals config item (pk=sk="GOALS",
 an `items` map of goal id -> goal object, plus a numeric `version`) written under an
-optimistic lock. Mirrors the budget repository tests; the shared FakeTable only parses
-flat SET expressions, so these tests use the shared ``config_item_table`` fake from
-conftest, which models the seed put_item + the nested SET/REMOVE-plus-version-bump the
-repo issues (WHIT-251).
+optimistic lock. Mirrors the budget repository tests: the real repository runs over the
+shared FakeTable, seeded per test by conftest's ``config_item_table`` (WHIT-251, WHIT-625).
 """
 
 from decimal import Decimal
 
 import pytest
 import copy
+
+_KEY = ("GOALS", "GOALS")  # the config item's store key in FakeTable
 
 
 @pytest.fixture
@@ -42,11 +42,11 @@ def test_list_goals_seeds_empty_then_is_stable(shared, goals_repo, config_item_t
     _with_table(goals_repo, table)
 
     assert goals_repo.list_goals() == {}
-    assert table.put_calls == 1                      # seeded once
-    assert table.item["version"] == Decimal(1)
+    assert len(table.put_calls) == 1                      # seeded once
+    assert table.store[_KEY]["version"] == Decimal(1)
 
     assert goals_repo.list_goals() == {}             # already present -> no re-seed
-    assert table.put_calls == 1
+    assert len(table.put_calls) == 1
 
 
 # --- upsert ----------------------------------------------------------------
@@ -59,9 +59,9 @@ def test_upsert_goal_writes_the_object_and_bumps_version(shared, goals_repo, con
     result = goals_repo.upsert_goal("g1", _goal())
 
     assert result == {"id": "g1", **_goal()}
-    assert table.item["items"]["g1"] == _goal()      # whole object stored
-    assert table.item["version"] == Decimal(2)       # bumped once
-    assert table.update_calls == 1
+    assert table.store[_KEY]["items"]["g1"] == _goal()      # whole object stored
+    assert table.store[_KEY]["version"] == Decimal(2)       # bumped once
+    assert len(table.update_calls) == 1
 
 
 def test_upsert_goal_overwrites_same_id_and_bumps_again(shared, goals_repo, config_item_table):
@@ -70,9 +70,9 @@ def test_upsert_goal_overwrites_same_id_and_bumps_again(shared, goals_repo, conf
 
     goals_repo.upsert_goal("g1", _goal(name="Bigger holiday", target_amount=Decimal(8000)))
 
-    assert table.item["items"]["g1"]["name"] == "Bigger holiday"
-    assert table.item["items"]["g1"]["target_amount"] == Decimal(8000)
-    assert table.item["version"] == Decimal(3)
+    assert table.store[_KEY]["items"]["g1"]["name"] == "Bigger holiday"
+    assert table.store[_KEY]["items"]["g1"]["target_amount"] == Decimal(8000)
+    assert table.store[_KEY]["version"] == Decimal(3)
 
 
 def test_upsert_goal_preserves_other_goals(shared, goals_repo, config_item_table):
@@ -82,8 +82,8 @@ def test_upsert_goal_preserves_other_goals(shared, goals_repo, config_item_table
 
     goals_repo.upsert_goal("g1", _goal())
 
-    assert table.item["items"]["g2"] == other        # only g1's key was written
-    assert "g1" in table.item["items"]
+    assert table.store[_KEY]["items"]["g2"] == other        # only g1's key was written
+    assert "g1" in table.store[_KEY]["items"]
 
 
 def test_upsert_goal_retries_once_under_a_version_race(shared, goals_repo, config_item_table):
@@ -93,8 +93,8 @@ def test_upsert_goal_retries_once_under_a_version_race(shared, goals_repo, confi
 
     goals_repo.upsert_goal("g1", _goal())
 
-    assert "g1" in table.item["items"]                # converged after the retry
-    assert table.update_calls == 2
+    assert "g1" in table.store[_KEY]["items"]                # converged after the retry
+    assert len(table.update_calls) == 2
 
 
 def test_upsert_goal_raises_a_conflict_when_it_cannot_converge(shared, goals_repo, config_item_table):
@@ -106,7 +106,7 @@ def test_upsert_goal_raises_a_conflict_when_it_cannot_converge(shared, goals_rep
 
     with pytest.raises(VersionConflictError):
         goals_repo.upsert_goal("g1", _goal())
-    assert "g1" not in table.item["items"]            # never written
+    assert "g1" not in table.store[_KEY]["items"]            # never written
 
 
 # --- WHIT-252: immutable start (start_date + start_balance) ------------------
@@ -120,7 +120,7 @@ def test_upsert_stamps_start_candidate_on_create(shared, goals_repo, config_item
 
     result = goals_repo.upsert_goal("g1", _goal(), start_candidate=dict(_START))
 
-    stored = table.item["items"]["g1"]
+    stored = table.store[_KEY]["items"]["g1"]
     assert stored["start_date"] == "2026-07-11"
     assert stored["start_balance"] == Decimal(3200)
     assert result["start_date"] == "2026-07-11"
@@ -135,7 +135,7 @@ def test_upsert_preserves_start_on_edit(shared, goals_repo, config_item_table):
         "g1", _goal(name="Bigger holiday"),
         start_candidate={"start_date": "2027-01-01", "start_balance": Decimal(9999)})
 
-    stored = table.item["items"]["g1"]
+    stored = table.store[_KEY]["items"]["g1"]
     assert stored["name"] == "Bigger holiday"          # the edit applied
     assert stored["start_date"] == "2026-07-11"         # original start frozen
     assert stored["start_balance"] == Decimal(3200)
@@ -150,7 +150,7 @@ def test_upsert_preserves_start_on_balance_update(shared, goals_repo, config_ite
         "g1", _goal(manual_balance=Decimal(1500), manual_as_of="2026-09-01"),
         start_candidate={"start_date": "2026-09-01", "start_balance": Decimal(1500)})
 
-    stored = table.item["items"]["g1"]
+    stored = table.store[_KEY]["items"]["g1"]
     assert stored["manual_balance"] == Decimal(1500)    # current balance moved
     assert stored["start_date"] == "2026-07-11"         # but the start didn't
     assert stored["start_balance"] == Decimal(3200)
@@ -164,13 +164,13 @@ def test_upsert_fills_absent_start_once_then_freezes(shared, goals_repo, config_
     _with_table(goals_repo, table)
 
     goals_repo.upsert_goal("g1", _goal(), start_candidate=dict(_START))
-    assert table.item["items"]["g1"]["start_balance"] == Decimal(3200)
+    assert table.store[_KEY]["items"]["g1"]["start_balance"] == Decimal(3200)
 
     goals_repo.upsert_goal(
         "g1", _goal(),
         start_candidate={"start_date": "2028-08-08", "start_balance": Decimal(1)})
-    assert table.item["items"]["g1"]["start_date"] == "2026-07-11"   # frozen at the first fill
-    assert table.item["items"]["g1"]["start_balance"] == Decimal(3200)
+    assert table.store[_KEY]["items"]["g1"]["start_date"] == "2026-07-11"   # frozen at the first fill
+    assert table.store[_KEY]["items"]["g1"]["start_balance"] == Decimal(3200)
 
 
 def test_upsert_stamps_no_start_when_candidate_empty(shared, goals_repo, config_item_table):
@@ -180,7 +180,7 @@ def test_upsert_stamps_no_start_when_candidate_empty(shared, goals_repo, config_
 
     goals_repo.upsert_goal("g1", _goal(), start_candidate={})
 
-    stored = table.item["items"]["g1"]
+    stored = table.store[_KEY]["items"]["g1"]
     assert "start_date" not in stored
     assert "start_balance" not in stored
 
@@ -194,10 +194,10 @@ def test_delete_goal_removes_an_existing_goal(shared, goals_repo, config_item_ta
 
     goals_repo.delete_goal("g1")
 
-    assert "g1" not in table.item["items"]
-    assert "g2" in table.item["items"]                # only the one key removed
-    assert table.item["version"] == Decimal(2)
-    assert table.update_calls == 1
+    assert "g1" not in table.store[_KEY]["items"]
+    assert "g2" in table.store[_KEY]["items"]                # only the one key removed
+    assert table.store[_KEY]["version"] == Decimal(2)
+    assert len(table.update_calls) == 1
 
 
 def test_delete_goal_absent_is_a_silent_noop(shared, goals_repo, config_item_table):
@@ -206,8 +206,8 @@ def test_delete_goal_absent_is_a_silent_noop(shared, goals_repo, config_item_tab
 
     goals_repo.delete_goal("g1")
 
-    assert table.update_calls == 0                    # never touched the item
-    assert table.item["version"] == Decimal(5)        # version unchanged
+    assert len(table.update_calls) == 0                    # never touched the item
+    assert table.store[_KEY]["version"] == Decimal(5)        # version unchanged
 
 
 def test_delete_goal_no_config_item_is_a_noop(shared, goals_repo, config_item_table):
@@ -216,8 +216,8 @@ def test_delete_goal_no_config_item_is_a_noop(shared, goals_repo, config_item_ta
 
     goals_repo.delete_goal("g1")
 
-    assert table.update_calls == 0
-    assert table.put_calls == 0                       # delete never seeds
+    assert len(table.update_calls) == 0
+    assert len(table.put_calls) == 0                       # delete never seeds
 
 
 def test_delete_goal_retries_once_under_a_version_race(shared, goals_repo, config_item_table):
@@ -227,8 +227,8 @@ def test_delete_goal_retries_once_under_a_version_race(shared, goals_repo, confi
 
     goals_repo.delete_goal("g1")
 
-    assert "g1" not in table.item["items"]            # converged after the retry
-    assert table.update_calls == 2
+    assert "g1" not in table.store[_KEY]["items"]            # converged after the retry
+    assert len(table.update_calls) == 2
 
 
 def test_delete_goal_raises_a_conflict_when_it_cannot_converge(shared, goals_repo, config_item_table):
@@ -240,7 +240,7 @@ def test_delete_goal_raises_a_conflict_when_it_cannot_converge(shared, goals_rep
 
     with pytest.raises(VersionConflictError):
         goals_repo.delete_goal("g1")
-    assert "g1" in table.item["items"]                # never removed
+    assert "g1" in table.store[_KEY]["items"]                # never removed
 
 
 # --- WHIT-252 QA GAPS: race-retry preserve, partial-start merge, source switch ---
@@ -264,9 +264,9 @@ def test_upsert_race_retry_preserves_a_concurrently_stamped_start(shared, goals_
         attempts["n"] += 1
         if attempts["n"] == 1:
             # A concurrent writer stamps the start and moves the version under us.
-            table.item["items"]["g1"] = {
+            table.store[_KEY]["items"]["g1"] = {
                 **no_start, "start_date": "2026-07-11", "start_balance": Decimal(3200)}
-            table.item["version"] = table.item["version"] + Decimal(1)
+            table.store[_KEY]["version"] = table.store[_KEY]["version"] + Decimal(1)
             raise client_error("ConditionalCheckFailedException")
         return original(*a, **k)
 
@@ -275,7 +275,7 @@ def test_upsert_race_retry_preserves_a_concurrently_stamped_start(shared, goals_
 
     goals_repo.upsert_goal("g1", _goal(name="Edited after race"), start_candidate={})
 
-    stored = table.item["items"]["g1"]
+    stored = table.store[_KEY]["items"]["g1"]
     assert attempts["n"] == 2                              # lost the lock once, converged on retry
     assert stored["name"] == "Edited after race"          # our edit applied
     assert stored["start_date"] == "2026-07-11"           # concurrent start preserved...
@@ -296,7 +296,7 @@ def test_upsert_with_only_one_stored_start_key_is_discarded_as_a_pair(shared, go
         "g1", _goal(),
         start_candidate={"start_date": "2030-01-01", "start_balance": Decimal(77)})
 
-    stored = table.item["items"]["g1"]
+    stored = table.store[_KEY]["items"]["g1"]
     # The stray half-pair is dropped; the candidate pair wins whole (no date/balance mismatch).
     assert stored["start_date"] == "2030-01-01"
     assert stored["start_balance"] == Decimal(77)
@@ -317,7 +317,7 @@ def test_upsert_switching_source_preserves_start_and_drops_stale_manual(shared, 
         "g1", synced,
         start_candidate={"start_date": "2027-01-01", "start_balance": Decimal(1)})
 
-    stored = table.item["items"]["g1"]
+    stored = table.store[_KEY]["items"]["g1"]
     assert stored["account_id"] == "up-spending"          # new source applied
     assert "manual_balance" not in stored                 # stale source dropped by full replace
     assert stored["start_date"] == "2026-07-11"           # start frozen across the source switch
@@ -327,131 +327,79 @@ def test_upsert_switching_source_preserves_start_and_drops_stale_manual(shared, 
 # --- folded from test_repository_goals_gaps.py (WHIT-463) ---
 
 
-def _client_error(code):
-    from botocore.exceptions import ClientError
-    err = ClientError()
-    err.response = {"Error": {"Code": code, "Message": "boom"}}
-    return err
+def _concurrent_writer(table, goal_id, goal):
+    """Before the repo's next update, a concurrent writer commits its OWN goal key and bumps the
+    version — so the repo's first guarded update fails and the retry must re-read (picking up the
+    sibling) and converge."""
+    def commit(key, table):
+        item = table.store[_KEY]
+        item["items"] = {**item["items"], goal_id: goal}
+        item["version"] = item["version"] + Decimal(1)
+    table.before_next_write(commit)
 
 
-class _RacingGoalsTable:
-    """Config item whose next update_item is preceded by a concurrent writer that
-    commits its OWN goal key and bumps the version — so the repo's first guarded
-    update fails and the retry must re-read (picking up the sibling) and converge."""
+def _lose_the_seed_race(table, concurrent_items):
+    """Our seed put finds that a concurrent caller has already seeded AND created goals, so
+    the real conditional put is refused and the re-read must reflect their state."""
+    real_put = table.put_item
 
-    def __init__(self, items=None, version=1):
-        self.item = {
-            "pk": "GOALS", "sk": "GOALS",
-            "items": dict(items or {}), "version": Decimal(version),
-        }
-        self.present = True
-        self.update_calls = 0
-        self._inject = None
+    def put_item(**kwargs):
+        table.seed({"pk": "GOALS", "sk": "GOALS", "items": concurrent_items, "version": Decimal(2)})
+        return real_put(**kwargs)
 
-    def inject_concurrent(self, goal_id, goal):
-        self._inject = (goal_id, goal)
-
-    def get_item(self, Key):
-        return {"Item": copy.deepcopy(self.item)}
-
-    def put_item(self, Item, ConditionExpression=None):
-        if ConditionExpression == "attribute_not_exists(pk)" and self.present:
-            raise _client_error("ConditionalCheckFailedException")
-        self.item = copy.deepcopy(Item)
-        self.present = True
-
-    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames,
-                    ExpressionAttributeValues, ConditionExpression=None):
-        self.update_calls += 1
-        if self._inject is not None:
-            gid, goal = self._inject
-            self._inject = None
-            self.item["items"][gid] = goal                 # concurrent writer commits
-            self.item["version"] = self.item["version"] + Decimal(1)
-        expected = ExpressionAttributeValues[":expected"]
-        if not self.present or expected != self.item["version"]:
-            raise _client_error("ConditionalCheckFailedException")
-        gid = ExpressionAttributeNames["#id"]              # literal attr name (aliased)
-        if UpdateExpression.startswith("REMOVE"):
-            self.item["items"].pop(gid, None)
-        else:
-            self.item["items"][gid] = ExpressionAttributeValues[":val"]
-        self.item["version"] = ExpressionAttributeValues[":next"]
+    table.put_item = put_item
 
 
-class _SeedRaceTable:
-    """Never seeded from our view: the first get_item is empty, but our seed put loses
-    the race to a concurrent caller who ALSO created goals — so the re-read must reflect
-    their state, not an empty map."""
-
-    def __init__(self, concurrent_items):
-        self._concurrent = concurrent_items
-        self.present = False
-        self.item = None
-        self.put_calls = 0
-        self.update_calls = 0
-
-    def get_item(self, Key):
-        return {"Item": copy.deepcopy(self.item)} if self.present else {}
-
-    def put_item(self, Item, ConditionExpression=None):
-        self.put_calls += 1
-        self.item = {
-            "pk": "GOALS", "sk": "GOALS",
-            "items": dict(self._concurrent), "version": Decimal(2),
-        }
-        self.present = True
-        raise _client_error("ConditionalCheckFailedException")
-
-
-def test_upsert_converges_and_preserves_a_concurrent_sibling(shared, goals_repo):
+def test_upsert_converges_and_preserves_a_concurrent_sibling(shared, goals_repo, config_item_table):
     # Race writes a DIFFERENT goal (g2) during the window. The retry must re-read and
     # keep g2 while adding g1 — the sibling-preservation the static-map race can't prove.
-    table = _RacingGoalsTable(items={})
-    table.inject_concurrent("g2", _goal(name="Car"))
+    table = config_item_table("GOALS", items={})
+    _concurrent_writer(table, "g2", _goal(name="Car"))
     goals_repo._table = table
 
     goals_repo.upsert_goal("g1", _goal())
 
-    assert set(table.item["items"]) == {"g1", "g2"}       # neither clobbered
-    assert table.item["items"]["g2"]["name"] == "Car"
-    assert table.update_calls == 2                        # converged on the retry
-    assert table.item["version"] == Decimal(3)            # concurrent bump + our bump
+    item = table.store[_KEY]
+    assert set(item["items"]) == {"g1", "g2"}             # neither clobbered
+    assert item["items"]["g2"]["name"] == "Car"
+    assert len(table.update_calls) == 2                   # converged on the retry
+    assert item["version"] == Decimal(3)                  # concurrent bump + our bump
 
 
-def test_delete_converges_and_preserves_a_concurrent_sibling(shared, goals_repo):
+def test_delete_converges_and_preserves_a_concurrent_sibling(shared, goals_repo, config_item_table):
     # Delete g1 while a concurrent writer adds g2 mid-race. Retry removes g1, keeps g2.
-    table = _RacingGoalsTable(items={"g1": _goal()})
-    table.inject_concurrent("g2", _goal(name="Car"))
+    table = config_item_table("GOALS", items={"g1": _goal()})
+    _concurrent_writer(table, "g2", _goal(name="Car"))
     goals_repo._table = table
 
     goals_repo.delete_goal("g1")
 
-    assert set(table.item["items"]) == {"g2"}
-    assert table.update_calls == 2
+    assert set(table.store[_KEY]["items"]) == {"g2"}
+    assert len(table.update_calls) == 2
 
 
-def test_list_reflects_a_concurrent_seed_and_create(shared, goals_repo):
+def test_list_reflects_a_concurrent_seed_and_create(shared, goals_repo, config_item_table):
     # Our seed loses to a concurrent caller who seeded AND created g1. The re-read must
     # surface g1 (not {}, not a crash). Load-bears the re-read line in list_goals.
-    table = _SeedRaceTable({"g1": _goal()})
+    table = config_item_table("GOALS", present=False)
+    _lose_the_seed_race(table, {"g1": _goal()})
     goals_repo._table = table
 
     result = goals_repo.list_goals()
 
     assert set(result) == {"g1"}
-    assert table.put_calls == 1                           # tried to seed once, lost
+    assert len(table.put_calls) == 1                      # tried to seed once, lost
 
 
-def test_upsert_stores_a_dotted_id_as_one_literal_key(shared, goals_repo):
+def test_upsert_stores_a_dotted_id_as_one_literal_key(shared, goals_repo, config_item_table):
     # The #id alias makes the goal id a literal attribute name, so a dot does NOT create
     # a nested map path (which real DynamoDB would do with an inlined path).
-    table = _RacingGoalsTable(items={})
+    table = config_item_table("GOALS", items={})
     goals_repo._table = table
 
     goals_repo.upsert_goal("a.b.c", _goal())
 
-    assert list(table.item["items"]) == ["a.b.c"]
+    assert list(table.store[_KEY]["items"]) == ["a.b.c"]
 
 
 # --- WHIT-476 QA GAP: the checkpoint ladder through the REAL write path ---------------
@@ -472,10 +420,10 @@ def test_upsert_stores_the_checkpoint_ladder_as_a_nested_list(shared, goals_repo
 
     result = goals_repo.upsert_goal("g1", _goal(checkpoints=copy.deepcopy(_LADDER)))
 
-    assert table.item["items"]["g1"]["checkpoints"] == _LADDER
+    assert table.store[_KEY]["items"]["g1"]["checkpoints"] == _LADDER
     assert result["checkpoints"] == _LADDER
     # Decimal("2500.50") == Decimal("2500.5"), so compare the STRING to pin the scale too.
-    assert str(table.item["items"]["g1"]["checkpoints"][1]["amount"]) == "2500.50"
+    assert str(table.store[_KEY]["items"]["g1"]["checkpoints"][1]["amount"]) == "2500.50"
 
 
 def test_upsert_omitting_checkpoints_keeps_the_ladder_and_the_frozen_start(shared, goals_repo, config_item_table):
@@ -489,7 +437,7 @@ def test_upsert_omitting_checkpoints_keeps_the_ladder_and_the_frozen_start(share
     goals_repo.upsert_goal("g1", _goal(name="Bigger holiday"),
                            start_candidate={"start_date": "2027-01-01", "start_balance": Decimal(9)})
 
-    after = table.item["items"]["g1"]
+    after = table.store[_KEY]["items"]["g1"]
     assert after["checkpoints"] == _LADDER            # kept across an omitting write
     assert after["name"] == "Bigger holiday"
     assert after["start_date"] == "2026-07-11"        # start still frozen across the same write
@@ -505,7 +453,7 @@ def test_upsert_an_explicit_ladder_replaces_the_stored_one(shared, goals_repo, c
 
     new_ladder = [{"id": "cp-9", "label": "Only rung", "amount": Decimal("2600")}]
     goals_repo.upsert_goal("g1", _goal(checkpoints=copy.deepcopy(new_ladder)))
-    assert table.item["items"]["g1"]["checkpoints"] == new_ladder     # replaced, not merged
+    assert table.store[_KEY]["items"]["g1"]["checkpoints"] == new_ladder     # replaced, not merged
 
     goals_repo.upsert_goal("g1", _goal(checkpoints=[]))
-    assert "checkpoints" not in table.item["items"]["g1"]             # [] clears
+    assert "checkpoints" not in table.store[_KEY]["items"]["g1"]             # [] clears

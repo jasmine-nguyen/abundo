@@ -9,15 +9,17 @@ Complements (does NOT duplicate):
   * tests/lambda_api/test_categories.py     — cascade fires / best-effort swallow (mocked repo)
 
 `handler.current_cycle_window` is pinned per test so the cycle math is deterministic.
-Uses the REAL handler.BudgetRepository over an in-memory config-item table so a clear
-actually strips fields that a later list_budgets read must honour.
+Uses the REAL handler.BudgetRepository over the shared FakeTable so a clear actually strips
+fields that a later list_budgets read must honour.
 """
 
-import copy
 import json
 from decimal import Decimal
 
 import pytest
+
+from _category_fakes import _cat, _schema
+from _dynamo_fakes import FakeTable
 
 LENGTH = 30
 PAYDATE = "2026-01-01"
@@ -25,63 +27,14 @@ CYCLE_START = "2026-08-06"
 TODAY = "2026-08-10"
 
 
-# --- in-memory config-item table (real BudgetRepository backs onto this) ------
-# Models the ONE budgets config item (pk=sk="BUDGETS"): an `items` map + a numeric
-# `version` written under the attribute_exists(pk) AND #v=:expected optimistic lock,
-# plus the nested SET-one-key / REMOVE-one-key + version bump the repo emits. This is
-# the same contract tests/shared/conftest.py::ConfigItemTable models; kept local because
-# that fixture lives in the shared suite's conftest, not on the import path here.
-def _client_error(code):
-    from botocore.exceptions import ClientError
-    err = ClientError.__new__(ClientError)
-    err.response = {"Error": {"Code": code, "Message": "boom"}}
-    return err
+_KEY = ("BUDGETS", "BUDGETS")
 
 
-class ConfigTable:
-    def __init__(self, items=None, version=1, present=True):
-        self.item = {"pk": "BUDGETS", "sk": "BUDGETS",
-                     "items": dict(items or {}), "version": Decimal(version)}
-        self.present = present
-        self.update_calls = 0
-        self.put_calls = 0
-        self._bump_before_next_update = False
-
-    def get_item(self, Key):
-        return {"Item": copy.deepcopy(self.item)} if self.present else {}
-
-    def put_item(self, Item, ConditionExpression=None):
-        self.put_calls += 1
-        if ConditionExpression == "attribute_not_exists(pk)" and self.present:
-            raise _client_error("ConditionalCheckFailedException")
-        self.item = copy.deepcopy(Item)
-        self.present = True
-
-    def race_next_update(self):
-        self._bump_before_next_update = True
-
-    def always_race(self):
-        original = self.update_item
-        def armed(*a, **k):
-            self.race_next_update()
-            return original(*a, **k)
-        self.update_item = armed
-
-    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames,
-                    ExpressionAttributeValues, ConditionExpression=None):
-        self.update_calls += 1
-        if self._bump_before_next_update:
-            self._bump_before_next_update = False
-            self.item["version"] = self.item["version"] + Decimal(1)  # concurrent writer
-        expected = ExpressionAttributeValues[":expected"]
-        if not self.present or expected != self.item["version"]:
-            raise _client_error("ConditionalCheckFailedException")
-        item_id = ExpressionAttributeNames["#id"]
-        if UpdateExpression.startswith("REMOVE"):
-            self.item["items"].pop(item_id, None)
-        else:
-            self.item["items"][item_id] = ExpressionAttributeValues[":val"]
-        self.item["version"] = ExpressionAttributeValues[":next"]
+def _config_table(items, version=1):
+    """The shared FakeTable holding the ONE budgets config item (pk=sk="BUDGETS")."""
+    table = FakeTable()
+    table.seed({"pk": "BUDGETS", "sk": "BUDGETS", "items": items, "version": Decimal(version)})
+    return table
 
 
 # --- fakes for the list_budgets read path ------------------------------------
@@ -101,22 +54,20 @@ class FakePayCycleRepo:
         return {"length": LENGTH, "last_pay_date": PAYDATE}
 
 
-class FakeCategoryRepo:
-    """Serves BOTH update_category (records + reflects the new bucket) and list_categories
-    (returns the category at its CURRENT bucket), so a re-bucket is visible to a later read."""
-    def __init__(self, cat_id, bucket):
-        self.cat_id = cat_id
-        self.bucket = bucket
-        self.update_calls = []
+def _category_repo(cat_id, bucket):
+    """The REAL CategoryRepository over a FakeTable holding the one category, so a re-bucket
+    lands in the store and a later list_categories reads it back."""
+    import repository
+    repo = repository.CategoryRepository()
+    repo._table = FakeTable()
+    repo._table.seed({"pk": "CATEGORIES", "sk": "CATEGORIES", "version": Decimal(1),
+                      "items": {cat_id: _cat(cat_id, bucket, parent=None)},
+                      "colorSlotSchema": _schema()})
+    return repo
 
-    def update_category(self, cat_id, name, bucket, icon, parent=None):
-        self.bucket = bucket
-        self.update_calls.append((cat_id, name, bucket, icon))
-        return {"id": cat_id, "name": name, "icon": icon, "color": "#111111",
-                "bucket": bucket, "parent": None}
 
-    def list_categories(self):
-        return [{"id": self.cat_id, "bucket": self.bucket, "parent": None}]
+def _stored_bucket(cat_repo, cat_id):
+    return cat_repo._table.store[("CATEGORIES", "CATEGORIES")]["items"][cat_id]["bucket"]
 
 
 def _event(bucket, cat_id="sink"):
@@ -163,14 +114,14 @@ def test_rebucket_to_income_then_back_to_spend_does_not_resurrect_the_buffer(han
     # fields, keeps the target) -> re-bucket back to a spend bucket -> GET /budgets. The buffer
     # must NOT reappear and NO past cycle may re-fold. FAIL-ON-REVERT: drop the handler cascade
     # and the surviving anchor re-folds 3 empty cycles -> carryover 300, reddening this.
-    table = ConfigTable(items={"sink": _rollover_entry()})
+    table = _config_table(items={"sink": _rollover_entry()})
     budget_repo = _budget_repo(handler, table)
-    cat_repo = FakeCategoryRepo("sink", "Lifestyle")
+    cat_repo = _category_repo("sink", "Lifestyle")
 
     to_income = handler.update_category(_event("Income"), cat_repo, budget_repo)
     assert to_income["statusCode"] == 200
     # the REAL clear ran on the REAL store: only the dollar target survives.
-    assert table.item["items"]["sink"] == {"target": Decimal(100)}
+    assert table.store[_KEY]["items"]["sink"] == {"target": Decimal(100)}
 
     back_to_spend = handler.update_category(_event("Lifestyle"), cat_repo, budget_repo)
     assert back_to_spend["statusCode"] == 200
@@ -188,9 +139,9 @@ def test_cleared_entry_serialises_through_list_budgets_with_no_leftover_rollover
     # through the API's DecimalEncoder with NO stray rollover/carryover keys — the wire shape
     # is byte-identical to a budget that never had rollover. FAIL-ON-REVERT: skip the clear and
     # the serialised row carries "rollover"/"carryover".
-    table = ConfigTable(items={"sink": _rollover_entry()})
+    table = _config_table(items={"sink": _rollover_entry()})
     budget_repo = _budget_repo(handler, table)
-    cat_repo = FakeCategoryRepo("sink", "Lifestyle")
+    cat_repo = _category_repo("sink", "Lifestyle")
 
     handler.update_category(_event("Income"), cat_repo, budget_repo)
     handler.update_category(_event("Lifestyle"), cat_repo, budget_repo)
@@ -210,15 +161,15 @@ def test_swallowed_clear_leaves_a_recoverable_stale_anchor_not_corruption(handle
     # intact), NOT a corrupt entry — the property the best-effort posture guarantees. If this ever
     # starts asserting a CLEARED entry, the swallow was tightened and this doc-test should be
     # revisited. FAIL-ON-REVERT: narrow the handler catch and the swallowed VersionConflict raises.
-    table = ConfigTable(items={"sink": _rollover_entry()})
+    table = _config_table(items={"sink": _rollover_entry()})
     table.always_race()                    # every clear attempt loses the lock -> raises, swallowed
     budget_repo = _budget_repo(handler, table)
-    cat_repo = FakeCategoryRepo("sink", "Lifestyle")
+    cat_repo = _category_repo("sink", "Lifestyle")
 
     resp = handler.update_category(_event("Income"), cat_repo, budget_repo)
 
     assert resp["statusCode"] == 200                       # swallowed, edit still succeeds
-    stale = table.item["items"]["sink"]
+    stale = table.store[_KEY]["items"]["sink"]
     assert stale["rollover"] is True                       # anchor intact (recoverable)
     assert stale["carryover_from"] == "2026-05-08"         # not cleared
     assert stale["target"] == Decimal(100)                 # never corrupted
@@ -237,13 +188,13 @@ def test_clear_rollover_non_db_error_is_not_swallowed(handler, monkeypatch):
     # non-DB fault from clear_rollover (a logic bug: KeyError/RuntimeError) must NOT be masked as
     # a 200 — it propagates so the bug surfaces (-> Lambda 500), exactly like the WHIT-127 delete
     # cascade. FAIL-ON-REVERT: widen the handler catch to Exception and this stops raising.
-    table = ConfigTable(items={"sink": _rollover_entry()})
+    table = _config_table(items={"sink": _rollover_entry()})
     budget_repo = _budget_repo(handler, table)
 
     def boom(cat_id):
         raise RuntimeError("bug: not a DB error")
     monkeypatch.setattr(budget_repo, "clear_rollover", boom)
-    cat_repo = FakeCategoryRepo("sink", "Lifestyle")
+    cat_repo = _category_repo("sink", "Lifestyle")
 
     with pytest.raises(RuntimeError, match="bug"):
         handler.update_category(_event("Income"), cat_repo, budget_repo)
@@ -257,13 +208,13 @@ def test_rebucket_to_savings_unbudgeted_is_a_clean_noop(handler):
     # of the clear can only ever run on an UNbudgeted category — where clear_rollover finds no
     # entry and must be a silent no-op (no seed, no write, no version bump). Proven against the
     # REAL repo. FAIL-ON-REVERT: make the absent-entry branch write and this reddens.
-    table = ConfigTable(items={"food": {"target": Decimal(80)}}, version=4)  # 'sink' absent
+    table = _config_table(items={"food": {"target": Decimal(80)}}, version=4)  # 'sink' absent
     budget_repo = _budget_repo(handler, table)
-    cat_repo = FakeCategoryRepo("sink", "Living")
+    cat_repo = _category_repo("sink", "Living")
 
     resp = handler.update_category(_event("Savings"), cat_repo, budget_repo)
 
     assert resp["statusCode"] == 200
-    assert cat_repo.update_calls == [("sink", "Sink", "Savings", "tag")]  # the re-bucket stuck
-    assert table.update_calls == 0                 # clear found nothing -> never wrote
-    assert table.item["version"] == Decimal(4)     # version untouched
+    assert _stored_bucket(cat_repo, "sink") == "Savings"             # the re-bucket stuck
+    assert table.update_calls == []                 # clear found nothing -> never wrote
+    assert table.store[_KEY]["version"] == Decimal(4)     # version untouched

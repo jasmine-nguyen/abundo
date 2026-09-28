@@ -1,63 +1,41 @@
 """Tests for NotifyRepository (shared/repository_notify.py).
 
-The debounce marker uses a combined "ADD #f :m SET #e = :exp" update on a String
-Set + a TTL attribute, which the shared FakeTable can't model — so this carries a
-small local fake that emulates the ADD (set-union) + SET and asserts the expression
-shape. Different cycle keys map to different items, so a new cycle re-arms.
+The real repository runs over the shared FakeTable (WHIT-625), so the String-Set ADD/DELETE, the
+TTL SET and the WHIT-577 conditional claim are DynamoDB's semantics, not a copy of the rule.
+Different cycle keys map to different items, so a new cycle re-arms.
 """
 
 import pytest
 from decimal import Decimal
 
-
-class FakeNotifyTable:
-    """In-memory stand-in modelling the update_item + get_item the NotifyRepository issues,
-    keyed by (pk, sk) so cycles are isolated: ADD-to-set + SET-ttl, the WHIT-577 conditional
-    claim, and DELETE-from-set. `client_error` builds the ConditionalCheckFailed a real table
-    raises when the claim's condition fails."""
-
-    CLAIM_CONDITION = "attribute_not_exists(#f) OR NOT contains(#f, :v)"
-
-    def __init__(self, client_error=None):
-        self.store: dict = {}
-        self._client_error = client_error
-
-    def get_item(self, Key):
-        item = self.store.get((Key["pk"], Key["sk"]))
-        return {"Item": dict(item)} if item is not None else {}
-
-    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues,
-                    ConditionExpression=None):
-        item = self.store.setdefault((Key["pk"], Key["sk"]), {"pk": Key["pk"], "sk": Key["sk"]})
-        fired_attr = ExpressionAttributeNames["#f"]
-        member = ExpressionAttributeValues[":m"]
-        assert isinstance(member, set), "String-Set ADD/DELETE must pass a set"
-        if UpdateExpression == "DELETE #f :m":
-            remaining = set(item.get(fired_attr, set())) - member
-            if remaining:
-                item[fired_attr] = remaining
-            else:
-                item.pop(fired_attr, None)  # deleting the last member drops the attribute
-            return
-        if ConditionExpression is not None:
-            assert ConditionExpression == self.CLAIM_CONDITION, ConditionExpression
-            if ExpressionAttributeValues[":v"] in item.get(fired_attr, set()):
-                raise self._client_error("ConditionalCheckFailedException")
-        # "ADD #f :m SET <assign>[, <assign>...]" — budget markers set the TTL only;
-        # repayment markers also set last_fired_at (WHIT-316). Parse the SET clause
-        # generically so both shapes round-trip.
-        add_part, _, set_part = UpdateExpression.partition(" SET ")
-        assert add_part == "ADD #f :m", UpdateExpression
-        item[fired_attr] = set(item.get(fired_attr, set())) | member
-        for assignment in set_part.split(","):
-            name_alias, value_alias = (part.strip() for part in assignment.split("="))
-            item[ExpressionAttributeNames[name_alias]] = ExpressionAttributeValues[value_alias]
+from _dynamo_fakes import FakeTable
 
 
-def _repo(shared, client_error=None):
+def _repo(shared, *_):
     r = shared.notify.NotifyRepository()
-    r._table = FakeNotifyTable(client_error)
+    r._table = FakeTable()
     return r
+
+
+def _expressions(table):
+    return [expression for expression, _names, _values in table.update_calls]
+
+
+def _assert_no_ttl_written(table):
+    for expression, names, values in table.update_calls:
+        assert "#e" not in names and ":exp" not in values, expression
+
+
+def _fail_update(table, expression, error):
+    """Make only the update with this UpdateExpression raise ``error``."""
+    real_update = table.update_item
+
+    def update_item(**kwargs):
+        if kwargs["UpdateExpression"] == expression:
+            raise error
+        return real_update(**kwargs)
+
+    table.update_item = update_item
 
 
 def test_no_markers_before_any_fire(shared):
@@ -324,43 +302,8 @@ def test_push_mark_error_surfaces_as_database_error(shared, client_error, databa
 
 # --- milestone markers (WHIT-301): once-ever, NO TTL ------------------------------------
 
-class FakeMilestoneTable:
-    """Models the milestone marker's `ADD #f :m` update — deliberately WITHOUT the
-    `SET #e = :exp` TTL the budget/repayment markers carry, and asserts none is written."""
-
-    def __init__(self):
-        self.store: dict = {}
-
-    def get_item(self, Key):
-        item = self.store.get((Key["pk"], Key["sk"]))
-        return {"Item": dict(item)} if item is not None else {}
-
-    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues):
-        # ADD #f :m (mark) or DELETE #f :m (reconcile, WHIT-385) — both on a String Set, both
-        # deliberately WITHOUT the `SET #e = :exp` TTL the budget/repayment markers carry.
-        assert UpdateExpression in ("ADD #f :m", "DELETE #f :m"), UpdateExpression
-        assert "#e" not in ExpressionAttributeNames and ":exp" not in ExpressionAttributeValues
-        member = ExpressionAttributeValues[":m"]
-        assert isinstance(member, set), "String-Set update must pass a set"
-        item = self.store.setdefault((Key["pk"], Key["sk"]), {"pk": Key["pk"], "sk": Key["sk"]})
-        fired_attr = ExpressionAttributeNames["#f"]
-        current = set(item.get(fired_attr, set()))
-        if UpdateExpression == "ADD #f :m":
-            item[fired_attr] = current | member
-            return
-        # DELETE removes the members; emptying the set drops the attribute (DynamoDB behaviour),
-        # so fired_milestones() reads back set().
-        remaining = current - member
-        if remaining:
-            item[fired_attr] = remaining
-        else:
-            item.pop(fired_attr, None)
-
-
 def _milestone_repo(shared):
-    r = shared.notify.NotifyRepository()
-    r._table = FakeMilestoneTable()
-    return r
+    return _repo(shared)
 
 
 def test_no_milestones_fired_initially(shared):
@@ -382,12 +325,13 @@ def test_milestone_marks_accumulate_and_are_idempotent(shared):
 
 
 def test_milestone_mark_writes_no_ttl(shared):
-    # The FakeMilestoneTable asserts the update carries no expires_at; also confirm the
+    # The update carries no expires_at, and the
     # stored item never grows a TTL attribute (a milestone must never expire + re-fire). The
     # shared-tenant default keeps the historical sk="FIRED" so WHIT-369 doesn't orphan existing
     # markers (which would re-fire on a non-monotonic balance).
     r = _milestone_repo(shared)
     r.mark_milestone_fired("0")
+    _assert_no_ttl_written(r._table)
     stored = r._table.store[("NOTIFY#MILESTONE", "FIRED")]
     assert "expires_at" not in stored
 
@@ -438,12 +382,13 @@ def test_remove_milestone_markers_empty_is_a_noop(shared):
 
 
 def test_remove_milestone_markers_writes_no_ttl(shared):
-    # The reconcile delete must preserve the no-TTL, once-ever contract (the fake asserts no
-    # #e/:exp on the update; also confirm the stored item never grows a TTL attribute).
+    # The reconcile delete must preserve the no-TTL, once-ever contract: no #e/:exp on the
+    # update, and the stored item never grows a TTL attribute.
     r = _milestone_repo(shared)
     r.mark_milestone_fired("bal:300000.00")
     r.mark_milestone_fired("bal:280000.00")
     r.remove_milestone_markers({"bal:300000.00"})
+    _assert_no_ttl_written(r._table)
     stored = r._table.store[("NOTIFY#MILESTONE", "FIRED")]
     assert "expires_at" not in stored
 
@@ -465,25 +410,6 @@ def test_remove_milestone_markers_error_surfaces_as_database_error(shared, clien
 # bare marker as dead and re-arms the celebration. migrate_milestone_markers does that rename,
 # but ONLY for a marker actually in the fired set, and adds-new-before-deletes-old so a partial
 # failure can never leave the row with zero markers.
-
-
-class _RecordingMilestoneTable(FakeMilestoneTable):
-    """FakeMilestoneTable that also records the order of update expressions, so a test can pin
-    that ADD runs before DELETE (the partial-failure safety contract)."""
-
-    def __init__(self):
-        super().__init__()
-        self.expressions = []
-
-    def update_item(self, **kwargs):
-        self.expressions.append(kwargs["UpdateExpression"])
-        return super().update_item(**kwargs)
-
-
-def _milestone_repo_with(shared, table):
-    r = shared.notify.NotifyRepository()
-    r._table = table
-    return r
 
 
 def test_migrate_renames_a_celebrated_marker_onto_its_new_id(shared):
@@ -537,25 +463,19 @@ def test_migrate_all_uncelebrated_does_not_touch_the_table(shared):
 def test_migrate_adds_the_new_marker_before_deleting_the_old(shared):
     # The order is the partial-failure contract: if the DELETE never runs, the row keeps BOTH
     # markers (safe), never zero. Pin ADD-before-DELETE so a reorder can't slip in.
-    table = _RecordingMilestoneTable()
-    r = _milestone_repo_with(shared, table)
+    r = _milestone_repo(shared)
     r.mark_milestone_fired("bal:400000.00")  # one ADD (the seed)
-    table.expressions.clear()
+    r._table.update_calls.clear()
     r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])
-    assert table.expressions == ["ADD #f :m", "DELETE #f :m"]
+    assert _expressions(r._table) == ["ADD #f :m", "DELETE #f :m"]
 
 
 def test_migrate_partial_failure_after_add_leaves_both_markers_never_zero(shared, client_error, database_error):
     # If the DELETE fails after the ADD, the row is left holding BOTH markers — deduped, and the
     # poller reaps the now-dead legacy one later. The one thing that must never happen is ZERO
     # markers (which would re-arm the celebration this migration exists to prevent).
-    class _DeleteFailsTable(FakeMilestoneTable):
-        def update_item(self, **kwargs):
-            if kwargs["UpdateExpression"] == "DELETE #f :m":
-                raise client_error("InternalServerError")
-            return super().update_item(**kwargs)
-
-    r = _milestone_repo_with(shared, _DeleteFailsTable())
+    r = _milestone_repo(shared)
+    _fail_update(r._table, "DELETE #f :m", client_error("InternalServerError"))
     r.mark_milestone_fired("bal:400000.00")
     with pytest.raises(database_error):
         r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])
@@ -573,10 +493,11 @@ def test_migrate_is_scoped_by_owner(shared):
 
 
 def test_migrate_writes_no_ttl(shared):
-    # Same no-TTL once-ever contract as mark/remove (the fake asserts no #e/:exp on the update).
+    # Same no-TTL once-ever contract as mark/remove: no #e/:exp on any update.
     r = _milestone_repo(shared)
     r.mark_milestone_fired("bal:400000.00")
     r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])
+    _assert_no_ttl_written(r._table)
     stored = r._table.store[("NOTIFY#MILESTONE", "FIRED")]
     assert "expires_at" not in stored
 
@@ -587,19 +508,10 @@ def test_migrate_writes_no_ttl(shared):
 _KEY = ("NOTIFY#REPAYMENT", "FIRED")
 
 
-class _DecimalTable:
-    """Returns the last_fired_at as a boto3-style Decimal, the way DynamoDB really does."""
-
-    def __init__(self, stored):
-        self._item = {"pk": _KEY[0], "sk": _KEY[1], "last_fired_at": stored}
-
-    def get_item(self, Key):
-        return {"Item": dict(self._item)}
-
-
 def test_last_fired_at_decimal_from_dynamo_returns_int(shared):
-    r = shared.notify.NotifyRepository()
-    r._table = _DecimalTable(Decimal("1752000000"))
+    # DynamoDB hands numbers back as Decimal.
+    r = _repo(shared)
+    r._table.seed({"pk": _KEY[0], "sk": _KEY[1], "last_fired_at": Decimal("1752000000")})
     result = r.last_repayment_fired_at()
     assert result == 1752000000
     assert type(result) is int  # not Decimal -> the int() cast is load-bearing
@@ -643,54 +555,13 @@ def test_hash_in_txn_id_does_not_corrupt_amount(shared):
 # --- folded from test_repository_notify_whit447_gaps.py (WHIT-463) ---
 
 
-class _MilestoneTable:
-    """Models ADD/DELETE on the `fired` String Set (no TTL), keyed by (pk, sk)."""
-
-    def __init__(self):
-        self.store = {}
-
-    def get_item(self, Key):
-        item = self.store.get((Key["pk"], Key["sk"]))
-        return {"Item": dict(item)} if item is not None else {}
-
-    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues):
-        assert UpdateExpression in ("ADD #f :m", "DELETE #f :m"), UpdateExpression
-        member = ExpressionAttributeValues[":m"]
-        assert isinstance(member, set)
-        item = self.store.setdefault((Key["pk"], Key["sk"]), {"pk": Key["pk"], "sk": Key["sk"]})
-        current = set(item.get("fired", set()))
-        if UpdateExpression == "ADD #f :m":
-            item["fired"] = current | member
-            return
-        remaining = current - member
-        if remaining:
-            item["fired"] = remaining
-        else:
-            item.pop("fired", None)
-
-
-def _repo_with(shared, table):
-    r = shared.notify.NotifyRepository()
-    r._table = table
-    return r
-
-
 def test_add_failing_leaves_the_old_marker_intact_never_zero(shared, client_error, database_error):
     # WHIT-447 — hunt#7 (mirror of the covered DELETE-fails case): if the ADD fails, the DELETE
     # never runs (it is second), so the OLD marker survives. The one thing that must never happen
     # — zero markers for a still-live celebrated milestone — is impossible from EITHER failure.
-    class _AddFailsTable(_MilestoneTable):
-        armed = False  # so the seed ADD below still lands; only the migrate ADD fails
-
-        def update_item(self, **kwargs):
-            if self.armed and kwargs["UpdateExpression"] == "ADD #f :m":
-                raise client_error("InternalServerError")
-            return super().update_item(**kwargs)
-
-    table = _AddFailsTable()
-    r = _repo_with(shared, table)
-    r.mark_milestone_fired("bal:400000.00")
-    table.armed = True
+    r = _milestone_repo(shared)
+    r.mark_milestone_fired("bal:400000.00")  # the seed ADD lands; only the migrate ADD fails
+    _fail_update(r._table, "ADD #f :m", client_error("InternalServerError"))
     with pytest.raises(database_error):
         r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])
     assert r.fired_milestones() == {"bal:400000.00"}  # old kept, new never added → never zero
@@ -700,8 +571,8 @@ def test_migrating_an_already_migrated_pair_is_a_safe_noop(shared):
     # WHIT-447 — hunt#5 at the repo level: after the marker is on the id, its bare `old` is gone,
     # so a second migrate finds `old` not in the fired set → nothing to add → returns without
     # touching the table, and the idd marker is neither lost nor duplicated.
-    table = _MilestoneTable()
-    r = _repo_with(shared, table)
+    r = _milestone_repo(shared)
+    table = r._table
     r.mark_milestone_fired("bal:400000.00")
     r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])
     assert r.fired_milestones() == {"id:u1:bal:400000.00"}
@@ -719,7 +590,7 @@ def test_a_migration_does_not_disturb_an_unrelated_fired_marker(shared):
     # WHIT-447: a batch that migrates one pair must leave every OTHER celebrated marker (here a
     # built-in sprint "0" and an unrelated saved marker) exactly as it was — no collateral ADD or
     # DELETE beyond the migrated pair.
-    r = _repo_with(shared, _MilestoneTable())
+    r = _milestone_repo(shared)
     r.mark_milestone_fired("bal:400000.00")
     r.mark_milestone_fired("0")
     r.mark_milestone_fired("id:other:bal:250000.00")
@@ -728,13 +599,11 @@ def test_a_migration_does_not_disturb_an_unrelated_fired_marker(shared):
 
 
 # --- goal-checkpoint markers (WHIT-479): once-ever, NO TTL, own item -----------------------
-# Reuses FakeMilestoneTable — same `ADD #f :m` String-Set update, no TTL — but keyed under
+# Same `ADD #f :m` String-Set update as the milestones, no TTL — but keyed under
 # NOTIFY#GOALCHECKPOINT, a SEPARATE item from NOTIFY#MILESTONE so the mortgage feature is untouched.
 
 def _goalcheckpoint_repo(shared):
-    r = shared.notify.NotifyRepository()
-    r._table = FakeMilestoneTable()
-    return r
+    return _repo(shared)
 
 
 def test_no_goal_checkpoints_fired_initially(shared):
@@ -759,6 +628,7 @@ def test_goal_checkpoint_mark_writes_no_ttl(shared):
     # A crossing is once-ever (the balance isn't monotonic), so the marker must never expire.
     r = _goalcheckpoint_repo(shared)
     r.mark_goal_checkpoint_fired("g:g1:cp:a:bal:1000.00")
+    _assert_no_ttl_written(r._table)
     stored = r._table.store[("NOTIFY#GOALCHECKPOINT", "FIRED")]
     assert "expires_at" not in stored
 

@@ -13,7 +13,6 @@ from decimal import Decimal
 import pytest
 
 from _dynamo_fakes import FakeTable
-from _rule_fakes import FakeRuleRepo
 
 COLES_AND_GROCERY = [
     {"field": "description", "operator": "contains", "value": "COLES"},
@@ -63,17 +62,14 @@ def test_every_saved_rule_field_reaches_the_matcher_including_spread_seeded(rule
     (COLES_AND_GROCERY, "AND"),
     (COLES_AND_GROCERY, "OR"),
 ])
-def test_store_fake_and_engine_agree_on_one_rule_id(shared, rule_repo, conditions, logic):
+def test_store_and_engine_agree_on_one_rule_id(shared, rule_repo, conditions, logic):
     import rule_engine
 
     expected = rule_engine.rule_identity("description", "contains", "COLES", conditions, logic)
     saved, _ = rule_repo.create_rule("description", "contains", "COLES", "groceries",
                                      conditions=conditions, logic=logic)
-    faked, _ = FakeRuleRepo().create_rule("description", "contains", "COLES", "groceries",
-                                          conditions=conditions, logic=logic)
 
     assert saved["id"] == expected
-    assert faked["id"] == expected
     # A 1-condition rule keeps its legacy single-condition id.
     if conditions is None or len(conditions) == 1:
         assert expected == rule_engine.rule_id_for("description", "contains", "COLES")

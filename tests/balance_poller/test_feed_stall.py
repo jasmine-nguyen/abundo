@@ -10,6 +10,8 @@ from decimal import Decimal
 
 import pytest
 
+from _dynamo_fakes import FakeTable
+
 DAY = 24 * 60 * 60
 NOW = 1_790_000_000
 WESTPAC = "westpac-altitude-qantas-black"
@@ -32,21 +34,15 @@ class _FakeTransactionRepo:
         return page, next_cursor
 
 
-class _FakeWatchRepo:
-    def __init__(self, watches=None):
-        self.watches = dict(watches or {})
-        self.puts = []
-
-    def get_watch(self, account_id):
-        watch = self.watches.get(account_id)
-        return None if watch is None else {**watch, "seen_dates": dict(watch["seen_dates"])}
-
-    def put_watch(self, account_id, seen_dates, seen_at, amount_at_seen, alerted):
-        self.puts.append(account_id)
-        self.watches[account_id] = {
-            "seen_dates": dict(seen_dates), "seen_at": seen_at,
-            "amount_at_seen": amount_at_seen, "alerted": alerted,
-        }
+def _watch_repo(handler, watches=None):
+    """The REAL FeedWatchRepository over a FakeTable, with ``watches`` already stored through the
+    real put_watch. The put log is cleared after that setup, so ``put_calls`` shows only the poller."""
+    watch_repo = handler.FeedWatchRepository()
+    watch_repo._table = FakeTable()
+    for account_id, watch in (watches or {}).items():
+        watch_repo.put_watch(account_id, **watch)
+    watch_repo._table.put_calls.clear()
+    return watch_repo
 
 
 class _FakeDeviceRepo:
@@ -82,7 +78,7 @@ def wired(handler, monkeypatch):
     def wire(rows=None, watches=None, tokens=("ExponentPushToken[x]",), expo_accepts=True):
         expo["accepts"] = expo_accepts
         transaction_repo = _FakeTransactionRepo(rows or {})
-        watch_repo = _FakeWatchRepo(watches)
+        watch_repo = _watch_repo(handler, watches)
         monkeypatch.setattr(handler, "TransactionRepository", lambda: transaction_repo)
         monkeypatch.setattr(handler, "FeedWatchRepository", lambda: watch_repo)
         monkeypatch.setattr(handler, "DeviceRepository", lambda: _FakeDeviceRepo(tokens))
@@ -102,7 +98,7 @@ def test_first_check_records_a_baseline_without_pushing(wired):
     handler.check_feed_stalls([_delta(WESTPAC, "-2992.75")], NOW)
 
     assert pushes == []
-    assert watch_repo.watches[WESTPAC] == _watch({"t1"}, NOW, "-2992.75")
+    assert watch_repo.get_watch(WESTPAC) == _watch({"t1"}, NOW, "-2992.75")
 
 
 def test_incident_replay_resends_only_while_balance_moves_pushes_once(wired, caplog):
@@ -120,7 +116,7 @@ def test_incident_replay_resends_only_while_balance_moves_pushes_once(wired, cap
     assert "stopped" in title
     assert "Altitude Qantas Black Card" in body and "3 days" in body
     assert data == {"type": "feedstall", "account": WESTPAC}
-    assert watch_repo.watches[WESTPAC]["alerted"] is True
+    assert watch_repo.get_watch(WESTPAC)["alerted"] is True
     assert "TRANSACTION_FEED_STALLED account=westpac-altitude-qantas-black" in caplog.text
 
 
@@ -169,9 +165,9 @@ def test_a_new_transaction_resets_the_watch(wired):
     handler.check_feed_stalls([_delta(WESTPAC, "-3232.56")], NOW)
 
     assert pushes == []
-    assert watch_repo.watches[WESTPAC]["seen_dates"] == {"t1": "2026-09-22", "t3": "2026-09-19"}
-    assert watch_repo.watches[WESTPAC]["seen_at"] == NOW
-    assert watch_repo.watches[WESTPAC]["amount_at_seen"] == Decimal("-3232.56")
+    assert watch_repo.get_watch(WESTPAC)["seen_dates"] == {"t1": "2026-09-22", "t3": "2026-09-19"}
+    assert watch_repo.get_watch(WESTPAC)["seen_at"] == NOW
+    assert watch_repo.get_watch(WESTPAC)["amount_at_seen"] == Decimal("-3232.56")
 
 
 def test_a_deleted_row_does_not_reset_the_watch(wired):
@@ -185,7 +181,7 @@ def test_a_deleted_row_does_not_reset_the_watch(wired):
     handler.check_feed_stalls([_delta(WESTPAC, "-3232.56")], NOW)
 
     assert len(pushes) == 1
-    assert watch_repo.watches[WESTPAC]["seen_at"] == NOW - 3 * DAY
+    assert watch_repo.get_watch(WESTPAC)["seen_at"] == NOW - 3 * DAY
 
 
 def test_no_activity_day_keeps_the_original_baseline(wired):
@@ -197,7 +193,7 @@ def test_no_activity_day_keeps_the_original_baseline(wired):
 
     handler.check_feed_stalls([_delta(WESTPAC, "-3100")], NOW)
 
-    assert watch_repo.puts == []
+    assert watch_repo._table.put_calls == []
 
 
 def test_recovery_after_a_stall_push_sends_the_all_clear(wired):
@@ -211,7 +207,7 @@ def test_recovery_after_a_stall_push_sends_the_all_clear(wired):
 
     assert len(pushes) == 1
     assert "coming in again" in pushes[0][0]
-    assert watch_repo.watches[WESTPAC]["alerted"] is False
+    assert watch_repo.get_watch(WESTPAC)["alerted"] is False
 
 
 def test_no_registered_device_retries_the_push_next_poll(wired):
@@ -225,7 +221,7 @@ def test_no_registered_device_retries_the_push_next_poll(wired):
     handler.check_feed_stalls([_delta(WESTPAC, "-3232.56")], NOW)
 
     assert pushes == []
-    assert watch_repo.watches[WESTPAC]["alerted"] is False
+    assert watch_repo.get_watch(WESTPAC)["alerted"] is False
 
 
 def test_a_push_expo_rejects_is_retried_next_poll(wired):
@@ -238,7 +234,7 @@ def test_a_push_expo_rejects_is_retried_next_poll(wired):
 
     handler.check_feed_stalls([_delta(WESTPAC, "-3232.56")], NOW)
 
-    assert watch_repo.watches[WESTPAC]["alerted"] is False
+    assert watch_repo.get_watch(WESTPAC)["alerted"] is False
 
 
 def test_a_cursor_that_never_ends_fails_this_account_only(wired, caplog):
@@ -248,7 +244,7 @@ def test_a_cursor_that_never_ends_fails_this_account_only(wired, caplog):
 
     handler.check_feed_stalls([_delta(WESTPAC, "-1")], NOW)
 
-    assert watch_repo.puts == []
+    assert watch_repo._table.put_calls == []
     assert "did not finish" in caplog.text
 
 
@@ -262,7 +258,7 @@ def test_every_page_of_recent_ids_is_read(wired):
     handler.check_feed_stalls([_delta(WESTPAC, "-2")], NOW)
 
     assert pushes == []
-    assert "t_new" in watch_repo.watches[WESTPAC]["seen_dates"]
+    assert "t_new" in watch_repo.get_watch(WESTPAC)["seen_dates"]
 
 
 def test_home_loan_and_unpolled_accounts_are_skipped(wired):
@@ -272,7 +268,7 @@ def test_home_loan_and_unpolled_accounts_are_skipped(wired):
     handler.check_feed_stalls([_delta("up-homeloan", "-594224.31")], NOW)
 
     assert transaction_repo.queried == []
-    assert watch_repo.puts == []
+    assert watch_repo._table.put_calls == []
 
 
 def test_one_accounts_failure_does_not_stop_the_others(wired, handler):
@@ -421,4 +417,4 @@ def test_ids_older_than_the_lookback_are_dropped_on_reset(wired):
 
     handler.check_feed_stalls([_delta(WESTPAC, "-2")], NOW)
 
-    assert watch_repo.watches[WESTPAC]["seen_dates"] == {"t_recent": "2026-09-15", "t_new": "2026-09-20"}
+    assert watch_repo.get_watch(WESTPAC)["seen_dates"] == {"t_recent": "2026-09-15", "t_new": "2026-09-20"}

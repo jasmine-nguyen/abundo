@@ -16,6 +16,8 @@ from decimal import Decimal
 
 import pytest
 
+from _budget_fakes import recording_budget_repo
+
 # Same fixed grid as the rollover suite: monthly, cycle_start 2026-08-06, payday grid from
 # 2026-01-01. Anchors used below: 2026-08-06 (this cycle), 2026-07-07 (1 back),
 # 2026-05-08 (3 back), 2026-04-08 (4 back), 2026-03-09 (5 back).
@@ -25,48 +27,6 @@ LENGTH = 30
 PAYDATE = "2026-01-01"
 
 BILL = Decimal("1390.91")   # over 4 cycles: slices 347.73, 347.73, 347.73, 347.72
-
-
-class FakeBudgetRepo:
-    def __init__(self, budgets=None):
-        self._budgets = budgets or {}
-        self.set_calls = []
-        self.set_spread_calls = []
-        self.clear_spread_calls = []
-        self.delete_calls = []
-        self.clear_spread_raises = False
-
-    def list_budgets(self):
-        return {k: dict(v) for k, v in self._budgets.items()}
-
-    def set_budget(self, cat_id, target, rollover=None, anchor=None):
-        self.set_calls.append((cat_id, target))
-        return {"id": cat_id, "target": target}
-
-    def set_spread(self, cat_id, amount, cycles, spread_from, spread_len, spread_paydate):
-        self.set_spread_calls.append((cat_id, amount, cycles, spread_from, spread_len, spread_paydate))
-        # The write lands, so a second read sees a plan the first read re-saved.
-        self._budgets.setdefault(cat_id, {}).update({
-            "spread_amount": amount, "spread_cycles": Decimal(cycles), "spread_from": spread_from,
-            "spread_len": Decimal(spread_len), "spread_paydate": spread_paydate,
-        })
-        return {"id": cat_id, "amount": amount, "cycles": cycles}
-
-    def clear_spread(self, cat_id):
-        self.clear_spread_calls.append(cat_id)
-        if self.clear_spread_raises:
-            raise RuntimeError("boom")   # exercises the best-effort swallow
-        for key in ("spread_amount", "spread_cycles", "spread_from", "spread_len", "spread_paydate"):
-            self._budgets.get(cat_id, {}).pop(key, None)
-
-    def settle_carryover(self, cat_id, carryover, carryover_from, carryover_len, carryover_paydate):
-        self._budgets.setdefault(cat_id, {}).update({
-            "carryover": carryover, "carryover_from": carryover_from,
-            "carryover_len": Decimal(carryover_len), "carryover_paydate": carryover_paydate,
-        })
-
-    def delete_budget(self, cat_id):
-        self.delete_calls.append(cat_id)
 
 
 class FakeTransactionRepo:
@@ -128,7 +88,7 @@ def _fixed_window(handler, monkeypatch):
 def test_the_anchor_cycle_carries_the_full_bill_as_a_cushion(handler):
     # The bill landed this cycle: spent 1390.91 of a 250 target. The row reports the whole
     # bill as a positive adjustment, so the client's spendable (target + adjustment) covers it.
-    budget_repo = FakeBudgetRepo({"insurance": _entry(spread_from=CYCLE_START)})
+    budget_repo = recording_budget_repo({"insurance": _entry(spread_from=CYCLE_START)})
     result = _list(handler, budget_repo, [_txn("insurance", -1390.91, "2026-08-07")])
 
     assert result["insurance"]["posted"] == BILL
@@ -137,7 +97,7 @@ def test_the_anchor_cycle_carries_the_full_bill_as_a_cushion(handler):
 
 
 def test_the_next_cycle_gives_back_the_first_slice(handler):
-    budget_repo = FakeBudgetRepo({"insurance": _entry(spread_from="2026-07-07")})
+    budget_repo = recording_budget_repo({"insurance": _entry(spread_from="2026-07-07")})
     result = _list(handler, budget_repo)
 
     assert result["insurance"]["spread"] == {
@@ -148,7 +108,7 @@ def test_the_next_cycle_gives_back_the_first_slice(handler):
 def test_the_last_payback_cycle_is_still_part_of_the_plan(handler):
     # index == cycles: the final (odd-cent) slice is taken and the plan is NOT yet cleared.
     # FAIL-ON-REVERT for an off-by-one that would finish the plan a cycle early.
-    budget_repo = FakeBudgetRepo({"insurance": _entry(spread_from="2026-04-08")})
+    budget_repo = recording_budget_repo({"insurance": _entry(spread_from="2026-04-08")})
     result = _list(handler, budget_repo)
 
     assert result["insurance"]["spread"]["index"] == 4
@@ -159,7 +119,7 @@ def test_the_last_payback_cycle_is_still_part_of_the_plan(handler):
 def test_a_finished_plan_shows_nothing_and_is_cleared_best_effort(handler):
     # index == cycles + 1: every slice has been taken. The row is byte-identical to a plain
     # budget (no `spread` key) and the stale fields are cleared on this read.
-    budget_repo = FakeBudgetRepo({"insurance": _entry(spread_from="2026-03-09")})
+    budget_repo = recording_budget_repo({"insurance": _entry(spread_from="2026-03-09")})
     result = _list(handler, budget_repo)
 
     assert result["insurance"] == {"available": Decimal(250), "target": Decimal(250), "posted": Decimal(0), "pending": Decimal(0)}
@@ -170,7 +130,7 @@ def test_a_long_gap_read_finishes_a_max_length_plan_instead_of_draining_forever(
     # FAIL-ON-REVERT for the saturation bug: a plan over the max 24 cycles, first opened ~31
     # cycles later. A position derived from the CAPPED window list would pin at 24 == cycles
     # and keep taking a slice every read, forever. The direct count sees it as finished.
-    budget_repo = FakeBudgetRepo({"insurance": _entry(spread_from="2024-01-01", cycles=24)})
+    budget_repo = recording_budget_repo({"insurance": _entry(spread_from="2024-01-01", cycles=24)})
     result = _list(handler, budget_repo)
 
     assert "spread" not in result["insurance"]
@@ -186,7 +146,7 @@ def test_a_pay_cycle_change_settles_the_outstanding_balance_over_this_cycle_then
     # shown for full cycles (5 x $50) count as taken; the $50 still owed comes off THIS
     # cycle. Net: +300 - 250 - 50 == 0 — nothing forgiven, nothing invented.
     original = Decimal("300.00")
-    budget_repo = FakeBudgetRepo({"insurance": _entry(
+    budget_repo = recording_budget_repo({"insurance": _entry(
         spread_from="2026-05-08", amount=original, cycles=6, spread_len=14)})
     result = _list(handler, budget_repo)
 
@@ -226,7 +186,7 @@ def test_taken_slices_are_measured_by_what_was_shown_under_the_old_grid_not_the_
     # outstanding = 1390.91 - 347.73 = 1043.18. FAIL-ON-REVERT for using today, not cycle_start.
     entry = _entry(spread_from="2026-06-09")
     entry["spread_paydate"] = "2026-01-10"
-    budget_repo = FakeBudgetRepo({"insurance": entry})
+    budget_repo = recording_budget_repo({"insurance": entry})
     result = _list(handler, budget_repo)
 
     assert result["insurance"]["spread"] == {
@@ -245,7 +205,7 @@ def test_a_second_pay_cycle_change_re_settles_the_settle_plan_instead_of_forgivi
     # forgiven. FAIL-ON-REVERT for the same today-vs-cycle_start measure.
     entry = _entry(spread_from="2026-07-09", amount=Decimal("50.00"), cycles=1)
     entry["spread_paydate"] = "2026-01-03"
-    budget_repo = FakeBudgetRepo({"insurance": entry})
+    budget_repo = recording_budget_repo({"insurance": entry})
     result = _list(handler, budget_repo)
 
     assert result["insurance"]["spread"]["adjustment"] == Decimal("-50.00")
@@ -256,7 +216,7 @@ def test_a_second_pay_cycle_change_re_settles_the_settle_plan_instead_of_forgivi
 def test_a_pay_cycle_change_while_still_in_the_anchor_cycle_just_withdraws_the_cushion(handler):
     # The cushion and the settle-up would land in the same cycle and cancel, so nothing is
     # shown (the row is plain) and the plan closes. Net zero by construction.
-    budget_repo = FakeBudgetRepo({"insurance": _entry(spread_from=CYCLE_START, spread_len=14)})
+    budget_repo = recording_budget_repo({"insurance": _entry(spread_from=CYCLE_START, spread_len=14)})
     result = _list(handler, budget_repo)
 
     assert "spread" not in result["insurance"]
@@ -270,7 +230,7 @@ def test_a_payday_moved_backwards_within_the_anchor_cycle_is_not_a_debt(handler)
     # cycle". The new cycle_start (08-06) sitting BEFORE the anchor must not matter.
     entry = _entry(spread_from="2026-08-08")
     entry["spread_paydate"] = "2026-01-03"
-    budget_repo = FakeBudgetRepo({"insurance": entry})
+    budget_repo = recording_budget_repo({"insurance": entry})
     result = _list(handler, budget_repo)
 
     assert "spread" not in result["insurance"]
@@ -280,7 +240,7 @@ def test_a_payday_moved_backwards_within_the_anchor_cycle_is_not_a_debt(handler)
 def test_a_pay_cycle_change_after_every_slice_was_taken_owes_nothing(handler):
     # 2 cycles of $150, anchored far back under length 14: all slices long taken, so there is
     # nothing to settle — no adjustment, just the clear.
-    budget_repo = FakeBudgetRepo({"insurance": _entry(
+    budget_repo = recording_budget_repo({"insurance": _entry(
         spread_from="2025-01-01", amount=Decimal("300.00"), cycles=2, spread_len=14)})
     result = _list(handler, budget_repo)
 
@@ -293,7 +253,7 @@ def test_a_payday_change_alone_also_counts_as_a_cycle_change(handler):
     # than reading slices off a fictional grid (mirrors the rollover alignment rule).
     entry = _entry(spread_from="2026-07-07")
     entry["spread_paydate"] = "2026-01-03"
-    budget_repo = FakeBudgetRepo({"insurance": entry})
+    budget_repo = recording_budget_repo({"insurance": entry})
     result = _list(handler, budget_repo)
 
     # One old cycle elapsed -> no slice was ever fully taken, so the WHOLE bill settles now,
@@ -310,7 +270,7 @@ def test_a_spread_on_a_re_bucketed_income_category_is_ignored(handler):
     # The plan was set while the category was spend; it's now Income. The read ignores it
     # (no adjustment on an earn-target) and does not clear it either — the reclassify path
     # owns that; a stale plan is inert here.
-    budget_repo = FakeBudgetRepo({"insurance": _entry(spread_from=CYCLE_START)})
+    budget_repo = recording_budget_repo({"insurance": _entry(spread_from=CYCLE_START)})
     result = _list(handler, budget_repo, categories=_spend_cat(bucket="Income"))
 
     assert "spread" not in result["insurance"]
@@ -318,15 +278,15 @@ def test_a_spread_on_a_re_bucketed_income_category_is_ignored(handler):
 
 
 def test_a_plain_budget_row_is_byte_identical_to_before(handler):
-    budget_repo = FakeBudgetRepo({"food": {"target": Decimal(250)}})
+    budget_repo = recording_budget_repo({"food": {"target": Decimal(250)}})
     result = _list(handler, budget_repo, [_txn("food", -40, "2026-08-08")], _spend_cat("food"))
 
     assert result == {"food": {"available": Decimal(250), "target": Decimal(250), "posted": Decimal(40), "pending": Decimal(0)}}
 
 
 def test_a_failed_clear_never_500s_the_read(handler):
-    budget_repo = FakeBudgetRepo({"insurance": _entry(spread_from="2026-03-09")})
-    budget_repo.clear_spread_raises = True
+    budget_repo = recording_budget_repo({"insurance": _entry(spread_from="2026-03-09")})
+    budget_repo._table.fail("update_item")
     result = _list(handler, budget_repo)
 
     assert "spread" not in result["insurance"]          # still served
@@ -337,7 +297,7 @@ def test_a_partial_spread_entry_is_cleared_instead_of_500ing_the_whole_screen(ha
     # Every write sets/strips all five fields together, so a partial entry can only come from
     # a hand-edited item. It must not KeyError the read — one bad entry would take down every
     # budget row. It is treated as finished: nothing shown, cleared, the sibling row served.
-    budget_repo = FakeBudgetRepo({
+    budget_repo = recording_budget_repo({
         "insurance": {"target": Decimal(250), "spread_amount": BILL, "spread_from": CYCLE_START},
         "food": {"target": Decimal(80)},
     })
@@ -380,7 +340,7 @@ def _delete_spread_event(category="insurance"):
 
 
 def _budgeted(**extra):
-    return FakeBudgetRepo({"insurance": {"target": Decimal(250), **extra}})
+    return recording_budget_repo({"insurance": {"target": Decimal(250), **extra}})
 
 
 def test_set_spread_records_the_plan_anchored_to_the_current_cycle(handler):
@@ -456,7 +416,7 @@ def test_set_spread_rejects_a_non_spend_category_400(handler, bucket):
 
 def test_set_spread_requires_a_budget_target_first(handler):
     # The spread adjusts a target's cycle spendable; with no target there is nothing to adjust.
-    repo = FakeBudgetRepo({})
+    repo = recording_budget_repo({})
 
     resp = handler.set_spread(_put_spread_event(), repo, FakeCategoryRepo(), FakePayCycleRepo())
 
@@ -537,7 +497,7 @@ def test_delete_spread_clears_the_plan(handler):
 
 
 def test_delete_spread_is_idempotent_200_with_no_plan(handler):
-    repo = FakeBudgetRepo({})
+    repo = recording_budget_repo({})
 
     resp = handler.delete_spread(_delete_spread_event(category="never_spread"), repo)
 
@@ -546,7 +506,7 @@ def test_delete_spread_is_idempotent_200_with_no_plan(handler):
 
 
 def test_delete_spread_missing_path_param_404(handler):
-    resp = handler.delete_spread({"pathParameters": {}}, FakeBudgetRepo())
+    resp = handler.delete_spread({"pathParameters": {}}, recording_budget_repo())
 
     assert resp["statusCode"] == 404
 
@@ -585,7 +545,7 @@ def test_a_category_whose_id_is_literally_spread_still_reaches_the_item_routes(h
     # name). A bare suffix match would steal it: PUT would land in set_spread (400, no
     # `amount`) and DELETE in delete_spread (target never removed). FAIL-ON-REVERT for the
     # exact-three-segment guard.
-    repo = FakeBudgetRepo({"spread": {"target": Decimal(50)}})
+    repo = recording_budget_repo({"spread": {"target": Decimal(50)}})
     monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(_spend_cat("spread")))
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: FakePayCycleRepo())

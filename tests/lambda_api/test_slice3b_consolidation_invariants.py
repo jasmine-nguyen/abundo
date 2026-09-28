@@ -6,15 +6,14 @@ drifted ones with a topic suffix (`_gaps`/`_edges`/`_nonfinite`) so nothing sile
 implementer proved the fold faithful ONCE (collect-only node-id diff identical modulo the registry
 edit, suite green). These guards make two of those invariants DURABLE so a future fold into the same
 mains can't silently regress them — the same fail-on-revert idea WHIT-465 [C1]/[C2] and WHIT-466
-apply, pointed at THESE mains (which carry their own local harness helpers, so WHIT-466's registry
-does not cover most of them; and its [G3] shadow-check covers only the milestone suites, not these):
+apply, pointed at THESE mains (which carry their own local harness helpers; WHIT-466's [G3]
+shadow-check covers only tests/shared/test_milestone*.py, not these):
 
   * [G4] no fold-target main has two top-level defs/consts with the SAME name. Folding N files into
          one can land two `test_...`/helper/const bindings under one name; Python keeps only the LAST
          and pytest silently drops the earlier one with no F811 here to flag it — the exact way a
          merged scenario or a drifted fake disappears. (WHIT-466 [G3] guards this only for the shared
-         milestone suites; feed/handler sit in the registry with shadow_check=False, the other seven
-         mains are not registered at all — so none of these nine are covered without this guard.)
+         milestone suites, so none of these nine are covered without this guard.)
   * [G5] the 13 files this slice deleted did NOT come back. Re-creating one re-splits the suite and
          re-duplicates a harness fake that can then drift from its twin — the drift WHIT-469 closed.
 """

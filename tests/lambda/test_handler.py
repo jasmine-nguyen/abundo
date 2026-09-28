@@ -28,31 +28,18 @@ from datetime import datetime, timezone
 
 import pytest
 
+from _dynamo_fakes import FakeTable
 from standardwebhooks.webhooks import Webhook as _RealWebhook
 
 _SECRET = base64.b64encode(b"abundo-test-signing-key").decode()
 
 
-class _Repo:
-    """Minimal repo double mirroring the real save-then-mark semantics: has_event
-    reports whether an id was marked; mark_event marks it (called only after a
-    successful write)."""
-
-    def __init__(self):
-        self._seen = set()
-        self.failed_batches = []
-
-    def has_event(self, envelope_id: str) -> bool:
-        return envelope_id in self._seen
-
-    def mark_event(self, envelope_id: str) -> None:
-        self._seen.add(envelope_id)
-
-    def save_failed_transactions(self, rows):
-        self.failed_batches.append(rows)
-
-    def insert_or_reconcile(self, txns, *, is_unfiled=None):
-        pass
+def _real_repo(lam):
+    """The webhook's own TransactionRepository over the shared FakeTable, so the dedup marker is
+    the real has_event / mark_event (save-then-mark)."""
+    repo = lam.repository.TransactionRepository()
+    repo._table = FakeTable()
+    return repo
 
 
 def _wire(lam, monkeypatch, repo, payload):
@@ -71,7 +58,7 @@ def test_valid_event_is_processed_and_returns_ok(lam, monkeypatch):
     seen = {}
     monkeypatch.setattr(handler, "process_transaction",
                         lambda payload, repo: seen.update(payload=payload))
-    handler = _wire(lam, monkeypatch, _Repo(), {"id": "evt_1", "data": [{"a": 1}]})
+    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_1", "data": [{"a": 1}]})
 
     resp = handler.lambda_handler({}, None)
 
@@ -84,7 +71,7 @@ def test_duplicate_event_is_skipped_without_processing(lam, monkeypatch):
     calls = []
     monkeypatch.setattr(handler, "process_transaction",
                         lambda payload, repo: calls.append(payload))
-    handler = _wire(lam, monkeypatch, _Repo(), {"id": "evt_dup", "data": []})
+    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_dup", "data": []})
 
     first = handler.lambda_handler({}, None)
     second = handler.lambda_handler({}, None)  # same id re-delivered
@@ -100,7 +87,7 @@ def test_summary_event_without_data_key_is_acked_not_500(lam, monkeypatch):
     # KeyError'd into a 500 that BankSync then retries forever (WHIT-302 cutover).
     # Runs the REAL process_transaction: fail-on-revert — restore `payload["data"]`
     # and this goes 500.
-    handler = _wire(lam, monkeypatch, _Repo(), {"id": "evt_summary"})  # note: no "data"
+    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_summary"})  # note: no "data"
 
     resp = handler.lambda_handler({}, None)
 
@@ -117,7 +104,7 @@ def test_webhook_logs_event_id_and_row_count(lam, monkeypatch, caplog):
     # these assertions go red.
     handler = lam.handler
     monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)
-    handler = _wire(lam, monkeypatch, _Repo(), {"id": "evt_log", "data": [{"a": 1}, {"b": 2}]})
+    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_log", "data": [{"a": 1}, {"b": 2}]})
 
     with caplog.at_level(logging.INFO, logger="handler"):
         resp = handler.lambda_handler({}, None)
@@ -136,7 +123,7 @@ def test_summary_delivery_logs_keys_and_allow_listed_fields_only(lam, monkeypatc
         "id": "evt_sum", "data": [], "status": "failed", "error": "consent expired",
         "account_number": "123-456", "job": {"state": "error", "feed": "f1"},
     }
-    handler = _wire(lam, monkeypatch, _Repo(), payload)
+    handler = _wire(lam, monkeypatch, _real_repo(lam), payload)
 
     with caplog.at_level(logging.INFO, logger="handler"):
         handler.lambda_handler({}, None)
@@ -153,7 +140,7 @@ def test_summary_delivery_logs_keys_and_allow_listed_fields_only(lam, monkeypatc
 def test_summary_delivery_truncates_a_long_field(lam, monkeypatch, caplog):
     handler = lam.handler
     monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)
-    handler = _wire(lam, monkeypatch, _Repo(), {"id": "evt_long", "message": "x" * 500})
+    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_long", "message": "x" * 500})
 
     with caplog.at_level(logging.INFO, logger="handler"):
         handler.lambda_handler({}, None)
@@ -177,7 +164,7 @@ def test_summary_delivery_hides_an_allow_listed_key_holding_an_object(lam, caplo
 def test_summary_delivery_without_data_key_is_logged(lam, monkeypatch, caplog):
     handler = lam.handler
     monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)
-    handler = _wire(lam, monkeypatch, _Repo(), {"id": "evt_nodata", "status": "ok"})
+    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_nodata", "status": "ok"})
 
     with caplog.at_level(logging.INFO, logger="handler"):
         handler.lambda_handler({}, None)
@@ -188,7 +175,7 @@ def test_summary_delivery_without_data_key_is_logged(lam, monkeypatch, caplog):
 def test_row_carrying_delivery_logs_no_summary_line(lam, monkeypatch, caplog):
     handler = lam.handler
     monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)
-    handler = _wire(lam, monkeypatch, _Repo(), {"id": "evt_rows", "data": [{"a": 1}]})
+    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_rows", "data": [{"a": 1}]})
 
     with caplog.at_level(logging.INFO, logger="handler"):
         handler.lambda_handler({}, None)
@@ -202,7 +189,7 @@ def test_webhook_logs_even_a_duplicate_delivery(lam, monkeypatch, caplog):
     # BankSync re-sends vs new work.
     handler = lam.handler
     monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)
-    handler = _wire(lam, monkeypatch, _Repo(), {"id": "evt_dup", "data": []})
+    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_dup", "data": []})
 
     handler.lambda_handler({}, None)  # first delivery: processed + marked
     with caplog.at_level(logging.INFO, logger="handler"):
@@ -264,7 +251,7 @@ def test_verify_and_parse_decodes_a_base64_body(lam, monkeypatch):
 
 def test_tampered_body_is_rejected_with_401(lam, monkeypatch):
     handler = _use_real_verifier(lam, monkeypatch)
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: _Repo())
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: _real_repo(lam))
     data = json.dumps({"id": "evt_1", "data": []})
     event = _signed_event(data, base64_body=False, mixed_case_headers=False)
     event["body"] = data + " "  # mutate after signing → signature no longer matches
@@ -274,7 +261,7 @@ def test_tampered_body_is_rejected_with_401(lam, monkeypatch):
 
 def test_unsigned_request_is_rejected_with_401(lam, monkeypatch):
     handler = _use_real_verifier(lam, monkeypatch)
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: _Repo())
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: _real_repo(lam))
     event = {"body": json.dumps({"id": "evt_1"}), "headers": {}, "isBase64Encoded": False}
 
     assert handler.lambda_handler(event, None)["statusCode"] == 401
@@ -282,7 +269,7 @@ def test_unsigned_request_is_rejected_with_401(lam, monkeypatch):
 
 def test_stale_timestamp_is_rejected_with_401(lam, monkeypatch):
     handler = _use_real_verifier(lam, monkeypatch)
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: _Repo())
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: _real_repo(lam))
     data = json.dumps({"id": "evt_1", "data": []})
     # Validly signed, but the timestamp is outside the ±5-minute replay window.
     stale = datetime.fromtimestamp(1_700_000_000, tz=timezone.utc)
@@ -307,7 +294,7 @@ def test_write_failure_then_retry_is_not_dropped(lam, monkeypatch):
             raise RuntimeError("Database write failed")
 
     monkeypatch.setattr(handler, "process_transaction", flaky_process)
-    handler = _wire(lam, monkeypatch, _Repo(), {"id": "evt_1", "data": [{"a": 1}]})
+    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_1", "data": [{"a": 1}]})
 
     resp1 = handler.lambda_handler({}, None)  # delivery 1 → write fails
     resp2 = handler.lambda_handler({}, None)  # delivery 2 → retry re-processes
@@ -322,7 +309,7 @@ def test_failing_event_is_not_marked_seen(lam, monkeypatch):
     # re-processes), while a sibling event that succeeded stays marked (its
     # redelivery is deduped). save-then-mark gives this for free — no rollback.
     handler = lam.handler
-    repo = _Repo()
+    repo = _real_repo(lam)
 
     def selective_process(payload, repo):
         if payload["id"] == "evt_fail":
@@ -339,8 +326,8 @@ def test_failing_event_is_not_marked_seen(lam, monkeypatch):
     monkeypatch.setattr(handler, "verify_and_parse", lambda e: {"id": "evt_fail", "data": []})
     assert handler.lambda_handler({}, None)["statusCode"] == 500
 
-    assert "evt_ok" in repo._seen        # succeeded → marked
-    assert "evt_fail" not in repo._seen  # failed → left unmarked for the retry
+    assert repo.has_event("evt_ok")           # succeeded → marked
+    assert not repo.has_event("evt_fail")     # failed → left unmarked for the retry
 
     # Redelivery: evt_ok is still deduped, evt_fail re-processes (and fails again).
     monkeypatch.setattr(handler, "verify_and_parse", lambda e: {"id": "evt_ok", "data": []})
@@ -383,9 +370,11 @@ def test_client_error_during_insert_is_not_reported_as_ok(lam, monkeypatch):
 
     handler = lam.handler
 
-    class _RaisingRepo(_Repo):
-        def insert_or_reconcile(self, txns, *, is_unfiled=None):
-            raise botocore.exceptions.ClientError()
+    def raising_insert(txns, *, is_unfiled=None):
+        raise botocore.exceptions.ClientError()
+
+    repo = _real_repo(lam)
+    monkeypatch.setattr(repo, "insert_or_reconcile", raising_insert)
 
     valid_row = {
         "id": "B", "date": "2026-06-29", "authorizedDate": "2026-06-29",
@@ -396,7 +385,7 @@ def test_client_error_during_insert_is_not_reported_as_ok(lam, monkeypatch):
     }
     monkeypatch.setattr(handler, "verify_and_parse",
                         lambda e: {"id": "evt_1", "data": [valid_row]})
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: _RaisingRepo())
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
 
     resp = handler.lambda_handler({}, None)
     # A failed write must honestly return 500 (→ BankSync retries), not masquerade
@@ -415,7 +404,7 @@ def test_mark_event_failure_after_write_retries_without_loss(lam, monkeypatch):
     # overwrite) and this time marks it. Nothing is dropped. Locks current behaviour;
     # a clean 500 here would be an improvement (see edge-case critique).
     handler = lam.handler
-    repo = _Repo()
+    repo = _real_repo(lam)
     writes = {"n": 0}
 
     def counting_process(payload, repo_):
@@ -449,7 +438,7 @@ def test_mark_event_failure_after_write_retries_without_loss(lam, monkeypatch):
 
 def test_dedup_and_retry_through_real_repository(lam, repo, monkeypatch):
     # Integration guard: drive the handler through the REAL has_event / mark_event
-    # (FakeTable), not the _Repo double, so a method rename or a gate-semantics
+    # (the `repo` fixture), so a method rename or a gate-semantics
     # regression is caught end-to-end. On the reverted mark-before-write code the
     # marker would exist after delivery 1 -> the first assertion below fails.
     handler = lam.handler

@@ -7,22 +7,7 @@ import json
 
 import pytest
 
-
-class FakeJobRepo:
-    def __init__(self, jobs=None):
-        self.jobs = dict(jobs or {})
-        self.created = []
-        self.finished = []
-
-    def create_job(self, job_id, kind="apply_rules"):
-        self.jobs[job_id] = {"id": job_id, "kind": kind, "status": "running"}
-        self.created.append((job_id, kind))
-
-    def get_job(self, job_id):
-        return self.jobs.get(job_id)
-
-    def finish_chat_job(self, job_id, status, reply_json=None, error=None):
-        self.finished.append((job_id, status, error))
+from _job_fakes import created_jobs, real_job_repo
 
 
 class FakeLambdaClient:
@@ -61,12 +46,12 @@ def _user(text="How much on eating out?"):
 
 
 def test_post_starts_a_chat_job_and_async_invokes_the_worker(handler, lambda_client):
-    job_repo = FakeJobRepo()
+    job_repo = real_job_repo()
     resp = _post(handler, job_repo, {"messages": [_user()]})
     body = json.loads(resp["body"])
 
     assert resp["statusCode"] == 202 and body["status"] == "running"
-    assert job_repo.created == [(body["jobId"], "ai_chat")]
+    assert created_jobs(job_repo) == [(body["jobId"], "ai_chat")]
     call = lambda_client.calls[0]
     assert call["InvocationType"] == "Event"
     assert call["FunctionName"] == "abundo-ai-chat-worker"
@@ -83,10 +68,10 @@ def test_post_starts_a_chat_job_and_async_invokes_the_worker(handler, lambda_cli
     {"messages": [_user(), {"role": "assistant", "text": "An answer"}]},
 ])
 def test_post_rejects_a_bad_history_without_starting_a_job(handler, lambda_client, body):
-    job_repo = FakeJobRepo()
+    job_repo = real_job_repo()
     resp = _post(handler, job_repo, body)
     assert resp["statusCode"] == 400
-    assert job_repo.created == [] and lambda_client.calls == []
+    assert created_jobs(job_repo) == [] and lambda_client.calls == []
 
 
 def test_post_keeps_the_last_twenty_messages_starting_on_a_question(handler, lambda_client):
@@ -96,7 +81,7 @@ def test_post_keeps_the_last_twenty_messages_starting_on_a_question(handler, lam
     for i in range(15):
         history += [_user(f"q{i}"), {"role": "assistant", "text": f"a{i}"}]
     history.append(_user("latest"))
-    _post(handler, FakeJobRepo(), {"messages": history})
+    _post(handler, real_job_repo(), {"messages": history})
 
     sent = json.loads(lambda_client.calls[0]["Payload"])["messages"]
     assert len(sent) == 19 and sent[0] == _user("q6") and sent[-1] == _user("latest")
@@ -105,7 +90,7 @@ def test_post_keeps_the_last_twenty_messages_starting_on_a_question(handler, lam
 def test_post_keeps_a_short_seeded_history_whole(handler, lambda_client):
     # Untrimmed, an answer-first history IS the insights seed and must reach the worker intact.
     history = [{"role": "assistant", "text": "You spent most on eating out."}, _user("Why?")]
-    _post(handler, FakeJobRepo(), {"messages": history})
+    _post(handler, real_job_repo(), {"messages": history})
 
     assert json.loads(lambda_client.calls[0]["Payload"])["messages"] == history
 
@@ -114,18 +99,19 @@ def test_post_returns_502_and_fails_the_job_when_the_invoke_fails(handler, lambd
     def throttled(payload):
         raise RuntimeError("throttled")
     monkeypatch.setattr(handler, "_invoke_ai_chat_worker", throttled)
-    job_repo = FakeJobRepo()
+    job_repo = real_job_repo()
     resp = _post(handler, job_repo, {"messages": [_user()]})
 
     assert resp["statusCode"] == 502
-    assert job_repo.finished and job_repo.finished[0][1] == "failed"
+    [(job_id, _kind)] = created_jobs(job_repo)
+    assert job_repo.get_job(job_id)["status"] == "failed"
 
 
 # --- GET -------------------------------------------------------------------------------------
 
 
 def test_get_returns_status_tool_status_and_the_parsed_reply(handler):
-    job_repo = FakeJobRepo({"j1": {
+    job_repo = real_job_repo({"j1": {
         "id": "j1", "kind": "ai_chat", "status": "succeeded", "toolStatus": "Checking your budgets…",
         "reply": json.dumps({"text": "You spent **$31.11**."}), "error": None}})
     resp = handler.get_ai_chat_job(_get_event("j1"), job_repo)
@@ -137,14 +123,14 @@ def test_get_returns_status_tool_status_and_the_parsed_reply(handler):
 
 
 def test_get_a_running_job_has_no_reply(handler):
-    job_repo = FakeJobRepo({"j1": {"id": "j1", "kind": "ai_chat", "status": "running"}})
+    job_repo = real_job_repo({"j1": {"id": "j1", "kind": "ai_chat", "status": "running"}})
     body = json.loads(handler.get_ai_chat_job(_get_event("j1"), job_repo)["body"])
     assert body["reply"] is None and body["status"] == "running"
 
 
 @pytest.mark.parametrize("jobs", [{}, {"j1": {"id": "j1", "kind": "apply_rules", "status": "running"}}])
 def test_get_404s_an_unknown_id_or_a_job_that_isnt_a_chat(handler, jobs):
-    resp = handler.get_ai_chat_job(_get_event("j1"), FakeJobRepo(jobs))
+    resp = handler.get_ai_chat_job(_get_event("j1"), real_job_repo(jobs))
     assert resp["statusCode"] == 404
 
 
@@ -167,12 +153,12 @@ def test_router_dispatches_both_chat_routes(handler, monkeypatch):
 
 def test_post_accepts_a_message_of_exactly_the_max_length(handler, lambda_client):
     # [A10] 2000 characters is allowed; the 2001 case is rejected in the parametrized test above.
-    resp = _post(handler, FakeJobRepo(), {"messages": [_user("x" * 2000)]})
+    resp = _post(handler, real_job_repo(), {"messages": [_user("x" * 2000)]})
     assert resp["statusCode"] == 202
 
 
 def test_post_rejects_a_whitespace_only_message(handler, lambda_client):
     # [A11] "   " is not a question — no job, no paid model call.
-    job_repo = FakeJobRepo()
+    job_repo = real_job_repo()
     resp = _post(handler, job_repo, {"messages": [_user("   ")]})
-    assert resp["statusCode"] == 400 and job_repo.created == [] and lambda_client.calls == []
+    assert resp["statusCode"] == 400 and created_jobs(job_repo) == [] and lambda_client.calls == []

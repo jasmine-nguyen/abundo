@@ -8,7 +8,7 @@ honours the date range like the real date-index query, and records every request
 from datetime import date
 from decimal import Decimal
 
-from _budget_alert_fakes import FakeNotifyRepo
+from _budget_alert_fakes import notify_repo
 
 _TODAY = date(2026, 7, 14)
 _ACCT = "up-spending"
@@ -77,7 +77,7 @@ def _fire(lam, monkeypatch, budget, stored, new):
         paycycle_repo=_Paycycle(), window_repo=window_repo, webhook_repo=_NoTwins(),
     )
     ba.fire_budget_alerts(ctx, [new], webhook_repo=_NoTwins(), category_repo=_Categories(),
-                          notify_repo=FakeNotifyRepo())
+                          notify_repo=notify_repo())
     return sent, window_repo
 
 

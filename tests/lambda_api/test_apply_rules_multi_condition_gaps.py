@@ -12,14 +12,13 @@ import json
 
 from decimal import Decimal
 
-from _feed_fakes import SPENDING, _row, WritableFeedRepo, FakeCategoryRepo
-from _rule_fakes import FakeRuleRepo
+from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
 
 
-def _multi_row(conditions, logic="all", category_id="transport", rule_id="m1",
-               budget_excluded=False):
+def _multi_rule(conditions, logic="all", category_id="transport", budget_excluded=False):
+    # The kwargs of one real RuleRepository.create_rule call.
     first = conditions[0]
-    return {"id": rule_id, "field": first["field"], "operator": first["operator"],
+    return {"field": first["field"], "operator": first["operator"],
             "value": first["value"], "category_id": category_id,
             "conditions": conditions, "logic": logic, "budget_excluded": budget_excluded}
 
@@ -29,14 +28,12 @@ def _apply_event(body):
             "requestContext": {"http": {"method": "POST"}}, "body": json.dumps(body)}
 
 
-def _call(handler, repo, rules, body, categories=frozenset({"transport", "groceries", "income"})):
+def _call(handler, rows, rules, body, categories=frozenset({"transport", "groceries", "income"})):
+    """Run the sweep over these stored charges; returns (body, table)."""
+    table, repo, rule_repo = real_repos({SPENDING: rows}, rules=rules)
     resp = handler.apply_rules_to_uncategorized(
-        _apply_event(body), repo, FakeCategoryRepo(categories), FakeRuleRepo(rules=rules))
-    return resp, json.loads(resp["body"])
-
-
-def _stored(repo, txn_id="t1"):
-    return repo._find_row(f"ACCOUNT#{SPENDING}", f"TXN#{txn_id}")
+        _apply_event(body), repo, FakeCategoryRepo(categories), rule_repo)
+    return json.loads(resp["body"]), table
 
 
 _UNDER_30 = [{"field": "merchant", "operator": "contains", "value": "uber"},
@@ -46,78 +43,79 @@ _UNDER_30 = [{"field": "merchant", "operator": "contains", "value": "uber"},
 def test_sweep_sets_budget_excluded_from_a_winning_multi_rule(handler):
     # [G-a1] WHIT-558 x WHIT-561: budget_excluded rides on the SAME write for a multi rule too. The
     # sweep reads the flag off the multi rule's client shape (rule_excluded_by_id keyed by its id).
-    repo = WritableFeedRepo({SPENDING: [
+    rows = [
         _row(SPENDING, "2026-07-01", "t1", description="UBER TRIP", merchant_name="UBER",
-             amount=Decimal("-25.00"), category=None)]})
-    _call(handler, repo, [_multi_row(_UNDER_30, budget_excluded=True)], {"dryRun": False})
-    row = _stored(repo)
+             amount=Decimal("-25.00"))]
+    _, table = _call(handler, rows, [_multi_rule(_UNDER_30, budget_excluded=True)],
+                     {"dryRun": False})
+    row = stored(table, "t1")
     assert row["category"] == "transport"
     assert row["budget_excluded"] is True
 
 
 def test_sweep_multi_rule_without_flag_does_not_exclude(handler):
     # [G-a1b] FAIL-ON-REVERT companion: a multi rule with the flag off leaves budget_excluded unset.
-    repo = WritableFeedRepo({SPENDING: [
+    rows = [
         _row(SPENDING, "2026-07-01", "t1", description="UBER TRIP", merchant_name="UBER",
-             amount=Decimal("-25.00"), category=None)]})
-    _call(handler, repo, [_multi_row(_UNDER_30, budget_excluded=False)], {"dryRun": False})
-    assert "budget_excluded" not in _stored(repo)
+             amount=Decimal("-25.00"))]
+    _, table = _call(handler, rows, [_multi_rule(_UNDER_30, budget_excluded=False)],
+                     {"dryRun": False})
+    assert "budget_excluded" not in stored(table, "t1")
 
 
 def test_sweep_two_agreeing_multi_rules_file_the_charge(handler):
     # [G-a2] Two multi rules both -> "transport" agree, so decide resolves (len(categories)==1) and
     # the charge is filed. The multi conflict guard must NOT fire on agreement.
-    a = _multi_row(_UNDER_30, category_id="transport", rule_id="a")
-    b = _multi_row([{"field": "merchant", "operator": "contains", "value": "uber"},
-                    {"field": "direction", "operator": "is", "value": "debit"}],
-                   category_id="transport", rule_id="b")
-    repo = WritableFeedRepo({SPENDING: [
+    a = _multi_rule(_UNDER_30, category_id="transport")
+    b = _multi_rule([{"field": "merchant", "operator": "contains", "value": "uber"},
+                     {"field": "direction", "operator": "is", "value": "debit"}],
+                    category_id="transport")
+    rows = [
         _row(SPENDING, "2026-07-01", "t1", description="UBER TRIP", merchant_name="UBER",
-             amount=Decimal("-25.00"), category=None)]})
-    _resp, body = _call(handler, repo, [a, b], {"dryRun": False})
-    assert _stored(repo)["category"] == "transport"
+             amount=Decimal("-25.00"))]
+    body, table = _call(handler, rows, [a, b], {"dryRun": False})
+    assert stored(table, "t1")["category"] == "transport"
     assert len(body["filed"]) == 1
 
 
 def test_sweep_two_disagreeing_multi_rules_leave_the_charge_unfiled(handler):
     # [G-a3] Two multi rules disagree (transport vs groceries) on one charge -> the decide guard
     # keeps it CONFLICTED, so the sweep files nothing and the charge stays unfiled.
-    a = _multi_row(_UNDER_30, category_id="transport", rule_id="a")
-    b = _multi_row([{"field": "merchant", "operator": "contains", "value": "uber"},
-                    {"field": "direction", "operator": "is", "value": "debit"}],
-                   category_id="groceries", rule_id="b")
-    repo = WritableFeedRepo({SPENDING: [
+    a = _multi_rule(_UNDER_30, category_id="transport")
+    b = _multi_rule([{"field": "merchant", "operator": "contains", "value": "uber"},
+                     {"field": "direction", "operator": "is", "value": "debit"}],
+                    category_id="groceries")
+    rows = [
         _row(SPENDING, "2026-07-01", "t1", description="UBER TRIP", merchant_name="UBER",
-             amount=Decimal("-25.00"), category=None)]})
-    _resp, body = _call(handler, repo, [a, b], {"dryRun": False})
-    assert _stored(repo).get("category") is None
+             amount=Decimal("-25.00"))]
+    body, table = _call(handler, rows, [a, b], {"dryRun": False})
+    assert stored(table, "t1").get("category") is None
     assert body["filed"] == []
 
 
 def test_sweep_direction_credit_rule_files_an_income_charge(handler):
     # [G-a4] A `direction is credit -> income` multi rule files a POSITIVE (income) charge, and
     # leaves a spend (negative) charge alone.
-    rule = _multi_row([{"field": "direction", "operator": "is", "value": "credit"}],
-                      category_id="income", rule_id="c1")
-    repo = WritableFeedRepo({SPENDING: [
+    rule = _multi_rule([{"field": "direction", "operator": "is", "value": "credit"}],
+                       category_id="income")
+    rows = [
         _row(SPENDING, "2026-07-02", "inc", description="SALARY", merchant_name="EMPLOYER",
-             amount=Decimal("1500.00"), category=None),
+             amount=Decimal("1500.00")),
         _row(SPENDING, "2026-07-01", "spend", description="UBER", merchant_name="UBER",
-             amount=Decimal("-25.00"), category=None)]})
-    _call(handler, repo, [rule], {"dryRun": False})
-    assert _stored(repo, "inc")["category"] == "income"
-    assert _stored(repo, "spend").get("category") is None
+             amount=Decimal("-25.00"))]
+    _, table = _call(handler, rows, [rule], {"dryRun": False})
+    assert stored(table, "inc")["category"] == "income"
+    assert stored(table, "spend").get("category") is None
 
 
 def test_inline_file_this_shop_is_still_single_condition(handler):
     # [G-a5] The merchant screen's "file this shop" path is untouched by WHIT-561: it mints a plain
     # `description contains` rule with NO conditions, even though the store now supports them.
-    repo = WritableFeedRepo({SPENDING: [
-        _row(SPENDING, "2026-07-01", "t1", description="ALDI 1", category=None)]})
-    rule_repo = FakeRuleRepo()
+    table, repo, rule_repo = real_repos({SPENDING: [
+        _row(SPENDING, "2026-07-01", "t1", description="ALDI 1")]})
     body = {"dryRun": False, "rule": {"value": "ALDI", "categoryId": "groceries"}}
     handler.apply_rules_to_uncategorized(
         _apply_event(body), repo, FakeCategoryRepo(frozenset({"groceries"})), rule_repo)
-    assert _stored(repo)["category"] == "groceries"
-    assert len(rule_repo.minted) == 1
-    assert "conditions" not in rule_repo.minted[0]      # single-condition, byte-identical to legacy
+    assert stored(table, "t1")["category"] == "groceries"
+    [minted] = rule_repo.list_rules()
+    assert "conditions" not in minted                   # single-condition, byte-identical to legacy

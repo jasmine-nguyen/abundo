@@ -11,12 +11,13 @@ import json
 
 import pytest
 
-from _feed_fakes import FakeCategoryRepo
-from _rule_fakes import FakeRuleRepo
+from _feed_fakes import FakeCategoryRepo, real_repos
+from _job_fakes import created_jobs, real_job_repo
 
 
-def _rule(value, category_id="groceries", rule_id="r1"):
-    return {"id": rule_id, "field": "description", "operator": "contains", "value": value,
+def _rule(value, category_id="groceries"):
+    # The kwargs of one real RuleRepository.create_rule call.
+    return {"field": "description", "operator": "contains", "value": value,
             "category_id": category_id}
 
 
@@ -38,36 +39,6 @@ def _get_event(job_id):
     }
 
 
-class FakeJobRepo:
-    """In-memory job store recording creates / progress / finishes."""
-
-    def __init__(self, jobs=None):
-        self.jobs = dict(jobs or {})
-        self.created = []
-        self.finished = []
-
-    def create_job(self, job_id, kind="apply_rules"):
-        item = {"id": job_id, "kind": kind, "status": "running",
-                "matched": 0, "attempted": 0, "filed": 0, "vanished": 0,
-                "failed": 0, "alreadyFiled": 0, "remaining": 0,
-                "createdRule": None, "error": None,
-                "created_at": "t0", "updated_at": "t0", "completed_at": None}
-        self.jobs[job_id] = item
-        self.created.append(job_id)
-        return item
-
-    def get_job(self, job_id):
-        return self.jobs.get(job_id)
-
-    def update_progress(self, job_id, counts):
-        self.jobs.setdefault(job_id, {"id": job_id}).update(counts)
-
-    def finish_job(self, job_id, status, counts, created_rule=None, error=None):
-        self.finished.append((job_id, status, error))
-        self.jobs.setdefault(job_id, {"id": job_id}).update(
-            {"status": status, "error": error, "createdRule": created_rule, **counts})
-
-
 class FakeLambdaClient:
     def __init__(self):
         self.calls = []
@@ -87,22 +58,22 @@ def worker_env(handler, monkeypatch):
 
 
 def _start(handler, job_repo, body, rules=(), categories=frozenset({"groceries", "coffee"})):
+    _, _, rule_repo = real_repos(rules=rules)
     return handler.start_apply_rules_job(
-        _post_event(body), FakeCategoryRepo(categories),
-        FakeRuleRepo(rules=list(rules)), job_repo)
+        _post_event(body), FakeCategoryRepo(categories), rule_repo, job_repo)
 
 
 # --- POST: start a job --------------------------------------------------------
 
 
 def test_post_starts_a_job_and_async_invokes_the_worker(handler, worker_env):
-    job_repo = FakeJobRepo()
+    job_repo = real_job_repo()
     resp = _start(handler, job_repo, {})
     body = json.loads(resp["body"])
 
     assert resp["statusCode"] == 202
     assert body["status"] == "running" and body["jobId"]
-    assert job_repo.created == [body["jobId"]]
+    assert created_jobs(job_repo) == [(body["jobId"], "apply_rules")]
     assert len(worker_env.calls) == 1
     # FAIL-ON-REVERT: a synchronous "RequestResponse" invoke would wait out the whole sweep and
     # blow the 30s gateway budget — the async job's entire reason to exist.
@@ -113,7 +84,7 @@ def test_post_starts_a_job_and_async_invokes_the_worker(handler, worker_env):
 
 
 def test_post_with_an_inline_rule_passes_it_in_the_payload(handler, worker_env):
-    job_repo = FakeJobRepo()
+    job_repo = real_job_repo()
     resp = _start(handler, job_repo, {"rule": {"value": "COLES", "categoryId": "groceries"}})
     body = json.loads(resp["body"])
 
@@ -125,50 +96,51 @@ def test_post_with_an_inline_rule_passes_it_in_the_payload(handler, worker_env):
 
 
 def test_post_rejects_a_bad_inline_rule_without_spawning_a_worker(handler, worker_env):
-    job_repo = FakeJobRepo()
+    job_repo = real_job_repo()
     # A value below the alphanumeric floor would file too broadly — rejected 400.
     resp = _start(handler, job_repo, {"rule": {"value": "a", "categoryId": "groceries"}})
 
     assert resp["statusCode"] == 400
-    assert job_repo.created == []          # FAIL-ON-REVERT: a validation slip spawns a worker on bad input
+    assert created_jobs(job_repo) == []          # FAIL-ON-REVERT: a validation slip spawns a worker on bad input
     assert worker_env.calls == []
 
 
 def test_post_refuses_a_clashing_inline_rule(handler, worker_env):
-    job_repo = FakeJobRepo()
+    job_repo = real_job_repo()
     # An existing "COLES -> coffee" rule fights an inline "COLES -> groceries" over the same charges.
     resp = _start(handler, job_repo, {"rule": {"value": "COLES", "categoryId": "groceries"}},
                   rules=[_rule("COLES", category_id="coffee")])
 
     assert resp["statusCode"] == 409
     assert json.loads(resp["body"])["existingRule"]["categoryId"] == "coffee"
-    assert job_repo.created == [] and worker_env.calls == []
+    assert created_jobs(job_repo) == [] and worker_env.calls == []
 
 
 def test_post_rejects_a_missing_body(handler, worker_env):
-    job_repo = FakeJobRepo()
+    job_repo = real_job_repo()
+    _, _, rule_repo = real_repos()
     resp = handler.start_apply_rules_job(
-        _post_event(), FakeCategoryRepo({"groceries"}), FakeRuleRepo(rules=[]), job_repo)
+        _post_event(), FakeCategoryRepo({"groceries"}), rule_repo, job_repo)
 
     assert resp["statusCode"] == 400
-    assert job_repo.created == [] and worker_env.calls == []
+    assert created_jobs(job_repo) == [] and worker_env.calls == []
 
 
 def test_post_returns_502_and_fails_the_job_when_the_invoke_cannot_be_dispatched(handler, worker_env, monkeypatch):
     def throttled(payload):
         raise RuntimeError("throttled")
     monkeypatch.setattr(handler, "_invoke_apply_rules_worker", throttled)
-    job_repo = FakeJobRepo()
+    job_repo = real_job_repo()
     resp = _start(handler, job_repo, {})
 
     assert resp["statusCode"] == 502
-    assert len(job_repo.created) == 1
+    [(job_id, _kind)] = created_jobs(job_repo)
     # The job it created is marked failed so a poll sees it end, not hang at "running".
-    assert job_repo.finished and job_repo.finished[0][1] == "failed"
+    assert job_repo.get_job(job_id)["status"] == "failed"
 
 
 def test_post_returns_500_when_the_job_row_cannot_be_written(handler, worker_env):
-    job_repo = FakeJobRepo()
+    job_repo = real_job_repo()
 
     def boom(job_id, kind="apply_rules"):
         raise handler.DatabaseError("db down")
@@ -189,7 +161,7 @@ def test_get_returns_the_job_in_client_shape(handler):
         "createdRule": None, "error": None,
         "created_at": "t0", "updated_at": "t1", "completed_at": None,
     }
-    job_repo = FakeJobRepo(jobs={"job1": stored})
+    job_repo = real_job_repo({"job1": stored})
     resp = handler.get_apply_rules_job(_get_event("job1"), job_repo)
     body = json.loads(resp["body"])
 
@@ -207,7 +179,7 @@ def test_get_reports_a_succeeded_job(handler):
               "vanished": 0, "failed": 0, "alreadyFiled": 0, "remaining": 0,
               "createdRule": {"id": "r1", "categoryId": "groceries"}, "error": None,
               "created_at": "t0", "updated_at": "t2", "completed_at": "t2"}
-    job_repo = FakeJobRepo(jobs={"job2": stored})
+    job_repo = real_job_repo({"job2": stored})
     body = json.loads(handler.get_apply_rules_job(_get_event("job2"), job_repo)["body"])
     assert body["status"] == "succeeded" and body["filed"] == 3 and body["remaining"] == 0
     assert body["createdRule"] == {"id": "r1", "categoryId": "groceries"}
@@ -215,12 +187,12 @@ def test_get_reports_a_succeeded_job(handler):
 
 
 def test_get_unknown_job_is_404(handler):
-    resp = handler.get_apply_rules_job(_get_event("nope"), FakeJobRepo())
+    resp = handler.get_apply_rules_job(_get_event("nope"), real_job_repo())
     assert resp["statusCode"] == 404
 
 
 def test_get_missing_id_is_404(handler):
     event = {"rawPath": "/transactions/uncategorized/apply-rules/jobs/",
              "requestContext": {"http": {"method": "GET"}}, "pathParameters": None}
-    resp = handler.get_apply_rules_job(event, FakeJobRepo())
+    resp = handler.get_apply_rules_job(event, real_job_repo())
     assert resp["statusCode"] == 404

@@ -15,9 +15,8 @@ import pathlib
 
 import pytest
 
-from _feed_fakes import FakeCategoryRepo
+from _feed_fakes import FakeCategoryRepo, real_repos
 from _lambda_api_constants import constants_namespace
-from _rule_fakes import FakeRuleRepo
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -61,7 +60,8 @@ def test_enrichments_constants_removed_from_lambda_api(handler):
 
 def test_rules_store_route_still_works_after_the_proxy_removal(handler, monkeypatch):
     # The replacement store route is undisturbed: GET /rules still lists.
-    monkeypatch.setattr(handler, "RuleRepository", lambda: FakeRuleRepo())
+    _, _, rule_repo = real_repos()
+    monkeypatch.setattr(handler, "RuleRepository", lambda: rule_repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(("groceries",)))
     resp = handler.lambda_handler(_event("GET", "/rules"), None)
     assert resp["statusCode"] == 200

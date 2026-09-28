@@ -19,6 +19,8 @@ import urllib.error
 
 import pytest
 
+from _dynamo_fakes import FakeTable
+
 MOCK_SECRET = "mock-secret"
 HOMELOAN_UUID = "fbef6cbc-09b3-4b6f-826c-6a178707a178"
 SIGNATURE_KEY = "x-up-authenticity-signature"
@@ -54,21 +56,40 @@ def _event(payload: dict, *, header=True, is_base64=False) -> dict:
     return {"body": body, "isBase64Encoded": is_base64, "headers": headers}
 
 
-class _FakeNotify:
-    def __init__(self, fired=None):
-        self.fired = set(fired or [])
-        self.marked = []
-        self.pushes = []  # (amount_cents, txn_id) recorded for the WHIT-317 miss-detector
+def _notify(up, fired=()):
+    """The REAL NotifyRepository over a FakeTable, with ``fired`` repayment ids already marked.
+    The write log is cleared after that setup, so ``_marked`` / ``_pushes`` see only the handler."""
+    notify = up.NotifyRepository()
+    notify._table = FakeTable()
+    _already_fired(notify, *fired)
+    return notify
 
-    def fired_repayments(self):
-        return set(self.fired)
 
-    def mark_repayment_fired(self, transaction_id):
-        self.marked.append(transaction_id)
-        self.fired.add(transaction_id)
+def _already_fired(notify, *transaction_ids):
+    for transaction_id in transaction_ids:
+        notify.mark_repayment_fired(transaction_id)
+    notify._table.update_calls.clear()
+    notify._table.update_keys.clear()
 
-    def mark_repayment_push(self, amount_cents, txn_id, fired_at=None):
-        self.pushes.append((amount_cents, txn_id))
+
+def _added(notify, pk):
+    return [member for key, (_expression, _names, values)
+            in zip(notify._table.update_keys, notify._table.update_calls)
+            if key["pk"] == pk for member in sorted(values[":m"])]
+
+
+def _marked(notify):
+    """The repayment ids the handler marked as notified, in order."""
+    return _added(notify, "NOTIFY#REPAYMENT")
+
+
+def _pushes(notify):
+    """(amount_cents, txn_id) of each push recorded for the WHIT-317 miss-detector."""
+    pushes = []
+    for token in _added(notify, "NOTIFY#REPAYPUSH"):
+        _fired_at, amount_cents, transaction_id = token.split("#", 2)
+        pushes.append((int(amount_cents), transaction_id))
+    return pushes
 
 
 class _FakeDevice:
@@ -88,7 +109,7 @@ def wired(lam, monkeypatch):
     up = lam.up_webhook
     monkeypatch.setattr(up, "get_signing_secret", lambda: MOCK_SECRET)
 
-    notify = _FakeNotify()
+    notify = _notify(up)
     device = _FakeDevice(["ExponentPushToken[abc]"])
     monkeypatch.setattr(up, "NotifyRepository", lambda: notify)
     monkeypatch.setattr(up, "DeviceRepository", lambda: device)
@@ -355,7 +376,7 @@ def test_qualifying_repayment_sends_one_push_and_marks(wired):
     assert "$3,573 toward the mortgage" in wired.sent[0]["body"]
     # WHIT-321: the push carries the deep-link destination so a tap opens /mortgage.
     assert wired.sent[0]["data"] == {"type": "repayment"}
-    assert wired.notify.marked == ["txn-1"]
+    assert _marked(wired.notify) == ["txn-1"]
 
 
 def test_wrong_account_does_not_push(wired, monkeypatch, caplog):
@@ -364,7 +385,7 @@ def test_wrong_account_does_not_push(wired, monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     assert wired.up.lambda_handler(_event(_webhook_payload()), None) == wired.up.OK_RESPONSE
     assert wired.sent == []
-    assert wired.notify.marked == []
+    assert _marked(wired.notify) == []
     assert _skip_reasons(caplog) == ["not_homeloan_account"]
 
 
@@ -394,7 +415,7 @@ def test_qualifying_repayment_records_push_marker(wired):
     # WHIT-317: a successful push records (amount_cents, txn_id) so the poller's precise
     # miss-detector can match this repayment. Cents come straight from valueInBaseUnits.
     assert wired.up.lambda_handler(_event(_webhook_payload()), None) == wired.up.OK_RESPONSE
-    assert wired.notify.pushes == [(357300, "txn-1")]
+    assert _pushes(wired.notify) == [(357300, "txn-1")]
 
 
 def test_failed_push_records_no_marker(wired, monkeypatch, caplog):
@@ -403,7 +424,7 @@ def test_failed_push_records_no_marker(wired, monkeypatch, caplog):
     monkeypatch.setattr(wired.up, "send_push", lambda *a, **k: {"sent": 1, "ok": 0, "pruned": []})
     caplog.set_level(logging.INFO)
     assert wired.up.lambda_handler(_event(_webhook_payload()), None) == wired.up.ERROR_RESPONSE
-    assert wired.notify.pushes == []
+    assert _pushes(wired.notify) == []
     assert not _marker_records(caplog, "UP_WEBHOOK_PUSH_SENT")
 
 
@@ -416,14 +437,14 @@ def test_successful_push_logs_push_sent(wired, caplog):
     message = record.getMessage()
     assert "transaction=txn-1" in message.split()
     assert "amount_cents=357300" in message.split()
-    assert wired.notify.pushes == [(357300, "txn-1")]
+    assert _pushes(wired.notify) == [(357300, "txn-1")]
     assert not _marker_records(caplog, "UP_WEBHOOK_SKIP")
 
 
 def test_already_fired_id_skips(lam, monkeypatch, caplog):
     up = lam.up_webhook
     monkeypatch.setattr(up, "get_signing_secret", lambda: MOCK_SECRET)
-    notify = _FakeNotify(fired={"txn-1"})
+    notify = _notify(up, fired={"txn-1"})
     monkeypatch.setattr(up, "NotifyRepository", lambda: notify)
     monkeypatch.setattr(up, "DeviceRepository", lambda: _FakeDevice(["ExponentPushToken[abc]"]))
     sent = []
@@ -433,7 +454,7 @@ def test_already_fired_id_skips(lam, monkeypatch, caplog):
 
     assert up.lambda_handler(_event(_webhook_payload()), None) == up.OK_RESPONSE
     assert sent == []
-    assert notify.marked == []
+    assert _marked(notify) == []
     assert _skip_reasons(caplog) == ["already_notified"]
 
 
@@ -442,8 +463,8 @@ def test_no_device_tokens_short_circuits(wired, monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     assert wired.up.lambda_handler(_event(_webhook_payload()), None) == wired.up.OK_RESPONSE
     assert wired.sent == []
-    assert wired.notify.marked == []
-    assert wired.notify.pushes == []
+    assert _marked(wired.notify) == []
+    assert _pushes(wired.notify) == []
     assert _marker_records(caplog, "UP_WEBHOOK_NO_DEVICE_TOKENS", logging.ERROR)
     assert not _marker_records(caplog, "UP_WEBHOOK_SKIP")
 
@@ -452,7 +473,7 @@ def test_send_push_not_accepted_returns_500_and_not_marked(wired, monkeypatch):
     monkeypatch.setattr(wired.up, "send_push", lambda *a, **k: {"sent": 1, "ok": 0, "pruned": []})
     result = wired.up.lambda_handler(_event(_webhook_payload()), None)
     assert result == wired.up.ERROR_RESPONSE
-    assert wired.notify.marked == []
+    assert _marked(wired.notify) == []
 
 
 def test_fetch_raises_returns_500(wired, monkeypatch):
@@ -464,7 +485,7 @@ def test_fetch_raises_returns_500(wired, monkeypatch):
 def test_send_push_raises_returns_500(wired, monkeypatch):
     monkeypatch.setattr(wired.up, "send_push", _boom("Expo down"))
     assert wired.up.lambda_handler(_event(_webhook_payload()), None) == wired.up.ERROR_RESPONSE
-    assert wired.notify.marked == []
+    assert _marked(wired.notify) == []
 
 
 def test_malformed_signed_body_returns_500(lam, monkeypatch):
@@ -563,7 +584,7 @@ def test_base64_encoded_body_pushes_end_to_end(wired):
     }
     assert wired.up.lambda_handler(event, None) == wired.up.OK_RESPONSE
     assert len(wired.sent) == 1
-    assert wired.notify.marked == ["txn-1"]
+    assert _marked(wired.notify) == ["txn-1"]
 
 
 # [E2] the header exactly as Up sends it (mixed case).
@@ -616,7 +637,7 @@ def test_real_ping_without_transaction_relationship_is_acked(wired, monkeypatch)
              "headers": {SIGNATURE_KEY: _sign(raw)}}
     assert wired.up.lambda_handler(event, None) == wired.up.OK_RESPONSE
     assert wired.sent == []
-    assert wired.notify.marked == []
+    assert _marked(wired.notify) == []
 
 
 # [E5] a partial fetched transaction → clean 500, no push.
@@ -630,7 +651,7 @@ def test_partial_transaction_missing_account_returns_500(wired, monkeypatch):
     result = wired.up.lambda_handler(_event(_webhook_payload()), None)
     assert result == wired.up.ERROR_RESPONSE
     assert wired.sent == []
-    assert wired.notify.marked == []
+    assert _marked(wired.notify) == []
 
 
 # [E6] valueInBaseUnits coercion.
@@ -654,7 +675,7 @@ def _boom(message):
 # already-pushed repayment must log a plain skip — never the NO_DEVICE_TOKENS alarm marker,
 # or every Up redelivery after a phone unregisters would page.
 def test_already_notified_wins_over_no_device_tokens(wired, monkeypatch, caplog):
-    wired.notify.fired.add("txn-1")
+    _already_fired(wired.notify, "txn-1")
     monkeypatch.setattr(wired.up, "DeviceRepository", lambda: _FakeDevice([]))
     caplog.set_level(logging.INFO)
     assert wired.up.lambda_handler(_event(_webhook_payload()), None) == wired.up.OK_RESPONSE
@@ -731,7 +752,7 @@ _OUTCOMES = ("UP_WEBHOOK_SKIP", "UP_WEBHOOK_NO_DEVICE_TOKENS", "UP_WEBHOOK_PUSH_
     (lambda w, mp: None, "UP_WEBHOOK_PUSH_SENT"),
     (lambda w, mp: mp.setattr(w.up, "DeviceRepository", lambda: _FakeDevice([])),
      "UP_WEBHOOK_NO_DEVICE_TOKENS"),
-    (lambda w, mp: w.notify.fired.add("txn-1"), "UP_WEBHOOK_SKIP"),
+    (lambda w, mp: _already_fired(w.notify, "txn-1"), "UP_WEBHOOK_SKIP"),
     (lambda w, mp: mp.setattr(w.up, "fetch_transaction", lambda _id: _up_transaction(cents=1)),
      "UP_WEBHOOK_SKIP"),
     (lambda w, mp: mp.setattr(w.up, "fetch_transaction",

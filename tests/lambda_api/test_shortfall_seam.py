@@ -15,6 +15,8 @@ from decimal import Decimal
 
 import pytest
 
+from _insight_fakes import insight_puts, insight_repo
+
 
 # --- local fakes (mirror the sibling suite's; infra, not duplicated test cases) ----
 
@@ -44,20 +46,6 @@ class _FakeTxnRepo:
 class _FakePayCycleRepo:
     def get_paycycle(self):
         return {"length": 14, "last_pay_date": "2024-01-03"}
-
-
-class _FakeInsightRepo:
-    def __init__(self, existing=None):
-        self._existing = existing
-        self.put_calls = []
-
-    def get_insight(self, cycle_start):
-        return self._existing
-
-    def put_insight(self, cycle_start, summary, suggestions, generated_at, input_hash):
-        self.put_calls.append({"input_hash": input_hash, "summary": summary})
-        self._existing = {"summary": summary, "suggestions": suggestions,
-                          "generated_at": generated_at, "input_hash": input_hash}
 
 
 def _txn(category, amount, status="posted"):
@@ -94,7 +82,7 @@ def test_generate_threads_shortfall_goal_into_model_input_and_hash(handler, monk
         return {"summary": "s", "suggestions": []}
 
     monkeypatch.setattr(handler, "generate_suggestions", _capture)
-    repo = _FakeInsightRepo(existing=None)
+    repo = insight_repo(existing=None)
     event = {"body": json.dumps({"goal": dict(_RAW_SHORTFALL)})}
 
     resp = handler.generate_ai_insights(
@@ -106,7 +94,7 @@ def test_generate_threads_shortfall_goal_into_model_input_and_hash(handler, monk
     assert captured["mi"]["goal"]["required_extra"] == 333.0
     assert "mortgage_free_date" not in captured["mi"]["goal"]
     # ...and is baked into the stored cache hash (a later goal change -> cache miss).
-    assert repo.put_calls[0]["input_hash"] == _hash(captured["mi"])
+    assert insight_puts(repo)[0]["input_hash"] == _hash(captured["mi"])
 
 
 def test_shortfall_goal_busts_an_otherwise_matching_spend_only_cache(handler, monkeypatch):
@@ -115,11 +103,11 @@ def test_shortfall_goal_busts_an_otherwise_matching_spend_only_cache(handler, mo
     cycle = _FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
     window = {(start, end): [_txn("groceries", -50)]}
-    spend_only, _ = handler.assemble_insight_input(
+    spend_only, cycle_start = handler.assemble_insight_input(
         _FakeCategoryRepo(), _FakeBudgetRepo(), _FakeTxnRepo(dict(window)), _FakePayCycleRepo())
-    repo = _FakeInsightRepo(existing={
+    repo = insight_repo(existing={
         "summary": "spend-only cached", "suggestions": [], "generated_at": "t",
-        "input_hash": _hash(spend_only)})
+        "input_hash": _hash(spend_only)}, cycle_start=cycle_start)
     monkeypatch.setattr(handler, "generate_suggestions",
                         lambda mi: {"summary": "regenerated with shortfall", "suggestions": []})
     event = {"body": json.dumps({"goal": dict(_RAW_SHORTFALL)})}
@@ -131,7 +119,7 @@ def test_shortfall_goal_busts_an_otherwise_matching_spend_only_cache(handler, mo
     body = json.loads(resp["body"])
     assert body["cached"] is False
     assert body["summary"] == "regenerated with shortfall"
-    assert len(repo.put_calls) == 1
+    assert len(insight_puts(repo)) == 1
 
 
 # --- the $1M sanitise cap boundary (silent-drop threshold) --------------------------

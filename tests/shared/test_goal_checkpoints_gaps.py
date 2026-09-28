@@ -10,6 +10,8 @@ from decimal import Decimal
 
 import pytest
 
+from _milestone_fakes import checkpoints_marked, goal_checkpoint_repo
+
 
 @pytest.fixture
 def gc(shared):
@@ -25,19 +27,6 @@ def _goal(direction="grow", checkpoints=None, name="Holiday"):
 
 
 # --- persistent fakes so a SEQUENCE of crossings shares one marker set / token list ----------
-
-class _FakeNotify:
-    def __init__(self, fired=None):
-        self._fired = set(fired or [])
-        self.marked = []
-
-    def fired_goal_checkpoints(self, scope=None):
-        return set(self._fired)
-
-    def mark_goal_checkpoint_fired(self, key, scope=None):
-        self.marked.append(key)
-        self._fired.add(key)
-
 
 class _FakeDevice:
     def __init__(self, tokens=("ExpoTok",)):
@@ -70,24 +59,24 @@ def test_crossed_checkpoints_absent_ladder_key_returns_empty(gc):
 
 def test_notify_none_ladder_does_no_io(gc, monkeypatch):
     sent = _spy_send(gc, monkeypatch)
-    notify = _FakeNotify()
+    notify = goal_checkpoint_repo()
     n = gc.notify_goal_checkpoint_crossing(
         Decimal("0"), Decimal("9999"),
         goal={"direction": "grow", "checkpoints": None}, goal_id="g1", synced=True,
         device_repo=_FakeDevice(), notify_repo=notify,
     )
-    assert n == 0 and sent == [] and notify.marked == []
+    assert n == 0 and sent == [] and checkpoints_marked(notify) == []
 
 
 def test_notify_empty_ladder_does_no_io(gc, monkeypatch):
     sent = _spy_send(gc, monkeypatch)
-    notify = _FakeNotify()
+    notify = goal_checkpoint_repo()
     n = gc.notify_goal_checkpoint_crossing(
         Decimal("0"), Decimal("9999"),
         goal=_goal("grow", []), goal_id="g1", synced=True,
         device_repo=_FakeDevice(), notify_repo=notify,
     )
-    assert n == 0 and sent == [] and notify.marked == []
+    assert n == 0 and sent == [] and checkpoints_marked(notify) == []
 
 
 # --- exact START equality (old == amount) never re-crosses, BOTH directions -------------------
@@ -112,7 +101,7 @@ def test_paydown_start_exactly_on_rung_is_not_recrossed(gc):
 
 def test_notify_manual_paydown_uses_entered_owed(gc, monkeypatch):
     sent = _spy_send(gc, monkeypatch)
-    notify = _FakeNotify()
+    notify = goal_checkpoint_repo()
     goal = _goal("paydown", [_cp("cp1", "Under 4k", 4000)])
     n = gc.notify_goal_checkpoint_crossing(
         Decimal("5000"), Decimal("3000"),  # entered owed 5000 -> 3000 (positive, NOT flipped)
@@ -121,7 +110,7 @@ def test_notify_manual_paydown_uses_entered_owed(gc, monkeypatch):
     )
     assert n == 1
     assert "Under 4k" in sent[0][0]
-    assert notify.marked == ["g:g1:cp:cp1:bal:4000.00"]
+    assert checkpoints_marked(notify) == ["g:g1:cp:cp1:bal:4000.00"]
 
 
 # --- cap-sized amounts stay exact (Decimal, no float) ----------------------------------------
@@ -129,7 +118,7 @@ def test_notify_manual_paydown_uses_entered_owed(gc, monkeypatch):
 
 def test_notify_cap_sized_amount_crosses_and_marks_exactly(gc, monkeypatch):
     sent = _spy_send(gc, monkeypatch)
-    notify = _FakeNotify()
+    notify = goal_checkpoint_repo()
     goal = _goal("grow", [_cp("cp1", "Nearly", "9999999998.55")])
     n = gc.notify_goal_checkpoint_crossing(
         Decimal("1"), Decimal("9999999999.99"),
@@ -137,7 +126,7 @@ def test_notify_cap_sized_amount_crosses_and_marks_exactly(gc, monkeypatch):
         device_repo=_FakeDevice(), notify_repo=notify,
     )
     assert n == 1
-    assert notify.marked == ["g:g1:cp:cp1:bal:9999999998.55"]
+    assert checkpoints_marked(notify) == ["g:g1:cp:cp1:bal:9999999998.55"]
 
 
 # --- mixed fired + fresh in ONE jump: name the furthest FRESH, mark ONLY fresh ----------------
@@ -146,7 +135,7 @@ def test_notify_cap_sized_amount_crosses_and_marks_exactly(gc, monkeypatch):
 def test_notify_multi_jump_skips_already_fired_rung_marks_only_fresh(gc, monkeypatch):
     sent = _spy_send(gc, monkeypatch)
     # cp2 (4000) already celebrated; a 1000->5000 jump re-crosses it AND freshly crosses cp1.
-    notify = _FakeNotify(fired=["g:g1:cp:cp2:bal:4000.00"])
+    notify = goal_checkpoint_repo(["g:g1:cp:cp2:bal:4000.00"])
     goal = _goal("grow", [_cp("cp1", "A", 2000), _cp("cp2", "B", 4000)])
     n = gc.notify_goal_checkpoint_crossing(
         Decimal("1000"), Decimal("5000"),
@@ -155,7 +144,7 @@ def test_notify_multi_jump_skips_already_fired_rung_marks_only_fresh(gc, monkeyp
     )
     assert n == 1
     assert "A" in sent[0][0]                       # furthest-along FRESH rung, not the fired one
-    assert notify.marked == ["g:g1:cp:cp1:bal:2000.00"]  # only the fresh rung is marked
+    assert checkpoints_marked(notify) == ["g:g1:cp:cp1:bal:2000.00"]  # only the fresh rung is marked
 
 
 # --- once-ever: a RE-CROSS of the same rung never fires twice (the whole no-TTL point) --------
@@ -163,7 +152,7 @@ def test_notify_multi_jump_skips_already_fired_rung_marks_only_fresh(gc, monkeyp
 
 def test_notify_recross_of_same_rung_fires_once_ever(gc, monkeypatch):
     sent = _spy_send(gc, monkeypatch)
-    notify = _FakeNotify()
+    notify = goal_checkpoint_repo()
     device = _FakeDevice()
     goal = _goal("grow", [_cp("cp1", "Halfway", 4000)])
 
@@ -176,7 +165,7 @@ def test_notify_recross_of_same_rung_fires_once_ever(gc, monkeypatch):
     assert cross(1000, 5000) == 1           # first cross fires
     assert cross(3000, 5000) == 0           # dropped to 3000 then re-crossed 4000 -> deduped
     assert len(sent) == 1
-    assert notify.marked == ["g:g1:cp:cp1:bal:4000.00"]  # marked exactly once
+    assert checkpoints_marked(notify) == ["g:g1:cp:cp1:bal:4000.00"]  # marked exactly once
 
 
 # --- re-point re-arms: same rung id, new amount -> a genuinely fresh celebration ---------------
@@ -184,7 +173,7 @@ def test_notify_recross_of_same_rung_fires_once_ever(gc, monkeypatch):
 
 def test_notify_repoint_of_a_fired_rung_rearms_the_celebration(gc, monkeypatch):
     sent = _spy_send(gc, monkeypatch)
-    notify = _FakeNotify()
+    notify = goal_checkpoint_repo()
     device = _FakeDevice()
 
     goal_v1 = _goal("grow", [_cp("cp1", "Halfway", 4000)])
@@ -198,7 +187,7 @@ def test_notify_repoint_of_a_fired_rung_rearms_the_celebration(gc, monkeypatch):
         device_repo=device, notify_repo=notify) == 1        # re-arms: fires again
 
     assert len(sent) == 2
-    assert notify.marked == ["g:g1:cp:cp1:bal:4000.00", "g:g1:cp:cp1:bal:6000.00"]
+    assert checkpoints_marked(notify) == ["g:g1:cp:cp1:bal:4000.00", "g:g1:cp:cp1:bal:6000.00"]
 
 
 # --- no device at crossing time marks NOTHING, so a genuinely later fresh cross still fires ----
@@ -206,7 +195,7 @@ def test_notify_repoint_of_a_fired_rung_rearms_the_celebration(gc, monkeypatch):
 
 def test_notify_no_tokens_leaves_marker_unset_for_a_later_fresh_cross(gc, monkeypatch):
     sent = _spy_send(gc, monkeypatch)
-    notify = _FakeNotify()
+    notify = goal_checkpoint_repo()
     device = _FakeDevice(tokens=())            # no registered device yet
     goal = _goal("grow", [_cp("cp1", "First", 2000), _cp("cp2", "Second", 5000)])
 
@@ -214,7 +203,7 @@ def test_notify_no_tokens_leaves_marker_unset_for_a_later_fresh_cross(gc, monkey
     assert gc.notify_goal_checkpoint_crossing(
         Decimal("1000"), Decimal("3000"), goal=goal, goal_id="g1", synced=True,
         device_repo=device, notify_repo=notify) == 0
-    assert notify.marked == []
+    assert checkpoints_marked(notify) == []
 
     # User registers a device; a later fresh cross of cp2 fires (cp1 stays un-fired/un-marked).
     device.tokens = ["ExpoTok"]
@@ -222,4 +211,4 @@ def test_notify_no_tokens_leaves_marker_unset_for_a_later_fresh_cross(gc, monkey
         Decimal("3000"), Decimal("6000"), goal=goal, goal_id="g1", synced=True,
         device_repo=device, notify_repo=notify) == 1
     assert "Second" in sent[0][0]
-    assert notify.marked == ["g:g1:cp:cp2:bal:5000.00"]
+    assert checkpoints_marked(notify) == ["g:g1:cp:cp2:bal:5000.00"]

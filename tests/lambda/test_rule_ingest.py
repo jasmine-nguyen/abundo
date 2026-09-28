@@ -5,9 +5,8 @@ longer labels them for us. Driven through the webhook `lam` fixture so rule_inge
 banksync.counts_to_budget resolve the way the deployed webhook resolves them.
 
 Local fakes (the webhook-suite convention — see test_budget_alerts.py): FakeRuleStore is a minimal
-snake_case rule store, deliberately NOT the shared tests/shared/_rule_fakes.FakeRuleRepo (whose
-error path imports DatabaseError from `repository`, which is lambda/repository.py here and does not
-export it).
+read-only snake_case rule store (`repository` is lambda/repository.py here, which does not export
+DatabaseError).
 """
 
 import logging

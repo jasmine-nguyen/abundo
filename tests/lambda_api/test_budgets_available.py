@@ -18,36 +18,14 @@ from decimal import Decimal
 
 import pytest
 
+from _budget_fakes import recording_budget_repo
+
 CYCLE_START = "2026-08-06"
 TODAY = "2026-08-10"
 LENGTH = 30
 PAYDATE = "2026-01-01"
 
 BILL = Decimal("1390.91")   # over 4 cycles: index 0 shows the full +BILL cushion
-
-
-class FakeBudgetRepo:
-    def __init__(self, budgets=None):
-        self._budgets = budgets or {}
-        self.settle_calls = []
-        self.set_spread_calls = []
-        self.clear_spread_calls = []
-
-    def list_budgets(self):
-        return {k: dict(v) for k, v in self._budgets.items()}
-
-    def settle_carryover(self, cat_id, carryover, carryover_from, carryover_len, carryover_paydate):
-        self.settle_calls.append((cat_id, carryover, carryover_from, carryover_len, carryover_paydate))
-        self._budgets.setdefault(cat_id, {}).update({
-            "carryover": carryover, "carryover_from": carryover_from,
-            "carryover_len": Decimal(carryover_len), "carryover_paydate": carryover_paydate,
-        })
-
-    def set_spread(self, cat_id, amount, cycles, spread_from, spread_len, spread_paydate):
-        self.set_spread_calls.append((cat_id, amount, cycles, spread_from, spread_len, spread_paydate))
-
-    def clear_spread(self, cat_id):
-        self.clear_spread_calls.append(cat_id)
 
 
 class FakeTransactionRepo:
@@ -95,7 +73,7 @@ def _fixed_window(handler, monkeypatch):
 
 def test_plain_budget_available_is_just_the_target(handler):
     # No rollover, no spread: both cushions 0, so available == target.
-    budget_repo = FakeBudgetRepo({"cat": {"target": Decimal(250)}})
+    budget_repo = recording_budget_repo({"cat": {"target": Decimal(250)}})
     result = _list(handler, budget_repo)
 
     assert result["cat"]["available"] == Decimal(250)
@@ -105,7 +83,7 @@ def test_income_earn_target_available_is_the_target(handler):
     # Income is excluded from both rollover and spread, so available == target (earnings show
     # in posted/pending, not in the cushion). FAIL-ON-REVERT: dropping the available line KeyErrors.
     cats = [{"id": "salary", "bucket": "Income", "parent": None}]
-    budget_repo = FakeBudgetRepo({"salary": {"target": Decimal(5000)}})
+    budget_repo = recording_budget_repo({"salary": {"target": Decimal(5000)}})
     result = _list(handler, budget_repo, [_txn("salary", 5000, "2026-08-08")], cats)
 
     assert result["salary"]["available"] == Decimal(5000)
@@ -118,7 +96,7 @@ def test_rollover_available_is_target_plus_live_carryover(handler):
     cats = [{"id": "sink", "bucket": "Lifestyle", "parent": None}]
     entry = {"target": Decimal(100), "rollover": True, "carryover": Decimal(0),
              "carryover_from": "2026-05-08", "carryover_len": Decimal(LENGTH), "carryover_paydate": PAYDATE}
-    budget_repo = FakeBudgetRepo({"sink": entry})
+    budget_repo = recording_budget_repo({"sink": entry})
     result = _list(handler, budget_repo, categories=cats)
 
     assert result["sink"]["carryover"] == Decimal(300)
@@ -130,7 +108,7 @@ def test_spread_available_is_target_plus_adjustment(handler):
     # target + BILL, so the bill doesn't read as "over budget".
     entry = {"target": Decimal(250), "spread_amount": BILL, "spread_cycles": Decimal(4),
              "spread_from": CYCLE_START, "spread_len": Decimal(LENGTH), "spread_paydate": PAYDATE}
-    budget_repo = FakeBudgetRepo({"cat": entry})
+    budget_repo = recording_budget_repo({"cat": entry})
     result = _list(handler, budget_repo, [_txn("cat", -1390.91, "2026-08-07")])
 
     assert result["cat"]["spread"]["adjustment"] == BILL
@@ -151,7 +129,7 @@ def test_a_row_flagged_both_rollover_and_spread_never_sums_both_cushions(handler
         "spread_amount": BILL, "spread_cycles": Decimal(4), "spread_from": CYCLE_START,
         "spread_len": Decimal(LENGTH), "spread_paydate": PAYDATE,
     }
-    budget_repo = FakeBudgetRepo({"both": entry})
+    budget_repo = recording_budget_repo({"both": entry})
     result = _list(handler, budget_repo, categories=cats)
 
     # Rollover cushion only: 100 + 300 == 400. Summing both would be 400 + BILL — never that.

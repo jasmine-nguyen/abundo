@@ -9,7 +9,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from _budget_alert_fakes import FakeNotifyRepo
+from _budget_alert_fakes import notify_repo
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BANK_ACCT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
@@ -75,7 +75,7 @@ def _fire(alerts, monkeypatch, repo, before, batch):
     sent = []
     monkeypatch.setattr(ba, "send_push",
                         lambda title, body, toks, data=None: sent.append(title) or {"sent": 1, "ok": 1, "pruned": []})
-    notify = FakeNotifyRepo()
+    notify = notify_repo()
     ctx = ba.capture_pre_write(batch, device_repo=_Devices(), budget_repo=_Budgets(),
                                paycycle_repo=_Paycycle(), window_repo=_Window(before), webhook_repo=repo)
     repo.insert_or_reconcile(batch)

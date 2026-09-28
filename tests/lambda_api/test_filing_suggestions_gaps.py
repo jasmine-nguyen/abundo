@@ -9,19 +9,18 @@ Covers, one per candidate gap:
   [G5] the SAME merchant appearing as an unfiled charge AND a hand-filed habit still suggests, and
        its own unfiled charge is not mis-disclosed as an also-catches sweep.
 
-Reuses the same fakes + _suggest helper style as test_filing_suggestions.py so suppression runs
+Reuses the same real-repositories _suggest helper as test_filing_suggestions.py so suppression runs
 through the real rule_book.rule_from_row mapping.
 """
 
 import json
 
-from _feed_fakes import ANZ, _row, FakeFeedRepo, FakeCategoryRepo
-from _rule_fakes import FakeRuleRepo
+from _feed_fakes import ANZ, FakeCategoryRepo, real_repos, _row
 
 
-def _suggest(handler, repo, taxonomy=("dining", "groceries", "petrol"), rules=()):
-    resp = handler.get_filing_suggestions(
-        repo, FakeCategoryRepo(set(taxonomy)), FakeRuleRepo(rules))
+def _suggest(handler, rows_by_account, taxonomy=("dining", "groceries", "petrol"), rules=()):
+    _, repo, rule_repo = real_repos(rows_by_account, rules=rules)
+    resp = handler.get_filing_suggestions(repo, FakeCategoryRepo(set(taxonomy)), rule_repo)
     assert resp["statusCode"] == 200
     return json.loads(resp["body"])
 
@@ -43,7 +42,7 @@ def test_equal_distinct_day_tie_between_two_categories_breaks_deterministically(
            for i, d in enumerate(["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"])]
     )
 
-    body = _suggest(handler, FakeFeedRepo({ANZ: rows}))
+    body = _suggest(handler, {ANZ: rows})
 
     assert len(body["suggestions"]) == 1
     assert body["suggestions"][0]["categoryId"] == "groceries"
@@ -61,7 +60,7 @@ def test_a_hand_filed_charge_with_no_date_is_not_counted_as_a_day(handler):
         _filed(ANZ, "", "d4", "SEDDONS EATERY", "SEDDONS EATERY MELB", "dining"),
     ]
 
-    assert _suggest(handler, FakeFeedRepo({ANZ: rows}))["suggestions"] == []
+    assert _suggest(handler, {ANZ: rows})["suggestions"] == []
 
 
 def test_a_dateless_charge_does_not_inflate_a_real_four_day_habit(handler):
@@ -75,7 +74,7 @@ def test_a_dateless_charge_does_not_inflate_a_real_four_day_habit(handler):
         _filed(ANZ, "", "d5", "SEDDONS EATERY", "SEDDONS EATERY MELB", "dining"),
     ]
 
-    body = _suggest(handler, FakeFeedRepo({ANZ: rows}))
+    body = _suggest(handler, {ANZ: rows})
 
     assert len(body["suggestions"]) == 1
     assert body["suggestions"][0]["distinctDays"] == 4
@@ -90,7 +89,7 @@ def test_alsocatches_discloses_a_nameless_unfiled_sweep_as_a_null_merchant_line(
     rows.append(_row(ANZ, "2026-07-05", "x1", merchant_name="",
                      description="PAYPAL *COLES ONLINE 8842", category=None))
 
-    body = _suggest(handler, FakeFeedRepo({ANZ: rows}))
+    body = _suggest(handler, {ANZ: rows})
 
     suggestion = body["suggestions"][0]
     assert suggestion["rulePattern"] == "COLES"
@@ -100,13 +99,13 @@ def test_alsocatches_discloses_a_nameless_unfiled_sweep_as_a_null_merchant_line(
 def test_a_description_equals_rule_suppresses_only_on_an_exact_match(handler):
     # [G4a] Suppression covers `description equals`, not only `contains`. A rule that equals the
     # charge's whole description matches it (rule_matches over equals) -> suppress.
-    repo = FakeFeedRepo({ANZ: [
+    history = {ANZ: [
         _filed(ANZ, d, f"s{i}", "SEDDONS EATERY", "SEDDONS EATERY MELB", "dining")
-        for i, d in enumerate(["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"])]})
+        for i, d in enumerate(["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"])]}
     rules = [{"field": "description", "operator": "equals", "value": "SEDDONS EATERY MELB",
               "category_id": "dining"}]
 
-    assert _suggest(handler, repo, rules=rules)["suggestions"] == []
+    assert _suggest(handler, history, rules=rules)["suggestions"] == []
 
 
 def test_a_description_equals_rule_that_is_not_exact_does_not_suppress(handler):
@@ -115,13 +114,13 @@ def test_a_description_equals_rule_that_is_not_exact_does_not_suppress(handler):
     # False); and it does not clash (same category, so the clash branch is skipped — and the clash
     # gate keys on `description contains` anyway) -> the suggestion survives. Guards against an equals
     # rule being mistaken for a contains cover.
-    repo = FakeFeedRepo({ANZ: [
+    history = {ANZ: [
         _filed(ANZ, d, f"s{i}", "SEDDONS EATERY", "SEDDONS EATERY MELB", "dining")
-        for i, d in enumerate(["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"])]})
+        for i, d in enumerate(["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"])]}
     rules = [{"field": "description", "operator": "equals", "value": "SEDDONS EATERY",
               "category_id": "dining"}]
 
-    body = _suggest(handler, repo, rules=rules)
+    body = _suggest(handler, history, rules=rules)
 
     assert [s["rulePattern"] for s in body["suggestions"]] == ["SEDDONS EATERY"]
 
@@ -134,7 +133,7 @@ def test_a_merchant_both_unfiled_and_hand_filed_still_suggests_without_self_disc
             for i, d in enumerate(["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"])]
     rows.append(_filed(ANZ, "2026-07-09", "u1", "COLES", "COLES 0999 KEW", None))
 
-    body = _suggest(handler, FakeFeedRepo({ANZ: rows}))
+    body = _suggest(handler, {ANZ: rows})
 
     assert len(body["suggestions"]) == 1
     assert body["suggestions"][0]["rulePattern"] == "COLES"
