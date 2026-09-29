@@ -272,6 +272,14 @@ the card number for card builds) and check where it is:
 
    - **PR opened: <url>** — relay the link. The script already committed,
      pushed and opened the PR, and it ran QA's new tests first if QA added any.
+   - **BRANCH PUSHED — open the PR** — the build passed and pushed its
+     branch, but this session has no working `gh` (a cloud session never
+     does), so opening the PR is yours. Open it from the branch into the base
+     it names, with the title it printed and the description file's text as
+     the body: use a GitHub tool if you have one (e.g. a GitHub MCP "create
+     pull request" tool). If you don't, give the user the "Open it here" link,
+     the title, and the description in a code block to paste. Either way,
+     relay the PR link once there is one.
    - **BUILD CANCELLED** — the user stopped it. Set the card's Status back
      to 'To Do', and mention the branch if the script printed one.
    - **CARD CLOSED** — the user agreed the card isn't needed. Set its Status
@@ -295,4 +303,4 @@ the card number for card builds) and check where it is:
    - If it printed **TECH DEBT CARDS TO FILE**, create each one on the board
      (Status 'To Do', Type 'Tech Debt' if the board has it, otherwise the
      default card type), and tell the user they were filed.
-   - Once the PR is open, update the card's Status to 'Done'.
+   - Once the PR is open (by the script or by you), update the card's Status to 'Done'.
