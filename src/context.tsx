@@ -796,37 +796,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	const [aiInsights, setAiInsights] = useState<AiInsights | null>(null);
 	const [aiInsightsLoading, setAiInsightsLoading] = useState(false);
 	const [aiInsightsError, setAiInsightsError] = useState(false);
-	const refreshAiInsights = useCallback(async () => {
-		const epoch = sessionEpoch.current;
-		try {
-			const result = await fetchAiInsights();
-			if (epoch !== sessionEpoch.current) return; // signed out mid-flight
-			setAiInsights(result);
-		} catch {
-			// A failed cache read leaves the current state intact (no error surfaced);
-			// the user can still generate.
-		}
-	}, []);
+	const refreshAiInsights = useCallback(() => runSave({
+		send: fetchAiInsights,
+		onSaved: setAiInsights,
+		// A failed cache read leaves the current state intact (no error surfaced);
+		// the user can still generate.
+		onFailed: () => {},
+		whenSignedOut: undefined,
+	}), [runSave]);
 	// `goal` is passed IN by the caller (computed from live state at tap time), not
 	// read from a closure here — so this stays a stable useCallback([]) and can never
 	// send a stale goal.
-	const generateAiInsights = useCallback(async (goal?: AiGoalSignal | null) => {
-		const epoch = sessionEpoch.current;
+	const generateAiInsights = useCallback((goal?: AiGoalSignal | null) => {
 		setAiInsightsLoading(true);
 		setAiInsightsError(false);
-		try {
-			const result = await apiGenerateAiInsights(goal);
-			if (epoch !== sessionEpoch.current) return; // signed out mid-flight
-			setAiInsights(result);
-		} catch {
-			if (epoch === sessionEpoch.current) setAiInsightsError(true);
-		} finally {
-			// Only the run that still owns the session may clear the spinner. A stale run
-			// (signed out, then a NEW session started its own generate) must NOT flip the
-			// live run's spinner off — that would let the new user double-fire.
-			if (epoch === sessionEpoch.current) setAiInsightsLoading(false);
-		}
-	}, []);
+		// Only the run that still owns the session may clear the spinner: the runner skips both
+		// callbacks after sign-out, so a stale run (signed out, then a NEW session started its own
+		// generate) can't flip the live run's spinner off and let the new user double-fire.
+		return runSave({
+			send: () => apiGenerateAiInsights(goal),
+			onSaved: (result) => {
+				setAiInsights(result);
+				setAiInsightsLoading(false);
+			},
+			onFailed: () => {
+				setAiInsightsError(true);
+				setAiInsightsLoading(false);
+			},
+			whenSignedOut: undefined,
+		});
+	}, [runSave]);
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -1031,13 +1030,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setSheet(null); // nothing to categorise — just close the sheet
       return;
     }
-    // WHIT-271: the optimistic cache writes below go through patchTransactions/patchRules
-    // (guarded `prev ? … : prev`), so they no-op on the cleared cache after sign-out. The late
-    // FAILURE toasts have no such guard, so gate them on the session epoch — a save settling
-    // after sign-out must not toast into the next session.
-    const epoch = sessionEpoch.current;
-    const epochStillCurrent = () => epoch === sessionEpoch.current;
-
     if (scope === 'all') {
       // "Every {merchant} charge": every OTHER uncategorised transaction from the
       // same merchant (matched by description) that counts toward a budget. Captured
@@ -1063,7 +1055,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const sameMerchantIds = sweepIds.includes(txId) ? sweepIds : [txId, ...sweepIds];
       // Optimistically file all of them under the chosen category; the rollback reverts each
       // failed one to what it ACTUALLY was (WHIT-324) and restores the old budget's list (WHIT-348).
-      const rollback = optimisticRefile(sameMerchantIds, categoryId, categories, epochStillCurrent);
+      const rollback = optimisticRefile(sameMerchantIds, categoryId, categories);
 
       // WHIT-355: don't mint a second rule when one already matches this pattern. Only CREATE a
       // new rule when there's no existing same-pattern rule. A same-category one already does the
@@ -1142,51 +1134,68 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // rule call in Promise.allSettled BEFORE awaiting the batch attaches its rejection
       // handler synchronously, so a rule failure can never float as an unhandled rejection
       // while the batch is in flight; issuing it first preserves the prior rule-before-charges
-      // call order.
-      const ruleSettled = mints.length > 0
-        ? Promise.allSettled(mints.map((mint) => createRule({ value: mint.value, categoryId })))
-        : null;
-      const { failedIds } = await persistCategoryBatch(sameMerchantIds, categoryId);
-      const ruleOutcomes = ruleSettled ? await ruleSettled : [];
-
-      // Reconcile each optimistic rule against ITS OWN temp id (allSettled preserves order, so
-      // outcome i belongs to mints[i]): swap in the real BankSync id on success (so a later delete
-      // targets the real rule), or remove just that temp row on failure — the others stand.
-      ruleOutcomes.forEach((outcome, i) => {
-        const { tempId } = mints[i];
-        if (outcome.status === 'fulfilled') {
-          // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
-          // false for the load path, where rules genuinely aren't new).
-          patchRules((prev) => prev.map((r) => (r.id === tempId ? { ...toRule(outcome.value), isNew: true } : r)));
-        } else {
-          patchRules((prev) => prev.filter((r) => r.id !== tempId));
-        }
+      // call order. The runner owns the session check: after sign-out none of the reconcile,
+      // rollback, toasts or refresh below run.
+      await runSave({
+        send: async () => {
+          const ruleSettled = mints.length > 0
+            ? Promise.allSettled(mints.map((mint) => createRule({ value: mint.value, categoryId })))
+            : null;
+          const { failedIds } = await persistCategoryBatch(sameMerchantIds, categoryId);
+          const ruleOutcomes = ruleSettled ? await ruleSettled : [];
+          return { failedIds, ruleOutcomes };
+        },
+        // Partial-failure undo lives in onSaved because persistCategoryBatch never throws.
+        onSaved: ({ failedIds, ruleOutcomes }) => {
+          // Reconcile each optimistic rule against ITS OWN temp id (allSettled preserves order, so
+          // outcome i belongs to mints[i]): swap in the real BankSync id on success (so a later
+          // delete targets the real rule), or remove just that temp row on failure — the others stand.
+          ruleOutcomes.forEach((outcome, i) => {
+            const { tempId } = mints[i];
+            if (outcome.status === 'fulfilled') {
+              // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
+              // false for the load path, where rules genuinely aren't new).
+              patchRules((prev) => prev.map((r) => (r.id === tempId ? { ...toRule(outcome.value), isNew: true } : r)));
+            } else {
+              patchRules((prev) => prev.filter((r) => r.id !== tempId));
+            }
+          });
+          const anyRuleRejected = ruleOutcomes.some((outcome) => outcome.status === 'rejected');
+          if (failedIds.length > 0) {
+            rollback(failedIds);
+            showToast('Could not save some categories. Please try again.');
+          } else if (anyRuleRejected) {
+            // Transactions filed fine; at least one future-rule failed to persist.
+            showToast('Filed, but could not save the rule for future charges.');
+          }
+          if (failedIds.length < sameMerchantIds.length) refreshAfter('refile');
+        },
+        onFailed: () => {
+          rollback(sameMerchantIds);
+          const tempIds = mints.map((mint) => mint.tempId);
+          patchRules((prev) => prev.filter((r) => !tempIds.includes(r.id)));
+          showToast('Could not save some categories. Please try again.');
+        },
+        whenSignedOut: undefined,
       });
-      const anyRuleRejected = ruleOutcomes.some((outcome) => outcome.status === 'rejected');
-      if (failedIds.length > 0) {
-        rollback(failedIds);
-        if (epochStillCurrent()) showToast('Could not save some categories. Please try again.');
-      } else if (anyRuleRejected) {
-        // Transactions filed fine; at least one future-rule failed to persist.
-        if (epoch === sessionEpoch.current) showToast('Filed, but could not save the rule for future charges.');
-      }
-      if (failedIds.length < sameMerchantIds.length) refreshAfter('refile');
       return;
     }
 
     // scope === 'one': just this single transaction.
-    const rollback = optimisticRefile([txId], categoryId, categories, epochStillCurrent);
+    const rollback = optimisticRefile([txId], categoryId, categories);
     showToast(`This transaction filed under ${category.name}.`);
     setSheet(null); // close the confirm sheet
 
-    try {
-      await apiSetTransactionCategory(txId, categoryId);
-      refreshAfter('refile');
-    } catch {
-      rollback([txId]);
-      if (epochStillCurrent()) showToast('Could not save category. Please try again.');
-    }
-  }, [sheet, showToast, patchRules]);
+    await runSave({
+      send: () => apiSetTransactionCategory(txId, categoryId),
+      onSaved: () => refreshAfter('refile'),
+      onFailed: () => {
+        rollback([txId]);
+        showToast('Could not save category. Please try again.');
+      },
+      whenSignedOut: undefined,
+    });
+  }, [sheet, showToast, patchRules, runSave]);
 
   // WHIT-291: re-file a captured SET of transactions under one category in a single action
   // (multi-select). This is applyCategory's 'all' batch path WITHOUT the merchant rule/sweep —
@@ -1201,10 +1210,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const ids = Array.from(new Set(txIds)).filter((id) => transactions.some((t) => t.transaction_id === id));
     if (!category || ids.length === 0) { setSheet(null); return; }
 
-    // WHIT-271: the optimistic writes are guarded (no-op on the cleared cache); gate late toasts on epoch.
-    const epoch = sessionEpoch.current;
-    const epochStillCurrent = () => epoch === sessionEpoch.current;
-    const rollback = optimisticRefile(ids, categoryId, categories, epochStillCurrent);
+    const rollback = optimisticRefile(ids, categoryId, categories);
     showToast(ids.length === 1
       ? `This transaction filed under ${category.name}.`
       : `${ids.length} transactions filed under ${category.name}.`);
@@ -1213,13 +1219,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // Batch-persist in chunks under the server cap and reconcile BY ID (shared with
     // applyCategory('all') since WHIT-292). A rejected/malformed chunk leaves its ids in
     // failedIds -> rolled back to their previous category.
-    const { failedIds } = await persistCategoryBatch(ids, categoryId);
-    if (failedIds.length > 0) {
-      rollback(failedIds);
-      if (epochStillCurrent()) showToast('Could not save some categories. Please try again.');
-    }
-    if (failedIds.length < ids.length) refreshAfter('refile');
-  }, [showToast]);
+    await runSave({
+      send: () => persistCategoryBatch(ids, categoryId),
+      // Partial-failure undo lives in onSaved because persistCategoryBatch never throws.
+      onSaved: ({ failedIds }) => {
+        if (failedIds.length > 0) {
+          rollback(failedIds);
+          showToast('Could not save some categories. Please try again.');
+        }
+        if (failedIds.length < ids.length) refreshAfter('refile');
+      },
+      onFailed: () => {
+        rollback(ids);
+        showToast('Could not save some categories. Please try again.');
+      },
+      whenSignedOut: undefined,
+    });
+  }, [showToast, runSave]);
 
   // WHIT-508: bring the server-derived reads back in line after an apply-rules run.
   //
@@ -1278,23 +1294,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // budget-only charge's detail screen to "not found." Now the row stays findable;
       // budgetDetail filters out excluded rows at the view-model level so the budget list still
       // drops them visually. Re-including (budget_excluded: false) still relies on the refresh.
-      patchAllCopies(stamp(patch));
-
-      // WHIT-271: the patches are guarded (no-op on the cleared cache); gate the late failure
-      // toast on the epoch so a save settling after sign-out doesn't toast the next session.
-      const epoch = sessionEpoch.current;
-      try {
-        await apiSetTransactionFields(txId, patch);
-        // A note/tag edit touches no server-derived total, so only an exclude refreshes.
-        if ('budget_excluded' in patch) refreshAfter('budgetExclusion');
-      } catch {
-        patchAllCopies(stamp(previous));
-        if (epoch === sessionEpoch.current) {
-          showToast('Could not save. Please try again.');
-        }
-      }
+      // WHIT-271: the runner owns the session check, so a save settling after sign-out neither
+      // undoes into the next account's data nor toasts into its session.
+      return runSave({
+        apply: () => {
+          patchAllCopies(stamp(patch));
+          return () => patchAllCopies(stamp(previous));
+        },
+        send: () => apiSetTransactionFields(txId, patch),
+        onSaved: () => {
+          // A note/tag edit touches no server-derived total, so only an exclude refreshes.
+          if ('budget_excluded' in patch) refreshAfter('budgetExclusion');
+        },
+        onFailed: () => showToast('Could not save. Please try again.'),
+        whenSignedOut: undefined,
+      });
     },
-    [showToast],
+    [showToast, runSave],
   );
 
   const saveBudget = useCallback(
