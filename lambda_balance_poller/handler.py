@@ -477,6 +477,8 @@ def lambda_handler(event, context):
     best-effort: an SSM failure (throttle, missing param, IAM) is logged and swallowed so
     the invocation never errors out and every last-good row survives, rather than a
     credential blip taking down the whole poll.
+    Only a fully clean run logs BALANCE_POLL_ALL_STORED — the heartbeat the WHIT-645
+    balance-poll alarm watches; keep it in lockstep with terraform/monitoring.tf.
     """
     try:
         api_key = get_api_key()
@@ -496,4 +498,6 @@ def lambda_handler(event, context):
         check_feed_stalls(deltas, int(time.time()))
     except Exception as e:
         logger.error("feed-stall check failed (balances still stored): %s", e)
+    if homeloan_stored and accounts_stored == len(BALANCE_SOURCES):
+        logger.info("BALANCE_POLL_ALL_STORED home loan + %s account balances refreshed", accounts_stored)
     return {"homeloan_stored": homeloan_stored, "accounts_stored": accounts_stored}
