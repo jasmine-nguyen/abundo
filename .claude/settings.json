@@ -1,4 +1,14 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(aws sts get-caller-identity)",
+      "Bash(aws dynamodb query *)",
+      "Bash(aws dynamodb get-item *)",
+      "Bash(aws logs filter-log-events *)",
+      "Bash(aws logs tail *)",
+      "WebFetch(domain:api.banksync.io)"
+    ]
+  },
   "enabledPlugins": {
     "expo@claude-plugins-official": true
   },
