@@ -16,10 +16,14 @@ import type { Transaction, Category, Rule } from '../context';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
+// The `updates` of every batch save the app sent, in order.
+const batches = () => server.requests()
+  .filter((r) => r.method === 'PATCH' && r.path === '/transactions')
+  .map((r) => (r.body as { updates: { id: string; category: string }[] }).updates);
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -33,13 +37,8 @@ const TXN = {
 const txns = () => readTransactionsCache(queryClient);
 const rules = () => queryClient.getQueryData<Rule[]>(['rules']) ?? [];
 
-beforeEach(() => {
-  queryClient.clear();
-  // Default: the batch endpoint echoes every id back as 'updated'.
-  mockApi.setTransactionCategories.mockImplementation(
-    async (updates: { id: string; category: string }[]) =>
-      ({ results: updates.map((u) => ({ id: u.id, status: 'updated' as const })) }));
-});
+// The fake server's batch endpoint echoes every id back as 'updated' unless a test says otherwise.
+beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });
 
 function seed(txnList: readonly Transaction[]) {
@@ -64,8 +63,8 @@ it('applyCategoryToMany splits a >100 multi-select into chunks of 100 (shared he
 
   await act(async () => { await result.current.applyCategoryToMany(many.map((t) => t.transaction_id), 'groceries'); });
 
-  expect(mockApi.setTransactionCategories).toHaveBeenCalledTimes(2);
-  const sizes = mockApi.setTransactionCategories.mock.calls.map((c) => c[0].length).sort((a, b) => b - a);
+  expect(batches()).toHaveLength(2);
+  const sizes = batches().map((updates) => updates.length).sort((a, b) => b - a);
   expect(sizes).toEqual([100, 50]);
   // Both chunks succeed (default echo) -> all 150 filed under groceries.
   expect(txns().filter((t) => t.category === 'groceries')).toHaveLength(150);
@@ -86,10 +85,10 @@ it('applyCategoryToMany reverts only the rejected chunk to its previous category
   ]);
   queryClient.setQueryData(['budgets', 14], {});
   queryClient.setQueryData(['rules'], []);
-  mockApi.setTransactionCategories.mockImplementation(async (updates: { id: string; category: string }[]) => {
-    if (updates.length !== 100) throw new Error('second chunk down');
-    return { results: updates.map((u) => ({ id: u.id, status: 'updated' as const })) };
+  server.once('PATCH', '/transactions', {
+    body: { results: many.slice(0, 100).map((t) => ({ id: t.transaction_id, status: 'updated' })) },
   });
+  server.once('PATCH', '/transactions', { status: 500 }); // second chunk down
   const result = mount();
 
   await act(async () => { await result.current.applyCategoryToMany(many.map((t) => t.transaction_id), 'dining'); });
@@ -107,7 +106,7 @@ it('applyCategoryToMany reverts only the rejected chunk to its previous category
 // gate createRule on sameMerchantIds.length > 0, or drop the tapped charge from the set, and
 // the assertions below go red.
 it("applyCategory('all') files the tapped charge and mints the rule when the sweep is empty", async () => {
-  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  server.once('POST', '/rules', { body: { id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' } });
   // Origin doesn't count to a budget -> no OTHER charge is swept; only the tapped charge is filed.
   seed([{ ...TXN, transaction_id: 't1', category: null, counts_to_budget: false }]);
   const result = mount();
@@ -115,9 +114,9 @@ it("applyCategory('all') files the tapped charge and mints the rule when the swe
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.setTransactionCategories).toHaveBeenCalledTimes(1);                    // the tapped charge is filed
-  expect(mockApi.setTransactionCategories.mock.calls[0][0]).toEqual([{ id: 't1', category: 'groceries' }]);
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' }); // rule STILL fires
+  expect(batches()).toHaveLength(1);                                     // the tapped charge is filed
+  expect(batches()[0]).toEqual([{ id: 't1', category: 'groceries' }]);
+  expect(server.requests()).toContainEqual({ method: 'POST', path: '/rules', body: { value: 'COLES', categoryId: 'groceries' } }); // rule STILL fires
   // The optimistic rule was reconciled to the real BankSync id (not rolled back) and survives.
   expect(rules()).toHaveLength(1);
   expect(rules()[0].id).toBe('e1');
@@ -134,6 +133,6 @@ it('applyCategoryToMany dedupes repeated ids to a single batch update', async ()
 
   await act(async () => { await result.current.applyCategoryToMany(['t1', 't1', 't1'], 'groceries'); });
 
-  expect(mockApi.setTransactionCategories).toHaveBeenCalledTimes(1);
-  expect(mockApi.setTransactionCategories.mock.calls[0][0]).toEqual([{ id: 't1', category: 'groceries' }]);
+  expect(batches()).toHaveLength(1);
+  expect(batches()[0]).toEqual([{ id: 't1', category: 'groceries' }]);
 });

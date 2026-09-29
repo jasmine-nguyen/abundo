@@ -12,10 +12,10 @@ import type { Rule } from '../context';
 import type { GoalRecord } from '../api';
 import { queryClient } from '../queryClient';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 const mountAppContext = () => renderHook(() => useAppContext(), { wrapper }).result;
@@ -29,11 +29,15 @@ const rule = (id: string): Rule => ({ id, pattern: id, categoryId: 'subs', isNew
 const goalIds = () => queryClient.getQueryData<GoalRecord[]>(['goals'])?.map((g) => g.id);
 const ruleIds = () => queryClient.getQueryData<Rule[]>(['rules'])?.map((r) => r.id);
 
+// Each goal / rule delete sits at its own path, so a failure is set per id.
+const failGoalDeletes = (...ids: string[]) => ids.forEach((id) => server.fail(`/goals/${id}`, 500));
+const failRuleDeletes = (...ids: string[]) => ids.forEach((id) => server.fail(`/rules/${id}`, 500));
+
 beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });
 
 describe('deleteGoal — three concurrent failed deletes restore order', () => {
-  beforeEach(() => { mockApi.deleteGoal.mockRejectedValue(new Error('API error: 500')); });
+  beforeEach(() => { failGoalDeletes('g1', 'g2', 'g3', 'g4', 'g5'); });
 
   it('an adjacent chain (g2+g3+g4) rolls back to [g1..g5]', async () => {
     queryClient.setQueryData<GoalRecord[]>(['goals'], ['g1', 'g2', 'g3', 'g4', 'g5'].map(goal));
@@ -54,10 +58,7 @@ describe('deleteGoal — one succeeds + one fails concurrently', () => {
     // Call order [g3(fail), g1(success)]: g3 captures its successor ids BEFORE g1 is removed,
     // so a saved integer index would splice g3 back at a stale slot -> [g2,g4,g3]. The
     // successor-anchor lands it correctly at [g2,g3,g4]. This is the fail-on-revert case.
-    mockApi.deleteGoal.mockImplementation(async (id: string) => {
-      if (id === 'g3') throw new Error('API error: 500');
-      return undefined as never;
-    });
+    failGoalDeletes('g3');
     queryClient.setQueryData<GoalRecord[]>(['goals'], ['g1', 'g2', 'g3', 'g4'].map(goal));
     const result = mountAppContext();
     let returns: boolean[] = [];
@@ -70,7 +71,7 @@ describe('deleteGoal — one succeeds + one fails concurrently', () => {
 });
 
 describe('deleteGoal — failure edges', () => {
-  beforeEach(() => { mockApi.deleteGoal.mockRejectedValue(new Error('API error: 500')); });
+  beforeEach(() => { failGoalDeletes('g1', 'g2', 'g3', 'g4', 'g5'); });
 
   it('a failed delete of the ONLY element restores [g1] and returns false + toasts', async () => {
     queryClient.setQueryData<GoalRecord[]>(['goals'], [goal('g1')]);
@@ -83,15 +84,18 @@ describe('deleteGoal — failure edges', () => {
   });
 
   it('restores the removed goal even if the goals cache is EVICTED mid-flight (prev ?? [])', async () => {
-    // Deferred reject so we can wipe the cache between the optimistic remove and the rollback.
-    let reject!: (e: Error) => void;
-    mockApi.deleteGoal.mockImplementation(() => new Promise((_res, rej) => { reject = rej; }));
+    // Held reply so we can wipe the cache between the optimistic remove and the rollback.
+    const held = server.hold('/goals/g1');
     queryClient.setQueryData<GoalRecord[]>(['goals'], [goal('g1'), goal('g2')]);
     const result = mountAppContext();
     let p!: Promise<boolean>;
     act(() => { p = result.current.deleteGoal('g1'); });      // optimistic remove -> [g2]
     act(() => { queryClient.removeQueries({ queryKey: ['goals'] }); }); // cache evicted mid-flight
-    await act(async () => { reject(new Error('API error: 500')); await p; });
+    await act(async () => {
+      server.once('DELETE', '/goals/g1', { status: 500 });
+      held.release();
+      await p;
+    });
     // deleteGoal's `prev ?? []` still rebuilds a list holding the removed goal.
     expect(goalIds()).toEqual(['g1']);
   });
@@ -102,14 +106,17 @@ describe('deleteRule — cache evicted mid-flight is a NO-OP (asymmetry vs delet
     // Documents the current behaviour: patchRules is `prev ? fn(prev) : prev`, so a rollback
     // against an evicted (undefined) cache is silently skipped — the failed rule delete is NOT
     // restored. deleteGoal recovers here; deleteRule does not. Flagged in the critique.
-    let reject!: (e: Error) => void;
-    mockApi.deleteRule.mockImplementation(() => new Promise((_res, rej) => { reject = rej; }));
+    const held = server.hold('/rules/r1');
     queryClient.setQueryData<Rule[]>(['rules'], [rule('r1'), rule('r2')]);
     const result = mountAppContext();
     let p!: Promise<void>;
     act(() => { p = result.current.deleteRule('r1'); });
     act(() => { queryClient.removeQueries({ queryKey: ['rules'] }); });
-    await act(async () => { reject(new Error('API error: 500')); await p; });
+    await act(async () => {
+      server.once('DELETE', '/rules/r1', { status: 500 });
+      held.release();
+      await p;
+    });
     expect(ruleIds()).toBeUndefined(); // rule NOT restored — cache stays evicted
   });
 });
@@ -123,7 +130,7 @@ describe('deleteRule — cache evicted mid-flight is a NO-OP (asymmetry vs delet
 // between these too. (Reuses this file's goalIds/ruleIds — the `?.map` form covers the same asserts.)
 
 describe('deleteGoal — two failed deletes at once restore order', () => {
-  beforeEach(() => { mockApi.deleteGoal.mockRejectedValue(new Error('API error: 500')); });
+  beforeEach(() => { failGoalDeletes('g1', 'g2', 'g3', 'g4', 'g5'); });
 
   it('a GAP pair (g1 + g3) rolls back to [g1,g2,g3,g4]', async () => {
     queryClient.setQueryData<GoalRecord[]>(['goals'], [goal('g1'), goal('g2'), goal('g3'), goal('g4')]);
@@ -145,7 +152,7 @@ describe('deleteGoal — two failed deletes at once restore order', () => {
 });
 
 describe('deleteRule — two failed deletes at once restore order', () => {
-  beforeEach(() => { mockApi.deleteRule.mockRejectedValue(new Error('API error: 500')); });
+  beforeEach(() => { failRuleDeletes('r1', 'r2', 'r3', 'r4'); });
 
   it('a GAP pair (r1 + r3) rolls back to [r1,r2,r3,r4]', async () => {
     queryClient.setQueryData<Rule[]>(['rules'], [rule('r1'), rule('r2'), rule('r3'), rule('r4')]);

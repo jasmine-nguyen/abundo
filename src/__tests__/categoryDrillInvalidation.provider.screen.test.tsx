@@ -21,10 +21,10 @@ import type { Transaction } from '../context';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -40,10 +40,7 @@ function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
   return spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
 }
 
-beforeEach(() => {
-  queryClient.clear();
-  mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'groceries' });
-});
+beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });
 
 function mount(transactions: Transaction[] = [txn()]) {
@@ -71,7 +68,6 @@ it('applyCategory(one) invalidates categoryTransactions (drill stays reconciled 
 // [A-inval-cat-exclude] excluding a charge drops it from the drill's contributing total, exactly
 // as it drops from the /breakdown card — the drill list must refresh in lockstep.
 it('applyTransactionEdit(budget_excluded) invalidates categoryTransactions', async () => {
-  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', budget_excluded: true });
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -85,7 +81,6 @@ it('applyTransactionEdit(budget_excluded) invalidates categoryTransactions', asy
 // the drill list (same guard as budgetTransactions). This one PASSES today (nothing invalidates it)
 // but locks the guard once the fix lands: the fix must sit INSIDE the budget_excluded branch.
 it('applyTransactionEdit(notes) does NOT invalidate categoryTransactions', async () => {
-  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', notes: 'lunch' });
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 

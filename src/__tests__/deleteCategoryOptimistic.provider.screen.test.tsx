@@ -9,10 +9,10 @@ import type { Transaction, Category, Rule } from '../context';
 import type { TransactionFeedPage } from '../api';
 import { queryClient } from '../queryClient';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -53,14 +53,7 @@ const categoryIds = () => queryClient.getQueryData<Category[]>(['categories'])?.
 const ruleIds = () => queryClient.getQueryData<Rule[]>(['rules'])?.map((r) => r.id);
 const invalidated = (key: QueryKey) => queryClient.getQueryState(key)?.isInvalidated;
 
-function deferred() {
-  let resolve!: () => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-}
-
-beforeEach(() => { queryClient.clear(); jest.clearAllMocks(); });
+beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });
 
 it('deleting a category unfiles its charges on screen instantly, undoes on failure, and on success leaves every charge list showing them uncategorised', async () => {
@@ -68,8 +61,7 @@ it('deleting a category unfiles its charges on screen instantly, undoes on failu
   const { result } = renderHook(() => useAppContext(), { wrapper });
 
   // 1. A failed delete: the screen changes before the server replies, then everything is put back.
-  const failing = deferred();
-  mockApi.deleteCategory.mockReturnValueOnce(failing.promise as never);
+  const failing = server.hold('/categories/dining');
   let failedOk: boolean | undefined;
   let failedDelete!: Promise<void>;
   act(() => { failedDelete = result.current.deleteCategory('dining').then((ok) => { failedOk = ok; }); });
@@ -81,7 +73,11 @@ it('deleting a category unfiles its charges on screen instantly, undoes on failu
   expect(categoryOf(listRows(BUDGET_KEY))).toEqual({ t1: null, t2: 'groceries' });
   expect(categoryOf(listRows(CATEGORY_KEY))).toEqual({ t1: null });
 
-  await act(async () => { failing.reject(new Error('boom')); await failedDelete; });
+  await act(async () => {
+    server.once('DELETE', '/categories/dining', 'dropped');
+    failing.release();
+    await failedDelete;
+  });
 
   expect(failedOk).toBe(false);
   expect(categoryIds()).toEqual(['dining', 'groceries']);
@@ -95,7 +91,6 @@ it('deleting a category unfiles its charges on screen instantly, undoes on failu
   expect(invalidated(CATEGORY_KEY)).toBe(false);
 
   // 2. A successful delete: every copy shows the charge uncategorised, and the charge lists reload.
-  mockApi.deleteCategory.mockResolvedValueOnce(undefined as never);
   let savedOk: boolean | undefined;
   await act(async () => { savedOk = await result.current.deleteCategory('dining'); });
 

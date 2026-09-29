@@ -15,10 +15,11 @@ import { useRulesScreenData } from '../queries';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
+const rulesReads = () => server.requests().filter((r) => r.method === 'GET' && r.path === '/rules');
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -43,7 +44,7 @@ function mountWithSeededCache() {
 }
 
 it('saveManualRule writes the cache and keeps isNew:true through the reconcile', async () => {
-  mockApi.createRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' });
+  server.once('POST', '/rules', { body: { id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' } });
   const result = mountWithSeededCache();
 
   await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
@@ -55,7 +56,6 @@ it('saveManualRule writes the cache and keeps isNew:true through the reconcile',
 });
 
 it('deleteRule removes the rule from the cache', async () => {
-  mockApi.deleteRule.mockResolvedValue({ id: 'e1' });
   const result = mountWithSeededCache();
 
   await act(async () => { await result.current.deleteRule('e1'); });
@@ -64,7 +64,6 @@ it('deleteRule removes the rule from the cache', async () => {
 });
 
 it('updateRule edits the cached rule in place', async () => {
-  mockApi.updateRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'DISNEY', categoryId: 'subs' });
   const result = mountWithSeededCache();
 
   await act(async () => { await result.current.updateRule('e1', 'DISNEY', 'subs'); });
@@ -75,39 +74,38 @@ it('updateRule edits the cached rule in place', async () => {
 // WHIT-558: the "keep out of budget" flag threads through both writers into the API call and
 // the ['rules'] cache row.
 it('saveManualRule passes budgetExcluded to createRule and into the cache', async () => {
-  mockApi.createRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'splitwise', categoryId: 'subs', budgetExcluded: true });
+  server.once('POST', '/rules', { body: { id: 'e9', field: 'description', operator: 'contains', value: 'splitwise', categoryId: 'subs', budgetExcluded: true } });
   const result = mountWithSeededCache();
 
   await act(async () => { await result.current.saveManualRule('splitwise', 'subs', true); });
 
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'splitwise', categoryId: 'subs', budgetExcluded: true, spread: false });
+  expect(server.requests()).toContainEqual({ method: 'POST', path: '/rules', body: { value: 'splitwise', categoryId: 'subs', budgetExcluded: true, spread: false } });
   expect(cacheRules()?.[0].budgetExcluded).toBe(true);
 });
 
 it('updateRule passes budgetExcluded to the rules API and into the cache', async () => {
-  mockApi.updateRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs', budgetExcluded: true });
   const result = mountWithSeededCache();
 
   await act(async () => { await result.current.updateRule('e1', 'NETFLIX', 'subs', true); });
 
-  expect(mockApi.updateRule).toHaveBeenCalledWith('e1', { value: 'NETFLIX', categoryId: 'subs', field: 'description', operator: 'contains', budgetExcluded: true, spread: false });
+  expect(server.requests()).toContainEqual({ method: 'PUT', path: '/rules/e1', body: { value: 'NETFLIX', categoryId: 'subs', field: 'description', operator: 'contains', budgetExcluded: true, spread: false } });
   expect(cacheRules()?.[0].budgetExcluded).toBe(true);
 });
 
 // WHIT-559: the spread flag threads through createRule and the server's captured amount/gap land in
 // the ['rules'] cache row (via toRule), so the edit sheet can prefill them.
 it('saveManualRule passes spread to createRule and the captured bill lands in the cache', async () => {
-  mockApi.createRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'origin', categoryId: 'subs', spread: true, spreadAmount: 4250, spreadGapDays: 30 });
+  server.once('POST', '/rules', { body: { id: 'e9', field: 'description', operator: 'contains', value: 'origin', categoryId: 'subs', spread: true, spreadAmount: 4250, spreadGapDays: 30 } });
   const result = mountWithSeededCache();
 
   await act(async () => { await result.current.saveManualRule('origin', 'subs', false, undefined, true); });
 
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'origin', categoryId: 'subs', budgetExcluded: false, spread: true });
+  expect(server.requests()).toContainEqual({ method: 'POST', path: '/rules', body: { value: 'origin', categoryId: 'subs', budgetExcluded: false, spread: true } });
   expect(cacheRules()?.[0]).toMatchObject({ spread: true, spreadAmount: 4250, spreadGapDays: 30 });
 });
 
 it('a failed save mirrors the optimistic add into the cache, then rolls it back', async () => {
-  mockApi.createRule.mockRejectedValue(new Error('API error: 400'));
+  server.once('POST', '/rules', { status: 400 });
   const result = mountWithSeededCache();
 
   // Observe the optimistic add reaching the cache MID-FLIGHT (before the reject), so this
@@ -125,7 +123,6 @@ it('a failed save mirrors the optimistic add into the cache, then rolls it back'
 });
 
 it('deleteCategory drops the category rules from the cache without resurrecting them', async () => {
-  mockApi.deleteCategory.mockResolvedValue(undefined as never);
   const result = mountWithSeededCache();
 
   await act(async () => { await result.current.deleteCategory('subs'); });
@@ -156,7 +153,7 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
   beforeEach(() => {
     // Only the mounted-observer test fetches (via the real useRulesQuery); the rest read
     // the seeded cache directly. The provider no longer eager-loads.
-    mockApi.listRules.mockResolvedValue([{ ...SERVER_RULE }]);
+    server.seed('/rules', [{ ...SERVER_RULE }]);
   });
 
   // WHIT-192: seed the caches the writers read (the provider no longer eager-loads).
@@ -174,7 +171,7 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
     // A single uncategorised charge in the cache; the confirm sheet targets it. Make it NOT
     // count to budget so no batch call fires — the test is only about the minted RULE write.
     const tx = { transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01', description: 'NETFLIX', merchant_name: 'Netflix', amount: -15, account_id: 'a1', account_name: 'Everyday', category: null, status: 'posted', type: 'purchase', counts_to_budget: false } as unknown as Transaction;
-    mockApi.createRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs' });
+    server.once('POST', '/rules', { body: { id: 'e9', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs' } });
     // WHIT-355: seed a NON-matching existing rule. A same-pattern rule would now (correctly)
     // suppress the mint as a duplicate; here the flow still mints, which is what this test locks.
     seedCache({ transactions: [tx], rules: [{ id: 'other', pattern: 'SPOTIFY', categoryId: 'subs', isNew: false }] });
@@ -193,20 +190,20 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
     // No ['rules'] seed: the query was never mounted, so getQueryData is undefined. Seed only
     // categories (the toast lookup) to prove the absent-cache guard, not a missing-category one.
     queryClient.setQueryData(['categories'], [SUBS_CAT]);
-    mockApi.createRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' });
+    server.once('POST', '/rules', { body: { id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' } });
     const result = mount();
 
     await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
 
     // The server write still happened…
-    expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs', budgetExcluded: false, spread: false });
+    expect(server.requests()).toContainEqual({ method: 'POST', path: '/rules', body: { value: 'spotify', categoryId: 'subs', budgetExcluded: false, spread: false } });
     // …but patchRules' `prev ? fn(prev) : prev` guard left the cache untouched (undefined) —
     // no crash from spreading undefined, and no half-built ['rules'] cache to mislead a later reader.
     expect(cacheRules()).toBeUndefined();
   });
 
   it('updateRule FAILURE writes the optimistic edit into the cache, then rolls it back', async () => {
-    mockApi.updateRule.mockRejectedValue(new Error('boom'));
+    server.fail('/rules/e1', 500);
     seedCache();
     const result = mount();
 
@@ -224,7 +221,7 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
   });
 
   it('deleteRule FAILURE removes then re-inserts the rule in the cache (catch-branch, not a no-op)', async () => {
-    mockApi.deleteRule.mockRejectedValue(new Error('boom'));
+    server.fail('/rules/e1', 500);
     seedCache();
     const result = mount();
 
@@ -240,14 +237,14 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
   });
 
   it('a MOUNTED useRulesQuery observer reflects saveManualRule instantly, with no refetch', async () => {
-    mockApi.createRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' });
+    server.once('POST', '/rules', { body: { id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' } });
     // Seed the ['rules'] cache FRESH (setQueryData stamps dataUpdatedAt=now), so the mounted
     // observer reads it synchronously without an initial fetch — deterministic, and it makes the
     // "no refetch after the write" assertion exact (listRules must stay at zero calls).
     queryClient.setQueryData<Rule[]>(['rules'], [RULE_E1]);
     const { result } = renderHook(() => ({ ctx: useAppContext(), screen: useRulesScreenData() }), { wrapper: observerWrapper });
     await waitFor(() => expect(result.current.screen.rules).toHaveLength(1));
-    expect(mockApi.listRules).not.toHaveBeenCalled(); // fresh cache → no initial fetch
+    expect(rulesReads()).toHaveLength(0); // fresh cache → no initial fetch
 
     await act(async () => { await result.current.ctx.saveManualRule('spotify', 'subs'); });
 
@@ -257,6 +254,6 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
     // once other suites have exercised the singleton notifyManager).
     await waitFor(() => expect(result.current.screen.rules).toHaveLength(2));
     expect(result.current.screen.rules[0]).toMatchObject({ id: 'e9', categoryId: 'subs', isNew: true });
-    expect(mockApi.listRules).not.toHaveBeenCalled();
+    expect(rulesReads()).toHaveLength(0);
   });
 });

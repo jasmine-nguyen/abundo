@@ -11,10 +11,12 @@ import { AppProvider, useAppContext } from '../context';
 import type { Rule } from '../context';
 import { queryClient } from '../queryClient';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
+// Every rule write the app sent with this method (POST = create, PUT = update, DELETE = delete).
+const ruleWrites = (method: string) => server.requests().filter((r) => r.method === method && r.path.startsWith('/rules'));
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 const NETFLIX: Rule = { id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false, field: 'description', operator: 'contains' };
@@ -28,7 +30,6 @@ beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });
 
 it('deleteRule writer calls the api deleteRule exactly once and no other rule api', async () => {
-  mockApi.deleteRule.mockResolvedValue({ id: 'e1' });
   seed([{ ...NETFLIX }]);
   const { result } = renderHook(() => useAppContext(), { wrapper });
 
@@ -36,35 +37,33 @@ it('deleteRule writer calls the api deleteRule exactly once and no other rule ap
 
   // Exactly once → a self-recursing writer would never reach the api (0 calls); a stacked
   // double-write would be >1. Either fails this.
-  expect(mockApi.deleteRule).toHaveBeenCalledTimes(1);
-  expect(mockApi.deleteRule).toHaveBeenCalledWith('e1');
+  expect(ruleWrites('DELETE')).toHaveLength(1);
+  expect(ruleWrites('DELETE')).toContainEqual({ method: 'DELETE', path: '/rules/e1', body: undefined });
   // A mis-alias (writer calling the wrong api fn) is caught here.
-  expect(mockApi.updateRule).not.toHaveBeenCalled();
-  expect(mockApi.createRule).not.toHaveBeenCalled();
+  expect(ruleWrites('PUT')).toHaveLength(0);
+  expect(ruleWrites('POST')).toHaveLength(0);
 });
 
 it('updateRule writer calls the api updateRule exactly once and no other rule api', async () => {
-  mockApi.updateRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'SPOTIFY', categoryId: 'subs' });
   seed([{ ...NETFLIX }]);
   const { result } = renderHook(() => useAppContext(), { wrapper });
 
   await act(async () => { await result.current.updateRule('e1', 'SPOTIFY', 'subs'); });
 
-  expect(mockApi.updateRule).toHaveBeenCalledTimes(1);
-  expect(mockApi.updateRule).toHaveBeenCalledWith('e1', { value: 'SPOTIFY', categoryId: 'subs', field: 'description', operator: 'contains', budgetExcluded: false, spread: false });
-  expect(mockApi.deleteRule).not.toHaveBeenCalled();
-  expect(mockApi.createRule).not.toHaveBeenCalled();
+  expect(ruleWrites('PUT')).toHaveLength(1);
+  expect(ruleWrites('PUT')).toContainEqual({ method: 'PUT', path: '/rules/e1', body: { value: 'SPOTIFY', categoryId: 'subs', field: 'description', operator: 'contains', budgetExcluded: false, spread: false } });
+  expect(ruleWrites('DELETE')).toHaveLength(0);
+  expect(ruleWrites('POST')).toHaveLength(0);
 });
 
 it('saveManualRule writer calls the api createRule exactly once and no other rule api', async () => {
-  mockApi.createRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' });
   seed();
   const { result } = renderHook(() => useAppContext(), { wrapper });
 
   await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
 
-  expect(mockApi.createRule).toHaveBeenCalledTimes(1);
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs', budgetExcluded: false, spread: false });
-  expect(mockApi.updateRule).not.toHaveBeenCalled();
-  expect(mockApi.deleteRule).not.toHaveBeenCalled();
+  expect(ruleWrites('POST')).toHaveLength(1);
+  expect(ruleWrites('POST')).toContainEqual({ method: 'POST', path: '/rules', body: { value: 'spotify', categoryId: 'subs', budgetExcluded: false, spread: false } });
+  expect(ruleWrites('PUT')).toHaveLength(0);
+  expect(ruleWrites('DELETE')).toHaveLength(0);
 });
