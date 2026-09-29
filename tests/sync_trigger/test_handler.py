@@ -194,3 +194,38 @@ def test_lambda_handler_url_error_counts_as_failure(monkeypatch):
 
     with pytest.raises(RuntimeError):
         handler.lambda_handler({}, None)
+
+
+# --- WHIT-644: a rejected key fails the run and is re-read next hour ----------
+
+
+def test_rejected_key_fails_the_run_and_next_run_uses_the_newly_saved_key(monkeypatch):
+    # 28 Sep: BankSync rejected our key (401) on every feed. The run must fail (that
+    # is what the Errors alarm counts), and once Jas saves a new key to SSM the next
+    # hourly run in the same warm container must use it, not the cached old one.
+    import api_key
+    ssm = {"value": "old-key"}
+    monkeypatch.setattr(api_key, "get_param", lambda path: ssm["value"])
+
+    seen_keys = []
+
+    def rejecting_urlopen(req, timeout=None):
+        seen_keys.append(req.get_header("X-api-key"))
+        raise _http_error(401)
+
+    monkeypatch.setattr(handler.urllib.request, "urlopen", rejecting_urlopen)
+    with pytest.raises(RuntimeError):
+        handler.lambda_handler({}, None)
+
+    ssm["value"] = "new-key"
+    accepted_keys = []
+
+    def accepting_urlopen(req, timeout=None):
+        accepted_keys.append(req.get_header("X-api-key"))
+        return _ok_response()
+
+    monkeypatch.setattr(handler.urllib.request, "urlopen", accepting_urlopen)
+    assert handler.lambda_handler({}, None) == {"triggered": list(handler.SYNC_FEED_IDS)}
+
+    assert set(seen_keys) == {"old-key"}
+    assert accepted_keys and set(accepted_keys) == {"new-key"}

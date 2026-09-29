@@ -29,7 +29,7 @@ from constants import (
     SYNC_FEED_IDS,
     SYNC_TIMEOUT_SECONDS,
 )
-from api_key import get_api_key as _fetch_api_key
+from api_key import forget_api_key, get_api_key as _fetch_api_key
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -86,6 +86,8 @@ def lambda_handler(event, context):
             trigger_sync(feed_id, api_key)
         except Exception as e:
             logger.error("feed %s (%s): sync trigger failed: %s", feed_id, label, e)
+            if isinstance(e, urllib.error.HTTPError) and e.code == 401:
+                forget_api_key(BANKSYNC_API_KEY_PATH)
             failed.append(feed_id)
 
     if failed:

@@ -21,3 +21,8 @@ def get_api_key(path: str) -> str:
     if path not in _cache:
         _cache[path] = get_param(path)
     return _cache[path]
+
+
+def forget_api_key(path: str) -> None:
+    """Drop a key the provider rejected so the next call re-reads SSM."""
+    _cache.pop(path, None)
