@@ -111,6 +111,50 @@ describe('WHIT-637 fake server', () => {
   });
 });
 
+describe('WHIT-639 fake server one-shot replies (once)', () => {
+  const server = installFakeServer();
+  const JOB_PATH = '/transactions/uncategorized/apply-rules/jobs/job-1';
+  const RUNNING = { jobId: 'job-1', status: 'running', attempted: 10 };
+  const SUCCEEDED = { jobId: 'job-1', status: 'succeeded', attempted: 20 };
+
+  it('a job poll gets each queued reply once, in order, then falls back to the route', async () => {
+    server.seed(JOB_PATH, RUNNING);
+    server.once('GET', JOB_PATH, 'dropped');
+    server.once('GET', JOB_PATH, { status: 503 });
+    server.once('GET', JOB_PATH, { body: SUCCEEDED });
+
+    const dropped = await api.getApplyRulesJob('job-1').catch((error: unknown) => error);
+    expect(dropped).toBeInstanceOf(TypeError);
+    expect((dropped as Error).message).toBe('Network request failed');
+
+    await expect(api.getApplyRulesJob('job-1')).rejects.toMatchObject({
+      name: 'ApiError', status: 503, serverMessage: null,
+    });
+    await expect(api.getApplyRulesJob('job-1')).resolves.toEqual(SUCCEEDED);
+    await expect(api.getApplyRulesJob('job-1')).resolves.toEqual(RUNNING);
+
+    expect(server.requests().filter((r) => r.method === 'GET' && r.path === JOB_PATH)).toHaveLength(4);
+  });
+
+  it('a queued reply beats a sticky failure, is keyed by method, and carries the server\'s reason', async () => {
+    server.fail('/categories', 500);
+    server.once('GET', '/categories', { body: [GROCERIES] });
+    await expect(api.fetchCategories()).resolves.toEqual([GROCERIES]);
+    await expect(api.fetchCategories()).rejects.toThrow('API error: 500');
+
+    server.once('PUT', '/rules/r1', { status: 409 });
+    await expect(api.deleteRule('r1')).resolves.toEqual({ id: 'r1' });
+    await expect(api.updateRule('r1', { value: 'COLES', categoryId: 'groceries' })).rejects.toMatchObject({
+      name: 'ApiError', status: 409,
+    });
+
+    server.once('POST', '/categories', { status: 409, reason: 'A category called Gym already exists' });
+    await expect(api.createCategory(GYM)).rejects.toMatchObject({
+      name: 'ApiError', status: 409, serverMessage: 'A category called Gym already exists',
+    });
+  });
+});
+
 describe('WHIT-637 fake server clean-up', () => {
   it('puts the real fetch back once the fake server\'s tests are done', () => {
     expect(global.fetch).toBe(originalFetch);

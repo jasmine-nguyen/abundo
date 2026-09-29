@@ -26,13 +26,15 @@ import { seedTransactionsCache } from './support/transactionsCache';
 let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
 const mockListeners = new Set<() => void>();
 const mockSetStatus = (status: typeof mockStatus) => { mockStatus = status; mockListeners.forEach((l) => l()); };
-jest.mock('../api');
 jest.mock('../auth', () => ({
   getStatus: () => mockStatus,
   subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
+  getAuthToken: async () => 'test-id-token',
 }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
+const APPLY_RULES = '/transactions/uncategorized/apply-rules';
 const SWEEP: FilingTarget = { kind: 'sweep' };
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
@@ -65,13 +67,8 @@ function rowsIn(key: 'transactions'): Transaction[] {
   return data ? data.pages.flatMap((p) => p.transactions) : [];
 }
 function mount() { return renderHook(() => useAppContext(), { wrapper }).result; }
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => { resolve = r; });
-  return { promise, resolve };
-}
 
-beforeEach(() => { queryClient.clear(); jest.clearAllMocks(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); mockStatus = 'authed'; });
 afterEach(() => { queryClient.clear(); });
 
 // --- fileByShop: the write ----------------------------------------------------
@@ -80,17 +77,19 @@ afterEach(() => { queryClient.clear(); });
 // revert: drop the rule arg and the call goes out as a plain sweep, minting nothing.
 it('sends the inline rule (value = the group pattern, category = the pick) with dryRun false', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report());
+  server.seed(APPLY_RULES, report());
 
   const result = mount();
   await act(async () => { await result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true }); });
 
-  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(false, { value: 'coles', categoryId: 'groceries' });
+  expect(server.requests()).toContainEqual({
+    method: 'POST', path: APPLY_RULES, body: { dryRun: false, rule: { value: 'coles', categoryId: 'groceries' } },
+  });
 });
 
 it('patches the filed row and returns { ok, report } on success', async () => {
   seedTransactionsCache(queryClient, [txn(), txn({ transaction_id: 'untouched' })]);
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report({ filed: [{ id: 't1', category: 'groceries' }] }));
+  server.seed(APPLY_RULES, report({ filed: [{ id: 't1', category: 'groceries' }] }));
 
   const result = mount();
   let outcome: FilingResult | null = null;
@@ -106,7 +105,7 @@ it('patches the filed row and returns { ok, report } on success', async () => {
 // must appear in the rules list. Fail-on-revert: drop either invalidateQueries and its key is gone.
 it('invalidates the shop list and the rules list after a successful file', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report());
+  server.seed(APPLY_RULES, report());
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
@@ -122,7 +121,7 @@ it('invalidates the shop list and the rules list after a successful file', async
 // invalidate spy fires.
 it('returns { clash } and refreshes nothing on a 409 clash', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  mockApi.applyRulesToUncategorized.mockRejectedValue(new ApiError(409, null));
+  server.fail(APPLY_RULES, 409);
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
@@ -140,7 +139,7 @@ it('returns { clash } and refreshes nothing on a 409 clash', async () => {
 // from the catch and the invalidate spy never fires.
 it('returns { clash: null } and still refreshes on a non-clash failure', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  mockApi.applyRulesToUncategorized.mockRejectedValue(new Error('API error: 502'));
+  server.fail(APPLY_RULES, 502);
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
@@ -157,33 +156,35 @@ it('returns { clash: null } and still refreshes on a non-clash failure', async (
 // and the second call fires a second api request.
 it('shares the in-flight latch with applyRulesToHistory', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  const pending = deferred<ApplyRulesResult>();
-  mockApi.applyRulesToUncategorized.mockReturnValue(pending.promise);
+  server.once('POST', APPLY_RULES, { body: report() });
+  const pending = server.hold(APPLY_RULES);
 
   const result = mount();
   await act(async () => {
     const first = result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true });   // holds the latch
     const blocked = await result.current.fileCharges(SWEEP, { now: true });     // must be turned away
     expect(blocked).toEqual({ status: 'failed', background: false });
-    pending.resolve(report());
+    pending.release();
     await first;
   });
 
-  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledTimes(1);
+  expect(server.requests().filter((r) => r.method === 'POST' && r.path === APPLY_RULES)).toHaveLength(1);
 });
 
 // --- previewFileByShop: the dry run -------------------------------------------
 
 it('previews with dryRun true and the inline rule, writing nothing', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report({ dryRun: true, filed: [], createdRule: null }));
+  server.seed(APPLY_RULES, report({ dryRun: true, filed: [], createdRule: null }));
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
   let outcome: FilingResult | null = null;
   await act(async () => { outcome = await result.current.previewFiling({ kind: 'shop', group: GROUP, categoryId: 'groceries' }); });
 
-  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(true, { value: 'coles', categoryId: 'groceries' });
+  expect(server.requests()).toContainEqual({
+    method: 'POST', path: APPLY_RULES, body: { dryRun: true, rule: { value: 'coles', categoryId: 'groceries' } },
+  });
   expect(outcome).toEqual({ status: 'filed', report: expect.anything() });
   expect(spy).not.toHaveBeenCalled();                        // a preview reconciles nothing
   expect(rowsIn('transactions')[0].category).toBeNull();     // ...and touches no row
@@ -192,7 +193,7 @@ it('previews with dryRun true and the inline rule, writing nothing', async () =>
 
 it('surfaces a 409 clash from the preview (distinct from a generic failure)', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  mockApi.applyRulesToUncategorized.mockRejectedValue(new ApiError(409, null));
+  server.fail(APPLY_RULES, 409);
 
   const result = mount();
   let outcome: FilingResult | null = null;
@@ -203,7 +204,7 @@ it('surfaces a 409 clash from the preview (distinct from a generic failure)', as
 
 it('returns { clash: null } when the preview fails for any other reason', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  mockApi.applyRulesToUncategorized.mockRejectedValue(new Error('API error: 502'));
+  server.fail(APPLY_RULES, 502);
 
   const result = mount();
   let outcome: FilingResult | null = null;
@@ -217,8 +218,8 @@ it('returns { clash: null } when the preview fails for any other reason', async 
 // A file settling after sign-out must not paint the next session's caches. Fail-on-revert: drop the
 // post-await epoch check and the signed-out session gets the old account's row filed.
 it('bails without painting when a file settles after sign-out', async () => {
-  const pending = deferred<ApplyRulesResult>();
-  mockApi.applyRulesToUncategorized.mockReturnValue(pending.promise);
+  server.once('POST', APPLY_RULES, { body: report({ filed: [{ id: 't1', category: 'groceries' }] }) });
+  const pending = server.hold(APPLY_RULES);
   const result = mount();
 
   let outcome: FilingResult | null = null;
@@ -226,7 +227,7 @@ it('bails without painting when a file settles after sign-out', async () => {
     const inFlight = result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true });
     mockSetStatus('anon');
     seedTransactionsCache(queryClient, [txn()]);
-    pending.resolve(report({ filed: [{ id: 't1', category: 'groceries' }] }));
+    pending.release();
     outcome = await inFlight;
   });
 

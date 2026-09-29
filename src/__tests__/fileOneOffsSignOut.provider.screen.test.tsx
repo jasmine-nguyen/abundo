@@ -1,6 +1,6 @@
 // WHIT-544 — the sign-out reset the screen tests can't reach: a one-shot "jump into multi-select"
 // intent armed but NOT yet consumed must NOT carry into the next session. Drives the REAL AppProvider
-// (../auth + ../api mocked) with a live miniature auth store so the anon broadcast runs the real
+// (../auth mocked, the fake server behind ../api) with a live miniature auth store so the anon broadcast runs the real
 // sign-out subscription. Mirrors saveMilestonesSignOut.provider's harness.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import React from 'react';
@@ -14,11 +14,14 @@ const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mo
 jest.mock('../auth', () => ({
   getStatus: () => mockStatus,
   subscribe: (l: () => void) => mockSubscribe(l),
+  getAuthToken: async () => 'test-id-token',
 }));
-jest.mock('../api');
 
 import { AppProvider, useAppContext } from '../context';
 import { queryClient } from '../queryClient';
+import { installFakeServer } from './support/fakeServer';
+
+installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 

@@ -10,12 +10,12 @@ import type { Transaction, FilingTarget } from '../context';
 import type { TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
 
 const SWEEP: FilingTarget = { kind: 'sweep' };
-const mockApi = api as jest.Mocked<typeof api>;
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd49b', recent: 100 } as const;
@@ -28,17 +28,18 @@ const txn = (id: string): Transaction => ({
 
 beforeEach(() => {
   queryClient.clear();
+  resetAuth();
   queryClient.setQueryData(['categories'], [{ ...CAT }]);
   queryClient.setQueryData<TransactionSearchResult>(SEARCH_KEY, { transactions: [txn('deep1'), txn('deep2'), txn('deep3')], truncated: false });
 });
 afterEach(() => { queryClient.clear(); });
 
 it('[A10] apply-rules patches + invalidates the search result', async () => {
-  mockApi.applyRulesToUncategorized.mockResolvedValue({
+  server.seed('/transactions/uncategorized/apply-rules', {
     dryRun: false, rulesConsidered: 1, unfiled: 3, matched: 1, conflicted: 0, conflictedSamples: [],
     byCategory: { groceries: 1 }, byRule: [], skippedRules: [],
     filed: [{ id: 'deep1', category: 'groceries' }], vanished: ['deep2'], failed: [],
-  } as never);
+  });
   const result = renderHook(() => useAppContext(), { wrapper }).result;
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 

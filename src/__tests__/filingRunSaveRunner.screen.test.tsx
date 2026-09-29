@@ -12,9 +12,11 @@ import type { Transaction } from '../context';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 
-jest.mock('../api');
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const GROUP: UncategorizedMerchantGroup = {
   merchant: 'Coles', rulePattern: 'coles', groupedBy: 'merchant', count: 1,
@@ -30,7 +32,7 @@ const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
 
 const UNFILED = { transaction_id: 't1', description: 'COLES 1234', amount: -10, category: null } as unknown as Transaction;
 
-beforeEach(() => { queryClient.clear(); jest.clearAllMocks(); });
+beforeEach(() => { queryClient.clear(); resetAuth(); });
 afterEach(() => { queryClient.clear(); });
 
 it('drops the filing preview and "file now" when the save runner says the user signed out', async () => {
@@ -39,7 +41,7 @@ it('drops the filing preview and "file now" when the save runner says the user s
   const sessionEpoch = { current: 0 };
   seedTransactionsCache(queryClient, [UNFILED]);
   const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report());
+  server.seed('/transactions/uncategorized/apply-rules', report());
 
   const { result } = renderHook(() => useFilingRun({
     sessionEpoch, runSave, prependMintedRule: jest.fn(), sheetOpen: true,

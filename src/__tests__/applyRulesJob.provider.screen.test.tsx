@@ -23,21 +23,25 @@ const mockSetStatus = (status: typeof mockStatus) => {
   mockStatus = status;
   mockListeners.forEach((listener) => listener());
 };
-jest.mock('../api');
 jest.mock('../auth', () => ({
   getStatus: () => mockStatus,
   subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
+  getAuthToken: async () => 'test-id-token',
 }));
-import * as api from '../api';
-import { ApiError } from '../apiError';
+import { installFakeServer } from './support/fakeServer';
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
-const mockApi = api as jest.Mocked<typeof api>;
+
+const server = installFakeServer();
+const JOBS = '/transactions/uncategorized/apply-rules/jobs';
+const JOB_PATH = `${JOBS}/job-1`;
+const calls = (method: string, path: string) =>
+  server.requests().filter((r) => r.method === method && r.path === path).length;
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
-  jobId: 'j1', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,
+  jobId: 'job-1', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,
   failed: 0, alreadyFiled: 0, remaining: 0, createdRule: null, error: null,
   createdAt: 't0', updatedAt: 't0', completedAt: null, ...over,
 });
@@ -55,22 +59,13 @@ async function tick(times = 1) {
   }
 }
 
-/** A promise the test resolves itself, so a GET can be left in flight while the sheet changes. */
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => { resolve = r; });
-  return { promise, resolve };
-}
-
-beforeEach(() => { queryClient.clear(); jest.clearAllMocks(); jest.useFakeTimers(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); jest.useFakeTimers(); mockStatus = 'authed'; });
 afterEach(() => { jest.useRealTimers(); queryClient.clear(); });
 
 it('starts a job, shows it running, and polls to success — refreshing caches once', async () => {
   const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
-  mockApi.startApplyRulesJob.mockResolvedValue(job({ status: 'running' }));
-  mockApi.getApplyRulesJob
-    .mockResolvedValueOnce(job({ status: 'running', matched: 900, filed: 300 }))
-    .mockResolvedValueOnce(job({ status: 'succeeded', matched: 900, filed: 900, remaining: 0 }));
+  server.once('GET', JOB_PATH, { body: job({ status: 'running', matched: 900, filed: 300 }) });
+  server.once('GET', JOB_PATH, { body: job({ status: 'succeeded', matched: 900, filed: 900, remaining: 0 }) });
 
   const r = mount();
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
@@ -88,8 +83,7 @@ it('starts a job, shows it running, and polls to success — refreshing caches o
 });
 
 it('treats a server status:"failed" as terminal and surfaces the error', async () => {
-  mockApi.startApplyRulesJob.mockResolvedValue(job());
-  mockApi.getApplyRulesJob.mockResolvedValueOnce(job({ status: 'failed', error: 'boom' }));
+  server.once('GET', JOB_PATH, { body: job({ status: 'failed', error: 'boom' }) });
 
   const r = mount();
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
@@ -99,8 +93,7 @@ it('treats a server status:"failed" as terminal and surfaces the error', async (
 });
 
 it('treats a 404 (expired id) as a terminal failure', async () => {
-  mockApi.startApplyRulesJob.mockResolvedValue(job());
-  mockApi.getApplyRulesJob.mockRejectedValueOnce(new ApiError(404, null));
+  server.once('GET', JOB_PATH, { status: 404 });
 
   const r = mount();
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
@@ -110,10 +103,8 @@ it('treats a 404 (expired id) as a terminal failure', async () => {
 });
 
 it('tolerates a transient network throw and keeps polling', async () => {
-  mockApi.startApplyRulesJob.mockResolvedValue(job());
-  mockApi.getApplyRulesJob
-    .mockRejectedValueOnce(new Error('offline'))                       // dropped poll — NOT a failure
-    .mockResolvedValueOnce(job({ status: 'succeeded', matched: 5, filed: 5 }));
+  server.once('GET', JOB_PATH, 'dropped');                              // dropped poll — NOT a failure
+  server.once('GET', JOB_PATH, { body: job({ status: 'succeeded', matched: 5, filed: 5 }) });
 
   const r = mount();
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
@@ -125,8 +116,7 @@ it('tolerates a transient network throw and keeps polling', async () => {
 });
 
 it('gives up after too many consecutive network throws', async () => {
-  mockApi.startApplyRulesJob.mockResolvedValue(job());
-  mockApi.getApplyRulesJob.mockRejectedValue(new Error('offline'));
+  for (let i = 0; i < 5; i++) server.once('GET', JOB_PATH, 'dropped');
 
   const r = mount();
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
@@ -136,8 +126,7 @@ it('gives up after too many consecutive network throws', async () => {
 });
 
 it('goes straight to done when the first poll is already succeeded (finished before the first GET)', async () => {
-  mockApi.startApplyRulesJob.mockResolvedValue(job());
-  mockApi.getApplyRulesJob.mockResolvedValueOnce(job({ status: 'succeeded', matched: 0, filed: 0 }));
+  server.once('GET', JOB_PATH, { body: job({ status: 'succeeded', matched: 0, filed: 0 }) });
 
   const r = mount();
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
@@ -147,55 +136,48 @@ it('goes straight to done when the first poll is already succeeded (finished bef
 });
 
 it('blocks the sync sweep while a job is running (one heavy run at a time)', async () => {
-  mockApi.startApplyRulesJob.mockResolvedValue(job());
-  mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 900, filed: 100 }));
-
   const r = mount();
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
+  server.seed(JOB_PATH, job({ status: 'running', matched: 900, filed: 100 }));
   expect(r.current.applyRulesJob?.status).toBe('running');
 
   // A second start is turned away; the sync sweep bails without touching the api.
   let second: unknown;
   await act(async () => { second = await r.current.fileCharges(SWEEP, BIG_RUN); });
   expect(second).toEqual({ status: 'failed', background: true });
-  expect(mockApi.startApplyRulesJob).toHaveBeenCalledTimes(1);
+  expect(calls('POST', JOBS)).toBe(1);
   let sync: unknown;
   await act(async () => { sync = await r.current.fileCharges(SWEEP, { now: true }); });
   expect(sync).toEqual({ status: 'failed', background: false });
-  expect(mockApi.applyRulesToUncategorized).not.toHaveBeenCalled();
+  expect(calls('POST', '/transactions/uncategorized/apply-rules')).toBe(0);
 });
 
 it('does not leave two poll chains after a dismiss + reopen during an in-flight GET', async () => {
   // Fail-on-revert for the poll-generation guard: a GET left in flight by a dismiss must NOT re-arm
   // the timer when it resolves, or the reopen's fresh timer plus the stale one give two live chains.
-  mockApi.startApplyRulesJob.mockResolvedValue(job());
-  const first = deferred<ApplyRulesJob>();
-  mockApi.getApplyRulesJob
-    .mockReturnValueOnce(first.promise) // the first GET hangs, in flight across the dismiss
-    .mockResolvedValue(job({ status: 'running', matched: 900, filed: 100 }));
-
   const r = mount();
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
+  server.seed(JOB_PATH, job({ status: 'running', matched: 900, filed: 100 }));
+  const first = server.hold(JOB_PATH); // the first GET hangs, in flight across the dismiss
   await act(async () => { jest.advanceTimersByTime(POLL); });   // fire poll 1 — its GET is now pending
-  expect(mockApi.getApplyRulesJob).toHaveBeenCalledTimes(1);
+  expect(calls('GET', JOB_PATH)).toBe(1);
 
   await act(async () => { r.current.setSheet(null); });          // dismiss mid-GET (bumps the generation)
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); }); // reopen (arms a fresh timer)
-  await act(async () => { first.resolve(job({ status: 'running', matched: 900, filed: 100 })); await Promise.resolve(); });
+  await act(async () => { first.release(); await Promise.resolve(); });
 
   // Exactly ONE chain is live now: one delay ⇒ exactly one more GET, not two.
-  const before = mockApi.getApplyRulesJob.mock.calls.length;
+  const before = calls('GET', JOB_PATH);
   await act(async () => { await jest.advanceTimersByTimeAsync(POLL); });
-  expect(mockApi.getApplyRulesJob.mock.calls.length).toBe(before + 1);
+  expect(calls('GET', JOB_PATH)).toBe(before + 1);
 });
 
 it('retry re-runs the SAME variant that failed, not a plain sweep', async () => {
   // A file-this-shop job fails; "Try again" must restart THAT shop's job — with its rule —
   // not a whole-rules sweep. (Finding 1: applyRulesJob is global, so the failed job can be shown
   // and retried from the plain sheet, which would otherwise call startApplyRulesSweep.)
-  mockApi.startApplyRulesJob.mockResolvedValue(job());
-  mockApi.getApplyRulesJob.mockResolvedValueOnce(job({ status: 'failed', error: 'boom' }));
+  server.once('GET', JOB_PATH, { body: job({ status: 'failed', error: 'boom' }) });
 
   const r = mount();
   const group = { rulePattern: 'WOOLWORTHS' } as UncategorizedMerchantGroup;
@@ -204,23 +186,22 @@ it('retry re-runs the SAME variant that failed, not a plain sweep', async () => 
   expect(r.current.applyRulesJob?.status).toBe('failed');
 
   await act(async () => { await r.current.retryApplyRulesJob(); });
-  expect(mockApi.startApplyRulesJob).toHaveBeenCalledTimes(2);
+  const starts = server.requests().filter((r) => r.method === 'POST' && r.path === JOBS);
+  expect(starts).toHaveLength(2);
   // Both starts carry the SHOP's rule — the retry did not fall back to a rule-less sweep.
-  expect(mockApi.startApplyRulesJob).toHaveBeenNthCalledWith(2, { value: 'WOOLWORTHS', categoryId: 'groceries' });
+  expect(starts[1].body).toEqual({ rule: { value: 'WOOLWORTHS', categoryId: 'groceries' } });
 });
 
 it('stops polling on sign-out and never reads status into the next session', async () => {
-  mockApi.startApplyRulesJob.mockResolvedValue(job());
-  mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 900, filed: 100 }));
-
   const r = mount();
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
+  server.seed(JOB_PATH, job({ status: 'running', matched: 900, filed: 100 }));
   await tick();
-  const callsBefore = mockApi.getApplyRulesJob.mock.calls.length;
+  const callsBefore = calls('GET', JOB_PATH);
 
   await act(async () => { mockSetStatus('anon'); });
   expect(r.current.applyRulesJob).toBeNull();
 
   await tick(3);
-  expect(mockApi.getApplyRulesJob.mock.calls.length).toBe(callsBefore); // no zombie poll
+  expect(calls('GET', JOB_PATH)).toBe(callsBefore); // no zombie poll
 });
