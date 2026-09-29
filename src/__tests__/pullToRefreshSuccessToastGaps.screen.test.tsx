@@ -125,6 +125,8 @@ describe('pull-to-refresh success-toast gaps (WHIT-489)', () => {
   // must still confirm with the toast. Fail-on-revert: drop the successMessage arg in accounts.tsx → RED.
   it('[N4] a pull on the empty "No accounts yet" state still toasts success', async () => {
     mockFetchTransactionsFeed.mockReset().mockResolvedValue({ transactions: [], nextCursor: null }); // no accounts
+    mockFetchAccountBalances.mockResolvedValue([]); // WHIT-643: a saved balance alone now makes a card
+    mockRefreshAccountBalances.mockResolvedValue([]);
     render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Accounts)));
     expect(await screen.findByText('No accounts yet')).toBeTruthy();
 

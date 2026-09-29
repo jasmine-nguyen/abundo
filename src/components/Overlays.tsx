@@ -4,7 +4,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
 import { Icon, Glyph } from '../icons';
-import { useAppContext, merchantLabel, categoryTreeRows, ruleConflict, ruleOverlap, categoryLabel, accountSummaries, APPLY_RULES_MAX_WRITES } from '../context';
+import { useAppContext, merchantLabel, categoryTreeRows, ruleConflict, ruleOverlap, categoryLabel, accountSummaries, accountNameFromId, APPLY_RULES_MAX_WRITES } from '../context';
 import type { RuleConflict, ApplyRulesResult, ApplyRulesJob, Category, FilingResult, FilingTarget, RuleWrite } from '../context';
 import { needsBackground } from '../filingRun';
 import type { UncategorizedMerchantGroup, RuleCondition, RuleLogic } from '../api';
@@ -469,7 +469,7 @@ function AddRuleSheet() {
   const accountNameById = new Map(accountSummaries({ transactions }).map((a) => [a.id, a.name]));
   const accountIds = new Set<string>(accountNameById.keys());
   for (const b of balances.values()) accountIds.add(b.account_id);
-  const accountOptions = [...accountIds].map((id) => ({ id, name: accountNameById.get(id) ?? id }));
+  const accountOptions = [...accountIds].map((id) => ({ id, name: accountNameById.get(id) ?? accountNameFromId(id) }));
   const sh = s.sheet;
   // ruleId present -> editing an existing rule; prefill from it. The sheet is
   // keyed on ruleId (see SheetHost), so it remounts per rule and these initialisers re-run.
@@ -669,7 +669,7 @@ function AddRuleSheet() {
     if (condition.field === 'account') {
       const options = accountOptions.some((o) => o.id === condition.value) || !condition.value
         ? accountOptions
-        : [...accountOptions, { id: condition.value, name: accountNameById.get(condition.value) ?? condition.value }];
+        : [...accountOptions, { id: condition.value, name: accountNameFromId(condition.value) }];
       if (options.length === 0) {
         return <Text style={[styles.cycleSectionHint, { marginTop: 8 }]}>No linked accounts yet.</Text>;
       }
