@@ -21,7 +21,10 @@
 // covered here; those suites keep their inlined block.
 import type { AuthStatus } from '../../auth';
 
+const TEST_TOKEN = 'test-id-token';
+
 let status: AuthStatus = 'authed';
+let token: string | undefined = TEST_TOKEN;
 const listeners = new Set<() => void>();
 
 export const getAuthStatus = (): AuthStatus => status;
@@ -37,19 +40,27 @@ export const setAuthStatus = (next: AuthStatus): void => {
   listeners.forEach((listener) => listener());
 };
 
-// Reset to logged-in + drop stale subscribers. Call in beforeEach.
+// The ID token the real api.ts request step asks for (WHIT-637). undefined → "Not signed in".
+export const getAuthToken = async (): Promise<string | undefined> => token;
+
+export const setAuthToken = (next: string | undefined): void => {
+  token = next;
+};
+
+// Reset to logged-in (with a token) + drop stale subscribers. Call in beforeEach.
 export const resetAuth = (): void => {
   status = 'authed';
+  token = TEST_TOKEN;
   listeners.clear();
 };
 
-// The object for jest.mock('../auth', ...): the two functions the auth module exposes. The
-// `satisfies` anchors the shape to the real auth module, so a getStatus/subscribe signature
-// drift trips typecheck instead of silently diverging.
+// The object for jest.mock('../auth', ...): the three functions the app reads from the auth
+// module. The `satisfies` anchors the shape to the real auth module, so a signature drift trips
+// typecheck instead of silently diverging.
 export function authMockModule() {
-  return { getStatus: getAuthStatus, subscribe: subscribeAuth } satisfies Pick<
+  return { getStatus: getAuthStatus, subscribe: subscribeAuth, getAuthToken } satisfies Pick<
     typeof import('../../auth'),
-    'getStatus' | 'subscribe'
+    'getStatus' | 'subscribe' | 'getAuthToken'
   >;
 }
 

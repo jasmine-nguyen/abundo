@@ -8,12 +8,11 @@ import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 import type { Rule } from '../context';
 import { queryClient } from '../queryClient';
-import { ApiError } from '../apiError';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 const RULE_E1: Rule = { id: 'e1', pattern: 'ORIGIN', categoryId: 'subs', isNew: false, field: 'description', operator: 'contains' };
@@ -29,7 +28,7 @@ function mount() {
 }
 
 it('a 422 on create shows the "no recurring bill" copy and rolls back', async () => {
-  mockApi.createRule.mockRejectedValue(new ApiError(422, null));
+  server.fail('/rules', 422);
   const result = mount();
 
   await act(async () => { await result.current.saveManualRule('ORIGIN', 'subs', false, undefined, true); });
@@ -39,7 +38,7 @@ it('a 422 on create shows the "no recurring bill" copy and rolls back', async ()
 });
 
 it('a 409 on create shows the "already has a spread rule" copy', async () => {
-  mockApi.createRule.mockRejectedValue(new ApiError(409, null));
+  server.fail('/rules', 409);
   const result = mount();
 
   await act(async () => { await result.current.saveManualRule('ORIGIN', 'subs', false, undefined, true); });
@@ -48,7 +47,7 @@ it('a 409 on create shows the "already has a spread rule" copy', async () => {
 });
 
 it('a non-spread failure keeps the generic create toast', async () => {
-  mockApi.createRule.mockRejectedValue(new ApiError(400, null));
+  server.fail('/rules', 400);
   const result = mount();
 
   await act(async () => { await result.current.saveManualRule('ORIGIN', 'subs', false, undefined, true); });
@@ -57,7 +56,7 @@ it('a non-spread failure keeps the generic create toast', async () => {
 });
 
 it('a 422 on an edit that turns spread on shows the specific copy too', async () => {
-  mockApi.updateRule.mockRejectedValue(new ApiError(422, null));
+  server.fail('/rules/e1', 422);
   const result = mount();
 
   await act(async () => { await result.current.updateRule('e1', 'ORIGIN', 'subs', false, undefined, true); });
