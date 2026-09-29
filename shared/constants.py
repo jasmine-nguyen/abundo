@@ -139,6 +139,32 @@ SYNC_FEED_IDS = {
 # HTTP timeout, in seconds, for a single sync-trigger request to BankSync.
 SYNC_TIMEOUT_SECONDS = 30
 
+# Accounts whose stored pendings the hourly sync trigger mirrors against BankSync's full
+# transaction list, deleting pendings the bank no longer lists (WHIT-662). ANZ is closed and
+# the home loan has no pendings, so both are out of scope.
+PENDING_MIRROR_SOURCES = [
+    {"bid": "fiskil_77", "aid": "A3AC9195-9E8D-48B8-86D0-46D130D7F64A"},  # westpac-altitude-qantas-black
+    {"bid": "fiskil_3", "aid": "3zVQJ8Btz_IRmqp78VrQnQ"},                 # up-spending
+]
+assert all(s["aid"] in ACCOUNT_ID_MAP for s in PENDING_MIRROR_SOURCES), (
+    "every PENDING_MIRROR_SOURCES `aid` must be a key in ACCOUNT_ID_MAP"
+)
+
+# Extra days the mirror's bank-list fetch reaches back beyond FEED_WINDOW_DAYS: BankSync filters
+# on the booking date, which can trail the swipe date we store.
+PENDING_MIRROR_FETCH_MARGIN_DAYS = 3
+
+# Page ceiling for one account's bank-list fetch. Also bounds requests against BankSync's
+# 10-a-minute limit.
+PENDING_MIRROR_MAX_PAGES = 3
+
+# More missing pendings than this in one account looks like a partial bank list, not real drops,
+# so the mirror deletes nothing for that account.
+PENDING_MIRROR_MAX_REMOVALS = 10
+
+# HTTP timeout, in seconds, for one bank-list page request.
+PENDING_MIRROR_TIMEOUT_SECONDS = 10
+
 # BankSync (bid, aid) coordinates for the home-loan account, used by the balance
 # poller to call getBalance (`GET /v1/banks/{bid}/accounts/{aid}/balances`) and
 # read the live mortgage balance (WHIT-8). `aid` is the same value that keys

@@ -60,8 +60,8 @@ data "archive_file" "lambda_api_zip" {
   output_path = "${path.module}/artifacts/lambda_api.zip"
 }
 
-# Transaction-trigger lambda source. Contains only handler.py; constants.py and
-# ssm.py come from the shared layer.
+# Transaction-trigger lambda source. Contains handler.py and pending_mirror.py (WHIT-662);
+# constants.py, ssm.py and the repositories come from the shared layer.
 data "archive_file" "sync_trigger_zip" {
   type        = "zip"
   source_dir  = "${path.module}/../lambda_sync_trigger"
@@ -320,6 +320,13 @@ resource "aws_lambda_function" "transaction_trigger" {
   source_code_hash = data.archive_file.sync_trigger_zip.output_base64sha256
   layers           = [aws_lambda_layer_version.shared.arn]
 
+  # The pending mirror (WHIT-662) reads and deletes transaction rows.
+  environment {
+    variables = {
+      TABLE_NAME = aws_dynamodb_table.dynamodb_table.name
+    }
+  }
+
   logging_config {
     log_format = "Text"
     log_group  = aws_cloudwatch_log_group.transaction_trigger.name
@@ -329,7 +336,7 @@ resource "aws_lambda_function" "transaction_trigger" {
 # Triggered daily by EventBridge Scheduler (see scheduler.tf) to poll the live Up
 # home-loan balance from BankSync (getBalance) and store it (WHIT-8). Needs the
 # shared layer (constants.py/ssm.py/repository.py) AND DynamoDB PutItem +
-# TABLE_NAME (unlike the transaction trigger, which writes nothing itself).
+# TABLE_NAME (the transaction trigger only reads and deletes, for its pending mirror).
 # The timeout scales with the account count: BALANCE_SOURCES is fetched serially at up
 # to HOMELOAN_BALANCE_TIMEOUT_SECONDS (30) each, so at 60s two slow bank calls exhausted
 # the budget and the remaining accounts were dropped for the day with no per-account log

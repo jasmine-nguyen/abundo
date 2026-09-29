@@ -65,6 +65,13 @@ def _reset_api_key_cache():
     api_key._cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _no_pending_mirror(monkeypatch):
+    """Stub the WHIT-662 pending mirror so the urlopen fakes here only see the sync POSTs.
+    The mirror itself is covered in test_pending_mirror.py."""
+    monkeypatch.setattr(handler.pending_mirror, "mirror_pendings", lambda api_key: None)
+
+
 # --- get_api_key -------------------------------------------------------------
 
 
@@ -229,3 +236,56 @@ def test_rejected_key_fails_the_run_and_next_run_uses_the_newly_saved_key(monkey
 
     assert set(seen_keys) == {"old-key"}
     assert accepted_keys and set(accepted_keys) == {"new-key"}
+
+
+# --- WHIT-662: the pending mirror runs after the syncs and never fails the run ----
+
+
+def test_pending_mirror_runs_after_every_sync_post(monkeypatch):
+    monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
+    events = []
+
+    def fake_urlopen(req, timeout=None):
+        events.append("post")
+        return _ok_response()
+
+    monkeypatch.setattr(handler.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(handler.pending_mirror, "mirror_pendings", lambda api_key: events.append(("mirror", api_key)))
+
+    handler.lambda_handler({}, None)
+
+    assert events == ["post"] * len(handler.SYNC_FEED_IDS) + [("mirror", "the-key")]
+
+
+def test_a_pending_mirror_failure_still_triggers_every_feed_and_does_not_raise(monkeypatch):
+    monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
+    calls = []
+
+    def fake_urlopen(req, timeout=None):
+        calls.append(req.full_url)
+        return _ok_response()
+
+    def broken_mirror(api_key):
+        raise RuntimeError("mirror broke")
+
+    monkeypatch.setattr(handler.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(handler.pending_mirror, "mirror_pendings", broken_mirror)
+
+    assert handler.lambda_handler({}, None) == {"triggered": list(handler.SYNC_FEED_IDS)}
+    assert len(calls) == len(handler.SYNC_FEED_IDS)
+
+
+def test_a_pending_mirror_failure_does_not_hide_a_failed_feed(monkeypatch):
+    monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
+
+    def fake_urlopen(req, timeout=None):
+        raise _http_error(500)
+
+    def broken_mirror(api_key):
+        raise RuntimeError("mirror broke")
+
+    monkeypatch.setattr(handler.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(handler.pending_mirror, "mirror_pendings", broken_mirror)
+
+    with pytest.raises(RuntimeError, match="sync trigger failed"):
+        handler.lambda_handler({}, None)

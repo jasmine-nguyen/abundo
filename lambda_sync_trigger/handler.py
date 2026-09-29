@@ -9,6 +9,9 @@ Flow:
         -> POST https://api.banksync.io/v1/feeds/{id}/sync   (per feed)
         -> BankSync fetches new transactions and pushes them to our webhook
            receiver (abundo-transaction-ingest), which writes them to DynamoDB.
+        -> then the pending mirror (pending_mirror.py, WHIT-662): per in-scope
+           account, GET BankSync's full transaction list and delete our stored
+           pendings the bank no longer lists. It never fails the run.
 
 BankSync's UI scheduler is capped at daily on our tier; calling the REST sync
 endpoint ourselves lets us pick our own cadence.
@@ -30,6 +33,7 @@ from constants import (
     SYNC_TIMEOUT_SECONDS,
 )
 from api_key import forget_api_key, get_api_key as _fetch_api_key
+import pending_mirror
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -89,6 +93,12 @@ def lambda_handler(event, context):
             if isinstance(e, urllib.error.HTTPError) and e.code == 401:
                 forget_api_key(BANKSYNC_API_KEY_PATH)
             failed.append(feed_id)
+
+    # Guarded so a mirror fault never fails the run: `failed` feeds the WHIT-644 alarm.
+    try:
+        pending_mirror.mirror_pendings(api_key)
+    except Exception:
+        logger.exception("pending mirror failed")
 
     if failed:
         raise RuntimeError(f"sync trigger failed for feeds: {failed}")
