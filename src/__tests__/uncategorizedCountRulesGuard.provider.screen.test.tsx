@@ -18,10 +18,10 @@ import { AppProvider, useAppContext } from '../context';
 import type { Rule } from '../context';
 import { queryClient } from '../queryClient';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -34,9 +34,7 @@ function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
 
 beforeEach(() => {
   queryClient.clear();
-  mockApi.createRule.mockResolvedValue({ ...RULE_RECORD } as never);
-  mockApi.updateRule.mockResolvedValue({ ...RULE_RECORD } as never);
-  mockApi.deleteRule.mockResolvedValue({ id: 'r1' } as never);
+  server.seed('/rules', [{ ...RULE_RECORD }]);
 });
 afterEach(() => { queryClient.clear(); });
 

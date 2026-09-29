@@ -15,10 +15,10 @@ import { AppProvider, useAppContext } from '../context';
 import type { Transaction } from '../context';
 import { queryClient } from '../queryClient';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -39,8 +39,6 @@ function readUncategorizedFeed(): Transaction[] {
 
 beforeEach(() => {
   queryClient.clear();
-  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 'deep1' } as never);
-  mockApi.setTransactionCategories.mockResolvedValue({ results: [{ id: 'm1', status: 'updated' }, { id: 'm2', status: 'updated' }] } as never);
   queryClient.setQueryData(['categories'], [{ ...CAT }]);
   queryClient.setQueryData(['budgets', 14], {});
 });
@@ -60,7 +58,7 @@ it('applyTransactionEdit updates a note on a row that lives only in the uncatego
 
   const row = readUncategorizedFeed().find((t) => t.transaction_id === 'deep1');
   expect(row?.notes).toBe('holiday');                    // the optimistic edit reached the uncat feed cache
-  expect(mockApi.setTransactionFields).toHaveBeenCalledWith('deep1', { notes: 'holiday' });
+  expect(server.requests()).toContainEqual({ method: 'PATCH', path: '/transactions/deep1', body: { notes: 'holiday' } });
 });
 
 // [C6] a multi-select batch file that includes uncat-feed rows patches their category there, so the

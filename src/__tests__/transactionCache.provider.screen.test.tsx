@@ -14,10 +14,10 @@ import type { TransactionFeedPage, TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
 import { findTransaction } from '../transactionCache';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -59,9 +59,9 @@ afterEach(() => { queryClient.clear(); });
 
 it('a batch re-file updates every copy, undoes only the charge that failed, and refreshes the right lists', async () => {
   // t2's save fails; t1 and t3 save.
-  mockApi.setTransactionCategories.mockResolvedValue({
-    results: [{ id: 't1', status: 'updated' }, { id: 't3', status: 'updated' }],
-  } as never);
+  server.once('PATCH', '/transactions', {
+    body: { results: [{ id: 't1', status: 'updated' }, { id: 't3', status: 'updated' }] },
+  });
   seed();
   const { result } = renderHook(() => useAppContext(), { wrapper });
 

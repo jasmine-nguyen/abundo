@@ -1,5 +1,5 @@
 // WHIT-190a/192 — the categorise write's cache write + invalidation (the WHIT-193 closure).
-// Drives the REAL applyCategory through AppProvider (../api + ../auth mocked) and asserts it
+// Drives the REAL applyCategory through AppProvider (../auth mocked, the fake server answering) and asserts it
 // updates the singleton ['transactions'] feed cache, rolls it back on failure, and invalidates
 // ['budgets']/['breakdown'] so the migrated Budgets/Insights screens refresh. The feed itself
 // is NOT invalidated (the optimistic patch already wrote it; an InfiniteData invalidate would
@@ -12,10 +12,14 @@ import type { Transaction } from '../context';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache, seedTransactionsPages, type FeedPage } from './support/transactionsCache';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
+const ruleMints = () => server.requests().filter((r) => r.method === 'POST' && r.path === '/rules');
+const ruleMintBodies = () => ruleMints().map((r) => r.body);
+const ruleUpdates = () => server.requests().filter((r) => r.method === 'PUT' && r.path.startsWith('/rules/'));
+const batchSaves = () => server.requests().filter((r) => r.method === 'PATCH' && r.path === '/transactions');
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -28,10 +32,9 @@ const txn = (id: string): Transaction => ({
 });
 const cachedCategory = (id: string) => readTransactionsCache(queryClient).find((t) => t.transaction_id === id)?.category;
 
+// The fake server mints a well-formed rule and reports every batch id updated unless a test queues otherwise.
 beforeEach(() => {
   queryClient.clear();
-  mockApi.createRule.mockResolvedValue({ id: 'r1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
-  mockApi.setTransactionCategories.mockImplementation(async (updates: { id: string; category: string }[]) => ({ results: updates.map((u) => ({ id: u.id, status: 'updated' as const })) }));
 });
 
 // The singleton queryClient's gcTime schedules a timer for inactive cached data;
@@ -52,7 +55,6 @@ function mount(transactions: Transaction[] = [txn('t1'), txn('t2')]) {
 }
 
 it('applyCategory(one) writes the tx cache AND invalidates budgets/breakdown but NOT the feed', async () => {
-  mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'groceries' });
   const result = mount();
 
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
@@ -67,7 +69,7 @@ it('applyCategory(one) writes the tx cache AND invalidates budgets/breakdown but
 });
 
 it('applyCategory(one) rolls the cache back on failure', async () => {
-  mockApi.setTransactionCategory.mockRejectedValue(new Error('boom'));
+  server.fail('/transactions/t1', 500);
   const result = mount();
 
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
@@ -93,7 +95,7 @@ it('applyCategory(all) writes every same-merchant charge into the cache + invali
 
 it('applyCategory(all) rolls back ONLY the failed ids in the cache (partial)', async () => {
   // t2's save comes back not-updated → only t2 reverts; t1 stays categorised.
-  mockApi.setTransactionCategories.mockResolvedValue({ results: [{ id: 't1', status: 'updated' as const }] });
+  server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: 'updated' }] } });
   const result = mount();
 
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
@@ -121,7 +123,7 @@ it('applyCategory(all) re-files the tapped charge even when it is already catego
 });
 
 it('applyCategory(all) reverts a failed tapped charge to its PREVIOUS category (not null)', async () => {
-  mockApi.setTransactionCategories.mockResolvedValue({ results: [] }); // every id fails to save
+  server.once('PATCH', '/transactions', { body: { results: [] } }); // every id fails to save
   const result = mount([{ ...txn('t1'), category: 'dining' }]);
   queryClient.setQueryData(['categories'], [{ ...CAT }, { ...DINING }]);
 
@@ -142,7 +144,7 @@ it('[WHIT-355] applyCategory(all) does NOT create a second rule when an identica
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.createRule).not.toHaveBeenCalled(); // no duplicate rule minted
+  expect(ruleMints()).toHaveLength(0); // no duplicate rule minted
   expect(cachedCategory('t1')).toBe('groceries'); // charges still filed
   expect(cachedCategory('t2')).toBe('groceries');
 });
@@ -155,8 +157,8 @@ it('[WHIT-355] applyCategory(all) neither creates nor changes a rule on a clash,
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.createRule).not.toHaveBeenCalled();  // no second, fighting rule
-  expect(mockApi.updateRule).not.toHaveBeenCalled();  // existing rule never silently changed
+  expect(ruleMints()).toHaveLength(0);   // no second, fighting rule
+  expect(ruleUpdates()).toHaveLength(0); // existing rule never silently changed
   expect((queryClient.getQueryData(['rules']) as { categoryId: string }[])[0].categoryId).toBe('dining'); // untouched
   expect(cachedCategory('t1')).toBe('groceries'); // the tapped charges still file where the user chose
   expect(cachedCategory('t2')).toBe('groceries');
@@ -169,7 +171,7 @@ it('[WHIT-355] applyCategory(all) STILL creates a rule when no same-pattern rule
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' });
+  expect(ruleMintBodies()).toContainEqual({ value: 'COLES', categoryId: 'groceries' });
 });
 
 // --- WHIT-491: one merchant, two spellings → one rule per distinct spelling ------------------
@@ -196,9 +198,9 @@ it('[WHIT-491] applyCategory(all) mints one rule per distinct spelling of the sa
   expect(cachedCategory('t2')).toBe('groceries'); // both spellings swept + filed
   // FAIL-ON-REVERT: the pre-491 single-rule code minted only the tapped spelling → 1 call. The fix
   // mints one per distinct spelling → exactly 2, one for each descriptor.
-  expect(mockApi.createRule).toHaveBeenCalledTimes(2);
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'groceries' });
+  expect(ruleMints()).toHaveLength(2);
+  expect(ruleMintBodies()).toContainEqual({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
+  expect(ruleMintBodies()).toContainEqual({ value: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'groceries' });
 });
 
 it('[WHIT-491] applyCategory(all) does NOT mint a rule from a swept no-merchant pending auth', async () => {
@@ -215,8 +217,8 @@ it('[WHIT-491] applyCategory(all) does NOT mint a rule from a swept no-merchant 
 
   expect(cachedCategory('t2')).toBe('groceries'); // the pending auth IS swept + filed
   // ...but no rule is minted from its noisy full description.
-  expect(mockApi.createRule).toHaveBeenCalledTimes(1);
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
+  expect(ruleMints()).toHaveLength(1);
+  expect(ruleMintBodies()).toContainEqual({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
 });
 
 it('[WHIT-491] applyCategory(all) dedups spellings that differ only by internal whitespace', async () => {
@@ -231,9 +233,9 @@ it('[WHIT-491] applyCategory(all) dedups spellings that differ only by internal 
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.createRule).toHaveBeenCalledTimes(2); // ws-variant folded away
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'UNIFLEX MASSAGE', categoryId: 'groceries' });
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'UNIFLEXMASSAGE', categoryId: 'groceries' });
+  expect(ruleMints()).toHaveLength(2); // ws-variant folded away
+  expect(ruleMintBodies()).toContainEqual({ value: 'UNIFLEX MASSAGE', categoryId: 'groceries' });
+  expect(ruleMintBodies()).toContainEqual({ value: 'UNIFLEXMASSAGE', categoryId: 'groceries' });
 });
 
 it('[WHIT-491] applyCategory(all) rolls back ONLY the spelling whose rule save failed', async () => {
@@ -241,10 +243,9 @@ it('[WHIT-491] applyCategory(all) rolls back ONLY the spelling whose rule save f
   // — the ANZ rule keeps its real server id — and the "could not save the rule" toast fires.
   const anz = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE');
   const westpac = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');
-  mockApi.createRule.mockImplementation(async ({ value, categoryId }) => {
-    if (value === 'UNIFLEXREMEDIALMASSAGE') throw new Error('boom');
-    return { id: 'r-anz', field: 'description', operator: 'contains', value: value ?? '', categoryId };
-  });
+  // Rules mint in sweep order: the ANZ spelling, then the Westpac one.
+  server.once('POST', '/rules', { body: { id: 'r-anz', field: 'description', operator: 'contains', value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' } });
+  server.once('POST', '/rules', { status: 500 });
   const result = mount([anz, westpac]);
   queryClient.setQueryData(['rules'], []);
 
@@ -272,10 +273,10 @@ it('[WHIT-491] applyCategory(all) skips only the spelling that clashes with an e
   await act(async () => { await result.current.applyCategory('all'); });
 
   // The new spelling mints; the clashing one does not.
-  expect(mockApi.createRule).toHaveBeenCalledTimes(1);
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
-  expect(mockApi.createRule).not.toHaveBeenCalledWith({ value: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'groceries' });
-  expect(mockApi.updateRule).not.toHaveBeenCalled(); // existing rule never silently changed
+  expect(ruleMints()).toHaveLength(1);
+  expect(ruleMintBodies()).toContainEqual({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
+  expect(ruleMintBodies()).not.toContainEqual({ value: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'groceries' });
+  expect(ruleUpdates()).toHaveLength(0); // existing rule never silently changed
   expect(cachedCategory('t1')).toBe('groceries'); // charges still file where the user chose
   expect(cachedCategory('t2')).toBe('groceries');
 });
@@ -298,7 +299,7 @@ it('applyCategoryToMany re-files exactly the ids in the set, in one batch, + inv
 });
 
 it('applyCategoryToMany reverts only the FAILED ids to their previous category (partial)', async () => {
-  mockApi.setTransactionCategories.mockResolvedValue({ results: [{ id: 't1', status: 'updated' as const }] }); // t2 not saved
+  server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: 'updated' }] } }); // t2 not saved
   const result = mount([{ ...txn('t1'), category: 'dining' }, { ...txn('t2'), category: 'dining' }]);
   queryClient.setQueryData(['categories'], [{ ...CAT }, { ...DINING }]);
 
@@ -311,7 +312,7 @@ it('applyCategoryToMany reverts only the FAILED ids to their previous category (
 it('applyCategoryToMany drops ids not in the cache and never calls the batch on an empty set', async () => {
   const result = mount([txn('t1')]);
   await act(async () => { await result.current.applyCategoryToMany(['ghost'], 'groceries'); });
-  expect(mockApi.setTransactionCategories).not.toHaveBeenCalled(); // nothing real to file
+  expect(batchSaves()).toHaveLength(0); // nothing real to file
 });
 
 // ===== WHIT-190a/192 (folded from transactionsFeedOptimistic.provider.screen.test.tsx) =====
@@ -319,7 +320,7 @@ it('applyCategoryToMany drops ids not in the cache and never calls the batch on 
 // batch updates IN PLACE across pages, and the page/cursor structure survives (the write path
 // maps its row transform per page; no add/remove). Without the InfiniteData-aware patch/read the
 // paged-in row would never update. Drives the REAL applyTransactionEdit + applyCategoryToMany
-// through AppProvider (../api + ../auth mocked — same regime as above, at module scope).
+// through AppProvider (../auth mocked + the fake server — same regime as above, at module scope).
 describe('the feed InfiniteData cache under optimistic writes', () => {
   const pages = (): FeedPage[] =>
     (queryClient.getQueryData(['transactions']) as { pages: FeedPage[] }).pages;
@@ -327,13 +328,9 @@ describe('the feed InfiniteData cache under optimistic writes', () => {
 
   beforeEach(() => {
     queryClient.clear();
-    mockApi.setTransactionCategories.mockImplementation(async (updates: { id: string; category: string }[]) => ({
-      results: updates.map((u) => ({ id: u.id, status: 'updated' as const })),
-    }));
   });
 
   it('applyTransactionEdit updates a PAGE 2 row in place, preserving page boundaries + cursors', async () => {
-    mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 'p2', notes: 'hi' });
     seedTransactionsPages(queryClient, [
       { transactions: [txn('p1a'), txn('p1b')], nextCursor: 'cur1' },
       { transactions: [txn('p2')], nextCursor: null },
@@ -369,7 +366,6 @@ describe('the feed InfiniteData cache under optimistic writes', () => {
   // The feed and the bounded ['transactionsRecent'] cache overlap on the newest rows. An edit must
   // patch BOTH, or the tab-bar dot / account-detail / goal-edit (which read recent) keep stale data.
   it('an edit on an OVERLAP charge patches the recent cache too, not just the feed', async () => {
-    mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 'p1', notes: 'x' });
     seedTransactionsPages(queryClient, [{ transactions: [txn('p1')], nextCursor: null }]);
     queryClient.setQueryData(['transactionsRecent'], [txn('p1')]); // same charge sits in both caches
     const { result } = renderHook(() => useAppContext(), { wrapper });
@@ -385,14 +381,13 @@ describe('the feed InfiniteData cache under optimistic writes', () => {
   // FAIL-ON-REVERT: narrow readTransactionsCache back to the feed and setTransactionFields is never
   // called here.
   it('a write on a RECENT-ONLY charge (beyond the feed) actually fires and files it', async () => {
-    mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 'r1', notes: 'x' });
     seedTransactionsPages(queryClient, [{ transactions: [txn('feedOnly')], nextCursor: 'cur1' }]); // feed lacks r1
     queryClient.setQueryData(['transactionsRecent'], [txn('r1')]); // r1 lives ONLY in the recent cache
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     await act(async () => { await result.current.applyTransactionEdit('r1', { notes: 'x' }); });
 
-    expect(mockApi.setTransactionFields).toHaveBeenCalledWith('r1', { notes: 'x' }); // NOT a silent no-op
+    expect(server.requests()).toContainEqual({ method: 'PATCH', path: '/transactions/r1', body: { notes: 'x' } }); // NOT a silent no-op
     expect(recentRows()[0].notes).toBe('x'); // filed into the recent cache
   });
 });
@@ -412,10 +407,10 @@ it('[WHIT-491][QA1] with 3 minted rules, a MIDDLE rejection removes exactly its 
   const a = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE');
   const b = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');
   const c = merchantTxn('t3', 'UNIFLEX REMEDIALMASSAGE', 'UNIFLEX REMEDIALMASSAGE');
-  mockApi.createRule.mockImplementation(async ({ value, categoryId }) => {
-    if (value === 'UNIFLEXREMEDIALMASSAGE') throw new Error('boom'); // the MIDDLE mint
-    return { id: `r-${value}`, field: 'description', operator: 'contains', value: value ?? '', categoryId };
-  });
+  // Rules mint in sweep order (a, b, c); the MIDDLE mint fails.
+  server.once('POST', '/rules', { body: { id: 'r-UNIFLEX REMEDIAL MASSAGE', field: 'description', operator: 'contains', value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' } });
+  server.once('POST', '/rules', { status: 500 });
+  server.once('POST', '/rules', { body: { id: 'r-UNIFLEX REMEDIALMASSAGE', field: 'description', operator: 'contains', value: 'UNIFLEX REMEDIALMASSAGE', categoryId: 'groceries' } });
   const result = mount([a, b, c]);
   queryClient.setQueryData(['rules'], []);
 
@@ -430,7 +425,7 @@ it('[WHIT-491][QA1] with 3 minted rules, a MIDDLE rejection removes exactly its 
   expect(rules.map((r) => r.pattern)).toEqual(['UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIALMASSAGE']);
   expect(rules.map((r) => r.id)).toEqual(['r-UNIFLEX REMEDIAL MASSAGE', 'r-UNIFLEX REMEDIALMASSAGE']);
   expect(rules.some((r) => r.pattern === 'UNIFLEXREMEDIALMASSAGE')).toBe(false); // rejected spelling dropped
-  expect(mockApi.createRule).toHaveBeenCalledTimes(3);
+  expect(ruleMints()).toHaveLength(3);
 });
 
 // [QA2] — the per-spelling conflict check is independent: when the TAPPED spelling already has a
@@ -447,9 +442,9 @@ it('[WHIT-491][QA2] tapped spelling is an existing duplicate, swept spelling is 
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.createRule).toHaveBeenCalledTimes(1);
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'groceries' });
-  expect(mockApi.createRule).not.toHaveBeenCalledWith({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
+  expect(ruleMints()).toHaveLength(1);
+  expect(ruleMintBodies()).toContainEqual({ value: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'groceries' });
+  expect(ruleMintBodies()).not.toContainEqual({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
   // Not a conflict → the "clash" wording must NOT appear; charges still file.
   expect(result.current.toast).not.toContain('already have a rule');
   expect(cachedCategory('t1')).toBe('groceries');
@@ -463,12 +458,10 @@ it('[WHIT-491][QA3] charge-batch partial failure + a rule rejection → only the
   const anz = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE');
   const westpac = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');
   // t2's categorisation fails to save (batch returns only t1 updated).
-  mockApi.setTransactionCategories.mockResolvedValue({ results: [{ id: 't1', status: 'updated' as const }] });
-  // ...and the westpac spelling's rule save also rejects.
-  mockApi.createRule.mockImplementation(async ({ value, categoryId }) => {
-    if (value === 'UNIFLEXREMEDIALMASSAGE') throw new Error('boom');
-    return { id: `r-${value}`, field: 'description', operator: 'contains', value: value ?? '', categoryId };
-  });
+  server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: 'updated' }] } });
+  // ...and the westpac spelling's rule save (minted second, after the ANZ one) also rejects.
+  server.once('POST', '/rules', { body: { id: 'r-UNIFLEX REMEDIAL MASSAGE', field: 'description', operator: 'contains', value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' } });
+  server.once('POST', '/rules', { status: 500 });
   const result = mount([anz, westpac]);
   queryClient.setQueryData(['rules'], []);
 
@@ -498,8 +491,8 @@ it('[WHIT-491][QA4] tapping a no-merchant charge for apply-all mints a full-desc
   await act(async () => { await result.current.applyCategory('all'); });
 
   // The tapped charge's own pattern falls back to the full noisy description and IS minted.
-  expect(mockApi.createRule).toHaveBeenCalledTimes(1);
-  expect(mockApi.createRule).toHaveBeenCalledWith({
+  expect(ruleMints()).toHaveLength(1);
+  expect(ruleMintBodies()).toContainEqual({
     value: 'POS AUTHORISATION   UNIFLEX REMEDIAL MASSAGE   +611800958316AU', categoryId: 'groceries',
   });
 });
@@ -513,7 +506,7 @@ it('[WHIT-491][QA5] with no ["rules"] cache seeded, createRule still fires and t
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' });
+  expect(ruleMintBodies()).toContainEqual({ value: 'COLES', categoryId: 'groceries' });
   // patchRules is guarded (prev ? fn(prev) : prev) → the absent cache stays absent, no crash.
   expect(queryClient.getQueryData(['rules'])).toBeUndefined();
   // Charges still filed.

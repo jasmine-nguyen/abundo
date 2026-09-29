@@ -14,10 +14,10 @@ import type { Transaction } from '../context';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -35,9 +35,7 @@ function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
 
 beforeEach(() => {
   queryClient.clear();
-  // the batch endpoint reports every id updated; the rule mint resolves to a well-formed rule.
-  mockApi.setTransactionCategories.mockResolvedValue({ results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'updated' }] } as never);
-  mockApi.createRule.mockResolvedValue({ id: 'r1', value: 'COLES', categoryId: 'groceries', field: 'description', operator: 'contains' } as never);
+  // the fake server's batch endpoint reports every id updated; the rule mint answers a well-formed rule.
 });
 afterEach(() => { queryClient.clear(); });
 
@@ -67,7 +65,7 @@ it('applyCategory("all") invalidates uncategorizedCount from its own call site',
 // can't have moved — the count must NOT be invalidated (`failedIds.length < sameMerchantIds.length`
 // guards it). Locks that the invalidate is gated on a real change, not fired unconditionally.
 it('applyCategory("all") does NOT invalidate uncategorizedCount when every save fails', async () => {
-  mockApi.setTransactionCategories.mockResolvedValue({ results: [{ id: 't1', status: 'error' }] } as never);
+  server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: 'error' }] } });
   const result = mount([txn()]);
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
