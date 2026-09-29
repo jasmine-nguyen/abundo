@@ -4,16 +4,11 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { ChatJob, ChatReply, ChatTurn } from '../api';
+import type { ChatReply } from '../api';
 import { chartCategoryColor } from '../chartColors';
+import { installFakeServer } from './support/fakeServer';
 
-const mockStartAiChat = jest.fn<(messages: ChatTurn[]) => Promise<ChatJob>>();
-const mockGetAiChatJob = jest.fn<(jobId: string) => Promise<ChatJob>>();
-jest.mock('../api', () => ({
-  startAiChat: (messages: ChatTurn[]) => mockStartAiChat(messages),
-  getAiChatJob: (jobId: string) => mockGetAiChatJob(jobId),
-}));
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 
 // Eating Out carries a stored colour slot that differs from its built-in default, so a card that
 // ignored the slot would draw a different colour.
@@ -36,6 +31,9 @@ import type { ChatContextValue } from '../chat/ChatContext';
 import { ChatSheet } from '../chat/ChatSheet';
 import { ChatAnswer } from '../chat/ChatAnswer';
 import { C } from '../theme';
+
+const server = installFakeServer();
+const chatPosts = () => server.sent('POST', '/ai/chat');
 
 const REPLY: ChatReply = {
   text: 'You spent **$31.11** per cycle on Eating Out.',
@@ -68,7 +66,9 @@ async function mountOpen() {
   return view;
 }
 
+// The first question starts job chat-1; its first check comes back with REPLY.
 async function askAndAnswer() {
+  server.once('GET', '/ai/chat/jobs/chat-1', { body: { jobId: 'chat-1', status: 'succeeded', reply: REPLY } });
   jest.useFakeTimers();
   act(() => chat.send('Average eating out?'));
   await flush();
@@ -80,8 +80,6 @@ async function askAndAnswer() {
 beforeEach(async () => {
   jest.clearAllMocks();
   await AsyncStorage.clear();
-  mockStartAiChat.mockResolvedValue({ jobId: 'j1', status: 'running' });
-  mockGetAiChatJob.mockResolvedValue({ jobId: 'j1', status: 'succeeded', reply: REPLY });
 });
 
 describe('consent', () => {
@@ -115,7 +113,9 @@ describe('with consent given', () => {
     await mountOpen();
     fireEvent.press(screen.getByTestId('chat-prompt-1'));
     await flush();
-    expect(mockStartAiChat).toHaveBeenCalledWith([{ role: 'user', text: 'Average Eating Out over the last 3 months' }]);
+    expect(chatPosts().map((request) => request.body)).toEqual([
+      { messages: [{ role: 'user', text: 'Average Eating Out over the last 3 months' }] },
+    ]);
     expect(screen.getByTestId('chat-typing')).toBeTruthy();
   });
 
@@ -125,7 +125,7 @@ describe('with consent given', () => {
     fireEvent.changeText(screen.getByTestId('chat-input'), 'How much on coffee?');
     fireEvent.press(screen.getByTestId('chat-send'));
     await flush();
-    expect(mockStartAiChat).toHaveBeenCalledWith([{ role: 'user', text: 'How much on coffee?' }]);
+    expect(chatPosts().map((request) => request.body)).toEqual([{ messages: [{ role: 'user', text: 'How much on coffee?' }] }]);
     expect(screen.getByTestId('chat-stop')).toBeTruthy();
   });
 
@@ -156,9 +156,11 @@ describe('with consent given', () => {
     await askAndAnswer();
     fireEvent.press(screen.getByTestId('chat-action-1'));
     await flush();
-    expect(mockStartAiChat).toHaveBeenLastCalledWith(expect.arrayContaining([
+    const posts = chatPosts();
+    expect(posts).toHaveLength(2);
+    expect(posts[1].body).toEqual({ messages: expect.arrayContaining([
       { role: 'user', text: 'Compare that to Groceries' },
-    ]));
+    ]) });
   });
 
   it('shows New chat only once a conversation exists', async () => {
@@ -171,14 +173,14 @@ describe('with consent given', () => {
   });
 
   it('an error shows the message with a Retry chip', async () => {
-    mockStartAiChat.mockRejectedValueOnce(new Error('offline'));
+    server.once('POST', '/ai/chat', 'dropped');
     await mountOpen();
     fireEvent.press(screen.getByTestId('chat-prompt-0'));
     await flush();
     expect(screen.getByText("Couldn't reach the assistant. Try again.")).toBeTruthy();
     fireEvent.press(screen.getByTestId('chat-retry'));
     await flush();
-    expect(mockStartAiChat).toHaveBeenCalledTimes(2);
+    expect(chatPosts()).toHaveLength(2);
   });
 });
 

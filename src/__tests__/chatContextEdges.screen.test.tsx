@@ -1,29 +1,32 @@
 // Card 609 QA — Ask Abundo provider edge cases: late answers after a thread is replaced, sign-out
 // mid-start, which failures are retried, and what the seeded follow-up thread sends. Same harness
-// as chatContext.provider.screen.test.tsx (API + auth mocked, fake timers).
+// as chatContext.provider.screen.test.tsx (real API on the fake server, auth mocked, fake timers).
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { act, render } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { ChatJob, ChatTurn } from '../api';
-import { ApiError } from '../apiError';
-
-const mockStartAiChat = jest.fn<(messages: ChatTurn[]) => Promise<ChatJob>>();
-const mockGetAiChatJob = jest.fn<(jobId: string) => Promise<ChatJob>>();
-jest.mock('../api', () => ({
-  startAiChat: (messages: ChatTurn[]) => mockStartAiChat(messages),
-  getAiChatJob: (jobId: string) => mockGetAiChatJob(jobId),
-}));
+import type { ChatJob } from '../api';
+import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';
 const mockAuthListeners = new Set<() => void>();
 jest.mock('../auth', () => ({
   getStatus: () => mockAuthStatus,
   subscribe: (listener: () => void) => { mockAuthListeners.add(listener); return () => mockAuthListeners.delete(listener); },
+  getAuthToken: async () => 'test-id-token',
 }));
 
 import { CHAT_ERROR_TEXT, CHAT_MAX_NET_ERRORS, CHAT_POLL_DELAY_MS, ChatProvider, useChat } from '../chat/ChatContext';
 import type { ChatContextValue } from '../chat/ChatContext';
+
+const server = installFakeServer();
+
+// The first POST /ai/chat of each test starts job chat-1; the server then answers its checks
+// "running" until told otherwise.
+const JOB = '/ai/chat/jobs/chat-1';
+const chatPosts = () => server.sent('POST', '/ai/chat');
+const jobChecks = () => server.sent('GET', JOB);
+const nextCheck = (job: Omit<ChatJob, 'jobId'>) => server.once('GET', JOB, { body: { jobId: 'chat-1', ...job } });
 
 const REPLY = { text: 'You spent **$31.11** per cycle.', source: '3 completed pay cycles · 30 Jul – 9 Sep' };
 
@@ -52,9 +55,6 @@ beforeEach(async () => {
   jest.useFakeTimers();
   mockAuthStatus = 'authed';
   mockAuthListeners.clear();
-  mockStartAiChat.mockReset();
-  mockGetAiChatJob.mockReset();
-  mockStartAiChat.mockResolvedValue({ jobId: 'j1', status: 'running' });
   await AsyncStorage.clear();
 });
 
@@ -63,44 +63,43 @@ afterEach(() => { jest.useRealTimers(); });
 
 describe('late answers never land in the wrong thread', () => {
   it('[A22a] a follow-up opened mid-answer drops the old job\'s late reply', async () => {
-    let resolvePoll: (job: ChatJob) => void = () => {};
-    mockGetAiChatJob.mockImplementationOnce(() => new Promise<ChatJob>((resolve) => { resolvePoll = resolve; }));
+    const poll = server.hold(JOB);
     await mount();
     act(() => chat.send('old question'));
     await flush();
     await tick(); // the poll is now in flight
 
     act(() => chat.openChat({ seed: 'You are on track this cycle.' }));
-    await act(async () => { resolvePoll({ jobId: 'j1', status: 'succeeded', reply: REPLY }); });
+    nextCheck({ status: 'succeeded', reply: REPLY });
+    await act(async () => { poll.release(); });
     await flush();
 
+    expect(jobChecks()).toHaveLength(1);
     expect(chat.messages).toEqual([expect.objectContaining({ text: 'You are on track this cycle.' })]);
     expect(chat.inFlight).toBe(false);
   });
 
   it('[A22f] signing out while the start request is pending never starts checking', async () => {
-    let resolveStart: (job: ChatJob) => void = () => {};
-    mockStartAiChat.mockImplementationOnce(() => new Promise<ChatJob>((resolve) => { resolveStart = resolve; }));
+    const start = server.hold('/ai/chat');
     await mount();
     act(() => chat.send('Hi'));
     await flush();
 
     mockAuthStatus = 'anon';
     act(() => mockAuthListeners.forEach((listener) => listener()));
-    await act(async () => { resolveStart({ jobId: 'j1', status: 'running' }); });
+    await act(async () => { start.release(); });
     await tick();
     await tick();
 
-    expect(mockGetAiChatJob).not.toHaveBeenCalled();
+    expect(jobChecks()).toHaveLength(0);
     expect(chat.messages).toEqual([]);
   });
 });
 
 describe('which failures are retried', () => {
   it('[A22b] a server error (5xx) on a check is retried like a dropped call, not a hard fail', async () => {
-    mockGetAiChatJob
-      .mockRejectedValueOnce(new ApiError(503, null))
-      .mockResolvedValueOnce({ jobId: 'j1', status: 'succeeded', reply: REPLY });
+    server.once('GET', JOB, { status: 503 });
+    nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
     act(() => chat.send('Hi'));
     await flush();
@@ -113,10 +112,10 @@ describe('which failures are retried', () => {
 
   it('[A22c] a good check resets the dropped-call count', async () => {
     const drops = CHAT_MAX_NET_ERRORS - 1;
-    for (let i = 0; i < drops; i += 1) mockGetAiChatJob.mockRejectedValueOnce(new Error('offline'));
-    mockGetAiChatJob.mockResolvedValueOnce({ jobId: 'j1', status: 'running' });
-    for (let i = 0; i < drops; i += 1) mockGetAiChatJob.mockRejectedValueOnce(new Error('offline'));
-    mockGetAiChatJob.mockResolvedValueOnce({ jobId: 'j1', status: 'succeeded', reply: REPLY });
+    for (let i = 0; i < drops; i += 1) server.once('GET', JOB, 'dropped');
+    nextCheck({ status: 'running' });
+    for (let i = 0; i < drops; i += 1) server.once('GET', JOB, 'dropped');
+    nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
     act(() => chat.send('Hi'));
     await flush();
@@ -125,7 +124,7 @@ describe('which failures are retried', () => {
   });
 
   it('[A22d] a succeeded job with no reply is an error, not a blank answer', async () => {
-    mockGetAiChatJob.mockResolvedValueOnce({ jobId: 'j1', status: 'succeeded', reply: null });
+    nextCheck({ status: 'succeeded', reply: null });
     await mount();
     act(() => chat.send('Hi'));
     await flush();
@@ -136,19 +135,18 @@ describe('which failures are retried', () => {
 
 describe('the follow-up thread', () => {
   it('[A22h] the first question after a seed sends the summary as the opening answer', async () => {
-    mockGetAiChatJob.mockResolvedValue({ jobId: 'j1', status: 'running' });
     await mount();
     act(() => chat.openChat({ seed: 'You are on track this cycle.' }));
     act(() => chat.send('Why?'));
     await flush();
-    expect(mockStartAiChat).toHaveBeenCalledWith([
+    expect(chatPosts().map((request) => request.body)).toEqual([{ messages: [
       { role: 'assistant', text: 'You are on track this cycle.' },
       { role: 'user', text: 'Why?' },
-    ]);
+    ] }]);
   });
 
   it('[A22e] Retry after a failed follow-up resends the seed and the question once each', async () => {
-    mockStartAiChat.mockRejectedValueOnce(new Error('offline'));
+    server.once('POST', '/ai/chat', 'dropped');
     await mount();
     act(() => chat.openChat({ seed: 'Summary.' }));
     act(() => chat.send('Why?'));
@@ -157,10 +155,11 @@ describe('the follow-up thread', () => {
 
     act(() => chat.retry());
     await flush();
-    expect(mockStartAiChat).toHaveBeenLastCalledWith([
+    const resent = { messages: [
       { role: 'assistant', text: 'Summary.' },
       { role: 'user', text: 'Why?' },
-    ]);
+    ] };
+    expect(chatPosts().map((request) => request.body)).toEqual([resent, resent]);
     expect(chat.messages.map((message) => message.role)).toEqual(['assistant', 'user']);
   });
 });

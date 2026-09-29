@@ -1,5 +1,5 @@
-// WHIT-552 — the useUncategorizedMerchants hook itself, against a REAL QueryClient (../api +
-// ../auth mocked). Locks the hook's gate contract the Transactions screen depends on:
+// WHIT-552 — the useUncategorizedMerchants hook itself, against a REAL QueryClient (the real ../api
+// over the fake server, ../auth mocked). Locks the hook's gate contract the Transactions screen depends on:
 //   [M1] auth-gated AND backlog-gated: no whole-history walk while signed out.
 //   [M2] authed + enabled=false (a caught-up user, count 0) → the walk does NOT fire. The WHIT-552
 //        win: sparing caught-up users the heavy call. Fail-on-revert: drop the `&& enabled` gate
@@ -11,16 +11,22 @@ import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { installFakeServer } from './support/fakeServer';
 
 import type { UncategorizedMerchants } from '../api';
 
 let mockAuthStatus = 'authed';
-jest.mock('../auth', () => ({ getStatus: () => mockAuthStatus, subscribe: () => () => {} }));
-
-const mockFetchUncategorizedMerchants = jest.fn<() => Promise<UncategorizedMerchants>>();
-jest.mock('../api', () => ({ fetchUncategorizedMerchants: () => mockFetchUncategorizedMerchants() }));
+jest.mock('../auth', () => ({
+  getStatus: () => mockAuthStatus,
+  subscribe: () => () => {},
+  getAuthToken: async () => 'test-id-token',
+}));
 
 import { useUncategorizedMerchants } from '../queries';
+
+const server = installFakeServer();
+const MERCHANTS_PATH = '/transactions/uncategorized/merchants';
+const merchantRequests = () => server.sent('GET', MERCHANTS_PATH);
 
 function makeClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 0, gcTime: Infinity } } });
@@ -37,14 +43,14 @@ const payload: UncategorizedMerchants = {
 
 beforeEach(() => {
   mockAuthStatus = 'authed';
-  mockFetchUncategorizedMerchants.mockReset().mockResolvedValue(payload);
+  server.seed(MERCHANTS_PATH, payload);
 });
 
 // [M1] auth still required — the backlog gate is additive, not a replacement.
 it('does NOT fetch while signed out, even with enabled=true', () => {
   mockAuthStatus = 'anon';
   const { result } = renderHook(() => useUncategorizedMerchants(true), { wrapper: wrapper(makeClient()) });
-  expect(mockFetchUncategorizedMerchants).not.toHaveBeenCalled();
+  expect(merchantRequests()).toHaveLength(0);
   expect(result.current.merchants).toBeUndefined();
 });
 
@@ -52,7 +58,7 @@ it('does NOT fetch while signed out, even with enabled=true', () => {
 // revert useUncategorizedMerchants to `useUncategorizedMerchantsQuery(useIsAuthed())` and this fails.
 it('does NOT fetch when authed but the backlog is empty (enabled=false)', () => {
   const { result } = renderHook(() => useUncategorizedMerchants(false), { wrapper: wrapper(makeClient()) });
-  expect(mockFetchUncategorizedMerchants).not.toHaveBeenCalled();
+  expect(merchantRequests()).toHaveLength(0);
   expect(result.current.merchants).toBeUndefined();
 });
 
@@ -60,7 +66,7 @@ it('does NOT fetch when authed but the backlog is empty (enabled=false)', () => 
 it('fetches when authed and the backlog is non-empty (enabled=true)', async () => {
   const { result } = renderHook(() => useUncategorizedMerchants(true), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.merchants).toEqual(payload));
-  expect(mockFetchUncategorizedMerchants).toHaveBeenCalledTimes(1);
+  expect(merchantRequests()).toHaveLength(1);
 });
 
 // [M4] the sheet path: called with no arg, the gate defaults to on so the "File by shop" sheet
@@ -68,5 +74,5 @@ it('fetches when authed and the backlog is non-empty (enabled=true)', async () =
 it('fetches with the default arg (the File-by-shop sheet path)', async () => {
   const { result } = renderHook(() => useUncategorizedMerchants(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.merchants).toEqual(payload));
-  expect(mockFetchUncategorizedMerchants).toHaveBeenCalledTimes(1);
+  expect(merchantRequests()).toHaveLength(1);
 });

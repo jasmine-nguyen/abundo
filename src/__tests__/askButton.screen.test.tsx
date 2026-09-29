@@ -12,11 +12,13 @@ jest.mock('../queries', () => ({
 }));
 jest.mock('../motion/NavBarsContext', () => ({ useNavBars: () => ({ visibility: { interpolate: () => 0 } }) }));
 jest.mock('expo-router', () => ({ Tabs: Object.assign(() => null, { Screen: () => null }) }));
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-jest.mock('../api', () => ({ startAiChat: jest.fn(), getAiChatJob: jest.fn() }));
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 
 import { TabBar } from '../../app/(tabs)/_layout';
 import { ChatProvider, useChat } from '../chat/ChatContext';
+import { installFakeServer } from './support/fakeServer';
+
+installFakeServer();
 
 let chatOpen = false;
 function Probe() {

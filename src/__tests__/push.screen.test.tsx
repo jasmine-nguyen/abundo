@@ -1,6 +1,7 @@
 // Tests the launch-time push registration flow (src/push.ts): permission gate,
-// token fetch, and best-effort no-crash behaviour. expo-notifications, expo-
-// constants and ../api are mocked, so nothing native/network runs. Runs in the
+// token fetch, and best-effort no-crash behaviour. expo-notifications and expo-
+// constants are mocked, so nothing native runs; the real ../api talks to the fake
+// server (POST /devices), so no network runs either. Runs in the
 // `screen` project (needs the react-native env for Platform); push.ts renders
 // nothing, so the flow is driven by calling it directly, not by mounting.
 //
@@ -11,6 +12,7 @@
 // SUPERSET of all six factories (addPushTokenListener added for the rotation folds);
 // every added export is inert on the paths that never had it.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { installFakeServer } from './support/fakeServer';
 
 const mockGetPermissions = jest.fn();
 const mockRequestPermissions = jest.fn();
@@ -36,12 +38,15 @@ jest.mock('expo-constants', () => ({
   default: { get expoConfig() { return { extra: { eas: { projectId: mockProjectId } } }; } },
 }));
 
-const mockRegisterDevice = jest.fn();
-jest.mock('../api', () => ({ registerDevice: (...a: unknown[]) => mockRegisterDevice(...a) }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { registerForPushNotificationsAsync, registerPushTokenRotation } from '../push';
+
+const server = installFakeServer();
+const devicePosts = () => server.sent('POST', '/devices');
+const tokensSent = () => devicePosts().map((request) => (request.body as { token: string }).token);
 
 // The foreground handler fires as a module-scope side effect the instant '../push' is
 // imported, before any beforeEach — so snapshot the call count and the handler arg NOW.
@@ -58,7 +63,6 @@ beforeEach(() => {
   jest.clearAllMocks();
   (Platform as unknown as { OS: string }).OS = 'ios';
   mockProjectId = 'test-project';
-  (mockRegisterDevice as jest.Mock).mockResolvedValue({ token: 'ExpoPushToken[abc]' } as never);
 });
 
 it('fresh grant: requests permission, fetches the token, registers it', async () => {
@@ -70,7 +74,7 @@ it('fresh grant: requests permission, fetches the token, registers it', async ()
 
   expect(mockRequestPermissions).toHaveBeenCalledTimes(1);
   expect(mockGetToken).toHaveBeenCalledWith({ projectId: 'test-project' });
-  expect(mockRegisterDevice).toHaveBeenCalledWith('ExpoPushToken[abc]');
+  expect(tokensSent()).toContain('ExpoPushToken[abc]');
 });
 
 it('already granted: does NOT re-prompt, still registers', async () => {
@@ -80,7 +84,7 @@ it('already granted: does NOT re-prompt, still registers', async () => {
   await registerForPushNotificationsAsync();
 
   expect(mockRequestPermissions).not.toHaveBeenCalled();
-  expect(mockRegisterDevice).toHaveBeenCalledWith('ExpoPushToken[abc]');
+  expect(tokensSent()).toContain('ExpoPushToken[abc]');
 });
 
 it('hard denial (canAskAgain false): no prompt, no token, no register, no throw', async () => {
@@ -90,7 +94,7 @@ it('hard denial (canAskAgain false): no prompt, no token, no register, no throw'
 
   expect(mockRequestPermissions).not.toHaveBeenCalled();
   expect(mockGetToken).not.toHaveBeenCalled();
-  expect(mockRegisterDevice).not.toHaveBeenCalled();
+  expect(devicePosts()).toHaveLength(0);
 });
 
 it('user denies the prompt: does NOT register', async () => {
@@ -100,7 +104,7 @@ it('user denies the prompt: does NOT register', async () => {
   await registerForPushNotificationsAsync();
 
   expect(mockGetToken).not.toHaveBeenCalled();
-  expect(mockRegisterDevice).not.toHaveBeenCalled();
+  expect(devicePosts()).toHaveLength(0);
 });
 
 it('missing projectId: bails before fetching a token', async () => {
@@ -110,7 +114,7 @@ it('missing projectId: bails before fetching a token', async () => {
   await registerForPushNotificationsAsync();
 
   expect(mockGetToken).not.toHaveBeenCalled();
-  expect(mockRegisterDevice).not.toHaveBeenCalled();
+  expect(devicePosts()).toHaveLength(0);
 });
 
 it('token fetch rejects (simulator): swallowed, no register, no throw', async () => {
@@ -118,15 +122,16 @@ it('token fetch rejects (simulator): swallowed, no register, no throw', async ()
   (mockGetToken as jest.Mock).mockRejectedValue(new Error('no device') as never);
 
   await expect(registerForPushNotificationsAsync()).resolves.toBeUndefined();
-  expect(mockRegisterDevice).not.toHaveBeenCalled();
+  expect(devicePosts()).toHaveLength(0);
 });
 
 it('registerDevice rejects (offline): swallowed, no throw', async () => {
   (mockGetPermissions as jest.Mock).mockResolvedValue({ status: 'granted', canAskAgain: false } as never);
   (mockGetToken as jest.Mock).mockResolvedValue({ data: 'ExpoPushToken[abc]' } as never);
-  (mockRegisterDevice as jest.Mock).mockRejectedValue(new Error('offline') as never);
+  server.once('POST', '/devices', 'dropped');
 
   await expect(registerForPushNotificationsAsync()).resolves.toBeUndefined();
+  expect(tokensSent()).toEqual(['ExpoPushToken[abc]']);
 });
 
 it('web: no-op — never touches the native permission API', async () => {
@@ -135,7 +140,7 @@ it('web: no-op — never touches the native permission API', async () => {
   await registerForPushNotificationsAsync();
 
   expect(mockGetPermissions).not.toHaveBeenCalled();
-  expect(mockRegisterDevice).not.toHaveBeenCalled();
+  expect(devicePosts()).toHaveLength(0);
 });
 
 // ===== WHIT-459 (folded from push.edges.screen.test.tsx) — adversarial gaps for the
@@ -148,7 +153,7 @@ it('getPermissionsAsync itself rejects: swallowed, no request/token/register, no
 
   expect(mockRequestPermissions).not.toHaveBeenCalled();
   expect(mockGetToken).not.toHaveBeenCalled();
-  expect(mockRegisterDevice).not.toHaveBeenCalled();
+  expect(devicePosts()).toHaveLength(0);
 });
 
 it('requestPermissionsAsync rejects mid-prompt: swallowed, no token/register, no throw', async () => {
@@ -158,7 +163,7 @@ it('requestPermissionsAsync rejects mid-prompt: swallowed, no token/register, no
   await expect(registerForPushNotificationsAsync()).resolves.toBeUndefined();
 
   expect(mockGetToken).not.toHaveBeenCalled();
-  expect(mockRegisterDevice).not.toHaveBeenCalled();
+  expect(devicePosts()).toHaveLength(0);
 });
 
 it('permissions missing canAskAgain (undetermined): bails without prompting or crashing', async () => {
@@ -170,7 +175,7 @@ it('permissions missing canAskAgain (undetermined): bails without prompting or c
 
   expect(mockRequestPermissions).not.toHaveBeenCalled();
   expect(mockGetToken).not.toHaveBeenCalled();
-  expect(mockRegisterDevice).not.toHaveBeenCalled();
+  expect(devicePosts()).toHaveLength(0);
 });
 
 it('empty-string token: guarded — does NOT POST a blank token', async () => {
@@ -181,7 +186,7 @@ it('empty-string token: guarded — does NOT POST a blank token', async () => {
 
   await expect(registerForPushNotificationsAsync()).resolves.toBeUndefined();
 
-  expect(mockRegisterDevice).not.toHaveBeenCalled();
+  expect(devicePosts()).toHaveLength(0);
 });
 
 // ===== WHIT-144 (folded from push.handler.screen.test.tsx) — the foreground handler
@@ -231,7 +236,6 @@ describe('push-token rotation (WHIT-145)', () => {
       return { remove: mockRemove };
     });
     (mockGetToken as jest.Mock).mockResolvedValue({ data: 'ExpoPushToken[new]' } as never);
-    (mockRegisterDevice as jest.Mock).mockResolvedValue({ token: 'ExpoPushToken[new]' } as never);
   });
 
   // ===== WHIT-145 (folded from push.rotation.screen.test.tsx)
@@ -249,9 +253,9 @@ describe('push-token rotation (WHIT-145)', () => {
     capturedListener!(DEVICE_EVENT);
     await flush();
 
-    expect(mockRegisterDevice).toHaveBeenCalledWith('ExpoPushToken[new]');
+    expect(tokensSent()).toContain('ExpoPushToken[new]');
     // Fail-on-revert: forwarding token.data would register the raw device token.
-    expect(mockRegisterDevice).not.toHaveBeenCalledWith(DEVICE_EVENT.data);
+    expect(tokensSent()).not.toContain(DEVICE_EVENT.data);
   });
 
   it('passes the device token into getExpoPushTokenAsync and fires exactly once (no loop)', async () => {
@@ -263,7 +267,7 @@ describe('push-token rotation (WHIT-145)', () => {
     // which would re-emit this event and infinite-loop. Assert the full object is passed.
     expect(mockGetToken).toHaveBeenCalledWith({ projectId: 'test-project', devicePushToken: DEVICE_EVENT });
     // One rotation event → exactly one re-register (proves no recursion).
-    expect(mockRegisterDevice).toHaveBeenCalledTimes(1);
+    expect(devicePosts()).toHaveLength(1);
   });
 
   it('is a no-op on web: returns undefined and installs no listener', () => {
@@ -286,7 +290,7 @@ describe('push-token rotation (WHIT-145)', () => {
     await flush();
 
     expect(mockGetToken).not.toHaveBeenCalled();
-    expect(mockRegisterDevice).not.toHaveBeenCalled();
+    expect(devicePosts()).toHaveLength(0);
   });
 
   // ===== WHIT-145 (folded from push.rotation.edges.screen.test.tsx)
@@ -307,9 +311,9 @@ describe('push-token rotation (WHIT-145)', () => {
 
     expect(mockGetToken).toHaveBeenNthCalledWith(1, { projectId: 'test-project', devicePushToken: DEVICE_A });
     expect(mockGetToken).toHaveBeenNthCalledWith(2, { projectId: 'test-project', devicePushToken: DEVICE_B });
-    expect(mockRegisterDevice).toHaveBeenCalledTimes(2);
-    expect(mockRegisterDevice).toHaveBeenCalledWith('ExpoPushToken[A]');
-    expect(mockRegisterDevice).toHaveBeenCalledWith('ExpoPushToken[B]');
+    expect(devicePosts()).toHaveLength(2);
+    expect(tokensSent()).toContain('ExpoPushToken[A]');
+    expect(tokensSent()).toContain('ExpoPushToken[B]');
   });
 
   it('[B2] getExpoPushTokenAsync rejects mid-rotation (offline): no register, listener never throws', async () => {
@@ -319,7 +323,7 @@ describe('push-token rotation (WHIT-145)', () => {
     expect(() => capturedListener!(DEVICE_A)).not.toThrow(); // sync callback must not throw
     await flush();
 
-    expect(mockRegisterDevice).not.toHaveBeenCalled();
+    expect(devicePosts()).toHaveLength(0);
   });
 
   it('[B3] empty Expo token in the rotation path: shared guard skips registerDevice', async () => {
@@ -332,18 +336,18 @@ describe('push-token rotation (WHIT-145)', () => {
     await flush();
 
     expect(mockGetToken).toHaveBeenCalledWith({ projectId: 'test-project', devicePushToken: DEVICE_A });
-    expect(mockRegisterDevice).not.toHaveBeenCalled();
+    expect(devicePosts()).toHaveLength(0);
   });
 
   it('[B4] registerDevice rejects inside the callback: swallowed, listener never throws', async () => {
-    (mockRegisterDevice as jest.Mock).mockRejectedValue(new Error('server 500') as never);
+    server.fail('/devices', 500);
 
     registerPushTokenRotation();
     expect(() => capturedListener!(DEVICE_A)).not.toThrow();
     await flush();
 
     // It was attempted once (the failure is swallowed, not retried/looped).
-    expect(mockRegisterDevice).toHaveBeenCalledTimes(1);
+    expect(devicePosts()).toHaveLength(1);
   });
 });
 
