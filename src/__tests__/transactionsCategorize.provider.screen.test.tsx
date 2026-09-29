@@ -16,10 +16,10 @@ jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => 
 import { installFakeServer } from './support/fakeServer';
 
 const server = installFakeServer();
-const ruleMints = () => server.requests().filter((r) => r.method === 'POST' && r.path === '/rules');
+const ruleMints = () => server.sent('POST', '/rules');
 const ruleMintBodies = () => ruleMints().map((r) => r.body);
-const ruleUpdates = () => server.requests().filter((r) => r.method === 'PUT' && r.path.startsWith('/rules/'));
-const batchSaves = () => server.requests().filter((r) => r.method === 'PATCH' && r.path === '/transactions');
+const ruleUpdates = () => server.sentUnder('PUT', '/rules/');
+const batchSaves = () => server.sent('PATCH', '/transactions');
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 

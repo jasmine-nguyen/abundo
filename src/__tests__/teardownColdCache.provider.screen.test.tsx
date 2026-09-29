@@ -17,7 +17,6 @@ jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => 
 import { installFakeServer } from './support/fakeServer';
 
 const server = installFakeServer();
-const sent = (method: string, path: string) => server.requests().filter((r) => r.method === method && r.path === path);
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -45,7 +44,7 @@ it('setPayCycleLength bails on a cold [payCycle] cache — no server write, no c
 
   await act(async () => { result.current.setPayCycleLength(30); });
 
-  expect(sent('PUT', '/paycycle')).toHaveLength(0);              // <-- fails on revert of the !prev guard
+  expect(server.sent('PUT', '/paycycle')).toHaveLength(0);              // <-- fails on revert of the !prev guard
   expect(queryClient.getQueryData(['payCycle'])).toBeUndefined(); // no half-built cycle written
 });
 
@@ -54,7 +53,7 @@ it('setPayday bails on a cold [payCycle] cache too (same guard, other field)', a
 
   await act(async () => { result.current.setPayday('2026-07-01'); });
 
-  expect(sent('PUT', '/paycycle')).toHaveLength(0);
+  expect(server.sent('PUT', '/paycycle')).toHaveLength(0);
   expect(queryClient.getQueryData(['payCycle'])).toBeUndefined();
 });
 
@@ -66,7 +65,7 @@ it('applyCategory(one) no-ops on a cold transactions/categories cache — closes
 
   await act(async () => { await result.current.applyCategory('one'); });
 
-  expect(sent('PATCH', '/transactions/t1')).toHaveLength(0);     // nothing to categorise
+  expect(server.sent('PATCH', '/transactions/t1')).toHaveLength(0);     // nothing to categorise
   expect(result.current.sheet).toBeNull();                       // sheet closed, not stuck open
 });
 
@@ -76,8 +75,8 @@ it('applyCategory(all) no-ops on a cold cache — mints no rule, sends no batch'
 
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(sent('POST', '/rules')).toHaveLength(0);
-  expect(sent('PATCH', '/transactions')).toHaveLength(0);
+  expect(server.sent('POST', '/rules')).toHaveLength(0);
+  expect(server.sent('PATCH', '/transactions')).toHaveLength(0);
   expect(result.current.sheet).toBeNull();
 });
 
@@ -90,7 +89,7 @@ it('applyCategory no-ops when transactions are warm but the taxonomy is cold (pa
 
   await act(async () => { await result.current.applyCategory('one'); });
 
-  expect(sent('PATCH', '/transactions/t1')).toHaveLength(0);
+  expect(server.sent('PATCH', '/transactions/t1')).toHaveLength(0);
   expect(result.current.sheet).toBeNull();
 });
 
@@ -147,7 +146,7 @@ it('updateRule bails on a cold [rules] cache — no PUT, no toast, cache untouch
 
   await act(async () => { await result.current.updateRule('e1', 'DISNEY', 'subs'); });
 
-  expect(sent('PUT', '/rules/e1')).toHaveLength(0);  // no `before` → guarded early return
+  expect(server.sent('PUT', '/rules/e1')).toHaveLength(0);  // no `before` → guarded early return
   // Assert the early return fired, not merely that the (undefined before.field) PUT threw:
   // removing the `if (!before) return` guard surfaces the caught-error toast + touches nothing,
   // so a null toast + absent cache only hold when the guard short-circuits.

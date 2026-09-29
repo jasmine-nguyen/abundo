@@ -37,7 +37,7 @@ const FAILED: FilingResult = { status: 'failed', background: false };
 
 const server = installFakeServer();
 const APPLY_RULES = '/transactions/uncategorized/apply-rules';
-const runs = () => server.requests().filter((r) => r.method === 'POST' && r.path === APPLY_RULES).length;
+const runs = () => server.sent('POST', APPLY_RULES).length;
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 

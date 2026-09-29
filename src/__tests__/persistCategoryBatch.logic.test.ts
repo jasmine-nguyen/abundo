@@ -14,8 +14,7 @@ const server = installFakeServer();
 // Server "everything updated" reply for a given chunk of ids.
 const allUpdated = (ids: string[]) => ({ results: ids.map((id) => ({ id, status: 'updated' })) });
 // The `updates` of every batch save the app sent, in order.
-const batches = () => server.requests()
-  .filter((r) => r.method === 'PATCH' && r.path === '/transactions')
+const batches = () => server.sent('PATCH', '/transactions')
   .map((r) => (r.body as { updates: { id: string; category: string }[] }).updates);
 
 describe('persistCategoryBatch', () => {

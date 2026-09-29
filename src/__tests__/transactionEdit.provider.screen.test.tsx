@@ -118,7 +118,7 @@ it('a note edit then a tags edit both land — the tags call does not drop the n
   expect(cached('t1')?.notes).toBe('lunch');
   expect(cached('t1')?.tags).toEqual(['work']);
   // Each PATCH carried only its own field (never re-sent the other).
-  const saves = server.requests().filter((r) => r.method === 'PATCH' && r.path === '/transactions/t1');
+  const saves = server.sent('PATCH', '/transactions/t1');
   expect(saves[0].body).toEqual({ notes: 'lunch' });
   expect(saves[1].body).toEqual({ tags: ['work'] });
 });

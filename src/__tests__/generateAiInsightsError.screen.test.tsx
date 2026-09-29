@@ -17,7 +17,7 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 
 const server = installFakeServer();
-const generates = () => server.requests().filter((r) => r.method === 'POST' && r.path === '/insights/ai');
+const generates = () => server.sent('POST', '/insights/ai');
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 

@@ -155,6 +155,44 @@ describe('WHIT-639 fake server one-shot replies (once)', () => {
   });
 });
 
+describe('WHIT-652 fake server request counts (sent / sentUnder)', () => {
+  const server = installFakeServer();
+  const JOB_PATH = '/transactions/uncategorized/apply-rules/jobs/job-1';
+  const COLES = { value: 'COLES', categoryId: 'groceries' };
+  const WOOLIES = { value: 'WOOLIES', categoryId: 'groceries' };
+
+  it('sent(method, path) returns only the requests with that method and exact full path, in order', async () => {
+    await api.createRule(COLES);
+    await api.listRules();
+    await api.createRule(WOOLIES);
+    await api.fetchBudgets(14);
+
+    expect(server.sent('GET', '/rules')).toEqual([{ method: 'GET', path: '/rules', body: undefined }]);
+    expect(server.sent('POST', '/rules')).toEqual([
+      { method: 'POST', path: '/rules', body: COLES },
+      { method: 'POST', path: '/rules', body: WOOLIES },
+    ]);
+    expect(server.sent('DELETE', '/rules')).toEqual([]);
+    expect(server.sent('GET', '/budgets')).toEqual([]);
+    expect(server.sent('GET', '/budgets?days=14')).toHaveLength(1);
+  });
+
+  it('sentUnder(method, prefix) returns the requests with that method whose path starts with the prefix, in order', async () => {
+    server.seed(JOB_PATH, { jobId: 'job-1', status: 'running' });
+    await api.createRule(COLES);
+    await api.getApplyRulesJob('job-1');
+    await api.fetchBudgets(14);
+    await api.getApplyRulesJob('job-1');
+
+    expect(server.sentUnder('GET', '/transactions/uncategorized/apply-rules/jobs/')).toEqual([
+      { method: 'GET', path: JOB_PATH, body: undefined },
+      { method: 'GET', path: JOB_PATH, body: undefined },
+    ]);
+    expect(server.sentUnder('GET', '/budgets')).toEqual([{ method: 'GET', path: '/budgets?days=14', body: undefined }]);
+    expect(server.sentUnder('POST', '/budgets')).toEqual([]);
+  });
+});
+
 describe('WHIT-637 fake server clean-up', () => {
   it('puts the real fetch back once the fake server\'s tests are done', () => {
     expect(global.fetch).toBe(originalFetch);

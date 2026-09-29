@@ -21,8 +21,7 @@ import { installFakeServer } from './support/fakeServer';
 
 const server = installFakeServer();
 // The `updates` of every batch save the app sent, in order.
-const batches = () => server.requests()
-  .filter((r) => r.method === 'PATCH' && r.path === '/transactions')
+const batches = () => server.sent('PATCH', '/transactions')
   .map((r) => (r.body as { updates: { id: string; category: string }[] }).updates);
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;

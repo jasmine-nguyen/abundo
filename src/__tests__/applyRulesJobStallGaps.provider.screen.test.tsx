@@ -34,7 +34,7 @@ const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the
 const server = installFakeServer();
 const JOBS = '/transactions/uncategorized/apply-rules/jobs';
 const JOB_PATH = `${JOBS}/job-1`;
-const polls = () => server.requests().filter((r) => r.method === 'GET' && r.path === JOB_PATH).length;
+const polls = () => server.sent('GET', JOB_PATH).length;
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -73,7 +73,7 @@ it('[G1] Try again while stalled tears the run down and restarts the same varian
   let res: unknown;
   await act(async () => { res = await r.current.retryApplyRulesJob(); });
   expect(res).toEqual({ status: 'background' });
-  expect(server.requests().filter((r) => r.method === 'POST' && r.path === JOBS)).toHaveLength(2); // abandoned the stuck run, started fresh
+  expect(server.sent('POST', JOBS)).toHaveLength(2); // abandoned the stuck run, started fresh
   expect(r.current.applyRulesStalled).toBe(false);            // fresh job → hint cleared
   expect(r.current.applyRulesJob?.status).toBe('running');
 });

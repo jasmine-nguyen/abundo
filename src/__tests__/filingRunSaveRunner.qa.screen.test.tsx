@@ -71,7 +71,7 @@ it('[A2] frees the lock after a failed file now the runner dropped, then refresh
   let again: FilingResult | null = null;
   await act(async () => { again = await r.current.fileCharges(SHOP, { now: true }); });
   expect(again).toEqual(FAILED);
-  expect(server.requests().filter((req) => req.method === 'POST' && req.path === APPLY_RULES)).toHaveLength(2);
+  expect(server.sent('POST', APPLY_RULES)).toHaveLength(2);
   expect(spy).toHaveBeenCalled();
 });
 

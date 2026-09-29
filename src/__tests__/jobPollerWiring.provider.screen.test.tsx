@@ -25,7 +25,7 @@ import type { ChatContextValue } from '../chat/ChatContext';
 
 const server = installFakeServer();
 const jobPath = (jobId: string) => `/transactions/uncategorized/apply-rules/jobs/${jobId}`;
-const gets = (prefix: string) => server.requests().filter((r) => r.method === 'GET' && r.path.startsWith(prefix)).length;
+const gets = (prefix: string) => server.sentUnder('GET', prefix).length;
 const drop = (path: string, times: number) => {
   for (let i = 0; i < times; i++) server.once('GET', path, 'dropped');
 };

@@ -9,6 +9,7 @@
 //   const held = server.hold('/categories');     // replies wait until held.release()
 //   server.once('GET', '/rules', { status: 503 }); // the next GET /rules only; 'dropped' = lost connection
 //   expect(server.requests()).toEqual([...]);    // what the app sent, in order
+//   expect(server.sent('POST', '/rules')).toHaveLength(1); // only that method + exact path
 //
 // seed / fail / hold / once take an exact path with no query string. The request log keeps
 // the full path, query included. No timers of its own, so it works under jest fake timers.
@@ -22,7 +23,7 @@ export interface LoggedRequest {
   body: unknown;
 }
 
-type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+export type Method ='GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 type Store = Map<string, unknown>;
 
 interface Call {
@@ -275,6 +276,14 @@ export function installFakeServer() {
     /** Every request the app sent, in order: method, full path (query included) and parsed body. */
     requests(): LoggedRequest[] {
       return [...log];
+    },
+    /** Requests sent with this method to exactly this path (query included), in order. */
+    sent(method: Method, path: string): LoggedRequest[] {
+      return log.filter((request) => request.method === method && request.path === path);
+    },
+    /** Requests sent with this method to any path starting with `prefix`, in order. */
+    sentUnder(method: Method, prefix: string): LoggedRequest[] {
+      return log.filter((request) => request.method === method && request.path.startsWith(prefix));
     },
   };
 }
