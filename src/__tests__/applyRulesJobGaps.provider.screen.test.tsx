@@ -31,7 +31,7 @@ const server = installFakeServer();
 const JOBS = '/transactions/uncategorized/apply-rules/jobs';
 const jobPath = (jobId: string) => `${JOBS}/${jobId}`;
 // How many times the app has checked on a job (any job) so far.
-const polls = () => server.requests().filter((r) => r.method === 'GET' && r.path.startsWith(`${JOBS}/`)).length;
+const polls = () => server.sentUnder('GET', `${JOBS}/`).length;
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 

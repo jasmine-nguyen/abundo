@@ -10,8 +10,7 @@ import { resetAuth, setAuthToken } from './support/authMock';
 
 const server = installFakeServer();
 
-const batches = () => server.requests()
-  .filter((r) => r.method === 'PATCH' && r.path === '/transactions')
+const batches = () => server.sent('PATCH', '/transactions')
   .map((r) => (r.body as { updates: { id: string; category: string }[] }).updates);
 const idsOf = (n: number) => Array.from({ length: n }, (_, i) => `t${i}`);
 const allUpdated = (ids: string[]) => ({ results: ids.map((id) => ({ id, status: 'updated' })) });

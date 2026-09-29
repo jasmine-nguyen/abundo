@@ -35,9 +35,6 @@ const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the
 const server = installFakeServer();
 const JOBS = '/transactions/uncategorized/apply-rules/jobs';
 const JOB_PATH = `${JOBS}/job-1`;
-const calls = (method: string, path: string) =>
-  server.requests().filter((r) => r.method === method && r.path === path).length;
-
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
@@ -145,11 +142,11 @@ it('blocks the sync sweep while a job is running (one heavy run at a time)', asy
   let second: unknown;
   await act(async () => { second = await r.current.fileCharges(SWEEP, BIG_RUN); });
   expect(second).toEqual({ status: 'failed', background: true });
-  expect(calls('POST', JOBS)).toBe(1);
+  expect(server.sent('POST', JOBS).length).toBe(1);
   let sync: unknown;
   await act(async () => { sync = await r.current.fileCharges(SWEEP, { now: true }); });
   expect(sync).toEqual({ status: 'failed', background: false });
-  expect(calls('POST', '/transactions/uncategorized/apply-rules')).toBe(0);
+  expect(server.sent('POST', '/transactions/uncategorized/apply-rules').length).toBe(0);
 });
 
 it('does not leave two poll chains after a dismiss + reopen during an in-flight GET', async () => {
@@ -161,16 +158,16 @@ it('does not leave two poll chains after a dismiss + reopen during an in-flight 
   server.seed(JOB_PATH, job({ status: 'running', matched: 900, filed: 100 }));
   const first = server.hold(JOB_PATH); // the first GET hangs, in flight across the dismiss
   await act(async () => { jest.advanceTimersByTime(POLL); });   // fire poll 1 — its GET is now pending
-  expect(calls('GET', JOB_PATH)).toBe(1);
+  expect(server.sent('GET', JOB_PATH).length).toBe(1);
 
   await act(async () => { r.current.setSheet(null); });          // dismiss mid-GET (bumps the generation)
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); }); // reopen (arms a fresh timer)
   await act(async () => { first.release(); await Promise.resolve(); });
 
   // Exactly ONE chain is live now: one delay ⇒ exactly one more GET, not two.
-  const before = calls('GET', JOB_PATH);
+  const before = server.sent('GET', JOB_PATH).length;
   await act(async () => { await jest.advanceTimersByTimeAsync(POLL); });
-  expect(calls('GET', JOB_PATH)).toBe(before + 1);
+  expect(server.sent('GET', JOB_PATH).length).toBe(before + 1);
 });
 
 it('retry re-runs the SAME variant that failed, not a plain sweep', async () => {
@@ -186,7 +183,7 @@ it('retry re-runs the SAME variant that failed, not a plain sweep', async () => 
   expect(r.current.applyRulesJob?.status).toBe('failed');
 
   await act(async () => { await r.current.retryApplyRulesJob(); });
-  const starts = server.requests().filter((r) => r.method === 'POST' && r.path === JOBS);
+  const starts = server.sent('POST', JOBS);
   expect(starts).toHaveLength(2);
   // Both starts carry the SHOP's rule — the retry did not fall back to a rule-less sweep.
   expect(starts[1].body).toEqual({ rule: { value: 'WOOLWORTHS', categoryId: 'groceries' } });
@@ -197,11 +194,11 @@ it('stops polling on sign-out and never reads status into the next session', asy
   await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   server.seed(JOB_PATH, job({ status: 'running', matched: 900, filed: 100 }));
   await tick();
-  const callsBefore = calls('GET', JOB_PATH);
+  const callsBefore = server.sent('GET', JOB_PATH).length;
 
   await act(async () => { mockSetStatus('anon'); });
   expect(r.current.applyRulesJob).toBeNull();
 
   await tick(3);
-  expect(calls('GET', JOB_PATH)).toBe(callsBefore); // no zombie poll
+  expect(server.sent('GET', JOB_PATH).length).toBe(callsBefore); // no zombie poll
 });

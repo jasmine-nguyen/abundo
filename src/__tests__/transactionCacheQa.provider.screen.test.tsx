@@ -144,7 +144,7 @@ it("applyCategory('all') sweeps only the main copies, rolls back just the failed
 
   await act(async () => { await result.current.applyCategory('all'); });
 
-  const batchSaves = server.requests().filter((r) => r.method === 'PATCH' && r.path === '/transactions');
+  const batchSaves = server.sent('PATCH', '/transactions');
   const sent = (batchSaves[0].body as { updates: { id: string }[] }).updates;
   expect(sent.map((item) => item.id).sort()).toEqual(['t1', 't2', 't3']);
   expect(categoryOf(feedRows('transactions'))).toEqual({ t1: 'groceries', t2: 'groceries' });
@@ -189,7 +189,7 @@ it('applyCategoryToMany ignores a charge that lives only in a budget/category li
 
   await act(async () => { await result.current.applyCategoryToMany(['only-budget'], 'groceries'); });
 
-  expect(server.requests().filter((r) => r.method === 'PATCH' && r.path === '/transactions')).toHaveLength(0);
+  expect(server.sent('PATCH', '/transactions')).toHaveLength(0);
   expect(listIds(BUDGET_KEY)).toEqual(['only-budget']);
   expect(invalidated(BUDGETS_KEY)).toBe(false);
 });

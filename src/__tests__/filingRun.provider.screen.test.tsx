@@ -24,7 +24,7 @@ import { installFakeServer } from './support/fakeServer';
 const server = installFakeServer();
 const APPLY_RULES = '/transactions/uncategorized/apply-rules';
 const JOBS = `${APPLY_RULES}/jobs`;
-const posts = (path: string) => server.requests().filter((r) => r.method === 'POST' && r.path === path);
+const posts = (path: string) => server.sent('POST', path);
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 

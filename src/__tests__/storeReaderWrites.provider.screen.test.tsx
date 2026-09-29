@@ -21,7 +21,7 @@ jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => 
 import { installFakeServer } from './support/fakeServer';
 
 const server = installFakeServer();
-const categoryReads = () => server.requests().filter((r) => r.method === 'GET' && r.path === '/categories');
+const categoryReads = () => server.sent('GET', '/categories');
 
 const CAT: Category = { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 };
 const OTHER: Category = { id: 'rent', name: 'Rent', bucket: 'Living', icon: 'home', color: '#8AB4F8', recent: 0 };
