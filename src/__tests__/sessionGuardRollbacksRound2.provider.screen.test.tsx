@@ -4,7 +4,7 @@
 // what stops a stale write landing once account B has RE-LOADED its cache. The same window
 // exists for createCategoryInline's append `prev ? [...prev, created] : prev` — on B's non-empty
 // ['categories'] it would PLANT account A's new category. Nothing pins that. This does.
-// Harness mirrors the committed suites: live mini auth store, mocked ../api, real queryClient.
+// Harness mirrors the committed suites: live mini auth store, the fake server, real queryClient.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
@@ -20,8 +20,8 @@ const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mo
 jest.mock('../auth', () => ({
   getStatus: () => mockStatus,
   subscribe: (l: () => void) => mockSubscribe(l),
+  getAuthToken: async () => 'test-id-token',
 }));
-jest.mock('../api');
 jest.mock('../queries', () => ({
   ...require('./support/screenQueryMocks').queryMocksFromState(() => ({})),
   useIsAuthed: () => {
@@ -32,17 +32,11 @@ jest.mock('../queries', () => ({
 
 import { AppProvider, useAppContext } from '../context';
 import { queryClient } from '../queryClient';
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
-function deferred<T>() {
-  let resolve!: (v: T) => void;
-  let reject!: (e?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-}
 
 function signOut() {
   act(() => { queryClient.clear(); mockSetStatus('anon'); });
@@ -63,8 +57,8 @@ afterEach(() => {
 describe('WHIT-271 round-2 — createCategoryInline cannot append the old category into the NEXT account', () => {
   it('[A-CCI-FRESH] a create settling AFTER a different account re-loads its list is dropped, returns null', async () => {
     queryClient.setQueryData(['categories'], [cat('cA', 'Account A only')]);
-    const d = deferred<{ id: string; name: string; bucket: string }>();
-    mockApi.createCategory.mockImplementation(() => d.promise as never);
+    const held = server.hold('/categories');
+    server.once('POST', '/categories', { body: { id: 'cNew', name: 'New', bucket: 'Living' } });
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<unknown>;
@@ -75,7 +69,7 @@ describe('WHIT-271 round-2 — createCategoryInline cannot append the old catego
     queryClient.setQueryData(['categories'], [cat('cB', 'Account B only')]);
 
     let returned!: unknown;
-    await act(async () => { d.resolve({ id: 'cNew', name: 'New', bucket: 'Living' }); returned = await pending; });
+    await act(async () => { held.release(); returned = await pending; });
 
     // The append `prev ? [...prev, created] : prev` on B's NON-empty list would plant cNew;
     // only the epoch guard (return null BEFORE the append) drops it. B's list stays untouched.

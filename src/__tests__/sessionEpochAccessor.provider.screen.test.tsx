@@ -26,8 +26,8 @@ const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mo
 jest.mock('../auth', () => ({
   getStatus: () => mockStatus,
   subscribe: (l: () => void) => mockSubscribe(l),
+  getAuthToken: async () => 'test-id-token',
 }));
-jest.mock('../api');
 jest.mock('../queries', () => ({
   ...require('./support/screenQueryMocks').queryMocksFromState(() => ({})),
   useIsAuthed: () => {
@@ -38,6 +38,9 @@ jest.mock('../queries', () => ({
 
 import { AppProvider, useAppContext } from '../context';
 import { queryClient } from '../queryClient';
+import { installFakeServer } from './support/fakeServer';
+
+installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 

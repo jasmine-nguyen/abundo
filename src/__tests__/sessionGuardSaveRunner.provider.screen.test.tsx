@@ -18,8 +18,8 @@ const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mo
 jest.mock('../auth', () => ({
   getStatus: () => mockStatus,
   subscribe: (l: () => void) => mockSubscribe(l),
+  getAuthToken: async () => 'test-id-token',
 }));
-jest.mock('../api');
 jest.mock('../queries', () => ({
   ...require('./support/screenQueryMocks').queryMocksFromState(() => ({})),
   useIsAuthed: () => {
@@ -31,17 +31,11 @@ jest.mock('../queries', () => ({
 import { AppProvider, useAppContext } from '../context';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
-function deferred<T>() {
-  let resolve!: (v: T) => void;
-  let reject!: (e?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-}
 
 // Production order: clearSession() wipes the cache, THEN broadcasts anon (the epoch bump).
 function signOut() {
@@ -62,8 +56,8 @@ afterEach(() => {
 describe('WHIT-638 — a save failing after sign-out cannot undo into the NEXT account', () => {
   it('applyTransactionEdit: a late failure leaves the next account\'s charge note untouched', async () => {
     seedTransactionsCache(queryClient, [{ transaction_id: 't1', notes: 'old', category: null, counts_to_budget: true, description: 'X' }]);
-    const d = deferred<unknown>();
-    mockApi.setTransactionFields.mockImplementation(() => d.promise as never);
+    const held = server.hold('/transactions/t1');
+    server.once('PATCH', '/transactions/t1', 'dropped');
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
@@ -72,7 +66,7 @@ describe('WHIT-638 — a save failing after sign-out cannot undo into the NEXT a
     // The next account signs in and loads its own charges before the stale failure lands.
     act(() => mockSetStatus('authed'));
     seedTransactionsCache(queryClient, [{ transaction_id: 't1', notes: 'next account', category: null, counts_to_budget: true, description: 'X' }]);
-    await act(async () => { d.reject(new Error('network')); await pending; });
+    await act(async () => { held.release(); await pending; });
 
     expect(readTransactionsCache(queryClient)[0]?.notes).toBe('next account');
     expect(result.current.toast).toBeNull();
@@ -84,8 +78,8 @@ describe('WHIT-638 — a save failing after sign-out cannot undo into the NEXT a
       { transaction_id: 't2', category: 'old', counts_to_budget: true, description: 'Y' },
     ]);
     queryClient.setQueryData(['categories'], [cat('old', 'Old'), cat('c1', 'Groceries')]);
-    const dBatch = deferred<unknown>();
-    mockApi.setTransactionCategories.mockImplementation(() => dBatch.promise as never);
+    const held = server.hold('/transactions');
+    server.once('PATCH', '/transactions', 'dropped');
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
@@ -96,7 +90,7 @@ describe('WHIT-638 — a save failing after sign-out cannot undo into the NEXT a
       { transaction_id: 't1', category: 'fresh', counts_to_budget: true, description: 'X' },
       { transaction_id: 't2', category: 'fresh', counts_to_budget: true, description: 'Y' },
     ]);
-    await act(async () => { dBatch.reject(new Error('network')); await pending; });
+    await act(async () => { held.release(); await pending; });
 
     expect(readTransactionsCache(queryClient).map((t) => t.category)).toEqual(['fresh', 'fresh']);
     expect(result.current.toast).toBeNull();
