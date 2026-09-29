@@ -787,7 +787,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		patchRules((prev) => [{ ...toRule(rule as RuleRecord), isNew: true }, ...prev]);
 	}, [patchRules]);
 	const { previewFiling, fileCharges, retryApplyRulesJob, applyRulesJob, applyRulesStalled, endOnLock } =
-		useFilingRun({ sessionEpoch, prependMintedRule, sheetOpen: sheet !== null });
+		useFilingRun({ sessionEpoch, runSave, prependMintedRule, sheetOpen: sheet !== null });
 
 	// AI spending insights (WHIT-104). `refreshAiInsights` reads the per-cycle cache
 	// (free); `generateAiInsights` is the paid "Analyse my spending" action. Error is

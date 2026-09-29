@@ -10,6 +10,7 @@ import {
 import { ApiError } from './apiError';
 import { patchTransactionsCache, refreshAfter } from './transactionCache';
 import { pollJob, type PollHandle } from './jobPoller';
+import { type SaveSteps } from './optimisticSave';
 
 export type FilingTarget =
   | { kind: 'sweep' }
@@ -95,8 +96,9 @@ function patchFiledRows(report: ApplyRulesResult) {
 const FAILED_NOW: FilingResult = { status: 'failed', background: false };
 const FAILED_BACKGROUND: FilingResult = { status: 'failed', background: true };
 
-export function useFilingRun({ sessionEpoch, prependMintedRule, sheetOpen }: {
+export function useFilingRun({ sessionEpoch, runSave, prependMintedRule, sheetOpen }: {
   sessionEpoch: MutableRefObject<number>;
+  runSave: <R, T>(steps: SaveSteps<R, T>) => Promise<T>;
   prependMintedRule: (rule: CreatedRule) => void;
   sheetOpen: boolean;
 }) {
@@ -142,19 +144,16 @@ export function useFilingRun({ sessionEpoch, prependMintedRule, sheetOpen }: {
     refreshAfter('rulesApplied');
   }, [prependMintedRule]);
 
-  const previewFiling = useCallback(async (target: FilingTarget): Promise<FilingResult> => {
-    const epoch = sessionEpoch.current;
-    try {
-      const report = await runRules(true, ruleFor(target));
-      if (epoch !== sessionEpoch.current) return FAILED_NOW;
-      return { status: 'filed', report };
-    } catch (e) {
-      if (epoch !== sessionEpoch.current) return FAILED_NOW;
+  const previewFiling = useCallback((target: FilingTarget): Promise<FilingResult> => runSave<ApplyRulesResult, FilingResult>({
+    send: () => runRules(true, ruleFor(target)),
+    onSaved: (report) => ({ status: 'filed', report }),
+    onFailed: (e) => {
       const clash = clashFrom(target, e);
       if (clash) return { status: 'clash', error: clash, background: false };
       return FAILED_NOW; // a preview writes nothing, so there is nothing to reconcile
-    }
-  }, [sessionEpoch]);
+    },
+    whenSignedOut: FAILED_NOW,
+  }), [runSave]);
 
   // The server has already committed by the time it answers and says exactly which rows landed, so
   // there is no optimistic write and no rollback. A clash wrote nothing, so it refreshes nothing;
@@ -163,23 +162,26 @@ export function useFilingRun({ sessionEpoch, prependMintedRule, sheetOpen }: {
   const fileNow = useCallback(async (target: FilingTarget): Promise<FilingResult> => {
     if (inFlight.current || jobActive.current) return FAILED_NOW;
     inFlight.current = true;
-    const epoch = sessionEpoch.current;
     try {
-      const report = await runRules(false, ruleFor(target));
-      if (epoch !== sessionEpoch.current) return FAILED_NOW;
-      patchFiledRows(report);
-      reconcileRules(target, report.createdRule);
-      return { status: 'filed', report };
-    } catch (e) {
-      if (epoch !== sessionEpoch.current) return FAILED_NOW;
-      const clash = clashFrom(target, e);
-      if (clash) return { status: 'clash', error: clash, background: false };
-      refreshAfter('rulesApplied');
-      return FAILED_NOW;
+      return await runSave<ApplyRulesResult, FilingResult>({
+        send: () => runRules(false, ruleFor(target)),
+        onSaved: (report) => {
+          patchFiledRows(report);
+          reconcileRules(target, report.createdRule);
+          return { status: 'filed', report };
+        },
+        onFailed: (e) => {
+          const clash = clashFrom(target, e);
+          if (clash) return { status: 'clash', error: clash, background: false };
+          refreshAfter('rulesApplied');
+          return FAILED_NOW;
+        },
+        whenSignedOut: FAILED_NOW,
+      });
     } finally {
       inFlight.current = false;
     }
-  }, [sessionEpoch, reconcileRules]);
+  }, [runSave, reconcileRules]);
 
   // Stop polling and release the "one run at a time" lock. Does NOT clear `applyRulesJob` — a
   // terminal frame stays on screen; the dismiss effect drops it when the sheet closes.
