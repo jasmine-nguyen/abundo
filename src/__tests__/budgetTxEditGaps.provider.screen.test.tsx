@@ -96,8 +96,7 @@ describe('[E] applyTransactionEdit — scoped-cache fallback + patch gaps', () =
     expect(queryClient.getQueryData(drillKey)).toEqual([txn('bill', { notes: 'annual premium' })]);
 
     await act(async () => {
-      server.once('PATCH', '/transactions/bill', 'dropped');
-      held.release();
+      held.fail('PATCH');
       await pending;
     });
     // Rolled back: both restored to the original row, no stale note left behind.
@@ -137,8 +136,7 @@ describe('[E] applyTransactionEdit — scoped-cache fallback + patch gaps', () =
     expect(queryClient.getQueryData(drillKey)).toEqual([txn('bill', { budget_excluded: true })]);
 
     await act(async () => {
-      server.once('PATCH', '/transactions/bill', 'dropped');
-      held.release();
+      held.fail('PATCH');
       await pending;
     });
     // Rolled back to the original unmarked row.

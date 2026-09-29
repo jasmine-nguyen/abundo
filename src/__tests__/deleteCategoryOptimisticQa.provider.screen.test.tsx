@@ -89,10 +89,7 @@ async function startDelete(result: { current: ReturnType<typeof useAppContext> }
   act(() => { pending = result.current.deleteCategory('dining'); });
   const request = {
     resolve: () => held.release(),
-    reject: (reply: Parameters<typeof server.once>[2]) => {
-      server.once('DELETE', '/categories/dining', reply);
-      held.release();
-    },
+    reject: (reply: Parameters<typeof server.once>[2]) => held.fail('DELETE', reply),
   };
   return { request, pending };
 }

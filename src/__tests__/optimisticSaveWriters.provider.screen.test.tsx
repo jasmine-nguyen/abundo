@@ -84,8 +84,7 @@ describe('WHIT-628 — spread/budget writers settling after sign-out', () => {
     signOut();
     let returned!: boolean;
     await act(async () => {
-      server.once('DELETE', '/budgets/c1/spread', 'dropped');
-      held.release();
+      held.fail('DELETE');
       returned = await pending;
     });
 
@@ -106,8 +105,7 @@ describe('WHIT-628 — spread/budget writers settling after sign-out', () => {
     queryClient.setQueryData(['budgets'], { other: rollup(7) });
     let returned!: boolean;
     await act(async () => {
-      server.once('DELETE', '/budgets/c1', 'dropped');
-      held.release();
+      held.fail('DELETE');
       returned = await pending;
     });
 
@@ -147,8 +145,7 @@ describe('WHIT-628 — writers still signed in', () => {
 
     let returned!: boolean;
     await act(async () => {
-      server.once('DELETE', '/budgets/c1', 'dropped');
-      held.release();
+      held.fail('DELETE');
       returned = await pending;
     });
 
@@ -228,8 +225,7 @@ describe('WHIT-628 — writers still signed in', () => {
     expect(result.current.toast).toBe('Rule added — COLES files as Groceries.');
 
     await act(async () => {
-      server.once('POST', '/rules', 'dropped');
-      held.release();
+      held.fail('POST');
       await pending;
     });
 
@@ -268,8 +264,7 @@ describe('WHIT-628 — writers still signed in', () => {
     expect(queryClient.getQueryData<{ pattern: string }[]>(['rules'])?.[0].pattern).toBe('NEW');
 
     await act(async () => {
-      server.once('PUT', '/rules/r1', 'dropped');
-      held.release();
+      held.fail('PUT');
       await pending;
     });
 
@@ -290,8 +285,7 @@ describe('WHIT-628 — writers still signed in', () => {
 
     let returned!: boolean;
     await act(async () => {
-      server.once('PUT', '/goals/new-goal', 'dropped');
-      held.release();
+      held.fail('PUT');
       returned = await pending;
     });
 
@@ -312,8 +306,7 @@ describe('WHIT-628 — writers still signed in', () => {
 
     let returned!: boolean;
     await act(async () => {
-      server.once('PUT', '/loanfacts', 'dropped');
-      held.release();
+      held.fail('PUT');
       returned = await pending;
     });
 

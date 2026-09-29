@@ -75,7 +75,7 @@ describe('WHIT-377 — saveMilestones settling AFTER sign-out is a no-op', () =>
     act(() => { pending = result.current.saveMilestones(NEXT); });
     signOut();
     let returned!: boolean;
-    await act(async () => { server.once('PUT', '/milestones', 'dropped'); held.release(); returned = await pending; });
+    await act(async () => { held.fail('PUT'); returned = await pending; });
 
     expect(returned).toBe(false);
     expect(cached()).toBeUndefined();          // <-- the catch's setQueryData(prev) is skipped by the epoch guard
