@@ -15,20 +15,20 @@ import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Rule } from '../context';
+import { installFakeServer } from './support/fakeServer';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-
-const mockListRules = jest.fn<() => Promise<unknown>>();
-jest.mock('../api', () => ({ listRules: () => mockListRules() }));
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 
 import { useRulesScreenData, rulesKey } from '../queries';
+
+const server = installFakeServer();
 
 // The server row for e1 carries NO isNew (server never sends it) — selectRules maps it to false.
 const SERVER = [{ id: 'e1', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs' }];
 // The cache after an optimistic create: the same rule but flagged NEW (badge showing).
 const CACHED_NEW: Rule = { id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: true, field: 'description', operator: 'contains' };
 
-beforeEach(() => { mockListRules.mockReset().mockResolvedValue(SERVER); });
+beforeEach(() => { server.seed('/rules', SERVER); });
 
 it('a rules-query refetch remaps via selectRules and CLEARS the NEW badge (isNew:true → false)', async () => {
   // staleTime Infinity so mounting over the seeded cache does NOT auto-refetch — we control
@@ -48,5 +48,5 @@ it('a rules-query refetch remaps via selectRules and CLEARS the NEW badge (isNew
 
   // The refetch remapped the server payload → isNew:false → the "NEW" badge is gone.
   await waitFor(() => expect(result.current.rules[0].isNew).toBe(false));
-  expect(mockListRules).toHaveBeenCalledTimes(1);
+  expect(server.sent('GET', '/rules')).toHaveLength(1);
 });

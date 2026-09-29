@@ -1,24 +1,18 @@
 // Card 609 — the Ask Abundo chat provider: send → background job → checked every second → answer.
-// The API and auth are mocked; fake timers drive the checking loop.
+// The real API runs against the fake server, auth is mocked; fake timers drive the checking loop.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { act, render } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { ChatJob, ChatTurn } from '../api';
-import { ApiError } from '../apiError';
-
-const mockStartAiChat = jest.fn<(messages: ChatTurn[]) => Promise<ChatJob>>();
-const mockGetAiChatJob = jest.fn<(jobId: string) => Promise<ChatJob>>();
-jest.mock('../api', () => ({
-  startAiChat: (messages: ChatTurn[]) => mockStartAiChat(messages),
-  getAiChatJob: (jobId: string) => mockGetAiChatJob(jobId),
-}));
+import type { ChatJob } from '../api';
+import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';
 const mockAuthListeners = new Set<() => void>();
 jest.mock('../auth', () => ({
   getStatus: () => mockAuthStatus,
   subscribe: (listener: () => void) => { mockAuthListeners.add(listener); return () => mockAuthListeners.delete(listener); },
+  getAuthToken: async () => 'test-id-token',
 }));
 
 import {
@@ -26,6 +20,15 @@ import {
   ChatProvider, chatHistory, useChat,
 } from '../chat/ChatContext';
 import type { ChatContextValue, ChatMessage } from '../chat/ChatContext';
+
+const server = installFakeServer();
+
+// The first POST /ai/chat of each test starts job chat-1; the server then answers its checks
+// "running" until told otherwise.
+const JOB = '/ai/chat/jobs/chat-1';
+const chatPosts = () => server.sent('POST', '/ai/chat');
+const jobChecks = () => server.sent('GET', JOB);
+const nextCheck = (job: Omit<ChatJob, 'jobId'>) => server.once('GET', JOB, { body: { jobId: 'chat-1', ...job } });
 
 const REPLY = { text: 'You spent **$31.11** per cycle.', source: '3 completed pay cycles · 30 Jul – 9 Sep' };
 
@@ -54,9 +57,6 @@ beforeEach(async () => {
   jest.useFakeTimers();
   mockAuthStatus = 'authed';
   mockAuthListeners.clear();
-  mockStartAiChat.mockReset();
-  mockGetAiChatJob.mockReset();
-  mockStartAiChat.mockResolvedValue({ jobId: 'j1', status: 'running' });
   await AsyncStorage.clear();
 });
 
@@ -64,14 +64,13 @@ afterEach(() => { jest.useRealTimers(); });
 
 describe('sending a question', () => {
   it('shows the typing state and status line, then the answer', async () => {
-    mockGetAiChatJob
-      .mockResolvedValueOnce({ jobId: 'j1', status: 'running', toolStatus: 'Looking at Eating Out, last 3 cycles…' })
-      .mockResolvedValueOnce({ jobId: 'j1', status: 'succeeded', reply: REPLY });
+    nextCheck({ status: 'running', toolStatus: 'Looking at Eating Out, last 3 cycles…' });
+    nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
 
     act(() => chat.send('  Average eating out?  '));
     await flush();
-    expect(mockStartAiChat).toHaveBeenCalledWith([{ role: 'user', text: 'Average eating out?' }]);
+    expect(chatPosts().map((request) => request.body)).toEqual([{ messages: [{ role: 'user', text: 'Average eating out?' }] }]);
     expect(chat.inFlight).toBe(true);
 
     await tick();
@@ -87,19 +86,19 @@ describe('sending a question', () => {
   it('ignores a blank message and a second send while one is in flight', async () => {
     await mount();
     act(() => chat.send('   '));
-    expect(mockStartAiChat).not.toHaveBeenCalled();
+    expect(chatPosts()).toHaveLength(0);
 
     act(() => chat.send('first'));
     await flush();
     act(() => chat.send('second'));
     await flush();
-    expect(mockStartAiChat).toHaveBeenCalledTimes(1);
+    expect(chatPosts()).toHaveLength(1);
   });
 });
 
 describe('stop', () => {
   it('stops checking and throws the answer away', async () => {
-    mockGetAiChatJob.mockResolvedValue({ jobId: 'j1', status: 'succeeded', reply: REPLY });
+    nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
     act(() => chat.send('Average eating out?'));
     await flush();
@@ -108,7 +107,7 @@ describe('stop', () => {
     await tick();
     await tick();
 
-    expect(mockGetAiChatJob).not.toHaveBeenCalled();
+    expect(jobChecks()).toHaveLength(0);
     expect(chat.inFlight).toBe(false);
     expect(chat.messages.map((message) => message.role)).toEqual(['user']);
   });
@@ -116,8 +115,8 @@ describe('stop', () => {
 
 describe('errors and retry', () => {
   it('a failed start shows the error bubble; Retry resends without duplicating the question', async () => {
-    mockStartAiChat.mockRejectedValueOnce(new Error('offline'));
-    mockGetAiChatJob.mockResolvedValue({ jobId: 'j1', status: 'succeeded', reply: REPLY });
+    server.once('POST', '/ai/chat', 'dropped');
+    nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
 
     act(() => chat.send('Average eating out?'));
@@ -126,14 +125,17 @@ describe('errors and retry', () => {
 
     act(() => chat.retry());
     await flush();
-    expect(mockStartAiChat).toHaveBeenLastCalledWith([{ role: 'user', text: 'Average eating out?' }]);
+    expect(chatPosts().map((request) => request.body)).toEqual([
+      { messages: [{ role: 'user', text: 'Average eating out?' }] },
+      { messages: [{ role: 'user', text: 'Average eating out?' }] },
+    ]);
     await tick();
     expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant']);
     expect(chat.messages[1]).toMatchObject({ status: 'done', text: REPLY.text });
   });
 
   it('a job the server marks failed shows the error bubble', async () => {
-    mockGetAiChatJob.mockResolvedValue({ jobId: 'j1', status: 'failed', error: 'assistant unavailable' });
+    nextCheck({ status: 'failed', error: 'assistant unavailable' });
     await mount();
     act(() => chat.send('Hi'));
     await flush();
@@ -143,7 +145,7 @@ describe('errors and retry', () => {
   });
 
   it('a gone job (404) fails straight away', async () => {
-    mockGetAiChatJob.mockRejectedValue(new ApiError(404, null));
+    server.fail(JOB, 404);
     await mount();
     act(() => chat.send('Hi'));
     await flush();
@@ -152,8 +154,8 @@ describe('errors and retry', () => {
   });
 
   it('tolerates a few dropped network calls, then answers', async () => {
-    for (let i = 0; i < CHAT_MAX_NET_ERRORS - 1; i += 1) mockGetAiChatJob.mockRejectedValueOnce(new Error('offline'));
-    mockGetAiChatJob.mockResolvedValueOnce({ jobId: 'j1', status: 'succeeded', reply: REPLY });
+    for (let i = 0; i < CHAT_MAX_NET_ERRORS - 1; i += 1) server.once('GET', JOB, 'dropped');
+    nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
     act(() => chat.send('Hi'));
     await flush();
@@ -162,7 +164,7 @@ describe('errors and retry', () => {
   });
 
   it('gives up after too many dropped calls in a row', async () => {
-    mockGetAiChatJob.mockRejectedValue(new Error('offline'));
+    for (let i = 0; i < CHAT_MAX_NET_ERRORS; i += 1) server.once('GET', JOB, 'dropped');
     await mount();
     act(() => chat.send('Hi'));
     await flush();
@@ -172,7 +174,6 @@ describe('errors and retry', () => {
   });
 
   it('gives up when the answer takes too long overall', async () => {
-    mockGetAiChatJob.mockResolvedValue({ jobId: 'j1', status: 'running' });
     await mount();
     act(() => chat.send('Hi'));
     await flush();
@@ -184,7 +185,7 @@ describe('errors and retry', () => {
 
 describe('opening, new chat and sign-out', () => {
   it('a follow-up opens a fresh thread seeded with the summary and focuses the keyboard', async () => {
-    mockGetAiChatJob.mockResolvedValue({ jobId: 'j1', status: 'succeeded', reply: REPLY });
+    nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
     act(() => chat.send('old question'));
     await flush();
@@ -300,19 +301,18 @@ describe('QA edges', () => {
   // [A15] New chat while the POST is still in the air: when it lands, the old job must not start
   // polling or drop its answer into the fresh thread.
   it('a start that resolves after New chat never polls or answers', async () => {
-    let resolveStart: (job: ChatJob) => void = () => {};
-    mockStartAiChat.mockReturnValueOnce(new Promise<ChatJob>((resolve) => { resolveStart = resolve; }));
-    mockGetAiChatJob.mockResolvedValue({ jobId: 'j1', status: 'succeeded', reply: REPLY });
+    const start = server.hold('/ai/chat');
+    nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
     act(() => chat.send('Average eating out?'));
     await flush();
 
     act(() => chat.newChat());
-    await act(async () => { resolveStart({ jobId: 'j1', status: 'running' }); });
+    await act(async () => { start.release(); });
     await tick();
     await tick();
 
-    expect(mockGetAiChatJob).not.toHaveBeenCalled();
+    expect(jobChecks()).toHaveLength(0);
     expect(chat.messages).toEqual([]);
     expect(chat.inFlight).toBe(false);
   });
@@ -320,7 +320,7 @@ describe('QA edges', () => {
   // [A16] A "succeeded" job with no reply is a broken answer, not a blank bubble — and the loop
   // stops instead of polling on.
   it('a succeeded job with no reply shows the error bubble straight away and stops checking', async () => {
-    mockGetAiChatJob.mockResolvedValue({ jobId: 'j1', status: 'succeeded', reply: null });
+    nextCheck({ status: 'succeeded', reply: null });
     await mount();
     act(() => chat.send('Hi'));
     await flush();
@@ -329,13 +329,13 @@ describe('QA edges', () => {
     expect(chat.messages[1]).toMatchObject({ role: 'assistant', status: 'error', text: CHAT_ERROR_TEXT });
     expect(chat.inFlight).toBe(false);
     await tick();
-    expect(mockGetAiChatJob).toHaveBeenCalledTimes(1);
+    expect(jobChecks()).toHaveLength(1);
   });
 
   // [A17] Retry only replaces an error bubble. After a good answer it must do nothing — otherwise
   // it would chop off the answer and resend (a second paid run).
   it('Retry after a good answer does nothing', async () => {
-    mockGetAiChatJob.mockResolvedValue({ jobId: 'j1', status: 'succeeded', reply: REPLY });
+    nextCheck({ status: 'succeeded', reply: REPLY });
     await mount();
     act(() => chat.send('Hi'));
     await flush();
@@ -344,7 +344,7 @@ describe('QA edges', () => {
 
     act(() => chat.retry());
     await flush();
-    expect(mockStartAiChat).toHaveBeenCalledTimes(1);
+    expect(chatPosts()).toHaveLength(1);
     expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant']);
   });
 });

@@ -1,10 +1,38 @@
-// No test may use the bare `jest.mock('../api')` auto-mock: it skips the real request code
-// (src/api.ts). Suites use `installFakeServer()` instead. WHIT-640 widens this to factory mocks.
+// No test may mock api.ts in any form (bare auto-mock, factory mock, jest.doMock): a mock skips
+// the real request code (src/api.ts). Suites use `installFakeServer()` instead.
 import { describe, it, expect } from '@jest/globals';
 import { readdirSync, readFileSync } from 'fs';
 import { join, relative } from 'path';
 
-const API_AUTO_MOCK = /^\s*jest\.mock\(\s*['"](\.\.\/)+api['"]\s*\)/m;
+const API_MOCK = /^\s*jest\.(mock|doMock)\(\s*['"](\.\.\/)+api['"]/m;
+
+// Shrinks as later cards move these suites onto the fake server; deleted once empty.
+const STILL_TO_MOVE = [
+  // WHIT-660
+  'insightsBreakdownQuery.screen.test.tsx',
+  'insightsBreakdownCacheFirst.screen.test.tsx',
+  'insightsBreakdownTree.gaps.screen.test.tsx',
+  'insightsCategoryDrill.screen.test.tsx',
+  'insightsCycleToggle.gaps.screen.test.tsx',
+  'insightsScreenData.edges.screen.test.tsx',
+  'goalScreenData.screen.test.tsx',
+  'goalScreenData.edges.screen.test.tsx',
+  'goalKeepLastGood.edges.screen.test.tsx',
+  'goalsScreenData.screen.test.tsx',
+  'payCycleServerDaysLeft.screen.test.tsx',
+  // WHIT-661
+  'transactionsScreenData.screen.test.tsx',
+  'transactionsSearchQueries.screen.test.tsx',
+  'transactionsSearchRefresh.screen.test.tsx',
+  'uncategorizedFeedQueries.screen.test.tsx',
+  'uncategorizedMoreState.screen.test.tsx',
+  'txResolverMergeGaps.screen.test.tsx',
+  'pullToRefreshLiveBalances.screen.test.tsx',
+  'pullToRefreshSuccessToastGaps.screen.test.tsx',
+  'budgetsQuery.screen.test.tsx',
+  'settingsQuery.screen.test.tsx',
+  'screenQueryHooks.screen.test.tsx',
+];
 
 function testFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -15,18 +43,26 @@ function testFiles(dir: string): string[] {
   });
 }
 
-function autoMocksApi(file: string): boolean {
-  return API_AUTO_MOCK.test(readFileSync(join(__dirname, file), 'utf8'));
+function mocksApi(file: string): boolean {
+  return API_MOCK.test(readFileSync(join(__dirname, file), 'utf8'));
 }
 
-describe('no test uses the bare api auto-mock', () => {
-  it('no test file auto-mocks the api', () => {
-    const offenders = testFiles(__dirname).filter(autoMocksApi);
+describe('no test mocks the api', () => {
+  it('no file outside the still-to-move list mocks the api', () => {
+    const offenders = testFiles(__dirname).filter(
+      (file) => mocksApi(file) && !STILL_TO_MOVE.includes(file),
+    );
 
     expect(offenders).toEqual([]);
   });
 
-  it('the moved save and big-screen suites run on the fake server and keep their expect( count', () => {
+  it('every file on the still-to-move list still mocks the api, so the list only shrinks', () => {
+    const alreadyMoved = STILL_TO_MOVE.filter((file) => !mocksApi(file));
+
+    expect(alreadyMoved).toEqual([]);
+  });
+
+  it('the moved suites run on the fake server and keep their expect( count', () => {
     const baselines: Record<string, number> = {
       'loanFactsWrite.provider.screen.test.tsx': 8,
       'goalsWrite.provider.screen.test.tsx': 53,
@@ -37,6 +73,17 @@ describe('no test uses the bare api auto-mock', () => {
       'whit525Gaps.provider.screen.test.tsx': 7,
       'appProvider.screen.test.tsx': 101,
       'overlaysRealData.screen.test.tsx': 100,
+      'askButton.screen.test.tsx': 8,
+      'chatSheet.screen.test.tsx': 34,
+      'chatContext.provider.screen.test.tsx': 54,
+      'chatContextEdges.screen.test.tsx': 13,
+      'push.screen.test.tsx': 62,
+      'rulesScreenData.screen.test.tsx': 17,
+      'rulesBadgeDivergence.screen.test.tsx': 3,
+      'uncategorizedCountHook.screen.test.tsx': 13,
+      'uncategorizedMerchantsHook.screen.test.tsx': 8,
+      'categoryRangeQuery.screen.test.tsx': 8,
+      'categoryRangeQueryEdges.screen.test.tsx': 10,
     };
 
     const shortfalls = Object.entries(baselines).flatMap(([file, baseline]) => {
@@ -51,10 +98,13 @@ describe('no test uses the bare api auto-mock', () => {
     expect(shortfalls).toEqual([]);
   });
 
-  it('the pattern catches the bare auto-mock and ignores factory mocks and comments', () => {
-    expect(`jest.mock('../api');`).toMatch(API_AUTO_MOCK);
-    expect(`import x from 'y';\n  jest.mock("../../api")`).toMatch(API_AUTO_MOCK);
-    expect(`jest.mock('../api', () => ({}));`).not.toMatch(API_AUTO_MOCK);
-    expect(`// used instead of jest.mock('../api')`).not.toMatch(API_AUTO_MOCK);
+  it('the pattern catches bare, factory and doMock mocks of the api and ignores comments and look-alikes', () => {
+    expect(`jest.mock('../api');`).toMatch(API_MOCK);
+    expect(`import x from 'y';\n  jest.mock("../../api")`).toMatch(API_MOCK);
+    expect(`jest.mock('../api', () => ({}));`).toMatch(API_MOCK);
+    expect(`jest.mock('../api', () => ({\n  fetchX: () => mockFetchX(),\n}));`).toMatch(API_MOCK);
+    expect(`jest.doMock('../api', () => ({}));`).toMatch(API_MOCK);
+    expect(`// used instead of jest.mock('../api')`).not.toMatch(API_MOCK);
+    expect(`jest.mock('../apiWire');`).not.toMatch(API_MOCK);
   });
 });
