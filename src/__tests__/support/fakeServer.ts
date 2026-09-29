@@ -23,7 +23,7 @@ export interface LoggedRequest {
   body: unknown;
 }
 
-export type Method ='GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 type Store = Map<string, unknown>;
 
 interface Call {
