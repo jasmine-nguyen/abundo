@@ -107,6 +107,7 @@ class BuildState(TypedDict):
     tests: NotRequired[str]
     test_attempts: NotRequired[int]
     test_feedback: NotRequired[str]
+    test_rejection: NotRequired[str]
     pinned: NotRequired[dict[str, str]]
     # implementation
     implementer_session: NotRequired[str]
@@ -129,6 +130,7 @@ class BuildState(TypedDict):
     qa_patch: NotRequired[str]
     qa_test_command: NotRequired[str]
     manual_checks: Annotated[list[str], merge_unique]
+    follow_ups: Annotated[list[str], merge_unique]
     last_review: NotRequired[dict[str, str]]
     # wrap-up
     failed: NotRequired[bool]
@@ -254,9 +256,10 @@ VALIDITY_WORDS = {
     "DEAD CODE": "the part of the app it's about isn't used anywhere",
     "WRONG PREMISE": "what it describes isn't how the app works today",
     "ALREADY COVERED": "the existing tests already cover it",
+    "WRONG REPO": "the change belongs in another repo, which this build can't change",
 }
 DESIGNER_OUTPUT = _output(
-    validity=_one_of("VALID", "ALREADY DONE", "DEAD CODE", "WRONG PREMISE", "ALREADY COVERED"),
+    validity=_one_of("VALID", "ALREADY DONE", "DEAD CODE", "WRONG PREMISE", "ALREADY COVERED", "WRONG REPO"),
     validity_evidence=TEXT,
     clarifying_questions=_list_of(question=TEXT, recommendation=TEXT),
     problem=TEXTS,
@@ -290,7 +293,7 @@ REPRODUCER_OUTPUT = _output(
     summary=TEXT,
 )
 TEST_WRITER_OUTPUT = _output(seams=TEXTS, test_files=TEXTS, command=TEXT, summary=TEXT)
-IMPLEMENTER_OUTPUT = _output(status=_one_of("DONE", "ESCALATE"), summary=TEXT, escalation=TEXT)
+IMPLEMENTER_OUTPUT = _output(status=_one_of("DONE", "ESCALATE"), summary=TEXT, escalation=TEXT, follow_ups=TEXTS)
 CODE_CRITIC_OUTPUT = _output(
     blocking_bugs=TEXTS,
     standards_breaches=TEXTS,
@@ -344,23 +347,71 @@ def _deny(reason: str) -> dict:
     }
 
 
+# Helpers change only the repo being built (QA: only its worktree) plus scratch space. The
+# pipeline can check, commit and undo changes here, but it can't even see another repo's.
+TEMP_DIRS = tuple({Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve()})
+SHELL_PATH = re.compile(r"(?<![\w.:/-])(?:~|/)[^\s'\"`;&|()<>]*")
+SHELL_CD = re.compile(r"""(?:^|[;&|(]\s*)cd\s+("[^"]*"|'[^']*'|[^\s;&|)]+)""")
+SHELL_WRITES = re.compile(
+    r">|\b(?:tee|cp|mv|rm|touch|mkdir|ln|install|rsync|patch)\b|\bsed\s+-i|\.write|write_(?:text|bytes)"
+    r"|\bopen\([^)]*['\"][wax]"
+)
+HARMLESS_REDIRECTS = re.compile(r"[0-9]?>&[0-9]|[0-9&]?>>?\s*/dev/(?:null|stdout|stderr)")
+WRITES_OUTSIDE = (
+    "Blocked: `{path}` is outside the repo you're building, and helpers change only this repo. Reading "
+    "it with absolute paths is fine. If the card needs a change elsewhere, don't make it: finish here and "
+    "list it under `follow_ups`."
+)
+
+
+def writable_roots(policy: str) -> tuple[Path, ...]:
+    return (BUILD_DIR, *TEMP_DIRS) if policy == "qa" else (ROOT, *TEMP_DIRS)
+
+
+def outside(path_text: str, roots: tuple[Path, ...]) -> bool:
+    text = path_text.strip("'\"")
+    if not text or "$" in text or text.startswith("/dev/"):
+        return False
+    path = Path(os.path.expanduser(text))
+    if not path.is_absolute():
+        return False  # relative paths are where the agent works
+    return not any(path.resolve().is_relative_to(root) for root in roots)
+
+
+def shell_writes_outside(command: str, roots: tuple[Path, ...]) -> str | None:
+    """A path outside `roots` that the command moves into or may write to, if any."""
+    for target in SHELL_CD.findall(command):
+        if outside(target, roots):
+            return target
+    if not SHELL_WRITES.search(HARMLESS_REDIRECTS.sub("", command)):
+        return None
+    return next((path for path in SHELL_PATH.findall(command) if outside(path, roots)), None)
+
+
 def guard_hooks(policy: str) -> dict[str, list[HookMatcher]]:
     denied = BASH_DENY[policy]
+    roots = writable_roots(policy)
 
     async def guard_bash(hook_input, _tool_use_id, _context):
         command = hook_input["tool_input"].get("command", "")
         if denied.search(command):
             return _deny(f"Blocked for a {policy} agent: `{command[:120]}`. The pipeline owns git.")
+        if policy != "read_only":
+            path = shell_writes_outside(command, roots)
+            if path:
+                return _deny(WRITES_OUTSIDE.format(path=path))
         return {}
 
     matchers = [HookMatcher(matcher="Bash", hooks=[guard_bash])]
-    if policy == "qa":
+    if policy != "read_only":
 
         async def guard_writes(hook_input, _tool_use_id, _context):
             tool_input = hook_input["tool_input"]
             path = Path(tool_input.get("file_path") or tool_input.get("notebook_path") or ".").resolve()
-            if path.is_relative_to(ROOT) and not path.is_relative_to(BUILD_DIR):
+            if policy == "qa" and path.is_relative_to(ROOT) and not path.is_relative_to(BUILD_DIR):
                 return _deny("QA writes only in its own worktree, never in the main checkout.")
+            if outside(str(path), roots):
+                return _deny(WRITES_OUTSIDE.format(path=path))
             return {}
 
         matchers.append(HookMatcher(matcher="Write|Edit|MultiEdit|NotebookEdit", hooks=[guard_writes]))
@@ -583,7 +634,7 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
         if update.get("escalation"):
             return "❌ Couldn't write tests that fail before the code exists"
         if update.get("test_feedback"):
-            return "❌ The new tests passed before any code existed, rewriting them"
+            return f"❌ The new tests were rejected: {update['test_rejection']}. Rewriting them"
         if "pinned" in update:
             return "✅ Failing tests written and locked"
         return "✅ No new tests needed at this level"
@@ -776,7 +827,10 @@ def stray_changes(state: BuildState) -> list[str]:
 
 def commit_all(state: BuildState, message: str) -> tuple[bool, str]:
     """Commit every change except files that were already untracked when the build started."""
-    excluded = [f":(exclude,literal){path}" for path in state.get("untracked_at_start", [])]
+    still_untracked = {path for status, path in git_status() if status == "??"}
+    excluded = [
+        f":(exclude,literal){path}" for path in state.get("untracked_at_start", []) if path in still_untracked
+    ]
     git("add", "-A", "--", ".", *excluded)
     if run(["git", "diff", "--cached", "--quiet"])[0] == 0:
         return True, ""
@@ -913,6 +967,24 @@ NO_TESTS_RAN = re.compile(
 )
 
 
+REJECTIONS = {
+    "no command given": "it gave no command to run them",
+    "The pipeline won't run": "its test command touches git",
+    "These test files are outside this repo": "they're outside this repo",
+    "These test files don't exist": "the test files it named don't exist",
+    "No tests ran": "the test command ran no tests",
+    "timed out after": "they timed out",
+}
+
+
+def rejection_reason(output: str) -> str:
+    """Why a red check failed, in a few plain words."""
+    return next(
+        (reason for start, reason in REJECTIONS.items() if output.startswith(start)),
+        "they passed before any code existed",
+    )
+
+
 def is_red(command: str, test_files=()) -> tuple[bool, str]:
     """Run a test command that must fail because the behaviour doesn't exist yet."""
     if not command.strip():
@@ -920,7 +992,10 @@ def is_red(command: str, test_files=()) -> tuple[bool, str]:
     # The agent wrote this command, so it gets the same guard as the agent's own shell.
     if BASH_DENY["writer"].search(command):
         return False, f"The pipeline won't run `{command}`: it touches git, and the pipeline owns git."
-    missing = [path for path in test_files if not (repo_path(path) and (ROOT / repo_path(path)).is_file())]
+    elsewhere = [path for path in test_files if not repo_path(path)]
+    if elsewhere:
+        return False, f"These test files are outside this repo, where the pipeline can't run or pin them: {', '.join(elsewhere)}"
+    missing = [path for path in test_files if not (ROOT / repo_path(path)).is_file()]
     if missing:
         return False, f"These test files don't exist: {', '.join(missing)}"
     code, output = run(command, timeout=CHECK_TIMEOUT_S)
@@ -1419,13 +1494,15 @@ async def test_writer(state: BuildState):
             "history": [f"✓ test_writer: {len(out['test_files'])} failing test file(s) pinned"],
         }
     attempts = state.get("test_attempts", 0) + 1
+    reason = rejection_reason(output)
     feedback = (
-        f"`{out['command']}` didn't fail for the right reason before any implementation exists "
-        f"(it passed, wasn't found, or timed out), so the tests prove nothing. Output:\n{tail(output, 1500)}"
+        f"`{out['command']}` didn't fail for the right reason before any implementation exists: {reason}. "
+        f"So the tests prove nothing yet. Output:\n{tail(output, 1500)}"
     )
     update = {
         "test_attempts": attempts,
         "test_feedback": feedback,
+        "test_rejection": reason,
         "history": [f"✗ test_writer: tests weren't red — {first_line(out['command'])}"],
     }
     if attempts >= MAX_TEST_ATTEMPTS:
@@ -1468,6 +1545,7 @@ async def implementer(state: BuildState):
     session_update = {
         "implementer_session": result.session_id,
         "implementer_resumes": resumes + 1 if resume else 0,
+        "follow_ups": out["follow_ups"],
     }
     if out["status"] == "ESCALATE":
         question = out["escalation"] or out["summary"]
@@ -2171,6 +2249,12 @@ def report(thread: str, result: dict) -> int:
     else:
         print("Done.")
     print("=" * 60)
+    if result.get("follow_ups"):
+        print("\nFOLLOW-UPS THE BUILD COULDN'T DO:")
+        print(bullets(result["follow_ups"]))
+    if result.get("manual_checks") and outcome in ("shipped", "pushed"):
+        print("\nMANUAL CHECKS (also in the PR):")
+        print(bullets(result["manual_checks"]))
     if result.get("tech_debt"):
         print("\nTECH DEBT CARDS TO FILE:")
         for card in result["tech_debt"]:
@@ -2401,6 +2485,7 @@ async def replan_build(graph, config, snapshot, feedback: str, pid: int | None):
             "advisory": None,
             "tech_debt": None,
             "manual_checks": None,
+            "follow_ups": None,
             "history": [f"↩️ replan: {first_line(feedback)}"],
         },
         as_node="sign_off",

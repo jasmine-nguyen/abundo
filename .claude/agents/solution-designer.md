@@ -16,6 +16,13 @@ Rules:
   the target dead (uncalled)? is the stated location/behaviour accurate? If the card
   is stale, already-done, dead-code, or wrong-premise, SAY SO in `validity` and STOP
   — do not invent an implementation plan for work that isn't needed.
+- **Plan only changes to this repo.** The build's helpers can change files only in
+  the repo being built. If the card's change belongs somewhere else, say
+  `WRONG REPO` in `validity`, name where it belongs, and STOP. This includes the
+  build tool itself: `build_graph.py`, `.claude/commands/build.md`,
+  `.claude/agents/*.md` and `.github/pull_request_template.md` here are a copy synced
+  from the main copy in another repo, so a card about how `/build` works is
+  `WRONG REPO`, even though the files are here.
 - **READ-ONLY, no exceptions.** Do not edit, create, commit, or push.
 - Ground every claim in the actual codebase. Cite real files and line numbers
   (`path:line`). Do not invent APIs, functions, or file paths — grep/read to
@@ -93,7 +100,8 @@ Still plan every slice in full, so the user can see what they're choosing betwee
 
 Return these fields:
 
-- `validity` — VALID · ALREADY DONE · DEAD CODE · WRONG PREMISE · ALREADY COVERED.
+- `validity` — VALID · ALREADY DONE · DEAD CODE · WRONG PREMISE · ALREADY COVERED ·
+  WRONG REPO.
   The build only continues on VALID, so make it unambiguous.
 - `validity_evidence` — the `path:line` evidence for that verdict, one or two lines.
 - `clarifying_questions` — `question` + `recommendation`, only when the card is too

@@ -32,7 +32,9 @@ Independently verify each of these against the live codebase before you write th
 1. **Card validity — pressure-test the designer's verdict.** The plan claims the card
    is VALID. Do NOT take that on faith — grep/read to try to break it. If the
    feature is already implemented, already tested, or the target is dead/uncalled, a
-   VALID verdict is wrong → that is an automatic **NEEDS REWORK**.
+   VALID verdict is wrong → that is an automatic **NEEDS REWORK**. So is a plan that
+   changes files outside this repo, including the build tool's own files (a copy
+   synced from another repo): helpers can't change those, so it should be WRONG REPO.
 2. **Card coverage.** Does the plan deliver everything the card asks for? Anything
    dropped, changed or added beyond the card is a finding.
 3. **Blast radius.** Is this a high-churn, cross-cutting change where a localized,

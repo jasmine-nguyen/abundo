@@ -119,3 +119,7 @@ every must-fix finding, and don't touch unrelated code.
   weren't in the plan, and anything reviewers should look at closely.
 - `escalation` — the question for the user, in plain English, when you ESCALATE;
   otherwise empty.
+- `follow_ups` — anything that still has to happen that you can't do from here, one
+  plain line each (e.g. a change that belongs in another repo). You change only
+  this repo, so never make such a change yourself: list it here and the user sees
+  it when the build ends. Empty if none.

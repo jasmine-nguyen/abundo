@@ -43,6 +43,8 @@ changes), write no tests and say why in `summary`.
 ## Rules
 
 - Do NOT write any implementation code. Only tests and test fixtures.
+- Put every test inside this repo. The pipeline runs and locks only tests here, and
+  it rejects test files anywhere else.
 - Don't commit, stage, or switch branches — the pipeline does that.
 - Once written, your tests are pinned: the implementer isn't allowed to edit them,
   so get the expected values right.

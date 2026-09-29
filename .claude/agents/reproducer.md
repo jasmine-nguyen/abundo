@@ -43,6 +43,8 @@ each cut, until every remaining piece is needed for the failure.
 ## Rules
 
 - Do not fix the bug. Only write tests, fixtures and scripts.
+- Put every test inside this repo. The pipeline runs and locks only tests here, and
+  it rejects test files anywhere else.
 - Redact secrets in anything you show: write `<REDACTED>`.
 - Don't commit, stage, or switch branches.
 - Check the project context (appended below) for landmines and the test commands.

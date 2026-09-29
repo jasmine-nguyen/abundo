@@ -229,7 +229,10 @@ the card number for card builds) and check where it is:
        card you filed.
    - **CARD LOOKS INVALID** — show the block (why it looks unneeded, the
      problem, and what the card should become), then ask: Close the card · Plan it anyway (ask
-     why it's still needed) · Stop.
+     why it's still needed) · Stop. If the reason is that the change belongs in
+     another repo (for a card about `/build` itself, the main copy of the build
+     tool), say where, and offer to make the change there outside the build once
+     the card is closed.
    - **QUESTIONS BEFORE PLANNING** — the card was too thin to plan. Ask the
      questions with AskUserQuestion, recommended answer first.
    - **DECISION NEEDED** — an agent hit a decision it shouldn't make alone
@@ -300,6 +303,10 @@ the card number for card builds) and check where it is:
      cause is fixed (e.g. `gh auth login`), `--retry`.
 
 6. After the run:
+   - If it printed **FOLLOW-UPS THE BUILD COULDN'T DO**, tell the user each one
+     in plain English, and offer to do the ones you can.
+   - If it printed **MANUAL CHECKS**, list them for the user: they're what a
+     person should try before merging.
    - If it printed **TECH DEBT CARDS TO FILE**, create each one on the board
      (Status 'To Do', Type 'Tech Debt' if the board has it, otherwise the
      default card type), and tell the user they were filed.
