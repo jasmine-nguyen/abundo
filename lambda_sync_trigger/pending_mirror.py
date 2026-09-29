@@ -96,13 +96,13 @@ def mirror_account(
     no longer lists. `fetch(bid, aid, date_from, date_to)` returns the bank's rows."""
     account_id = ACCOUNT_ID_MAP[source["aid"]]
     check_from = today - timedelta(days=FEED_WINDOW_DAYS)
-    # Read ours BEFORE the bank's list: a pending stored after this read can't be judged against
-    # an older bank list.
-    stored = read_date_range_pages(repo, account_id, check_from.isoformat(), None)
-    pendings = [row for row in stored if row.get("status") == PENDING_STATUS]
-
     fetch_from = today - timedelta(days=FEED_WINDOW_DAYS + PENDING_MIRROR_FETCH_MARGIN_DAYS)
     fetch_to = today + timedelta(days=1)
+    # Read ours BEFORE the bank's list: a pending stored after this read can't be judged against
+    # an older bank list. Capped at fetch_to: a row dated later can never be in the bank's list.
+    stored = read_date_range_pages(repo, account_id, check_from.isoformat(), fetch_to.isoformat())
+    pendings = [row for row in stored if row.get("status") == PENDING_STATUS]
+
     bank_rows = fetch(source["bid"], source["aid"], fetch_from.isoformat(), fetch_to.isoformat())
     if not bank_rows:
         logger.warning("pending_mirror %s: bank list is empty, skipping", account_id)
