@@ -794,7 +794,7 @@ def test_only_merchant_matching_pending_consumed_not_lowest_id(lam, repo):
 def test_pending_with_missing_amount_never_matches(lam, repo):
     # A pooled pending with no amount (defensive: DB rows shouldn't, but must never
     # KeyError). It has the matching merchant + day, so absent the None-guard the tip
-    # tier would try _is_tip_adjusted(item["amount"], ...) and raise. Must not crash,
+    # tier would try _is_larger_within(item["amount"], ...) and raise. Must not crash,
     # must not match.
     _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
                   authorized_date="2026-06-29", pending=True, category="coffee")
@@ -1174,8 +1174,8 @@ def test_reconcile_matches_empty_and_all_pending_batch(lam, repo):
 # --- direct locks on the new pure helpers -----------------------------------
 
 
-def test_is_tip_adjusted_edges(lam):
-    f = lam.reconcile._is_tip_adjusted
+def test_is_larger_within_edges(lam):
+    f = lambda a, s: lam.reconcile._is_larger_within(a, s, lam.reconcile.TIP_HEADROOM)
     D = Decimal
     # equal magnitude is inside the (inclusive) window
     assert f(D("-5"), D("-5")) is True
@@ -1364,7 +1364,8 @@ def test_skew_single_word_merchant_does_not_merge_a_neighbouring_brand(lam, repo
 
 
 def test_skew_tip_sized_amount_gap_does_not_merge(lam, repo):
-    # Skewed AND tipped is a compound rarity — this tier requires the exact amount.
+    # +9% is over the skewed-fee tier's 5% limit (WHIT-653), so a tip-sized gap on a
+    # skewed pair still doesn't merge.
     _skew_pending(repo, lam, amount=Decimal("-11.00"))
 
     repo.insert_or_reconcile([_skew_posted(lam, amount=Decimal("-12.00"))])

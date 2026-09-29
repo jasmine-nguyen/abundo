@@ -171,11 +171,6 @@ def _is_larger_within(auth_amount: Decimal, settled_amount: Decimal, headroom: D
     return auth_mag <= settled_mag <= auth_mag * (Decimal(1) + headroom)
 
 
-def _is_tip_adjusted(auth_amount: Decimal, settled_amount: Decimal) -> bool:
-    """Whether `settled_amount` is `auth_amount` plus at most a tip (TIP_HEADROOM)."""
-    return _is_larger_within(auth_amount, settled_amount, TIP_HEADROOM)
-
-
 def _settles_after(pending_date: Optional[str], posted_date: Optional[str]) -> bool:
     """Whether `pending_date` could be the swipe day of a charge that settled on
     `posted_date`: same day or up to FEED_WINDOW_DAYS earlier. Used only by the
@@ -277,7 +272,7 @@ def _find_tip_twin(posted_txn: Transaction, pool: list[dict]) -> Optional[dict]:
         pool,
         lambda item: item.get("authorized_date") == authorized_date
         and item.get("amount") is not None
-        and _is_tip_adjusted(item["amount"], amount)
+        and _is_larger_within(item["amount"], amount, TIP_HEADROOM)
         and merchant_matches_pending(merchant, item.get("merchant_name") or "",
                                      item.get("description") or ""),
     )

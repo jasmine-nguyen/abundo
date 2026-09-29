@@ -117,7 +117,7 @@ def _is_carry_twin(pending: dict, posted: dict) -> bool:
     dates within the window.
 
     Amount must match EXACTLY. The reconciler pairs a tip-adjusted settlement via its own tip
-    tier (reconcile._is_tip_adjusted), but the rescue deliberately does NOT — carrying a
+    tier (reconcile._is_larger_within), but the rescue deliberately does NOT — carrying a
     user's category is kept strict, so the amount gate is not widened to a tip range (nor
     mirrors the skewed-fee tier, WHIT-653). The
     accepted cost: a tipped charge (dining/rideshare) that missed every reconcile tier is
