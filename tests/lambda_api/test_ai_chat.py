@@ -10,6 +10,8 @@ from decimal import Decimal
 
 import pytest
 
+from _terraform import TERRAFORM_DIR, tf_attr, tf_block
+
 TODAY = "2026-09-20"
 CYCLE_START = "2026-09-10"
 
@@ -421,10 +423,6 @@ def test_worker_still_returns_failed_when_marking_the_job_failed_also_fails(ai_c
 def test_every_model_round_fits_inside_the_worker_timeout(ai_chat):
     # If CHAT_MAX_TOOL_ROUNDS slow model calls outlast the worker's Lambda timeout, AWS kills the
     # worker mid-loop: its "failed" write never runs and the job hangs as "running".
-    import pathlib
-    import re
-
-    tf = (pathlib.Path(__file__).resolve().parents[2] / "terraform" / "lambda.tf").read_text()
-    worker = tf[tf.index('resource "aws_lambda_function" "ai_chat_worker"'):]
-    timeout = int(re.search(r"timeout\s*=\s*(\d+)", worker).group(1))
+    worker = tf_block((TERRAFORM_DIR / "lambda.tf").read_text(), "aws_lambda_function", "ai_chat_worker")
+    timeout = int(tf_attr(worker, "timeout"))
     assert ai_chat.CHAT_MAX_TOOL_ROUNDS * ai_chat.ANTHROPIC_CHAT_TIMEOUT_SECONDS < timeout

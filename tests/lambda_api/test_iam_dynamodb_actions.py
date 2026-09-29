@@ -20,9 +20,11 @@ import ast
 import pathlib
 import re
 
+from _terraform import TERRAFORM_DIR, tf_block
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _SHARED = _REPO_ROOT / "shared"
-_IAM = _REPO_ROOT / "terraform" / "iam.tf"
+_IAM = TERRAFORM_DIR / "iam.tf"
 _FACADE = _SHARED / "repository.py"
 
 # boto3 Table method -> the IAM action it needs. batch_writer maps to BatchWriteItem; it is
@@ -39,13 +41,8 @@ _VERB_TO_ACTION = {
 
 
 def _app_api_policy_block() -> str:
-    """The text of the `app_api_dynamodb` resource, sliced to the next `resource "` marker."""
-    source = _IAM.read_text()
-    start = source.index('resource "aws_iam_role_policy" "app_api_dynamodb"')
-    rest = source[start:]
-    # The block ends at the next top-level resource declaration.
-    end = rest.index('\nresource "', 1)
-    return rest[:end]
+    """The body of the `app_api_dynamodb` resource."""
+    return tf_block(_IAM.read_text(), "aws_iam_role_policy", "app_api_dynamodb")
 
 
 def _granted_actions() -> set[str]:

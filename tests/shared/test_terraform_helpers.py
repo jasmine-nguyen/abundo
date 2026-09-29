@@ -26,9 +26,11 @@ def test_shared_readers_read_monitoring_tf():
 
 
 def test_no_test_file_keeps_its_own_terraform_reader():
+    # WHIT-649: a hand-built <repo>/terraform path is a local copy of TERRAFORM_DIR too.
     local_copy = re.compile(
         r"^\s*def _(tf_block|tf_attr|filter_pattern)\(|"
-        r'resource "aws_cloudwatch_log_metric_filter" "[^"{]+"\.\*\?',
+        r'resource "aws_cloudwatch_log_metric_filter" "[^"{]+"\.\*\?|'
+        r'(parents\[\d+\]|_ROOT|_REPO_ROOT)\)?\s*/\s*"terraform"',
         re.M)
     this_file = pathlib.Path(__file__).resolve()
     offenders = sorted(
@@ -38,4 +40,4 @@ def test_no_test_file_keeps_its_own_terraform_reader():
         and path.name != "_terraform.py"
         and local_copy.search(path.read_text())
     )
-    assert offenders == [], f"import the readers from _terraform instead: {offenders}"
+    assert offenders == [], f"import TERRAFORM_DIR and the readers from _terraform instead: {offenders}"
