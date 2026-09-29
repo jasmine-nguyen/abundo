@@ -104,3 +104,16 @@ describe('accountDetail', () => {
     expect(accountDetail({ transactions, category }, 'nope')).toBeNull();
   });
 });
+
+describe('accountSummaries extraIds ordering (WHIT-643 QA)', () => {
+  // [A1] a balance-only id whose name sorts alphabetically first must still come after every
+  // transaction-derived account, so existing cards keep their index (and accent colour).
+  it('sorts a balance-only account last even when its name sorts first', () => {
+    const out = accountSummaries(
+      { transactions: [txn({ transaction_id: 't1', account_id: 'z1', account_name: 'Zeta' })] },
+      new Map([['aaa-loan', 1], ['z1', 2]]).keys(),
+    );
+    expect(out.map((a) => a.id)).toEqual(['z1', 'aaa-loan']);
+    expect(out[1]).toEqual({ id: 'aaa-loan', name: 'Aaa Loan', count: 0 });
+  });
+});

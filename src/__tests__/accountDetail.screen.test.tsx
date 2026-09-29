@@ -25,6 +25,7 @@ jest.mock('expo-router', () => ({
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import AccountDetail from '../../app/account/[id]';
+import { Header } from '../components/Header';
 
 const ROW = {
   transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
@@ -142,4 +143,20 @@ it('an unknown account with no balance and no transactions still shows "No trans
   render(<AccountDetail />);
   expect(screen.getByText('No transactions')).toBeTruthy();
   expect(screen.queryByTestId('account-balance')).toBeNull();
+});
+
+// [A2] an account with BOTH loaded transactions and a balance keeps the bank's name in the
+// header — the id-derived fallback ("A1") is only for balance-only accounts.
+it('uses the transaction account name for the header when the account also has a balance', () => {
+  mockTx = txData({ transactions: [ROW], balances: new Map([['a1', bal()]]) });
+  render(<AccountDetail />);
+  expect(screen.UNSAFE_getByType(Header).props.title).toBe('ANZ');
+});
+
+// [A3] a balance-only account's header is its id tidied into words, not the generic "Account".
+it('titles a balance-only account from its id', () => {
+  mockId = 'up-homeloan';
+  mockTx = txData({ transactions: [ROW], balances: new Map([['up-homeloan', bal({ account_id: 'up-homeloan' })]]) });
+  render(<AccountDetail />);
+  expect(screen.UNSAFE_getByType(Header).props.title).toBe('Up Homeloan');
 });
