@@ -6,13 +6,6 @@ import { join, relative } from 'path';
 
 const API_AUTO_MOCK = /^\s*jest\.mock\(\s*['"](\.\.\/)+api['"]\s*\)/m;
 
-// Shrinks as later cards move these suites onto the fake server; deleted once empty.
-const STILL_TO_MOVE = [
-  // WHIT-657
-  'appProvider.screen.test.tsx',
-  'overlaysRealData.screen.test.tsx',
-];
-
 function testFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
@@ -27,21 +20,13 @@ function autoMocksApi(file: string): boolean {
 }
 
 describe('no test uses the bare api auto-mock', () => {
-  it('no file outside the still-to-move list auto-mocks the api', () => {
-    const offenders = testFiles(__dirname).filter(
-      (file) => autoMocksApi(file) && !STILL_TO_MOVE.includes(file),
-    );
+  it('no test file auto-mocks the api', () => {
+    const offenders = testFiles(__dirname).filter(autoMocksApi);
 
     expect(offenders).toEqual([]);
   });
 
-  it('every file on the still-to-move list still auto-mocks the api, so the list only shrinks', () => {
-    const alreadyMoved = STILL_TO_MOVE.filter((file) => !autoMocksApi(file));
-
-    expect(alreadyMoved).toEqual([]);
-  });
-
-  it('the WHIT-656 save suites run on the fake server and keep their expect( count', () => {
+  it('the moved save and big-screen suites run on the fake server and keep their expect( count', () => {
     const baselines: Record<string, number> = {
       'loanFactsWrite.provider.screen.test.tsx': 8,
       'goalsWrite.provider.screen.test.tsx': 53,
@@ -50,6 +35,8 @@ describe('no test uses the bare api auto-mock', () => {
       'budgetTxOptimistic.provider.screen.test.tsx': 64,
       'budgetTxEditGaps.provider.screen.test.tsx': 9,
       'whit525Gaps.provider.screen.test.tsx': 7,
+      'appProvider.screen.test.tsx': 101,
+      'overlaysRealData.screen.test.tsx': 100,
     };
 
     const shortfalls = Object.entries(baselines).flatMap(([file, baseline]) => {
