@@ -157,6 +157,23 @@ def test_preview_rows_equal_the_real_save_on_a_mixed_batch(alerts, repo, monkeyp
     assert _view(alerts.budget_alerts._simulate_after(ctx, batch)) == _view(ledger)
 
 
+# WHIT-653 — a settled charge dated a day earlier with a foreign fee folded in (+3%)
+# reconciles its pending in the preview exactly as the real save does: counted once.
+def test_preview_reconciles_a_skewed_fee_pair_like_the_real_save(alerts, repo, monkeypatch):
+    _seed(repo, alerts, txn_id="PEND", amount=Decimal("-40.00"), pending=True, category="groceries",
+          date="2026-07-11", authorized_date="2026-07-11")
+    before = [dict(r) for r in repo._table.store.values()]
+    batch = [_norm_real(alerts, txn_id="POST", amount=Decimal("-41.20"), pending=False,
+                        category="FOOD_AND_DRINK", date="2026-07-10", authorized_date="2026-07-10")]
+
+    _, _, ctx = _fire(alerts, monkeypatch, repo, before, batch)
+
+    ledger = list(repo._table.store.values())
+    preview = alerts.budget_alerts._simulate_after(ctx, batch)
+    assert [r["transaction_id"] for r in preview] == ["POST"]   # pending absent — spend counted once
+    assert _view(preview) == _view(ledger)
+
+
 # [A4] P1 — the preview never mutates the snapshot: running it twice gives the same rows,
 # and the pending pools / before-rows the ctx holds are untouched (the fire step reads them).
 def test_preview_does_not_mutate_the_snapshot(alerts, repo, monkeypatch):
