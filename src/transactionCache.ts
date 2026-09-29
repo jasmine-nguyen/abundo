@@ -198,10 +198,11 @@ function removeRefiledFromBudgetLists(categories: Category[], ids: string[], new
 // Optimistically file `ids` under `categoryId` on every main copy and drop them from any budget
 // list that no longer owns them. Returns a rollback for the ids whose save failed: each goes
 // back to its OWN previous category (WHIT-324), never a blanket Uncategorized. The budget-list
-// restore uses raw setQueryData, which would recreate a cleared entry after sign-out, so it only
-// runs while `epochStillCurrent()`; it restores the snapshots then re-drops the ids that saved.
+// restore uses raw setQueryData, which would recreate a cleared entry after sign-out, so only
+// call the rollback while still in the same session (the save runner guarantees this). It
+// restores the snapshots then re-drops the ids that saved.
 export function optimisticRefile(
-  ids: string[], categoryId: string, categories: Category[], epochStillCurrent: () => boolean,
+  ids: string[], categoryId: string, categories: Category[],
 ): (failedIds: string[]) => void {
   const previousById = new Map(
     readTransactionCopies(queryClient, { includeScopedLists: false })
@@ -218,7 +219,6 @@ export function optimisticRefile(
       prev.map((existing) => (failedIds.includes(existing.transaction_id)
         ? { ...existing, category: previousById.get(existing.transaction_id) ?? null }
         : existing)));
-    if (!epochStillCurrent()) return;
     budgetTxSnaps.forEach(([key, data]) => queryClient.setQueryData(key, data));
     const savedIds = ids.filter((id) => !failedIds.includes(id));
     if (savedIds.length > 0) removeRefiledFromBudgetLists(categories, savedIds, categoryId);
