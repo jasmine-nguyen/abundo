@@ -1,5 +1,6 @@
 // WHIT-459 real-data overlay fold — every <Overlays/> screen test that mounts the REAL
-// <AppProvider> (the real-provider regime: only ../auth, ../api and ../queries are mocked) lives
+// <AppProvider> (the real-provider regime: only ../auth and ../queries are mocked, requests go to
+// the fake server) lives
 // here, one child describe per concern. Folded in (scenarios preserved 1:1, 32 its):
 //   - WHIT-268  anon hard-clear + locked hide/keep    (was overlaysAuthClear)
 //   - WHIT-268  gaps: refresh/epoch/loading/reconcile (was overlaysAuthClearGaps)
@@ -14,8 +15,8 @@
 // converted here to the same inline store (setAuthStatus→mockSetStatus, resetAuth→inline reset), which
 // is byte-equivalent (authMock.ts's setAuthStatus/resetAuth/useIsAuthedMock match the inline versions).
 // Each describe keeps its own consts / helpers / Probe / renderOverlays / beforeEach block-scoped; only
-// the mocked modules (../auth, ../api, ../queries), the shared `mockState`, and the auth store are
-// module-level (jest.mock can't be per-describe). The two WHIT-268 describes hardcoded an empty query
+// the mocked modules (../auth, ../queries), the fake server, the shared `mockState`, and the auth store
+// are module-level (jest.mock can't be per-describe). The two WHIT-268 describes hardcoded an empty query
 // fixture; under the shared `mockState` their beforeEach now explicitly `mockState = {}` so a fixture
 // from a sibling describe can't leak in (order-independence).
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
@@ -34,13 +35,11 @@ const mockSetStatus = (s: typeof mockStatus) => { mockStatus = s; mockListeners.
 const mockRebroadcast = () => mockListeners.forEach((l) => l());
 const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mockListeners.delete(l); };
 
-jest.mock('../auth', () => ({ getStatus: () => mockStatus, subscribe: (l: () => void) => mockSubscribe(l) }));
-// Auto-mocked. clearMocks (jest.config) clears call-counts each test but NOT implementations, so a
-// mockRejectedValue/mockImplementation persists across describes in this single file. That is inert
-// only because context.tsx's mount effects call NO api method — every generate/refresh/create/file is
-// a user-triggered callback — so no describe inherits a live pending/rejecting impl at mount. Keep it
-// that way: a new mount-time api call would need a reset here.
-jest.mock('../api');
+jest.mock('../auth', () => ({
+  getStatus: () => mockStatus,
+  subscribe: (l: () => void) => mockSubscribe(l),
+  getAuthToken: async () => 'test-id-token',
+}));
 
 let mockState: { transactions?: unknown[]; categories?: unknown[]; rules?: unknown[]; goals?: unknown[] } = {};
 jest.mock('../queries', () => ({
@@ -57,9 +56,9 @@ jest.mock('../queries', () => ({
 import { AppProvider, useAppContext } from '../context';
 import { Overlays } from '../components/Overlays';
 import { queryClient } from '../queryClient';
-import { ApiError } from '../apiError';
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 afterEach(() => { queryClient.clear(); jest.useRealTimers(); });
 
@@ -87,7 +86,7 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
   // --- sign-out hard-clears the overlay + AI state ---------------------------------
 
   it('flipping to anon clears sheet, toast and the AI insights state (fail-on-revert for the anon subscription)', async () => {
-    mockApi.generateAiInsights.mockResolvedValue({ summary: 'old account insights' } as never);
+    server.seed('/insights/ai', { summary: 'old account insights' });
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     await act(async () => {
@@ -108,18 +107,19 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
   });
 
   it('an AI generate that settles AFTER sign-out cannot re-seat the old account data, even if a new session is live (session-epoch guard)', async () => {
-    let resolveGenerate!: (v: api.AiInsights) => void;
-    mockApi.generateAiInsights.mockImplementation(() => new Promise<api.AiInsights>((res) => { resolveGenerate = res; }));
+    const held = server.hold('/insights/ai');
+    server.seed('/insights/ai', { summary: 'old account insights' });
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
     act(() => {
       pending = result.current.generateAiInsights(null);
     });
+    await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(1));
     act(() => mockSetStatus('anon')); // the session dies while the request is in flight
     act(() => mockSetStatus('authed')); // …and a NEW session signs in before it settles
     await act(async () => {
-      resolveGenerate({ summary: 'old account insights' } as unknown as api.AiInsights);
+      held.release();
       await pending;
     });
 
@@ -130,40 +130,44 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
   });
 
   it('a stale generate settling after re-sign-in does NOT clear the NEW session spinner (epoch-guarded finally)', async () => {
-    let resolveA!: (v: api.AiInsights) => void;
-    mockApi.generateAiInsights
-      .mockImplementationOnce(() => new Promise<api.AiInsights>((res) => { resolveA = res; }))
-      .mockImplementationOnce(() => new Promise<api.AiInsights>(() => {})); // B stays in flight
+    // The hold is keyed by path, so each request must reach the server before the next hold is set.
+    const heldA = server.hold('/insights/ai');
+    server.once('POST', '/insights/ai', { body: { summary: 'stale A' } });
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pendingA!: Promise<void>;
     act(() => { pendingA = result.current.generateAiInsights(null); }); // A in flight (epoch 0)
+    await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(1));
     act(() => mockSetStatus('anon'));   // sign out → epoch bumps, loading reset
     act(() => mockSetStatus('authed')); // a NEW session signs in
+    const heldB = server.hold('/insights/ai');
     act(() => { void result.current.generateAiInsights(null); }); // B in flight → loading true
+    await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(2));
     expect(result.current.aiInsightsLoading).toBe(true);
 
     await act(async () => {
-      resolveA({ summary: 'stale A' } as unknown as api.AiInsights);
+      heldA.release();
       await pendingA;
     });
 
     // A's finally must not touch B's spinner — B is still generating.
     expect(result.current.aiInsightsLoading).toBe(true);
+    await act(async () => { heldB.release(); });
   });
 
   it('an AI generate that settles during a Face ID LOCK (same session) is KEPT, not dropped', async () => {
-    let resolveGenerate!: (v: api.AiInsights) => void;
-    mockApi.generateAiInsights.mockImplementation(() => new Promise<api.AiInsights>((res) => { resolveGenerate = res; }));
+    const held = server.hold('/insights/ai');
+    server.seed('/insights/ai', { summary: 'my insights' });
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
     act(() => {
       pending = result.current.generateAiInsights(null);
     });
+    await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(1));
     act(() => mockSetStatus('locked')); // backgrounded → Face ID seal, SAME session
     await act(async () => {
-      resolveGenerate({ summary: 'my insights' } as unknown as api.AiInsights);
+      held.release();
       await pending;
     });
 
@@ -252,20 +256,21 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
   it('a refreshAiInsights that settles AFTER sign-out cannot re-seat the old account insights', async () => {
     // Phase 1 (control): while authed, a refresh genuinely seats data — so the null
     // assertion below can't pass vacuously.
-    mockApi.fetchAiInsights.mockResolvedValueOnce({ summary: 'live session' } as never);
+    server.once('GET', '/insights/ai', { body: { summary: 'live session' } });
     const { result } = renderHook(() => useAppContext(), { wrapper });
     await act(async () => { await result.current.refreshAiInsights(); });
     expect(result.current.aiInsights).not.toBeNull();
 
     // Phase 2: a refresh in flight when the session ends.
-    let resolveFetch!: (v: api.AiInsights) => void;
-    mockApi.fetchAiInsights.mockImplementation(() => new Promise<api.AiInsights>((res) => { resolveFetch = res; }));
+    const held = server.hold('/insights/ai');
+    server.seed('/insights/ai', { summary: 'old account insights' });
     let pending!: Promise<void>;
     act(() => { pending = result.current.refreshAiInsights(); });
+    await waitFor(() => expect(server.sent('GET', '/insights/ai')).toHaveLength(2));
     act(() => mockSetStatus('anon')); // sign-out mid-flight (anon subscription clears state)
     act(() => mockSetStatus('authed')); // …and a NEW session signs in before it settles
     await act(async () => {
-      resolveFetch({ summary: 'old account insights' } as unknown as api.AiInsights);
+      held.release();
       await pending;
     });
 
@@ -318,19 +323,20 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
   // query cache: the rule create's reconcile (patchRules) no-ops on an empty cache.
   it("a rule save that settles AFTER sign-out does not re-seed the cleared ['rules'] cache", async () => {
     queryClient.setQueryData(['rules'], []); // a warm rules cache, as if the screen was open
-    let resolveCreate!: (v: api.RuleRecord) => void;
-    mockApi.createRule.mockImplementation(() => new Promise<api.RuleRecord>((res) => { resolveCreate = res; }));
+    const held = server.hold('/rules');
+    server.once('POST', '/rules', { body: { id: 'srv-1', value: 'NETFLIX', categoryId: 'c1', field: 'description', operator: 'contains' } });
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
     act(() => { pending = result.current.saveManualRule('NETFLIX', 'c1'); });
     // The optimistic write landed while authed (that part is fine and invisible post-clear).
     expect(queryClient.getQueryData(['rules'])).toHaveLength(1);
+    await waitFor(() => expect(server.sent('POST', '/rules')).toHaveLength(1));
 
     // Sign-out, in production order: clearSession() clears the cache BEFORE broadcasting anon.
     act(() => { queryClient.clear(); mockSetStatus('anon'); });
     await act(async () => {
-      resolveCreate({ id: 'srv-1', value: 'NETFLIX', categoryId: 'c1', field: 'description', operator: 'contains' } as api.RuleRecord);
+      held.release();
       await pending;
     });
 
@@ -748,7 +754,8 @@ describe('WHIT-283 GAP — the restored form RE-SELECTS bucket / icon / parent a
 // reason travels api → context → the toast a user actually sees on this screen.
 //
 // Real components all the way down (real AppProvider, real Overlays, real
-// QuickCreateCategory); only ../api and ../auth are mocked. The assertion is the rendered
+// QuickCreateCategory, real request code on the fake server); only ../auth and ../queries are
+// mocked. The assertion is the rendered
 // toast TEXT, not a spy.
 describe('WHIT-437 — categorise sheet quick-create reason', () => {
   let ctx!: ReturnType<typeof useAppContext>;
@@ -780,7 +787,7 @@ describe('WHIT-437 — categorise sheet quick-create reason', () => {
   describe('the sheet shows the server reason instead of "Please try again"', () => {
     // [A30] the card's headline promise, on the path that got no code change.
     it('renders the refusal reason in the toast', async () => {
-      mockApi.createCategory.mockRejectedValue(new ApiError(400, CAP) as never);
+      server.fail('/categories', 400, CAP);
       fillCreateForm();
       await submit();
 
@@ -790,7 +797,7 @@ describe('WHIT-437 — categorise sheet quick-create reason', () => {
 
     // [A31] the most reachable real refusal by hand — a name that already exists.
     it('renders a 409 duplicate refusal', async () => {
-      mockApi.createCategory.mockRejectedValue(new ApiError(409, 'category already exists') as never);
+      server.fail('/categories', 409, 'category already exists');
       fillCreateForm('Groceries');
       await submit();
 
@@ -801,25 +808,25 @@ describe('WHIT-437 — categorise sheet quick-create reason', () => {
     // createAndFile only calls setSubmitting(false) on the null branch, so a stuck busy flag here
     // would trap the user on a dead form with no error recovery.
     it('does not file the transaction and re-enables the form for a retry', async () => {
-      mockApi.createCategory.mockRejectedValue(new ApiError(400, CAP) as never);
+      server.fail('/categories', 400, CAP);
       fillCreateForm();
       await submit();
       await screen.findByText('A category can have at most 50 sub-categories.');
 
-      expect(mockApi.setTransactionFields).not.toHaveBeenCalled();
-      expect(mockApi.setTransactionCategories).not.toHaveBeenCalled();
+      // Neither the single-charge nor the batch filing request was sent.
+      expect(server.sentUnder('PATCH', '/transactions')).toEqual([]);
       expect(screen.getByPlaceholderText(NAME_INPUT).props.value).toBe('Gym');  // still on the form
 
       // The button works again: a second press reaches the API a second time.
       await submit();
-      await waitFor(() => expect(mockApi.createCategory).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(server.sent('POST', '/categories')).toHaveLength(2));
     });
   });
 
   describe('the generic copy still covers what is not ours to quote', () => {
     // [A33] a 5xx is our fault; "try again" is honest there and must survive.
     it('renders the generic copy for a 500 that did explain itself', async () => {
-      mockApi.createCategory.mockRejectedValue(new ApiError(500, 'DynamoDB ProvisionedThroughputExceeded') as never);
+      server.fail('/categories', 500, 'DynamoDB ProvisionedThroughputExceeded');
       fillCreateForm();
       await submit();
 
@@ -827,9 +834,9 @@ describe('WHIT-437 — categorise sheet quick-create reason', () => {
       expect(screen.queryByText(/DynamoDB/)).toBeNull();
     });
 
-    // [A34] offline: a plain Error carries nothing, so nothing may be invented.
+    // [A34] offline: a lost connection carries nothing, so nothing may be invented.
     it('renders the generic copy for a network failure', async () => {
-      mockApi.createCategory.mockRejectedValue(new TypeError('Network request failed') as never);
+      server.once('POST', '/categories', 'dropped');
       fillCreateForm();
       await submit();
 
@@ -872,7 +879,7 @@ describe('WHIT-538 — Back from the add-rule preview restores the form draft', 
     mockListeners.clear();
     mockState = { categories: CATS, rules: [] };
     queryClient.clear();
-    mockApi.applyRulesToUncategorized.mockResolvedValue(previewReport as never);
+    server.seed('/transactions/uncategorized/apply-rules', previewReport);
   });
 
   it('restores the typed pattern after transitioning to the confirm step and pressing Back', async () => {

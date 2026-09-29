@@ -1,6 +1,6 @@
 // Provider mutation tests (WHIT-90): drive the real AppProvider through its
-// category/budget/transaction/loan-facts actions with ../api mocked. WHIT-192: the eager
-// store is gone, so the writers read + write the TanStack Query cache directly. These
+// category/budget/transaction/loan-facts actions, with requests on the fake server. WHIT-192: the
+// eager store is gone, so the writers read + write the TanStack Query cache directly. These
 // tests SEED that cache (the provider no longer eager-loads) and ASSERT on it via
 // queryClient.getQueryData, instead of the retired result.current.{transactions,...}.
 // Covers applyCategory (one + all), saveBudget, saveCategory (create + edit),
@@ -12,14 +12,13 @@ import { AppProvider, useAppContext } from '../context';
 import type { Transaction, Category, Rule, LoanFacts } from '../context';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
-import { ApiError } from '../apiError';
+import { installFakeServer, type LoggedRequest } from './support/fakeServer';
 
-jest.mock('../api');
 // The writers guard the load-error banner on auth (retired), but auth still gates
 // nothing in these direct-action tests; pin 'authed' for parity with the app.
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -35,23 +34,24 @@ const txns = () => readTransactionsCache(queryClient);
 const cats = () => queryClient.getQueryData<Category[]>(['categories']) ?? [];
 const rules = () => queryClient.getQueryData<Rule[]>(['rules']) ?? [];
 const loanFacts = () => queryClient.getQueryData<LoanFacts>(['loanFacts']);
+const bodies = (requests: LoggedRequest[]) => requests.map((request) => request.body);
+const batchIds = (batch: LoggedRequest) =>
+  (batch.body as { updates: { id: string }[] }).updates.map((update) => update.id);
 
 beforeEach(() => {
   // The module-singleton queryClient carries gcTime-5min timers; clear it around each
   // test so those timers don't outlive the suite (the "worker failed to exit" warning).
   queryClient.clear();
-  // Batch category write (WHIT-70): default to "all updated", echoing the ids sent.
-  mockApi.setTransactionCategories.mockImplementation(
-    async (updates: { id: string; category: string }[]) =>
-      ({ results: updates.map((u) => ({ id: u.id, status: 'updated' as const })) }));
 });
 afterEach(() => {
   queryClient.clear();
 });
 
 // WHIT-192: seed the query caches the writers read (the provider no longer eager-loads).
-// `txnList` overrides the transactions the sweep tests operate on.
+// `txnList` overrides the transactions the sweep tests operate on. The fake server's category
+// list matches the cache, so a category write updates a real row.
 function seed(txnList: readonly Transaction[] = [{ ...TXN }]) {
+  server.seed('/categories', [CAT]);
   seedTransactionsCache(queryClient, txnList.map((t) => ({ ...t })));
   queryClient.setQueryData(['categories'], [{ ...CAT }]);
   // The ['budgets', cycleLen] cache holds the RAW queryFn shape: a
@@ -69,14 +69,14 @@ function mount() {
 
 
 // --- WHIT-437: the server's reason reaches the toast --------------------------
-// These run against the REAL provider with only ../api mocked, so they also prove the path
-// src/components/Overlays.tsx uses (createAndFile calls createCategoryInline with no opts and
+// These run against the REAL provider and request code on the fake server, so they also prove the
+// path src/components/Overlays.tsx uses (createAndFile calls createCategoryInline with no opts and
 // therefore inherits this fix with zero code change of its own).
 
 const CAP_REASON = 'a category can have at most 50 sub-categories';
 
 it('createCategoryInline toasts the server reason and still returns null', async () => {
-  mockApi.createCategory.mockRejectedValue(new ApiError(400, CAP_REASON));
+  server.once('POST', '/categories', { status: 400, reason: CAP_REASON });
   seed();
   const result = mount();
   let created: unknown = 'unset';
@@ -87,7 +87,7 @@ it('createCategoryInline toasts the server reason and still returns null', async
 });
 
 it('saveCategory toasts the depth reason', async () => {
-  mockApi.updateCategory.mockRejectedValue(new ApiError(400, 'categories can be nested at most 5 levels deep'));
+  server.once('PATCH', '/categories/groceries', { status: 400, reason: 'categories can be nested at most 5 levels deep' });
   seed();
   const result = mount();
   await act(async () => { await result.current.saveCategory('groceries', { name: 'Groceries', bucket: 'Living', icon: 'cart' }); });
@@ -96,7 +96,7 @@ it('saveCategory toasts the depth reason', async () => {
 
 it('deleteCategory toasts the too-wide-to-detach reason', async () => {
   const detach = "'cafes-coffee' has 73 sub-categories — too many to detach in one write; move some out from under it first";
-  mockApi.deleteCategory.mockRejectedValue(new ApiError(400, detach));
+  server.once('DELETE', '/categories/cafes-coffee', { status: 400, reason: detach });
   seed();
   const result = mount();
   await act(async () => { await result.current.deleteCategory('cafes-coffee'); });
@@ -104,7 +104,7 @@ it('deleteCategory toasts the too-wide-to-detach reason', async () => {
 });
 
 it('keeps the generic copy when the failure explains nothing', async () => {
-  mockApi.createCategory.mockRejectedValue(new Error('offline'));
+  server.once('POST', '/categories', 'dropped');
   seed();
   const result = mount();
   await act(async () => { await result.current.createCategoryInline({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }); });
@@ -112,7 +112,7 @@ it('keeps the generic copy when the failure explains nothing', async () => {
 });
 
 it('keeps the generic copy for a 5xx that did explain itself', async () => {
-  mockApi.deleteCategory.mockRejectedValue(new ApiError(500, 'internal boom'));
+  server.once('DELETE', '/categories/groceries', { status: 500, reason: 'internal boom' });
   seed();
   const result = mount();
   await act(async () => { await result.current.deleteCategory('groceries'); });
@@ -122,20 +122,19 @@ it('keeps the generic copy for a 5xx that did explain itself', async () => {
 // --- applyCategory -----------------------------------------------------------
 
 it('applyCategory(one) files the transaction and persists it', async () => {
-  mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'groceries' });
   seed();
   const result = mount();
 
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('one'); });
 
-  expect(mockApi.setTransactionCategory).toHaveBeenCalledWith('t1', 'groceries');
+  expect(bodies(server.sent('PATCH', '/transactions/t1'))).toEqual([{ category: 'groceries' }]);
   expect(txns()[0].category).toBe('groceries');
   expect(result.current.sheet).toBeNull();
 });
 
 it('applyCategory(one) rolls the category back on failure', async () => {
-  mockApi.setTransactionCategory.mockRejectedValue(new Error('boom'));
+  server.once('PATCH', '/transactions/t1', 'dropped');
   seed();
   const result = mount();
 
@@ -151,7 +150,6 @@ it('applyCategory(all) files every same-merchant charge — and ONLY that mercha
   // description happens to contain the "COLES" token but whose merchant_name is
   // Woolworths → must be EXCLUDED by the same-merchant gate, proving the sweep
   // keys on merchant_name, not a loose description match.
-  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   seed([
     { ...TXN, transaction_id: 't1' },
     { ...TXN, transaction_id: 't2' },
@@ -163,10 +161,11 @@ it('applyCategory(all) files every same-merchant charge — and ONLY that mercha
   await act(async () => { await result.current.applyCategory('all'); });
 
   // ONE batch call (WHIT-70), not N single PATCHes — carrying t1 + t2 only, NOT t3.
-  expect(mockApi.setTransactionCategories).toHaveBeenCalledTimes(1);
-  expect(mockApi.setTransactionCategory).not.toHaveBeenCalled();
-  expect(mockApi.setTransactionCategories.mock.calls[0][0].map((u) => u.id).sort()).toEqual(['t1', 't2']);
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' });
+  const batches = server.sent('PATCH', '/transactions');
+  expect(batches).toHaveLength(1);
+  expect(server.sentUnder('PATCH', '/transactions/')).toEqual([]);
+  expect(batchIds(batches[0]).sort()).toEqual(['t1', 't2']);
+  expect(bodies(server.sent('POST', '/rules'))).toEqual([{ value: 'COLES', categoryId: 'groceries' }]);
 
   const byId = Object.fromEntries(txns().map((t) => [t.transaction_id, t.category]));
   expect(byId.t1).toBe('groceries');
@@ -182,7 +181,6 @@ it('applyCategory(all) sweeps same-merchant charges tagged with a RAW bank categ
   // FOOD_AND_DRINK), NOT null. The sweep must catch those too — a plain
   // category==null check silently skipped them (the KKV bug). A charge already
   // filed under a real user category must NOT be swept (don't overwrite it).
-  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   seed([
     { ...TXN, transaction_id: 't1', category: null },              // tapped origin (null)
     { ...TXN, transaction_id: 't2', category: 'FOOD_AND_DRINK' },  // raw enum, same merchant -> MUST sweep
@@ -194,8 +192,9 @@ it('applyCategory(all) sweeps same-merchant charges tagged with a RAW bank categ
   await act(async () => { await result.current.applyCategory('all'); });
 
   // t1 (null) + t2 (raw enum) swept in ONE batch; t3 (already groceries) left alone.
-  expect(mockApi.setTransactionCategories).toHaveBeenCalledTimes(1);
-  const swept = mockApi.setTransactionCategories.mock.calls[0][0].map((u) => u.id).sort();
+  const batches = server.sent('PATCH', '/transactions');
+  expect(batches).toHaveLength(1);
+  const swept = batchIds(batches[0]).sort();
   expect(swept).toEqual(['t1', 't2']);
   const byId = Object.fromEntries(txns().map((t) => [t.transaction_id, t.category]));
   expect(byId.t2).toBe('groceries');   // the FOOD_AND_DRINK charge is now filed
@@ -204,9 +203,8 @@ it('applyCategory(all) sweeps same-merchant charges tagged with a RAW bank categ
 it('applyCategory(all) rolls back only the ids the batch reports as not saved', async () => {
   // Partial server success: the batch files t1 but reports t2 not_found. Only t2
   // reverts (to uncategorised); t1 stays filed. Rollback keys BY ID, not position.
-  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
-  mockApi.setTransactionCategories.mockResolvedValue({
-    results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'not_found' }],
+  server.once('PATCH', '/transactions', {
+    body: { results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'not_found' }] },
   });
   seed([
     { ...TXN, transaction_id: 't1', category: null },
@@ -224,8 +222,7 @@ it('applyCategory(all) rolls back only the ids the batch reports as not saved', 
 });
 
 it('applyCategory(all) rolls back ALL ids when the whole batch call rejects', async () => {
-  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
-  mockApi.setTransactionCategories.mockRejectedValue(new Error('network'));
+  server.once('PATCH', '/transactions', 'dropped');
   seed([
     { ...TXN, transaction_id: 't1', category: null },
     { ...TXN, transaction_id: 't2', category: null },
@@ -251,10 +248,7 @@ it('applyCategory(all) toasts rule-only failure (charges filed, optimistic rule 
   const unhandled: unknown[] = [];
   const onUnhandled = (reason: unknown) => unhandled.push(reason);
   process.on('unhandledRejection', onUnhandled);
-  mockApi.createRule.mockRejectedValue(new Error('banksync down'));
-  mockApi.setTransactionCategories.mockResolvedValue({
-    results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'updated' }],
-  });
+  server.once('POST', '/rules', { status: 500 });
   seed([
     { ...TXN, transaction_id: 't1', category: null },
     { ...TXN, transaction_id: 't2', category: null },
@@ -271,18 +265,20 @@ it('applyCategory(all) toasts rule-only failure (charges filed, optimistic rule 
   expect(result.current.toast).toBe('Filed, but could not save the rule for future charges.');
   // Concurrency: the rule is issued BEFORE the batch (prior call order), matching the old
   // single Promise.allSettled([createRule, ...chunks]).
-  expect(mockApi.createRule.mock.invocationCallOrder[0])
-    .toBeLessThan(mockApi.setTransactionCategories.mock.invocationCallOrder[0]);
+  const sentInOrder = server.requests();
+  const ruleAt = sentInOrder.findIndex((request) => request.method === 'POST' && request.path === '/rules');
+  const firstBatchAt = sentInOrder.findIndex((request) => request.method === 'PATCH' && request.path === '/transactions');
+  expect(ruleAt).toBeGreaterThanOrEqual(0);
+  expect(ruleAt).toBeLessThan(firstBatchAt);
 
   process.off('unhandledRejection', onUnhandled);
   expect(unhandled).toEqual([]);                     // rule rejection handled, never floated
 });
 
 it('applyCategory(all) invalidates budgets + breakdown when at least one charge saved', async () => {
-  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   // Partial: t1 saved, t2 not — still >=1 saved, so spend changed -> a refresh MUST fire.
-  mockApi.setTransactionCategories.mockResolvedValue({
-    results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'not_found' }],
+  server.once('PATCH', '/transactions', {
+    body: { results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'not_found' }] },
   });
   seed([
     { ...TXN, transaction_id: 't1', category: null },
@@ -302,8 +298,7 @@ it('applyCategory(all) invalidates budgets + breakdown when at least one charge 
 });
 
 it('applyCategory(all) does NOT invalidate budgets/breakdown when the whole batch fails', async () => {
-  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
-  mockApi.setTransactionCategories.mockRejectedValue(new Error('network'));
+  server.once('PATCH', '/transactions', 'dropped');
   seed([
     { ...TXN, transaction_id: 't1', category: null },
     { ...TXN, transaction_id: 't2', category: null },
@@ -324,49 +319,49 @@ it('applyCategory(all) files the tapped charge even when the sweep is empty (nev
   // WHIT-324: the tapped charge doesn't count to a budget, so the merchant SWEEP is empty — but
   // the charge the user explicitly picked is still filed. The batch therefore carries exactly
   // that one id, and is never sent empty (a real server 400s on {updates:[]}; the E1 guard).
-  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   seed([{ ...TXN, transaction_id: 't1', category: null, counts_to_budget: false }]);
   const result = mount();
 
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.setTransactionCategories).toHaveBeenCalledTimes(1);
-  expect(mockApi.setTransactionCategories.mock.calls[0][0]).toEqual([{ id: 't1', category: 'groceries' }]);
+  const batches = server.sent('PATCH', '/transactions');
+  expect(batches).toHaveLength(1);
+  expect(batches[0].body).toEqual({ updates: [{ id: 't1', category: 'groceries' }] });
 });
 
 it('applyCategory(all) splits a >100 sweep into chunks of 100 (WHIT-70 chunking)', async () => {
   // 150 same-merchant uncategorised charges -> the sweep must send TWO batch calls
   // (100 + 50), not one oversized request the server would 400.
   const many = Array.from({ length: 150 }, (_, i) => ({ ...TXN, transaction_id: `t${i}`, category: null }));
-  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   seed(many);
   const result = mount();
 
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't0', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.setTransactionCategories).toHaveBeenCalledTimes(2);
-  const sizes = mockApi.setTransactionCategories.mock.calls.map((c) => c[0].length).sort((a, b) => b - a);
+  const batches = server.sent('PATCH', '/transactions');
+  expect(batches).toHaveLength(2);
+  const sizes = batches.map((batch) => batchIds(batch).length).sort((a, b) => b - a);
   expect(sizes).toEqual([100, 50]);
-  // Both chunks succeed (default echo mock) -> all 150 filed.
+  // Both chunks succeed (the fake server echoes every id as updated) -> all 150 filed.
   expect(txns().filter((t) => t.category === 'groceries')).toHaveLength(150);
 });
 
 it('applyCategory(all) reverts only the failed chunk when one of several rejects', async () => {
   const many = Array.from({ length: 150 }, (_, i) => ({ ...TXN, transaction_id: `t${i}`, category: null }));
-  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
-  // First chunk (100) succeeds; second chunk (50) rejects -> only those 50 revert.
-  mockApi.setTransactionCategories.mockImplementation(async (updates: { id: string; category: string }[]) => {
-    if (updates.length !== 100) throw new Error('chunk failed');
-    return { results: updates.map((u) => ({ id: u.id, status: 'updated' as const })) };
-  });
+  // First chunk (t0..t99) succeeds; the second (t100..t149) is lost -> only those 50 revert.
+  const first100 = many.slice(0, 100).map((t) => t.transaction_id);
+  server.once('PATCH', '/transactions', { body: { results: first100.map((id) => ({ id, status: 'updated' })) } });
+  server.once('PATCH', '/transactions', 'dropped');
   seed(many);
   const result = mount();
 
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't0', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
+  // The scripted success reply matches the first batch actually sent.
+  expect(batchIds(server.sent('PATCH', '/transactions')[0])).toEqual(first100);
   const byId = Object.fromEntries(txns().map((t) => [t.transaction_id, t.category]));
   expect(byId.t0).toBe('groceries');   // first chunk (t0..t99) saved
   expect(byId.t149).toBeNull();        // second chunk (t100..t149) rejected -> reverted
@@ -377,7 +372,6 @@ it('applyCategory(all) reverts only the failed chunk when one of several rejects
 // --- saveBudget --------------------------------------------------------------
 
 it('saveBudget persists a target and returns true', async () => {
-  mockApi.setBudget.mockResolvedValue({ id: 'groceries', target: 300 });
   seed();
   const result = mount();
 
@@ -385,7 +379,7 @@ it('saveBudget persists a target and returns true', async () => {
   await act(async () => { ok = await result.current.saveBudget('groceries', 300); });
 
   expect(ok).toBe(true);
-  expect(mockApi.setBudget).toHaveBeenCalledWith('groceries', 300);
+  expect(bodies(server.sent('PUT', '/budgets/groceries'))).toEqual([{ target: 300 }]);
 });
 
 it('saveBudget rejects a non-positive target without calling the API', async () => {
@@ -394,11 +388,11 @@ it('saveBudget rejects a non-positive target without calling the API', async () 
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveBudget('groceries', 0); });
   expect(ok).toBe(false);
-  expect(mockApi.setBudget).not.toHaveBeenCalled();
+  expect(server.sentUnder('PUT', '/budgets/')).toEqual([]);
 });
 
 it('saveBudget returns false + toasts on failure', async () => {
-  mockApi.setBudget.mockRejectedValue(new Error('x'));
+  server.once('PUT', '/budgets/groceries', 'dropped');
   seed();
   const result = mount();
   let ok: boolean | undefined;
@@ -419,7 +413,7 @@ it('saveBudget rejects a Savings-bucket category without calling the API (WHIT-2
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveBudget('nest_egg', 300); });
   expect(ok).toBe(false);
-  expect(mockApi.setBudget).not.toHaveBeenCalled();
+  expect(server.sentUnder('PUT', '/budgets/')).toEqual([]);
   expect(result.current.toast).toBe("Savings categories can't be budgeted.");
 });
 
@@ -428,15 +422,15 @@ it('saveBudget on an uncached (cold) category falls through to the server, not t
   // Savings — it must fall through to the server (the 400 backstop), never silently succeed
   // or wrongly fire the Savings short-circuit. Here the server rejects; the writer surfaces
   // the GENERIC save-failed toast. Fail-on-revert: if the short-circuit fired on an
-  // undefined bucket, setBudget would never be called and the toast would be the Savings copy.
+  // undefined bucket, no PUT would be sent and the toast would be the Savings copy.
   seed(); // categories = [CAT] only; 'nest_egg' is NOT in the cache
-  mockApi.setBudget.mockRejectedValue(new Error('400'));
+  server.once('PUT', '/budgets/nest_egg', { status: 400 });
   const result = mount();
 
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveBudget('nest_egg', 300); });
 
-  expect(mockApi.setBudget).toHaveBeenCalledWith('nest_egg', 300); // hit the server (no short-circuit)
+  expect(bodies(server.sent('PUT', '/budgets/nest_egg'))).toEqual([{ target: 300 }]); // hit the server (no short-circuit)
   expect(ok).toBe(false);
   expect(result.current.toast).toBe('Could not save budget. Please try again.');
 });
@@ -444,7 +438,6 @@ it('saveBudget on an uncached (cold) category falls through to the server, not t
 // --- deleteBudget ------------------------------------------------------------
 
 it('deleteBudget removes the target from the budgets cache, calls the API, and toasts', async () => {
-  mockApi.deleteBudget.mockResolvedValue({ id: 'groceries' });
   seed();
   // A stored target for 'groceries' in the RAW ['budgets', cycleLen] Record.
   queryClient.setQueryData(['budgets', 14], { groceries: { target: 300, posted: 40, pending: 10 } });
@@ -454,14 +447,14 @@ it('deleteBudget removes the target from the budgets cache, calls the API, and t
   await act(async () => { ok = await result.current.deleteBudget('groceries'); });
 
   expect(ok).toBe(true);
-  expect(mockApi.deleteBudget).toHaveBeenCalledWith('groceries');
+  expect(server.sent('DELETE', '/budgets/groceries')).toHaveLength(1);
   // The id is stripped from the cache optimistically (before the invalidate reconciles).
   expect(queryClient.getQueryData(['budgets', 14])).toEqual({});
   expect(result.current.toast).toBe('Groceries budget removed.');
 });
 
 it('deleteBudget returns false, restores the cache, and toasts on failure', async () => {
-  mockApi.deleteBudget.mockRejectedValue(new Error('x'));
+  server.once('DELETE', '/budgets/groceries', 'dropped');
   seed();
   const before = { groceries: { target: 300, posted: 40, pending: 10 } };
   queryClient.setQueryData(['budgets', 14], { ...before });
@@ -479,7 +472,7 @@ it('deleteBudget returns false, restores the cache, and toasts on failure', asyn
 // --- saveCategory ------------------------------------------------------------
 
 it('saveCategory creates a new category', async () => {
-  mockApi.createCategory.mockResolvedValue({ id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#f00', recent: 0 });
+  server.once('POST', '/categories', { body: { id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#f00', recent: 0 } });
   seed();
   const result = mount();
 
@@ -487,12 +480,12 @@ it('saveCategory creates a new category', async () => {
   await act(async () => { ok = await result.current.saveCategory(null, { name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }); });
 
   expect(ok).toBe(true);
-  expect(mockApi.createCategory).toHaveBeenCalledWith({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' });
+  expect(bodies(server.sent('POST', '/categories'))).toEqual([{ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }]);
   expect(cats().some((c) => c.id === 'gym')).toBe(true);
 });
 
 it('saveCategory edits an existing category in place', async () => {
-  mockApi.updateCategory.mockResolvedValue({ id: 'groceries', name: 'Supermarket', bucket: 'Living', icon: 'cart', color: '#0f0', recent: 0 });
+  server.once('PATCH', '/categories/groceries', { body: { id: 'groceries', name: 'Supermarket', bucket: 'Living', icon: 'cart', color: '#0f0', recent: 0 } });
   seed();
   const result = mount();
 
@@ -500,7 +493,7 @@ it('saveCategory edits an existing category in place', async () => {
   await act(async () => { ok = await result.current.saveCategory('groceries', { name: 'Supermarket', bucket: 'Living', icon: 'cart' }); });
 
   expect(ok).toBe(true);
-  expect(mockApi.updateCategory).toHaveBeenCalledWith('groceries', { name: 'Supermarket', bucket: 'Living', icon: 'cart' });
+  expect(bodies(server.sent('PATCH', '/categories/groceries'))).toEqual([{ name: 'Supermarket', bucket: 'Living', icon: 'cart' }]);
   expect(cats().find((c) => c.id === 'groceries')?.name).toBe('Supermarket');
 });
 
@@ -508,20 +501,20 @@ it('saveCategory threads a chosen parent through (create + edit); omitting it le
   // WHIT-221: the category-edit screen manages the parent link. When it passes `parent`
   // (an id, or null to detach) it must reach the API; when a caller omits it, the field
   // must NOT be sent (server leave-as-is) — that's what the two tests above assert.
-  mockApi.createCategory.mockResolvedValue({ id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#f00', recent: 0, parent: 'car' });
-  mockApi.updateCategory.mockResolvedValue({ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#0f0', recent: 0, parent: null });
+  server.once('POST', '/categories', { body: { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#f00', recent: 0, parent: 'car' } });
+  server.once('PATCH', '/categories/groceries', { body: { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#0f0', recent: 0, parent: null } });
   seed();
   const result = mount();
 
   await act(async () => { await result.current.saveCategory(null, { name: 'Parking', bucket: 'Living', icon: 'car', parent: 'car' }); });
-  expect(mockApi.createCategory).toHaveBeenCalledWith({ name: 'Parking', bucket: 'Living', icon: 'car', parent: 'car' });
+  expect(bodies(server.sent('POST', '/categories'))).toEqual([{ name: 'Parking', bucket: 'Living', icon: 'car', parent: 'car' }]);
 
   await act(async () => { await result.current.saveCategory('groceries', { name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null }); });
-  expect(mockApi.updateCategory).toHaveBeenCalledWith('groceries', { name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null });
+  expect(bodies(server.sent('PATCH', '/categories/groceries'))).toEqual([{ name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null }]);
 });
 
 it('saveCategory returns false + toasts on failure', async () => {
-  mockApi.createCategory.mockRejectedValue(new Error('x'));
+  server.once('POST', '/categories', 'dropped');
   seed();
   const result = mount();
   let ok: boolean | undefined;
@@ -532,8 +525,10 @@ it('saveCategory returns false + toasts on failure', async () => {
 
 // --- createCategoryInline (WHIT-237/238) -------------------------------------
 
+const GYM_ROW = { id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#f00', recent: 0, parent: null };
+
 it('createCategoryInline returns the created category and mirrors it into the cache', async () => {
-  mockApi.createCategory.mockResolvedValue({ id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#f00', recent: 0, parent: null });
+  server.once('POST', '/categories', { body: GYM_ROW });
   seed();
   const result = mount();
 
@@ -542,7 +537,7 @@ it('createCategoryInline returns the created category and mirrors it into the ca
 
   // Returns the CATEGORY (not a boolean) so a caller can file/re-parent against its id...
   expect((created as { id: string } | null)?.id).toBe('gym');
-  expect(mockApi.createCategory).toHaveBeenCalledWith({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', parent: null });
+  expect(bodies(server.sent('POST', '/categories'))).toEqual([{ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', parent: null }]);
   // ...and it's mirrored into the cache so it's pickable immediately.
   expect(cats().some((c) => c.id === 'gym')).toBe(true);
 });
@@ -550,7 +545,6 @@ it('createCategoryInline returns the created category and mirrors it into the ca
 // WHIT-240: the writers toast by default, but an orchestrated bulk save (category/edit) opts
 // into { silent: true } so the screen can show ONE summary toast instead of one per write.
 it('createCategoryInline toasts by default, and stays silent with { silent: true }', async () => {
-  mockApi.createCategory.mockResolvedValue({ id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#f00', recent: 0, parent: null });
   seed();
   const result = mount();
   // Silent FIRST, from the null baseline: no toast. Fail-on-revert: drop the `if (!opts?.silent)`
@@ -563,7 +557,6 @@ it('createCategoryInline toasts by default, and stays silent with { silent: true
 });
 
 it('saveCategory (update) toasts by default, and stays silent with { silent: true }', async () => {
-  mockApi.updateCategory.mockResolvedValue({ id: 'groceries', name: 'Supermarket', bucket: 'Living', icon: 'cart', color: '#0f0', recent: 0 });
   seed();
   const result = mount();
   await act(async () => { await result.current.saveCategory('groceries', { name: 'Supermarket', bucket: 'Living', icon: 'cart' }, { silent: true }); });
@@ -579,13 +572,13 @@ it('saveCategory (update) toasts by default, and stays silent with { silent: tru
 // exists for — a silent write fires no toast of its own — is unchanged and still pinned below.
 // Fail-on-revert: ungate the catch-branch showToast and the toast assertion goes red.
 it('createCategoryInline stays silent on failure with { silent: true }', async () => {
-  mockApi.createCategory.mockRejectedValue(new Error('x'));
+  server.once('POST', '/categories', 'dropped');
   seed();
   const result = mount();
   await act(async () => {
     await expect(
       result.current.createCategoryInline({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }, { silent: true }),
-    ).rejects.toThrow('x');                 // reports failure by rejecting, so the reason survives
+    ).rejects.toThrow('Network request failed'); // reports failure by rejecting, so the reason survives
   });
   expect(result.current.toast).toBeNull();  // ...but fires no toast of its own
 });
@@ -594,7 +587,7 @@ it('createCategoryInline stays silent on failure with { silent: true }', async (
 // attaching an existing sub-category to a parent already at 50 — runs through saveCategory, not
 // createCategoryInline, so without this the line can be reverted with the whole suite still green.
 it('saveCategory stays silent on failure with { silent: true } and rejects', async () => {
-  mockApi.updateCategory.mockRejectedValue(new ApiError(400, CAP_REASON));
+  server.once('PATCH', '/categories/groceries', { status: 400, reason: CAP_REASON });
   seed();
   const result = mount();
   await act(async () => {
@@ -606,7 +599,7 @@ it('saveCategory stays silent on failure with { silent: true } and rejects', asy
 });
 
 it('createCategoryInline returns null + toasts on failure', async () => {
-  mockApi.createCategory.mockRejectedValue(new Error('x'));
+  server.once('POST', '/categories', 'dropped');
   seed();
   const result = mount();
   let created: unknown = 'unset';
@@ -618,7 +611,6 @@ it('createCategoryInline returns null + toasts on failure', async () => {
 // --- deleteCategory ----------------------------------------------------------
 
 it('deleteCategory removes it (cache cascade) and returns true', async () => {
-  mockApi.deleteCategory.mockResolvedValue({ id: 'groceries' });
   seed();
   const result = mount();
 
@@ -626,12 +618,12 @@ it('deleteCategory removes it (cache cascade) and returns true', async () => {
   await act(async () => { ok = await result.current.deleteCategory('groceries'); });
 
   expect(ok).toBe(true);
-  expect(mockApi.deleteCategory).toHaveBeenCalledWith('groceries');
+  expect(server.sent('DELETE', '/categories/groceries')).toHaveLength(1);
   expect(cats().some((c) => c.id === 'groceries')).toBe(false);
 });
 
 it('deleteCategory returns false + toasts on failure', async () => {
-  mockApi.deleteCategory.mockRejectedValue(new Error('x'));
+  server.once('DELETE', '/categories/groceries', 'dropped');
   seed();
   const result = mount();
   let ok: boolean | undefined;
@@ -645,18 +637,17 @@ it('deleteCategory returns false + toasts on failure', async () => {
 const FACTS = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
 
 it('saveLoanFacts persists + optimistically updates the cache, returns true', async () => {
-  mockApi.setLoanFacts.mockResolvedValue(FACTS);
   seed();
   const result = mount();
   let ok: boolean | undefined;
   await act(async () => { ok = await result.current.saveLoanFacts(FACTS); });
   expect(ok).toBe(true);
-  expect(mockApi.setLoanFacts).toHaveBeenCalledWith(FACTS);
+  expect(bodies(server.sent('PUT', '/loanfacts'))).toEqual([FACTS]);
   expect(loanFacts()?.homeValue).toBe(770000);
 });
 
 it('saveLoanFacts rolls the cache back + toasts on failure', async () => {
-  mockApi.setLoanFacts.mockRejectedValue(new Error('x'));
+  server.once('PUT', '/loanfacts', 'dropped');
   seed();  // seeds all-null facts
   const result = mount();
   let ok: boolean | undefined;
