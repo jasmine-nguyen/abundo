@@ -27,3 +27,8 @@ def filter_pattern(resource_name):
         r'pattern\s*=\s*"((?:[^"\\]|\\.)*)"', MONITORING_TF.read_text(), re.S)
     assert match, f"metric filter {resource_name} not found in monitoring.tf"
     return match.group(1).replace('\\"', '"')
+
+
+def alarm_names(text):
+    """WHIT-655: every aws_cloudwatch_metric_alarm resource name in the terraform text, in order."""
+    return re.findall(r'^resource "aws_cloudwatch_metric_alarm" "([^"]+)"', text, re.M)

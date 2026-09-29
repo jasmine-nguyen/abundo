@@ -300,136 +300,73 @@ resource "aws_cloudwatch_metric_alarm" "balance_poll_stale" {
   ok_actions          = [aws_sns_topic.alerts.arn]
 }
 
-# --- Up-webhook health alarms (WHIT-316) ------------------------------------
+# --- Up-webhook health alarm (WHIT-316, merged in WHIT-655) ------------------
 # WHIT-313 made the direct Up webhook the SOLE home-loan repayment notifier (the slow
 # BankSync-path push was removed), so a silent stop = a missed alert with no safety net.
-# These alarms restore observability: (1) any processing failure, (2) a missed repayment
-# push, and (WHIT-616) a rejected Up token and a qualifying repayment with no phone to push to.
+# WHIT-655: AWS bills per alarmed metric (10 free a month), so the four Up webhook alarms
+# (processing failed, token rejected, no device tokens, repayment missed) became ONE alarm
+# on ONE metric, UpWebhookRepaymentPushFailures. Two filters publish it: the webhook's own
+# failures and the balance-poller's repayment-missed safety net. Don't split it back into
+# separate alarms, and don't merge with metric math instead: a metric-math alarm is billed
+# per metric it reads, so it saves nothing.
 
-# (1) Loud failures. One datapoint each time a validly-signed Up delivery fails to
-# fetch/push — the handler catches it, logs "up webhook: processing failed", and returns a
-# 500 dict (so AWS's built-in Lambda Errors metric never fires). A rejected Up token also
-# lands here but has its own alarm below. Quoted → exact-substring match (the line has spaces + a colon); keep this pattern
-# and up_webhook.py's log line in lockstep so this silent-failure monitor can't itself
-# silently never match. The 401 (rotated signing secret) path is deliberately NOT alarmed:
-# the route is public, so scanners make 401 noise — alarm (2) catches that case instead.
-resource "aws_cloudwatch_log_metric_filter" "up_webhook_errors" {
-  name           = "${var.project_name}-up-webhook-errors"
+# Loud failures, all on the up_webhook log group. The `?a ?b ?c` pattern is an OR:
+# - "up webhook: processing failed" (quoted → exact-substring match, the line has spaces and a
+#   colon): a validly-signed Up delivery failed to fetch/push. The handler catches it and
+#   returns a 500 dict, so AWS's built-in Lambda Errors metric never fires.
+# - UP_WEBHOOK_TOKEN_REJECTED: Up answered 401/403 to our personal access token.
+# - UP_WEBHOOK_NO_DEVICE_TOKENS: a qualifying repayment arrived but no phone is registered.
+#   This path returns without raising, so it logs no "processing failed" line.
+# Keep this pattern and up_webhook.py's log lines in lockstep so this silent-failure monitor
+# can't itself silently never match. The 401 (rotated signing secret) path is deliberately NOT
+# alarmed: the route is public, so scanners make 401 noise — the repayment-missed safety net
+# below catches that case instead.
+resource "aws_cloudwatch_log_metric_filter" "up_webhook_failures" {
+  name           = "${var.project_name}-up-webhook-failures"
   log_group_name = aws_cloudwatch_log_group.up_webhook.name
-  pattern        = "\"up webhook: processing failed\""
+  pattern        = "?\"up webhook: processing failed\" ?UP_WEBHOOK_TOKEN_REJECTED ?UP_WEBHOOK_NO_DEVICE_TOKENS"
 
   metric_transformation {
-    name          = "UpWebhookErrors"
+    name          = "UpWebhookRepaymentPushFailures"
     namespace     = "${var.project_name}/UpWebhook"
     value         = "1"
     default_value = "0"
   }
 }
 
-resource "aws_cloudwatch_metric_alarm" "up_webhook_errors" {
-  alarm_name          = "${var.project_name}-up-webhook-errors"
-  namespace           = "${var.project_name}/UpWebhook"
-  metric_name         = "UpWebhookErrors"
-  statistic           = "Sum"
-  period              = 3600
-  evaluation_periods  = 1
-  threshold           = 1
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  treat_missing_data  = "notBreaching"
-  alarm_description   = "A validly-signed Up webhook delivery failed to fetch/push in the last hour — the instant repayment push may be down. Up retries and SNS de-dupes, so a self-healing blip can page once."
-  alarm_actions       = [aws_sns_topic.alerts.arn]
-}
-
-# (WHIT-616) A dead Up token. fetch_transaction logs UP_WEBHOOK_TOKEN_REJECTED as a bare word
-# when Up answers 401/403. Keep this pattern and up_webhook.py in lockstep.
-resource "aws_cloudwatch_log_metric_filter" "up_webhook_token_rejected" {
-  name           = "${var.project_name}-up-webhook-token-rejected"
-  log_group_name = aws_cloudwatch_log_group.up_webhook.name
-  pattern        = "UP_WEBHOOK_TOKEN_REJECTED"
-
-  metric_transformation {
-    name          = "UpWebhookTokenRejected"
-    namespace     = "${var.project_name}/UpWebhook"
-    value         = "1"
-    default_value = "0"
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "up_webhook_token_rejected" {
-  alarm_name          = "${var.project_name}-up-webhook-token-rejected"
-  namespace           = "${var.project_name}/UpWebhook"
-  metric_name         = "UpWebhookTokenRejected"
-  statistic           = "Sum"
-  period              = 3600
-  evaluation_periods  = 1
-  threshold           = 1
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  treat_missing_data  = "notBreaching"
-  alarm_description   = "Up rejected our personal access token (401/403) — the instant mortgage-repayment push is down. Replace /abundo/up-personal-access-token in SSM and verify Up returns 404 (not 401) for a fake transaction id."
-  alarm_actions       = [aws_sns_topic.alerts.arn]
-}
-
-# (WHIT-616) A qualifying repayment arrived but no phone is registered for push. notify logs
-# UP_WEBHOOK_NO_DEVICE_TOKENS as a bare word. Keep this pattern and up_webhook.py in lockstep.
-resource "aws_cloudwatch_log_metric_filter" "up_webhook_no_device_tokens" {
-  name           = "${var.project_name}-up-webhook-no-device-tokens"
-  log_group_name = aws_cloudwatch_log_group.up_webhook.name
-  pattern        = "UP_WEBHOOK_NO_DEVICE_TOKENS"
-
-  metric_transformation {
-    name          = "UpWebhookNoDeviceTokens"
-    namespace     = "${var.project_name}/UpWebhook"
-    value         = "1"
-    default_value = "0"
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "up_webhook_no_device_tokens" {
-  alarm_name          = "${var.project_name}-up-webhook-no-device-tokens"
-  namespace           = "${var.project_name}/UpWebhook"
-  metric_name         = "UpWebhookNoDeviceTokens"
-  statistic           = "Sum"
-  period              = 3600
-  evaluation_periods  = 1
-  threshold           = 1
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  treat_missing_data  = "notBreaching"
-  alarm_description   = "A qualifying home-loan repayment arrived but no phone is registered for push — the repayment alert could not be sent."
-  alarm_actions       = [aws_sns_topic.alerts.arn]
-}
-
-# (2) Silent failures — the real backstop. One datapoint when the daily poll finds a
-# repayment landed but no push fired within the lookback window (handler.py logs
+# Silent failures — the real backstop, on the balance_poller log group. One datapoint when
+# the daily poll finds a repayment landed but no push fired within the lookback window (handler.py logs
 # "UP_WEBHOOK_REPAYMENT_MISSED ..."). TWO independent detectors log this token, so the
 # substring pattern catches both: the coarse balance-drop check (WHIT-316) and the precise
 # transaction-based check (WHIT-317, tagged "source=txn"). This is the ONLY signal for the
 # silent modes: a re-linked account (wrong id → 200, no push) or a deregistered webhook
 # (never runs). Both read from the bank feed, independent of the Up webhook, so the miss is
-# still seen when the webhook is broken. Keep this pattern and handler.py in lockstep.
+# still seen when the webhook is broken. It publishes the SAME metric as up_webhook_failures,
+# so the one alarm below covers both. Keep this pattern and handler.py in lockstep.
 resource "aws_cloudwatch_log_metric_filter" "up_webhook_repayment_missed" {
   name           = "${var.project_name}-up-webhook-repayment-missed"
   log_group_name = aws_cloudwatch_log_group.balance_poller.name
   pattern        = "UP_WEBHOOK_REPAYMENT_MISSED"
 
   metric_transformation {
-    name          = "UpWebhookRepaymentMissed"
+    name          = "UpWebhookRepaymentPushFailures"
     namespace     = "${var.project_name}/UpWebhook"
     value         = "1"
     default_value = "0"
   }
 }
 
-resource "aws_cloudwatch_metric_alarm" "up_webhook_repayment_missed" {
-  alarm_name          = "${var.project_name}-up-webhook-repayment-missed"
+resource "aws_cloudwatch_metric_alarm" "up_webhook_repayment_push" {
+  alarm_name          = "${var.project_name}-up-webhook-repayment-push"
   namespace           = "${var.project_name}/UpWebhook"
-  metric_name         = "UpWebhookRepaymentMissed"
+  metric_name         = "UpWebhookRepaymentPushFailures"
   statistic           = "Sum"
-  period              = 86400
+  period              = 3600
   evaluation_periods  = 1
   threshold           = 1
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
-  alarm_description   = "A home-loan repayment landed but no instant repayment push fired around then — caught either by the balance dropping (WHIT-316) or by the repayment transaction having no matching push (WHIT-317, source=txn). The push may be silently down (signing secret / Up token / re-linked account / deregistered webhook rotated or broken)."
+  alarm_description   = "The instant home-loan repayment push may be down. Search both /aws/lambda/abundo-up-webhook and /aws/lambda/abundo-balance-poller for these markers. In /aws/lambda/abundo-up-webhook: 'up webhook: processing failed' = a validly-signed Up delivery failed to fetch/push (Up retries, so a self-healing blip can page once). UP_WEBHOOK_TOKEN_REJECTED = Up rejected our personal access token (401/403): replace /abundo/up-personal-access-token in SSM and check Up returns 404 (not 401) for a fake transaction id. UP_WEBHOOK_NO_DEVICE_TOKENS = a qualifying repayment arrived but no phone is registered for push: open the app on a phone to register it. In /aws/lambda/abundo-balance-poller: UP_WEBHOOK_REPAYMENT_MISSED = a repayment landed with no push (silent webhook failure: rotated signing secret, re-linked account or deregistered webhook); source=txn marks the transaction-based check."
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
 

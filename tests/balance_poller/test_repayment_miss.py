@@ -10,6 +10,8 @@ import logging
 import time
 from decimal import Decimal
 
+from _terraform import MONITORING_TF, filter_pattern, tf_attr, tf_block
+
 MARKER = "UP_WEBHOOK_REPAYMENT_MISSED"
 _DAY = 24 * 60 * 60
 _LOOKBACK = 7
@@ -181,3 +183,32 @@ def test_precise_detector_runs_even_when_balance_fetch_fails(handler, monkeypatc
 
 def _raise_detector(*a, **k):
     raise RuntimeError("detector blew up")
+
+
+# --- WHIT-655: both detectors' lines still feed the merged Up webhook alarm ---
+
+class _FakeTxnRepo:
+    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit):
+        return [{"type": "TRANSFER_INCOMING", "amount": Decimal("3573.00"), "date": "2026-07-04"}], None
+
+
+class _FakeNoPushes:
+    def repayment_push_amounts_since(self, cutoff):
+        return []
+
+
+def test_both_detectors_log_a_line_the_repayment_missed_filter_matches(handler, caplog):
+    pattern = filter_pattern("up_webhook_repayment_missed")
+    metric_filter = tf_block(MONITORING_TF.read_text(), "aws_cloudwatch_log_metric_filter", "up_webhook_repayment_missed")
+    assert tf_attr(metric_filter, "log_group_name") == "aws_cloudwatch_log_group.balance_poller.name"
+
+    caplog.set_level(logging.ERROR)
+    handler.check_repayment_landed_but_no_push(Decimal("600000"), Decimal("596000"), _FakeNotify(None))
+    coarse = [record.getMessage() for record in caplog.records]
+    caplog.clear()
+    handler.check_ingested_repayment_without_push(_FakeNoPushes(), _FakeTxnRepo(), _NOW)
+    precise = [record.getMessage() for record in caplog.records]
+
+    # A bare CloudWatch term matches a whole word.
+    assert any(pattern in message.split() for message in coarse), coarse
+    assert any(pattern in message.split() and "source=txn" in message for message in precise), precise

@@ -18,7 +18,6 @@ import urllib.error
 import pytest
 
 from _dynamo_fakes import FakeTable
-from _terraform import MONITORING_TF, filter_pattern, tf_attr, tf_block
 
 MOCK_SECRET = "mock-secret"
 HOMELOAN_UUID = "fbef6cbc-09b3-4b6f-826c-6a178707a178"
@@ -514,35 +513,9 @@ def test_qualifying_repayment_logs_no_skip(wired, caplog):
     assert not _marker_records(caplog, "UP_WEBHOOK_SKIP")
 
 
-# --- WHIT-616: each alarm's pattern still matches the line it watches ---------
-
-@pytest.mark.parametrize("code", [401, 403])
-def test_terraform_token_rejected_filter_matches_emitted_line(fetch_wired, monkeypatch, caplog, code):
-    pattern = filter_pattern("up_webhook_token_rejected")
-    assert pattern == "UP_WEBHOOK_TOKEN_REJECTED", f"terraform pattern changed: {pattern!r}"
-    monkeypatch.setattr(fetch_wired.up.urllib.request, "urlopen", _urlopen_raising(_http_error(code)))
-    caplog.set_level(logging.INFO)
-    fetch_wired.up.lambda_handler(_event(_webhook_payload()), None)
-    assert _marker_records(caplog, pattern), f"no bare {pattern} word in the logged lines"
-
-
-def test_terraform_no_device_tokens_filter_matches_emitted_line(wired, monkeypatch, caplog):
-    pattern = filter_pattern("up_webhook_no_device_tokens")
-    assert pattern == "UP_WEBHOOK_NO_DEVICE_TOKENS", f"terraform pattern changed: {pattern!r}"
-    monkeypatch.setattr(wired.up, "DeviceRepository", lambda: _FakeDevice([]))
-    caplog.set_level(logging.INFO)
-    wired.up.lambda_handler(_event(_webhook_payload()), None)
-    assert _marker_records(caplog, pattern), f"no bare {pattern} word in the logged lines"
-
-
-def test_terraform_errors_filter_matches_emitted_line(wired, monkeypatch, caplog):
-    # A quoted CloudWatch pattern is an exact-substring match on the phrase inside the quotes.
-    pattern = filter_pattern("up_webhook_errors")
-    assert pattern == '"up webhook: processing failed"', f"terraform pattern changed: {pattern!r}"
-    monkeypatch.setattr(wired.up, "fetch_transaction", _boom("Up API down"))
-    caplog.set_level(logging.INFO)
-    wired.up.lambda_handler(_event(_webhook_payload()), None)
-    assert any(pattern.strip('"') in r.getMessage() for r in caplog.records)
+# WHIT-655: the merged up_webhook_failures filter's pattern-matches-emitted-line tests live in
+# test_up_webhook_failures_alarm.py; the merged alarm's wiring is pinned in
+# tests/shared/test_alarm_budget.py.
 
 
 def test_any_positive_credit_over_floor_false_fires(wired, monkeypatch):
@@ -691,22 +664,6 @@ def test_replaced_token_is_used_on_next_delivery(fetch_wired, monkeypatch):
     assert up.lambda_handler(_event(_webhook_payload()), None) == up.OK_RESPONSE
     assert seen == ["Bearer old-pat-value", "Bearer new-pat-value"]
     assert len(fetch_wired.sent) == 1
-
-
-# [A3] Each new alarm watches the metric its filter actually emits, pages the alerts topic,
-# and uses the hourly period. A renamed metric on either side leaves an alarm that can never fire.
-@pytest.mark.parametrize("name", ["up_webhook_token_rejected", "up_webhook_no_device_tokens"])
-def test_terraform_alarm_watches_its_filter_metric(name):
-    text = MONITORING_TF.read_text()
-    metric_filter = tf_block(text, "aws_cloudwatch_log_metric_filter", name)
-    alarm = tf_block(text, "aws_cloudwatch_metric_alarm", name)
-    transformation = metric_filter.split("metric_transformation", 1)[1]
-    assert tf_attr(alarm, "metric_name") == tf_attr(transformation, "name")
-    assert tf_attr(alarm, "namespace") == tf_attr(transformation, "namespace")
-    assert tf_attr(metric_filter, "log_group_name") == "aws_cloudwatch_log_group.up_webhook.name"
-    assert tf_attr(alarm, "alarm_actions") == "[aws_sns_topic.alerts.arn]"
-    assert tf_attr(alarm, "period") == "3600"
-    assert tf_attr(alarm, "treat_missing_data") == '"notBreaching"'
 
 
 # [A4] "Any other fetch failure logs UP_WEBHOOK_FETCH_FAILED". Up (or a proxy) dropping the

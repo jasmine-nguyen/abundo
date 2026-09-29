@@ -6,7 +6,7 @@ Every caller now relies on the shared readers naming what they couldn't find.
 
 import pytest
 
-from _terraform import filter_pattern, tf_attr, tf_block
+from _terraform import alarm_names, filter_pattern, tf_attr, tf_block
 
 _TWO_RESOURCES = '''resource "aws_cloudwatch_metric_alarm" "first" {
   period = 3600
@@ -48,3 +48,9 @@ def test_attr_does_not_match_a_longer_key_ending_in_the_same_name():
     assert tf_attr(block, "alarm_actions") == "[a]"
     with pytest.raises(AssertionError):
         tf_attr(block, "actions")
+
+
+# WHIT-655: the alarm-budget guard counts with alarm_names, so it must find every alarm, in order.
+def test_alarm_names_lists_every_alarm_resource():
+    assert alarm_names(_TWO_RESOURCES) == ["first", "second"]
+    assert alarm_names('resource "aws_cloudwatch_log_metric_filter" "not_an_alarm" {\n}\n') == []
