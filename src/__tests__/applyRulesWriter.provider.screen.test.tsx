@@ -28,16 +28,18 @@ const mockSetStatus = (status: typeof mockStatus) => {
   mockStatus = status;
   mockListeners.forEach((listener) => listener());
 };
-jest.mock('../api');
 jest.mock('../auth', () => ({
   getStatus: () => mockStatus,
   subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
+  getAuthToken: async () => 'test-id-token',
 }));
-import * as api from '../api';
+import { installFakeServer } from './support/fakeServer';
 
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const FAILED: FilingResult = { status: 'failed', background: false };
-const mockApi = api as jest.Mocked<typeof api>;
+
+const server = installFakeServer();
+const APPLY_RULES = '/transactions/uncategorized/apply-rules';
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -70,15 +72,8 @@ function mount() {
   return result;
 }
 
-beforeEach(() => { queryClient.clear(); jest.clearAllMocks(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); mockStatus = 'authed'; });
 afterEach(() => { queryClient.clear(); });
-
-/** A promise the test resolves itself, so the action is genuinely in flight while the session changes. */
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => { resolve = r; });
-  return { promise, resolve };
-}
 
 // --- the successful write -----------------------------------------------------
 
@@ -88,7 +83,7 @@ it('patches every filed row into all three list caches, by id', async () => {
   queryClient.setQueryData(['uncategorizedFeed'],
     { pages: [{ transactions: [txn({ transaction_id: 'deep' })], nextCursor: null }], pageParams: [undefined] });
   queryClient.setQueryData(['transactionsRecent'], [txn({ transaction_id: 'recent' })]);
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report({
+  server.seed(APPLY_RULES, report({
     filed: [{ id: 't1', category: 'groceries' }, { id: 'deep', category: 'fuel' }, { id: 'recent', category: 'coffee' }],
   }));
 
@@ -109,7 +104,7 @@ it('patches every filed row into all three list caches, by id', async () => {
 it('removes vanished rows from the feed and the recent window', async () => {
   seedTransactionsCache(queryClient, [txn(), txn({ transaction_id: 'gone' })]);
   queryClient.setQueryData(['transactionsRecent'], [txn({ transaction_id: 'gone' })]);
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report({ filed: [], vanished: ['gone'] }));
+  server.seed(APPLY_RULES, report({ filed: [], vanished: ['gone'] }));
 
   const result = mount();
   await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
@@ -120,7 +115,7 @@ it('removes vanished rows from the feed and the recent window', async () => {
 
 it('invalidates the server-derived reads but never the transactions feed', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report());
+  server.seed(APPLY_RULES, report());
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -153,7 +148,7 @@ it('trims the uncategorized feed to page 1 and keeps its rows on screen', async 
     ],
     pageParams: [undefined, 'c1', 'c2'],
   });
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report({ filed: [] }));
+  server.seed(APPLY_RULES, report({ filed: [] }));
 
   const result = mount();
   await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
@@ -166,7 +161,7 @@ it('trims the uncategorized feed to page 1 and keeps its rows on screen', async 
 
 it('returns the server report so the sheet can offer the next round', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report({ remaining: 339 }));
+  server.seed(APPLY_RULES, report({ remaining: 339 }));
 
   const result = mount();
   let returned: FilingResult | null = null;
@@ -188,7 +183,7 @@ it('still refreshes the caches when the write fails', async () => {
     pages: [{ transactions: [txn()], nextCursor: 'c1' }, { transactions: [], nextCursor: null }],
     pageParams: [undefined, 'c1'],
   });
-  mockApi.applyRulesToUncategorized.mockRejectedValue(new Error('API error: 502'));
+  server.fail(APPLY_RULES, 502);
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
@@ -203,7 +198,7 @@ it('still refreshes the caches when the write fails', async () => {
 
 it('treats an offline write the same as a failed one', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  mockApi.applyRulesToUncategorized.mockRejectedValue(new TypeError('Network request failed'));
+  server.once('POST', APPLY_RULES, 'dropped');
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
@@ -219,14 +214,14 @@ it('treats an offline write the same as a failed one', async () => {
 
 it('previews with dryRun true and writes nothing', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report({ dryRun: true, filed: [] }));
+  server.seed(APPLY_RULES, report({ dryRun: true, filed: [] }));
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
   let returned: FilingResult | null = null;
   await act(async () => { returned = await result.current.previewFiling(SWEEP); });
 
-  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(true);
+  expect(server.requests()).toContainEqual({ method: 'POST', path: APPLY_RULES, body: { dryRun: true } });
   expect(returned).toEqual({ status: 'filed', report: expect.objectContaining({ dryRun: true }) });
   expect(spy).not.toHaveBeenCalled();                    // a preview reconciles nothing
   expect(rowsIn('transactions')[0].category).toBeNull(); // ...and touches no row
@@ -235,7 +230,7 @@ it('previews with dryRun true and writes nothing', async () => {
 
 it('returns null when the preview fails, without touching the caches', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  mockApi.applyRulesToUncategorized.mockRejectedValue(new Error('API error: 502'));
+  server.fail(APPLY_RULES, 502);
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
@@ -252,8 +247,8 @@ it('returns null when the preview fails, without touching the caches', async () 
 // WHIT-282: a run settling after a sign-out must not paint the next session's caches. Fail-on-
 // revert: drop the post-await epoch check and the signed-out session gets the old account's rows.
 it('bails without writing when the user signs out mid-write', async () => {
-  const pending = deferred<ApplyRulesResult>();
-  mockApi.applyRulesToUncategorized.mockReturnValue(pending.promise);
+  server.once('POST', APPLY_RULES, { body: report({ filed: [{ id: 't1', category: 'groceries' }] }) });
+  const pending = server.hold(APPLY_RULES);
   const result = mount();
 
   let returned: FilingResult | null = null;
@@ -261,7 +256,7 @@ it('bails without writing when the user signs out mid-write', async () => {
     const inFlight = result.current.fileCharges(SWEEP, { now: true });
     mockSetStatus('anon');                                   // sign-out bumps the session epoch
     seedTransactionsCache(queryClient, [txn()]);             // the next session's data
-    pending.resolve(report({ filed: [{ id: 't1', category: 'groceries' }] }));
+    pending.release();
     returned = await inFlight;
   });
 
@@ -270,15 +265,15 @@ it('bails without writing when the user signs out mid-write', async () => {
 });
 
 it('bails without painting when the preview settles after a sign-out', async () => {
-  const pending = deferred<ApplyRulesResult>();
-  mockApi.applyRulesToUncategorized.mockReturnValue(pending.promise);
+  server.once('POST', APPLY_RULES, { body: report({ dryRun: true }) });
+  const pending = server.hold(APPLY_RULES);
   const result = mount();
 
   let returned: FilingResult | null = null;
   await act(async () => {
     const inFlight = result.current.previewFiling(SWEEP);
     mockSetStatus('anon');
-    pending.resolve(report({ dryRun: true }));
+    pending.release();
     returned = await inFlight;
   });
 
@@ -325,7 +320,7 @@ it('keeps rows the user filed mid-run in the caches, with their own category', a
     txn({ transaction_id: 'gone' }),
   ]);
   queryClient.setQueryData(['transactionsRecent'], [txn({ transaction_id: 'kept', category: 'coffee' })]);
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report({
+  server.seed(APPLY_RULES, report({
     filed: [], vanished: ['gone'], alreadyFiled: ['kept'],
   }));
 

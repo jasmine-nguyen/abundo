@@ -7,9 +7,10 @@
 //   server.seed('/categories', [GROCERIES]);     // what a read answers
 //   server.fail('/rules', 409);                  // every call to that path fails with 409
 //   const held = server.hold('/categories');     // replies wait until held.release()
+//   server.once('GET', '/rules', { status: 503 }); // the next GET /rules only; 'dropped' = lost connection
 //   expect(server.requests()).toEqual([...]);    // what the app sent, in order
 //
-// seed / fail / hold take an exact path with no query string. The request log keeps
+// seed / fail / hold / once take an exact path with no query string. The request log keeps
 // the full path, query included. No timers of its own, so it works under jest fake timers.
 import { beforeEach, afterEach } from '@jest/globals';
 
@@ -36,6 +37,8 @@ interface Reply {
   status: number;
   body: unknown;
 }
+
+type Queued = { status?: number; body?: unknown; reason?: string } | 'dropped';
 
 class NotFound extends Error {}
 
@@ -176,6 +179,11 @@ function response({ status, body }: Reply) {
   } as Response;
 }
 
+function queuedReply({ status = 200, body, reason }: Exclude<Queued, 'dropped'>): Reply {
+  if (status < 400) return { status, body };
+  return { status, body: reason === undefined ? {} : { error: reason } };
+}
+
 function untilReleasedOrAborted(held: Promise<void>, signal?: AbortSignal | null) {
   if (!signal) return held;
   return new Promise<void>((resolve, reject) => {
@@ -190,6 +198,7 @@ export function installFakeServer() {
   let store: Store = new Map();
   let failures = new Map<string, Reply>();
   let holds = new Map<string, Promise<void>>();
+  let queued = new Map<string, Queued[]>();
   let log: LoggedRequest[] = [];
   let ids = 0;
   let realFetch: typeof fetch;
@@ -208,6 +217,10 @@ export function installFakeServer() {
     const held = holds.get(path);
     if (held) await untilReleasedOrAborted(held, init?.signal);
 
+    const next = queued.get(`${method} ${path}`)?.shift();
+    if (next === 'dropped') throw new TypeError('Network request failed');
+    if (next) return response(queuedReply(next));
+
     const failure = failures.get(path);
     if (failure) return response(failure);
     try {
@@ -223,6 +236,7 @@ export function installFakeServer() {
     store = new Map();
     failures = new Map();
     holds = new Map();
+    queued = new Map();
     log = [];
     ids = 0;
     realFetch = global.fetch;
@@ -240,7 +254,7 @@ export function installFakeServer() {
     },
     /** Make every call to this path fail with `status`; `reason` becomes the server's { error } text. */
     fail(path: string, status: number, reason?: string) {
-      failures.set(path, { status, body: reason === undefined ? {} : { error: reason } });
+      failures.set(path, queuedReply({ status, reason }));
     },
     /** Keep every call to this path waiting until release(). */
     hold(path: string) {
@@ -252,6 +266,11 @@ export function installFakeServer() {
           release();
         },
       };
+    },
+    /** Answer only the next `method` call to this path with `reply`; queued replies go out in order. */
+    once(method: Method, path: string, reply: Queued) {
+      const key = `${method} ${path}`;
+      queued.set(key, [...(queued.get(key) ?? []), reply]);
     },
     /** Every request the app sent, in order: method, full path (query included) and parsed body. */
     requests(): LoggedRequest[] {

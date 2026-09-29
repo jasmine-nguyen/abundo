@@ -25,16 +25,19 @@ const mockSetStatus = (status: typeof mockStatus) => {
   mockStatus = status;
   mockListeners.forEach((listener) => listener());
 };
-jest.mock('../api');
 jest.mock('../auth', () => ({
   getStatus: () => mockStatus,
   subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
+  getAuthToken: async () => 'test-id-token',
 }));
-import * as api from '../api';
+import { installFakeServer } from './support/fakeServer';
 
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const FAILED: FilingResult = { status: 'failed', background: false };
-const mockApi = api as jest.Mocked<typeof api>;
+
+const server = installFakeServer();
+const APPLY_RULES = '/transactions/uncategorized/apply-rules';
+const runs = () => server.requests().filter((r) => r.method === 'POST' && r.path === APPLY_RULES).length;
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -59,16 +62,7 @@ function rowsIn(key: 'transactions' | 'uncategorizedFeed'): Transaction[] {
 
 const mount = () => renderHook(() => useAppContext(), { wrapper }).result;
 
-/** A promise the test settles itself, so the run is genuinely in flight while other things happen. */
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
-  promise.catch(() => {});   // the provider owns the real handler; this only silences the warning
-  return { promise, resolve, reject };
-}
-
-beforeEach(() => { queryClient.clear(); jest.clearAllMocks(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); mockStatus = 'authed'; });
 afterEach(() => { queryClient.clear(); });
 
 // --- a refresh landing mid-run ------------------------------------------------
@@ -81,8 +75,8 @@ afterEach(() => { queryClient.clear(); });
 // one reverts to unfiled.
 it('reconciles against the rows present when the report lands, not a pre-call snapshot', async () => {
   seedTransactionsCache(queryClient, [txn({ transaction_id: 't1' })]);
-  const pending = deferred<ApplyRulesResult>();
-  mockApi.applyRulesToUncategorized.mockReturnValue(pending.promise);
+  server.once('POST', APPLY_RULES, { body: report({ filed: [{ id: 't1', category: 'groceries' }] }) });
+  const pending = server.hold(APPLY_RULES);   // the run stays in flight until release()
   const result = mount();
 
   await act(async () => {
@@ -93,7 +87,7 @@ it('reconciles against the rows present when the report lands, not a pre-call sn
       txn({ transaction_id: 't2', category: 'fuel' }),
       txn({ transaction_id: 't3' }),
     ]);
-    pending.resolve(report({ filed: [{ id: 't1', category: 'groceries' }] }));
+    pending.release();
     await inFlight;
   });
 
@@ -116,14 +110,13 @@ it('converges across rounds when a later report re-reports rows, in its own orde
   ]);
   const result = mount();
 
-  mockApi.applyRulesToUncategorized.mockResolvedValueOnce(
-    report({ filed: [{ id: 't1', category: 'groceries' }], remaining: 2 }));
+  server.once('POST', APPLY_RULES, { body: report({ filed: [{ id: 't1', category: 'groceries' }], remaining: 2 }) });
   await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
 
-  mockApi.applyRulesToUncategorized.mockResolvedValueOnce(report({
+  server.once('POST', APPLY_RULES, { body: report({
     filed: [{ id: 't3', category: 'fuel' }, { id: 't1', category: 'groceries' }],
     vanished: ['t2'], remaining: 0,
-  }));
+  }) });
   await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
 
   expect(rowsIn('transactions').map((row) => [row.transaction_id, row.category]))
@@ -146,7 +139,7 @@ it('leaves every loaded uncategorized page alone during a preview', async () => 
     ],
     pageParams: [undefined, 'c1', 'c2'],
   });
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report({ dryRun: true, filed: [] }));
+  server.seed(APPLY_RULES, report({ dryRun: true, filed: [] }));
   const result = mount();
 
   await act(async () => { await result.current.previewFiling(SWEEP); });
@@ -164,8 +157,8 @@ it('leaves every loaded uncategorized page alone during a preview', async () => 
 // previous account's uncategorized count, budgets and feed into a session that has just ended.
 it('does not refresh the caches when a FAILING write lands after a sign-out', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  const pending = deferred<ApplyRulesResult>();
-  mockApi.applyRulesToUncategorized.mockReturnValue(pending.promise);
+  server.once('POST', APPLY_RULES, { status: 401 });
+  const pending = server.hold(APPLY_RULES);
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -173,7 +166,7 @@ it('does not refresh the caches when a FAILING write lands after a sign-out', as
   await act(async () => {
     const inFlight = result.current.fileCharges(SWEEP, { now: true });
     mockSetStatus('anon');                            // sign-out bumps the session epoch
-    pending.reject(new Error('API error: 401'));
+    pending.release();                                // the write then fails with a 401
     returned = await inFlight;
   });
 
@@ -190,42 +183,42 @@ it('does not refresh the caches when a FAILING write lands after a sign-out', as
 // Fail-on-revert: move the guard back into the component and this reddens.
 it('refuses a second run while one is still in flight', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  const pending = deferred<ApplyRulesResult>();
-  mockApi.applyRulesToUncategorized.mockReturnValue(pending.promise);
+  server.once('POST', APPLY_RULES, { body: report() });
+  const pending = server.hold(APPLY_RULES);
   const result = mount();
 
   let second: FilingResult | null = null;
   await act(async () => {
     const first = result.current.fileCharges(SWEEP, { now: true });
     second = await result.current.fileCharges(SWEEP, { now: true });   // as if reopened and tapped again
-    pending.resolve(report());
+    pending.release();
     await first;
   });
 
   expect(second).toEqual(FAILED);
-  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledTimes(1);
+  expect(runs()).toBe(1);
 });
 
 // ...and the latch must release, or the feature is dead after one round.
 it('allows the next round once the previous one has settled', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report());
+  server.seed(APPLY_RULES, report());
   const result = mount();
 
   await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
   await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
 
-  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledTimes(2);
+  expect(runs()).toBe(2);
 });
 
 // A failed run must release the latch too, or one dropped connection locks her out permanently.
 it('releases the latch after a failed run', async () => {
   seedTransactionsCache(queryClient, [txn()]);
-  mockApi.applyRulesToUncategorized.mockRejectedValueOnce(new Error('API error: 502'));
+  server.once('POST', APPLY_RULES, { status: 502 });
   const result = mount();
   await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
 
-  mockApi.applyRulesToUncategorized.mockResolvedValueOnce(report());
+  server.once('POST', APPLY_RULES, { body: report() });
   let retried: FilingResult | null = null;
   await act(async () => { retried = await result.current.fileCharges(SWEEP, { now: true }); });
 

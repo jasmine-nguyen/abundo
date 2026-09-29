@@ -12,26 +12,28 @@ import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 import { queryClient } from '../queryClient';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
+const generates = () => server.requests().filter((r) => r.method === 'POST' && r.path === '/insights/ai');
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
-beforeEach(() => { queryClient.clear(); });
+beforeEach(() => { queryClient.clear(); resetAuth(); });
 afterEach(() => { queryClient.clear(); });
 
 it('a 502 from generateAiInsights sets aiInsightsError and clears loading', async () => {
   // The real api call rejects exactly as it does on a server 502 (see api.ts:561).
-  mockApi.generateAiInsights.mockRejectedValue(new Error('API error: 502'));
+  server.fail('/insights/ai', 502);
   const { result } = renderHook(() => useAppContext(), { wrapper });
 
   expect(result.current.aiInsightsError).toBe(false);
 
   await act(async () => { await result.current.generateAiInsights(null); });
 
-  expect(mockApi.generateAiInsights).toHaveBeenCalledTimes(1);
+  expect(generates()).toHaveLength(1);
   expect(result.current.aiInsightsError).toBe(true);   // retry state is armed
   expect(result.current.aiInsightsLoading).toBe(false); // spinner is cleared
   expect(result.current.aiInsights).toBeNull();         // no stale success shown
@@ -40,9 +42,8 @@ it('a 502 from generateAiInsights sets aiInsightsError and clears loading', asyn
 it('a later successful re-tap clears the error state', async () => {
   // Re-tapping "Try again" after an empty/502 must recover: WHIT-138 makes the
   // server regenerate, and the client must drop aiInsightsError on success.
-  mockApi.generateAiInsights
-    .mockRejectedValueOnce(new Error('API error: 502'))
-    .mockResolvedValueOnce({ summary: 'Solid cycle.', suggestions: ['Cut coffee'], generated_at: 't', cycle_start: '2026-06-25', cached: false } as any);
+  server.once('POST', '/insights/ai', { status: 502 });
+  server.once('POST', '/insights/ai', { body: { summary: 'Solid cycle.', suggestions: ['Cut coffee'], generated_at: 't', cycle_start: '2026-06-25', cached: false } });
   const { result } = renderHook(() => useAppContext(), { wrapper });
 
   await act(async () => { await result.current.generateAiInsights(null); });

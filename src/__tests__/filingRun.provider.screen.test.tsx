@@ -7,20 +7,24 @@ import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
-import type { ApplyRulesJob, ApplyRulesResult, FilingResult, FilingTarget } from '../context';
+import type { ApplyRulesResult, FilingResult, FilingTarget } from '../context';
 import type { UncategorizedMerchantGroup } from '../api';
 import { ApiError } from '../apiError';
 import { queryClient } from '../queryClient';
 
 let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
 const mockListeners = new Set<() => void>();
-jest.mock('../api');
 jest.mock('../auth', () => ({
   getStatus: () => mockStatus,
   subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
+  getAuthToken: async () => 'test-id-token',
 }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
+const APPLY_RULES = '/transactions/uncategorized/apply-rules';
+const JOBS = `${APPLY_RULES}/jobs`;
+const posts = (path: string) => server.requests().filter((r) => r.method === 'POST' && r.path === path);
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -37,59 +41,53 @@ const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
   filed: [], vanished: [], failed: [], remaining: 699, ...over,
 } as ApplyRulesResult);
 
-const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
-  jobId: 'j1', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,
-  failed: 0, alreadyFiled: 0, remaining: 0, createdRule: null, error: null,
-  createdAt: 't0', updatedAt: 't0', completedAt: null, ...over,
-});
-
 function mount() { return renderHook(() => useAppContext(), { wrapper }).result; }
 
-beforeEach(() => { queryClient.clear(); jest.clearAllMocks(); jest.useFakeTimers(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); jest.useFakeTimers(); mockStatus = 'authed'; });
 afterEach(() => { jest.useRealTimers(); queryClient.clear(); });
 
 it('sends a shop run over 300 charges to a background job and says so', async () => {
-  mockApi.startApplyRulesJob.mockResolvedValue(job());
-
   const r = mount();
   let result: FilingResult | null = null;
   await act(async () => { result = await r.current.fileCharges(SHOP, { matched: 999 }); });
 
   expect(result).toEqual({ status: 'background' });
-  expect(mockApi.startApplyRulesJob).toHaveBeenCalledWith({ value: 'coles', categoryId: 'groceries' });
-  expect(mockApi.applyRulesToUncategorized).not.toHaveBeenCalled();
+  expect(server.requests()).toContainEqual({ method: 'POST', path: JOBS, body: { rule: { value: 'coles', categoryId: 'groceries' } } });
+  expect(posts(APPLY_RULES)).toHaveLength(0);
   expect(r.current.applyRulesJob?.status).toBe('running');
 });
 
 it('files a shop run of 300 charges now and returns the report', async () => {
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report({ matched: 300, remaining: 0 }));
+  server.seed(APPLY_RULES, report({ matched: 300, remaining: 0 }));
 
   const r = mount();
   let result: FilingResult | null = null;
   await act(async () => { result = await r.current.fileCharges(SHOP, { matched: 300 }); });
 
   expect(result).toEqual({ status: 'filed', report: expect.objectContaining({ matched: 300 }) });
-  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(false, { value: 'coles', categoryId: 'groceries' });
-  expect(mockApi.startApplyRulesJob).not.toHaveBeenCalled();
+  expect(server.requests()).toContainEqual({
+    method: 'POST', path: APPLY_RULES, body: { dryRun: false, rule: { value: 'coles', categoryId: 'groceries' } },
+  });
+  expect(posts(JOBS)).toHaveLength(0);
 });
 
 it('files the first 300 now, even over the cap, when the user picks "file up to 300"', async () => {
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report());
+  server.seed(APPLY_RULES, report());
 
   const r = mount();
   let result: FilingResult | null = null;
   await act(async () => { result = await r.current.fileCharges(SWEEP, { matched: 999, now: true }); });
 
   expect(result).toEqual({ status: 'filed', report: expect.objectContaining({ matched: 999 }) });
-  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledTimes(1);
-  expect(mockApi.applyRulesToUncategorized.mock.calls[0][0]).toBe(false);
-  expect(mockApi.applyRulesToUncategorized.mock.calls[0][1]).toBeUndefined();
-  expect(mockApi.startApplyRulesJob).not.toHaveBeenCalled();
+  expect(posts(APPLY_RULES)).toHaveLength(1);
+  expect(posts(APPLY_RULES)[0].body).toMatchObject({ dryRun: false });
+  expect(posts(APPLY_RULES)[0].body).not.toHaveProperty('rule');
+  expect(posts(JOBS)).toHaveLength(0);
 });
 
 it('reports a rule clash with where it came from: filing now vs starting a job', async () => {
-  mockApi.applyRulesToUncategorized.mockRejectedValue(new ApiError(409, null));
-  mockApi.startApplyRulesJob.mockRejectedValue(new ApiError(409, null));
+  server.fail(APPLY_RULES, 409);
+  server.fail(JOBS, 409);
 
   const r = mount();
   let now: FilingResult | null = null;
@@ -102,12 +100,14 @@ it('reports a rule clash with where it came from: filing now vs starting a job',
 });
 
 it('previews through the same module and returns the same result shape', async () => {
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report({ dryRun: true }));
+  server.seed(APPLY_RULES, report({ dryRun: true }));
 
   const r = mount();
   let result: FilingResult | null = null;
   await act(async () => { result = await r.current.previewFiling(SHOP); });
 
   expect(result).toEqual({ status: 'filed', report: expect.objectContaining({ dryRun: true, matched: 999 }) });
-  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(true, { value: 'coles', categoryId: 'groceries' });
+  expect(server.requests()).toContainEqual({
+    method: 'POST', path: APPLY_RULES, body: { dryRun: true, rule: { value: 'coles', categoryId: 'groceries' } },
+  });
 });

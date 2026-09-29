@@ -14,18 +14,19 @@ import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 import type { ApplyRulesResult, FilingResult, FilingTarget } from '../context';
 import type { UncategorizedMerchantGroup } from '../api';
-import { ApiError } from '../apiError';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
 
 let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-jest.mock('../api');
 jest.mock('../auth', () => ({
   getStatus: () => mockStatus,
   subscribe: () => () => {},
+  getAuthToken: async () => 'test-id-token',
 }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
+const APPLY_RULES = '/transactions/uncategorized/apply-rules';
 const SWEEP: FilingTarget = { kind: 'sweep' };
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
@@ -46,31 +47,26 @@ function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
   return spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
 }
 function mount() { return renderHook(() => useAppContext(), { wrapper }).result; }
-function deferred<T>() {
-  let resolve!: (v: T) => void;
-  const promise = new Promise<T>((r) => { resolve = r; });
-  return { promise, resolve };
-}
 
-beforeEach(() => { queryClient.clear(); jest.clearAllMocks(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); mockStatus = 'authed'; });
 afterEach(() => { queryClient.clear(); });
 
 // [A30] "Apply my rules" must stay a plain sweep on the wire — no inline rule. Fail-on-revert: pass
 // a rule through applyRulesToHistory and the exact-args match reddens.
 it('[A30] applyRulesToHistory calls the api with dryRun false and NO inline rule', async () => {
   seedTransactionsCache(queryClient, []);
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report());
+  server.seed(APPLY_RULES, report());
   const result = mount();
   await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
-  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(false);
+  expect(server.requests()).toContainEqual({ method: 'POST', path: APPLY_RULES, body: { dryRun: false } });
 });
 
 // [A31] The preview must also stay a plain dry-run — no inline rule.
 it('[A31] previewRuleApplication calls the api with dryRun true and NO inline rule', async () => {
-  mockApi.applyRulesToUncategorized.mockResolvedValue(report({ dryRun: true }));
+  server.seed(APPLY_RULES, report({ dryRun: true }));
   const result = mount();
   await act(async () => { await result.current.previewFiling(SWEEP); });
-  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(true);
+  expect(server.requests()).toContainEqual({ method: 'POST', path: APPLY_RULES, body: { dryRun: true } });
 });
 
 // [A32] The api now throws ApiError(409) on a clash. "Apply my rules" does NOT distinguish it — it
@@ -78,7 +74,7 @@ it('[A31] previewRuleApplication calls the api with dryRun true and NO inline ru
 // Fail-on-revert: if applyRulesToHistory ever grew a clash branch, the null-equality reddens.
 it('[A32] a 409 from applyRulesToHistory returns bare null and still refreshes', async () => {
   seedTransactionsCache(queryClient, []);
-  mockApi.applyRulesToUncategorized.mockRejectedValue(new ApiError(409, null));
+  server.fail(APPLY_RULES, 409);
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
   let out: FilingResult | undefined;
@@ -91,7 +87,7 @@ it('[A32] a 409 from applyRulesToHistory returns bare null and still refreshes',
 // [A33] The preview swallows every error to null (it reconciles nothing) — including the new
 // ApiError. Fail-on-revert: if the catch narrowed to non-ApiError, this throw would escape.
 it('[A33] a 409 from previewRuleApplication returns null and refreshes nothing', async () => {
-  mockApi.applyRulesToUncategorized.mockRejectedValue(new ApiError(409, null));
+  server.fail(APPLY_RULES, 409);
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
   let out: FilingResult | undefined;
@@ -106,16 +102,16 @@ it('[A33] a 409 from previewRuleApplication returns null and refreshes nothing',
 // give fileByShop its own latch and the second api call fires.
 it('[A34] an in-flight applyRulesToHistory turns away a fileByShop', async () => {
   seedTransactionsCache(queryClient, []);
-  const pending = deferred<ApplyRulesResult>();
-  mockApi.applyRulesToUncategorized.mockReturnValue(pending.promise);
+  server.once('POST', APPLY_RULES, { body: report() });
+  const pending = server.hold(APPLY_RULES);
   const result = mount();
   let blocked: FilingResult | undefined;
   await act(async () => {
     const first = result.current.fileCharges(SWEEP, { now: true });   // holds the latch
     blocked = await result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true });  // must be turned away
-    pending.resolve(report());
+    pending.release();
     await first;
   });
   expect(blocked).toEqual({ status: 'failed', background: false });
-  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledTimes(1);
+  expect(server.requests().filter((r) => r.method === 'POST' && r.path === APPLY_RULES)).toHaveLength(1);
 });

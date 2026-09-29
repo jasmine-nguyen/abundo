@@ -9,26 +9,31 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppProvider, useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
 import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';
 import { queryClient } from '../queryClient';
-import type { ChatJob } from '../api';
 
 let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
 const mockListeners = new Set<() => void>();
-jest.mock('../api');
 jest.mock('../auth', () => ({
   getStatus: () => mockStatus,
   subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
+  getAuthToken: async () => 'test-id-token',
 }));
-import * as api from '../api';
+import { installFakeServer } from './support/fakeServer';
 import { CHAT_ERROR_TEXT, CHAT_MAX_WAIT_MS, CHAT_POLL_DELAY_MS, ChatProvider, useChat } from '../chat/ChatContext';
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
 import type { ChatContextValue } from '../chat/ChatContext';
-const mockApi = api as jest.Mocked<typeof api>;
+
+const server = installFakeServer();
+const jobPath = (jobId: string) => `/transactions/uncategorized/apply-rules/jobs/${jobId}`;
+const gets = (prefix: string) => server.requests().filter((r) => r.method === 'GET' && r.path.startsWith(prefix)).length;
+const drop = (path: string, times: number) => {
+  for (let i = 0; i < times; i++) server.once('GET', path, 'dropped');
+};
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
-  jobId: 'j1', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,
+  jobId: 'job-1', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,
   failed: 0, alreadyFiled: 0, remaining: 0, createdRule: null, error: null,
   createdAt: 't0', updatedAt: 't0', completedAt: null, ...over,
 });
@@ -42,14 +47,13 @@ async function tick(times = 1) {
 }
 
 beforeEach(async () => {
-  queryClient.clear(); jest.clearAllMocks(); jest.useFakeTimers(); mockStatus = 'authed'; mockListeners.clear();
+  queryClient.clear(); jest.useFakeTimers(); mockStatus = 'authed'; mockListeners.clear();
   await AsyncStorage.clear();
 });
 afterEach(() => { jest.useRealTimers(); queryClient.clear(); });
 
 it('[A10] dropped connections before a dismiss still count after the sheet is reopened', async () => {
-  mockApi.startApplyRulesJob.mockResolvedValue(job());
-  mockApi.getApplyRulesJob.mockRejectedValue(new Error('offline'));
+  drop(jobPath('job-1'), 5);
 
   const r = renderHook(() => useAppContext(), { wrapper }).result;
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });
@@ -59,7 +63,7 @@ it('[A10] dropped connections before a dismiss still count after the sheet is re
 
   await act(async () => { r.current.setSheet(null); });
   await tick(4); // dismissed → no polling
-  expect(mockApi.getApplyRulesJob).toHaveBeenCalledTimes(3);
+  expect(gets(jobPath('job-1'))).toBe(3);
 
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });
   await tick(2); // 2 more drops → 5 in a row → gives up
@@ -67,8 +71,8 @@ it('[A10] dropped connections before a dismiss still count after the sheet is re
 });
 
 it('[A11] a new job after a network give-up starts its dropped-connection count from zero', async () => {
-  mockApi.startApplyRulesJob.mockResolvedValue(job());
-  mockApi.getApplyRulesJob.mockRejectedValue(new Error('offline'));
+  drop(jobPath('job-1'), 5);
+  drop(jobPath('job-2'), 5); // the retry's fresh job
 
   const r = renderHook(() => useAppContext(), { wrapper }).result;
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });
@@ -84,13 +88,9 @@ it('[A11] a new job after a network give-up starts its dropped-connection count 
 });
 
 it('[A12] a dismiss after a good check carries zero drops, not a stale count', async () => {
-  mockApi.startApplyRulesJob.mockResolvedValue(job());
-  mockApi.getApplyRulesJob
-    .mockRejectedValueOnce(new Error('offline'))
-    .mockRejectedValueOnce(new Error('offline'))
-    .mockRejectedValueOnce(new Error('offline'))
-    .mockResolvedValueOnce(job({ matched: 10, attempted: 1 })) // resets the count
-    .mockRejectedValue(new Error('offline'));
+  drop(jobPath('job-1'), 3);
+  server.once('GET', jobPath('job-1'), { body: job({ matched: 10, attempted: 1 }) }); // resets the count
+  drop(jobPath('job-1'), 5);
 
   const r = renderHook(() => useAppContext(), { wrapper }).result;
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });
@@ -111,20 +111,19 @@ function Probe() {
 }
 
 it('[A13] the chat time limit counts from before the start request, not from the first check', async () => {
-  let resolveStart: (value: ChatJob) => void = () => {};
-  mockApi.startAiChat.mockImplementation(() => new Promise<ChatJob>((resolve) => { resolveStart = resolve; }));
-  mockApi.getAiChatJob.mockResolvedValue({ jobId: 'c1', status: 'running' });
+  const start = server.hold('/ai/chat');
 
   render(<ChatProvider><Probe /></ChatProvider>);
   await act(async () => { await Promise.resolve(); });
   act(() => chat.send('how much on coffee?'));
 
-  // The start request itself eats almost the whole budget.
-  await act(async () => { jest.advanceTimersByTime(CHAT_MAX_WAIT_MS - CHAT_POLL_DELAY_MS / 2); });
-  await act(async () => { resolveStart({ jobId: 'c1', status: 'running' }); });
+  // The start request itself eats almost the whole budget. The clock jumps rather than the timers
+  // running, so the start request's own 15s cancel timer doesn't end it first.
+  await act(async () => { jest.setSystemTime(Date.now() + CHAT_MAX_WAIT_MS - CHAT_POLL_DELAY_MS / 2); });
+  await act(async () => { start.release(); });
   await act(async () => { await jest.advanceTimersByTimeAsync(CHAT_POLL_DELAY_MS); });
 
-  expect(mockApi.getAiChatJob).not.toHaveBeenCalled();
+  expect(gets('/ai/chat/jobs/')).toBe(0);
   expect(chat.inFlight).toBe(false);
   expect(chat.messages[chat.messages.length - 1]).toMatchObject({ role: 'assistant', status: 'error', text: CHAT_ERROR_TEXT });
 });

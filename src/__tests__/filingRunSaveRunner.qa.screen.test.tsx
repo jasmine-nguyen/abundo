@@ -9,19 +9,20 @@ import type { FilingResult, FilingTarget } from '../context';
 import { useFilingRun } from '../filingRun';
 import { runOptimisticSave, type SaveSteps } from '../optimisticSave';
 import type { UncategorizedMerchantGroup } from '../api';
-import { ApiError } from '../apiError';
 import { queryClient } from '../queryClient';
 
 let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
 const mockListeners = new Set<() => void>();
 const mockSetStatus = (status: typeof mockStatus) => { mockStatus = status; mockListeners.forEach((l) => l()); };
-jest.mock('../api');
 jest.mock('../auth', () => ({
   getStatus: () => mockStatus,
   subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
+  getAuthToken: async () => 'test-id-token',
 }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
+const APPLY_RULES = '/transactions/uncategorized/apply-rules';
 
 const GROUP: UncategorizedMerchantGroup = {
   merchant: 'Coles', rulePattern: 'coles', groupedBy: 'merchant', count: 1,
@@ -30,12 +31,6 @@ const GROUP: UncategorizedMerchantGroup = {
 const SHOP: FilingTarget = { kind: 'shop', group: GROUP, categoryId: 'groceries' };
 const FAILED = { status: 'failed', background: false };
 
-function deferredReject() {
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<never>((_, r) => { reject = r; });
-  return { promise, reject };
-}
-
 function mountHook(isSameSession: () => boolean) {
   const runSave = <R, T>(steps: SaveSteps<R, T>) => runOptimisticSave(isSameSession, steps);
   return renderHook(() => useFilingRun({
@@ -43,14 +38,14 @@ function mountHook(isSameSession: () => boolean) {
   })).result;
 }
 
-beforeEach(() => { queryClient.clear(); jest.clearAllMocks(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); mockStatus = 'authed'; });
 afterEach(() => { queryClient.clear(); });
 
 // [A1] (P0) The runner's session verdict beats the clash mapping for both preview and file now.
 it('[A1] turns a shop clash into a plain failure when the runner says signed out', async () => {
   const r = mountHook(() => false);
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  mockApi.applyRulesToUncategorized.mockRejectedValue(new ApiError(409, null));
+  server.fail(APPLY_RULES, 409);
 
   let preview: FilingResult | null = null;
   let now: FilingResult | null = null;
@@ -67,7 +62,7 @@ it('[A2] frees the lock after a failed file now the runner dropped, then refresh
   let sameSession = false;
   const r = mountHook(() => sameSession);
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  mockApi.applyRulesToUncategorized.mockRejectedValue(new ApiError(502, null));
+  server.fail(APPLY_RULES, 502);
 
   await act(async () => { await r.current.fileCharges(SHOP, { now: true }); });
   expect(spy).not.toHaveBeenCalled();
@@ -76,16 +71,16 @@ it('[A2] frees the lock after a failed file now the runner dropped, then refresh
   let again: FilingResult | null = null;
   await act(async () => { again = await r.current.fileCharges(SHOP, { now: true }); });
   expect(again).toEqual(FAILED);
-  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledTimes(2);
+  expect(server.requests().filter((req) => req.method === 'POST' && req.path === APPLY_RULES)).toHaveLength(2);
   expect(spy).toHaveBeenCalled();
 });
 
 // [A3] (P0) Through the real provider: a clash that lands after sign-out shows no clash and
 // refreshes nothing, for preview and file now.
 it('[A3] drops a preview clash and a file-now clash that land after sign-out', async () => {
-  const preview = deferredReject();
-  const commit = deferredReject();
-  mockApi.applyRulesToUncategorized.mockReturnValueOnce(preview.promise).mockReturnValueOnce(commit.promise);
+  server.once('POST', APPLY_RULES, { status: 409 });
+  server.once('POST', APPLY_RULES, { status: 409 });
+  const pending = server.hold(APPLY_RULES);   // the preview and the commit both stay in flight
   const r = renderHook(() => useAppContext(), {
     wrapper: ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>,
   }).result;
@@ -100,8 +95,7 @@ it('[A3] drops a preview clash and a file-now clash that land after sign-out', a
   let previewResult: FilingResult | null = null;
   let fileResult: FilingResult | null = null;
   await act(async () => {
-    preview.reject(new ApiError(409, null));
-    commit.reject(new ApiError(409, null));
+    pending.release();                        // both then fail with a 409 clash
     previewResult = await previewing;
     fileResult = await filing;
   });
