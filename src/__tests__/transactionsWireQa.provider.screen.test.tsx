@@ -13,7 +13,6 @@ jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => 
 import { installFakeServer } from './support/fakeServer';
 
 const server = installFakeServer();
-const sent = (method: string, path: string) => server.requests().filter((r) => r.method === method && r.path === path);
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -47,7 +46,7 @@ it('a note edit whose connection drops puts the old note back and toasts', async
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { notes: 'new note' }); });
 
-  expect(sent('PATCH', '/transactions/t1')).toHaveLength(1);
+  expect(server.sent('PATCH', '/transactions/t1')).toHaveLength(1);
   expect(cached('t1')?.notes).toBe('old note');
   expect(result.current.toast).toBe('Could not save. Please try again.');
 });
@@ -88,7 +87,7 @@ it('applyCategoryToMany when the batch request itself errors reverts every charg
 
   await act(async () => { await result.current.applyCategoryToMany(['t1', 't2'], 'groceries'); });
 
-  expect(sent('PATCH', '/transactions')).toHaveLength(1);
+  expect(server.sent('PATCH', '/transactions')).toHaveLength(1);
   expect(cached('t1')?.category).toBeNull();
   expect(cached('t2')?.category).toBe('dining');
   expect(result.current.toast).toBe('Could not save some categories. Please try again.');
@@ -114,7 +113,7 @@ it("applyCategory('all') swaps the temp rule for the id the server minted, keepi
 
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(sent('POST', '/rules')).toEqual([{ method: 'POST', path: '/rules', body: { value: 'COLES', categoryId: 'groceries' } }]);
+  expect(server.sent('POST', '/rules')).toEqual([{ method: 'POST', path: '/rules', body: { value: 'COLES', categoryId: 'groceries' } }]);
   expect(queryClient.getQueryData(['rules'])).toEqual([
     expect.objectContaining({ id: 'rule-1', pattern: 'COLES', categoryId: 'groceries', isNew: true }),
   ]);

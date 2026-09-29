@@ -19,7 +19,7 @@ jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => 
 import { installFakeServer } from './support/fakeServer';
 
 const server = installFakeServer();
-const rulesReads = () => server.requests().filter((r) => r.method === 'GET' && r.path === '/rules');
+const rulesReads = () => server.sent('GET', '/rules');
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 

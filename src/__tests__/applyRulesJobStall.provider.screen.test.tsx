@@ -25,7 +25,7 @@ const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the
 
 const server = installFakeServer();
 const JOB_PATH = '/transactions/uncategorized/apply-rules/jobs/job-1';
-const polls = () => server.requests().filter((r) => r.method === 'GET' && r.path === JOB_PATH).length;
+const polls = () => server.sent('GET', JOB_PATH).length;
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 

@@ -195,7 +195,7 @@ it('shares the in-flight latch with applyRulesToHistory', async () => {
     await first;
   });
 
-  expect(server.requests().filter((r) => r.method === 'POST' && r.path === APPLY_RULES)).toHaveLength(1);
+  expect(server.sent('POST', APPLY_RULES)).toHaveLength(1);
 });
 
 // A file settling after sign-out must not paint the next session's caches.

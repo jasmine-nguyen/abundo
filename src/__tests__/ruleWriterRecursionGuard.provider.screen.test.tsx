@@ -12,11 +12,11 @@ import type { Rule } from '../context';
 import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
-import { installFakeServer } from './support/fakeServer';
+import { installFakeServer, type Method } from './support/fakeServer';
 
 const server = installFakeServer();
 // Every rule write the app sent with this method (POST = create, PUT = update, DELETE = delete).
-const ruleWrites = (method: string) => server.requests().filter((r) => r.method === method && r.path.startsWith('/rules'));
+const ruleWrites = (method: Method) => server.sentUnder(method, '/rules');
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 const NETFLIX: Rule = { id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false, field: 'description', operator: 'contains' };

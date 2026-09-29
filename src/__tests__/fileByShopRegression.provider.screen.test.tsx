@@ -113,5 +113,5 @@ it('[A34] an in-flight applyRulesToHistory turns away a fileByShop', async () =>
     await first;
   });
   expect(blocked).toEqual({ status: 'failed', background: false });
-  expect(server.requests().filter((r) => r.method === 'POST' && r.path === APPLY_RULES)).toHaveLength(1);
+  expect(server.sent('POST', APPLY_RULES)).toHaveLength(1);
 });
