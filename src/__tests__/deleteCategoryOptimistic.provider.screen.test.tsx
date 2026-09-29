@@ -74,8 +74,7 @@ it('deleting a category unfiles its charges on screen instantly, undoes on failu
   expect(categoryOf(listRows(CATEGORY_KEY))).toEqual({ t1: null });
 
   await act(async () => {
-    server.once('DELETE', '/categories/dining', 'dropped');
-    failing.release();
+    failing.fail('DELETE');
     await failedDelete;
   });
 

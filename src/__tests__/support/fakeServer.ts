@@ -7,6 +7,7 @@
 //   server.seed('/categories', [GROCERIES]);     // what a read answers
 //   server.fail('/rules', 409);                  // every call to that path fails with 409
 //   const held = server.hold('/categories');     // replies wait until held.release()
+//   held.fail('PATCH');                          // release as a lost connection; or held.fail('DELETE', { status: 500 })
 //   server.once('GET', '/rules', { status: 503 }); // the next GET /rules only; 'dropped' = lost connection
 //   expect(server.requests()).toEqual([...]);    // what the app sent, in order
 //   expect(server.sent('POST', '/rules')).toHaveLength(1); // only that method + exact path
@@ -249,6 +250,11 @@ export function installFakeServer() {
     global.fetch = realFetch;
   });
 
+  function queue(method: Method, path: string, reply: Queued) {
+    const key = `${method} ${path}`;
+    queued.set(key, [...(queued.get(key) ?? []), reply]);
+  }
+
   return {
     /** Set what a path answers (a read's data, or the record list a write updates). */
     seed(path: string, data: unknown) {
@@ -260,19 +266,24 @@ export function installFakeServer() {
     },
     /** Keep every call to this path waiting until release(). */
     hold(path: string) {
-      let release!: () => void;
-      holds.set(path, new Promise<void>((resolve) => { release = resolve; }));
+      let resolveHold!: () => void;
+      holds.set(path, new Promise<void>((resolve) => { resolveHold = resolve; }));
+      const release = () => {
+        holds.delete(path);
+        resolveHold();
+      };
       return {
-        release() {
-          holds.delete(path);
+        release,
+        /** Release as a failure: `method`'s next reply on this path is `reply` (default: lost connection). */
+        fail(method: Method, reply: Queued = 'dropped') {
+          queue(method, path, reply);
           release();
         },
       };
     },
     /** Answer only the next `method` call to this path with `reply`; queued replies go out in order. */
     once(method: Method, path: string, reply: Queued) {
-      const key = `${method} ${path}`;
-      queued.set(key, [...(queued.get(key) ?? []), reply]);
+      queue(method, path, reply);
     },
     /** Every request the app sent, in order: method, full path (query included) and parsed body. */
     requests(): LoggedRequest[] {

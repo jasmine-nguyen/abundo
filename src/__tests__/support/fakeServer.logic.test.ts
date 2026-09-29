@@ -79,6 +79,33 @@ describe('WHIT-637 fake server', () => {
     await save;
   });
 
+  it('WHIT-659 held.fail(method) releases a held save as a lost connection, then the path answers normally', async () => {
+    const held = server.hold('/milestones');
+    const save = api.setMilestones([]).catch((error: unknown) => error);
+
+    await flush();
+    held.fail('PUT');
+
+    const dropped = await save;
+    expect(dropped).toBeInstanceOf(TypeError);
+    expect((dropped as Error).message).toBe('Network request failed');
+
+    await expect(api.setMilestones([])).resolves.toEqual([]);
+    expect(server.sent('PUT', '/milestones')).toHaveLength(2);
+  });
+
+  it('WHIT-659 held.fail(method, reply) releases a held save with that status and the server\'s reason', async () => {
+    const held = server.hold('/categories');
+    const save = api.createCategory(GYM).catch((error: unknown) => error);
+
+    await flush();
+    held.fail('POST', { status: 400, reason: 'Name is required' });
+
+    const rejected = await save;
+    expect(rejected).toBeInstanceOf(ApiError);
+    expect(rejected).toMatchObject({ status: 400, serverMessage: 'Name is required' });
+  });
+
   it('logs every request\'s method, path and body', async () => {
     server.seed('/categories', [GROCERIES]);
     await api.fetchCategories();

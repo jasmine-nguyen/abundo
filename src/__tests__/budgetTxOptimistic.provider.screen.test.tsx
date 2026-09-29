@@ -35,11 +35,6 @@ const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
-// A held save fails with a lost connection once released.
-function dropHeld(held: { release: () => void }, path: string) {
-  server.once('PATCH', path, 'dropped');
-  held.release();
-}
 const sentBodies = (path: string) => server.sent('PATCH', path).map((request) => request.body);
 
 function signOut() { act(() => { queryClient.clear(); mockSetStatus('anon'); }); }
@@ -156,7 +151,7 @@ it('[WHIT-360] exclude rollback un-stamps only the marked list, not an unrelated
   // A background refetch of the unrelated 'food' list lands while the save is still pending.
   act(() => { queryClient.setQueryData(['budgetTransactions', 'food'], [txn({ transaction_id: 't9new' })]); });
 
-  await act(async () => { dropHeld(held, '/transactions/t1'); await pending; });
+  await act(async () => { held.fail('PATCH'); await pending; });
 
   expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([txn()]);                 // un-stamped back to original
   expect(queryClient.getQueryData(['budgetTransactions', 'food'])).toEqual([txn({ transaction_id: 't9new' })]); // fresh data NOT clobbered
@@ -320,7 +315,7 @@ describe('WHIT-344 exclude rollback settling after sign-out', () => {
     let pending!: Promise<void>;
     act(() => { pending = result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
     signOut(); // cache cleared, epoch bumped, while the save is still in-flight
-    await act(async () => { dropHeld(held, '/transactions/t1'); await pending; });
+    await act(async () => { held.fail('PATCH'); await pending; });
 
     // WHIT-271 invariant: nothing from the prior session may reappear in the wiped cache.
     expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toBeUndefined();
@@ -453,7 +448,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
       // A background refetch of the UNRELATED shopping list lands while the save is still pending.
       act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('t9new', { category: 'shopping' })]); });
 
-      await act(async () => { dropHeld(held, '/transactions/t1'); await pending; });
+      await act(async () => { held.fail('PATCH'); await pending; });
 
       expect(foodList()).toEqual([txn('t1')]);                                    // shrunk list correctly restored
       expect(budgetList('shopping')).toEqual([txn('t9new', { category: 'shopping' })]); // fresh data NOT clobbered
@@ -512,7 +507,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
 
         act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]); });
 
-        await act(async () => { dropHeld(held, '/transactions/t1'); await pending; });
+        await act(async () => { held.fail('PATCH'); await pending; });
 
         expect(foodList()).toEqual([txn('t1')]);                                        // parent restored
         expect(budgetList('coffee')).toEqual([txn('t1')]);                              // child restored
@@ -537,7 +532,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
 
         act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]); });
 
-        await act(async () => { dropHeld(held, '/transactions/t1'); await pending; });
+        await act(async () => { held.fail('PATCH'); await pending; });
 
         expect(foodList()).toEqual([txn('t1')]);                                        // stamped list restored
         expect(budgetList('shopping')).toEqual([txn('s1new', { category: 'shopping' })]); // refetched data survived
@@ -557,7 +552,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
         // Optimistic: the budget-list row carries the new note before the save settles.
         expect(foodList()).toEqual([txn('t1', { notes: 'lunch with A' })]);
 
-        await act(async () => { dropHeld(held, '/transactions/t1'); await pending; });
+        await act(async () => { held.fail('PATCH'); await pending; });
         // Rolled back to the original row — no stale note left behind.
         expect(foodList()).toEqual([txn('t1')]);
       });
@@ -574,7 +569,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
         act(() => { pending = result.current.applyTransactionEdit('t1', { tags: ['work'] }); });
         expect(queryClient.getQueryData(drillKey)).toEqual([txn('t1', { tags: ['work'] })]); // optimistic
 
-        await act(async () => { dropHeld(held, '/transactions/t1'); await pending; });
+        await act(async () => { held.fail('PATCH'); await pending; });
         expect(queryClient.getQueryData(drillKey)).toEqual([txn('t1')]);                     // rolled back
       });
 
@@ -605,7 +600,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
         // shopping's refetch lands mid-save, now holding real rows.
         act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]); });
 
-        await act(async () => { dropHeld(held, '/transactions/t1'); await pending; });
+        await act(async () => { held.fail('PATCH'); await pending; });
 
         expect(foodList()).toEqual([txn('t1')]);                                        // shrunk list restored
         expect(budgetList('shopping')).toEqual([txn('s1new', { category: 'shopping' })]); // empty→refetched list NOT erased
@@ -768,7 +763,7 @@ describe('WHIT-348 re-file budget-list rollback settling after sign-out', () => 
     expect(queryClient.getQueryData(['budgetTransactions', 'food'])).toEqual([]); // dropped optimistically
 
     signOut(); // cache cleared + epoch bumped, save still in flight
-    await act(async () => { dropHeld(held, '/transactions'); await pending; });
+    await act(async () => { held.fail('PATCH'); await pending; });
 
     // WHIT-271 invariant: the failed re-file's restore must NOT resurrect the prior session's list.
     expect(queryClient.getQueryData(['budgetTransactions', 'food'])).toBeUndefined();

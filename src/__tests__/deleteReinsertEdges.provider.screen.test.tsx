@@ -92,8 +92,7 @@ describe('deleteGoal — failure edges', () => {
     act(() => { p = result.current.deleteGoal('g1'); });      // optimistic remove -> [g2]
     act(() => { queryClient.removeQueries({ queryKey: ['goals'] }); }); // cache evicted mid-flight
     await act(async () => {
-      server.once('DELETE', '/goals/g1', { status: 500 });
-      held.release();
+      held.fail('DELETE', { status: 500 });
       await p;
     });
     // deleteGoal's `prev ?? []` still rebuilds a list holding the removed goal.
@@ -113,8 +112,7 @@ describe('deleteRule — cache evicted mid-flight is a NO-OP (asymmetry vs delet
     act(() => { p = result.current.deleteRule('r1'); });
     act(() => { queryClient.removeQueries({ queryKey: ['rules'] }); });
     await act(async () => {
-      server.once('DELETE', '/rules/r1', { status: 500 });
-      held.release();
+      held.fail('DELETE', { status: 500 });
       await p;
     });
     expect(ruleIds()).toBeUndefined(); // rule NOT restored — cache stays evicted

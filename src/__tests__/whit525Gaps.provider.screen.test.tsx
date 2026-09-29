@@ -88,8 +88,7 @@ describe('[WHIT-525 gaps] applyTransactionEdit stamp boundaries', () => {
     expect(budgetList('food')).toEqual([txn('bill', { budget_excluded: true })]);
 
     await act(async () => {
-      server.once('PATCH', '/transactions/bill', 'dropped');
-      held.release();
+      held.fail('PATCH');
       await pending;
     });
 

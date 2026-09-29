@@ -83,7 +83,7 @@ describe('WHIT-638 QA — after sign-out, nothing leaks into the NEXT account', 
     signOut();
     signInNextAccount();
     seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: 'fresh', counts_to_budget: true, description: 'X' }]);
-    await act(async () => { server.once('PATCH', '/transactions/t1', 'dropped'); held.release(); await pending; });
+    await act(async () => { held.fail('PATCH'); await pending; });
 
     expect(readTransactionsCache(queryClient)[0]?.category).toBe('fresh');
     expect(result.current.toast).toBeNull();
@@ -111,7 +111,7 @@ describe('WHIT-638 QA — after sign-out, nothing leaks into the NEXT account', 
     ]);
     const nextRules: Rule[] = [{ id: 'rX', pattern: 'NEXT', categoryId: 'fresh', isNew: false }];
     queryClient.setQueryData(['rules'], nextRules);
-    await act(async () => { server.once('PATCH', '/transactions', 'dropped'); held.release(); await pending; });
+    await act(async () => { held.fail('PATCH'); await pending; });
 
     expect(readTransactionsCache(queryClient).map((t) => t.category)).toEqual(['fresh', 'fresh']);
     expect(rulesCache()).toEqual(nextRules);
@@ -193,7 +193,7 @@ describe('WHIT-638 QA — after sign-out, nothing leaks into the NEXT account', 
     act(() => { pending = result.current.generateAiInsights(null); });
     signOut();
     signInNextAccount();
-    await act(async () => { server.once('POST', '/insights/ai', 'dropped'); held.release(); await pending; });
+    await act(async () => { held.fail('POST'); await pending; });
 
     expect(result.current.aiInsightsError).toBe(false);
     expect(result.current.aiInsightsLoading).toBe(false);
