@@ -12,8 +12,9 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
-import type { ApplyRulesJob } from '../context';
+import { AppProvider, useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
+import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';
+import type { UncategorizedMerchantGroup } from '../api';
 import { queryClient } from '../queryClient';
 
 let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
@@ -29,6 +30,8 @@ jest.mock('../auth', () => ({
 }));
 import * as api from '../api';
 import { ApiError } from '../apiError';
+const SWEEP: FilingTarget = { kind: 'sweep' };
+const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
 const mockApi = api as jest.Mocked<typeof api>;
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
@@ -70,7 +73,7 @@ it('starts a job, shows it running, and polls to success — refreshing caches o
     .mockResolvedValueOnce(job({ status: 'succeeded', matched: 900, filed: 900, remaining: 0 }));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   expect(r.current.applyRulesJob?.status).toBe('running');
 
   await tick();
@@ -89,7 +92,7 @@ it('treats a server status:"failed" as terminal and surfaces the error', async (
   mockApi.getApplyRulesJob.mockResolvedValueOnce(job({ status: 'failed', error: 'boom' }));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick();
 
   expect(r.current.applyRulesJob).toMatchObject({ status: 'failed', error: 'boom' });
@@ -100,7 +103,7 @@ it('treats a 404 (expired id) as a terminal failure', async () => {
   mockApi.getApplyRulesJob.mockRejectedValueOnce(new ApiError(404, null));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick();
 
   expect(r.current.applyRulesJob).toMatchObject({ status: 'failed', error: 'expired' });
@@ -113,7 +116,7 @@ it('tolerates a transient network throw and keeps polling', async () => {
     .mockResolvedValueOnce(job({ status: 'succeeded', matched: 5, filed: 5 }));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
 
   await tick();
   expect(r.current.applyRulesJob?.status).toBe('running'); // the blip did not flip it to failed
@@ -126,7 +129,7 @@ it('gives up after too many consecutive network throws', async () => {
   mockApi.getApplyRulesJob.mockRejectedValue(new Error('offline'));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(5); // APPLY_RULES_JOB_MAX_NET_ERRORS
 
   expect(r.current.applyRulesJob).toMatchObject({ status: 'failed', error: 'network' });
@@ -137,7 +140,7 @@ it('goes straight to done when the first poll is already succeeded (finished bef
   mockApi.getApplyRulesJob.mockResolvedValueOnce(job({ status: 'succeeded', matched: 0, filed: 0 }));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick();
 
   expect(r.current.applyRulesJob).toMatchObject({ status: 'succeeded', matched: 0, filed: 0 });
@@ -148,17 +151,17 @@ it('blocks the sync sweep while a job is running (one heavy run at a time)', asy
   mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 900, filed: 100 }));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   expect(r.current.applyRulesJob?.status).toBe('running');
 
   // A second start is turned away; the sync sweep bails without touching the api.
   let second: unknown;
-  await act(async () => { second = await r.current.startApplyRulesSweep(); });
-  expect(second).toEqual({ ok: false, clash: null });
+  await act(async () => { second = await r.current.fileCharges(SWEEP, BIG_RUN); });
+  expect(second).toEqual({ status: 'failed', background: true });
   expect(mockApi.startApplyRulesJob).toHaveBeenCalledTimes(1);
   let sync: unknown;
-  await act(async () => { sync = await r.current.applyRulesToHistory(); });
-  expect(sync).toBeNull();
+  await act(async () => { sync = await r.current.fileCharges(SWEEP, { now: true }); });
+  expect(sync).toEqual({ status: 'failed', background: false });
   expect(mockApi.applyRulesToUncategorized).not.toHaveBeenCalled();
 });
 
@@ -173,7 +176,7 @@ it('does not leave two poll chains after a dismiss + reopen during an in-flight 
 
   const r = mount();
   await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await act(async () => { jest.advanceTimersByTime(POLL); });   // fire poll 1 — its GET is now pending
   expect(mockApi.getApplyRulesJob).toHaveBeenCalledTimes(1);
 
@@ -195,8 +198,8 @@ it('retry re-runs the SAME variant that failed, not a plain sweep', async () => 
   mockApi.getApplyRulesJob.mockResolvedValueOnce(job({ status: 'failed', error: 'boom' }));
 
   const r = mount();
-  const group = { rulePattern: 'WOOLWORTHS' } as Parameters<typeof r.current.startFileByShopJob>[0];
-  await act(async () => { await r.current.startFileByShopJob(group, 'groceries'); });
+  const group = { rulePattern: 'WOOLWORTHS' } as UncategorizedMerchantGroup;
+  await act(async () => { await r.current.fileCharges({ kind: 'shop', group: group, categoryId: 'groceries' }, BIG_RUN); });
   await tick();
   expect(r.current.applyRulesJob?.status).toBe('failed');
 
@@ -211,7 +214,7 @@ it('stops polling on sign-out and never reads status into the next session', asy
   mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 900, filed: 100 }));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick();
   const callsBefore = mockApi.getApplyRulesJob.mock.calls.length;
 

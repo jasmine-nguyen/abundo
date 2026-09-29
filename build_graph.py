@@ -135,6 +135,8 @@ class BuildState(TypedDict):
     outcome: NotRequired[str]
     pr_url: NotRequired[str]
     pr_error: NotRequired[str]
+    pr_title: NotRequired[str]
+    pr_compare_url: NotRequired[str]
 
 
 # --- settings ---
@@ -464,6 +466,10 @@ class BuildError(Exception):
     """Something the user has to sort out before running --retry."""
 
 
+# A cloud session's chat ID. Helpers inherit the environment, so with these set every
+# helper's saved conversation is the chat itself, and continuing one reopens the chat.
+PARENT_SESSION_VARS = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_REMOTE_SESSION_ID")
+
 # Either of these makes the agents bill per token instead of using the Claude plan.
 PAID_AUTH_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
@@ -562,6 +568,8 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
     if name == "ship":
         if update.get("outcome") == "shipped":
             return f"✅ PR opened: {update['pr_url']}"
+        if update.get("outcome") == "pushed":
+            return "✅ Branch pushed. The PR needs opening: there's no GitHub tool here"
         if update.get("checks_feedback"):
             return "❌ Final checks failed, nothing pushed" + ("" if update["failed"] else ", back to the implementer")
         return "❌ Couldn't push or open the PR"
@@ -1786,6 +1794,24 @@ def pr_body(state: BuildState) -> str:
     return "\n\n".join(f"## {title}\n\n{body}" for title, body in sections) + "\n"
 
 
+def gh_ready() -> bool:
+    return shutil.which("gh") is not None and run(["gh", "auth", "status"], timeout=30)[0] == 0
+
+
+def pr_body_file(state: BuildState) -> Path:
+    return work_dir(state) / "pr-body.md"
+
+
+def compare_url(base: str, branch: str) -> str:
+    """GitHub's "open a pull request" page for the branch. A cloud session's origin is a
+    local proxy, but its path still ends in <owner>/<repo>."""
+    code, remote = run(["git", "remote", "get-url", "origin"])
+    match = re.search(r"[/:]([^/:]+)/([^/]+?)(?:\.git)?/?$", remote.strip()) if code == 0 else None
+    if not match:
+        return ""
+    return f"https://github.com/{match.group(1)}/{match.group(2)}/compare/{base}...{branch}?expand=1"
+
+
 def ship(state: BuildState):
     # A failure goes back to the implementer, and its fix gets checked and reviewed again.
     sent_back = recheck_qa_tests(state, "The final checks before pushing failed:", "ship: final checks failed, nothing pushed")
@@ -1800,6 +1826,17 @@ def ship(state: BuildState):
     title = f"{commit_prefix(state)}: {card_title(state)}"[:72]
     try:
         git("push", "-u", "origin", branch)
+        if not gh_ready():
+            # A cloud session has no `gh` (or no GitHub login for it), so whoever runs the build opens the PR.
+            write_text(pr_body_file(state), pr_body(state))
+            compare = compare_url(base, branch)
+            return {
+                "outcome": "pushed",
+                "pr_title": title,
+                "pr_compare_url": compare,
+                "pr_error": "",
+                "history": [f"✓ ship: pushed {branch}; the PR needs opening"],
+            }
         # Only an open PR counts: an old closed one on a reused branch name isn't this build's.
         code, existing = run(["gh", "pr", "list", "--head", branch, "--state", "open", "--json", "url", "-q", ".[].url"])
         if code == 0 and existing.strip():
@@ -2124,6 +2161,13 @@ def report(thread: str, result: dict) -> int:
         code = 1
     elif outcome == "shipped":
         print(f"PR opened: {result['pr_url']}")
+    elif outcome == "pushed":
+        print("BRANCH PUSHED — open the PR: `gh` isn't available here")
+        print(f"Branch: {result['branch']} → {result['base_branch']}")
+        print(f"Title: {result['pr_title']}")
+        print(f"Description: {pr_body_file(result).relative_to(ROOT)}")
+        if result.get("pr_compare_url"):
+            print(f"Open it here: {result['pr_compare_url']}")
     else:
         print("Done.")
     print("=" * 60)
@@ -2297,7 +2341,7 @@ def stop_running_build(values: dict, pid: int | None) -> bool:
     if not values:
         print("No saved build for this thread.")
         return False
-    if values.get("outcome") in ("shipped", "closed", "stopped"):
+    if values.get("outcome") in ("shipped", "pushed", "closed", "stopped"):
         print("This build already finished. Open a new card for the change, or change the PR directly.")
         return False
     branch = values.get("branch")
@@ -2367,6 +2411,8 @@ async def replan_build(graph, config, snapshot, feedback: str, pid: int | None):
 
 async def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    for name in PARENT_SESSION_VARS:
+        os.environ.pop(name, None)
     paid = paid_auth_var()
     if paid and not args.allow_api_billing and not args.status:
         print(

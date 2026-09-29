@@ -134,7 +134,7 @@ const REFRESH_BY_CHANGE: Record<'refile' | 'budgetExclusion' | 'categoryDeleted'
 
 export type ChangeKind = keyof typeof REFRESH_BY_CHANGE;
 
-// `skipRules` leaves ['rules'] alone: WHIT-538's fileNewRule shows its minted rule optimistically
+// `skipRules` leaves ['rules'] alone: WHIT-538's new-rule filing shows its minted rule optimistically
 // with a "NEW" badge that a refetch would reset.
 export function refreshAfter(kind: ChangeKind, opts?: { skipRules?: boolean }): void {
   if (kind === 'rulesApplied') {

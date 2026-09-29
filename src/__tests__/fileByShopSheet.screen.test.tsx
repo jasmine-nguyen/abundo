@@ -14,7 +14,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext } from '../context';
-import type { FileByShopOutcome } from '../context';
+import type { FilingResult, FilingTarget, FilingWhen } from '../context';
 import type { ApplyRulesResult, UncategorizedMerchantGroup, UncategorizedMerchants } from '../api';
 import { APPLY_RULES_MAX_WRITES } from '../context';
 import { ApiError } from '../apiError';
@@ -31,8 +31,8 @@ import { Overlays } from '../components/Overlays';
 const fns = {
   setSheet: jest.fn(),
   showToast: jest.fn(),
-  previewFileByShop: jest.fn<(group: UncategorizedMerchantGroup, categoryId: string) => Promise<FileByShopOutcome>>(),
-  fileByShop: jest.fn<(group: UncategorizedMerchantGroup, categoryId: string) => Promise<FileByShopOutcome>>(),
+  previewFiling: jest.fn<(target: FilingTarget) => Promise<FilingResult>>(),
+  fileCharges: jest.fn<(target: FilingTarget, when: FilingWhen) => Promise<FilingResult>>(),
 };
 
 const CATEGORIES = [
@@ -116,10 +116,10 @@ describe('the shop list', () => {
 
 describe('the confirm sheet', () => {
   it('previews on mount and shows the TRUE swept count (report.matched)', async () => {
-    fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: 23 }) });
+    fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 23 }) });
     await mountConfirm();
 
-    expect(fns.previewFileByShop).toHaveBeenCalledTimes(1);
+    expect(fns.previewFiling).toHaveBeenCalledTimes(1);
     // 23, not the group's own count of 20 — the rule sweeps other shops too.
     expect(screen.getByTestId('file-by-shop-confirm-apply')).toBeTruthy();
     expect(screen.getByText('File 23 charges')).toBeTruthy();
@@ -127,18 +127,18 @@ describe('the confirm sheet', () => {
 
   it('files the shop when confirmed, calling fileByShop with the captured pair', async () => {
     const g = group();
-    fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: 20 }) });
-    fns.fileByShop.mockResolvedValue({ ok: true, report: report({ dryRun: false, matched: 20, filed: [{ id: 't1', category: 'groceries' }] }) });
+    fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 20 }) });
+    fns.fileCharges.mockResolvedValue({ status: 'filed', report: report({ dryRun: false, matched: 20, filed: [{ id: 't1', category: 'groceries' }] }) });
     await mountConfirm(g, 'groceries');
 
     await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); });
-    expect(fns.fileByShop).toHaveBeenCalledWith(g, 'groceries');
+    expect(fns.fileCharges).toHaveBeenCalledWith({ kind: 'shop', group: g, categoryId: 'groceries' }, { now: true });
   });
 
   // The over-broad-rule guard: the rule would also file other shops, and that must be visible
   // BEFORE the tap. Fail-on-revert: drop the alsoCatches block and the warning is gone.
   it('warns when the rule also sweeps other shops', async () => {
-    fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: 25 }) });
+    fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 25 }) });
     await mountConfirm(group({ alsoCatches: [{ merchant: 'Coles Express', count: 5 }] }));
 
     expect(screen.getByTestId('file-by-shop-also-catches')).toBeTruthy();
@@ -148,7 +148,7 @@ describe('the confirm sheet', () => {
   // A clash surfaced by the PREVIEW (the server checks even on a dry run). No "File" button — there
   // is nothing to write. Fail-on-revert: collapse the clash outcome and the confirm button returns.
   it('shows the clash card and no File button when the preview reports a clash', async () => {
-    fns.previewFileByShop.mockResolvedValue({ ok: false, clash: new ApiError(409, null) });
+    fns.previewFiling.mockResolvedValue({ status: 'clash', error: new ApiError(409, null), background: false });
     await mountConfirm();
 
     expect(screen.getByText('You already have a rule for this')).toBeTruthy();
@@ -156,8 +156,8 @@ describe('the confirm sheet', () => {
   });
 
   it('shows the clash card when the WRITE races into a clash', async () => {
-    fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: 20 }) });
-    fns.fileByShop.mockResolvedValue({ ok: false, clash: new ApiError(409, null) });
+    fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 20 }) });
+    fns.fileCharges.mockResolvedValue({ status: 'clash', error: new ApiError(409, null), background: false });
     await mountConfirm();
 
     await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); });
@@ -169,7 +169,7 @@ describe('the confirm sheet', () => {
   // one call can't keep. APPLY_RULES_MAX_WRITES + 200 guarantees we're over the cap.
   it('says "up to N now" (not the full count) when the shop exceeds the write cap', async () => {
     const over = APPLY_RULES_MAX_WRITES + 200;
-    fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: over }) });
+    fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: over }) });
     await mountConfirm();
 
     expect(screen.getByText(`File up to ${APPLY_RULES_MAX_WRITES} now`)).toBeTruthy();
@@ -179,7 +179,7 @@ describe('the confirm sheet', () => {
   // A shop whose charges someone filed between opening the list and here reads matched 0 — offer no
   // no-op "File 0". Fail-on-revert: drop the matched===0 arm and a "File 0 charges" button shows.
   it('says nothing is left when the preview reports matched 0', async () => {
-    fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: 0 }) });
+    fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 0 }) });
     await mountConfirm();
 
     expect(screen.getByText('Nothing left to file here')).toBeTruthy();

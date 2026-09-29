@@ -8,8 +8,8 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
-import type { ApplyRulesJob } from '../context';
+import { AppProvider, useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
+import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';
 import { queryClient } from '../queryClient';
 
 let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
@@ -21,6 +21,8 @@ jest.mock('../auth', () => ({
 }));
 import * as api from '../api';
 const mockApi = api as jest.Mocked<typeof api>;
+const SWEEP: FilingTarget = { kind: 'sweep' };
+const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -54,7 +56,7 @@ it('raises the stall hint after N unchanged polls while the job keeps running (p
   mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 0, attempted: 0 }));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
 
   await tick(POLLS_TO_TRIP - 1);
   expect(r.current.applyRulesStalled).toBe(false);   // not yet — one poll short of the threshold
@@ -76,7 +78,7 @@ it('never raises the hint while progress keeps advancing', async () => {
     job({ status: 'running', matched: 900, attempted: (attempted += 10) }));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
 
   await tick(POLLS_TO_TRIP + 5);
   expect(r.current.applyRulesStalled).toBe(false);
@@ -88,7 +90,7 @@ it('clears the hint when progress resumes', async () => {
   mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 900, attempted: 100 }));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(POLLS_TO_TRIP);
   expect(r.current.applyRulesStalled).toBe(true);
 
@@ -103,7 +105,7 @@ it('a terminal state on the stall poll wins over the hint', async () => {
   mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 0, attempted: 0 }));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(POLLS_TO_TRIP - 1);
   expect(r.current.applyRulesStalled).toBe(false);
 

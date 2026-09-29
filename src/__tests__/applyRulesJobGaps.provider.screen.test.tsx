@@ -7,8 +7,8 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
-import type { ApplyRulesJob } from '../context';
+import { AppProvider, useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
+import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';
 import { queryClient } from '../queryClient';
 
 let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
@@ -22,8 +22,10 @@ jest.mock('../auth', () => ({
   subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
   getAuthToken: async () => 'test-id-token',
 }));
-import type { CreatedRule } from '../api';
+import type { CreatedRule, UncategorizedMerchantGroup } from '../api';
 import { installFakeServer } from './support/fakeServer';
+const SWEEP: FilingTarget = { kind: 'sweep' };
+const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
 
 const server = installFakeServer();
 const JOBS = '/transactions/uncategorized/apply-rules/jobs';
@@ -60,7 +62,7 @@ afterEach(() => { jest.useRealTimers(); queryClient.clear(); });
 // advancing several delays while a GET is in flight must NOT fan out extra GETs.
 it('[G1] fires exactly one GET per delay even when a GET outlasts the delay', async () => {
   const r = mount().result;
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   const held = server.hold(jobPath('job-1'));
 
   await tick();                                             // first poll fires → GET pending
@@ -78,7 +80,7 @@ it('[G1] fires exactly one GET per delay even when a GET outlasts the delay', as
 // [G2] unmount mid-poll clears the timer — no GET fires after the provider unmounts.
 it('[G2] clears the poll timer on unmount (no zombie GET)', async () => {
   const h = mount();
-  await act(async () => { await h.result.current.startApplyRulesSweep(); });
+  await act(async () => { await h.result.current.fileCharges(SWEEP, BIG_RUN); });
   server.seed(jobPath('job-1'), job({ status: 'running', matched: 900, filed: 100 }));
   await tick();
   const before = polls();
@@ -93,7 +95,7 @@ it('[G2] clears the poll timer on unmount (no zombie GET)', async () => {
 // unlock (the lock was released).
 it('[G3] a Face-ID lock stops polling, drops the job, and releases the lock', async () => {
   const r = mount().result;
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   server.seed(jobPath('job-1'), job({ status: 'running', matched: 900, filed: 100 }));
   await tick();
   const before = polls();
@@ -107,8 +109,8 @@ it('[G3] a Face-ID lock stops polling, drops the job, and releases the lock', as
   // The lock was released (not just the timer) — a new sweep is accepted, not turned away.
   mockStatus = 'authed';
   let started: unknown;
-  await act(async () => { started = await r.current.startApplyRulesSweep(); });
-  expect(started).toEqual({ ok: true });
+  await act(async () => { started = await r.current.fileCharges(SWEEP, BIG_RUN); });
+  expect(started).toEqual({ status: 'background' });
 });
 
 // [G5] a Face-ID lock DURING the start POST must discard the start — not resurrect the job and leave
@@ -121,7 +123,7 @@ it('[G5] a lock while the start POST is in flight discards the start and keeps t
 
   const r = mount().result;
   let started: Promise<unknown>;
-  await act(async () => { started = r.current.startApplyRulesSweep(); });   // POST now pending
+  await act(async () => { started = r.current.fileCharges(SWEEP, BIG_RUN); });   // POST now pending
   await act(async () => { mockSetStatus('locked'); });                      // lock clears active + job
   await act(async () => { held.release(); await started; });
 
@@ -132,8 +134,8 @@ it('[G5] a lock while the start POST is in flight discards the start and keeps t
   // The lock was left consistent — after unlock a fresh sweep is accepted (latch not stuck true).
   mockStatus = 'authed';
   let again: unknown;
-  await act(async () => { again = await r.current.startApplyRulesSweep(); });
-  expect(again).toEqual({ ok: true });
+  await act(async () => { again = await r.current.fileCharges(SWEEP, BIG_RUN); });
+  expect(again).toEqual({ status: 'background' });
 });
 
 // [G4] terminal reconcile — the "add rule" variant prepends the minted rule with its NEW badge and
@@ -144,7 +146,7 @@ it('[G4] add-rule success prepends the minted rule (NEW badge) and skips the rul
   const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
 
   const r = mount().result;
-  await act(async () => { await r.current.startNewRuleJob('COLES', 'groceries', false); });
+  await act(async () => { await r.current.fileCharges({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: false }, BIG_RUN); });
   server.seed(jobPath('job-1'), job({ status: 'succeeded', matched: 5, filed: 5, createdRule: minted }));
   const before = invalidate.mock.calls.length;
   await tick();
@@ -161,8 +163,8 @@ it('[G4] file-this-shop success does NOT prepend and DOES refresh the rules list
   const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
 
   const r = mount().result;
-  const grp = { merchant: 'Coles', rulePattern: 'coles', groupedBy: 'merchant', count: 5, samples: [], firstDate: '2026-01-01', lastDate: '2026-02-01', alsoCatches: [] } as unknown as Parameters<typeof r.current.startFileByShopJob>[0];
-  await act(async () => { await r.current.startFileByShopJob(grp, 'groceries'); });
+  const grp = { merchant: 'Coles', rulePattern: 'coles', groupedBy: 'merchant', count: 5, samples: [], firstDate: '2026-01-01', lastDate: '2026-02-01', alsoCatches: [] } as unknown as UncategorizedMerchantGroup;
+  await act(async () => { await r.current.fileCharges({ kind: 'shop', group: grp, categoryId: 'groceries' }, BIG_RUN); });
   server.seed(jobPath('job-1'), job({ status: 'succeeded', matched: 5, filed: 5, createdRule: minted }));
   const before = invalidate.mock.calls.length;
   await tick();

@@ -1,11 +1,12 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Animated, GestureResponderEvent, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
 import { Icon, Glyph } from '../icons';
 import { useAppContext, merchantLabel, categoryTreeRows, ruleConflict, ruleOverlap, categoryLabel, accountSummaries, APPLY_RULES_MAX_WRITES } from '../context';
-import type { RuleConflict, ApplyRulesResult, ApplyRulesJob, Category, FileByShopOutcome, RuleWrite } from '../context';
+import type { RuleConflict, ApplyRulesResult, ApplyRulesJob, Category, FilingResult, FilingTarget, RuleWrite } from '../context';
+import { needsBackground } from '../filingRun';
 import type { UncategorizedMerchantGroup, RuleCondition, RuleLogic } from '../api';
 import { RULE_FIELD_OPERATORS, RULE_DIRECTIONS, ruleValueIsSafe } from '../ruleVocabulary';
 import { useInFlightGuard } from '../hooks/useInFlightGuard';
@@ -998,12 +999,14 @@ function GoalBalanceSheet() {
 // It reads and writes only through the context actions, never src/api.ts directly: that keeps the
 // session-epoch bail every other awaited call gets, and keeps the `../context` mock seam the
 // screen tests use.
+const SWEEP: FilingTarget = { kind: 'sweep' };
+
 type ApplyRulesPhase = 'loading' | 'preview' | 'applying' | 'done' | 'stuck' | 'previewFailed' | 'writeFailed';
 
 function ApplyRulesSheet() {
   // The provider's writers are useCallback-stable, so the mount effect below fires exactly once
   // even though the context value's identity changes on every toast.
-  const { previewRuleApplication, applyRulesToHistory, applyRulesJob, applyRulesStalled, startApplyRulesSweep, setSheet, showToast } = useAppContext();
+  const { previewFiling, fileCharges, applyRulesJob, applyRulesStalled, setSheet, showToast } = useAppContext();
   const onRetryJob = useApplyRulesJobRetry();
   const { category } = useCategories();
   const runGuarded = useInFlightGuard();
@@ -1030,11 +1033,11 @@ function ApplyRulesSheet() {
 
   const runPreview = useCallback(async () => {
     setPhase('loading');
-    const result = await previewRuleApplication();
-    if (!result) { setPhase('previewFailed'); return; }
-    setReport(result);
+    const outcome = await previewFiling(SWEEP);
+    if (outcome.status !== 'filed') { setPhase('previewFailed'); return; }
+    setReport(outcome.report);
     setPhase('preview');
-  }, [previewRuleApplication]);
+  }, [previewFiling]);
 
   useEffect(() => { previewGuarded(runPreview); }, [previewGuarded, runPreview]);
 
@@ -1042,12 +1045,13 @@ function ApplyRulesSheet() {
   // preview's — are the truthful ones afterwards. Replace the report wholesale.
   const onApply = () => runGuarded(async () => {
     setPhase('applying');
-    const result = await applyRulesToHistory();
-    if (!result) {
+    const outcome = await fileCharges(SWEEP, { now: true });
+    if (outcome.status !== 'filed') {
       if (onScreen.current) setPhase('writeFailed');
       else showToast("Couldn't finish applying your rules. Some charges may already have been filed.");
       return;
     }
+    const result = outcome.report;
     setReport(result);
     filedTotal.current += result.filed.length;
     // `failed` rows were attempted and so are NOT in `remaining`, but they are still unfiled — a
@@ -1068,9 +1072,9 @@ function ApplyRulesSheet() {
   // WHIT-560: start the uncapped background sweep. On the accepted job the provider takes over —
   // `applyRulesJob` becomes non-null and the job view below renders; a failed start (502/network)
   // just toasts and leaves the preview so she can retry.
-  const onStartSweep = () => runGuarded(async () => {
-    const outcome = await startApplyRulesSweep();
-    if (!outcome.ok) showToast("Couldn't start the background sweep. Please try again.");
+  const onStartSweep = (matched: number) => runGuarded(async () => {
+    const outcome = await fileCharges(SWEEP, { matched });
+    if (outcome.status === 'clash' || outcome.status === 'failed') showToast("Couldn't start the background sweep. Please try again.");
   });
 
   // Once a job is running (or finished), it owns the sheet — its status drives running/done/failed.
@@ -1107,7 +1111,7 @@ function ApplyRulesSheet() {
         <Text style={styles.confirmTitle}>Couldn't finish</Text>
         {/* Deliberately NOT "nothing happened": the server writes row by row and only reports at
             the end, so a dropped connection can leave charges already filed. And deliberately not
-            "pull down to refresh" — applyRulesToHistory already refreshed the caches for her. */}
+            "pull down to refresh" — the filing run already refreshed the caches for her. */}
         <Text style={styles.confirmSub}>
           Some charges may already have been filed. Your unfiled list and count have been refreshed — open this again to see what's left.
         </Text>
@@ -1206,7 +1210,7 @@ function ApplyRulesSheet() {
     );
   }
 
-  const capped = report.matched > APPLY_RULES_MAX_WRITES;
+  const capped = needsBackground(report);
   return (
     <View>
       <Text style={styles.confirmTitle}>Apply my rules</Text>
@@ -1219,7 +1223,7 @@ function ApplyRulesSheet() {
           one-round instant file is demoted; at or under the cap, one instant file is all it takes. */}
       {capped ? (
         <>
-          <Pressable testID="apply-rules-apply-all" onPress={onStartSweep} style={[styles.btn, styles.btnPrimary]}>
+          <Pressable testID="apply-rules-apply-all" onPress={() => onStartSweep(report.matched)} style={[styles.btn, styles.btnPrimary]}>
             <Text style={styles.btnPrimaryText}>Apply to all history</Text>
           </Pressable>
           <Pressable testID="apply-rules-apply" onPress={onApply} style={[styles.btn, styles.btnGhost]}>
@@ -1250,7 +1254,7 @@ function useApplyRulesJobRetry(): () => Promise<void> {
   const runGuarded = useInFlightGuard();
   return useCallback(() => runGuarded(async () => {
     const outcome = await retryApplyRulesJob();
-    if (!outcome.ok) showToast("Couldn't start the background sweep. Please try again.");
+    if (outcome.status !== 'background') showToast("Couldn't start the background sweep. Please try again.");
   }), [retryApplyRulesJob, showToast, runGuarded]);
 }
 
@@ -1558,8 +1562,8 @@ type ConfirmPreviewSheetProps = {
   // `preview` feeds the mount effect, so it MUST be a useCallback in the wrapper — an unstable
   // identity would re-fire the preview and snap the sheet back to its spinner (WHIT-538). The rest
   // are read at press time and need no memoisation.
-  preview: () => Promise<FileByShopOutcome>;
-  commit: () => Promise<FileByShopOutcome>;
+  preview: () => Promise<FilingResult>;
+  commit: () => Promise<FilingResult>;
   filedToast: (report: ApplyRulesResult) => void; // always fired on success — on screen or not
   onNavigate: () => void;                          // only when the sheet is still on screen
   clashToast: () => void;                          // only when dismissed mid-write
@@ -1585,8 +1589,8 @@ function ConfirmPreviewSheet({ preview, commit, filedToast, onNavigate, clashToa
   const runPreview = useCallback(async () => {
     setPhase('loading');
     const outcome = await preview();
-    if (outcome.ok) { setReport(outcome.report); setPhase('preview'); return; }
-    setPhase(outcome.clash ? 'clash' : 'previewFailed');
+    if (outcome.status === 'filed') { setReport(outcome.report); setPhase('preview'); return; }
+    setPhase(outcome.status === 'clash' ? 'clash' : 'previewFailed');
   }, [preview]);
 
   useEffect(() => { previewGuarded(runPreview); }, [previewGuarded, runPreview]);
@@ -1594,12 +1598,14 @@ function ConfirmPreviewSheet({ preview, commit, filedToast, onNavigate, clashToa
   const onCommit = () => runGuarded(async () => {
     setPhase('confirming');
     const outcome = await commit();
-    if (outcome.ok) {
+    // A 'background' answer needs nothing here: the job view takes over through applyRulesJob.
+    if (outcome.status === 'background') return;
+    if (outcome.status === 'filed') {
       filedToast(outcome.report);            // always — never drop a result the user can't see
       if (onScreen.current) onNavigate();    // only navigate a sheet that's still on screen
       return;
     }
-    if (outcome.clash) { if (onScreen.current) setPhase('clash'); else clashToast(); return; }
+    if (outcome.status === 'clash') { if (onScreen.current) setPhase('clash'); else clashToast(); return; }
     if (onScreen.current) setPhase('writeFailed'); else writeFailedToast();
   });
 
@@ -1611,17 +1617,18 @@ function FileByShopConfirmSheet() {
   // the value's identity changes on every toast (auto-clears 3.4s later), and a preview built off
   // the whole value would re-fire and snap the sheet back to its spinner. `sheet` only changes when
   // setSheet is called (a toast never touches it), so the memoised `preview` below stays stable.
-  const { sheet, previewFileByShop, fileByShop, applyRulesJob, applyRulesStalled, startFileByShopJob, setSheet, showToast } = useAppContext();
+  const { sheet, previewFiling, fileCharges, applyRulesJob, applyRulesStalled, setSheet, showToast } = useAppContext();
   const { category } = useCategories();
   const onRetryJob = useApplyRulesJobRetry();
   const group = sheet?.mode === 'fileByShopConfirm' ? sheet.group : null;
   const categoryId = sheet?.mode === 'fileByShopConfirm' ? sheet.categoryId : null;
-  // Non-null-asserted: the guard below returns null before the shell mounts, so `preview` is never
-  // invoked while group/categoryId are null. useCallback must precede the early return (hooks rule).
-  const preview = useCallback(
-    () => previewFileByShop(group!, categoryId!),
-    [previewFileByShop, group, categoryId],
+  // Non-null-asserted: the guard below returns null before the shell mounts, so `target` is never
+  // used while group/categoryId are null. Hooks must precede the early return (hooks rule).
+  const target = useMemo<FilingTarget>(
+    () => ({ kind: 'shop', group: group!, categoryId: categoryId! }),
+    [group, categoryId],
   );
+  const preview = useCallback(() => previewFiling(target), [previewFiling, target]);
 
   if (!group || !categoryId) return null;
   const chosen = category(categoryId);
@@ -1635,7 +1642,7 @@ function FileByShopConfirmSheet() {
   return (
     <ConfirmPreviewSheet
       preview={preview}
-      commit={() => fileByShop(group, categoryId)}
+      commit={() => fileCharges(target, { now: true })}
       filedToast={(report) => showToast(fileByShopFiledMessage(report, chosen.name, group.merchant))}
       // Back to the shop list, which the write invalidated — the filed shop is gone from it.
       onNavigate={() => setSheet({ mode: 'fileByShopList' })}
@@ -1644,10 +1651,10 @@ function FileByShopConfirmSheet() {
       renderArm={({ phase, report, onCommit, runCommit, retry }) => {
         // WHIT-560: a shop bigger than the per-call cap starts the uncapped background sweep instead
         // of the one-round file. A 409 clash or a failed start toasts (the same copy as the sync path).
-        const onApplyAll = () => runCommit(async () => {
-          const outcome = await startFileByShopJob(group, categoryId);
-          if (outcome.ok) return;
-          showToast(outcome.clash
+        const onApplyAll = (matched: number) => runCommit(async () => {
+          const outcome = await fileCharges(target, { matched });
+          if (outcome.status !== 'clash' && outcome.status !== 'failed') return;
+          showToast(outcome.status === 'clash'
             ? `You already have a rule filing ${group.merchant || 'this shop'} somewhere else.`
             : `Couldn't start filing ${group.merchant || 'this shop'}. Please try again.`);
         });
@@ -1722,7 +1729,7 @@ function FileByShopConfirmSheet() {
         const dateRange = fileByShopDateRange(group);
         // The server files at most APPLY_RULES_MAX_WRITES per call, so a shop bigger than that takes
         // more than one tap. Say "up to N now" rather than promise the full matched count.
-        const capped = report.matched > APPLY_RULES_MAX_WRITES;
+        const capped = needsBackground(report);
         return (
           <View>
             <View style={[styles.confirmChip, { backgroundColor: tint(chosen.color, 0.16) }]}>
@@ -1748,7 +1755,7 @@ function FileByShopConfirmSheet() {
             )}
             {capped ? (
               <>
-                <Pressable testID="file-by-shop-confirm-apply-all" onPress={onApplyAll} style={[styles.btn, styles.btnPrimary]}>
+                <Pressable testID="file-by-shop-confirm-apply-all" onPress={() => onApplyAll(report.matched)} style={[styles.btn, styles.btnPrimary]}>
                   <Text style={styles.btnPrimaryText}>Apply to all history</Text>
                 </Pressable>
                 <Pressable testID="file-by-shop-confirm-apply" onPress={onCommit} style={[styles.btn, styles.btnGhost]}>
@@ -1777,7 +1784,7 @@ function fileByShopFiledMessage(report: ApplyRulesResult, categoryName: string, 
   const filed = report.filed.length;
   if (filed === 0) return `Nothing left to file for ${merchant || 'this shop'}.`;
   const base = `Filed ${filed} ${chargeNoun(filed)} as ${categoryName}`;
-  return report.matched > APPLY_RULES_MAX_WRITES ? `${base} — more of this shop to go, tap it again.` : `${base}.`;
+  return needsBackground(report) ? `${base} — more of this shop to go, tap it again.` : `${base}.`;
 }
 
 /** A "20 Jun 2026 – 4 Aug 2026" range for a group, or a single date, or '' when neither is known. */
@@ -1791,25 +1798,26 @@ function fileByShopDateRange(group: UncategorizedMerchantGroup): string {
 }
 
 // WHIT-538: the confirm step after typing a NEW rule. Previews how many stored charges the typed
-// pattern would file (dry run), then either mints the rule + files them (fileNewRule) or saves the
+// pattern would file (dry run), then either mints the rule + files them (fileCharges) or saves the
 // rule for future charges only (saveManualRule). WHIT-557: routes through the shared
 // ConfirmPreviewSheet shell; only its copy, its "rule only" action, and its back/close targets differ.
 function AddRuleConfirmSheet() {
   // Destructure the STABLE context callbacks, NOT the whole value: its identity changes on every
   // toast, and a preview built off it would re-fire and snap the sheet back to its spinner. `sheet`
   // only changes when setSheet is called, so the memoised `preview` below stays stable.
-  const { sheet, previewNewRule, fileNewRule, saveManualRule, applyRulesJob, applyRulesStalled, startNewRuleJob, setSheet, showToast } = useAppContext();
+  const { sheet, previewFiling, fileCharges, saveManualRule, applyRulesJob, applyRulesStalled, setSheet, showToast } = useAppContext();
   const { category } = useCategories();
   const onRetryJob = useApplyRulesJobRetry();
   const pattern = sheet?.mode === 'addRuleConfirm' ? sheet.pattern : null;
   const categoryId = sheet?.mode === 'addRuleConfirm' ? sheet.categoryId : null;
   const budgetExcluded = sheet?.mode === 'addRuleConfirm' ? !!sheet.budgetExcluded : false;
-  // Non-null-asserted: the guard below returns null before the shell mounts, so `preview` is never
-  // invoked while pattern/categoryId are null. useCallback must precede the early return (hooks rule).
-  const preview = useCallback(
-    () => previewNewRule(pattern!, categoryId!, budgetExcluded),
-    [previewNewRule, pattern, categoryId, budgetExcluded],
+  // Non-null-asserted: the guard below returns null before the shell mounts, so `target` is never
+  // used while pattern/categoryId are null. Hooks must precede the early return (hooks rule).
+  const target = useMemo<FilingTarget>(
+    () => ({ kind: 'newRule', pattern: pattern!, categoryId: categoryId!, budgetExcluded }),
+    [pattern, categoryId, budgetExcluded],
   );
+  const preview = useCallback(() => previewFiling(target), [previewFiling, target]);
 
   if (!pattern || !categoryId) return null;
   const chosen = category(categoryId);
@@ -1823,7 +1831,7 @@ function AddRuleConfirmSheet() {
   return (
     <ConfirmPreviewSheet
       preview={preview}
-      commit={() => fileNewRule(pattern, categoryId, budgetExcluded)}
+      commit={() => fileCharges(target, { now: true })}
       filedToast={(report) => showToast(addRuleFiledMessage(report, chosen.name))}
       onNavigate={() => setSheet(null)}
       clashToast={() => showToast(`You already have a rule for “${pattern}”.`)}
@@ -1837,10 +1845,10 @@ function AddRuleConfirmSheet() {
         const goBack = () => setSheet({ mode: 'addrule' });
         // WHIT-560: a pattern matching more than the per-call cap files its past charges via the
         // uncapped background sweep. A 409 clash or failed start toasts (same copy as the sync path).
-        const onApplyAll = () => runCommit(async () => {
-          const outcome = await startNewRuleJob(pattern, categoryId, budgetExcluded);
-          if (outcome.ok) return;
-          showToast(outcome.clash
+        const onApplyAll = (matched: number) => runCommit(async () => {
+          const outcome = await fileCharges(target, { matched });
+          if (outcome.status !== 'clash' && outcome.status !== 'failed') return;
+          showToast(outcome.status === 'clash'
             ? `You already have a rule for “${pattern}”.`
             : `Couldn't start filing “${pattern}”. Please try again.`);
         });
@@ -1919,7 +1927,7 @@ function AddRuleConfirmSheet() {
         }
 
         // The server files at most APPLY_RULES_MAX_WRITES per call, so a big match takes more than one go.
-        const capped = report.matched > APPLY_RULES_MAX_WRITES;
+        const capped = needsBackground(report);
         // The inline rule is the only rule in the plan, so its samples live at byRule[0]. Guard the
         // index (an empty byRule is possible) and drop null descriptions.
         const samples = (report.byRule[0]?.samples ?? []).filter((sample): sample is string => !!sample);
@@ -1943,7 +1951,7 @@ function AddRuleConfirmSheet() {
             )}
             {capped ? (
               <>
-                <Pressable testID="add-rule-confirm-file-all" onPress={onApplyAll} style={[styles.btn, styles.btnPrimary]}>
+                <Pressable testID="add-rule-confirm-file-all" onPress={() => onApplyAll(report.matched)} style={[styles.btn, styles.btnPrimary]}>
                   <Text style={styles.btnPrimaryText}>Add rule + file all history</Text>
                 </Pressable>
                 <Pressable testID="add-rule-confirm-file" onPress={onCommit} style={[styles.btn, styles.btnGhost]}>
@@ -1974,7 +1982,7 @@ function addRuleFiledMessage(report: ApplyRulesResult, categoryName: string): st
   const filed = report.filed.length;
   if (filed === 0) return `Rule added — it files as ${categoryName}.`;
   const base = `Rule added — filed ${filed} past ${chargeNoun(filed)} as ${categoryName}`;
-  return report.matched > APPLY_RULES_MAX_WRITES ? `${base}. More to go — use “Apply my rules” to finish.` : `${base}.`;
+  return needsBackground(report) ? `${base}. More to go — use “Apply my rules” to finish.` : `${base}.`;
 }
 
 /** Why nothing can be filed, named from the report rather than guessed. Every arm is reachable:

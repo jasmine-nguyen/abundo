@@ -8,7 +8,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
-import type { AppContext, FileByShopOutcome } from '../context';
+import type { AppContext, FilingResult, FilingTarget, FilingWhen } from '../context';
 import type { ApplyRulesResult, UncategorizedMerchantGroup, UncategorizedMerchants } from '../api';
 import { ApiError } from '../apiError';
 
@@ -28,8 +28,8 @@ const CATEGORIES = [
 const fns = {
   setSheet: jest.fn(),
   showToast: jest.fn(),
-  previewFileByShop: jest.fn<(g: UncategorizedMerchantGroup, c: string) => Promise<FileByShopOutcome>>(),
-  fileByShop: jest.fn<(g: UncategorizedMerchantGroup, c: string) => Promise<FileByShopOutcome>>(),
+  previewFiling: jest.fn<(target: FilingTarget) => Promise<FilingResult>>(),
+  fileCharges: jest.fn<(target: FilingTarget, when: FilingWhen) => Promise<FilingResult>>(),
 };
 
 const group = (over: Partial<UncategorizedMerchantGroup> = {}): UncategorizedMerchantGroup => ({
@@ -71,16 +71,16 @@ beforeEach(() => { jest.clearAllMocks(); });
 // TOAST the clash (not drop it), must NOT setPhase into the clash card on the unmounted sheet, and
 // must NOT navigate. This is the off-screen clash branch neither fileByShopSheetGaps test reaches.
 it('[A29] toasts a 409-clash that settles after the sheet is dismissed', async () => {
-  const pending = deferred<FileByShopOutcome>();
-  fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: 2 }) });
-  fns.fileByShop.mockReturnValue(pending.promise);
+  const pending = deferred<FilingResult>();
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 2 }) });
+  fns.fileCharges.mockReturnValue(pending.promise);
   const { rerender } = await mountConfirm();
 
   await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); }); // start write
   mockState = { ...mockState, sheet: null } as unknown as AppContext;                            // dismiss
   await act(async () => { rerender(<Overlays />); });
 
-  await act(async () => { pending.resolve({ ok: false, clash: new ApiError(409, null) }); });
+  await act(async () => { pending.resolve({ status: 'clash', error: new ApiError(409, null), background: false }); });
 
   expect(fns.showToast).toHaveBeenCalledWith('You already have a rule filing Coles somewhere else.');
   expect(fns.setSheet).not.toHaveBeenCalledWith({ mode: 'fileByShopList' });

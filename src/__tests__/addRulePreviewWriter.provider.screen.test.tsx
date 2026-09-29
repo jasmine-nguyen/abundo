@@ -15,7 +15,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
-import type { Transaction, Rule, ApplyRulesResult } from '../context';
+import type { Transaction, Rule, ApplyRulesResult, FilingResult, FilingTarget } from '../context';
 import { ApiError } from '../apiError';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
@@ -30,6 +30,7 @@ jest.mock('../auth', () => ({
 }));
 import * as api from '../api';
 const mockApi = api as jest.Mocked<typeof api>;
+const SWEEP: FilingTarget = { kind: 'sweep' };
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -76,11 +77,11 @@ it('previews with dryRun true and the trimmed inline rule, writing nothing', asy
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  let outcome: Awaited<ReturnType<typeof result.current.previewNewRule>> | null = null;
-  await act(async () => { outcome = await result.current.previewNewRule('  COLES  ', 'groceries'); });
+  let outcome: FilingResult | null = null;
+  await act(async () => { outcome = await result.current.previewFiling({ kind: 'newRule', pattern: '  COLES  ', categoryId: 'groceries', budgetExcluded: false }); });
 
   expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(true, { value: 'COLES', categoryId: 'groceries', budgetExcluded: false });
-  expect(outcome!.ok).toBe(true);
+  expect(outcome).toEqual({ status: 'filed', report: expect.anything() });
   expect(spy).not.toHaveBeenCalled();                     // a preview reconciles nothing
   expect(rowsIn('transactions')[0].category).toBeNull();  // ...and touches no row
   spy.mockRestore();
@@ -91,10 +92,10 @@ it('surfaces a 409 clash from the preview (distinct from a generic failure)', as
   mockApi.applyRulesToUncategorized.mockRejectedValue(new ApiError(409, null));
 
   const result = mount();
-  let outcome: Awaited<ReturnType<typeof result.current.previewNewRule>> | null = null;
-  await act(async () => { outcome = await result.current.previewNewRule('COLES', 'groceries'); });
+  let outcome: FilingResult | null = null;
+  await act(async () => { outcome = await result.current.previewFiling({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: false }); });
 
-  expect(outcome).toEqual({ ok: false, clash: expect.any(ApiError) });
+  expect(outcome).toEqual({ status: 'clash', error: expect.any(ApiError), background: false });
 });
 
 // --- fileNewRule: the mint + file ---------------------------------------------
@@ -104,11 +105,11 @@ it('sends the trimmed inline rule with dryRun false and patches the filed row', 
   mockApi.applyRulesToUncategorized.mockResolvedValue(report({ filed: [{ id: 't1', category: 'groceries' }] }));
 
   const result = mount();
-  let outcome: Awaited<ReturnType<typeof result.current.fileNewRule>> | null = null;
-  await act(async () => { outcome = await result.current.fileNewRule('  COLES  ', 'groceries'); });
+  let outcome: FilingResult | null = null;
+  await act(async () => { outcome = await result.current.fileCharges({ kind: 'newRule', pattern: '  COLES  ', categoryId: 'groceries', budgetExcluded: false }, { now: true }); });
 
   expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(false, { value: 'COLES', categoryId: 'groceries', budgetExcluded: false });
-  expect(outcome).toEqual({ ok: true, report: expect.objectContaining({ filed: [{ id: 't1', category: 'groceries' }] }) });
+  expect(outcome).toEqual({ status: 'filed', report: expect.objectContaining({ filed: [{ id: 't1', category: 'groceries' }] }) });
   const byId = new Map(rowsIn('transactions').map((r) => [r.transaction_id, r.category]));
   expect(byId.get('t1')).toBe('groceries');
   expect(byId.get('untouched')).toBeNull();
@@ -124,7 +125,7 @@ it('prepends the minted rule to the rules cache with isNew and does NOT invalida
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  await act(async () => { await result.current.fileNewRule('COLES', 'groceries'); });
+  await act(async () => { await result.current.fileCharges({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: false }, { now: true }); });
 
   const rules = queryClient.getQueryData<Rule[]>(['rules'])!;
   expect(rules[0]).toEqual({ id: 'r1', pattern: 'coles', categoryId: 'groceries', isNew: true, field: 'description', operator: 'contains' });
@@ -143,7 +144,7 @@ it('falls back to invalidating ["rules"] when the server omits createdRule', asy
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  await act(async () => { await result.current.fileNewRule('COLES', 'groceries'); });
+  await act(async () => { await result.current.fileCharges({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: false }, { now: true }); });
 
   expect(invalidatedKeys(spy)).toContain('rules');
   spy.mockRestore();
@@ -157,10 +158,10 @@ it('returns { clash } and refreshes nothing on a 409 clash', async () => {
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  let outcome: Awaited<ReturnType<typeof result.current.fileNewRule>> | null = null;
-  await act(async () => { outcome = await result.current.fileNewRule('COLES', 'groceries'); });
+  let outcome: FilingResult | null = null;
+  await act(async () => { outcome = await result.current.fileCharges({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: false }, { now: true }); });
 
-  expect(outcome).toEqual({ ok: false, clash: expect.any(ApiError) });
+  expect(outcome).toEqual({ status: 'clash', error: expect.any(ApiError), background: false });
   expect(spy).not.toHaveBeenCalled();
   expect(rowsIn('transactions')[0].category).toBeNull();
   spy.mockRestore();
@@ -173,10 +174,10 @@ it('returns { clash: null } and still refreshes on a non-clash failure', async (
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  let outcome: Awaited<ReturnType<typeof result.current.fileNewRule>> | null = null;
-  await act(async () => { outcome = await result.current.fileNewRule('COLES', 'groceries'); });
+  let outcome: FilingResult | null = null;
+  await act(async () => { outcome = await result.current.fileCharges({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: false }, { now: true }); });
 
-  expect(outcome).toEqual({ ok: false, clash: null });
+  expect(outcome).toEqual({ status: 'failed', background: false });
   expect(invalidatedKeys(spy)).toContain('uncategorizedCount');
   spy.mockRestore();
 });
@@ -190,9 +191,9 @@ it('shares the in-flight latch with applyRulesToHistory', async () => {
 
   const result = mount();
   await act(async () => {
-    const first = result.current.fileNewRule('COLES', 'groceries'); // holds the latch
-    const blocked = await result.current.applyRulesToHistory();      // must be turned away
-    expect(blocked).toBeNull();
+    const first = result.current.fileCharges({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: false }, { now: true }); // holds the latch
+    const blocked = await result.current.fileCharges(SWEEP, { now: true });      // must be turned away
+    expect(blocked).toEqual({ status: 'failed', background: false });
     pending.resolve(report());
     await first;
   });
@@ -206,15 +207,15 @@ it('bails without painting when a file settles after sign-out', async () => {
   mockApi.applyRulesToUncategorized.mockReturnValue(pending.promise);
   const result = mount();
 
-  let outcome: Awaited<ReturnType<typeof result.current.fileNewRule>> | null = null;
+  let outcome: FilingResult | null = null;
   await act(async () => {
-    const inFlight = result.current.fileNewRule('COLES', 'groceries');
+    const inFlight = result.current.fileCharges({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: false }, { now: true });
     mockSetStatus('anon');
     seedTransactionsCache(queryClient, [txn()]);
     pending.resolve(report({ filed: [{ id: 't1', category: 'groceries' }] }));
     outcome = await inFlight;
   });
 
-  expect(outcome).toEqual({ ok: false, clash: null });
+  expect(outcome).toEqual({ status: 'failed', background: false });
   expect(rowsIn('transactions')[0].category).toBeNull();
 });

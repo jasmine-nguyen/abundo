@@ -9,7 +9,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, act } from '@testing-library/react-native';
-import type { AppContext, FileByShopOutcome } from '../context';
+import type { AppContext, FilingResult, FilingTarget, FilingWhen } from '../context';
 import type { ApplyRulesResult } from '../api';
 
 let mockState: AppContext;
@@ -25,8 +25,8 @@ const fns = {
   setSheet: jest.fn(),
   showToast: jest.fn(),
   saveManualRule: jest.fn(),
-  previewNewRule: jest.fn<(pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<FileByShopOutcome>>(),
-  fileNewRule: jest.fn<(pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<FileByShopOutcome>>(),
+  previewFiling: jest.fn<(target: FilingTarget) => Promise<FilingResult>>(),
+  fileCharges: jest.fn<(target: FilingTarget, when: FilingWhen) => Promise<FilingResult>>(),
 };
 
 const CATEGORIES = [
@@ -48,13 +48,13 @@ beforeEach(() => { jest.clearAllMocks(); });
 // inline arrow — the re-render re-fires the mount effect, previewNewRule is called twice, and the
 // "add-rule-confirm-busy" spinner reappears (file button gone).
 it('[A43] a context re-render does not re-fire the preview or snap back to the spinner', async () => {
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 12 }) });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 12 }) });
   const sheet = { mode: 'addRuleConfirm', pattern: 'COLES', categoryId: 'groceries' } as const;
   mockState = { sheet, toast: null, categories: CATEGORIES, ...fns } as unknown as AppContext;
   const { rerender } = render(<Overlays />);
   await act(async () => {}); // let the mount-time preview resolve into the preview card
 
-  expect(fns.previewNewRule).toHaveBeenCalledTimes(1);
+  expect(fns.previewFiling).toHaveBeenCalledTimes(1);
   expect(screen.getByTestId('add-rule-confirm-file')).toBeTruthy();
 
   // Simulate the provider re-rendering for an unrelated reason: a toast appears (new context value
@@ -69,7 +69,7 @@ it('[A43] a context re-render does not re-fire the preview or snap back to the s
     rerender(<Overlays />);
   });
 
-  expect(fns.previewNewRule).toHaveBeenCalledTimes(1);           // never re-fired
+  expect(fns.previewFiling).toHaveBeenCalledTimes(1);           // never re-fired
   expect(screen.getByTestId('add-rule-confirm-file')).toBeTruthy(); // still the preview card
   expect(screen.queryByTestId('add-rule-confirm-busy')).toBeNull(); // never snapped back to spinner
 });
