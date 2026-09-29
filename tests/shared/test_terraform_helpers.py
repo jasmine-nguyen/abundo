@@ -17,11 +17,12 @@ def test_shared_readers_read_monitoring_tf():
     assert TERRAFORM_DIR.name == "terraform"
     assert MONITORING_TF == TERRAFORM_DIR / "monitoring.tf"
 
-    block = tf_block(MONITORING_TF.read_text(), "aws_cloudwatch_log_metric_filter", "up_webhook_errors")
-    assert tf_attr(block, "name") == '"${var.project_name}-up-webhook-errors"'
+    block = tf_block(MONITORING_TF.read_text(), "aws_cloudwatch_log_metric_filter", "up_webhook_failures")
+    assert tf_attr(block, "name") == '"${var.project_name}-up-webhook-failures"'
 
     # An HCL-escaped quoted pattern is read whole and un-escaped, not cut at its first \".
-    assert filter_pattern("up_webhook_errors") == '"up webhook: processing failed"'
+    assert filter_pattern("up_webhook_failures") == (
+        '?"up webhook: processing failed" ?UP_WEBHOOK_TOKEN_REJECTED ?UP_WEBHOOK_NO_DEVICE_TOKENS')
     assert filter_pattern("milestone_row_malformed") == "?MILESTONE_ROW_MALFORMED ?MILESTONE_PLAN_MALFORMED"
 
 
