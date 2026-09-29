@@ -2,7 +2,7 @@
 #
 # The app's first alerting path: a shared SNS "alerts" topic that CloudWatch alarms
 # notify. Built here for the age-out sweep (an unattended, destructive daily job that
-# must not fail silently), but deliberately GENERIC — WHIT-108 (balance-poller failures)
+# must not fail silently), but deliberately GENERIC — the balance-poll stale alarm (WHIT-645)
 # and WHIT-135 (dead-letter alarm) can attach their own alarms to this same topic instead
 # of each standing up a separate notification path.
 
@@ -258,6 +258,44 @@ resource "aws_cloudwatch_metric_alarm" "transaction_trigger_errors" {
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
   alarm_description   = "The hourly BankSync sync has failed 3 hours in a row, so no transactions are arriving. Check /aws/lambda/abundo-transaction-trigger. 'HTTP Error 401' means BankSync rejected our key: make a new key in the BankSync dashboard and save it to /abundo/banksync-api-key in SSM (the next hourly run picks it up). The daily balance poll also uses this key; if Accounts balances look stale the next day, re-run abundo-balance-poller. 'HTTP Error 404' means a feed was deleted: update SYNC_FEED_IDS in shared/constants.py."
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+}
+
+# --- Balance-poller health alarm (WHIT-645) ---------------------------------
+# The balance poller swallows every failure (key fetch, home-loan read, each account read), so
+# its Errors metric never fires. Instead, only a fully clean run (home loan + every
+# BALANCE_SOURCES account stored) logs BALANCE_POLL_ALL_STORED — the heartbeat. Keep the pattern
+# and lambda_balance_poller/handler.py's log line in lockstep. default_value 0 so a failing run
+# still publishes a datapoint.
+resource "aws_cloudwatch_log_metric_filter" "balance_poll_all_stored" {
+  name           = "${var.project_name}-balance-poll-all-stored"
+  log_group_name = aws_cloudwatch_log_group.balance_poller.name
+  pattern        = "BALANCE_POLL_ALL_STORED"
+
+  metric_transformation {
+    name          = "BalancePollAllStored"
+    namespace     = "${var.project_name}/BalancePoller"
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+# Breaches when 2 daily runs in a row had no clean run (the period matches the daily schedule).
+# treat_missing_data "breaching" is load-bearing: a disabled schedule, an import crash or a
+# timeout leaves no log line at all, and that silence MUST page.
+resource "aws_cloudwatch_metric_alarm" "balance_poll_stale" {
+  alarm_name          = "${var.project_name}-balance-poll-stale"
+  namespace           = "${var.project_name}/BalancePoller"
+  metric_name         = "BalancePollAllStored"
+  statistic           = "Sum"
+  period              = 86400
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+  threshold           = 1
+  comparison_operator = "LessThanThreshold"
+  treat_missing_data  = "breaching"
+  alarm_description   = "Account balances haven't all refreshed for 2 days. Check /aws/lambda/abundo-balance-poller for 'balance poll failed' lines, which name the account. If the transaction-trigger alarm is also firing, it's the BankSync key: fix that first. 404 = an account ID changed: update BALANCE_SOURCES / ACCOUNT_ID_MAP in shared/constants.py. No log lines = the schedule is off or the lambda is crashing. After fixing, re-run abundo-balance-poller."
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 }
