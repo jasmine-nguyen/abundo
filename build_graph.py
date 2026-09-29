@@ -776,7 +776,10 @@ def stray_changes(state: BuildState) -> list[str]:
 
 def commit_all(state: BuildState, message: str) -> tuple[bool, str]:
     """Commit every change except files that were already untracked when the build started."""
-    excluded = [f":(exclude,literal){path}" for path in state.get("untracked_at_start", [])]
+    still_untracked = {path for status, path in git_status() if status == "??"}
+    excluded = [
+        f":(exclude,literal){path}" for path in state.get("untracked_at_start", []) if path in still_untracked
+    ]
     git("add", "-A", "--", ".", *excluded)
     if run(["git", "diff", "--cached", "--quiet"])[0] == 0:
         return True, ""
