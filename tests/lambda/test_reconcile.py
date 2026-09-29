@@ -625,6 +625,9 @@ def test_process_transaction_uses_insert_or_reconcile(lam):
         def save_failed_transactions(self, rows):
             calls["failed"] = rows
 
+        def is_deleted(self, account_id, transaction_id):
+            return False
+
         def insert_or_reconcile(self, txns, *, is_unfiled=None):
             calls["reconcile"] = txns
 

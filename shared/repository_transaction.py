@@ -10,7 +10,13 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
-from constants import ACCOUNT_ID_MAP, DATE_RANGE_MAX_PAGES, DEAD_LETTER_TTL_SECONDS, MAX_PAGE_SIZE
+from constants import (
+    ACCOUNT_ID_MAP,
+    DATE_RANGE_MAX_PAGES,
+    DEAD_LETTER_TTL_SECONDS,
+    DELETED_TRANSACTION_TTL_SECONDS,
+    MAX_PAGE_SIZE,
+)
 from models import Transaction
 from repository_base import REGION_NAME, TABLE_NAME, handle_database_error, logger
 
@@ -61,6 +67,10 @@ def _build_pk(account_id: str) -> str:
 
 def _build_sk(transaction_id: str) -> str:
     return f"TXN#{transaction_id}"
+
+
+def _build_deleted_pk(account_pk: str) -> str:
+    return f"DELETED#{account_pk}"
 
 
 class TransactionRepository:
@@ -187,6 +197,37 @@ class TransactionRepository:
 
         except ClientError as e:
             handle_database_error(e, "index query")
+
+    def delete_transaction(self, pk: str, sk: str) -> bool:
+        """Deletes a transaction the user removed, leaving a "deleted by you" marker (WHIT-654).
+
+        The marker is written FIRST so a BankSync re-send can't bring the charge back; it carries
+        no index fields, so no read lists it, and DynamoDB's TTL expires it. A stray marker from a
+        failed delete is harmless. Returns False when the row is already gone (a 404).
+        """
+        now = int(datetime.now(timezone.utc).timestamp())
+        try:
+            self._get_table().put_item(Item={
+                "pk": _build_deleted_pk(pk),
+                "sk": sk,
+                "expires_at": now + DELETED_TRANSACTION_TTL_SECONDS,
+            })
+            self._get_table().delete_item(
+                Key={"pk": pk, "sk": sk}, ConditionExpression="attribute_exists(pk)"
+            )
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            handle_database_error(e, "delete")
+
+    def is_deleted(self, account_id: str, transaction_id: str) -> bool:
+        """True while the user's "deleted by you" marker for this transaction hasn't expired."""
+        key = {"pk": _build_deleted_pk(_build_pk(account_id)), "sk": _build_sk(transaction_id)}
+        try:
+            return "Item" in self._get_table().get_item(Key=key)
+        except ClientError as e:
+            handle_database_error(e, "read")
 
     def update_transaction_category(self, pk: str, sk: str, category: str) -> bool:
         """Sets a transaction's category, leaving all other attributes intact.

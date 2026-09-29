@@ -47,6 +47,8 @@ locals {
     "POST /transactions/uncategorized/apply-rules/jobs",
     "GET /transactions/uncategorized/apply-rules/jobs/{id}",
     "PATCH /transactions/{id}",
+    # WHIT-654: the user deletes one charge from the transaction screen.
+    "DELETE /transactions/{id}",
     "PATCH /transactions",
     "GET /categories",
     "POST /categories",

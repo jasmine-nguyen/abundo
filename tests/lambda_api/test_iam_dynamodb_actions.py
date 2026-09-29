@@ -134,17 +134,23 @@ def test_every_dynamodb_verb_the_repositories_call_is_granted():
     )
 
 
-def test_delete_item_only_ever_targets_rule_rows():
-    # The security invariant behind the scoped grant: the code must only delete items whose pk
-    # equals the LeadingKeys value, so a bug can never delete a non-rule row (and the grant
-    # would deny it anyway).
+def test_delete_item_only_ever_targets_rule_or_transaction_rows():
+    # The security invariant behind the scoped grant: the code must only delete rule rows (a
+    # literal "RULE" pk) or, from the transaction repository only, a transaction row (its
+    # "ACCOUNT#..." pk comes from the id lookup, WHIT-654) — so a bug can never delete anything
+    # else (and the grant would deny it anyway).
     leading_keys = _leading_keys()
-    assert leading_keys == {"RULE"}, f"unexpected LeadingKeys scope: {leading_keys}"
+    assert leading_keys == {"RULE", "ACCOUNT#*"}, f"unexpected LeadingKeys scope: {leading_keys}"
+    assert '"ForAllValues:StringLike"' in _app_api_policy_block(), (
+        "the ACCOUNT#* wildcard only matches under StringLike"
+    )
     _, delete_calls = _needed_actions_and_deletes()
     for module_name, call in delete_calls:
         pk = _delete_pk_literal(call)
-        assert pk in leading_keys, (
-            f"{module_name} calls delete_item with pk={pk!r}, which is not the IAM-scoped "
-            f"LeadingKeys value {leading_keys}; the delete would be denied (or, worse, isn't "
-            "pinned to a rule row). Pass Key={'pk': 'RULE', ...} as a literal."
+        if module_name == "repository_transaction.py":
+            continue
+        assert pk == "RULE", (
+            f"{module_name} calls delete_item with pk={pk!r}, which is not a rule row; the "
+            "delete would be denied (or, worse, isn't pinned to a rule row). Pass "
+            "Key={'pk': 'RULE', ...} as a literal."
         )

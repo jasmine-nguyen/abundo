@@ -55,6 +55,10 @@ FEED_WINDOW_DAYS = 7
 # 10 days can no longer receive a settlement push — it is genuinely frozen.
 PENDING_AGE_OUT_DAYS = 10
 
+# How long the "deleted by you" marker for a user-deleted transaction lives (WHIT-654). Must stay
+# well past FEED_WINDOW_DAYS so a BankSync re-send can't bring the deleted charge back.
+DELETED_TRANSACTION_TTL_SECONDS = 30 * 24 * 3600
+
 # Maximum number of items requested per DynamoDB query page.
 MAX_PAGE_SIZE = 100
 

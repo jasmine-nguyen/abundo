@@ -28,6 +28,7 @@ export const WIRE: Record<string, [() => Promise<unknown>, Wire]> = {
   fetchCategoryTransactions: [() => api.fetchCategoryTransactions('groceries', 0), [null, '/categories/groceries/transactions', 15000, undefined]],
   setTransactionCategory: [() => api.setTransactionCategory('t1', 'groceries'), ['PATCH', '/transactions/t1', 15000, '{"category":"groceries"}']],
   setTransactionFields: [() => api.setTransactionFields('t1', { notes: 'n' }), ['PATCH', '/transactions/t1', 15000, '{"notes":"n"}']],
+  deleteTransaction: [() => api.deleteTransaction('t1'), ['DELETE', '/transactions/t1', 15000, undefined]],
   setTransactionCategories: [() => api.setTransactionCategories([{ id: 't1', category: 'groceries' }]), ['PATCH', '/transactions', 15000, '{"updates":[{"id":"t1","category":"groceries"}]}']],
   fetchHomeLoan: [() => api.fetchHomeLoan(), [null, '/homeloan', 15000, undefined]],
   fetchAccountBalances: [() => api.fetchAccountBalances(), [null, '/accounts/balances', 15000, undefined]],

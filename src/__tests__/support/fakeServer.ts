@@ -101,6 +101,7 @@ const ROUTES: [Method, string, (call: Call) => unknown][] = [
   ['POST', APPLY_RULES_JOBS, (call) => startJob(call, 'job', APPLY_RULES_JOBS, EMPTY_APPLY_RULES_JOB)],
   ['GET', `${APPLY_RULES_JOBS}/:id`, readOrNotFound],
   ['PATCH', '/transactions/:id', ({ params, body }) => ({ transaction_id: params.id, ...body })],
+  ['DELETE', '/transactions/:id', ({ params }) => ({ transaction_id: params.id })],
   ['POST', '/ai/chat', (call) => startJob(call, 'chat', CHAT_JOBS, {})],
   ['GET', `${CHAT_JOBS}/:id`, readOrNotFound],
   ['GET', '/categories', readSeeded([])],

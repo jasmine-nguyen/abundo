@@ -3,9 +3,10 @@
 // query the lists use (mocked here), found by id. Verifies the fields render, the pending
 // label, the "not found" state for a stale id, and cache-first error handling. The next
 // slice adds the editable note + tags.
-import { it, expect, jest, beforeEach, describe } from '@jest/globals';
+import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { Alert } from 'react-native';
+import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import { makeState, cat, txn, budget, rule } from './factory';
 import type { Budget, Rule } from '../context';
 
@@ -41,6 +42,7 @@ jest.mock('../queries', () => ({
 const mockApplyTransactionEdit = jest.fn();
 const mockToast = jest.fn();
 const mockOpenPicker = jest.fn();
+const mockDeleteTransaction = jest.fn<(txId: string) => Promise<boolean>>();
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return {
@@ -49,15 +51,17 @@ jest.mock('../context', () => {
       applyTransactionEdit: mockApplyTransactionEdit,
       showToast: mockToast,
       openPicker: mockOpenPicker,
+      deleteTransaction: mockDeleteTransaction,
     }),
   };
 });
 
 let mockId = 't1';
 const mockPush = jest.fn();
+const mockBack = jest.fn();
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({ id: mockId }),
-  useRouter: () => ({ back: jest.fn(), push: mockPush }),
+  useRouter: () => ({ back: mockBack, push: mockPush }),
 }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
@@ -84,6 +88,8 @@ beforeEach(() => {
   mockApplyTransactionEdit.mockClear();
   mockToast.mockClear();
   mockOpenPicker.mockClear();
+  mockBack.mockClear();
+  mockDeleteTransaction.mockReset();
 });
 
 it('renders the transaction fields (merchant, amount, date, account, category, status)', () => {
@@ -400,5 +406,59 @@ describe('rule attribution line', () => {
     mockRules = { rules: [rule({ id: 'r1', pattern: 'COLES', field: 'description', operator: 'contains', categoryId: 'coffee' })], isLoading: false };
     render(<TransactionDetail />);
     expect(screen.getByLabelText('Filed by your rule: contains "COLES"')).toBeTruthy();
+  });
+});
+
+// WHIT-654: delete a charge (e.g. a duplicate) from its detail screen, behind a confirmation.
+describe('delete this transaction', () => {
+  type AlertButton = { text: string; style?: string; onPress?: () => void };
+  let alertSpy: ReturnType<typeof jest.spyOn>;
+  beforeEach(() => { alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {}); });
+  afterEach(() => { alertSpy.mockRestore(); });
+
+  function tapDeleteAndChoose(choice: 'Cancel' | 'Delete') {
+    fireEvent.press(screen.getByTestId('transaction-delete'));
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    const [title, , buttons] = alertSpy.mock.calls[0] as [string, string, AlertButton[]];
+    expect(title).toBe('Delete this transaction?');
+    buttons.find((button) => button.text === choice)?.onPress?.();
+  }
+
+  it('asks for confirmation, and Cancel deletes nothing', () => {
+    render(<TransactionDetail />);
+    tapDeleteAndChoose('Cancel');
+    expect(mockDeleteTransaction).not.toHaveBeenCalled();
+    expect(mockBack).not.toHaveBeenCalled();
+  });
+
+  it('confirming deletes the charge and goes back, never flashing "Transaction not found"', async () => {
+    let finish: (ok: boolean) => void = () => {};
+    mockDeleteTransaction.mockImplementation(() => {
+      // The real action drops the charge from every cache before the server answers.
+      mockTx = txData({ transactions: [] });
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    const view = render(<TransactionDetail />);
+
+    await act(async () => { tapDeleteAndChoose('Delete'); });
+    view.rerender(<TransactionDetail />);
+
+    expect(mockDeleteTransaction).toHaveBeenCalledWith('t1');
+    expect(screen.queryByText('Transaction not found')).toBeNull();
+    expect(screen.getByText('Woolworths')).toBeTruthy();
+    expect(mockBack).not.toHaveBeenCalled();
+
+    await act(async () => { finish(true); });
+    expect(mockBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed delete stays on the screen so the user can retry', async () => {
+    mockDeleteTransaction.mockResolvedValue(false);
+    render(<TransactionDetail />);
+
+    await act(async () => { tapDeleteAndChoose('Delete'); });
+
+    expect(mockBack).not.toHaveBeenCalled();
+    expect(screen.getByTestId('transaction-delete').props.accessibilityState).toEqual({ disabled: false });
   });
 });

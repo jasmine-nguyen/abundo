@@ -124,6 +124,17 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
 
     repo.save_failed_transactions(unmapped_transactions)
 
+    # A charge the user deleted must not come back through a BankSync re-send (WHIT-654): drop it
+    # before rules, alerts or the write ever see it.
+    received_count = len(normalised_transactions)
+    normalised_transactions = [
+        transaction for transaction in normalised_transactions
+        if not repo.is_deleted(transaction["account_id"], transaction["transaction_id"])
+    ]
+    if received_count > len(normalised_transactions):
+        logger.info("skipped %d re-sent transaction(s) the user deleted",
+                    received_count - len(normalised_transactions))
+
     # Apply the user's rules as each charge lands (WHIT-530): BankSync no longer labels charges
     # for us, so our server files each unfiled one by our own rules here, BEFORE the budget
     # snapshot and the write see the category. Best-effort inside `apply` — a rules-read failure
