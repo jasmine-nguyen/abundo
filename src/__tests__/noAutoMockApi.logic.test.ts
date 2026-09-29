@@ -8,14 +8,6 @@ const API_AUTO_MOCK = /^\s*jest\.mock\(\s*['"](\.\.\/)+api['"]\s*\)/m;
 
 // Shrinks as later cards move these suites onto the fake server; deleted once empty.
 const STILL_TO_MOVE = [
-  // WHIT-656
-  'loanFactsWrite.provider.screen.test.tsx',
-  'goalsWrite.provider.screen.test.tsx',
-  'goalSaveCoexistence.provider.screen.test.tsx',
-  'optimisticSaveWriters.provider.screen.test.tsx',
-  'budgetTxOptimistic.provider.screen.test.tsx',
-  'budgetTxEditGaps.provider.screen.test.tsx',
-  'whit525Gaps.provider.screen.test.tsx',
   // WHIT-657
   'appProvider.screen.test.tsx',
   'overlaysRealData.screen.test.tsx',
@@ -47,6 +39,29 @@ describe('no test uses the bare api auto-mock', () => {
     const alreadyMoved = STILL_TO_MOVE.filter((file) => !autoMocksApi(file));
 
     expect(alreadyMoved).toEqual([]);
+  });
+
+  it('the WHIT-656 save suites run on the fake server and keep their expect( count', () => {
+    const baselines: Record<string, number> = {
+      'loanFactsWrite.provider.screen.test.tsx': 8,
+      'goalsWrite.provider.screen.test.tsx': 53,
+      'goalSaveCoexistence.provider.screen.test.tsx': 3,
+      'optimisticSaveWriters.provider.screen.test.tsx': 49,
+      'budgetTxOptimistic.provider.screen.test.tsx': 64,
+      'budgetTxEditGaps.provider.screen.test.tsx': 9,
+      'whit525Gaps.provider.screen.test.tsx': 7,
+    };
+
+    const shortfalls = Object.entries(baselines).flatMap(([file, baseline]) => {
+      const source = readFileSync(join(__dirname, file), 'utf8');
+      const expectLines = source.split('\n').filter((line) => line.includes('expect(')).length;
+      const problems: string[] = [];
+      if (!/installFakeServer\(\)/.test(source)) problems.push(`${file}: no installFakeServer()`);
+      if (expectLines < baseline) problems.push(`${file}: expect( ${expectLines} < ${baseline}`);
+      return problems;
+    });
+
+    expect(shortfalls).toEqual([]);
   });
 
   it('the pattern catches the bare auto-mock and ignores factory mocks and comments', () => {

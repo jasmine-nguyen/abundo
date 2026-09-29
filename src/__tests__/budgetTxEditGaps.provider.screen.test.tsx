@@ -14,12 +14,16 @@ import { AppProvider, useAppContext } from '../context';
 import type { Transaction, Category } from '../context';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
+import { installFakeServer } from './support/fakeServer';
 
 let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => mockStatus, subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({
+  getStatus: () => mockStatus,
+  subscribe: () => () => {},
+  getAuthToken: async () => 'test-id-token',
+}));
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -51,13 +55,13 @@ describe('[E] applyTransactionEdit — scoped-cache fallback + patch gaps', () =
   // budget list must land the tag in that list. FAIL-ON-REVERT: reverting context.tsx removes the
   // findInScopedLists fallback → the edit early-returns → the tag never lands.
   it('[E1] a tag edit on a budget-only row lands in the budget list', async () => {
-    mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 'bill', tags: ['work'] });
     const result = mount([]); // feed + recent empty
     queryClient.setQueryData(['budgetTransactions', 'insurance'], [txn('bill')]);
 
     await act(async () => { await result.current.applyTransactionEdit('bill', { tags: ['work'] }); });
 
     expect(budgetList('insurance')).toEqual([txn('bill', { tags: ['work'] })]);
+    expect(server.sent('PATCH', '/transactions/bill').map((request) => request.body)).toEqual([{ tags: ['work'] }]);
   });
 
   // [E2] The EXCLUDE path on a budget-ONLY row (absent from feed/recent). The fallback must find it
@@ -66,7 +70,6 @@ describe('[E] applyTransactionEdit — scoped-cache fallback + patch gaps', () =
   // of the exclude path. FAIL-ON-REVERT: reverting context.tsx → readTransactionsCache is empty and
   // there is no fallback → early return → stamp never runs → the row stays unmarked.
   it('[E2] excluding a budget-only row (feed empty) marks it in the budget list', async () => {
-    mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 'bill', budget_excluded: true });
     const result = mount([]); // feed + recent empty
     queryClient.setQueryData(['budgetTransactions', 'insurance'], [txn('bill'), txn('other')]);
 
@@ -80,8 +83,7 @@ describe('[E] applyTransactionEdit — scoped-cache fallback + patch gaps', () =
   // two prefixes in one edit and its rollback restores both. FAIL-ON-REVERT: reverting context.tsx
   // removes patchScopedLists → neither cache shows the optimistic note.
   it('[E3] a note edit patches both a budget and a category cache, and rolls back both on failure', async () => {
-    let rejectSave: (e: unknown) => void = () => {};
-    mockApi.setTransactionFields.mockReturnValue(new Promise((_res, rej) => { rejectSave = rej; }));
+    const held = server.hold('/transactions/bill');
     const result = mount([txn('bill')]); // also in feed, so `previous` snapshots cleanly
     const drillKey = ['categoryTransactions', 'coffee', 0];
     queryClient.setQueryData(['budgetTransactions', 'food'], [txn('bill')]);
@@ -93,7 +95,11 @@ describe('[E] applyTransactionEdit — scoped-cache fallback + patch gaps', () =
     expect(budgetList('food')).toEqual([txn('bill', { notes: 'annual premium' })]);
     expect(queryClient.getQueryData(drillKey)).toEqual([txn('bill', { notes: 'annual premium' })]);
 
-    await act(async () => { rejectSave(new Error('network')); await pending; });
+    await act(async () => {
+      server.once('PATCH', '/transactions/bill', 'dropped');
+      held.release();
+      await pending;
+    });
     // Rolled back: both restored to the original row, no stale note left behind.
     expect(budgetList('food')).toEqual([txn('bill')]);
     expect(queryClient.getQueryData(drillKey)).toEqual([txn('bill')]);
@@ -105,7 +111,6 @@ describe('[E] applyTransactionEdit — scoped-cache fallback + patch gaps', () =
   // FAIL-ON-REVERT: reverting WHIT-525 removes the row from the budget cache → findInScopedLists
   // returns undefined → the detail screen flashes "Transaction not found."
   it('[E5] WHIT-525: excluding a budget-only row keeps it findable in the cache', async () => {
-    mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 'bill', budget_excluded: true });
     const result = mount([]); // feed empty — the row lives ONLY in the budget cache
     queryClient.setQueryData(['budgetTransactions', 'insurance'], [txn('bill')]);
 
@@ -121,8 +126,7 @@ describe('[E] applyTransactionEdit — scoped-cache fallback + patch gaps', () =
   // FAIL-ON-REVERT: reverting the category-mark arm leaves the row's
   // budget_excluded false → the toggle would never move. Rollback restores it on a failed save.
   it('[E4] excluding a category-only row marks it in place (toggle moves), and rolls back on failure', async () => {
-    let rejectSave: (e: unknown) => void = () => {};
-    mockApi.setTransactionFields.mockReturnValue(new Promise((_res, rej) => { rejectSave = rej; }));
+    const held = server.hold('/transactions/bill');
     const result = mount([]); // feed + recent empty; the row lives ONLY in a category cache
     const drillKey = ['categoryTransactions', 'coffee', 0];
     queryClient.setQueryData(drillKey, [txn('bill')]);
@@ -132,7 +136,11 @@ describe('[E] applyTransactionEdit — scoped-cache fallback + patch gaps', () =
     // Optimistic: the row stays in the category cache, now marked excluded (kept, not removed).
     expect(queryClient.getQueryData(drillKey)).toEqual([txn('bill', { budget_excluded: true })]);
 
-    await act(async () => { rejectSave(new Error('network')); await pending; });
+    await act(async () => {
+      server.once('PATCH', '/transactions/bill', 'dropped');
+      held.release();
+      await pending;
+    });
     // Rolled back to the original unmarked row.
     expect(queryClient.getQueryData(drillKey)).toEqual([txn('bill')]);
   });
