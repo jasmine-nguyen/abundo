@@ -13,13 +13,12 @@ import hmac
 import json
 import logging
 import http.client
-import pathlib
-import re
 import urllib.error
 
 import pytest
 
 from _dynamo_fakes import FakeTable
+from _terraform import MONITORING_TF, filter_pattern, tf_attr, tf_block
 
 MOCK_SECRET = "mock-secret"
 HOMELOAN_UUID = "fbef6cbc-09b3-4b6f-826c-6a178707a178"
@@ -517,21 +516,9 @@ def test_qualifying_repayment_logs_no_skip(wired, caplog):
 
 # --- WHIT-616: each alarm's pattern still matches the line it watches ---------
 
-_MONITORING_TF = pathlib.Path(__file__).resolve().parents[2] / "terraform" / "monitoring.tf"
-
-
-def _filter_pattern(resource_name):
-    """The metric filter's pattern READ OUT of monitoring.tf (not retyped), un-escaped. The
-    regex allows HCL's \\" escapes so a quoted pattern isn't cut at its first inner quote."""
-    match = re.search(
-        rf'resource "aws_cloudwatch_log_metric_filter" "{resource_name}".*?'
-        r'pattern\s*=\s*"((?:[^"\\]|\\.)*)"', _MONITORING_TF.read_text(), re.S)
-    return match.group(1).replace('\\"', '"')
-
-
 @pytest.mark.parametrize("code", [401, 403])
 def test_terraform_token_rejected_filter_matches_emitted_line(fetch_wired, monkeypatch, caplog, code):
-    pattern = _filter_pattern("up_webhook_token_rejected")
+    pattern = filter_pattern("up_webhook_token_rejected")
     assert pattern == "UP_WEBHOOK_TOKEN_REJECTED", f"terraform pattern changed: {pattern!r}"
     monkeypatch.setattr(fetch_wired.up.urllib.request, "urlopen", _urlopen_raising(_http_error(code)))
     caplog.set_level(logging.INFO)
@@ -540,7 +527,7 @@ def test_terraform_token_rejected_filter_matches_emitted_line(fetch_wired, monke
 
 
 def test_terraform_no_device_tokens_filter_matches_emitted_line(wired, monkeypatch, caplog):
-    pattern = _filter_pattern("up_webhook_no_device_tokens")
+    pattern = filter_pattern("up_webhook_no_device_tokens")
     assert pattern == "UP_WEBHOOK_NO_DEVICE_TOKENS", f"terraform pattern changed: {pattern!r}"
     monkeypatch.setattr(wired.up, "DeviceRepository", lambda: _FakeDevice([]))
     caplog.set_level(logging.INFO)
@@ -550,7 +537,7 @@ def test_terraform_no_device_tokens_filter_matches_emitted_line(wired, monkeypat
 
 def test_terraform_errors_filter_matches_emitted_line(wired, monkeypatch, caplog):
     # A quoted CloudWatch pattern is an exact-substring match on the phrase inside the quotes.
-    pattern = _filter_pattern("up_webhook_errors")
+    pattern = filter_pattern("up_webhook_errors")
     assert pattern == '"up webhook: processing failed"', f"terraform pattern changed: {pattern!r}"
     monkeypatch.setattr(wired.up, "fetch_transaction", _boom("Up API down"))
     caplog.set_level(logging.INFO)
@@ -708,26 +695,18 @@ def test_replaced_token_is_used_on_next_delivery(fetch_wired, monkeypatch):
 
 # [A3] Each new alarm watches the metric its filter actually emits, pages the alerts topic,
 # and uses the hourly period. A renamed metric on either side leaves an alarm that can never fire.
-def _tf_block(kind, name):
-    match = re.search(rf'resource "{kind}" "{name}" \{{(.*?)\n\}}', _MONITORING_TF.read_text(), re.S)
-    return match.group(1)
-
-
-def _tf_attr(block, key):
-    return re.search(rf'^\s*{key}\s*=\s*(.+?)\s*$', block, re.M).group(1)
-
-
 @pytest.mark.parametrize("name", ["up_webhook_token_rejected", "up_webhook_no_device_tokens"])
 def test_terraform_alarm_watches_its_filter_metric(name):
-    metric_filter = _tf_block("aws_cloudwatch_log_metric_filter", name)
-    alarm = _tf_block("aws_cloudwatch_metric_alarm", name)
+    text = MONITORING_TF.read_text()
+    metric_filter = tf_block(text, "aws_cloudwatch_log_metric_filter", name)
+    alarm = tf_block(text, "aws_cloudwatch_metric_alarm", name)
     transformation = metric_filter.split("metric_transformation", 1)[1]
-    assert _tf_attr(alarm, "metric_name") == _tf_attr(transformation, "name")
-    assert _tf_attr(alarm, "namespace") == _tf_attr(transformation, "namespace")
-    assert _tf_attr(metric_filter, "log_group_name") == "aws_cloudwatch_log_group.up_webhook.name"
-    assert _tf_attr(alarm, "alarm_actions") == "[aws_sns_topic.alerts.arn]"
-    assert _tf_attr(alarm, "period") == "3600"
-    assert _tf_attr(alarm, "treat_missing_data") == '"notBreaching"'
+    assert tf_attr(alarm, "metric_name") == tf_attr(transformation, "name")
+    assert tf_attr(alarm, "namespace") == tf_attr(transformation, "namespace")
+    assert tf_attr(metric_filter, "log_group_name") == "aws_cloudwatch_log_group.up_webhook.name"
+    assert tf_attr(alarm, "alarm_actions") == "[aws_sns_topic.alerts.arn]"
+    assert tf_attr(alarm, "period") == "3600"
+    assert tf_attr(alarm, "treat_missing_data") == '"notBreaching"'
 
 
 # [A4] "Any other fetch failure logs UP_WEBHOOK_FETCH_FAILED". Up (or a proxy) dropping the

@@ -7,29 +7,9 @@ missed balance must. The terraform side must match the exact line CloudWatch wil
 
 import json
 import logging
-import pathlib
 import re
 
-_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_TERRAFORM = _REPO_ROOT / "terraform"
-_MONITORING_TF = _TERRAFORM / "monitoring.tf"
-
-
-def _tf_block(text, kind, name):
-    match = re.search(rf'resource "{kind}" "{name}" \{{(.*?)\n\}}', text, re.S)
-    assert match, f'resource "{kind}" "{name}" not found'
-    return match.group(1)
-
-
-def _tf_attr(block, key):
-    match = re.search(rf'^\s*{key}\s*=\s*(.+?)\s*$', block, re.M)
-    assert match, f"attribute {key} not found"
-    return match.group(1)
-
-
-def _filter_pattern():
-    block = _tf_block(_MONITORING_TF.read_text(), "aws_cloudwatch_log_metric_filter", "balance_poll_all_stored")
-    return _tf_attr(block, "pattern").strip('"')
+from _terraform import MONITORING_TF, TERRAFORM_DIR, filter_pattern, tf_attr, tf_block
 
 
 class _FakeResponse:
@@ -102,7 +82,8 @@ def _stub(handler, monkeypatch, caplog, *, payloads=None, account_repo=None, url
 
 
 def _heartbeats(caplog):
-    return [r for r in caplog.records if _filter_pattern() in r.getMessage()]
+    pattern = filter_pattern("balance_poll_all_stored")
+    return [r for r in caplog.records if pattern in r.getMessage()]
 
 
 def _raise(*args, **kwargs):
@@ -202,7 +183,7 @@ def test_heartbeat_is_an_enabled_info_record_from_the_handler_logger(handler, mo
 # [A10] (P0) CloudWatch matches an unquoted pattern as a whole term: it must be a bare
 # alphanumeric/underscore token and appear in the emitted line delimited by whitespace.
 def test_filter_pattern_is_a_bare_term_the_emitted_line_contains_as_a_whole_word(handler, monkeypatch, caplog):
-    pattern = _filter_pattern()
+    pattern = filter_pattern("balance_poll_all_stored")
     assert re.fullmatch(r"[A-Za-z0-9_]+", pattern), f"pattern needs quoting in CloudWatch: {pattern!r}"
     _stub(handler, monkeypatch, caplog)
 
@@ -215,17 +196,17 @@ def test_filter_pattern_is_a_bare_term_the_emitted_line_contains_as_a_whole_word
 # [A11] (P1) the alarm description points at the real log group of the real function.
 def test_alarm_description_names_the_real_poller_log_group():
     project = re.search(r'variable "project_name" \{.*?default\s*=\s*"([^"]+)"',
-                        (_TERRAFORM / "variables.tf").read_text(), re.S).group(1)
-    function = _tf_block((_TERRAFORM / "lambda.tf").read_text(), "aws_lambda_function", "balance_poller")
-    function_name = _tf_attr(function, "function_name").strip('"').replace("${var.project_name}", project)
-    alarm = _tf_block(_MONITORING_TF.read_text(), "aws_cloudwatch_metric_alarm", "balance_poll_stale")
-    description = _tf_attr(alarm, "alarm_description")
+                        (TERRAFORM_DIR / "variables.tf").read_text(), re.S).group(1)
+    function = tf_block((TERRAFORM_DIR / "lambda.tf").read_text(), "aws_lambda_function", "balance_poller")
+    function_name = tf_attr(function, "function_name").strip('"').replace("${var.project_name}", project)
+    alarm = tf_block(MONITORING_TF.read_text(), "aws_cloudwatch_metric_alarm", "balance_poll_stale")
+    description = tf_attr(alarm, "alarm_description")
     assert f"/aws/lambda/{function_name}" in description
     assert "balance poll failed" in description
 
 
 # [A12] (P1) the metric the alarm reads is published by exactly one filter (no collision).
 def test_balance_poll_metric_is_published_by_one_filter_only():
-    text = _MONITORING_TF.read_text()
+    text = MONITORING_TF.read_text()
     assert len(re.findall(r'\bname\s*=\s*"BalancePollAllStored"', text)) == 1
     assert len(re.findall(r'metric_name\s*=\s*"BalancePollAllStored"', text)) == 1
