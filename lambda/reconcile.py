@@ -290,8 +290,9 @@ def _find_skewed_auth_twin(posted_txn: Transaction, pool: list[dict]) -> Optiona
 
     This tier DELETES a pending, so the gates stay strict: an exact amount (a skewed
     charge that also grew, e.g. a foreign fee folded in, is left to
-    `_find_skewed_fee_twin`, which runs after this one — WHIT-653), a merchant match (see merchant_matches_pending), and a skew of exactly one day in
-    the one direction the clocks can produce.
+    `_find_skewed_fee_twin`, which runs after this one — WHIT-653), a merchant
+    match (see merchant_matches_pending), and a skew of exactly one day in the one
+    direction the clocks can produce.
 
     Two genuine same-amount purchases on consecutive days are indistinguishable from
     a skewed pair, which is why match_all claims every EXACT twin in the
