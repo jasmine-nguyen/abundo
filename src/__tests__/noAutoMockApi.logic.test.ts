@@ -107,4 +107,21 @@ describe('no test mocks the api', () => {
     expect(`// used instead of jest.mock('../api')`).not.toMatch(API_MOCK);
     expect(`jest.mock('../apiWire');`).not.toMatch(API_MOCK);
   });
+
+  // [A1] WHIT-640 QA — layouts the factory form really takes, and near-miss module names.
+  it('the pattern catches tab-indented, line-broken and deep-path mocks and skips other api* modules', () => {
+    expect(`\tjest.mock('../api', () => ({}));`).toMatch(API_MOCK);
+    expect(`jest.mock(\n  '../api',\n  () => ({ fetchX: jest.fn() }),\n);`).toMatch(API_MOCK);
+    expect(`jest.mock("../../../api", () => ({}));`).toMatch(API_MOCK);
+    expect(`  jest.doMock("../api");`).toMatch(API_MOCK);
+    expect(`jest.mock('../apiError', () => ({}));`).not.toMatch(API_MOCK);
+    expect(`jest.mock('../api-client');`).not.toMatch(API_MOCK);
+    expect(`jest.mock('./support/api');`).not.toMatch(API_MOCK);
+    expect(`const hint = "jest.mock('../api')";`).not.toMatch(API_MOCK);
+  });
+
+  // [A2]
+  it('the still-to-move list names each file once', () => {
+    expect(STILL_TO_MOVE.filter((file, i) => STILL_TO_MOVE.indexOf(file) !== i)).toEqual([]);
+  });
 });
