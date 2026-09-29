@@ -111,8 +111,14 @@ TIP_HEADROOM = Decimal("0.25")
 # swiped before 10:00 local falls on the PREVIOUS day in UTC and the two dates disagree by
 # exactly one — always in that direction, never the reverse. The reconciler's exact and tip
 # tiers both key on an equal authorized_date, so without a skew-tolerant tier the twins
-# never match and the purchase is counted twice. Used only by lambda/repository.py.
+# never match and the purchase is counted twice. Used only by lambda/reconcile.py.
 AUTH_DATE_SKEW_DAYS = 1
+
+# Maximum fraction by which a settled charge may exceed a pending dated AUTH_DATE_SKEW_DAYS
+# later and still be the SAME purchase (WHIT-653): a Westpac overseas charge settles a day
+# earlier with the foreign fee (~3%) folded in. ONE-DIRECTIONAL, like TIP_HEADROOM.
+# Used only by lambda/reconcile.py.
+SKEW_FEE_HEADROOM = Decimal("0.05")
 
 # Seed pay cycle used by PayCycleRepository until the user sets their real payday:
 # a fixed past date (a Wednesday, the app's original default last_pay_date) + a

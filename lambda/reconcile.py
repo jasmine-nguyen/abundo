@@ -19,6 +19,7 @@ from constants import (
     AUTH_DATE_SKEW_DAYS,
     FEED_WINDOW_DAYS,
     PENDING_STATUS,
+    SKEW_FEE_HEADROOM,
     TIP_HEADROOM,
 )
 from repository_transaction import _build_pk, _build_sk, sanitise_transaction
@@ -78,8 +79,8 @@ def _merchant_gate(merchant: str, pending_merchant: str, description: str) -> Op
     skewed-date merge log's gate= label; deriving both from this one return value is why
     they cannot drift (WHIT-338).
 
-    Shared by every heuristic tier that matches on a merchant — tip, skewed-date and
-    blank-auth. They MUST share it. The tiers run tightest-first so a tighter tier always
+    Shared by every heuristic tier that matches on a merchant — tip, skewed-date,
+    skewed-fee and blank-auth. They MUST share it. The tiers run tightest-first so a tighter tier always
     claims its twin before a looser one can reach it, and that ordering silently inverts
     if one tier can recognise a merchant the tiers above it cannot: the loosest tier then
     wins by default and deletes the wrong pending.
@@ -132,8 +133,8 @@ def _merchant_gate(merchant: str, pending_merchant: str, description: str) -> Op
 
 def merchant_matches_pending(merchant: str, pending_merchant: str, description: str) -> bool:
     """Whether a posted merchant names the same shop as a pending row — the bool view of
-    `_merchant_gate` (which branch matched). Shared by the tip, skewed-date and blank-auth
-    tiers; see `_merchant_gate` for the full rationale."""
+    `_merchant_gate` (which branch matched). Shared by the tip, skewed-date, skewed-fee
+    and blank-auth tiers; see `_merchant_gate` for the full rationale."""
     return _merchant_gate(merchant, pending_merchant, description) is not None
 
 
@@ -158,16 +159,16 @@ def _is_skewed_next_day(pending_date: Optional[str], posted_date: Optional[str])
     return (pending_day - posted_day).days == AUTH_DATE_SKEW_DAYS
 
 
-def _is_tip_adjusted(auth_amount: Decimal, settled_amount: Decimal) -> bool:
-    """Whether `settled_amount` is `auth_amount` plus at most a tip (TIP_HEADROOM).
-    Both must be spend (negative) and ONE-DIRECTIONAL — a tip only makes the
-    magnitude larger — so a smaller settled amount, or an opposite-sign one (a
-    refund/credit), is never a tip-match."""
+def _is_larger_within(auth_amount: Decimal, settled_amount: Decimal, headroom: Decimal) -> bool:
+    """Whether `settled_amount` is `auth_amount` grown by at most `headroom` (a fraction).
+    Both must be spend (negative) and ONE-DIRECTIONAL — settlement only makes the
+    magnitude larger (a tip, a folded-in fee) — so a smaller settled amount, or an
+    opposite-sign one (a refund/credit), never matches."""
     if auth_amount >= 0 or settled_amount >= 0:
         return False
     auth_mag = -auth_amount
     settled_mag = -settled_amount
-    return auth_mag <= settled_mag <= auth_mag * (Decimal(1) + TIP_HEADROOM)
+    return auth_mag <= settled_mag <= auth_mag * (Decimal(1) + headroom)
 
 
 def _settles_after(pending_date: Optional[str], posted_date: Optional[str]) -> bool:
@@ -199,7 +200,7 @@ def _pop_lowest_id(pool: list[dict], indices: list[int]) -> dict:
 def _select_twin(pool: list[dict], predicate: Callable[[dict], bool]) -> Optional[dict]:
     """Return AND consume the one pending row `predicate` accepts, or None. The shared
     tail of every tier whose whole candidate set is a single predicate (exact, tip,
-    blank-auth). The skewed tier pre-filters for its own reject logging, so it calls
+    skewed-fee, blank-auth). The skewed tier pre-filters for its own reject logging, so it calls
     _pop_lowest_id directly rather than going through here."""
     candidates = [i for i, item in enumerate(pool) if predicate(item)]
     if not candidates:
@@ -271,7 +272,7 @@ def _find_tip_twin(posted_txn: Transaction, pool: list[dict]) -> Optional[dict]:
         pool,
         lambda item: item.get("authorized_date") == authorized_date
         and item.get("amount") is not None
-        and _is_tip_adjusted(item["amount"], amount)
+        and _is_larger_within(item["amount"], amount, TIP_HEADROOM)
         and merchant_matches_pending(merchant, item.get("merchant_name") or "",
                                      item.get("description") or ""),
     )
@@ -287,10 +288,11 @@ def _find_skewed_auth_twin(posted_txn: Transaction, pool: list[dict]) -> Optiona
     split across the Melbourne/UTC day boundary matches neither and both rows
     survive — the purchase is then counted twice for as long as the pending lives.
 
-    This tier DELETES a pending, so the gates stay strict: an exact amount (no tip
-    headroom — skewed AND tipped is a compound rarity not worth the extra surface),
-    a merchant match (see merchant_matches_pending), and a skew of exactly one day in
-    the one direction the clocks can produce.
+    This tier DELETES a pending, so the gates stay strict: an exact amount (a skewed
+    charge that also grew, e.g. a foreign fee folded in, is left to
+    `_find_skewed_fee_twin`, which runs after this one — WHIT-653), a merchant
+    match (see merchant_matches_pending), and a skew of exactly one day in the one
+    direction the clocks can produce.
 
     Two genuine same-amount purchases on consecutive days are indistinguishable from
     a skewed pair, which is why match_all claims every EXACT twin in the
@@ -368,6 +370,52 @@ def _find_skewed_auth_twin(posted_txn: Transaction, pool: list[dict]) -> Optiona
     return twin
 
 
+def _find_skewed_fee_twin(posted_txn: Transaction, pool: list[dict]) -> Optional[dict]:
+    """Return AND consume the pending twin that settled one day EARLIER and slightly
+    LARGER (WHIT-653), or None. A Westpac overseas charge settles dated a day before
+    its pending with the foreign fee folded in (-170.01 pending -> -175.11 posted), so
+    the equal-date tiers and the exact-amount skewed tier all miss it.
+
+    Runs after the exact, tip and skewed tiers, so an exact-amount skewed twin is
+    always claimed first and this only sees what they left. Gates: the pending dated
+    exactly AUTH_DATE_SKEW_DAYS after the posted, the posted amount up to
+    SKEW_FEE_HEADROOM larger (spend only, never smaller), and the tip tier's merchant
+    gate including its >=2-word rule.
+
+    A wrong pick costs the same as in the skewed tier: the total stays right, but the
+    settled row takes the consumed pending's day, category, notes and tags."""
+    authorized_date = posted_txn.get("authorized_date")
+    if not authorized_date:
+        return None
+    amount = posted_txn.get("amount")
+    if amount is None:
+        return None
+    merchant = posted_txn.get("merchant_name") or ""
+    if len(_words(merchant)) < 2:
+        return None
+    twin = _select_twin(
+        pool,
+        lambda item: _is_skewed_next_day(item.get("authorized_date"), authorized_date)
+        and item.get("amount") is not None
+        and _is_larger_within(item["amount"], amount, SKEW_FEE_HEADROOM)
+        and merchant_matches_pending(merchant, item.get("merchant_name") or "",
+                                     item.get("description") or ""),
+    )
+    if twin is None:
+        return None
+    # A merge DELETES the pending, so this line is the only trace it happened.
+    gate = _merchant_gate(merchant, twin.get("merchant_name") or "",
+                          twin.get("description") or "")
+    logger.info(
+        "skewed-fee twin merged: account=%s merchant=%r amount=%s pending_amount=%s "
+        "gate=%s posted=%s (auth %s) pending=%s (auth %s)",
+        posted_txn["account_id"], merchant, amount, twin.get("amount"), gate,
+        posted_txn.get("transaction_id"), authorized_date,
+        twin.get("transaction_id"), twin.get("authorized_date"),
+    )
+    return twin
+
+
 def _find_blank_auth_twin(posted_txn: Transaction, pool: list[dict]) -> Optional[dict]:
     """Return AND consume the pending twin of a posted row the bank sent WITHOUT an
     authorized_date, or None. Some ANZ settlements blank that field, and both the
@@ -415,10 +463,11 @@ def match_all(
     matches: list[Optional[dict]] = [None] * len(posted_txns)
     unmatched = list(range(len(posted_txns)))
     # Tightest gate first: exact date+amount, then a tip on the same day, then a
-    # date split one day by the Melbourne/UTC clocks, then the loosest (no swipe
-    # date at all, matched within a FEED_WINDOW_DAYS window).
-    for find_twin in (_find_exact_twin, _find_tip_twin,
-                      _find_skewed_auth_twin, _find_blank_auth_twin):
+    # date split one day by the Melbourne/UTC clocks, then that same split with a
+    # small fee folded in, then the loosest (no swipe date at all, matched within a
+    # FEED_WINDOW_DAYS window).
+    for find_twin in (_find_exact_twin, _find_tip_twin, _find_skewed_auth_twin,
+                      _find_skewed_fee_twin, _find_blank_auth_twin):
         still: list[int] = []
         for i in unmatched:
             pool = pending_pools.get(posted_txns[i]["account_id"], [])
@@ -439,7 +488,8 @@ def inherit_swipe_date(merged: Transaction, posted_txn: Transaction, source_row:
        twin's date the charge would show (or regress to) its settlement day.
     2. authorized_date exactly one day BEFORE the source's (WHIT-331) — the pair was
        dated off two clocks and the source holds the Melbourne-local day, which is
-       the day the user actually swiped. Melbourne wins.
+       the day the user actually swiped. Melbourne wins. A skewed-fee merge (WHIT-653)
+       has the same shape and is handled the same way.
 
     Deliberately gated on the skew SHAPE rather than "the dates differ": a stored
     date must never clobber a genuine upstream correction, only the known one-day

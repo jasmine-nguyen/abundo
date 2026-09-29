@@ -794,7 +794,7 @@ def test_only_merchant_matching_pending_consumed_not_lowest_id(lam, repo):
 def test_pending_with_missing_amount_never_matches(lam, repo):
     # A pooled pending with no amount (defensive: DB rows shouldn't, but must never
     # KeyError). It has the matching merchant + day, so absent the None-guard the tip
-    # tier would try _is_tip_adjusted(item["amount"], ...) and raise. Must not crash,
+    # tier would try _is_larger_within(item["amount"], ...) and raise. Must not crash,
     # must not match.
     _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
                   authorized_date="2026-06-29", pending=True, category="coffee")
@@ -1174,8 +1174,8 @@ def test_reconcile_matches_empty_and_all_pending_batch(lam, repo):
 # --- direct locks on the new pure helpers -----------------------------------
 
 
-def test_is_tip_adjusted_edges(lam):
-    f = lam.reconcile._is_tip_adjusted
+def test_is_larger_within_edges(lam):
+    f = lambda a, s: lam.reconcile._is_larger_within(a, s, lam.reconcile.TIP_HEADROOM)
     D = Decimal
     # equal magnitude is inside the (inclusive) window
     assert f(D("-5"), D("-5")) is True
@@ -1364,12 +1364,138 @@ def test_skew_single_word_merchant_does_not_merge_a_neighbouring_brand(lam, repo
 
 
 def test_skew_tip_sized_amount_gap_does_not_merge(lam, repo):
-    # Skewed AND tipped is a compound rarity — this tier requires the exact amount.
+    # +9% is over the skewed-fee tier's 5% limit (WHIT-653), so a tip-sized gap on a
+    # skewed pair still doesn't merge.
     _skew_pending(repo, lam, amount=Decimal("-11.00"))
 
     repo.insert_or_reconcile([_skew_posted(lam, amount=Decimal("-12.00"))])
 
     assert len(repo._table.store) == 2
+
+
+# --- WHIT-653: skewed date AND a foreign fee folded into the settled amount ---------
+
+_CLAUDE_PEND_DESC = "Pending - ANTHROPIC* CLAUDE SUB      SAN FRANCISOUS"
+_CLAUDE_POST_DESC = "ANTHROPIC* CLAUDE SUB SAN FRANCIS USA"
+_CLAUDE_MERCHANT = "ANTHROPIC* CLAUDE SUB"
+
+
+def _fee_pending(repo, lam, txn_id="PEND", amount=Decimal("-170.01"),
+                 authorized_date="2026-09-27", category="subs", notes=None,
+                 description=_CLAUDE_PEND_DESC, merchant_name=_CLAUDE_MERCHANT):
+    pending = _norm(lam, txn_id=txn_id, amount=amount, authorized_date=authorized_date,
+                    date=authorized_date, pending=True, category=category,
+                    description=description, merchant_name=merchant_name)
+    if notes is not None:
+        pending["notes"] = notes
+    repo.insert_transactions([pending])
+    return pending
+
+
+def _fee_posted(lam, txn_id="POST", amount=Decimal("-175.11"), authorized_date="2026-09-26",
+                description=_CLAUDE_POST_DESC, merchant_name=_CLAUDE_MERCHANT):
+    return _norm(lam, txn_id=txn_id, amount=amount, authorized_date=authorized_date,
+                 date=authorized_date, pending=False, category="GENERAL_SERVICES",
+                 description=description, merchant_name=merchant_name)
+
+
+def test_westpac_overseas_charge_with_fee_a_day_earlier_reconciles(lam, repo):
+    # WHIT-653 fail-on-revert anchor: the live Claude pair. Pending -170.01 on 09-27
+    # settles as -175.11 (+$5.10 foreign fee) dated 09-26 — both rows stayed in the app.
+    _fee_pending(repo, lam, notes="claude max")
+    posted = _fee_posted(lam)
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#PEND") not in store           # stale pending removed — no double count
+    assert len(store) == 1
+    row = store[(acc, "TXN#POST")]
+    assert row["amount"] == Decimal("-175.11")
+    assert row["category"] == "subs"
+    assert row["notes"] == "claude max"
+    assert row["date"] == "2026-09-27"              # swipe date inherited like the skew tier
+    assert row["authorized_date"] == "2026-09-27"
+
+
+def test_skew_fee_exactly_five_percent_merges(lam, repo):
+    _fee_pending(repo, lam, amount=Decimal("-100.00"))
+
+    repo.insert_or_reconcile([_fee_posted(lam, amount=Decimal("-105.00"))])
+
+    store = repo._table.store
+    assert list(store) == [(_acc(_fee_posted(lam)), "TXN#POST")]
+
+
+def test_skew_fee_just_over_five_percent_does_not_merge(lam, repo):
+    _fee_pending(repo, lam, amount=Decimal("-100.00"))
+
+    repo.insert_or_reconcile([_fee_posted(lam, amount=Decimal("-105.01"))])
+
+    assert len(repo._table.store) == 2
+
+
+def test_skew_fee_smaller_posted_amount_does_not_merge(lam, repo):
+    _fee_pending(repo, lam)
+
+    repo.insert_or_reconcile([_fee_posted(lam, amount=Decimal("-165.00"))])
+
+    assert len(repo._table.store) == 2
+
+
+def test_skew_fee_opposite_sign_does_not_merge(lam, repo):
+    _fee_pending(repo, lam)
+
+    repo.insert_or_reconcile([_fee_posted(lam, amount=Decimal("175.11"))])
+
+    assert len(repo._table.store) == 2
+
+
+def test_skew_fee_pending_a_day_before_posted_does_not_merge(lam, repo):
+    _fee_pending(repo, lam, amount=Decimal("-100.00"), authorized_date="2026-09-25")
+
+    repo.insert_or_reconcile([_fee_posted(lam, amount=Decimal("-103.00"))])
+
+    assert len(repo._table.store) == 2
+
+
+def test_skew_fee_different_merchant_does_not_merge(lam, repo):
+    _fee_pending(repo, lam, description="Pending - OPENAI *CHATGPT SUBSCR      SAN FRANCISOUS",
+                 merchant_name="OPENAI *CHATGPT SUBSCR")
+
+    repo.insert_or_reconcile([_fee_posted(lam)])
+
+    assert len(repo._table.store) == 2
+
+
+def test_skew_fee_single_word_merchant_does_not_merge(lam, repo):
+    _fee_pending(repo, lam, amount=Decimal("-100.00"), description="Pending - NETFLIX",
+                 merchant_name="NETFLIX")
+
+    repo.insert_or_reconcile([_fee_posted(lam, amount=Decimal("-103.00"),
+                                          description="NETFLIX", merchant_name="NETFLIX")])
+
+    assert len(repo._table.store) == 2
+
+
+def test_exact_skew_twin_beats_fee_candidate_across_the_batch(lam, repo):
+    # The -51.00 posting comes first (lower id) and is a fee-sized candidate; the exact
+    # skewed tier must still claim the pending for the -50.00 posting.
+    _fee_pending(repo, lam, amount=Decimal("-50.00"))
+    fee_first = _fee_posted(lam, txn_id="A51", amount=Decimal("-51.00"))
+    exact_later = _fee_posted(lam, txn_id="B50", amount=Decimal("-50.00"))
+
+    repo.insert_or_reconcile([fee_first, exact_later])
+
+    store = repo._table.store
+    acc = _acc(fee_first)
+    assert (acc, "TXN#PEND") not in store
+    assert len(store) == 2
+    assert store[(acc, "TXN#B50")]["category"] == "subs"
+    assert store[(acc, "TXN#B50")]["date"] == "2026-09-27"
+    assert store[(acc, "TXN#A51")]["category"] == "GENERAL_SERVICES"
+    assert store[(acc, "TXN#A51")]["date"] == "2026-09-26"
 
 
 def test_skew_merchant_running_into_the_next_column_is_not_a_match(lam, repo):

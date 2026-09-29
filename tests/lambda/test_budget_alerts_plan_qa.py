@@ -157,6 +157,23 @@ def test_preview_rows_equal_the_real_save_on_a_mixed_batch(alerts, repo, monkeyp
     assert _view(alerts.budget_alerts._simulate_after(ctx, batch)) == _view(ledger)
 
 
+# WHIT-653 — a settled charge dated a day earlier with a foreign fee folded in (+3%)
+# reconciles its pending in the preview exactly as the real save does: counted once.
+def test_preview_reconciles_a_skewed_fee_pair_like_the_real_save(alerts, repo, monkeypatch):
+    _seed(repo, alerts, txn_id="PEND", amount=Decimal("-40.00"), pending=True, category="groceries",
+          date="2026-07-11", authorized_date="2026-07-11")
+    before = [dict(r) for r in repo._table.store.values()]
+    batch = [_norm_real(alerts, txn_id="POST", amount=Decimal("-41.20"), pending=False,
+                        category="FOOD_AND_DRINK", date="2026-07-10", authorized_date="2026-07-10")]
+
+    _, _, ctx = _fire(alerts, monkeypatch, repo, before, batch)
+
+    ledger = list(repo._table.store.values())
+    preview = alerts.budget_alerts._simulate_after(ctx, batch)
+    assert [r["transaction_id"] for r in preview] == ["POST"]   # pending absent — spend counted once
+    assert _view(preview) == _view(ledger)
+
+
 # [A4] P1 — the preview never mutates the snapshot: running it twice gives the same rows,
 # and the pending pools / before-rows the ctx holds are untouched (the fire step reads them).
 def test_preview_does_not_mutate_the_snapshot(alerts, repo, monkeypatch):
@@ -208,3 +225,19 @@ def test_budget_alerts_lives_in_lambda_and_is_allow_listed():
     allow = (_REPO_ROOT / ".gitignore").read_text().splitlines()
     assert "!lambda/budget_alerts.py" in allow
     assert "!lambda/reconcile.py" in allow
+
+
+# [A19] P0 (WHIT-653 QA) — pending -60 groceries (07-11) settles as -61.80 dated 07-10.
+# Counted once → 61.80 of 100 → no push. Double-counted (tier missing) → 121.80 → pushes.
+def test_skewed_fee_settlement_does_not_trigger_a_double_counted_alert(alerts, repo, monkeypatch):
+    _seed(repo, alerts, txn_id="PEND", amount=Decimal("-60.00"), pending=True, category="groceries",
+          date="2026-07-11", authorized_date="2026-07-11")
+    before = [dict(r) for r in repo._table.store.values()]
+    batch = [_norm_real(alerts, txn_id="POST", amount=Decimal("-61.80"), pending=False,
+                        category="groceries", date="2026-07-10", authorized_date="2026-07-10")]
+
+    sent, notify, _ = _fire(alerts, monkeypatch, repo, before, batch)
+
+    assert sent == []
+    assert notify.fired_markers("2026-07-01", 14) == set()
+    assert [r["transaction_id"] for r in repo._table.store.values()] == ["POST"]
