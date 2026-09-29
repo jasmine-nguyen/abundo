@@ -6,7 +6,7 @@
 //   2. The client-minted id on a new row survives the optimistic write unchanged (server preserves
 //      supplied ids) — saveMilestones REPLACES the list, it must not merge/append/regenerate ids.
 // Harness mirrors sessionGuardRollbacks.provider.screen: a live miniature auth store (so the anon
-// broadcast actually bumps the session epoch), mocked ../api, the real singleton queryClient.
+// broadcast actually bumps the session epoch), the fake server, the real singleton queryClient.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
@@ -19,25 +19,18 @@ const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mo
 jest.mock('../auth', () => ({
   getStatus: () => mockStatus,
   subscribe: (l: () => void) => mockSubscribe(l),
+  getAuthToken: async () => 'test-id-token',
 }));
-jest.mock('../api');
 
 import { AppProvider, useAppContext } from '../context';
 import { queryClient } from '../queryClient';
 import type { MilestoneRecord } from '../api';
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
+const sent = (method: string, path: string) => server.requests().filter((r) => r.method === method && r.path === path);
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
-// A deferred whose resolve/reject the test controls, so the writer is genuinely in-flight when the
-// session ends (mirrors sessionGuardRollbacks' deferred).
-function deferred<T>() {
-  let resolve!: (v: T) => void;
-  let reject!: (e?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-}
 
 // Sign out in PRODUCTION order: clear the cache, THEN broadcast anon (which the context subscription
 // turns into the epoch bump). Matches sessionGuardRollbacks.signOut.
@@ -60,15 +53,14 @@ afterEach(() => { queryClient.clear(); });
 describe('WHIT-377 — saveMilestones settling AFTER sign-out is a no-op', () => {
   it('SUCCESS after sign-out: no invalidate re-seat, no toast, returns false', async () => {
     queryClient.setQueryData(['milestones'], PREV);
-    const d = deferred<MilestoneRecord[]>();
-    mockApi.setMilestones.mockImplementation(() => d.promise);
+    const held = server.hold('/milestones'); // the save is genuinely in flight when the session ends
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<boolean>;
     act(() => { pending = result.current.saveMilestones(NEXT); }); // optimistic write → cache = NEXT
     signOut();                                                      // clears cache + bumps epoch
     let returned!: boolean;
-    await act(async () => { d.resolve(NEXT); returned = await pending; });
+    await act(async () => { held.release(); returned = await pending; });
 
     expect(returned).toBe(false);              // <-- no stray router.back() after the login redirect
     expect(cached()).toBeUndefined();          // the cleared cache is NOT re-populated by a late invalidate/write
@@ -77,15 +69,14 @@ describe('WHIT-377 — saveMilestones settling AFTER sign-out is a no-op', () =>
 
   it('FAILURE after sign-out: old plan is NOT re-seated into the cleared cache, no toast, returns false', async () => {
     queryClient.setQueryData(['milestones'], PREV);
-    const d = deferred<MilestoneRecord[]>();
-    mockApi.setMilestones.mockImplementation(() => d.promise);
+    const held = server.hold('/milestones'); // the save is genuinely in flight when the session ends
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<boolean>;
     act(() => { pending = result.current.saveMilestones(NEXT); });
     signOut();
     let returned!: boolean;
-    await act(async () => { d.reject(new Error('network')); returned = await pending; });
+    await act(async () => { server.once('PUT', '/milestones', 'dropped'); held.release(); returned = await pending; });
 
     expect(returned).toBe(false);
     expect(cached()).toBeUndefined();          // <-- the catch's setQueryData(prev) is skipped by the epoch guard
@@ -96,13 +87,13 @@ describe('WHIT-377 — saveMilestones settling AFTER sign-out is a no-op', () =>
 describe('WHIT-377 — the client-minted id survives the optimistic write', () => {
   it('REPLACES the list and preserves the supplied new-row id exactly once (no merge/append/regen)', async () => {
     queryClient.setQueryData(['milestones'], PREV);        // an existing 2-row plan
-    mockApi.setMilestones.mockResolvedValue(NEXT);         // server echoes the list back unchanged
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let ok!: boolean;
     await act(async () => { ok = await result.current.saveMilestones(NEXT); });
 
     expect(ok).toBe(true);
+    expect(sent('PUT', '/milestones')).toEqual([{ method: 'PUT', path: '/milestones', body: { milestones: NEXT } }]);
     const rows = cached()!;
     expect(rows).toEqual(NEXT);                             // full replace — not [...PREV, ...NEXT]
     expect(rows.map((r) => r.id)).toEqual(['a', 'b', 'c']); // the client-minted 'c' is present ONCE, unchanged

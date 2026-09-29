@@ -16,8 +16,8 @@ const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mo
 jest.mock('../auth', () => ({
   getStatus: () => mockStatus,
   subscribe: (l: () => void) => mockSubscribe(l),
+  getAuthToken: async () => 'test-id-token',
 }));
-jest.mock('../api');
 jest.mock('../queries', () => ({
   ...require('./support/screenQueryMocks').queryMocksFromState(() => ({})),
   useIsAuthed: () => {
@@ -30,17 +30,11 @@ import { AppProvider, useAppContext } from '../context';
 import type { Rule } from '../context';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
-function deferred<T>() {
-  let resolve!: (v: T) => void;
-  let reject!: (e?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-}
 
 // Production order: clearSession() wipes the cache, THEN broadcasts anon (the epoch bump).
 function signOut() {
@@ -81,8 +75,7 @@ describe('WHIT-638 QA — after sign-out, nothing leaks into the NEXT account', 
   it("applyCategory('one'): a late failure leaves the next account's category untouched and shows no toast", async () => {
     seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: null, counts_to_budget: true, description: 'X' }]);
     queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
-    const d = deferred<unknown>();
-    mockApi.setTransactionCategory.mockImplementation(() => d.promise as never);
+    const held = server.hold('/transactions/t1');
     const result = mountWithConfirm('t1', 'c1');
 
     let pending!: Promise<void>;
@@ -90,7 +83,7 @@ describe('WHIT-638 QA — after sign-out, nothing leaks into the NEXT account', 
     signOut();
     signInNextAccount();
     seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: 'fresh', counts_to_budget: true, description: 'X' }]);
-    await act(async () => { d.reject(new Error('network')); await pending; });
+    await act(async () => { server.once('PATCH', '/transactions/t1', 'dropped'); held.release(); await pending; });
 
     expect(readTransactionsCache(queryClient)[0]?.category).toBe('fresh');
     expect(result.current.toast).toBeNull();
@@ -104,9 +97,8 @@ describe('WHIT-638 QA — after sign-out, nothing leaks into the NEXT account', 
     ]);
     queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
     queryClient.setQueryData(['rules'], []);
-    mockApi.createRule.mockResolvedValue({ id: 'r9', value: 'COLES', categoryId: 'c1' } as never);
-    const dBatch = deferred<unknown>();
-    mockApi.setTransactionCategories.mockImplementation(() => dBatch.promise as never);
+    server.once('POST', '/rules', { body: { id: 'r9', value: 'COLES', categoryId: 'c1' } });
+    const held = server.hold('/transactions');
     const result = mountWithConfirm('t1', 'c1');
 
     let pending!: Promise<void>;
@@ -119,7 +111,7 @@ describe('WHIT-638 QA — after sign-out, nothing leaks into the NEXT account', 
     ]);
     const nextRules: Rule[] = [{ id: 'rX', pattern: 'NEXT', categoryId: 'fresh', isNew: false }];
     queryClient.setQueryData(['rules'], nextRules);
-    await act(async () => { dBatch.reject(new Error('network')); await pending; });
+    await act(async () => { server.once('PATCH', '/transactions', 'dropped'); held.release(); await pending; });
 
     expect(readTransactionsCache(queryClient).map((t) => t.category)).toEqual(['fresh', 'fresh']);
     expect(rulesCache()).toEqual(nextRules);
@@ -130,15 +122,14 @@ describe('WHIT-638 QA — after sign-out, nothing leaks into the NEXT account', 
   it("applyCategory('one'): a success settling after sign-out triggers no refresh", async () => {
     seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: null, counts_to_budget: true, description: 'X' }]);
     queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
-    const d = deferred<unknown>();
-    mockApi.setTransactionCategory.mockImplementation(() => d.promise as never);
+    const held = server.hold('/transactions/t1');
     const result = mountWithConfirm('t1', 'c1');
 
     let pending!: Promise<void>;
     act(() => { pending = result.current.applyCategory('one'); });
     signOut();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
-    await act(async () => { d.resolve({}); await pending; });
+    await act(async () => { held.release(); await pending; });
 
     expect(invalidatedKeys(spy)).toEqual([]);
   });
@@ -147,15 +138,14 @@ describe('WHIT-638 QA — after sign-out, nothing leaks into the NEXT account', 
   it('applyCategoryToMany: a success settling after sign-out triggers no refresh', async () => {
     seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: null, counts_to_budget: true, description: 'X' }]);
     queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
-    const d = deferred<unknown>();
-    mockApi.setTransactionCategories.mockImplementation(() => d.promise as never);
+    const held = server.hold('/transactions');
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
     act(() => { pending = result.current.applyCategoryToMany(['t1'], 'c1'); });
     signOut();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
-    await act(async () => { d.resolve(updated('t1')); await pending; });
+    await act(async () => { held.release(); await pending; });
 
     expect(invalidatedKeys(spy)).toEqual([]);
   });
@@ -163,15 +153,14 @@ describe('WHIT-638 QA — after sign-out, nothing leaks into the NEXT account', 
   // [A5]
   it('applyTransactionEdit (exclude): a success settling after sign-out triggers no refresh', async () => {
     seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: null, counts_to_budget: true, description: 'X' }]);
-    const d = deferred<unknown>();
-    mockApi.setTransactionFields.mockImplementation(() => d.promise as never);
+    const held = server.hold('/transactions/t1');
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
     act(() => { pending = result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
     signOut();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
-    await act(async () => { d.resolve({}); await pending; });
+    await act(async () => { held.release(); await pending; });
 
     expect(invalidatedKeys(spy)).toEqual([]);
   });
@@ -181,16 +170,15 @@ describe('WHIT-638 QA — after sign-out, nothing leaks into the NEXT account', 
     seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: null, counts_to_budget: true, description: 'COLES' }]);
     queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
     queryClient.setQueryData(['rules'], []);
-    mockApi.createRule.mockRejectedValue(new Error('rule down') as never);
-    const dBatch = deferred<unknown>();
-    mockApi.setTransactionCategories.mockImplementation(() => dBatch.promise as never);
+    server.fail('/rules', 500);
+    const held = server.hold('/transactions');
     const result = mountWithConfirm('t1', 'c1');
 
     let pending!: Promise<void>;
     act(() => { pending = result.current.applyCategory('all'); });
     signOut();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
-    await act(async () => { dBatch.resolve(updated('t1')); await pending; });
+    await act(async () => { held.release(); await pending; });
 
     expect(invalidatedKeys(spy)).toEqual([]);
     expect(result.current.toast).toBeNull();
@@ -198,15 +186,14 @@ describe('WHIT-638 QA — after sign-out, nothing leaks into the NEXT account', 
 
   // [A7]
   it('generateAiInsights: a late failure after sign-out + re-sign-in sets no error on the new session', async () => {
-    const d = deferred<api.AiInsights>();
-    mockApi.generateAiInsights.mockImplementation(() => d.promise as never);
+    const held = server.hold('/insights/ai');
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
     act(() => { pending = result.current.generateAiInsights(null); });
     signOut();
     signInNextAccount();
-    await act(async () => { d.reject(new Error('network')); await pending; });
+    await act(async () => { server.once('POST', '/insights/ai', 'dropped'); held.release(); await pending; });
 
     expect(result.current.aiInsightsError).toBe(false);
     expect(result.current.aiInsightsLoading).toBe(false);
@@ -218,7 +205,7 @@ describe('WHIT-638 QA — in-session behaviour is unchanged', () => {
   it("applyCategory('one') failure rolls the category back, toasts, and does not refresh", async () => {
     seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: 'old', counts_to_budget: true, description: 'X' }]);
     queryClient.setQueryData(['categories'], [cat('old', 'Old'), cat('c1', 'Groceries')]);
-    mockApi.setTransactionCategory.mockRejectedValue(new Error('network') as never);
+    server.once('PATCH', '/transactions/t1', 'dropped');
     const result = mountWithConfirm('t1', 'c1');
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -234,7 +221,6 @@ describe('WHIT-638 QA — in-session behaviour is unchanged', () => {
   it("applyCategory('one') success keeps the new category and refreshes the refile keys", async () => {
     seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: 'old', counts_to_budget: true, description: 'X' }]);
     queryClient.setQueryData(['categories'], [cat('old', 'Old'), cat('c1', 'Groceries')]);
-    mockApi.setTransactionCategory.mockResolvedValue({} as never);
     const result = mountWithConfirm('t1', 'c1');
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -250,8 +236,7 @@ describe('WHIT-638 QA — in-session behaviour is unchanged', () => {
     seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: null, counts_to_budget: true, description: 'COLES' }]);
     queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
     queryClient.setQueryData(['rules'], []);
-    mockApi.createRule.mockResolvedValue({ id: 'r9', value: 'COLES', categoryId: 'c1', field: 'description', operator: 'contains' } as never);
-    mockApi.setTransactionCategories.mockResolvedValue(updated('t1') as never);
+    server.once('POST', '/rules', { body: { id: 'r9', value: 'COLES', categoryId: 'c1', field: 'description', operator: 'contains' } });
     const result = mountWithConfirm('t1', 'c1');
 
     await act(async () => { await result.current.applyCategory('all'); });
@@ -268,8 +253,7 @@ describe('WHIT-638 QA — in-session behaviour is unchanged', () => {
     queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
     const existing: Rule[] = [{ id: 'rOther', pattern: 'WOOLWORTHS', categoryId: 'c1', isNew: false }];
     queryClient.setQueryData(['rules'], existing);
-    mockApi.createRule.mockRejectedValue(new Error('rule down') as never);
-    mockApi.setTransactionCategories.mockResolvedValue(updated('t1') as never);
+    server.fail('/rules', 500);
     const result = mountWithConfirm('t1', 'c1');
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -289,8 +273,8 @@ describe('WHIT-638 QA — in-session behaviour is unchanged', () => {
     ]);
     queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
     queryClient.setQueryData(['rules'], []);
-    mockApi.createRule.mockResolvedValue({ id: 'r9', value: 'COLES', categoryId: 'c1' } as never);
-    mockApi.setTransactionCategories.mockResolvedValue(updated('t1') as never);
+    server.once('POST', '/rules', { body: { id: 'r9', value: 'COLES', categoryId: 'c1' } });
+    server.once('PATCH', '/transactions', { body: updated('t1') }); // t2 comes back without a result
     const result = mountWithConfirm('t1', 'c1');
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -308,7 +292,7 @@ describe('WHIT-638 QA — in-session behaviour is unchanged', () => {
       { transaction_id: 't2', category: 'older', counts_to_budget: true, description: 'Y' },
     ]);
     queryClient.setQueryData(['categories'], [cat('old', 'Old'), cat('older', 'Older'), cat('c1', 'Groceries')]);
-    mockApi.setTransactionCategories.mockRejectedValue(new Error('network') as never);
+    server.fail('/transactions', 500);
     const { result } = renderHook(() => useAppContext(), { wrapper });
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -322,7 +306,6 @@ describe('WHIT-638 QA — in-session behaviour is unchanged', () => {
   // [A14]
   it('applyTransactionEdit note success refreshes nothing; exclude success refreshes the budget keys', async () => {
     seedTransactionsCache(queryClient, [{ transaction_id: 't1', notes: 'old', category: null, counts_to_budget: true, description: 'X' }]);
-    mockApi.setTransactionFields.mockResolvedValue({} as never);
     const { result } = renderHook(() => useAppContext(), { wrapper });
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -337,12 +320,12 @@ describe('WHIT-638 QA — in-session behaviour is unchanged', () => {
 
   // [A15]
   it('refreshAiInsights failure keeps the insights already shown and raises no error', async () => {
-    mockApi.fetchAiInsights.mockResolvedValueOnce({ summary: 'shown' } as never);
+    server.once('GET', '/insights/ai', { body: { summary: 'shown' } });
     const { result } = renderHook(() => useAppContext(), { wrapper });
     await act(async () => { await result.current.refreshAiInsights(); });
     expect(result.current.aiInsights).toEqual({ summary: 'shown' });
 
-    mockApi.fetchAiInsights.mockRejectedValueOnce(new Error('network') as never);
+    server.once('GET', '/insights/ai', 'dropped');
     await act(async () => { await result.current.refreshAiInsights(); });
 
     expect(result.current.aiInsights).toEqual({ summary: 'shown' });
@@ -351,7 +334,7 @@ describe('WHIT-638 QA — in-session behaviour is unchanged', () => {
 
   // [A16]
   it('generateAiInsights: success seats data and clears the spinner; failure flags the error and clears it', async () => {
-    mockApi.generateAiInsights.mockResolvedValueOnce({ summary: 'fresh' } as never);
+    server.once('POST', '/insights/ai', { body: { summary: 'fresh' } });
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     await act(async () => { await result.current.generateAiInsights(null); });
@@ -359,7 +342,7 @@ describe('WHIT-638 QA — in-session behaviour is unchanged', () => {
     expect(result.current.aiInsightsLoading).toBe(false);
     expect(result.current.aiInsightsError).toBe(false);
 
-    mockApi.generateAiInsights.mockRejectedValueOnce(new Error('network') as never);
+    server.once('POST', '/insights/ai', 'dropped');
     await act(async () => { await result.current.generateAiInsights(null); });
     expect(result.current.aiInsightsError).toBe(true);
     expect(result.current.aiInsightsLoading).toBe(false);
