@@ -54,7 +54,7 @@ RULE | RULE#r1                        USER#<owner_id> | RULE#r1
 | 5 | `LOANFACTS` \| `LOANFACTS` | `U` \| `LOANFACTS` | `repository_loanfacts.py` |
 | 6 | `DEVICES` \| `DEVICES` | `U` \| `DEVICES` | `repository_device.py` |
 | 7 | `ACCOUNT#<name>` \| `TXN#<t>` | `U` \| `ACCOUNT#<gen id>#TXN#<t>` | `repository_transaction.py` |
-| 8 | `RULE` \| `RULE#<id>` | `U` \| `RULE#<id>` | `repository_rule.py` |
+| 8 | `RULE` \| `RULE#<id>` | `U#RULES` \| `RULE#<id>` (own partition, see "Delete permission" in section 3) | `repository_rule.py` |
 | 9 | `JOB` \| `JOB#<id>` | `U` \| `JOB#<id>` | `repository_job.py` |
 | 10 | `INSIGHT` \| `<cycle_start>` | `U` \| `INSIGHT#<cycle_start>` | `repository_insight.py` |
 | 11 | `MILESTONES` \| `<scope>` | `U` \| `MILESTONES` | `repository_milestone.py` |
@@ -71,6 +71,7 @@ RULE | RULE#r1                        USER#<owner_id> | RULE#r1
 - The `SHARED` / `FIRED` / `None` scope in the sort key goes away. The owner is now in `pk`, so a scope adds nothing. This also removes the `"SHARED"` ↔ `None` bridge in `lambda_api/handler.py` (`_notify_scope`).
 - `U | ACCOUNT#<a>#TXN#<t>` lets one query read one account's transactions (`begins_with ACCOUNT#<a>#TXN#`) or all of the user's transactions (`begins_with ACCOUNT#`).
 - Rows 12–15: `<a>` is the generated account id, never a name.
+- Row 8 is the one exception to "owner is the whole `pk`": rules sit in a second per-user partition `USER#<owner_id>#RULES`. That keeps the API's delete permission limited to rules (section 3).
 
 ### New per-user row: the accounts list
 
@@ -107,7 +108,7 @@ These are looked up before the owner is known, or they are an ops queue across a
 - Both old indexes would let one user's lookup match another user's rows (same transaction id, or same account id). The new ones always include the owner.
 - Transaction rows keep a plain `account_id` attribute. The app still reads it.
 - `owner-index` is sparse: only the app-wide rows that carry an `owner` attribute (FAILED, PUSHRECEIPT) appear in it. Per-user rows don't set `owner` — their owner is in `pk`. Used only by delete-user.
-- **Rollout order** (DynamoDB allows one GSI change per apply): add `owner-txn-index` → add `owner-account-date-index` → add `owner-index` → backfill attributes (migration) → switch reads → drop `transaction-id-index` → drop `date-index`.
+- **Rollout order** (DynamoDB allows one GSI change per apply): add `owner-txn-index` → add `owner-account-date-index` → add `owner-index` → backfill attributes (migration) → switch reads (the key layout switch, section 8) → drop `transaction-id-index` → drop `date-index`.
 
 ## 3. Key-builder API (`shared/keys.py`, built in the re-key card)
 
@@ -117,7 +118,8 @@ The only place a key string is formed. If a method forgets the owner → it can'
 class MissingOwnerError(Exception): ...
 
 class OwnerKeys:
-    def __init__(self, owner_id: str):  # raises MissingOwnerError on None / "" / whitespace
+    def __init__(self, owner_id: str):  # raises MissingOwnerError on None / "" / whitespace;
+                                        # ValueError if owner_id contains "#"
     # singletons → {"pk", "sk"}
     def budgets(self); def categories(self); def goals(self); def paycycle(self)
     def loanfacts(self); def devices(self); def milestones(self)
@@ -125,7 +127,7 @@ class OwnerKeys:
     def transaction(self, account_id, txn_id)        # {"pk", "sk"}
     def account_txn_prefix(self, account_id)         # sk prefix for begins_with
     # collections
-    def rule(self, rule_id); def rules_prefix(self)
+    def rule(self, rule_id); def rules_partition(self)   # pk = U#RULES
     def job(self, job_id); def jobs_prefix(self)
     def insight(self, cycle_start)
     # per-account markers
@@ -137,8 +139,10 @@ class OwnerKeys:
     def account(self, account_id); def accounts_prefix(self)
     # GSI attribute values, set on every transaction write
     def gsi_owner_txn(self, txn_id); def gsi_owner_account(self, account_id)
+    # GSI lookups → (index name, hash attribute, value); follow the key layout switch (section 8)
+    def txn_lookup(self, txn_id); def account_date_lookup(self, account_id)
     # delete-user
-    def everything(self)                             # KeyConditionExpression for pk = U
+    def everything(self)                             # the two partitions: pk = U and pk = U#RULES
 
 # app-wide helpers (no owner needed)
 def bank_account(provider, provider_account_id)
@@ -150,7 +154,14 @@ def pending_receipt(receipt_id)
 
 - Repositories take `OwnerKeys` (or the owner id) in their constructor. No repository method writes its own key string.
 - **Guard test** (repo-wide, like `test_no_shared_name_shadowing.py`): no `"pk"` dict literal or `Key("pk")` outside `shared/keys.py`. Exempt: tests and `scripts/migrations/` (historical one-off scripts).
-- IAM: the rule-delete grant pins `dynamodb:LeadingKeys = ["RULE"]` (`terraform/iam.tf:130`). After re-keying, rule rows live under `USER#…`, so this condition must become `USER#*` (StringLike) in the re-key card. Delete-user also needs DeleteItem / BatchWriteItem across a user's partition.
+**Delete permission (IAM)**
+
+- Today the API may delete rule rows only: `dynamodb:LeadingKeys = ["RULE"]` (`terraform/iam.tf:117-131`, WHIT-528). That check only looks at `pk`.
+- If rules moved to `U | RULE#<id>`, the check would have to allow `USER#*` → the API could delete **any** row of **any** user (budgets, transactions, devices). Not acceptable.
+- So rules get their own partition `USER#<owner_id>#RULES`. The condition becomes `ForAllValues:StringLike` = `["USER#*#RULES"]` → delete stays limited to rule rows.
+  - While the old layout is still live (section 8), the list is `["RULE", "USER#*#RULES"]`. `"RULE"` is removed when the old rows are deleted.
+  - No other per-user `pk` may ever end in `#RULES`. `OwnerKeys` refuses owner ids containing `#`, so an owner id can't fake the suffix.
+- Delete-user needs delete across a whole user. It runs in its **own** Lambda with its own role. The API role never gets that wider permission.
 
 ## 4. Owner resolution: every entry point
 
@@ -178,7 +189,9 @@ def pending_receipt(receipt_id)
 
 ## 5. Delete everything for a user
 
-1. Query `pk = U` (paged) → batch-delete every row. Covers budgets, categories, goals, transactions, rules, jobs, insights, milestones, balances, markers, notify rows, devices, `ACCTINFO` rows.
+Runs in its own Lambda and role (section 3). The API can't do this.
+
+1. Query `pk = U` and `pk = U#RULES` (paged) → batch-delete every row. Covers budgets, categories, goals, transactions, rules, jobs, insights, milestones, balances, markers, notify rows, devices, `ACCTINFO` rows.
    - Read the `ACCTINFO#` rows first — step 2 needs their provider ids.
 2. Delete each `BANKACCT#<provider>#<id>` row listed on those `ACCTINFO` rows.
 3. Query `owner-index` for `owner = <owner_id>` → delete those app-wide rows (FAILED, PUSHRECEIPT). No table scan.
@@ -199,23 +212,66 @@ Safe to run twice: every step deletes whatever is still there.
 
 Steps:
 1. Generate the 4 account ids once and save them to a mapping file, so a re-run reuses them.
-2. Write the 4 `ACCTINFO#` rows (from `ACCOUNT_ID_MAP`, `BALANCE_SOURCES`, `SYNC_FEED_IDS`, `UP_HOMELOAN_ACCOUNT_ID`, `FEED_STALL_ACCOUNT_IDS`) and their `BANKACCT#banksync#…` / `BANKACCT#up#…` rows.
-3. Write `USERS | USER#<Jas owner_id>`.
-4. Copy every row in patterns 1–20 to its new key. Transactions: rewrite `account_id` to the new id, and set `owner_txn` / `owner_account`.
+2. Check that the accounts-list card already wrote the 4 `ACCTINFO#` rows (from `ACCOUNT_ID_MAP`, `BALANCE_SOURCES`, `SYNC_FEED_IDS`, `UP_HOMELOAN_ACCOUNT_ID`, `FEED_STALL_ACCOUNT_IDS`), their `BANKACCT#banksync#…` / `BANKACCT#up#…` rows, and `USERS | USER#<Jas owner_id>`. Stop if any is missing.
+3. Rules: `RULE | RULE#<id>` → `U#RULES | RULE#<id>`.
+4. Copy every row in patterns 1–20 to its new key. Transactions: rewrite `account_id` to the new id, and set `owner_txn` / `owner_account`. Re-key the `ACCTINFO#<name>` rows to `ACCTINFO#<gen id>` and point the `BANKACCT#` rows at the new ids (the accounts-list card created them with the old name ids).
+   - Any other row that stores an account id inside its contents (goals, loan facts, markers) gets the old name swapped for the new id. The dry run lists every hit.
 5. Scopes: `MILESTONES | SHARED` → `U | MILESTONES`. `NOTIFY#MILESTONE | FIRED` and `NOTIFY#GOALCHECKPOINT | FIRED` → `U | NOTIFY#…`, **keeping the fired markers** (otherwise old milestone / goal pushes fire again).
 6. FAILED and PUSHRECEIPT rows: add `owner`. EVENT rows: add `expires_at`.
-7. Delete old rows only after reads are switched and checked.
+7. Delete old rows only after the switch (section 8) has been live and checked for a week.
 
 Rules:
-- Safe to run twice: puts are "copy if missing", ids come from the mapping file.
+- Safe to run twice. The mapping file keeps the ids stable. The script has two modes: `--copy` (copy if missing, used ahead of time) and `--final` (overwrite, used only inside the freeze).
 - `--dry-run` prints counts per pattern (old vs would-write). A real run ends with the same count check and fails if they don't match.
 
-## 7. Follow-on cards
+## 8. Cutover: switching from the old keys to the new ones
 
-1. **Re-key**: `shared/keys.py`, repositories take the owner, `current_scope` returns `sub`, guard test, IAM `LeadingKeys` update, feed-cursor rebuild.
-2. **Accounts list**: `ACCTINFO#` / `BANKACCT#` rows, `kind`, replace the name constants, owner lookup in both webhooks and the scheduled jobs.
-3. **Migration + GSI swap**: add GSIs, migrate, switch reads, drop old GSIs.
-4. **Delete user**: the path in section 5, plus the `owner-index` GSI.
+The risk: if code that reads the new keys ships before the data has been copied → the app shows empty budgets and transactions. And bank writes made during the copy land in one key set but not the other.
+
+**The switch lives in one place: the key-builder.**
+
+- `shared/keys.py` has a key-layout setting: `legacy` or `owner` (one Lambda environment variable, same value in every Lambda).
+- `legacy` → `OwnerKeys` still demands an owner, but returns today's keys (`BUDGETS | BUDGETS`, `ACCOUNT#<a> | TXN#<t>`, `RULE | RULE#<id>`…) and the old GSIs. Same data, same behaviour.
+- `owner` → returns the new keys and the new GSIs from this page.
+- New row types (`ACCTINFO#`, `BANKACCT#`, `USERS`) have no old version. They use their new keys in both modes.
+- Repositories never see the setting. Only `keys.py` reads it.
+
+```
+re-key card        accounts-list card       migration card                        later
+[legacy] ────────→ [legacy] ──────────────→ copy → freeze → final copy → [owner] → delete old rows
+ no data change     writes ACCTINFO/          (old rows untouched until "later")    drop old GSIs
+                    BANKACCT/USERS rows                                             drop "RULE" from IAM
+```
+
+**Freeze and switch (in the migration card, a few minutes, Jas is the only user)**
+
+1. Ahead of time, app live: add the 3 GSIs. Run `--copy` and the dry-run count check.
+2. Turn the freeze on (a setting read by every Lambda):
+   - BankSync webhook → dead-letters every incoming transaction to `FAILED` (the existing path). Nothing is lost.
+   - Up webhook → skips (worst case: one missed repayment push).
+   - Scheduled jobs → exit early.
+   - API → rejects writes with "try again in a few minutes". Reads keep working.
+3. Run `--final` (overwrite) → every change since step 1 is copied. Count check must pass.
+4. One deploy: key layout → `owner`, freeze → off.
+5. Run reprocess → the `FAILED` rows from the freeze are filed under the new keys.
+6. Check the app: budgets, transactions, goals, rules, milestones.
+
+**Going back**
+
+- If step 6 fails → set the key layout back to `legacy`. The old rows are untouched, so the app works again at once.
+- Cost: writes made after step 4 exist only under the new keys → re-run `--final` before trying again. The old rows are kept a week for this reason.
+
+**Owner before the switch**
+
+- In `legacy` mode the API already passes `claims.sub` (it's ignored by the keys, but proves every path has an owner).
+- Background jobs and webhooks have no signed-in user. Until the accounts-list card adds the `BANKACCT#` / `USERS` lookups, the re-key card gives them one configured owner id (Jas's `sub`, one setting). The accounts-list card replaces it.
+
+## 9. Follow-on cards
+
+1. **Re-key** (ships in `legacy` mode, no visible change): `shared/keys.py` with the key-layout setting, repositories take the owner, `current_scope` returns `sub`, one configured owner for background jobs, guard test, feed-cursor rebuild. IAM condition → `["RULE", "USER#*#RULES"]`.
+2. **Accounts list** (still `legacy`): `ACCTINFO#` / `BANKACCT#` / `USERS` rows (with today's name ids), `kind`, the app gets account names from the list instead of the id (today it turns `up-homeloan` into "Up Homeloan"), replace the name constants and the configured owner with lookups in both webhooks and the scheduled jobs.
+3. **Migration + switch**: add GSIs, the migration script (section 6), the freeze setting, the cutover in section 8. A week later: delete old rows, drop old GSIs, drop `"RULE"` from the IAM condition, delete the `legacy` mode from `keys.py`.
+4. **Delete user**: the path in section 5, its own Lambda and role, plus the `owner-index` GSI (if not already added in card 3).
 
 ## Out of scope
 
