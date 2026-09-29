@@ -7,14 +7,12 @@ and pages the real alerts topic with a runbook that names both known causes.
 """
 
 import io
-import pathlib
 import re
 import urllib.error
 
 import handler
 import pytest
-
-_TERRAFORM = pathlib.Path(__file__).resolve().parents[2] / "terraform"
+from _terraform import MONITORING_TF, TERRAFORM_DIR, tf_attr, tf_block
 
 
 class _FakeResponse:
@@ -167,59 +165,47 @@ def test_after_a_401_run_the_next_run_reads_ssm_again(monkeypatch, ssm_reads):
 # --- terraform: the alarm watches what the schedule runs ----------------------
 
 
-def _tf_block(text, kind, name):
-    match = re.search(rf'resource "{kind}" "{name}" \{{(.*?)\n\}}', text, re.S)
-    assert match, f'resource "{kind}" "{name}" not found'
-    return match.group(1)
-
-
-def _tf_attr(block, key):
-    match = re.search(rf'^\s*{key}\s*=\s*(.+?)\s*$', block, re.M)
-    assert match, f"attribute {key} not found"
-    return match.group(1)
-
-
 def _alarm():
-    return _tf_block((_TERRAFORM / "monitoring.tf").read_text(),
-                     "aws_cloudwatch_metric_alarm", "transaction_trigger_errors")
+    return tf_block(MONITORING_TF.read_text(),
+                    "aws_cloudwatch_metric_alarm", "transaction_trigger_errors")
 
 
 # [A8]
 def test_alarm_watches_the_function_the_hourly_schedule_invokes():
-    schedule = _tf_block((_TERRAFORM / "scheduler.tf").read_text(),
-                         "aws_scheduler_schedule", "transaction_sync")
+    schedule = tf_block((TERRAFORM_DIR / "scheduler.tf").read_text(),
+                        "aws_scheduler_schedule", "transaction_sync")
     assert re.search(r"^\s*arn\s*=\s*aws_lambda_function\.transaction_trigger\.arn\s*$", schedule, re.M)
-    assert _tf_attr(schedule, "schedule_expression") == "var.sync_schedule_expression"
+    assert tf_attr(schedule, "schedule_expression") == "var.sync_schedule_expression"
 
-    function = _tf_block((_TERRAFORM / "lambda.tf").read_text(),
-                         "aws_lambda_function", "transaction_trigger")
-    assert _tf_attr(function, "function_name") == '"${var.project_name}-transaction-trigger"'
-    assert "aws_lambda_function.transaction_trigger.function_name" in _tf_attr(_alarm(), "dimensions")
+    function = tf_block((TERRAFORM_DIR / "lambda.tf").read_text(),
+                        "aws_lambda_function", "transaction_trigger")
+    assert tf_attr(function, "function_name") == '"${var.project_name}-transaction-trigger"'
+    assert "aws_lambda_function.transaction_trigger.function_name" in tf_attr(_alarm(), "dimensions")
 
 
 # [A9]
 def test_alarm_pages_the_existing_alerts_topic():
-    monitoring = (_TERRAFORM / "monitoring.tf").read_text()
-    _tf_block(monitoring, "aws_sns_topic", "alerts")
-    assert _tf_attr(_alarm(), "alarm_actions") == "[aws_sns_topic.alerts.arn]"
+    monitoring = MONITORING_TF.read_text()
+    tf_block(monitoring, "aws_sns_topic", "alerts")
+    assert tf_attr(_alarm(), "alarm_actions") == "[aws_sns_topic.alerts.arn]"
 
 
 # [A10]
 def test_hours_without_a_run_do_not_count_as_failed_hours():
-    assert _tf_attr(_alarm(), "treat_missing_data") == '"notBreaching"'
+    assert tf_attr(_alarm(), "treat_missing_data") == '"notBreaching"'
 
 
 # [A11]
 def test_alarm_name_is_unique_across_monitoring():
-    monitoring = (_TERRAFORM / "monitoring.tf").read_text()
-    name = _tf_attr(_alarm(), "alarm_name")
+    monitoring = MONITORING_TF.read_text()
+    name = tf_attr(_alarm(), "alarm_name")
     assert name == '"${var.project_name}-transaction-trigger-errors"'
     assert len(re.findall(rf"^\s*alarm_name\s*=\s*{re.escape(name)}\s*$", monitoring, re.M)) == 1
 
 
 # [A12]
 def test_alarm_description_is_a_runbook_for_both_known_causes():
-    description = _tf_attr(_alarm(), "alarm_description")
+    description = tf_attr(_alarm(), "alarm_description")
 
     assert description.startswith('"') and description.endswith('"')
     assert "/aws/lambda/abundo-transaction-trigger" in description
@@ -232,7 +218,7 @@ def test_alarm_description_is_a_runbook_for_both_known_causes():
 
 # [A13]
 def test_runbook_paths_match_the_real_log_group_and_ssm_path():
-    log_group = _tf_block((_TERRAFORM / "lambda.tf").read_text(),
-                          "aws_cloudwatch_log_group", "transaction_trigger")
-    assert _tf_attr(log_group, "name") == '"/aws/lambda/${var.project_name}-transaction-trigger"'
-    assert handler.BANKSYNC_API_KEY_PATH in _tf_attr(_alarm(), "alarm_description")
+    log_group = tf_block((TERRAFORM_DIR / "lambda.tf").read_text(),
+                         "aws_cloudwatch_log_group", "transaction_trigger")
+    assert tf_attr(log_group, "name") == '"/aws/lambda/${var.project_name}-transaction-trigger"'
+    assert handler.BANKSYNC_API_KEY_PATH in tf_attr(_alarm(), "alarm_description")

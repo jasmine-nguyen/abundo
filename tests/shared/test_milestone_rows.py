@@ -17,7 +17,6 @@ Covered here:
 
 import json
 import logging
-import pathlib
 import re
 import sys
 from decimal import Decimal
@@ -31,6 +30,7 @@ from _milestone_fakes import (
     marker_reads, removed_markers, stored_markers,
 )
 from _milestone_row_fakes import _GOOD, _row, _store_raw_row
+from _terraform import filter_pattern
 
 
 # --- [U] the shared validator, directly -------------------------------------------------
@@ -593,10 +593,7 @@ def test_the_terraform_metric_filter_matches_the_line_a_bad_date_emits(shared, c
     # retyped, so renaming the token on either side goes red.
     # CloudWatch text filter terms match whitespace-delimited words, so the token has to sit in
     # the line as a bare word — a "MILESTONE_ROW_MALFORMED:" prefix would NOT match the filter.
-    tf = (pathlib.Path(__file__).resolve().parents[2] / "terraform" / "monitoring.tf").read_text()
-    pattern = re.search(
-        r'resource "aws_cloudwatch_log_metric_filter" "milestone_row_malformed".*?'
-        r'pattern\s*=\s*"([^"]+)"', tf, re.S).group(1)
+    pattern = filter_pattern("milestone_row_malformed")
     terms = re.findall(r"\?(\S+)", pattern)
     assert "MILESTONE_ROW_MALFORMED" in terms, f"terraform pattern changed: {pattern!r}"
 
