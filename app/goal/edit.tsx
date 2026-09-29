@@ -5,7 +5,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Crypto from 'expo-crypto';
 import { C, FONT, fmt, tint } from '../../src/theme';
 import { Icon, ICON_KEYS } from '../../src/icons';
-import { useAppContext, accountSummaries } from '../../src/context';
+import { useAppContext, accountSummaries, accountNameFromId } from '../../src/context';
 import { useGoalsQuery, useRecentTransactionsScreenData, useIsAuthed } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { NativeDateField } from '../../src/components/NativeDateField';
@@ -94,13 +94,13 @@ export default function GoalEdit() {
   const nameById = new Map(accountSummaries({ transactions }).map((a) => [a.id, a.name]));
   const accountOptions: { id: string; name: string; amount: number | null }[] = [...balances.values()].map((b) => ({
     id: b.account_id,
-    name: nameById.get(b.account_id) ?? b.account_id,
+    name: nameById.get(b.account_id) ?? accountNameFromId(b.account_id),
     amount: b.amount,
   }));
   // Keep the currently-saved account visible when editing, even if it hasn't been polled this
   // session (so it isn't in `balances`) — otherwise the edit form would show no selection.
   if (accountId && !accountOptions.some((o) => o.id === accountId)) {
-    accountOptions.push({ id: accountId, name: nameById.get(accountId) ?? accountId, amount: null });
+    accountOptions.push({ id: accountId, name: nameById.get(accountId) ?? accountNameFromId(accountId), amount: null });
   }
 
   const chooseDirection = (next: Direction) => {

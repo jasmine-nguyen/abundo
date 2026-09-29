@@ -171,14 +171,14 @@ describe('create', () => {
 });
 
 describe('synced account picker', () => {
-  it('lists an account that has a balance but NO transactions (falls back to the id)', () => {
+  it('lists an account that has a balance but NO transactions (falls back to the tidied id)', () => {
     mockBalances = new Map([['acc-2', balance('acc-2', 999)]]);
     mockTransactions = []; // acc-2 has a live balance but no transaction history yet
     render(<GoalEdit />);
     fireEvent.press(screen.getByTestId('goal-source-synced'));
     const row = screen.getByTestId('goal-account-acc-2');
     expect(row).toBeTruthy();
-    expect(screen.getByText('acc-2')).toBeTruthy(); // id fallback name
+    expect(screen.getByText('Acc 2')).toBeTruthy(); // WHIT-643: tidied id fallback name
   });
 
   it('a manual body carries NO account_id even after an account was picked then switched away', async () => {

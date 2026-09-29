@@ -88,6 +88,7 @@ it('an editing rule account not in the recent set is surfaced and round-trips', 
   });
   render(<Overlays />);
   expect(screen.getByTestId('rule-account-0-acc-gone')).toBeTruthy();
+  expect(screen.getByText('Acc Gone')).toBeTruthy(); // WHIT-643: tidied id, not the raw 'acc-gone'
   fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('a1', 'acc-gone', 'groceries', false, {
     conditions: [{ field: 'account', operator: 'equals', value: 'acc-gone' }],
