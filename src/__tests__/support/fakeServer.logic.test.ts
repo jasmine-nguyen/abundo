@@ -133,7 +133,7 @@ describe('WHIT-639 fake server one-shot replies (once)', () => {
     await expect(api.getApplyRulesJob('job-1')).resolves.toEqual(SUCCEEDED);
     await expect(api.getApplyRulesJob('job-1')).resolves.toEqual(RUNNING);
 
-    expect(server.requests().filter((r) => r.method === 'GET' && r.path === JOB_PATH)).toHaveLength(4);
+    expect(server.sent('GET', JOB_PATH)).toHaveLength(4);
   });
 
   it('a queued reply beats a sticky failure, is keyed by method, and carries the server\'s reason', async () => {
