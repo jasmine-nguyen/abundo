@@ -22,14 +22,13 @@ beforeEach(() => resetAuth());
 
 describe('WHIT-651 QA — held replies used by the sign-out suites', () => {
   const server = installFakeServer();
-  const sent = (method: string, path: string) => server.requests().filter((r) => r.method === method && r.path === path);
 
   // [A1] (P0) saveMilestonesSignOut / sessionGuardSaveRunnerQa queue the failure AFTER the save is in flight.
   it('[A1] a dropped reply queued while the request is held is the one it gets on release', async () => {
     const held = server.hold('/milestones');
     const save = api.setMilestones(PLAN).then(() => 'resolved', (e: unknown) => e);
     await flush();
-    expect(sent('PUT', '/milestones')).toHaveLength(1);
+    expect(server.sent('PUT', '/milestones')).toHaveLength(1);
 
     server.once('PUT', '/milestones', 'dropped');
     held.release();
@@ -87,6 +86,6 @@ describe('WHIT-651 QA — held replies used by the sign-out suites', () => {
     held.release();
 
     await expect(save).resolves.toEqual(PLAN);
-    expect(sent('PUT', '/milestones')).toEqual([{ method: 'PUT', path: '/milestones', body: { milestones: PLAN } }]);
+    expect(server.sent('PUT', '/milestones')).toEqual([{ method: 'PUT', path: '/milestones', body: { milestones: PLAN } }]);
   });
 });

@@ -28,7 +28,6 @@ import type { MilestoneRecord } from '../api';
 import { installFakeServer } from './support/fakeServer';
 
 const server = installFakeServer();
-const sent = (method: string, path: string) => server.requests().filter((r) => r.method === method && r.path === path);
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -93,7 +92,7 @@ describe('WHIT-377 — the client-minted id survives the optimistic write', () =
     await act(async () => { ok = await result.current.saveMilestones(NEXT); });
 
     expect(ok).toBe(true);
-    expect(sent('PUT', '/milestones')).toEqual([{ method: 'PUT', path: '/milestones', body: { milestones: NEXT } }]);
+    expect(server.sent('PUT', '/milestones')).toEqual([{ method: 'PUT', path: '/milestones', body: { milestones: NEXT } }]);
     const rows = cached()!;
     expect(rows).toEqual(NEXT);                             // full replace — not [...PREV, ...NEXT]
     expect(rows.map((r) => r.id)).toEqual(['a', 'b', 'c']); // the client-minted 'c' is present ONCE, unchanged

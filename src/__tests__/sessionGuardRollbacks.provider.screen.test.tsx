@@ -36,7 +36,6 @@ import { seedTransactionsCache, readTransactionsCache } from './support/transact
 import { installFakeServer } from './support/fakeServer';
 
 const server = installFakeServer();
-const sent = (method: string, path: string) => server.requests().filter((r) => r.method === method && r.path === path);
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -80,7 +79,7 @@ describe('WHIT-271 — a writer settling after sign-out re-seats nothing and sho
     signOut();
     await act(async () => { held.release(); await settle(); });
 
-    expect(sent('PUT', '/paycycle')).toHaveLength(1);
+    expect(server.sent('PUT', '/paycycle')).toHaveLength(1);
     expect(queryClient.getQueryData(['payCycle'])).toBeUndefined(); // old cycle NOT re-seated
     expect(result.current.toast).toBeNull();
   });
@@ -100,7 +99,7 @@ describe('WHIT-271 — a writer settling after sign-out re-seats nothing and sho
 
     // The new account's cycle must survive — a guarded-updater (prev ? prev-value : prev) would
     // have overwritten it with the old length; only the epoch drops the write entirely.
-    expect(sent('PUT', '/paycycle')).toHaveLength(1);
+    expect(server.sent('PUT', '/paycycle')).toHaveLength(1);
     expect(queryClient.getQueryData(['payCycle'])).toEqual({ length: 7, last_pay_date: '2026-07-10' });
   });
 
@@ -477,7 +476,7 @@ describe('[A21][A22] a blank name is a validation bail, never a rejection', () =
         .then((v) => v, (e: unknown) => ({ threw: e }));
     });
     expect(returned).toBeNull();
-    expect(sent('POST', '/categories')).toHaveLength(0);
+    expect(server.sent('POST', '/categories')).toHaveLength(0);
     expect(result.current.toast).toBeNull();
   });
 
@@ -489,7 +488,7 @@ describe('[A21][A22] a blank name is a validation bail, never a rejection', () =
         .then((v) => v, (e: unknown) => ({ threw: e }));
     });
     expect(returned).toBe(false);
-    expect(sent('POST', '/categories')).toHaveLength(0);
+    expect(server.sent('POST', '/categories')).toHaveLength(0);
   });
 
   it('saveCategory("gym", { name: "   " }, { silent: true }) resolves false and never calls the API', async () => {
@@ -500,7 +499,7 @@ describe('[A21][A22] a blank name is a validation bail, never a rejection', () =
         .then((v) => v, (e: unknown) => ({ threw: e }));
     });
     expect(returned).toBe(false);
-    expect(sent('PATCH', '/categories/gym')).toHaveLength(0);
+    expect(server.sent('PATCH', '/categories/gym')).toHaveLength(0);
   });
 });
 
