@@ -237,6 +237,9 @@ def lambda_handler(event, context):
         if path.startswith(f"{TRANSACTION_PATH}/") and method == "PATCH":
             return patch_transaction(event, TransactionRepository())
 
+        if path.startswith(f"{TRANSACTION_PATH}/") and method == "DELETE":
+            return delete_transaction(event, TransactionRepository())
+
         if path == CATEGORY_PATH and method == "GET":
             return _json_response(200, list_categories(CategoryRepository()))
 
@@ -631,6 +634,26 @@ def patch_transaction(event: dict, repo: TransactionRepository) -> dict:
         return _json_response(404, {"error": "transaction not found"})
 
     return _json_response(200, {"transaction_id": transaction_id, **fields})
+
+
+def delete_transaction(event: dict, repo: TransactionRepository) -> dict:
+    """DELETE /transactions/{id} — the user removes one charge, e.g. a duplicate (WHIT-654).
+
+    The repository leaves a "deleted by you" marker so a BankSync re-send can't bring it back.
+    Unknown or already-deleted id -> 404.
+    """
+    transaction_id = (event.get("pathParameters") or {}).get("id")
+    if not transaction_id:
+        return _json_response(404, {"error": "transaction not found"})
+
+    keys = repo.get_transaction_keys_by_id(transaction_id)
+    if keys is None:
+        return _json_response(404, {"error": "transaction not found"})
+
+    if not repo.delete_transaction(keys["pk"], keys["sk"]):
+        return _json_response(404, {"error": "transaction not found"})
+
+    return _json_response(200, {"transaction_id": transaction_id})
 
 
 def patch_transactions_batch(event: dict, repo: TransactionRepository) -> dict:

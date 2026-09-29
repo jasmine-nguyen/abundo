@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
+import React, { useRef, useState } from 'react';
+import { Alert, View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
@@ -9,6 +9,7 @@ import { useTransactionDetailScreenData, useTransactionResolver, useBudgetsScree
 import { Header } from '../../src/components/Header';
 import { Icon, Glyph } from '../../src/icons';
 import { DetailStates } from '../../src/components/DetailStates';
+import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 
 // WHIT-272 / WHIT-275: the per-transaction detail screen. Reached by the trailing chevron on
 // a TransactionRow; the id in the route is the transaction_id. The transaction comes from the
@@ -26,7 +27,7 @@ export default function TransactionDetail() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { openPicker } = useAppContext();
+  const { openPicker, deleteTransaction } = useAppContext();
   const { category, isLoading, isError, refetch } = useTransactionDetailScreenData();
   // Budgets feed the "Spread this bill" prompt below; cached + deduped by query key, so this adds
   // no real cost. On a cold open `budgets` is [] → eligibility 'hidden' → the button just waits.
@@ -37,7 +38,12 @@ export default function TransactionDetail() {
   // one-off opened from a budget's Related Transactions) resolves. `transactions` here is that
   // union, so hasCache below is true whenever any list has loaded.
   const { findTx, transactions } = useTransactionResolver();
-  const transaction = findTx(id);
+  // WHIT-654: a delete drops the charge from every cache before the server answers. Keep showing
+  // the last-known charge while it runs, so the screen never flashes "Transaction not found".
+  const [deleting, setDeleting] = useState(false);
+  const deletingTransaction = useRef<Transaction | undefined>(undefined);
+  const runDelete = useInFlightGuard();
+  const transaction = findTx(id) ?? (deleting ? deletingTransaction.current : undefined);
   const view = transaction ? transactionView({ category }, transaction) : null;
   // "Spread this bill" (WHIT-556): offer the shared spread flow from the transaction itself, using
   // the SAME eligibility rule as the budget screen. Only a real spend charge that counts to budget
@@ -66,6 +72,31 @@ export default function TransactionDetail() {
     }
   }
 
+  const onConfirmDelete = () => runDelete(async () => {
+    if (deleting || !transaction) return;
+    deletingTransaction.current = transaction;
+    setDeleting(true);
+    try {
+      // On success the charge is gone everywhere; go back. On failure the writer toasts and puts
+      // it back — stay so the user can retry.
+      const ok = await deleteTransaction(transaction.transaction_id);
+      if (ok) router.back();
+      else setDeleting(false);
+    } catch (error) {
+      setDeleting(false);
+      throw error;
+    }
+  });
+
+  const onDelete = () => Alert.alert(
+    'Delete this transaction?',
+    "It will be removed from your list, budgets and insights. This can't be undone.",
+    [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: onConfirmDelete },
+    ],
+  );
+
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title="Transaction" />
@@ -81,7 +112,7 @@ export default function TransactionDetail() {
         <DetailStates
           isLoading={isLoading}
           isError={isError}
-          hasCache={transactions.length > 0}
+          hasCache={transactions.length > 0 || deleting}
           idPrefix="transaction"
           errorText="Couldn't load this transaction."
           retryLabel="Retry loading this transaction"
@@ -154,6 +185,18 @@ export default function TransactionDetail() {
 
               {/* Keyed by id so switching transactions reseeds the local note text. */}
               <NoteAndTagsEditor key={transaction.transaction_id} transaction={transaction} />
+
+              <Pressable
+                testID="transaction-delete"
+                onPress={onDelete}
+                disabled={deleting}
+                accessibilityRole="button"
+                accessibilityLabel="Delete transaction"
+                accessibilityState={{ disabled: deleting }}
+                style={[styles.deleteBtn, deleting && { opacity: 0.6 }]}
+              >
+                <Text style={styles.deleteText}>{deleting ? 'Deleting…' : 'Delete transaction'}</Text>
+              </Pressable>
             </>
           ) : (
             // No cache (feed / recent / budget-detail / category-drill) carries this id
@@ -407,6 +450,9 @@ const styles = StyleSheet.create({
 
   spreadBtn: { marginTop: 12, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), backgroundColor: tint(C.accentAlt, 0.1), alignItems: 'center' },
   spreadText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSofter },
+
+  deleteBtn: { marginTop: 24, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: tint(C.bad, 0.3), backgroundColor: tint(C.bad, 0.08), alignItems: 'center' },
+  deleteText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.bad },
 
   empty: { alignItems: 'center', paddingVertical: 64, paddingHorizontal: 30, gap: 8 },
   emptyTitle: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.textBright, marginTop: 4 },

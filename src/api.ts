@@ -868,6 +868,15 @@ export const setTransactionFields = endpoint(
     send({ path: `/transactions/${encodeURIComponent(id)}`, method: "PATCH", body: fields }),
 );
 
+/**
+ * Delete one transaction (WHIT-654). The server leaves a marker so a bank re-send
+ * can't bring it back.
+ *
+ * @throws If the response status is not OK (e.g. 404 when the id is unknown).
+ */
+export const deleteTransaction = endpoint("plain", (send, id: string): Promise<{ transaction_id: string }> =>
+  send({ path: `/transactions/${encodeURIComponent(id)}`, method: "DELETE" }));
+
 /** One transaction's outcome in a batch category update (WHIT-70). */
 export interface BatchCategoryResult {
   id: string;

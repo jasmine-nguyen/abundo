@@ -104,15 +104,41 @@ export function patchAllCopies(mapRow: (row: Transaction) => Transaction): void 
   patchScopedLists(mapRow);
 }
 
+// Drop one charge from every copy, main and scoped (WHIT-654, the user deleted it). Returns a
+// restore that puts every copy back as it was. The restore no-ops on a cleared cache, like
+// patchTransactionsCache.
+export function removeFromAllCopies(txId: string): () => void {
+  const prefixes: QueryKey[] = [
+    ['transactions'], ['uncategorizedFeed'], ['transactionsRecent'], ['transactionsSearch'],
+    ['budgetTransactions'], ['categoryTransactions'],
+  ];
+  const snapshots = prefixes.flatMap((queryKey) => queryClient.getQueriesData<unknown>({ queryKey }));
+
+  const dropRow = (rows: Transaction[]) => rows.filter((t) => t.transaction_id !== txId);
+  patchTransactionsCache(dropRow);
+  for (const prefix of [['budgetTransactions'], ['categoryTransactions']]) {
+    queryClient.setQueriesData<Transaction[]>({ queryKey: prefix }, (prev) => (prev ? dropRow(prev) : prev));
+  }
+
+  return () => {
+    for (const [key, snapshot] of snapshots) {
+      queryClient.setQueryData<unknown>(key, (prev: unknown) => (prev ? snapshot : prev));
+    }
+  };
+}
+
 // What to mark for a refresh after each kind of change. The feed is never here: it is an
 // InfiniteData of loaded pages, so invalidating it would refetch every page (a storm); the
 // optimistic patch already wrote the change into it.
-const REFRESH_BY_CHANGE: Record<'refile' | 'budgetExclusion' | 'categoryDeleted' | 'rulesApplied', QueryKey[]> = {
+const REFRESH_BY_CHANGE: Record<'refile' | 'budgetExclusion' | 'transactionDeleted' | 'categoryDeleted' | 'rulesApplied', QueryKey[]> = {
   // A re-file changes the totals, which budget/category list a charge belongs to, and the
   // uncategorized tally (WHIT-501). Search is patched in place, so it is skipped.
   refile: [['budgets'], ['breakdown'], ['budgetTransactions'], ['categoryTransactions'], ['uncategorizedCount']],
   // Excluding/including a charge changes the budget total and its cycle list; not the tally.
   budgetExclusion: [['budgets'], ['breakdown'], ['budgetTransactions'], ['categoryTransactions']],
+  // A deleted charge leaves the totals and, if unfiled, the tally. Search and both feeds are
+  // patched in place.
+  transactionDeleted: [['budgets'], ['breakdown'], ['budgetTransactions'], ['categoryTransactions'], ['uncategorizedCount']],
   // The deleted category's charges become unfiled: they must ENTER the uncategorized feed and
   // search results, which an in-place patch can't do. Budgets are cascaded by hand (a refetch
   // would resurrect the dropped budget, as the server doesn't cascade). The charge lists reload so

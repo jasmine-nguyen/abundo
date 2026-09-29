@@ -114,10 +114,11 @@ resource "aws_iam_role_policy" "app_api_dynamodb" {
           "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table",
         "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table/index/*"]
       },
-      # DeleteItem is scoped to rule rows ONLY: the LeadingKeys condition restricts it to items
-      # whose partition key is "RULE" (WHIT-528, the RuleRepository store). Kept a SEPARATE
-      # statement — folding DeleteItem into the block above would grant table-wide delete, and
-      # ForAllValues on a statement whose other actions don't populate LeadingKeys can bypass.
+      # DeleteItem is scoped to rule rows and transaction rows ONLY: the LeadingKeys condition
+      # restricts it to items whose partition key is "RULE" (WHIT-528, the RuleRepository store)
+      # or "ACCOUNT#..." (WHIT-654, the user deleting one charge). Kept a SEPARATE statement —
+      # folding DeleteItem into the block above would grant table-wide delete, and ForAllValues
+      # on a statement whose other actions don't populate LeadingKeys can bypass.
       # Base-table ARN only (you cannot delete through an index).
       {
         Effect = "Allow"
@@ -126,8 +127,8 @@ resource "aws_iam_role_policy" "app_api_dynamodb" {
           "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table"
         ]
         Condition = {
-          "ForAllValues:StringEquals" = {
-            "dynamodb:LeadingKeys" = ["RULE"]
+          "ForAllValues:StringLike" = {
+            "dynamodb:LeadingKeys" = ["RULE", "ACCOUNT#*"]
           }
         }
       }
