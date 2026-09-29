@@ -304,8 +304,8 @@ resource "aws_lambda_function_event_invoke_config" "ai_chat_worker" {
 }
 
 # Triggered on a schedule by EventBridge Scheduler (see scheduler.tf) to kick off
-# BankSync incremental syncs. Only needs the shared layer for constants.py/ssm.py;
-# no DynamoDB access (BankSync pushes results to the webhook lambda instead).
+# BankSync incremental syncs (BankSync pushes results to the webhook lambda). Before
+# that it runs the pending mirror (WHIT-662), so it reads and deletes pending rows.
 # The timeout scales with the feed count: SYNC_FEED_IDS is POSTed serially at up to
 # SYNC_TIMEOUT_SECONDS (30) each, so at 60s a third feed could be killed mid-loop
 # before its sync fired, and before the per-feed error line ran.
