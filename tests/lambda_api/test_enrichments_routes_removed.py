@@ -17,6 +17,7 @@ import pytest
 
 from _feed_fakes import FakeCategoryRepo, real_repos
 from _lambda_api_constants import constants_namespace
+from _terraform import TERRAFORM_DIR
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -69,7 +70,7 @@ def test_rules_store_route_still_works_after_the_proxy_removal(handler, monkeypa
 
 
 def test_enrichments_routes_gone_from_api_gateway():
-    apigateway = (_ROOT / "terraform" / "apigateway.tf").read_text()
+    apigateway = (TERRAFORM_DIR / "apigateway.tf").read_text()
     assert "/enrichments" not in apigateway
     # The surviving store routes remain declared.
     assert '"GET /rules"' in apigateway

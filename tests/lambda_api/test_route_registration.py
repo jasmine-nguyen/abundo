@@ -14,10 +14,12 @@ keys carry `{id}` placeholders this can't derive.
 import pathlib
 import re
 
+from _terraform import TERRAFORM_DIR
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _HANDLER = _REPO_ROOT / "lambda_api" / "handler.py"
 _CONSTANTS = _REPO_ROOT / "lambda_api" / "api_constants.py"
-_APIGATEWAY = _REPO_ROOT / "terraform" / "apigateway.tf"
+_APIGATEWAY = TERRAFORM_DIR / "apigateway.tf"
 
 # `if path == NAME and method == "VERB":` — the exact-match dispatch shape.
 _DISPATCH = re.compile(r'path == ([A-Z][A-Z0-9_]*) and method == "([A-Z]+)"')

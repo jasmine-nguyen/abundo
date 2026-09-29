@@ -13,6 +13,7 @@ import json
 import pytest
 
 from _feed_fakes import FakeCategoryRepo, Repos
+from _terraform import TERRAFORM_DIR
 
 
 _CATEGORIES = ("groceries", "petrol")
@@ -408,9 +409,6 @@ def test_item_routes_are_declared_in_api_gateway():
     # test_route_registration.py covers the exact GET/POST routes automatically, but the
     # startswith-dispatched {id} routes carry a placeholder it can't derive — pin them by hand so
     # a PUT/DELETE that works in tests can't 404 at the deployed gateway (WHIT-506's failure mode).
-    import pathlib
-
-    apigateway = (pathlib.Path(__file__).resolve().parents[2]
-                  / "terraform" / "apigateway.tf").read_text()
+    apigateway = (TERRAFORM_DIR / "apigateway.tf").read_text()
     assert '"PUT /rules/{id}"' in apigateway
     assert '"DELETE /rules/{id}"' in apigateway
