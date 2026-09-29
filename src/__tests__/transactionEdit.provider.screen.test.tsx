@@ -1,5 +1,5 @@
 // WHIT-275 — applyTransactionEdit's optimistic cache write + rollback. Drives the REAL
-// action through AppProvider (../api + ../auth mocked): it patches the singleton
+// action through AppProvider (../auth mocked, the fake server answering): it patches the singleton
 // ['transactions'] feed cache the detail screen reads, calls setTransactionFields with ONLY the
 // changed fields, and rolls back on failure. A note/tag edit invalidates NOTHING (the feed is
 // patched in place, never invalidated — an InfiniteData invalidate would storm every page).
@@ -11,10 +11,10 @@ import type { Transaction } from '../context';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -37,14 +37,13 @@ function mount(transactions: Transaction[] = [txn()]) {
 }
 
 it('saves a note optimistically, calls the API with only that field, and invalidates nothing', async () => {
-  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', notes: 'lunch' });
   const result = mount();
   const invalidateSpy = jest.spyOn(queryClient, 'invalidateQueries');
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { notes: 'lunch' }); });
 
   expect(cached('t1')?.notes).toBe('lunch'); // optimistic cache write
-  expect(mockApi.setTransactionFields).toHaveBeenCalledWith('t1', { notes: 'lunch' });
+  expect(server.requests()).toContainEqual({ method: 'PATCH', path: '/transactions/t1', body: { notes: 'lunch' } });
   const keys = invalidateSpy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
   expect(keys).not.toContain('transactions'); // the feed is patched in place, never invalidated
   expect(keys).toHaveLength(0); // a plain note edit touches no server-derived cache either
@@ -52,7 +51,7 @@ it('saves a note optimistically, calls the API with only that field, and invalid
 });
 
 it('rolls the note back to its previous value (and toasts) on save failure', async () => {
-  mockApi.setTransactionFields.mockRejectedValue(new Error('boom'));
+  server.fail('/transactions/t1', 500);
   const result = mount([txn({ notes: 'old note' })]);
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { notes: 'new note' }); });
@@ -62,7 +61,6 @@ it('rolls the note back to its previous value (and toasts) on save failure', asy
 });
 
 it('adds tags optimistically without clobbering the note', async () => {
-  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', tags: ['work'] });
   const result = mount([txn({ notes: 'keep me' })]);
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { tags: ['work'] }); });
@@ -72,7 +70,7 @@ it('adds tags optimistically without clobbering the note', async () => {
 });
 
 it('rolls tags back to absent on failure when there were none before', async () => {
-  mockApi.setTransactionFields.mockRejectedValue(new Error('boom'));
+  server.fail('/transactions/t1', 500);
   const result = mount([txn()]); // no tags
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { tags: ['work'] }); });
@@ -83,24 +81,23 @@ it('rolls tags back to absent on failure when there were none before', async () 
 it('is a no-op (no API call) when the transaction is not in the cache', async () => {
   const result = mount([]);
   await act(async () => { await result.current.applyTransactionEdit('ghost', { notes: 'x' }); });
-  expect(mockApi.setTransactionFields).not.toHaveBeenCalled();
+  expect(server.requests().filter((r) => r.method === 'PATCH')).toHaveLength(0);
 });
 
 // WHIT-296: the budget-exclude override rides the same optimistic write + rollback.
 it('excludes from budgets optimistically, calling the API with only that field', async () => {
-  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', budget_excluded: true });
   const result = mount([txn({ notes: 'keep me' })]);
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
 
   expect(cached('t1')?.budget_excluded).toBe(true); // optimistic cache write
   expect(cached('t1')?.notes).toBe('keep me');      // other fields untouched
-  expect(mockApi.setTransactionFields).toHaveBeenCalledWith('t1', { budget_excluded: true });
+  expect(server.requests()).toContainEqual({ method: 'PATCH', path: '/transactions/t1', body: { budget_excluded: true } });
 });
 
 it('rolls budget_excluded back to absent on failure when it was unset before', async () => {
   // Without the widened rollback snapshot this stays stuck `true` — the fail-on-revert anchor.
-  mockApi.setTransactionFields.mockRejectedValue(new Error('boom'));
+  server.fail('/transactions/t1', 500);
   const result = mount([txn()]); // no override
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
@@ -112,7 +109,6 @@ it('rolls budget_excluded back to absent on failure when it was unset before', a
 // WHIT-275 adversarial gaps — two SEQUENTIAL edits where the second reads the cache the first
 // patched (neither field clobbers the other), and clearing a note writes "" via a { notes: "" } PATCH.
 it('a note edit then a tags edit both land — the tags call does not drop the note', async () => { // [A20]
-  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1' });
   const result = mount([txn()]); // starts with neither note nor tags
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { notes: 'lunch' }); });
@@ -122,17 +118,17 @@ it('a note edit then a tags edit both land — the tags call does not drop the n
   expect(cached('t1')?.notes).toBe('lunch');
   expect(cached('t1')?.tags).toEqual(['work']);
   // Each PATCH carried only its own field (never re-sent the other).
-  expect(mockApi.setTransactionFields).toHaveBeenNthCalledWith(1, 't1', { notes: 'lunch' });
-  expect(mockApi.setTransactionFields).toHaveBeenNthCalledWith(2, 't1', { tags: ['work'] });
+  const saves = server.requests().filter((r) => r.method === 'PATCH' && r.path === '/transactions/t1');
+  expect(saves[0].body).toEqual({ notes: 'lunch' });
+  expect(saves[1].body).toEqual({ tags: ['work'] });
 });
 
 it('clearing a note writes "" optimistically and PATCHes only { notes: "" }', async () => { // [A21]
-  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1' });
   const result = mount([txn({ notes: 'old', tags: ['keep'] })]);
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { notes: '' }); });
 
   expect(cached('t1')?.notes).toBe('');           // cleared in the cache
   expect(cached('t1')?.tags).toEqual(['keep']);   // tags untouched
-  expect(mockApi.setTransactionFields).toHaveBeenCalledWith('t1', { notes: '' });
+  expect(server.requests()).toContainEqual({ method: 'PATCH', path: '/transactions/t1', body: { notes: '' } });
 });

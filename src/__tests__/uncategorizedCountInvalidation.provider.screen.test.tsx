@@ -20,10 +20,10 @@ import type { Transaction } from '../context';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -41,9 +41,6 @@ function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
 
 beforeEach(() => {
   queryClient.clear();
-  mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'groceries' });
-  mockApi.setTransactionCategories.mockResolvedValue({ results: [{ id: 't1', status: 'updated' }] } as never);
-  mockApi.deleteCategory.mockResolvedValue({ id: 'groceries' });
 });
 afterEach(() => { queryClient.clear(); });
 
@@ -93,7 +90,6 @@ it('deleteCategory invalidates uncategorizedCount', async () => {
 // [A-inval-guard] a note / budget-exclude edit never changes a charge's category, so the uncategorized
 // tally can't move — invalidating here would refetch the count on every note save for nothing.
 it('applyTransactionEdit does NOT invalidate uncategorizedCount', async () => {
-  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', notes: 'lunch' });
   const result = mount([txn({ category: 'groceries' })]);
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 

@@ -17,16 +17,16 @@ const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mo
 jest.mock('../auth', () => ({
   getStatus: () => mockStatus,
   subscribe: (l: () => void) => mockSubscribe(l),
+  getAuthToken: async () => 'test-id-token',
 }));
-jest.mock('../api');
 
 import { AppProvider, useAppContext } from '../context';
 import type { Transaction, Category, Rule } from '../context';
 import type { TransactionFeedPage, TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
-import { ApiError } from '../apiError';
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -77,23 +77,23 @@ const listRows = (key: QueryKey) => queryClient.getQueryData<Transaction[]>(key)
 const searchRows = () => queryClient.getQueryData<TransactionSearchResult>(SEARCH_KEY)?.transactions;
 const invalidated = (key: QueryKey) => queryClient.getQueryState(key)?.isInvalidated;
 
-function deferred() {
-  let resolve!: () => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-}
-
 // Production order: clearSession() wipes the cache, THEN broadcasts anon (the epoch bump).
 function signOut() {
   act(() => { queryClient.clear(); mockSetStatus('anon'); });
 }
 
+// The delete waits on the server until resolve() (it succeeds) or reject(reply) (it gets `reply`).
 async function startDelete(result: { current: ReturnType<typeof useAppContext> }) {
-  const request = deferred();
-  mockApi.deleteCategory.mockReturnValueOnce(request.promise as never);
+  const held = server.hold('/categories/dining');
   let pending!: Promise<boolean>;
   act(() => { pending = result.current.deleteCategory('dining'); });
+  const request = {
+    resolve: () => held.release(),
+    reject: (reply: Parameters<typeof server.once>[2]) => {
+      server.once('DELETE', '/categories/dining', reply);
+      held.release();
+    },
+  };
   return { request, pending };
 }
 
@@ -101,7 +101,6 @@ beforeEach(() => {
   mockStatus = 'authed';
   mockListeners.clear();
   queryClient.clear();
-  jest.clearAllMocks();
 });
 afterEach(() => { queryClient.clear(); });
 
@@ -132,7 +131,7 @@ it('a failed delete puts back exactly what it changed: only Dining charges retur
   const { request, pending } = await startDelete(result);
 
   let ok!: boolean;
-  await act(async () => { request.reject(new Error('network')); ok = await pending; });
+  await act(async () => { request.reject('dropped'); ok = await pending; });
 
   expect(ok).toBe(false);
   // t3 was uncategorised before — the undo must not stamp Dining onto it.
@@ -160,7 +159,7 @@ it('a failed delete shows the server reason when it gives one', async () => {
   const { request, pending } = await startDelete(result);
 
   await act(async () => {
-    request.reject(new ApiError(400, 'category is in use by a goal'));
+    request.reject({ status: 400, reason: 'category is in use by a goal' });
     await pending;
   });
 
@@ -176,7 +175,7 @@ it('signing out mid-delete then failing re-seats nothing into the cleared cache 
 
   signOut();
   let ok!: boolean;
-  await act(async () => { request.reject(new Error('network')); ok = await pending; });
+  await act(async () => { request.reject('dropped'); ok = await pending; });
 
   expect(ok).toBe(false);
   expect(result.current.toast).toBeNull();
@@ -209,7 +208,7 @@ it('a delete on a cold cache (nothing loaded) neither crashes nor creates cache 
   const { request, pending } = await startDelete(result);
 
   let ok!: boolean;
-  await act(async () => { request.reject(new Error('network')); ok = await pending; });
+  await act(async () => { request.reject('dropped'); ok = await pending; });
 
   expect(ok).toBe(false);
   expect(result.current.toast).toBe('Could not delete category. Please try again.');

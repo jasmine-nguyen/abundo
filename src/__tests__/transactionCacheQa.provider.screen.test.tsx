@@ -18,10 +18,10 @@ import type { Transaction, Category } from '../context';
 import type { TransactionFeedPage, TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -68,12 +68,11 @@ function mount() {
   return result;
 }
 
-beforeEach(() => { queryClient.clear(); jest.clearAllMocks(); });
+beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });
 
 // [A1]
 it("applyCategory('one') files the charge in every main copy, drops it from the old budget's list and refreshes the re-file set", async () => {
-  mockApi.setTransactionCategory.mockResolvedValue(undefined as never);
   seedServerDerived();
   queryClient.setQueryData(['transactions'], page([tx('t1'), tx('t2')]));
   queryClient.setQueryData(UNCAT_KEY, page([]));
@@ -86,7 +85,7 @@ it("applyCategory('one') files the charge in every main copy, drops it from the 
 
   await act(async () => { await result.current.applyCategory('one'); });
 
-  expect(mockApi.setTransactionCategory).toHaveBeenCalledWith('t1', 'groceries');
+  expect(server.requests()).toContainEqual({ method: 'PATCH', path: '/transactions/t1', body: { category: 'groceries' } });
   expect(categoryOf(feedRows('transactions'))).toEqual({ t1: 'groceries', t2: 'dining' });
   expect(categoryOf(recentRows())).toEqual({ t1: 'groceries' });
   expect(categoryOf(searchRows())).toEqual({ t1: 'groceries' });
@@ -106,7 +105,7 @@ it("applyCategory('one') files the charge in every main copy, drops it from the 
 
 // [A2]
 it("applyCategory('one') failure puts the charge back to its OWN old category everywhere and restores the budget list", async () => {
-  mockApi.setTransactionCategory.mockRejectedValue(new Error('boom'));
+  server.fail('/transactions/t1', 500);
   seedServerDerived();
   queryClient.setQueryData(['transactions'], page([tx('t1'), tx('t2')]));
   queryClient.setQueryData(['transactionsRecent'], [tx('t1')]);
@@ -132,10 +131,10 @@ it("applyCategory('all') sweeps only the main copies, rolls back just the failed
   // t1 tapped (dining), t2 unfiled same merchant (saves), t3 unfiled same merchant (fails).
   // t9 is an unfiled same-merchant charge that exists ONLY in a budget list — a stale scoped copy
   // that a re-file sweep must never pick up (WHIT-524).
-  mockApi.setTransactionCategories.mockResolvedValue({
-    results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'updated' }, { id: 't3', status: 'error' }],
-  } as never);
-  mockApi.createRule.mockResolvedValue({ id: 'r1', value: 'COLES', categoryId: 'groceries', field: 'description', operator: 'contains' } as never);
+  server.once('PATCH', '/transactions', {
+    body: { results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'updated' }, { id: 't3', status: 'error' }] },
+  });
+  server.once('POST', '/rules', { body: { id: 'r1', value: 'COLES', categoryId: 'groceries', field: 'description', operator: 'contains' } });
   seedServerDerived();
   queryClient.setQueryData(['transactions'], page([tx('t1'), tx('t2', { category: null })]));
   queryClient.setQueryData(UNCAT_KEY, page([tx('t2', { category: null }), tx('t3', { category: null })]));
@@ -145,7 +144,8 @@ it("applyCategory('all') sweeps only the main copies, rolls back just the failed
 
   await act(async () => { await result.current.applyCategory('all'); });
 
-  const sent = (mockApi.setTransactionCategories.mock.calls[0] as unknown[])[0] as { id: string }[];
+  const batchSaves = server.requests().filter((r) => r.method === 'PATCH' && r.path === '/transactions');
+  const sent = (batchSaves[0].body as { updates: { id: string }[] }).updates;
   expect(sent.map((item) => item.id).sort()).toEqual(['t1', 't2', 't3']);
   expect(categoryOf(feedRows('transactions'))).toEqual({ t1: 'groceries', t2: 'groceries' });
   expect(categoryOf(feedRows('uncategorizedFeed'))).toEqual({ t2: 'groceries', t3: null });
@@ -159,9 +159,9 @@ it("applyCategory('all') sweeps only the main copies, rolls back just the failed
 
 // [A4]
 it('applyCategoryToMany where every save fails restores every copy and marks nothing for a refresh', async () => {
-  mockApi.setTransactionCategories.mockResolvedValue({
-    results: [{ id: 't1', status: 'error' }, { id: 't2', status: 'error' }],
-  } as never);
+  server.once('PATCH', '/transactions', {
+    body: { results: [{ id: 't1', status: 'error' }, { id: 't2', status: 'error' }] },
+  });
   seedServerDerived();
   queryClient.setQueryData(['transactions'], page([tx('t1'), tx('t2', { category: null })]));
   queryClient.setQueryData(SEARCH_KEY, { transactions: [tx('t2', { category: null })], truncated: false });
@@ -189,14 +189,13 @@ it('applyCategoryToMany ignores a charge that lives only in a budget/category li
 
   await act(async () => { await result.current.applyCategoryToMany(['only-budget'], 'groceries'); });
 
-  expect(mockApi.setTransactionCategories).not.toHaveBeenCalled();
+  expect(server.requests().filter((r) => r.method === 'PATCH' && r.path === '/transactions')).toHaveLength(0);
   expect(listIds(BUDGET_KEY)).toEqual(['only-budget']);
   expect(invalidated(BUDGETS_KEY)).toBe(false);
 });
 
 // [A6]
 it('applyTransactionEdit exclude stamps every copy (main + scoped) and refreshes the exclusion set, not the tally', async () => {
-  mockApi.setTransactionFields.mockResolvedValue(undefined as never);
   seedServerDerived();
   queryClient.setQueryData(['transactions'], page([tx('t1')]));
   queryClient.setQueryData(['transactionsRecent'], [tx('t1')]);
@@ -227,7 +226,6 @@ it('applyTransactionEdit on a budget-only charge: a note edit refreshes nothing;
   queryClient.setQueryData(CATEGORY_KEY, [tx('old', { notes: 'before' })]);
   const result = mount();
 
-  mockApi.setTransactionFields.mockResolvedValueOnce(undefined as never);
   await act(async () => { await result.current.applyTransactionEdit('old', { notes: 'after' }); });
   expect(byId(listRows(BUDGET_KEY)).old.notes).toBe('after');
   expect(byId(listRows(CATEGORY_KEY)).old.notes).toBe('after');
@@ -235,7 +233,7 @@ it('applyTransactionEdit on a budget-only charge: a note edit refreshes nothing;
     expect([key, invalidated(key)]).toEqual([key, false]);
   }
 
-  mockApi.setTransactionFields.mockRejectedValueOnce(new Error('boom'));
+  server.once('PATCH', '/transactions/old', { status: 500 });
   await act(async () => { await result.current.applyTransactionEdit('old', { notes: 'lost' }); });
   expect(byId(listRows(BUDGET_KEY)).old.notes).toBe('after');
   expect(byId(listRows(CATEGORY_KEY)).old.notes).toBe('after');
@@ -243,7 +241,6 @@ it('applyTransactionEdit on a budget-only charge: a note edit refreshes nothing;
 
 // [A8]
 it('deleteCategory unfiles its charges in every copy and refreshes the category-deleted set', async () => {
-  mockApi.deleteCategory.mockResolvedValue(undefined as never);
   seedServerDerived();
   queryClient.setQueryData(['transactions'], page([tx('t1'), tx('t2', { category: 'groceries' })]));
   queryClient.setQueryData(UNCAT_KEY, page([]));

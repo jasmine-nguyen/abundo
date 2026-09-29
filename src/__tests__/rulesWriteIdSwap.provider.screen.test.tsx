@@ -10,10 +10,10 @@ import { AppProvider, useAppContext } from '../context';
 import type { Rule } from '../context';
 import { queryClient } from '../queryClient';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 const RULE_E1: Rule = { id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false, field: 'description', operator: 'contains' };
@@ -31,7 +31,7 @@ function mountWithSeededCache() {
 
 it('updateRule adopts the server-assigned NEW id when the /rules store re-mints on a value change', async () => {
   // The server changed the id ('e1' -> 'e9') because the value changed — the /rules store's behaviour.
-  mockApi.updateRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'DISNEY', categoryId: 'subs' });
+  server.once('PUT', '/rules/e1', { body: { id: 'e9', field: 'description', operator: 'contains', value: 'DISNEY', categoryId: 'subs' } });
   const result = mountWithSeededCache();
 
   await act(async () => { await result.current.updateRule('e1', 'DISNEY', 'subs'); });

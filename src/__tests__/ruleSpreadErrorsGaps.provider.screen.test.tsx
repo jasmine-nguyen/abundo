@@ -13,12 +13,11 @@ import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext, toRule } from '../context';
 import type { Rule } from '../context';
 import { queryClient } from '../queryClient';
-import { ApiError } from '../apiError';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 const RULE_E1: Rule = { id: 'e1', pattern: 'ORIGIN', categoryId: 'subs', isNew: false, field: 'description', operator: 'contains' };
@@ -35,7 +34,7 @@ function mount() {
 
 // [A-E409] The 409 branch of ruleWriteErrorMessage must fire on the EDIT writer too, not just create.
 it('[A-E409] a 409 on an edit that turns spread on shows the "already has a spread rule" copy and rolls back', async () => {
-  mockApi.updateRule.mockRejectedValue(new ApiError(409, null));
+  server.fail('/rules/e1', 409);
   const result = mount();
 
   await act(async () => { await result.current.updateRule('e1', 'ORIGIN', 'subs', false, undefined, true); });
@@ -62,7 +61,7 @@ it('[A-TR0] toRule maps a non-spread rule cleanly (spread:false, captured fields
 // gated on the write actually requesting spread, so a future non-spread 409/422 stays generic.
 // FAIL-ON-REVERT: drop the `spread &&` gate in ruleWriteErrorMessage and this shows the spread copy.
 it('[A-G0] a 409 on a NON-spread save keeps the generic toast', async () => {
-  mockApi.createRule.mockRejectedValue(new ApiError(409, null));
+  server.once('POST', '/rules', { status: 409 });
   const result = mount();
 
   await act(async () => { await result.current.saveManualRule('ORIGIN', 'subs', false); });

@@ -19,10 +19,10 @@ import type { Transaction } from '../context';
 import type { TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -47,8 +47,6 @@ function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
 
 beforeEach(() => {
   queryClient.clear();
-  mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 'deep1', category: 'groceries' });
-  mockApi.deleteCategory.mockResolvedValue({ id: 'groceries' });
   queryClient.setQueryData(['categories'], [{ ...CAT }]);
   queryClient.setQueryData(['budgets', 14], {});
 });
@@ -65,7 +63,7 @@ it('[1] files a deep-history row that lives ONLY in a search result', async () =
 
   await act(async () => { await result.current.applyCategory('one'); });
 
-  expect(mockApi.setTransactionCategory).toHaveBeenCalledWith('deep1', 'groceries');
+  expect(server.requests()).toContainEqual({ method: 'PATCH', path: '/transactions/deep1', body: { category: 'groceries' } });
 });
 
 it('[2] patches the filed row inside the search result', async () => {
@@ -79,9 +77,6 @@ it('[2] patches the filed row inside the search result', async () => {
 });
 
 it('[3] "every charge from this shop" also files the same shop\'s unfiled search-only rows', async () => {
-  mockApi.setTransactionCategories.mockResolvedValue({ results: [
-    { id: 'deep1', status: 'updated' }, { id: 'deep2', status: 'updated' },
-  ] } as never);
   seedSearch([txn(), txn({ transaction_id: 'deep2', date: '2019-05-01' })]);
   const result = mount();
   act(() => result.current.setSheet({ mode: 'confirm', txId: 'deep1', categoryId: 'groceries' }));
@@ -92,7 +87,6 @@ it('[3] "every charge from this shop" also files the same shop\'s unfiled search
 });
 
 it('[4] a notes edit lands in the search result', async () => {
-  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 'deep1', notes: 'birthday' });
   seedSearch([txn()]);
   const result = mount();
 
@@ -102,7 +96,6 @@ it('[4] a notes edit lands in the search result', async () => {
 });
 
 it('[5] filing several at once (bulk re-categorise) lands in the search result', async () => {
-  mockApi.setTransactionCategories.mockResolvedValue({ results: [{ id: 'deep1', status: 'updated' }] } as never);
   seedSearch([txn()]);
   const result = mount();
 
@@ -124,7 +117,6 @@ it('[6] deleting a category refreshes search results', async () => {
 });
 
 it('[7] renaming a category refreshes search results (the name is searchable text)', async () => {
-  mockApi.updateCategory.mockResolvedValue({ ...CAT, name: 'Food shop' } as never);
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -135,7 +127,6 @@ it('[7] renaming a category refreshes search results (the name is searchable tex
 });
 
 it('[8] an icon-only category save leaves search results alone (no pointless full-history re-scan)', async () => {
-  mockApi.updateCategory.mockResolvedValue({ ...CAT, icon: 'basket' } as never);
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 

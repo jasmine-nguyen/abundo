@@ -17,10 +17,11 @@ import { useCategories, usePayCycle } from '../queries';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
+const categoryReads = () => server.requests().filter((r) => r.method === 'GET' && r.path === '/categories');
 
 const CAT: Category = { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 };
 const OTHER: Category = { id: 'rent', name: 'Rent', bucket: 'Living', icon: 'home', color: '#8AB4F8', recent: 0 };
@@ -45,8 +46,7 @@ function mount() {
 }
 
 it('persistPayCycle writes [payCycle] optimistically AND invalidates payCycle/budgets/breakdown', async () => {
-  mockApi.setPayCycle.mockResolvedValue({ length: 30, last_pay_date: '2024-01-03' });
-  mockApi.fetchPayCycle.mockResolvedValue({ length: 30, last_pay_date: '2024-01-03', days_left: 30 });
+  server.seed('/paycycle', { length: 30, last_pay_date: '2024-01-03', days_left: 30 });
   const result = await mount();
   // Seed a stale server days_left; the optimistic write must NOT carry it forward.
   queryClient.setQueryData(['payCycle'], { length: 14, last_pay_date: '2024-01-03', days_left: 5 });
@@ -62,7 +62,6 @@ it('persistPayCycle writes [payCycle] optimistically AND invalidates payCycle/bu
 });
 
 it('saveCategory mirrors the new category into [categories] instantly AND invalidates to reconcile', async () => {
-  mockApi.createCategory.mockResolvedValue({ id: 'new', name: 'New', bucket: 'Living', icon: 'home', color: '#fff', recent: 0 } as never);
   const result = await mount();
   queryClient.setQueryData<Category[]>(['categories'], [OTHER]); // as a mounted category screen would have
   const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
@@ -78,7 +77,6 @@ it('saveCategory mirrors the new category into [categories] instantly AND invali
 });
 
 it('deleteCategory MIRRORS the cascade into the caches without invalidating (no resurrection)', async () => {
-  mockApi.deleteCategory.mockResolvedValue(undefined as never);
   const result = await mount();
   // Seed the caches as a mounted screen would have (budgets in the real Record shape).
   queryClient.setQueryData<Category[]>(['categories'], [CAT, OTHER]);
@@ -106,7 +104,6 @@ it('deleteCategory drops the id from EVERY budget window, skips windows lacking 
   // leave windows that never had it untouched (the `id in prev` guard), and not throw on a
   // still-loading window whose data is undefined (the `!prev` guard). A regression to array
   // `.filter` would throw on the first Record and abort the whole cascade.
-  mockApi.deleteCategory.mockResolvedValue(undefined as never);
   const result = await mount();
   queryClient.setQueryData<Category[]>(['categories'], [CAT, OTHER]);
   queryClient.setQueryData<Record<string, BudgetRollup>>(['budgets', 14], { coffee: { target: 100, posted: 40, pending: 10 }, rent: { target: 500, posted: 0, pending: 0 } });
@@ -125,21 +122,14 @@ it('deleteCategory drops the id from EVERY budget window, skips windows lacking 
 // The suite above asserts getQueryData + an invalidate spy; this block asserts the mirror caches
 // reach a LIVE mounted observer (useCategories / usePayCycle) under the SAME singleton
 // queryClient the writers write to. It mounts through QueryClientProvider(client=singleton) and
-// needs the eager fetch mocks primed, so its divergent wrapper + beforeEach are scoped here.
+// needs the eager reads answered, so its divergent wrapper + beforeEach are scoped here.
 describe('WHIT-203 live observers (QueryClientProvider + real reader hooks)', () => {
   const NEW: Category = { id: 'new', name: 'New', bucket: 'Living', icon: 'home', color: '#fff', recent: 0 };
 
   beforeEach(() => {
     queryClient.clear();
-    mockApi.fetchTransactions.mockResolvedValue([]);
-    mockApi.fetchCategories.mockResolvedValue([]);
-    mockApi.fetchPayCycle.mockResolvedValue({ length: 14, last_pay_date: '2024-01-03' });
-    mockApi.fetchBudgets.mockResolvedValue({});
-    mockApi.fetchBreakdown.mockResolvedValue({});
-    mockApi.fetchHomeLoan.mockResolvedValue({ balance: null, as_of: null, currency: null });
-    mockApi.fetchLoanFacts.mockResolvedValue({ original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null });
-    mockApi.fetchRepayment.mockResolvedValue({ amount: null, date: null, principal: null, interest: null });
-    mockApi.listRules.mockResolvedValue([]);
+    // The other eager reads get the fake server's empty defaults.
+    server.seed('/paycycle', { length: 14, last_pay_date: '2024-01-03' });
   });
 
   const wrapper = ({ children }: { children: React.ReactNode }) => (
@@ -149,7 +139,6 @@ describe('WHIT-203 live observers (QueryClientProvider + real reader hooks)', ()
   );
 
   it('usePayCycle observer reflects setPayCycleLength immediately (read-your-write)', async () => {
-    mockApi.setPayCycle.mockResolvedValue({ length: 30, last_pay_date: '2024-01-03' } as never);
     const { result } = renderHook(() => ({ ctx: useAppContext(), pc: usePayCycle() }), { wrapper });
 
     // Let the initial payCycle fetch settle first so it can't overwrite our write late.
@@ -157,8 +146,7 @@ describe('WHIT-203 live observers (QueryClientProvider + real reader hooks)', ()
     expect(result.current.pc.cycleName()).toBe('Fortnightly'); // fetched length 14
 
     // persistPayCycle now invalidates ['payCycle'] (WHIT-341: refetch the server days_left), so
-    // the refetch must reflect the just-saved length — mirror the server persisting the write.
-    mockApi.fetchPayCycle.mockResolvedValue({ length: 30, last_pay_date: '2024-01-03' });
+    // the refetch must reflect the just-saved length — the fake server stores the PUT it gets.
     await act(async () => { result.current.ctx.setPayCycleLength(30); });
 
     await waitFor(() => expect(result.current.pc.cycleName()).toBe('Monthly'));
@@ -166,14 +154,14 @@ describe('WHIT-203 live observers (QueryClientProvider + real reader hooks)', ()
   });
 
   it('useCategories observer drops a deleted category and does NOT refetch it (no resurrection)', async () => {
-    // The static mock still returns coffee — so a stray refetch WOULD resurrect it, which is
-    // exactly what must not happen (delete uses setQueryData, not invalidate).
-    mockApi.fetchCategories.mockResolvedValue([CAT, OTHER]);
-    mockApi.deleteCategory.mockResolvedValue(undefined as never);
+    // The server keeps coffee (its delete answers without dropping it) — so a stray refetch WOULD
+    // resurrect it, which is exactly what must not happen (delete uses setQueryData, not invalidate).
+    server.seed('/categories', [CAT, OTHER]);
+    server.once('DELETE', '/categories/coffee', { body: { id: 'coffee' } });
     const { result } = renderHook(() => ({ ctx: useAppContext(), cats: useCategories() }), { wrapper });
 
     await waitFor(() => expect(result.current.cats.categories).toHaveLength(2));
-    const fetchCalls = mockApi.fetchCategories.mock.calls.length;
+    const fetchCalls = categoryReads().length;
 
     await act(async () => { await result.current.ctx.deleteCategory('coffee'); });
 
@@ -181,16 +169,16 @@ describe('WHIT-203 live observers (QueryClientProvider + real reader hooks)', ()
     expect(result.current.cats.category('coffee')).toBeUndefined();
     expect(result.current.cats.category('rent')?.name).toBe('Rent');
     // No categories refetch — the server does no cascade, so a refetch would bring coffee back.
-    expect(mockApi.fetchCategories.mock.calls.length).toBe(fetchCalls);
+    expect(categoryReads().length).toBe(fetchCalls);
   });
 
   it('useCategories observer shows a newly-created category via the invalidate refetch', async () => {
-    mockApi.fetchCategories.mockResolvedValue([CAT]);
+    server.seed('/categories', [CAT]);
     const { result } = renderHook(() => ({ ctx: useAppContext(), cats: useCategories() }), { wrapper });
     await waitFor(() => expect(result.current.cats.categories).toHaveLength(1));
 
-    mockApi.createCategory.mockResolvedValue(NEW as never);
-    mockApi.fetchCategories.mockResolvedValue([CAT, NEW]); // what the invalidate-triggered refetch returns
+    server.once('POST', '/categories', { body: NEW });
+    server.seed('/categories', [CAT, NEW]); // what the invalidate-triggered refetch returns
 
     await act(async () => { await result.current.ctx.saveCategory(null, { name: 'New', bucket: 'Living', icon: 'home' }); });
 

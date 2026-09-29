@@ -20,10 +20,10 @@ import { AppProvider, useAppContext } from '../context';
 import type { Transaction } from '../context';
 import { queryClient } from '../queryClient';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -49,8 +49,6 @@ function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
 
 beforeEach(() => {
   queryClient.clear();
-  mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 'deep1', category: 'groceries' });
-  mockApi.deleteCategory.mockResolvedValue({ id: 'groceries' });
   queryClient.setQueryData(['categories'], [{ ...CAT }]);
   queryClient.setQueryData(['budgets', 14], {});
 });
@@ -69,7 +67,7 @@ it('files a deep-history row that lives ONLY in the uncategorized feed cache', a
 
   await act(async () => { await result.current.applyCategory('one'); });
 
-  expect(mockApi.setTransactionCategory).toHaveBeenCalledWith('deep1', 'groceries'); // resolved + persisted
+  expect(server.requests()).toContainEqual({ method: 'PATCH', path: '/transactions/deep1', body: { category: 'groceries' } }); // resolved + persisted
 });
 
 // [2] PATCH — filing the row updates its category IN the uncategorized feed cache, so the tab's
