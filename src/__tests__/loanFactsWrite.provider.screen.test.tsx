@@ -9,11 +9,11 @@ import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 import type { LoanFacts } from '../context';
 import { queryClient } from '../queryClient';
+import { installFakeServer } from './support/fakeServer';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -37,7 +37,6 @@ function mount() {
 }
 
 it('saveLoanFacts writes the cache + invalidates ONLY loanFacts', async () => {
-  mockApi.setLoanFacts.mockResolvedValue(FACTS);
   const result = mount();
   const invalidateSpy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -45,6 +44,7 @@ it('saveLoanFacts writes the cache + invalidates ONLY loanFacts', async () => {
   await act(async () => { ok = await result.current.saveLoanFacts(FACTS); });
 
   expect(ok).toBe(true);
+  expect(server.sent('PUT', '/loanfacts').map((request) => request.body)).toEqual([FACTS]);
   expect(cachedFacts()).toEqual(FACTS); // query cache optimistic write
   const keys = invalidateSpy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
   expect(keys).toContain('loanFacts');
@@ -54,7 +54,7 @@ it('saveLoanFacts writes the cache + invalidates ONLY loanFacts', async () => {
 });
 
 it('rolls the cache back on a save failure', async () => {
-  mockApi.setLoanFacts.mockRejectedValue(new Error('boom'));
+  server.fail('/loanfacts', 500);
   const result = mount();
 
   // The optimistic write reaches the cache MID-FLIGHT (before the reject), then the catch

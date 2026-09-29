@@ -8,14 +8,15 @@
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
+import * as Crypto from 'expo-crypto';
 import { AppProvider, useAppContext } from '../context';
 import type { GoalRecord, GoalWriteBody } from '../api';
 import { queryClient } from '../queryClient';
+import { installFakeServer } from './support/fakeServer';
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -31,21 +32,15 @@ const NEW_BODY: GoalWriteBody = {
 const cacheGoals = () => queryClient.getQueryData<GoalRecord[]>(['goals']);
 
 beforeEach(() => { queryClient.clear(); });
-afterEach(() => { queryClient.clear(); });
+afterEach(() => {
+  queryClient.clear();
+  jest.restoreAllMocks();
+});
 
-// The real server echoes the id back into the saved goal, and returns every checkpoint WITH an
-// id (minting any the client omitted — WHIT-476). Mirror both so the reconcile step replaces the
-// optimistic row with an equivalent authoritative one.
-function serverEcho(id: string, body: GoalWriteBody, extra: Partial<GoalRecord> = {}): GoalRecord {
-  const checkpoints = body.checkpoints?.map((cp) => ({ ...cp, id: cp.id ?? 'server-minted' }));
-  return { id, ...body, checkpoints, ...extra };
-}
-
-function echoSave() {
-  mockApi.saveGoal.mockImplementation((id: string, body: GoalWriteBody) => Promise.resolve(serverEcho(id, body)));
-}
-
+// The fake server saves a goal by merging the sent body over its stored row (id from the path)
+// and echoing the result, so seed it with the same goals as the cache.
 function mountWithSeededCache(goals: GoalRecord[] = [GOAL_G1]) {
+  server.seed('/goals', goals);
   queryClient.setQueryData<GoalRecord[]>(['goals'], goals);
   const { result } = renderHook(() => useAppContext(), { wrapper });
   return result;
@@ -54,12 +49,22 @@ function mountWithSeededCache(goals: GoalRecord[] = [GOAL_G1]) {
 // Folded from goalsWriteEdges: seeds only when goals are given, so the un-opened-hub
 // (undefined ['goals']) cases can exercise the `prev ?? []` guard.
 function mount(goals?: GoalRecord[]) {
-  if (goals) queryClient.setQueryData<GoalRecord[]>(['goals'], goals);
+  if (goals) {
+    server.seed('/goals', goals);
+    queryClient.setQueryData<GoalRecord[]>(['goals'], goals);
+  }
   return renderHook(() => useAppContext(), { wrapper }).result;
 }
 
+// A create mints its goal id from the (auto-mocked) random-id source; pin the next one so a
+// test can script the server's reply for that goal's path.
+function mintNextGoalId(id: string) {
+  jest.spyOn(Crypto, 'randomUUID').mockReturnValueOnce(id);
+}
+
+const sentGoalBodies = () => server.sentUnder('PUT', '/goals/').map((request) => request.body as GoalWriteBody);
+
 it('saveGoal(null, body) mints an id and APPENDS the new goal, then reconciles to the server row', async () => {
-  echoSave();
   const result = mountWithSeededCache();
 
   let ok: boolean | undefined;
@@ -77,11 +82,10 @@ it('saveGoal(null, body) mints an id and APPENDS the new goal, then reconciles t
   });
   expect(created.id).toMatch(/^test-uuid-/);     // a client-minted id (the auto-mocked randomUUID)
   // The server was PUT the minted id + the body (id in the path, not the body).
-  expect(mockApi.saveGoal).toHaveBeenCalledWith(created.id, NEW_BODY);
+  expect(server.sent('PUT', `/goals/${created.id}`).map((request) => request.body)).toEqual([NEW_BODY]);
 });
 
 it('saveGoal(editId, body) REPLACES the existing goal in place (no append)', async () => {
-  echoSave();
   const result = mountWithSeededCache();
   const edit: GoalWriteBody = { ...NEW_BODY, name: 'Bigger fund', target_amount: 20000 };
 
@@ -90,11 +94,12 @@ it('saveGoal(editId, body) REPLACES the existing goal in place (no append)', asy
   const goals = cacheGoals()!;
   expect(goals).toHaveLength(1);                  // replaced, not appended
   expect(goals[0]).toMatchObject({ id: 'g1', name: 'Bigger fund', target_amount: 20000 });
-  expect(mockApi.saveGoal).toHaveBeenCalledWith('g1', edit);
+  expect(server.sent('PUT', '/goals/g1').map((request) => request.body)).toEqual([edit]);
 });
 
 it('a failed CREATE mirrors the optimistic append mid-flight, then rolls it back', async () => {
-  mockApi.saveGoal.mockRejectedValue(new Error('API error: 400'));
+  mintNextGoalId('new-goal');
+  server.fail('/goals/new-goal', 400);
   const result = mountWithSeededCache();
 
   // Observe the optimistic append reaching the cache MID-FLIGHT (before the reject) — without
@@ -113,7 +118,7 @@ it('a failed CREATE mirrors the optimistic append mid-flight, then rolls it back
 });
 
 it('a failed EDIT rolls the cached goal back to its prior value', async () => {
-  mockApi.saveGoal.mockRejectedValue(new Error('API error: 500'));
+  server.fail('/goals/g1', 500);
   const result = mountWithSeededCache();
 
   let ok: boolean | undefined;
@@ -126,7 +131,6 @@ it('a failed EDIT rolls the cached goal back to its prior value', async () => {
 });
 
 it('deleteGoal removes the goal from the cache on success', async () => {
-  mockApi.deleteGoal.mockResolvedValue({ id: 'g1' });
   const result = mountWithSeededCache();
 
   let ok: boolean | undefined;
@@ -134,10 +138,11 @@ it('deleteGoal removes the goal from the cache on success', async () => {
 
   expect(ok).toBe(true);
   expect(cacheGoals()).toEqual([]);
+  expect(server.sent('DELETE', '/goals/g1')).toHaveLength(1);
 });
 
 it('a failed delete reinserts the goal AT ITS ORIGINAL INDEX', async () => {
-  mockApi.deleteGoal.mockRejectedValue(new Error('API error: 500'));
+  server.fail('/goals/g2', 500);
   const G2: GoalRecord = { ...GOAL_G1, id: 'g2', name: 'Car' };
   const G3: GoalRecord = { ...GOAL_G1, id: 'g3', name: 'Roof' };
   const result = mountWithSeededCache([GOAL_G1, G2, G3]);
@@ -162,7 +167,7 @@ it('deleteGoal is a no-op false when the id is not in the cache', async () => {
   await act(async () => { ok = await result.current.deleteGoal('nope'); });
 
   expect(ok).toBe(false);
-  expect(mockApi.deleteGoal).not.toHaveBeenCalled();
+  expect(server.sentUnder('DELETE', '/goals/')).toEqual([]);
   expect(cacheGoals()).toEqual([GOAL_G1]);
 });
 
@@ -176,7 +181,6 @@ it('deleteGoal is a no-op false when the id is not in the cache', async () => {
 
 // [G1] create with NO ['goals'] cache entry yet (hub never opened) — the `prev ?? []` guard.
 it('saveGoal(null) into an EMPTY/undefined cache seeds a one-item list (prev ?? [])', async () => {
-  echoSave();
   const result = mount(); // deliberately NOT seeded → getQueryData(['goals']) is undefined
   expect(cacheGoals()).toBeUndefined();
 
@@ -193,8 +197,8 @@ it('saveGoal(null) into an EMPTY/undefined cache seeds a one-item list (prev ?? 
 // [G2] on success the optimistic row is SWAPPED for the server's row (same id) — not left beside it.
 it('create reconciles the optimistic row to the server row by id (no duplicate, server fields win)', async () => {
   // Server echoes the id but returns an authoritative row that DIFFERS from the optimistic one.
-  mockApi.saveGoal.mockImplementation((id: string, body: GoalWriteBody) =>
-    Promise.resolve(serverEcho(id, body, { name: 'Server Holiday', baseline: 250 })));
+  mintNextGoalId('new-goal');
+  server.once('PUT', '/goals/new-goal', { body: { id: 'new-goal', ...NEW_BODY, name: 'Server Holiday', baseline: 250 } });
   const result = mount([GOAL_G1]);
 
   let ok: boolean | undefined;
@@ -211,7 +215,7 @@ it('create reconciles the optimistic row to the server row by id (no duplicate, 
 
 // [G3] an edit whose id is concurrently REMOVED before the api rejects — rollback must NOT resurrect.
 it('a failed EDIT does NOT resurrect a goal that was concurrently deleted mid-flight', async () => {
-  mockApi.saveGoal.mockRejectedValue(new Error('API error: 500'));
+  server.fail('/goals/g1', 500);
   const result = mount([GOAL_G1]);
 
   let ok: boolean | undefined;
@@ -227,7 +231,6 @@ it('a failed EDIT does NOT resurrect a goal that was concurrently deleted mid-fl
 
 // [G4] same race, but the api SUCCEEDS — the server row must also not resurrect a deleted id.
 it('a succeeded EDIT does NOT resurrect a goal that was concurrently deleted mid-flight', async () => {
-  echoSave();
   const result = mount([GOAL_G1]);
 
   let ok: boolean | undefined;
@@ -243,7 +246,7 @@ it('a succeeded EDIT does NOT resurrect a goal that was concurrently deleted mid
 
 // [G5] delete of the FIRST element, rolled back, restores it at index 0.
 it('a failed delete of the FIRST goal reinserts it at index 0 (order preserved)', async () => {
-  mockApi.deleteGoal.mockRejectedValue(new Error('API error: 500'));
+  server.fail('/goals/g1', 500);
   const G2: GoalRecord = { ...GOAL_G1, id: 'g2' };
   const G3: GoalRecord = { ...GOAL_G1, id: 'g3' };
   const result = mount([GOAL_G1, G2, G3]);
@@ -254,7 +257,7 @@ it('a failed delete of the FIRST goal reinserts it at index 0 (order preserved)'
 
 // [G6] delete of the LAST element, rolled back, restores it at the end.
 it('a failed delete of the LAST goal reinserts it at the end (order preserved)', async () => {
-  mockApi.deleteGoal.mockRejectedValue(new Error('API error: 500'));
+  server.fail('/goals/g3', 500);
   const G2: GoalRecord = { ...GOAL_G1, id: 'g2' };
   const G3: GoalRecord = { ...GOAL_G1, id: 'g3' };
   const result = mount([GOAL_G1, G2, G3]);
@@ -265,7 +268,6 @@ it('a failed delete of the LAST goal reinserts it at the end (order preserved)',
 
 // [G7] two concurrent successful deletes both land — the survivor is correct.
 it('two concurrent deletes both remove their goal (second delete sees the first\'s cache write)', async () => {
-  mockApi.deleteGoal.mockResolvedValue({ id: 'x' });
   const G2: GoalRecord = { ...GOAL_G1, id: 'g2' };
   const G3: GoalRecord = { ...GOAL_G1, id: 'g3' };
   const result = mount([GOAL_G1, G2, G3]);
@@ -280,6 +282,7 @@ it('two concurrent deletes both remove their goal (second delete sees the first\
   expect(a).toBe(true);
   expect(b).toBe(true);
   expect(cacheGoals()).toEqual([G2]); // both removed, the middle survives
+  expect(server.sentUnder('DELETE', '/goals/').map((request) => request.path)).toEqual(['/goals/g1', '/goals/g3']);
 });
 
 // WHIT-476 — checkpoint ids must exist BEFORE the optimistic row lands in the cache. A
@@ -287,7 +290,6 @@ it('two concurrent deletes both remove their goal (second delete sees the first\
 // the writer mints any the caller omitted (like the goal id) and sends the SAME ids on — the
 // optimistic row and the row the server saves can never disagree about them.
 it('saveGoal mints ids for id-less checkpoints, in the cache AND in the body it sends', async () => {
-  echoSave();
   const result = mount([GOAL_G1]);
 
   // Read the cache MID-FLIGHT (before the server replies) — that optimistic row is the one
@@ -302,8 +304,7 @@ it('saveGoal mints ids for id-less checkpoints, in the cache AND in the body it 
     await pending;
   });
 
-  const [, sentBody] = mockApi.saveGoal.mock.calls[0] as [string, GoalWriteBody];
-  const sent = sentBody.checkpoints!;
+  const sent = sentGoalBodies()[0].checkpoints!;
   expect(sent[0].id).toMatch(/^test-uuid-/);    // client-minted (the auto-mocked randomUUID)
   expect(sent[1].id).toBe('kept-1');            // a supplied id is never re-minted
 
@@ -331,7 +332,6 @@ const GOAL_WITH_LADDER: GoalRecord = {
 // would give both the same id, and the once-ever celebration marker (a later slice) keys on
 // it — one rung would silently mark the other's celebration done.
 it('mints a SEPARATE id for every id-less checkpoint', async () => {
-  echoSave();
   const result = mount([GOAL_G1]);
 
   await act(async () => {
@@ -341,8 +341,7 @@ it('mints a SEPARATE id for every id-less checkpoint', async () => {
     });
   });
 
-  const [, sentBody] = mockApi.saveGoal.mock.calls[0] as [string, GoalWriteBody];
-  const ids = sentBody.checkpoints!.map((cp) => cp.id);
+  const ids = sentGoalBodies()[0].checkpoints!.map((cp) => cp.id);
   expect(new Set(ids).size).toBe(3);
   ids.forEach((id) => expect(id).toMatch(/^test-uuid-/));
 });
@@ -352,11 +351,13 @@ it('mints a SEPARATE id for every id-less checkpoint', async () => {
 // cache — not the client's guess, which would make the celebration key on an id that was
 // never stored.
 it('reconcile replaces the optimistically minted ladder with the SERVER ladder', async () => {
-  mockApi.saveGoal.mockImplementation((id: string, body: GoalWriteBody) =>
-    Promise.resolve({
-      ...serverEcho(id, body),
+  mintNextGoalId('new-goal');
+  server.once('PUT', '/goals/new-goal', {
+    body: {
+      id: 'new-goal', ...NEW_BODY,
       checkpoints: [{ id: 'srv-1', label: 'First', amount: 1000 }],   // server's own ids, one rung
-    }));
+    },
+  });
   const result = mount([GOAL_G1]);
 
   await act(async () => {
@@ -373,7 +374,7 @@ it('reconcile replaces the optimistically minted ladder with the SERVER ladder',
 // [B3] A failed save must restore the PRE-EDIT ladder, not leave the optimistic one (whose
 // freshly minted ids the server never saw) sitting in the cache.
 it('a failed edit rolls the ladder back to the previously SAVED checkpoints', async () => {
-  mockApi.saveGoal.mockRejectedValue(new Error('API error: 500'));
+  server.fail('/goals/g1', 500);
   const result = mountWithSeededCache([GOAL_WITH_LADDER]);
 
   let midIds: (string | undefined)[] | undefined;
@@ -401,9 +402,7 @@ it('an edit that omits checkpoints: client drops them optimistically, the server
   // WHIT-476 option B: saveGoal is a passthrough — it sends exactly what the caller gave and
   // does NOT carry the ladder forward, so an omitting edit blanks it in the instant on-screen
   // row. But the server keeps an omitted ladder and echoes it back, so the reconcile restores
-  // it. (Simulate the B server here: when the body omits checkpoints, return the stored ones.)
-  mockApi.saveGoal.mockImplementation((id: string, body: GoalWriteBody) =>
-    Promise.resolve({ ...serverEcho(id, body), checkpoints: GOAL_WITH_LADDER.checkpoints }));
+  // it. (The fake server merges the sent body over its stored row, so an omitted ladder is kept.)
   const result = mountWithSeededCache([GOAL_WITH_LADDER]);
 
   let midLadder: unknown;
@@ -413,8 +412,8 @@ it('an edit that omits checkpoints: client drops them optimistically, the server
     await p;
   });
 
-  const [, sentBody] = mockApi.saveGoal.mock.calls[0] as [string, GoalWriteBody];
-  expect(sentBody.checkpoints).toBeUndefined();          // client invents nothing on the way out
+  const [sentBody] = sentGoalBodies();
+  expect(sentBody.checkpoints).toBeUndefined();         // client invents nothing on the way out
   expect(midLadder).toBeUndefined();                     // and carries nothing forward optimistically
   expect(cacheGoals()![0].name).toBe('Renamed');
   expect(cacheGoals()![0].checkpoints).toEqual(GOAL_WITH_LADDER.checkpoints);  // server restored it

@@ -1,12 +1,12 @@
 // WHIT-344 — the OPTIMISTIC removal that makes a budget-detail row vanish the instant a charge
 // is excluded, instead of only when the invalidate's refetch lands. Drives the REAL action
-// through AppProvider (../api + ../auth mocked). The sibling budgetTxInvalidation suite proves
+// through AppProvider (the fake server + ../auth mocked). The sibling budgetTxInvalidation suite proves
 // the invalidate keys fire; these prove the synchronous ['budgetTransactions', *] setQueryData
 // patch + its rollback. Removal only — re-including relies on the invalidate (no optimistic add).
 // WHIT-459 — provider-family cluster fold. The five sibling suites (budgetTxInvalidation,
 // budgetTxOptimisticSignOut, budgetTxRefileOptimistic, budgetTxRefileParentSubtree,
 // budgetTxRefileSignOut) merged in below as block-scoped child describes, each keeping its own
-// fixtures byte-for-byte. Shared harness (imports, ../api automock, wrapper, deferred/signOut,
+// fixtures byte-for-byte. Shared harness (imports, the fake server, wrapper, signOut,
 // module beforeEach/afterEach) hoisted once. The ../auth mock is reconciled to the LIVE-store
 // SUPERSET so the sign-out siblings can flip mockStatus; every other describe simply stays 'authed'.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
@@ -16,6 +16,7 @@ import { AppProvider, useAppContext } from '../context';
 import type { Transaction, Category, Rule } from '../context';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
+import { installFakeServer } from './support/fakeServer';
 
 // Live auth store (superset). The static-'authed' siblings never touch mockStatus, so it stays
 // 'authed' for them; the two sign-out siblings mutate it via mockSetStatus to drive sign-out.
@@ -24,19 +25,23 @@ const mockListeners = new Set<() => void>();
 const mockSetStatus = (s: typeof mockStatus) => { mockStatus = s; mockListeners.forEach((l) => l()); };
 const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mockListeners.delete(l); };
 
-jest.mock('../api');
-jest.mock('../auth', () => ({ getStatus: () => mockStatus, subscribe: (l: () => void) => mockSubscribe(l) }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({
+  getStatus: () => mockStatus,
+  subscribe: (l: () => void) => mockSubscribe(l),
+  getAuthToken: async () => 'test-id-token',
+}));
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
-// Shared by the two sign-out siblings (byte-identical in both originals).
-function deferred<T>() {
-  let resolve!: (v: T) => void; let reject!: (e?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
+// A held save fails with a lost connection once released.
+function dropHeld(held: { release: () => void }, path: string) {
+  server.once('PATCH', path, 'dropped');
+  held.release();
 }
+const sentBodies = (path: string) => server.sent('PATCH', path).map((request) => request.body);
+
 function signOut() { act(() => { queryClient.clear(); mockSetStatus('anon'); }); }
 
 const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd49b', recent: 100 } as const;
@@ -67,8 +72,7 @@ function mount(transactions: Transaction[] = [txn()]) {
 // FAIL-ON-REVERT: reverting WHIT-525 removes the stamp path → the row is physically removed → the
 // detail screen blanks to "not found" for a budget-only charge.
 it('exclude marks the row in the cached budget list before the server confirms', async () => {
-  let resolveSave: (v: { transaction_id: string; budget_excluded: boolean }) => void = () => {};
-  mockApi.setTransactionFields.mockReturnValue(new Promise((r) => { resolveSave = r; }));
+  const held = server.hold('/transactions/t1');
   const result = mount();
   queryClient.setQueryData(['budgetTransactions', 'groceries'], [txn()]);
 
@@ -78,13 +82,13 @@ it('exclude marks the row in the cached budget list before the server confirms',
   // The optimistic patch ran synchronously; the row is marked, not removed.
   expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([txn({ budget_excluded: true })]);
 
-  await act(async () => { resolveSave({ transaction_id: 't1', budget_excluded: true }); await pending; });
+  await act(async () => { held.release(); await pending; });
+  expect(sentBodies('/transactions/t1')).toEqual([{ budget_excluded: true }]);
 });
 
 // [O-exclude-all-entries] a charge on a child category also shows in a budgeted parent's list, so
 // exclude must MARK it in EVERY cached ['budgetTransactions', *] entry (WHIT-525).
 it('exclude marks the row in every cached budget list (parent + child)', async () => {
-  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', budget_excluded: true });
   const result = mount();
   queryClient.setQueryData(['budgetTransactions', 'groceries'], [txn()]);
   queryClient.setQueryData(['budgetTransactions', 'food'], [txn()]);
@@ -100,7 +104,7 @@ it('exclude marks the row in every cached budget list (parent + child)', async (
 // toEqual matches against the original object. FAIL-ON-REVERT: dropping the catch rollback
 // stamp leaves budget_excluded:true on the row.
 it('rolls back the exclude stamp when the save fails', async () => {
-  mockApi.setTransactionFields.mockRejectedValue(new Error('network'));
+  server.fail('/transactions/t1', 500);
   const result = mount([txn(), txn({ transaction_id: 't2', date: '2026-06-20' })]);
   const original = [txn(), txn({ transaction_id: 't2', date: '2026-06-20' })];
   queryClient.setQueryData(['budgetTransactions', 'groceries'], original);
@@ -113,7 +117,6 @@ it('rolls back the exclude stamp when the save fails', async () => {
 // [O-no-add] re-including a charge (budget_excluded: false) must NOT optimistically add a row —
 // that needs the server's window + newest-first sort, so it's left to the invalidate/refetch.
 it('re-include does NOT optimistically add a row to the cached budget list', async () => {
-  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', budget_excluded: false });
   const result = mount();
   queryClient.setQueryData(['budgetTransactions', 'groceries'], []);
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
@@ -130,7 +133,6 @@ it('re-include does NOT optimistically add a row to the cached budget list', asy
 
 // [O-cold-cache] with no budget list cached (evicted / never opened), the patch no-ops cleanly.
 it('exclude no-ops when no budget list is cached', async () => {
-  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', budget_excluded: true });
   const result = mount();
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
@@ -142,8 +144,7 @@ it('exclude no-ops when no budget list is cached', async () => {
 // list that was refetched mid-save. WHIT-525: the row is now MARKED (not removed), so rollback
 // un-stamps it. The 'food' list never held t1, so its refetched data survives untouched.
 it('[WHIT-360] exclude rollback un-stamps only the marked list, not an unrelated refetched list', async () => {
-  let rejectSave: (e: unknown) => void = () => {};
-  mockApi.setTransactionFields.mockReturnValue(new Promise((_res, rej) => { rejectSave = rej; }));
+  const held = server.hold('/transactions/t1');
   const result = mount();
   queryClient.setQueryData(['budgetTransactions', 'groceries'], [txn()]);
   queryClient.setQueryData(['budgetTransactions', 'food'], [txn({ transaction_id: 't9old' })]); // never holds t1
@@ -155,9 +156,9 @@ it('[WHIT-360] exclude rollback un-stamps only the marked list, not an unrelated
   // A background refetch of the unrelated 'food' list lands while the save is still pending.
   act(() => { queryClient.setQueryData(['budgetTransactions', 'food'], [txn({ transaction_id: 't9new' })]); });
 
-  await act(async () => { rejectSave(new Error('network')); await pending; });
+  await act(async () => { dropHeld(held, '/transactions/t1'); await pending; });
 
-  expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([txn()]);                    // un-stamped back to original
+  expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([txn()]);                 // un-stamped back to original
   expect(queryClient.getQueryData(['budgetTransactions', 'food'])).toEqual([txn({ transaction_id: 't9new' })]); // fresh data NOT clobbered
 });
 
@@ -170,7 +171,6 @@ it('[WHIT-360] exclude rollback un-stamps only the marked list, not an unrelated
 // others unchanged. WHIT-525: the row stays in the list (stamped budget_excluded:true) so the
 // detail screen can still find it; budgetDetail filters it out at the view-model level.
 it('exclude marks ONLY the excluded row, leaving siblings intact and ordered', async () => {
-  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', budget_excluded: true } as never);
   const t1 = txn();
   const t2 = txn({ transaction_id: 't2', date: '2026-06-28', description: 'WOOLIES' });
   const t3 = txn({ transaction_id: 't3', date: '2026-06-20', description: 'ALDI' });
@@ -186,7 +186,6 @@ it('exclude marks ONLY the excluded row, leaving siblings intact and ordered', a
 // (the removal touches every ['budgetTransactions', *] entry; a list without the id must be a no-op
 // on contents). FAIL-ON-REVERT covered by [G1]; this pins the "don't drop the wrong row" direction.
 it('a budget list without the excluded id keeps all its rows', async () => {
-  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', budget_excluded: true } as never);
   const other1 = txn({ transaction_id: 'x1', category: 'transport' });
   const other2 = txn({ transaction_id: 'x2', category: 'transport', date: '2026-06-15' });
   const result = mount([txn(), other1, other2]);
@@ -201,7 +200,7 @@ it('a budget list without the excluded id keeps all its rows', async () => {
 // approach means rollback un-stamps (restores the original row) rather than re-inserting from a
 // snapshot. FAIL-ON-REVERT: deleting the catch rollback stamp leaves both lists with stale flags.
 it('rolls back every cached budget list when the save fails', async () => {
-  mockApi.setTransactionFields.mockRejectedValue(new Error('network'));
+  server.fail('/transactions/t1', 500);
   const parent = [txn(), txn({ transaction_id: 't2', date: '2026-06-20' })];
   const child = [txn()];
   const result = mount([txn(), txn({ transaction_id: 't2', date: '2026-06-20' })]);
@@ -219,7 +218,6 @@ it('rolls back every cached budget list when the save fails', async () => {
 // removal logic ever bleeding into the transactions cache. FAIL-ON-REVERT: if patchTransactions
 // stopped setting budget_excluded, the flag assertion reddens.
 it('exclude keeps the charge in the transactions cache, flagged excluded', async () => {
-  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', budget_excluded: true } as never);
   const result = mount([txn(), txn({ transaction_id: 't2' })]);
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
@@ -248,11 +246,7 @@ describe('budgetTxInvalidation (folded)', () => {
     return spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
   }
 
-  beforeEach(() => {
-    queryClient.clear();
-    mockApi.createRule.mockResolvedValue({ id: 'r1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
-    mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'groceries' });
-  });
+  beforeEach(() => { queryClient.clear(); });
   afterEach(() => { queryClient.clear(); jest.restoreAllMocks(); }); // clear the singleton + restore spies (config has clearMocks, not restoreMocks)
 
   function mount(transactions: Transaction[] = [txn()]) {
@@ -267,7 +261,6 @@ describe('budgetTxInvalidation (folded)', () => {
   // (which now drops it) and the rows below it stay reconciled. FAIL-ON-REVERT: removing the
   // `if ('budget_excluded' in patch)` invalidation block drops 'budgetTransactions' here.
   it('applyTransactionEdit(budget_excluded) invalidates budgets/breakdown/budgetTransactions', async () => {
-    mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', budget_excluded: true });
     const result = mount();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -283,7 +276,6 @@ describe('budgetTxInvalidation (folded)', () => {
   // it must NOT invalidate the feed (patched in place). FAIL-ON-REVERT: hoisting the budget
   // invalidations out of the `budget_excluded` guard makes a note edit invalidate 'budgetTransactions'.
   it('applyTransactionEdit(notes) invalidates NOTHING — not the feed, not the budget lists', async () => {
-    mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', notes: 'lunch' });
     const result = mount();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -309,6 +301,7 @@ describe('budgetTxInvalidation (folded)', () => {
 
     expect(invalidatedKeys(spy)).toEqual(expect.arrayContaining(['budgets', 'breakdown', 'budgetTransactions']));
     expect(invalidatedKeys(spy)).not.toContain('transactions'); // feed patched in place, never invalidated
+    expect(sentBodies('/transactions/t1')).toEqual([{ category: 'groceries' }]);
     spy.mockRestore();
   });
 });
@@ -321,14 +314,13 @@ describe('WHIT-344 exclude rollback settling after sign-out', () => {
   it('does NOT re-seat the old account budget list into the cleared cache', async () => {
     seedTransactionsCache(queryClient, [txn()]);
     queryClient.setQueryData(['budgetTransactions', 'groceries'], [txn()]);
-    const d = deferred<{ transaction_id: string; budget_excluded: boolean }>();
-    mockApi.setTransactionFields.mockImplementation(() => d.promise as never);
+    const held = server.hold('/transactions/t1');
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
     act(() => { pending = result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
     signOut(); // cache cleared, epoch bumped, while the save is still in-flight
-    await act(async () => { d.reject(new Error('network')); await pending; });
+    await act(async () => { dropHeld(held, '/transactions/t1'); await pending; });
 
     // WHIT-271 invariant: nothing from the prior session may reappear in the wiped cache.
     expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toBeUndefined();
@@ -360,13 +352,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
   const foodList = () => queryClient.getQueryData<Transaction[]>(['budgetTransactions', 'food']);
   const budgetList = (id: string) => queryClient.getQueryData<Transaction[]>(['budgetTransactions', id]);
 
-  beforeEach(() => {
-    queryClient.clear();
-    mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'transport' });
-    mockApi.setTransactionCategories.mockImplementation(async (updates: { id: string; category: string }[]) =>
-      ({ results: updates.map((u) => ({ id: u.id, status: 'updated' as const })) }));
-    mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'CAFE', categoryId: 'transport' });
-  });
+  beforeEach(() => { queryClient.clear(); });
   afterEach(() => { queryClient.clear(); }); // clear the singleton's gcTime timers
 
   function mount(transactions: Transaction[]) {
@@ -393,18 +379,18 @@ describe('budgetTxRefileOptimistic (folded)', () => {
 
     it("applyCategory('one') re-filed to a category STILL in the budget subtree keeps the row", async () => {
       // t1 is on 'coffee'; re-file to 'food' (the budget itself) — still inside food's subtree.
-      mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'food' });
       const result = mount([txn('t1')]);
       queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);
 
       act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'food' }));
       await act(async () => { await result.current.applyCategory('one'); });
 
+      expect(sentBodies('/transactions/t1')).toEqual([{ category: 'food' }]);
       expect(foodList()).toEqual([txn('t1')]);                         // stays in food's subtree → kept
     });
 
     it("applyCategory('one') restores the row when the save fails", async () => {
-      mockApi.setTransactionCategory.mockRejectedValue(new Error('boom'));
+      server.fail('/transactions/t1', 500);
       const result = mount([txn('t1')]);
       queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);
 
@@ -431,11 +417,14 @@ describe('budgetTxRefileOptimistic (folded)', () => {
       await act(async () => { await result.current.applyCategoryToMany(['t1', 't2'], 'transport'); });
 
       expect(foodList()).toEqual([]);
+      expect(sentBodies('/transactions')).toEqual([{
+        updates: [{ id: 't1', category: 'transport' }, { id: 't2', category: 'transport' }],
+      }]);
     });
 
     it('applyCategoryToMany partial failure restores ONLY the failed row (Decision A)', async () => {
       // t1 saves, t2 fails → t2 reappears in the food list, t1 stays gone.
-      mockApi.setTransactionCategories.mockResolvedValue({ results: [{ id: 't1', status: 'updated' as const }] });
+      server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: 'updated' }] } });
       const result = mount([txn('t1'), txn('t2')]);
       queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1'), txn('t2')]);
 
@@ -450,8 +439,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
       // FAILS, the rollback must restore food (the shrunk list) but must NOT clobber shopping's fresh
       // data with the stale pre-save snapshot. Fail-on-revert: restoring ALL snapshots (the old
       // behaviour) stamps shopping back to [t9old].
-      let rejectSave: (e: unknown) => void = () => {};
-      mockApi.setTransactionCategory.mockReturnValue(new Promise((_res, rej) => { rejectSave = rej; }));
+      const held = server.hold('/transactions/t1');
       const result = mount([txn('t1')]);
       queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);
       queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('t9old', { category: 'shopping' })]);
@@ -465,7 +453,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
       // A background refetch of the UNRELATED shopping list lands while the save is still pending.
       act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('t9new', { category: 'shopping' })]); });
 
-      await act(async () => { rejectSave(new Error('boom')); await pending; });
+      await act(async () => { dropHeld(held, '/transactions/t1'); await pending; });
 
       expect(foodList()).toEqual([txn('t1')]);                                    // shrunk list correctly restored
       expect(budgetList('shopping')).toEqual([txn('t9new', { category: 'shopping' })]); // fresh data NOT clobbered
@@ -489,9 +477,8 @@ describe('budgetTxRefileOptimistic (folded)', () => {
         // food holds t1 + t2; shopping never held either. Re-file [t1,t2] OUT of food; t1 SAVES, t2 FAILS.
         // Mid-save a background refetch replaces shopping's list. On partial failure the rollback must:
         // restore food, re-drop only the saved t1 (Decision A), and NEVER touch shopping's fresh data.
-        let resolveBatch: (v: { results: { id: string; status: 'updated' }[] }) => void = () => {};
-        mockApi.setTransactionCategories.mockReturnValue(
-          new Promise((r) => { resolveBatch = r; }) as ReturnType<typeof api.setTransactionCategories>);
+        const held = server.hold('/transactions');
+        server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: 'updated' }] } });
         const result = mount([txn('t1'), txn('t2')]);
         queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1'), txn('t2')]);
         queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s0', { category: 'shopping' })]);
@@ -503,7 +490,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
         // A background refetch of the UNRELATED shopping list lands while the batch is still pending.
         act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]); });
 
-        await act(async () => { resolveBatch({ results: [{ id: 't1', status: 'updated' }] }); await pending; });
+        await act(async () => { held.release(); await pending; });
 
         expect(foodList()).toEqual([txn('t2')]);                                        // failed t2 restored; saved t1 stays gone
         expect(budgetList('shopping')).toEqual([txn('s1new', { category: 'shopping' })]); // fresh data NOT clobbered
@@ -511,9 +498,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
 
       it('[G3] a failed re-file restores BOTH shrunk lists (parent + child) and leaves an unrelated refetched list untouched', async () => {
         // t1 is on coffee → held by food (parent) AND coffee (child). Re-file to transport (out of both).
-        let rejectSave: (e: unknown) => void = () => {};
-        mockApi.setTransactionCategory.mockReturnValue(
-          new Promise((_res, rej) => { rejectSave = rej; }) as ReturnType<typeof api.setTransactionCategory>);
+        const held = server.hold('/transactions/t1');
         const result = mount([txn('t1')]);
         queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);
         queryClient.setQueryData(['budgetTransactions', 'coffee'], [txn('t1')]);
@@ -527,7 +512,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
 
         act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]); });
 
-        await act(async () => { rejectSave(new Error('boom')); await pending; });
+        await act(async () => { dropHeld(held, '/transactions/t1'); await pending; });
 
         expect(foodList()).toEqual([txn('t1')]);                                        // parent restored
         expect(budgetList('coffee')).toEqual([txn('t1')]);                              // child restored
@@ -540,9 +525,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
         // WHIT-525: the stamp approach maps over every budget list during rollback, but the map is an
         // identity for lists that never held the target row — data is unchanged. The meaningful guard
         // is that the refetched shopping data survives the rollback.
-        let rejectSave: (e: unknown) => void = () => {};
-        mockApi.setTransactionFields.mockReturnValue(
-          new Promise((_res, rej) => { rejectSave = rej; }) as ReturnType<typeof api.setTransactionFields>);
+        const held = server.hold('/transactions/t1');
         const result = mount([txn('t1')]);
         queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);        // holds t1 → gets stamped
         queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s0', { category: 'shopping' })]); // never held t1
@@ -554,7 +537,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
 
         act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]); });
 
-        await act(async () => { rejectSave(new Error('boom')); await pending; });
+        await act(async () => { dropHeld(held, '/transactions/t1'); await pending; });
 
         expect(foodList()).toEqual([txn('t1')]);                                        // stamped list restored
         expect(budgetList('shopping')).toEqual([txn('s1new', { category: 'shopping' })]); // refetched data survived
@@ -565,8 +548,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
         // edit DOES patch every ['budgetTransactions', *] holding it — in place (unlike the row-removal
         // the budget_excluded path does) — and restores the original row if the save fails. This
         // replaces the old guard that a note edit must never touch the budget lists.
-        let rejectSave: (e: unknown) => void = () => {};
-        mockApi.setTransactionFields.mockReturnValue(new Promise((_res, rej) => { rejectSave = rej; }));
+        const held = server.hold('/transactions/t1');
         const result = mount([txn('t1')]);
         queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);
 
@@ -575,7 +557,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
         // Optimistic: the budget-list row carries the new note before the save settles.
         expect(foodList()).toEqual([txn('t1', { notes: 'lunch with A' })]);
 
-        await act(async () => { rejectSave(new Error('boom')); await pending; });
+        await act(async () => { dropHeld(held, '/transactions/t1'); await pending; });
         // Rolled back to the original row — no stale note left behind.
         expect(foodList()).toEqual([txn('t1')]);
       });
@@ -583,8 +565,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
       it('[G4b] a note/tag edit also patches the Insights category-drill cache, and rolls back on failure', async () => {
         // Same as G4 for the ['categoryTransactions', category, cycle] cache — reached by a prefix
         // scan since it's keyed by category AND cycle.
-        let rejectSave: (e: unknown) => void = () => {};
-        mockApi.setTransactionFields.mockReturnValue(new Promise((_res, rej) => { rejectSave = rej; }));
+        const held = server.hold('/transactions/t1');
         const result = mount([txn('t1')]);
         const drillKey = ['categoryTransactions', 'coffee', 0];
         queryClient.setQueryData(drillKey, [txn('t1')]);
@@ -593,27 +574,25 @@ describe('budgetTxRefileOptimistic (folded)', () => {
         act(() => { pending = result.current.applyTransactionEdit('t1', { tags: ['work'] }); });
         expect(queryClient.getQueryData(drillKey)).toEqual([txn('t1', { tags: ['work'] })]); // optimistic
 
-        await act(async () => { rejectSave(new Error('boom')); await pending; });
+        await act(async () => { dropHeld(held, '/transactions/t1'); await pending; });
         expect(queryClient.getQueryData(drillKey)).toEqual([txn('t1')]);                     // rolled back
       });
 
       it('[G4c] a note edit on a row present ONLY in a budget list (absent from feed/recent) is applied, not a no-op', async () => {
         // The fallback lookup: readTransactionsCache (feed/uncat/recent) is empty, so without the
         // budget/category scan the edit would early-return and the note would never land.
-        mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 'bill', notes: 'annual premium' });
         const result = mount([]);                                    // feed + recent empty
         queryClient.setQueryData(['budgetTransactions', 'insurance'], [txn('bill')]);
         await act(async () => { await result.current.applyTransactionEdit('bill', { notes: 'annual premium' }); });
         expect(budgetList('insurance')).toEqual([txn('bill', { notes: 'annual premium' })]);
+        expect(sentBodies('/transactions/bill')).toEqual([{ notes: 'annual premium' }]);
       });
 
       it('[G5] a list that was EMPTY at removal time and refetched into rows mid-save survives a failed rollback', async () => {
         // The old code snapshotted EVERY present list (an empty [] included) and restored it verbatim,
         // erasing a mid-save refetch. The `data?.some(...)` filter drops the empty list from the snapshot
         // set, so it is never restored/erased.
-        let rejectSave: (e: unknown) => void = () => {};
-        mockApi.setTransactionFields.mockReturnValue(
-          new Promise((_res, rej) => { rejectSave = rej; }) as ReturnType<typeof api.setTransactionFields>);
+        const held = server.hold('/transactions/t1');
         const result = mount([txn('t1')]);
         queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);   // holds t1 → shrinks
         queryClient.setQueryData(['budgetTransactions', 'shopping'], []);         // present but EMPTY, never held t1
@@ -626,7 +605,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
         // shopping's refetch lands mid-save, now holding real rows.
         act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]); });
 
-        await act(async () => { rejectSave(new Error('boom')); await pending; });
+        await act(async () => { dropHeld(held, '/transactions/t1'); await pending; });
 
         expect(foodList()).toEqual([txn('t1')]);                                        // shrunk list restored
         expect(budgetList('shopping')).toEqual([txn('s1new', { category: 'shopping' })]); // empty→refetched list NOT erased
@@ -661,13 +640,7 @@ describe('budgetTxRefileParentSubtree (folded)', () => {
 
   const list = (id: string) => queryClient.getQueryData<Transaction[]>(['budgetTransactions', id]);
 
-  beforeEach(() => {
-    queryClient.clear();
-    mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'transport' });
-    mockApi.setTransactionCategories.mockImplementation(async (updates: { id: string; category: string }[]) =>
-      ({ results: updates.map((u) => ({ id: u.id, status: 'updated' as const })) }));
-    mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'CAFE', categoryId: 'transport' });
-  });
+  beforeEach(() => { queryClient.clear(); });
   afterEach(() => { queryClient.clear(); jest.restoreAllMocks(); }); // clear the singleton + restore the [NOOP] setQueryData spy
 
   function mount(transactions: Transaction[]) {
@@ -681,7 +654,6 @@ describe('budgetTxRefileParentSubtree (folded)', () => {
 
   describe('WHIT-348 optimistic removal — parent/overlap/all-multi/no-op gaps', () => {
     it('[OVERLAP+PARENT-KEEP] re-file leaf→sibling drops it from the parent budget but keeps it in the grandparent', async () => {
-      mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'snacks' });
       const result = mount([txn('t1')]);
       // The same coffee charge is listed under BOTH budgeted ancestors.
       queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);
@@ -691,6 +663,7 @@ describe('budgetTxRefileParentSubtree (folded)', () => {
       act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'snacks' }));
       await act(async () => { await result.current.applyCategory('one'); });
 
+      expect(sentBodies('/transactions/t1')).toEqual([{ category: 'snacks' }]);
       expect(list('food')).toEqual([txn('t1')]);   // still inside food's subtree → kept
       expect(list('dining')).toEqual([]);           // no longer inside dining's subtree → dropped
     });
@@ -713,7 +686,6 @@ describe('budgetTxRefileParentSubtree (folded)', () => {
       // guard. React Query's structural sharing returns the OLD reference on a deep-equal write, so
       // reference identity can't distinguish "skipped" from "rewritten with equal data" — spy on
       // setQueryData and assert neither budget key was written during the re-file.
-      mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'dining' });
       const result = mount([txn('t1')]);
       queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);
       queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('t9', { category: 'shopping' })]);
@@ -728,6 +700,7 @@ describe('budgetTxRefileParentSubtree (folded)', () => {
         .map((key) => key[1]);
       expect(budgetKeysWritten).not.toContain('food');      // still-owned → ownership guard skips it
       expect(budgetKeysWritten).not.toContain('shopping');  // never held the row → shrink guard skips it
+      expect(sentBodies('/transactions/t1')).toEqual([{ category: 'dining' }]);
       setSpy.mockRestore();
     });
 
@@ -748,7 +721,7 @@ describe('budgetTxRefileParentSubtree (folded)', () => {
     it("[ALL-MULTI] applyCategory('all') partial failure restores ONLY the failed id (the 'all' re-drop path)", async () => {
       // t1 saves, t2 fails → t2 reappears in food's list, t1 stays gone. Distinct code path from
       // applyCategoryToMany's partial-failure re-drop (context.tsx ~905 vs ~992).
-      mockApi.setTransactionCategories.mockResolvedValue({ results: [{ id: 't1', status: 'updated' as const }] });
+      server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: 'updated' }] } });
       const t1 = txn('t1', { category: null });
       const t2 = txn('t2', { category: null });
       const result = mount([t1, t2]);
@@ -786,8 +759,7 @@ describe('WHIT-348 re-file budget-list rollback settling after sign-out', () => 
     seedTransactionsCache(queryClient, [txn()]);
     queryClient.setQueryData(['categories'], CATS);
     queryClient.setQueryData(['budgetTransactions', 'food'], [txn()]);
-    const d = deferred<{ results: { id: string; status: 'updated' }[] }>();
-    mockApi.setTransactionCategories.mockImplementation(() => d.promise as never);
+    const held = server.hold('/transactions');
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
@@ -796,7 +768,7 @@ describe('WHIT-348 re-file budget-list rollback settling after sign-out', () => 
     expect(queryClient.getQueryData(['budgetTransactions', 'food'])).toEqual([]); // dropped optimistically
 
     signOut(); // cache cleared + epoch bumped, save still in flight
-    await act(async () => { d.reject(new Error('network')); await pending; });
+    await act(async () => { dropHeld(held, '/transactions'); await pending; });
 
     // WHIT-271 invariant: the failed re-file's restore must NOT resurrect the prior session's list.
     expect(queryClient.getQueryData(['budgetTransactions', 'food'])).toBeUndefined();
