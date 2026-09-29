@@ -83,3 +83,33 @@ def test_failure_for_one_path_does_not_poison_another_path(api_key_module, monke
     # B did not inherit A's (absent) slot, and A remains un-cached / re-raisable.
     assert "/bad" not in api_key_module._cache
     assert api_key_module._cache["/good"] == "key-for::/good"
+
+
+# --- WHIT-644: forget a rejected key so the next call re-reads SSM ---
+
+
+def test_forget_makes_the_next_call_refetch(api_key_module, monkeypatch):
+    keys = iter(["old-key", "new-key"])
+    monkeypatch.setattr(api_key_module, "get_param", lambda path: next(keys))
+
+    assert api_key_module.get_api_key("/bank/key") == "old-key"
+    api_key_module.forget_api_key("/bank/key")
+    assert api_key_module.get_api_key("/bank/key") == "new-key"
+
+
+def test_forgetting_one_path_leaves_another_cached(api_key_module, monkeypatch):
+    calls = []
+    monkeypatch.setattr(api_key_module, "get_param", lambda path: calls.append(path) or "secret")
+
+    api_key_module.get_api_key("/bank/key")
+    api_key_module.get_api_key("/anthropic/key")
+    api_key_module.forget_api_key("/bank/key")
+    api_key_module.get_api_key("/anthropic/key")
+
+    assert calls == ["/bank/key", "/anthropic/key"]
+
+
+def test_forgetting_an_unknown_path_does_nothing(api_key_module):
+    api_key_module.forget_api_key("/never/fetched")
+
+    assert api_key_module._cache == {}

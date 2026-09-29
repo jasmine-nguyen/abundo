@@ -239,6 +239,29 @@ resource "aws_cloudwatch_metric_alarm" "goal_nudge_errors" {
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
 
+# --- Transaction-trigger failure alarm (WHIT-644) ---------------------------
+# A rejected BankSync key means no sync ever starts, so BankSync's "Sync failed" email never
+# fires, and the balance poller (same key) fails too, blinding the WHIT-606 stall alert. The
+# trigger raises when any feed fails, so the built-in Errors metric counts each failed run.
+# A 3600s period with 3 of 3 datapoints counts failed HOURS (matches the hourly schedule), so
+# async retries (up to 3 errors in one hour) can't page early.
+resource "aws_cloudwatch_metric_alarm" "transaction_trigger_errors" {
+  alarm_name          = "${var.project_name}-transaction-trigger-errors"
+  namespace           = "AWS/Lambda"
+  metric_name         = "Errors"
+  dimensions          = { FunctionName = aws_lambda_function.transaction_trigger.function_name }
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 3
+  datapoints_to_alarm = 3
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "The hourly BankSync sync has failed 3 hours in a row, so no transactions are arriving. Check /aws/lambda/abundo-transaction-trigger. 'HTTP Error 401' means BankSync rejected our key: make a new key in the BankSync dashboard and save it to /abundo/banksync-api-key in SSM (the next hourly run picks it up). The daily balance poll also uses this key; if Accounts balances look stale the next day, re-run abundo-balance-poller. 'HTTP Error 404' means a feed was deleted: update SYNC_FEED_IDS in shared/constants.py."
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+}
+
 # --- Up-webhook health alarms (WHIT-316) ------------------------------------
 # WHIT-313 made the direct Up webhook the SOLE home-loan repayment notifier (the slow
 # BankSync-path push was removed), so a silent stop = a missed alert with no safety net.
