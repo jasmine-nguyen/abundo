@@ -12,7 +12,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
-import type { AppContext, ApplyRulesResult } from '../context';
+import type { AppContext, ApplyRulesResult, FilingResult, FilingTarget, FilingWhen } from '../context';
 
 let mockState: AppContext;
 jest.mock('../context', () => {
@@ -26,9 +26,12 @@ import { Overlays } from '../components/Overlays';
 const fns = {
   setSheet: jest.fn(),
   showToast: jest.fn(),
-  previewRuleApplication: jest.fn<() => Promise<ApplyRulesResult | null>>(),
-  applyRulesToHistory: jest.fn<() => Promise<ApplyRulesResult | null>>(),
+  previewFiling: jest.fn<(target: FilingTarget) => Promise<FilingResult>>(),
+  fileCharges: jest.fn<(target: FilingTarget, when: FilingWhen) => Promise<FilingResult>>(),
 };
+
+const filed = (result: ApplyRulesResult): FilingResult => ({ status: 'filed', report: result });
+const FAILED: FilingResult = { status: 'failed', background: false };
 
 const CATEGORIES = [{ id: 'groceries', name: 'Groceries' }];
 
@@ -51,7 +54,7 @@ function mount() {
 
 /** Mount and let the mount-time preview resolve. */
 async function mountWithPreview(preview: ApplyRulesResult | null) {
-  fns.previewRuleApplication.mockResolvedValue(preview);
+  fns.previewFiling.mockResolvedValue(preview ? filed(preview) : FAILED);
   const view = mount();
   await act(async () => {});
   return view;
@@ -59,9 +62,9 @@ async function mountWithPreview(preview: ApplyRulesResult | null) {
 
 /** Round 1: a full capped round, leaving the sheet in its partial state with 212 to go. */
 async function firstRound() {
-  fns.applyRulesToHistory.mockResolvedValueOnce(report({
+  fns.fileCharges.mockResolvedValueOnce(filed(report({
     dryRun: false, matched: 512, filed: filedRows(300), remaining: 212,
-  }));
+  })));
   await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
 }
 
@@ -75,12 +78,12 @@ beforeEach(() => { jest.clearAllMocks(); });
 // server work, and a fresh report overwriting the round she is mid-way through reading.
 it('does not re-scan history when an unrelated context change re-renders it', async () => {
   const view = await mountWithPreview(report({ matched: 4, unfiled: 10, remaining: 4 }));
-  expect(fns.previewRuleApplication).toHaveBeenCalledTimes(1);
+  expect(fns.previewFiling).toHaveBeenCalledTimes(1);
 
   mockState = { ...mockState, toast: 'Saved' } as unknown as AppContext;
   await act(async () => { view.rerender(<Overlays />); });
 
-  expect(fns.previewRuleApplication).toHaveBeenCalledTimes(1);
+  expect(fns.previewFiling).toHaveBeenCalledTimes(1);
   expect(screen.getByText('File 4 charges')).toBeTruthy();   // the same plan, undisturbed
 });
 
@@ -94,7 +97,7 @@ it('swaps the round-1 numbers for the filing spinner while the next round runs',
   await firstRound();
   expect(screen.getByText('Filed 300 charges so far')).toBeTruthy();
 
-  fns.applyRulesToHistory.mockReturnValueOnce(new Promise(() => {}));   // never settles
+  fns.fileCharges.mockReturnValueOnce(new Promise(() => {}));   // never settles
   await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-continue')); });
 
   expect(screen.getByTestId('apply-rules-busy')).toBeTruthy();
@@ -112,14 +115,14 @@ it('files once on a same-frame double tap of "Apply the rest"', async () => {
   await mountWithPreview(report());
   await firstRound();
 
-  fns.applyRulesToHistory.mockResolvedValue(report({ dryRun: false, filed: filedRows(212, 'b'), remaining: 0 }));
+  fns.fileCharges.mockResolvedValue(filed(report({ dryRun: false, filed: filedRows(212, 'b'), remaining: 0 })));
   const button = screen.getByTestId('apply-rules-continue');
   await act(async () => {
     fireEvent.press(button);
     fireEvent.press(button);
   });
 
-  expect(fns.applyRulesToHistory).toHaveBeenCalledTimes(2);   // round 1 + ONE round 2
+  expect(fns.fileCharges).toHaveBeenCalledTimes(2);   // round 1 + ONE round 2
 });
 
 // --- [A15] a failed round must not leave the last one's numbers up ------------
@@ -131,7 +134,7 @@ it('clears the earlier round numbers when a later round fails', async () => {
   await mountWithPreview(report());
   await firstRound();
 
-  fns.applyRulesToHistory.mockResolvedValueOnce(null);
+  fns.fileCharges.mockResolvedValueOnce(FAILED);
   await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-continue')); });
 
   expect(screen.getByText("Couldn't finish")).toBeTruthy();
@@ -152,9 +155,9 @@ it('clears the earlier round numbers when a later round fails', async () => {
 // this is the case where the gate itself is load-bearing.
 it('never claims success when every row errored and `remaining` is zero', async () => {
   await mountWithPreview(report({ matched: 4, remaining: 4 }));
-  fns.applyRulesToHistory.mockResolvedValueOnce(report({
+  fns.fileCharges.mockResolvedValueOnce(filed(report({
     dryRun: false, matched: 4, filed: [], failed: ['t1', 't2', 't3', 't4'], remaining: 0,
-  }));
+  })));
 
   await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
 
@@ -176,11 +179,11 @@ it('stops offering another round once one files nothing and shrinks nothing', as
     dryRun: false, matched: 4, filed: [], failed: ['t1', 't2', 't3', 't4'], remaining: 0,
   });
 
-  fns.applyRulesToHistory.mockResolvedValueOnce(stalledRound);
+  fns.fileCharges.mockResolvedValueOnce(filed(stalledRound));
   await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
   expect(screen.getByTestId('apply-rules-continue')).toBeTruthy();   // one retry is fair
 
-  fns.applyRulesToHistory.mockResolvedValueOnce(stalledRound);       // identical result
+  fns.fileCharges.mockResolvedValueOnce(filed(stalledRound));       // identical result
   await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-continue')); });
 
   expect(screen.getByText("Something's stopping these")).toBeTruthy();
@@ -193,9 +196,9 @@ it('keeps offering rounds while the work left is shrinking', async () => {
   await mountWithPreview(report());
   await firstRound();
 
-  fns.applyRulesToHistory.mockResolvedValueOnce(report({
+  fns.fileCharges.mockResolvedValueOnce(filed(report({
     dryRun: false, matched: 512, filed: filedRows(200, 'b'), remaining: 12,
-  }));
+  })));
   await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-continue')); });
 
   expect(screen.getByText('Filed 500 charges so far')).toBeTruthy();
@@ -212,10 +215,10 @@ it('keeps offering rounds while the work left is shrinking', async () => {
 // "Apply the rest" instead of closing -> red.
 it('finishes the run when every attempted row was already filed by the user', async () => {
   await mountWithPreview(report({ matched: 4, remaining: 4 }));
-  fns.applyRulesToHistory.mockResolvedValueOnce(report({
+  fns.fileCharges.mockResolvedValueOnce(filed(report({
     dryRun: false, matched: 4, filed: [], failed: [],
     alreadyFiled: ['t1', 't2', 't3', 't4'], remaining: 0,
-  }));
+  })));
 
   await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
 
@@ -233,10 +236,10 @@ it('does not call a round stuck when someone else filed the rows it skipped', as
   await mountWithPreview(report());
   await firstRound();                                   // filed 300, 212 to go
 
-  fns.applyRulesToHistory.mockResolvedValueOnce(report({
+  fns.fileCharges.mockResolvedValueOnce(filed(report({
     dryRun: false, matched: 512, filed: [], failed: [],
     alreadyFiled: Array.from({ length: 100 }, (_, i) => `x${i}`), remaining: 112,
-  }));
+  })));
   await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-continue')); });
 
   expect(screen.queryByText("Something's stopping these")).toBeNull();

@@ -12,8 +12,8 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
-import type { ApplyRulesJob } from '../context';
+import { AppProvider, useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
+import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';
 import { ApiError } from '../apiError';
 import { queryClient } from '../queryClient';
 
@@ -30,6 +30,8 @@ jest.mock('../auth', () => ({
 }));
 import * as api from '../api';
 const mockApi = api as jest.Mocked<typeof api>;
+const SWEEP: FilingTarget = { kind: 'sweep' };
+const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -68,13 +70,13 @@ it('[G1] Try again while stalled tears the run down and restarts the same varian
   mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 0, attempted: 0 }));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(POLLS_TO_TRIP);
   expect(r.current.applyRulesStalled).toBe(true);
 
   let res: unknown;
   await act(async () => { res = await r.current.retryApplyRulesJob(); });
-  expect(res).toEqual({ ok: true });
+  expect(res).toEqual({ status: 'background' });
   expect(mockApi.startApplyRulesJob).toHaveBeenCalledTimes(2); // abandoned the stuck run, started fresh
   expect(r.current.applyRulesStalled).toBe(false);            // fresh job → hint cleared
   expect(r.current.applyRulesJob?.status).toBe('running');
@@ -92,7 +94,7 @@ it('[G2] a fresh sweep after a lock leak does not re-trip the hint on the first 
 
   const r = mount();
   await act(async () => { r.current.setSheet({ mode: 'applyRules' } as never); });
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(POLLS_TO_TRIP);
   expect(r.current.applyRulesStalled).toBe(true);
 
@@ -104,7 +106,7 @@ it('[G2] a fresh sweep after a lock leak does not re-trip the hint on the first 
   // Fresh sweep starts clean (lock effect + begin both reset the stall refs). First poll (0:0)
   // must NOT re-trip.
   await act(async () => { r.current.setSheet({ mode: 'applyRules' } as never); });
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(1);
   expect(r.current.applyRulesStalled).toBe(false); // leaked counter would re-trip here
   expect(r.current.applyRulesJob?.status).toBe('running');
@@ -123,7 +125,7 @@ it('[G3] a network throw is neutral to the stall counter (does not reset it)', a
   });
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(24);                                    // counter 23, not stalled
   expect(r.current.applyRulesStalled).toBe(false);
   await tick(3);                                     // three offline throws — counter untouched
@@ -139,7 +141,7 @@ it('[G4a] progress via matched alone resets the stall counter', async () => {
   mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 5, attempted: 5 }));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(POLLS_TO_TRIP);
   expect(r.current.applyRulesStalled).toBe(true);
 
@@ -154,7 +156,7 @@ it('[G4b] progress via attempted alone resets the stall counter', async () => {
   mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 900, attempted: 10 }));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(POLLS_TO_TRIP);
   expect(r.current.applyRulesStalled).toBe(true);
 
@@ -171,7 +173,7 @@ it('[G5] a mid-run jump restarts the stall clock from the jump, not from mount',
   mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 100, attempted: 0 }));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(10); // 10 unchanged polls at 100:0 — counter climbing toward the trip
   expect(r.current.applyRulesStalled).toBe(false);
 
@@ -201,7 +203,7 @@ it('[G6] a teardown between a stall poll firing and resolving does not trip the 
 
   const r = mount();
   await act(async () => { r.current.setSheet({ mode: 'applyRules' } as never); });
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(POLLS_TO_TRIP - 1);        // counter 23, not stalled
   expect(r.current.applyRulesStalled).toBe(false);
 
@@ -219,7 +221,7 @@ it('[G7a] a 404 on the stall poll clears the hint and fails the job (expired)', 
   mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 0, attempted: 0 }));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(POLLS_TO_TRIP);
   expect(r.current.applyRulesStalled).toBe(true);
 
@@ -236,7 +238,7 @@ it('[G7b] the network-error cap while stalled clears the hint and fails the job 
   mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 0, attempted: 0 }));
 
   const r = mount();
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(POLLS_TO_TRIP);
   expect(r.current.applyRulesStalled).toBe(true);
 
@@ -254,7 +256,7 @@ it('[G8] the stall hint survives a dismiss and reopen of the same running job', 
 
   const r = mount();
   await act(async () => { r.current.setSheet({ mode: 'applyRules' } as never); });
-  await act(async () => { await r.current.startApplyRulesSweep(); });
+  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
   await tick(POLLS_TO_TRIP);
   expect(r.current.applyRulesStalled).toBe(true);
 

@@ -9,7 +9,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
-import type { AppContext, FileByShopOutcome, ApplyRulesJobStart, ApplyRulesJob } from '../context';
+import type { AppContext, ApplyRulesJob, FilingResult, FilingTarget, FilingWhen } from '../context';
 import type { ApplyRulesResult, UncategorizedMerchantGroup, UncategorizedMerchants } from '../api';
 import { APPLY_RULES_MAX_WRITES } from '../context';
 import { ApiError } from '../apiError';
@@ -26,14 +26,10 @@ import { Overlays } from '../components/Overlays';
 const fns = {
   setSheet: jest.fn(),
   showToast: jest.fn(),
-  previewFileByShop: jest.fn<(g: UncategorizedMerchantGroup, c: string) => Promise<FileByShopOutcome>>(),
-  fileByShop: jest.fn<(g: UncategorizedMerchantGroup, c: string) => Promise<FileByShopOutcome>>(),
-  startFileByShopJob: jest.fn<(g: UncategorizedMerchantGroup, c: string) => Promise<ApplyRulesJobStart>>(),
-  previewNewRule: jest.fn<(p: string, c: string, b?: boolean) => Promise<FileByShopOutcome>>(),
-  fileNewRule: jest.fn<(p: string, c: string, b?: boolean) => Promise<FileByShopOutcome>>(),
+  previewFiling: jest.fn<(target: FilingTarget) => Promise<FilingResult>>(),
+  fileCharges: jest.fn<(target: FilingTarget, when: FilingWhen) => Promise<FilingResult>>(),
   saveManualRule: jest.fn(),
-  startNewRuleJob: jest.fn<(p: string, c: string, b?: boolean) => Promise<ApplyRulesJobStart>>(),
-  retryApplyRulesJob: jest.fn<() => Promise<ApplyRulesJobStart>>(),
+  retryApplyRulesJob: jest.fn<() => Promise<FilingResult>>(),
 };
 
 const CATEGORIES = [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null }];
@@ -58,7 +54,7 @@ const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
 });
 
 async function mountFileByShop(applyRulesJob: ApplyRulesJob | null, g = group()) {
-  fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: g.count }) });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: g.count }) });
   mockState = {
     sheet: { mode: 'fileByShopConfirm', group: g, categoryId: 'groceries' }, toast: null,
     categories: CATEGORIES, uncategorizedMerchants: merchants(g), applyRulesJob, ...fns,
@@ -68,7 +64,7 @@ async function mountFileByShop(applyRulesJob: ApplyRulesJob | null, g = group())
 }
 
 async function mountAddRule(applyRulesJob: ApplyRulesJob | null, budgetExcluded = false, pattern = 'COLES') {
-  fns.previewNewRule.mockResolvedValue({ ok: true, report: report() });
+  fns.previewFiling.mockResolvedValue({ status: 'filed', report: report() });
   mockState = {
     sheet: { mode: 'addRuleConfirm', pattern, categoryId: 'groceries', budgetExcluded }, toast: null,
     categories: CATEGORIES, applyRulesJob, ...fns,
@@ -83,18 +79,18 @@ beforeEach(() => { jest.clearAllMocks(); });
 
 it('[V1] file-this-shop capped promotes Apply-to-all and starts the file-by-shop job with the pair', async () => {
   const g = group();
-  fns.startFileByShopJob.mockResolvedValue({ ok: true });
+  fns.fileCharges.mockResolvedValue({ status: 'background' });
   await mountFileByShop(null, g);
 
   expect(screen.getByTestId('file-by-shop-confirm-apply-all')).toBeTruthy();
   expect(screen.getByText(`File up to ${APPLY_RULES_MAX_WRITES} now`)).toBeTruthy(); // demoted, still there
   await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply-all')); });
-  expect(fns.startFileByShopJob).toHaveBeenCalledWith(g, 'groceries');
-  expect(fns.fileByShop).not.toHaveBeenCalled(); // NOT the one-round sync path
+  expect(fns.fileCharges).toHaveBeenCalledWith({ kind: 'shop', group: g, categoryId: 'groceries' }, { matched: OVER });
+  expect(fns.fileCharges).not.toHaveBeenCalledWith(expect.anything(), { now: true }); // NOT the one-round sync path
 });
 
 it('[V2] a 409 clash from the file-by-shop async start toasts the shop-specific clash copy', async () => {
-  fns.startFileByShopJob.mockResolvedValue({ ok: false, clash: new ApiError(409, null) });
+  fns.fileCharges.mockResolvedValue({ status: 'clash', error: new ApiError(409, null), background: true });
   await mountFileByShop(null, group({ merchant: 'Coles' }));
 
   await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply-all')); });
@@ -117,23 +113,23 @@ it('[V4] a failed job-view retry re-runs the provider variant retry, not a plain
 
   fireEvent.press(screen.getByTestId('apply-rules-job-retry'));
   expect(fns.retryApplyRulesJob).toHaveBeenCalledTimes(1);
-  expect(fns.startFileByShopJob).not.toHaveBeenCalled(); // no direct variant start from the job view
+  expect(fns.fileCharges).not.toHaveBeenCalled(); // no direct variant start from the job view
 });
 
 // --- add-rule -----------------------------------------------------------------
 
 it('[V5] add-rule capped promotes file-all and starts the new-rule job with the budgetExcluded flag', async () => {
-  fns.startNewRuleJob.mockResolvedValue({ ok: true });
+  fns.fileCharges.mockResolvedValue({ status: 'background' });
   await mountAddRule(null, true);
 
   expect(screen.getByTestId('add-rule-confirm-file-all')).toBeTruthy();
   await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file-all')); });
-  expect(fns.startNewRuleJob).toHaveBeenCalledWith('COLES', 'groceries', true);
-  expect(fns.fileNewRule).not.toHaveBeenCalled();
+  expect(fns.fileCharges).toHaveBeenCalledWith({ kind: 'newRule', pattern: 'COLES', categoryId: 'groceries', budgetExcluded: true }, { matched: OVER });
+  expect(fns.fileCharges).not.toHaveBeenCalledWith(expect.anything(), { now: true });
 });
 
 it('[V6] a 409 clash from the add-rule async start toasts the pattern-specific clash copy', async () => {
-  fns.startNewRuleJob.mockResolvedValue({ ok: false, clash: new ApiError(409, null) });
+  fns.fileCharges.mockResolvedValue({ status: 'clash', error: new ApiError(409, null), background: true });
   await mountAddRule(null, false, 'COLES');
 
   await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file-all')); });

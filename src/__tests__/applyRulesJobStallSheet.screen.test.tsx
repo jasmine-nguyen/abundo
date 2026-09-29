@@ -6,7 +6,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
-import type { AppContext, ApplyRulesResult, ApplyRulesJob, ApplyRulesJobStart } from '../context';
+import type { AppContext, ApplyRulesResult, ApplyRulesJob, FilingResult, FilingTarget, FilingWhen } from '../context';
 
 let mockState: AppContext;
 jest.mock('../context', () => {
@@ -20,10 +20,9 @@ import { Overlays } from '../components/Overlays';
 const fns = {
   setSheet: jest.fn(),
   showToast: jest.fn(),
-  previewRuleApplication: jest.fn<() => Promise<ApplyRulesResult | null>>(),
-  applyRulesToHistory: jest.fn<() => Promise<ApplyRulesResult | null>>(),
-  startApplyRulesSweep: jest.fn<() => Promise<ApplyRulesJobStart>>(),
-  retryApplyRulesJob: jest.fn<() => Promise<ApplyRulesJobStart>>(),
+  previewFiling: jest.fn<(target: FilingTarget) => Promise<FilingResult>>(),
+  fileCharges: jest.fn<(target: FilingTarget, when: FilingWhen) => Promise<FilingResult>>(),
+  retryApplyRulesJob: jest.fn<() => Promise<FilingResult>>(),
 };
 
 const CATEGORIES = [{ id: 'groceries', name: 'Groceries' }];
@@ -35,7 +34,7 @@ const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
 });
 
 async function mountWith(applyRulesJob: ApplyRulesJob | null, stalled: boolean) {
-  fns.retryApplyRulesJob.mockResolvedValue({ ok: true });
+  fns.retryApplyRulesJob.mockResolvedValue({ status: 'background' });
   mockState = { sheet: { mode: 'applyRules' }, toast: null, categories: CATEGORIES,
     applyRulesJob, applyRulesStalled: stalled, ...fns } as unknown as AppContext;
   render(<Overlays />);

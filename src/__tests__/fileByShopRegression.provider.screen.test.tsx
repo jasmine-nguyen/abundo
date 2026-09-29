@@ -12,7 +12,7 @@ import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
-import type { ApplyRulesResult } from '../context';
+import type { ApplyRulesResult, FilingResult, FilingTarget } from '../context';
 import type { UncategorizedMerchantGroup } from '../api';
 import { ApiError } from '../apiError';
 import { queryClient } from '../queryClient';
@@ -26,6 +26,7 @@ jest.mock('../auth', () => ({
 }));
 import * as api from '../api';
 const mockApi = api as jest.Mocked<typeof api>;
+const SWEEP: FilingTarget = { kind: 'sweep' };
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
@@ -60,7 +61,7 @@ it('[A30] applyRulesToHistory calls the api with dryRun false and NO inline rule
   seedTransactionsCache(queryClient, []);
   mockApi.applyRulesToUncategorized.mockResolvedValue(report());
   const result = mount();
-  await act(async () => { await result.current.applyRulesToHistory(); });
+  await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
   expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(false);
 });
 
@@ -68,7 +69,7 @@ it('[A30] applyRulesToHistory calls the api with dryRun false and NO inline rule
 it('[A31] previewRuleApplication calls the api with dryRun true and NO inline rule', async () => {
   mockApi.applyRulesToUncategorized.mockResolvedValue(report({ dryRun: true }));
   const result = mount();
-  await act(async () => { await result.current.previewRuleApplication(); });
+  await act(async () => { await result.current.previewFiling(SWEEP); });
   expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(true);
 });
 
@@ -80,9 +81,9 @@ it('[A32] a 409 from applyRulesToHistory returns bare null and still refreshes',
   mockApi.applyRulesToUncategorized.mockRejectedValue(new ApiError(409, null));
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  let out: ApplyRulesResult | null | undefined;
-  await act(async () => { out = await result.current.applyRulesToHistory(); });
-  expect(out).toBeNull();
+  let out: FilingResult | undefined;
+  await act(async () => { out = await result.current.fileCharges(SWEEP, { now: true }); });
+  expect(out).toEqual({ status: 'failed', background: false });
   expect(invalidatedKeys(spy)).toContain('uncategorizedCount');
   spy.mockRestore();
 });
@@ -93,9 +94,9 @@ it('[A33] a 409 from previewRuleApplication returns null and refreshes nothing',
   mockApi.applyRulesToUncategorized.mockRejectedValue(new ApiError(409, null));
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  let out: ApplyRulesResult | null | undefined;
-  await act(async () => { out = await result.current.previewRuleApplication(); });
-  expect(out).toBeNull();
+  let out: FilingResult | undefined;
+  await act(async () => { out = await result.current.previewFiling(SWEEP); });
+  expect(out).toEqual({ status: 'failed', background: false });
   expect(spy).not.toHaveBeenCalled();
   spy.mockRestore();
 });
@@ -108,13 +109,13 @@ it('[A34] an in-flight applyRulesToHistory turns away a fileByShop', async () =>
   const pending = deferred<ApplyRulesResult>();
   mockApi.applyRulesToUncategorized.mockReturnValue(pending.promise);
   const result = mount();
-  let blocked: { ok: boolean } | undefined;
+  let blocked: FilingResult | undefined;
   await act(async () => {
-    const first = result.current.applyRulesToHistory();   // holds the latch
-    blocked = await result.current.fileByShop(GROUP, 'groceries');  // must be turned away
+    const first = result.current.fileCharges(SWEEP, { now: true });   // holds the latch
+    blocked = await result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true });  // must be turned away
     pending.resolve(report());
     await first;
   });
-  expect(blocked).toEqual({ ok: false, clash: null });
+  expect(blocked).toEqual({ status: 'failed', background: false });
   expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledTimes(1);
 });

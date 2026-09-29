@@ -15,8 +15,8 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
-import type { Transaction, ApplyRulesResult } from '../context';
+import { AppProvider, useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
+import type { Transaction, ApplyRulesResult, FilingResult, FilingTarget } from '../context';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, seedTransactionsPages } from './support/transactionsCache';
 
@@ -34,6 +34,9 @@ jest.mock('../auth', () => ({
   subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
 }));
 import * as api from '../api';
+
+const SWEEP: FilingTarget = { kind: 'sweep' };
+const FAILED: FilingResult = { status: 'failed', background: false };
 const mockApi = api as jest.Mocked<typeof api>;
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
@@ -90,7 +93,7 @@ it('patches every filed row into all three list caches, by id', async () => {
   }));
 
   const result = mount();
-  await act(async () => { await result.current.applyRulesToHistory(); });
+  await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
 
   const byId = new Map([...rowsIn('transactions'), ...rowsIn('uncategorizedFeed'),
     ...(queryClient.getQueryData<Transaction[]>(['transactionsRecent']) ?? [])]
@@ -109,7 +112,7 @@ it('removes vanished rows from the feed and the recent window', async () => {
   mockApi.applyRulesToUncategorized.mockResolvedValue(report({ filed: [], vanished: ['gone'] }));
 
   const result = mount();
-  await act(async () => { await result.current.applyRulesToHistory(); });
+  await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
 
   expect(rowsIn('transactions').map((r) => r.transaction_id)).toEqual(['t1']);
   expect(queryClient.getQueryData<Transaction[]>(['transactionsRecent'])).toEqual([]);
@@ -121,7 +124,7 @@ it('invalidates the server-derived reads but never the transactions feed', async
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
-  await act(async () => { await result.current.applyRulesToHistory(); });
+  await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
 
   const keys = invalidatedKeys(spy);
   // `categories` is in the list for a specific reason: the reconcile writes the SERVER's category
@@ -153,7 +156,7 @@ it('trims the uncategorized feed to page 1 and keeps its rows on screen', async 
   mockApi.applyRulesToUncategorized.mockResolvedValue(report({ filed: [] }));
 
   const result = mount();
-  await act(async () => { await result.current.applyRulesToHistory(); });
+  await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
 
   const data = queryClient.getQueryData<{ pages: unknown[]; pageParams: unknown[] }>(['uncategorizedFeed']);
   expect(data!.pages).toHaveLength(1);
@@ -166,10 +169,10 @@ it('returns the server report so the sheet can offer the next round', async () =
   mockApi.applyRulesToUncategorized.mockResolvedValue(report({ remaining: 339 }));
 
   const result = mount();
-  let returned: ApplyRulesResult | null = null;
-  await act(async () => { returned = await result.current.applyRulesToHistory(); });
+  let returned: FilingResult | null = null;
+  await act(async () => { returned = await result.current.fileCharges(SWEEP, { now: true }); });
 
-  expect(returned!.remaining).toBe(339);
+  expect(returned).toEqual({ status: 'filed', report: expect.objectContaining({ remaining: 339 }) });
 });
 
 // --- the failure path (the blocker this card's review caught) -----------------
@@ -189,10 +192,10 @@ it('still refreshes the caches when the write fails', async () => {
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  let returned: ApplyRulesResult | null = report();
-  await act(async () => { returned = await result.current.applyRulesToHistory(); });
+  let returned: FilingResult | null = null;
+  await act(async () => { returned = await result.current.fileCharges(SWEEP, { now: true }); });
 
-  expect(returned).toBeNull();
+  expect(returned).toEqual(FAILED);
   expect(invalidatedKeys(spy)).toEqual(expect.arrayContaining(['uncategorizedCount', 'budgets', 'uncategorizedFeed']));
   expect(queryClient.getQueryData<{ pages: unknown[] }>(['uncategorizedFeed'])!.pages).toHaveLength(1);
   spy.mockRestore();
@@ -204,10 +207,10 @@ it('treats an offline write the same as a failed one', async () => {
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  let returned: ApplyRulesResult | null = report();
-  await act(async () => { returned = await result.current.applyRulesToHistory(); });
+  let returned: FilingResult | null = null;
+  await act(async () => { returned = await result.current.fileCharges(SWEEP, { now: true }); });
 
-  expect(returned).toBeNull();
+  expect(returned).toEqual(FAILED);
   expect(invalidatedKeys(spy)).toContain('uncategorizedCount');
   spy.mockRestore();
 });
@@ -220,11 +223,11 @@ it('previews with dryRun true and writes nothing', async () => {
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  let returned: ApplyRulesResult | null = null;
-  await act(async () => { returned = await result.current.previewRuleApplication(); });
+  let returned: FilingResult | null = null;
+  await act(async () => { returned = await result.current.previewFiling(SWEEP); });
 
   expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(true);
-  expect(returned!.dryRun).toBe(true);
+  expect(returned).toEqual({ status: 'filed', report: expect.objectContaining({ dryRun: true }) });
   expect(spy).not.toHaveBeenCalled();                    // a preview reconciles nothing
   expect(rowsIn('transactions')[0].category).toBeNull(); // ...and touches no row
   spy.mockRestore();
@@ -236,10 +239,10 @@ it('returns null when the preview fails, without touching the caches', async () 
 
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
-  let returned: ApplyRulesResult | null = report();
-  await act(async () => { returned = await result.current.previewRuleApplication(); });
+  let returned: FilingResult | null = null;
+  await act(async () => { returned = await result.current.previewFiling(SWEEP); });
 
-  expect(returned).toBeNull();
+  expect(returned).toEqual(FAILED);
   expect(spy).not.toHaveBeenCalled();
   spy.mockRestore();
 });
@@ -253,16 +256,16 @@ it('bails without writing when the user signs out mid-write', async () => {
   mockApi.applyRulesToUncategorized.mockReturnValue(pending.promise);
   const result = mount();
 
-  let returned: ApplyRulesResult | null = report();
+  let returned: FilingResult | null = null;
   await act(async () => {
-    const inFlight = result.current.applyRulesToHistory();
+    const inFlight = result.current.fileCharges(SWEEP, { now: true });
     mockSetStatus('anon');                                   // sign-out bumps the session epoch
     seedTransactionsCache(queryClient, [txn()]);             // the next session's data
     pending.resolve(report({ filed: [{ id: 't1', category: 'groceries' }] }));
     returned = await inFlight;
   });
 
-  expect(returned).toBeNull();
+  expect(returned).toEqual(FAILED);
   expect(rowsIn('transactions')[0].category).toBeNull();     // the late report never landed
 });
 
@@ -271,15 +274,15 @@ it('bails without painting when the preview settles after a sign-out', async () 
   mockApi.applyRulesToUncategorized.mockReturnValue(pending.promise);
   const result = mount();
 
-  let returned: ApplyRulesResult | null = report();
+  let returned: FilingResult | null = null;
   await act(async () => {
-    const inFlight = result.current.previewRuleApplication();
+    const inFlight = result.current.previewFiling(SWEEP);
     mockSetStatus('anon');
     pending.resolve(report({ dryRun: true }));
     returned = await inFlight;
   });
 
-  expect(returned).toBeNull();
+  expect(returned).toEqual(FAILED);
 });
 
 // M4: the WHIT-268 privacy shield unmounts the whole overlay layer on a LOCK, destroying the
@@ -327,7 +330,7 @@ it('keeps rows the user filed mid-run in the caches, with their own category', a
   }));
 
   const result = mount();
-  await act(async () => { await result.current.applyRulesToHistory(); });
+  await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
 
   const rows = rowsIn('transactions');
   expect(rows.map((r) => r.transaction_id)).toEqual(['kept']);   // the vanished one went, this stayed

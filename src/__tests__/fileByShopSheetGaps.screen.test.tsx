@@ -16,7 +16,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext } from '../context';
-import type { FileByShopOutcome } from '../context';
+import type { FilingResult, FilingTarget, FilingWhen } from '../context';
 import { APPLY_RULES_MAX_WRITES } from '../context';
 import type { ApplyRulesResult, UncategorizedMerchantGroup, UncategorizedMerchants } from '../api';
 
@@ -44,8 +44,8 @@ const fns = {
   setSheet: jest.fn(),
   showToast: jest.fn(),
   requestUncategorizedSelect: jest.fn(),  // WHIT-544: the "Select to file" jump
-  previewFileByShop: jest.fn<(g: UncategorizedMerchantGroup, c: string) => Promise<FileByShopOutcome>>(),
-  fileByShop: jest.fn<(g: UncategorizedMerchantGroup, c: string) => Promise<FileByShopOutcome>>(),
+  previewFiling: jest.fn<(target: FilingTarget) => Promise<FilingResult>>(),
+  fileCharges: jest.fn<(target: FilingTarget, when: FilingWhen) => Promise<FilingResult>>(),
 };
 
 const group = (over: Partial<UncategorizedMerchantGroup> = {}): UncategorizedMerchantGroup => ({
@@ -94,16 +94,16 @@ describe('confirm sheet — failure arms', () => {
   // must fire a FRESH preview. Fail-on-revert: drop the previewFailed arm and the busy spinner
   // never resolves into this card; drop the retry wiring and the second preview never fires.
   it('[A20] shows the preview-failed card and retries the preview on "Try again"', async () => {
-    fns.previewFileByShop
-      .mockResolvedValueOnce({ ok: false, clash: null })
-      .mockResolvedValueOnce({ ok: true, report: report({ matched: 20 }) });
+    fns.previewFiling
+      .mockResolvedValueOnce({ status: 'failed', background: false })
+      .mockResolvedValueOnce({ status: 'filed', report: report({ matched: 20 }) });
     await mountConfirm();
 
     expect(screen.getByText("Couldn't check this shop")).toBeTruthy();
     expect(screen.queryByTestId('file-by-shop-confirm-apply')).toBeNull();
 
     await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-retry')); });
-    expect(fns.previewFileByShop).toHaveBeenCalledTimes(2);
+    expect(fns.previewFiling).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId('file-by-shop-confirm-apply')).toBeTruthy();
   });
 
@@ -111,8 +111,8 @@ describe('confirm sheet — failure arms', () => {
   // card, NOT the clash card and NOT a success. Fail-on-revert: drop the writeFailed arm and the
   // sheet is stuck on the confirming spinner.
   it('[A21] shows the "Couldn\'t finish" card when the write fails (non-clash)', async () => {
-    fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: 20 }) });
-    fns.fileByShop.mockResolvedValue({ ok: false, clash: null });
+    fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 20 }) });
+    fns.fileCharges.mockResolvedValue({ status: 'failed', background: false });
     await mountConfirm();
 
     await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); });
@@ -129,8 +129,8 @@ describe('confirm sheet — success', () => {
   // shop list. Fail-on-revert: drop the showToast and the toast assertion reddens; drop the
   // setSheet and the navigation assertion reddens.
   it('[A22] toasts the filed count and returns to the shop list on success', async () => {
-    fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: 2 }) });
-    fns.fileByShop.mockResolvedValue({ ok: true, report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) });
+    fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 2 }) });
+    fns.fileCharges.mockResolvedValue({ status: 'filed', report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) });
     await mountConfirm(group(), 'groceries');
 
     await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); });
@@ -144,8 +144,8 @@ describe('confirm sheet — success', () => {
   // reads a plain "Filed N charges as Groceries." with no "more to go".
   it('[A22b] toasts "more of this shop to go" when the shop exceeds the write cap', async () => {
     const over = APPLY_RULES_MAX_WRITES + 200;
-    fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: over }) });
-    fns.fileByShop.mockResolvedValue({ ok: true, report: report({ dryRun: false, matched: over, filed: Array.from({ length: APPLY_RULES_MAX_WRITES }, (_, i) => ({ id: `t${i}`, category: 'groceries' })), remaining: 200 }) });
+    fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: over }) });
+    fns.fileCharges.mockResolvedValue({ status: 'filed', report: report({ dryRun: false, matched: over, filed: Array.from({ length: APPLY_RULES_MAX_WRITES }, (_, i) => ({ id: `t${i}`, category: 'groceries' })), remaining: 200 }) });
     await mountConfirm();
 
     await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); });
@@ -156,8 +156,8 @@ describe('confirm sheet — success', () => {
   // uses the "nothing left" copy, not "Filed 0 charges". Fail-on-revert: collapse the filed>0
   // branch and this reddens.
   it('[A23] toasts the "nothing left" copy when the write filed zero rows', async () => {
-    fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: 2 }) });
-    fns.fileByShop.mockResolvedValue({ ok: true, report: report({ dryRun: false, matched: 0, filed: [] }) });
+    fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 2 }) });
+    fns.fileCharges.mockResolvedValue({ status: 'filed', report: report({ dryRun: false, matched: 0, filed: [] }) });
     await mountConfirm();
 
     await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); });
@@ -174,9 +174,9 @@ describe('confirm sheet — dismissed mid-write', () => {
   // fires against a dismissed sheet. (The success toast fires before the guard, so this test pins
   // the NAV guard; [A24b] pins the failure-path else-toast.)
   it('[A24] does not navigate when dismissed mid-write (success settles off screen)', async () => {
-    const pending = deferred<FileByShopOutcome>();
-    fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: 2 }) });
-    fns.fileByShop.mockReturnValue(pending.promise);
+    const pending = deferred<FilingResult>();
+    fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 2 }) });
+    fns.fileCharges.mockReturnValue(pending.promise);
     const { rerender } = await mountConfirm();
 
     await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); }); // starts the write
@@ -184,7 +184,7 @@ describe('confirm sheet — dismissed mid-write', () => {
     mockState = { ...mockState, sheet: null } as unknown as AppContext;
     await act(async () => { rerender(<Overlays />); });
 
-    await act(async () => { pending.resolve({ ok: true, report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) }); });
+    await act(async () => { pending.resolve({ status: 'filed', report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) }); });
 
     expect(fns.showToast).toHaveBeenCalledWith('Filed 2 charges as Groceries.');
     expect(fns.setSheet).not.toHaveBeenCalledWith({ mode: 'fileByShopList' });
@@ -195,16 +195,16 @@ describe('confirm sheet — dismissed mid-write', () => {
   // ELSE-toast branch [A24] can't reach (its success toast fires before the guard). Fail-on-revert:
   // drop the `else showToast(...)` on the write-failure path and the outcome vanishes with no toast.
   it('[A24b] toasts a failed write that settles after the sheet is dismissed', async () => {
-    const pending = deferred<FileByShopOutcome>();
-    fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: 2 }) });
-    fns.fileByShop.mockReturnValue(pending.promise);
+    const pending = deferred<FilingResult>();
+    fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 2 }) });
+    fns.fileCharges.mockReturnValue(pending.promise);
     const { rerender } = await mountConfirm();
 
     await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); });
     mockState = { ...mockState, sheet: null } as unknown as AppContext;
     await act(async () => { rerender(<Overlays />); });
 
-    await act(async () => { pending.resolve({ ok: false, clash: null }); });
+    await act(async () => { pending.resolve({ status: 'failed', background: false }); });
 
     expect(fns.showToast).toHaveBeenCalledWith('Couldn\'t file Coles. Some charges may already have been filed.');
   });
@@ -216,7 +216,7 @@ describe('confirm sheet — copy edges', () => {
   // [A25] An empty merchant string must fall back to "this shop", never render a blank. Fail-on-
   // revert: drop the `|| 'this shop'` and the body reads "...from  (..." with a gap.
   it('[A25] falls back to "this shop" when the group merchant is empty', async () => {
-    fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: 4 }) });
+    fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 4 }) });
     await mountConfirm(group({ merchant: '', firstDate: null, lastDate: null }));
     expect(screen.getByText(/from this shop/)).toBeTruthy();
   });
@@ -224,7 +224,7 @@ describe('confirm sheet — copy edges', () => {
   // [A26] A null merchant in alsoCatches must read "Unnamed shop". Fail-on-revert: drop the
   // `|| 'Unnamed shop'` and the row renders " — 3 charges" with a leading blank.
   it('[A26] renders "Unnamed shop" for a null merchant in alsoCatches', async () => {
-    fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: 25 }) });
+    fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 25 }) });
     await mountConfirm(group({ alsoCatches: [{ merchant: null, count: 3 }] }));
     expect(screen.getByText('Unnamed shop — 3 charges')).toBeTruthy();
   });
@@ -232,7 +232,7 @@ describe('confirm sheet — copy edges', () => {
   // [A27] The preview shows the group's date range (TZ Australia/Melbourne, pinned ISO dates).
   // Fail-on-revert: drop the dateRange interpolation and the range text is gone.
   it('[A27] renders the group date range in Melbourne local time', async () => {
-    fns.previewFileByShop.mockResolvedValue({ ok: true, report: report({ matched: 20 }) });
+    fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 20 }) });
     await mountConfirm(group({ firstDate: '2026-06-01', lastDate: '2026-08-04' }));
     expect(screen.getByText(/1 Jun 2026 – 4 Aug 2026/)).toBeTruthy();
   });

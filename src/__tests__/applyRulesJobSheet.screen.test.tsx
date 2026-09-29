@@ -7,7 +7,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
-import type { AppContext, ApplyRulesResult, ApplyRulesJob, ApplyRulesJobStart } from '../context';
+import type { AppContext, ApplyRulesResult, ApplyRulesJob, FilingResult, FilingTarget, FilingWhen } from '../context';
 
 let mockState: AppContext;
 jest.mock('../context', () => {
@@ -21,10 +21,9 @@ import { Overlays } from '../components/Overlays';
 const fns = {
   setSheet: jest.fn(),
   showToast: jest.fn(),
-  previewRuleApplication: jest.fn<() => Promise<ApplyRulesResult | null>>(),
-  applyRulesToHistory: jest.fn<() => Promise<ApplyRulesResult | null>>(),
-  startApplyRulesSweep: jest.fn<() => Promise<ApplyRulesJobStart>>(),
-  retryApplyRulesJob: jest.fn<() => Promise<ApplyRulesJobStart>>(),
+  previewFiling: jest.fn<(target: FilingTarget) => Promise<FilingResult>>(),
+  fileCharges: jest.fn<(target: FilingTarget, when: FilingWhen) => Promise<FilingResult>>(),
+  retryApplyRulesJob: jest.fn<() => Promise<FilingResult>>(),
 };
 
 const CATEGORIES = [{ id: 'groceries', name: 'Groceries' }];
@@ -43,7 +42,7 @@ const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
 
 /** Mount the apply-rules sheet with a given job state (null = the preview arm). */
 async function mountWith(applyRulesJob: ApplyRulesJob | null, preview: ApplyRulesResult | null = report()) {
-  fns.previewRuleApplication.mockResolvedValue(preview);
+  fns.previewFiling.mockResolvedValue(preview ? { status: 'filed', report: preview } : { status: 'failed', background: false });
   mockState = { sheet: { mode: 'applyRules' }, toast: null, categories: CATEGORIES, applyRulesJob, ...fns } as unknown as AppContext;
   render(<Overlays />);
   await act(async () => {});
@@ -58,11 +57,12 @@ it('promotes the background sweep to primary over the per-run cap', async () => 
   await mountWith(null, report({ matched: 512 }));
 
   fireEvent.press(screen.getByTestId('apply-rules-apply-all'));
-  expect(fns.startApplyRulesSweep).toHaveBeenCalledTimes(1);
+  expect(fns.fileCharges).toHaveBeenCalledTimes(1);
+  expect(fns.fileCharges).toHaveBeenCalledWith({ kind: 'sweep' }, { matched: 512 });
   // The one-round instant file is still there, demoted.
   expect(screen.getByText('File up to 300 now')).toBeTruthy();
   // and it is NOT the background sweep.
-  expect(fns.applyRulesToHistory).not.toHaveBeenCalled();
+  expect(fns.fileCharges).not.toHaveBeenCalledWith({ kind: 'sweep' }, { now: true });
 });
 
 // --- running ------------------------------------------------------------------
@@ -96,12 +96,12 @@ it('shows the done summary on success', async () => {
 });
 
 it('offers retry on failure, re-running the same job variant', async () => {
-  fns.retryApplyRulesJob.mockResolvedValue({ ok: true });
+  fns.retryApplyRulesJob.mockResolvedValue({ status: 'background' });
   await mountWith(job({ status: 'failed', error: 'network' }));
 
   expect(screen.getByTestId('apply-rules-job-failed')).toBeTruthy();
   fireEvent.press(screen.getByTestId('apply-rules-job-retry'));
   // Retry goes through the provider's variant-aware retry, NOT a plain sweep.
   expect(fns.retryApplyRulesJob).toHaveBeenCalledTimes(1);
-  expect(fns.startApplyRulesSweep).not.toHaveBeenCalled();
+  expect(fns.fileCharges).not.toHaveBeenCalled();
 });
