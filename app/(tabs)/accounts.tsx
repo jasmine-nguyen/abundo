@@ -11,8 +11,9 @@ import { ListStates } from '../../src/components/ListStates';
 import { SettingsButton } from '../../src/components/SettingsButton';
 
 // The Accounts tab. Lifted out of the Transactions segmented control into its own bottom-bar
-// tab, unchanged: it derives one card per account_id from the same transactions query the
-// Transactions tab uses, shows live balances (poller-fed), and taps through to /account/[id].
+// tab: it derives one card per account_id from the same transactions query the Transactions
+// tab uses plus the saved balances, shows live balances (poller-fed), and taps through to
+// /account/[id].
 export default function Accounts() {
   const router = useRouter();
   const { showToast } = useAppContext();
@@ -22,8 +23,9 @@ export default function Accounts() {
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   // WHIT-215: derived from the transactions themselves (one card per account_id), not a
-  // hardcoded list — so names always match what's in the data.
-  const accounts = accountSummaries({ transactions });
+  // hardcoded list — so names always match what's in the data. WHIT-643: plus every account
+  // with a saved balance, so a quiet account (the home loan) still gets a card.
+  const accounts = accountSummaries({ transactions }, balances.keys());
 
   const showError = isError && transactions.length === 0;
   const showSpinner = !showError && isLoading && transactions.length === 0;
@@ -79,6 +81,8 @@ export default function Accounts() {
             // WHIT-212: signed live balance from the poller-fed query — green when in credit,
             // red when owing. Absent until the account's first poll → a dim "—".
             const bal = balances.get(a.id);
+            let subtitle = `${a.count} ${a.count === 1 ? 'transaction' : 'transactions'}`;
+            if (a.count === 0) subtitle = 'No recent transactions';
             return (
               <Pressable
                 key={a.id}
@@ -88,7 +92,7 @@ export default function Accounts() {
                 <View style={[styles.acctChip, { backgroundColor: tint(color, 0.15) }]}><Icon name="bank" size={22} color={color} /></View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.acctName}>{a.name}</Text>
-                  <Text style={styles.acctSub}>{a.count} {a.count === 1 ? 'transaction' : 'transactions'}</Text>
+                  <Text style={styles.acctSub}>{subtitle}</Text>
                 </View>
                 {bal ? (
                   <Text style={[styles.acctBal, { color: bal.amount < 0 ? C.bad : C.good }]}>{fmtBalance(bal.amount)}</Text>

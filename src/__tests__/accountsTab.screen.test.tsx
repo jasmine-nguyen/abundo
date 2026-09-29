@@ -199,3 +199,34 @@ it('does NOT raise the pull spinner during a cold load (inline spinner owns it)'
   expect(refetchList).toHaveBeenCalledTimes(1);                // the pull DID fire (pulling=true)
   expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false); // ...but gated off
 });
+
+// WHIT-643: the home loan gets ~2 transactions a month, so it usually isn't in the newest
+// loaded window — but the balance poller has saved its balance. The tab must still show a card
+// for every account in the balances payload, not only accounts seen in the loaded transactions.
+// Fail-on-revert: derive cards from transactions only → no "Up Homeloan" card → red.
+it('shows a card for a balance-only account (no loaded transactions) with its live balance', () => {
+  mockTx = txData({
+    transactions: [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }],
+    balances: new Map([
+      ['a1', bal({ account_id: 'a1', amount: 96270.59 })],
+      ['up-homeloan', bal({ account_id: 'up-homeloan', amount: -500000, account_type: 'mortgage' })],
+    ]),
+  });
+  render(<Accounts />);
+  expect(screen.getByText('ANZ')).toBeTruthy();
+  expect(screen.getByText('Up Homeloan')).toBeTruthy();
+  expect(colorOf(screen.getByText('-$500,000.00'))).toBe(C.bad);
+  expect(screen.getByText('No recent transactions')).toBeTruthy();
+  fireEvent.press(screen.getByText('Up Homeloan'));
+  expect(mockPush).toHaveBeenCalledWith('/account/up-homeloan');
+});
+
+it('with no loaded transactions but a saved balance, shows the card, not "No accounts yet"', () => {
+  mockTx = txData({
+    transactions: [],
+    balances: new Map([['up-homeloan', bal({ account_id: 'up-homeloan', amount: -500000 })]]),
+  });
+  render(<Accounts />);
+  expect(screen.queryByText('No accounts yet')).toBeNull();
+  expect(screen.getByText('Up Homeloan')).toBeTruthy();
+});

@@ -17,8 +17,9 @@ jest.mock('../context', () => {
   return { ...actual, useAppContext: () => ({ openPicker: jest.fn(), category: () => undefined }) };
 });
 
+let mockId = 'a1';
 jest.mock('expo-router', () => ({
-  useLocalSearchParams: () => ({ id: 'a1' }),
+  useLocalSearchParams: () => ({ id: mockId }),
   useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
 }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
@@ -46,7 +47,7 @@ function txData(over: Partial<{ transactions: unknown[]; balances: Map<string, u
 
 const colorOf = (node: unknown) => (StyleSheet.flatten((node as { props: { style?: unknown } }).props.style) as { color?: string }).color;
 
-beforeEach(() => { mockTx = txData(); });
+beforeEach(() => { mockTx = txData(); mockId = 'a1'; });
 
 it('shows a negative balance in red and the credit-card "available" line (owe, but credit left)', () => {
   mockTx = txData({ balances: new Map([['a1', bal({ amount: -6492.26, available_balance: 8171.88 })]]) });
@@ -117,4 +118,28 @@ it('a background refetch failure over cached rows keeps the transaction list ren
   render(<AccountDetail />);
   expect(screen.queryByTestId('account-error')).toBeNull();
   expect(screen.getByText('1 transaction')).toBeTruthy(); // cached content still on screen
+});
+
+// WHIT-643: a balance-only account (e.g. the home loan, whose few transactions are outside the
+// loaded window) must still show its live balance, a readable title and a "No recent
+// transactions" note. Fail-on-revert: keep the balance card inside the `detail` branch → red.
+it('shows the balance for an account with a saved balance but no loaded transactions', () => {
+  mockId = 'up-homeloan';
+  mockTx = txData({
+    transactions: [ROW],
+    balances: new Map([['up-homeloan', bal({ account_id: 'up-homeloan', amount: -500000, available_balance: 0, account_type: 'mortgage' })]]),
+  });
+  render(<AccountDetail />);
+  expect(screen.getByTestId('account-balance')).toBeTruthy();
+  expect(screen.getByText('-$500,000.00')).toBeTruthy();
+  expect(screen.getByText('Up Homeloan')).toBeTruthy();
+  expect(screen.getByText('No recent transactions')).toBeTruthy();
+});
+
+it('an unknown account with no balance and no transactions still shows "No transactions"', () => {
+  mockId = 'nope';
+  mockTx = txData({ transactions: [ROW], balances: new Map() });
+  render(<AccountDetail />);
+  expect(screen.getByText('No transactions')).toBeTruthy();
+  expect(screen.queryByTestId('account-balance')).toBeNull();
 });

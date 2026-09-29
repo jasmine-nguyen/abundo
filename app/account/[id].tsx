@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, fmtBalance, fmt, agoLabel } from '../../src/theme';
-import { accountDetail } from '../../src/context';
+import { accountDetail, accountNameFromId } from '../../src/context';
 import { useRecentTransactionsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { TransactionRow } from '../../src/components/TransactionRow';
@@ -25,10 +25,14 @@ export default function AccountDetail() {
   // left (available > 0). This excludes the loan (available 0) and spending (positive
   // amount) without relying on account_type, which the feed reports as "unknown" for cards.
   const showAvailable = bal != null && bal.amount < 0 && bal.available_balance != null && bal.available_balance > 0;
+  // WHIT-643: a balance-only account (no loaded transactions) is named from its id.
+  let title = 'Account';
+  if (bal) title = accountNameFromId(id);
+  if (detail) title = detail.name;
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-      <Header title={detail?.name ?? 'Account'} />
+      <Header title={title} />
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}
         showsVerticalScrollIndicator={false}
@@ -42,18 +46,18 @@ export default function AccountDetail() {
           retryLabel="Retry loading this account"
           onRetry={refetch}
         >
-          {detail ? (
-            <>
-              {bal && (
-                <View testID="account-balance" style={styles.balCard}>
-                  <Text style={styles.balLabel}>Current balance</Text>
-                  <Text style={[styles.balAmount, { color: bal.amount < 0 ? C.bad : C.good }]}>{fmtBalance(bal.amount)}</Text>
-                  {showAvailable && (
-                    <Text style={styles.balAvailable}>{fmt(bal.available_balance!)} available</Text>
-                  )}
-                  {!!agoLabel(bal.as_of) && <Text style={styles.balAsOf}>as of {agoLabel(bal.as_of)}</Text>}
-                </View>
+          {bal && (
+            <View testID="account-balance" style={styles.balCard}>
+              <Text style={styles.balLabel}>Current balance</Text>
+              <Text style={[styles.balAmount, { color: bal.amount < 0 ? C.bad : C.good }]}>{fmtBalance(bal.amount)}</Text>
+              {showAvailable && (
+                <Text style={styles.balAvailable}>{fmt(bal.available_balance!)} available</Text>
               )}
+              {!!agoLabel(bal.as_of) && <Text style={styles.balAsOf}>as of {agoLabel(bal.as_of)}</Text>}
+            </View>
+          )}
+          {detail && (
+            <>
               <Text style={styles.count}>{detail.count} {detail.count === 1 ? 'transaction' : 'transactions'}</Text>
               {detail.groups.map((g) => (
                 <View key={g.label} style={{ marginTop: 14 }}>
@@ -62,8 +66,11 @@ export default function AccountDetail() {
                 </View>
               ))}
             </>
-          ) : (
-            // No transaction carries this id (unknown/stale account) — settled, not loading.
+          )}
+          {/* WHIT-643: a saved balance but none of the loaded transactions — a quiet account. */}
+          {!detail && bal && <Text style={styles.count}>No recent transactions</Text>}
+          {!detail && !bal && (
+            // No transaction or balance carries this id (unknown/stale account) — settled, not loading.
             <View style={styles.empty}>
               <Text style={styles.emptyTitle}>No transactions</Text>
               <Text style={styles.emptySub}>This account has no transactions yet.</Text>

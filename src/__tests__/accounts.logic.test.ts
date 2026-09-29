@@ -3,7 +3,7 @@
 // (one row per account_id, one canonical name, busiest-first) and accountDetail (this
 // account's transactions, grouped; null for an unknown id).
 import { describe, it, expect } from '@jest/globals';
-import { accountSummaries, accountDetail } from '../context';
+import { accountSummaries, accountDetail, accountNameFromId } from '../context';
 import { txn } from './factory';
 
 const category = (_id: string | null) => undefined;
@@ -58,6 +58,29 @@ describe('accountSummaries', () => {
 
   it('is empty when there are no transactions', () => {
     expect(accountSummaries({ transactions: [] })).toEqual([]);
+  });
+
+  it('adds extra (balance-only) ids after the transaction-derived accounts, without duplicates', () => {
+    const out = accountSummaries(
+      { transactions: [txn({ transaction_id: 't1', account_id: 'a1', account_name: 'ANZ' })] },
+      ['a1', 'up-homeloan'],
+    );
+    expect(out).toEqual([
+      { id: 'a1', name: 'ANZ', count: 1 },
+      { id: 'up-homeloan', name: 'Up Homeloan', count: 0 },
+    ]);
+  });
+
+  it('builds a card from an extra id alone when there are no transactions', () => {
+    expect(accountSummaries({ transactions: [] }, ['up-homeloan'])).toEqual([
+      { id: 'up-homeloan', name: 'Up Homeloan', count: 0 },
+    ]);
+  });
+});
+
+describe('accountNameFromId', () => {
+  it('tidies an internal id into words', () => {
+    expect(accountNameFromId('westpac-altitude-qantas-black')).toBe('Westpac Altitude Qantas Black');
   });
 });
 

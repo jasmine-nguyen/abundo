@@ -2945,15 +2945,26 @@ function canonicalAccountName(transactions: Transaction[], fallbackId: string): 
   return name;
 }
 
+// WHIT-643: a readable name for an account known only by its id (a saved balance with no
+// loaded transactions): `up-homeloan` → `Up Homeloan`.
+export function accountNameFromId(id: string): string {
+  return id.split('-').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+}
+
 // One row per distinct account_id, busiest first (a stable name tie-break keeps the order
-// deterministic across renders). Feeds the Accounts tab.
-export function accountSummaries(s: Pick<TransactionListInput, 'transactions'>): AccountSummary[] {
+// deterministic across renders). Feeds the Accounts tab. WHIT-643: `extraIds` (the saved
+// balances' ids) adds a count-0 row for any account with no loaded transactions, so a quiet
+// account like the home loan still gets a card; count 0 sorts those rows last.
+export function accountSummaries(s: Pick<TransactionListInput, 'transactions'>, extraIds: Iterable<string> = []): AccountSummary[] {
   const byId = new Map<string, Transaction[]>();
   for (const t of s.transactions) {
     if (!byId.has(t.account_id)) byId.set(t.account_id, []);
     byId.get(t.account_id)!.push(t);
   }
   const out = [...byId].map(([id, txns]) => ({ id, name: canonicalAccountName(txns, id), count: txns.length }));
+  for (const id of extraIds) {
+    if (!byId.has(id)) out.push({ id, name: accountNameFromId(id), count: 0 });
+  }
   out.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   return out;
 }
