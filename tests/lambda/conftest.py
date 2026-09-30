@@ -65,7 +65,7 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 _REIMPORT = ("handler", "up_webhook", "constants", "models", "repository", "reconcile", "banksync", "encoders", "merchant", "reprocess", "age_out",
              "budget_alerts", "repayment_alerts", "spend", "budget_standing", "push", "repository_base", "repository_transaction", "repository_budget",
              "repository_category", "repository_device", "repository_notify", "repository_paycycle", "rule_engine",
-             "rule_ingest", "repository_rule")
+             "rule_ingest", "repository_rule", "pending_carry")
 
 
 @pytest.fixture

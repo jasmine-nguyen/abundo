@@ -29,9 +29,8 @@ import json
 import logging
 from datetime import date, timedelta
 
-import rule_engine
 from constants import ACCOUNT_ID_MAP, PENDING_AGE_OUT_DAYS
-from reconcile import merchant_matches_pending, with_carried_category
+from pending_carry import find_carry_twin, is_filed, load_is_unfiled, with_carried_category
 from repository import TransactionRepository
 from repository_category import CategoryRepository
 from repository_errors import DatabaseError
@@ -40,31 +39,10 @@ from spend import melbourne_today
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# WHIT-511: how far apart a filed pending and its settled twin may be dated and still be
-# rescued. Deliberately TIGHTER than reconcile's FEED_WINDOW_DAYS (7): the rescue carries a
-# user's category, so it must be strict — a symmetric ±3 days is generous for the usual
-# swipe→settle lag while keeping a coincidental same-amount charge from being swept in. The
-# accepted cost is a twin that settled 4–7 days after the swipe is not rescued (reaped as today).
-_CARRY_DATE_SKEW_DAYS = 3
-
-
 def _cutoff_date(today: date) -> str:
     """The inclusive lower bound: a pending dated strictly BEFORE this is stale. Returned
     as a "YYYY-MM-DD" string to compare directly against the stored `date` string."""
     return (today - timedelta(days=PENDING_AGE_OUT_DAYS)).isoformat()
-
-
-def _within_days(date_a: str | None, date_b: str | None, days: int) -> bool:
-    """Whether two bare "YYYY-MM-DD" dates are at most `days` apart (symmetric). A missing or
-    unparseable date is never within — the rescue then finds no twin and reaps as today."""
-    if not date_a or not date_b:
-        return False
-    try:
-        parsed_a = date.fromisoformat(date_a[:10])
-        parsed_b = date.fromisoformat(date_b[:10])
-    except ValueError:
-        return False
-    return abs((parsed_a - parsed_b).days) <= days
 
 
 def _load_is_unfiled(category_repo):
@@ -76,62 +54,10 @@ def _load_is_unfiled(category_repo):
     if category_repo is None:
         return None
     try:
-        taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
+        return load_is_unfiled(category_repo)
     except Exception:
         logger.exception("age_out: could not read taxonomy; rescue disabled, reaping as usual")
         return None
-    return lambda category: rule_engine.is_unfiled_category(category, taxonomy_ids)
-
-
-def _pending_is_filed(pending: dict, is_unfiled) -> bool:
-    """Whether the user actually filed this pending — a real category, OR a note/tag/exclusion
-    they set. These are the user-owned fields with_carried_category carries (plus filed_by_rule,
-    which never exists without a category and so is already covered by the category check), so
-    losing any of them to the reap is the harm WHIT-511 fixes."""
-    if not is_unfiled(pending.get("category")):
-        return True
-    return bool(pending.get("notes") or pending.get("tags") or pending.get("budget_excluded"))
-
-
-def _pending_category_is_user_set(pending: dict, is_unfiled) -> bool:
-    """Whether a USER (or the bank) set this pending's category, not a rule (WHIT-553). A real,
-    filed category with NO filed_by_rule stamp is user/bank-owned. Only such a pending may
-    override a RULE-filed settled twin — a user override beats a rule's guess. A rule-stamped
-    pending, or one filed only by notes/tags/exclusion, must never override a rule's category."""
-    return not is_unfiled(pending.get("category")) and not pending.get("filed_by_rule")
-
-
-def _find_carry_twin(pending: dict, candidates: list[dict]) -> dict | None:
-    """The settled twin to carry a filed pending's fields onto, or None. STRICT: same exact
-    amount, same shop (the reconcile merchant gate), and dated within _CARRY_DATE_SKEW_DAYS.
-    Exactly one match carries; zero OR an ambiguous tie (≥2) carries nothing — a wrong carry
-    is worse than a missed one (WHIT-511, Jasmine's locked choice)."""
-    matches = [posted for posted in candidates if _is_carry_twin(pending, posted)]
-    if len(matches) == 1:
-        return matches[0]
-    return None
-
-
-def _is_carry_twin(pending: dict, posted: dict) -> bool:
-    """Whether `posted` is strictly the settled twin of `pending` — exact amount, same shop,
-    dates within the window.
-
-    Amount must match EXACTLY. The reconciler pairs a tip-adjusted settlement via its own tip
-    tier (reconcile._is_larger_within), but the rescue deliberately does NOT — carrying a
-    user's category is kept strict, so the amount gate is not widened to a tip range (nor
-    mirrors the skewed-fee tier, WHIT-653). The
-    accepted cost: a tipped charge (dining/rideshare) that missed every reconcile tier is
-    not rescued at reap time. This is a narrow miss (it already had to miss the tip tier), and
-    the strict gate is the safety Jasmine chose over widening the match (WHIT-511)."""
-    if pending.get("amount") != posted.get("amount"):
-        return False
-    if not merchant_matches_pending(
-        posted.get("merchant_name") or "",
-        pending.get("merchant_name") or "",
-        pending.get("description") or "",
-    ):
-        return False
-    return _within_days(pending.get("date"), posted.get("date"), _CARRY_DATE_SKEW_DAYS)
 
 
 def age_out_account(repo, account_id: str, cutoff: str, dry_run: bool, is_unfiled=None) -> dict:
@@ -150,11 +76,9 @@ def age_out_account(repo, account_id: str, cutoff: str, dry_run: bool, is_unfile
     as before.
     """
     summary = {"stale": 0, "reaped": 0, "failed": 0, "rescued": 0}
-    # The account's settled twin candidates — every posted row that is NOT user-owned: unfiled OR
-    # rule-filed (WHIT-553). A user-filed twin (real category, no filed_by_rule stamp) is excluded,
-    # so a manual filing on the twin is never overwritten. Loaded once, lazily, only if a filed
-    # pending actually needs a rescue (most accounts have none), then trimmed as twins are used.
-    carry_candidates = None
+    # The account's posted rows — loaded once, lazily, only if a filed pending actually needs a
+    # rescue (most accounts have none), then trimmed as twins are claimed.
+    posted_rows = None
     for pending in repo.get_pending_transactions_for_account(account_id):
         pending_date = pending.get("date")
         # No age signal, or still inside the window -> never reap. `date == cutoff` is
@@ -170,8 +94,8 @@ def age_out_account(repo, account_id: str, cutoff: str, dry_run: bool, is_unfile
 
         # WHIT-511: rescue a filed pending's category/notes/tags/exclusion onto its settled twin.
         twin = None
-        if is_unfiled is not None and _pending_is_filed(pending, is_unfiled):
-            if carry_candidates is None:
+        if is_unfiled is not None and is_filed(pending, is_unfiled):
+            if posted_rows is None:
                 # Fail-open like the taxonomy read: a posted-scan fault on ONE account must not
                 # abort the unattended sweep for every later account. Skip the rescue here (no
                 # candidates -> reap as today); the next daily sweep retries the still-filed pending.
@@ -183,16 +107,7 @@ def age_out_account(repo, account_id: str, cutoff: str, dry_run: bool, is_unfile
                         account_id, exc,
                     )
                     posted_rows = []
-                carry_candidates = [posted for posted in posted_rows
-                                    if is_unfiled(posted.get("category")) or posted.get("filed_by_rule")]
-            # A user-set-category pending may override a rule-filed twin, so it sees every candidate.
-            # Anything else (a rule-stamped pending, or one filed only by notes/tags/exclusion) may
-            # only carry onto an UNFILED twin — a rule never overrides another rule's category (WHIT-553).
-            if _pending_category_is_user_set(pending, is_unfiled):
-                eligible = carry_candidates
-            else:
-                eligible = [posted for posted in carry_candidates if is_unfiled(posted.get("category"))]
-            twin = _find_carry_twin(pending, eligible)
+            twin = find_carry_twin(pending, posted_rows, is_unfiled)
             if twin is None:
                 logger.info(
                     "age_out rescue: filed pending has no confident twin account=%s txn=%s%s",
@@ -229,7 +144,7 @@ def age_out_account(repo, account_id: str, cutoff: str, dry_run: bool, is_unfile
                 account_id, pending.get("transaction_id"), twin.get("transaction_id"),
             )
             # A twin can be claimed once — drop it so a second filed pending can't carry onto it.
-            carry_candidates = [posted for posted in carry_candidates if posted.get("sk") != twin.get("sk")]
+            posted_rows = [posted for posted in posted_rows if posted.get("sk") != twin.get("sk")]
 
         try:
             repo.delete_pending_if_present(pending["pk"], pending["sk"])

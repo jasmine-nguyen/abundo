@@ -55,6 +55,13 @@ FEED_WINDOW_DAYS = 7
 # 10 days can no longer receive a settlement push — it is genuinely frozen.
 PENDING_AGE_OUT_DAYS = 10
 
+# WHIT-511: how far apart a filed pending and its settled twin may be dated and still have the
+# user's filing carried across. Deliberately TIGHTER than FEED_WINDOW_DAYS (7): the carry moves
+# a user's category, so it must be strict — a symmetric ±3 days is generous for the usual
+# swipe→settle lag while keeping a coincidental same-amount charge from being swept in. The
+# accepted cost is a twin that settled 4–7 days after the swipe is not matched.
+CARRY_DATE_SKEW_DAYS = 3
+
 # How long the "deleted by you" marker for a user-deleted transaction lives (WHIT-654). Must stay
 # well past FEED_WINDOW_DAYS so a BankSync re-send can't bring the deleted charge back.
 DELETED_TRANSACTION_TTL_SECONDS = 30 * 24 * 3600

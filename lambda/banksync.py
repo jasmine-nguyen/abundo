@@ -1,10 +1,11 @@
 import logging
-from constants import ACCOUNT_ID_MAP, HOMELOAN_ACCOUNT_ID, NON_BUDGET_CATEGORIES
+from constants import ACCOUNT_ID_MAP
 from decimal import Decimal
 from typing import Optional
 
 from merchant import clean_merchant
 from models import Transaction
+from spend import counts_to_budget
 
 logger = logging.getLogger(__name__)
 
@@ -42,20 +43,6 @@ def resolve_account_id(banksync_account_id: str) -> str:
             f"Unknown BankSync accountId {banksync_account_id!r} — add it to ACCOUNT_ID_MAP"
         )
     return internal_id
-
-
-def counts_to_budget(internal_account_id: str, category: Optional[str]) -> bool:
-    """Whether a transaction counts toward a SPENDING budget (WHIT-50).
-
-    Excluded: anything on the home-loan account (interest, repayment credits) and any
-    transfer/loan-payment category (own-account transfers, investments, card payments,
-    and the repayment debit leaving Spending). Income and refunds are left counting —
-    the earn-target feature handles those. `category` is BankSync's raw value.
-    """
-    return (
-        internal_account_id != HOMELOAN_ACCOUNT_ID
-        and category not in NON_BUDGET_CATEGORIES
-    )
 
 
 class BankSyncClient:

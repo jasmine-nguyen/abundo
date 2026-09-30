@@ -16,6 +16,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from constants import (
+    HOMELOAN_ACCOUNT_ID, NON_BUDGET_CATEGORIES,
     PENDING_STATUS, POSTED_STATUS,
     ROLLOVER_MAX_LOOKBACK_CYCLES, ROLLOVER_SETTLE_LAG_DAYS,
     SPREAD_MIN_CYCLES, SPREAD_MAX_CYCLES,
@@ -302,6 +303,20 @@ def transactions_in_window(transactions: list[dict], start: str, end: str) -> li
     of it, so the caller must pre-filter to a single cycle.
     """
     return [t for t in transactions if start <= t.get("date", "") <= end]
+
+
+def counts_to_budget(internal_account_id: str, category: str | None) -> bool:
+    """Whether a transaction counts toward a SPENDING budget (WHIT-50).
+
+    Excluded: anything on the home-loan account (interest, repayment credits) and any
+    transfer/loan-payment category (own-account transfers, investments, card payments,
+    and the repayment debit leaving Spending). Income and refunds are left counting —
+    the earn-target feature handles those. `category` is BankSync's raw value.
+    """
+    return (
+        internal_account_id != HOMELOAN_ACCOUNT_ID
+        and category not in NON_BUDGET_CATEGORIES
+    )
 
 
 def contributes_to_budget(transaction: dict) -> bool:

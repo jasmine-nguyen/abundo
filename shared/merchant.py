@@ -120,3 +120,110 @@ def pending_merchant_column(description: Optional[str]) -> Optional[str]:
         return None
     column = text[prefix.end():prefix.end() + _MERCHANT_COLUMN_WIDTH]
     return column if column.strip() else None
+
+
+# --- Matching a posted merchant to a pending row (WHIT-336) --------------------
+# Moved from the webhook's reconcile.py (WHIT-663) so the hourly pending mirror can use the
+# same gate as settlement and the age-out rescue.
+
+_WORD = re.compile(r"[a-z0-9]+")
+
+
+def _words(s: Optional[str]) -> list[str]:
+    """Lowercase alphanumeric words of a string. BankSync descriptor noise
+    ('POS AUTHORISATION', 'DD *', country/store codes) splits out on the
+    non-alphanumeric boundaries, leaving comparable merchant words."""
+    return _WORD.findall((s or "").lower())
+
+
+def _merchant_in_description(merchant: str, description: str) -> bool:
+    """Whether every word of `merchant` appears as a CONSECUTIVE run inside
+    `description`'s words. Word-level (not raw substring) so a short or adjacent
+    token can't over-match: 'coles' is NOT a word in "nicole's cafe", 'bp' is NOT a
+    word in 'bpay' — while a multi-word merchant ('DOORDASH XUANBANHC') still matches
+    a pending's raw "POS AUTHORISATION  DD *DOORDASH XUANBANHC ..." description.
+    Empty merchant -> False (never over-match on an underivable token)."""
+    m = _words(merchant)
+    if not m:
+        return False
+    d = _words(description)
+    return any(d[i:i + len(m)] == m for i in range(len(d) - len(m) + 1))
+
+
+def _same_cleaned_merchant(posted_merchant: str, pending_merchant: str) -> bool:
+    """Whether two ALREADY-cleaned merchant names refer to the same merchant. Inputs
+    must have been through `clean_merchant` — banksync.normalise writes both sides that
+    way — because this does NOT clean them: "COLES 0602" and "COLES" do NOT match. Only
+    padding and casing are absorbed. An empty name on either side never matches.
+
+    NOTE this is chain-wide, not storefront-wide: clean_merchant strips trailing store
+    numbers and processor prefixes, so COLES 0602 and COLES 1157 are both "COLES", and
+    "AMAZON RETA* AMAZON AU" and "AMAZON AU" are both "AMAZON"."""
+    posted_words = _words(posted_merchant)
+    return bool(posted_words) and posted_words == _words(pending_merchant)
+
+
+def _merchant_gate(merchant: str, pending_merchant: str, description: str) -> Optional[str]:
+    """Which branch matches a posted merchant to a pending row (WHIT-336) — "column",
+    "description", "name", or None when nothing matches. The SINGLE source for both the
+    match decision (`merchant_matches_pending` is a thin bool view of this) and the
+    skewed-date merge log's gate= label; deriving both from this one return value is why
+    they cannot drift (WHIT-338).
+
+    Shared by every heuristic tier that matches on a merchant — tip, skewed-date,
+    skewed-fee and blank-auth. They MUST share it. The tiers run tightest-first so a tighter tier always
+    claims its twin before a looser one can reach it, and that ordering silently inverts
+    if one tier can recognise a merchant the tiers above it cannot: the loosest tier then
+    wins by default and deletes the wrong pending.
+
+    An ANZ pending carries its merchant in a fixed-width column, so for those rows we
+    read that column by position and require the two CLEANED names to be EQUAL. Equality,
+    not containment: "CHEMIST WAREHOUSE" is contained in "CHEMIST WAREHOUSE DARLING", and
+    those are two different stores — merging them would delete a real transaction. The
+    same trap catches "McDonalds" inside "MCDONALDS SYD DOMEST" and "WOOLWORTHS" inside
+    "WOOLWORTHS/330 MILLERS RD"; all three pairs are live in the table.
+
+    Equality also replaces the prefix-tolerant matcher this used to need. That tolerance
+    existed only for ANZ's column fusion, which a positional slice now removes at the
+    source, and it was itself over-matching on name prefixes.
+
+    Non-ANZ descriptions (Up rows, legacy rows) have no such column and keep the shape of
+    the gate they had — two-or-more words matched against the raw description, a lone word
+    additionally requiring the pending's own cleaned name to be that same word. The
+    multi-word branch does lose WHIT-331's prefix tolerance along with everything else,
+    which costs nothing: column fusion only happens on ANZ rows, and the loss is a miss.
+    Do NOT tighten this fallback to name equality — on the live table (queried 2026-07-25)
+    75 rows carry an empty merchant_name, none of them ANZ-shaped, and 108 pairs that
+    reconcile today would silently stop.
+
+    Known accepted miss: two descriptors for one merchant ("PET INSURANCE" /
+    "PET INSURANCE PAYMENT", both live on 2026-07-25) do not match. Recurring direct
+    debits rarely raise a card pending, and the failure direction is a leftover duplicate
+    that the age-out sweep reaps — never a wrong merge.
+
+    Deliberately NOT the fuzzy scorer the client uses for "apply to all"
+    (src/context.tsx matchesRulePattern): that is tuned for recall, and on short names
+    it scores COLES/MOLES at 0.80 — over its own threshold. Mis-sweeping a category is
+    undoable; deleting a pending is not. Do not unify the two."""
+    if is_anz_pending(description):
+        column = pending_merchant_column(description)
+        # An ANZ row with no readable column has nothing to compare, so it must REFUSE.
+        # Falling through to the gates below would hand the row to a containment search
+        # over the whole description — suburb included — and a merchant named after a
+        # place would match it. "Unreadable" is not "not ANZ".
+        if column is not None and _same_cleaned_merchant(merchant, clean_merchant(column)):
+            return "column"
+        return None
+    if len(_words(merchant)) >= 2:
+        return "description" if _merchant_in_description(merchant, description) else None
+    if (_same_cleaned_merchant(merchant, pending_merchant)
+            and _merchant_in_description(merchant, description)):
+        return "name"
+    return None
+
+
+def merchant_matches_pending(merchant: str, pending_merchant: str, description: str) -> bool:
+    """Whether a posted merchant names the same shop as a pending row — the bool view of
+    `_merchant_gate` (which branch matched). Shared by the tip, skewed-date, skewed-fee
+    and blank-auth tiers; see `_merchant_gate` for the full rationale."""
+    return _merchant_gate(merchant, pending_merchant, description) is not None
