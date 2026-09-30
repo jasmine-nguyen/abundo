@@ -110,6 +110,10 @@ class BuildState(TypedDict):
     test_feedback: NotRequired[str]
     test_rejection: NotRequired[str]
     pinned: NotRequired[dict[str, str]]
+    unpin_request: NotRequired[list[str]]
+    unpin_named: NotRequired[bool]
+    unpinned: NotRequired[list[str]]
+    user_decisions: NotRequired[list[str]]
     # implementation
     implementer_session: NotRequired[str]
     implementer_resumes: NotRequired[int]
@@ -295,7 +299,9 @@ REPRODUCER_OUTPUT = _output(
     summary=TEXT,
 )
 TEST_WRITER_OUTPUT = _output(seams=TEXTS, test_files=TEXTS, command=TEXT, summary=TEXT)
-IMPLEMENTER_OUTPUT = _output(status=_one_of("DONE", "ESCALATE"), summary=TEXT, escalation=TEXT, follow_ups=TEXTS)
+IMPLEMENTER_OUTPUT = _output(
+    status=_one_of("DONE", "ESCALATE"), summary=TEXT, escalation=TEXT, follow_ups=TEXTS, unpin_files=TEXTS
+)
 CODE_CRITIC_OUTPUT = _output(
     blocking_bugs=TEXTS,
     standards_breaches=TEXTS,
@@ -973,6 +979,37 @@ def tampered_pins(pinned: dict[str, str]) -> list[str]:
     ]
 
 
+def pinned_paths(state: BuildState, paths) -> list[str]:
+    """The paths that name pinned (or already unlocked) test files, as the pins store them."""
+    locked = {*state.get("pinned", {}), *state.get("unpinned", [])}
+    return sorted({relative for relative in map(repo_path, paths) if relative in locked})
+
+
+def unpin_update(state: BuildState, files: list[str], approval: str) -> dict:
+    """Unlock pinned test files for the implementer's next round; the checks after it pin them again."""
+    return {
+        "pinned": {path: digest for path, digest in state.get("pinned", {}).items() if path not in files},
+        "unpinned": sorted({*state.get("unpinned", []), *files}),
+        "user_decisions": [
+            *state.get("user_decisions", []), f"Unlocked {', '.join(files)} so the implementer could change it: {approval}"
+        ],
+    }
+
+
+def relock(state: BuildState) -> dict:
+    """Pin the test files the user unlocked again, at the contents the implementer left them in."""
+    if not state.get("unpinned"):
+        return {}
+    pins = pin(state, state["unpinned"])
+    if pins:
+        print(f"   🔒 Locked {', '.join(sorted(pins))} again, at the implementer's new version", flush=True)
+    gone = [path for path in state["unpinned"] if path not in pins]
+    if gone:
+        print(f"   ⚠️ {', '.join(gone)} was deleted while unlocked, so it's no longer locked", flush=True)
+    history = [f"• unlocked test file deleted, no longer locked: {', '.join(gone)}"] if gone else []
+    return {"pinned": {**state.get("pinned", {}), **pins}, "unpinned": [], "history": history}
+
+
 def restore_pins(state: BuildState) -> list[str]:
     """Put back every pinned test file that was changed or deleted. Returns their paths."""
     restored = []
@@ -1104,9 +1141,20 @@ def review_block(state: BuildState, key: str, extra: str = "") -> str:
             f"(commits: `git log --oneline {diff_range}`). Review only that range."
         ),
         fix_round_block(state, key),
+        user_decisions_block(state),
         extra,
     ]
     return "\n\n".join(part for part in parts if part)
+
+
+def user_decisions_block(state: BuildState) -> str:
+    if not state.get("user_decisions"):
+        return ""
+    return (
+        "## Decisions the user made during the build\nThe user answered the implementer's questions. Their "
+        "answers win over the plan: check the code follows them, but never ask for something they approved to be "
+        "undone, or for something they ruled out:\n" + bullets(state["user_decisions"])
+    )
 
 
 def format_questions(items: list[dict]) -> str:
@@ -1668,21 +1716,38 @@ def implementer_prompt(state: BuildState, feedback: str) -> str:
         parts.append(f"## Bug reproduction (make this pass)\n{state['repro']}")
     if state.get("tests"):
         parts.append(f"## Failing tests already written (make these pass)\n{state['tests']}")
-    if state.get("pinned"):
-        parts.append(
-            "## Pinned test files (read-only: the pipeline rejects changes; ESCALATE if one is wrong)\n"
-            + bullets(sorted(state["pinned"]))
-        )
+    parts.append(pinned_block(state))
+    parts.append(unpinned_block(state))
     parts.append(feedback)
     if state.get("escalation_answer"):
         parts.append(f"## Your escalated question, answered\n{state['escalation_answer']}")
     return "\n\n".join(part for part in parts if part)
 
 
+def pinned_block(state: BuildState) -> str:
+    if not state.get("pinned"):
+        return ""
+    return (
+        "## Pinned test files (read-only: the pipeline puts back any change; if one is wrong, ESCALATE "
+        "and list it in `unpin_files`)\n" + bullets(sorted(state["pinned"]))
+    )
+
+
+def unpinned_block(state: BuildState) -> str:
+    if not state.get("unpinned"):
+        return ""
+    return (
+        "## Test files you may change this round\nThe user approved changing these pinned test files. Make only "
+        "the change they approved. The pipeline pins them again, at your new contents, when you finish:\n"
+        + bullets(state["unpinned"])
+    )
+
+
 async def implementer(state: BuildState):
     feedback = fix_feedback(state)
     answer = state.get("escalation_answer", "")
-    news = "\n\n".join(p for p in [feedback, answer and f"## Your escalated question, answered\n{answer}"] if p)
+    answered = answer and f"## Your escalated question, answered\n{answer}"
+    news = "\n\n".join(p for p in [pinned_block(state), unpinned_block(state), feedback, answered] if p)
     resumes = state.get("implementer_resumes", 0)
     # Continue the same session on fix rounds: it already knows the code it wrote.
     session = state.get("implementer_session", "") if resumes < MAX_SESSION_RESUMES else ""
@@ -1701,6 +1766,8 @@ async def implementer(state: BuildState):
             **session_update,
             "escalation": question,
             "escalation_source": "implementer",
+            "unpin_request": pinned_paths(state, out.get("unpin_files", [])),
+            "unpin_named": bool(out.get("unpin_files")),
             "history": [f"✗ implementer: escalated — {first_line(question)}"],
         }
     rounds = state.get("implementation_attempts", 0) + 1
@@ -1718,17 +1785,44 @@ SKIP_TO = {"reproducer": "test_writer", "test_writer": "implementer"}
 ESCALATION_HINTS = {
     "reproducer": ' "skip" builds without a reproduction.',
     "test_writer": ' "skip" builds without acceptance tests.',
-    "implementer": ' "unpin: <reason>" lets it edit pinned tests.',
 }
+
+
+def files_to_unpin(state: BuildState) -> list[str]:
+    """The test files an "unpin" reply unlocks: the ones the implementer named, else every pinned one."""
+    if state.get("unpin_named"):
+        return state.get("unpin_request", [])
+    return sorted(state.get("pinned", {}))
+
+
+def unpin_hint(state: BuildState) -> str:
+    files = files_to_unpin(state)
+    if state.get("unpin_named") and not files:
+        return "\n\nThe implementer named test files to unlock, but none of them is locked, so \"unpin\" unlocks nothing."
+    if not files:
+        return ""
+    named = f"{plural(len(files), 'locked test file')}: {', '.join(files)}"
+    it = "it" if len(files) == 1 else "them"
+    if not state.get("unpin_named"):
+        return (
+            f"\n\nOnly if this is about a locked test: \"unpin: <reason>\" unlocks all {named}, for the "
+            "implementer's next round only."
+        )
+    return (
+        f"\n\nThe implementer wants to change {named}. \"unpin: <reason>\" unlocks {it} for the implementer's "
+        f"next round only, and locks {it} again at the new contents once the checks run. Any other reply keeps "
+        f"{it} locked."
+    )
 
 
 def escalation(state: BuildState):
     source = state.get("escalation_source", "implementer")
+    hint = unpin_hint(state) if source == "implementer" else ""
     reply = interrupt(
         f"DECISION NEEDED (from the {NODE_LABELS[source]})\n\n{state['escalation']}\n\n"
-        f"Reply with your decision, or \"stop\" to end the build.{ESCALATION_HINTS.get(source, '')}"
+        f"Reply with your decision, or \"stop\" to end the build.{ESCALATION_HINTS.get(source, '')}{hint}"
     )
-    word, _ = split_reply(reply)
+    word, rest = split_reply(reply)
     if word in STOPS:
         return {"escalation": "", **stopped("escalation")}
     update = {
@@ -1739,12 +1833,17 @@ def escalation(state: BuildState):
     }
     if source in ("test_writer", "reproducer"):
         update["test_attempts"] = 0
-    if source == "implementer":
-        update["code_decisions"] = []  # answered now, so don't ask the implementer to escalate them again
     if word == "skip" and source in SKIP_TO:
         update.update(escalation_next=SKIP_TO[source], escalation_answer="", test_feedback="")
-    if word == "unpin":
-        update["pinned"] = {}
+    if source == "implementer":
+        update["code_decisions"] = []  # answered now, so don't ask the implementer to escalate them again
+        update["unpin_request"], update["unpin_named"] = [], False
+        # Reviewers see every answer, so they don't send back what the user decided.
+        update["user_decisions"] = [*state.get("user_decisions", []), reply.strip()]
+        files = files_to_unpin(state)
+        if word == "unpin" and files:
+            update.update(unpin_update(state, files, rest or "approved"))
+            update["history"].append(f"• unpinned for one round: {', '.join(files)}")
     return update
 
 
@@ -1758,7 +1857,8 @@ def failing_checks(state: BuildState) -> list[str]:
     if tampered:
         problems.append(
             "Pinned test files were changed or deleted, and the pipeline has no copy to put back. Restore "
-            f"them; if one is genuinely wrong, reply with status ESCALATE instead:\n{bullets(tampered)}"
+            "them; if one is genuinely wrong, reply with status ESCALATE and list it in `unpin_files` instead:\n"
+            f"{bullets(tampered)}"
         )
     commands = check_commands()
     if not commands:
@@ -1774,24 +1874,27 @@ def failing_checks(state: BuildState) -> list[str]:
         problems.insert(0, (
             "You changed or deleted pinned test files, so the pipeline put them back before running the "
             f"checks:\n{bullets(restored)}\nDon't edit them. If one is genuinely wrong, reply with status "
-            "ESCALATE instead."
+            "ESCALATE and list it in `unpin_files`: the user can unlock it for one round."
         ))
     return problems
 
 
 def checks(state: BuildState):
     problems = failing_checks(state)
+    relocked = relock(state)
     if not problems:
         ok, output = commit_all(state, commit_message(state))
         if not ok:
             problems.append(f"git commit failed (a pre-commit hook?):\n{tail(output)}")
     failed = bool(problems) and state.get("implementation_attempts", 0) >= MAX_IMPLEMENTATION_ROUNDS
     return {
+        **relocked,
         "checks_feedback": "\n\n".join(problems),
         "failed": failed,
         "outcome": "failed" if failed else "",
         "history": [
-            mark(False, f"checks: {first_line(problems[0])}") if problems else mark(True, "checks: passed, committed")
+            *relocked.get("history", []),
+            mark(False, f"checks: {first_line(problems[0])}") if problems else mark(True, "checks: passed, committed"),
         ],
     }
 
@@ -1974,6 +2077,9 @@ def next_slice(state: BuildState):
         # a behaviour the plan changes). They still run in every check, and the code review
         # flags any change that weakens them.
         "pinned": {},
+        "unpinned": [],
+        "unpin_request": [],
+        "unpin_named": False,
         "tests": "",
         "test_attempts": 0,
         "test_feedback": "",
@@ -2228,6 +2334,7 @@ builder.add_conditional_edges("ship", after_ship)
 #   python3 build_graph.py --thread WHIT-123 --status                              → where is it?
 #   python3 build_graph.py --thread WHIT-123 --retry                               → re-run a step that errored
 #   python3 build_graph.py --thread WHIT-123 --recheck                             → after fixing a failed build by hand
+#   add --unpin <test file> to --recheck when the user approved changing that locked test
 #   python3 build_graph.py --thread WHIT-123 --replan "<what to change>"           → stop it, even mid-run, and replan
 #   python3 build_graph.py --thread WHIT-123 --cancel                              → stop it, even mid-run, and end it
 #   python3 build_graph.py --thread WHIT-123 --clean-backups                       → delete the backup branches replans left, once the ticket is done
@@ -2269,6 +2376,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--clean-backups", action="store_true", help="delete the backup branches replans left, once the build is done"
     )
     parser.add_argument(
+        "--unpin", action="append", metavar="TEST_FILE",
+        help="with --recheck: a locked test file the user approved changing (repeat for more)",
+    )
+    parser.add_argument(
         "--allow-api-billing", action="store_true",
         help="run even though an API key is set, so every token is billed (the user's call only)",
     )
@@ -2283,6 +2394,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.request and not args.card and not continuing:
         args.thread = args.thread or hashlib.sha256(args.request.encode()).hexdigest()[:8]
     args.thread = args.thread or args.card
+    if args.unpin and not args.recheck:
+        parser.error("--unpin only works with --recheck; at a pause, reply \"unpin: <reason>\" instead")
     if continuing:
         if not args.thread:
             parser.error(
@@ -2399,6 +2512,11 @@ def report(thread: str, result: dict) -> int:
         for key, label in REVIEW_LABELS.items():
             if result.get(f"{key}_verdict") == "NEEDS_REWORK":
                 print(f"\n## {label}\n{review_findings(result, key)}")
+        if result.get("pinned"):
+            print(
+                f"\n## Locked test files\n{bullets(sorted(result['pinned']))}\nThe recheck puts back any change to "
+                "these. Change one only if the user approves, then add --unpin <that file> to the recheck."
+            )
         print(f"\nFix these by hand, then re-run checks and reviews:\n  {rerun()} --thread {thread} --recheck")
         code = 1
     elif outcome == "stopped":
@@ -2512,15 +2630,21 @@ async def retry_build(graph, config, snapshot):
     return None
 
 
-async def recheck_build(graph, config, snapshot):
+async def recheck_build(graph, config, snapshot, unpin: list[str]):
     values = snapshot.values
     if values.get("outcome") != "failed" or snapshot.next:
         print("Only a failed, finished build can be rechecked. Use --status to see where this one is.")
+        return None
+    files = pinned_paths(values, unpin)
+    unknown = [path for path in unpin if repo_path(path) not in files]
+    if unknown:
+        print(f"{', '.join(unknown)} isn't a locked test file. Locked: {', '.join(sorted(values.get('pinned', {}))) or 'none'}.")
         return None
     await graph.aupdate_state(
         config,
         {
             **cleared_reviews(),
+            **(unpin_update(values, files, "the user approved changing it after the build failed") if files else {}),
             "failed": False,
             "outcome": "",
             "implementation_attempts": 0,
@@ -2696,6 +2820,10 @@ async def replan_build(graph, config, snapshot, feedback: str, pid: int | None):
             "escalation_answer": "",
             "escalation_next": "",
             "pinned": {},
+            "unpinned": [],
+            "unpin_request": [],
+            "unpin_named": False,
+            "user_decisions": [],
             "repro": "",
             "tests": "",
             "test_attempts": 0,
@@ -2791,7 +2919,7 @@ async def main(argv: list[str] | None = None) -> int:
             elif args.retry:
                 result = await retry_build(graph, config, snapshot)
             elif args.recheck:
-                result = await recheck_build(graph, config, snapshot)
+                result = await recheck_build(graph, config, snapshot, args.unpin or [])
             else:
                 result = await start_build(graph, saver, config, snapshot, args)
         except Exception as e:  # noqa: BLE001 — every failure gets the same --retry advice

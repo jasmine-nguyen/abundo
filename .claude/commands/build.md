@@ -260,10 +260,31 @@ the card number for card builds) and check where it is:
        (`skip`, `unpin`), with what happens if they pick it and what it costs.
      Then ask the user.
 
+     **Locked tests.** The tests written before the code (and QA's) are locked:
+     the build puts back any change to them. When the block ends with "The
+     implementer wants to change N locked test file(s)", `unpin` is how a change
+     to them gets approved. (A block that only says "Only if this is about a
+     locked test" isn't about tests: mention `unpin` only if the question is
+     about one.) Say in plain
+     words how many tests it unlocks and which (what each checks, not its path),
+     using only the count the block gives, and that each is unlocked for one
+     round, then locked again at its new contents. If the user approves changing
+     a locked test, in any words, resume with `unpin: <their words>`: the reply
+     must start with `unpin`, or the tests stay locked and the build puts the old
+     version back.
+
    Every pause also accepts **Stop**: it ends the build there and nothing
    ships.
 
    Never answer a pause yourself: every one of them is the user's call.
+
+   **You relay and resume, nothing more.** While a build is running or paused,
+   never edit the card's code or tests yourself, and never touch the build's
+   saved progress (the `.build/` folder, including `build_graph.db`) at all, not
+   even to "unstick" it. Every change goes through a resume reply, so the build
+   knows about it: a locked test through `unpin`, anything else through the
+   user's decision in words. If no reply fits, tell the user what's stuck and
+   ask. The one time you change code is BUILD FAILED (step 5).
 
    **Recommendations are the helper's, not yours.** Mark "(Recommended)" on the
    option the block recommends, and say it's the helper's pick. If you'd choose
@@ -282,7 +303,7 @@ the card number for card builds) and check where it is:
    | PLAN FOR REVIEW | `go` (recommended answers) · `go: Q1 <answer>; Q2 <answer>` · `rework: <feedback>` |
    | CARD LOOKS INVALID | `close` · `rework: <why it's still needed>` |
    | QUESTIONS BEFORE PLANNING | `go` (recommendations) or `Q1: <answer>; Q2: <answer>` |
-   | DECISION NEEDED | the decision in plain words · `skip` · `unpin: <reason>` |
+   | DECISION NEEDED | the decision in plain words · `skip` · `unpin: <the user's words>` (approves changing the locked tests the block names) |
 
    If the reply contains quotes, backticks or `$`, pass it through a
    quoted heredoc so the shell doesn't touch it:
@@ -316,9 +337,13 @@ the card number for card builds) and check where it is:
      evidence.
    - **BUILD FAILED** — the automatic loop ran out of rounds. Don't ask the
      user what to do: read the findings below the line, fix them yourself
-     in the codebase (don't edit pinned test files; if one is wrong, ask the
-     user), then run
+     in the codebase, then run
      `python3 build_graph.py --thread <id> --recheck`
+     Don't change a locked test (they're listed under "Locked test files";
+     the recheck puts back any change to one). If one is wrong,
+     explain it to the user and ask. Only if they approve, change it and add
+     `--unpin <that test file>` to the recheck: it stays locked at your new
+     version.
      to re-run the checks and both reviews (code review and QA) on your fixes. Repeat until
      it passes.
    - **BUILD STOPPED** — a step errored (an agent ran out of turns or

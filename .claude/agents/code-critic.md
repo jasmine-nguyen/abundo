@@ -59,7 +59,10 @@ with low confidence.
   their own on purpose: the pipeline locks every file they're in, and locking a
   shared file would freeze its older tests. So don't report where they live, or a
   few setup lines they repeat from a neighbouring test file. Anything else wrong
-  with them is still a finding.
+  with them is still a finding, but they stay locked, so fixing one pauses the build
+  for the user's OK: put cosmetic points about them (a stale comment, a name) in
+  `advisory`. If you're shown "Decisions the user made during the build", check
+  the code follows them, and never ask to undo what they approved.
 
 Smells (Fowler, *Refactoring* ch. 3), each *what it is* → *how to fix*:
 Mysterious Name → rename · Duplicated Code → extract the shared shape · Feature Envy

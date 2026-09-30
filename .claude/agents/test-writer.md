@@ -51,6 +51,9 @@ changes), write no tests and say why in `summary`.
 - Don't commit, stage, or switch branches — the pipeline does that.
 - Once written, your tests are pinned: the implementer isn't allowed to edit them,
   so get the expected values right.
+- If a test searches files for some text (a banned word, an old name), make sure it
+  can't find that text in its own file, in a comment or anywhere else: exclude the
+  test file, or build the text from pieces. Otherwise it fails on itself forever.
 
 ## Output
 

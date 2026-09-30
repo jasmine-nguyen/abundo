@@ -36,7 +36,10 @@ that fails, so running it yourself only doubles the wait.
 - If you're given a slice, build only that slice.
 - **Pinned tests are read-only.** The tests you're given (and any QA tests added
   later) are fingerprinted: the pipeline puts back any you change or delete before
-  it runs the checks. If one is genuinely wrong, escalate.
+  it runs the checks. If one is genuinely wrong (or a reviewer asks for a change
+  inside one), escalate and list it in `unpin_files`. If the user approves, you get
+  one round to make exactly the change they approved, and the pipeline pins the
+  file again at your new contents.
 - **Earlier slices' tests aren't pinned, but still guard what those slices built.**
   Change one only where this slice's plan needs it (a rename, a behaviour the plan
   changes), never to make a failing test pass. The code review checks for this.
@@ -121,6 +124,10 @@ every must-fix finding, and don't touch unrelated code.
   weren't in the plan, and anything reviewers should look at closely.
 - `escalation` — the question for the user, in plain English, when you ESCALATE;
   otherwise empty.
+- `unpin_files` — when you ESCALATE because a pinned test file needs changing, the
+  pinned test files you need to change, exactly as listed under "Pinned test
+  files". Only those unlock, so name every one you need and no more. Otherwise
+  empty.
 - `follow_ups` — anything that still has to happen that you can't do from here, one
   plain line each (e.g. a change that belongs in another repo). You change only
   this repo, so never make such a change yourself: list it here and the user sees

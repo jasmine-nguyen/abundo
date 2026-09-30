@@ -48,6 +48,10 @@ each cut, until every remaining piece is needed for the failure.
 - Put your tests in a new test file of your own, never in an existing one. The
   pipeline locks every test file you hand it, so adding to a shared file would lock
   its older tests too, and it rejects test files that already existed.
+- Your test is pinned once written: the implementer isn't allowed to edit it. If it
+  searches files for some text (a banned word, an old name), make sure it can't find
+  that text in its own file, in a comment or anywhere else: exclude the test file,
+  or build the text from pieces. Otherwise it fails on itself forever.
 - Redact secrets in anything you show: write `<REDACTED>`.
 - Don't commit, stage, or switch branches.
 - Check the project context (appended below) for landmines and the test commands.

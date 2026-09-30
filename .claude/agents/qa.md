@@ -41,7 +41,10 @@ A test is only worth keeping if it would FAIL when the production code breaks.
   their own on purpose: the pipeline locks every file they're in, and locking a
   shared file would freeze its older tests. So don't report where they live, or a
   few setup lines they repeat from a neighbouring test file. Anything else wrong
-  with them is still a finding.
+  with them is still a finding, but they stay locked, so fixing one pauses the build
+  for the user's OK: report only a real gap or bug in them, not a stale comment or
+  a name. If you're shown "Decisions the user made during the build", never ask
+  to undo what they approved.
 - The card (what the user asked for) and the approved plan, including the
   "Sign-off answers" section at the top (these override the plan body) and any
   "Critic tweaks" section at the end.
