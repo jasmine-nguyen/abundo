@@ -643,6 +643,9 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
     if name == "reproducer":
         if update.get("repro"):
             return "✅ Bug reproduced with a failing test"
+        if update.get("test_rejection"):
+            retry = "" if update.get("escalation") else ". Rewriting it"
+            return f"❌ The bug test was rejected: {update['test_rejection']}{retry}"
         return "❌ Couldn't reproduce the bug"
     if name == "sign_off" and update.get("plan_decision") == "AUTO_APPROVED":
         return auto_approved_brief(state)
@@ -973,18 +976,16 @@ REJECTIONS = {
     "no command given": "it gave no command to run them",
     "The pipeline won't run": "its test command touches git",
     "These test files are outside this repo": "they're outside this repo",
+    "These test files already existed": "they were added to an existing test file instead of a new one",
     "These test files don't exist": "the test files it named don't exist",
     "No tests ran": "the test command ran no tests",
     "timed out after": "they timed out",
 }
 
 
-def rejection_reason(output: str) -> str:
+def rejection_reason(output: str, passed: str = "they passed before any code existed") -> str:
     """Why a red check failed, in a few plain words."""
-    return next(
-        (reason for start, reason in REJECTIONS.items() if output.startswith(start)),
-        "they passed before any code existed",
-    )
+    return next((reason for start, reason in REJECTIONS.items() if output.startswith(start)), passed)
 
 
 def is_red(command: str, test_files=()) -> tuple[bool, str]:
@@ -994,6 +995,14 @@ def is_red(command: str, test_files=()) -> tuple[bool, str]:
     # The agent wrote this command, so it gets the same guard as the agent's own shell.
     if BASH_DENY["writer"].search(command):
         return False, f"The pipeline won't run `{command}`: it touches git, and the pipeline owns git."
+    # Pins cover whole files, so tests added to a shared file would lock every older test in it.
+    inside = [repo_path(path) for path in test_files if repo_path(path)]
+    existing = git("ls-files", "--", *inside).splitlines() if inside else []
+    if existing:
+        return False, (
+            f"These test files already existed: {', '.join(existing)}. Put the new tests in a new file of their "
+            "own: the pipeline locks every test file it's given, so adding to a shared file locks its older tests too."
+        )
     elsewhere = [path for path in test_files if not repo_path(path)]
     if elsewhere:
         return False, f"These test files are outside this repo, where the pipeline can't run or pin them: {', '.join(elsewhere)}"
@@ -1547,32 +1556,48 @@ def prepare_branch(state: BuildState):
 
 async def reproducer(state: BuildState):
     parts = [card_block(state), f"## Approved plan\n{state['plan']}"]
+    if state.get("test_feedback"):
+        parts.append(f"## Your previous test was rejected\n{state['test_feedback']}")
     if state.get("escalation_answer"):
         parts.append(f"## You couldn't reproduce this before. The user says:\n{state['escalation_answer']}")
     result = await run_agent("reproducer", "\n\n".join(parts), REPRODUCER_OUTPUT)
     out = result.output
-    if out["status"] == "REPRODUCED":
-        red, output = is_red(out["command"], out["test_files"])
-        if red:
-            return {
-                "repro": f"`{out['command']}` fails on: {out['symptom']}\n\n{out['summary']}",
-                "tests": out["summary"],
-                "pinned": {**state.get("pinned", {}), **pin(state, out["test_files"])},
-                "escalation_answer": "",
-                "history": [f"✓ reproducer: red on {first_line(out['symptom'])}"],
-            }
-        reason = (
-            f"The reproducer said `{out['command']}` fails on the bug, but it didn't fail "
-            f"when the pipeline ran it:\n{tail(output, 1500)}"
-        )
-    else:
-        reason = out["tried"]
-    return {
-        "escalation": f"Couldn't reproduce the bug.\n\nSymptom: {out['symptom']}\n\n{reason}",
-        "escalation_source": "reproducer",
-        "escalation_answer": "",
-        "history": [f"✗ reproducer: couldn't reproduce — {first_line(reason)}"],
+    done = {"test_attempts": 0, "test_feedback": "", "escalation_answer": ""}
+    if out["status"] != "REPRODUCED":
+        return {
+            **done,
+            "escalation": f"Couldn't reproduce the bug.\n\nSymptom: {out['symptom']}\n\n{out['tried']}",
+            "escalation_source": "reproducer",
+            "history": [f"✗ reproducer: couldn't reproduce — {first_line(out['tried'])}"],
+        }
+    red, output = is_red(out["command"], out["test_files"])
+    if red:
+        return {
+            **done,
+            "repro": f"`{out['command']}` fails on: {out['symptom']}\n\n{out['summary']}",
+            "tests": out["summary"],
+            "pinned": {**state.get("pinned", {}), **pin(state, out["test_files"])},
+            "history": [f"✓ reproducer: red on {first_line(out['symptom'])}"],
+        }
+    attempts = state.get("test_attempts", 0) + 1
+    reason = rejection_reason(output, passed="it passed, so it doesn't show the bug")
+    feedback = (
+        f"You said `{out['command']}` fails on the bug, but the pipeline rejected it: {reason}. Output:\n"
+        f"{tail(output, 1500)}"
+    )
+    update = {
+        "test_attempts": attempts,
+        "test_feedback": feedback,
+        "test_rejection": reason,
+        "history": [f"✗ reproducer: test rejected — {reason}"],
     }
+    if attempts >= MAX_TEST_ATTEMPTS:
+        update["escalation"] = (
+            f"The reproducer wrote a test for the bug, but the build rejected it: {reason}.\n\n"
+            f"Symptom it says the test catches: {out['symptom']}\n\n{feedback}"
+        )
+        update["escalation_source"] = "reproducer"
+    return update
 
 
 async def test_writer(state: BuildState):
@@ -1693,7 +1718,7 @@ def escalation(state: BuildState):
         "escalation_next": source,
         "history": [f"• escalation answered: {first_line(reply)}"],
     }
-    if source == "test_writer":
+    if source in ("test_writer", "reproducer"):
         update["test_attempts"] = 0
     if source == "implementer":
         update["code_decisions"] = []  # answered now, so don't ask the implementer to escalate them again
@@ -2079,7 +2104,11 @@ def after_prepare_branch(state: BuildState):
 
 
 def after_reproducer(state: BuildState):
-    return "escalation" if state.get("escalation") else "implementer"
+    if state.get("escalation"):
+        return "escalation"
+    if state.get("test_feedback"):
+        return "reproducer"
+    return "implementer"
 
 
 def after_test_writer(state: BuildState):

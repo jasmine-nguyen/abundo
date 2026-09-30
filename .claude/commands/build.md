@@ -191,7 +191,9 @@ the card number for card builds) and check where it is:
 
    The user can't see the script's output, only your messages. So at every
    pause, show what the block says in your own message BEFORE you ask
-   anything.
+   anything, in the same message as the question and above it. The question
+   box alone never tells the user enough to answer, and a one-line recap of
+   the block doesn't count.
 
    The user may have walked away while the build ran. So at every pause, first
    send them a push notification (the PushNotification tool, if you have it):
@@ -246,10 +248,17 @@ the card number for card builds) and check where it is:
    - **QUESTIONS BEFORE PLANNING** — the card was too thin to plan. Ask the
      questions with AskUserQuestion, recommended answer first.
    - **DECISION NEEDED** — an agent hit a decision it shouldn't make alone
-     (or couldn't reproduce the bug, or write failing tests). Show it in
-     plain English, rewriting any line that talks code, and ask the user.
-     Offer the options it lists and any hint on the last line (`skip`,
-     `unpin`), each explained in everyday words.
+     (or couldn't reproduce the bug, or write failing tests). The block often
+     quotes code and error output, so retell it in plain English under three
+     bold headings, before the question:
+     - **What it was doing:** the step, in everyday words (e.g. "writing a
+       test that shows the bug happening").
+     - **What went wrong:** what actually happened and why, as far as the
+       block shows. Say plainly if the helper's work was fine and the build
+       rejected it for another reason (e.g. it looked in the wrong folder).
+     - **Your options:** each option it lists, and any hint on the last line
+       (`skip`, `unpin`), with what happens if they pick it and what it costs.
+     Then ask the user.
 
    Every pause also accepts **Stop**: it ends the build there and nothing
    ships.

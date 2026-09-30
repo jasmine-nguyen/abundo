@@ -45,6 +45,9 @@ each cut, until every remaining piece is needed for the failure.
 - Do not fix the bug. Only write tests, fixtures and scripts.
 - Put every test inside this repo. The pipeline runs and locks only tests here, and
   it rejects test files anywhere else.
+- Put your tests in a new test file of your own, never in an existing one. The
+  pipeline locks every test file you hand it, so adding to a shared file would lock
+  its older tests too, and it rejects test files that already existed.
 - Redact secrets in anything you show: write `<REDACTED>`.
 - Don't commit, stage, or switch branches.
 - Check the project context (appended below) for landmines and the test commands.
