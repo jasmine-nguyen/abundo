@@ -131,6 +131,14 @@ it('a sustained failure shows the inline error, and Retry recovers', async () =>
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
 });
 
+it('a sustained failure sends a bounded number of requests (WHIT-668)', async () => {
+  server.fail('/budgets', 503);
+  renderBudgets(makeClient(false));
+  expect(await screen.findByTestId('budgets-error')).toBeTruthy();
+  await act(() => new Promise<void>((resolve) => setTimeout(resolve, 200)));
+  expect(budgetReads()).toHaveLength(1);
+});
+
 it('does not fetch before login, then fires the moment auth flips to authed', async () => {
   mockAuthStatus = 'anon';
   renderBudgets();

@@ -550,12 +550,9 @@ export function usePayCycle(): PayCycleData {
 //   - refetch  = fire every query (the inline Retry / pull-to-refresh).
 //   - refetchStale = fire only the queries whose data has gone stale (focus refresh with no
 //     request storm), gated on each query result's built-in `.isStale`.
-// It's a hook (calls useCallback), hence the `use` prefix. Passing the `queries` array
-// straight as the useCallback deps reproduces each composite's former
-// `useCallback(fn, [q1, q2, …])` element-for-element (React compares deps with Object.is),
-// preserving the refetch/refetchStale IDENTITY the consumers' useFocusEffect depends on to
-// avoid a re-subscribe storm. Each call site passes a fixed-length array, so the deps length
-// is stable across renders.
+// It's a hook (calls useCallback), hence the `use` prefix. refetch/refetchStale keep a
+// stable identity across renders (see useLatestRef), so a consumer's useFocusEffect fires
+// only on real focus — never on every redraw (WHIT-668).
 interface CombinedQueryStatus {
   isLoading: boolean;
   isError: boolean;
@@ -570,13 +567,19 @@ interface ScreenQuery {
   isStale: boolean;
   refetch: () => unknown;
 }
+// TanStack results are new objects every render, so focus callbacks read them through a ref
+// to keep a stable identity — otherwise each redraw reruns the focus refetch (WHIT-668).
+function useLatestRef<T>(value: T) {
+  const ref = useRef(value);
+  ref.current = value;
+  return ref;
+}
 function useCombineScreenQueries(queries: ScreenQuery[]): CombinedQueryStatus {
   const isLoading = queries.some((q) => q.isLoading);
   const isError = queries.some((q) => q.isError);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- the query array IS the deps
-  const refetch = useCallback(() => { queries.forEach((q) => { q.refetch(); }); }, queries);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- the query array IS the deps
-  const refetchStale = useCallback(() => { queries.forEach((q) => { if (q.isStale) q.refetch(); }); }, queries);
+  const latest = useLatestRef(queries);
+  const refetch = useCallback(() => { latest.current.forEach((q) => { q.refetch(); }); }, [latest]);
+  const refetchStale = useCallback(() => { latest.current.forEach((q) => { if (q.isStale) q.refetch(); }); }, [latest]);
   return { isLoading, isError, refetch, refetchStale };
 }
 
@@ -908,14 +911,16 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
     await queryClient.cancelQueries({ queryKey: accountBalancesKey });
     queryClient.setQueryData(accountBalancesKey, fresh);
   }, [queryClient]);
+  const latest = useLatestRef({ categoriesQuery, feedQuery, searchActive, searchQueryResult });
   const refetchStale = useCallback(() => {
+    const { categoriesQuery, feedQuery, searchActive, searchQueryResult } = latest.current;
     if (categoriesQuery.isStale) categoriesQuery.refetch();
     if (searchActive) {
       if (searchQueryResult.isStale) searchQueryResult.refetch();
       return;
     }
     if (feedQuery.isStale) feedQuery.refetch(); // refetches every loaded page in place (keeps place)
-  }, [feedQuery, categoriesQuery, searchActive, searchQueryResult]);
+  }, [latest]);
 
   const { data: searchData, isPlaceholderData: searchIsPlaceholder, isError: searchIsError, isFetching: searchIsFetching, refetch: refetchSearch } = searchQueryResult;
   const search = useMemo<TransactionsSearchState>(() => ({
