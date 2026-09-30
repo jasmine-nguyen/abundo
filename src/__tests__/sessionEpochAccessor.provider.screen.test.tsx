@@ -28,13 +28,6 @@ jest.mock('../auth', () => ({
   subscribe: (l: () => void) => mockSubscribe(l),
   getAuthToken: async () => 'test-id-token',
 }));
-jest.mock('../queries', () => ({
-  ...require('./support/screenQueryMocks').queryMocksFromState(() => ({})),
-  useIsAuthed: () => {
-    const ReactActual = require('react') as typeof React;
-    return ReactActual.useSyncExternalStore(mockSubscribe, () => mockStatus === 'authed');
-  },
-}));
 
 import { AppProvider, useAppContext } from '../context';
 import { queryClient } from '../queryClient';

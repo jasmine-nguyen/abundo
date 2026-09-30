@@ -4,17 +4,14 @@
 // authed→locked→anon transitions exactly as in prod. Usage in a suite:
 //
 //   jest.mock('../auth', () => require('./support/authMock').authMockModule());
-//   jest.mock('../queries', () => ({
-//     ...require('./support/screenQueryMocks').queryMocksFromState(() => mockState),
-//     useIsAuthed: () => require('./support/authMock').useIsAuthedMock(), // AFTER the spread
-//   }));
 //   import { setAuthStatus, resetAuth } from './support/authMock';
 //   beforeEach(() => resetAuth());
 //   ...
 //   act(() => setAuthStatus('locked'));
 //
-// Both jest.mock factories use require() (not the import) so they survive hoisting; every path
-// resolves to this one module instance, so setAuthStatus() and the mocked hooks share state.
+// The real query hooks read this same store, so draw the screen with support/renderWithQueries.
+// The jest.mock factory uses require() (not the import) so it survives hoisting; every path
+// resolves to this one module instance, so setAuthStatus() and the real useIsAuthed share state.
 //
 // NOTE: setAuthStatus broadcasts UNCONDITIONALLY. The guarded variant — skip the broadcast when
 // the status is unchanged (sessionEpochAccessor / session-epoch suites) — is deliberately NOT
