@@ -89,6 +89,7 @@ class BuildState(TypedDict):
     blast_radius: NotRequired[str]
     seams: NotRequired[list[str]]
     decisions: NotRequired[list[dict]]
+    sign_off_answers: NotRequired[str]
     slices: NotRequired[list[dict]]
     plan_verdict: NotRequired[str]
     plan_findings: NotRequired[list[str]]
@@ -1090,6 +1091,86 @@ def format_questions(items: list[dict]) -> str:
     return "\n\n".join(blocks)
 
 
+ANSWER = re.compile(r"\bQ(\d+)\s*[:=.)-]?\s*(.*?)(?=[;,\n]?\s*\bQ\d+\b|$)", re.I | re.S)
+
+
+def parse_answers(text: str) -> dict[int, str]:
+    """The user's sign-off reply ("Q1 B; Q2 A", "Q1=B, Q2=A") as {question number: answer}."""
+    answers = {}
+    for match in ANSWER.finditer(text):
+        answer = match.group(2).strip().rstrip(";,.").strip()
+        if answer:
+            answers[int(match.group(1))] = answer
+    return answers
+
+
+def option_text(options: str, letter: str) -> str:
+    parts = re.split(r"\b([A-Z])\)", options)
+    for label, wording in zip(parts[1::2], parts[2::2]):
+        if label == letter:
+            return wording.strip().rstrip(",;").strip()
+    return ""
+
+
+def answer_letter(answer: str) -> str:
+    match = re.fullmatch(r"\s*\(?([A-Za-z])\)?[.:,]?\s*", answer)
+    if not match:
+        return ""
+    return match.group(1).upper()
+
+
+def answers_differ(decisions: list[dict], text: str) -> bool:
+    """Whether the reply picks anything but the recommendation. Free text counts as differing."""
+    answers = parse_answers(text)
+    if text.strip() and not answers:
+        return True
+    for n, answer in answers.items():
+        if not 1 <= n <= len(decisions):
+            continue
+        recommended = re.match(r"\s*\(?([A-Z])\b[).:,]?", decisions[n - 1]["recommendation"])
+        letter = answer_letter(answer)
+        if not recommended or not letter or letter != recommended.group(1):
+            return True
+    return False
+
+
+def spelled_answers(decisions: list[dict], text: str) -> str:
+    answers = parse_answers(text)
+    lines = []
+    for n, item in enumerate(decisions, 1):
+        answer = answers.get(n)
+        if not answer:
+            lines.append(f"Q{n}. {item['question']} → recommended: {item['recommendation']}")
+            continue
+        letter = answer_letter(answer)
+        wording = option_text(item.get("options", ""), letter) if letter else ""
+        lines.append(f"Q{n}. {item['question']} → {letter or answer}: {wording or answer}")
+    if text.strip() and not answers:
+        lines.append(text.strip())
+    return "\n".join(lines)
+
+
+def answered_question(line: str) -> str:
+    match = re.match(r"Q\d+\. (.*?) → ", line)
+    if not match:
+        return ""
+    return match.group(1)
+
+
+def merge_answers(saved: str, new: str) -> str:
+    """Answers from an earlier sign-off round plus this round's. A question answered earlier keeps
+    that answer unless the user picks again; it never falls back to the recommendation."""
+    lines = saved.splitlines()
+    for line in new.splitlines():
+        question = answered_question(line)
+        earlier = [i for i, old in enumerate(lines) if question and answered_question(old) == question]
+        if not earlier:
+            lines.append(line)
+        elif "→ recommended: " not in line:
+            lines[earlier[0]] = line
+    return "\n".join(lines)
+
+
 def review_findings(values: dict, key: str) -> str:
     """A reviewer's must-fix findings. The code critic's unapproved decisions are kept
     apart, so they drop out once the user has answered them."""
@@ -1371,7 +1452,25 @@ def sign_off(state: BuildState):
         return {"plan_decision": "STOPPED", **stopped("sign_off")}
     if word not in APPROVALS:
         return _sent_back(state, rest if word == "rework" else reply)
+    decisions = state.get("decisions")
+    if rest and decisions and answers_differ(decisions, rest):
+        spelled = merge_answers(state.get("sign_off_answers", ""), spelled_answers(decisions, rest))
+        return answers_sent_back(state, spelled)
     return approve(state, rest, "APPROVED")
+
+
+def answers_sent_back(state: BuildState, spelled: str) -> dict:
+    feedback = (
+        "The user signed off with these answers, which override your recommendations. Rewrite every "
+        "part of the plan (Problem/Task/Solution, Approach, tests, risks) to follow them, and remove "
+        "these from `decisions`. If you must keep one there, keep its question word for word: a "
+        f"reworded question counts as new and is asked again.\n{spelled}"
+    )
+    return {
+        **_sent_back(state, feedback),
+        "sign_off_answers": spelled,
+        "history": ["✗ sign_off: answers differ from the recommendation — plan sent back to follow them"],
+    }
 
 
 def auto_approvable(state: BuildState) -> bool:
@@ -1390,13 +1489,16 @@ def auto_approvable(state: BuildState) -> bool:
 
 def approve(state: BuildState, answers: str, decision: str) -> dict:
     # Re-read the plan file so direct edits made during the pause count.
-    sections = [read_text(plan_file(state)) or state["plan"]]
+    new_answers = answers
+    if state.get("decisions"):
+        new_answers = spelled_answers(state["decisions"], answers)
+    answers_block = merge_answers(state.get("sign_off_answers", ""), new_answers)
+    sections = []
+    if answers_block:
+        sections.append(f"## Sign-off answers — these override anything below that disagrees\n{answers_block}")
+    sections.append(read_text(plan_file(state)) or state["plan"])
     if state.get("plan_tweaks"):
         sections.append(f"## Critic tweaks (apply these)\n{bullets(state['plan_tweaks'])}")
-    if answers:
-        sections.append(f"## Sign-off answers\n{answers}")
-    elif state.get("decisions"):
-        sections.append("## Sign-off answers\nUse the recommended answer for every decision.")
     approved = "\n\n".join(sections)
     write_text(work_dir(state) / "approved-plan.md", approved)
     how = "approved automatically (routine)" if decision == "AUTO_APPROVED" else "approved"
@@ -1404,6 +1506,7 @@ def approve(state: BuildState, answers: str, decision: str) -> dict:
         "plan_decision": decision,
         "plan": approved,
         "plan_feedback": "",
+        "sign_off_answers": answers_block,
         "history": [f"✓ sign_off: {how}{' with answers' if answers else ''}"],
     }
 
@@ -2463,6 +2566,7 @@ async def replan_build(graph, config, snapshot, feedback: str, pid: int | None):
             "plan_feedback": feedback,
             "plan_attempts": 0,
             "always_sign_off": True,
+            "sign_off_answers": "",
             "clarify_questions": [],
             "escalation": "",
             "escalation_answer": "",

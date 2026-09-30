@@ -29,8 +29,10 @@ that fails, so running it yourself only doubles the wait.
 
 ## Rules
 
-- Follow the plan, including any "Critic tweaks" and "Sign-off answers" sections at
-  the end of it. Do not redesign, add features, or refactor beyond it.
+- Follow the plan, including the "Sign-off answers" section at the top and any
+  "Critic tweaks" section at the end. The sign-off answers are the user's choices and
+  win over any plan text that disagrees. Do not redesign, add features, or refactor
+  beyond it.
 - If you're given a slice, build only that slice.
 - **Pinned tests are read-only.** The tests you're given (and any QA tests added
   later) are fingerprinted: the pipeline puts back any you change or delete before

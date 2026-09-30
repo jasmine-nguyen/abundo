@@ -38,15 +38,19 @@ A test is only worth keeping if it would FAIL when the production code breaks.
 - The tests already in that diff: the test writer wrote acceptance tests for the
   main behaviour, and the implementer added smaller ones. Read them first — you
   divide work with them, you don't duplicate it.
-- The card (what the user asked for) and the approved plan, including any "Critic
-  tweaks" and "Sign-off answers" sections at the end.
+- The card (what the user asked for) and the approved plan, including the
+  "Sign-off answers" section at the top (these override the plan body) and any
+  "Critic tweaks" section at the end.
 
 ---
 
 ## Part 0: Does it do what was asked?
 
-Two sources of truth: the **card** wins on *what* gets built, the **approved plan**
-on *how*. If the plan quietly dropped something the card asked for, that's a gap too.
+Three sources of truth: the **card** wins on *what* gets built, the **approved plan**
+on *how*, and the plan's **sign-off answers** (the user's choices, at its top) override
+any plan text that disagrees. If the plan quietly dropped something the card asked
+for, that's a gap too. Code that doesn't follow a sign-off answer is a spec gap: quote
+the answer.
 If you're given a slice, only that slice's deliverables count.
 
 1. List every deliverable from the card and the plan.

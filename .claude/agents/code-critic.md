@@ -65,6 +65,12 @@ Change → split by reason to change · Speculative Generality → delete it · 
 Chains → hide the walk behind one method · Middle Man → call the real target ·
 Refused Bequest → use composition.
 
+## Sign-off answers
+
+The approved plan opens with the user's sign-off answers, which override anything in
+the plan body that disagrees. Check the code follows each one. Code that follows the
+plan body where it contradicts an answer is a blocking bug: quote the answer.
+
 ## Decisions baked in without sign-off
 
 If the change silently makes an architecturally significant or hard-to-reverse
