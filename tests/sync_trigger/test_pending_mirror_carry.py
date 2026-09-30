@@ -124,3 +124,34 @@ def test_an_edited_pending_the_bank_dropped_moves_its_edit_onto_the_settled_char
     assert result["kept"] == 1
     assert result["removed"] == 0
     assert result["failed"] == 0
+
+
+def test_a_second_pending_never_overwrites_the_note_an_earlier_run_carried(repo, mirror):
+    # WHIT-666: each run re-reads the settled charges, so the in-run "claimed twin" guard does not
+    # protect a note carried by an earlier run.
+    guzman = {
+        "amount": Decimal("-23.50"),
+        "merchant_name": "Guzman y Gomez",
+        "description": "GUZMAN Y GOMEZ NEWTOWN",
+    }
+    repo._table.seed(
+        _row("first", day="2026-09-27", notes="dinner with Sam", **guzman),
+        _row("settled", status="posted", **guzman),
+    )
+    bank = [{"id": "settled", "accountId": WESTPAC_AID, "pending": False}]
+
+    first_run = mirror.mirror_account(repo, _fetch_returning(bank), WESTPAC_SOURCE, TODAY, _is_unfiled)
+
+    assert first_run["carried"] == 1
+    assert _stored(repo, "settled")["notes"] == "dinner with Sam"
+
+    # A later pending at the same shop, same amount, turns up and then drops off the bank's list.
+    repo._table.seed(_row("second", day="2026-09-28", notes="lunch with Jo", **guzman))
+
+    second_run = mirror.mirror_account(repo, _fetch_returning(bank), WESTPAC_SOURCE, TODAY, _is_unfiled)
+
+    assert _stored(repo, "settled")["notes"] == "dinner with Sam"
+    assert "second" in _ids(repo)
+    assert _stored(repo, "second")["notes"] == "lunch with Jo"
+    assert second_run["carried"] == 0
+    assert second_run["kept"] == 1

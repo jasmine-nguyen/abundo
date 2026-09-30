@@ -360,9 +360,10 @@ def test_the_webhook_settling_the_pending_mid_run_counts_gone_and_keeps_the_carr
     assert result["failed"] == 0
 
 
-def test_a_notes_only_retry_after_a_failed_delete_finishes_the_job(repo, mirror):
-    # [A16] A notes-only carry leaves the twin unfiled, so it's still a candidate next hour:
-    # the retry carries the same note again (no harm) and removes the pending.
+def test_a_notes_only_retry_after_a_failed_delete_keeps_the_pending_and_the_note(repo, mirror):
+    # [A16] The carry landed but the delete failed. The twin now holds the note, so it's no
+    # longer a candidate (WHIT-666): the retry keeps the pending for the age-out, and the
+    # carried note stays on the twin.
     repo._table.seed(_row("kept"), _row("edited", notes="dinner with Sam", **_GUZMAN), _row("settled", status="posted", **_GUZMAN))
     repo._table.fail("delete_item")
 
@@ -373,9 +374,10 @@ def test_a_notes_only_retry_after_a_failed_delete_finishes_the_job(repo, mirror)
     repo._table.clear_failures()
     second = _run(mirror, repo)
 
-    assert _ids(repo) == {"kept", "settled"}
+    assert _ids(repo) == {"kept", "edited", "settled"}
     assert _stored(repo, "settled")["notes"] == "dinner with Sam"
-    assert second["carried"] == 1
+    assert second["carried"] == 0
+    assert second["kept"] == 1
     assert second["failed"] == 0
 
 
