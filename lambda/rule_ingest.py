@@ -20,8 +20,8 @@ no shared `constants`; rule_book (and the rule_engine it wraps) is constants-fre
 import logging
 from typing import Callable, Optional
 
-from banksync import counts_to_budget
 from rule_book import RuleBook
+from spend import counts_to_budget
 
 logger = logging.getLogger(__name__)
 

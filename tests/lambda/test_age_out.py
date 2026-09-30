@@ -895,19 +895,6 @@ def test_no_cross_account_carry(lam, repo):
     assert rows["twin_b"].get("category") is None
 
 
-def test_within_days_boundaries(lam):
-    # [A30] (P0) Symmetric, INCLUSIVE at exactly _CARRY_DATE_SKEW_DAYS. Fail-on-revert: change
-    # `<= days` to `< days` and the exactly-3 case flips.
-    w = lam.age_out._within_days
-    assert w("2026-06-10", "2026-06-13", 3) is True
-    assert w("2026-06-13", "2026-06-10", 3) is True
-    assert w("2026-06-10", "2026-06-14", 3) is False
-    assert w("2026-06-10", "2026-06-10", 3) is True
-    assert w(None, "2026-06-10", 3) is False
-    assert w("2026-06-10", "", 3) is False
-    assert w("not-a-date", "2026-06-10", 3) is False
-
-
 def test_rescue_at_exactly_three_days_but_not_four(lam, repo):
     # [A31] (P0) Integration boundary: twin +3 days IS rescued; a fresh run with twin +4 is NOT.
     filed3 = _norm(lam, "filed3", "2026-06-10", pending=True, category="groceries")

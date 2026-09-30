@@ -305,7 +305,8 @@ resource "aws_lambda_function_event_invoke_config" "ai_chat_worker" {
 
 # Triggered on a schedule by EventBridge Scheduler (see scheduler.tf) to kick off
 # BankSync incremental syncs (BankSync pushes results to the webhook lambda). Before
-# that it runs the pending mirror (WHIT-662), so it reads and deletes pending rows.
+# that it runs the pending mirror (WHIT-662), so it reads and deletes pending rows, and
+# saves a settled charge's carried edit (WHIT-663).
 # The timeout scales with the feed count: SYNC_FEED_IDS is POSTed serially at up to
 # SYNC_TIMEOUT_SECONDS (30) each, so at 60s a third feed could be killed mid-loop
 # before its sync fired, and before the per-feed error line ran.
@@ -320,7 +321,7 @@ resource "aws_lambda_function" "transaction_trigger" {
   source_code_hash = data.archive_file.sync_trigger_zip.output_base64sha256
   layers           = [aws_lambda_layer_version.shared.arn]
 
-  # The pending mirror (WHIT-662) reads and deletes transaction rows.
+  # The pending mirror (WHIT-662) reads, deletes, and saves a settled charge's carried edit.
   environment {
     variables = {
       TABLE_NAME = aws_dynamodb_table.dynamodb_table.name

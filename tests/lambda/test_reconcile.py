@@ -1199,7 +1199,7 @@ def test_is_larger_within_edges(lam):
 
 
 def test_merchant_in_description_word_level(lam):
-    g = lam.reconcile._merchant_in_description
+    g = lam.merchant._merchant_in_description
     # empty merchant never over-matches
     assert g("", "anything at all") is False
     # single short token is NOT a substring match: 'bp' is not a word in 'bpay'
@@ -1965,7 +1965,7 @@ def test_one_word_merchant_still_does_not_blank_auth_reconcile(lam, repo):
 
 
 def test_same_cleaned_merchant_edges(lam):
-    f = lam.reconcile._same_cleaned_merchant
+    f = lam.merchant._same_cleaned_merchant
     # Both sides arrive already cleaned (banksync.normalise writes merchant_name through
     # clean_merchant on pending and posted alike), so this only has to absorb padding
     # and casing — not raw store numbers, which never reach it.
@@ -1999,7 +1999,7 @@ def test_merchant_gate_returns_the_matched_branch_name(lam):
     # gate= label is read straight from this — so this is the single source both the
     # match and the label depend on. A branch-order or predicate change that mislabels
     # the log reds here.
-    g = lam.reconcile._merchant_gate
+    g = lam.merchant._merchant_gate
     assert g("KKV INTERNATIONAL PTY", "", _SKEW_PEND_DESC) == "column"
     # a single-word merchant on an ANZ column is still "column" — the column branch is
     # checked first, so it never falls to the name branch (the QUEENVICTORIAMARKETSKIDAT case)
@@ -2017,7 +2017,7 @@ def test_gate_and_bool_agree_on_the_anz_shape_boundaries(lam):
     # WHIT-338 — the label and the bool now BOTH hinge on is_anz_pending vs
     # pending_merchant_column. Pin the two boundaries where an is_anz/column split would
     # silently flip a label from "column" to "name" (or admit a merge on nothing).
-    g = lam.reconcile._merchant_gate
+    g = lam.merchant._merchant_gate
     m = lam.reconcile.merchant_matches_pending
     # ANZ-shaped but the merchant column is BLANK (padding >= column width): the gate must
     # REFUSE, never fall through to a name/description containment search over the suburb.

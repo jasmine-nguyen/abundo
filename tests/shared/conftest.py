@@ -83,6 +83,28 @@ def rule_engine():
 
 
 @pytest.fixture
+def pending_carry():
+    """shared/pending_carry.py imported in isolation — the pending edit check, twin matching and
+    carry shared by the age-out and the hourly pending mirror (WHIT-663)."""
+    with use_condition_fields():
+        while _SHARED_DIR in sys.path:
+            sys.path.remove(_SHARED_DIR)
+        sys.path.insert(0, _SHARED_DIR)
+        saved = {name: sys.modules.pop(name, None) for name in _REIMPORT}
+        import pending_carry
+
+        try:
+            yield pending_carry
+        finally:
+            for name in _REIMPORT:
+                sys.modules.pop(name, None)
+                if saved[name] is not None:
+                    sys.modules[name] = saved[name]
+            while _SHARED_DIR in sys.path:
+                sys.path.remove(_SHARED_DIR)
+
+
+@pytest.fixture
 def shared():
     """Import the shared layer's modules in isolation; yield the ones tests use.
 
