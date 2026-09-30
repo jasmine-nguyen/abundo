@@ -203,8 +203,12 @@ the card number for card builds) and check where it is:
      message exactly as printed, formatted as Markdown (section titles in
      bold, lines as bullets): the header line, Problem, Task and Solution,
      the "Why this needs your sign-off" line, any unresolved critic concerns,
-     and the details line. Don't add to it,
-     shorten it, or pull more in from the plan file. The one exception is a
+     and the details line. This is not optional, even when a progress
+     message already said the critic approved: the question box alone doesn't
+     tell the user what they're signing off on. Put the whole summary in the
+     same message as the AskUserQuestion call, above it, never a one-line
+     recap instead. Don't add to it, shorten it, or pull more in from the plan
+     file. The one exception is a
      line that isn't plain English: rewrite that line (see "Plain English is
      critical"). If the user asks for the details, show them the parts they
      ask about, in plain English too.
