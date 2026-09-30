@@ -178,7 +178,13 @@ the card number for card builds) and check where it is:
    PLAN FOR REVIEW (step 3) before anything is built again. If they want to
    end a running build instead, run `python3 build_graph.py --thread <id>
    --cancel` (step 5, BUILD CANCELLED); if it's unclear which they want, ask.
-   Once the PR is open, both refuse: change the PR instead.
+
+   `--replan` still works after the build has pushed its branch, as long as
+   no PR exists for it yet (open or closed). It keeps the pushed work on a
+   local backup branch and prints its name, and the next push replaces the
+   branch only if nobody else pushed to it meanwhile. `--cancel` refuses once
+   the branch is pushed, and both refuse once a PR exists: change the PR
+   instead.
 
 3. When the script pauses, it prints a block between `===` lines and
    `Paused. Resume with: ...`. The first line of the block says why:
@@ -311,3 +317,7 @@ the card number for card builds) and check where it is:
      (Status 'To Do', Type 'Tech Debt' if the board has it, otherwise the
      default card type), and tell the user they were filed.
    - Once the PR is open (by the script or by you), update the card's Status to 'Done'.
+   - If a replan printed a backup branch (🗄), tell the user it's still on
+     their machine, and offer to delete it once the ticket is done:
+     `python3 build_graph.py --thread <id> --clean-backups`. It deletes only
+     that build's backups, and refuses while the build is still running.

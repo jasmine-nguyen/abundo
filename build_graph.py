@@ -140,6 +140,7 @@ class BuildState(TypedDict):
     pr_error: NotRequired[str]
     pr_title: NotRequired[str]
     pr_compare_url: NotRequired[str]
+    replaced_push: NotRequired[str]
 
 
 # --- settings ---
@@ -781,12 +782,12 @@ def git(*args: str) -> str:
     ).stdout.strip()
 
 
-def run(command: str | list[str], timeout: float | None = None) -> tuple[int | None, str]:
+def run(command: str | list[str], timeout: float | None = None, cwd: Path | None = None) -> tuple[int | None, str]:
     """Run a command in the repo. Returns (exit code, output); the code is None on timeout.
     The command gets its own process group, so a timeout also stops what it started
     (test runner workers, a dev server) instead of leaving them running."""
     process = subprocess.Popen(
-        command, cwd=ROOT, shell=isinstance(command, str), stdout=subprocess.PIPE,
+        command, cwd=cwd or ROOT, shell=isinstance(command, str), stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, text=True, start_new_session=True,
     )
     try:
@@ -1873,11 +1874,12 @@ def fix_or_ship(state: BuildState):
 
 def failing_qa_tests(state: BuildState) -> list[str] | None:
     """Run only the tests QA just added. None when QA gave no command that runs them,
-    so the caller falls back to every check."""
+    so the caller falls back to every check. QA writes the command for the repo root, which
+    isn't this folder when the pipeline lives in a subfolder."""
     command = state.get("qa_test_command", "")
     if not command.strip() or BASH_DENY["writer"].search(command):
         return None
-    code, output = run(command, timeout=CHECK_TIMEOUT_S)
+    code, output = run(command, timeout=CHECK_TIMEOUT_S, cwd=Path(git("rev-parse", "--show-toplevel")))
     if code in (126, 127) or NO_TESTS_RAN.search(output):
         return None
     print(f"   {'✅' if code == 0 else '❌'} {command}", flush=True)
@@ -2005,8 +2007,15 @@ def ship(state: BuildState):
     if not ok:
         return {"outcome": "ship_error", "pr_error": f"git commit failed:\n{tail(output)}"}
     title = f"{commit_prefix(state)}: {card_title(state)}"[:72]
+    push = ["push", "-u", "origin", branch]
+    if state.get("replaced_push"):
+        # A replan threw away this pushed work: replace it only if nobody pushed on top since.
+        push.insert(2, f"--force-with-lease={branch}:{state['replaced_push']}")
     try:
-        git("push", "-u", "origin", branch)
+        git(*push)
+    except subprocess.CalledProcessError as e:
+        return {"outcome": "ship_error", "pr_error": f"{' '.join(e.cmd[:3])}\n{e.stderr or e.stdout}".strip()}
+    try:
         if not gh_ready():
             # A cloud session has no `gh` (or no GitHub login for it), so whoever runs the build opens the PR.
             write_text(pr_body_file(state), pr_body(state))
@@ -2016,6 +2025,7 @@ def ship(state: BuildState):
                 "pr_title": title,
                 "pr_compare_url": compare,
                 "pr_error": "",
+                "replaced_push": "",
                 "history": [f"✓ ship: pushed {branch}; the PR needs opening"],
             }
         # Only an open PR counts: an old closed one on a reused branch name isn't this build's.
@@ -2029,8 +2039,12 @@ def ship(state: BuildState):
             )
             pr_url = created.stdout.strip().splitlines()[-1]
     except subprocess.CalledProcessError as e:
-        return {"outcome": "ship_error", "pr_error": f"{' '.join(e.cmd[:3])}\n{e.stderr or e.stdout}".strip()}
-    return {"outcome": "shipped", "pr_url": pr_url, "pr_error": "", "history": [f"✓ ship: {pr_url}"]}
+        return {
+            "outcome": "ship_error",
+            "pr_error": f"{' '.join(e.cmd[:3])}\n{e.stderr or e.stdout}".strip(),
+            "replaced_push": "",
+        }
+    return {"outcome": "shipped", "pr_url": pr_url, "pr_error": "", "replaced_push": "", "history": [f"✓ ship: {pr_url}"]}
 
 
 # --- routing ---
@@ -2168,6 +2182,7 @@ builder.add_conditional_edges("ship", after_ship)
 #   python3 build_graph.py --thread WHIT-123 --recheck                             → after fixing a failed build by hand
 #   python3 build_graph.py --thread WHIT-123 --replan "<what to change>"           → stop it, even mid-run, and replan
 #   python3 build_graph.py --thread WHIT-123 --cancel                              → stop it, even mid-run, and end it
+#   python3 build_graph.py --thread WHIT-123 --clean-backups                       → delete the backup branches replans left, once the ticket is done
 #   add --restart to a new build to discard saved progress for that card
 #   add --branch <name> to build on a given branch; a cloud session must pass its own
 #   add --review-plan to pause for sign-off even when the card is routine
@@ -2202,6 +2217,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="stop the build (even while it runs), throw away its unfinished work and send the plan back",
     )
     action.add_argument("--cancel", action="store_true", help="stop the build (even while it runs) and end it")
+    action.add_argument(
+        "--clean-backups", action="store_true", help="delete the backup branches replans left, once the build is done"
+    )
     parser.add_argument(
         "--allow-api-billing", action="store_true",
         help="run even though an API key is set, so every token is billed (the user's call only)",
@@ -2212,13 +2230,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         args.details = sys.stdin.read() if args.details_file == "-" else Path(args.details_file).read_text()
     continuing = (
         args.resume is not None or args.replan is not None or args.cancel or args.status or args.retry or args.recheck
+        or args.clean_backups
     )
     if args.request and not args.card and not continuing:
         args.thread = args.thread or hashlib.sha256(args.request.encode()).hexdigest()[:8]
     args.thread = args.thread or args.card
     if continuing:
         if not args.thread:
-            parser.error("--resume, --replan, --cancel, --status, --retry and --recheck need --thread (or --card)")
+            parser.error(
+                "--resume, --replan, --cancel, --clean-backups, --status, --retry and --recheck need --thread (or --card)"
+            )
     elif args.card and not (args.details or "").strip():
         parser.error(f"--card {args.card} requires --details or --details-file (fetch the card first)")
     elif not args.card and not args.request:
@@ -2523,18 +2544,60 @@ def discard_build_work(state: BuildState, to: str) -> None:
         (ROOT / path).unlink(missing_ok=True)
 
 
-def stop_running_build(values: dict, pid: int | None) -> bool:
-    """Stop the build of this thread running as `pid`, if any. False if it can't be stopped any more."""
+def remote_tip(branch: str) -> str:
+    """The commit the branch points at on origin, or "" if it isn't there."""
+    code, output = run(["git", "ls-remote", "origin", f"refs/heads/{branch}"], timeout=30)
+    if code != 0 or not output.strip():
+        return ""
+    return output.split()[0]
+
+
+def pr_exists(branch: str) -> bool | None:
+    """Whether an open or merged PR was opened from the branch. None if it can't tell."""
+    if gh_ready():
+        code, output = run(
+            ["gh", "pr", "list", "--head", branch, "--state", "all", "--json", "url,state",
+             "-q", '.[] | select(.state != "CLOSED") | .url'],
+            timeout=30,
+        )
+        if code != 0:
+            return None
+        return bool(output.strip())
+    # Without gh, GitHub's refs/pull/<n>/head refs show which commits have a PR.
+    tip = remote_tip(branch)
+    if not tip:
+        return None
+    code, output = run(["git", "ls-remote", "origin", "refs/pull/*/head"], timeout=30)
+    if code != 0 or not output.strip():
+        return None
+    return any(line.split()[0] == tip for line in output.splitlines())
+
+
+def stop_running_build(values: dict, pid: int | None, replan: bool = False) -> bool:
+    """Stop the build of this thread running as `pid`, if any. False if it can't be stopped any more.
+    A replan may still throw away pushed work, as long as no PR was opened from it."""
     if not values:
         print("No saved build for this thread.")
         return False
-    if values.get("outcome") in ("shipped", "pushed", "closed", "stopped"):
+    outcome = values.get("outcome")
+    if outcome in ("shipped", "closed", "stopped") or (outcome == "pushed" and not replan):
         print("This build already finished. Open a new card for the change, or change the PR directly.")
         return False
     branch = values.get("branch")
-    if branch and run(["git", "ls-remote", "--exit-code", "--heads", "origin", branch], timeout=30)[0] == 0:
+    pushed = outcome == "pushed" or (
+        branch and run(["git", "ls-remote", "--exit-code", "--heads", "origin", branch], timeout=30)[0] == 0
+    )
+    if pushed and not replan:
         print(f"Branch {branch} is already pushed, so its work can't be thrown away. Change the PR directly.")
         return False
+    if pushed:
+        found = pr_exists(branch)
+        if found:
+            print(f"A PR exists for {branch}. Change the PR directly.")
+            return False
+        if found is None:
+            print(f"Couldn't check GitHub for a PR on {branch}, so nothing was changed.")
+            return False
     if pid:
         print("⏹ Stopping the running build…", flush=True)
         stop_process_tree(pid)
@@ -2551,10 +2614,23 @@ async def cancel_build(graph, config, snapshot, pid: int | None):
     return (await graph.aget_state(config)).values
 
 
+def keep_pushed_work(branch: str) -> dict:
+    """Back up the branch's pushed tip locally, and record it so the re-ship replaces only that."""
+    tip = remote_tip(branch) if branch else ""
+    if not tip:
+        return {}
+    git("fetch", "origin", branch)  # the tip may not be local if someone else pushed it
+    backup = f"{branch}-before-replan-{tip[:7]}"
+    git("branch", "-f", backup, tip)
+    print(f"🗄 Kept the pushed work on {backup}. Delete it with --clean-backups once the ticket is done.", flush=True)
+    return {"replaced_push": tip}
+
+
 async def replan_build(graph, config, snapshot, feedback: str, pid: int | None):
     values = snapshot.values
-    if not stop_running_build(values, pid):
+    if not stop_running_build(values, pid, replan=True):
         return None
+    kept = keep_pushed_work(values.get("branch", ""))
     if values.get("build_base"):
         discard_build_work(values, values["build_base"])
         print("🗑 Threw away the unfinished work", flush=True)
@@ -2586,6 +2662,10 @@ async def replan_build(graph, config, snapshot, feedback: str, pid: int | None):
             "qa_test_command": "",
             "failed": False,
             "outcome": "",
+            "pr_error": "",
+            "pr_title": "",
+            "pr_compare_url": "",
+            **kept,
             "advisory": None,
             "tech_debt": None,
             "manual_checks": None,
@@ -2596,6 +2676,28 @@ async def replan_build(graph, config, snapshot, feedback: str, pid: int | None):
     )
     print("↩️ Sending the plan back to the designer with your changes", flush=True)
     return await graph.ainvoke(None, config)
+
+
+def clean_backups(values: dict) -> int:
+    """Delete the local backup branches replans left, once the build is done."""
+    if not values:
+        print("No saved build for this thread.")
+        return 1
+    if values.get("outcome") not in ("shipped", "pushed", "closed", "stopped"):
+        print("This build isn't done yet, so its backups are kept.")
+        return 1
+    branch = values.get("branch")
+    if not branch:
+        print("No backup branches: this build never made a branch.")
+        return 0
+    backups = git("branch", "--list", f"{branch}-before-replan-*", "--format=%(refname:short)").splitlines()
+    if not backups:
+        print(f"No backup branches for {branch}.")
+        return 0
+    for backup in backups:
+        git("branch", "-D", backup)
+        print(f"🗑 Deleted {backup}")
+    return 0
 
 
 async def main(argv: list[str] | None = None) -> int:
@@ -2628,6 +2730,8 @@ async def main(argv: list[str] | None = None) -> int:
         if running and args.replan is None and not args.cancel:
             print(f"A build of {args.thread} is already running. Wait for it, or stop it with --replan or --cancel.")
             return 1
+        if args.clean_backups:
+            return clean_backups(snapshot.values)
         write_text(pid_file(args.thread), str(os.getpid()))
         try:
             if args.replan is not None:
