@@ -32,6 +32,11 @@ const POPUP_SUITES = [
   'applyRulesJobVariantSheet.screen.test.tsx',
   'applyRulesRounds.screen.test.tsx',
   'applyRulesSheet.screen.test.tsx',
+  'pickerSheetTree.screen.test.tsx',
+  'multiSelectSheet.screen.test.tsx',
+  'incomeCategory.screen.test.tsx',
+  'confirmSheetMountStability.screen.test.tsx',
+  'confirmSheetRefile.screen.test.tsx',
 ];
 
 const QUERIES_MOCK = /jest\.(mock|doMock)\(\s*['"](\.\.\/)+queries['"]/;

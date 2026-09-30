@@ -7,8 +7,7 @@
 // WHIT-538 bug the memoisation exists to prevent). Not covered by addRulePreview(.gaps): those mount
 // once and never re-render the provider underneath the settled preview card.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
-import { render, screen, act } from '@testing-library/react-native';
+import { screen, act } from '@testing-library/react-native';
 import type { AppContext, FilingResult, FilingTarget, FilingWhen } from '../context';
 import type { ApplyRulesResult } from '../api';
 
@@ -17,9 +16,15 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { Overlays } from '../components/Overlays';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { openOverlays, overlaysTree } from './support/openOverlays';
+
+const server = installFakeServer();
+useTestQueryClient();
 
 const fns = {
   setSheet: jest.fn(),
@@ -30,7 +35,7 @@ const fns = {
 };
 
 const CATEGORIES = [
-  { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null },
+  { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null },
 ];
 
 const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
@@ -41,7 +46,10 @@ const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
   ...over,
 });
 
-beforeEach(() => { jest.clearAllMocks(); });
+beforeEach(() => {
+  jest.clearAllMocks();
+  resetAuth();
+});
 
 // [A43] A context re-render (a toast landing) leaves the settled preview card in place and fires NO
 // second preview. Fail-on-revert: change AddRuleConfirmSheet's `preview` from a useCallback to an
@@ -50,8 +58,10 @@ beforeEach(() => { jest.clearAllMocks(); });
 it('[A43] a context re-render does not re-fire the preview or snap back to the spinner', async () => {
   fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 12 }) });
   const sheet = { mode: 'addRuleConfirm', pattern: 'COLES', categoryId: 'groceries' } as const;
-  mockState = { sheet, toast: null, categories: CATEGORIES, ...fns } as unknown as AppContext;
-  const { rerender } = render(<Overlays />);
+  server.seed('/categories', CATEGORIES);
+  // The screens load first and the pop-up opens on the rerender, so that open is its only mount.
+  const state = { sheet, toast: null, ...fns } as unknown as AppContext;
+  const { rerender } = await openOverlays(state, (next) => { mockState = next; });
   await act(async () => {}); // let the mount-time preview resolve into the preview card
 
   expect(fns.previewFiling).toHaveBeenCalledTimes(1);
@@ -61,12 +71,12 @@ it('[A43] a context re-render does not re-fire the preview or snap back to the s
   // identity), the SAME sheet object underneath. The memoized preview must hold.
   await act(async () => {
     mockState = { ...mockState, toast: 'Filed something elsewhere' } as unknown as AppContext;
-    rerender(<Overlays />);
+    rerender(overlaysTree());
   });
   // ...and its auto-clear 3.4s later — a second re-render.
   await act(async () => {
     mockState = { ...mockState, toast: null } as unknown as AppContext;
-    rerender(<Overlays />);
+    rerender(overlaysTree());
   });
 
   expect(fns.previewFiling).toHaveBeenCalledTimes(1);           // never re-fired

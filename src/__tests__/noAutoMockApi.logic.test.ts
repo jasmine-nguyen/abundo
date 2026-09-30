@@ -89,6 +89,11 @@ describe('no test mocks the api', () => {
       'applyRulesJobVariantSheet.screen.test.tsx': 17,
       'applyRulesRounds.screen.test.tsx': 30,
       'applyRulesSheet.screen.test.tsx': 69,
+      'confirmSheetMountStability.screen.test.tsx': 5,
+      'confirmSheetRefile.screen.test.tsx': 8,
+      'incomeCategory.screen.test.tsx': 18,
+      'multiSelectSheet.screen.test.tsx': 6,
+      'pickerSheetTree.screen.test.tsx': 54,
     };
 
     const shortfalls = Object.entries(baselines).flatMap(([file, baseline]) => {
