@@ -16,6 +16,7 @@ from constants import (
     DEAD_LETTER_TTL_SECONDS,
     DELETED_TRANSACTION_TTL_SECONDS,
     MAX_PAGE_SIZE,
+    PENDING_STATUS,
 )
 from models import Transaction
 from repository_base import REGION_NAME, TABLE_NAME, handle_database_error, logger
@@ -214,6 +215,22 @@ class TransactionRepository:
             })
             self._get_table().delete_item(
                 Key={"pk": pk, "sk": sk}, ConditionExpression="attribute_exists(pk)"
+            )
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            handle_database_error(e, "delete")
+
+    def delete_if_still_pending(self, pk: str, sk: str) -> bool:
+        """Deletes a pending the bank no longer lists (WHIT-662). No "deleted by you" marker: the
+        bank dropped it, the user didn't. Returns False when the row is gone or has since posted."""
+        try:
+            self._get_table().delete_item(
+                Key={"pk": pk, "sk": sk},
+                ConditionExpression="#s = :pending",
+                ExpressionAttributeNames={"#s": "status"},
+                ExpressionAttributeValues={":pending": PENDING_STATUS},
             )
             return True
         except ClientError as e:

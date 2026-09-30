@@ -26,8 +26,9 @@ resource "aws_iam_role" "app_api_exec" {
   })
 }
 
-# Execution role for the transaction-trigger lambda. Kept minimal on purpose: it
-# only reads the BankSync API key from SSM and writes its own logs — no DynamoDB.
+# Execution role for the transaction-trigger lambda. Reads the BankSync API key from
+# SSM, writes its own logs, and reads/deletes transaction rows for the pending mirror
+# (WHIT-662) — no DynamoDB writes beyond those deletes.
 resource "aws_iam_role" "transaction_trigger_exec" {
   name = "${var.project_name}-transaction-trigger-exec"
   assume_role_policy = jsonencode({
@@ -291,6 +292,30 @@ resource "aws_iam_role_policy" "transaction_trigger_logs" {
       ]
       Resource = [
         "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-transaction-trigger:*"
+      ]
+    }]
+  })
+}
+
+# Transaction-trigger lambda: the pending mirror (WHIT-662) reads an account's rows over the
+# date-index, reads the category taxonomy, and deletes pendings the bank no longer lists. No
+# PutItem: the taxonomy read's repaint write fails open.
+resource "aws_iam_role_policy" "transaction_trigger_dynamodb" {
+  name = "${var.project_name}-transaction-trigger-dynamodb"
+  role = aws_iam_role.transaction_trigger_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:DeleteItem"
+      ]
+      Resource = [
+        "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table",
+        "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table/index/*"
       ]
     }]
   })
