@@ -1,23 +1,15 @@
 // WHIT-308 — tapping an Insights spend row drills into that category's transactions. A leaf,
 // a "Directly in X" (synthetic) row, and Uncategorized each navigate to /category/<drillId>
 // carrying the selected cycle; a PARENT row still expands its subs instead of navigating.
-// Same mock shape as insightsCycleToggle.gaps: ../api + ../auth + ../context (partial) +
-// expo-router mocked, with a CAPTURED router.push so the navigation target is asserted.
+// Same harness as insightsCycleToggle.gaps: real ../api over the fake server; ../auth + ../context
+// (partial) + expo-router mocked, with a CAPTURED router.push so the navigation target is asserted.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { installFakeServer } from './support/fakeServer';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-
-const mockFetchBreakdown = jest.fn<(days: number, cycle?: number) => Promise<unknown>>();
-const mockFetchCategories = jest.fn<() => Promise<unknown>>();
-const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
-jest.mock('../api', () => ({
-  fetchBreakdown: (...a: unknown[]) => mockFetchBreakdown(...(a as [number, number?])),
-  fetchCategories: () => mockFetchCategories(),
-  fetchPayCycle: () => mockFetchPayCycle(),
-}));
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
@@ -39,6 +31,8 @@ jest.mock('expo-router', () => {
 });
 
 import Insights from '../../app/(tabs)/insights';
+
+const server = installFakeServer();
 
 const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
 // A parent (Food) with a spending child (Coffee) AND its own direct spend → categoryBreakdown
@@ -63,9 +57,9 @@ function renderInsights() {
 
 beforeEach(() => {
   mockPush.mockReset();
-  mockFetchBreakdown.mockReset().mockResolvedValue(BREAKDOWN);
-  mockFetchCategories.mockReset().mockResolvedValue(CATS);
-  mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
+  server.seed('/breakdown', BREAKDOWN);
+  server.seed('/categories', CATS);
+  server.seed('/paycycle', PAY_CYCLE);
 });
 
 it('tapping a leaf row drills into that category for the current cycle', async () => {

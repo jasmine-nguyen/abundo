@@ -2,8 +2,8 @@
 // behaviours: breakdown comes from the auth-gated query (not fetched before login),
 // windows on the real cycle length, a transient 5xx self-heals, a sustained failure
 // shows an inline Retry — and crucially the breakdown failure is scoped to Insights.
-// ../api + ../auth + expo-router mocked; ../context PARTIALLY mocked (real selectors,
-// stubbed useAppContext for the AI card) so ../queries' real imports still resolve.
+// Real ../api over the fake server; ../auth + expo-router mocked; ../context PARTIALLY mocked
+// (real selectors, stubbed useAppContext for the AI card) so ../queries' real imports still resolve.
 //
 // WHIT-467 folded in the WHIT-189 GAPS suite (qa's adversarial half — partial failure,
 // focus-refetch storm, authed→locked mid-session) that carried a byte-identical mock map
@@ -12,6 +12,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';
 const mockAuthListeners = new Set<() => void>();
@@ -21,20 +22,12 @@ jest.mock('../auth', () => ({
     mockAuthListeners.add(l);
     return () => mockAuthListeners.delete(l);
   },
+  getAuthToken: async () => 'test-id-token',
 }));
 function setAuth(next: string) {
   mockAuthStatus = next;
   mockAuthListeners.forEach((l) => l());
 }
-
-const mockFetchBreakdown = jest.fn<(days: number, cycle?: number) => Promise<unknown>>();
-const mockFetchCategories = jest.fn<() => Promise<unknown>>();
-const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
-jest.mock('../api', () => ({
-  fetchBreakdown: (...a: unknown[]) => mockFetchBreakdown(...(a as [number, number?])),
-  fetchCategories: () => mockFetchCategories(),
-  fetchPayCycle: () => mockFetchPayCycle(),
-}));
 
 // Stub only useAppContext (the AI card); keep the real categoryBreakdown/cycleClock/
 // toCategory that ../queries and the screen import.
@@ -62,6 +55,8 @@ jest.mock('expo-router', () => {
 import Insights from '../../app/(tabs)/insights';
 import { UNCATEGORIZED_KEY } from '../context';
 
+const server = installFakeServer();
+
 const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
 const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
 const BREAKDOWN = { coffee: { posted: 40, pending: 10 } };
@@ -76,9 +71,9 @@ function renderInsights(client = makeClient()) {
 beforeEach(() => {
   mockAuthStatus = 'authed';
   mockAuthListeners.clear();
-  mockFetchBreakdown.mockReset().mockResolvedValue(BREAKDOWN);
-  mockFetchCategories.mockReset().mockResolvedValue(CATS);
-  mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
+  server.seed('/breakdown', BREAKDOWN);
+  server.seed('/categories', CATS);
+  server.seed('/paycycle', PAY_CYCLE);
 });
 
 it('renders breakdown rows from the query, fetched in parallel with the pay cycle', async () => {
@@ -86,48 +81,50 @@ it('renders breakdown rows from the query, fetched in parallel with the pay cycl
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
   // WHIT-72: breakdown fetches in PARALLEL now (flat key, no gate) → fires with the default
   // length (14); the server derives the window itself, so the rows are correct regardless.
-  // WHIT-68: the current cycle is 0.
-  expect(mockFetchBreakdown).toHaveBeenCalledWith(14, 0);
-  expect(mockFetchBreakdown).toHaveBeenCalledTimes(1);
+  // WHIT-68: the current cycle is 0, which sends no cycle param.
+  expect(server.sent('GET', '/breakdown?days=14')).toHaveLength(1);
+  expect(server.sentUnder('GET', '/breakdown')).toHaveLength(1);
 });
 
 it('does not fetch breakdown before login, then fires when auth flips to authed', async () => {
   mockAuthStatus = 'anon';
   renderInsights();
-  expect(mockFetchBreakdown).not.toHaveBeenCalled();
-  expect(mockFetchPayCycle).not.toHaveBeenCalled();
+  expect(server.sentUnder('GET', '/breakdown')).toHaveLength(0);
+  expect(server.sent('GET', '/paycycle')).toHaveLength(0);
 
   await act(async () => {
     setAuth('authed');
   });
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-  expect(mockFetchBreakdown).toHaveBeenCalled();
+  expect(server.sentUnder('GET', '/breakdown')).toHaveLength(1);
 });
 
 it('a transient 5xx on breakdown retries and self-heals — no error shown', async () => {
-  mockFetchBreakdown.mockReset().mockRejectedValueOnce(new Error('API error: 503')).mockResolvedValue(BREAKDOWN);
+  server.once('GET', '/breakdown', { status: 503 });
   renderInsights(makeClient(2));
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
   expect(screen.queryByTestId('insights-error')).toBeNull();
-  expect(mockFetchBreakdown).toHaveBeenCalledTimes(2);
+  expect(server.sentUnder('GET', '/breakdown')).toHaveLength(2);
 });
 
 it('a sustained breakdown failure shows the inline error + Retry, no false $0', async () => {
-  mockFetchBreakdown.mockReset().mockRejectedValue(new Error('API error: 503'));
+  // A lasting failure: the screen's focus refresh re-asks for a stale errored read more than once,
+  // so a single queued 503 would heal on its own before Retry is pressed.
+  server.fail('/breakdown', 503);
   renderInsights(makeClient(false));
   expect(await screen.findByTestId('insights-error')).toBeTruthy();
   expect(screen.queryByText('$0')).toBeNull(); // hero shows "—", not a confident zero
 
-  mockFetchBreakdown.mockReset().mockResolvedValue(BREAKDOWN);
+  const failedCalls = server.sentUnder('GET', '/breakdown').length;
+  server.once('GET', '/breakdown', { body: BREAKDOWN }); // a queued reply goes out ahead of the failure
   fireEvent.press(screen.getByTestId('insights-retry'));
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+  expect(server.sentUnder('GET', '/breakdown').length).toBeGreaterThan(failedCalls);
 });
 
 // --- WHIT-68: historical look-back selector ----------------------------------
 
 it('the cycle selector reads the prior cycle, relabels the hero, and hides the AI coach', async () => {
-  mockFetchBreakdown.mockReset().mockImplementation((_days: number, cycle = 0) =>
-    Promise.resolve(cycle === 1 ? { coffee: { posted: 5, pending: 0 } } : BREAKDOWN));
   renderInsights();
 
   // current cycle: "THIS PAY CYCLE" eyebrow + the AI coach card present
@@ -135,28 +132,28 @@ it('the cycle selector reads the prior cycle, relabels the hero, and hides the A
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
   expect(screen.getByText('Worth a look')).toBeTruthy();
 
+  server.once('GET', '/breakdown', { body: { coffee: { posted: 5, pending: 0 } } });
   fireEvent.press(screen.getByTestId('insights-cycle-prev'));
 
   expect(await screen.findByText('LAST PAY CYCLE')).toBeTruthy();
-  // The prior-cycle read fired with cycle=1; the `days` arg is inconsequential (the server
+  // The prior-cycle read fired with cycle=1; the `days` param is inconsequential (the server
   // derives the window) and varies with whether the pay cycle has resolved, so don't pin it.
-  expect(mockFetchBreakdown).toHaveBeenCalledWith(expect.any(Number), 1);
+  expect(server.sentUnder('GET', '/breakdown').some((request) => request.path.endsWith('&cycle=1'))).toBe(true);
   expect(screen.queryByText('Worth a look')).toBeNull();   // AI coach hidden on a past cycle
 
   // back to "This cycle" — served from cache (no new fetch), label + coach return
-  const callsBefore = mockFetchBreakdown.mock.calls.length;
+  const callsBefore = server.sentUnder('GET', '/breakdown').length;
   fireEvent.press(screen.getByTestId('insights-cycle-current'));
   expect(await screen.findByText('THIS PAY CYCLE')).toBeTruthy();
   expect(screen.getByText('Worth a look')).toBeTruthy();
-  expect(mockFetchBreakdown.mock.calls.length).toBe(callsBefore); // cycle 0 already cached
+  expect(server.sentUnder('GET', '/breakdown')).toHaveLength(callsBefore); // cycle 0 already cached
 });
 
 it('an empty past cycle shows "No spending in that pay cycle" (not "this pay cycle")', async () => {
-  mockFetchBreakdown.mockReset().mockImplementation((_days: number, cycle = 0) =>
-    Promise.resolve(cycle === 1 ? {} : BREAKDOWN));
   renderInsights();
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
 
+  server.once('GET', '/breakdown', { body: {} });
   fireEvent.press(screen.getByTestId('insights-cycle-prev'));
   expect(await screen.findByText('No spending in that pay cycle.')).toBeTruthy();
   expect(screen.queryByText('No spending yet this pay cycle.')).toBeNull();
@@ -172,8 +169,8 @@ describe('partial failure: categories down while breakdown succeeds', () => {
   // composite's `categoriesError` (categoriesQuery errored with no cached data), and gates
   // the row list on !showError so the partial uncat row can't leak under the error card.
   it('breakdown has real + uncategorized spend, categories failed on first load → the inline error IS shown (no partial hero)', async () => {
-    mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
-    mockFetchBreakdown.mockReset().mockResolvedValue({ coffee: { posted: 40, pending: 0 }, [UNCATEGORIZED_KEY]: { posted: 25, pending: 0 } });
+    server.fail('/categories', 500);
+    server.seed('/breakdown', { coffee: { posted: 40, pending: 0 }, [UNCATEGORIZED_KEY]: { posted: 25, pending: 0 } });
     renderInsights(makeClient(false));
     expect(await screen.findByTestId('insights-error')).toBeTruthy();     // error surfaces now
     expect(screen.getByText("Couldn't load")).toBeTruthy();               // ...and the hero says so
@@ -184,7 +181,7 @@ describe('partial failure: categories down while breakdown succeeds', () => {
   });
 
   it('breakdown has ONLY real-category spend → all rows drop → the inline error DOES surface', async () => {
-    mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
+    server.fail('/categories', 500);
     // breakdown resolves fine but every id needs the (failed) taxonomy → zero rows.
     renderInsights(makeClient(false));
     expect(await screen.findByTestId('insights-error')).toBeTruthy();
@@ -200,9 +197,9 @@ describe('focus refetch does not storm', () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(mockFetchPayCycle).toHaveBeenCalledTimes(1);
-    expect(mockFetchBreakdown).toHaveBeenCalledTimes(1);
-    expect(mockFetchCategories).toHaveBeenCalledTimes(1);
+    expect(server.sent('GET', '/paycycle')).toHaveLength(1);
+    expect(server.sentUnder('GET', '/breakdown')).toHaveLength(1);
+    expect(server.sent('GET', '/categories')).toHaveLength(1);
   });
 });
 
@@ -210,13 +207,13 @@ describe('auth transition mid-session on Insights', () => {
   it('authed→locked keeps cached rows, shows no error, and fires no doomed refetch', async () => {
     renderInsights();
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-    const before = mockFetchBreakdown.mock.calls.length;
+    const before = server.sentUnder('GET', '/breakdown').length;
 
     await act(async () => {
       setAuth('locked');
     });
     expect(screen.getByText('Cafes & Coffee')).toBeTruthy(); // cache survives
     expect(screen.queryByTestId('insights-error')).toBeNull();
-    expect(mockFetchBreakdown).toHaveBeenCalledTimes(before); // no new fetch while locked
+    expect(server.sentUnder('GET', '/breakdown')).toHaveLength(before); // no new fetch while locked
   });
 });

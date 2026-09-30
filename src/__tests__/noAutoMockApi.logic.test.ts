@@ -8,18 +8,6 @@ const API_MOCK = /^\s*jest\.(mock|doMock)\(\s*['"](\.\.\/)+api['"]/m;
 
 // Shrinks as later cards move these suites onto the fake server; deleted once empty.
 const STILL_TO_MOVE = [
-  // WHIT-660
-  'insightsBreakdownQuery.screen.test.tsx',
-  'insightsBreakdownCacheFirst.screen.test.tsx',
-  'insightsBreakdownTree.gaps.screen.test.tsx',
-  'insightsCategoryDrill.screen.test.tsx',
-  'insightsCycleToggle.gaps.screen.test.tsx',
-  'insightsScreenData.edges.screen.test.tsx',
-  'goalScreenData.screen.test.tsx',
-  'goalScreenData.edges.screen.test.tsx',
-  'goalKeepLastGood.edges.screen.test.tsx',
-  'goalsScreenData.screen.test.tsx',
-  'payCycleServerDaysLeft.screen.test.tsx',
   // WHIT-661
   'transactionsScreenData.screen.test.tsx',
   'transactionsSearchQueries.screen.test.tsx',
@@ -84,6 +72,17 @@ describe('no test mocks the api', () => {
       'uncategorizedMerchantsHook.screen.test.tsx': 8,
       'categoryRangeQuery.screen.test.tsx': 8,
       'categoryRangeQueryEdges.screen.test.tsx': 10,
+      'insightsBreakdownQuery.screen.test.tsx': 42,
+      'insightsBreakdownCacheFirst.screen.test.tsx': 4,
+      'insightsBreakdownTree.gaps.screen.test.tsx': 26,
+      'insightsCategoryDrill.screen.test.tsx': 6,
+      'insightsCycleToggle.gaps.screen.test.tsx': 19,
+      'insightsScreenData.edges.screen.test.tsx': 28,
+      'goalScreenData.screen.test.tsx': 35,
+      'goalScreenData.edges.screen.test.tsx': 33,
+      'goalKeepLastGood.edges.screen.test.tsx': 12,
+      'goalsScreenData.screen.test.tsx': 45,
+      'payCycleServerDaysLeft.screen.test.tsx': 8,
     };
 
     const shortfalls = Object.entries(baselines).flatMap(([file, baseline]) => {

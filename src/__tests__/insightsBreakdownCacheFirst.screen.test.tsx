@@ -10,25 +10,19 @@
 // categories-retention lock in insightsScreenData.edges. The paired SCREEN-level assertion —
 // that this isError-with-rows state keeps the row visible and shows no error card — lives in
 // insightsScreenGaps (the mocked-composite showError guard), where it is a real fail-on-revert
-// lock on `showError`'s `&& rows.length === 0`.
+// lock on `showError`'s `&& rows.length === 0`. Real ../api over the fake server, ../auth mocked.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { installFakeServer } from './support/fakeServer';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-
-const mockFetchBreakdown = jest.fn<(days: number) => Promise<unknown>>();
-const mockFetchCategories = jest.fn<() => Promise<unknown>>();
-const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
-jest.mock('../api', () => ({
-  fetchBreakdown: (...a: unknown[]) => mockFetchBreakdown(...(a as [number])),
-  fetchCategories: () => mockFetchCategories(),
-  fetchPayCycle: () => mockFetchPayCycle(),
-}));
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 
 import { useInsightsScreenData } from '../queries';
 import { UNCATEGORIZED_KEY } from '../context';
+
+const server = installFakeServer();
 
 const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
 const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
@@ -42,9 +36,9 @@ const wrapper = (client: QueryClient) =>
   ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 
 beforeEach(() => {
-  mockFetchBreakdown.mockReset().mockResolvedValue(UNCAT_ONLY);
-  mockFetchCategories.mockReset().mockResolvedValue(CATS);
-  mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
+  server.seed('/breakdown', UNCAT_ONLY);
+  server.seed('/categories', CATS);
+  server.seed('/paycycle', PAY_CYCLE);
 });
 
 it('a breakdown background-refetch failure surfaces isError but RETAINS the last-good breakdown (categoriesError stays false)', async () => {
@@ -53,7 +47,7 @@ it('a breakdown background-refetch failure surfaces isError but RETAINS the last
   await waitFor(() => expect(result.current.breakdown[UNCATEGORIZED_KEY]?.posted).toBe(25));
 
   // Only breakdown fails on refetch; categories + payCycle still resolve. Retry fires all.
-  mockFetchBreakdown.mockReset().mockRejectedValue(new Error('API error: 503'));
+  server.fail('/breakdown', 503);
   await act(async () => { result.current.refetch(); });
   await waitFor(() => expect(result.current.isError).toBe(true)); // the failed breakdown refetch propagates
 

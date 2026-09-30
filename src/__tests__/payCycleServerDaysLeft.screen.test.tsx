@@ -1,5 +1,5 @@
 // WHIT-341 GAP — the composites actually surface the SERVER days_left, not a locally
-// recomputed countdown. Mock ../api + ../auth (same pattern as screenQueryHooks); real
+// recomputed countdown. Real ../api over the fake server, ../auth mocked; real
 // QueryClientProvider. cycleClockView now CLAMPS to [0,length], so an out-of-range sentinel
 // can't be used; instead SERVER_DAYS is an in-range value chosen to DIFFER from what the local
 // cycleClock computes today, so a daysLeft of SERVER_DAYS can only have come through the server
@@ -10,24 +10,18 @@ import React from 'react';
 import { renderHook, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cycleClock } from '../context';
+import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';
-jest.mock('../auth', () => ({ getStatus: () => mockAuthStatus, subscribe: () => () => {} }));
-
-const mockFetchCategories = jest.fn<() => Promise<unknown>>();
-const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
-const mockFetchBudgets = jest.fn<() => Promise<unknown>>();
-const mockFetchBudgetTransactions = jest.fn<(id: string) => Promise<unknown>>();
-const mockFetchBreakdown = jest.fn<() => Promise<unknown>>();
-jest.mock('../api', () => ({
-  fetchCategories: () => mockFetchCategories(),
-  fetchPayCycle: () => mockFetchPayCycle(),
-  fetchBudgets: () => mockFetchBudgets(),
-  fetchBudgetTransactions: (id: string) => mockFetchBudgetTransactions(id),
-  fetchBreakdown: () => mockFetchBreakdown(),
+jest.mock('../auth', () => ({
+  getStatus: () => mockAuthStatus,
+  subscribe: () => () => {},
+  getAuthToken: async () => 'test-id-token',
 }));
 
 import { usePayCycle, useBudgetsScreenData, useBudgetDetailScreenData, useInsightsScreenData } from '../queries';
+
+const server = installFakeServer();
 
 // An in-range server value (survives the clamp) chosen to DIFFER from the local clock's value
 // for this cycle today — so a daysLeft of SERVER_DAYS proves the server pass-through, not the
@@ -45,11 +39,7 @@ const wrapper = (client: QueryClient) =>
 
 beforeEach(() => {
   mockAuthStatus = 'authed';
-  mockFetchCategories.mockReset().mockResolvedValue([]);
-  mockFetchPayCycle.mockReset().mockResolvedValue(SERVER);
-  mockFetchBudgets.mockReset().mockResolvedValue({});
-  mockFetchBudgetTransactions.mockReset().mockResolvedValue([]);
-  mockFetchBreakdown.mockReset().mockResolvedValue({});
+  server.seed('/paycycle', SERVER);
 });
 
 it('usePayCycle surfaces the server days_left, not a locally computed countdown', async () => {
