@@ -58,8 +58,7 @@ def test_removed_markers_leave_the_set_and_are_reported(shared):
 
 
 def test_an_empty_removal_never_reaches_the_table(shared):
-    # [A2] the old fake asserted callers never removed an empty set. That guard now lives in the
-    # real repository, and FakeTable would accept an empty DELETE that DynamoDB rejects — so pin it.
+    # [A2] the repository's own guard skips an empty removal without calling the table at all.
     notify = notify_repo(fired={"0"})
 
     notify.remove_milestone_markers(set())
