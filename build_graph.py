@@ -920,7 +920,26 @@ def remove_worktree(worktree: Path) -> None:
 # "don't weaken the tests" is enforced rather than requested.
 
 
+def subfolder() -> str:
+    """Where ROOT sits under the git top: "." unless the pipeline lives in a subfolder."""
+    return ROOT.resolve().relative_to(Path(git("rev-parse", "--show-toplevel")).resolve()).as_posix()
+
+
+def strip_cd_to_root(command: str) -> str:
+    """Drop a leading `cd <subfolder> &&`: agents may write commands from the git top."""
+    folder = subfolder()
+    if folder == ".":
+        return command
+    match = re.match(rf"\s*cd\s+(?:\./)?{re.escape(folder)}/?\s*&&\s*", command)
+    if not match:
+        return command
+    return command[match.end():]
+
+
 def repo_path(path: str) -> str | None:
+    folder = subfolder()
+    if folder != "." and path.startswith(folder + "/") and not (ROOT / path).is_file():
+        path = path.removeprefix(folder + "/")
     resolved = (ROOT / path).resolve()
     return str(resolved.relative_to(ROOT)) if resolved.is_relative_to(ROOT) else None
 
@@ -1009,7 +1028,7 @@ def is_red(command: str, test_files=()) -> tuple[bool, str]:
     missing = [path for path in test_files if not (ROOT / repo_path(path)).is_file()]
     if missing:
         return False, f"These test files don't exist: {', '.join(missing)}"
-    code, output = run(command, timeout=CHECK_TIMEOUT_S)
+    code, output = run(strip_cd_to_root(command), timeout=CHECK_TIMEOUT_S)
     if NO_TESTS_RAN.search(output):
         return False, f"No tests ran.\n{output}"
     return code not in (0, 126, 127, None), output

@@ -67,9 +67,9 @@ a few words.
 ## Output
 
 - `status` — REPRODUCED or CANNOT_REPRODUCE.
-- `command` — the one command (run from the repo root) that fails on the bug; empty
+- `command` — the one command (run from the folder you start in; the pipeline runs your command there) that fails on the bug; empty
   if not reproduced.
-- `test_files` — regression test files you added, relative to the repo root.
+- `test_files` — regression test files you added, relative to the folder you start in.
 - `symptom` — the exact symptom your command catches (error text, wrong value).
 - `tried` — what you tried; required for CANNOT_REPRODUCE.
 - `summary` — what the regression test checks, and at which seam, in 2–4 lines.
