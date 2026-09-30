@@ -16,7 +16,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { resetAuth, setAuthStatus } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient } from './support/renderWithQueries';
+import { refreshInAct, useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
 import { queryClient } from '../queryClient';
 import { categoriesKey } from '../queries';
@@ -98,7 +98,7 @@ it('[A3] relabels after the categories cache refreshes, without re-previewing', 
   expect(screen.getByText('"coles" → Groceries · 4 charges')).toBeTruthy();
 
   server.seed('/categories', [{ ...CATEGORIES[0], name: 'Food shop' }, CATEGORIES[1]]);
-  await act(async () => { await queryClient.invalidateQueries({ queryKey: categoriesKey }); });
+  await refreshInAct(() => queryClient.invalidateQueries({ queryKey: categoriesKey }));
 
   await waitFor(() => expect(screen.getByText('"coles" → Food shop · 4 charges')).toBeTruthy());
   expect(fns.previewFiling).toHaveBeenCalledTimes(1);

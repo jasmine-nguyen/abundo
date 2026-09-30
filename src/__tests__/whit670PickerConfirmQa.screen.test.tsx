@@ -19,7 +19,7 @@ import { categoriesKey } from '../queries';
 import { queryClient } from '../queryClient';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, WithQueries } from './support/renderWithQueries';
+import { refreshInAct, useTestQueryClient, WithQueries } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
 
 const server = installFakeServer();
@@ -110,7 +110,7 @@ describe('picker over a failed or slow categories reply', () => {
     expect(pickerNames()).not.toContain('Gym');
 
     server.seed('/categories', [...FAMILY, cat('gym', 'Gym')]);
-    await act(async () => { await queryClient.invalidateQueries({ queryKey: categoriesKey }); });
+    await refreshInAct(() => queryClient.invalidateQueries({ queryKey: categoriesKey }));
 
     await waitFor(() => expect(pickerNames()).toEqual(['Food', 'Dining', 'Gym', 'Transport']));
   });

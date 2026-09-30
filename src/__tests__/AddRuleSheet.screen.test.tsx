@@ -18,7 +18,7 @@ import { queryClient } from '../queryClient';
 import { categoriesKey } from '../queries';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient } from './support/renderWithQueries';
+import { refreshInAct, useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
 
 const server = installFakeServer();
@@ -286,7 +286,7 @@ describe('AddRuleSheet — WHIT-284 drop effect (draft re-clean)', () => {
 
     // The retry succeeds: the real list arrives with 'subs' still present → selection survived intact.
     server.once('GET', '/categories', { body: CATS });
-    await act(() => queryClient.refetchQueries({ queryKey: categoriesKey }));
+    await refreshInAct(() => queryClient.refetchQueries({ queryKey: categoriesKey }));
     await screen.findByText('Subscriptions'); // the list has arrived
     expect(lastDraftCategoryId()).toBe('subs');
     fireEvent.press(screen.getByText('Add rule'));
@@ -303,7 +303,7 @@ describe('AddRuleSheet — WHIT-284 drop effect (draft re-clean)', () => {
 
     // 'subs' is deleted -> only 'groceries' remains, list re-emits.
     server.seed('/categories', [CATS[1]]);
-    await act(() => queryClient.invalidateQueries({ queryKey: categoriesKey }));
+    await refreshInAct(() => queryClient.invalidateQueries({ queryKey: categoriesKey }));
     await waitFor(() => expect(screen.queryByText('Subscriptions')).toBeNull()); // the new list is on screen
 
     await waitFor(() => expect(lastDraftCategoryId()).toBeNull());   // selection dropped & draft re-cleaned
