@@ -6,6 +6,8 @@ that grammar must raise, never pass silently.
 
 It also pins FakeTable's set rules (WHIT-636): DynamoDB refuses an empty set in ADD/DELETE, and (an
 app rule, stricter than DynamoDB) the app stores only String Sets, so a set holding numbers is refused.
+The empty-set rule also covers SET, put_item and the batch writer (WHIT-676, pinned in
+test_whit676_empty_set_writes.py).
 """
 
 import pytest

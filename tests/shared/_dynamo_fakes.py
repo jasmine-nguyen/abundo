@@ -16,8 +16,8 @@ pass with its guard dead.
 
 It also enforces four of DynamoDB's validation rules: an UpdateExpression over the 4KB ceiling,
 a declared ExpressionAttributeName/Value that no expression uses, an ADD/DELETE that mixes set
-types (a number into a String Set), and an empty set in ADD/DELETE raise ValidationException. So
-does (an app rule, stricter than DynamoDB) a set holding numbers: the app stores only String Sets.
+types (a number into a String Set), and an empty set anywhere in a written value (SET/ADD/DELETE
+values, put_item, batch put; nested ones included) raise ValidationException. So does (an app rule, stricter than DynamoDB) a set holding numbers: the app stores only String Sets.
 Reads and writes are deep copies.
 
 Test hooks: ``fail`` (make a call raise), ``before_write`` / ``before_next_write`` (simulate a
@@ -179,11 +179,23 @@ def _set_type(members):
     return {"string" if isinstance(member, str) else "number" for member in members}
 
 
+def _check_no_empty_set(value):
+    """DynamoDB refuses an empty set anywhere in an attribute value, nested ones included."""
+    if isinstance(value, (set, frozenset)) and not value:
+        raise _client_error(
+            "ValidationException", "One or more parameter values were invalid: An string set may not be empty"
+        )
+    if isinstance(value, dict):
+        for member in value.values():
+            _check_no_empty_set(member)
+    if isinstance(value, list):
+        for member in value:
+            _check_no_empty_set(member)
+
+
 def _check_set_type(operand, current):
-    """ADD/DELETE's set must be non-empty and match the stored set's type, as in DynamoDB. The app
-    stores only String Sets, so (stricter than DynamoDB) a set holding numbers is refused too."""
-    if not operand:
-        raise _client_error("ValidationException", "An string set may not be empty")
+    """ADD/DELETE's set must match the stored set's type, as in DynamoDB. The app stores only
+    String Sets, so (stricter than DynamoDB) a set holding numbers is refused too."""
     types = _set_type(operand)
     if "number" in types:
         raise _client_error("ValidationException", "FakeTable: this app stores only String Sets")
@@ -395,6 +407,7 @@ class FakeTable:
 
             def put_item(self_, Item):
                 table._check_failure("batch_writer", Item)
+                _check_no_empty_set(Item)
                 table.store[_store_key(Item)] = copy.deepcopy(Item)
 
         return _Batch()
@@ -404,6 +417,8 @@ class FakeTable:
         self.put_calls.append(copy.deepcopy(Item))
         self._check_failure("put_item", Item)
         _check_all_used(ExpressionAttributeNames, ExpressionAttributeValues, ConditionExpression)
+        _check_no_empty_set(ExpressionAttributeValues or {})
+        _check_no_empty_set(Item)
         key = _store_key(Item)
         if ConditionExpression is not None and not self._holds(
             key, ConditionExpression, ExpressionAttributeNames, ExpressionAttributeValues
@@ -437,6 +452,7 @@ class FakeTable:
                 f"{expression_bytes} bytes exceeds the {_MAX_UPDATE_EXPRESSION_BYTES} limit",
             )
         _check_all_used(names, values, UpdateExpression, ConditionExpression)
+        _check_no_empty_set(values)
         key = _store_key(Key)
         if ConditionExpression is not None and not self._holds(key, ConditionExpression, names, values):
             raise _client_error("ConditionalCheckFailedException")
