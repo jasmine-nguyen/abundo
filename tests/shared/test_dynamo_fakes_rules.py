@@ -1,5 +1,6 @@
 """FakeTable behaviour beyond the pinned grammar (WHIT-625): DynamoDB's unused-name and set-type
-rules, the one-shot write queue, clearing failures, and the call recorders."""
+rules, the one-shot write queue, clearing failures, and the call recorders. The empty-set and
+number-set rules (WHIT-636) are pinned in test_dynamo_fakes_set_rules.py."""
 
 import pytest
 from botocore.exceptions import ClientError
