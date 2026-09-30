@@ -35,6 +35,13 @@ def _has_user_fields(row: dict) -> bool:
     return bool(row.get("notes") or row.get("tags") or row.get("budget_excluded"))
 
 
+def _same_user_fields(row_a: dict, row_b: dict) -> bool:
+    return all(
+        (row_a.get(field_name) or None) == (row_b.get(field_name) or None)
+        for field_name in ("notes", "tags", "budget_excluded")
+    )
+
+
 def is_user_edited(pending: dict, is_unfiled) -> bool:
     """Whether the user edited this pending — their own category, or a note/tag/exclusion they
     set. A rule's category alone is not a user edit."""
@@ -93,12 +100,14 @@ def find_carry_twin(pending: dict, posted_rows: list[dict], is_unfiled) -> dict 
     notes/tags/exclusion) may only carry onto an UNFILED twin — a rule never overrides another
     rule's category. A twin that already holds a note, tags or exclusion (carried earlier, or
     set by the user) is user-owned too and never a candidate, so a later pending can't
-    overwrite it (WHIT-666).
+    overwrite it (WHIT-666) — unless those fields already equal the pending's own: repeating
+    the same carry changes nothing, and lets a retry finish after a failed delete.
 
     STRICT: same exact amount, same shop (the reconcile merchant gate), dated within
     CARRY_DATE_SKEW_DAYS. Exactly one match carries; zero OR an ambiguous tie (≥2) carries
     nothing — a wrong carry is worse than a missed one (WHIT-511, Jasmine's locked choice)."""
-    candidates = [posted for posted in posted_rows if not _has_user_fields(posted)]
+    candidates = [posted for posted in posted_rows
+                  if not _has_user_fields(posted) or _same_user_fields(pending, posted)]
     if category_is_user_set(pending, is_unfiled):
         eligible = [posted for posted in candidates
                     if is_unfiled(posted.get("category")) or posted.get("filed_by_rule")]

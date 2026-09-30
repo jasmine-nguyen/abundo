@@ -175,3 +175,17 @@ def test_carry_recomputes_budget_flag_off_for_the_home_loan(pending_carry):
 )
 def test_counts_to_budget_in_shared_spend(shared, account_id, category, expected):
     assert shared.spend.counts_to_budget(account_id, category) is expected
+
+
+# [A3] (P1) WHIT-666 boundary: only a REAL note / tag / exclusion claims a settled charge. An
+# empty note, an empty tag list or budget_excluded=False (a cleared edit, or a fresh bank row)
+# must leave the charge a candidate, or ordinary carries silently stop.
+@pytest.mark.parametrize(
+    "cleared", [{"notes": ""}, {"tags": []}, {"budget_excluded": False}, {"notes": None, "tags": None}],
+)
+def test_a_settled_charge_with_only_cleared_edit_fields_is_still_a_twin(pending_carry, cleared):
+    is_unfiled = pending_carry.load_is_unfiled(_CategoryRepo(["groceries"]))
+    twin = _row("posted-1", "2026-06-11", status="posted", **cleared)
+
+    assert pending_carry.find_carry_twin(_pending(notes="gift"), [twin], is_unfiled) is twin
+    assert pending_carry.find_carry_twin(_pending(category="groceries"), [twin], is_unfiled) is twin
