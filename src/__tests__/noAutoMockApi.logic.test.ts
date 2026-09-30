@@ -73,6 +73,17 @@ describe('no test mocks the api', () => {
       'budgetsQuery.screen.test.tsx': 118,
       'settingsQuery.screen.test.tsx': 87,
       'screenQueryHooks.screen.test.tsx': 52,
+      'addRuleConfirmBudgetExcluded.screen.test.tsx': 3,
+      'addRulePreview.screen.test.tsx': 17,
+      'addRulePreviewGaps.screen.test.tsx': 26,
+      'AddRuleSheet.screen.test.tsx': 57,
+      'AddRuleSheetBudgetExcludedEdit.screen.test.tsx': 2,
+      'AddRuleSheetClassicPathUntouched.screen.test.tsx': 8,
+      'AddRuleSheetMultiCondition.screen.test.tsx': 19,
+      'AddRuleSheetMultiConditionGaps.screen.test.tsx': 16,
+      'AddRuleSheetOverlapWarning.screen.test.tsx': 10,
+      'AddRuleSheetSpread.screen.test.tsx': 8,
+      'AddRuleSheetSpreadGaps.screen.test.tsx': 6,
     };
 
     const shortfalls = Object.entries(baselines).flatMap(([file, baseline]) => {

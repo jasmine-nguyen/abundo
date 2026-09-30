@@ -12,7 +12,7 @@
 //   - a 409 clash surfaced by the preview shows the clash card and no file button.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react-native';
+import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, FilingResult, FilingTarget, FilingWhen } from '../context';
 import type { ApplyRulesResult } from '../api';
 import { APPLY_RULES_MAX_WRITES } from '../context';
@@ -23,9 +23,15 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { Overlays } from '../components/Overlays';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { openOverlays } from './support/openOverlays';
+
+const server = installFakeServer();
+useTestQueryClient();
 
 const fns = {
   setSheet: jest.fn(),
@@ -36,8 +42,8 @@ const fns = {
 };
 
 const CATEGORIES = [
-  { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null },
-  { id: 'fuel', name: 'Fuel', bucket: 'Living', icon: 'car', color: '#F2C94C', parent: null },
+  { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null },
+  { id: 'fuel', name: 'Fuel', bucket: 'Living', icon: 'car', parent: null },
 ];
 
 const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
@@ -49,14 +55,16 @@ const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
 });
 
 async function mountConfirm(pattern = 'COLES', categoryId = 'groceries') {
-  mockState = {
-    sheet: { mode: 'addRuleConfirm', pattern, categoryId }, toast: null, categories: CATEGORIES, ...fns,
-  } as unknown as AppContext;
-  render(<Overlays />);
+  server.seed('/categories', CATEGORIES);
+  const state = { sheet: { mode: 'addRuleConfirm', pattern, categoryId }, toast: null, ...fns } as unknown as AppContext;
+  await openOverlays(state, (next) => { mockState = next; });
   await act(async () => {}); // let the mount-time preview resolve
 }
 
-beforeEach(() => { jest.clearAllMocks(); });
+beforeEach(() => {
+  jest.clearAllMocks();
+  resetAuth();
+});
 
 it('previews on mount and shows the matched count with sample descriptions', async () => {
   fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: 12 }) });

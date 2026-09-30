@@ -1,10 +1,10 @@
 // Screen test: the AddRuleSheet in EDIT mode (WHIT-52 Slice 3). When the sheet
 // carries a ruleId it prefills from that rule, relabels to "Edit rule" /
-// "Update rule", and submits via updateRule (not saveManualRule). Context is
-// injected via the jest.mock('../context') pattern.
+// "Update rule", and submits via updateRule (not saveManualRule). Client state and writers are
+// injected via the jest.mock('../context') pattern; the categories and rules the sheet reads come
+// from the fake server through the real query hooks (WHIT-670).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 
 let mockState: AppContext;
@@ -12,9 +12,35 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { Overlays } from '../components/Overlays';
+import { queryClient } from '../queryClient';
+import { categoriesKey } from '../queries';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { openOverlays, overlaysTree } from './support/openOverlays';
+
+const server = installFakeServer();
+useTestQueryClient();
+
+beforeEach(() => resetAuth());
+
+const setMockState = (next: AppContext) => { mockState = next; };
+
+const CATS = [
+  { id: 'subs', name: 'Subscriptions', icon: 'film', bucket: 'Lifestyle' },
+  { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Living' },
+];
+
+// Seed what the sheet reads from the server, then open it over the loaded screens.
+async function openSheet(state: Record<string, unknown>, rules: unknown[] = [], categories: unknown[] = CATS) {
+  server.seed('/categories', categories);
+  server.seed('/rules', rules);
+  return openOverlays({ toast: null, ...state } as unknown as AppContext, setMockState);
+}
+
+const settled = () => waitFor(() => expect(queryClient.isFetching()).toBe(0));
 
 const fns = {
   updateRule: jest.fn(),
@@ -22,18 +48,9 @@ const fns = {
   setSheet: jest.fn(), readSheetDraft: () => undefined, writeSheetDraft: () => {},
 };
 
-function editState(): AppContext {
-  return {
-    sheet: { mode: 'addrule', ruleId: 'e1' },
-    toast: null,
-    rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false }],
-    categories: [
-      { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
-      { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },
-    ],
-    ...fns,
-  } as unknown as AppContext;
-}
+const EDIT_SHEET = { mode: 'addrule', ruleId: 'e1' };
+const openEdit = (rules: unknown[] = [{ id: 'e1', value: 'NETFLIX', categoryId: 'subs' }]) =>
+  openSheet({ sheet: EDIT_SHEET, ...fns }, rules);
 
 beforeEach(() => {
   fns.updateRule.mockClear();
@@ -41,109 +58,96 @@ beforeEach(() => {
   fns.setSheet.mockClear();
 });
 
-it('prefills from the rule and relabels for edit', () => {
-  mockState = editState();
-  render(<Overlays />);
+it('prefills from the rule and relabels for edit', async () => {
+  await openEdit();
   expect(screen.getByText('Edit rule')).toBeTruthy();
   expect(screen.getByDisplayValue('NETFLIX')).toBeTruthy();
   expect(screen.getByText('Update rule')).toBeTruthy();
 });
 
-it('submitting calls updateRule with the id, not saveManualRule', () => {
-  mockState = editState();
-  render(<Overlays />);
+it('submitting calls updateRule with the id, not saveManualRule', async () => {
+  await openEdit();
   fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', false, undefined, false);
   expect(fns.saveManualRule).not.toHaveBeenCalled();
 });
 
 // WHIT-558: the "keep out of budget" toggle threads its value into updateRule (edit path).
-it('toggling "keep out of budget" passes budgetExcluded:true to updateRule', () => {
-  mockState = editState();
-  render(<Overlays />);
+it('toggling "keep out of budget" passes budgetExcluded:true to updateRule', async () => {
+  await openEdit();
   fireEvent.press(screen.getByTestId('rule-budget-excluded'));
   fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', true, undefined, false);
 });
 
-it('prefills the toggle from the edited rule (budgetExcluded:true stays on and is submitted)', () => {
-  mockState = { ...editState(), rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false, budgetExcluded: true }] } as AppContext;
-  render(<Overlays />);
+it('prefills the toggle from the edited rule (budgetExcluded:true stays on and is submitted)', async () => {
+  await openEdit([{ id: 'e1', value: 'NETFLIX', categoryId: 'subs', budgetExcluded: true }]);
   fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', true, undefined, false);
 });
 
 // WHIT-284 — a restored/prefilled categoryId whose category no longer exists must be dropped:
 // no selection, save disabled, and it can never be submitted.
-const CATS = [
-  { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
-  { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },
-];
-function ruleState(over: Partial<Record<string, unknown>>): AppContext {
-  return { sheet: { mode: 'addrule' }, toast: null, rules: [], categories: CATS, ...fns, ...over } as unknown as AppContext;
-}
+const openNew = (over: Record<string, unknown> = {}, rules: unknown[] = [], categories: unknown[] = CATS) =>
+  openSheet({ sheet: { mode: 'addrule' }, ...fns, ...over }, rules, categories);
 
-it('[WHIT-284] a DEAD prefilled categoryId (its category was deleted) keeps the save button disabled', () => {
-  mockState = { ...editState(), rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'ghost', isNew: false }] } as AppContext;
-  render(<Overlays />);
+it('[WHIT-284] a DEAD prefilled categoryId (its category was deleted) keeps the save button disabled', async () => {
+  await openEdit([{ id: 'e1', value: 'NETFLIX', categoryId: 'ghost' }]);
   fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).not.toHaveBeenCalled(); // dead id dropped → canSave false → no submit
 });
 
-it('[WHIT-284] a DEAD restored draft categoryId (WHIT-277 unlock) keeps the save button disabled', () => {
-  mockState = ruleState({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'ghost' }) });
-  render(<Overlays />);
+it('[WHIT-284] a DEAD restored draft categoryId (WHIT-277 unlock) keeps the save button disabled', async () => {
+  await openNew({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'ghost' }) });
   fireEvent.press(screen.getByText('Add rule'));
   expect(fns.saveManualRule).not.toHaveBeenCalled();
 });
 
-it('[WHIT-284] the LAST category was deleted → loaded-but-EMPTY list still drops the dead id (disabled)', () => {
+it('[WHIT-284] the LAST category was deleted → loaded-but-EMPTY list still drops the dead id (disabled)', async () => {
   // The case a `cats.length > 0` guard would miss: empty list, but LOADED (not loading).
-  mockState = ruleState({ categories: [], categoriesLoading: false, readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'ghost' }) });
-  render(<Overlays />);
+  await openNew({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'ghost' }) }, [], []);
   fireEvent.press(screen.getByText('Add rule'));
   expect(fns.saveManualRule).not.toHaveBeenCalled();
 });
 
-it('[WHIT-284] a VALID restored categoryId is NOT cleared — submit reaches the confirm step', () => {
-  mockState = ruleState({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) });
-  render(<Overlays />);
+it('[WHIT-284] a VALID restored categoryId is NOT cleared — submit reaches the confirm step', async () => {
+  await openNew({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) });
   fireEvent.press(screen.getByText('Add rule'));
   // WHIT-538: a valid new rule now opens the preview/confirm step, which owns the save itself.
   expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'NETFLIX', categoryId: 'subs', budgetExcluded: false });
 });
 
-it('[WHIT-284] a valid restored id survives the LOADING window: save is held disabled, then re-enables once the list arrives', () => {
+it('[WHIT-284] a valid restored id survives the LOADING window: save is held disabled, then re-enables once the list arrives', async () => {
   // While loading, no id can be resolved → save is disabled (so a dead id is never submittable mid-load,
   // WHIT-284 [E1]). The drop effect is gated on !loading, so the valid id is KEPT, not cleared — and the
   // moment the list loads it resolves and save works. Fail-on-revert: restore the `catsLoading ||` escape
   // and the first press would submit during load.
-  mockState = ruleState({ categories: [], categoriesLoading: true, readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) });
-  const { rerender } = render(<Overlays />);
+  server.seed('/categories', CATS);
+  const held = server.hold('/categories');
+  setMockState({ sheet: { mode: 'addrule' }, toast: null, ...fns, readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) } as unknown as AppContext);
+  render(overlaysTree()); // the sheet opens while the categories reply is still held back
   fireEvent.press(screen.getByText('Add rule'));
   expect(fns.saveManualRule).not.toHaveBeenCalled(); // loading → id unverifiable → save disabled
 
-  mockState = ruleState({ categories: CATS, categoriesLoading: false, readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) });
-  rerender(<Overlays />);
+  await act(async () => held.release());
+  await screen.findByText('Subscriptions'); // the list has arrived
   fireEvent.press(screen.getByText('Add rule'));
   // WHIT-538: valid id kept through load → submit now reaches the confirm step.
   expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'NETFLIX', categoryId: 'subs', budgetExcluded: false });
 });
 
-it('[WHIT-284] re-picking a real category after a dead one re-enables save', () => {
-  mockState = { ...editState(), rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'ghost', isNew: false }] } as AppContext;
-  render(<Overlays />);
+it('[WHIT-284] re-picking a real category after a dead one re-enables save', async () => {
+  await openEdit([{ id: 'e1', value: 'NETFLIX', categoryId: 'ghost' }]);
   fireEvent.press(screen.getByText('Groceries')); // pick a valid category
   fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'groceries', false, undefined, false);
 });
 
 // WHIT-355 — conflict/duplicate detection in the add-rule sheet.
-const NETFLIX_SUBS = { id: 'b1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false };
+const NETFLIX_SUBS = { id: 'b1', value: 'NETFLIX', categoryId: 'subs' };
 
-it('[WHIT-355] creating a CLASHING rule warns and does not mint until Replace', () => {
-  mockState = ruleState({ rules: [NETFLIX_SUBS] });
-  render(<Overlays />);
+it('[WHIT-355] creating a CLASHING rule warns and does not mint until Replace', async () => {
+  await openNew({}, [NETFLIX_SUBS]);
   fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
   fireEvent.press(screen.getByText('Groceries')); // different category → conflict
   fireEvent.press(screen.getByText('Add rule'));
@@ -155,9 +159,8 @@ it('[WHIT-355] creating a CLASHING rule warns and does not mint until Replace', 
   expect(fns.saveManualRule).not.toHaveBeenCalled();                          // no second row
 });
 
-it('[WHIT-355] Cancel on a create conflict writes nothing and restores the submit button', () => {
-  mockState = ruleState({ rules: [NETFLIX_SUBS] });
-  render(<Overlays />);
+it('[WHIT-355] Cancel on a create conflict writes nothing and restores the submit button', async () => {
+  await openNew({}, [NETFLIX_SUBS]);
   fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
   fireEvent.press(screen.getByText('Groceries'));
   fireEvent.press(screen.getByText('Add rule'));
@@ -167,9 +170,8 @@ it('[WHIT-355] Cancel on a create conflict writes nothing and restores the submi
   expect(screen.getByTestId('rule-submit')).toBeTruthy(); // back to the normal form
 });
 
-it('[WHIT-355] an exact DUPLICATE on create no-ops (no rule minted) and closes on OK', () => {
-  mockState = ruleState({ rules: [NETFLIX_SUBS] });
-  render(<Overlays />);
+it('[WHIT-355] an exact DUPLICATE on create no-ops (no rule minted) and closes on OK', async () => {
+  await openNew({}, [NETFLIX_SUBS]);
   fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
   fireEvent.press(screen.getByText('Subscriptions')); // same category → duplicate
   fireEvent.press(screen.getByText('Add rule'));
@@ -179,9 +181,8 @@ it('[WHIT-355] an exact DUPLICATE on create no-ops (no rule minted) and closes o
   expect(fns.setSheet).toHaveBeenCalledWith(null);
 });
 
-it('[WHIT-355] creating a NON-clashing rule proceeds to the confirm step (happy path preserved)', () => {
-  mockState = ruleState({ rules: [NETFLIX_SUBS] });
-  render(<Overlays />);
+it('[WHIT-355] creating a NON-clashing rule proceeds to the confirm step (happy path preserved)', async () => {
+  await openNew({}, [NETFLIX_SUBS]);
   fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'SPOTIFY');
   fireEvent.press(screen.getByText('Subscriptions'));
   fireEvent.press(screen.getByText('Add rule'));
@@ -190,16 +191,11 @@ it('[WHIT-355] creating a NON-clashing rule proceeds to the confirm step (happy 
   expect(screen.queryByTestId('rule-conflict')).toBeNull();
 });
 
-it('[WHIT-355] editing a rule INTO a clash warns with no Replace and writes nothing', () => {
-  mockState = {
-    ...editState(),
-    rules: [
-      { id: 'e1', pattern: 'OLD', categoryId: 'subs', isNew: false },
-      { id: 'b1', pattern: 'NETFLIX', categoryId: 'groceries', isNew: false },
-    ],
-    sheet: { mode: 'addrule', ruleId: 'e1' },
-  } as AppContext;
-  render(<Overlays />);
+it('[WHIT-355] editing a rule INTO a clash warns with no Replace and writes nothing', async () => {
+  await openEdit([
+    { id: 'e1', value: 'OLD', categoryId: 'subs' },
+    { id: 'b1', value: 'NETFLIX', categoryId: 'groceries' },
+  ]);
   fireEvent.changeText(screen.getByDisplayValue('OLD'), 'NETFLIX'); // edit e1's pattern onto b1
   fireEvent.press(screen.getByText('Update rule'));
   expect(screen.getByTestId('rule-conflict')).toBeTruthy();
@@ -209,9 +205,8 @@ it('[WHIT-355] editing a rule INTO a clash warns with no Replace and writes noth
   expect(fns.updateRule).not.toHaveBeenCalled();
 });
 
-it('[WHIT-355] editing the pattern after a warning clears it and restores the submit button', () => {
-  mockState = ruleState({ rules: [NETFLIX_SUBS] });
-  render(<Overlays />);
+it('[WHIT-355] editing the pattern after a warning clears it and restores the submit button', async () => {
+  await openNew({}, [NETFLIX_SUBS]);
   fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
   fireEvent.press(screen.getByText('Groceries'));
   fireEvent.press(screen.getByText('Add rule'));
@@ -226,10 +221,9 @@ it('[WHIT-355] editing the pattern after a warning clears it and restores the su
   expect(fns.updateRule).not.toHaveBeenCalled();
 });
 
-it('[WHIT-355] Replace overwrites the surviving rule with the newly-typed raw pattern', () => {
+it('[WHIT-355] Replace overwrites the surviving rule with the newly-typed raw pattern', async () => {
   // Existing rule stored lowercase; user types upper-case + a different category.
-  mockState = ruleState({ rules: [{ id: 'b1', pattern: 'netflix', categoryId: 'subs', isNew: false }] });
-  render(<Overlays />);
+  await openNew({}, [{ id: 'b1', value: 'netflix', categoryId: 'subs' }]);
   fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
   fireEvent.press(screen.getByText('Groceries'));
   fireEvent.press(screen.getByText('Add rule'));
@@ -241,11 +235,6 @@ it('[WHIT-355] Replace overwrites the surviving rule with the newly-typed raw pa
 // restored draft id to null. Own block-scoped fixtures: fns.writeSheetDraft is a TRACKED jest.fn
 // (the survivor's is a no-op), and lastDraftCategoryId reads its calls. =====
 describe('AddRuleSheet — WHIT-284 drop effect (draft re-clean)', () => {
-  const CATS = [
-    { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
-    { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },
-  ];
-
   const fns = {
     updateRule: jest.fn(),
     saveManualRule: jest.fn(),
@@ -253,13 +242,8 @@ describe('AddRuleSheet — WHIT-284 drop effect (draft re-clean)', () => {
     writeSheetDraft: jest.fn(),
   };
 
-  function ruleState(over: Partial<Record<string, unknown>>): AppContext {
-    return {
-      sheet: { mode: 'addrule' }, toast: null, rules: [],
-      categories: CATS, categoriesLoading: false,
-      readSheetDraft: () => undefined,
-      ...fns, ...over,
-    } as unknown as AppContext;
+  function ruleState(over: Partial<Record<string, unknown>>) {
+    return { sheet: { mode: 'addrule' }, readSheetDraft: () => undefined, ...fns, ...over };
   }
 
   // Last categoryId the sheet persisted back to the draft store.
@@ -277,18 +261,16 @@ describe('AddRuleSheet — WHIT-284 drop effect (draft re-clean)', () => {
 
   // [A7] — the drop effect must re-write the persisted draft with categoryId:null.
   // canSave belt alone leaves the draft holding the dead id → this pins the effect.
-  it('[WHIT-284] a DEAD restored id is re-cleaned out of the persisted draft (written back as null)', () => {
-    mockState = ruleState({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'ghost' }) });
-    render(<Overlays />);
+  it('[WHIT-284] a DEAD restored id is re-cleaned out of the persisted draft (written back as null)', async () => {
+    await openSheet(ruleState({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'ghost' }) }));
     expect(lastDraftCategoryId()).toBeNull(); // effect cleared it, not left at 'ghost'
     fireEvent.press(screen.getByText('Add rule'));
     expect(fns.saveManualRule).not.toHaveBeenCalled();
   });
 
   // Control: a VALID restored id is left in the draft untouched (never re-cleaned).
-  it('[WHIT-284] a VALID restored id is left in the persisted draft (not re-cleaned)', () => {
-    mockState = ruleState({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) });
-    render(<Overlays />);
+  it('[WHIT-284] a VALID restored id is left in the persisted draft (not re-cleaned)', async () => {
+    await openSheet(ruleState({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) }));
     expect(lastDraftCategoryId()).toBe('subs');
   });
 
@@ -296,14 +278,16 @@ describe('AddRuleSheet — WHIT-284 drop effect (draft re-clean)', () => {
   // must NOT fire there: dropping would clear a VALID restored id and stickily re-clean the draft to
   // null, so it can't recover when the list later loads OK. Gate is `!catsError`. Fail-on-revert:
   // remove `!catsError` and the effect drops 'subs' on the error render → draft re-written to null.
-  it('[WHIT-284] a categories LOAD ERROR (empty list, not loading) does NOT drop a valid restored id or wipe the draft', () => {
-    mockState = ruleState({ categories: [], categoriesLoading: false, categoriesError: true, readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) });
-    const { rerender } = render(<Overlays />);
+  it('[WHIT-284] a categories LOAD ERROR (empty list, not loading) does NOT drop a valid restored id or wipe the draft', async () => {
+    server.fail('/categories', 500);
+    await openSheet(ruleState({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) }));
+    await settled(); // opening the sheet retries the failed read; let it fail again
     expect(lastDraftCategoryId()).toBe('subs'); // error → don't drop → draft keeps the id (recoverable)
 
     // The retry succeeds: the real list arrives with 'subs' still present → selection survived intact.
-    mockState = ruleState({ categories: CATS, categoriesLoading: false, categoriesError: false, readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) });
-    rerender(<Overlays />);
+    server.once('GET', '/categories', { body: CATS });
+    await act(() => queryClient.refetchQueries({ queryKey: categoriesKey }));
+    await screen.findByText('Subscriptions'); // the list has arrived
     expect(lastDraftCategoryId()).toBe('subs');
     fireEvent.press(screen.getByText('Add rule'));
     // WHIT-538: recovered → submit reaches the confirm step.
@@ -313,16 +297,16 @@ describe('AddRuleSheet — WHIT-284 drop effect (draft re-clean)', () => {
   // [A8] — an in-session delete: the sheet is open with a valid selection, then that
   // category disappears from the list (deleted elsewhere / this device). The drop
   // effect must clear the now-dead selection, re-clean the draft, and disable save.
-  it('[WHIT-284] deleting the selected category while the sheet is open clears it and disables save', () => {
-    mockState = ruleState({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) });
-    const { rerender } = render(<Overlays />);
+  it('[WHIT-284] deleting the selected category while the sheet is open clears it and disables save', async () => {
+    await openSheet(ruleState({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) }));
     expect(lastDraftCategoryId()).toBe('subs'); // starts valid & selected
 
     // 'subs' is deleted -> only 'groceries' remains, list re-emits.
-    mockState = { ...mockState, categories: [CATS[1]] } as AppContext;
-    rerender(<Overlays />);
+    server.seed('/categories', [CATS[1]]);
+    await act(() => queryClient.invalidateQueries({ queryKey: categoriesKey }));
+    await waitFor(() => expect(screen.queryByText('Subscriptions')).toBeNull()); // the new list is on screen
 
-    expect(lastDraftCategoryId()).toBeNull();   // selection dropped & draft re-cleaned
+    await waitFor(() => expect(lastDraftCategoryId()).toBeNull());   // selection dropped & draft re-cleaned
     fireEvent.press(screen.getByText('Add rule'));
     expect(fns.saveManualRule).not.toHaveBeenCalled(); // save now disabled
   });
@@ -340,16 +324,15 @@ describe('AddRuleSheet — WHIT-355 conflict adversarial', () => {
   };
 
   const CATS = [
-    { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
-    { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },
-    { id: 'coffee', name: 'Coffee', icon: 'cup', color: '#c08457', bucket: 'Living', recent: 0 },
+    { id: 'subs', name: 'Subscriptions', icon: 'film', bucket: 'Lifestyle' },
+    { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Living' },
+    { id: 'coffee', name: 'Coffee', icon: 'cup', bucket: 'Living' },
   ];
 
-  function createState(rules: unknown[]): AppContext {
-    return { sheet: { mode: 'addrule' }, toast: null, rules, categories: CATS, ...fns } as unknown as AppContext;
-  }
+  const openCreate = (rules: unknown[], sheet: Record<string, unknown> = { mode: 'addrule' }) =>
+    openSheet({ sheet, ...fns }, rules, CATS);
 
-  const NETFLIX_SUBS = { id: 'b1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false };
+  const NETFLIX_SUBS = { id: 'b1', value: 'NETFLIX', categoryId: 'subs' };
 
   beforeEach(() => {
     fns.updateRule.mockClear();
@@ -362,9 +345,8 @@ describe('AddRuleSheet — WHIT-355 conflict adversarial', () => {
   // button would survive and retarget the OTHER rule using the newly-picked category.
   // Fail-on-revert: delete Overlays.tsx:473 -> the warning persists after the pill tap -> the
   // `rule-submit` assertion (and `rule-conflict` being gone) fails.
-  it('[WHIT-355] changing the category after a warning dismisses it and restores submit', () => {
-    mockState = createState([NETFLIX_SUBS]);
-    render(<Overlays />);
+  it('[WHIT-355] changing the category after a warning dismisses it and restores submit', async () => {
+    await openCreate([NETFLIX_SUBS]);
     fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
     fireEvent.press(screen.getByText('Groceries'));
     fireEvent.press(screen.getByText('Add rule'));
@@ -381,15 +363,11 @@ describe('AddRuleSheet — WHIT-355 conflict adversarial', () => {
 
   // [A-S3] Edit path: after an edit-into-clash warning, changing the pattern also clears the
   // warn-only block (the edit path never had a Replace, so the only risk is being stuck).
-  it('[WHIT-355] on the edit path, changing the pattern clears the warn-only block', () => {
-    mockState = {
-      ...createState([
-        { id: 'e1', pattern: 'OLD', categoryId: 'subs', isNew: false },
-        { id: 'b1', pattern: 'NETFLIX', categoryId: 'groceries', isNew: false },
-      ]),
-      sheet: { mode: 'addrule', ruleId: 'e1' },
-    } as unknown as AppContext;
-    render(<Overlays />);
+  it('[WHIT-355] on the edit path, changing the pattern clears the warn-only block', async () => {
+    await openCreate([
+      { id: 'e1', value: 'OLD', categoryId: 'subs' },
+      { id: 'b1', value: 'NETFLIX', categoryId: 'groceries' },
+    ], { mode: 'addrule', ruleId: 'e1' });
     fireEvent.changeText(screen.getByDisplayValue('OLD'), 'NETFLIX'); // clash with b1
     fireEvent.press(screen.getByText('Update rule'));
     expect(screen.getByTestId('rule-conflict')).toBeTruthy();
@@ -402,9 +380,8 @@ describe('AddRuleSheet — WHIT-355 conflict adversarial', () => {
 
   // [A-S4] Empty rules list -> a create never warns and saves straight through (guards a future
   // change that might warn/null-deref on an empty list).
-  it('[WHIT-355] with no existing rules a create proceeds with no warning', () => {
-    mockState = createState([]);
-    render(<Overlays />);
+  it('[WHIT-355] with no existing rules a create proceeds with no warning', async () => {
+    await openCreate([]);
     fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
     fireEvent.press(screen.getByText('Subscriptions'));
     fireEvent.press(screen.getByText('Add rule'));

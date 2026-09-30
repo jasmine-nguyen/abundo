@@ -7,8 +7,7 @@
 //  [G5] editing a server-only merchant/category flat rule round-trips its field via the conditions payload
 //  [G7] reducing a multi rule to one classic row on EDIT saves via the flat path (no conditions payload)
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { screen, fireEvent } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 
 let mockState: AppContext;
@@ -16,9 +15,15 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { Overlays } from '../components/Overlays';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { openOverlays } from './support/openOverlays';
+
+const server = installFakeServer();
+useTestQueryClient();
 
 const fns = {
   updateRule: jest.fn(),
@@ -29,25 +34,30 @@ const fns = {
 };
 
 const CATS = [
-  { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
-  { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },
+  { id: 'subs', name: 'Subscriptions', icon: 'film', bucket: 'Lifestyle' },
+  { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Living' },
 ];
 
-function newState(over: Partial<Record<string, unknown>> = {}): AppContext {
-  return { sheet: { mode: 'addrule' }, toast: null, rules: [], categories: CATS, transactions: [], ...fns, ...over } as unknown as AppContext;
+// Rules and recent charges come from the server; everything else is the sheet's own state.
+async function mount({ rules = [], transactions = [], ...over }: Partial<Record<string, unknown>> = {}) {
+  server.seed('/categories', CATS);
+  server.seed('/rules', rules);
+  server.seed('/transactions', transactions);
+  const state = { sheet: { mode: 'addrule' }, toast: null, ...fns, ...over } as unknown as AppContext;
+  await openOverlays(state, (next) => { mockState = next; });
 }
 
 beforeEach(() => {
   fns.updateRule.mockClear();
   fns.saveManualRule.mockClear();
   fns.setSheet.mockClear();
+  resetAuth();
 });
 
 // [G1] Switch a row's field after typing: the old text must not leak into the new field, and the
 // operator must snap to the new field's default (not keep the previous field's picked operator).
-it('switching a row field clears the stale value and resets the operator to the field default', () => {
-  mockState = newState();
-  render(<Overlays />);
+it('switching a row field clears the stale value and resets the operator to the field default', async () => {
+  await mount();
   fireEvent.press(screen.getByTestId('rule-op-0-equals'));
   fireEvent.changeText(screen.getByTestId('rule-value-0'), 'NETFLIX');
   expect(screen.getByDisplayValue('NETFLIX')).toBeTruthy();
@@ -63,9 +73,8 @@ it('switching a row field clears the stale value and resets the operator to the 
 });
 
 // [G2] The AND/OR toggle is meaningless with one condition, so it only appears at >=2 rows.
-it('the AND/OR toggle is hidden with one row and appears with two', () => {
-  mockState = newState();
-  render(<Overlays />);
+it('the AND/OR toggle is hidden with one row and appears with two', async () => {
+  await mount();
   expect(screen.queryByTestId('rule-logic-all')).toBeNull();
   expect(screen.queryByTestId('rule-logic-any')).toBeNull();
   fireEvent.press(screen.getByTestId('rule-add-condition'));
@@ -75,18 +84,17 @@ it('the AND/OR toggle is hidden with one row and appears with two', () => {
 
 // [G3] Editing an account rule whose account_id isn't in the recent-transactions set: the picker must
 // still surface that id as a selected pill so the value is visible and editable, and round-trip on save.
-it('an editing rule account not in the recent set is surfaced and round-trips', () => {
-  mockState = newState({
+it('an editing rule account not in the recent set is surfaced and round-trips', async () => {
+  await mount({
     sheet: { mode: 'addrule', ruleId: 'a1' },
     transactions: [],
     rules: [{
-      id: 'a1', pattern: 'acc-gone', categoryId: 'groceries', isNew: false,
+      id: 'a1', value: 'acc-gone', categoryId: 'groceries',
       field: 'account', operator: 'equals',
       conditions: [{ field: 'account', operator: 'equals', value: 'acc-gone' }],
       logic: 'all',
     }],
   });
-  render(<Overlays />);
   expect(screen.getByTestId('rule-account-0-acc-gone')).toBeTruthy();
   expect(screen.getByText('Acc Gone')).toBeTruthy(); // WHIT-643: tidied id, not the raw 'acc-gone'
   fireEvent.press(screen.getByText('Update rule'));
@@ -99,9 +107,8 @@ it('an editing rule account not in the recent set is surfaced and round-trips', 
 // [G4] Add a second row then remove it: the draft is back to a single description/contains row, so a
 // NEW rule must route through the classic WHIT-538 preview (setSheet addRuleConfirm), NOT the direct
 // multi conditions payload.
-it('adding then removing a row back to one classic row routes a new rule through the preview', () => {
-  mockState = newState();
-  render(<Overlays />);
+it('adding then removing a row back to one classic row routes a new rule through the preview', async () => {
+  await mount();
   fireEvent.changeText(screen.getByTestId('rule-value-0'), 'NETFLIX');
   fireEvent.press(screen.getByTestId('rule-add-condition'));
   fireEvent.press(screen.getByTestId('rule-field-1-amount'));
@@ -118,12 +125,11 @@ it('adding then removing a row back to one classic row routes a new rule through
 // [G5] Editing a server-authored rule on a field the builder never offers (merchant / category): the
 // field must survive the round-trip (not silently reset to description) and save via the conditions
 // payload without corruption.
-it('editing a merchant flat rule preserves the merchant field on save', () => {
-  mockState = newState({
+it('editing a merchant flat rule preserves the merchant field on save', async () => {
+  await mount({
     sheet: { mode: 'addrule', ruleId: 'x1' },
-    rules: [{ id: 'x1', pattern: 'GROCERYLAND', categoryId: 'groceries', isNew: false, field: 'merchant', operator: 'contains' }],
+    rules: [{ id: 'x1', value: 'GROCERYLAND', categoryId: 'groceries', field: 'merchant', operator: 'contains' }],
   });
-  render(<Overlays />);
   expect(screen.getByDisplayValue('GROCERYLAND')).toBeTruthy();
   fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('x1', 'GROCERYLAND', 'groceries', false, {
@@ -132,12 +138,11 @@ it('editing a merchant flat rule preserves the merchant field on save', () => {
   }, false);
 });
 
-it('editing a category equals flat rule preserves the category field on save', () => {
-  mockState = newState({
+it('editing a category equals flat rule preserves the category field on save', async () => {
+  await mount({
     sheet: { mode: 'addrule', ruleId: 'c1' },
-    rules: [{ id: 'c1', pattern: 'GROCERIES', categoryId: 'groceries', isNew: false, field: 'category', operator: 'equals' }],
+    rules: [{ id: 'c1', value: 'GROCERIES', categoryId: 'groceries', field: 'category', operator: 'equals' }],
   });
-  render(<Overlays />);
   fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('c1', 'GROCERIES', 'groceries', false, {
     conditions: [{ field: 'category', operator: 'equals', value: 'GROCERIES' }],
@@ -148,11 +153,11 @@ it('editing a category equals flat rule preserves the category field on save', (
 // [G7] Reducing a MULTI rule down to one classic description/contains row on EDIT must save via the
 // flat path (updateRule with 4 args, no conditions payload) — the collapse-to-single case that mirrors
 // context.tsx nulling conditions/logic on the classic edit path.
-it('editing a multi rule down to one classic row saves via the flat path (no conditions payload)', () => {
-  mockState = newState({
+it('editing a multi rule down to one classic row saves via the flat path (no conditions payload)', async () => {
+  await mount({
     sheet: { mode: 'addrule', ruleId: 'm2' },
     rules: [{
-      id: 'm2', pattern: 'NETFLIX', categoryId: 'subs', isNew: false,
+      id: 'm2', value: 'NETFLIX', categoryId: 'subs',
       field: 'description', operator: 'contains',
       conditions: [
         { field: 'description', operator: 'contains', value: 'NETFLIX' },
@@ -161,7 +166,6 @@ it('editing a multi rule down to one classic row saves via the flat path (no con
       logic: 'all',
     }],
   });
-  render(<Overlays />);
   fireEvent.press(screen.getByTestId('rule-remove-1')); // drop the amount row → one description/contains row
   fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('m2', 'NETFLIX', 'subs', false, undefined, false);

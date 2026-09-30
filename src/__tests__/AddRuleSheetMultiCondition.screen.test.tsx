@@ -3,8 +3,7 @@
 // toggle; saves the conditions+logic payload; edits round-trip; single-condition classic rules keep
 // today's behaviour (covered in AddRuleSheet.screen.test.tsx, plus the backward-compat case here).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { screen, fireEvent } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 
 let mockState: AppContext;
@@ -12,9 +11,15 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { Overlays } from '../components/Overlays';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { openOverlays } from './support/openOverlays';
+
+const server = installFakeServer();
+useTestQueryClient();
 
 const fns = {
   updateRule: jest.fn(),
@@ -25,23 +30,28 @@ const fns = {
 };
 
 const CATS = [
-  { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
-  { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },
+  { id: 'subs', name: 'Subscriptions', icon: 'film', bucket: 'Lifestyle' },
+  { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Living' },
 ];
 
-function newState(over: Partial<Record<string, unknown>> = {}): AppContext {
-  return { sheet: { mode: 'addrule' }, toast: null, rules: [], categories: CATS, transactions: [], ...fns, ...over } as unknown as AppContext;
+// Rules and recent charges come from the server; everything else is the sheet's own state.
+async function mount({ rules = [], transactions = [], ...over }: Partial<Record<string, unknown>> = {}) {
+  server.seed('/categories', CATS);
+  server.seed('/rules', rules);
+  server.seed('/transactions', transactions);
+  const state = { sheet: { mode: 'addrule' }, toast: null, ...fns, ...over } as unknown as AppContext;
+  await openOverlays(state, (next) => { mockState = next; });
 }
 
 beforeEach(() => {
   fns.updateRule.mockClear();
   fns.saveManualRule.mockClear();
   fns.setSheet.mockClear();
+  resetAuth();
 });
 
-it('builds a two-condition rule and saves it directly (no preview step)', () => {
-  mockState = newState();
-  render(<Overlays />);
+it('builds a two-condition rule and saves it directly (no preview step)', async () => {
+  await mount();
   fireEvent.changeText(screen.getByTestId('rule-value-0'), 'NETFLIX');
   fireEvent.press(screen.getByTestId('rule-add-condition'));
   fireEvent.press(screen.getByTestId('rule-field-1-amount'));
@@ -59,9 +69,8 @@ it('builds a two-condition rule and saves it directly (no preview step)', () => 
   expect(fns.setSheet).not.toHaveBeenCalledWith(expect.objectContaining({ mode: 'addRuleConfirm' }));
 });
 
-it('the logic toggle sets "any" in the saved payload', () => {
-  mockState = newState();
-  render(<Overlays />);
+it('the logic toggle sets "any" in the saved payload', async () => {
+  await mount();
   fireEvent.changeText(screen.getByTestId('rule-value-0'), 'NETFLIX');
   fireEvent.press(screen.getByTestId('rule-add-condition'));
   fireEvent.press(screen.getByTestId('rule-field-1-amount'));
@@ -72,9 +81,8 @@ it('the logic toggle sets "any" in the saved payload', () => {
   expect(fns.saveManualRule).toHaveBeenCalledWith('NETFLIX', 'subs', false, expect.objectContaining({ logic: 'any' }), false);
 });
 
-it('a single direction condition saves via the conditions payload, not the classic preview', () => {
-  mockState = newState();
-  render(<Overlays />);
+it('a single direction condition saves via the conditions payload, not the classic preview', async () => {
+  await mount();
   fireEvent.press(screen.getByTestId('rule-field-0-direction')); // defaults to Spending (debit)
   fireEvent.press(screen.getByText('Subscriptions'));
   fireEvent.press(screen.getByText('Add rule'));
@@ -85,9 +93,8 @@ it('a single direction condition saves via the conditions payload, not the class
   expect(fns.setSheet).not.toHaveBeenCalled();
 });
 
-it('an amount condition of 0 keeps save disabled', () => {
-  mockState = newState();
-  render(<Overlays />);
+it('an amount condition of 0 keeps save disabled', async () => {
+  await mount();
   fireEvent.press(screen.getByTestId('rule-field-0-amount'));
   fireEvent.changeText(screen.getByTestId('rule-value-0'), '0');
   fireEvent.press(screen.getByText('Subscriptions'));
@@ -95,9 +102,8 @@ it('an amount condition of 0 keeps save disabled', () => {
   expect(fns.saveManualRule).not.toHaveBeenCalled();
 });
 
-it('a positive amount condition saves', () => {
-  mockState = newState();
-  render(<Overlays />);
+it('a positive amount condition saves', async () => {
+  await mount();
   fireEvent.press(screen.getByTestId('rule-field-0-amount'));
   fireEvent.changeText(screen.getByTestId('rule-value-0'), '30');
   fireEvent.press(screen.getByText('Groceries'));
@@ -108,9 +114,8 @@ it('a positive amount condition saves', () => {
   }, false);
 });
 
-it('a too-short description-contains value keeps save disabled (mirrors the server floor)', () => {
-  mockState = newState();
-  render(<Overlays />);
+it('a too-short description-contains value keeps save disabled (mirrors the server floor)', async () => {
+  await mount();
   fireEvent.changeText(screen.getByTestId('rule-value-0'), 'AB'); // < 4 alphanumerics
   fireEvent.press(screen.getByText('Subscriptions'));
   fireEvent.press(screen.getByText('Add rule'));
@@ -118,11 +123,10 @@ it('a too-short description-contains value keeps save disabled (mirrors the serv
   expect(fns.setSheet).not.toHaveBeenCalled();
 });
 
-it('an account condition stores the picked account id', () => {
-  mockState = newState({
+it('an account condition stores the picked account id', async () => {
+  await mount({
     transactions: [{ transaction_id: 't1', account_id: 'acc-1', account_name: 'Everyday' }],
   });
-  render(<Overlays />);
   fireEvent.press(screen.getByTestId('rule-field-0-account'));
   fireEvent.press(screen.getByTestId('rule-account-0-acc-1'));
   fireEvent.press(screen.getByText('Groceries'));
@@ -133,11 +137,11 @@ it('an account condition stores the picked account id', () => {
   }, false);
 });
 
-it('editing a multi-condition rule round-trips its conditions and logic', () => {
-  mockState = newState({
+it('editing a multi-condition rule round-trips its conditions and logic', async () => {
+  await mount({
     sheet: { mode: 'addrule', ruleId: 'm1' },
     rules: [{
-      id: 'm1', pattern: 'COLES', categoryId: 'groceries', isNew: false,
+      id: 'm1', value: 'COLES', categoryId: 'groceries',
       field: 'description', operator: 'contains',
       conditions: [
         { field: 'description', operator: 'contains', value: 'COLES' },
@@ -146,7 +150,6 @@ it('editing a multi-condition rule round-trips its conditions and logic', () => 
       logic: 'any',
     }],
   });
-  render(<Overlays />);
   expect(screen.getByTestId('rule-condition-0')).toBeTruthy();
   expect(screen.getByTestId('rule-condition-1')).toBeTruthy();
   expect(screen.getByDisplayValue('COLES')).toBeTruthy();
@@ -161,19 +164,17 @@ it('editing a multi-condition rule round-trips its conditions and logic', () => 
   }, false);
 });
 
-it('a legacy flat rule edits via the classic single-condition path (no conditions payload)', () => {
-  mockState = newState({
+it('a legacy flat rule edits via the classic single-condition path (no conditions payload)', async () => {
+  await mount({
     sheet: { mode: 'addrule', ruleId: 'f1' },
-    rules: [{ id: 'f1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false, field: 'description', operator: 'contains' }],
+    rules: [{ id: 'f1', value: 'NETFLIX', categoryId: 'subs', field: 'description', operator: 'contains' }],
   });
-  render(<Overlays />);
   fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('f1', 'NETFLIX', 'subs', false, undefined, false);
 });
 
-it('adds and removes condition rows', () => {
-  mockState = newState();
-  render(<Overlays />);
+it('adds and removes condition rows', async () => {
+  await mount();
   expect(screen.queryByTestId('rule-condition-1')).toBeNull();
   fireEvent.press(screen.getByTestId('rule-add-condition'));
   expect(screen.getByTestId('rule-condition-1')).toBeTruthy();

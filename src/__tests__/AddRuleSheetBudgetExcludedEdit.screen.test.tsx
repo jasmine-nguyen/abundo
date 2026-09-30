@@ -7,8 +7,7 @@
 //   2. the user's hand wins at the UI too: a rule with the flag ON, tap the toggle OFF → updateRule
 //      gets false (the toggle is genuinely two-way, not write-once).
 import { it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { screen, fireEvent } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 
 let mockState: AppContext;
@@ -16,9 +15,15 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { Overlays } from '../components/Overlays';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { openOverlays } from './support/openOverlays';
+
+const server = installFakeServer();
+useTestQueryClient();
 
 const fns = {
   updateRule: jest.fn(),
@@ -26,31 +31,27 @@ const fns = {
   setSheet: jest.fn(), readSheetDraft: () => undefined, writeSheetDraft: () => {},
 };
 
-function editState(budgetExcluded: boolean): AppContext {
-  return {
-    sheet: { mode: 'addrule', ruleId: 'e1' },
-    toast: null,
-    rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false, budgetExcluded }],
-    categories: [
-      { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
-    ],
-    ...fns,
-  } as unknown as AppContext;
+async function openEdit(budgetExcluded: boolean) {
+  server.seed('/categories', [{ id: 'subs', name: 'Subscriptions', icon: 'film', bucket: 'Lifestyle' }]);
+  server.seed('/rules', [{ id: 'e1', value: 'NETFLIX', categoryId: 'subs', budgetExcluded }]);
+  const state = { sheet: { mode: 'addrule', ruleId: 'e1' }, toast: null, ...fns } as unknown as AppContext;
+  await openOverlays(state, (next) => { mockState = next; });
 }
 
-beforeEach(() => { jest.clearAllMocks(); });
+beforeEach(() => {
+  jest.clearAllMocks();
+  resetAuth();
+});
 
-it('editing only the pattern preserves the prefilled budgetExcluded:true', () => {
-  mockState = editState(true);
-  render(<Overlays />);
+it('editing only the pattern preserves the prefilled budgetExcluded:true', async () => {
+  await openEdit(true);
   fireEvent.changeText(screen.getByDisplayValue('NETFLIX'), 'NETFLIX PREMIUM');
   fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX PREMIUM', 'subs', true, undefined, false);
 });
 
-it('turning an inherited exclusion OFF submits budgetExcluded:false', () => {
-  mockState = editState(true);
-  render(<Overlays />);
+it('turning an inherited exclusion OFF submits budgetExcluded:false', async () => {
+  await openEdit(true);
   fireEvent.press(screen.getByTestId('rule-budget-excluded')); // true -> false
   fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', false, undefined, false);

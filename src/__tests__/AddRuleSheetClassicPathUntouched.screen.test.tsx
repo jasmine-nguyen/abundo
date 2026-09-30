@@ -4,8 +4,7 @@
 // soft `rule-overlap` warning. Companion to AddRuleSheetOverlapWarning.screen.test.tsx (the multi
 // path). If someone routed the classic path through ruleOverlap, `rule-overlap` would appear here.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { screen, fireEvent } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 
 let mockState: AppContext;
@@ -13,9 +12,15 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { Overlays } from '../components/Overlays';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { openOverlays } from './support/openOverlays';
+
+const server = installFakeServer();
+useTestQueryClient();
 
 const fns = {
   updateRule: jest.fn(),
@@ -26,27 +31,30 @@ const fns = {
 };
 
 const CATS = [
-  { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
-  { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },
+  { id: 'subs', name: 'Subscriptions', icon: 'film', bucket: 'Lifestyle' },
+  { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Living' },
 ];
 
 // An existing CLASSIC rule (no `conditions`) filing COLESSHOP as Groceries.
-const colesGroceries = { id: 'g1', pattern: 'COLESSHOP', categoryId: 'groceries', isNew: false };
+const colesGroceries = { id: 'g1', value: 'COLESSHOP', categoryId: 'groceries' };
 
-function newState(over: Partial<Record<string, unknown>> = {}): AppContext {
-  return { sheet: { mode: 'addrule' }, toast: null, rules: [], categories: CATS, transactions: [], ...fns, ...over } as unknown as AppContext;
+async function openNew(rules: unknown[]) {
+  server.seed('/categories', CATS);
+  server.seed('/rules', rules);
+  const state = { sheet: { mode: 'addrule' }, toast: null, ...fns } as unknown as AppContext;
+  await openOverlays(state, (next) => { mockState = next; });
 }
 
 beforeEach(() => {
   fns.updateRule.mockClear();
   fns.saveManualRule.mockClear();
   fns.setSheet.mockClear();
+  resetAuth();
 });
 
 // [A34] classic single description-contains rule clashing on category -> OLD ruleConflict path.
-it('a clashing classic rule shows rule-conflict (Replace/Cancel), never rule-overlap', () => {
-  mockState = newState({ rules: [colesGroceries] });
-  render(<Overlays />);
+it('a clashing classic rule shows rule-conflict (Replace/Cancel), never rule-overlap', async () => {
+  await openNew([colesGroceries]);
   fireEvent.changeText(screen.getByTestId('rule-value-0'), 'COLESSHOP');
   fireEvent.press(screen.getByText('Subscriptions'));
   fireEvent.press(screen.getByTestId('rule-submit'));
@@ -59,9 +67,8 @@ it('a clashing classic rule shows rule-conflict (Replace/Cancel), never rule-ove
 });
 
 // [A35] a NON-clashing classic rule takes the classic confirm step, still not the overlap path.
-it('a non-clashing classic rule routes to the addRuleConfirm step, not rule-overlap', () => {
-  mockState = newState({ rules: [] });
-  render(<Overlays />);
+it('a non-clashing classic rule routes to the addRuleConfirm step, not rule-overlap', async () => {
+  await openNew([]);
   fireEvent.changeText(screen.getByTestId('rule-value-0'), 'NETFLIXSUB');
   fireEvent.press(screen.getByText('Subscriptions'));
   fireEvent.press(screen.getByTestId('rule-submit'));
