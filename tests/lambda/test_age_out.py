@@ -1174,3 +1174,57 @@ def test_whit545_note_rescue_does_not_carry_the_pendings_raw_enum_onto_the_twin(
     assert carried["notes"] == "work lunch"          # the note (the reason for the rescue) carries
     assert carried["category"] == "TRANSFER_OUT"     # raw enum NOT clobbered onto the twin
     assert carried["counts_to_budget"] is False       # flag recomputed for the category that stays
+
+
+# --- WHIT-666 QA: an earlier carried edit survives a later sweep ---------------------------
+
+
+def test_a_later_sweep_never_overwrites_the_note_an_earlier_sweep_carried(lam, repo):
+    # [A1] (P0) The age-out re-reads the settled charges every day, so its in-run "claimed twin"
+    # guard doesn't reach across days. Day 1 carries "work lunch"; on day 2 a second stale
+    # pending at the same shop and amount must not overwrite it — it's reaped with no carry.
+    first = _norm(lam, "first_pending", "2026-06-10", pending=True, category=None)
+    first["notes"] = "work lunch"
+    twin = _norm(lam, "settled_twin", "2026-06-11", pending=False, category=None)
+    repo.insert_transactions([first, twin])
+
+    day_one = _sweep_tax(lam, repo, ["groceries"])
+
+    assert day_one["rescued"] == 1
+    assert _rows(repo)["settled_twin"]["notes"] == "work lunch"
+
+    second = _norm(lam, "second_pending", "2026-06-12", pending=True, category=None)
+    second["notes"] = "coffee with Jo"
+    second["tags"] = ["reimbursable"]
+    repo.insert_transactions([second])
+
+    day_two = _sweep_tax(lam, repo, ["groceries"])
+
+    rows = _rows(repo)
+    assert day_two["rescued"] == 0 and day_two["reaped"] == 1
+    assert "second_pending" not in rows
+    assert rows["settled_twin"]["notes"] == "work lunch"
+    assert not rows["settled_twin"].get("tags")
+
+
+def test_a_later_sweep_never_lands_a_category_on_a_charge_an_earlier_sweep_excluded(lam, repo):
+    # [A2] (P1) Exclusion-only carry leaves the twin unfiled, so before WHIT-666 a later
+    # user-filed pending could still land its category and note on it. Now it's claimed.
+    first = _norm(lam, "first_pending", "2026-06-10", pending=True, category=None)
+    first["budget_excluded"] = True
+    twin = _norm(lam, "settled_twin", "2026-06-11", pending=False, category=None)
+    repo.insert_transactions([first, twin])
+
+    assert _sweep_tax(lam, repo, ["groceries"])["rescued"] == 1
+
+    second = _norm(lam, "second_pending", "2026-06-12", pending=True, category="groceries")
+    second["notes"] = "not a transfer"
+    repo.insert_transactions([second])
+
+    day_two = _sweep_tax(lam, repo, ["groceries"])
+
+    carried = _rows(repo)["settled_twin"]
+    assert day_two["rescued"] == 0
+    assert carried["budget_excluded"] is True
+    assert carried.get("category") != "groceries"
+    assert not carried.get("notes")

@@ -133,3 +133,33 @@ def test_edited_pending_finds_its_one_strict_twin_and_the_edit_carries_across(pe
     assert find(note_pending, [rule_filed], IS_UNFILED) is None
     assert find(rule_pending, [unfiled_twin], IS_UNFILED) is unfiled_twin
     assert find(note_pending, [unfiled_twin], IS_UNFILED) is unfiled_twin
+
+
+@pytest.mark.parametrize(
+    "carried_edit",
+    [{"notes": "first"}, {"tags": ["trip"]}, {"budget_excluded": True}],
+)
+def test_a_settled_charge_that_already_holds_a_carried_edit_is_never_matched_again(pending_carry, carried_edit):
+    # WHIT-666: a note, tags or exclusion already on the settled charge (carried earlier, or set
+    # by the user) makes it claimed — a later pending must not overwrite it.
+    find = pending_carry.find_carry_twin
+
+    # A note-only pending against an unfiled charge that already holds an edit → no twin.
+    edited_unfiled = _row("posted-1", "2026-06-11", status="posted", **carried_edit)
+    assert find(_pending(notes="second"), [edited_unfiled], IS_UNFILED) is None
+
+    # A user-category pending against a rule-filed charge that already holds an edit → no twin.
+    edited_rule_filed = _row(
+        "posted-2", "2026-06-11", status="posted", category="dining", filed_by_rule="rule-9", **carried_edit,
+    )
+    assert find(_pending(category="groceries"), [edited_rule_filed], IS_UNFILED) is None
+
+    # A clean unfiled charge next to the edited one → the clean one is the only candidate.
+    clean = _row("posted-3", "2026-06-11", status="posted")
+    assert find(_pending(notes="second"), [edited_unfiled, clean], IS_UNFILED) is clean
+
+
+def test_a_category_only_pending_never_carries_onto_a_charge_the_user_noted(pending_carry):
+    # Deliberate: a charge that already holds an edit is claimed, like a charge the user filed.
+    user_noted = _row("posted-n", "2026-06-11", status="posted", notes="mine")
+    assert pending_carry.find_carry_twin(_pending(category="groceries"), [user_noted], IS_UNFILED) is None
