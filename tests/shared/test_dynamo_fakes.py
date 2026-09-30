@@ -12,11 +12,7 @@ import pytest
 from botocore.exceptions import ClientError
 
 from _boto_stubs import _Field
-from _dynamo_fakes import FakeTable
-
-
-def _code(excinfo):
-    return excinfo.value.response["Error"]["Code"]
+from _dynamo_fakes import FakeTable, error_code
 
 
 def _is_row(key, pk, sk):
@@ -58,7 +54,7 @@ def test_fake_table_interprets_dynamodb_expressions_and_offers_test_hooks():
             ExpressionAttributeNames={"#items": "items", "#new": "gym"},
             ExpressionAttributeValues={":cat": {"name": "Other"}},
         )
-    assert _code(refused) == "ConditionalCheckFailedException"
+    assert error_code(refused) == "ConditionalCheckFailedException"
 
     # Nested REMOVE, with <> and parenthesised OR in the condition.
     table.update_item(
@@ -92,7 +88,7 @@ def test_fake_table_interprets_dynamodb_expressions_and_offers_test_hooks():
             ExpressionAttributeNames={"#f": "fired"},
             ExpressionAttributeValues={":m": {"a"}, ":v": "a"},
         )
-    assert _code(claimed) == "ConditionalCheckFailedException"
+    assert error_code(claimed) == "ConditionalCheckFailedException"
 
     # ADD on an absent row creates it; DELETE of the last members drops the attribute.
     table.update_item(
@@ -135,7 +131,7 @@ def test_fake_table_interprets_dynamodb_expressions_and_offers_test_hooks():
             ExpressionAttributeNames=names,
             ExpressionAttributeValues={":v": 1},
         )
-    assert _code(too_large) == "ValidationException"
+    assert error_code(too_large) == "ValidationException"
     assert "attr0" not in table.get_item(Key={"pk": "N", "sk": "FIRED"})["Item"]
 
     # --- Hooks: make a call fail, race a write, serve a stale index. ---
@@ -155,7 +151,7 @@ def test_fake_table_interprets_dynamodb_expressions_and_offers_test_hooks():
             Key={"pk": "ACC#1", "sk": "T1"}, UpdateExpression="SET #c = :c",
             ExpressionAttributeNames={"#c": "category"}, ExpressionAttributeValues={":c": "food"},
         )
-    assert _code(failed) == "ProvisionedThroughputExceededException"
+    assert error_code(failed) == "ProvisionedThroughputExceededException"
     table.update_item(
         Key={"pk": "ACC#1", "sk": "T2"}, UpdateExpression="SET #c = :c",
         ExpressionAttributeNames={"#c": "category"}, ExpressionAttributeValues={":c": "food"},
@@ -180,7 +176,7 @@ def test_fake_table_interprets_dynamodb_expressions_and_offers_test_hooks():
             ExpressionAttributeNames={"#v": "version"},
             ExpressionAttributeValues={":next": 2, ":expected": 1},
         )
-    assert _code(lost_race) == "ConditionalCheckFailedException"
+    assert error_code(lost_race) == "ConditionalCheckFailedException"
     assert raced
 
     assert table.update_calls
@@ -242,10 +238,10 @@ def test_an_empty_set_in_add_or_delete_is_rejected_and_writes_nothing():
     with pytest.raises(ClientError) as empty_delete_missing_row:
         _update(table, {"pk": "M", "sk": "MISSING"}, "DELETE", set())
 
-    assert _code(empty_add) == "ValidationException"
-    assert _code(empty_delete) == "ValidationException"
-    assert _code(empty_delete_missing_attribute) == "ValidationException"
-    assert _code(empty_delete_missing_row) == "ValidationException"
+    assert error_code(empty_add) == "ValidationException"
+    assert error_code(empty_delete) == "ValidationException"
+    assert error_code(empty_delete_missing_attribute) == "ValidationException"
+    assert error_code(empty_delete_missing_row) == "ValidationException"
     assert table.get_item(Key={"pk": "N", "sk": "FIRED"})["Item"]["fired"] == {"a"}
     assert table.get_item(Key={"pk": "E", "sk": "EMPTY"})["Item"] == {"pk": "E", "sk": "EMPTY"}
     assert table.get_item(Key={"pk": "M", "sk": "MISSING"}) == {}
@@ -257,5 +253,5 @@ def test_a_first_add_of_a_number_set_is_rejected_and_creates_no_row():
     with pytest.raises(ClientError) as number_set:
         _update(table, {"pk": "N", "sk": "FIRED"}, "ADD", {1})
 
-    assert _code(number_set) == "ValidationException"
+    assert error_code(number_set) == "ValidationException"
     assert table.get_item(Key={"pk": "N", "sk": "FIRED"}) == {}

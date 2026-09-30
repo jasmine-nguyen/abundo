@@ -3,11 +3,7 @@
 import pytest
 from botocore.exceptions import ClientError
 
-from _dynamo_fakes import FakeTable
-
-
-def _code(excinfo):
-    return excinfo.value.response["Error"]["Code"]
+from _dynamo_fakes import FakeTable, error_code
 
 
 def test_an_empty_first_add_on_a_missing_row_is_rejected_and_creates_no_row():
@@ -18,7 +14,7 @@ def test_an_empty_first_add_on_a_missing_row_is_rejected_and_creates_no_row():
         table.update_item(Key={"pk": "N", "sk": "FIRED"}, UpdateExpression="ADD #f :m",
                           ExpressionAttributeNames={"#f": "fired"}, ExpressionAttributeValues={":m": set()})
 
-    assert _code(empty_add) == "ValidationException"
+    assert error_code(empty_add) == "ValidationException"
     assert table.get_item(Key={"pk": "N", "sk": "FIRED"}) == {}
 
 
@@ -32,6 +28,6 @@ def test_an_empty_set_alongside_a_set_clause_writes_neither_clause():
                           ExpressionAttributeNames={"#f": "fired", "#e": "expires"},
                           ExpressionAttributeValues={":m": set(), ":exp": 2})
 
-    assert _code(empty_add) == "ValidationException"
+    assert error_code(empty_add) == "ValidationException"
     assert table.get_item(Key={"pk": "N", "sk": "FIRED"})["Item"] == {
         "pk": "N", "sk": "FIRED", "fired": {"a"}, "expires": 1}

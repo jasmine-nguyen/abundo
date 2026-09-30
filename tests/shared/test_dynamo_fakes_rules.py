@@ -6,11 +6,7 @@ import pytest
 from botocore.exceptions import ClientError
 
 from _boto_stubs import _Field
-from _dynamo_fakes import FakeTable
-
-
-def _code(excinfo):
-    return excinfo.value.response["Error"]["Code"]
+from _dynamo_fakes import FakeTable, error_code
 
 
 def test_a_declared_name_or_value_no_expression_uses_is_rejected():
@@ -31,8 +27,8 @@ def test_a_declared_name_or_value_no_expression_uses_is_rejected():
             ExpressionAttributeValues={":v": 2, ":spare": 3},
         )
 
-    assert _code(unused_name) == "ValidationException"
-    assert _code(unused_value) == "ValidationException"
+    assert error_code(unused_name) == "ValidationException"
+    assert error_code(unused_value) == "ValidationException"
     assert table.get_item(Key={"pk": "A", "sk": "A"})["Item"]["count"] == 1
 
 
@@ -47,7 +43,7 @@ def test_a_set_under_a_missing_parent_map_is_rejected_and_writes_nothing():
             ExpressionAttributeValues={":next": 2, ":val": 1},
         )
 
-    assert _code(invalid) == "ValidationException"
+    assert error_code(invalid) == "ValidationException"
     assert table.get_item(Key={"pk": "A", "sk": "A"})["Item"] == {"pk": "A", "sk": "A", "version": 1}
 
 
@@ -62,8 +58,8 @@ def test_a_number_added_to_a_string_set_is_rejected_and_writes_nothing():
         table.update_item(Key={"pk": "B", "sk": "B"}, UpdateExpression="ADD #f :m",
                           ExpressionAttributeNames={"#f": "fired"}, ExpressionAttributeValues={":m": {"a", 1}})
 
-    assert _code(into_existing) == "ValidationException"
-    assert _code(mixed) == "ValidationException"
+    assert error_code(into_existing) == "ValidationException"
+    assert error_code(mixed) == "ValidationException"
     assert table.get_item(Key={"pk": "A", "sk": "A"})["Item"]["fired"] == {"0"}
     assert table.get_item(Key={"pk": "B", "sk": "B"}) == {}
 
