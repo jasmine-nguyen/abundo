@@ -14,9 +14,10 @@ instead of matching whitelisted strings, so the REAL repositories run over it un
 Anything outside that grammar raises AssertionError: a drifted expression must fail loudly, never
 pass with its guard dead.
 
-It also enforces three of DynamoDB's validation rules: an UpdateExpression over the 4KB ceiling,
-a declared ExpressionAttributeName/Value that no expression uses, and an ADD/DELETE that mixes
-set types (a number into a String Set) raise ValidationException.
+It also enforces four of DynamoDB's validation rules: an UpdateExpression over the 4KB ceiling,
+a declared ExpressionAttributeName/Value that no expression uses, an ADD/DELETE that mixes set
+types (a number into a String Set), and an empty set in ADD/DELETE raise ValidationException. So
+does (an app rule, stricter than DynamoDB) a set holding numbers: the app stores only String Sets.
 Reads and writes are deep copies.
 
 Test hooks: ``fail`` (make a call raise), ``before_write`` / ``before_next_write`` (simulate a
@@ -174,8 +175,13 @@ def _set_type(members):
 
 
 def _check_set_type(operand, current):
-    """A DynamoDB set holds one type (String Set or Number Set); ADD/DELETE must match it."""
+    """ADD/DELETE's set must be non-empty and match the stored set's type, as in DynamoDB. The app
+    stores only String Sets, so (stricter than DynamoDB) a set holding numbers is refused too."""
+    if not operand:
+        raise _client_error("ValidationException", "An string set may not be empty")
     types = _set_type(operand)
+    if "number" in types:
+        raise _client_error("ValidationException", "FakeTable: this app stores only String Sets")
     if isinstance(current, set):
         types |= _set_type(current)
     if len(types) > 1:
