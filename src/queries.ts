@@ -514,8 +514,9 @@ export function useCategories(): CategoriesData {
   const categories = categoriesQuery.data ?? EMPTY_CATEGORIES;
   const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
   const category = useCallback((id: string | null) => (id == null ? undefined : byId.get(id)), [byId]);
-  const refetch = useCallback(() => { categoriesQuery.refetch(); }, [categoriesQuery]);
-  const refetchStale = useCallback(() => { if (categoriesQuery.isStale) categoriesQuery.refetch(); }, [categoriesQuery]);
+  const latest = useLatestRef(categoriesQuery);
+  const refetch = useCallback(() => { latest.current.refetch(); }, [latest]);
+  const refetchStale = useCallback(() => { if (latest.current.isStale) latest.current.refetch(); }, [latest]);
   return { categories, category, isLoading: categoriesQuery.isLoading, isError: categoriesQuery.isError, refetch, refetchStale };
 }
 
