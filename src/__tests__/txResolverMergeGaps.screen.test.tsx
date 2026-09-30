@@ -16,24 +16,18 @@ import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Transaction } from '../context';
+import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';
-jest.mock('../auth', () => ({ getStatus: () => mockAuthStatus, subscribe: () => () => {} }));
-
-const mockFeed = jest.fn<(cursor?: string) => Promise<unknown>>();
-const mockUncat = jest.fn<(cursor?: string) => Promise<unknown>>();
-const mockRecent = jest.fn<() => Promise<unknown>>();
-const mockCategories = jest.fn<() => Promise<unknown>>();
-const mockBalances = jest.fn<() => Promise<unknown>>();
-jest.mock('../api', () => ({
-  fetchTransactionsFeed: (cursor?: string) => mockFeed(cursor),
-  fetchUncategorizedFeed: (cursor?: string) => mockUncat(cursor),
-  fetchTransactions: () => mockRecent(),
-  fetchCategories: () => mockCategories(),
-  fetchAccountBalances: () => mockBalances(),
+jest.mock('../auth', () => ({
+  getStatus: () => mockAuthStatus,
+  subscribe: () => () => {},
+  getAuthToken: async () => 'test-id-token',
 }));
 
 import { useTransactionResolver, useTransactionsSearchQuery, budgetTransactionsKey, categoryTransactionsKey, transactionsKey, transactionsRecentKey, transactionsSearchKey } from '../queries';
+
+const server = installFakeServer();
 
 const tx = (id: string, over: Partial<Transaction> = {}): Transaction => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
@@ -44,15 +38,10 @@ const ids = (list: Transaction[]) => list.map((t) => t.transaction_id);
 const makeClient = () => new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
 const wrapper = (client: QueryClient) => ({ children }: { children: React.ReactNode }) =>
   React.createElement(QueryClientProvider, { client }, children);
-const emptyFeed = () => mockFeed.mockResolvedValue({ transactions: [], nextCursor: null });
+const emptyFeed = () => server.seed('/transactions/feed', { transactions: [], nextCursor: null });
 
 beforeEach(() => {
   mockAuthStatus = 'authed';
-  mockFeed.mockReset();
-  mockUncat.mockReset();
-  mockRecent.mockReset().mockResolvedValue([]);
-  mockCategories.mockReset().mockResolvedValue([]);
-  mockBalances.mockReset().mockResolvedValue([]);
 });
 
 describe('[R] useTransactionResolver — cross-scoped-cache merge edges', () => {

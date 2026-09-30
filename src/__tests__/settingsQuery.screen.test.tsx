@@ -1,18 +1,19 @@
 // WHIT-459 settings server-rows fold — every Settings screen test that runs the REAL query layer
 // (real <QueryClientProvider> + real useSettingsScreenData/useRulesScreenData/usePayCycle, with
-// ../api + ../auth + ../context + expo-router hand-mocked) lives here, one child describe per source.
+// real ../api over the fake server; ../auth + ../context + expo-router hand-mocked) lives here, one
+// child describe per source.
 // Folded in (scenarios preserved 1:1, 23 its):
 //   - WHIT-191a  server rows on the real query layer      (was settingsQuery — the survivor)
 //   - WHIT-191a  gaps: hard-fail / cache-first / focus     (was settingsQueryGaps)
 //   - WHIT-198   gaps: loan-only / ordering / fan-out      (was settingsSetupErrorGaps)
 //
-// The three sources diverged in all four mock factories; unified here to supersets that hoist once:
+// The three sources diverged in all their mock factories; unified here to supersets that hoist once:
 //   ../auth      — the LIVE store (settingsQuery's), driven by setAuth, plus a shared mockSignOut so
 //                  the WHIT-198 log-out-mid-outage test can assert; the two static-'authed' sources
 //                  never flip, and each describe's beforeEach re-seeds 'authed' so the shared mutable
 //                  store can't leak a status across describes.
-//   ../api       — jest.fn-backed fetchCategories/fetchLoanFacts/listRules + a resolving
-//                  fetchPayCycle; each describe seeds listRules to its own fixture.
+//   fake server  — each describe seeds /categories, /loanfacts and /rules to its own fixtures;
+//                  /paycycle answers the server default (14 days).
 //   ../context   — one stub; the screen reads only alerts/setSheet off context (rules AND cycleName
 //                  are read from the query hooks, so both stubbed fields are vestigial).
 //   expo-router  — shared mockReplace/mockSignOut so the WHIT-198 log-out-mid-outage test can assert.
@@ -21,6 +22,7 @@ import React from 'react';
 import { Text } from 'react-native';
 import { render, screen, renderHook, act, waitFor, fireEvent } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { installFakeServer } from './support/fakeServer';
 
 // Live miniature auth store (superset — only settingsQuery flips it; the gaps describes stay 'authed').
 let mockAuthStatus = 'authed';
@@ -34,21 +36,12 @@ jest.mock('../auth', () => ({
   },
   getCurrentUser: () => null,
   signOut: () => mockSignOut(),
+  getAuthToken: async () => 'test-id-token',
 }));
 function setAuth(next: string) {
   mockAuthStatus = next;
   mockAuthListeners.forEach((l) => l());
 }
-
-const mockFetchCategories = jest.fn<() => Promise<unknown>>();
-const mockFetchLoanFacts = jest.fn<() => Promise<unknown>>();
-const mockListRules = jest.fn<() => Promise<unknown>>();
-jest.mock('../api', () => ({
-  fetchCategories: () => mockFetchCategories(),
-  fetchLoanFacts: () => mockFetchLoanFacts(),
-  listRules: () => mockListRules(),
-  fetchPayCycle: () => Promise.resolve({ length: 14, last_pay_date: '2024-01-03' }),
-}));
 
 // Real selectors (loanFactsReady) + composite deps; stub only the store-backed client-state rows.
 // `rules` and `cycleName` here are vestigial — the screen reads them from the query hooks, not context.
@@ -68,6 +61,13 @@ jest.mock('expo-router', () => {
 
 import Settings from '../../app/settings';
 import { useSettingsScreenData } from '../queries';
+
+const server = installFakeServer();
+const CATEGORIES = '/categories';
+const LOAN_FACTS = '/loanfacts';
+const RULES = '/rules';
+const categoryReads = () => server.sent('GET', CATEGORIES).length;
+const loanReads = () => server.sent('GET', LOAN_FACTS).length;
 
 // ===== WHIT-191a — the Settings server-backed rows (categories count + loan-facts status)
 // on the real query layer: not fetched before login, fires on auth flip, self-heals a
@@ -91,9 +91,9 @@ describe('WHIT-191a — Settings server rows on the real query layer', () => {
   beforeEach(() => {
     mockAuthStatus = 'authed';
     mockAuthListeners.clear();
-    mockFetchCategories.mockReset().mockResolvedValue(CATS);
-    mockFetchLoanFacts.mockReset().mockResolvedValue(READY_FACTS);
-    mockListRules.mockReset().mockResolvedValue([]); // rules read — kept deterministic for the "…" count
+    server.seed(CATEGORIES, CATS);
+    server.seed(LOAN_FACTS, READY_FACTS);
+    server.seed(RULES, []); // rules read — kept deterministic for the "…" count
   });
 
   it('shows the category count and "Edit" loan status from the query', async () => {
@@ -103,21 +103,20 @@ describe('WHIT-191a — Settings server rows on the real query layer', () => {
   });
 
   it('shows "Set up" when loan facts are not filled in', async () => {
-    mockFetchLoanFacts.mockReset().mockResolvedValue(EMPTY_FACTS);
+    server.seed(LOAN_FACTS, EMPTY_FACTS);
     renderSettings();
     await screen.findByText('3');
     expect(screen.getByText('Set up')).toBeTruthy();
   });
 
   it('shows "…" (not "0") while first-loading, then the real count', async () => {
-    let resolveCats: (v: unknown) => void = () => {};
-    mockFetchCategories.mockReset().mockReturnValue(new Promise((r) => { resolveCats = r; }));
+    const heldCats = server.hold(CATEGORIES);
     renderSettings();
     // All three query-backed rows — categories count, loan status, AND the Automation-rules
     // count (WHIT-198) — show "…" while first-loading; none flashes a misleading "0".
     expect(screen.getAllByText('…').length).toBe(3);
     expect(screen.queryByText('0')).toBeNull(); // fail-on-revert for the rules-row "0" flash
-    await act(async () => { resolveCats(CATS); });
+    await act(async () => { heldCats.release(); });
     expect(await screen.findByText('3')).toBeTruthy();
   });
 
@@ -136,19 +135,19 @@ describe('WHIT-191a — Settings server rows on the real query layer', () => {
   it('does not fetch before login, then fires on auth flip to authed', async () => {
     mockAuthStatus = 'anon';
     renderSettings();
-    expect(mockFetchCategories).not.toHaveBeenCalled();
-    expect(mockFetchLoanFacts).not.toHaveBeenCalled();
+    expect(categoryReads()).toBe(0);
+    expect(loanReads()).toBe(0);
 
     await act(async () => { setAuth('authed'); });
     expect(await screen.findByText('3')).toBeTruthy();
-    expect(mockFetchLoanFacts).toHaveBeenCalled();
+    expect(loanReads()).toBeGreaterThan(0);
   });
 
   it('a transient 5xx on the loan-facts read retries and self-heals', async () => {
-    mockFetchLoanFacts.mockReset().mockRejectedValueOnce(new Error('API error: 503')).mockResolvedValue(READY_FACTS);
+    server.once('GET', LOAN_FACTS, { status: 503 });
     renderSettings(makeClient(2));
     expect(await screen.findByText('Edit')).toBeTruthy();
-    expect(mockFetchLoanFacts).toHaveBeenCalledTimes(2);
+    expect(loanReads()).toBe(2);
   });
 });
 
@@ -179,14 +178,14 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
   beforeEach(() => {
     mockAuthStatus = 'authed';
     mockAuthListeners.clear();
-    mockFetchCategories.mockReset().mockResolvedValue(CATS);
-    mockFetchLoanFacts.mockReset().mockResolvedValue(READY_FACTS);
-    mockListRules.mockReset().mockResolvedValue(ONE_RULE);
+    server.seed(CATEGORIES, CATS);
+    server.seed(LOAN_FACTS, READY_FACTS);
+    server.seed(RULES, ONE_RULE);
   });
 
   describe('sustained hard failure (no self-heal)', () => {
     it('hook surfaces categoriesError (not a fake 0) and drops isLoading', async () => {
-      mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
+      server.fail(CATEGORIES, 500);
       const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false)) });
 
       await waitFor(() => expect(result.current.categoriesError).toBe(true));
@@ -197,7 +196,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
     // WHIT-198 fail-on-revert: before the fix the categories row collapsed to a misleading "0".
     // Reverting settings.tsx to `String(categoriesCount)` brings the "0" back and fails this.
     it('Settings renders "—" + a Retry (not the misleading "0") once the read has hard-failed', async () => {
-      mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
+      server.fail(CATEGORIES, 500);
       render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
 
       // loan facts still resolve → "Edit" lets us wait past first paint deterministically.
@@ -212,16 +211,16 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
 
   describe('the inline Retry re-reads both server rows (WHIT-198)', () => {
     it('press Retry → categories + loan facts refetch and the rows recover', async () => {
-      mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
-      mockFetchLoanFacts.mockReset().mockRejectedValue(new Error('API error: 500'));
+      server.fail(CATEGORIES, 500);
+      server.fail(LOAN_FACTS, 500);
       render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
 
       const retry = await screen.findByTestId('settings-setup-retry');
       await waitFor(() => expect(screen.getAllByText('—').length).toBe(2)); // both rows honestly unknown
 
-      // re-arm both reads to succeed, then retry
-      mockFetchCategories.mockReset().mockResolvedValue(CATS);
-      mockFetchLoanFacts.mockReset().mockResolvedValue(READY_FACTS);
+      // re-arm both reads to succeed (a queued reply goes out ahead of the failure), then retry
+      server.once('GET', CATEGORIES, { body: CATS });
+      server.once('GET', LOAN_FACTS, { body: READY_FACTS });
       fireEvent.press(retry);
 
       await waitFor(() => expect(screen.queryByText('—')).toBeNull()); // rows recovered
@@ -237,9 +236,10 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
       await waitFor(() => expect(result.current.categoriesCount).toBe(2)); // first load succeeded
 
       // the NEXT read fails — but we already hold a cached count
-      mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 503'));
+      const before = categoryReads();
+      server.fail(CATEGORIES, 503);
       await act(async () => { result.current.refetchStale(); });
-      await waitFor(() => expect(mockFetchCategories.mock.calls.length).toBe(1)); // the refetch fired + failed
+      await waitFor(() => expect(categoryReads()).toBe(before + 1)); // the refetch fired + failed
 
       // firstLoadError guard: data is retained on a background-refetch failure → no "—", real count stays
       expect(result.current.categoriesError).toBe(false);
@@ -249,11 +249,12 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
 
   describe('partial-load flash', () => {
     it('reports isLoading true while categories are pending even though loan facts are cached-ready', async () => {
-      mockFetchCategories.mockReset().mockReturnValue(new Promise(() => {})); // never resolves
+      const heldCats = server.hold(CATEGORIES); // not answered during the test
       const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false)) });
 
       await waitFor(() => expect(result.current.loanReady).toBe(true)); // loan settled first
       expect(result.current.isLoading).toBe(true); // ...but the whole screen (incl. loan row) still shows "…"
+      await act(async () => { heldCats.release(); });
     });
   });
 
@@ -263,8 +264,8 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
       const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(client) });
       await waitFor(() => expect(result.current.loanReady).toBe(true));
 
-      const before = mockFetchLoanFacts.mock.calls.length;
-      const catBefore = mockFetchCategories.mock.calls.length;
+      const before = loanReads();
+      const catBefore = categoryReads();
 
       // Mirror the production write: setQueryData(next) + invalidate ONLY loanFacts.
       await act(async () => {
@@ -272,8 +273,8 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
         await client.invalidateQueries({ queryKey: ['loanFacts'] });
       });
 
-      await waitFor(() => expect(mockFetchLoanFacts.mock.calls.length).toBe(before + 1)); // active observer refetched
-      expect(mockFetchCategories.mock.calls.length).toBe(catBefore); // invalidate was loanFacts-only
+      await waitFor(() => expect(loanReads()).toBe(before + 1)); // active observer refetched
+      expect(categoryReads()).toBe(catBefore); // invalidate was loanFacts-only
       expect(result.current.loanReady).toBe(true); // never flickers to "Set up" across the refetch
     });
   });
@@ -283,24 +284,24 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
       const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false, 60_000)) });
       await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-      const cats = mockFetchCategories.mock.calls.length;
-      const loan = mockFetchLoanFacts.mock.calls.length;
+      const cats = categoryReads();
+      const loan = loanReads();
       await act(async () => { result.current.refetchStale(); });
 
-      expect(mockFetchCategories.mock.calls.length).toBe(cats); // still fresh → skipped
-      expect(mockFetchLoanFacts.mock.calls.length).toBe(loan);
+      expect(categoryReads()).toBe(cats); // still fresh → skipped
+      expect(loanReads()).toBe(loan);
     });
 
     it('DOES refetch both when they have gone stale', async () => {
       const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false, 0)) });
       await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-      const cats = mockFetchCategories.mock.calls.length;
-      const loan = mockFetchLoanFacts.mock.calls.length;
+      const cats = categoryReads();
+      const loan = loanReads();
       await act(async () => { result.current.refetchStale(); });
 
-      await waitFor(() => expect(mockFetchCategories.mock.calls.length).toBe(cats + 1));
-      expect(mockFetchLoanFacts.mock.calls.length).toBe(loan + 1);
+      await waitFor(() => expect(categoryReads()).toBe(cats + 1));
+      expect(loanReads()).toBe(loan + 1);
     });
   });
 
@@ -309,7 +310,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
   // showed a misleading "0").
   describe('rules-row hard failure', () => {
     it('rules read fails → Automation rules shows "—" + the setup retry, others keep their values', async () => {
-      mockListRules.mockReset().mockRejectedValue(new Error('API error: 500'));
+      server.fail(RULES, 500);
       render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
 
       expect(await screen.findByText('2')).toBeTruthy(); // categories loaded (2), unaffected
@@ -320,13 +321,13 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
     });
 
     it('the setup Retry re-reads the failed rules query too (fan-out includes rules)', async () => {
-      mockListRules.mockReset().mockRejectedValue(new Error('API error: 500'));
+      server.fail(RULES, 500);
       render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
 
       const retry = await screen.findByTestId('settings-setup-retry');
       await screen.findByText('—'); // rules failed → "—"
 
-      mockListRules.mockReset().mockResolvedValue(ONE_RULE); // re-arm the rules read
+      server.once('GET', RULES, { body: ONE_RULE }); // re-arm the rules read
       fireEvent.press(retry);
 
       expect(await screen.findByText('1')).toBeTruthy(); // rules recovered to its real count
@@ -341,17 +342,17 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
   // background-refetch failure over cached data is a different case — that keeps the cached value.)
   describe('focus refetch re-arms a first-load failure', () => {
     it('a first-load-failed categories read is stale, so refetchStale() on focus retries + recovers it', async () => {
-      mockFetchCategories.mockReset().mockRejectedValueOnce(new Error('API error: 500')).mockResolvedValue(CATS);
+      server.once('GET', CATEGORIES, { status: 500 });
       const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false)) });
 
       await waitFor(() => expect(result.current.categoriesError).toBe(true)); // first load failed, nothing cached
-      const callsAfterFail = mockFetchCategories.mock.calls.length;
+      const callsAfterFail = categoryReads();
 
       await act(async () => { result.current.refetchStale(); }); // returning to the tab
 
       await waitFor(() => expect(result.current.categoriesError).toBe(false)); // recovered without pressing Retry
       expect(result.current.categoriesCount).toBe(2);
-      expect(mockFetchCategories.mock.calls.length).toBe(callsAfterFail + 1); // focus DID re-issue the failed read
+      expect(categoryReads()).toBe(callsAfterFail + 1); // focus DID re-issue the failed read
     });
   });
 });
@@ -392,10 +393,10 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
   beforeEach(() => {
     mockAuthStatus = 'authed';
     mockAuthListeners.clear();
-    mockFetchCategories.mockReset().mockResolvedValue(CATS);
-    mockFetchLoanFacts.mockReset().mockResolvedValue(READY_FACTS);
+    server.seed(CATEGORIES, CATS);
+    server.seed(LOAN_FACTS, READY_FACTS);
     // rules length 1 so the Automation-rules row shows a stable "1" during an outage.
-    mockListRules.mockReset().mockResolvedValue([{ id: 'r1', field: 'description', operator: 'contains', value: 'X', categoryId: 'c' }]);
+    server.seed(RULES, [{ id: 'r1', field: 'description', operator: 'contains', value: 'X', categoryId: 'c' }]);
   });
 
   // [A5] mirror of the implementer's categories-only case, for the LOAN row. Before the fix the
@@ -403,7 +404,7 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
   // `loanReady ? 'Edit' : 'Set up'` brings "Set up" back and drops the "—", failing this.
   describe('loan-row-ONLY hard failure (categories fine)', () => {
     it('loan shows "—" + retry, categories keeps its real count (no fake "Set up")', async () => {
-      mockFetchLoanFacts.mockReset().mockRejectedValue(new Error('API error: 500'));
+      server.fail(LOAN_FACTS, 500);
       render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
 
       expect(await screen.findByText('2')).toBeTruthy();        // categories count intact
@@ -421,20 +422,20 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
   // categories read would NOT be re-issued — this counts both mocks to prove the fan-out.
   describe('Retry after a single-row failure re-issues BOTH reads', () => {
     it('loan-only failure → Retry refetches categories AND loan facts', async () => {
-      mockFetchLoanFacts.mockReset().mockRejectedValue(new Error('API error: 500'));
+      server.fail(LOAN_FACTS, 500);
       render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
 
       const retry = await screen.findByTestId('settings-setup-retry');
       await screen.findByText('2');                             // categories loaded once
-      const catsBefore = mockFetchCategories.mock.calls.length; // == 1
-      const loanBefore = mockFetchLoanFacts.mock.calls.length;  // == 1
+      const catsBefore = categoryReads(); // == 1
+      const loanBefore = loanReads();     // == 1
 
-      mockFetchLoanFacts.mockResolvedValue(READY_FACTS); // re-arm the loan read (no reset → keep the call count)
+      server.once('GET', LOAN_FACTS, { body: READY_FACTS }); // re-arm the loan read, ahead of the failure
       fireEvent.press(retry);
 
       await waitFor(() => expect(screen.getByText('Edit')).toBeTruthy()); // loan recovered
-      expect(mockFetchCategories.mock.calls.length).toBe(catsBefore + 1);  // the healthy row refetched too
-      expect(mockFetchLoanFacts.mock.calls.length).toBe(loanBefore + 1);
+      expect(categoryReads()).toBe(catsBefore + 1);  // the healthy row refetched too
+      expect(loanReads()).toBe(loanBefore + 1);
       expect(screen.queryByTestId('settings-setup-error')).toBeNull();     // affordance gone
     });
   });
@@ -447,19 +448,19 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
   // racy against the sibling Automation-rules row's cold-load "0", so the hook check is the anchor.
   describe('one row errored while the other is still loading', () => {
     it('hook: categoriesError flips true while isLoading stays true (loan still pending)', async () => {
-      mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
-      mockFetchLoanFacts.mockReset().mockReturnValue(new Promise(() => {})); // never resolves
+      server.fail(CATEGORIES, 500);
+      const heldLoan = server.hold(LOAN_FACTS); // not answered during the test
       const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false)) });
 
       await waitFor(() => expect(result.current.categoriesError).toBe(true)); // the error landed…
       expect(result.current.isLoading).toBe(true); // …but the screen is still loading (loan pending)
       expect(result.current.loanReadyError).toBe(false); // the pending read hasn't errored
+      await act(async () => { heldLoan.release(); });
     });
 
     it('screen: withholds the error card while still loading, then surfaces it once loading ends', async () => {
-      let resolveLoan!: (v: unknown) => void;
-      mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
-      mockFetchLoanFacts.mockReset().mockReturnValue(new Promise((res) => { resolveLoan = res; })); // held pending
+      server.fail(CATEGORIES, 500);
+      const heldLoan = server.hold(LOAN_FACTS); // held pending
       render(
         <QueryClientProvider client={makeClient(false)}>
           <ErrorProbe />
@@ -475,7 +476,7 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
       expect(screen.queryByText('—')).toBeNull(); // rows still "…", no premature dash
 
       // let loan settle → isLoading false, categoriesError still true → the card + "—" now surface
-      await act(async () => { resolveLoan(READY_FACTS); });
+      await act(async () => { heldLoan.release(); });
       expect(await screen.findByTestId('settings-setup-error')).toBeTruthy();
       expect(screen.getByText('—')).toBeTruthy();
     });
@@ -485,16 +486,16 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
   // successful Retry → both false. Complements the screen tests at the data-source boundary.
   describe('hook surfaces both per-row error flags together', () => {
     it('both flags true on a dual 500, both false after a successful refetch', async () => {
-      mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
-      mockFetchLoanFacts.mockReset().mockRejectedValue(new Error('API error: 500'));
+      server.fail(CATEGORIES, 500);
+      server.fail(LOAN_FACTS, 500);
       const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false)) });
 
       await waitFor(() => expect(result.current.categoriesError).toBe(true));
       expect(result.current.loanReadyError).toBe(true);
       expect(result.current.isLoading).toBe(false); // both settled (errored) → not loading
 
-      mockFetchCategories.mockReset().mockResolvedValue(CATS);
-      mockFetchLoanFacts.mockReset().mockResolvedValue(READY_FACTS);
+      server.once('GET', CATEGORIES, { body: CATS });
+      server.once('GET', LOAN_FACTS, { body: READY_FACTS });
       await act(async () => { result.current.refetch(); });
 
       await waitFor(() => expect(result.current.categoriesError).toBe(false));
@@ -508,7 +509,7 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
   // card: every non-server row must stay rendered + usable during a categories outage.
   describe('non-server rows stay usable during a categories outage', () => {
     it('profile, Automation rules, Pay cycle, Log out all render + Log out still fires', async () => {
-      mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
+      server.fail(CATEGORIES, 500);
       render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
 
       await screen.findByTestId('settings-setup-error');    // outage is live

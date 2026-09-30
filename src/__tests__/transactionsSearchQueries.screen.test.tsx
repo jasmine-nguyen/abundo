@@ -6,26 +6,26 @@
 //   [Q4] pull-to-refresh under a search refetches the SEARCH, not the feed — unless the feed failed.
 //   [Q5] useTransactionResolver finds a row that lives only in a search result, and picks up a
 //        patch to it (the picker/confirm sheets resolve through this).
+// Real ../api over the fake server; ../auth mocked.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Transaction } from '../context';
+import { installFakeServer } from './support/fakeServer';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-
-const mockFeed = jest.fn<(cursor?: string) => Promise<unknown>>();
-const mockSearch = jest.fn<(tab: string, query: string) => Promise<unknown>>();
-jest.mock('../api', () => ({
-  fetchTransactionsFeed: (cursor?: string) => mockFeed(cursor),
-  fetchUncategorizedFeed: () => Promise.resolve({ transactions: [], nextCursor: null }),
-  fetchTransactionsSearch: (tab: string, query: string) => mockSearch(tab, query),
-  fetchTransactions: () => Promise.resolve([]),
-  fetchCategories: () => Promise.resolve([]),
-  fetchAccountBalances: () => Promise.resolve([]),
+jest.mock('../auth', () => ({
+  getStatus: () => 'authed',
+  subscribe: () => () => {},
+  getAuthToken: async () => 'test-id-token',
 }));
 
 import { useTransactionsScreenData, useTransactionResolver } from '../queries';
+
+const server = installFakeServer();
+const FEED = '/transactions/feed';
+const SEARCH = '/transactions/search';
+const ALL_STEVEN = '/transactions/search?tab=all&q=steven';
 
 const tx = (id: string, over: Partial<Transaction> = {}): Transaction => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
@@ -38,10 +38,12 @@ const wrapper = (client: QueryClient) => ({ children }: { children: React.ReactN
   React.createElement(QueryClientProvider, { client }, children);
 type Props = { tab: 'all' | 'uncategorized'; query: string };
 
+// The pretend server answers one reply per path, so each test seeds the match for the tab + query it mounts with.
+const seedSearch = (tab: string, query: string) =>
+  server.seed(SEARCH, { transactions: [tx(`${tab}-${query}`)], truncated: false });
+
 beforeEach(() => {
-  mockFeed.mockReset().mockResolvedValue({ transactions: [tx('feed1')], nextCursor: 'more' });
-  mockSearch.mockReset().mockImplementation((tab, query) =>
-    Promise.resolve({ transactions: [tx(`${tab}-${query}`)], truncated: false }));
+  server.seed(FEED, { transactions: [tx('feed1')], nextCursor: 'more' });
 });
 
 function mountScreenData(client: QueryClient, initialProps: Props) {
@@ -51,10 +53,11 @@ function mountScreenData(client: QueryClient, initialProps: Props) {
 }
 
 it('[Q1] searches the tab + query and leaves `transactions` as the normal feed', async () => {
+  seedSearch('all', 'steven');
   const { result } = mountScreenData(makeClient(), { tab: 'all', query: 'steven' });
 
   await waitFor(() => expect(result.current.search.answered).toBe(true));
-  expect(mockSearch).toHaveBeenCalledWith('all', 'steven');
+  expect(server.sent('GET', ALL_STEVEN).length).toBeGreaterThanOrEqual(1);
   expect(ids(result.current.search.results)).toEqual(['all-steven']);
   expect(ids(result.current.transactions)).toEqual(['feed1']);
 });
@@ -63,95 +66,101 @@ it('an empty query runs no search and reports it inactive', async () => {
   const { result } = mountScreenData(makeClient(), { tab: 'all', query: '' });
 
   await waitFor(() => expect(ids(result.current.transactions)).toEqual(['feed1']));
-  expect(mockSearch).not.toHaveBeenCalled();
+  expect(server.sentUnder('GET', SEARCH)).toHaveLength(0);
   expect(result.current.search.active).toBe(false);
   expect(result.current.search.answered).toBe(false);
 });
 
 it('[Q2] the previous query\'s result is a placeholder, not an answer, while the next loads', async () => {
-  let resolveNext: (value: unknown) => void = () => {};
+  seedSearch('all', 'ste');
   const { result, rerender } = mountScreenData(makeClient(), { tab: 'all', query: 'ste' });
   await waitFor(() => expect(result.current.search.answered).toBe(true));
 
-  mockSearch.mockImplementation(() => new Promise((resolve) => { resolveNext = resolve; }));
+  const next = server.hold(SEARCH);
+  server.once('GET', SEARCH, { body: { transactions: [tx('all-steven')], truncated: true } });
   rerender({ tab: 'all', query: 'steven' });
 
-  await waitFor(() => expect(mockSearch).toHaveBeenLastCalledWith('all', 'steven'));
+  await waitFor(() => expect(server.requests().at(-1)?.path).toBe(ALL_STEVEN));
   expect(ids(result.current.search.results)).toEqual(['all-ste']); // shown while loading
   expect(result.current.search.answered).toBe(false);
-  await act(async () => { resolveNext({ transactions: [tx('all-steven')], truncated: true }); });
+  await act(async () => { next.release(); });
   await waitFor(() => expect(result.current.search.answered).toBe(true));
   expect(result.current.search.truncated).toBe(true);
 });
 
 it('[Q3] never carries one tab\'s results onto the other tab as a placeholder', async () => {
+  seedSearch('uncategorized', 'steven');
   const { result, rerender } = mountScreenData(makeClient(), { tab: 'uncategorized', query: 'steven' });
   await waitFor(() => expect(result.current.search.answered).toBe(true));
 
-  mockSearch.mockImplementation(() => new Promise(() => {}));
+  const never = server.hold(SEARCH);
   rerender({ tab: 'all', query: 'steven' });
 
-  await waitFor(() => expect(mockSearch).toHaveBeenLastCalledWith('all', 'steven'));
+  await waitFor(() => expect(server.requests().at(-1)?.path).toBe(ALL_STEVEN));
   expect(result.current.search.results).toEqual([]);
   expect(result.current.search.answered).toBe(false);
+  await act(async () => { never.release(); });
 });
 
 it('[Q4] pull-to-refresh under a search refetches the search, not the feed', async () => {
+  seedSearch('all', 'steven');
   const { result } = mountScreenData(makeClient(), { tab: 'all', query: 'steven' });
   await waitFor(() => expect(result.current.search.answered).toBe(true));
-  mockFeed.mockClear();
-  mockSearch.mockClear();
+  const feedCalls = server.sentUnder('GET', FEED).length;
+  const searchCalls = server.sent('GET', ALL_STEVEN).length;
 
   await act(async () => { await result.current.refetchList(); });
 
-  expect(mockSearch).toHaveBeenCalledWith('all', 'steven');
-  expect(mockFeed).not.toHaveBeenCalled();
+  expect(server.sent('GET', ALL_STEVEN).length).toBeGreaterThan(searchCalls);
+  expect(server.sentUnder('GET', FEED)).toHaveLength(feedCalls);
 });
 
 it('[Q4b] Retry under a search still reloads a FAILED feed (its error screen hides the search)', async () => {
-  mockFeed.mockRejectedValueOnce(new Error('offline'));
+  seedSearch('all', 'steven');
+  server.once('GET', FEED, 'dropped');
   const { result } = mountScreenData(makeClient(), { tab: 'all', query: 'steven' });
   await waitFor(() => expect(result.current.isError).toBe(true));
-  mockFeed.mockClear();
+  const feedCalls = server.sentUnder('GET', FEED).length;
 
   await act(async () => { await result.current.refetchList(); });
 
-  expect(mockFeed).toHaveBeenCalled();
+  expect(server.sentUnder('GET', FEED).length).toBeGreaterThan(feedCalls);
   await waitFor(() => expect(result.current.isError).toBe(false));
 });
 
 it('[Q4d] with rows still on screen, a failed feed refresh does not stop a pull re-asking the search', async () => {
+  seedSearch('all', 'steven');
   const client = makeClient();
   const { result } = mountScreenData(client, { tab: 'all', query: 'steven' });
   await waitFor(() => expect(result.current.search.answered).toBe(true));
   await waitFor(() => expect(ids(result.current.transactions)).toEqual(['feed1']));
-  mockFeed.mockRejectedValueOnce(new Error('offline'));
+  server.once('GET', FEED, 'dropped');
   await act(async () => { await client.refetchQueries({ queryKey: ['transactions'] }); });
   await waitFor(() => expect(result.current.isError).toBe(true));
-  mockSearch.mockClear();
-  mockFeed.mockClear();
+  const feedCalls = server.sentUnder('GET', FEED).length;
+  const searchCalls = server.sent('GET', ALL_STEVEN).length;
 
   await act(async () => { await result.current.refetchList(); });
 
-  expect(mockSearch).toHaveBeenCalledWith('all', 'steven');
-  expect(mockFeed).not.toHaveBeenCalled();
+  expect(server.sent('GET', ALL_STEVEN).length).toBeGreaterThan(searchCalls);
+  expect(server.sentUnder('GET', FEED)).toHaveLength(feedCalls);
 });
 
 // A search that already had an answer and then failed a refresh keeps its error flag while a
 // manual Retry runs — the screen must show "Searching…", not the stale error.
 it('[Q4c] a manual Retry after a failed refresh reports "searching", not the old error', async () => {
-  let resolveRetry: (value: unknown) => void = () => {};
+  seedSearch('all', 'steven');
   const { result } = mountScreenData(makeClient(), { tab: 'all', query: 'steven' });
   await waitFor(() => expect(result.current.search.answered).toBe(true));
-  mockSearch.mockRejectedValueOnce(new Error('offline'));
+  server.once('GET', SEARCH, 'dropped');
   await act(async () => { await result.current.refetchList(); });
   await waitFor(() => expect(result.current.search.isError).toBe(true));
 
-  mockSearch.mockImplementation(() => new Promise((resolve) => { resolveRetry = resolve; }));
+  const retry = server.hold(SEARCH);
   act(() => { result.current.search.retry(); });
 
   await waitFor(() => expect(result.current.search.isError).toBe(false));
-  await act(async () => { resolveRetry({ transactions: [tx('all-steven')], truncated: false }); });
+  await act(async () => { retry.release(); });
   await waitFor(() => expect(result.current.search.answered).toBe(true));
 });
 

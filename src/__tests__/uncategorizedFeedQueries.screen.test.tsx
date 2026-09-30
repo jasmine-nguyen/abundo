@@ -16,24 +16,20 @@ import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Transaction } from '../context';
+import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';
-jest.mock('../auth', () => ({ getStatus: () => mockAuthStatus, subscribe: () => () => {} }));
-
-const mockFeed = jest.fn<(cursor?: string) => Promise<unknown>>();
-const mockUncat = jest.fn<(cursor?: string) => Promise<unknown>>();
-const mockRecent = jest.fn<() => Promise<unknown>>();
-const mockCategories = jest.fn<() => Promise<unknown>>();
-const mockBalances = jest.fn<() => Promise<unknown>>();
-jest.mock('../api', () => ({
-  fetchTransactionsFeed: (cursor?: string) => mockFeed(cursor),
-  fetchUncategorizedFeed: (cursor?: string) => mockUncat(cursor),
-  fetchTransactions: () => mockRecent(),
-  fetchCategories: () => mockCategories(),
-  fetchAccountBalances: () => mockBalances(),
+jest.mock('../auth', () => ({
+  getStatus: () => mockAuthStatus,
+  subscribe: () => () => {},
+  getAuthToken: async () => 'test-id-token',
 }));
 
 import { useTransactionsScreenData, useTransactionResolver, transactionsKey, uncategorizedFeedKey, budgetTransactionsKey, categoryTransactionsKey, transactionsRecentKey } from '../queries';
+
+const server = installFakeServer();
+const FEED = '/transactions/feed';
+const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
 
 const tx = (id: string, over: Partial<Transaction> = {}): Transaction => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
@@ -47,11 +43,6 @@ const wrapper = (client: QueryClient) => ({ children }: { children: React.ReactN
 
 beforeEach(() => {
   mockAuthStatus = 'authed';
-  mockFeed.mockReset();
-  mockUncat.mockReset();
-  mockRecent.mockReset().mockResolvedValue([]);
-  mockCategories.mockReset().mockResolvedValue([]);
-  mockBalances.mockReset().mockResolvedValue([]);
 });
 
 // [C1] tab-switch lifecycle — one mount, tab arg changes. Switching back to 'all' must keep the
@@ -60,24 +51,24 @@ beforeEach(() => {
 // would show u-rows, not plain1.
 describe('[C1] tab-switch lifecycle (all -> uncategorized -> all)', () => {
   it('keeps the plain feed on the way back and re-fetches neither feed', async () => {
-    mockFeed.mockResolvedValue({ transactions: [tx('plain1')], nextCursor: null });
-    mockUncat.mockResolvedValue({ transactions: [tx('u1')], nextCursor: null });
+    server.seed(FEED, { transactions: [tx('plain1')], nextCursor: null });
+    server.seed(UNCATEGORIZED_FEED, { transactions: [tx('u1')], nextCursor: null });
     const { result, rerender } = renderHook((tab: 'all' | 'uncategorized') => useTransactionsScreenData(tab), {
       wrapper: wrapper(makeClient()), initialProps: 'all' as 'all' | 'uncategorized',
     });
 
     await waitFor(() => expect(ids(result.current.transactions)).toEqual(['plain1']));
-    expect(mockUncat).not.toHaveBeenCalled();       // uncategorized query only FETCHES on its tab
-    expect(mockFeed).toHaveBeenCalledTimes(1);
+    expect(server.sentUnder('GET', UNCATEGORIZED_FEED)).toHaveLength(0); // uncategorized query only FETCHES on its tab
+    expect(server.sentUnder('GET', FEED)).toHaveLength(1);
 
     rerender('uncategorized');
     await waitFor(() => expect(ids(result.current.transactions)).toEqual(['u1']));
-    expect(mockUncat).toHaveBeenCalledTimes(1);
+    expect(server.sentUnder('GET', UNCATEGORIZED_FEED)).toHaveLength(1);
 
     rerender('all');
     await waitFor(() => expect(ids(result.current.transactions)).toEqual(['plain1'])); // plain feed intact
-    expect(mockFeed).toHaveBeenCalledTimes(1);       // NOT re-fetched
-    expect(mockUncat).toHaveBeenCalledTimes(1);       // NOT re-fetched
+    expect(server.sentUnder('GET', FEED)).toHaveLength(1);                 // NOT re-fetched
+    expect(server.sentUnder('GET', UNCATEGORIZED_FEED)).toHaveLength(1);   // NOT re-fetched
   });
 });
 
@@ -86,8 +77,8 @@ describe('[C1] tab-switch lifecycle (all -> uncategorized -> all)', () => {
 // plain feed and recent are fetched as normal.
 describe('[C2] useTransactionResolver unions the uncategorized feed', () => {
   it('finds a row that lives ONLY in the uncategorized feed and de-dupes a row in both', async () => {
-    mockFeed.mockResolvedValue({ transactions: [tx('dup', { description: 'FEED' }), tx('feedonly')], nextCursor: null });
-    mockRecent.mockResolvedValue([tx('recentonly')]);
+    server.seed(FEED, { transactions: [tx('dup', { description: 'FEED' }), tx('feedonly')], nextCursor: null });
+    server.seed('/transactions', [tx('recentonly')]);
     const client = makeClient();
     // The uncategorized feed cache the tab would have warmed (dup is ALSO in the plain feed).
     client.setQueryData(uncategorizedFeedKey, {
@@ -112,7 +103,7 @@ describe('[C2] useTransactionResolver unions the uncategorized feed', () => {
 // window). These caches aren't observed by a useQuery in the resolver, so a narrow query-cache
 // subscription re-runs the union when — and only when — one of them changes (WHIT-524).
 describe('[C4] useTransactionResolver unions the budget/category caches', () => {
-  const emptyFeed = () => mockFeed.mockResolvedValue({ transactions: [], nextCursor: null });
+  const emptyFeed = () => server.seed(FEED, { transactions: [], nextCursor: null });
 
   it('finds a row that lives ONLY in the budget-detail cache', async () => {
     emptyFeed();
@@ -134,7 +125,7 @@ describe('[C4] useTransactionResolver unions the budget/category caches', () => 
   });
 
   it('feed-wins: a charge in both the feed (fresh) and a stale category cache resolves to the feed copy', async () => {
-    mockFeed.mockResolvedValue({ transactions: [tx('dup', { description: 'FRESH' })], nextCursor: null });
+    server.seed(FEED, { transactions: [tx('dup', { description: 'FRESH' })], nextCursor: null });
     const client = makeClient();
     client.setQueryData([...categoryTransactionsKey, 'coffee', 0], [tx('dup', { description: 'STALE' })]);
     const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
@@ -182,7 +173,7 @@ describe('[C4] useTransactionResolver unions the budget/category caches', () => 
 // [C3] refetchList is keyed to the ACTIVE feed only.
 describe('[C3] refetchList touches only the active feed cache', () => {
   it('a pull on the ALL tab leaves the uncategorized feed cache untrimmed', async () => {
-    mockFeed.mockResolvedValue({ transactions: [tx('plain1')], nextCursor: null });
+    server.seed(FEED, { transactions: [tx('plain1')], nextCursor: null });
     const client = makeClient();
     // Seed a 2-page uncategorized feed cache as if the user had paged it earlier.
     client.setQueryData(uncategorizedFeedKey, {
@@ -196,14 +187,13 @@ describe('[C3] refetchList touches only the active feed cache', () => {
 
     const uncat = client.getQueryData<{ pages: { transactions: Transaction[] }[] }>(uncategorizedFeedKey);
     expect(uncat!.pages).toHaveLength(2);            // uncategorized feed NOT trimmed by an 'all' pull
-    expect(mockUncat).not.toHaveBeenCalled();        // NOR refetched
+    expect(server.sentUnder('GET', UNCATEGORIZED_FEED)).toHaveLength(0); // NOR refetched
   });
 
   it('a pull on the UNCATEGORIZED tab trims the uncategorized feed, not the plain feed', async () => {
-    mockUncat
-      .mockResolvedValueOnce({ transactions: [tx('u1')], nextCursor: 'c1' })
-      .mockResolvedValueOnce({ transactions: [tx('u2')], nextCursor: null })
-      .mockResolvedValue({ transactions: [tx('u1')], nextCursor: 'c1' }); // pull -> page 1 fresh
+    server.once('GET', UNCATEGORIZED_FEED, { body: { transactions: [tx('u1')], nextCursor: 'c1' } });
+    server.once('GET', UNCATEGORIZED_FEED, { body: { transactions: [tx('u2')], nextCursor: null } });
+    server.seed(UNCATEGORIZED_FEED, { transactions: [tx('u1')], nextCursor: 'c1' }); // pull -> page 1 fresh
     const client = makeClient();
     // Seed a 2-page plain feed cache; it must survive an uncategorized pull.
     client.setQueryData(transactionsKey, {

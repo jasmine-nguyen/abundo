@@ -1,13 +1,15 @@
 // WHIT-188 — the Budgets screen on the new query layer. Proves the behaviours that
 // matter: data comes from the auth-gated queries, a transient 5xx self-heals (no stuck
 // banner), a sustained failure shows an inline retry, budgets window on the REAL cycle
-// length, and nothing fetches before login. ../api + ../auth + expo-router mocked; the
-// screen renders under a real QueryClientProvider so the actual query behaviour runs.
+// length, and nothing fetches before login. Real ../api over the fake server; ../auth +
+// expo-router mocked; the screen renders under a real QueryClientProvider so the actual query
+// behaviour runs.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor, renderHook } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { routerSpies, resetRouter } from './support/routerMock';
+import { installFakeServer } from './support/fakeServer';
 
 // auth: controllable status + a real subscribe, so the "fires on login" test can flip it.
 let mockAuthStatus = 'authed';
@@ -18,37 +20,27 @@ jest.mock('../auth', () => ({
     mockAuthListeners.add(l);
     return () => mockAuthListeners.delete(l);
   },
+  getAuthToken: async () => 'test-id-token',
 }));
 function setAuth(next: string) {
   mockAuthStatus = next;
   mockAuthListeners.forEach((l) => l());
 }
 
-// api: controllable fetchers. The three Budgets reads (fetchBudgets/Categories/PayCycle) drive
-// the screen; a call to any OTHER screen endpoint would throw, so a green render proves the
-// screen fetches ONLY its own reads. fetchTransactions + fetchBudgetTransactions are part of the
-// mocked-module UNION added for the folded WHIT-72 detail-hook tests (useBudgetDetailScreenData);
-// the Budgets screen never calls them, so they are inert for every non-detail test here.
-const mockFetchBudgets = jest.fn<(days: number) => Promise<unknown>>();
-const mockFetchCategories = jest.fn<() => Promise<unknown>>();
-const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
-const mockFetchTransactions = jest.fn<() => Promise<unknown>>();
-const mockFetchBudgetTransactions = jest.fn<(id: string) => Promise<unknown>>();
-jest.mock('../api', () => ({
-  fetchBudgets: (...a: unknown[]) => mockFetchBudgets(...(a as [number])),
-  fetchCategories: () => mockFetchCategories(),
-  fetchPayCycle: () => mockFetchPayCycle(),
-  fetchTransactions: () => mockFetchTransactions(),
-  fetchBudgetTransactions: (id: string) => mockFetchBudgetTransactions(id),
-}));
-
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Budgets from '../../app/(tabs)/budgets';
-// The REAL query hooks (../api + ../auth mocked above) — driven directly by the folded WHIT-72
-// tests via renderHook; the same regime the screen renders under.
+// The REAL query hooks (real ../api over the fake server, ../auth mocked above) — driven directly
+// by the folded WHIT-72 tests via renderHook; the same regime the screen renders under.
 import { useBudgetsScreenData, useBudgetDetailScreenData } from '../queries';
 import { cycleStart } from '../context';
+
+const server = installFakeServer();
+// The Budgets reads. `/budgets?` (with the query mark) counts the rollup read only, never a
+// budget's own transactions list.
+const budgetReads = () => server.sentUnder('GET', '/budgets?');
+const payCycleReads = () => server.sent('GET', '/paycycle');
+const categoryReads = () => server.sent('GET', '/categories');
 
 // length 30 (NOT the default 14) so "windowed on the real length" genuinely proves
 // budgets waited for the pay cycle rather than fetching with the seeded default.
@@ -69,9 +61,9 @@ function renderBudgets(client = makeClient()) {
 beforeEach(() => {
   mockAuthStatus = 'authed';
   mockAuthListeners.clear();
-  mockFetchBudgets.mockReset().mockResolvedValue(BUDGETS);
-  mockFetchCategories.mockReset().mockResolvedValue(CATS);
-  mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
+  server.seed('/budgets', BUDGETS);
+  server.seed('/categories', CATS);
+  server.seed('/paycycle', PAY_CYCLE);
   resetRouter();
 });
 
@@ -81,10 +73,10 @@ it('renders budget rows from the queries, fetched in parallel with the pay cycle
   // WHIT-72: budgets fetch in PARALLEL now (flat key, no gate), so they fire with the default
   // length (14) before the cycle resolves — and never refetch to 30. The server ignores the
   // length anyway (it derives the window itself), so the rendered rows are still correct.
-  expect(mockFetchBudgets).toHaveBeenCalledWith(14);
-  expect(mockFetchBudgets).toHaveBeenCalledTimes(1);
-  expect(mockFetchPayCycle).toHaveBeenCalledTimes(1);
-  expect(mockFetchCategories).toHaveBeenCalledTimes(1);
+  expect(server.sent('GET', '/budgets?days=14')).toHaveLength(1);
+  expect(budgetReads()).toHaveLength(1);
+  expect(payCycleReads()).toHaveLength(1);
+  expect(categoryReads()).toHaveLength(1);
 });
 
 it('does not render the redundant per-row "target" caption (the pace tick is labelled once in the legend)', async () => {
@@ -103,7 +95,7 @@ it('still renders the per-row pace STATUS after the caption removal (info kept, 
   // this proves the screen still RENDERS it. Removing budgets.tsx:101 (the paceLabel <Text/>)
   // is invisible to the logic tests AND to the absence/legend test above — this is the guard.
   // Over-budget so the label is date-independent: spent 120 of 100 -> exactly "$20 over budget".
-  mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 100, posted: 120, pending: 0 } });
+  server.seed('/budgets', { coffee: { target: 100, posted: 120, pending: 0 } });
   renderBudgets();
   await screen.findByText('Cafes & Coffee');
   expect(screen.getByText('$20 over budget')).toBeTruthy();
@@ -116,18 +108,15 @@ it('shows a spinner first, then the rows (cache-first render)', async () => {
 });
 
 it('a transient 5xx retries with backoff and self-heals — no error shown', async () => {
-  mockFetchBudgets
-    .mockReset()
-    .mockRejectedValueOnce(new Error('API error: 503'))
-    .mockResolvedValue(BUDGETS);
+  server.once('GET', '/budgets', { status: 503 });
   renderBudgets(makeClient(2)); // retry enabled (fast delay)
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
   expect(screen.queryByTestId('budgets-error')).toBeNull();
-  expect(mockFetchBudgets).toHaveBeenCalledTimes(2); // first failed, retry succeeded
+  expect(budgetReads()).toHaveLength(2); // first failed, retry succeeded
 });
 
 it('a sustained failure shows the inline error, and Retry recovers', async () => {
-  mockFetchBudgets.mockReset().mockRejectedValue(new Error('API error: 503'));
+  server.fail('/budgets', 503);
   renderBudgets(makeClient(false)); // no retry → straight to the error state
   expect(await screen.findByTestId('budgets-error')).toBeTruthy();
 
@@ -137,7 +126,7 @@ it('a sustained failure shows the inline error, and Retry recovers', async () =>
   expect(retry.props.accessibilityRole).toBe('button');
   expect(retry.props.accessibilityLabel).toBe('Retry loading your budgets');
 
-  mockFetchBudgets.mockReset().mockResolvedValue(BUDGETS);
+  server.once('GET', '/budgets', { body: BUDGETS }); // a queued reply goes out ahead of the failure
   fireEvent.press(retry);
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
 });
@@ -146,15 +135,15 @@ it('does not fetch before login, then fires the moment auth flips to authed', as
   mockAuthStatus = 'anon';
   renderBudgets();
   // Disabled queries never call their fetchers.
-  expect(mockFetchPayCycle).not.toHaveBeenCalled();
-  expect(mockFetchBudgets).not.toHaveBeenCalled();
-  expect(mockFetchCategories).not.toHaveBeenCalled();
+  expect(payCycleReads()).toHaveLength(0);
+  expect(budgetReads()).toHaveLength(0);
+  expect(categoryReads()).toHaveLength(0);
 
   await act(async () => {
     setAuth('authed');
   });
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-  expect(mockFetchPayCycle).toHaveBeenCalled();
+  expect(payCycleReads().length).toBeGreaterThan(0);
 });
 
 it('the add-budget button navigates to the picker', async () => {
@@ -169,11 +158,11 @@ it('hides a Savings-bucket budget end-to-end and keeps it out of the hero total 
   // a deep-linked write) must not render a row AND must not inflate the "of $X" pill.
   // Exercises the whole query -> selectBudgets -> budgetViews -> render pipeline; reverting
   // the budgetViews Savings skip (src/context.tsx) makes both assertions fail.
-  mockFetchCategories.mockReset().mockResolvedValue([
+  server.seed('/categories', [
     { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
     { id: 'nest_egg', name: 'Nest Egg', bucket: 'Savings', icon: 'home', color: '#C7A8F0', recent: 0 },
   ]);
-  mockFetchBudgets.mockReset().mockResolvedValue({
+  server.seed('/budgets', {
     coffee: { target: 100, posted: 40, pending: 10 },
     nest_egg: { target: 2000, posted: 0, pending: 0 },
   });
@@ -201,7 +190,7 @@ it('through the hook: a known last_pay_date renders a known "Started …" (WHIT-
   try {
     // last_pay_date 1 Sep, 30-day cycle, today 18 Sep → cyclesElapsed 0 → start stays 1 Sep.
     // Also proves the no-leading-zero format ("1 Sep") survives a real render.
-    mockFetchPayCycle.mockReset().mockResolvedValue({ length: 30, last_pay_date: '2026-09-01' });
+    server.seed('/paycycle', { length: 30, last_pay_date: '2026-09-01' });
     renderBudgets();
     expect(await screen.findByText('Started 1 Sep')).toBeTruthy();
   } finally {
@@ -210,24 +199,24 @@ it('through the hook: a known last_pay_date renders a known "Started …" (WHIT-
 });
 
 // ===== WHIT-188 adversarial gaps (folded in) — partial failure, empty state, auth-lock, cache
-// invalidation, focus over-fetch, and the payCycle-failure dead-end. Same regime (mocked auth+api,
-// real QueryClient); the gaps' local router mock was rewired onto the shared routerMock harness. =====
+// invalidation, focus over-fetch, and the payCycle-failure dead-end. Same regime (mocked auth, fake
+// server, real QueryClient); the gaps' local router mock was rewired onto the shared routerMock harness. =====
 
 describe('partial failure', () => {
   it('budgets read fails while pay cycle succeeds → inline error + Retry (not a spinner)', async () => {
-    mockFetchBudgets.mockReset().mockRejectedValue(new Error('API error: 503'));
+    server.fail('/budgets', 503);
     renderBudgets(makeClient(false));
     expect(await screen.findByTestId('budgets-error')).toBeTruthy();
     expect(screen.getByTestId('budgets-retry')).toBeTruthy();
     // WHIT-72: budgets fetches in PARALLEL now (not gated on payCycle), so it fires with the
     // DEFAULT length (14) before the cycle resolves — and the flat key means it never
     // refetches to 30. The server ignores the length anyway, so the response is still correct.
-    expect(mockFetchBudgets).toHaveBeenCalledWith(14);
+    expect(server.sent('GET', '/budgets?days=14').length).toBeGreaterThan(0);
     expect(screen.queryByTestId('budgets-loading')).toBeNull();
   });
 
   it('categories read fails → inline error (rows cannot render without their category)', async () => {
-    mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
+    server.fail('/categories', 500);
     renderBudgets(makeClient(false));
     expect(await screen.findByTestId('budgets-error')).toBeTruthy();
     expect(screen.queryByText('Cafes & Coffee')).toBeNull();
@@ -236,7 +225,7 @@ describe('partial failure', () => {
 
 describe('empty budgets', () => {
   it('empty rollup {} → empty state (hero + Add a budget), not a spinner or error', async () => {
-    mockFetchBudgets.mockReset().mockResolvedValue({});
+    server.seed('/budgets', {});
     renderBudgets();
     expect(await screen.findByText('Add a budget')).toBeTruthy();
     expect(screen.queryByTestId('budgets-loading')).toBeNull();
@@ -253,9 +242,9 @@ describe('focus refetch', () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(mockFetchPayCycle).toHaveBeenCalledTimes(1);
-    expect(mockFetchBudgets).toHaveBeenCalledTimes(1);
-    expect(mockFetchCategories).toHaveBeenCalledTimes(1);
+    expect(payCycleReads()).toHaveLength(1);
+    expect(budgetReads()).toHaveLength(1);
+    expect(categoryReads()).toHaveLength(1);
   });
 });
 
@@ -263,14 +252,14 @@ describe('auth transition mid-session', () => {
   it('authed→locked keeps cached rows and fires no new fetch (no doomed 401 retry)', async () => {
     renderBudgets();
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-    const before = mockFetchBudgets.mock.calls.length;
+    const before = budgetReads().length;
 
     await act(async () => {
       setAuth('locked');
     });
     expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
     expect(screen.queryByTestId('budgets-error')).toBeNull();
-    expect(mockFetchBudgets).toHaveBeenCalledTimes(before);
+    expect(budgetReads()).toHaveLength(before);
   });
 });
 
@@ -283,12 +272,12 @@ describe('save → cache invalidation', () => {
     const client = makeClient();
     render(React.createElement(QueryClientProvider, { client }, React.createElement(Budgets)));
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-    const before = mockFetchBudgets.mock.calls.length;
+    const before = budgetReads().length;
 
     await act(async () => {
       client.invalidateQueries({ queryKey: ['budgets'] }); // what edit.tsx does after a save
     });
-    await waitFor(() => expect(mockFetchBudgets.mock.calls.length).toBeGreaterThan(before));
+    await waitFor(() => expect(budgetReads().length).toBeGreaterThan(before));
   });
 });
 
@@ -298,15 +287,14 @@ describe('parallel fetch (no waterfall)', () => {
     // Hold the pay cycle unresolved; budgets must STILL fire (in parallel), with the default
     // length (14). On the OLD gated code fetchBudgets would not be called until payCycle
     // resolved — so this fails on revert.
-    let resolvePayCycle: (v: unknown) => void = () => {};
-    mockFetchPayCycle.mockReset().mockReturnValue(new Promise((r) => { resolvePayCycle = r; }));
+    const heldPayCycle = server.hold('/paycycle');
     renderBudgets();
 
-    await waitFor(() => expect(mockFetchBudgets).toHaveBeenCalled());
-    expect(mockFetchBudgets).toHaveBeenCalledWith(14);   // default length — cycle not yet loaded
-    expect(mockFetchPayCycle).toHaveBeenCalledTimes(1);  // fired in parallel, still pending
+    await waitFor(() => expect(budgetReads().length).toBeGreaterThan(0));
+    expect(server.sent('GET', '/budgets?days=14')).toHaveLength(1); // default length — cycle not yet loaded
+    expect(payCycleReads()).toHaveLength(1);  // fired in parallel, still pending
 
-    await act(async () => { resolvePayCycle(PAY_CYCLE); }); // settle to avoid an act() leak
+    await act(async () => { heldPayCycle.release(); }); // settle to avoid an act() leak
   });
 });
 
@@ -318,7 +306,7 @@ describe('length change refetches once, not twice', () => {
     const client = makeClient();
     render(React.createElement(QueryClientProvider, { client }, React.createElement(Budgets)));
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-    const afterLoad = mockFetchBudgets.mock.calls.length;
+    const afterLoad = budgetReads().length;
 
     // persistPayCycle writes the new-length cycle into the cache. With the flat key this must
     // NOT trigger a budgets refetch on its own (the old windowed key WOULD have — refetch #1).
@@ -326,11 +314,11 @@ describe('length change refetches once, not twice', () => {
       client.setQueryData(['payCycle'], { length: 14, last_pay_date: '2026-07-01' });
     });
     await act(async () => { await Promise.resolve(); });
-    expect(mockFetchBudgets.mock.calls.length).toBe(afterLoad); // no key-shift refetch
+    expect(budgetReads()).toHaveLength(afterLoad); // no key-shift refetch
 
     // ...and the explicit invalidate persistPayCycle fires is the SINGLE refresh.
     await act(async () => { client.invalidateQueries({ queryKey: ['budgets'] }); });
-    await waitFor(() => expect(mockFetchBudgets.mock.calls.length).toBe(afterLoad + 1));
+    await waitFor(() => expect(budgetReads()).toHaveLength(afterLoad + 1));
   });
 });
 
@@ -341,7 +329,7 @@ describe('length change refetches once, not twice', () => {
 // drop payCycleError from showError and this reverts to rendering rows with a wrong days-left.
 describe('payCycle failure must show the error, not budgets on a wrong cycle', () => {
   it('sustained payCycle failure → inline error + Retry (payCycleError), never a spinner', async () => {
-    mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
+    server.fail('/paycycle', 503);
     renderBudgets(makeClient(false));
     expect(await screen.findByTestId('budgets-error')).toBeTruthy();
     expect(screen.getByTestId('budgets-retry')).toBeTruthy();
@@ -349,7 +337,7 @@ describe('payCycle failure must show the error, not budgets on a wrong cycle', (
   });
 });
 
-// ===== WHIT-221 (folded from budgetsSubcategory.screen.test.tsx) — same ../auth/../api/expo-router
+// ===== WHIT-221 (folded from budgetsSubcategory.screen.test.tsx) — same fake-server/../auth/expo-router
 // regime (real QueryClient). Divergent fixtures (car/parent + parking/sub, PAY_CYCLE len 14) and the
 // indent-style helpers are block-scoped here so they shadow the module coffee fixtures for these two. =====
 describe('WHIT-221 parent→sub tree + de-duped hero (folded from budgetsSubcategory)', () => {
@@ -385,9 +373,9 @@ describe('WHIT-221 parent→sub tree + de-duped hero (folded from budgetsSubcate
   }
 
   beforeEach(() => {
-    mockFetchBudgets.mockReset().mockResolvedValue(BUDGETS);
-    mockFetchCategories.mockReset().mockResolvedValue(CATS);
-    mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
+    server.seed('/budgets', BUDGETS);
+    server.seed('/categories', CATS);
+    server.seed('/paycycle', PAY_CYCLE);
   });
 
   it('[A26] hero de-dups: the "of" pill counts the parent cap once, not parent + sub', async () => {
@@ -410,7 +398,7 @@ describe('WHIT-221 parent→sub tree + de-duped hero (folded from budgetsSubcate
 });
 
 // ===== WHIT-72 (folded from budgetsPayCycleError.screen.test.tsx) — the payCycleError guard,
-// driven via renderHook on the REAL hooks (../api + ../auth mocked; NO expo-router mock originally —
+// driven via renderHook on the REAL hooks (real ../api, ../auth mocked; NO expo-router mock originally —
 // the shared module-scope expo-router mock is inert here because ../queries never imports it).
 // makeClient/wrapper/fixtures block-scoped so they don't collide with the module helpers. =====
 describe('WHIT-72 payCycleError guard (folded from budgetsPayCycleError)', () => {
@@ -425,16 +413,14 @@ describe('WHIT-72 payCycleError guard (folded from budgetsPayCycleError)', () =>
     ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 
   beforeEach(() => {
-    mockFetchBudgets.mockReset().mockResolvedValue(BUDGETS);
-    mockFetchCategories.mockReset().mockResolvedValue(CATS);
-    mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
-    mockFetchTransactions.mockReset().mockResolvedValue([]);
-    mockFetchBudgetTransactions.mockReset().mockResolvedValue([]);
+    server.seed('/budgets', BUDGETS);
+    server.seed('/categories', CATS);
+    server.seed('/paycycle', PAY_CYCLE);
   });
 
   describe('useBudgetsScreenData — payCycleError guard (WHIT-72)', () => {
     it('first-load payCycle failure (never-succeeded → data undefined) → payCycleError is TRUE', async () => {
-      mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
+      server.fail('/paycycle', 503);
       const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient()) });
 
       await waitFor(() => expect(result.current.isError).toBe(true));
@@ -452,7 +438,7 @@ describe('WHIT-72 payCycleError guard (folded from budgetsPayCycleError)', () =>
       await waitFor(() => expect(result.current.budgets).toHaveLength(1));
       expect(result.current.cycleLen).toBe(30);
 
-      mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
+      server.fail('/paycycle', 503);
       await act(async () => { result.current.refetch(); });
       await waitFor(() => expect(result.current.isError).toBe(true)); // the failed payCycle refetch propagates
 
@@ -471,8 +457,8 @@ describe('WHIT-72 payCycleError guard (folded from budgetsPayCycleError)', () =>
     });
 
     it('BOTH payCycle AND budgets fail on first load → error via both paths (payCycleError AND isError)', async () => {
-      mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
-      mockFetchBudgets.mockReset().mockRejectedValue(new Error('API error: 500'));
+      server.fail('/paycycle', 503);
+      server.fail('/budgets', 500);
       const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient()) });
 
       await waitFor(() => expect(result.current.isError).toBe(true));
@@ -487,7 +473,7 @@ describe('WHIT-72 payCycleError guard (folded from budgetsPayCycleError)', () =>
       await waitFor(() => expect(result.current.budgets).toHaveLength(1));
       expect(result.current.cycleLen).toBe(30);
 
-      mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
+      server.fail('/paycycle', 503);
       await act(async () => { result.current.refetch(); });
       await waitFor(() => expect(result.current.isError).toBe(true));
 
@@ -497,7 +483,7 @@ describe('WHIT-72 payCycleError guard (folded from budgetsPayCycleError)', () =>
     });
 
     it('first-load payCycle failure → payCycleError is TRUE (detail blanks on it)', async () => {
-      mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
+      server.fail('/paycycle', 503);
       const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
       await waitFor(() => expect(result.current.isError).toBe(true));
       expect(result.current.payCycleError).toBe(true);
@@ -512,7 +498,7 @@ describe('WHIT-573 hero over-budget label + sign', () => {
   it('reads "Over budget" with a signed total when spend exceeds the plan', async () => {
     // spent 200 of available 100 → totRemain -100. Fail-on-revert: without the fix the hero says
     // "Budget remaining" + unsigned "$100" — both assertions below flip.
-    mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 100, posted: 200, pending: 0 } });
+    server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('Over budget')).toBeTruthy();      // label flipped
@@ -522,7 +508,7 @@ describe('WHIT-573 hero over-budget label + sign', () => {
 
   it('keeps "Budget remaining" (unsigned) when under the plan', async () => {
     // spent 50 of 100 → totRemain +50: the happy path must be untouched.
-    mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 100, posted: 40, pending: 10 } });
+    server.seed('/budgets', { coffee: { target: 100, posted: 40, pending: 10 } });
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('Budget remaining')).toBeTruthy();
@@ -530,7 +516,7 @@ describe('WHIT-573 hero over-budget label + sign', () => {
   });
 
   it('reads "Budget remaining" when exactly on budget (totRemain === 0), not "Over budget"', async () => {
-    mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 100, posted: 100, pending: 0 } });
+    server.seed('/budgets', { coffee: { target: 100, posted: 100, pending: 0 } });
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('Budget remaining')).toBeTruthy();
@@ -541,7 +527,7 @@ describe('WHIT-573 hero over-budget label + sign', () => {
     // spent 100.30 of 100 → totRemain -0.30, which fmt rounds to $0. The -0.5 dust threshold must
     // keep the headline calm. Fail-on-revert for the threshold: change `< -0.5` to `< 0` and this
     // flips to "Over budget -$0".
-    mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 100, posted: 100, pending: 0.3 } });
+    server.seed('/budgets', { coffee: { target: 100, posted: 100, pending: 0.3 } });
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('Budget remaining')).toBeTruthy();
@@ -555,11 +541,11 @@ describe('WHIT-573 hero over-budget label + sign', () => {
 // coherence, and the true -0.5 threshold boundaries (-0.5 exact, -0.51).
 describe('WHIT-573 hero over-budget — gaps', () => {
   it('sums MULTIPLE over-budget rows into one signed hero total + coherent pill', async () => {
-    mockFetchCategories.mockReset().mockResolvedValue([
+    server.seed('/categories', [
       { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
       { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd1b9', recent: 12 },
     ]);
-    mockFetchBudgets.mockReset().mockResolvedValue({
+    server.seed('/budgets', {
       coffee: { target: 100, posted: 150, pending: 0 },
       groceries: { target: 200, posted: 250, pending: 0 },
     });
@@ -575,7 +561,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
   it('negativity from a rollover DEFICIT (not raw overspend) still flips the hero, on the available envelope', async () => {
     // carryover -80 → available = 100 + (-80) = 20; spent 50 > 20 → totRemain -30. Modest raw spend,
     // but the borrowed envelope is blown — proves the hero total is built on `available`, not target.
-    mockFetchBudgets.mockReset().mockResolvedValue({
+    server.seed('/budgets', {
       coffee: { target: 100, posted: 50, pending: 0, rollover: true, carryover: -80 },
     });
     renderBudgets();
@@ -586,11 +572,11 @@ describe('WHIT-573 hero over-budget — gaps', () => {
   });
 
   it('keeps an Income budget OUT of the over-budget hero (earnings do not rescue it)', async () => {
-    mockFetchCategories.mockReset().mockResolvedValue([
+    server.seed('/categories', [
       { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
       { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'cash', color: '#7fd1b9', recent: 0 },
     ]);
-    mockFetchBudgets.mockReset().mockResolvedValue({
+    server.seed('/budgets', {
       coffee: { target: 100, posted: 200, pending: 0 },
       salary: { target: 5000, posted: 6000, pending: 0 },
     });
@@ -605,7 +591,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
   });
 
   it('renders a large deficit as the exact comma-grouped -$6,056 with a coherent pill', async () => {
-    mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 1000, posted: 7056, pending: 0 } });
+    server.seed('/budgets', { coffee: { target: 1000, posted: 7056, pending: 0 } });
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('Over budget')).toBeTruthy();
@@ -616,7 +602,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
 
   it('totRemain === -0.5 EXACTLY stays "Budget remaining" (strict `< -0.5` boundary)', async () => {
     // -0.5 < -0.5 is false → NOT over budget. The true threshold boundary the -0.30 test only approaches.
-    mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 100, posted: 100, pending: 0.5 } });
+    server.seed('/budgets', { coffee: { target: 100, posted: 100, pending: 0.5 } });
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('Budget remaining')).toBeTruthy();
@@ -624,7 +610,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
   });
 
   it('totRemain just past the threshold (-0.51) flips to "Over budget"', async () => {
-    mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 100, posted: 100.51, pending: 0 } });
+    server.seed('/budgets', { coffee: { target: 100, posted: 100.51, pending: 0 } });
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('Over budget')).toBeTruthy();

@@ -7,29 +7,22 @@
 //   [N3] allSettled independence: the LIST refetch fails but the balance succeeds → success toast STILL
 //        fires (the toast is gated on the balance call, never the list outcome).
 //   [N4] Empty "No accounts yet" state is a valid pull target → a successful pull still confirms.
+// Real ../api over the fake server; ../auth + expo-router mocked; ../context PARTIALLY mocked.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { RefreshControl } from 'react-native';
 import { render, screen, act, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';
-jest.mock('../auth', () => ({ getStatus: () => mockAuthStatus, subscribe: () => () => {} }));
-
-const mockFetchTransactionsFeed = jest.fn<(cursor?: string) => Promise<unknown>>();
-const mockFetchCategories = jest.fn<() => Promise<unknown>>();
-const mockFetchAccountBalances = jest.fn<() => Promise<unknown>>();
-const mockRefreshAccountBalances = jest.fn<() => Promise<unknown>>();
-const mockFetchUncategorizedCount = jest.fn<() => Promise<number>>();
-const mockShowToast = jest.fn<(m: string) => void>();
-jest.mock('../api', () => ({
-  fetchTransactionsFeed: (cursor?: string) => mockFetchTransactionsFeed(cursor),
-  fetchCategories: () => mockFetchCategories(),
-  fetchTransactions: () => Promise.resolve([]),
-  fetchAccountBalances: () => mockFetchAccountBalances(),
-  refreshAccountBalances: () => mockRefreshAccountBalances(),
-  fetchUncategorizedCount: () => mockFetchUncategorizedCount(),
+jest.mock('../auth', () => ({
+  getStatus: () => mockAuthStatus,
+  subscribe: () => () => {},
+  getAuthToken: async () => 'test-id-token',
 }));
+
+const mockShowToast = jest.fn<(m: string) => void>();
 
 const CATS = [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 }];
 jest.mock('../context', () => {
@@ -48,6 +41,11 @@ jest.mock('expo-router', () => {
 import Accounts from '../../app/(tabs)/accounts';
 import Transactions from '../../app/(tabs)/transactions';
 
+const server = installFakeServer();
+const FEED = '/transactions/feed';
+const BALANCES = '/accounts/balances';
+const REFRESH = '/accounts/balances/refresh';
+
 const TXNS = [{
   transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
   description: 'WOOLWORTHS', merchant_name: 'Woolworths', amount: -42, account_id: 'a1',
@@ -64,11 +62,11 @@ const flush = async () => { await act(async () => { await Promise.resolve(); awa
 
 beforeEach(() => {
   mockAuthStatus = 'authed';
-  mockFetchTransactionsFeed.mockReset().mockResolvedValue({ transactions: TXNS, nextCursor: null });
-  mockFetchCategories.mockReset().mockResolvedValue(CATS);
-  mockFetchAccountBalances.mockReset().mockResolvedValue([{ account_id: 'a1', amount: -100 }]);
-  mockRefreshAccountBalances.mockReset().mockResolvedValue([{ account_id: 'a1', amount: -100 }]);
-  mockFetchUncategorizedCount.mockReset().mockResolvedValue(0);
+  server.seed(FEED, { transactions: TXNS, nextCursor: null });
+  server.seed('/categories', CATS);
+  // The live refresh echoes the stored balances unless a test queues its own reply.
+  server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]);
+  server.seed('/transactions/uncategorized/count', { count: 0 });
   mockShowToast.mockReset();
 });
 
@@ -82,7 +80,7 @@ describe('pull-to-refresh success-toast gaps (WHIT-489)', () => {
     expect(await screen.findByText('-$42.00')).toBeTruthy();
 
     await pull();
-    await waitFor(() => expect(mockRefreshAccountBalances).toHaveBeenCalledTimes(1)); // the live call ran & succeeded
+    await waitFor(() => expect(server.sent('POST', REFRESH)).toHaveLength(1)); // the live call ran & succeeded
     await flush();
     expect(mockShowToast).not.toHaveBeenCalled(); // no 'Balances up to date', no failure toast — silent
   });
@@ -92,7 +90,7 @@ describe('pull-to-refresh success-toast gaps (WHIT-489)', () => {
   // unchanged (-$100.00 in and -$100.00 out) yet the toast MUST still fire — it is the only proof the
   // pull ran. Fail-on-revert: drop the successMessage arg in accounts.tsx → no toast → RED.
   it('[N2] an UNCHANGED balance still toasts "Balances up to date"', async () => {
-    mockRefreshAccountBalances.mockResolvedValue([{ account_id: 'a1', amount: -100 }]); // same as stored
+    server.once('POST', REFRESH, { body: [{ account_id: 'a1', amount: -100 }] }); // same as stored
     render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Accounts)));
     expect(await screen.findByText('-$100.00')).toBeTruthy();
 
@@ -111,8 +109,8 @@ describe('pull-to-refresh success-toast gaps (WHIT-489)', () => {
     render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Accounts)));
     expect(await screen.findByText('-$100.00')).toBeTruthy();
     // The pull's list refetch now errors; the live balance call still resolves.
-    mockFetchTransactionsFeed.mockReset().mockRejectedValue(new Error('API error: 503'));
-    mockRefreshAccountBalances.mockResolvedValue([{ account_id: 'a1', amount: -250 }]);
+    server.fail(FEED, 503);
+    server.once('POST', REFRESH, { body: [{ account_id: 'a1', amount: -250 }] });
 
     await pull();
     await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Balances up to date'));
@@ -124,9 +122,9 @@ describe('pull-to-refresh success-toast gaps (WHIT-489)', () => {
   // RefreshControl live there, gated on !showSpinner not on row count). A successful pull from empty
   // must still confirm with the toast. Fail-on-revert: drop the successMessage arg in accounts.tsx → RED.
   it('[N4] a pull on the empty "No accounts yet" state still toasts success', async () => {
-    mockFetchTransactionsFeed.mockReset().mockResolvedValue({ transactions: [], nextCursor: null }); // no accounts
-    mockFetchAccountBalances.mockResolvedValue([]); // WHIT-643: a saved balance alone now makes a card
-    mockRefreshAccountBalances.mockResolvedValue([]);
+    server.seed(FEED, { transactions: [], nextCursor: null }); // no accounts
+    server.seed(BALANCES, []); // WHIT-643: a saved balance alone now makes a card
+    server.once('POST', REFRESH, { body: [] });
     render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Accounts)));
     expect(await screen.findByText('No accounts yet')).toBeTruthy();
 
