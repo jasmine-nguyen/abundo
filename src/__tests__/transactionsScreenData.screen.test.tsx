@@ -438,6 +438,18 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
     expect(await screen.findByText('-$42.00')).toBeTruthy();
   });
 
+  it('a sustained feed failure sends a bounded number of requests, and Retry recovers (WHIT-668)', async () => {
+    server.fail(FEED, 503);
+    renderTransactions(makeClient(false));
+    expect(await screen.findByTestId('transactions-error')).toBeTruthy();
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 200)));
+    expect(feedReads()).toHaveLength(1);
+
+    server.once('GET', FEED, { body: { transactions: TXNS, nextCursor: null } }); // ahead of the failure
+    fireEvent.press(screen.getByTestId('transactions-retry'));
+    expect(await screen.findByText('-$42.00')).toBeTruthy();
+  });
+
   it('does not fetch before login, then fires on auth flip to authed', async () => {
     mockAuthStatus = 'anon';
     renderTransactions();

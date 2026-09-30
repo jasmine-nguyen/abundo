@@ -30,7 +30,10 @@ function setAuth(next: string) {
 }
 
 // Stub only useAppContext (the AI card); keep the real categoryBreakdown/cycleClock/
-// toCategory that ../queries and the screen import.
+// toCategory that ../queries and the screen import. The AI actions are single stable fns (as the
+// real context's useCallbacks are), so the stub itself never rebuilds the screen's focus callback.
+const mockRefreshAiInsights = jest.fn();
+const mockGenerateAiInsights = jest.fn();
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return {
@@ -39,8 +42,8 @@ jest.mock('../context', () => {
       aiInsights: null,
       aiInsightsLoading: false,
       aiInsightsError: false,
-      refreshAiInsights: jest.fn(),
-      generateAiInsights: jest.fn(),
+      refreshAiInsights: mockRefreshAiInsights,
+      generateAiInsights: mockGenerateAiInsights,
       loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null },
       homeLoan: { balance: null, asOf: null },
     }),
@@ -71,6 +74,8 @@ function renderInsights(client = makeClient()) {
 beforeEach(() => {
   mockAuthStatus = 'authed';
   mockAuthListeners.clear();
+  mockRefreshAiInsights.mockClear();
+  mockGenerateAiInsights.mockClear();
   server.seed('/breakdown', BREAKDOWN);
   server.seed('/categories', CATS);
   server.seed('/paycycle', PAY_CYCLE);
@@ -108,8 +113,8 @@ it('a transient 5xx on breakdown retries and self-heals — no error shown', asy
 });
 
 it('a sustained breakdown failure shows the inline error + Retry, no false $0', async () => {
-  // A lasting failure: the screen's focus refresh re-asks for a stale errored read more than once,
-  // so a single queued 503 would heal on its own before Retry is pressed.
+  // A lasting failure, so Retry is proven against a persistent 503 (the focus-refresh loop that
+  // once re-asked on its own is gone — WHIT-668).
   server.fail('/breakdown', 503);
   renderInsights(makeClient(false));
   expect(await screen.findByTestId('insights-error')).toBeTruthy();
@@ -120,6 +125,32 @@ it('a sustained breakdown failure shows the inline error + Retry, no false $0', 
   fireEvent.press(screen.getByTestId('insights-retry'));
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
   expect(server.sentUnder('GET', '/breakdown').length).toBeGreaterThan(failedCalls);
+});
+
+it('a sustained breakdown failure sends a bounded number of requests (WHIT-668)', async () => {
+  // The focus refresh used to re-run on every redraw; an errored read with nothing saved is always
+  // out of date, so each failure asked again straight away (about 20 requests in 200ms here).
+  server.fail('/breakdown', 503);
+  renderInsights(makeClient(false));
+  expect(await screen.findByTestId('insights-error')).toBeTruthy();
+  await act(() => new Promise<void>((resolve) => setTimeout(resolve, 200)));
+  expect(server.sentUnder('GET', '/breakdown')).toHaveLength(1);
+
+  server.once('GET', '/breakdown', { body: BREAKDOWN }); // a queued reply goes out ahead of the failure
+  fireEvent.press(screen.getByTestId('insights-retry'));
+  expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+  expect(server.sentUnder('GET', '/breakdown')).toHaveLength(2);
+});
+
+it('the AI summary read fires once per focus, not on every redraw (WHIT-668)', async () => {
+  renderInsights();
+  expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+  server.once('GET', '/breakdown', { body: { coffee: { posted: 5, pending: 0 } } });
+  fireEvent.press(screen.getByTestId('insights-cycle-prev'));
+  expect(await screen.findByText('LAST PAY CYCLE')).toBeTruthy();
+  fireEvent.press(screen.getByTestId('insights-cycle-current'));
+  expect(await screen.findByText('THIS PAY CYCLE')).toBeTruthy();
+  expect(mockRefreshAiInsights).toHaveBeenCalledTimes(1);
 });
 
 // --- WHIT-68: historical look-back selector ----------------------------------
