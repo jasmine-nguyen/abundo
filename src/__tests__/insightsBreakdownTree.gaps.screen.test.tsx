@@ -8,28 +8,20 @@
 //   [A11] a grandchild stays hidden until BOTH ancestors are expanded (chain gate)
 //   [A12] the hero "N categories" is the TOP-LEVEL count, not the flat row count
 //   [A13] a parent's accessibilityState.expanded tracks the open/closed state (a11y)
-// Same harness as insightsBreakdownQuery.screen.test.tsx: ../api + ../auth + expo-router
-// mocked; ../context PARTIALLY mocked (real categoryBreakdown, stub useAppContext).
+// Same harness as insightsBreakdownQuery.screen.test.tsx: real ../api over the fake server;
+// ../auth + expo-router mocked; ../context PARTIALLY mocked (real categoryBreakdown, stub useAppContext).
 //
-// WHIT-467 folded in insightsPayCycleParallel (WHIT-72 GAP) — same mock map + timer regime.
+// WHIT-467 folded in insightsPayCycleParallel (WHIT-72 GAP) — same harness + timer regime.
 // Its coffee fixtures differ from this file's tree fixtures, so it lives in its own describe
-// with a nested beforeEach that re-seeds all three fetchers (runs after the outer one → wins).
+// with a nested beforeEach that re-seeds all three reads (runs after the outer one → wins).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StyleSheet } from 'react-native';
+import { installFakeServer } from './support/fakeServer';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-
-const mockFetchBreakdown = jest.fn<(days: number, cycle?: number) => Promise<unknown>>();
-const mockFetchCategories = jest.fn<() => Promise<unknown>>();
-const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
-jest.mock('../api', () => ({
-  fetchBreakdown: (...a: unknown[]) => mockFetchBreakdown(...(a as [number, number?])),
-  fetchCategories: () => mockFetchCategories(),
-  fetchPayCycle: () => mockFetchPayCycle(),
-}));
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
@@ -50,6 +42,8 @@ jest.mock('expo-router', () => {
 });
 
 import Insights from '../../app/(tabs)/insights';
+
+const server = installFakeServer();
 
 const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
 // Two top-level trees: Food → {Groceries, Restaurants} and Car → Daily → Petrol.
@@ -93,9 +87,9 @@ function indentOf(label: string): number {
 }
 
 beforeEach(() => {
-  mockFetchBreakdown.mockReset().mockResolvedValue(BREAKDOWN);
-  mockFetchCategories.mockReset().mockResolvedValue(CATS);
-  mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
+  server.seed('/breakdown', BREAKDOWN);
+  server.seed('/categories', CATS);
+  server.seed('/paycycle', PAY_CYCLE);
 });
 
 it('[A9] parents render collapsed by default — subs are hidden', async () => {
@@ -179,23 +173,22 @@ describe('cycle-independent hero (pay cycle pending)', () => {
   const BREAKDOWN = { coffee: { posted: 40, pending: 10 } };
 
   beforeEach(() => {
-    mockFetchBreakdown.mockReset().mockResolvedValue(BREAKDOWN);
-    mockFetchCategories.mockReset().mockResolvedValue(CATS);
-    mockFetchPayCycle.mockReset().mockResolvedValue({ length: 30, last_pay_date: '2026-07-01' });
+    server.seed('/breakdown', BREAKDOWN);
+    server.seed('/categories', CATS);
+    server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01' });
   });
 
   it('renders the breakdown hero while the pay cycle is STILL pending (cycle-independent hero → Insights exclusion is safe)', async () => {
     // Hold the pay cycle unresolved; breakdown + categories resolve. The hero must paint its
     // total anyway — it reads breakdown, never the cycle. On a payCycle-gated hero it would sit
-    // on "Loading…" until the (never-resolving) cycle landed.
-    let resolvePayCycle: (v: unknown) => void = () => {};
-    mockFetchPayCycle.mockReset().mockReturnValue(new Promise((r) => { resolvePayCycle = r; }));
+    // on "Loading…" until the (held) cycle landed.
+    const held = server.hold('/paycycle');
     render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Insights)));
 
     expect(await screen.findByText('spent across 1 category')).toBeTruthy(); // hero painted from breakdown
     expect(screen.queryByText('Loading…')).toBeNull();
-    expect(mockFetchBreakdown).toHaveBeenCalledWith(14, 0); // parallel, default length, current cycle (WHIT-68); server derives the window
+    expect(server.sent('GET', '/breakdown?days=14')).toHaveLength(1); // parallel, default length, current cycle (WHIT-68); server derives the window
 
-    await act(async () => { resolvePayCycle({ length: 30, last_pay_date: '2026-07-01' }); }); // settle to avoid act() leak
+    await act(async () => { held.release(); }); // settle to avoid act() leak
   });
 });

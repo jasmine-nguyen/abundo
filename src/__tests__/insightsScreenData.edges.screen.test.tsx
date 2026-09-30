@@ -6,30 +6,22 @@
 // were dropped from useCombineScreenQueries([...]), a pay-cycle outage would surface neither
 // isError (nothing to OR) nor isLoading — stranding the user on an empty screen with no Retry.
 // Fail-on-revert: dropping payCycleQuery from the Insights array flips isError to false here.
-// ../api + ../auth mocked; real QueryClientProvider drives the hook (mirrors goalScreenData.edges).
+// Real ../api over the fake server, ../auth mocked; real QueryClientProvider drives the hook
+// (mirrors goalScreenData.edges).
 //
-// WHIT-467 folded in insightsIncomeEpsilon.edges (WHIT-380 QA gap) — identical mock map + timer
-// regime. It wants NO default breakdown (each test seeds its own), so it lives in its own describe
-// with a nested beforeEach that resets ONLY breakdown and inherits categories/payCycle/budgets.
+// WHIT-467 folded in insightsIncomeEpsilon.edges (WHIT-380 QA gap) — same harness + timer
+// regime. It seeds its own breakdown over the default and inherits categories/payCycle/budgets.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { installFakeServer } from './support/fakeServer';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-
-const mockFetchBreakdown = jest.fn<(days: number, cycle?: number) => Promise<unknown>>();
-const mockFetchCategories = jest.fn<() => Promise<unknown>>();
-const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
-const mockFetchBudgets = jest.fn<() => Promise<unknown>>();
-jest.mock('../api', () => ({
-  fetchBreakdown: (...a: unknown[]) => mockFetchBreakdown(...(a as [number, number?])),
-  fetchCategories: () => mockFetchCategories(),
-  fetchPayCycle: () => mockFetchPayCycle(),
-  fetchBudgets: () => mockFetchBudgets(),
-}));
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 
 import { useInsightsScreenData } from '../queries';
+
+const server = installFakeServer();
 
 const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
 const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
@@ -42,14 +34,14 @@ const wrapper = (client: QueryClient) =>
   ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 
 beforeEach(() => {
-  mockFetchBreakdown.mockReset().mockResolvedValue(BREAKDOWN);
-  mockFetchCategories.mockReset().mockResolvedValue(CATS);
-  mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
-  mockFetchBudgets.mockReset().mockResolvedValue({}); // no budgets by default
+  server.seed('/breakdown', BREAKDOWN);
+  server.seed('/categories', CATS);
+  server.seed('/paycycle', PAY_CYCLE);
+  server.seed('/budgets', {}); // no budgets by default
 });
 
 it('a payCycle failure surfaces as isError and does NOT strand isLoading (payCycle IS in the Insights array)', async () => {
-  mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
+  server.fail('/paycycle', 503);
   const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
 
   await waitFor(() => expect(result.current.isError).toBe(true)); // payCycleQuery IS in the OR
@@ -57,14 +49,14 @@ it('a payCycle failure surfaces as isError and does NOT strand isLoading (payCyc
   // WHIT-72: breakdown no longer waits behind payCycleQuery.isSuccess — it fetches in parallel
   // with the default length (the server derives the window itself), so it DID fetch. The
   // composite still surfaces isError via the payCycle failure in the OR.
-  await waitFor(() => expect(mockFetchBreakdown).toHaveBeenCalledWith(14, 0)); // WHIT-68: current cycle = 0
+  await waitFor(() => expect(server.sent('GET', '/breakdown?days=14')).toHaveLength(1)); // WHIT-68: current cycle = 0
 });
 
 // WHIT-194: the categoriesError signal that lets Insights distinguish a first-load categories
 // failure (no taxonomy → show the error) from a background-refetch failure over good cached
 // taxonomy (keep the rows). These two lock the `data === undefined` guard — the make-or-break.
 it('categoriesError is TRUE on a FIRST-LOAD categories failure (never-succeeded → data undefined)', async () => {
-  mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
+  server.fail('/categories', 500);
   const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
 
   await waitFor(() => expect(result.current.isError).toBe(true));
@@ -79,7 +71,7 @@ it('categoriesError is FALSE on a BACKGROUND-refetch categories failure over goo
   const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.category('coffee')?.name).toBe('Cafes & Coffee'));
 
-  mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 503'));
+  server.fail('/categories', 503);
   await act(async () => { result.current.refetch(); });
   await waitFor(() => expect(result.current.isError).toBe(true)); // the failed categories refetch propagates
 
@@ -90,7 +82,7 @@ it('categoriesError is FALSE on a BACKGROUND-refetch categories failure over goo
 // WHIT-312: `earned` rides in the breakdown response's __earned__ bucket (server-computed),
 // read as posted + pending; absent (no income, or an older server) → 0.
 it('derives earned from the __earned__ bucket (posted + pending)', async () => {
-  mockFetchBreakdown.mockReset().mockResolvedValue({ coffee: { posted: 40, pending: 10 }, __earned__: { posted: 2500, pending: 300 } });
+  server.seed('/breakdown', { coffee: { posted: 40, pending: 10 }, __earned__: { posted: 2500, pending: 300 } });
   const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
 
   await waitFor(() => expect(result.current.earned).toBe(2800));
@@ -109,7 +101,7 @@ it('earned defaults to 0 when the response carries no __earned__ (older server /
 // __income__ map, sorted biggest-first. A net-reversed source now arrives SIGNED and is KEPT (the
 // drill screen shows it as a "−$X" reversal, sorted last); only an EXACT-$0-net source is dropped.
 it('derives incomeSources biggest-first, keeps a net-negative source, drops only an exact-$0 one', async () => {
-  mockFetchBreakdown.mockReset().mockResolvedValue({
+  server.seed('/breakdown', {
     coffee: { posted: 40, pending: 10 },
     __earned__: { posted: 5000, pending: 200 },
     __income__: {
@@ -142,10 +134,7 @@ it('incomeSources is [] when the response carries no __income__ (older server / 
 // off a stale/shared source, cycle=1 would keep cycle=0's 2800.
 // [A14]
 it('re-derives earned from the selected cycle (no stale carry-over on cycle switch)', async () => {
-  mockFetchBreakdown.mockReset().mockImplementation((_days: number, cycle?: number) =>
-    Promise.resolve(cycle === 1
-      ? { coffee: { posted: 5, pending: 0 }, __earned__: { posted: 1000, pending: 0 } }
-      : { coffee: { posted: 40, pending: 10 }, __earned__: { posted: 2500, pending: 300 } }));
+  server.seed('/breakdown', { coffee: { posted: 40, pending: 10 }, __earned__: { posted: 2500, pending: 300 } });
 
   const client = makeClient();
   const { result, rerender } = renderHook(({ cycle }: { cycle: number }) => useInsightsScreenData(cycle), {
@@ -154,9 +143,11 @@ it('re-derives earned from the selected cycle (no stale carry-over on cycle swit
   });
   await waitFor(() => expect(result.current.earned).toBe(2800)); // this cycle: 2500 + 300
 
+  server.once('GET', '/breakdown', { body: { coffee: { posted: 5, pending: 0 }, __earned__: { posted: 1000, pending: 0 } } });
   rerender({ cycle: 1 });
   await waitFor(() => expect(result.current.earned).toBe(1000)); // last cycle: its OWN __earned__
   expect(result.current.breakdown.coffee).toEqual({ posted: 5, pending: 0 });
+  expect(server.sentUnder('GET', '/breakdown').slice(-1)[0].path).toMatch(/&cycle=1$/);
 });
 
 // --- WHIT-380 QA gap (folded in by WHIT-467) ----------------------------------
@@ -166,14 +157,10 @@ it('re-derives earned from the selected cycle (no stale carry-over on cycle swit
 // 0.005: a sub-half-cent net (either sign) is DROPPED as dust; a net just OVER it is KEPT.
 // Fail-on-revert (proven): `>= RECONCILE_EPSILON` → `!== 0` keeps the dust (length 4) → reddens;
 // bump RECONCILE_EPSILON to 0.01 drops the −0.006 source → reddens.
-// Its own nested beforeEach resets breakdown to NO default (each test seeds its own).
+// The test seeds its own breakdown over the file's default.
 describe('RECONCILE_EPSILON income-dust boundary', () => {
-  beforeEach(() => {
-    mockFetchBreakdown.mockReset(); // no default breakdown — the test below seeds its own
-  });
-
   it('drops a sub-half-cent net source (either sign) as float dust but keeps a net just OVER the half-cent', () => {
-    mockFetchBreakdown.mockResolvedValue({
+    server.seed('/breakdown', {
       coffee: { posted: 40, pending: 10 },
       __earned__: { posted: 5000, pending: 0 },
       __income__: {

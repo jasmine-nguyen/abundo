@@ -7,24 +7,16 @@
 //        cycle 1 (the cycle-keyed error path, end to end)
 //   [A8] a POPULATED coach (summary + suggestions) is hidden on the last cycle and its
 //        content is restored on switch back (not just the "Worth a look" header)
-// Same mock shape as insightsBreakdownQuery.screen.test.tsx: ../api + ../auth + expo-router
-// mocked; ../context PARTIALLY mocked (real selectors, a MUTABLE useAppContext so a test can
-// populate the AI coach).
+// Same harness as insightsBreakdownQuery.screen.test.tsx: real ../api over the fake server;
+// ../auth + expo-router mocked; ../context PARTIALLY mocked (real selectors, a MUTABLE
+// useAppContext so a test can populate the AI coach).
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { installFakeServer } from './support/fakeServer';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-
-const mockFetchBreakdown = jest.fn<(days: number, cycle?: number) => Promise<unknown>>();
-const mockFetchCategories = jest.fn<() => Promise<unknown>>();
-const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
-jest.mock('../api', () => ({
-  fetchBreakdown: (...a: unknown[]) => mockFetchBreakdown(...(a as [number, number?])),
-  fetchCategories: () => mockFetchCategories(),
-  fetchPayCycle: () => mockFetchPayCycle(),
-}));
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 
 // Mutable AI slice so [A8] can populate the coach (summary + suggestions).
 type Ai = { summary: string; suggestions: string[]; generated_at: string } | null;
@@ -52,6 +44,8 @@ jest.mock('expo-router', () => {
 
 import Insights from '../../app/(tabs)/insights';
 
+const server = installFakeServer();
+
 const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
 const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
 const BREAKDOWN = { coffee: { posted: 40, pending: 10 } };
@@ -65,9 +59,9 @@ function renderInsights(client = makeClient()) {
 
 beforeEach(() => {
   mockAi = null;
-  mockFetchBreakdown.mockReset().mockResolvedValue(BREAKDOWN);
-  mockFetchCategories.mockReset().mockResolvedValue(CATS);
-  mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
+  server.seed('/breakdown', BREAKDOWN);
+  server.seed('/categories', CATS);
+  server.seed('/paycycle', PAY_CYCLE);
 });
 
 // [A6] a11y lock — VoiceOver reads the active segment. Asserts BOTH segments so a
@@ -93,24 +87,23 @@ it('[A6] segmented control accessibilityState.selected tracks the active segment
 // cycle whose read FAILS must show the inline error + Retry (not a stale cycle-0 hero or
 // a confident $0), and Retry must refetch cycle 1 specifically.
 it('[A7] a past-cycle read that FAILS shows inline error + Retry; Retry refetches cycle 1', async () => {
-  mockFetchBreakdown.mockReset().mockImplementation((_d: number, cycle = 0) =>
-    cycle === 1 ? Promise.reject(new Error('API error: 503')) : Promise.resolve(BREAKDOWN));
   renderInsights(makeClient(false));
   await screen.findByText('Cafes & Coffee');
 
+  // Cycle 0 is cached now, so from here only the cycle-1 read reaches the server — and it fails.
+  server.fail('/breakdown', 503);
   fireEvent.press(screen.getByTestId('insights-cycle-prev'));
   expect(await screen.findByTestId('insights-error')).toBeTruthy();
   expect(screen.queryByText('$0')).toBeNull();               // no confident zero over a past-cycle error
   expect(screen.queryByText('Cafes & Coffee')).toBeNull();   // no stale cycle-0 rows bleeding through
 
-  // Retry — cycle 1 now succeeds with its own data.
-  mockFetchBreakdown.mockReset().mockImplementation((_d: number, cycle = 0) =>
-    Promise.resolve(cycle === 1 ? { coffee: { posted: 5, pending: 0 } } : BREAKDOWN));
+  // Retry — cycle 1 now succeeds with its own data (a queued reply goes out ahead of the failure).
+  server.once('GET', '/breakdown', { body: { coffee: { posted: 5, pending: 0 } } });
   fireEvent.press(screen.getByTestId('insights-retry'));
 
   await screen.findByText('Cafes & Coffee');
   expect(screen.getByText('LAST PAY CYCLE')).toBeTruthy();    // still on the past cycle after recovery
-  expect(mockFetchBreakdown).toHaveBeenCalledWith(expect.any(Number), 1); // the refetch was for cycle 1
+  expect(server.sentUnder('GET', '/breakdown').slice(-1)[0].path).toMatch(/&cycle=1$/); // the refetch was for cycle 1
 });
 
 // [A8] a POPULATED coach must vanish ENTIRELY on the past cycle (summary + suggestion

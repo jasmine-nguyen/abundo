@@ -2,11 +2,13 @@
 // fetched before login, fires on the auth flip, and — the crux — isLoading/isError come ONLY
 // from the two PRIMARY reads (goals + pay cycle). Account balances and the mortgage summary
 // are SECONDARY: a hiccup there degrades one card (balanceFor → null, mortgageError), never
-// blanks the hub. Retry fires EVERY read. ../api + ../auth mocked; real QueryClientProvider.
+// blanks the hub. Retry fires EVERY read. Real ../api over the fake server, ../auth mocked;
+// real QueryClientProvider.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';
 const mockAuthListeners = new Set<() => void>();
@@ -16,26 +18,16 @@ jest.mock('../auth', () => ({
     mockAuthListeners.add(l);
     return () => mockAuthListeners.delete(l);
   },
+  getAuthToken: async () => 'test-id-token',
 }));
 function setAuth(next: string) {
   mockAuthStatus = next;
   mockAuthListeners.forEach((l) => l());
 }
 
-const mockFetchGoals = jest.fn<() => Promise<unknown>>();
-const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
-const mockFetchAccountBalances = jest.fn<() => Promise<unknown>>();
-const mockFetchHomeLoan = jest.fn<() => Promise<unknown>>();
-const mockFetchLoanFacts = jest.fn<() => Promise<unknown>>();
-jest.mock('../api', () => ({
-  fetchGoals: () => mockFetchGoals(),
-  fetchPayCycle: () => mockFetchPayCycle(),
-  fetchAccountBalances: () => mockFetchAccountBalances(),
-  fetchHomeLoan: () => mockFetchHomeLoan(),
-  fetchLoanFacts: () => mockFetchLoanFacts(),
-}));
+import { useGoalsScreenData, homeLoanKey } from '../queries';
 
-import { useGoalsScreenData } from '../queries';
+const server = installFakeServer();
 
 const GOALS = [
   { id: 'g1', name: 'Emergency fund', icon: 'umbrella', direction: 'grow', target_amount: 10000, target_date: '2026-12-01', account_id: 'up-spending' },
@@ -57,11 +49,11 @@ const wrapper = (client: QueryClient) =>
 beforeEach(() => {
   mockAuthStatus = 'authed';
   mockAuthListeners.clear();
-  mockFetchGoals.mockReset().mockResolvedValue(GOALS);
-  mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
-  mockFetchAccountBalances.mockReset().mockResolvedValue(BALANCES);
-  mockFetchHomeLoan.mockReset().mockResolvedValue(HOME_LOAN);
-  mockFetchLoanFacts.mockReset().mockResolvedValue(READY_FACTS);
+  server.seed('/goals', GOALS);
+  server.seed('/paycycle', PAY_CYCLE);
+  server.seed('/accounts/balances', BALANCES);
+  server.seed('/homeloan', HOME_LOAN);
+  server.seed('/loanfacts', READY_FACTS);
 });
 
 it('assembles goals, pay cycle, the mortgage summary, and a per-account balance lookup', async () => {
@@ -90,18 +82,18 @@ it('balanceFor returns the live SIGNED amount by account id, null for unknown/un
 it('does not fetch before login, then fires every read on the auth flip', async () => {
   mockAuthStatus = 'anon';
   const { result } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });
-  expect(mockFetchGoals).not.toHaveBeenCalled();
-  expect(mockFetchPayCycle).not.toHaveBeenCalled();
-  expect(mockFetchAccountBalances).not.toHaveBeenCalled();
+  expect(server.sent('GET', '/goals')).toHaveLength(0);
+  expect(server.sent('GET', '/paycycle')).toHaveLength(0);
+  expect(server.sent('GET', '/accounts/balances')).toHaveLength(0);
 
   await act(async () => { setAuth('authed'); });
   await waitFor(() => expect(result.current.goals).toEqual(GOALS));
-  expect(mockFetchGoals).toHaveBeenCalled();
-  expect(mockFetchAccountBalances).toHaveBeenCalled();
+  expect(server.sent('GET', '/goals')).toHaveLength(1);
+  expect(server.sent('GET', '/accounts/balances')).toHaveLength(1);
 });
 
 it('SECONDARY balances failure does NOT set isError — a synced card just loses its balance', async () => {
-  mockFetchAccountBalances.mockReset().mockRejectedValue(new Error('API error: 500'));
+  server.fail('/accounts/balances', 500);
   const { result } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient(false)) });
   await waitFor(() => expect(result.current.goals).toEqual(GOALS));
 
@@ -110,7 +102,7 @@ it('SECONDARY balances failure does NOT set isError — a synced card just loses
 });
 
 it('SECONDARY mortgage failure sets mortgageError only — never the aggregate isError', async () => {
-  mockFetchHomeLoan.mockReset().mockRejectedValue(new Error('API error: 503'));
+  server.fail('/homeloan', 503);
   const { result } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient(false)) });
   await waitFor(() => expect(result.current.mortgageError).toBe(true));
 
@@ -119,13 +111,13 @@ it('SECONDARY mortgage failure sets mortgageError only — never the aggregate i
 });
 
 it('a PRIMARY goals first-load failure sets isError (nothing to show)', async () => {
-  mockFetchGoals.mockReset().mockRejectedValue(new Error('API error: 500'));
+  server.fail('/goals', 500);
   const { result } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient(false)) });
   await waitFor(() => expect(result.current.isError).toBe(true));
 });
 
 it('a PRIMARY pay-cycle first-load failure sets isError (pace math has no cycle)', async () => {
-  mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 500'));
+  server.fail('/paycycle', 500);
   const { result } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient(false)) });
   await waitFor(() => expect(result.current.isError).toBe(true));
 });
@@ -134,15 +126,15 @@ it('refetch fires EVERY read — including the secondary balances + mortgage', a
   const { result } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.goals).toEqual(GOALS));
   const before = {
-    goals: mockFetchGoals.mock.calls.length,
-    balances: mockFetchAccountBalances.mock.calls.length,
-    homeLoan: mockFetchHomeLoan.mock.calls.length,
+    goals: server.sent('GET', '/goals').length,
+    balances: server.sent('GET', '/accounts/balances').length,
+    homeLoan: server.sent('GET', '/homeloan').length,
   };
 
   await act(async () => { result.current.refetch(); });
-  await waitFor(() => expect(mockFetchGoals.mock.calls.length).toBeGreaterThan(before.goals));
-  expect(mockFetchAccountBalances.mock.calls.length).toBeGreaterThan(before.balances);
-  expect(mockFetchHomeLoan.mock.calls.length).toBeGreaterThan(before.homeLoan);
+  await waitFor(() => expect(server.sent('GET', '/goals').length).toBeGreaterThan(before.goals));
+  expect(server.sent('GET', '/accounts/balances').length).toBeGreaterThan(before.balances);
+  expect(server.sent('GET', '/homeloan').length).toBeGreaterThan(before.homeLoan);
 });
 
 // ===== WHIT-233 (folded from goalsScreenDataEdges.screen.test.tsx) =====
@@ -151,7 +143,7 @@ it('refetch fires EVERY read — including the secondary balances + mortgage', a
 // FAILED a background refetch must keep mortgageError FALSE (firstLoadError, not bare .isError — the
 // last-good value stands); balanceFor keeps a STABLE identity across a redraw when balances are
 // unchanged (the WHIT-244 [dep]-thrash trap) and changes when the data changes; and `goals` keeps a
-// stable EMPTY_GOALS identity while cold. ../api + ../auth mocked at module scope (same regime).
+// stable EMPTY_GOALS identity while cold. Real ../api over the fake server (same regime).
 // Block-scoped BALANCES (single account) shadows the module-level one; a self-contained beforeEach
 // re-seeds auth + every read for this describe.
 describe('useGoalsScreenData — adversarial edges (WHIT-233)', () => {
@@ -162,17 +154,17 @@ describe('useGoalsScreenData — adversarial edges (WHIT-233)', () => {
   beforeEach(() => {
     mockAuthStatus = 'authed';
     mockAuthListeners.clear();
-    mockFetchGoals.mockReset().mockResolvedValue(GOALS);
-    mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
-    mockFetchAccountBalances.mockReset().mockResolvedValue(BALANCES);
-    mockFetchHomeLoan.mockReset().mockResolvedValue(HOME_LOAN);
-    mockFetchLoanFacts.mockReset().mockResolvedValue(READY_FACTS);
+    server.seed('/goals', GOALS);
+    server.seed('/paycycle', PAY_CYCLE);
+    server.seed('/accounts/balances', BALANCES);
+    server.seed('/homeloan', HOME_LOAN);
+    server.seed('/loanfacts', READY_FACTS);
   });
 
   // [S1] loanFacts is SECONDARY too — its failure must not blank the hub (guards against someone
   // adding loanFactsQuery to the primary isError). The implementer only tested homeLoan + balances.
   it('a SECONDARY loanFacts failure does NOT set isError and leaves mortgageError false', async () => {
-    mockFetchLoanFacts.mockReset().mockRejectedValue(new Error('API error: 500'));
+    server.fail('/loanfacts', 500);
     const { result } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient(false)) });
     await waitFor(() => expect(result.current.goals).toEqual(GOALS));
 
@@ -189,10 +181,11 @@ describe('useGoalsScreenData — adversarial edges (WHIT-233)', () => {
     expect(result.current.mortgageError).toBe(false);
 
     // Now the mortgage read starts failing; a refetch fires it (and the others, which still succeed).
-    mockFetchHomeLoan.mockReset().mockRejectedValue(new Error('API error: 503'));
+    server.fail('/homeloan', 503);
     await act(async () => { result.current.refetch(); });
-    await waitFor(() => expect(mockFetchHomeLoan.mock.calls.length).toBeGreaterThan(0));
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await waitFor(() => expect(server.sent('GET', '/homeloan')).toHaveLength(2));
+    // The real request settles a few ticks later; wait until the failure has landed in the cache.
+    await waitFor(() => expect(client.getQueryState(homeLoanKey)?.status).toBe('error'));
 
     expect(result.current.homeLoan.balance).toBe(596642.43); // last-good value preserved
     expect(result.current.mortgageError).toBe(false);        // NOT flagged — it loaded once
@@ -209,7 +202,7 @@ describe('useGoalsScreenData — adversarial edges (WHIT-233)', () => {
     expect(result.current.balanceFor).toBe(before); // same reference — no thrash
 
     // A genuine balances change must produce a NEW balanceFor (and the new value).
-    mockFetchAccountBalances.mockReset().mockResolvedValue([
+    server.seed('/accounts/balances', [
       { account_id: 'up-spending', amount: 9999, available_balance: null, currency: 'AUD', as_of: '2026-07-11T00:00:00Z', account_type: null },
     ]);
     await act(async () => { result.current.refetch(); });
