@@ -55,6 +55,11 @@ with low confidence.
   than 15 minutes, or outside the files it touches). File it as a card instead.
 - Skip anything a linter or formatter already enforces, and style nitpicks on code
   that follows existing patterns.
+- The tests written before the code (the proof tests) sit in a new test file of
+  their own on purpose: the pipeline locks every file they're in, and locking a
+  shared file would freeze its older tests. So don't report where they live, or a
+  few setup lines they repeat from a neighbouring test file. Anything else wrong
+  with them is still a finding.
 
 Smells (Fowler, *Refactoring* ch. 3), each *what it is* → *how to fix*:
 Mysterious Name → rename · Duplicated Code → extract the shared shape · Feature Envy

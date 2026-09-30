@@ -265,6 +265,13 @@ the card number for card builds) and check where it is:
 
    Never answer a pause yourself: every one of them is the user's call.
 
+   **Recommendations are the helper's, not yours.** Mark "(Recommended)" on the
+   option the block recommends, and say it's the helper's pick. If you'd choose
+   differently, for example from what you know of the user's preferences, say so
+   once on its own line, "The implementer recommends A. I'd pick B, because
+   …", and never blend your view into the summary. The recommendation and your
+   note must never read as if they disagree without saying so.
+
 4. Resume with the user's reply:
    `python3 build_graph.py --thread <id> --resume "<reply>"`
 

@@ -37,7 +37,11 @@ A test is only worth keeping if it would FAIL when the production code breaks.
 - The diff range you're given: read it with `git diff`.
 - The tests already in that diff: the test writer wrote acceptance tests for the
   main behaviour, and the implementer added smaller ones. Read them first — you
-  divide work with them, you don't duplicate it.
+  divide work with them, you don't duplicate it. The tests written before the code (the proof tests) sit in a new test file of
+  their own on purpose: the pipeline locks every file they're in, and locking a
+  shared file would freeze its older tests. So don't report where they live, or a
+  few setup lines they repeat from a neighbouring test file. Anything else wrong
+  with them is still a finding.
 - The card (what the user asked for) and the approved plan, including the
   "Sign-off answers" section at the top (these override the plan body) and any
   "Critic tweaks" section at the end.
