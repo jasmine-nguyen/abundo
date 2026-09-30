@@ -1016,6 +1016,7 @@ export interface SettingsScreenData {
   categoriesError: boolean;
   loanReadyError: boolean;
   isLoading: boolean; // first load, nothing cached → show "…" instead of a misleading "0"
+  isError: boolean;
   refetch: () => void;
   refetchStale: () => void;
 }

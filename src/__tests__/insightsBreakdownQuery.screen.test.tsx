@@ -113,8 +113,8 @@ it('a transient 5xx on breakdown retries and self-heals — no error shown', asy
 });
 
 it('a sustained breakdown failure shows the inline error + Retry, no false $0', async () => {
-  // A lasting failure: the screen's focus refresh re-asks for a stale errored read more than once,
-  // so a single queued 503 would heal on its own before Retry is pressed.
+  // A lasting failure, so Retry is proven against a persistent 503 (the focus-refresh loop that
+  // once re-asked on its own is gone — WHIT-668).
   server.fail('/breakdown', 503);
   renderInsights(makeClient(false));
   expect(await screen.findByTestId('insights-error')).toBeTruthy();
