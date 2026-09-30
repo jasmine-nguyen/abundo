@@ -5,7 +5,8 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';
@@ -23,12 +24,6 @@ const COFFEE_TX = '/categories/coffee/transactions';
 const SALARY_TX = '/categories/salary/transactions';
 
 const CATS = [{ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
-
-function makeClient(staleTime = 60_000) {
-  return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime, gcTime: Infinity } } });
-}
-const wrapper = (client: QueryClient) =>
-  ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 
 beforeEach(() => {
   mockAuthStatus = 'authed';
@@ -81,7 +76,7 @@ it('useBudgetDetailScreenData surfaces a budget-transactions read failure as isE
 });
 
 it('useBudgetDetailScreenData refetchStale re-fires every stale read exactly once (incl. the list)', async () => {
-  const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient(0)) });
+  const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
   await waitFor(() => expect(result.current.isLoading).toBe(false));
   await waitFor(() => expect(server.sent('GET', COFFEE_BUDGET_TX)).toHaveLength(1));
 

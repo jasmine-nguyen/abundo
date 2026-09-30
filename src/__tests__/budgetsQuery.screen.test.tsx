@@ -8,6 +8,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor, renderHook } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { makeClient, wrapper, pause } from './support/queryClient';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 
@@ -48,12 +49,6 @@ const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
 const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 }];
 const BUDGETS = { coffee: { target: 100, posted: 40, pending: 10 } };
 
-function makeClient(retry: boolean | number = false) {
-  // staleTime mirrors the app default (data stays fresh) so the focus refetch is a
-  // no-op here, exactly as in prod — otherwise the default staleTime:0 makes every
-  // query instantly stale and refetchStale fires a spurious second fetch.
-  return new QueryClient({ defaultOptions: { queries: { retry, retryDelay: 1, staleTime: 60_000, gcTime: Infinity } } });
-}
 function renderBudgets(client = makeClient()) {
   return render(React.createElement(QueryClientProvider, { client }, React.createElement(Budgets)));
 }
@@ -109,7 +104,7 @@ it('shows a spinner first, then the rows (cache-first render)', async () => {
 
 it('a transient 5xx retries with backoff and self-heals — no error shown', async () => {
   server.once('GET', '/budgets', { status: 503 });
-  renderBudgets(makeClient(2)); // retry enabled (fast delay)
+  renderBudgets(makeClient({ retry: 2 })); // retry enabled (fast delay)
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
   expect(screen.queryByTestId('budgets-error')).toBeNull();
   expect(budgetReads()).toHaveLength(2); // first failed, retry succeeded
@@ -117,7 +112,7 @@ it('a transient 5xx retries with backoff and self-heals — no error shown', asy
 
 it('a sustained failure shows the inline error, and Retry recovers', async () => {
   server.fail('/budgets', 503);
-  renderBudgets(makeClient(false)); // no retry → straight to the error state
+  renderBudgets(makeClient()); // no retry → straight to the error state
   expect(await screen.findByTestId('budgets-error')).toBeTruthy();
 
   // WHIT-198: the Retry now routes through the shared RetryButton, so it carries the
@@ -133,9 +128,9 @@ it('a sustained failure shows the inline error, and Retry recovers', async () =>
 
 it('a sustained failure sends a bounded number of requests (WHIT-668)', async () => {
   server.fail('/budgets', 503);
-  renderBudgets(makeClient(false));
+  renderBudgets(makeClient());
   expect(await screen.findByTestId('budgets-error')).toBeTruthy();
-  await act(() => new Promise<void>((resolve) => setTimeout(resolve, 200)));
+  await pause(200);
   expect(budgetReads()).toHaveLength(1);
 });
 
@@ -213,7 +208,7 @@ it('through the hook: a known last_pay_date renders a known "Started …" (WHIT-
 describe('partial failure', () => {
   it('budgets read fails while pay cycle succeeds → inline error + Retry (not a spinner)', async () => {
     server.fail('/budgets', 503);
-    renderBudgets(makeClient(false));
+    renderBudgets(makeClient());
     expect(await screen.findByTestId('budgets-error')).toBeTruthy();
     expect(screen.getByTestId('budgets-retry')).toBeTruthy();
     // WHIT-72: budgets fetches in PARALLEL now (not gated on payCycle), so it fires with the
@@ -225,7 +220,7 @@ describe('partial failure', () => {
 
   it('categories read fails → inline error (rows cannot render without their category)', async () => {
     server.fail('/categories', 500);
-    renderBudgets(makeClient(false));
+    renderBudgets(makeClient());
     expect(await screen.findByTestId('budgets-error')).toBeTruthy();
     expect(screen.queryByText('Cafes & Coffee')).toBeNull();
   });
@@ -338,7 +333,7 @@ describe('length change refetches once, not twice', () => {
 describe('payCycle failure must show the error, not budgets on a wrong cycle', () => {
   it('sustained payCycle failure → inline error + Retry (payCycleError), never a spinner', async () => {
     server.fail('/paycycle', 503);
-    renderBudgets(makeClient(false));
+    renderBudgets(makeClient());
     expect(await screen.findByTestId('budgets-error')).toBeTruthy();
     expect(screen.getByTestId('budgets-retry')).toBeTruthy();
     expect(screen.queryByTestId('budgets-loading')).toBeNull();
@@ -408,17 +403,11 @@ describe('WHIT-221 parent→sub tree + de-duped hero (folded from budgetsSubcate
 // ===== WHIT-72 (folded from budgetsPayCycleError.screen.test.tsx) — the payCycleError guard,
 // driven via renderHook on the REAL hooks (real ../api, ../auth mocked; NO expo-router mock originally —
 // the shared module-scope expo-router mock is inert here because ../queries never imports it).
-// makeClient/wrapper/fixtures block-scoped so they don't collide with the module helpers. =====
+// Fixtures block-scoped so they don't collide with the module ones. =====
 describe('WHIT-72 payCycleError guard (folded from budgetsPayCycleError)', () => {
   const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
   const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
   const BUDGETS = { coffee: { target: 100, posted: 40, pending: 10 } };
-
-  function makeClient() {
-    return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
-  }
-  const wrapper = (client: QueryClient) =>
-    ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 
   beforeEach(() => {
     server.seed('/budgets', BUDGETS);

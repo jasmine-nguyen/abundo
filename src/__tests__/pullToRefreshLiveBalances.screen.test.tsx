@@ -12,6 +12,7 @@ import React from 'react';
 import { RefreshControl } from 'react-native';
 import { render, screen, act, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { makeClient } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';
@@ -50,9 +51,6 @@ const TXNS = [{
   account_name: 'ANZ', category: 'groceries', status: 'posted', type: 'purchase', counts_to_budget: true,
 }];
 
-function makeClient() {
-  return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
-}
 function renderScreen(client = makeClient()) {
   return render(React.createElement(QueryClientProvider, { client }, React.createElement(Accounts)));
 }

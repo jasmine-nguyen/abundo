@@ -13,7 +13,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { makeClient, wrapper } from './support/queryClient';
 import type { Rule } from '../context';
 import { installFakeServer } from './support/fakeServer';
 
@@ -33,11 +33,10 @@ beforeEach(() => { server.seed('/rules', SERVER); });
 it('a rules-query refetch remaps via selectRules and CLEARS the NEW badge (isNew:true → false)', async () => {
   // staleTime Infinity so mounting over the seeded cache does NOT auto-refetch — we control
   // exactly when the refetch happens.
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
+  const client = makeClient({ staleTime: Infinity });
   client.setQueryData<Rule[]>([...rulesKey], [CACHED_NEW]); // as if saveManualRule just mirrored it in
 
-  const wrapper = ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-  const { result } = renderHook(() => useRulesScreenData(), { wrapper });
+  const { result } = renderHook(() => useRulesScreenData(), { wrapper: wrapper(client) });
 
   // Before the refetch: the badge is present (the mirror's isNew survived).
   expect(result.current.rules[0].isNew).toBe(true);

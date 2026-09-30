@@ -10,7 +10,8 @@
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { makeClient } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
 jest.mock('../auth', () => ({
@@ -37,8 +38,7 @@ const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
 const COUNT = '/transactions/uncategorized/count';
 
 function renderScreen() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
-  return render(React.createElement(QueryClientProvider, { client }, React.createElement(Transactions)));
+  return render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Transactions)));
 }
 
 // [C4a] badge>0, empty first page but a live cursor -> "More to load" (deep rows a Load More away).

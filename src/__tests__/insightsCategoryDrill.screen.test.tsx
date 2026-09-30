@@ -6,7 +6,8 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { makeClient } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
@@ -48,9 +49,6 @@ const BREAKDOWN = {
   __rollup__: { nodes: { food: { posted: 50, pending: 0 } } },  // netted parent = direct 30 + coffee 20
 };
 
-function makeClient() {
-  return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
-}
 function renderInsights() {
   return render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Insights)));
 }

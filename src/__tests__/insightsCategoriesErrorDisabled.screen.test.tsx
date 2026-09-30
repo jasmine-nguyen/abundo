@@ -8,7 +8,7 @@
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { renderHook, waitFor } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { makeClient, wrapper } from './support/queryClient';
 
 // Unauthed → every query in the composite is disabled and never runs.
 jest.mock('../auth', () => ({ getStatus: () => 'anon', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
@@ -17,12 +17,6 @@ import { installFakeServer } from './support/fakeServer';
 import { useInsightsScreenData } from '../queries';
 
 const server = installFakeServer();
-
-function makeClient() {
-  return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
-}
-const wrapper = (client: QueryClient) =>
-  ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 
 it('a DISABLED categories query (unauthed, never ran) does NOT report categoriesError', async () => {
   const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });

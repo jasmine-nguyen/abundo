@@ -12,7 +12,8 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { RefreshControl } from 'react-native';
 import { render, screen, act, waitFor } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { makeClient } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';
@@ -52,9 +53,6 @@ const TXNS = [{
   account_name: 'ANZ', category: 'groceries', status: 'posted', type: 'purchase', counts_to_budget: true,
 }];
 
-function makeClient() {
-  return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
-}
 const rc = () => screen.UNSAFE_getByType(RefreshControl);
 const pull = async () => { await act(async () => { rc().props.onRefresh(); }); };
 // Let the balance promise's .then/.catch microtasks flush so a (wrongly) wired toast would have fired.

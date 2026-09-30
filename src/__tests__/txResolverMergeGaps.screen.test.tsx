@@ -14,7 +14,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { makeClient, wrapper } from './support/queryClient';
 import type { Transaction } from '../context';
 import { installFakeServer } from './support/fakeServer';
 
@@ -35,9 +35,6 @@ const tx = (id: string, over: Partial<Transaction> = {}): Transaction => ({
   account_name: 'ANZ', category: null, status: 'posted', type: 'purchase', counts_to_budget: true, ...over,
 });
 const ids = (list: Transaction[]) => list.map((t) => t.transaction_id);
-const makeClient = () => new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
-const wrapper = (client: QueryClient) => ({ children }: { children: React.ReactNode }) =>
-  React.createElement(QueryClientProvider, { client }, children);
 const emptyFeed = () => server.seed('/transactions/feed', { transactions: [], nextCursor: null });
 
 beforeEach(() => {

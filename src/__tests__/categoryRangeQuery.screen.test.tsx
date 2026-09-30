@@ -4,7 +4,8 @@
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
+import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
@@ -16,12 +17,6 @@ const server = installFakeServer();
 const COFFEE_PATH = '/categories/coffee/transactions';
 const RANGE = { from: '2026-06-12', to: '2026-09-11' };
 const RANGE_PATH = `${COFFEE_PATH}?from=2026-06-12&to=2026-09-11`;
-
-function makeClient() {
-  return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
-}
-const wrapper = (client: QueryClient) =>
-  ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 
 // [A13]
 it('a date range caches apart from the cycle view of the same category', async () => {

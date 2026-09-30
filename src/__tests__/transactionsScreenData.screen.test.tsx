@@ -12,6 +12,7 @@ import React from 'react';
 import { RefreshControl } from 'react-native';
 import { render, renderHook, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { makeClient, wrapper, pause } from './support/queryClient';
 import type { Transaction } from '../context';
 import { installFakeServer } from './support/fakeServer';
 
@@ -76,16 +77,7 @@ const TXNS = [{
   account_name: 'ANZ', category: 'groceries', status: 'posted', type: 'purchase', counts_to_budget: true,
 }];
 
-function wrapper(client: QueryClient) {
-  return ({ children }: { children: React.ReactNode }) =>
-    React.createElement(QueryClientProvider, { client }, children);
-}
-
 describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
-  function makeClient(staleTime: number) {
-    return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime, gcTime: Infinity } } });
-  }
-
   beforeEach(() => {
     mockAuthStatus = 'authed';
     mockAuthListeners.clear();
@@ -94,7 +86,7 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
   });
 
   it('refetchStale no-ops on a FRESH cache (instant-from-cache on revisit)', async () => {
-    const client = makeClient(Infinity); // never stale
+    const client = makeClient({ staleTime: Infinity }); // never stale
     const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.transactions.length).toBe(1));
     expect(feedReads()).toHaveLength(1);
@@ -106,7 +98,7 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
   });
 
   it('refetchStale REFETCHES a STALE single-page cache (focus refresh re-checks the newest page)', async () => {
-    const client = makeClient(0); // immediately stale
+    const client = makeClient({ staleTime: 0 }); // immediately stale
     const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.transactions.length).toBe(1));
     expect(feedReads()).toHaveLength(1);
@@ -120,7 +112,7 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
     // Infinity-stale client: balances is never stale, so only an UNCONDITIONAL (forced) refetch
     // refires the stored GET — proving Retry re-reads balances past the 45s window.
     server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]);
-    const client = makeClient(Infinity);
+    const client = makeClient({ staleTime: Infinity });
     const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.balances.get('a1')).toBeTruthy());
     expect(balanceReads()).toHaveLength(1); // initial load
@@ -136,7 +128,7 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
     // updating them, not a staleness-driven GET — and that the stored GET is NOT fired again on pull.
     server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]); // stored (initial)
     server.once('POST', REFRESH, { body: [{ account_id: 'a1', amount: -250 }] }); // live POST result
-    const client = makeClient(Infinity);
+    const client = makeClient({ staleTime: Infinity });
     const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.balances.get('a1')).toBeTruthy());
     expect(balanceReads()).toHaveLength(1); // initial stored load
@@ -159,7 +151,7 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
     // disagrees with the rows the pull just brought in.
     // Fail-on-revert: drop the uncategorizedCount invalidate from refetchList → this key is no
     // longer passed to invalidateQueries and the assertion fails.
-    const client = makeClient(Infinity);
+    const client = makeClient({ staleTime: Infinity });
     const spy = jest.spyOn(client, 'invalidateQueries');
     const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.transactions.length).toBe(1));
@@ -177,7 +169,7 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
     // staleTime:0 makes the feed itself stale (so refetchStale DOES refire it), proving balances is
     // skipped by design here, not merely because it happened to be fresh.
     server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]);
-    const client = makeClient(0); // everything immediately stale
+    const client = makeClient({ staleTime: 0 }); // everything immediately stale
     const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.balances.get('a1')).toBeTruthy());
     expect(balanceReads()).toHaveLength(1);
@@ -193,7 +185,7 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
     // the composite must not surface it. isError stays false, the feed rows stay, and react-query
     // keeps the last-good balance (no card blanks mid-refetch).
     server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]); // initial load OK
-    const client = makeClient(Infinity); // retry:false
+    const client = makeClient({ staleTime: Infinity }); // retry:false
     const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.balances.get('a1')).toBeTruthy());
     expect(result.current.isError).toBe(false);
@@ -209,7 +201,7 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
 
   it('isError surfaces when ONLY the categories read fails (transactions still populated)', async () => {
     server.fail('/categories', 500);
-    const client = makeClient(Infinity); // retry:false
+    const client = makeClient({ staleTime: Infinity }); // retry:false
     const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.transactions.length).toBe(1); // tx loaded despite categories failing
@@ -231,10 +223,6 @@ describe('the Transactions tab feed composite — pagination + refresh', () => {
   });
   const ids = (list: Transaction[]) => list.map((t) => t.transaction_id);
   const page = (transactions: Transaction[], nextCursor: string | null) => ({ body: { transactions, nextCursor } });
-
-  function makeClient(staleTime = 60_000) {
-    return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime, gcTime: Infinity } } });
-  }
 
   beforeEach(() => {
     mockAuthStatus = 'authed';
@@ -276,7 +264,7 @@ describe('the Transactions tab feed composite — pagination + refresh', () => {
     // focus refetch re-fetches BOTH loaded pages by their own cursors:
     server.once('GET', FEED, page([tx('t1')], 'cur1'));
     server.once('GET', FEED, page([tx('t2')], null));
-    const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(makeClient(0)) }); // stale
+    const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(makeClient({ staleTime: 0 })) }); // stale
     await waitFor(() => expect(result.current.transactions.length).toBe(1));
     await act(async () => { result.current.loadMore(); });
     await waitFor(() => expect(result.current.transactions.length).toBe(2)); // 2 pages
@@ -309,10 +297,6 @@ describe('the Uncategorized tab feed composite — server-side paged uncategoriz
   });
   const ids = (list: Transaction[]) => list.map((t) => t.transaction_id);
   const page = (transactions: Transaction[], nextCursor: string | null) => ({ body: { transactions, nextCursor } });
-
-  function makeClient(staleTime = 60_000) {
-    return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime, gcTime: Infinity } } });
-  }
 
   beforeEach(() => {
     mockAuthStatus = 'authed';
@@ -386,9 +370,6 @@ describe('the Uncategorized tab feed composite — server-side paged uncategoriz
 // PARTIALLY mocked (all above, at module scope); the screen renders under a real
 // QueryClientProvider.
 describe('the Transactions list on the real query layer (WHIT-190a)', () => {
-  function makeClient(retry: boolean | number = false) {
-    return new QueryClient({ defaultOptions: { queries: { retry, retryDelay: 1, staleTime: 60_000, gcTime: Infinity } } });
-  }
   function renderTransactions(client = makeClient()) {
     return render(React.createElement(QueryClientProvider, { client }, React.createElement(Transactions)));
   }
@@ -415,7 +396,7 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
 
   it('a transient 5xx retries and self-heals — no error shown', async () => {
     server.once('GET', FEED, { status: 503 });
-    renderTransactions(makeClient(2));
+    renderTransactions(makeClient({ retry: 2 }));
     expect(await screen.findByText('-$42.00')).toBeTruthy();
     expect(screen.queryByTestId('transactions-error')).toBeNull();
     expect(feedReads()).toHaveLength(2);
@@ -423,7 +404,7 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
 
   it('a sustained failure shows the inline error, and Retry recovers', async () => {
     server.fail(FEED, 503);
-    renderTransactions(makeClient(false));
+    renderTransactions(makeClient());
     expect(await screen.findByTestId('transactions-error')).toBeTruthy();
 
     // WHIT-198 GAP (authored by qa) — the retry now routes through the shared RetryButton, so it
@@ -440,9 +421,9 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
 
   it('a sustained feed failure sends a bounded number of requests, and Retry recovers (WHIT-668)', async () => {
     server.fail(FEED, 503);
-    renderTransactions(makeClient(false));
+    renderTransactions(makeClient());
     expect(await screen.findByTestId('transactions-error')).toBeTruthy();
-    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 200)));
+    await pause(200);
     expect(feedReads()).toHaveLength(1);
 
     server.once('GET', FEED, { body: { transactions: TXNS, nextCursor: null } }); // ahead of the failure
@@ -468,7 +449,7 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
     // pull-only). Guards that the Retry path keeps its balance refresh.
     server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]);
     server.fail(FEED, 503);
-    renderTransactions(makeClient(false));
+    renderTransactions(makeClient());
     expect(await screen.findByTestId('transactions-error')).toBeTruthy();
     await waitFor(() => expect(balanceReads()).toHaveLength(1)); // fetched once on mount
 
@@ -503,10 +484,6 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
 // (the tab composite always does, which looped the resolver on the detail screen), and its
 // spinner/error/Retry must mirror the feed + taxonomy exactly as before.
 describe('useTransactionDetailScreenData (WHIT-614)', () => {
-  function makeClient() {
-    return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
-  }
-
   beforeEach(() => {
     mockAuthStatus = 'authed';
     mockAuthListeners.clear();
@@ -515,14 +492,14 @@ describe('useTransactionDetailScreenData (WHIT-614)', () => {
   });
 
   it('never creates a search query in the cache', async () => {
-    const client = makeClient();
+    const client = makeClient({ staleTime: Infinity });
     const { result } = renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(client.getQueryCache().findAll({ queryKey: transactionsSearchKey })).toHaveLength(0);
   });
 
   it('loads the feed + taxonomy: not loading, no error, categories resolve', async () => {
-    const client = makeClient();
+    const client = makeClient({ staleTime: Infinity });
     const { result } = renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
     expect(result.current.isLoading).toBe(true);
     await waitFor(() => expect(result.current.isLoading).toBe(false));
@@ -533,20 +510,20 @@ describe('useTransactionDetailScreenData (WHIT-614)', () => {
 
   it('isError surfaces when the categories read fails', async () => {
     server.fail('/categories', 500);
-    const client = makeClient();
+    const client = makeClient({ staleTime: Infinity });
     const { result } = renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.isError).toBe(true));
   });
 
   it('isError surfaces when the feed read fails', async () => {
     server.fail(FEED, 500);
-    const client = makeClient();
+    const client = makeClient({ staleTime: Infinity });
     const { result } = renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.isError).toBe(true));
   });
 
   it('refetch (Retry) re-runs the feed and categories fetches', async () => {
-    const client = makeClient();
+    const client = makeClient({ staleTime: Infinity });
     const { result } = renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(feedReads()).toHaveLength(1);

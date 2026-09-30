@@ -7,7 +7,8 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React, { useEffect } from 'react';
 import { render, renderHook, act, waitFor } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { makeClient, wrapper, pause } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
 jest.mock('../auth', () => ({
@@ -30,14 +31,6 @@ const READ_PATHS = [
   '/accounts/balances', '/loanfacts', '/rules', '/goals', '/homeloan', '/repayment', '/milestones',
 ];
 
-function makeClient(staleTime = 60_000) {
-  return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime, gcTime: Infinity } } });
-}
-function wrapper(client: QueryClient) {
-  return ({ children }: { children: React.ReactNode }) =>
-    React.createElement(QueryClientProvider, { client }, children);
-}
-const pause = (ms: number) => act(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 const reads = () => server.requests().filter((r) => r.method === 'GET');
 
 type Composite = { isError: boolean; refetchStale: () => void };
@@ -109,7 +102,7 @@ describe('refetch / refetchStale identity (WHIT-668)', () => {
 
 describe('a refetchStale captured early still reads the latest query state', () => {
   it('composite: a first-render refetchStale skips reads that have since loaded fresh [A4]', async () => {
-    const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient(Infinity)) });
+    const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient({ staleTime: Infinity })) });
     const early = result.current.refetchStale; // captured while every read was still pending (stale)
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     const before = reads().length;
@@ -119,7 +112,7 @@ describe('a refetchStale captured early still reads the latest query state', () 
   });
 
   it('composite: a first-render refetchStale re-checks reads that have since gone stale [A5]', async () => {
-    const { result } = renderHook(() => useRulesScreenData(), { wrapper: wrapper(makeClient(0)) });
+    const { result } = renderHook(() => useRulesScreenData(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
     const early = result.current.refetchStale;
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(server.sent('GET', '/rules')).toHaveLength(1);
@@ -129,7 +122,7 @@ describe('a refetchStale captured early still reads the latest query state', () 
 
   it('Transactions: a pre-search refetchStale refreshes the SEARCH (not the feed) once a search is active [A6]', async () => {
     const { result, rerender } = renderHook(({ q }: { q: string }) => useTransactionsScreenData('all', q), {
-      wrapper: wrapper(makeClient(0)), initialProps: { q: '' },
+      wrapper: wrapper(makeClient({ staleTime: 0 })), initialProps: { q: '' },
     });
     const early = result.current.refetchStale;
     await waitFor(() => expect(result.current.isLoading).toBe(false));
@@ -144,7 +137,7 @@ describe('a refetchStale captured early still reads the latest query state', () 
 
   it('Transactions: a mid-search refetchStale refreshes the FEED once the search is cleared [A7]', async () => {
     const { result, rerender } = renderHook(({ q }: { q: string }) => useTransactionsScreenData('all', q), {
-      wrapper: wrapper(makeClient(0)), initialProps: { q: 'woolies' },
+      wrapper: wrapper(makeClient({ staleTime: 0 })), initialProps: { q: 'woolies' },
     });
     const early = result.current.refetchStale;
     await waitFor(() => expect(result.current.search.answered).toBe(true));
