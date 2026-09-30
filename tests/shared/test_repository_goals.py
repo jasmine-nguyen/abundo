@@ -245,10 +245,10 @@ def test_delete_goal_raises_a_conflict_when_it_cannot_converge(shared, goals_rep
 
 # --- WHIT-252 QA GAPS: race-retry preserve, partial-start merge, source switch ---
 # (Independent of the implementer's WHIT-252 tests above. Reuse the shared config_item_table
-# fake + client_error factory, _goal / _with_table / _START. Every start value is a pinned literal.)
+# fake, _goal / _with_table / _START. Every start value is a pinned literal.)
 
 
-def test_upsert_race_retry_preserves_a_concurrently_stamped_start(shared, goals_repo, config_item_table, client_error):
+def test_upsert_race_retry_preserves_a_concurrently_stamped_start(shared, goals_repo, config_item_table):
     # [A15] The version-race retry must re-READ and re-MERGE the start INSIDE the loop.
     # Setup: a synced goal exists with NO start (created pre-poll); our upsert carries an
     # EMPTY candidate (still unpolled on our side). Mid-write, a concurrent poll-fill stamps
@@ -257,26 +257,14 @@ def test_upsert_race_retry_preserves_a_concurrently_stamped_start(shared, goals_
     # This is the test that pins the merge inside the retry loop (fail-on-revert target).
     no_start = {k: v for k, v in _goal().items() if not k.startswith("start_")}
     table = config_item_table("GOALS", items={"g1": no_start})
-    original = table.update_item
-    attempts = {"n": 0}
-
-    def _concurrent_fill_then_race(*a, **k):
-        attempts["n"] += 1
-        if attempts["n"] == 1:
-            # A concurrent writer stamps the start and moves the version under us.
-            table.store[_KEY]["items"]["g1"] = {
-                **no_start, "start_date": "2026-07-11", "start_balance": Decimal(3200)}
-            table.store[_KEY]["version"] = table.store[_KEY]["version"] + Decimal(1)
-            raise client_error("ConditionalCheckFailedException")
-        return original(*a, **k)
-
-    table.update_item = _concurrent_fill_then_race
+    _concurrent_writer(table, "g1", {**no_start, **_START})   # stamps the start and moves the version under us
     _with_table(goals_repo, table)
 
     goals_repo.upsert_goal("g1", _goal(name="Edited after race"), start_candidate={})
 
     stored = table.store[_KEY]["items"]["g1"]
-    assert attempts["n"] == 2                              # lost the lock once, converged on retry
+    assert len(table.update_calls) == 2                    # the real lock refused once, converged on retry
+    assert table.store[_KEY]["version"] == Decimal(3)      # concurrent bump + ours
     assert stored["name"] == "Edited after race"          # our edit applied
     assert stored["start_date"] == "2026-07-11"           # concurrent start preserved...
     assert stored["start_balance"] == Decimal(3200)       # ...not clobbered back to absent
