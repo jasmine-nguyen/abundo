@@ -27,6 +27,11 @@ const POPUP_SUITES = [
   'AddRuleSheetOverlapWarning.screen.test.tsx',
   'AddRuleSheetSpread.screen.test.tsx',
   'AddRuleSheetSpreadGaps.screen.test.tsx',
+  'applyRulesJobSheet.screen.test.tsx',
+  'applyRulesJobStallSheet.screen.test.tsx',
+  'applyRulesJobVariantSheet.screen.test.tsx',
+  'applyRulesRounds.screen.test.tsx',
+  'applyRulesSheet.screen.test.tsx',
 ];
 
 const QUERIES_MOCK = /jest\.(mock|doMock)\(\s*['"](\.\.\/)+queries['"]/;

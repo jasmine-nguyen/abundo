@@ -84,6 +84,11 @@ describe('no test mocks the api', () => {
       'AddRuleSheetOverlapWarning.screen.test.tsx': 10,
       'AddRuleSheetSpread.screen.test.tsx': 8,
       'AddRuleSheetSpreadGaps.screen.test.tsx': 6,
+      'applyRulesJobSheet.screen.test.tsx': 16,
+      'applyRulesJobStallSheet.screen.test.tsx': 8,
+      'applyRulesJobVariantSheet.screen.test.tsx': 17,
+      'applyRulesRounds.screen.test.tsx': 30,
+      'applyRulesSheet.screen.test.tsx': 69,
     };
 
     const shortfalls = Object.entries(baselines).flatMap(([file, baseline]) => {

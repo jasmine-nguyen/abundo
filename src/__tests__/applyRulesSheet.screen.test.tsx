@@ -11,7 +11,7 @@
 //   - a rule filing to Income has no row in the taxonomy map and must not render a blank name.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react-native';
+import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, ApplyRulesResult, FilingResult, FilingTarget, FilingWhen } from '../context';
 
 let mockState: AppContext;
@@ -19,9 +19,15 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { Overlays } from '../components/Overlays';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { openOverlays } from './support/openOverlays';
+
+const server = installFakeServer();
+useTestQueryClient();
 
 const fns = {
   setSheet: jest.fn(),
@@ -33,7 +39,10 @@ const fns = {
 const filed = (result: ApplyRulesResult): FilingResult => ({ status: 'filed', report: result });
 const FAILED: FilingResult = { status: 'failed', background: false };
 
-const CATEGORIES = [{ id: 'groceries', name: 'Groceries' }, { id: 'fuel', name: 'Fuel' }];
+const CATEGORIES = [
+  { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null },
+  { id: 'fuel', name: 'Fuel', bucket: 'Living', icon: 'car', parent: null },
+];
 
 const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
   dryRun: true, rulesConsidered: 2, unfiled: 10, matched: 4, conflicted: 0, conflictedSamples: [],
@@ -44,14 +53,15 @@ const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
 });
 
 function mount() {
-  mockState = { sheet: { mode: 'applyRules' }, toast: null, categories: CATEGORIES, ...fns } as unknown as AppContext;
-  return render(<Overlays />);
+  server.seed('/categories', CATEGORIES);
+  const state = { sheet: { mode: 'applyRules' }, toast: null, ...fns } as unknown as AppContext;
+  return openOverlays(state, (next) => { mockState = next; });
 }
 
 /** Mount and let the mount-time preview resolve. */
 async function mountWithPreview(preview: ApplyRulesResult | null) {
   fns.previewFiling.mockResolvedValue(preview ? filed(preview) : FAILED);
-  mount();
+  await mount();
   await act(async () => {});
   return screen;
 }
@@ -63,13 +73,16 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-beforeEach(() => { jest.clearAllMocks(); });
+beforeEach(() => {
+  jest.clearAllMocks();
+  resetAuth();
+});
 
 // --- loading ------------------------------------------------------------------
 
 it('previews once on mount and shows the checking copy while it runs', async () => {
   fns.previewFiling.mockReturnValue(new Promise(() => {}));  // never settles
-  mount();
+  await mount();
 
   expect(screen.getByTestId('apply-rules-busy')).toBeTruthy();
   expect(screen.getByText('Checking what your rules would file…')).toBeTruthy();
