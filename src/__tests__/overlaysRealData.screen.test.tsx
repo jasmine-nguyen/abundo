@@ -1,7 +1,5 @@
 // WHIT-459 real-data overlay fold — every <Overlays/> screen test that mounts the REAL
-// <AppProvider> (the real-provider regime: only ../auth and ../queries are mocked, requests go to
-// the fake server) lives
-// here, one child describe per concern. Folded in (scenarios preserved 1:1, 32 its):
+// <AppProvider> (requests go to the fake server) lives here, one child describe per concern. Folded in (scenarios preserved 1:1, 32 its):
 //   - WHIT-268  anon hard-clear + locked hide/keep    (was overlaysAuthClear)
 //   - WHIT-268  gaps: refresh/epoch/loading/reconcile (was overlaysAuthClearGaps)
 //   - WHIT-277  pop-up sheet drafts survive a lock     (was overlaysSheetDraft)
@@ -10,15 +8,11 @@
 //   - WHIT-283  gap: restored form RE-SELECTS          (was overlaysPickerCreateDraftRender)
 //   - WHIT-437  categorise sheet quick-create reason   (was categorizeSheetCreateReason)
 //
-// Six of the seven sources already shared this inline live-auth-store harness verbatim, so it hoists
-// once at module scope; the seventh (WHIT-277 sheet-draft) used the shared support/authMock helper —
-// converted here to the same inline store (setAuthStatus→mockSetStatus, resetAuth→inline reset), which
-// is byte-equivalent (authMock.ts's setAuthStatus/resetAuth/useIsAuthedMock match the inline versions).
-// Each describe keeps its own consts / helpers / Probe / renderOverlays / beforeEach block-scoped; only
-// the mocked modules (../auth, ../queries), the fake server, the shared `mockState`, and the auth store
-// are module-level (jest.mock can't be per-describe). The two WHIT-268 describes hardcoded an empty query
-// fixture; under the shared `mockState` their beforeEach now explicitly `mockState = {}` so a fixture
-// from a sibling describe can't leak in (order-independence).
+// Only ../auth is mocked (a live login store the tests drive). The screen data is the real query
+// code (src/queries.ts) over the fake server: each describe seeds what its pop-ups read and draws
+// <Overlays/> under the app's query provider (support/renderWithQueries). Each describe keeps its own
+// consts / helpers / Probe / renderOverlays / beforeEach block-scoped; only the ../auth mock, the fake
+// server and the auth store are module-level (jest.mock can't be per-describe).
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { Text } from 'react-native';
@@ -41,26 +35,34 @@ jest.mock('../auth', () => ({
   getAuthToken: async () => 'test-id-token',
 }));
 
-let mockState: { transactions?: unknown[]; categories?: unknown[]; rules?: unknown[]; goals?: unknown[] } = {};
-jest.mock('../queries', () => ({
-  ...require('./support/screenQueryMocks').queryMocksFromState(() => mockState),
-  useIsAuthed: () => {
-    const ReactActual = require('react') as typeof React;
-    return ReactActual.useSyncExternalStore(mockSubscribe, () => mockStatus === 'authed');
-  },
-  // GoalBalanceSheet reads the live goal via useGoalsQuery (not in the shared support mock). Additive —
-  // inert for the describes that never open a goalbalance sheet (mockState.goals is undefined → []).
-  useGoalsQuery: () => ({ data: mockState.goals ?? [] }),
-}));
-
 import { AppProvider, useAppContext } from '../context';
 import { Overlays } from '../components/Overlays';
 import { queryClient } from '../queryClient';
+import { useCategories, useGoalsQuery, useIsAuthed, useRulesScreenData, useTransactionResolver } from '../queries';
 import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient, WithQueries, renderWithQueries } from './support/renderWithQueries';
 
 const server = installFakeServer();
+useTestQueryClient();
 
-afterEach(() => { queryClient.clear(); jest.useRealTimers(); });
+afterEach(() => { jest.useRealTimers(); });
+
+const T1 = [{ transaction_id: 't1', amount: -12, description: 'CAFE', merchant_name: 'Cafe' }];
+// The picker resolves a tapped charge from the feed and the recent list; seed both.
+function seedTransactions(transactions: unknown[]) {
+  server.seed('/transactions', transactions);
+  server.seed('/transactions/feed', { transactions, nextCursor: null });
+}
+
+// Stands in for the tab screens under the overlay layer: in the app they have already loaded what
+// a pop-up reads by the time one opens, so the tests' synchronous checks after setSheet hold.
+function ScreensUnderneath() {
+  useCategories();
+  useRulesScreenData();
+  useGoalsQuery(useIsAuthed());
+  useTransactionResolver();
+  return null;
+}
 
 // ===== WHIT-268 — overlays render OUTSIDE the auth gate (app/_layout.tsx), so the gate's
 // privacy cover can never hide them: a toast/sheet showing amounts could outlive a
@@ -79,7 +81,6 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
   beforeEach(() => {
     mockStatus = 'authed';
     mockListeners.clear();
-    mockState = {}; // this describe hardcoded an empty query fixture — pin it so a sibling can't leak in
     queryClient.clear();
   });
 
@@ -186,10 +187,12 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
   it('locked hides the overlay layer but keeps its state: the toast disappears and REAPPEARS on unlock (fail-on-revert for the gate)', () => {
     let ctx!: ReturnType<typeof useAppContext>;
     render(
-      <AppProvider>
-        <Probe grab={(c) => { ctx = c; }} />
-        <Overlays />
-      </AppProvider>,
+      <WithQueries>
+        <AppProvider>
+          <Probe grab={(c) => { ctx = c; }} />
+          <Overlays />
+        </AppProvider>
+      </WithQueries>,
     );
 
     act(() => ctx.showToast('Balance: $9,999'));
@@ -210,10 +213,12 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
   it('anon unmounts the overlay layer AND the state is gone (both halves compose)', () => {
     let ctx!: ReturnType<typeof useAppContext>;
     render(
-      <AppProvider>
-        <Probe grab={(c) => { ctx = c; }} />
-        <Overlays />
-      </AppProvider>,
+      <WithQueries>
+        <AppProvider>
+          <Probe grab={(c) => { ctx = c; }} />
+          <Overlays />
+        </AppProvider>
+      </WithQueries>,
     );
 
     act(() => ctx.showToast('Balance: $9,999'));
@@ -247,7 +252,6 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
   beforeEach(() => {
     mockStatus = 'authed';
     mockListeners.clear();
-    mockState = {}; // this describe hardcoded an empty query fixture — pin it so a sibling can't leak in
     queryClient.clear();
   });
 
@@ -305,10 +309,12 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
     mockStatus = 'loading';
     let ctx!: ReturnType<typeof useAppContext>;
     render(
-      <AppProvider>
-        <Probe grab={(c) => { ctx = c; }} />
-        <Overlays />
-      </AppProvider>,
+      <WithQueries>
+        <AppProvider>
+          <Probe grab={(c) => { ctx = c; }} />
+          <Overlays />
+        </AppProvider>
+      </WithQueries>,
     );
 
     act(() => ctx.showToast('Balance: $1,234'));
@@ -355,8 +361,9 @@ describe('WHIT-277 — pop-up sheet drafts survive a Face ID lock', () => {
   let ctx!: ReturnType<typeof useAppContext>;
   function Probe() { ctx = useAppContext(); return <Text testID="probe">probe</Text>; }
   function renderOverlays() {
-    return render(
+    return renderWithQueries(
       <AppProvider>
+        <ScreensUnderneath />
         <Probe />
         <Overlays />
       </AppProvider>,
@@ -368,12 +375,12 @@ describe('WHIT-277 — pop-up sheet drafts survive a Face ID lock', () => {
   beforeEach(() => {
     mockStatus = 'authed';
     mockListeners.clear();
-    mockState = { goals: [{ id: 'g1', name: 'Emergency fund', icon: 'star', direction: 'save', target_amount: 1000, target_date: null, baseline: null, manual_balance: null }] };
+    server.seed('/goals', [{ id: 'g1', name: 'Emergency fund', icon: 'star', direction: 'save', target_amount: 1000, target_date: null, baseline: null, manual_balance: null }]);
     queryClient.clear();
   });
 
-  it('restores a half-typed AddRule draft across authed→locked→authed', () => {
-    renderOverlays();
+  it('restores a half-typed AddRule draft across authed→locked→authed', async () => {
+    await renderOverlays();
     act(() => ctx.setSheet({ mode: 'addrule' }));
     fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY');
@@ -388,8 +395,8 @@ describe('WHIT-277 — pop-up sheet drafts survive a Face ID lock', () => {
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY');
   });
 
-  it('restores a half-typed GoalBalance draft across authed→locked→authed', () => {
-    renderOverlays();
+  it('restores a half-typed GoalBalance draft across authed→locked→authed', async () => {
+    await renderOverlays();
     act(() => ctx.setSheet({ mode: 'goalbalance', goalId: 'g1' }));
     fireEvent.changeText(screen.getByTestId('goal-balance-input'), '2500');
     expect(screen.getByTestId('goal-balance-input').props.value).toBe('2500');
@@ -401,8 +408,8 @@ describe('WHIT-277 — pop-up sheet drafts survive a Face ID lock', () => {
     expect(screen.getByTestId('goal-balance-input').props.value).toBe('2500');
   });
 
-  it('clears the draft on sign-out — the next session opens the sheet empty (no cross-user leak)', () => {
-    renderOverlays();
+  it('clears the draft on sign-out — the next session opens the sheet empty (no cross-user leak)', async () => {
+    await renderOverlays();
     act(() => ctx.setSheet({ mode: 'addrule' }));
     fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
 
@@ -412,8 +419,8 @@ describe('WHIT-277 — pop-up sheet drafts survive a Face ID lock', () => {
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('');
   });
 
-  it('clears the draft on close — reopening the same sheet starts empty (no stale restore)', () => {
-    renderOverlays();
+  it('clears the draft on close — reopening the same sheet starts empty (no stale restore)', async () => {
+    await renderOverlays();
     act(() => ctx.setSheet({ mode: 'addrule' }));
     fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
 
@@ -438,8 +445,9 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
   let ctx!: ReturnType<typeof useAppContext>;
   function Probe() { ctx = useAppContext(); return <Text testID="probe">probe</Text>; }
   function renderOverlays() {
-    return render(
+    return renderWithQueries(
       <AppProvider>
+        <ScreensUnderneath />
         <Probe />
         <Overlays />
       </AppProvider>,
@@ -463,16 +471,14 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
   beforeEach(() => {
     mockStatus = 'authed';
     mockListeners.clear();
-    mockState = {
-      categories: CATS,
-      rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false }],
-      goals: [{ id: 'g1', name: 'Emergency fund', icon: 'star', direction: 'save', target_amount: 1000, target_date: null, baseline: null, manual_balance: null }],
-    };
+    server.seed('/categories', CATS);
+    server.seed('/rules', [{ id: 'e1', value: 'NETFLIX', categoryId: 'subs' }]);
+    server.seed('/goals', [{ id: 'g1', name: 'Emergency fund', icon: 'star', direction: 'save', target_amount: 1000, target_date: null, baseline: null, manual_balance: null }]);
     queryClient.clear();
   });
 
-  it('[A5] restores the categoryId (pill) half of an AddRule draft across a lock, not just the pattern', () => {
-    renderOverlays();
+  it('[A5] restores the categoryId (pill) half of an AddRule draft across a lock, not just the pattern', async () => {
+    await renderOverlays();
     act(() => ctx.setSheet({ mode: 'addrule' }));
     fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
     fireEvent.press(screen.getByText('Groceries')); // select the pill
@@ -489,8 +495,8 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
     expect(pillColor('Subscriptions')).not.toBe('#fff');
   });
 
-  it('[A6] restores the asOf DATE half of a GoalBalance draft across a lock, not just the balance', () => {
-    renderOverlays();
+  it('[A6] restores the asOf DATE half of a GoalBalance draft across a lock, not just the balance', async () => {
+    await renderOverlays();
     act(() => ctx.setSheet({ mode: 'goalbalance', goalId: 'g1' }));
     // Move the as-of off today via the (globally-mocked) date picker → fixed 20 Jun 2026.
     const androidOpen = screen.queryByTestId('goal-asof-open');
@@ -510,8 +516,8 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
     expect(screen.queryByText(todayLabel)).toBeNull();
   });
 
-  it('[A7] an EDIT-rule draft survives a lock AND still differs from the original prefill', () => {
-    renderOverlays();
+  it('[A7] an EDIT-rule draft survives a lock AND still differs from the original prefill', async () => {
+    await renderOverlays();
     act(() => ctx.setSheet({ mode: 'addrule', ruleId: 'e1' }));
     expect(screen.getByDisplayValue('NETFLIX')).toBeTruthy(); // prefilled from the rule
     fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'NETFLIXX');
@@ -524,8 +530,8 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
     expect(screen.queryByDisplayValue('NETFLIX')).toBeNull();
   });
 
-  it('[A8] a NEW-rule draft does not leak into an EDIT sheet (distinct draft keys, no null between)', () => {
-    renderOverlays();
+  it('[A8] a NEW-rule draft does not leak into an EDIT sheet (distinct draft keys, no null between)', async () => {
+    await renderOverlays();
     // New rule: type text under the `addrule:new` key.
     act(() => ctx.setSheet({ mode: 'addrule' }));
     fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'AAA');
@@ -541,8 +547,8 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('AAA');
   });
 
-  it('[A9] WHIT-268: while locked WITH a draft stashed, the typed money figure is not readable by any query', () => {
-    renderOverlays();
+  it('[A9] WHIT-268: while locked WITH a draft stashed, the typed money figure is not readable by any query', async () => {
+    await renderOverlays();
     act(() => ctx.setSheet({ mode: 'goalbalance', goalId: 'g1' }));
     fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9999');
     expect(screen.getByDisplayValue('9999')).toBeTruthy();
@@ -570,7 +576,7 @@ describe('WHIT-283 — picker inline-create draft survives a Face ID lock', () =
   let ctx!: ReturnType<typeof useAppContext>;
   function Probe() { ctx = useAppContext(); return <Text testID="probe">probe</Text>; }
   function renderOverlays() {
-    return render(<AppProvider><Probe /><Overlays /></AppProvider>);
+    return renderWithQueries(<AppProvider><ScreensUnderneath /><Probe /><Overlays /></AppProvider>);
   }
 
   const NAME_INPUT = 'Category name';
@@ -578,7 +584,7 @@ describe('WHIT-283 — picker inline-create draft survives a Face ID lock', () =
   beforeEach(() => {
     mockStatus = 'authed';
     mockListeners.clear();
-    mockState = { transactions: [{ transaction_id: 't1', amount: -12, description: 'CAFE', merchant_name: 'Cafe' }], categories: [] };
+    seedTransactions(T1);
     queryClient.clear();
   });
 
@@ -587,8 +593,8 @@ describe('WHIT-283 — picker inline-create draft survives a Face ID lock', () =
     fireEvent.press(screen.getByTestId('pickerNewCategory')); // list → inline create form
   }
 
-  it('restores the half-typed name and reopens INTO the create form (not the list) across a lock', () => {
-    renderOverlays();
+  it('restores the half-typed name and reopens INTO the create form (not the list) across a lock', async () => {
+    await renderOverlays();
     openCreateForm();
     fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), 'Gym');
     expect(screen.getByPlaceholderText(NAME_INPUT).props.value).toBe('Gym');
@@ -604,8 +610,8 @@ describe('WHIT-283 — picker inline-create draft survives a Face ID lock', () =
     expect(screen.queryByTestId('pickerNewCategory')).toBeNull(); // NOT back on the list
   });
 
-  it('persists all fields (name + bucket + icon) to the draft store', () => {
-    renderOverlays();
+  it('persists all fields (name + bucket + icon) to the draft store', async () => {
+    await renderOverlays();
     openCreateForm();
     fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), 'Gym');
     fireEvent.press(screen.getByText('Living'));    // pick a non-default bucket
@@ -615,8 +621,8 @@ describe('WHIT-283 — picker inline-create draft survives a Face ID lock', () =
     expect(ctx.readSheetDraft('pickercat:t1')).toEqual({ name: 'Gym', bucket: 'Living', icon: 'cart', parent: null });
   });
 
-  it('renders nothing category-related while locked, even with a draft stashed (WHIT-268 intact)', () => {
-    renderOverlays();
+  it('renders nothing category-related while locked, even with a draft stashed (WHIT-268 intact)', async () => {
+    await renderOverlays();
     openCreateForm();
     fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), 'SecretCat');
 
@@ -626,8 +632,8 @@ describe('WHIT-283 — picker inline-create draft survives a Face ID lock', () =
     expect(screen.queryByText('New category')).toBeNull();
   });
 
-  it('clears the draft on sheet close — reopening the picker starts on the list with an empty form', () => {
-    renderOverlays();
+  it('clears the draft on sheet close — reopening the picker starts on the list with an empty form', async () => {
+    await renderOverlays();
     openCreateForm();
     fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), 'Gym');
 
@@ -639,8 +645,8 @@ describe('WHIT-283 — picker inline-create draft survives a Face ID lock', () =
     expect(screen.getByPlaceholderText(NAME_INPUT).props.value).toBe(''); // fresh empty form
   });
 
-  it('clears the draft on sign-out (no cross-user leak)', () => {
-    renderOverlays();
+  it('clears the draft on sign-out (no cross-user leak)', async () => {
+    await renderOverlays();
     openCreateForm();
     fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), 'Gym');
 
@@ -650,8 +656,8 @@ describe('WHIT-283 — picker inline-create draft survives a Face ID lock', () =
     expect(screen.getByPlaceholderText(NAME_INPUT).props.value).toBe('');
   });
 
-  it('Cancel discards the draft — reopening the create form starts empty', () => {
-    renderOverlays();
+  it('Cancel discards the draft — reopening the create form starts empty', async () => {
+    await renderOverlays();
     openCreateForm();
     fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), 'Gym');
 
@@ -670,7 +676,7 @@ describe('WHIT-283 GAP — the restored form RE-SELECTS bucket / icon / parent a
   let ctx!: ReturnType<typeof useAppContext>;
   function Probe() { ctx = useAppContext(); return <Text testID="probe">probe</Text>; }
   function renderOverlays() {
-    return render(<AppProvider><Probe /><Overlays /></AppProvider>);
+    return renderWithQueries(<AppProvider><ScreensUnderneath /><Probe /><Overlays /></AppProvider>);
   }
 
   const NAME_INPUT = 'Category name';
@@ -685,12 +691,10 @@ describe('WHIT-283 GAP — the restored form RE-SELECTS bucket / icon / parent a
   beforeEach(() => {
     mockStatus = 'authed';
     mockListeners.clear();
-    mockState = {
-      transactions: [{ transaction_id: 't1', amount: -12, description: 'CAFE', merchant_name: 'Cafe' }],
-      // One same-bucket (Lifestyle == the form's initialBucket) category, so the inline form's parent
-      // picker offers it — required for the parent round-trip.
-      categories: [{ id: 'coffee', name: 'Coffee', icon: 'coffee', color: '#e8a87c', bucket: 'Lifestyle', recent: 0, parent: null }],
-    };
+    seedTransactions(T1);
+    // One same-bucket (Lifestyle == the form's initialBucket) category, so the inline form's parent
+    // picker offers it — required for the parent round-trip.
+    server.seed('/categories', [{ id: 'coffee', name: 'Coffee', icon: 'coffee', bucket: 'Lifestyle', recent: 0, parent: null }]);
     queryClient.clear();
   });
 
@@ -700,8 +704,8 @@ describe('WHIT-283 GAP — the restored form RE-SELECTS bucket / icon / parent a
   }
 
   // [G1] Round-trip RENDER of bucket + icon (the implementer only checks the store write pre-lock).
-  it('[G1] bucket + icon selection survive the lock and RENDER as selected on unlock (not just the store)', () => {
-    renderOverlays();
+  it('[G1] bucket + icon selection survive the lock and RENDER as selected on unlock (not just the store)', async () => {
+    await renderOverlays();
     openCreateForm();
     fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), 'Gym');
     fireEvent.press(screen.getByText('Living'));       // a non-default bucket (default is Lifestyle)
@@ -726,8 +730,8 @@ describe('WHIT-283 GAP — the restored form RE-SELECTS bucket / icon / parent a
 
   // [G2] Round-trip RENDER of a picked parent (implementer only ever persists parent:null across a
   // lock; pickerSheetParentPick pick->submit never locks).
-  it('[G2] a picked parent survives the lock and RENDERS as the selected parent on unlock', () => {
-    renderOverlays();
+  it('[G2] a picked parent survives the lock and RENDERS as the selected parent on unlock', async () => {
+    await renderOverlays();
     openCreateForm();
     fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), 'Beans');
     fireEvent.press(screen.getByText('Coffee'));       // the same-bucket parent (initialBucket Lifestyle)
@@ -738,7 +742,7 @@ describe('WHIT-283 GAP — the restored form RE-SELECTS bucket / icon / parent a
 
     // Reopened: the 'Coffee' parent chip reads selected (painted in the category's colour) and the
     // 'None' chip does not.
-    expect(flat(screen.getByText('Coffee').props.style).color).toBe('#e8a87c');
+    expect(flat(screen.getByText('Coffee').props.style).color).toBe('#ff9e64'); // the app's colour for id 'coffee'
     expect(flat(screen.getByText('None').props.style).color).not.toBe(C.accentSofter);
     expect(ctx.readSheetDraft('pickercat:t1')).toMatchObject({ name: 'Beans', parent: 'coffee' });
   });
@@ -754,13 +758,13 @@ describe('WHIT-283 GAP — the restored form RE-SELECTS bucket / icon / parent a
 // reason travels api → context → the toast a user actually sees on this screen.
 //
 // Real components all the way down (real AppProvider, real Overlays, real
-// QuickCreateCategory, real request code on the fake server); only ../auth and ../queries are
+// QuickCreateCategory, real query hooks and request code on the fake server); only ../auth is
 // mocked. The assertion is the rendered
 // toast TEXT, not a spy.
 describe('WHIT-437 — categorise sheet quick-create reason', () => {
   let ctx!: ReturnType<typeof useAppContext>;
   function Probe() { ctx = useAppContext(); return <Text testID="probe">probe</Text>; }
-  function renderOverlays() { return render(<AppProvider><Probe /><Overlays /></AppProvider>); }
+  function renderOverlays() { return renderWithQueries(<AppProvider><ScreensUnderneath /><Probe /><Overlays /></AppProvider>); }
 
   const NAME_INPUT = 'Category name';
   const CAP = 'a category can have at most 50 sub-categories';
@@ -768,16 +772,13 @@ describe('WHIT-437 — categorise sheet quick-create reason', () => {
   beforeEach(() => {
     mockStatus = 'authed';
     mockListeners.clear();
-    mockState = {
-      transactions: [{ transaction_id: 't1', amount: -12, description: 'CAFE', merchant_name: 'Cafe' }],
-      categories: [],
-    };
+    seedTransactions(T1);
     queryClient.clear();
   });
 
   /** Open the picker for t1, switch to the inline create form, and type a name. */
-  function fillCreateForm(name = 'Gym') {
-    renderOverlays();
+  async function fillCreateForm(name = 'Gym') {
+    await renderOverlays();
     act(() => ctx.openPicker('t1'));
     fireEvent.press(screen.getByTestId('pickerNewCategory'));
     fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), name);
@@ -787,8 +788,8 @@ describe('WHIT-437 — categorise sheet quick-create reason', () => {
   describe('the sheet shows the server reason instead of "Please try again"', () => {
     // [A30] the card's headline promise, on the path that got no code change.
     it('renders the refusal reason in the toast', async () => {
-      server.fail('/categories', 400, CAP);
-      fillCreateForm();
+      server.once('POST', '/categories', { status: 400, reason: CAP });
+      await fillCreateForm();
       await submit();
 
       expect(await screen.findByText('A category can have at most 50 sub-categories.')).toBeTruthy();
@@ -797,8 +798,8 @@ describe('WHIT-437 — categorise sheet quick-create reason', () => {
 
     // [A31] the most reachable real refusal by hand — a name that already exists.
     it('renders a 409 duplicate refusal', async () => {
-      server.fail('/categories', 409, 'category already exists');
-      fillCreateForm('Groceries');
+      server.once('POST', '/categories', { status: 409, reason: 'category already exists' });
+      await fillCreateForm('Groceries');
       await submit();
 
       expect(await screen.findByText('Category already exists.')).toBeTruthy();
@@ -808,8 +809,9 @@ describe('WHIT-437 — categorise sheet quick-create reason', () => {
     // createAndFile only calls setSubmitting(false) on the null branch, so a stuck busy flag here
     // would trap the user on a dead form with no error recovery.
     it('does not file the transaction and re-enables the form for a retry', async () => {
-      server.fail('/categories', 400, CAP);
-      fillCreateForm();
+      server.once('POST', '/categories', { status: 400, reason: CAP });
+      server.once('POST', '/categories', { status: 400, reason: CAP });
+      await fillCreateForm();
       await submit();
       await screen.findByText('A category can have at most 50 sub-categories.');
 
@@ -826,8 +828,8 @@ describe('WHIT-437 — categorise sheet quick-create reason', () => {
   describe('the generic copy still covers what is not ours to quote', () => {
     // [A33] a 5xx is our fault; "try again" is honest there and must survive.
     it('renders the generic copy for a 500 that did explain itself', async () => {
-      server.fail('/categories', 500, 'DynamoDB ProvisionedThroughputExceeded');
-      fillCreateForm();
+      server.once('POST', '/categories', { status: 500, reason: 'DynamoDB ProvisionedThroughputExceeded' });
+      await fillCreateForm();
       await submit();
 
       expect(await screen.findByText('Could not save category. Please try again.')).toBeTruthy();
@@ -837,7 +839,7 @@ describe('WHIT-437 — categorise sheet quick-create reason', () => {
     // [A34] offline: a lost connection carries nothing, so nothing may be invented.
     it('renders the generic copy for a network failure', async () => {
       server.once('POST', '/categories', 'dropped');
-      fillCreateForm();
+      await fillCreateForm();
       await submit();
 
       expect(await screen.findByText('Could not save category. Please try again.')).toBeTruthy();
@@ -854,8 +856,9 @@ describe('WHIT-538 — Back from the add-rule preview restores the form draft', 
   let ctx!: ReturnType<typeof useAppContext>;
   function Probe() { ctx = useAppContext(); return <Text testID="probe">probe</Text>; }
   function renderOverlays() {
-    return render(
+    return renderWithQueries(
       <AppProvider>
+        <ScreensUnderneath />
         <Probe />
         <Overlays />
       </AppProvider>,
@@ -877,13 +880,14 @@ describe('WHIT-538 — Back from the add-rule preview restores the form draft', 
   beforeEach(() => {
     mockStatus = 'authed';
     mockListeners.clear();
-    mockState = { categories: CATS, rules: [] };
+    server.seed('/categories', CATS);
+    server.seed('/rules', []);
     queryClient.clear();
     server.seed('/transactions/uncategorized/apply-rules', previewReport);
   });
 
   it('restores the typed pattern after transitioning to the confirm step and pressing Back', async () => {
-    renderOverlays();
+    await renderOverlays();
     act(() => ctx.setSheet({ mode: 'addrule' }));
     fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
     fireEvent.press(screen.getByText('Subscriptions')); // pick a category so Add rule is enabled
