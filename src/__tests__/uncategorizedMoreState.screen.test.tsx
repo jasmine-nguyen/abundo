@@ -6,28 +6,17 @@
 //   * more history to page  -> "More to load"
 //   * no more pages, stale/skewed badge -> "Nothing to show yet"
 // and it must NEVER appear on the 'all' tab, nor compete with "All caught up".
-import { it, expect, jest, beforeEach } from '@jest/globals';
+// Real ../api over the fake server; ../auth + expo-router mocked.
+import { it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { installFakeServer } from './support/fakeServer';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-
-const mockFeed = jest.fn<(c?: string) => Promise<unknown>>();
-const mockUncat = jest.fn<(c?: string) => Promise<unknown>>();
-const mockCount = jest.fn<() => Promise<number>>();
-const mockCategories = jest.fn<() => Promise<unknown>>();
-const mockTransactions = jest.fn<() => Promise<unknown>>();
-const mockBalances = jest.fn<() => Promise<unknown>>();
-const mockRefreshBalances = jest.fn<() => Promise<unknown>>();
-jest.mock('../api', () => ({
-  fetchTransactionsFeed: (c?: string) => mockFeed(c),
-  fetchUncategorizedFeed: (c?: string) => mockUncat(c),
-  fetchUncategorizedCount: () => mockCount(),
-  fetchCategories: () => mockCategories(),
-  fetchTransactions: () => mockTransactions(),
-  fetchAccountBalances: () => mockBalances(),
-  refreshAccountBalances: () => mockRefreshBalances(),
+jest.mock('../auth', () => ({
+  getStatus: () => 'authed',
+  subscribe: () => () => {},
+  getAuthToken: async () => 'test-id-token',
 }));
 
 // ../context PARTIAL — real selectors (transactionGroups/countUncategorized) so the tab list is
@@ -43,25 +32,19 @@ jest.mock('expo-router', () => {
 
 import Transactions from '../../app/(tabs)/transactions';
 
+const server = installFakeServer();
+const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
+const COUNT = '/transactions/uncategorized/count';
+
 function renderScreen() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
   return render(React.createElement(QueryClientProvider, { client }, React.createElement(Transactions)));
 }
 
-beforeEach(() => {
-  mockFeed.mockReset().mockResolvedValue({ transactions: [], nextCursor: null });
-  mockUncat.mockReset();
-  mockCount.mockReset();
-  mockCategories.mockReset().mockResolvedValue([]);
-  mockTransactions.mockReset().mockResolvedValue([]);
-  mockBalances.mockReset().mockResolvedValue([]);
-  mockRefreshBalances.mockReset().mockResolvedValue([]);
-});
-
 // [C4a] badge>0, empty first page but a live cursor -> "More to load" (deep rows a Load More away).
 it('shows "More to load" when the loaded page is empty but the cursor says more history', async () => {
-  mockCount.mockResolvedValue(639);
-  mockUncat.mockResolvedValue({ transactions: [], nextCursor: 'deep-cursor' });
+  server.seed(COUNT, { count: 639 });
+  server.seed(UNCATEGORIZED_FEED,{ transactions: [], nextCursor: 'deep-cursor' });
   renderScreen();
   fireEvent.press(screen.getByTestId('tab-uncategorized'));
 
@@ -71,8 +54,8 @@ it('shows "More to load" when the loaded page is empty but the cursor says more 
 
 // [C4b] badge>0, empty page AND no more pages (stale/skewed badge) -> "Nothing to show yet".
 it('shows "Nothing to show yet" when the badge is ahead but there are no more pages', async () => {
-  mockCount.mockResolvedValue(3);
-  mockUncat.mockResolvedValue({ transactions: [], nextCursor: null }); // history exhausted, list empty
+  server.seed(COUNT, { count: 3 });
+  server.seed(UNCATEGORIZED_FEED,{ transactions: [], nextCursor: null }); // history exhausted, list empty
   renderScreen();
   fireEvent.press(screen.getByTestId('tab-uncategorized'));
 
@@ -82,13 +65,13 @@ it('shows "Nothing to show yet" when the badge is ahead but there are no more pa
 
 // [C4c] the more-state must NEVER appear on the 'all' tab, even with a non-zero badge + empty feed.
 it('never shows the more-state on the All tab', async () => {
-  mockCount.mockResolvedValue(639);
-  mockUncat.mockResolvedValue({ transactions: [], nextCursor: 'deep-cursor' });
+  server.seed(COUNT, { count: 639 });
+  server.seed(UNCATEGORIZED_FEED,{ transactions: [], nextCursor: 'deep-cursor' });
   renderScreen(); // stays on 'all'
   // Force the server count to RESOLVE (the badge renders it), so the only thing that could keep
   // the more-state hidden is the `tab === 'uncategorized'` guard — not an unresolved serverCount.
   expect(await screen.findByText('639')).toBeTruthy();
-  await waitFor(() => expect(mockFeed).toHaveBeenCalled());
+  await waitFor(() => expect(server.sentUnder('GET', '/transactions/feed').length).toBeGreaterThan(0));
 
   expect(screen.queryByTestId('transactions-uncategorized-more')).toBeNull();
   expect(screen.queryByText('More to load')).toBeNull();
@@ -96,8 +79,8 @@ it('never shows the more-state on the All tab', async () => {
 
 // [C4d] a resolved server 0 -> "All caught up", and the more-state must NOT compete with it.
 it('shows "All caught up" (not the more-state) on a resolved server zero', async () => {
-  mockCount.mockResolvedValue(0);
-  mockUncat.mockResolvedValue({ transactions: [], nextCursor: null });
+  server.seed(COUNT, { count: 0 });
+  server.seed(UNCATEGORIZED_FEED,{ transactions: [], nextCursor: null });
   renderScreen();
   fireEvent.press(screen.getByTestId('tab-uncategorized'));
 

@@ -6,27 +6,22 @@
 // figure the user sees), that a success toasts "Balances up to date", that the LIST still refreshes when the live
 // call fails (allSettled), that a second pull after a FAILED first is not latched, and that an
 // in-flight stored GET can't clobber the freshly-seeded live value.
+// Real ../api over the fake server; ../auth + expo-router mocked; ../context PARTIALLY mocked.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { RefreshControl } from 'react-native';
 import { render, screen, act, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';
-jest.mock('../auth', () => ({ getStatus: () => mockAuthStatus, subscribe: () => () => {} }));
-
-const mockFetchTransactionsFeed = jest.fn<(cursor?: string) => Promise<unknown>>();
-const mockFetchCategories = jest.fn<() => Promise<unknown>>();
-const mockFetchAccountBalances = jest.fn<() => Promise<unknown>>();
-const mockRefreshAccountBalances = jest.fn<() => Promise<unknown>>();
-const mockShowToast = jest.fn<(m: string) => void>();
-jest.mock('../api', () => ({
-  fetchTransactionsFeed: (cursor?: string) => mockFetchTransactionsFeed(cursor),
-  fetchCategories: () => mockFetchCategories(),
-  fetchTransactions: () => Promise.resolve([]),
-  fetchAccountBalances: () => mockFetchAccountBalances(),
-  refreshAccountBalances: () => mockRefreshAccountBalances(),
+jest.mock('../auth', () => ({
+  getStatus: () => mockAuthStatus,
+  subscribe: () => () => {},
+  getAuthToken: async () => 'test-id-token',
 }));
+
+const mockShowToast = jest.fn<(m: string) => void>();
 
 const CATS = [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 }];
 jest.mock('../context', () => {
@@ -44,17 +39,16 @@ jest.mock('expo-router', () => {
 
 import Accounts from '../../app/(tabs)/accounts';
 
+const server = installFakeServer();
+const BALANCES = '/accounts/balances';
+const REFRESH = '/accounts/balances/refresh';
+const LIVE = [{ account_id: 'a1', amount: -250 }];
+
 const TXNS = [{
   transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
   description: 'WOOLWORTHS', merchant_name: 'Woolworths', amount: -42, account_id: 'a1',
   account_name: 'ANZ', category: 'groceries', status: 'posted', type: 'purchase', counts_to_budget: true,
 }];
-
-function deferred<T>() {
-  let resolve!: (v: T) => void, reject!: (e?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-}
 
 function makeClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
@@ -68,10 +62,9 @@ const pull = async () => { await act(async () => { rc().props.onRefresh(); }); }
 describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-212 gaps)', () => {
   beforeEach(() => {
     mockAuthStatus = 'authed';
-    mockFetchTransactionsFeed.mockReset().mockResolvedValue({ transactions: TXNS, nextCursor: null });
-    mockFetchCategories.mockReset().mockResolvedValue(CATS);
-    mockFetchAccountBalances.mockReset().mockResolvedValue([{ account_id: 'a1', amount: -100 }]);
-    mockRefreshAccountBalances.mockReset();
+    server.seed('/transactions/feed', { transactions: TXNS, nextCursor: null });
+    server.seed('/categories', CATS);
+    server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]);
     mockShowToast.mockReset();
   });
 
@@ -80,7 +73,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   // the hook. Fail-on-revert: drop `setQueryData(accountBalancesKey, fresh)` in refreshLiveBalances
   // and the card stays -$100.00 → the -$250.00 findBy never resolves → RED.
   it('[G1] a successful live pull updates the rendered Accounts card old→new', async () => {
-    mockRefreshAccountBalances.mockResolvedValue([{ account_id: 'a1', amount: -250 }]);
+    server.once('POST', REFRESH, { body: LIVE });
     renderScreen();
     expect(await screen.findByText('-$100.00')).toBeTruthy();    // card loaded, stored balance shown
 
@@ -96,7 +89,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   // Fail-on-revert: drop the successMessage arg on the Accounts screen (or the `.then` toast in the
   // hook) → no toast fires on success → RED.
   it('[G2] a successful live pull toasts "Balances up to date"', async () => {
-    mockRefreshAccountBalances.mockResolvedValue([{ account_id: 'a1', amount: -250 }]);
+    server.once('POST', REFRESH, { body: LIVE });
     renderScreen();
     expect(await screen.findByText('-$100.00')).toBeTruthy();
     await pull();
@@ -109,7 +102,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   // the pixel the user reads, past "isError is false". Fail-on-revert: swallow the throw and
   // setQueryData(accountBalancesKey, undefined/[]) on failure → the card blanks to "—" → RED.
   it('[G3] an offline live pull keeps the exact prior card number and toasts', async () => {
-    mockRefreshAccountBalances.mockRejectedValue(new Error('Network request failed'));
+    server.once('POST', REFRESH, 'dropped');
     renderScreen();
     expect(await screen.findByText('-$100.00')).toBeTruthy();
 
@@ -124,14 +117,14 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   // Fail-on-revert: gate refetchList behind the balance success → the feed is not re-fetched on a
   // failed pull → the call-count assertion reddens.
   it('[G4] the list still refetches when the live balance call fails', async () => {
-    mockRefreshAccountBalances.mockRejectedValue(new Error('API error: 502'));
+    server.fail(REFRESH, 502);
     renderScreen();
     expect(await screen.findByText('-$100.00')).toBeTruthy();
-    const feedCallsBefore = mockFetchTransactionsFeed.mock.calls.length;
+    const feedCallsBefore = server.sentUnder('GET', '/transactions/feed').length;
 
     await pull();
-    await waitFor(() => expect(mockRefreshAccountBalances).toHaveBeenCalledTimes(1)); // live call fired & failed
-    await waitFor(() => expect(mockFetchTransactionsFeed.mock.calls.length).toBeGreaterThan(feedCallsBefore));
+    await waitFor(() => expect(server.sent('POST', REFRESH)).toHaveLength(1)); // live call fired & failed
+    await waitFor(() => expect(server.sentUnder('GET', '/transactions/feed').length).toBeGreaterThan(feedCallsBefore));
   });
 
   // [G5] A second pull after a FAILED first still fires the live call AND raises/clears the spinner —
@@ -142,23 +135,22 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
     expect(await screen.findByText('-$100.00')).toBeTruthy();
 
     // First pull: live call rejects.
-    const d1 = deferred<unknown>();
-    mockRefreshAccountBalances.mockReturnValueOnce(d1.promise);
+    const live1 = server.hold(REFRESH);
     await act(async () => { rc().props.onRefresh(); });
     expect(rc().props.refreshing).toBe(true);                    // spinner up mid-pull
-    await act(async () => { d1.reject(new Error('offline')); await Promise.resolve(); });
+    await act(async () => { live1.fail('POST'); });
     await waitFor(() => expect(rc().props.refreshing).toBe(false)); // cleared despite the failure
     expect(mockShowToast).toHaveBeenCalledTimes(1);
 
     // Second pull: not latched — spins again, applies its fresh number, clears again.
-    const d2 = deferred<unknown>();
-    mockRefreshAccountBalances.mockReturnValueOnce(d2.promise);
+    const live2 = server.hold(REFRESH);
+    server.once('POST', REFRESH, { body: LIVE });
     await act(async () => { rc().props.onRefresh(); });
     expect(rc().props.refreshing).toBe(true);                    // proves the flag reset
-    await act(async () => { d2.resolve([{ account_id: 'a1', amount: -250 }]); await Promise.resolve(); });
+    await act(async () => { live2.release(); });
     expect(await screen.findByText('-$250.00')).toBeTruthy();    // 2nd pull's live number reached the card
     await waitFor(() => expect(rc().props.refreshing).toBe(false));
-    expect(mockRefreshAccountBalances).toHaveBeenCalledTimes(2);
+    expect(server.sent('POST', REFRESH)).toHaveLength(2);
   });
 
   // [G6] The in-flight stored GET race: a pull whose live POST resolves BEFORE the still-pending
@@ -169,10 +161,10 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   // reliably reproduces under the sharded coverage run).
   it('[G6] a late-resolving stored GET does NOT clobber the freshly-pulled live value', async () => {
     // Hold the INITIAL stored balances GET open so it's still in flight when the user pulls.
-    const storedGet = deferred<unknown>();
-    mockFetchAccountBalances.mockReset().mockReturnValueOnce(storedGet.promise);
-    // The live pull resolves immediately with the fresh number.
-    mockRefreshAccountBalances.mockResolvedValue([{ account_id: 'a1', amount: -250 }]);
+    const storedGet = server.hold(BALANCES);
+    // The live pull resolves immediately with the fresh number (queued: the refresh route would
+    // otherwise echo the stored -100).
+    server.once('POST', REFRESH, { body: LIVE });
 
     renderScreen();
     // Card up (feed resolved); balances GET still pending → the pending dash.
@@ -183,7 +175,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
 
     // The stale stored GET finally lands with the OLD number — it must be ignored (query was cancelled).
     // Flush with a real macrotask so react-query fully commits the resolved fetch if it were going to.
-    await act(async () => { storedGet.resolve([{ account_id: 'a1', amount: -100 }]); await new Promise((r) => setTimeout(r, 0)); });
+    await act(async () => { storedGet.release(); await new Promise((r) => setTimeout(r, 0)); });
     expect(screen.getByText('-$250.00')).toBeTruthy();            // still the live value, not clobbered
     expect(screen.queryByText('-$100.00')).toBeNull();
   });

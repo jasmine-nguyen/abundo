@@ -1,31 +1,26 @@
 // WHIT-203 — the shared hooks the second-tier readers moved onto: useCategories (the
 // taxonomy the pickers / category screens / rules label / tab badge read), usePayCycle
 // (the Settings row + pay-cycle sheet), and useBudgetDetailScreenData (the budget-detail
-// screen). ../api + ../auth mocked; real QueryClientProvider.
+// screen). Real ../api over the fake server; ../auth mocked; real QueryClientProvider.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';
-jest.mock('../auth', () => ({ getStatus: () => mockAuthStatus, subscribe: () => () => {} }));
-
-const mockFetchCategories = jest.fn<() => Promise<unknown>>();
-const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
-const mockFetchBudgets = jest.fn<() => Promise<unknown>>();
-const mockFetchTransactions = jest.fn<() => Promise<unknown>>();
-const mockFetchBudgetTransactions = jest.fn<(id: string) => Promise<unknown>>();
-const mockFetchCategoryTransactions = jest.fn<(id: string, cycle: number) => Promise<unknown>>(); // WHIT-342/374 (folded)
-jest.mock('../api', () => ({
-  fetchCategories: () => mockFetchCategories(),
-  fetchPayCycle: () => mockFetchPayCycle(),
-  fetchBudgets: () => mockFetchBudgets(),
-  fetchTransactions: () => mockFetchTransactions(),
-  fetchBudgetTransactions: (id: string) => mockFetchBudgetTransactions(id),
-  fetchCategoryTransactions: (id: string, cycle: number) => mockFetchCategoryTransactions(id, cycle),
+jest.mock('../auth', () => ({
+  getStatus: () => mockAuthStatus,
+  subscribe: () => () => {},
+  getAuthToken: async () => 'test-id-token',
 }));
 
 import { useCategories, usePayCycle, useBudgetDetailScreenData, useBudgetsScreenData, useCategoryCycleTransactionsQuery, useCategoryTransactionsScreenData, categoriesKey } from '../queries';
+
+const server = installFakeServer();
+const COFFEE_BUDGET_TX = '/budgets/coffee/transactions';
+const COFFEE_TX = '/categories/coffee/transactions';
+const SALARY_TX = '/categories/salary/transactions';
 
 const CATS = [{ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
 
@@ -37,17 +32,15 @@ const wrapper = (client: QueryClient) =>
 
 beforeEach(() => {
   mockAuthStatus = 'authed';
-  mockFetchCategories.mockReset().mockResolvedValue(CATS);
-  mockFetchPayCycle.mockReset().mockResolvedValue({ length: 30, last_pay_date: '2024-01-03' });
-  mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 100, posted: 40, pending: 10 } });
-  mockFetchTransactions.mockReset().mockResolvedValue([]);
-  mockFetchBudgetTransactions.mockReset().mockResolvedValue([]);
+  server.seed('/categories', CATS);
+  server.seed('/paycycle', { length: 30, last_pay_date: '2024-01-03' });
+  server.seed('/budgets', { coffee: { target: 100, posted: 40, pending: 10 } });
 });
 
 it('useCategories maps the list + a null-tolerant lookup, and does not fetch before login', async () => {
   mockAuthStatus = 'anon';
   const anon = renderHook(() => useCategories(), { wrapper: wrapper(makeClient()) });
-  expect(mockFetchCategories).not.toHaveBeenCalled();
+  expect(server.sent('GET', '/categories')).toHaveLength(0);
   expect(anon.result.current.categories).toEqual([]);
   expect(anon.result.current.category('coffee')).toBeUndefined();
 
@@ -65,13 +58,13 @@ it('usePayCycle derives the cycle name from the fetched length', async () => {
 });
 
 it('useBudgetDetailScreenData assembles the budget list + budgets + categories for the given id', async () => {
-  mockFetchBudgetTransactions.mockReset().mockResolvedValue([{ transaction_id: 'x', category: 'coffee', date: '2026-07-18' }]);
+  server.seed(COFFEE_BUDGET_TX, [{ transaction_id: 'x', category: 'coffee', date: '2026-07-18' }]);
   const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isLoading).toBe(false));
   expect(result.current.cycleLen).toBe(30);
   expect(result.current.category('coffee')?.name).toBe('Coffee');
   expect(result.current.budgets).toEqual([{ id: 'coffee', budget: 100, posted: 40, pending: 10, rollover: false, carryover: 0, spreadAdjustment: 0 }]);
-  expect(mockFetchBudgetTransactions).toHaveBeenCalledWith('coffee'); // the list is fetched per-budget
+  expect(server.sent('GET', COFFEE_BUDGET_TX).length).toBeGreaterThanOrEqual(1); // the list is fetched per-budget
   expect(result.current.transactions).toHaveLength(1);
   expect(result.current.isError).toBe(false);
 });
@@ -81,7 +74,7 @@ it('useBudgetDetailScreenData assembles the budget list + budgets + categories f
 // transcription risk the plan-critic flagged) — a list failure must surface as isError, and
 // refetchStale must re-fire the list read.
 it('useBudgetDetailScreenData surfaces a budget-transactions read failure as isError (not a stranded spinner)', async () => {
-  mockFetchBudgetTransactions.mockReset().mockRejectedValue(new Error('API error: 500'));
+  server.fail(COFFEE_BUDGET_TX, 500);
   const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isError).toBe(true)); // budgetTransactionsQuery IS in the OR
   expect(result.current.isLoading).toBe(false);                   // errored dependency → not an endless spinner
@@ -90,13 +83,13 @@ it('useBudgetDetailScreenData surfaces a budget-transactions read failure as isE
 it('useBudgetDetailScreenData refetchStale re-fires every stale read exactly once (incl. the list)', async () => {
   const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient(0)) });
   await waitFor(() => expect(result.current.isLoading).toBe(false));
-  await waitFor(() => expect(mockFetchBudgetTransactions).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(server.sent('GET', COFFEE_BUDGET_TX)).toHaveLength(1));
 
   await act(async () => { result.current.refetchStale(); });
   // staleTime 0 → immediately stale → each read (the budget list included) refires once.
-  await waitFor(() => expect(mockFetchBudgetTransactions).toHaveBeenCalledTimes(2)); // budgetTransactionsQuery IS in refetchStale
-  expect(mockFetchBudgets).toHaveBeenCalledTimes(2);
-  expect(mockFetchCategories).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(server.sent('GET', COFFEE_BUDGET_TX)).toHaveLength(2)); // budgetTransactionsQuery IS in refetchStale
+  expect(server.sentUnder('GET', '/budgets?')).toHaveLength(2);
+  expect(server.sent('GET', '/categories')).toHaveLength(2);
 });
 
 // WHIT-204 — the shared helper ORs the queries' `.isLoading` (NOT `.isPending`) so an errored
@@ -106,7 +99,7 @@ it('useBudgetDetailScreenData refetchStale re-fires every stale read exactly onc
 // vs-`.isPending` distinction is better locked by a dedicated useCombineScreenQueries unit
 // test (tracked as a follow-up card). This still guards the payCycle-failure → not-stranded path.
 it('useBudgetsScreenData: a payCycle failure does NOT strand isLoading', async () => {
-  mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
+  server.fail('/paycycle', 503);
   const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isError).toBe(true));
   expect(result.current.isLoading).toBe(false);
@@ -115,7 +108,7 @@ it('useBudgetsScreenData: a payCycle failure does NOT strand isLoading', async (
 // Same lock for the budget-detail composite: a payCycle failure surfaces as isError, not a
 // stranded spinner. (WHIT-72: budgets fetch in parallel here too; see the note above.)
 it('useBudgetDetailScreenData: a payCycle failure surfaces as isError, not a stranded spinner', async () => {
-  mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
+  server.fail('/paycycle', 503);
   const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isError).toBe(true)); // payCycleQuery IS in the OR
   expect(result.current.isLoading).toBe(false);
@@ -124,49 +117,50 @@ it('useBudgetDetailScreenData: a payCycle failure surfaces as isError, not a str
 // ===== WHIT-342 GAP (folded from categoryDrillQuery.gaps) — useCategoryCycleTransactionsQuery, the
 // drill-in's data hook: no fetch before login (enabled=false), no fetch on empty categoryId, and the
 // cycle is part of the query key so cycle 0 and cycle 1 for the same category cache INDEPENDENTLY.
-// Own beforeEach seeds cycle-tagged rows (the module beforeEach doesn't touch this mock).
+// Each test queues rows tagged by the cycle it asks for, so a key collision would surface as wrong rows.
 describe('useCategoryCycleTransactionsQuery (WHIT-342)', () => {
-  beforeEach(() => {
-    mockFetchCategoryTransactions.mockReset()
-      // return rows tagged by the cycle asked for, so a key collision would surface as wrong rows.
-      .mockImplementation((id, cycle) => Promise.resolve([{ transaction_id: `${id}-c${cycle}` }]));
-  });
+  const cycleRows = (cycle: number) => ({ body: [{ transaction_id: `coffee-c${cycle}` }] });
 
   // [A-hook1]
   it('does not fetch before login (enabled=false)', () => {
     renderHook(() => useCategoryCycleTransactionsQuery('coffee', 0, false), { wrapper: wrapper(makeClient()) });
-    expect(mockFetchCategoryTransactions).not.toHaveBeenCalled();
+    expect(server.sentUnder('GET', '/categories/')).toHaveLength(0);
   });
 
   // [A-hook2] — the `enabled && !!categoryId` guard: an absent id (a route mounted before params
   // resolve) must not fire a `/categories//transactions` request.
   it('does not fetch when categoryId is empty, even when enabled', () => {
     renderHook(() => useCategoryCycleTransactionsQuery('', 0, true), { wrapper: wrapper(makeClient()) });
-    expect(mockFetchCategoryTransactions).not.toHaveBeenCalled();
+    expect(server.sentUnder('GET', '/categories/')).toHaveLength(0);
   });
 
   // [A-hook4]
   it('fetches with (categoryId, cycle) when enabled and id present', async () => {
+    server.once('GET', COFFEE_TX, cycleRows(1));
     const { result } = renderHook(() => useCategoryCycleTransactionsQuery('coffee', 1, true), { wrapper: wrapper(makeClient()) });
     await waitFor(() => expect(result.current.data).toBeDefined());
-    expect(mockFetchCategoryTransactions).toHaveBeenCalledWith('coffee', 1);
+    expect(server.sent('GET', `${COFFEE_TX}?cycle=1`)).toHaveLength(1);
   });
 
   // [A-hook3] — the headline cache-key gap: cycle 0 and cycle 1 for the SAME category must not
-  // collide. Both hooks share ONE client; each must resolve to ITS OWN cycle's rows.
+  // collide. Both hooks share ONE client; each must resolve to ITS OWN cycle's rows. Mounted one
+  // after the other so each reply is queued for the right cycle: a collided key would hand c1 the
+  // cached c0 rows without asking the server.
   it('caches cycle 0 and cycle 1 independently for the same category (no collision)', async () => {
     const client = makeClient();
+    server.once('GET', COFFEE_TX, cycleRows(0));
     const c0 = renderHook(() => useCategoryCycleTransactionsQuery('coffee', 0, true), { wrapper: wrapper(client) });
-    const c1 = renderHook(() => useCategoryCycleTransactionsQuery('coffee', 1, true), { wrapper: wrapper(client) });
-
     await waitFor(() => expect(c0.result.current.data).toBeDefined());
+
+    server.once('GET', COFFEE_TX, cycleRows(1));
+    const c1 = renderHook(() => useCategoryCycleTransactionsQuery('coffee', 1, true), { wrapper: wrapper(client) });
     await waitFor(() => expect(c1.result.current.data).toBeDefined());
 
     expect(c0.result.current.data).toEqual([{ transaction_id: 'coffee-c0' }]);
     expect(c1.result.current.data).toEqual([{ transaction_id: 'coffee-c1' }]);
     // both cycles were actually fetched — a collided key would fetch once and share.
-    expect(mockFetchCategoryTransactions).toHaveBeenCalledWith('coffee', 0);
-    expect(mockFetchCategoryTransactions).toHaveBeenCalledWith('coffee', 1);
+    expect(server.sent('GET', COFFEE_TX)).toHaveLength(1);
+    expect(server.sent('GET', `${COFFEE_TX}?cycle=1`)).toHaveLength(1);
   });
 });
 
@@ -180,8 +174,8 @@ describe('useCategoryTransactionsScreenData (WHIT-374)', () => {
 
   beforeEach(() => {
     mockAuthStatus = 'authed';
-    mockFetchCategories.mockReset().mockResolvedValue(CATS);
-    mockFetchCategoryTransactions.mockReset().mockResolvedValue(ROWS);
+    server.seed('/categories', CATS);
+    server.seed(SALARY_TX, ROWS);
   });
 
   // [A-warm] — the warm path: Insights already loaded the taxonomy, so drilling in must NOT flash a
@@ -208,7 +202,7 @@ describe('useCategoryTransactionsScreenData (WHIT-374)', () => {
   // [A-empty] — an empty taxonomy is still "loaded" (data === []), so categoriesReady must be true
   // and the screen renders (everything Uncategorized), not stall on a spinner forever. No crash.
   it('treats an empty taxonomy ([]) as ready (true), not as never-loaded', async () => {
-    mockFetchCategories.mockReset().mockResolvedValue([]);
+    server.seed('/categories', []);
     const { result } = renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(makeClient()) });
     await waitFor(() => expect(result.current.categoriesReady).toBe(true));
     expect(result.current.category('salary')).toBeUndefined(); // empty taxonomy → no match, no throw
@@ -218,7 +212,7 @@ describe('useCategoryTransactionsScreenData (WHIT-374)', () => {
   // taxonomy read fails. isError must be true and categoriesReady false, so the screen shows the
   // error card (it can't label/sign the rows) instead of a cold "$0" detail.
   it('a taxonomy read failure (transactions cached) surfaces isError with categoriesReady false', async () => {
-    mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
+    server.fail('/categories', 500);
     const { result } = renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(makeClient()) });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.categoriesReady).toBe(false);       // never loaded → screen must gate
@@ -232,11 +226,11 @@ describe('useCategoryTransactionsScreenData (WHIT-374)', () => {
   it('refetch re-fires both the transactions and the categories reads', async () => {
     const { result } = renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(makeClient()) });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
-    expect(mockFetchCategoryTransactions).toHaveBeenCalledTimes(1);
-    expect(mockFetchCategories).toHaveBeenCalledTimes(1);
+    expect(server.sent('GET', SALARY_TX)).toHaveLength(1);
+    expect(server.sent('GET', '/categories')).toHaveLength(1);
 
     await act(async () => { result.current.refetch(); });
-    await waitFor(() => expect(mockFetchCategoryTransactions).toHaveBeenCalledTimes(2));
-    expect(mockFetchCategories).toHaveBeenCalledTimes(2);       // BOTH reads re-fired
+    await waitFor(() => expect(server.sent('GET', SALARY_TX)).toHaveLength(2));
+    expect(server.sent('GET', '/categories')).toHaveLength(2);  // BOTH reads re-fired
   });
 });

@@ -6,22 +6,6 @@ import { join, relative } from 'path';
 
 const API_MOCK = /^\s*jest\.(mock|doMock)\(\s*['"](\.\.\/)+api['"]/m;
 
-// Shrinks as later cards move these suites onto the fake server; deleted once empty.
-const STILL_TO_MOVE = [
-  // WHIT-661
-  'transactionsScreenData.screen.test.tsx',
-  'transactionsSearchQueries.screen.test.tsx',
-  'transactionsSearchRefresh.screen.test.tsx',
-  'uncategorizedFeedQueries.screen.test.tsx',
-  'uncategorizedMoreState.screen.test.tsx',
-  'txResolverMergeGaps.screen.test.tsx',
-  'pullToRefreshLiveBalances.screen.test.tsx',
-  'pullToRefreshSuccessToastGaps.screen.test.tsx',
-  'budgetsQuery.screen.test.tsx',
-  'settingsQuery.screen.test.tsx',
-  'screenQueryHooks.screen.test.tsx',
-];
-
 function testFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
@@ -36,18 +20,8 @@ function mocksApi(file: string): boolean {
 }
 
 describe('no test mocks the api', () => {
-  it('no file outside the still-to-move list mocks the api', () => {
-    const offenders = testFiles(__dirname).filter(
-      (file) => mocksApi(file) && !STILL_TO_MOVE.includes(file),
-    );
-
-    expect(offenders).toEqual([]);
-  });
-
-  it('every file on the still-to-move list still mocks the api, so the list only shrinks', () => {
-    const alreadyMoved = STILL_TO_MOVE.filter((file) => !mocksApi(file));
-
-    expect(alreadyMoved).toEqual([]);
+  it('no test file mocks the api', () => {
+    expect(testFiles(__dirname).filter(mocksApi)).toEqual([]);
   });
 
   it('the moved suites run on the fake server and keep their expect( count', () => {
@@ -83,6 +57,17 @@ describe('no test mocks the api', () => {
       'goalKeepLastGood.edges.screen.test.tsx': 12,
       'goalsScreenData.screen.test.tsx': 45,
       'payCycleServerDaysLeft.screen.test.tsx': 8,
+      'transactionsScreenData.screen.test.tsx': 106,
+      'transactionsSearchQueries.screen.test.tsx': 35,
+      'transactionsSearchRefresh.screen.test.tsx': 7,
+      'uncategorizedFeedQueries.screen.test.tsx': 32,
+      'uncategorizedMoreState.screen.test.tsx': 10,
+      'txResolverMergeGaps.screen.test.tsx': 19,
+      'pullToRefreshLiveBalances.screen.test.tsx': 25,
+      'pullToRefreshSuccessToastGaps.screen.test.tsx': 14,
+      'budgetsQuery.screen.test.tsx': 118,
+      'settingsQuery.screen.test.tsx': 87,
+      'screenQueryHooks.screen.test.tsx': 52,
     };
 
     const shortfalls = Object.entries(baselines).flatMap(([file, baseline]) => {
@@ -117,10 +102,5 @@ describe('no test mocks the api', () => {
     expect(`jest.mock('../api-client');`).not.toMatch(API_MOCK);
     expect(`jest.mock('./support/api');`).not.toMatch(API_MOCK);
     expect(`const hint = "jest.mock('../api')";`).not.toMatch(API_MOCK);
-  });
-
-  // [A2]
-  it('the still-to-move list names each file once', () => {
-    expect(STILL_TO_MOVE.filter((file, i) => STILL_TO_MOVE.indexOf(file) !== i)).toEqual([]);
   });
 });

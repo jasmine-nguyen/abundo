@@ -3,26 +3,24 @@
 //   [A8] a stale search (e.g. a new charge landed since) is re-asked on return; the paged feed is
 //        left alone (refetching every loaded page under a search would be a wasted storm).
 //   [A9] a fresh search is NOT re-asked on return.
+// Real ../api over the fake server; ../auth mocked.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Transaction } from '../context';
+import { installFakeServer } from './support/fakeServer';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-
-const mockFeed = jest.fn<(cursor?: string) => Promise<unknown>>();
-const mockSearch = jest.fn<(tab: string, query: string) => Promise<unknown>>();
-jest.mock('../api', () => ({
-  fetchTransactionsFeed: (cursor?: string) => mockFeed(cursor),
-  fetchUncategorizedFeed: () => Promise.resolve({ transactions: [], nextCursor: null }),
-  fetchTransactionsSearch: (tab: string, query: string) => mockSearch(tab, query),
-  fetchTransactions: () => Promise.resolve([]),
-  fetchCategories: () => Promise.resolve([]),
-  fetchAccountBalances: () => Promise.resolve([]),
+jest.mock('../auth', () => ({
+  getStatus: () => 'authed',
+  subscribe: () => () => {},
+  getAuthToken: async () => 'test-id-token',
 }));
 
 import { useTransactionsScreenData } from '../queries';
+
+const server = installFakeServer();
+const SEARCH = '/transactions/search?tab=all&q=steven';
 
 const tx = (id: string): Transaction => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
@@ -38,30 +36,31 @@ const mount = (queryClient: QueryClient) => renderHook(() => useTransactionsScre
 });
 
 beforeEach(() => {
-  mockFeed.mockReset().mockResolvedValue({ transactions: [tx('feed1')], nextCursor: 'more' });
-  mockSearch.mockReset().mockResolvedValue({ transactions: [tx('old-match')], truncated: false });
+  server.seed('/transactions/feed', { transactions: [tx('feed1')], nextCursor: 'more' });
+  server.seed('/transactions/search', { transactions: [tx('old-match')], truncated: false });
 });
 
 it('[A8] on return, a stale search is re-asked (and picks up a new match); the feed is not refetched', async () => {
   const { result } = mount(client(0)); // everything is immediately stale
   await waitFor(() => expect(result.current.search.answered).toBe(true));
-  await waitFor(() => expect(mockFeed).toHaveBeenCalled());
-  mockFeed.mockClear();
-  mockSearch.mockClear().mockResolvedValue({ transactions: [tx('new-charge'), tx('old-match')], truncated: false });
+  await waitFor(() => expect(server.sentUnder('GET', '/transactions/feed').length).toBeGreaterThan(0));
+  const feedCalls = server.sentUnder('GET', '/transactions/feed').length;
+  const searchCalls = server.sent('GET', SEARCH).length;
+  server.seed('/transactions/search', { transactions: [tx('new-charge'), tx('old-match')], truncated: false });
 
   await act(async () => { result.current.refetchStale(); });
 
   await waitFor(() => expect(ids(result.current.search.results)).toEqual(['new-charge', 'old-match']));
-  expect(mockSearch).toHaveBeenCalledWith('all', 'steven');
-  expect(mockFeed).not.toHaveBeenCalled();
+  expect(server.sent('GET', SEARCH).length).toBeGreaterThan(searchCalls);
+  expect(server.sentUnder('GET', '/transactions/feed')).toHaveLength(feedCalls);
 });
 
 it('[A9] on return, a fresh search is not re-asked', async () => {
   const { result } = mount(client(60_000));
   await waitFor(() => expect(result.current.search.answered).toBe(true));
-  mockSearch.mockClear();
+  const searchCalls = server.sent('GET', SEARCH).length;
 
   await act(async () => { result.current.refetchStale(); });
 
-  expect(mockSearch).not.toHaveBeenCalled();
+  expect(server.sent('GET', SEARCH)).toHaveLength(searchCalls);
 });
