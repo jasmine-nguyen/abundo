@@ -90,8 +90,8 @@ def _ids(repo):
     return {key[1].removeprefix("TXN#") for key in repo._table.store if key[0].startswith("ACCOUNT#")}
 
 
-def _never_filed(row):
-    return False
+def _nothing_filed(category):
+    return True
 
 
 class _Categories:
@@ -134,7 +134,7 @@ def test_a_pending_dated_after_the_fetch_window_is_not_deleted(repo, mirror):
     # "Never touch rows outside the window".
     repo._table.seed(_row("kept"), _row("future", day="2026-10-01"))
 
-    result = mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _never_filed)
+    result = mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _nothing_filed)
 
     assert _ids(repo) == {"kept", "future"}
     assert result["removed"] == 0
@@ -144,7 +144,7 @@ def test_a_pending_dated_on_the_last_fetched_day_is_still_judged(repo, mirror):
     # [A2] The fetch reaches to tomorrow, so a missing pending dated tomorrow is in scope.
     repo._table.seed(_row("kept"), _row("tomorrow", day="2026-09-30"))
 
-    mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _never_filed)
+    mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _nothing_filed)
 
     assert _ids(repo) == {"kept"}
 
@@ -159,7 +159,7 @@ def test_the_removal_cap_counts_only_in_window_pendings(repo, mirror):
         *(_row(f"old{n}", day="2026-09-10") for n in range(11)),
     )
 
-    result = mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _never_filed)
+    result = mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _nothing_filed)
 
     assert "gone" not in _ids(repo)
     assert result["removed"] == 1
@@ -171,7 +171,7 @@ def test_a_numeric_bank_id_matches_the_stored_string_id(repo, mirror):
     repo._table.seed(_row("12345"), _row("gone"))
     bank = [{"id": 12345, "accountId": WESTPAC_AID, "pending": True}]
 
-    mirror.mirror_account(repo, _fetch_returning(bank), WESTPAC_SOURCE, TODAY, _never_filed)
+    mirror.mirror_account(repo, _fetch_returning(bank), WESTPAC_SOURCE, TODAY, _nothing_filed)
 
     assert _ids(repo) == {"12345"}
 
@@ -185,7 +185,7 @@ def test_a_deleted_by_you_marker_survives_the_mirror(repo, mirror):
     repo._table.seed(_row("kept"), _row("user_deleted"), _row("gone"))
     assert repo.delete_transaction(f"ACCOUNT#{WESTPAC}", "TXN#user_deleted") is True
 
-    result = mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _never_filed)
+    result = mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _nothing_filed)
 
     assert repo.is_deleted(WESTPAC, "user_deleted") is True
     # A bank-side removal writes no "deleted by you" marker of its own.

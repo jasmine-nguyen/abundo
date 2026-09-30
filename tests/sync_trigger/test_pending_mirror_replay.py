@@ -123,7 +123,7 @@ def test_29_sep_replay_removes_exactly_the_three_dropped_pendings(layer):
         return copy.deepcopy(BANK_LIST)
 
     source = {"bid": WESTPAC_BID, "aid": WESTPAC_AID}
-    result = pending_mirror.mirror_account(repo, fetch, source, TODAY, lambda row: False)
+    result = pending_mirror.mirror_account(repo, fetch, source, TODAY, lambda category: True)
 
     removed = {key[1].removeprefix("TXN#") for key in set(before) - set(repo._table.store)}
     assert removed == DROPPED_IDS

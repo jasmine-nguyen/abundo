@@ -3,8 +3,9 @@
 The webhook only ever hears about new or changed rows, never drops. So once an hour, per
 in-scope account, we fetch BankSync's full transaction list and delete our pendings inside the
 check window whose id the bank no longer has. Posted rows and rows outside the window are
-never touched. A pending the user edited is kept (left to the age-out sweep). Any doubt about
-the bank's reply → that account is skipped and nothing is deleted.
+never touched. A pending the user edited has its edit moved onto its settled twin, then is
+deleted (WHIT-663); no twin yet → it's kept for next hour, with the age-out sweep as the
+backstop. Any doubt about the bank's reply → that account is skipped and nothing is deleted.
 """
 
 import json
@@ -14,10 +15,10 @@ import urllib.request
 from datetime import date, timedelta
 from typing import Any, Callable, Optional
 
-import rule_engine
 from constants import (
     ACCOUNT_ID_MAP,
     BANKSYNC_BASE_URL,
+    CARRY_DATE_SKEW_DAYS,
     FEED_WINDOW_DAYS,
     PENDING_MIRROR_FETCH_MARGIN_DAYS,
     PENDING_MIRROR_MAX_PAGES,
@@ -25,7 +26,9 @@ from constants import (
     PENDING_MIRROR_SOURCES,
     PENDING_MIRROR_TIMEOUT_SECONDS,
     PENDING_STATUS,
+    POSTED_STATUS,
 )
+from pending_carry import find_carry_twin, is_user_edited, load_is_unfiled, with_carried_category
 from repository_category import CategoryRepository
 from repository_errors import DatabaseError
 from repository_transaction import TransactionRepository, read_date_range_pages
@@ -82,7 +85,7 @@ def fetch_bank_transactions(bid: str, aid: str, api_key: str, date_from: str, da
 
 
 def _result(checked: int = 0, skipped: Optional[str] = None) -> dict:
-    return {"checked": checked, "removed": 0, "kept": 0, "gone": 0, "failed": 0, "skipped": skipped}
+    return {"checked": checked, "removed": 0, "carried": 0, "kept": 0, "gone": 0, "failed": 0, "skipped": skipped}
 
 
 def mirror_account(
@@ -90,18 +93,25 @@ def mirror_account(
     fetch: Callable[[str, str, str, str], list[dict]],
     source: dict,
     today: date,
-    is_user_filed: Callable[[dict], bool],
+    is_unfiled: Callable[[Optional[str]], bool],
 ) -> dict:
     """Delete this account's stored pendings (dated from today - FEED_WINDOW_DAYS) that the bank
-    no longer lists. `fetch(bid, aid, date_from, date_to)` returns the bank's rows."""
+    no longer lists, moving a user's edit onto the settled twin first.
+    `fetch(bid, aid, date_from, date_to)` returns the bank's rows."""
     account_id = ACCOUNT_ID_MAP[source["aid"]]
     check_from = today - timedelta(days=FEED_WINDOW_DAYS)
     fetch_from = today - timedelta(days=FEED_WINDOW_DAYS + PENDING_MIRROR_FETCH_MARGIN_DAYS)
     fetch_to = today + timedelta(days=1)
     # Read ours BEFORE the bank's list: a pending stored after this read can't be judged against
     # an older bank list. Capped at fetch_to: a row dated later can never be in the bank's list.
-    stored = read_date_range_pages(repo, account_id, check_from.isoformat(), fetch_to.isoformat())
-    pendings = [row for row in stored if row.get("status") == PENDING_STATUS]
+    # Starts CARRY_DATE_SKEW_DAYS early so a settled twin dated before check_from is still found.
+    read_from = check_from - timedelta(days=CARRY_DATE_SKEW_DAYS)
+    stored = read_date_range_pages(repo, account_id, read_from.isoformat(), fetch_to.isoformat())
+    pendings = [
+        row for row in stored
+        if row.get("status") == PENDING_STATUS and row.get("date", "") >= check_from.isoformat()
+    ]
+    posted_rows = [row for row in stored if row.get("status") == POSTED_STATUS]
 
     bank_rows = fetch(source["bid"], source["aid"], fetch_from.isoformat(), fetch_to.isoformat())
     if not bank_rows:
@@ -119,9 +129,8 @@ def mirror_account(
 
     result = _result(len(pendings))
     for row in missing:
-        if is_user_filed(row):
-            logger.info("pending_mirror %s: kept (user-edited) txn=%s", account_id, row["transaction_id"])
-            result["kept"] += 1
+        if is_user_edited(row, is_unfiled):
+            posted_rows = _carry(repo, account_id, row, posted_rows, is_unfiled, result)
             continue
         try:
             deleted = repo.delete_if_still_pending(row["pk"], row["sk"])
@@ -140,19 +149,45 @@ def mirror_account(
     return result
 
 
-def _load_is_user_filed(category_repo: Any) -> Callable[[dict], bool]:
-    """A pending the user edited: a real category not set by a rule, or a note/tag/exclusion
-    (the age-out rescue's definitions, WHIT-511/553). Rule-filed pendings aren't protected: the
-    posted twin gets the rule on ingest."""
-    taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
-
-    def is_user_filed(row: dict) -> bool:
-        category = row.get("category")
-        if not rule_engine.is_unfiled_category(category, taxonomy_ids) and not row.get("filed_by_rule"):
-            return True
-        return bool(row.get("notes") or row.get("tags") or row.get("budget_excluded"))
-
-    return is_user_filed
+def _carry(
+    repo: Any,
+    account_id: str,
+    pending: dict,
+    posted_rows: list[dict],
+    is_unfiled: Callable[[Optional[str]], bool],
+    result: dict,
+) -> list[dict]:
+    """Move a user-edited pending's edit onto its settled twin, then delete the pending. No
+    confident twin → keep it for next hour. The pending is only deleted once the carry is saved.
+    Returns posted_rows without the claimed twin, so no other pending can carry onto it."""
+    transaction_id = pending["transaction_id"]
+    twin = find_carry_twin(pending, posted_rows, is_unfiled)
+    if twin is None:
+        logger.info("pending_mirror %s: kept (user-edited, no settled twin yet) txn=%s", account_id, transaction_id)
+        result["kept"] += 1
+        return posted_rows
+    try:
+        repo.insert_transactions([with_carried_category(twin, pending, is_unfiled=is_unfiled)])
+    except DatabaseError:
+        logger.exception("pending_mirror %s: carry failed, keeping txn=%s", account_id, transaction_id)
+        result["failed"] += 1
+        return posted_rows
+    posted_rows = [posted for posted in posted_rows if posted.get("sk") != twin.get("sk")]
+    try:
+        deleted = repo.delete_if_still_pending(pending["pk"], pending["sk"])
+    except DatabaseError:
+        logger.exception("pending_mirror %s: delete after carry failed txn=%s", account_id, transaction_id)
+        result["failed"] += 1
+        return posted_rows
+    if not deleted:
+        result["gone"] += 1
+        return posted_rows
+    logger.info(
+        "pending_mirror carried account=%s pending=%s -> posted=%s",
+        account_id, transaction_id, twin.get("transaction_id"),
+    )
+    result["carried"] += 1
+    return posted_rows
 
 
 def mirror_pendings(
@@ -167,10 +202,10 @@ def mirror_pendings(
     category_repo = category_repo or CategoryRepository()
     today = today or melbourne_today()
     try:
-        is_user_filed = _load_is_user_filed(category_repo)
+        is_unfiled = load_is_unfiled(category_repo)
     except Exception:
         logger.exception("pending_mirror: could not read categories, skipping every account")
-        return {"removed": 0, "kept": 0, "skipped": len(PENDING_MIRROR_SOURCES), "accounts": {}}
+        return {"removed": 0, "carried": 0, "kept": 0, "skipped": len(PENDING_MIRROR_SOURCES), "accounts": {}}
 
     def fetch_account(bid: str, aid: str, date_from: str, date_to: str) -> list[dict]:
         return fetch(bid, aid, api_key, date_from, date_to)
@@ -179,7 +214,7 @@ def mirror_pendings(
     for source in PENDING_MIRROR_SOURCES:
         account_id = ACCOUNT_ID_MAP[source["aid"]]
         try:
-            accounts[account_id] = mirror_account(repo, fetch_account, source, today, is_user_filed)
+            accounts[account_id] = mirror_account(repo, fetch_account, source, today, is_unfiled)
         except MirrorSkip as e:
             logger.warning("pending_mirror %s: skipped: %s", account_id, e)
             accounts[account_id] = _result(skipped=str(e))
@@ -189,12 +224,13 @@ def mirror_pendings(
 
     summary = {
         "removed": sum(result["removed"] for result in accounts.values()),
+        "carried": sum(result["carried"] for result in accounts.values()),
         "kept": sum(result["kept"] for result in accounts.values()),
         "skipped": sum(1 for result in accounts.values() if result["skipped"]),
         "accounts": accounts,
     }
     logger.info(
-        "pending_mirror summary: removed=%d kept=%d skipped=%d accounts=%s",
-        summary["removed"], summary["kept"], summary["skipped"], accounts,
+        "pending_mirror summary: removed=%d carried=%d kept=%d skipped=%d accounts=%s",
+        summary["removed"], summary["carried"], summary["kept"], summary["skipped"], accounts,
     )
     return summary
