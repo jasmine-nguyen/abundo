@@ -13,14 +13,10 @@ import pytest
 from botocore.exceptions import ClientError
 
 from _boto_stubs import _Field
-from _dynamo_fakes import _MAX_UPDATE_EXPRESSION_BYTES, FakeTable
+from _dynamo_fakes import _MAX_UPDATE_EXPRESSION_BYTES, FakeTable, error_code
 
 _KEY = {"pk": "A", "sk": "A"}
 _SHARED_DIR = pathlib.Path(__file__).resolve().parents[2] / "shared"
-
-
-def _code(excinfo):
-    return excinfo.value.response["Error"]["Code"]
 
 
 def _table(**fields):
@@ -96,7 +92,7 @@ def test_attribute_exists_pk_on_an_absent_row_is_refused_and_invents_nothing():
                           ConditionExpression="attribute_exists(pk)",
                           ExpressionAttributeNames={"#c": "category"},
                           ExpressionAttributeValues={":c": "food"})
-    assert _code(refused) == "ConditionalCheckFailedException"
+    assert error_code(refused) == "ConditionalCheckFailedException"
     assert table.store == {}
 
 
@@ -106,14 +102,14 @@ def test_conditional_put_and_delete_are_evaluated_too():
     with pytest.raises(ClientError) as put_refused:
         table.put_item(Item={"pk": "A", "sk": "A", "new": True},
                        ConditionExpression="attribute_not_exists(pk)")
-    assert _code(put_refused) == "ConditionalCheckFailedException"
+    assert error_code(put_refused) == "ConditionalCheckFailedException"
     assert "new" not in table.store[("A", "A")]
 
     with pytest.raises(ClientError) as delete_refused:
         table.delete_item(Key=_KEY, ConditionExpression="#p = :rule",
                           ExpressionAttributeNames={"#p": "filed_by_rule"},
                           ExpressionAttributeValues={":rule": "r2"})
-    assert _code(delete_refused) == "ConditionalCheckFailedException"
+    assert error_code(delete_refused) == "ConditionalCheckFailedException"
     assert ("A", "A") in table.store
 
     table.delete_item(Key=_KEY, ConditionExpression="#p = :rule",
@@ -147,7 +143,7 @@ def test_an_unknown_condition_form_raises_instead_of_passing(condition, names, v
                           ExpressionAttributeNames={"#c": "category", **names},
                           ExpressionAttributeValues={":c": "written", **values})
     if raised.type is ClientError:  # the undeclared-value case is DynamoDB's own ValidationException
-        assert _code(raised) == "ValidationException"
+        assert error_code(raised) == "ValidationException"
     assert table.store[("A", "A")] == before
 
 
@@ -179,7 +175,7 @@ def test_a_later_clause_failing_leaves_the_nested_map_and_earlier_clauses_unwrit
                           ExpressionAttributeNames={"#items": "items", "#a": "a", "#n": "n",
                                                     "#nope": "nope", "#b": "b"},
                           ExpressionAttributeValues={":two": 2})
-    assert _code(invalid) == "ValidationException"
+    assert error_code(invalid) == "ValidationException"
     assert table.store[("A", "A")]["items"] == {"a": {"n": 1}}
 
 
@@ -214,7 +210,7 @@ def test_an_update_expression_of_exactly_4096_bytes_is_accepted_and_4097_is_reje
     with pytest.raises(ClientError) as too_large:
         table.update_item(Key=_KEY, UpdateExpression=_set_expression_of(4097),
                           ExpressionAttributeNames=names, ExpressionAttributeValues={":c": 9, ":d": 9})
-    assert _code(too_large) == "ValidationException"
+    assert error_code(too_large) == "ValidationException"
     assert table.store[("A", "A")]["c"] == 1
 
 
@@ -227,7 +223,7 @@ def test_the_4kb_ceiling_counts_bytes_not_characters():
     with pytest.raises(ClientError) as too_large:
         table.update_item(Key=_KEY, UpdateExpression=expression,
                           ExpressionAttributeNames={alias: "c"}, ExpressionAttributeValues={":c": 1})
-    assert _code(too_large) == "ValidationException"
+    assert error_code(too_large) == "ValidationException"
 
 
 # --- [A5] upsert, ADD and DELETE edges ------------------------------------------------------
@@ -276,7 +272,7 @@ def test_a_set_through_a_non_map_parent_is_invalid():
         table.update_item(Key=_KEY, UpdateExpression="SET #items.#a = :v",
                           ExpressionAttributeNames={"#items": "items", "#a": "a"},
                           ExpressionAttributeValues={":v": 1})
-    assert _code(invalid) == "ValidationException"
+    assert error_code(invalid) == "ValidationException"
 
 
 # --- [A6] reads and writes are deep copies -------------------------------------------------
@@ -316,7 +312,7 @@ def test_fail_narrows_by_subject_for_put_and_query_and_rejects_an_unknown_operat
     table.put_item(Item={"pk": "A", "sk": "good", "account_id": "1", "date": "2026-09-01"})
     with pytest.raises(ClientError) as throttled:
         table.put_item(Item={"pk": "A", "sk": "bad"})
-    assert _code(throttled) == "ProvisionedThroughputExceededException"
+    assert error_code(throttled) == "ProvisionedThroughputExceededException"
     assert ("A", "bad") not in table.store
 
     assert len(table.query(KeyConditionExpression=_Field("pk").eq("A"))["Items"]) == 1
@@ -384,8 +380,8 @@ def test_an_unused_alias_on_a_conditional_put_or_delete_is_rejected():
     with pytest.raises(ClientError) as delete_unused:
         table.delete_item(Key=_KEY, ConditionExpression="attribute_exists(pk)",
                           ExpressionAttributeValues={":spare": 1})
-    assert _code(put_unused) == "ValidationException"
-    assert _code(delete_unused) == "ValidationException"
+    assert error_code(put_unused) == "ValidationException"
+    assert error_code(delete_unused) == "ValidationException"
     assert ("B", "B") not in table.store
     assert ("A", "A") in table.store
 

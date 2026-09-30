@@ -3,11 +3,7 @@
 import pytest
 from botocore.exceptions import ClientError
 
-from _dynamo_fakes import FakeTable
-
-
-def _code(excinfo):
-    return excinfo.value.response["Error"]["Code"]
+from _dynamo_fakes import FakeTable, error_code
 
 
 def _update(table, key, action, marker):
@@ -26,8 +22,8 @@ def test_a_number_set_is_refused_even_where_dynamodb_types_would_match():
     with pytest.raises(ClientError) as delete_on_missing_row:
         _update(table, {"pk": "M", "sk": "MISSING"}, "DELETE", {1})
 
-    assert _code(add_onto_number_set) == "ValidationException"
-    assert _code(delete_on_missing_row) == "ValidationException"
+    assert error_code(add_onto_number_set) == "ValidationException"
+    assert error_code(delete_on_missing_row) == "ValidationException"
     assert table.get_item(Key={"pk": "N", "sk": "NUMS"})["Item"]["fired"] == {1}
     assert table.get_item(Key={"pk": "M", "sk": "MISSING"}) == {}
 

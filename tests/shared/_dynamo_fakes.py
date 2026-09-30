@@ -54,6 +54,11 @@ def _client_error(code: str, message: str = "boom"):
     return err
 
 
+def error_code(excinfo):
+    """The DynamoDB error code on a ClientError caught by pytest.raises."""
+    return excinfo.value.response["Error"]["Code"]
+
+
 def _store_key(key):
     return key["pk"], key["sk"]
 
