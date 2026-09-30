@@ -10,7 +10,8 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, waitFor } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
+import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';
@@ -26,12 +27,6 @@ const server = installFakeServer();
 const COUNT_PATH = '/transactions/uncategorized/count';
 const countRequests = () => server.sent('GET', COUNT_PATH);
 
-function makeClient(staleTime = 0) {
-  return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime, gcTime: Infinity } } });
-}
-const wrapper = (client: QueryClient) =>
-  ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-
 beforeEach(() => {
   mockAuthStatus = 'authed';
   server.seed(COUNT_PATH, { count: 4 });
@@ -41,21 +36,21 @@ beforeEach(() => {
 // anon and this fails. A 'locked' session (token read returns undefined) must be gated too.
 it('does NOT fetch before login (enabled=false while anon)', () => {
   mockAuthStatus = 'anon';
-  const { result } = renderHook(() => useUncategorizedCount(), { wrapper: wrapper(makeClient()) });
+  const { result } = renderHook(() => useUncategorizedCount(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
   expect(countRequests()).toHaveLength(0);
   expect(result.current).toBeUndefined(); // pre-auth → undefined, so consumers fall back to local
 });
 
 it('does NOT fetch while the session is locked (getStatus !== "authed")', () => {
   mockAuthStatus = 'locked';
-  const { result } = renderHook(() => useUncategorizedCount(), { wrapper: wrapper(makeClient()) });
+  const { result } = renderHook(() => useUncategorizedCount(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
   expect(countRequests()).toHaveLength(0);
   expect(result.current).toBeUndefined(); // locked → undefined, so consumers fall back to local
 });
 
 // [B2] once authed the walk fires and the resolved number is surfaced.
 it('fetches once authed and returns the RESOLVED number', async () => {
-  const { result } = renderHook(() => useUncategorizedCount(), { wrapper: wrapper(makeClient()) });
+  const { result } = renderHook(() => useUncategorizedCount(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
   await waitFor(() => expect(result.current).toBe(4));
   expect(countRequests()).toHaveLength(1);
 });
@@ -66,7 +61,7 @@ it('fetches once authed and returns the RESOLVED number', async () => {
 it('is undefined (not 0) while the fetch is in flight, then resolves', async () => {
   server.seed(COUNT_PATH, { count: 0 });
   const held = server.hold(COUNT_PATH);
-  const { result } = renderHook(() => useUncategorizedCount(), { wrapper: wrapper(makeClient()) });
+  const { result } = renderHook(() => useUncategorizedCount(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
   await waitFor(() => expect(countRequests()).toHaveLength(1));
   expect(result.current).toBeUndefined();      // in flight → undefined, not a premature 0
   held.release();
@@ -78,7 +73,7 @@ it('is undefined (not 0) while the fetch is in flight, then resolves', async () 
 // remount refetches → 2 calls. The test client's OWN default staleTime is 0, so the hook's own
 // staleTime is the only thing holding the cache fresh here.
 it('holds the fetched count across a remount within the 5-min staleTime (no re-walk)', async () => {
-  const client = makeClient(); // default staleTime 0 → the hook's OWN 5-min staleTime is the only cache-holder
+  const client = makeClient({ staleTime: 0 }); // staleTime 0 → the hook's OWN 5-min staleTime is the only cache-holder
   const first = renderHook(() => useUncategorizedCount(), { wrapper: wrapper(client) });
   await waitFor(() => expect(first.result.current).toBe(4));
   expect(countRequests()).toHaveLength(1);

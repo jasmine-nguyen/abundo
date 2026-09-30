@@ -22,6 +22,7 @@ import React from 'react';
 import { Text } from 'react-native';
 import { render, screen, renderHook, act, waitFor, fireEvent } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
 // Live miniature auth store (superset — only settingsQuery flips it; the gaps describes stay 'authed').
@@ -81,9 +82,6 @@ describe('WHIT-191a — Settings server rows on the real query layer', () => {
   const READY_FACTS = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
   const EMPTY_FACTS = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
 
-  function makeClient(retry: boolean | number = false) {
-    return new QueryClient({ defaultOptions: { queries: { retry, retryDelay: 1, staleTime: 60_000, gcTime: Infinity } } });
-  }
   function renderSettings(client = makeClient()) {
     return render(React.createElement(QueryClientProvider, { client }, React.createElement(Settings)));
   }
@@ -145,7 +143,7 @@ describe('WHIT-191a — Settings server rows on the real query layer', () => {
 
   it('a transient 5xx on the loan-facts read retries and self-heals', async () => {
     server.once('GET', LOAN_FACTS, { status: 503 });
-    renderSettings(makeClient(2));
+    renderSettings(makeClient({ retry: 2 }));
     expect(await screen.findByText('Edit')).toBeTruthy();
     expect(loanReads()).toBe(2);
   });
@@ -169,12 +167,6 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
   ];
   const READY_FACTS = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
 
-  function makeClient(retry: boolean | number = false, staleTime = 60_000) {
-    return new QueryClient({ defaultOptions: { queries: { retry, retryDelay: 1, staleTime, gcTime: Infinity } } });
-  }
-  const hookWrapper = (client: QueryClient) =>
-    ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-
   beforeEach(() => {
     mockAuthStatus = 'authed';
     mockAuthListeners.clear();
@@ -186,7 +178,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
   describe('sustained hard failure (no self-heal)', () => {
     it('hook surfaces categoriesError (not a fake 0) and drops isLoading', async () => {
       server.fail(CATEGORIES, 500);
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false)) });
+      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient()) });
 
       await waitFor(() => expect(result.current.categoriesError).toBe(true));
       expect(result.current.isLoading).toBe(false); // errored query is not "loading" → no endless "…"
@@ -197,7 +189,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
     // Reverting settings.tsx to `String(categoriesCount)` brings the "0" back and fails this.
     it('Settings renders "—" + a Retry (not the misleading "0") once the read has hard-failed', async () => {
       server.fail(CATEGORIES, 500);
-      render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
+      render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
 
       // loan facts still resolve → "Edit" lets us wait past first paint deterministically.
       expect(await screen.findByText('Edit')).toBeTruthy();
@@ -213,7 +205,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
     it('press Retry → categories + loan facts refetch and the rows recover', async () => {
       server.fail(CATEGORIES, 500);
       server.fail(LOAN_FACTS, 500);
-      render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
+      render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
 
       const retry = await screen.findByTestId('settings-setup-retry');
       await waitFor(() => expect(screen.getAllByText('—').length).toBe(2)); // both rows honestly unknown
@@ -232,7 +224,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
 
   describe('cache-first: a background-refetch failure keeps the last-good value (WHIT-198)', () => {
     it('does NOT surface categoriesError once a real count has been cached', async () => {
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false, 0)) });
+      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
       await waitFor(() => expect(result.current.categoriesCount).toBe(2)); // first load succeeded
 
       // the NEXT read fails — but we already hold a cached count
@@ -250,7 +242,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
   describe('partial-load flash', () => {
     it('reports isLoading true while categories are pending even though loan facts are cached-ready', async () => {
       const heldCats = server.hold(CATEGORIES); // not answered during the test
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false)) });
+      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient()) });
 
       await waitFor(() => expect(result.current.loanReady).toBe(true)); // loan settled first
       expect(result.current.isLoading).toBe(true); // ...but the whole screen (incl. loan row) still shows "…"
@@ -260,8 +252,8 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
 
   describe('read-your-write with an active Settings observer', () => {
     it("invalidate after a save refetches the mounted observer and the loan row stays ready", async () => {
-      const client = makeClient(false);
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(client) });
+      const client = makeClient();
+      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(client) });
       await waitFor(() => expect(result.current.loanReady).toBe(true));
 
       const before = loanReads();
@@ -281,7 +273,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
 
   describe('refetchStale focus gate', () => {
     it('does NOT refetch fresh (non-stale) queries — no request storm on focus', async () => {
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false, 60_000)) });
+      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient()) });
       await waitFor(() => expect(result.current.isLoading).toBe(false));
 
       const cats = categoryReads();
@@ -293,7 +285,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
     });
 
     it('DOES refetch both when they have gone stale', async () => {
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false, 0)) });
+      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
       await waitFor(() => expect(result.current.isLoading).toBe(false));
 
       const cats = categoryReads();
@@ -311,7 +303,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
   describe('rules-row hard failure', () => {
     it('rules read fails → Automation rules shows "—" + the setup retry, others keep their values', async () => {
       server.fail(RULES, 500);
-      render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
+      render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
 
       expect(await screen.findByText('2')).toBeTruthy(); // categories loaded (2), unaffected
       expect(screen.getByText('Edit')).toBeTruthy(); // loan loaded, unaffected
@@ -322,7 +314,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
 
     it('the setup Retry re-reads the failed rules query too (fan-out includes rules)', async () => {
       server.fail(RULES, 500);
-      render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
+      render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
 
       const retry = await screen.findByTestId('settings-setup-retry');
       await screen.findByText('—'); // rules failed → "—"
@@ -343,7 +335,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
   describe('focus refetch re-arms a first-load failure', () => {
     it('a first-load-failed categories read is stale, so refetchStale() on focus retries + recovers it', async () => {
       server.once('GET', CATEGORIES, { status: 500 });
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false)) });
+      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient()) });
 
       await waitFor(() => expect(result.current.categoriesError).toBe(true)); // first load failed, nothing cached
       const callsAfterFail = categoryReads();
@@ -384,12 +376,6 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
   ];
   const READY_FACTS = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
 
-  function makeClient(retry: boolean | number = false, staleTime = 60_000) {
-    return new QueryClient({ defaultOptions: { queries: { retry, retryDelay: 1, staleTime, gcTime: Infinity } } });
-  }
-  const hookWrapper = (client: QueryClient) =>
-    ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-
   beforeEach(() => {
     mockAuthStatus = 'authed';
     mockAuthListeners.clear();
@@ -405,7 +391,7 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
   describe('loan-row-ONLY hard failure (categories fine)', () => {
     it('loan shows "—" + retry, categories keeps its real count (no fake "Set up")', async () => {
       server.fail(LOAN_FACTS, 500);
-      render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
+      render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
 
       expect(await screen.findByText('2')).toBeTruthy();        // categories count intact
       expect(screen.getByText('—')).toBeTruthy();               // loan row honestly unknown
@@ -423,7 +409,7 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
   describe('Retry after a single-row failure re-issues BOTH reads', () => {
     it('loan-only failure → Retry refetches categories AND loan facts', async () => {
       server.fail(LOAN_FACTS, 500);
-      render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
+      render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
 
       const retry = await screen.findByTestId('settings-setup-retry');
       await screen.findByText('2');                             // categories loaded once
@@ -450,7 +436,7 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
     it('hook: categoriesError flips true while isLoading stays true (loan still pending)', async () => {
       server.fail(CATEGORIES, 500);
       const heldLoan = server.hold(LOAN_FACTS); // not answered during the test
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false)) });
+      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient()) });
 
       await waitFor(() => expect(result.current.categoriesError).toBe(true)); // the error landed…
       expect(result.current.isLoading).toBe(true); // …but the screen is still loading (loan pending)
@@ -462,7 +448,7 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
       server.fail(CATEGORIES, 500);
       const heldLoan = server.hold(LOAN_FACTS); // held pending
       render(
-        <QueryClientProvider client={makeClient(false)}>
+        <QueryClientProvider client={makeClient()}>
           <ErrorProbe />
           <Settings />
         </QueryClientProvider>,
@@ -488,7 +474,7 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
     it('both flags true on a dual 500, both false after a successful refetch', async () => {
       server.fail(CATEGORIES, 500);
       server.fail(LOAN_FACTS, 500);
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false)) });
+      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient()) });
 
       await waitFor(() => expect(result.current.categoriesError).toBe(true));
       expect(result.current.loanReadyError).toBe(true);
@@ -510,7 +496,7 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
   describe('non-server rows stay usable during a categories outage', () => {
     it('profile, Automation rules, Pay cycle, Log out all render + Log out still fires', async () => {
       server.fail(CATEGORIES, 500);
-      render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
+      render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
 
       await screen.findByTestId('settings-setup-error');    // outage is live
       expect(await screen.findByText('Edit')).toBeTruthy(); // the OTHER server row (loan) settled fine

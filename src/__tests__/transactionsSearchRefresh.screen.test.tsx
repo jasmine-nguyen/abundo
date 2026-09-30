@@ -7,7 +7,8 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
+import { makeClient, wrapper } from './support/queryClient';
 import type { Transaction } from '../context';
 import { installFakeServer } from './support/fakeServer';
 
@@ -28,12 +29,8 @@ const tx = (id: string): Transaction => ({
   account_name: 'ANZ', category: null, status: 'posted', type: 'purchase', counts_to_budget: true,
 });
 const ids = (list: Transaction[]) => list.map((transaction) => transaction.transaction_id);
-const client = (staleTime: number) =>
-  new QueryClient({ defaultOptions: { queries: { retry: false, staleTime, gcTime: Infinity } } });
-const mount = (queryClient: QueryClient) => renderHook(() => useTransactionsScreenData('all', 'steven'), {
-  wrapper: ({ children }: { children: React.ReactNode }) =>
-    React.createElement(QueryClientProvider, { client: queryClient }, children),
-});
+const mount = (queryClient: QueryClient) =>
+  renderHook(() => useTransactionsScreenData('all', 'steven'), { wrapper: wrapper(queryClient) });
 
 beforeEach(() => {
   server.seed('/transactions/feed', { transactions: [tx('feed1')], nextCursor: 'more' });
@@ -41,7 +38,7 @@ beforeEach(() => {
 });
 
 it('[A8] on return, a stale search is re-asked (and picks up a new match); the feed is not refetched', async () => {
-  const { result } = mount(client(0)); // everything is immediately stale
+  const { result } = mount(makeClient({ staleTime: 0 })); // everything is immediately stale
   await waitFor(() => expect(result.current.search.answered).toBe(true));
   await waitFor(() => expect(server.sentUnder('GET', '/transactions/feed').length).toBeGreaterThan(0));
   const feedCalls = server.sentUnder('GET', '/transactions/feed').length;
@@ -56,7 +53,7 @@ it('[A8] on return, a stale search is re-asked (and picks up a new match); the f
 });
 
 it('[A9] on return, a fresh search is not re-asked', async () => {
-  const { result } = mount(client(60_000));
+  const { result } = mount(makeClient());
   await waitFor(() => expect(result.current.search.answered).toBe(true));
   const searchCalls = server.sent('GET', SEARCH).length;
 

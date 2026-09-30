@@ -8,7 +8,8 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';
@@ -29,13 +30,6 @@ const NULL_HOME_LOAN = { balance: null, as_of: null, currency: null };
 const REPAYMENT = { amount: 1500, date: '2026-07-01', principal: 1268, interest: 232 };
 const REPAYMENT_2 = { amount: 1600, date: '2026-08-01', principal: 1300, interest: 300 };
 const READY_FACTS = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
-
-// staleTime chosen per-test: 60s keeps data fresh (refetchStale no-op); 0 makes it stale.
-function makeClient(staleTime: number) {
-  return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime, gcTime: Infinity } } });
-}
-const wrapper = (client: QueryClient) =>
-  ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 
 beforeEach(() => {
   mockAuthStatus = 'authed';
@@ -61,7 +55,7 @@ it('a null balance on a LATER refetch KEEPS the loaded balance (keep-last-good, 
   // homeLoan fetch COUNT would let the assertion fire before the null result was written.)
   server.once('GET', '/repayment', { body: REPAYMENT });
   server.seed('/repayment', REPAYMENT_2);
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient(60_000)) });
+  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.homeLoan.balance).toBe(596642.43));
 
   await act(async () => { result.current.refetch(); });
@@ -74,7 +68,7 @@ it('a null balance on a LATER refetch KEEPS the loaded balance (keep-last-good, 
 
 it('a loan-facts read failure is an aggregate error but NOT a balance error, and facts fall back to empty', async () => {
   server.fail('/loanfacts', 500);
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient(60_000)) });
+  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
 
   await waitFor(() => expect(result.current.isError).toBe(true));
   expect(result.current.homeLoanError).toBe(false);            // the balance read is fine
@@ -83,7 +77,7 @@ it('a loan-facts read failure is an aggregate error but NOT a balance error, and
 });
 
 it('refetchStale is a no-op while every query is fresh (no request storm on focus)', async () => {
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient(60_000)) });
+  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isLoading).toBe(false));
   expect(server.sent('GET', '/homeloan')).toHaveLength(1);
   expect(server.sent('GET', '/repayment')).toHaveLength(1);
@@ -97,7 +91,7 @@ it('refetchStale is a no-op while every query is fresh (no request storm on focu
 });
 
 it('refetchStale refetches all three reads exactly once when they are stale', async () => {
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient(0)) });
+  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
   await waitFor(() => expect(result.current.isLoading).toBe(false));
   await waitFor(() => expect(server.sent('GET', '/homeloan')).toHaveLength(1));
 
@@ -114,11 +108,8 @@ it('refetchStale refetches all three reads exactly once when they are stale', as
 // balance hero. Locks: (1) a REJECT leaves isError/isLoading untouched, milestones → []; (2) that []
 // keeps a STABLE reference (frozen EMPTY_MILESTONES, WHIT-244 identity trap); (3) a real saved list
 // flows through unchanged. Reuses the module wrapper + HOME_LOAN/REPAYMENT/READY_FACTS + the module
-// beforeEach (which now seeds /milestones → []); its own fixed-stale makeClient is block-scoped.
+// beforeEach (which now seeds /milestones → []).
 describe('goalScreenData — milestones secondary query (WHIT-367)', () => {
-  function makeClient() {
-    return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
-  }
   const SAVED_PLAN = [
     { id: 'a', label: 'Start',  targetBalance: 300000, targetDate: '2026-01-01' },
     { id: 'b', label: 'Midway', targetBalance: 200000, targetDate: '2027-01-01' },

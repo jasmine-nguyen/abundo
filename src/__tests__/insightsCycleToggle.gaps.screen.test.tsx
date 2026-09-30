@@ -13,7 +13,8 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { makeClient } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
@@ -50,9 +51,6 @@ const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
 const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
 const BREAKDOWN = { coffee: { posted: 40, pending: 10 } };
 
-function makeClient(retry: boolean | number = false) {
-  return new QueryClient({ defaultOptions: { queries: { retry, retryDelay: 1, staleTime: 60_000, gcTime: Infinity } } });
-}
 function renderInsights(client = makeClient()) {
   return render(React.createElement(QueryClientProvider, { client }, React.createElement(Insights)));
 }
@@ -87,7 +85,7 @@ it('[A6] segmented control accessibilityState.selected tracks the active segment
 // cycle whose read FAILS must show the inline error + Retry (not a stale cycle-0 hero or
 // a confident $0), and Retry must refetch cycle 1 specifically.
 it('[A7] a past-cycle read that FAILS shows inline error + Retry; Retry refetches cycle 1', async () => {
-  renderInsights(makeClient(false));
+  renderInsights(makeClient());
   await screen.findByText('Cafes & Coffee');
 
   // Cycle 0 is cached now, so from here only the cycle-1 read reaches the server — and it fails.

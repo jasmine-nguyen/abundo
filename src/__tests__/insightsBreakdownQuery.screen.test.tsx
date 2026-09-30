@@ -11,7 +11,8 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { makeClient, pause } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';
@@ -64,9 +65,6 @@ const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
 const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
 const BREAKDOWN = { coffee: { posted: 40, pending: 10 } };
 
-function makeClient(retry: boolean | number = false) {
-  return new QueryClient({ defaultOptions: { queries: { retry, retryDelay: 1, staleTime: 60_000, gcTime: Infinity } } });
-}
 function renderInsights(client = makeClient()) {
   return render(React.createElement(QueryClientProvider, { client }, React.createElement(Insights)));
 }
@@ -106,7 +104,7 @@ it('does not fetch breakdown before login, then fires when auth flips to authed'
 
 it('a transient 5xx on breakdown retries and self-heals — no error shown', async () => {
   server.once('GET', '/breakdown', { status: 503 });
-  renderInsights(makeClient(2));
+  renderInsights(makeClient({ retry: 2 }));
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
   expect(screen.queryByTestId('insights-error')).toBeNull();
   expect(server.sentUnder('GET', '/breakdown')).toHaveLength(2);
@@ -116,7 +114,7 @@ it('a sustained breakdown failure shows the inline error + Retry, no false $0', 
   // A lasting failure, so Retry is proven against a persistent 503 (the focus-refresh loop that
   // once re-asked on its own is gone — WHIT-668).
   server.fail('/breakdown', 503);
-  renderInsights(makeClient(false));
+  renderInsights(makeClient());
   expect(await screen.findByTestId('insights-error')).toBeTruthy();
   expect(screen.queryByText('$0')).toBeNull(); // hero shows "—", not a confident zero
 
@@ -131,9 +129,9 @@ it('a sustained breakdown failure sends a bounded number of requests (WHIT-668)'
   // The focus refresh used to re-run on every redraw; an errored read with nothing saved is always
   // out of date, so each failure asked again straight away (about 20 requests in 200ms here).
   server.fail('/breakdown', 503);
-  renderInsights(makeClient(false));
+  renderInsights(makeClient());
   expect(await screen.findByTestId('insights-error')).toBeTruthy();
-  await act(() => new Promise<void>((resolve) => setTimeout(resolve, 200)));
+  await pause(200);
   expect(server.sentUnder('GET', '/breakdown')).toHaveLength(1);
 
   server.once('GET', '/breakdown', { body: BREAKDOWN }); // a queued reply goes out ahead of the failure
@@ -202,7 +200,7 @@ describe('partial failure: categories down while breakdown succeeds', () => {
   it('breakdown has real + uncategorized spend, categories failed on first load → the inline error IS shown (no partial hero)', async () => {
     server.fail('/categories', 500);
     server.seed('/breakdown', { coffee: { posted: 40, pending: 0 }, [UNCATEGORIZED_KEY]: { posted: 25, pending: 0 } });
-    renderInsights(makeClient(false));
+    renderInsights(makeClient());
     expect(await screen.findByTestId('insights-error')).toBeTruthy();     // error surfaces now
     expect(screen.getByText("Couldn't load")).toBeTruthy();               // ...and the hero says so
     expect(screen.queryByText('Cafes & Coffee')).toBeNull();             // real row dropped (no taxonomy)
@@ -214,7 +212,7 @@ describe('partial failure: categories down while breakdown succeeds', () => {
   it('breakdown has ONLY real-category spend → all rows drop → the inline error DOES surface', async () => {
     server.fail('/categories', 500);
     // breakdown resolves fine but every id needs the (failed) taxonomy → zero rows.
-    renderInsights(makeClient(false));
+    renderInsights(makeClient());
     expect(await screen.findByTestId('insights-error')).toBeTruthy();
     expect(screen.queryByText('Cafes & Coffee')).toBeNull();
     expect(screen.queryByText('$0')).toBeNull(); // hero must not lie with a confident $0

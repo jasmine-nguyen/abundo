@@ -10,7 +10,8 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, waitFor } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
+import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
 import type { UncategorizedMerchants } from '../api';
@@ -28,12 +29,6 @@ const server = installFakeServer();
 const MERCHANTS_PATH = '/transactions/uncategorized/merchants';
 const merchantRequests = () => server.sent('GET', MERCHANTS_PATH);
 
-function makeClient() {
-  return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 0, gcTime: Infinity } } });
-}
-const wrapper = (client: QueryClient) =>
-  ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-
 const payload: UncategorizedMerchants = {
   unfiled: 3,
   groups: [{ merchant: 'Woolworths', rulePattern: 'WOOLWORTHS', groupedBy: 'merchant', count: 3,
@@ -49,7 +44,7 @@ beforeEach(() => {
 // [M1] auth still required — the backlog gate is additive, not a replacement.
 it('does NOT fetch while signed out, even with enabled=true', () => {
   mockAuthStatus = 'anon';
-  const { result } = renderHook(() => useUncategorizedMerchants(true), { wrapper: wrapper(makeClient()) });
+  const { result } = renderHook(() => useUncategorizedMerchants(true), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
   expect(merchantRequests()).toHaveLength(0);
   expect(result.current.merchants).toBeUndefined();
 });
@@ -57,14 +52,14 @@ it('does NOT fetch while signed out, even with enabled=true', () => {
 // [M2] the core WHIT-552 gate: authed but no backlog (count 0) → no heavy walk. Fail-on-revert:
 // revert useUncategorizedMerchants to `useUncategorizedMerchantsQuery(useIsAuthed())` and this fails.
 it('does NOT fetch when authed but the backlog is empty (enabled=false)', () => {
-  const { result } = renderHook(() => useUncategorizedMerchants(false), { wrapper: wrapper(makeClient()) });
+  const { result } = renderHook(() => useUncategorizedMerchants(false), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
   expect(merchantRequests()).toHaveLength(0);
   expect(result.current.merchants).toBeUndefined();
 });
 
 // [M3] authed + backlog → the walk fires and the grouped shops come through.
 it('fetches when authed and the backlog is non-empty (enabled=true)', async () => {
-  const { result } = renderHook(() => useUncategorizedMerchants(true), { wrapper: wrapper(makeClient()) });
+  const { result } = renderHook(() => useUncategorizedMerchants(true), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
   await waitFor(() => expect(result.current.merchants).toEqual(payload));
   expect(merchantRequests()).toHaveLength(1);
 });
@@ -72,7 +67,7 @@ it('fetches when authed and the backlog is non-empty (enabled=true)', async () =
 // [M4] the sheet path: called with no arg, the gate defaults to on so the "File by shop" sheet
 // keeps its auth-only fetch. Fail-on-revert: make `enabled` required and the sheet stops fetching.
 it('fetches with the default arg (the File-by-shop sheet path)', async () => {
-  const { result } = renderHook(() => useUncategorizedMerchants(), { wrapper: wrapper(makeClient()) });
+  const { result } = renderHook(() => useUncategorizedMerchants(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
   await waitFor(() => expect(result.current.merchants).toEqual(payload));
   expect(merchantRequests()).toHaveLength(1);
 });

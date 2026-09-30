@@ -17,7 +17,8 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { makeClient } from './support/queryClient';
 import { StyleSheet } from 'react-native';
 import { installFakeServer } from './support/fakeServer';
 
@@ -68,9 +69,6 @@ const BREAKDOWN = {
   },
 };
 
-function makeClient() {
-  return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
-}
 function renderInsights() {
   return render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Insights)));
 }

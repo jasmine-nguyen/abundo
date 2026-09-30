@@ -4,7 +4,7 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { makeClient, wrapper, pause } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
 jest.mock('../auth', () => ({
@@ -18,15 +18,6 @@ import { useCategories } from '../queries';
 const server = installFakeServer();
 
 const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 };
-
-function makeClient(staleTime = 60_000) {
-  return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime, gcTime: Infinity } } });
-}
-function wrapper(client: QueryClient) {
-  return ({ children }: { children: React.ReactNode }) =>
-    React.createElement(QueryClientProvider, { client }, children);
-}
-const pause = (ms: number) => act(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
 describe('useCategories reload actions', () => {
   it('refetch and refetchStale keep the same identity across a rerender, a load and an error', async () => {
@@ -51,7 +42,7 @@ describe('useCategories reload actions', () => {
 
   it('a refetchStale captured before the load skips the reload once the categories are fresh', async () => {
     server.seed('/categories', [COFFEE]);
-    const { result } = renderHook(() => useCategories(), { wrapper: wrapper(makeClient(Infinity)) });
+    const { result } = renderHook(() => useCategories(), { wrapper: wrapper(makeClient({ staleTime: Infinity })) });
     const early = result.current.refetchStale; // captured while the read was still pending (stale)
     await waitFor(() => expect(result.current.categories).toHaveLength(1));
     expect(server.sent('GET', '/categories')).toHaveLength(1);

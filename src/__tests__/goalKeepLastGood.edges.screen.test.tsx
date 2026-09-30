@@ -10,7 +10,8 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
@@ -27,12 +28,6 @@ const REPAYMENT = { amount: 1500, date: '2026-07-01', principal: 1268, interest:
 const REPAYMENT_2 = { amount: 1600, date: '2026-08-01', principal: 1300, interest: 300 };
 const REPAYMENT_3 = { amount: 1700, date: '2026-09-01', principal: 1350, interest: 350 };
 const READY_FACTS = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
-
-function makeClient() {
-  return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
-}
-const wrapper = (client: QueryClient) =>
-  ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 
 beforeEach(() => {
   server.seed('/homeloan', HOME_LOAN);
