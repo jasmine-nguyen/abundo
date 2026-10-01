@@ -9,8 +9,8 @@
 // The shadowed-folder guard (themeLayout.logic.test.ts) is the fourth consumer: it drives walkSrc
 // (below) to catch a file and a same-named folder sitting side by side.
 //
-// The cache-in-act guards (cacheRefreshInAct / cacheRefreshAnywhereInAct .logic.test.ts) use
-// stripComments and matchingBrace to read each act(...) body whole.
+// The cache-in-act guard (cacheRefreshInAct.logic.test.ts) uses stripComments and matchingBrace
+// to read each act(...) body whole.
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, relative, sep } from 'path';
 
