@@ -1,6 +1,6 @@
 """WHIT-336 QA gaps (adversarial) — the skewed-date tier's merchant gate after the
 prefix-tolerant matcher was replaced by a POSITIONAL slice of ANZ's fixed-width
-merchant column plus CLEANED-NAME EQUALITY (lambda/repository.py
+merchant column plus CLEANED-NAME EQUALITY (lambda/webhook_repository.py
 `merchant.pending_merchant_column` / `reconcile.merchant_matches_pending`).
 
 Written on top of the implementer's WHIT-336 section in test_reconcile.py. That

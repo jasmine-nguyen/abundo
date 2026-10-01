@@ -5,7 +5,7 @@ non-taxonomy truthy raw categories, the category/equals rule shape, `income`, a 
 batch, the capture_pre_write ordering, the read-once contract on reprocess, and the per-charge
 KeyError that lives OUTSIDE the best-effort try/except.
 
-Local fakes only (webhook-suite convention): `repository` is lambda/repository.py here, which does
+Local fakes only (webhook-suite convention): `repository` is lambda/webhook_repository.py here, which does
 not export DatabaseError.
 """
 

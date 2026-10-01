@@ -95,7 +95,7 @@ These are looked up before the owner is known, or they are an ops queue across a
 | new | — | `BANKACCT#<provider>#<provider_account_id>` \| `BANKACCT` | `{owner, account_id}`. `provider` is `banksync` or `up`. |
 | new | — | `USERS` \| `USER#<owner_id>` | The registry scheduled jobs loop over. `{created_at}`. |
 
-- EVENT rows today have no `expires_at` (`lambda/repository.py:255-257`), so they live forever. Dedup only needs to cover BankSync's retry window (hours to a few days). 30 days is a safe margin. Old EVENT rows get `expires_at` in the migration.
+- EVENT rows today have no `expires_at` (`lambda/webhook_repository.py:256-258`), so they live forever. Dedup only needs to cover BankSync's retry window (hours to a few days). 30 days is a safe margin. Old EVENT rows get `expires_at` in the migration.
 
 ## 2. Lookup indexes (GSIs, the side-tables that find rows by another key)
 

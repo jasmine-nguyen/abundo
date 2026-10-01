@@ -5,14 +5,14 @@ import logging
 
 from banksync import BankSyncClient, UnknownAccountError
 from models import Transaction
-from repository import TransactionRepository
+from webhook_repository import TransactionRepository
 from ssm import get_param
 from standardwebhooks.webhooks import Webhook
 
 # Budget-threshold alerts (WHIT-22). The shared layer provides the detection + the
 # repos it reads; the windowed spend read uses the SHARED TransactionRepository
 # (`repository_transaction`, a different module from the webhook's local
-# `repository`) because only it has get_transactions_by_date_range.
+# `webhook_repository`) because only it has get_transactions_by_date_range.
 import budget_alerts
 import rule_ingest
 from repository_transaction import TransactionRepository as WindowRepo

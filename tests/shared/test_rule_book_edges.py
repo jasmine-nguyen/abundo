@@ -58,12 +58,13 @@ def _plan(book, transaction_repo):
     return transactions, book.plan(transactions)
 
 
-# [A15] (P0) importing rule_book pulls in no constants, banksync, boto3 or SpreadSeeder — the
-# source-text guard misses a top-level import of a module that itself imports those.
+# [A15] (P0) importing rule_book pulls in no banksync, boto3 or SpreadSeeder — the source-text
+# guard misses a top-level import of a module that itself imports those. (`constants` is allowed
+# since WHIT-608: rule_engine reads the rule vocabulary from the one shared constants file.)
 def test_importing_rule_book_is_bundle_safe_transitively():
     probe = (
         "import sys; import rule_book; "
-        "print(sorted(m for m in ('constants', 'banksync', 'boto3', 'rule_spreading', 'spend', "
+        "print(sorted(m for m in ('banksync', 'boto3', 'rule_spreading', 'spend', "
         "'repository_transaction') if m in sys.modules))"
     )
     result = subprocess.run([sys.executable, "-c", probe], cwd=SHARED_DIR,

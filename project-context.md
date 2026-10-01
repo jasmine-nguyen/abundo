@@ -35,7 +35,7 @@ Check these before changing the touched area:
 - **Each constant has one home** — API-only → `lambda_api/api_constants.py`; everything
   else → `shared/constants.py`; never both. Guarded by `test_no_shared_name_shadowing.py`.
 - **The webhook repository subclasses the shared one** —
-  `lambda/repository.py`'s `TransactionRepository` extends
+  `lambda/webhook_repository.py`'s `TransactionRepository` extends
   `shared/repository_transaction.py` and imports `handle_database_error` from
   `shared/repository_base.py`. CRUD/error code lives in one place; don't
   reintroduce a local copy of an inherited method — override only to change

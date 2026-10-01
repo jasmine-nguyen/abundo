@@ -16,7 +16,7 @@ resource "null_resource" "prepare_lambda_deps" {
 }
 
 # Webhook lambda source: only its webhook-specific modules (handler.py,
-# repository.py, reconcile.py with the settlement planner, budget_alerts.py,
+# webhook_repository.py, reconcile.py with the settlement planner, budget_alerts.py,
 # banksync.py). constants.py,
 # models.py, encoders.py, and ssm.py come from the shared layer attached below —
 # same single-source pattern as the api/sync/authorizer lambdas (WHIT-88).

@@ -245,3 +245,31 @@ SPREAD_MAX_CYCLES = 24
 # accumulating forever — long enough to notice + reprocess (see the recovery
 # lambda, WHIT-55), short enough not to pile up. 30 days.
 DEAD_LETTER_TTL_SECONDS = 30 * 24 * 60 * 60
+
+# --- Rules -------------------------------------------------------------------
+# The (field, operator) pairs a rule may use — the one home for the rule vocabulary (WHIT-608).
+# The rule engine evaluates them and the API validates requests against them, so the two can't
+# drift. The client copy (src/ruleVocabulary.ts) is guarded by Jest.
+#   description/merchant: `contains` (substring) + `equals` (exact, folded).
+#   category: `equals` — a raw-enum mapping (FOOD_AND_DRINK -> groceries) for rules made outside
+#             the app; unfiled rows carry raw enums, so it is worth honouring when present.
+#   account: `equals` against the internal account_id.
+#   amount: `less_than`/`less_than_or_equal`/`greater_than`/`greater_than_or_equal` a plain positive
+#           dollar value, compared to the charge's MAGNITUDE (abs) — spend is stored negative, so
+#           "under $30" means abs(amount) < 30.
+#   direction: `is` "debit" (spend, amount < 0) / "credit" (income, amount > 0).
+RULE_FIELD_OPERATORS = {
+    "description": frozenset({"contains", "equals"}),
+    "merchant": frozenset({"contains", "equals"}),
+    "category": frozenset({"equals"}),
+    "account": frozenset({"equals"}),
+    "amount": frozenset({"less_than", "less_than_or_equal", "greater_than", "greater_than_or_equal"}),
+    "direction": frozenset({"is"}),
+}
+# Derived: every field, and the union of every operator.
+RULE_FIELDS = frozenset(RULE_FIELD_OPERATORS)
+RULE_OPERATORS = frozenset().union(*RULE_FIELD_OPERATORS.values())
+# How a multi-condition rule combines its conditions: "all" = AND, "any" = OR.
+RULE_LOGIC = frozenset({"all", "any"})
+# The one direction condition's allowed values.
+RULE_DIRECTIONS = frozenset({"debit", "credit"})

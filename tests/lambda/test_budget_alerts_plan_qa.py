@@ -193,7 +193,7 @@ def test_preview_does_not_mutate_the_snapshot(alerts, repo, monkeypatch):
     assert [dict(r) for r in ctx["before_rows"]] == rows_before
 
 
-# [A5] P0 — the card's "done when": no code outside lambda/repository.py reaches into the
+# [A5] P0 — the card's "done when": no code outside lambda/webhook_repository.py reaches into the
 # webhook repository's private names, and the moved matching helpers are gone from it.
 _MOVED = ("_reconcile_matches", "_ensure_pool", "_find_exact_twin", "_find_tip_twin",
           "_find_skewed_auth_twin", "_find_blank_auth_twin", "_with_carried_category",
@@ -205,11 +205,11 @@ def test_nothing_outside_the_repository_uses_its_private_names(lam):
     own_private = [n for n in vars(repo_cls) if n.startswith("_") and not n.startswith("__")]
     assert not [n for n in _MOVED if hasattr(repo_cls, n) or hasattr(lam.repository, n)]
 
-    pattern = re.compile(r"\.(%s)\b|\brepository\._[a-z]" % "|".join(map(re.escape, own_private + list(_MOVED))))
+    pattern = re.compile(r"\.(%s)\b|\b(?:webhook_)?repository\._[a-z]" % "|".join(map(re.escape, own_private + list(_MOVED))))
     offenders = []
     for folder in ("lambda", "shared", "lambda_api"):
         for path in (_REPO_ROOT / folder).rglob("*.py"):
-            if path == _REPO_ROOT / "lambda" / "repository.py":
+            if path == _REPO_ROOT / "lambda" / "webhook_repository.py":
                 continue
             for number, line in enumerate(path.read_text().splitlines(), 1):
                 if pattern.search(line):

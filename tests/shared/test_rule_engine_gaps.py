@@ -168,10 +168,10 @@ def test_contains_with_an_empty_value_is_vacuously_true_so_callers_must_guard(ru
 # --- the module is the shared copy, not a lambda_api copy ---------------------
 
 
-def test_rule_engine_is_the_shared_layer_module_with_no_constants_import(rule_engine):
-    # [G13] WHIT-527 moved this OUT of lambda_api. It must resolve to shared/ and stay pure and
-    # constants-free. build_artifacts_test.sh + the bundle test guard the deploy; this guards the
-    # import path the tests themselves exercise.
+def test_rule_engine_is_the_shared_layer_module_with_only_the_constants_import(rule_engine):
+    # [G13] WHIT-527 moved this OUT of lambda_api. It must resolve to shared/ and stay pure: its
+    # only project import is the rule vocabulary from `constants` (WHIT-608 — every function now
+    # loads the one shared constants file). This guards the import path the tests exercise.
     import os
     assert rule_engine.__file__.replace(os.sep, "/").endswith("shared/rule_engine.py")
     import ast
@@ -183,9 +183,8 @@ def test_rule_engine_is_the_shared_layer_module_with_no_constants_import(rule_en
             imported.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
             imported.add(node.module)
-    # No `constants` import (the docstring MENTIONS the phrase; only real imports count).
-    assert "constants" not in imported
-    # Stdlib only — re (matching) + hashlib (rule_id_for, WHIT-528) + decimal (amount comparison,
-    # WHIT-541). Nothing from the shared layer or constants, so the module stays a pure,
-    # deploy-safe leaf.
-    assert imported <= {"re", "hashlib", "decimal"}
+    # re (matching) + hashlib (rule_id_for, WHIT-528) + decimal (amount comparison, WHIT-541) +
+    # constants (the rule vocabulary, WHIT-608). Nothing else from the shared layer, so the module
+    # stays a pure, deploy-safe leaf.
+    assert "constants" in imported
+    assert imported <= {"re", "hashlib", "decimal", "constants"}
