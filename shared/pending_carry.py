@@ -106,14 +106,36 @@ def find_carry_twin(pending: dict, posted_rows: list[dict], is_unfiled) -> dict 
     STRICT: same exact amount, same shop (the reconcile merchant gate), dated within
     CARRY_DATE_SKEW_DAYS. Exactly one match carries; zero OR an ambiguous tie (≥2) carries
     nothing — a wrong carry is worse than a missed one (WHIT-511, Jasmine's locked choice)."""
-    candidates = [posted for posted in posted_rows
-                  if not _has_user_fields(posted) or _same_user_fields(pending, posted)]
+    eligible = [posted for posted in _candidates(pending, posted_rows)
+                if _may_take_category(pending, posted, is_unfiled)]
+    return _only_twin(pending, eligible)
+
+
+def find_reissued_twin(pending: dict, live_pendings: list[dict], is_unfiled) -> dict | None:
+    """The bank's re-issued pending copy to carry an edited stale pending onto, or None
+    (WHIT-678). Same rules as find_carry_twin, plus a copy already filed exactly as the pending
+    (same category and rule stamp) qualifies: carrying changes no filing, only adds the edit."""
+    eligible = [
+        row for row in _candidates(pending, live_pendings)
+        if _may_take_category(pending, row, is_unfiled)
+        or (row.get("category") == pending.get("category")
+            and row.get("filed_by_rule") == pending.get("filed_by_rule"))
+    ]
+    return _only_twin(pending, eligible)
+
+
+def _candidates(pending: dict, rows: list[dict]) -> list[dict]:
+    return [row for row in rows if not _has_user_fields(row) or _same_user_fields(pending, row)]
+
+
+def _may_take_category(pending: dict, row: dict, is_unfiled) -> bool:
     if category_is_user_set(pending, is_unfiled):
-        eligible = [posted for posted in candidates
-                    if is_unfiled(posted.get("category")) or posted.get("filed_by_rule")]
-    else:
-        eligible = [posted for posted in candidates if is_unfiled(posted.get("category"))]
-    matches = [posted for posted in eligible if _is_carry_twin(pending, posted)]
+        return is_unfiled(row.get("category")) or bool(row.get("filed_by_rule"))
+    return is_unfiled(row.get("category"))
+
+
+def _only_twin(pending: dict, eligible: list[dict]) -> dict | None:
+    matches = [row for row in eligible if _is_carry_twin(pending, row)]
     if len(matches) == 1:
         return matches[0]
     return None

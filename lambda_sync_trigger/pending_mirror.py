@@ -29,7 +29,14 @@ from constants import (
     PENDING_STATUS,
     POSTED_STATUS,
 )
-from pending_carry import find_carry_twin, find_identical_copy, is_user_edited, load_is_unfiled, with_carried_category
+from pending_carry import (
+    find_carry_twin,
+    find_identical_copy,
+    find_reissued_twin,
+    is_user_edited,
+    load_is_unfiled,
+    with_carried_category,
+)
 from repository_category import CategoryRepository
 from repository_errors import DatabaseError
 from repository_transaction import TransactionRepository, read_date_range_pages
@@ -165,17 +172,22 @@ def _carry(
     is_unfiled: Callable[[Optional[str]], bool],
     result: dict,
 ) -> tuple[list[dict], list[dict]]:
-    """Move a user-edited pending's edit onto its settled twin — or, with none, onto the bank's
-    re-issued pending copy — then delete the pending. No confident twin → delete it only if a live
-    copy already holds the same edit, else keep it for next hour. The pending is only deleted
+    """Move a user-edited pending's edit onto its settled twin, then delete the pending. With no
+    settled twin: a live copy already holding the same edit → just delete the pending; else carry
+    onto the bank's re-issued pending copy; else keep it for next hour. The pending is only deleted
     once the carry is saved. Returns both pools without the claimed twin, so no other pending can
     carry onto it."""
     transaction_id = pending["transaction_id"]
     twin = find_carry_twin(pending, posted_rows, is_unfiled)
+    identical = find_identical_copy(pending, live_pendings)
+    if twin is None and identical is not None:
+        _remove_identical(repo, account_id, pending, identical, result)
+        return posted_rows, live_pendings
     if twin is None:
-        twin = find_carry_twin(pending, live_pendings, is_unfiled)
+        twin = find_reissued_twin(pending, live_pendings, is_unfiled)
     if twin is None:
-        _remove_if_identical_copy(repo, account_id, pending, live_pendings, result)
+        logger.info("pending_mirror %s: kept (user-edited, no settled twin yet) txn=%s", account_id, transaction_id)
+        result["kept"] += 1
         return posted_rows, live_pendings
     try:
         saved = _save_carry(repo, twin, pending, is_unfiled)
@@ -219,15 +231,8 @@ def _save_carry(repo: Any, twin: dict, pending: dict, is_unfiled: Callable[[Opti
     return True
 
 
-def _remove_if_identical_copy(
-    repo: Any, account_id: str, pending: dict, live_pendings: list[dict], result: dict,
-) -> None:
+def _remove_identical(repo: Any, account_id: str, pending: dict, identical: dict, result: dict) -> None:
     transaction_id = pending["transaction_id"]
-    identical = find_identical_copy(pending, live_pendings)
-    if identical is None:
-        logger.info("pending_mirror %s: kept (user-edited, no settled twin yet) txn=%s", account_id, transaction_id)
-        result["kept"] += 1
-        return
     try:
         deleted = repo.delete_if_still_pending(pending["pk"], pending["sk"])
     except DatabaseError:
