@@ -5,9 +5,10 @@ Everything under .build/ belongs to build_graph.py (its database, locked-test co
 plans), except .build/cards/, where the chat writes card details for --details-file.
 Changes go through `build_graph.py --resume`, so the build knows about them.
 
-The build's own agents (QA writes its patch under .build/) run with
-BUILD_PIPELINE_AGENT=1 in their environment, which a shell command can't set for
-this hook, so they're let through.
+Let through, by a variable set when the session starts (a shell command can't set
+it for this hook):
+- the build's own agents (QA writes its patch under .build/): BUILD_PIPELINE_AGENT=1
+- a repair session the user opened on purpose with `ticket repair <card>`: ALLOW_BUILD_REPAIR=1
 """
 import json
 import os
@@ -17,7 +18,9 @@ from pathlib import Path
 
 REASON = (
     "This is /build's saved progress, which only build_graph.py may change. Don't edit it to unstick "
-    "a build: resume it with the user's answer (`build_graph.py --resume`), or tell the user what's stuck."
+    "a build: resume it with the user's answer (`build_graph.py --resume`), or use --retry, --recheck or "
+    "--replan. If none of those fixes it, tell the user what's stuck and that `ticket repair <card>` opens a "
+    "session allowed to change these files."
 )
 WRITE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 BUILD_DIR = re.compile(r"(^|[\s'\"=/])\.build/(?!cards/)")
@@ -51,7 +54,7 @@ def in_build_dir(file_path: str, cwd: Path) -> bool:
 
 
 def main() -> int:
-    if os.environ.get("BUILD_PIPELINE_AGENT") == "1":
+    if "1" in (os.environ.get("BUILD_PIPELINE_AGENT"), os.environ.get("ALLOW_BUILD_REPAIR")):
         return 0
     event = json.load(sys.stdin)
     tool, given = event.get("tool_name", ""), event.get("tool_input") or {}

@@ -295,7 +295,10 @@ the card number for card builds) and check where it is:
    never edit the card's code or tests yourself, and never touch the build's
    saved progress (the `.build/` folder, including `build_graph.db`) at all, not
    even to "unstick" it (a project safety check blocks it; only `.build/cards/` is
-   yours to write). Every change goes through a resume reply, so the build
+   yours to write). If a build is stuck and none of `--resume`, `--retry`,
+   `--recheck` or `--replan` can fix it, tell the user what's stuck and that
+   `ticket repair <card>` opens a separate session allowed to repair these
+   files. Never work around the block yourself. Every change goes through a resume reply, so the build
    knows about it: a locked test through an option that unlocks it (or
    `unpin`), anything else through the user's decision. If no reply fits, tell the user what's stuck and
    ask. The one time you change code is BUILD FAILED (step 5).
