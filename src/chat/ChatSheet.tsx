@@ -6,6 +6,7 @@ import {
   Animated, KeyboardAvoidingView, Modal, NativeScrollEvent, NativeSyntheticEvent, Platform,
   Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../theme';
@@ -213,6 +214,7 @@ function Composer() {
   const canSend = text.trim().length > 0 && !inFlight;
   const submit = () => {
     if (!canSend) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     send(text);
     setText('');
   };
