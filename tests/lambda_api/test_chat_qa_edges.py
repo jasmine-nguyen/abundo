@@ -294,6 +294,10 @@ def _scripted(replies, requests):
     return post
 
 
+def _plenty_of_time():
+    return 200
+
+
 def _tool(name, tool_input, call_id="c1"):
     return {"content": [{"type": "tool_use", "id": call_id, "name": name, "input": tool_input}],
             "stop_reason": "tool_use"}
@@ -306,7 +310,7 @@ def test_an_unknown_tool_name_goes_back_as_is_error_and_the_loop_continues(ai_ch
         _tool("respond", {"text": "Sorry, I can't do that."}, "c2"),
     ], requests))
     job_repo = _JobRepo()
-    reply = ai_chat.run_chat("job", [{"role": "user", "text": "hi"}], _chat_data(), job_repo)
+    reply = ai_chat.run_chat("job", [{"role": "user", "text": "hi"}], _chat_data(), job_repo, _plenty_of_time)
     assert reply == {"text": "Sorry, I can't do that."}
     result = requests[1][-1]["content"][0]
     assert result["is_error"] is True and result["tool_use_id"] == "c1"
@@ -321,7 +325,7 @@ def test_a_bad_status_line_argument_still_runs_the_tool(ai_chat, monkeypatch):  
         _tool("respond", {"text": "ok"}, "c2"),
     ], requests))
     job_repo = _JobRepo()
-    ai_chat.run_chat("job", [{"role": "user", "text": "hi"}], _chat_data(), job_repo)
+    ai_chat.run_chat("job", [{"role": "user", "text": "hi"}], _chat_data(), job_repo, _plenty_of_time)
     assert job_repo.statuses == ["Working on it…"]
     assert requests[1][-1]["content"][0]["is_error"] is True
 
@@ -330,7 +334,7 @@ def test_a_plain_text_reply_with_no_tool_call_fails_the_job(ai_chat, monkeypatch
     monkeypatch.setattr(ai_chat, "post_messages", _scripted([
         {"content": [{"type": "text", "text": "Here you go"}], "stop_reason": "end_turn"}], []))
     with pytest.raises(ai_chat.ChatError):
-        ai_chat.run_chat("job", [{"role": "user", "text": "hi"}], _chat_data(), _JobRepo())
+        ai_chat.run_chat("job", [{"role": "user", "text": "hi"}], _chat_data(), _JobRepo(), _plenty_of_time)
 
 
 def test_numbers_from_a_previous_message_do_not_validate_this_card(ai_chat, monkeypatch):  # [A17]
@@ -341,12 +345,12 @@ def test_numbers_from_a_previous_message_do_not_validate_this_card(ai_chat, monk
         _tool("query_transactions", {"filters": {"category_ids": ["eatingout"]}, "metric": "sum"}),
         _tool("respond", {"text": "a", "card": _card(value=42)}, "c2"),
     ], []))
-    first = ai_chat.run_chat("job1", [{"role": "user", "text": "q1"}], data, _JobRepo())
+    first = ai_chat.run_chat("job1", [{"role": "user", "text": "q1"}], data, _JobRepo(), _plenty_of_time)
     assert first["card"]["value"] == 42.0
 
     monkeypatch.setattr(ai_chat, "post_messages", _scripted([
         _tool("respond", {"text": "b", "card": _card(value=42)})], []))
-    second = ai_chat.run_chat("job2", [{"role": "user", "text": "q2"}], data, _JobRepo())
+    second = ai_chat.run_chat("job2", [{"role": "user", "text": "q2"}], data, _JobRepo(), _plenty_of_time)
     assert "card" not in second
 
 

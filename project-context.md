@@ -42,11 +42,12 @@ Check these before changing the touched area:
   behaviour.
 - **`get_api_key()` lives once in `shared/api_key.py`**, cached by SSM path. Each
   lambda keeps a one-line wrapper passing its own path — don't re-copy the SSM fetch.
-- **The chat's time limits are a chain** (WHIT-609) — `ANTHROPIC_CHAT_TIMEOUT_SECONDS ×
-  CHAT_MAX_TOOL_ROUNDS` < the `ai_chat_worker` timeout in `terraform/lambda.tf` < the app's
-  `CHAT_MAX_WAIT_MS` (`src/chat/ChatContext.tsx`). `CHAT_MESSAGE_MAX_LEN` and the 20-message
-  history are copied by hand into `ChatContext.tsx`. Change them together. Guarded by
-  `test_every_model_round_fits_inside_the_worker_timeout` and `chatLimitsSync.logic.test.ts`.
+- **The chat's time limits are a chain** (WHIT-609, WHIT-612) — the `ai_chat_worker` timeout in
+  `terraform/lambda.tf` < the app's `CHAT_MAX_WAIT_MS` (`src/chat/ChatContext.tsx`). Inside the
+  worker, `run_chat` shares its remaining time across the model calls, keeping
+  `CHAT_DEADLINE_MARGIN_SECONDS` back to mark the job failed. `CHAT_MESSAGE_MAX_LEN` and the
+  20-message history are copied by hand into `ChatContext.tsx`. Change them together. Guarded by
+  `chatLimitsSync.logic.test.ts` and the deadline tests in `test_chat_deadline.py` / `test_ai_chat.py`.
 - **An answer-first chat history means "insights seed"** (WHIT-609) — `ai_chat.to_model_messages`
   puts a fixed "here's the summary" user turn in front of a history that starts with an answer.
   Any trim or filter of the history (client `chatHistory`, server `_validate_chat_messages`) must

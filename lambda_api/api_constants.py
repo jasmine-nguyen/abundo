@@ -111,9 +111,12 @@ AI_CHAT_JOBS_PATH = "/ai/chat/jobs"
 # One chat model call writes tool calls AND the final reply, so it needs more room than
 # the one-shot insights call (ANTHROPIC_MAX_TOKENS).
 ANTHROPIC_CHAT_MAX_TOKENS = 1500
-# Per model call, capped so CHAT_MAX_TOOL_ROUNDS of these fit inside the worker's 210s Lambda
-# timeout (terraform/lambda.tf) — otherwise AWS kills it mid-loop and the job is never marked failed.
-ANTHROPIC_CHAT_TIMEOUT_SECONDS = 30
+# The cap on one model call; the real limit is the worker's time left (see ai_chat.run_chat).
+ANTHROPIC_CHAT_TIMEOUT_SECONDS = 60
+# Worker time kept back from the model calls to check the reply and write the job row.
+CHAT_DEADLINE_MARGIN_SECONDS = 10
+# With less call time than this left, the worker fails rather than start another model call.
+CHAT_MIN_CALL_SECONDS = 10
 # Tool rounds per user message; the last round forces the answer, so a loop fails fast.
 CHAT_MAX_TOOL_ROUNDS = 6
 # Only the most recent messages are sent to the model as context.
