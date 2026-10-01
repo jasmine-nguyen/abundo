@@ -58,7 +58,7 @@ changes), write no tests and say why in `summary`.
 ## Output
 
 - `seams` — the seams you tested, one line each.
-- `test_files` — the test files you added or changed, relative to the folder you start in.
+- `test_files` — the new test files you added, relative to the folder you start in.
 - `command` — one shell command, run from the folder you start in (the pipeline runs it there), that runs only your tests.
   It must exit non-zero now.
 - `summary` — what each test verifies, one line each (or why there are no tests).

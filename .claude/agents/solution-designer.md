@@ -81,7 +81,9 @@ several layers, or several independently useful behaviours), split it into 2–5
 every layer it needs (schema, API, UI, tests) that works and can be verified on its
 own. Put any prefactoring ("make the change easy, then make the easy change") in the
 first slice. Leave `slices` empty for normal-sized cards — don't split for the sake
-of it.
+of it. Always leave it empty for a bug card, and offer no split: a bug is fixed in one
+build, so the pipeline drops a bug's slices. If a bug's fix is that big, say so in
+`risks`.
 
 **Three or more slices means the card is too big for one build.** A long build
 waits on the user more, runs more review rounds and is harder to recover when it

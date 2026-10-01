@@ -54,8 +54,11 @@ If the user says "resume" or "continue the build" (and `$ARGUMENTS` is
 empty or says "resume"), find the thread ID from the conversation (it's
 the card number for card builds) and check where it is:
 `python3 build_graph.py --thread <id> --status`
-- "Paused: waiting for your reply" → go to step 3 and handle the pause.
-- A next step but no pause → it stopped on an error: `--retry`.
+- "Paused: waiting for your reply" → go to step 3 and handle the pause. The
+  status prints the block it's paused on.
+- "Running now" → it's still going: follow it with `--status` until it pauses
+  or ends.
+- A next step but no pause, and not running → it stopped on an error: `--retry`.
 - Finished with outcome `failed` → step 5, BUILD FAILED.
 
 ## Starting a new build
@@ -68,8 +71,10 @@ the card number for card builds) and check where it is:
    title, description, and Type.
 
    If project-context.md has a blocker relation, check whether all
-   blockers have Status = 'Done'. If not, warn the user, list the
-   unfinished blockers, and ask whether to continue anyway.
+   blockers have Status = 'Done' and their PR merged (a card goes to Done
+   when its PR opens, before it merges: `gh pr list --search <card ID>
+   --state merged`). If not, warn the user, list the unfinished blockers,
+   and ask whether to continue anyway.
 
    **b) Plain-text request** — `$ARGUMENTS` is not a card number. Create
    a new card on the board: use `notion-create-pages` with the board data
@@ -90,8 +95,8 @@ the card number for card builds) and check where it is:
       - If project-context.md has skip patterns, skip cards whose Name
         contains any pattern.
       - Read the blocker relation. For each blocker URL, check its
-        Status. A card is ready only when every blocker is Done.
-        (No blockers = ready.)
+        Status. A card is ready only when every blocker is Done and its
+        PR merged (see 1a). (No blockers = ready.)
    3. Pick the first ready card.
    4. If any card has Status = 'In Progress', mention it and ask
       whether to resume that instead.
@@ -180,7 +185,8 @@ the card number for card builds) and check where it is:
    --cancel` (step 5, BUILD CANCELLED); if it's unclear which they want, ask.
 
    `--replan` still works after the build has pushed its branch, as long as
-   no PR exists for it yet (open or closed). It keeps the pushed work on a
+   no open or merged PR exists for it yet (a closed one doesn't count, unless
+   `gh` isn't installed: then any PR counts). It keeps the pushed work on a
    local backup branch and prints its name, and the next push replaces the
    branch only if nobody else pushed to it meanwhile. `--cancel` refuses once
    the branch is pushed, and both refuse once a PR exists: change the PR
@@ -221,7 +227,7 @@ the card number for card builds) and check where it is:
 
      If the user chooses to **split** the card (the designer offers this when
      the plan has 3 or more slices):
-     1. Read the slices from the plan file. For every slice after the first,
+     1. Read the slices from the PLAN FOR REVIEW block (under "Slices"). For every slice after the first,
         create a card on the board the same way as step 1b. Title it with the
         slice's title and describe what it delivers. If project-context.md
         has a blocker relation, set this card as each new card's blocker.
@@ -385,4 +391,6 @@ the card number for card builds) and check where it is:
    - If a replan printed a backup branch (🗄), tell the user it's still on
      their machine, and offer to delete it once the ticket is done:
      `python3 build_graph.py --thread <id> --clean-backups`. It deletes only
-     that build's backups, and refuses while the build is still running.
+     that build's backups, and refuses while the build is still running. Run
+     it before the ticket's worktree is removed (`ticket done`); after that,
+     add `--branch <the build's branch>` from any checkout of the repo.
