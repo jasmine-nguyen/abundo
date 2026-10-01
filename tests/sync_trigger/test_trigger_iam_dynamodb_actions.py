@@ -17,7 +17,7 @@ import ast
 import pathlib
 import re
 
-from _terraform import DYNAMODB_VERB_TO_ACTION, TERRAFORM_DIR, granted_dynamodb_actions, tf_block
+from _terraform import DYNAMODB_VERB_TO_ACTION, TERRAFORM_DIR, granted_dynamodb_actions, leading_keys, tf_block
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _IAM = TERRAFORM_DIR / "iam.tf"
@@ -122,7 +122,6 @@ def test_every_dynamodb_action_the_pending_mirror_needs_is_granted():
 
 def test_update_item_is_scoped_to_transaction_rows():
     block = _policy_block()
-    match = re.search(r'"dynamodb:LeadingKeys"\s*=\s*\[([^\]]*)\]', block)
-    assert match, "transaction_trigger_dynamodb has no dynamodb:LeadingKeys condition on UpdateItem"
-    assert re.findall(r'"([^"]+)"', match.group(1)) == ["ACCOUNT#*"]
+    assert leading_keys(block) == ["ACCOUNT#*"], (
+        "transaction_trigger_dynamodb has no dynamodb:LeadingKeys condition on UpdateItem")
     assert '"ForAllValues:StringLike"' in block, "the ACCOUNT#* wildcard only matches under StringLike"

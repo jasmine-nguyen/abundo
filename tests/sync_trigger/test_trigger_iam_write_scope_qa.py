@@ -13,6 +13,7 @@ from decimal import Decimal
 
 import pytest
 from _dynamo_fakes import FakeTable
+from _terraform import allows, granted_dynamodb_actions, policy_statements
 
 _spec = importlib.util.spec_from_file_location(
     "trigger_iam_policy_qa", pathlib.Path(__file__).with_name("test_trigger_iam_policy_qa.py")
@@ -86,11 +87,11 @@ def test_every_account_rows_pk_is_inside_the_write_scope(layer, action):
     pks = {key[0] for key in repository._table.store}
     assert len(pks) == len(constants.ACCOUNT_ID_MAP)
     for pk in pks:
-        assert policy_qa._allows(action, pk), f"the trigger role can't {action} a row with pk {pk!r}"
+        assert allows(policy_statements(policy_qa.POLICY), action, pk), f"the trigger role can't {action} a row with pk {pk!r}"
 
 
 # [A5] P1 — the reads keep the date-index: the mirror lists an account's rows over it.
 def test_reads_still_reach_the_date_index():
-    granting = [s for s in policy_qa._statements() if "Query" in policy_qa.granted_dynamodb_actions(s)]
+    granting = [s for s in policy_statements(policy_qa.POLICY) if "Query" in granted_dynamodb_actions(s)]
     assert granting, "no statement grants Query"
     assert any("/index/*" in statement for statement in granting), "Query lost the index/* resource"
