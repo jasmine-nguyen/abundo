@@ -2875,6 +2875,35 @@ def save_pause(thread: str, snapshot) -> None:
         (folder / "pause.txt").unlink(missing_ok=True)
 
 
+def last_save_file(thread: str) -> Path:
+    return BUILD_DIR / thread / "last-save"
+
+
+def record_saves(saver) -> None:
+    """Note each save this build writes, so a save written by anything else shows up (see changed_elsewhere)."""
+    put = saver.aput
+
+    async def aput(config, checkpoint, metadata, new_versions):
+        saved = await put(config, checkpoint, metadata, new_versions)
+        write_text(last_save_file(saved["configurable"]["thread_id"]), saved["configurable"]["checkpoint_id"])
+        return saved
+
+    saver.aput = aput
+
+
+def changed_elsewhere(thread: str, snapshot) -> bool:
+    """Whether the thread's latest save isn't the last one the build wrote: something else changed its
+    saved progress. A repair session the user opened (`ticket repair`) may, and its changes are accepted."""
+    recorded = read_text(last_save_file(thread)).strip()
+    latest = (snapshot.config or {}).get("configurable", {}).get("checkpoint_id", "")
+    if not recorded or not latest or recorded == latest:
+        return False
+    if os.environ.get("ALLOW_BUILD_REPAIR") == "1":
+        write_text(last_save_file(thread), latest)
+        return False
+    return True
+
+
 def pid_file(thread: str) -> Path:
     return BUILD_DIR / f"{thread}.pid"
 
@@ -3180,6 +3209,7 @@ async def main(argv: list[str] | None = None) -> int:
     config = {"configurable": {"thread_id": args.thread}}
     async with AsyncSqliteSaver.from_conn_string(str(DB_PATH)) as saver:
         await saver.setup()
+        record_saves(saver)
         graph = builder.compile(checkpointer=saver)
         snapshot = await graph.aget_state(config)
         if args.status:
@@ -3190,6 +3220,13 @@ async def main(argv: list[str] | None = None) -> int:
             return 1
         if args.clean_backups:
             return clean_backups(snapshot.values, args.branch)
+        if not args.restart and changed_elsewhere(args.thread, snapshot):
+            print(
+                f"{args.thread}'s saved progress was changed by something other than the build, so it won't run "
+                "on it. If that was a deliberate repair, run this command from the repair session "
+                f"(`ticket repair {args.thread}`); otherwise start over with --restart."
+            )
+            return 1
         if not take_lock(args.thread, running):
             print(f"Another run of {args.thread} just started. Wait for it, or stop it with --replan or --cancel.")
             return 1

@@ -31,7 +31,15 @@ WRITES = re.compile(
 HARMLESS_REDIRECTS = re.compile(r"[0-9]?>&[0-9]|[0-9&]?>>?\s*/dev/(?:null|stdout|stderr)")
 SAVED_STATE = re.compile(r"build_graph\.db|update_state\(|AsyncSqliteSaver|SqliteSaver")
 RUNS_CODE = re.compile(r"\bpython[\d.]*\b|\bsqlite3\b|\buv\s+run\b")
-PYTHON_SCRIPT = re.compile(r"\bpython[\d.]*\s+(?:-\S+\s+)*([^\s;&|]+\.py)\b")
+# Running code a script holds: python/uv/a shell, or a path like ./x.py.
+RUNS_SCRIPT = re.compile(r"\bpython[\d.]*\b|\buv\s+run\b|\b(?:ba|z)?sh\b|(?:^|[\s;&|(])\.{0,2}/\S")
+WORD = re.compile(r"[^\s;&|()'\"`<>]+")
+# The pipeline itself, in the project this hook belongs to; a file elsewhere with its name isn't trusted.
+PIPELINE = {
+    (Path(folder) / "build_graph.py").resolve()
+    for folder in (Path(__file__).resolve().parents[2], os.environ.get("CLAUDE_PROJECT_DIR"))
+    if folder
+}
 
 
 def touches_saved_state(command: str, cwd: Path) -> bool:
@@ -40,15 +48,28 @@ def touches_saved_state(command: str, cwd: Path) -> bool:
         return True
     if BUILD_DIR.search(command) and WRITES.search(command):
         return True
-    for script in PYTHON_SCRIPT.findall(command):
-        path = Path(script) if Path(script).is_absolute() else cwd / script
-        if path.name != "build_graph.py" and path.is_file():
-            try:
-                if SAVED_STATE.search(path.read_text(errors="ignore")):
-                    return True
-            except OSError:
-                pass
-    return False
+    return bool(RUNS_SCRIPT.search(command)) and any(
+        SAVED_STATE.search(read(path)) for path in scripts(command, cwd) if path not in PIPELINE
+    )
+
+
+def scripts(command: str, cwd: Path) -> set[Path]:
+    """Files the command may run: every word that names a file, and every `-m module`."""
+    words = WORD.findall(command)
+    found = set()
+    for before, word in zip(["", *words], words):
+        name = word.replace(".", "/") + ".py" if before == "-m" else word
+        path = Path(name) if Path(name).is_absolute() else cwd / name
+        if path.is_file():
+            found.add(path.resolve())
+    return found
+
+
+def read(path: Path) -> str:
+    try:
+        return path.read_text(errors="ignore")
+    except OSError:
+        return ""
 
 
 def in_build_dir(file_path: str, cwd: Path) -> bool:
