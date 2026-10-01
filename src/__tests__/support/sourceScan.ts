@@ -8,6 +8,9 @@
 //
 // The shadowed-folder guard (themeLayout.logic.test.ts) is the fourth consumer: it drives walkSrc
 // (below) to catch a file and a same-named folder sitting side by side.
+//
+// The cache-in-act guards (cacheRefreshInAct / cacheRefreshAnywhereInAct .logic.test.ts) use
+// stripComments and matchingBrace to read each act(...) body whole.
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, relative, sep } from 'path';
 
@@ -67,8 +70,9 @@ export function styleBlocks(src: string): { name: string; body: string }[] {
   return blocks;
 }
 
-// Index of the '}' that closes the '{' at `open`, or -1. Skips string literals whole.
-function matchingBrace(src: string, open: number): number {
+// Index of the closing character that matches the opening one at `open`, or -1. Works for any
+// open/close pair ('{' '}' by default, '(' ')' for a call). Skips string literals whole.
+export function matchingBrace(src: string, open: number, openChar = '{', closeChar = '}'): number {
   let depth = 0;
   for (let i = open; i < src.length; i++) {
     const char = src[i];
@@ -76,8 +80,8 @@ function matchingBrace(src: string, open: number): number {
       i = skipString(src, i);
       continue;
     }
-    if (char === '{') depth++;
-    else if (char === '}' && --depth === 0) return i;
+    if (char === openChar) depth++;
+    else if (char === closeChar && --depth === 0) return i;
   }
   return -1;
 }
