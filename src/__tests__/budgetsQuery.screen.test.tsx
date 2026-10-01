@@ -11,6 +11,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { makeClient, wrapper, pause } from './support/queryClient';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
+import { refreshInAct } from './support/renderWithQueries';
 
 // auth: controllable status + a real subscribe, so the "fires on login" test can flip it.
 let mockAuthStatus = 'authed';
@@ -277,9 +278,7 @@ describe('save → cache invalidation', () => {
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
     const before = budgetReads().length;
 
-    await act(async () => {
-      client.invalidateQueries({ queryKey: ['budgets'] }); // what edit.tsx does after a save
-    });
+    await refreshInAct(() => client.invalidateQueries({ queryKey: ['budgets'] })); // what edit.tsx does after a save
     await waitFor(() => expect(budgetReads().length).toBeGreaterThan(before));
   });
 });
@@ -313,14 +312,11 @@ describe('length change refetches once, not twice', () => {
 
     // persistPayCycle writes the new-length cycle into the cache. With the flat key this must
     // NOT trigger a budgets refetch on its own (the old windowed key WOULD have — refetch #1).
-    await act(async () => {
-      client.setQueryData(['payCycle'], { length: 14, last_pay_date: '2026-07-01' });
-    });
-    await act(async () => { await Promise.resolve(); });
+    await refreshInAct(() => client.setQueryData(['payCycle'], { length: 14, last_pay_date: '2026-07-01' }));
     expect(budgetReads()).toHaveLength(afterLoad); // no key-shift refetch
 
     // ...and the explicit invalidate persistPayCycle fires is the SINGLE refresh.
-    await act(async () => { client.invalidateQueries({ queryKey: ['budgets'] }); });
+    await refreshInAct(() => client.invalidateQueries({ queryKey: ['budgets'] }));
     await waitFor(() => expect(budgetReads()).toHaveLength(afterLoad + 1));
   });
 });

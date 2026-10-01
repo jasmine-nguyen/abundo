@@ -17,6 +17,7 @@ import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { makeClient, wrapper } from './support/queryClient';
 import type { Transaction } from '../context';
 import { installFakeServer } from './support/fakeServer';
+import { refreshInAct } from './support/renderWithQueries';
 
 let mockAuthStatus = 'authed';
 jest.mock('../auth', () => ({
@@ -138,7 +139,7 @@ describe('[C4] useTransactionResolver unions the budget/category caches', () => 
     client.setQueryData([...budgetTransactionsKey, 'insurance'], [tx('bill', { notes: '' })]);
     const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.findTx('bill')).toBeDefined());
-    act(() => { client.setQueryData([...budgetTransactionsKey, 'insurance'], [tx('bill', { notes: 'paid' })]); });
+    await refreshInAct(() => client.setQueryData([...budgetTransactionsKey, 'insurance'], [tx('bill', { notes: 'paid' })]));
     await waitFor(() => expect(result.current.findTx('bill')!.notes).toBe('paid'));
   });
 
@@ -154,7 +155,7 @@ describe('[C4] useTransactionResolver unions the budget/category caches', () => 
     const before = result.current.transactions;
     // An unrelated cache write must NOT bump the version counter → the memo keeps its reference.
     // (A whole-cache subscription would recompute here and fail this `toBe`.)
-    act(() => { client.setQueryData(['accountBalances'], [{ account_id: 'a1', amount: 5 }]); });
+    await refreshInAct(() => client.setQueryData(['accountBalances'], [{ account_id: 'a1', amount: 5 }]));
     expect(result.current.transactions).toBe(before);
   });
 

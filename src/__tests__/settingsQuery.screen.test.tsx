@@ -24,6 +24,7 @@ import { render, screen, renderHook, act, waitFor, fireEvent } from '@testing-li
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
+import { refreshInAct } from './support/renderWithQueries';
 
 // Live miniature auth store (superset — only settingsQuery flips it; the gaps describes stay 'authed').
 let mockAuthStatus = 'authed';
@@ -260,7 +261,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
       const catBefore = categoryReads();
 
       // Mirror the production write: setQueryData(next) + invalidate ONLY loanFacts.
-      await act(async () => {
+      await refreshInAct(async () => {
         client.setQueryData(['loanFacts'], READY_FACTS);
         await client.invalidateQueries({ queryKey: ['loanFacts'] });
       });

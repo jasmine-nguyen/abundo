@@ -3,10 +3,11 @@
 // write's prefix invalidation refreshes it. Real ../api over the fake server, ../auth mocked; real QueryClient.
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { renderHook, waitFor, act } from '@testing-library/react-native';
+import { renderHook, waitFor } from '@testing-library/react-native';
 import type { QueryClient } from '@tanstack/react-query';
 import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
+import { refreshInAct } from './support/renderWithQueries';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 
@@ -42,6 +43,6 @@ it('invalidating the categoryTransactions prefix refetches the date-range list',
   await waitFor(() => expect(range.result.current.data).toBeDefined());
   expect(server.sent('GET', RANGE_PATH)).toHaveLength(1);
 
-  await act(async () => { await client.invalidateQueries({ queryKey: categoryTransactionsKey }); });
+  await refreshInAct(() => client.invalidateQueries({ queryKey: categoryTransactionsKey }));
   expect(server.sent('GET', RANGE_PATH)).toHaveLength(2);
 });

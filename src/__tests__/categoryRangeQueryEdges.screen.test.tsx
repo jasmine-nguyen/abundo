@@ -4,10 +4,11 @@
 // Real ../api over the fake server, ../auth mocked; real QueryClientProvider.
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { renderHook, waitFor, act } from '@testing-library/react-native';
+import { renderHook, waitFor } from '@testing-library/react-native';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
+import { refreshInAct } from './support/renderWithQueries';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 
@@ -48,7 +49,7 @@ it('[A26] invalidating the categoryTransactions prefix refetches a range query',
   await waitFor(() => expect(jun.result.current.data).toBeDefined());
   expect(server.sentUnder('GET', COFFEE_PATH)).toHaveLength(1);
 
-  await act(async () => { await client.invalidateQueries({ queryKey: categoryTransactionsKey }); });
+  await refreshInAct(() => client.invalidateQueries({ queryKey: categoryTransactionsKey }));
   await waitFor(() => expect(server.sentUnder('GET', COFFEE_PATH)).toHaveLength(2));
   expect(server.sentUnder('GET', COFFEE_PATH).map((request) => request.path)).toEqual([JUN_SEP_PATH, JUN_SEP_PATH]);
 });

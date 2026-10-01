@@ -12,10 +12,11 @@
 // tracked separately; this locks only the remap-clears-the-badge outcome.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { renderHook, act, waitFor } from '@testing-library/react-native';
+import { renderHook, waitFor } from '@testing-library/react-native';
 import { makeClient, wrapper } from './support/queryClient';
 import type { Rule } from '../context';
 import { installFakeServer } from './support/fakeServer';
+import { refreshInAct } from './support/renderWithQueries';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 
@@ -43,7 +44,7 @@ it('a rules-query refetch remaps via selectRules and CLEARS the NEW badge (isNew
 
   // Drive the refetch of the active ['rules'] observer — in the app this is what a stale
   // focus-refetch fires. invalidateQueries awaits its own auto-refetch of the mounted query.
-  await act(async () => { await client.invalidateQueries({ queryKey: [...rulesKey] }); });
+  await refreshInAct(() => client.invalidateQueries({ queryKey: [...rulesKey] }));
 
   // The refetch remapped the server payload → isNew:false → the "NEW" badge is gone.
   await waitFor(() => expect(result.current.rules[0].isNew).toBe(false));

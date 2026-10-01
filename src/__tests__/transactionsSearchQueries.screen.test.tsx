@@ -14,6 +14,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import { makeClient, wrapper } from './support/queryClient';
 import type { Transaction } from '../context';
 import { installFakeServer } from './support/fakeServer';
+import { refreshInAct } from './support/renderWithQueries';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -133,7 +134,7 @@ it('[Q4d] with rows still on screen, a failed feed refresh does not stop a pull 
   await waitFor(() => expect(result.current.search.answered).toBe(true));
   await waitFor(() => expect(ids(result.current.transactions)).toEqual(['feed1']));
   server.once('GET', FEED, 'dropped');
-  await act(async () => { await client.refetchQueries({ queryKey: ['transactions'] }); });
+  await refreshInAct(() => client.refetchQueries({ queryKey: ['transactions'] }));
   await waitFor(() => expect(result.current.isError).toBe(true));
   const feedCalls = server.sentUnder('GET', FEED).length;
   const searchCalls = server.sent('GET', ALL_STEVEN).length;
@@ -168,8 +169,8 @@ it('[Q5] the resolver finds a search-only row and sees a patch to it', async () 
   const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
 
   await waitFor(() => expect(result.current.findTx('deep1')).toBeTruthy());
-  act(() => {
-    client.setQueryData(['transactionsSearch', 'all', 'steven'], { transactions: [tx('deep1', { category: 'groceries' })], truncated: false });
-  });
+  await refreshInAct(() =>
+    client.setQueryData(['transactionsSearch', 'all', 'steven'], { transactions: [tx('deep1', { category: 'groceries' })], truncated: false }),
+  );
   await waitFor(() => expect(result.current.findTx('deep1')?.category).toBe('groceries'));
 });
