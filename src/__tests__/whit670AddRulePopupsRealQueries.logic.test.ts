@@ -1,7 +1,7 @@
 // WHIT-670 slice 1 — the 11 add-rule pop-up suites draw <Overlays/> over the fake server and the
 // real screen data code (src/queries.ts), instead of the hand-written screenQueryMocks shapes.
 import { describe, it, expect } from '@jest/globals';
-import { existsSync, readFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join } from 'path';
 
 // Minimum expect( counts live in the noAutoMockApi baselines.
@@ -41,7 +41,6 @@ describe('add-rule pop-up suites run on the fake server', () => {
     });
 
     expect(problems).toEqual([]);
-    expect(existsSync(join(__dirname, 'support', 'screenQueryMocks.ts'))).toBe(true);
   });
 
   it('the add-rule loading and error cases pause or fail the categories reply instead of faking hook flags', () => {

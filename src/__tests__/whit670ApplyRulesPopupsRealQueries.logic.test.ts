@@ -2,7 +2,7 @@
 // categories through the real screen data code (src/queries.ts), instead of the hand-written
 // screenQueryMocks shapes. The preview, filing and background-job writers stay on the context mock.
 import { describe, it, expect } from '@jest/globals';
-import { existsSync, readFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join } from 'path';
 
 // Minimum expect( counts live in the noAutoMockApi baselines.
@@ -37,7 +37,6 @@ describe('apply-rules pop-up suites run on the fake server', () => {
     });
 
     expect(problems).toEqual([]);
-    expect(existsSync(join(__dirname, 'support', 'screenQueryMocks.ts'))).toBe(true);
   });
 
   it('all 5 are listed in the fake-server baselines and in POPUP_SUITES', () => {
