@@ -142,11 +142,12 @@ def _only_twin(pending: dict, eligible: list[dict]) -> dict | None:
 
 
 def find_identical_copy(pending: dict, live_pendings: list[dict]) -> dict | None:
-    """A live pending that is the same purchase as `pending` and already holds its category and
-    user fields, or None (WHIT-678). Deleting `pending` then loses nothing, so any match will do."""
+    """A live pending that is the same purchase as `pending` and already holds its category, rule
+    stamp and user fields, or None (WHIT-678). Deleting `pending` then loses nothing, so any match will do."""
     for row in live_pendings:
         if (_is_carry_twin(pending, row)
                 and row.get("category") == pending.get("category")
+                and row.get("filed_by_rule") == pending.get("filed_by_rule")
                 and _same_user_fields(pending, row)):
             return row
     return None
