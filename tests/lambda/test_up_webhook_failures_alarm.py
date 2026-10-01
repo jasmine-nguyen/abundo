@@ -85,6 +85,7 @@ def test_each_webhook_failure_logs_a_term_the_merged_filter_matches(lam, monkeyp
     monkeypatch.setattr(up, "NotifyRepository", lambda: notify)
     monkeypatch.setattr(up, "DeviceRepository", lambda: _FakeDevice(["ExponentPushToken[abc]"]))
     monkeypatch.setattr(up, "send_push", lambda *a, **k: {"sent": 1, "ok": 1, "pruned": []})
+    monkeypatch.setattr(up, "get_homeloan_account_id", lambda: HOMELOAN_UUID)
     arrange(up, monkeypatch)
 
     caplog.set_level(logging.INFO)
