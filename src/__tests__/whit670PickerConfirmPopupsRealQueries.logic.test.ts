@@ -3,7 +3,7 @@
 // (src/queries.ts), instead of the hand-written screenQueryMocks shapes. The filing writers
 // (chooseCategory, applyCategory, createCategoryInline, fileCharges…) stay on the context mock.
 import { describe, it, expect } from '@jest/globals';
-import { existsSync, readFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join } from 'path';
 
 // Minimum expect( counts live in the noAutoMockApi baselines.
@@ -44,7 +44,6 @@ describe('picker and confirm pop-up suites run on the fake server', () => {
     });
 
     expect(problems).toEqual([]);
-    expect(existsSync(join(__dirname, 'support', 'screenQueryMocks.ts'))).toBe(true);
   });
 
   it('the picker and confirm suites that tap one charge load it from the fake server (recent list and feed)', () => {

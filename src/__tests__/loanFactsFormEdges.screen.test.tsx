@@ -8,12 +8,14 @@ import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, LoanFacts, LoanFactsInput } from '../context';
 
-let mockState: AppContext;
+type LoanFormState = Pick<AppContext, 'saveLoanFacts' | 'showToast'>;
+
+let mockState: LoanFormState;
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 const mockBack = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack, push: jest.fn() }) }));
@@ -21,6 +23,12 @@ jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack, push: jest
 import Loan from '../../app/loan';
 import { LOANFACTS_FIELD_MAX } from '../loanLimits';
 import { fmtCompact } from '../theme';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient, renderLoaded, WithQueries } from './support/renderWithQueries';
+
+const server = installFakeServer();
+useTestQueryClient();
 
 // Derived from the ceiling (WHIT-393) so a change to it needs no edit here. The prose is
 // written out on purpose — a reworded toast must still be changed deliberately in both places.
@@ -28,10 +36,12 @@ const AT = String(LOANFACTS_FIELD_MAX);
 const OVER = String(LOANFACTS_FIELD_MAX + 1);
 const AMOUNT_TOAST = `Keep each amount to ${fmtCompact(LOANFACTS_FIELD_MAX)} or less.`;
 
-const EMPTY: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
+const SAVED: LoanFacts = {
+  original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200,
+};
 
-function state(over: Partial<AppContext>): AppContext {
-  return { loanFacts: EMPTY, saveLoanFacts: jest.fn(), showToast: jest.fn(), ...over } as unknown as AppContext;
+function state(over: Partial<LoanFormState>): LoanFormState {
+  return { saveLoanFacts: jest.fn() as LoanFormState['saveLoanFacts'], showToast: jest.fn() as AppContext['showToast'], ...over };
 }
 
 function fill(over: Partial<Record<'orig' | 'home' | 'lvr' | 'rate' | 'base' | 'extra', string>> = {}) {
@@ -44,12 +54,15 @@ function fill(over: Partial<Record<'orig' | 'home' | 'lvr' | 'rate' | 'base' | '
   fireEvent.changeText(screen.getByPlaceholderText('e.g. 500'), v.extra);
 }
 
-beforeEach(() => { mockBack.mockClear(); });
+beforeEach(() => {
+  mockBack.mockClear();
+  resetAuth();
+});
 
 it('accepts Extra = 0 (optional top-up) and saves', async () => {
   const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
   mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
-  render(<Loan />);
+  await renderLoaded(<Loan />);
   fill({ extra: '0' });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
   expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ extra: 0 }));
@@ -59,7 +72,7 @@ it('accepts Extra = 0 (optional top-up) and saves', async () => {
 it('accepts the exact upper bounds LVR = 100% and rate = 100', async () => {
   const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
   mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
-  render(<Loan />);
+  await renderLoaded(<Loan />);
   fill({ lvr: '100', rate: '100' });   // client guard is lvr<=1 (fraction) and ratePct<=100
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
   expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ lvr: 1, ratePct: 100 }));
@@ -72,7 +85,7 @@ it('blocks LVR = 0 (must be > 0) with a toast and no save', async () => {
     saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'],
     showToast: showToast as AppContext['showToast'],
   });
-  render(<Loan />);
+  await renderLoaded(<Loan />);
   fill({ lvr: '0' });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
   expect(saveLoanFacts).not.toHaveBeenCalled();
@@ -86,7 +99,7 @@ it('rejects trailing garbage in a number ("80abc") rather than storing 80', asyn
     saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'],
     showToast: showToast as AppContext['showToast'],
   });
-  render(<Loan />);
+  await renderLoaded(<Loan />);
   fill({ home: '770000abc' });   // paste can slip past the decimal-pad keyboard
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
   expect(saveLoanFacts).not.toHaveBeenCalled();
@@ -100,7 +113,7 @@ it('blocks a dollar field over the ceiling (extra) with a toast and no save', as
     saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'],
     showToast: showToast as AppContext['showToast'],
   });
-  render(<Loan />);
+  await renderLoaded(<Loan />);
   // A non-first field over the ceiling — proves the .some() check catches more than original.
   fill({ extra: OVER });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
@@ -111,7 +124,7 @@ it('blocks a dollar field over the ceiling (extra) with a toast and no save', as
 it('accepts exactly the ceiling (strict >, matching the server) and saves', async () => {
   const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
   mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
-  render(<Loan />);
+  await renderLoaded(<Loan />);
   fill({ orig: AT });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
   expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ original: LOANFACTS_FIELD_MAX }));
@@ -125,10 +138,17 @@ it('a blank form (opened before facts loaded) cannot wipe saved facts on Save', 
     saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'],
     showToast: showToast as AppContext['showToast'],
   });
-  render(<Loan />);
-  // No fills — every field blank -> num() is NaN, guard fails.
-  await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-  expect(saveLoanFacts).not.toHaveBeenCalled();   // no PUT -> saved facts untouched
-  expect(showToast).toHaveBeenCalled();
-  expect(mockBack).not.toHaveBeenCalled();
+  // Saved facts exist on the server, but their reply hasn't landed when the form opens.
+  server.seed('/loanfacts', SAVED);
+  const held = server.hold('/loanfacts');
+  try {
+    render(<WithQueries><Loan /></WithQueries>);
+    // No fills — every field blank -> num() is NaN, guard fails.
+    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    expect(saveLoanFacts).not.toHaveBeenCalled();   // no PUT -> saved facts untouched
+    expect(showToast).toHaveBeenCalled();
+    expect(mockBack).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => { held.release(); });
+  }
 });

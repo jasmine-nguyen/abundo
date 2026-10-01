@@ -102,6 +102,14 @@ describe('no test mocks the api', () => {
       'goalBalanceSheet.screen.test.tsx': 28,
       'PayCycleSheet.screen.test.tsx': 7,
       'sheetHostMotion.screen.test.tsx': 38,
+      'budgetDetailLoadMore.screen.test.tsx': 40,
+      'budgetEditSave.screen.test.tsx': 55,
+      'budgetSpread.screen.test.tsx': 22,
+      'budgetSpreadGaps.screen.test.tsx': 23,
+      'loanCeilingCopy.screen.test.tsx': 11,
+      'loanFactsForm.screen.test.tsx': 47,
+      'loanFactsForm.edit.screen.test.tsx': 6,
+      'loanFactsFormEdges.screen.test.tsx': 14,
     };
 
     const shortfalls = Object.entries(baselines).flatMap(([file, baseline]) => {
