@@ -22,6 +22,7 @@ request. The pattern derivation, merchant bucketing, and the alsoCatches disclos
 merchant_groups so a suggested rule and a merchant-screen rule can never derive or disclose differently.
 """
 
+from api_constants import MIN_FILING_HABIT_DAYS
 from merchant_groups import also_catches, bucket_by_merchant, rule_value_for_bucket
 from rule_engine import (
     contains,
@@ -29,12 +30,6 @@ from rule_engine import (
     is_unfiled_category,
     rule_matches,
 )
-
-# How many DISTINCT days a merchant must be hand-filed to the SAME category before a rule is
-# suggested (WHIT-542). Below this it is a one-off, not a habit, and a nudge on a single filing is
-# noise. Local, not an api_constants.py value — merchant_groups keeps its own floors the same way, and it
-# keeps this module constants-free.
-MIN_FILING_HABIT_DAYS = 4
 
 # The rule kinds that identify a charge by its WORDING — the ones that name a merchant. A rule keyed
 # on amount / direction / account is not a merchant identity, so it never suppresses a suggestion

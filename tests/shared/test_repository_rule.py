@@ -6,8 +6,6 @@ rather than mocked away. The id logic lives in rule_engine (tested there); here 
 storage behaviour built on it.
 """
 
-import pathlib
-
 import pytest
 
 
@@ -186,16 +184,6 @@ def test_delete_calls_delete_item_with_key_only(rule_repo):
     rule_repo.delete_rule(rule["id"])
     assert seen["Key"] == {"pk": "RULE", "sk": f"RULE#{rule['id']}"}
     assert seen["kwargs"] == {}
-
-
-# --- kept constants-free ------------------------------------------------------
-
-
-def test_repository_rule_imports_no_constants():
-    # The module is kept pure and constants-free (its one tunable is local); this pins it.
-    source = (pathlib.Path(__file__).resolve().parents[2] / "shared" / "repository_rule.py").read_text()
-    assert "from constants import" not in source
-    assert "import constants" not in source
 
 
 # --- spread action (WHIT-559): the second action flag + its captured bill ----------------------

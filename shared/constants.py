@@ -97,6 +97,14 @@ POSTED_STATUS = "posted"
 # (a new cycle re-arms via a fresh pk, so the marker only needs to outlive its own).
 NOTIFY_TTL_SECONDS = 60 * 24 * 60 * 60
 
+# A finished background job is only useful while the app polls it, so it self-deletes a day
+# later via DynamoDB TTL (WHIT-537).
+JOB_TTL_SECONDS = 24 * 60 * 60
+
+# A stashed push-receipt id self-expires after ~24h — Expo retains receipts about that long,
+# so an id the sweep never resolves is reaped by TTL (WHIT-139).
+RECEIPT_TTL_SECONDS = 24 * 60 * 60
+
 # Missed-repayment alarm backstop (WHIT-316). The direct Up webhook is the sole home-loan
 # repayment notifier now, so the daily balance poll double-checks it: if the mortgage
 # balance dropped like a repayment landed but no push fired recently, it logs an alarmed

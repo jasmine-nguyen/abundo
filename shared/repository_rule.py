@@ -7,8 +7,6 @@ sha256("field|operator|folded value"). The database key therefore IS the duplica
 the same rule text always lands on the same row, so a conditional ``attribute_not_exists``
 put is all the dedup we need. The shared partition lets ``list_rules`` read every rule in one
 Query (paged) instead of scanning the table.
-
-Kept constants-free: the one tunable — the page cap — is defined LOCALLY below.
 """
 
 import logging

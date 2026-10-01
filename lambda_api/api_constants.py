@@ -138,8 +138,7 @@ CHAT_LIST_MAX = 200
 # cycles prior). A safety bound on how far into the past a single request may reach —
 # each request scans exactly ONE length-day window regardless of `cycle`, so the read
 # cost is flat; the cap just rejects an absurd/out-of-range ?cycle= with a 400 rather
-# than serving it. Kept API-only (the shared spend helper stays constant-free and pure);
-# deliberately NOT reusing INSIGHTS_PRIOR_CYCLES so widening the
+# than serving it. Kept API-only; deliberately NOT reusing INSIGHTS_PRIOR_CYCLES so widening the
 # AI trend can't silently change the breakdown lookback.
 BREAKDOWN_MAX_LOOKBACK = 12
 
@@ -148,6 +147,11 @@ BREAKDOWN_MAX_LOOKBACK = 12
 # rule that the current in-app UI produces.
 DEFAULT_RULE_FIELD = "description"
 DEFAULT_RULE_OPERATOR = "contains"
+
+# How many DISTINCT days a merchant must be hand-filed to the SAME category before a rule is
+# suggested (WHIT-542). Below this it is a one-off, not a habit, and a nudge on a single filing is
+# noise.
+MIN_FILING_HABIT_DAYS = 4
 
 # --- Categories (user-defined taxonomy) ------------------------------------
 # API Gateway route path for the category CRUD endpoints.

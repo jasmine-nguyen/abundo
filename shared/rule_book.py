@@ -7,8 +7,8 @@ through `rule_from_row`, so they can never drift apart on which fields reach the
 `RuleBook` is the user's rule book for one run: read once, then file incoming charges (webhook),
 sweep stored ones (the apply-rules route and worker), or re-file after an edit/delete.
 
-Banksync-free at import, and it imports no constants itself: the write limits come in as arguments
-and the whole-history read is imported lazily.
+Banksync-free at import: the write limits come in as arguments and the whole-history read is
+imported lazily.
 """
 
 import copy
