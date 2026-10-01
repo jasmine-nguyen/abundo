@@ -108,18 +108,12 @@ describe('the spending donut', () => {
     expect(screen.queryByTestId('insights-donut')).toBeNull();
   });
 
-  it('is not drawn over the first load', async () => {
-    const held = server.hold('/breakdown');
-    drawInsights();
-    expect(await screen.findByTestId('insights-loading')).toBeTruthy();
-    expect(screen.queryByTestId('insights-donut')).toBeNull();
-    held.release();
-    await settled();
-  });
-
-  it('is not drawn over an error', async () => {
-    server.fail('/breakdown', 500);
+  it('is not drawn over an error, even with a spend row', async () => {
+    // The Uncategorized row survives a categories failure, so only the error gate hides the donut.
+    seedBreakdown({ spend: { [UNCATEGORIZED_KEY]: posted(25) } });
+    server.fail('/categories', 500);
     await renderInsights();
+    expect(screen.getByTestId('insights-error')).toBeTruthy();
     expect(screen.queryByTestId('insights-donut')).toBeNull();
   });
 });
@@ -146,20 +140,27 @@ describe('the earned-vs-spent chart is never drawn over an empty/loading/error s
     expect(screen.queryByTestId('insights-earned-spent')).toBeNull();
   });
 
-  it('first load → no chart', async () => {
+  it('first load → no chart, even once the income has arrived', async () => {
+    // The breakdown (with earned) lands; the pay cycle is still loading, so the spinner shows.
     seedBreakdown({ earned: 3000 });
-    const held = server.hold('/breakdown');
+    const held = server.hold('/paycycle');
     drawInsights();
     expect(await screen.findByTestId('insights-loading')).toBeTruthy();
+    await waitFor(() => expect(queryClient.getQueryState([...breakdownKey, 0])?.status).toBe('success'));
+    await refreshInAct(() => Promise.resolve());
+    expect(screen.getByTestId('insights-loading')).toBeTruthy();
     expect(screen.queryByTestId('insights-earned-spent')).toBeNull();
-    held.release();
+    await refreshInAct(() => held.release());
     await settled();
+    expect(await screen.findByTestId('insights-earned-spent')).toBeTruthy(); // positive control
   });
 
-  it('a sustained error with nothing cached → no chart', async () => {
-    // Rows empty → showError suppresses the chart.
-    server.fail('/breakdown', 500);
+  it('an error with the income already in → no chart', async () => {
+    // Categories never loaded → showError, while earned is 3000.
+    seedBreakdown({ earned: 3000 });
+    server.fail('/categories', 500);
     await renderInsights();
+    expect(screen.getByTestId('insights-error')).toBeTruthy();
     expect(screen.queryByTestId('insights-earned-spent')).toBeNull();
   });
 });
