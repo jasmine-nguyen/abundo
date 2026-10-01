@@ -38,13 +38,21 @@ def unseen_pause(build: Path) -> str | None:
     return None
 
 
+def build_dirs(event: dict) -> list[Path]:
+    """The .build folders from the session's folder up to the project's: the pipeline may live in a subfolder."""
+    project = Path(os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or os.getcwd()).resolve()
+    here = Path(event.get("cwd") or project).resolve()
+    folders = [here, *here.parents] if here.is_relative_to(project) else [project]
+    return [folder / ".build" for folder in folders[: folders.index(project) + 1] if (folder / ".build").is_dir()]
+
+
 def main() -> int:
     if os.environ.get("BUILD_PIPELINE_AGENT") == "1":
         return 0
     event = json.load(sys.stdin)
     if event.get("tool_name") != "AskUserQuestion":
         return 0
-    pause = unseen_pause(Path(os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or os.getcwd()) / ".build")
+    pause = next(filter(None, map(unseen_pause, build_dirs(event))), None)
     if pause is not None:
         json.dump({"hookSpecificOutput": {
             "hookEventName": "PreToolUse", "permissionDecision": "deny",

@@ -831,7 +831,8 @@ def run(command: str | list[str], timeout: float | None = None, cwd: Path | None
 
 
 def git_status() -> list[tuple[str, str]]:
-    """(status, path) for every uncommitted change, untracked files included."""
+    """(status, path) for every uncommitted change, untracked files included. Paths are from the
+    git top, even when the pipeline lives in a subfolder."""
     out = subprocess.run(
         ["git", "status", "--porcelain", "-z", "--untracked-files=all"],
         cwd=ROOT, check=True, capture_output=True, text=True,
@@ -857,7 +858,7 @@ def commit_all(state: BuildState, message: str) -> tuple[bool, str]:
     """Commit every change except files that were already untracked when the build started."""
     still_untracked = {path for status, path in git_status() if status == "??"}
     excluded = [
-        f":(exclude,literal){path}" for path in state.get("untracked_at_start", []) if path in still_untracked
+        f":(top,exclude,literal){path}" for path in state.get("untracked_at_start", []) if path in still_untracked
     ]
     git("add", "-A", "--", ".", *excluded)
     if run(["git", "diff", "--cached", "--quiet"])[0] == 0:
@@ -908,10 +909,12 @@ def exclude_build_dir() -> None:
     exclude = Path(git("rev-parse", "--git-path", "info/exclude"))
     if not exclude.is_absolute():
         exclude = ROOT / exclude
-    if "/.build/" not in read_text(exclude).splitlines():
+    where = subfolder()
+    pattern = "/.build/" if where == "." else f"/{where}/.build/"  # anchored at the git top
+    if pattern not in read_text(exclude).splitlines():
         exclude.parent.mkdir(parents=True, exist_ok=True)
         with exclude.open("a") as f:
-            f.write("\n/.build/\n")
+            f.write(f"\n{pattern}\n")
 
 
 # Installed packages git doesn't carry into a worktree, linked from the main checkout.
@@ -924,7 +927,7 @@ def add_worktree() -> Path:
     git("worktree", "add", "--detach", str(worktree), "HEAD")
     for name in DEPENDENCY_DIRS:
         for source in [ROOT / name, *ROOT.glob(f"*/{name}")]:
-            target = worktree / source.relative_to(ROOT)
+            target = worktree / subfolder() / source.relative_to(ROOT)
             if source.is_dir() and target.parent.is_dir() and not target.exists():
                 target.symlink_to(source)
     return worktree
@@ -943,9 +946,13 @@ def remove_worktree(worktree: Path) -> None:
 # "don't weaken the tests" is enforced rather than requested.
 
 
+def git_top() -> Path:
+    return Path(git("rev-parse", "--show-toplevel")).resolve()
+
+
 def subfolder() -> str:
     """Where ROOT sits under the git top: "." unless the pipeline lives in a subfolder."""
-    return ROOT.resolve().relative_to(Path(git("rev-parse", "--show-toplevel")).resolve()).as_posix()
+    return ROOT.resolve().relative_to(git_top()).as_posix()
 
 
 def strip_cd_to_root(command: str) -> str:
@@ -2106,8 +2113,9 @@ async def qa(state: BuildState):
     patch.parent.mkdir(parents=True, exist_ok=True)
     patch.unlink(missing_ok=True)
     worktree = add_worktree()
+    workdir = worktree / subfolder()
     extra = (
-        f"## Your worktree\n`{worktree}`: your working directory, a checkout of HEAD with the main "
+        f"## Your worktree\n`{workdir}`: your working directory, in a checkout of HEAD with the main "
         f"checkout's installed packages linked in. Work only there; never touch the main checkout at "
         f"`{ROOT}`. The pipeline removes the worktree when you finish.\n\n"
         f"## Where your tests go\nSave your test changes as a patch at `{patch}` "
@@ -2115,7 +2123,7 @@ async def qa(state: BuildState):
         f"{qa_depth_block(state)}"
     )
     try:
-        result = await run_agent("qa", review_block(state, "qa", extra), QA_OUTPUT, cwd=worktree)
+        result = await run_agent("qa", review_block(state, "qa", extra), QA_OUTPUT, cwd=workdir)
     finally:
         remove_worktree(worktree)
     out = result.output
@@ -2163,7 +2171,7 @@ def failing_qa_tests(state: BuildState) -> list[str] | None:
     command = state.get("qa_test_command", "")
     if not command.strip() or BASH_DENY["writer"].search(command):
         return None
-    code, output = run(command, timeout=CHECK_TIMEOUT_S, cwd=Path(git("rev-parse", "--show-toplevel")))
+    code, output = run(command, timeout=CHECK_TIMEOUT_S, cwd=git_top())
     if code in (126, 127) or NO_TESTS_RAN.search(output):
         return None
     print(f"   {'✅' if code == 0 else '❌'} {command}", flush=True)
@@ -2629,6 +2637,27 @@ async def print_status(graph, config, thread: str, snapshot) -> int:
     return 0
 
 
+FINAL_HEADLINES = {
+    "closed": "card closed",
+    "failed": "failed",
+    "stopped": "cancelled",
+    "ship_error": "passed, PR failed",
+    "shipped": "PR opened",
+    "pushed": "branch pushed",
+}
+
+
+def ping_user(title: str) -> None:
+    """Play herdr's needs-input sound when the build runs in a herdr pane. The user mutes
+    herdr's "finished" sound, since every step's agent finishing would ping them."""
+    if os.environ.get("HERDR_ENV") != "1" or not shutil.which("herdr"):
+        return
+    try:
+        run(["herdr", "notification", "show", title, "--sound", "request"], timeout=10)
+    except OSError:
+        pass
+
+
 def report(thread: str, result: dict) -> int:
     interrupts = result.get("__interrupt__")
     if interrupts:
@@ -2681,6 +2710,7 @@ def report(thread: str, result: dict) -> int:
     else:
         print("Done.")
     print("=" * 60)
+    ping_user(f"/build {thread}: {FINAL_HEADLINES.get(outcome, 'done')}")
     if outcome not in ("shipped", "pushed"):  # a failed build prints these again once it ships
         return code
     if result.get("follow_ups"):
@@ -2871,8 +2901,9 @@ def discard_build_work(state: BuildState, to: str) -> None:
     lock = Path(git("rev-parse", "--git-path", "index.lock"))
     (lock if lock.is_absolute() else ROOT / lock).unlink(missing_ok=True)  # left by a killed commit
     git("reset", "--hard", to)
+    top = git_top()
     for path in stray_changes(state):
-        (ROOT / path).unlink(missing_ok=True)
+        (top / path).unlink(missing_ok=True)
 
 
 def remote_tip(branch: str) -> str:
@@ -3105,6 +3136,7 @@ async def main(argv: list[str] | None = None) -> int:
             print("\n" + "=" * 60)
             print(f"BUILD STOPPED at {', '.join(stopped.next) or 'the end'}:\n{e}")
             print("=" * 60)
+            ping_user(f"/build {args.thread}: stopped")
             print(f"\nFix the cause, then run:\n  {rerun()} --thread {args.thread} --retry")
             return 1
         finally:
