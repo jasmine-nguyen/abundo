@@ -7,10 +7,8 @@ call the trigger policy in terraform/iam.tf would refuse, including the LeadingK
 """
 
 import copy
-import fnmatch
 import importlib
 import pathlib
-import re
 import sys
 from datetime import date
 from decimal import Decimal
@@ -18,7 +16,7 @@ from decimal import Decimal
 import pytest
 from _boto_stubs import install_import_satisfiers, use_condition_fields
 from _dynamo_fakes import FakeTable, _client_error
-from _terraform import TERRAFORM_DIR, granted_dynamodb_actions, tf_block
+from _terraform import DYNAMODB_VERB_TO_ACTION, allows, granted_dynamodb_actions, leading_keys, policy_statements
 
 install_import_satisfiers(ssm_default="test-api-key")
 
@@ -30,53 +28,7 @@ TODAY = date(2026, 10, 1)
 _SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
 _SHARED_MODULES = {path.stem for path in pathlib.Path(_SHARED_DIR).glob("*.py")} - {"ssm"}
 
-_OPERATION_TO_ACTION = {
-    "get_item": "GetItem",
-    "put_item": "PutItem",
-    "query": "Query",
-    "update_item": "UpdateItem",
-    "delete_item": "DeleteItem",
-    "batch_writer": "BatchWriteItem",
-}
-
-
-def _statements() -> list[str]:
-    """Each top-level `{ ... }` of the trigger policy's Statement list, as text."""
-    block = tf_block((TERRAFORM_DIR / "iam.tf").read_text(), "aws_iam_role_policy", "transaction_trigger_dynamodb")
-    body = block[block.index("Statement"):]
-    statements, depth, start = [], 0, None
-    for position, char in enumerate(body):
-        if char == "{":
-            if depth == 0:
-                start = position
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                statements.append(body[start:position + 1])
-            if depth < 0:
-                break
-    return statements
-
-
-def _leading_keys(statement: str):
-    match = re.search(r'"dynamodb:LeadingKeys"\s*=\s*\[([^\]]*)\]', statement)
-    if match is None:
-        return None
-    return re.findall(r'"([^"]+)"', match.group(1))
-
-
-def _allows(action: str, pk) -> bool:
-    for statement in _statements():
-        if action not in granted_dynamodb_actions(statement):
-            continue
-        patterns = _leading_keys(statement)
-        if patterns is None:
-            return True
-        # ForAllValues:StringLike → the request's partition key must match one pattern.
-        if pk is not None and any(fnmatch.fnmatchcase(pk, pattern) for pattern in patterns):
-            return True
-    return False
+POLICY = "transaction_trigger_dynamodb"
 
 
 def _pk_of(operation, subject):
@@ -90,11 +42,13 @@ def _access_denied():
 
 
 def _enforce_trigger_policy(table: FakeTable) -> FakeTable:
-    for operation, action in _OPERATION_TO_ACTION.items():
+    statements = policy_statements(POLICY)
+    for operation, action in DYNAMODB_VERB_TO_ACTION.items():
         table.fail(
             operation,
             error=_access_denied(),
-            when=lambda subject, operation=operation, action=action: not _allows(action, _pk_of(operation, subject)),
+            when=lambda subject, operation=operation, action=action: not allows(
+                statements, action, _pk_of(operation, subject)),
         )
     return table
 
@@ -181,10 +135,11 @@ def test_the_rush_and_cettire_doubles_are_removed_with_notes_kept_under_the_trig
 
 # [A2] P0 — UpdateItem can't widen quietly: EVERY statement granting it carries the scope.
 def test_every_statement_granting_update_item_is_scoped_to_transaction_rows_on_the_base_table():
-    granting = [statement for statement in _statements() if "UpdateItem" in granted_dynamodb_actions(statement)]
+    granting = [statement for statement in policy_statements(POLICY)
+                if "UpdateItem" in granted_dynamodb_actions(statement)]
     assert granting, "no statement grants UpdateItem, so carry_onto_pending gets AccessDenied"
     for statement in granting:
-        assert _leading_keys(statement) == ["ACCOUNT#*"], f"UpdateItem not scoped to ACCOUNT# rows:\n{statement}"
+        assert leading_keys(statement) == ["ACCOUNT#*"], f"UpdateItem not scoped to ACCOUNT# rows:\n{statement}"
         assert '"ForAllValues:StringLike"' in statement, f"the ACCOUNT#* wildcard needs StringLike:\n{statement}"
         assert "/index/" not in statement, f"UpdateItem should be base-table only:\n{statement}"
 
@@ -204,13 +159,14 @@ def test_every_account_rows_pk_is_inside_the_update_scope(layer):
     pks = {key[0] for key in repository._table.store}
     assert len(pks) == len(constants.ACCOUNT_ID_MAP)
     for pk in pks:
-        assert _allows("UpdateItem", pk), f"the trigger role can't update a row with pk {pk!r}"
+        assert allows(policy_statements(POLICY), "UpdateItem", pk), f"the trigger role can't update a row with pk {pk!r}"
 
 
 # [A4] P1 — per the plan, the category colour backfill (pk CATEGORIES) stays denied for this role.
 def test_the_categories_row_is_outside_the_update_scope():
-    assert not _allows("UpdateItem", "CATEGORIES")
-    assert not _allows("PutItem", "CATEGORIES")
+    statements = policy_statements(POLICY)
+    assert not allows(statements, "UpdateItem", "CATEGORIES")
+    assert not allows(statements, "PutItem", "CATEGORIES")
 
 
 # [A5] P1 — with the backfill denied, the mirror's category read still fails open.
