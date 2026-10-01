@@ -294,7 +294,8 @@ the card number for card builds) and check where it is:
    **You relay and resume, nothing more.** While a build is running or paused,
    never edit the card's code or tests yourself, and never touch the build's
    saved progress (the `.build/` folder, including `build_graph.db`) at all, not
-   even to "unstick" it. Every change goes through a resume reply, so the build
+   even to "unstick" it (a project safety check blocks it; only `.build/cards/` is
+   yours to write). Every change goes through a resume reply, so the build
    knows about it: a locked test through an option that unlocks it (or
    `unpin`), anything else through the user's decision. If no reply fits, tell the user what's stuck and
    ask. The one time you change code is BUILD FAILED (step 5).

@@ -492,6 +492,8 @@ async def run_agent(
         # read-only agents write tools (e.g. a Notion MCP).
         setting_sources=["project"],
         strict_mcp_config=True,
+        # The project's hook that keeps the chat session out of .build/ lets the build's own agents through.
+        env={"BUILD_PIPELINE_AGENT": "1"},
     )
     result = None
     try:
