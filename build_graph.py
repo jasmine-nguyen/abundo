@@ -156,6 +156,8 @@ class BuildState(TypedDict):
 ROOT = Path(__file__).resolve().parent
 BUILD_DIR = ROOT / ".build"
 DB_PATH = BUILD_DIR / "build_graph.db"
+# What the build is waiting on, for the hook that puts it in front of the user (.claude/hooks/).
+PAUSE_FILE = BUILD_DIR / "pause.txt"
 PROJECT_CONTEXT_FILE = ROOT / "project-context.md"
 
 DEFAULT_MODEL = "claude-opus-5-5"
@@ -2618,12 +2620,14 @@ async def print_status(graph, config, thread: str, snapshot) -> int:
 def report(thread: str, result: dict) -> int:
     interrupts = result.get("__interrupt__")
     if interrupts:
+        PAUSE_FILE.write_text(interrupts[0].value)
         print("\n" + "=" * 60)
         print(interrupts[0].value)
         print("=" * 60)
         print(f'\nPaused. Resume with:\n  {rerun()} --thread {thread} --resume "<your reply>"')
         return 0
 
+    PAUSE_FILE.unlink(missing_ok=True)
     outcome, code = result.get("outcome"), 0
     print("\n" + "=" * 60)
     if outcome == "closed":
@@ -2740,6 +2744,7 @@ async def resume_build(graph, config, snapshot, reply: str):
         print(f"Reply rejected: {problem}. The build is still paused on the same question.\n\n{reply_format(snapshot.values)}")
         return None
     print_history(snapshot.values)
+    PAUSE_FILE.unlink(missing_ok=True)
     return await graph.ainvoke(Command(resume=value), config)
 
 
