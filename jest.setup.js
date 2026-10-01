@@ -69,6 +69,12 @@ jest.mock('expo-font', () => ({
   loadAsync: jest.fn(),
 }));
 
+// expo-haptics (card 610): the chat's send buzz is a native call; no-op it headlessly.
+jest.mock('expo-haptics', () => ({
+  impactAsync: jest.fn(() => Promise.resolve()),
+  ImpactFeedbackStyle: { Light: 'light', Medium: 'medium', Heavy: 'heavy' },
+}));
+
 // Auth native modules (WHIT-160) have no JS-only impl; stub them so any screen that
 // transitively imports src/auth (via app/index or the auth gate) renders headlessly.
 // Tests that exercise the auth flow itself mock these per-case with real behaviour.
