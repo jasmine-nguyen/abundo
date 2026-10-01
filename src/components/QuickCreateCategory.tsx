@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { C, FONT, tint } from '../theme';
-import { Bucket, Category, eligibleParents } from '../context';
+import { eligibleParents } from '../context';
+import type { Bucket, Category } from '../types';
 import { CategoryFields } from './CategoryFields';
 import { useInFlightGuard } from '../hooks/useInFlightGuard';
 

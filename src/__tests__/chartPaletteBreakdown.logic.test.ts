@@ -11,11 +11,12 @@
 // on the wrapper below would be decorative — every assertion would still pass with the slot dropped,
 // and the file would claim to mirror the screen while proving nothing about the stored slot.
 import { describe, it, expect } from '@jest/globals';
-import { categoryBreakdown, incomeBreakdown, UNCATEGORIZED_KEY } from '../context';
+import { categoryBreakdown, incomeBreakdown } from '../context';
+import { UNCATEGORIZED_KEY } from '../model';
 import { C, ADJUSTMENT_ROW } from '../theme';
 import { chartCategoryColor } from '../chartColors';
 import { cat, spend, withRollup } from './factory';
-import type { Category } from '../context';
+import type { Category } from '../types';
 
 // A plain id→Category lookup, then the Insights screen's accessor wrapper on top of it
 // (mirrors insights.tsx `chartCategory` verbatim: unknown id → passthrough undefined).

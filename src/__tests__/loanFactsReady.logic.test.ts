@@ -3,7 +3,7 @@
 // object must be "not ready" (Set up), and an all-zero object must be "ready" (0 is a
 // set value, not "unset"). Pure exported production fn — fails on revert.
 import { describe, it, expect } from '@jest/globals';
-import { loanFactsReady } from '../context';
+import { loanFactsReady } from '../model';
 import type { LoanFacts } from '../api';
 
 const FULL: LoanFacts = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };

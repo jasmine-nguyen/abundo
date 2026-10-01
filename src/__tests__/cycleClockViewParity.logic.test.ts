@@ -3,7 +3,7 @@
 // Melbourne local-midnight day — exactly the calendar day the server's Melbourne clock
 // reports. cycleClock reads that day's UTC-whole-day count, so the two must coincide.
 import { describe, it, expect } from '@jest/globals';
-import { cycleClock, cycleClockView, elapsedFrac } from '../context';
+import { cycleClock, cycleClockView, elapsedFrac } from '../payCycle';
 
 // A Melbourne local-calendar Date for Y-M-D (month 1-based).
 const day = (y: number, m: number, d: number) => new Date(y, m - 1, d);

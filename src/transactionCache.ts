@@ -11,12 +11,13 @@
 // re-file sweep); it drops rows from the old budget's list and lets the refresh rebuild them.
 // Lookups (a tapped charge that lives only in a budget list) do read them.
 //
-// No runtime imports from './context' or './queries': queries.ts imports context.tsx, and both
-// import this module, so a runtime import back would be circular.
+// No runtime imports from './context' or './queries': both import this module, so a runtime
+// import back would be circular. The cache keys come from the leaf './queryKeys'.
 import type { InfiniteData, QueryClient, QueryKey } from '@tanstack/react-query';
 import { queryClient } from './queryClient';
 import type { TransactionFeedPage, TransactionSearchResult } from './api';
-import type { Transaction, Category } from './context';
+import type { Transaction, Category } from './types';
+import { breakdownKey, budgetTransactionsKey, budgetsKey, categoriesKey, categoryTransactionsKey, filingSuggestionsKey, rulesKey, transactionsKey, transactionsRecentKey, transactionsSearchKey, uncategorizedCountKey, uncategorizedFeedKey, uncategorizedMerchantsKey } from './queryKeys';
 
 // Concatenate transaction lists, keeping the FIRST copy of each id — so callers list their
 // freshest source first.
@@ -49,14 +50,14 @@ export function readTransactionCopies(
   client: QueryClient, { includeScopedLists }: { includeScopedLists: boolean },
 ): Transaction[] {
   const lists = [
-    readFeedRows(client, ['transactions']),
-    readFeedRows(client, ['uncategorizedFeed']),
-    client.getQueryData<Transaction[]>(['transactionsRecent']) ?? [],
-    ...client.getQueriesData<TransactionSearchResult>({ queryKey: ['transactionsSearch'] })
+    readFeedRows(client, transactionsKey),
+    readFeedRows(client, uncategorizedFeedKey),
+    client.getQueryData<Transaction[]>(transactionsRecentKey) ?? [],
+    ...client.getQueriesData<TransactionSearchResult>({ queryKey: transactionsSearchKey })
       .map(([, result]) => result?.transactions ?? []),
   ];
   if (includeScopedLists) {
-    lists.push(...readScopedRows(client, ['budgetTransactions']), ...readScopedRows(client, ['categoryTransactions']));
+    lists.push(...readScopedRows(client, budgetTransactionsKey), ...readScopedRows(client, categoryTransactionsKey));
   }
   return unionById(lists);
 }
@@ -83,15 +84,15 @@ function patchInfiniteFeed(key: QueryKey, fn: (prev: Transaction[]) => Transacti
 // Patch the main copies (feed, uncategorized feed, recent, search). Guarded: no-ops on a cleared
 // cache, so a late rollback after sign-out needs no epoch gate.
 export function patchTransactionsCache(fn: (prev: Transaction[]) => Transaction[]): void {
-  patchInfiniteFeed(['transactions'], fn);
-  patchInfiniteFeed(['uncategorizedFeed'], fn);
-  queryClient.setQueryData<Transaction[]>(['transactionsRecent'], (prev) => (prev ? fn(prev) : prev));
-  queryClient.setQueriesData<TransactionSearchResult>({ queryKey: ['transactionsSearch'] }, (prev) =>
+  patchInfiniteFeed(transactionsKey, fn);
+  patchInfiniteFeed(uncategorizedFeedKey, fn);
+  queryClient.setQueryData<Transaction[]>(transactionsRecentKey, (prev) => (prev ? fn(prev) : prev));
+  queryClient.setQueriesData<TransactionSearchResult>({ queryKey: transactionsSearchKey }, (prev) =>
     prev ? { ...prev, transactions: fn(prev.transactions) } : prev);
 }
 
 function patchScopedLists(mapRow: (row: Transaction) => Transaction): void {
-  for (const prefix of [['budgetTransactions'], ['categoryTransactions']]) {
+  for (const prefix of [budgetTransactionsKey, categoryTransactionsKey]) {
     for (const [key] of queryClient.getQueriesData<Transaction[]>({ queryKey: prefix })) {
       queryClient.setQueryData<Transaction[]>(key, (prev) => (prev ? prev.map(mapRow) : prev));
     }
@@ -109,14 +110,14 @@ export function patchAllCopies(mapRow: (row: Transaction) => Transaction): void 
 // patchTransactionsCache.
 export function removeFromAllCopies(txId: string): () => void {
   const prefixes: QueryKey[] = [
-    ['transactions'], ['uncategorizedFeed'], ['transactionsRecent'], ['transactionsSearch'],
-    ['budgetTransactions'], ['categoryTransactions'],
+    transactionsKey, uncategorizedFeedKey, transactionsRecentKey, transactionsSearchKey,
+    budgetTransactionsKey, categoryTransactionsKey,
   ];
   const snapshots = prefixes.flatMap((queryKey) => queryClient.getQueriesData<unknown>({ queryKey }));
 
   const dropRow = (rows: Transaction[]) => rows.filter((t) => t.transaction_id !== txId);
   patchTransactionsCache(dropRow);
-  for (const prefix of [['budgetTransactions'], ['categoryTransactions']]) {
+  for (const prefix of [budgetTransactionsKey, categoryTransactionsKey]) {
     queryClient.setQueriesData<Transaction[]>({ queryKey: prefix }, (prev) => (prev ? dropRow(prev) : prev));
   }
 
@@ -133,28 +134,28 @@ export function removeFromAllCopies(txId: string): () => void {
 const REFRESH_BY_CHANGE: Record<'refile' | 'budgetExclusion' | 'transactionDeleted' | 'categoryDeleted' | 'rulesApplied', QueryKey[]> = {
   // A re-file changes the totals, which budget/category list a charge belongs to, and the
   // uncategorized tally (WHIT-501). Search is patched in place, so it is skipped.
-  refile: [['budgets'], ['breakdown'], ['budgetTransactions'], ['categoryTransactions'], ['uncategorizedCount']],
+  refile: [budgetsKey, breakdownKey, budgetTransactionsKey, categoryTransactionsKey, uncategorizedCountKey],
   // Excluding/including a charge changes the budget total and its cycle list; not the tally.
-  budgetExclusion: [['budgets'], ['breakdown'], ['budgetTransactions'], ['categoryTransactions']],
+  budgetExclusion: [budgetsKey, breakdownKey, budgetTransactionsKey, categoryTransactionsKey],
   // A deleted charge leaves the totals and, if unfiled, the tally. Search and both feeds are
   // patched in place.
-  transactionDeleted: [['budgets'], ['breakdown'], ['budgetTransactions'], ['categoryTransactions'], ['uncategorizedCount']],
+  transactionDeleted: [budgetsKey, breakdownKey, budgetTransactionsKey, categoryTransactionsKey, uncategorizedCountKey],
   // The deleted category's charges become unfiled: they must ENTER the uncategorized feed and
   // search results, which an in-place patch can't do. Budgets are cascaded by hand (a refetch
   // would resurrect the dropped budget, as the server doesn't cascade). The charge lists reload so
   // a charge leaves a parent budget's list and the spend moves; their refetched rows still carry
   // the dangling id, which shows as Uncategorized through categoryIsUnmapped.
   categoryDeleted: [
-    ['breakdown'], ['uncategorizedCount'], ['uncategorizedFeed'], ['transactionsSearch'],
-    ['budgetTransactions'], ['categoryTransactions'],
+    breakdownKey, uncategorizedCountKey, uncategorizedFeedKey, transactionsSearchKey,
+    budgetTransactionsKey, categoryTransactionsKey,
   ],
   // A server-side run can file rows we never saw, move them into or out of search, mint rules
   // (WHIT-517), shrink the shop groups and suggestions (WHIT-542), and file under a category
   // created in another session — so re-read the taxonomy too.
   rulesApplied: [
-    ['budgets'], ['breakdown'], ['budgetTransactions'], ['categoryTransactions'], ['uncategorizedCount'],
-    ['uncategorizedFeed'], ['transactionsSearch'], ['categories'], ['rules'], ['uncategorizedMerchants'],
-    ['filingSuggestions'],
+    budgetsKey, breakdownKey, budgetTransactionsKey, categoryTransactionsKey, uncategorizedCountKey,
+    uncategorizedFeedKey, transactionsSearchKey, categoriesKey, rulesKey, uncategorizedMerchantsKey,
+    filingSuggestionsKey,
   ],
 };
 
@@ -166,13 +167,13 @@ export function refreshAfter(kind: ChangeKind, opts?: { skipRules?: boolean }): 
   if (kind === 'rulesApplied') {
     // Trim the uncategorized feed to page 1 BEFORE invalidating, so the refetch is one round trip
     // rather than every loaded page, while page 1 stays on screen (WHIT-508).
-    queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(['uncategorizedFeed'], (prev) =>
+    queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(uncategorizedFeedKey, (prev) =>
       prev && prev.pages.length > 1
         ? { ...prev, pages: prev.pages.slice(0, 1), pageParams: prev.pageParams.slice(0, 1) }
         : prev);
   }
   for (const queryKey of REFRESH_BY_CHANGE[kind]) {
-    if (opts?.skipRules && queryKey[0] === 'rules') continue;
+    if (opts?.skipRules && queryKey[0] === rulesKey[0]) continue;
     queryClient.invalidateQueries({ queryKey });
   }
 }
@@ -207,7 +208,7 @@ export function budgetSubtreeContains(categories: Category[], budgetId: string, 
 // snapshots of ONLY the lists it changed, so a failed save rolls back exactly those (WHIT-360) —
 // restoring untouched lists would clobber a concurrent refetch of an unrelated budget.
 function removeRefiledFromBudgetLists(categories: Category[], ids: string[], newCategoryId: string) {
-  const snapshots = queryClient.getQueriesData<Transaction[]>({ queryKey: ['budgetTransactions'] });
+  const snapshots = queryClient.getQueriesData<Transaction[]>({ queryKey: budgetTransactionsKey });
   const changed: typeof snapshots = [];
   snapshots.forEach(([key, data]) => {
     if (!data) return;

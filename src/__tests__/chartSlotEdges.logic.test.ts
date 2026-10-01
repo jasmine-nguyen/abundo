@@ -7,7 +7,7 @@ import {
   chartCategoryColor, normalizeColorSlot, ASSIGNMENT_ORDER, CATEGORY_COLORS,
   OTHER_COLOR,
 } from '../chartColors';
-import { toCategory } from '../context';
+import { toCategory } from '../model';
 import { readServerSeedSlots } from './serverSeedSlots';
 
 // The server's seed slots, READ from shared/repository_category.py — not retyped. A hand copy

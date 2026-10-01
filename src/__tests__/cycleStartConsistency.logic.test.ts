@@ -3,7 +3,7 @@
 // [A-inv], the DEFAULT_PAY_CYCLE fallback [A-default], year-boundary formatting [A-year], and
 // started-exactly-today [A-today]. Runs under TZ=Australia/Melbourne (see the test script).
 import { describe, it, expect } from '@jest/globals';
-import { cycleStart, cycleClock } from '../context';
+import { cycleStart, cycleClock } from '../payCycle';
 import { DEFAULT_PAY_CYCLE } from '../queries';
 import { isoToUtcDayMs, dateToUtcDayMs, formatDayMonth, MS_PER_DAY } from '../dateutil';
 

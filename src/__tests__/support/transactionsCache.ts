@@ -4,7 +4,7 @@
 // cursor shape in one place. seedTransactionsCache defaults to a single end-of-history page
 // (nextCursor null); pass rows + a cursor, or seedTransactionsPages, for multi-page cases.
 import type { QueryClient } from '@tanstack/react-query';
-import type { Transaction } from '../../context';
+import type { Transaction } from '../../types';
 
 export interface FeedPage {
   transactions: Transaction[];

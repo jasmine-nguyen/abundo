@@ -5,7 +5,8 @@
 // in UTC, which is exactly what would break a getUTC* slip.
 import { describe, it, expect } from '@jest/globals';
 import { isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, utcDayMsToISO, formatDayMonth, formatDateRange } from '../dateutil';
-import { cycleClock, paydaysUntil, milestoneView } from '../context';
+import { paydaysUntil, milestoneView } from '../context';
+import { cycleClock } from '../payCycle';
 import { milestoneTime, MILESTONES } from '../milestones';
 import { makeState } from './factory';
 

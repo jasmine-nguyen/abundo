@@ -17,7 +17,8 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
-import type { Transaction, ApplyRulesResult, FilingResult, FilingTarget } from '../context';
+import type { ApplyRulesResult, FilingResult, FilingTarget } from '../context';
+import type { Transaction } from '../types';
 import type { UncategorizedMerchantGroup } from '../api';
 import { ApiError } from '../apiError';
 import { queryClient } from '../queryClient';

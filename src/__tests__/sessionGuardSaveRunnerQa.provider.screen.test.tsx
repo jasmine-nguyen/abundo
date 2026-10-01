@@ -20,7 +20,7 @@ jest.mock('../auth', () => ({
 }));
 
 import { AppProvider, useAppContext } from '../context';
-import type { Rule } from '../context';
+import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 import { installFakeServer } from './support/fakeServer';

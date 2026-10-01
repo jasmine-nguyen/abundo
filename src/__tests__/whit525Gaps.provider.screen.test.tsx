@@ -9,7 +9,7 @@ import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
-import type { Transaction, Category } from '../context';
+import type { Transaction, Category } from '../types';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
 import { installFakeServer } from './support/fakeServer';

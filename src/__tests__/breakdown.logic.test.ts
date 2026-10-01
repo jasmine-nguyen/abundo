@@ -2,7 +2,8 @@
 // for the Insights tab. Pure over { breakdown, category }, so it runs headlessly via
 // makeState. This is the single testable unit driving the screen.
 import { describe, it, expect } from '@jest/globals';
-import { categoryBreakdown, UNCATEGORIZED_KEY, EARNED_KEY, INCOME_KEY } from '../context';
+import { categoryBreakdown } from '../context';
+import { UNCATEGORIZED_KEY, EARNED_KEY, INCOME_KEY } from '../model';
 import { C } from '../theme';
 import { makeState, cat, spend, withRollup } from './factory';
 

@@ -3,7 +3,8 @@
 // colour, pending flag, and tappability). Single sources of truth, so a
 // regression here would silently mislabel money.
 import { describe, it, expect } from '@jest/globals';
-import { isUncategorized, countUncategorized, transactionView, transactionGroups, transactionMatchesSearch, categoryTransactions, UNCATEGORIZED_KEY } from '../context';
+import { isUncategorized, countUncategorized, transactionView, transactionGroups, transactionMatchesSearch, categoryTransactions } from '../context';
+import { UNCATEGORIZED_KEY } from '../model';
 import { C } from '../theme';
 import { makeState, cat, txn } from './factory';
 

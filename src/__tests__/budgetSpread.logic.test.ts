@@ -5,8 +5,11 @@
 // entry-point gating (spreadActive / canStartSpread / overspend); budgetEditInfo greys the
 // rollover toggle off while a spread is active; spreadPreview mirrors the server's cent split.
 import { describe, it, expect } from '@jest/globals';
-import { budgetViews, budgetDetail, budgetEditInfo, budgetSpreadEligibility, toBudget, spreadPreview, cycleName } from '../context';
-import type { Category, Budget } from '../context';
+import { budgetViews, budgetDetail, budgetEditInfo, budgetSpreadEligibility, spreadPreview } from '../context';
+import { toBudget } from '../model';
+import { cycleName } from '../payCycle';
+import type { Category } from '../types';
+import type { Budget } from '../model';
 import { makeState, cat, budget } from './factory';
 
 const sink = (over = {}) => cat({ id: 'sink', name: 'Sink', bucket: 'Lifestyle', ...over });

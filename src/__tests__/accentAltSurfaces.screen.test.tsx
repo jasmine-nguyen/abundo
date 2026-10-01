@@ -16,7 +16,7 @@ import { Text, StyleSheet } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
 import { makeState, cat, txn } from './factory';
 import { C } from '../theme';
-import type { Category } from '../context';
+import type { Category } from '../types';
 
 let mockState: { openPicker: () => void; category: (id: string | null) => Category | undefined };
 jest.mock('../context', () => {

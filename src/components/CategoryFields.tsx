@@ -2,7 +2,8 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet, TextInput, ScrollView } from 'react-native';
 import { C, FONT, tint } from '../theme';
 import { Icon, ICON_KEYS } from '../icons';
-import { BUCKETS, Bucket, Category, eligibleParents, childCount, MAX_CHILDREN_PER_CATEGORY } from '../context';
+import { BUCKETS, eligibleParents, childCount, MAX_CHILDREN_PER_CATEGORY } from '../context';
+import type { Bucket, Category } from '../types';
 import { BUCKET_COLOR } from '../categoryColors';
 
 // WHIT-239: the ONE implementation of the category field controls (name / bucket / parent /

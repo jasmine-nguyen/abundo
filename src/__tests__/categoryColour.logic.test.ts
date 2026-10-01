@@ -8,7 +8,7 @@
 //   • the OKLCH relationship (L×0.85, C×0.90) between each base and its sibling, so a hand-edited
 //     token that drifts off that curve fails here rather than shipping a mismatched shade.
 import { describe, it, expect } from '@jest/globals';
-import { toCategory } from '../context';
+import { toCategory } from '../model';
 import {
   colorForCategory, CATEGORY_BASE, CATEGORY_SIBLINGS, PALETTE,
 } from '../categoryColors';

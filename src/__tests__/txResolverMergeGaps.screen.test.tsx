@@ -15,7 +15,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { makeClient, wrapper } from './support/queryClient';
-import type { Transaction } from '../context';
+import type { Transaction } from '../types';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
 

@@ -5,7 +5,7 @@
 import { it, expect, describe } from '@jest/globals';
 import { makeQueryClient } from '../queryClient';
 import { readTransactionCopies } from '../transactionCache';
-import type { Transaction } from '../context';
+import type { Transaction } from '../types';
 
 const tx = (id: string, over: Partial<Transaction> = {}): Transaction => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',

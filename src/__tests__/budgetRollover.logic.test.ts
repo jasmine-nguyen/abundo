@@ -4,7 +4,8 @@
 // pace stays on the base target, and the bar denominator can never divide by 0. toBudget
 // defaults the fields for a non-rollover/legacy budget.
 import { describe, it, expect } from '@jest/globals';
-import { budgetViews, budgetDetail, toBudget } from '../context';
+import { budgetViews, budgetDetail } from '../context';
+import { toBudget } from '../model';
 import { makeState, cat, budget } from './factory';
 
 const sink = (over = {}) => cat({ id: 'sink', name: 'Sink', bucket: 'Lifestyle', ...over });

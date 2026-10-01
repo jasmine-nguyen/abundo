@@ -6,7 +6,7 @@
 // tsc JSON-path check across the src/ boundary, mirroring the existing tests' require() usage.
 import { describe, it, expect } from '@jest/globals';
 import { budgetSubtreeContains } from '../context';
-import type { Category } from '../context';
+import type { Category } from '../types';
 
 const fixture = require('../../tests/fixtures/subtree_parity.json') as {
   categories: { id: string; parent: string | null; bucket: string | null }[];

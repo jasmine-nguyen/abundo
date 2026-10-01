@@ -13,7 +13,7 @@ import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals
 import React from 'react';
 import { ScrollView } from 'react-native';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
-import type { Category } from '../context';
+import type { Category } from '../types';
 import { MAX_CHILDREN_PER_CATEGORY } from '../context';
 import { ApiError } from '../apiError';
 

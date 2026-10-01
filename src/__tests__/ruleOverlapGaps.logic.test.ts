@@ -4,7 +4,8 @@
 // numeric-edge and _normalise-whitespace corners it leaves open. Every assertion mirrors what the
 // real engine (shared/rule_engine.py) would do, so a false flag or a missed provable overlap fails.
 import { describe, it, expect } from '@jest/globals';
-import { ruleOverlap, type Rule } from '../context';
+import { ruleOverlap } from '../context';
+import type { Rule } from '../model';
 import type { RuleCondition, RuleLogic } from '../api';
 
 const classic = (id: string, pattern: string, categoryId: string): Rule =>

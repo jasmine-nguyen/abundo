@@ -5,7 +5,7 @@
 // check across the src/ boundary, mirroring budgetSubtreeParity.logic.test.ts.
 import { describe, it, expect } from '@jest/globals';
 import { transactionMatchesSearch, SEARCH_NOTES_AND_TAGS, SEARCH_QUERY_MAX_LEN } from '../context';
-import type { Category, Transaction } from '../context';
+import type { Category, Transaction } from '../types';
 
 const fixture = require('../../tests/fixtures/transaction_search_parity.json') as {
   includeNotesAndTags: boolean;

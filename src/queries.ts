@@ -8,10 +8,13 @@ import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@t
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchTransactionsSearch, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchFilingSuggestions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listRules } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, DateRange, RuleRecord, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage, TransactionSearchResult, UncategorizedMerchants, FilingSuggestions } from './api';
-import { cycleClockView, cycleStart, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
+import { cycleClockView, cycleStart, cycleName } from './payCycle';
+import { loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './model';
 import { readTransactionCopies } from './transactionCache';
 import { RECONCILE_EPSILON } from './theme';
-import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
+import type { Budget, HomeLoanState, Rule } from './model';
+import type { Category, Transaction } from './types';
+import { categoriesKey, payCycleKey, budgetsKey, budgetTransactionsKey, categoryTransactionsKey, breakdownKey, transactionsKey, uncategorizedFeedKey, transactionsRecentKey, transactionsSearchKey, uncategorizedCountKey, uncategorizedMerchantsKey, filingSuggestionsKey, loanFactsKey, homeLoanKey, repaymentKey, accountBalancesKey, rulesKey, goalsKey, milestonesKey } from './queryKeys';
 import { getStatus, subscribe } from './auth';
 
 // --- auth gating -------------------------------------------------------------
@@ -27,84 +30,8 @@ export function useIsAuthed(): boolean {
   return useSyncExternalStore(subscribe, isAuthedSnapshot, isAuthedSnapshot);
 }
 
-// --- query keys (exported so write paths can invalidate the cache) -----------
-export const categoriesKey = ['categories'] as const;
-export const payCycleKey = ['payCycle'] as const;
-// Budgets are un-windowed at the KEY (WHIT-72): the server derives the pay-cycle window
-// itself (GET /budgets ignores the client ?days=), so a flat key is correct — it lets
-// budgets fetch in PARALLEL with the pay cycle (no waterfall) and refetch exactly ONCE on
-// a cycle-length change (the explicit invalidateQueries(['budgets']) in persistPayCycle),
-// rather than a length change shifting the key AND the invalidate firing two fetches.
-export const budgetsKey = ['budgets'] as const;
-// The transactions behind one budget's total (the budget-detail list). A per-id key so
-// each budget caches independently; the categorise writes invalidate the flat prefix so
-// re-tagging a charge refreshes every cached budget's list.
-export const budgetTransactionsKey = ['budgetTransactions'] as const;
-// The transactions behind one /breakdown row (the category drill-in list). Keyed per
-// category AND cycle so each look-back caches independently, like the breakdown query.
-export const categoryTransactionsKey = ['categoryTransactions'] as const;
-// Breakdown (spend-by-category, the Insights tab) is the same — server-derived window, so
-// a flat key: parallel fetch, single invalidate on a length change (WHIT-72).
-export const breakdownKey = ['breakdown'] as const;
-// The Transactions tab's cursor-paged, all-accounts FEED (the "Load More" history). Held as
-// an infinite query under this flat key. Kept in sync with the literal ['transactions'] the
-// optimistic write path patches in context.tsx (context imports queryClient directly, not
-// this key, to avoid a circular import) — those writes map over the InfiniteData pages.
-export const transactionsKey = ['transactions'] as const;
-// The Uncategorized tab's OWN cursor-paged feed: each page is real uncategorized rows from
-// full history (server-filtered, same rule as the count), so the tab lists actual unfiled
-// charges via "Load More" instead of client-filtering the general feed's loaded pages. A
-// SEPARATE infinite-query key from ['transactions'] so the two feeds page independently. Kept
-// in sync with the literal ['uncategorizedFeed'] the optimistic write path patches in
-// context.tsx (context imports queryClient directly, not this key, to avoid a circular import).
-export const uncategorizedFeedKey = ['uncategorizedFeed'] as const;
-// The BOUNDED "recent" list (the server's rolling window) behind the tab-bar dot, the
-// account-detail screen, and the goal-edit picker. A SEPARATE key from the feed so those
-// counts stay fixed and can't drift as the tab pages back through full history.
-export const transactionsRecentKey = ['transactionsRecent'] as const;
-// The Transactions-tab search over ALL history (WHIT-576): one flat result per [tab, query].
-// Kept in sync with the literal ['transactionsSearch'] prefix the optimistic write path patches
-// and invalidates in context.tsx (context imports queryClient directly, not this key).
-export const transactionsSearchKey = ['transactionsSearch'] as const;
-// The full-history uncategorized count (WHIT-500/501) behind the tab badge, the tab-bar dot,
-// and the "All caught up" empty state — a single server number that reflects ALL history, not
-// just the loaded pages. Kept in sync with the literal ['uncategorizedCount'] the categorise +
-// delete-category writes invalidate in context.tsx (context imports queryClient directly, not
-// this key, to avoid a circular import).
-export const uncategorizedCountKey = ['uncategorizedCount'] as const;
-// The unfiled charges grouped by shop, behind the "File by shop" screen (WHIT-517). Whole-history
-// server grouping. Kept in sync with the literal ['uncategorizedMerchants'] that
-// refreshAfterApplyRules invalidates in context.tsx after any rule sweep (context imports
-// queryClient directly, not this key, to avoid a circular import), so a filed shop leaves the list.
-export const uncategorizedMerchantsKey = ['uncategorizedMerchants'] as const;
-// Rules suggested from the user's hand-filing habits, behind the "File by shop" screen (WHIT-542).
-// Whole-history server walk. Kept in sync with the literal ['filingSuggestions'] that
-// refreshAfterApplyRules invalidates in context.tsx after any rule sweep, so a shop that just got a
-// rule (or had its charges filed) drops off the suggestions.
-export const filingSuggestionsKey = ['filingSuggestions'] as const;
-// Loan facts (the Settings "Loan details" row + the loan form). Un-windowed flat key,
-// kept in sync with the literal ['loanFacts'] the saveLoanFacts write uses in context.tsx.
-export const loanFactsKey = ['loanFacts'] as const;
-// The live home-loan balance + the last repayment (the Goal tab + milestone screen).
-// Un-windowed flat keys — WHIT-197. No write path touches them (balance is poller-fed,
-// repayment is server-derived), so no in-context literal to keep in sync.
-export const homeLoanKey = ['homeLoan'] as const;
-export const repaymentKey = ['repayment'] as const;
-// The live per-account balances (the Accounts tab + account-detail header) — WHIT-212.
-// Un-windowed flat key, poller-fed like the home-loan balance, so no write path touches it.
-export const accountBalancesKey = ['accountBalances'] as const;
-// The categorisation rules (the Rules screen). Un-windowed flat key, kept in sync with
-// the literal ['rules'] the rule writes double-write in context.tsx (context imports
-// queryClient directly, not this key, to avoid a circular import) — WHIT-195.
-export const rulesKey = ['rules'] as const;
-// The user's savings/debt goals (the Goals hub) — WHIT-233. Un-windowed flat key, kept in
-// sync with the literal ['goals'] the goal writes touch in context.tsx (context imports
-// queryClient directly, not this key, to avoid a circular import).
-export const goalsKey = ['goals'] as const;
-// The user's saved home-loan milestone plan (the milestone + mortgage screens) — WHIT-367.
-// Un-windowed flat key. No write path yet (the editor lands in WHIT-377); when it does, its
-// save must invalidate the literal ['milestones'] to keep this in sync, like goalsKey.
-export const milestonesKey = ['milestones'] as const;
+// --- query keys (defined in ./queryKeys; re-exported for existing importers) -----
+export { categoriesKey, payCycleKey, budgetsKey, budgetTransactionsKey, categoryTransactionsKey, breakdownKey, transactionsKey, uncategorizedFeedKey, transactionsRecentKey, transactionsSearchKey, uncategorizedCountKey, uncategorizedMerchantsKey, filingSuggestionsKey, loanFactsKey, homeLoanKey, repaymentKey, accountBalancesKey, rulesKey, goalsKey, milestonesKey } from './queryKeys';
 
 // --- pure selectors over the raw API payloads (unit-tested in the logic project) ---
 export function selectCategories(raw: unknown[]): Category[] {
