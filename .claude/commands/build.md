@@ -354,8 +354,10 @@ the card number for card builds) and check where it is:
      to 'Done' (or the board's won't-do option) and add a comment with the
      evidence.
    - **BUILD FAILED** — the automatic loop ran out of rounds. Don't ask the
-     user what to do: read the findings below the line, fix them yourself
-     in the codebase, then run
+     user what to do about the findings below the line: fix them yourself
+     in the codebase. The exception is **Decisions for the user**: those are
+     theirs, so ask about each one with AskUserQuestion first and change the
+     code only as they decide. Then run
      `python3 build_graph.py --thread <id> --recheck`
      Don't change a locked test (they're listed under "Locked test files";
      the recheck puts back any change to one). If one is wrong,

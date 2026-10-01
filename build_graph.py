@@ -156,8 +156,6 @@ class BuildState(TypedDict):
 ROOT = Path(__file__).resolve().parent
 BUILD_DIR = ROOT / ".build"
 DB_PATH = BUILD_DIR / "build_graph.db"
-# What the build is waiting on, for the hook that puts it in front of the user (.claude/hooks/).
-PAUSE_FILE = BUILD_DIR / "pause.txt"
 PROJECT_CONTEXT_FILE = ROOT / "project-context.md"
 
 DEFAULT_MODEL = "claude-opus-5-5"
@@ -172,7 +170,9 @@ MAX_SESSION_RESUMES = 2
 CHECK_TIMEOUT_S = 900
 
 APPROVALS = {"go", "approve", "approved", "yes", "y", "lgtm", "ok"}
-STOPS = {"stop", "cancel", "abort"}
+# Only a bare stop word, or one followed by ":" and a reason, ends the build: "Cancel button should be
+# red" is an answer.
+STOP_REPLY = re.compile(r"\s*(?:stop|cancel|abort)\s*(?:[:.!].*)?", re.I | re.S)
 BUG_TYPES = {"bug", "defect"}
 TYPE_TO_PREFIX = {
     "story": "feat", "feature": "feat",
@@ -745,6 +745,10 @@ def split_reply(reply: str) -> tuple[str, str]:
     return match.group(1).lower(), match.group(2).strip()
 
 
+def is_stop(reply) -> bool:
+    return isinstance(reply, str) and bool(STOP_REPLY.fullmatch(reply))
+
+
 def stopped(node: str) -> dict:
     """The user said "stop" at a pause: end the build there, ship nothing."""
     return {"outcome": "stopped", "history": [f"• {node}: stopped by the user"]}
@@ -1236,9 +1240,17 @@ def answers_differ(decisions: list[dict], text: str) -> bool:
             continue
         recommended = re.match(r"\s*\(?([A-Z])\b[).:,]?", decisions[n - 1]["recommendation"])
         letter = answer_letter(answer)
-        if not recommended or not letter or letter != recommended.group(1):
+        if not recommended or not letter:
+            return True
+        options = decisions[n - 1].get("options", "")
+        if letter != recommended.group(1) and not (keeps_plan(options, letter) and keeps_plan(options, recommended.group(1))):
             return True
     return False
+
+
+def keeps_plan(options: str, letter: str) -> bool:
+    """A long-term-fix answer that builds this plan as it is: "Card only", or "Later" (filed as its own card)."""
+    return bool(re.match(r"(?:card only|later)\b", option_text(options, letter), re.I))
 
 
 def spelled_answers(decisions: list[dict], text: str) -> str:
@@ -1388,7 +1400,7 @@ def clarify(state: BuildState):
         '"stop" ends the build.'
     )
     word, rest = split_reply(reply)
-    if word in STOPS:
+    if is_stop(reply):
         return {"clarify_questions": [], **stopped("clarify")}
     answer = "Use your recommended answer for every question." if word in APPROVALS and not rest else reply
     answered = f"{state.get('clarify_answers', '')}\n\n{questions}\n\nAnswer: {answer}".strip()
@@ -1541,7 +1553,7 @@ def sign_off(state: BuildState):
     if state.get("validity", "VALID") != "VALID":
         reply = interrupt(invalid_brief(state))
         word, rest = split_reply(reply)
-        if word in STOPS:
+        if is_stop(reply):
             return {"plan_decision": "STOPPED", **stopped("sign_off")}
         if word == "close":
             return {
@@ -1555,7 +1567,7 @@ def sign_off(state: BuildState):
         return approve(state, "", "AUTO_APPROVED")
     reply = interrupt(plan_brief(state))
     word, rest = split_reply(reply)
-    if word in STOPS:
+    if is_stop(reply):
         return {"plan_decision": "STOPPED", **stopped("sign_off")}
     if word not in APPROVALS:
         return _sent_back(state, rest if word == "rework" else reply)
@@ -1878,7 +1890,7 @@ def reply_schema(values: dict) -> dict:
 
 def check_reply(values: dict, text: str) -> tuple[dict | str | None, str]:
     """The resume value for this reply, or None and why the reply was rejected."""
-    if not structured_pause(values) or split_reply(text)[0] in STOPS:
+    if not structured_pause(values) or is_stop(text):
         return text, ""
     try:
         reply = json.loads(text)
@@ -1949,7 +1961,7 @@ def escalation(state: BuildState):
         # A build paused before options existed may have named the files "unpin" unlocks.
         offered = state.get("unpin_request") if state.get("unpin_named") else sorted(state.get("pinned", {}))
         files = offered if word == "unpin" and source == "implementer" else []
-    if word in STOPS:
+    if is_stop(reply):
         return {"escalation": "", **stopped("escalation")}
     update = {
         "escalation": "",
@@ -2600,7 +2612,7 @@ async def print_status(graph, config, thread: str, snapshot) -> int:
     print(f"Thread: {thread}")
     print(f"Card: {values.get('card_number') or '(ad-hoc)'} · type: {values.get('card_type', '')}")
     if snapshot.interrupts:
-        print("Paused: waiting for your reply (--resume)")
+        print(f"Paused: waiting for your reply (--resume) to this:\n\n{snapshot.interrupts[0].value}\n")
     print(f"Next step: {', '.join(snapshot.next) or 'finished'}")
     print(f"Outcome: {values.get('outcome') or 'in progress'}")
     plan = BUILD_DIR / thread / "plan.md"
@@ -2620,14 +2632,12 @@ async def print_status(graph, config, thread: str, snapshot) -> int:
 def report(thread: str, result: dict) -> int:
     interrupts = result.get("__interrupt__")
     if interrupts:
-        PAUSE_FILE.write_text(interrupts[0].value)
         print("\n" + "=" * 60)
         print(interrupts[0].value)
         print("=" * 60)
         print(f'\nPaused. Resume with:\n  {rerun()} --thread {thread} --resume "<your reply>"')
         return 0
 
-    PAUSE_FILE.unlink(missing_ok=True)
     outcome, code = result.get("outcome"), 0
     print("\n" + "=" * 60)
     if outcome == "closed":
@@ -2637,8 +2647,13 @@ def report(thread: str, result: dict) -> int:
         if result.get("checks_feedback"):
             print(f"\n## Automatic checks\n{result['checks_feedback']}")
         for key, label in REVIEW_LABELS.items():
-            if result.get(f"{key}_verdict") == "NEEDS_REWORK":
-                print(f"\n## {label}\n{review_findings(result, key)}")
+            if result.get(f"{key}_verdict") == "NEEDS_REWORK" and result.get(f"{key}_feedback"):
+                print(f"\n## {label}\n{result[f'{key}_feedback']}")
+        if result.get("code_decisions"):
+            print(
+                "\n## Decisions for the user\nThe code took these without sign-off. Ask the user about each "
+                f"one, and change the code only as they decide:\n{bullets(result['code_decisions'])}"
+            )
         if result.get("pinned"):
             print(
                 f"\n## Locked test files\n{bullets(sorted(result['pinned']))}\nThe recheck puts back any change to "
@@ -2666,10 +2681,12 @@ def report(thread: str, result: dict) -> int:
     else:
         print("Done.")
     print("=" * 60)
+    if outcome not in ("shipped", "pushed"):  # a failed build prints these again once it ships
+        return code
     if result.get("follow_ups"):
         print("\nFOLLOW-UPS THE BUILD COULDN'T DO:")
         print(bullets(result["follow_ups"]))
-    if result.get("manual_checks") and outcome in ("shipped", "pushed"):
+    if result.get("manual_checks"):
         print("\nMANUAL CHECKS (also in the PR):")
         print(bullets(result["manual_checks"]))
     if result.get("tech_debt"):
@@ -2744,7 +2761,6 @@ async def resume_build(graph, config, snapshot, reply: str):
         print(f"Reply rejected: {problem}. The build is still paused on the same question.\n\n{reply_format(snapshot.values)}")
         return None
     print_history(snapshot.values)
-    PAUSE_FILE.unlink(missing_ok=True)
     return await graph.ainvoke(Command(resume=value), config)
 
 
@@ -2789,6 +2805,17 @@ async def recheck_build(graph, config, snapshot, unpin: list[str]):
 
 
 # --- stopping a running build ---
+
+
+def save_pause(thread: str, snapshot) -> None:
+    """What the build waits on, for the hook that shows it to the user before they're asked
+    (.claude/hooks/show-pause-first.py). Its "shown" mark is cleared: this is a new pause."""
+    folder = BUILD_DIR / thread
+    (folder / "pause.shown").unlink(missing_ok=True)
+    if snapshot.interrupts:
+        write_text(folder / "pause.txt", snapshot.interrupts[0].value)
+    else:
+        (folder / "pause.txt").unlink(missing_ok=True)
 
 
 def pid_file(thread: str) -> Path:
@@ -2902,9 +2929,26 @@ def stop_running_build(values: dict, pid: int | None, replan: bool = False) -> b
         if found is None:
             print(f"Couldn't check GitHub for a PR on {branch}, so nothing was changed.")
             return False
+    if not safe_to_discard(values, pid):
+        return False
     if pid:
         print("⏹ Stopping the running build…", flush=True)
         stop_process_tree(pid)
+    return True
+
+
+def safe_to_discard(values: dict, pid: int | None) -> bool:
+    """Whether throwing the build's work away can only touch the build's own work."""
+    branch, current = values.get("branch"), git("branch", "--show-current")
+    if values.get("build_base") and branch and current != branch:
+        print(f"You're on {current or 'a detached HEAD'}, not the build's branch {branch}. "
+              f"Check out {branch} first, so nothing else is thrown away.")
+        return False
+    changes = stray_changes(values) if values.get("build_base") and not pid else []
+    if changes:
+        print("The build isn't running, so these uncommitted changes aren't its half-written work. "
+              f"Commit, stash or delete them first:\n{bullets(changes)}")
+        return False
     return True
 
 
@@ -3057,6 +3101,7 @@ async def main(argv: list[str] | None = None) -> int:
             if not isinstance(e, (BuildError, AgentError)):
                 traceback.print_exc()
             stopped = await graph.aget_state(config)
+            save_pause(args.thread, stopped)
             print("\n" + "=" * 60)
             print(f"BUILD STOPPED at {', '.join(stopped.next) or 'the end'}:\n{e}")
             print("=" * 60)
@@ -3067,6 +3112,7 @@ async def main(argv: list[str] | None = None) -> int:
                 pid_file(args.thread).unlink()
         if result is None:
             return 1
+        save_pause(args.thread, await graph.aget_state(config))
         return report(args.thread, result)
 
 

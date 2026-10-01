@@ -23,14 +23,20 @@ REASON = (
     "session allowed to change these files."
 )
 WRITE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
-BUILD_DIR = re.compile(r"(^|[\s'\"=/])\.build/(?!cards/)")
-WRITES = re.compile(r">|\btee\b|\brm\b|\bmv\b|\bcp\b|\bsed\s+-i|\bsqlite3\b|\btruncate\b|\bdd\b|\bln\b|\bchmod\b")
+BUILD_DIR = re.compile(r"(^|[\s'\"=/>(])\.build(/cards/\.\.|/(?!cards(?:/|\b))|(?=[\s'\";&|)]|$))")
+WRITES = re.compile(
+    r">|\b(?:tee|rm|mv|cp|sqlite3|truncate|dd|ln|chmod|touch|mkdir|unlink|install|rsync|patch)\b|\bsed\s+-i"
+    r"|\bperl\s+-\S*i|-delete\b|\.write|write_(?:text|bytes)|\bopen\([^)]*['\"][wax]"
+)
+HARMLESS_REDIRECTS = re.compile(r"[0-9]?>&[0-9]|[0-9&]?>>?\s*/dev/(?:null|stdout|stderr)")
 SAVED_STATE = re.compile(r"build_graph\.db|update_state\(|AsyncSqliteSaver|SqliteSaver")
+RUNS_CODE = re.compile(r"\bpython[\d.]*\b|\bsqlite3\b|\buv\s+run\b")
 PYTHON_SCRIPT = re.compile(r"\bpython[\d.]*\s+(?:-\S+\s+)*([^\s;&|]+\.py)\b")
 
 
 def touches_saved_state(command: str, cwd: Path) -> bool:
-    if SAVED_STATE.search(command):
+    command = HARMLESS_REDIRECTS.sub(" ", command)
+    if SAVED_STATE.search(command) and RUNS_CODE.search(command):
         return True
     if BUILD_DIR.search(command) and WRITES.search(command):
         return True
@@ -46,7 +52,7 @@ def touches_saved_state(command: str, cwd: Path) -> bool:
 
 
 def in_build_dir(file_path: str, cwd: Path) -> bool:
-    parts = (Path(file_path) if Path(file_path).is_absolute() else cwd / file_path).parts
+    parts = Path(os.path.normpath(Path(file_path) if Path(file_path).is_absolute() else cwd / file_path)).parts
     if ".build" not in parts:
         return False
     rest = parts[parts.index(".build") + 1:]
