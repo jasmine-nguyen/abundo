@@ -20,24 +20,12 @@ import ast
 import pathlib
 import re
 
-from _terraform import TERRAFORM_DIR, tf_block
+from _terraform import DYNAMODB_VERB_TO_ACTION, TERRAFORM_DIR, granted_dynamodb_actions, tf_block
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _SHARED = _REPO_ROOT / "shared"
 _IAM = TERRAFORM_DIR / "iam.tf"
 _FACADE = _SHARED / "repository.py"
-
-# boto3 Table method -> the IAM action it needs. batch_writer maps to BatchWriteItem; it is
-# called through a local `table` var in repository_transaction, NOT self._get_table().<verb>(,
-# so the direct-chain scan below deliberately does not see it (and the role omits it).
-_VERB_TO_ACTION = {
-    "get_item": "GetItem",
-    "put_item": "PutItem",
-    "query": "Query",
-    "update_item": "UpdateItem",
-    "delete_item": "DeleteItem",
-    "batch_writer": "BatchWriteItem",
-}
 
 
 def _app_api_policy_block() -> str:
@@ -46,10 +34,7 @@ def _app_api_policy_block() -> str:
 
 
 def _granted_actions() -> set[str]:
-    block = _app_api_policy_block()
-    # `"dynamodb:LeadingKeys"` also matches the action pattern (it is a condition key, not an
-    # action), so drop it explicitly.
-    return {name for name in re.findall(r'"dynamodb:(\w+)"', block)} - {"LeadingKeys"}
+    return granted_dynamodb_actions(_app_api_policy_block())
 
 
 def _leading_keys() -> set[str]:
@@ -93,11 +78,11 @@ def _needed_actions_and_deletes():
     for module in _scanned_modules():
         tree = ast.parse(module.read_text())
         for verb, call in _table_verb_calls(tree):
-            assert verb in _VERB_TO_ACTION, (
-                f"{module.name} calls self._get_table().{verb}() — add it to _VERB_TO_ACTION "
+            assert verb in DYNAMODB_VERB_TO_ACTION, (
+                f"{module.name} calls self._get_table().{verb}() — add it to DYNAMODB_VERB_TO_ACTION "
                 "so the IAM guard knows which action it needs"
             )
-            needed.add(_VERB_TO_ACTION[verb])
+            needed.add(DYNAMODB_VERB_TO_ACTION[verb])
             if verb == "delete_item":
                 delete_calls.append((module.name, call))
     return needed, delete_calls

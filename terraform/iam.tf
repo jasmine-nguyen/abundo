@@ -299,27 +299,44 @@ resource "aws_iam_role_policy" "transaction_trigger_logs" {
 
 # Transaction-trigger lambda: the pending mirror (WHIT-662) reads an account's rows over the
 # date-index, reads the category taxonomy, and deletes pendings the bank no longer lists. It
-# saves a settled charge's carried edit (WHIT-663) through BatchWriteItem. No PutItem or
-# UpdateItem: the taxonomy read's repaint write fails open.
+# saves a settled charge's carried edit (WHIT-663) through BatchWriteItem. No PutItem.
 resource "aws_iam_role_policy" "transaction_trigger_dynamodb" {
   name = "${var.project_name}-transaction-trigger-dynamodb"
   role = aws_iam_role.transaction_trigger_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "dynamodb:GetItem",
-        "dynamodb:Query",
-        "dynamodb:DeleteItem",
-        "dynamodb:BatchWriteItem"
-      ]
-      Resource = [
-        "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table",
-        "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table/index/*"
-      ]
-    }]
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:Query",
+          "dynamodb:DeleteItem",
+          "dynamodb:BatchWriteItem"
+        ]
+        Resource = [
+          "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table",
+          "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table/index/*"
+        ]
+      },
+      # UpdateItem is scoped to transaction rows ("ACCOUNT#...") ONLY, for moving a carried edit
+      # onto a re-issued pending (WHIT-678). A SEPARATE statement for the same reason as
+      # app_api's DeleteItem. The taxonomy read's repaint write (pk "CATEGORIES") stays denied
+      # and fails open. Base-table ARN only (you cannot update through an index).
+      {
+        Effect = "Allow"
+        Action = ["dynamodb:UpdateItem"]
+        Resource = [
+          "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table"
+        ]
+        Condition = {
+          "ForAllValues:StringLike" = {
+            "dynamodb:LeadingKeys" = ["ACCOUNT#*"]
+          }
+        }
+      }
+    ]
   })
 }
 
