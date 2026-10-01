@@ -1,21 +1,20 @@
 // WHIT-459 host-mechanics fold — every SheetHost-mechanics screen test that mounts <Overlays />
-// over the data-layer-mocked context regime (jest.mock('../context') + the screenQueryMocks
-// query mock) lives here, one child describe per concern. Folded in (scenarios preserved 1:1):
+// over the mocked context (jest.mock('../context')) and the fake server via support/openOverlays
+// lives here, one child describe per concern. Folded in (scenarios preserved 1:1):
 //   - WHIT-199  reduce-motion wiring          (was sheetHostMotion.screen.test.tsx — the survivor)
 //   - WHIT-290/293 drag-to-dismiss grabber    (was sheetDragDismiss.screen.test.tsx)
 //   - WHIT-294  keyboard avoidance            (was sheetKeyboardAvoid.screen.test.tsx)
 //   - WHIT-288  scroll-host backdrop          (was sheetScrollHost.screen.test.tsx)
 //   - WHIT-285  AddRule object collapse       (was overlaysSheetDraftObjectCollapse.screen.test.tsx)
-// The three jest.mock()s are byte-identical across all five sources, so they hoist once at module
-// scope; each source keeps its own consts / fns / state builders / beforeEach inside its describe.
+// The jest.mock()s hoist once at module scope; each source keeps its own consts / fns / state builders / beforeEach inside its describe.
 // useReduceMotion is mocked module-wide but is inert for the four non-motion sources (the real hook
 // also resolves false synchronously in jest, and none of them assert on motion). A module-level
 // afterEach restores spies (config clears call-counts but not spyOn installs) so the WHIT-199
 // Animated.spring spy can't leak into a later describe.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
+import type { ReactElement } from 'react';
 import { Modal, Animated, KeyboardAvoidingView, ScrollView } from 'react-native';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 import { SHEET_DISMISS_DISTANCE, shouldDismissSheet } from '../motion/sheetMotion';
 
@@ -24,7 +23,7 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 // The reduce-motion gate under test (WHIT-199). Controllable so both branches are deterministic (the
 // real hook resolves async off a native probe — no good for a branch assertion). Inert for the other
@@ -33,7 +32,30 @@ jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFr
 let mockReduceMotion = false;
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => mockReduceMotion }));
 
-import { Overlays } from '../components/Overlays';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { openOverlays, overlaysTree } from './support/openOverlays';
+
+const server = installFakeServer();
+useTestQueryClient();
+
+const PAY_CYCLE = { length: 14, last_pay_date: '2026-06-06' };
+
+// Open `state.sheet` over the loaded screens, then let the reads the sheet starts settle.
+async function mount(state: AppContext) {
+  const view = await openOverlays(state, (next) => { mockState = next; });
+  await act(async () => {});
+  return view;
+}
+
+// Point the mocked context at `state` and redraw.
+async function show(rerender: (tree: ReactElement) => void, state: AppContext) {
+  mockState = state;
+  await act(async () => { rerender(overlaysTree()); });
+}
+
+beforeEach(() => { resetAuth(); });
 
 // jest.config clearMocks resets call-counts but NOT spyOn installs; restore them so the WHIT-199
 // Animated.spring spy can't survive into a later child describe.
@@ -52,7 +74,6 @@ describe('SheetHost reduce-motion wiring (WHIT-199)', () => {
     return {
       sheet: { mode: 'paycycle' },
       toast: null,
-      payCycle: { length: 14, last_pay_date: '2026-06-06' },
       setSheet: jest.fn(),
       setPayCycleLength: jest.fn(),
       setPayday: jest.fn(),
@@ -65,30 +86,30 @@ describe('SheetHost reduce-motion wiring (WHIT-199)', () => {
   beforeEach(() => {
     jest.restoreAllMocks();
     mockReduceMotion = false;
+    server.seed('/paycycle', PAY_CYCLE);
   });
 
-  it('motion on: Modal fades (not slides) and the open spring is started, content mounted', () => {
+  // The sheet opens on openOverlays' second render, so the spring checks run after mount returns.
+  it('motion on: Modal fades (not slides) and the open spring is started, content mounted', async () => {
     mockReduceMotion = false;
     const springSpy = jest.spyOn(Animated, 'spring')
       .mockReturnValue({ start: jest.fn() } as unknown as Animated.CompositeAnimation);
-    mockState = paycycleState();
-    const { UNSAFE_getByType } = render(<Overlays />);
+    const { UNSAFE_getByType } = await mount(paycycleState());
     expect(UNSAFE_getByType(Modal).props.animationType).toBe('fade'); // NOT the old 'slide'
     expect(screen.getByText('Fortnightly')).toBeTruthy();             // sheet content mounted
     expect(springSpy).toHaveBeenCalledTimes(1);                       // the open spring fired
   });
 
-  it('reduce-motion: Modal does not animate and NO spring is started (instant jump)', () => {
+  it('reduce-motion: Modal does not animate and NO spring is started (instant jump)', async () => {
     mockReduceMotion = true;
     const springSpy = jest.spyOn(Animated, 'spring');
-    mockState = paycycleState();
-    const { UNSAFE_getByType } = render(<Overlays />);
+    const { UNSAFE_getByType } = await mount(paycycleState());
     expect(UNSAFE_getByType(Modal).props.animationType).toBe('none');
     expect(screen.getByText('Fortnightly')).toBeTruthy(); // still rendered immediately
     expect(springSpy).not.toHaveBeenCalled();
   });
 
-  it('toggling reduce-motion while a sheet is OPEN does not re-seed/re-spring it (qa edge #2)', () => {
+  it('toggling reduce-motion while a sheet is OPEN does not re-seed/re-spring it (qa edge #2)', async () => {
     // Sheet opens under reduce-motion (instant, no spring). The user then flips reduce-motion OFF
     // while the sheet stays open — the spring is keyed on `open`, not reduceMotion, so an at-rest
     // sheet must NOT suddenly spring under them. Fail-on-revert: put reduceMotion back in the open
@@ -96,28 +117,23 @@ describe('SheetHost reduce-motion wiring (WHIT-199)', () => {
     mockReduceMotion = true;
     const springSpy = jest.spyOn(Animated, 'spring')
       .mockReturnValue({ start: jest.fn() } as unknown as Animated.CompositeAnimation);
-    mockState = paycycleState();
-    const { rerender } = render(<Overlays />);
+    const { rerender } = await mount(paycycleState());
     expect(springSpy).not.toHaveBeenCalled();  // opened under reduce-motion → no spring
     mockReduceMotion = false;                   // OS reduce-motion flipped OFF, sheet still open
-    rerender(<Overlays />);
+    await show(rerender, mockState);
     expect(springSpy).not.toHaveBeenCalled();  // at-rest sheet is not re-sprung
   });
 
-  it('reopen still springs — the open effect re-fires on every open (not stuck at rest)', () => {
+  it('reopen still springs — the open effect re-fires on every open (not stuck at rest)', async () => {
     mockReduceMotion = false;
     const springSpy = jest.spyOn(Animated, 'spring')
       .mockReturnValue({ start: jest.fn() } as unknown as Animated.CompositeAnimation);
-    mockState = closedState();
-    const { rerender } = render(<Overlays />);
+    const { rerender } = await mount(closedState());
     expect(springSpy).not.toHaveBeenCalled();   // closed → no spring
-    mockState = paycycleState();
-    rerender(<Overlays />);
+    await show(rerender, paycycleState());
     expect(springSpy).toHaveBeenCalledTimes(1); // first open
-    mockState = closedState();
-    rerender(<Overlays />);
-    mockState = paycycleState();
-    rerender(<Overlays />);
+    await show(rerender, closedState());
+    await show(rerender, paycycleState());
     expect(springSpy).toHaveBeenCalledTimes(2); // reopen re-seeds + springs
   });
 });
@@ -130,14 +146,14 @@ describe('SheetHost drag-to-dismiss (WHIT-290/WHIT-293)', () => {
   const fns = {
     setSheet: jest.fn(), setPayCycleLength: jest.fn(), setPayday: jest.fn(),
   };
-  beforeEach(() => { Object.values(fns).forEach((f) => f.mockClear()); });
+  beforeEach(() => {
+    Object.values(fns).forEach((f) => f.mockClear());
+    server.seed('/paycycle', PAY_CYCLE);
+  });
 
-  // The pay-cycle sheet is the simplest to mount (no category/query plumbing).
+  // The pay-cycle sheet is the simplest to mount (no category plumbing).
   function sheetState(): AppContext {
-    return {
-      sheet: { mode: 'paycycle' }, toast: null,
-      payCycle: { length: 14, last_pay_date: '2026-06-06' }, ...fns,
-    } as unknown as AppContext;
+    return { sheet: { mode: 'paycycle' }, toast: null, ...fns } as unknown as AppContext;
   }
 
   // A slow drag from y=100 down to y=100+distance (timestamps far apart → negligible velocity, so
@@ -176,23 +192,20 @@ describe('SheetHost drag-to-dismiss (WHIT-290/WHIT-293)', () => {
   });
 
   describe('grabber pull-down-to-dismiss (WHIT-290/WHIT-293)', () => {
-    it('a drag past the threshold closes the sheet', () => {
-      mockState = sheetState();
-      render(<Overlays />);
+    it('a drag past the threshold closes the sheet', async () => {
+      await mount(sheetState());
       dragGrabber(SHEET_DISMISS_DISTANCE + 40);
       expect(fns.setSheet).toHaveBeenCalledWith(null);
     });
 
-    it('a short, slow drag springs back and does NOT close', () => {
-      mockState = sheetState();
-      render(<Overlays />);
+    it('a short, slow drag springs back and does NOT close', async () => {
+      await mount(sheetState());
       dragGrabber(20);
       expect(fns.setSheet).not.toHaveBeenCalled();
     });
 
-    it('a quick short flick closes the sheet (WHIT-293)', () => {
-      mockState = sheetState();
-      render(<Overlays />);
+    it('a quick short flick closes the sheet (WHIT-293)', async () => {
+      await mount(sheetState());
       flickGrabber();
       expect(fns.setSheet).toHaveBeenCalledWith(null);
     });
@@ -205,27 +218,25 @@ describe('SheetHost drag-to-dismiss (WHIT-290/WHIT-293)', () => {
 // KeyboardAvoidingView with a real behavior) and that the sheet still renders + closes.
 describe('SheetHost keyboard avoidance (WHIT-294)', () => {
   const fns = { setSheet: jest.fn(), setPayCycleLength: jest.fn(), setPayday: jest.fn() };
-  beforeEach(() => { Object.values(fns).forEach((f) => f.mockClear()); });
+  beforeEach(() => {
+    Object.values(fns).forEach((f) => f.mockClear());
+    server.seed('/paycycle', PAY_CYCLE);
+  });
 
   function sheetState(): AppContext {
-    return {
-      sheet: { mode: 'paycycle' }, toast: null,
-      payCycle: { length: 14, last_pay_date: '2026-06-06' }, ...fns,
-    } as unknown as AppContext;
+    return { sheet: { mode: 'paycycle' }, toast: null, ...fns } as unknown as AppContext;
   }
 
   describe('SheetHost lifts the sheet above the keyboard (WHIT-294)', () => {
-    it('wraps the sheet in a KeyboardAvoidingView with a real behavior', () => {
-      mockState = sheetState();
-      const { UNSAFE_getByType } = render(<Overlays />);
+    it('wraps the sheet in a KeyboardAvoidingView with a real behavior', async () => {
+      const { UNSAFE_getByType } = await mount(sheetState());
       const kav = UNSAFE_getByType(KeyboardAvoidingView);
       expect(kav).toBeTruthy();
       expect(['padding', 'height', 'position']).toContain(kav.props.behavior); // set, not undefined
     });
 
-    it('still renders the sheet content and closes on the backdrop', () => {
-      mockState = sheetState();
-      render(<Overlays />);
+    it('still renders the sheet content and closes on the backdrop', async () => {
+      await mount(sheetState());
       expect(screen.getByText('Fortnightly')).toBeTruthy(); // sheet content mounted
       fireEvent.press(screen.getByLabelText('Close'));
       expect(fns.setSheet).toHaveBeenCalledWith(null);
@@ -251,47 +262,45 @@ describe('SheetHost scroll-host backdrop (WHIT-288)', () => {
   };
   beforeEach(() => { Object.values(fns).forEach((f) => f.mockClear()); });
 
-  function pickerState(): AppContext {
-    return {
-      sheet: { mode: 'picker', txId: 't1' },
-      transactions: [{ transaction_id: 't1', amount: -12.5, description: 'COLES', merchant_name: 'Coles' }],
-      categories: [CAT_A, CAT_B], toast: null, ...fns,
-    } as unknown as AppContext;
+  const TX = { transaction_id: 't1', amount: -12.5, description: 'COLES', merchant_name: 'Coles' };
+
+  // The picker resolves the tapped charge from the feed and the recent list; seed both.
+  function openPicker() {
+    server.seed('/categories', [CAT_A, CAT_B]);
+    server.seed('/transactions', [TX]);
+    server.seed('/transactions/feed', { transactions: [TX], nextCursor: null });
+    return mount({ sheet: { mode: 'picker', txId: 't1' }, toast: null, ...fns } as unknown as AppContext);
   }
 
   describe('SheetHost tap-to-close via a backdrop behind the sheet (WHIT-288)', () => {
-    it('a distinct labelled backdrop closes the sheet on tap', () => {
+    it('a distinct labelled backdrop closes the sheet on tap', async () => {
       // The old sheet had no such control — the whole card was the close-wrapper. Its presence is
       // the fail-on-revert: revert to the wrapping Pressable and this "Close" button disappears.
-      mockState = pickerState();
-      render(<Overlays />);
+      await openPicker();
       fireEvent.press(screen.getByLabelText('Close'));
       expect(fns.setSheet).toHaveBeenCalledWith(null);
     });
 
-    it('the tap-to-close backdrop does NOT wrap the scrolling list', () => {
+    it('the tap-to-close backdrop does NOT wrap the scrolling list', async () => {
       // The bug was the closing element wrapping the ScrollView. Lock the fix structurally: the
       // "Close" backdrop must have NO ScrollView in its subtree — it's a sibling behind the sheet,
       // not an ancestor of the list. Re-wrapping the list in a labelled Pressable (reintroducing
       // the exact bug) would put a ScrollView under this element and trip the assertion. (ScrollView
       // matches by type reference in this RN/RNTL; Pressable does not, so we anchor on the list.)
-      mockState = pickerState();
-      const { UNSAFE_getByType } = render(<Overlays />);
+      const { UNSAFE_getByType } = await openPicker();
       expect(UNSAFE_getByType(ScrollView)).toBeTruthy(); // the picker list exists...
       const close = screen.getByLabelText('Close');
       expect(close.findAll((n) => n.type === ScrollView)).toHaveLength(0); // ...but not under the backdrop
     });
 
-    it('tapping a category row selects it (list stays interactive)', () => {
-      mockState = pickerState();
-      render(<Overlays />);
+    it('tapping a category row selects it (list stays interactive)', async () => {
+      await openPicker();
       fireEvent.press(screen.getByText('Groceries'));
       expect(fns.chooseCategory).toHaveBeenCalledWith('groceries');
     });
 
-    it('still renders the picker list', () => {
-      mockState = pickerState();
-      render(<Overlays />);
+    it('still renders the picker list', async () => {
+      await openPicker();
       expect(screen.getByText('Groceries')).toBeTruthy();
       expect(screen.getByText('Coffee')).toBeTruthy();
     });
@@ -320,24 +329,20 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
     readSheetDraft, writeSheetDraft,
   };
 
-  function newRuleState(): AppContext {
-    return {
-      sheet: { mode: 'addrule' }, // no ruleId → key `addrule:new`, no editing prefill
-      toast: null,
-      rules: [],
-      categories: [
-        { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },
-        { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
-      ],
-      ...fns,
-    } as unknown as AppContext;
+  function openNewRule() {
+    server.seed('/categories', [
+      { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },
+      { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
+    ]);
+    server.seed('/rules', []);
+    // no ruleId → key `addrule:new`, no editing prefill
+    return mount({ sheet: { mode: 'addrule' }, toast: null, ...fns } as unknown as AppContext);
   }
 
   beforeEach(() => {
     store.clear();
     readSheetDraft.mockClear();
     writeSheetDraft.mockClear();
-    mockState = newRuleState();
   });
 
   describe('WHIT-285 — AddRule two-field object collapse + guarded alias setters', () => {
@@ -345,8 +350,8 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
     // draft. A non-merge setter (setDraft({ categoryId: value })) would drop `conditions` from the
     // persisted object — this pins {...prev, categoryId: value}. (WHIT-563: the draft now holds a
     // `conditions` array + `logic`, not a flat `pattern`.)
-    it('[B1] selecting a category after typing a pattern persists BOTH fields (merge, no clobber)', () => {
-      render(<Overlays />);
+    it('[B1] selecting a category after typing a pattern persists BOTH fields (merge, no clobber)', async () => {
+      await openNewRule();
       fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
       fireEvent.press(screen.getByText('Groceries'));
 
@@ -357,8 +362,8 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
 
     // [B2] The reverse merge: typing a pattern AFTER selecting a category must not clobber the
     // categoryId. Order-independence of the object-merge.
-    it('[B2] typing a pattern after selecting a category keeps the categoryId (merge both ways)', () => {
-      render(<Overlays />);
+    it('[B2] typing a pattern after selecting a category keeps the categoryId (merge both ways)', async () => {
+      await openNewRule();
       fireEvent.press(screen.getByText('Subscriptions'));
       fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'NETFLIX');
 
@@ -368,8 +373,8 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
     // [B3] The guarded bailout: re-tapping the ALREADY-selected pill returns `prev` unchanged, so
     // React bails the update and the persist effect never re-fires. Dropping the
     // `prev.categoryId === value` guard would re-render with a new (equal) object and write again.
-    it('[B3] re-tapping the already-selected category is a no-op — no extra write, pattern untouched', () => {
-      render(<Overlays />);
+    it('[B3] re-tapping the already-selected category is a no-op — no extra write, pattern untouched', async () => {
+      await openNewRule();
       fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
       fireEvent.press(screen.getByText('Groceries')); // first selection → a real write
 

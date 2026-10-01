@@ -11,8 +11,7 @@
 //   - the alsoCatches warning appears when the rule would sweep other shops;
 //   - confirming calls fileByShop with the captured shop + category.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react-native';
+import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 import type { FilingResult, FilingTarget, FilingWhen } from '../context';
 import type { ApplyRulesResult, UncategorizedMerchantGroup, UncategorizedMerchants } from '../api';
@@ -24,9 +23,15 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { Overlays } from '../components/Overlays';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { openOverlays } from './support/openOverlays';
+
+const server = installFakeServer();
+useTestQueryClient();
 
 const fns = {
   setSheet: jest.fn(),
@@ -59,55 +64,57 @@ const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
   ...over,
 });
 
+// The shops load once the sheet opens, so each list test waits for them before it checks.
 function mountList(groups = [group()]) {
-  mockState = {
-    sheet: { mode: 'fileByShopList' }, toast: null, categories: CATEGORIES,
-    uncategorizedMerchants: merchants(groups), ...fns,
-  } as unknown as AppContext;
-  return render(<Overlays />);
+  server.seed('/categories', CATEGORIES);
+  server.seed('/transactions/uncategorized/merchants', merchants(groups));
+  const state = { sheet: { mode: 'fileByShopList' }, toast: null, ...fns } as unknown as AppContext;
+  return openOverlays(state, (next) => { mockState = next; });
 }
 
 async function mountConfirm(g = group(), categoryId = 'groceries') {
-  mockState = {
-    sheet: { mode: 'fileByShopConfirm', group: g, categoryId }, toast: null, categories: CATEGORIES,
-    uncategorizedMerchants: merchants([g]), ...fns,
-  } as unknown as AppContext;
-  render(<Overlays />);
+  server.seed('/categories', CATEGORIES);
+  const state = { sheet: { mode: 'fileByShopConfirm', group: g, categoryId }, toast: null, ...fns } as unknown as AppContext;
+  await openOverlays(state, (next) => { mockState = next; });
   await act(async () => {});   // let the mount-time preview resolve
 }
 
-beforeEach(() => { jest.clearAllMocks(); });
+beforeEach(() => {
+  jest.clearAllMocks();
+  resetAuth();
+});
 
 // --- the shop list ------------------------------------------------------------
 
 describe('the shop list', () => {
-  it('lists the server groups, biggest count shown', () => {
-    mountList([group({ merchant: 'Coles', count: 20 }), group({ merchant: 'Kmart', rulePattern: 'kmart', count: 5 })]);
-    expect(screen.getByText('Coles')).toBeTruthy();
+  it('lists the server groups, biggest count shown', async () => {
+    await mountList([group({ merchant: 'Coles', count: 20 }), group({ merchant: 'Kmart', rulePattern: 'kmart', count: 5 })]);
+    expect(await screen.findByText('Coles')).toBeTruthy();
     expect(screen.getByText('Kmart')).toBeTruthy();
     expect(screen.getAllByTestId('file-by-shop-group').length).toBe(2);
   });
 
-  it('opens the category tree when a shop is tapped', () => {
-    mountList();
+  it('opens the category tree when a shop is tapped', async () => {
+    await mountList();
+    const [shop] = await screen.findAllByTestId('file-by-shop-group');
     expect(screen.queryByTestId('file-by-shop-cat')).toBeNull();
-    fireEvent.press(screen.getAllByTestId('file-by-shop-group')[0]);
+    fireEvent.press(shop);
     expect(screen.getAllByTestId('file-by-shop-cat').length).toBe(CATEGORIES.length);
   });
 
   // The capture: picking a category must carry BOTH the group and the category into the confirm
   // sheet, so the confirm needs no refetch. Fail-on-revert: pass the wrong pair and this reddens.
-  it('advances to the confirm sheet with the chosen shop and category', () => {
+  it('advances to the confirm sheet with the chosen shop and category', async () => {
     const g = group();
-    mountList([g]);
-    fireEvent.press(screen.getAllByTestId('file-by-shop-group')[0]);
+    await mountList([g]);
+    fireEvent.press((await screen.findAllByTestId('file-by-shop-group'))[0]);
     fireEvent.press(screen.getByText('Groceries'));   // press the row by name (siblings sort A–Z)
     expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'fileByShopConfirm', group: g, categoryId: 'groceries' });
   });
 
-  it('shows the "every shop is filed" state when there are no groups', () => {
-    mountList([]);
-    expect(screen.getByText('Every shop is filed')).toBeTruthy();
+  it('shows the "every shop is filed" state when there are no groups', async () => {
+    await mountList([]);
+    expect(await screen.findByText('Every shop is filed')).toBeTruthy();
     expect(screen.queryByTestId('file-by-shop-group')).toBeNull();
   });
 });

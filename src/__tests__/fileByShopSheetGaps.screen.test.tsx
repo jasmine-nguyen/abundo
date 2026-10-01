@@ -13,27 +13,28 @@
 //   - [A27] the preview's date range is rendered (TZ Australia/Melbourne, pinned dates)
 //   - [A28] the list's error card (background refetch failed) and its ungrouped "one-offs" copy
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react-native';
+import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 import type { FilingResult, FilingTarget, FilingWhen } from '../context';
 import { APPLY_RULES_MAX_WRITES } from '../context';
 import type { ApplyRulesResult, UncategorizedMerchantGroup, UncategorizedMerchants } from '../api';
 
 let mockState: AppContext;
-// Override useUncategorizedMerchants so the list loading/error arms are reachable (the shared
-// queryMocksFromState hardcodes isLoading/isError false).
-let mockMerchantsResult: { merchants: unknown; isLoading: boolean; isError: boolean };
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => {
-  const base = require('./support/screenQueryMocks').queryMocksFromState(() => mockState);
-  return { ...base, useUncategorizedMerchants: () => mockMerchantsResult };
-});
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { Overlays } from '../components/Overlays';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { openOverlays, overlaysTree } from './support/openOverlays';
+
+const server = installFakeServer();
+useTestQueryClient();
+
+const MERCHANTS = '/transactions/uncategorized/merchants';
 
 const CATEGORIES = [
   { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null },
@@ -75,17 +76,17 @@ function deferred<T>() {
 }
 
 async function mountConfirm(g = group(), categoryId = 'groceries') {
-  mockState = {
-    sheet: { mode: 'fileByShopConfirm', group: g, categoryId }, toast: null, categories: CATEGORIES,
-    uncategorizedMerchants: merchants([g]), ...fns,
-  } as unknown as AppContext;
-  mockMerchantsResult = { merchants: merchants([g]), isLoading: false, isError: false };
-  const utils = render(<Overlays />);
+  server.seed('/categories', CATEGORIES);
+  const state = { sheet: { mode: 'fileByShopConfirm', group: g, categoryId }, toast: null, ...fns } as unknown as AppContext;
+  const utils = await openOverlays(state, (next) => { mockState = next; });
   await act(async () => {});   // let the mount-time preview settle
   return utils;
 }
 
-beforeEach(() => { jest.clearAllMocks(); });
+beforeEach(() => {
+  jest.clearAllMocks();
+  resetAuth();
+});
 
 // --- the confirm sheet: preview + write failure arms --------------------------
 
@@ -182,7 +183,7 @@ describe('confirm sheet — dismissed mid-write', () => {
     await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); }); // starts the write
     // Dismiss the sheet while the write is still pending → the confirm sheet unmounts.
     mockState = { ...mockState, sheet: null } as unknown as AppContext;
-    await act(async () => { rerender(<Overlays />); });
+    await act(async () => { rerender(overlaysTree()); });
 
     await act(async () => { pending.resolve({ status: 'filed', report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) }); });
 
@@ -202,7 +203,7 @@ describe('confirm sheet — dismissed mid-write', () => {
 
     await act(async () => { fireEvent.press(screen.getByTestId('file-by-shop-confirm-apply')); });
     mockState = { ...mockState, sheet: null } as unknown as AppContext;
-    await act(async () => { rerender(<Overlays />); });
+    await act(async () => { rerender(overlaysTree()); });
 
     await act(async () => { pending.resolve({ status: 'failed', background: false }); });
 
@@ -240,56 +241,60 @@ describe('confirm sheet — copy edges', () => {
 
 // --- the shop list: error + ungrouped copy ------------------------------------
 
-function mountList(result: { merchants: unknown; isLoading: boolean; isError: boolean }) {
-  mockState = {
-    sheet: { mode: 'fileByShopList' }, toast: null, categories: CATEGORIES,
-    uncategorizedMerchants: result.merchants, ...fns,
-  } as unknown as AppContext;
-  mockMerchantsResult = result;
-  return render(<Overlays />);
+// The shops load once the sheet opens; seed (or fail / hold) them before calling this.
+function mountList() {
+  server.seed('/categories', CATEGORIES);
+  const state = { sheet: { mode: 'fileByShopList' }, toast: null, ...fns } as unknown as AppContext;
+  return openOverlays(state, (next) => { mockState = next; });
 }
 
 describe('the shop list — background states', () => {
   // [A28a] A background refetch that errors (or the payload guard threw) shows the error card, not a
   // crash or a silent empty list. Fail-on-revert: drop the `isError || !merchants` arm and an
   // errored refetch renders "Every shop is filed" over real data.
-  it('[A28a] shows the error card when the shop list errors', () => {
-    mountList({ merchants: undefined, isLoading: false, isError: true });
-    expect(screen.getByText("Couldn't load your shops")).toBeTruthy();
+  it('[A28a] shows the error card when the shop list errors', async () => {
+    server.fail(MERCHANTS, 500);
+    await mountList();
+    expect(await screen.findByText("Couldn't load your shops")).toBeTruthy();
     expect(screen.getByTestId('file-by-shop-close')).toBeTruthy();
   });
 
   // [A28b] The loading spinner shows only while there is no cached data. Fail-on-revert: drop the
   // `isLoading && !merchants` arm and the busy testID is gone.
-  it('[A28b] shows the busy spinner while loading with no cached shops', () => {
-    mountList({ merchants: undefined, isLoading: true, isError: false });
+  it('[A28b] shows the busy spinner while loading with no cached shops', async () => {
+    const held = server.hold(MERCHANTS);
+    await mountList();
     expect(screen.getByTestId('file-by-shop-busy')).toBeTruthy();
+    await act(async () => { held.release(); });
   });
 
   // [A28c] Every shop filed but stray one-offs remain → the ungrouped-count copy, not the bare
   // "nothing left" copy. Fail-on-revert: drop the ungrouped.count branch and the "one-offs" line
   // is gone.
-  it('[A28c] names the leftover one-offs when every shop is filed but one-offs remain', () => {
-    mountList({ merchants: merchants([], { unfiled: 3, ungrouped: { count: 3, samples: ['ONE OFF'] } }), isLoading: false, isError: false });
-    expect(screen.getByText('Every shop is filed')).toBeTruthy();
+  it('[A28c] names the leftover one-offs when every shop is filed but one-offs remain', async () => {
+    server.seed(MERCHANTS, merchants([], { unfiled: 3, ungrouped: { count: 3, samples: ['ONE OFF'] } }));
+    await mountList();
+    expect(await screen.findByText('Every shop is filed')).toBeTruthy();
     expect(screen.getByText(/last 3 unfiled charges are one-offs/)).toBeTruthy();
   });
 
   // WHIT-544 — [A28d] with one-offs present, the "Select to file" button shows and, when tapped,
   // arms the Uncategorized multi-select jump AND closes the sheet. Fail-on-revert: drop the button
   // and getByTestId throws; drop either onPress call and its assertion fails.
-  it('[A28d] "Select to file" arms the multi-select jump and closes the sheet', () => {
-    mountList({ merchants: merchants([], { unfiled: 3, ungrouped: { count: 3, samples: ['ONE OFF'] } }), isLoading: false, isError: false });
-    fireEvent.press(screen.getByTestId('file-by-shop-one-offs'));
+  it('[A28d] "Select to file" arms the multi-select jump and closes the sheet', async () => {
+    server.seed(MERCHANTS, merchants([], { unfiled: 3, ungrouped: { count: 3, samples: ['ONE OFF'] } }));
+    await mountList();
+    fireEvent.press(await screen.findByTestId('file-by-shop-one-offs'));
     expect(fns.requestUncategorizedSelect).toHaveBeenCalledTimes(1);
     expect(fns.setSheet).toHaveBeenCalledWith(null);
   });
 
   // WHIT-544 — [A28e] the negative gate: no one-offs → no "Select to file" button (only "Done").
   // Fail-on-revert: drop the `oneOffCount > 0` guard on the button and it renders here.
-  it('[A28e] hides "Select to file" when there are no one-offs left', () => {
-    mountList({ merchants: merchants([], { unfiled: 0, ungrouped: { count: 0, samples: [] } }), isLoading: false, isError: false });
-    expect(screen.getByText(/nothing left to file by shop/)).toBeTruthy();
+  it('[A28e] hides "Select to file" when there are no one-offs left', async () => {
+    server.seed(MERCHANTS, merchants([], { unfiled: 0, ungrouped: { count: 0, samples: [] } }));
+    await mountList();
+    expect(await screen.findByText(/nothing left to file by shop/)).toBeTruthy();
     expect(screen.queryByTestId('file-by-shop-one-offs')).toBeNull();
     expect(screen.getByTestId('file-by-shop-close')).toBeTruthy();
   });
