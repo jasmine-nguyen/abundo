@@ -27,20 +27,19 @@ logger = logging.getLogger(__name__)
 
 
 def load_rules(rule_repo, category_repo):
-    """Read the user's rule book once and return `(book, is_unfiled)` ready to file charges, or
-    None if the read failed (the caller then leaves charges unfiled). Splitting the read from the
+    """Read the user's rule book once and return it ready to file charges, or None if the read
+    failed (the caller then leaves charges unfiled). Splitting the read from the
     filing lets a per-row caller (reprocess) read once, not once per charge."""
     try:
         book = RuleBook.load(rule_repo, category_repo)
     except Exception:
         logger.exception("rule ingest: could not read rules/taxonomy; charges land unfiled")
         return None
-    return book, book.is_unfiled
+    return book
 
 
-def file_charge(charge: dict, book: RuleBook, _is_unfiled=None, *, seeder=None) -> None:
-    """File one charge in place by `book` (see RuleBook.file_charges). The unused middle argument
-    keeps `file_charge(charge, *load_rules(...))` working for reprocess."""
+def file_charge(charge: dict, book: RuleBook, *, seeder=None) -> None:
+    """File one charge in place by `book` (see RuleBook.file_charges)."""
     book.file_charges([charge], seeder, counts_to_budget=counts_to_budget)
 
 
@@ -63,10 +62,9 @@ def apply(rows: list, *, rule_repo, category_repo,
     untouched."""
     if not rows:
         return rows, None                # a data-less delivery (summary event) pays for no reads
-    loaded = load_rules(rule_repo, category_repo)
-    if loaded is None:
+    book = load_rules(rule_repo, category_repo)
+    if book is None:
         return rows, None
-    book, is_unfiled = loaded
     seeder = None
     if budget_repo is not None and paycycle_repo is not None:
         # Lazy import keeps THIS module's load constants-free (its docstring invariant): rule_spreading
@@ -74,4 +72,4 @@ def apply(rows: list, *, rule_repo, category_repo,
         from rule_spreading import SpreadSeeder
         seeder = SpreadSeeder(budget_repo, paycycle_repo, rule_repo)
     book.file_charges(rows, seeder, counts_to_budget=counts_to_budget)
-    return rows, is_unfiled
+    return rows, book.is_unfiled

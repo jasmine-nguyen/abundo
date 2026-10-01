@@ -1,8 +1,7 @@
-"""WHIT-623 slice 3 QA — reprocess's per-row shape `file_charge(charge, *load_rules(...))`.
+"""WHIT-623 slice 3 QA — reprocess's per-row shape `file_charge(charge, load_rules(...))`.
 
-load_rules now returns (RuleBook, is_unfiled) and file_charge keeps an unused middle argument so the
-splat still works. The reprocess suite files one charge this way; these pin the rest of what the
-per-row path must still do (stamp, keep-out-of-budget, disagreement, deleted-category skip).
+load_rules returns the RuleBook (WHIT-633). The reprocess suite files one charge this way; these pin
+the rest of what the per-row path must still do (stamp, keep-out-of-budget, disagreement, deleted-category skip).
 """
 
 
@@ -30,21 +29,21 @@ def _charge(txn_id="t1", description="COLES 123 RICHMOND"):
 
 
 def _file(lam, charge, rules):
-    loaded = lam.rule_ingest.load_rules(_Store(rules), _Cats())
-    lam.rule_ingest.file_charge(charge, *loaded)
-    return loaded
+    book = lam.rule_ingest.load_rules(_Store(rules), _Cats())
+    lam.rule_ingest.file_charge(charge, book)
+    return book
 
 
 def test_per_row_filing_stamps_and_keeps_an_excluded_charge_out_of_the_budget(lam):
     # [A6] FAIL-ON-REVERT: make file_charge a no-op (or drop the book) and nothing is filed.
     charge = _charge()
-    _, is_unfiled = _file(lam, charge, [_rule("COLES", budget_excluded=True)])
+    book = _file(lam, charge, [_rule("COLES", budget_excluded=True)])
 
     assert charge["category"] == "groceries"
     assert charge["filed_by_rule"] == "rule-COLES-groceries"
     assert charge["budget_excluded"] is True
-    # The second element is still the taxonomy check reprocess threads into insert_or_reconcile.
-    assert is_unfiled("NOT_A_CATEGORY") is True and is_unfiled("groceries") is False
+    # The book's taxonomy check is what reprocess threads into insert_or_reconcile.
+    assert book.is_unfiled("NOT_A_CATEGORY") is True and book.is_unfiled("groceries") is False
 
 
 def test_per_row_filing_leaves_a_disagreed_charge_unfiled(lam):
