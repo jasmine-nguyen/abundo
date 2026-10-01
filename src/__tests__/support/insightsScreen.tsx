@@ -1,0 +1,81 @@
+// WHIT-687 — draw the real Insights tab over the fake server. The screen data code (../queries)
+// runs for real; only the AI slice (which still lives on the context store) is a stand-in a test
+// can set. Usage in a suite (the jest.mock calls must stay in the test file, for hoisting):
+//
+//   jest.mock('../auth', () => require('./support/authMock').authMockModule());
+//   jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
+//   jest.mock('expo-router', ...);                 // useFocusEffect + useRouter
+//   const server = installFakeServer();
+//   useTestQueryClient();
+//   beforeEach(() => { resetAuth(); resetAi(); });
+//   seedInsights(server, { breakdown: breakdownWire({ spend: { coffee: { posted: 40, pending: 0 } } }), categories });
+//   await renderInsights();
+//
+// (Not a *.test file, so the jest testMatch never runs it as a suite.)
+import React from 'react';
+import { jest } from '@jest/globals';
+import { render } from '@testing-library/react-native';
+import type { AppContext } from '../../context';
+import type { installFakeServer } from './fakeServer';
+import { renderWithQueries, WithQueries } from './renderWithQueries';
+
+type AiSlice = Pick<AppContext, 'aiInsights' | 'aiInsightsLoading' | 'aiInsightsError' | 'refreshAiInsights' | 'generateAiInsights'>;
+type Spend = Record<string, { posted: number; pending: number }>;
+
+export const refreshAiInsights = jest.fn(async () => {});
+export const generateAiInsights = jest.fn(async () => {});
+
+const AI_DEFAULTS = { aiInsights: null, aiInsightsLoading: false, aiInsightsError: false };
+let ai: AiSlice = { ...AI_DEFAULTS, refreshAiInsights, generateAiInsights };
+
+export function setAi(over: Partial<AiSlice>) {
+  ai = { ...ai, ...over };
+}
+
+export function resetAi() {
+  refreshAiInsights.mockClear();
+  generateAiInsights.mockClear();
+  ai = { ...AI_DEFAULTS, refreshAiInsights, generateAiInsights };
+}
+
+// The jest.mock('../context') factory: the real module, with useAppContext reading the AI slice.
+export function contextMockModule() {
+  return { ...(jest.requireActual('../../context') as object), useAppContext: () => ai };
+}
+
+// The /breakdown reply: spend rows plus the __earned__ / __income__ / __rollup__ extras.
+export function breakdownWire({ spend = {}, earned, income, rollup }: { spend?: Spend; earned?: number; income?: Spend; rollup?: unknown }) {
+  return {
+    ...spend,
+    ...(earned === undefined ? {} : { __earned__: { posted: earned, pending: 0 } }),
+    ...(income === undefined ? {} : { __income__: income }),
+    ...(rollup === undefined ? {} : { __rollup__: rollup }),
+  };
+}
+
+const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
+
+export function seedInsights(
+  server: ReturnType<typeof installFakeServer>,
+  { breakdown, categories, payCycle = PAY_CYCLE }: { breakdown: unknown; categories: unknown[]; payCycle?: unknown },
+) {
+  server.seed('/breakdown', breakdown);
+  server.seed('/categories', categories);
+  server.seed('/paycycle', payCycle);
+}
+
+// Required lazily: importing the screen at load time would re-enter the ../context mock factory.
+function InsightsTab() {
+  const Insights = require('../../../app/(tabs)/insights').default;
+  return <Insights />;
+}
+
+/** Draw the tab and wait until the first reads have settled. */
+export function renderInsights() {
+  return renderWithQueries(<InsightsTab />);
+}
+
+/** Draw the tab without waiting, for held / still-loading replies. */
+export function drawInsights() {
+  return render(<WithQueries><InsightsTab /></WithQueries>);
+}
