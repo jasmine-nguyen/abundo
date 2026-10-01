@@ -40,9 +40,12 @@ def reprocess_failed(repo, *, rule_repo=None, category_repo=None) -> dict:
     rows = repo.get_failed_transactions()
     summary = {"reprocessed": 0, "skipped": 0, "errors": 0}
 
-    loaded_rules = None
+    book = None
     if rule_repo is not None and category_repo is not None:
-        loaded_rules = rule_ingest.load_rules(rule_repo, category_repo)
+        book = rule_ingest.load_rules(rule_repo, category_repo)
+    is_unfiled = None
+    if book is not None:
+        is_unfiled = book.is_unfiled
 
     for row in rows:
         # Decode the stored raw BankSync row. A missing/undecodable `raw` can never
@@ -66,17 +69,15 @@ def reprocess_failed(repo, *, rule_repo=None, category_repo=None) -> dict:
             continue
 
         # File it by the user's rules before inserting, if the stores were supplied (WHIT-530).
-        if loaded_rules is not None:
-            rule_ingest.file_charge(txn, *loaded_rules)
+        if book is not None:
+            rule_ingest.file_charge(txn, book)
 
         # Insert, THEN delete the dead-letter — the delete only ever follows a durable
         # insert. A DB error here leaves the row untouched to retry next run.
         try:
             # WHIT-545: thread the taxonomy check so a stored raw category can't clobber a
-            # rule-fill on settlement. loaded_rules is (applicable, is_unfiled) or None.
-            repo.insert_or_reconcile(
-                [txn], is_unfiled=(loaded_rules[1] if loaded_rules else None)
-            )
+            # rule-fill on settlement. None when no rule book was read.
+            repo.insert_or_reconcile([txn], is_unfiled=is_unfiled)
             repo.delete_failed_transaction(row["sk"])
             summary["reprocessed"] += 1
         except Exception:

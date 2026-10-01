@@ -400,8 +400,8 @@ def test_reprocess_with_rule_stores_files_a_recovered_row(lam, repo):
 
 def test_whit545_reprocess_threads_is_unfiled_so_a_rule_fill_survives_settlement(lam, repo):
     # A dead-letter posted row re-driven with rule stores is rule-filled to "groceries" and then
-    # settles onto a pending twin holding the bank's raw enum. reprocess must pass loaded_rules[1]
-    # (is_unfiled) into insert_or_reconcile so the raw enum can't clobber the rule-fill.
+    # settles onto a pending twin holding the bank's raw enum. reprocess must pass the book's
+    # is_unfiled into insert_or_reconcile so the raw enum can't clobber the rule-fill.
     # FAIL-ON-REVERT: change reprocess.py to is_unfiled=None and the twin's raw enum wins.
     pending = lam.banksync.BankSyncClient.normalise(
         _raw_row(txn_id="PEND", amount=-5.50, pending=True, category="FOOD_AND_DRINK"))
