@@ -1,6 +1,6 @@
 """Test bootstrap for the BankSync webhook lambda suite (``lambda/``).
 
-``lambda/`` owns only the webhook-specific ``handler`` / ``repository`` /
+``lambda/`` owns only the webhook-specific ``handler`` / ``webhook_repository`` /
 ``banksync`` (and imports ``ssm`` / ``standardwebhooks``); ``constants`` /
 ``models`` / ``encoders`` come from the shared layer (``shared/``), exactly as the
 deployed webhook resolves them (its function code shadows the attached layer). The
@@ -60,9 +60,10 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _LAMBDA_DIR = str(_REPO_ROOT / "lambda")
 _SHARED_DIR = str(_REPO_ROOT / "shared")
 # Bare module names whose imports must resolve fresh per test: lambda/'s own copies
-# (handler / repository / banksync) plus the folded modules now provided by shared/
-# (constants / models / encoders). Shed so a sibling suite's cached copy can't win.
-_REIMPORT = ("handler", "up_webhook", "constants", "models", "repository", "reconcile", "banksync", "encoders", "merchant", "reprocess", "age_out",
+# (handler / webhook_repository / banksync) plus the folded modules now provided by shared/
+# (constants / models / encoders). Shed so a sibling suite's cached copy can't win —
+# including the shared facade `repository` another suite may have cached.
+_REIMPORT = ("handler", "up_webhook", "constants", "models", "repository", "webhook_repository", "reconcile", "banksync", "encoders", "merchant", "reprocess", "age_out",
              "budget_alerts", "repayment_alerts", "spend", "budget_standing", "push", "repository_base", "repository_transaction", "repository_budget",
              "repository_category", "repository_device", "repository_notify", "repository_paycycle", "rule_engine",
              "rule_ingest", "repository_rule", "pending_carry")
@@ -96,7 +97,7 @@ def lam():
         import merchant
         import models
         import reconcile
-        import repository
+        import webhook_repository
         import reprocess
         import age_out
         import budget_alerts
@@ -104,7 +105,7 @@ def lam():
         import rule_ingest
 
         ns = types.SimpleNamespace(
-            repository=repository, reconcile=reconcile, banksync=banksync, handler=handler, models=models,
+            repository=webhook_repository, reconcile=reconcile, banksync=banksync, handler=handler, models=models,
             merchant=merchant, reprocess=reprocess,
             age_out=age_out,
             budget_alerts=budget_alerts, repayment_alerts=repayment_alerts,

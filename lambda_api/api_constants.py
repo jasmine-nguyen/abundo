@@ -143,27 +143,7 @@ CHAT_LIST_MAX = 200
 # AI trend can't silently change the breakdown lookback.
 BREAKDOWN_MAX_LOOKBACK = 12
 
-# The (field, operator) pairs a rule may use — MIRRORS shared/rule_engine._FIELD_OPERATORS and MUST
-# stay in lockstep with it (WHIT-541). The engine is constants-free, so the two lists are unlinked:
-# a pair the validator accepts but the engine can't evaluate silently matches nothing. Widen BOTH
-# together.
-RULE_FIELD_OPERATORS = {
-    "description": frozenset({"contains", "equals"}),
-    "merchant": frozenset({"contains", "equals"}),
-    "category": frozenset({"equals"}),
-    "account": frozenset({"equals"}),
-    "amount": frozenset({"less_than", "less_than_or_equal", "greater_than", "greater_than_or_equal"}),
-    "direction": frozenset({"is"}),
-}
-# Derived: every field, and the union of every operator — the legacy single-condition create check
-# still validates field/operator independently, then the (field, operator) pair is verified against
-# RULE_FIELD_OPERATORS.
-RULE_FIELDS = frozenset(RULE_FIELD_OPERATORS)
-RULE_OPERATORS = frozenset().union(*RULE_FIELD_OPERATORS.values())
-# How a multi-condition rule combines its conditions: "all" = AND, "any" = OR.
-RULE_LOGIC = frozenset({"all", "any"})
-# The one direction condition's allowed values.
-RULE_DIRECTIONS = frozenset({"debit", "credit"})
+# The rule vocabulary (RULE_FIELD_OPERATORS etc.) lives in shared/constants.py (WHIT-608).
 # Applied when a create request omits them: the plain "description contains X"
 # rule that the current in-app UI produces.
 DEFAULT_RULE_FIELD = "description"

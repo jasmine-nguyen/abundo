@@ -16,7 +16,7 @@ import json
 import logging
 
 from banksync import BankSyncClient
-from repository import TransactionRepository
+from webhook_repository import TransactionRepository
 import rule_ingest
 from repository_rule import RuleRepository
 from repository_category import CategoryRepository

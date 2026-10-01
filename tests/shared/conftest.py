@@ -64,7 +64,8 @@ def api_key_module():
 def rule_engine():
     """shared/rule_engine.py imported in isolation — the pure rule-matching logic (WHIT-527).
 
-    Standalone like api_key_module: rule_engine imports only `re`, so it needs neither the boto
+    Standalone like api_key_module: rule_engine imports only `re` plus `constants` from shared/
+    (already first on sys.path), so it needs neither the boto
     fakes nor the repository chain the `shared` fixture wires up."""
     while _SHARED_DIR in sys.path:
         sys.path.remove(_SHARED_DIR)

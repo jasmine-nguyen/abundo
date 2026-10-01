@@ -1,5 +1,5 @@
 // WHIT-563 — the client's rule vocabulary must equal the server's. The engine evaluates only the
-// (field, operator) pairs in shared/rule_engine, mirrored by lambda_api/api_constants.py; the builder's
+// (field, operator) pairs in shared/constants.py (which the API also validates against); the builder's
 // pickers are a hand copy. If the two drift, the form offers a pair the engine can't evaluate (it
 // silently matches nothing) or blocks one it can. This pins them together the way applyRulesCap
 // pins the write cap. Fail-on-revert: change either side and this reddens.
@@ -12,9 +12,9 @@ const readServer = (rel: string) => fs.readFileSync(path.join(__dirname, '../../
 const quoted = (block: string) => [...block.matchAll(/"([^"]+)"/g)].map((m) => m[1]).sort();
 
 describe('the client rule vocabulary mirrors the server', () => {
-  const constants = readServer('lambda_api/api_constants.py');
+  const constants = readServer('shared/constants.py');
 
-  it('RULE_FIELD_OPERATORS matches lambda_api/api_constants.py', () => {
+  it('RULE_FIELD_OPERATORS matches shared/constants.py', () => {
     const block = constants.match(/RULE_FIELD_OPERATORS\s*=\s*\{([\s\S]*?)\n\}/);
     expect(block).not.toBeNull();
     const server: Record<string, string[]> = {};

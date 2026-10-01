@@ -33,7 +33,7 @@ def test_get_pending_is_the_webhook_paginated_override_not_the_parent(repo):
     # if the subclass's copy were dropped, resolution would fall through to a parent
     # that PAGINATES DIFFERENTLY (or not at all). Pin it to the webhook module.
     method = type(repo).get_pending_transactions_for_account
-    assert method.__module__ == "repository", method.__module__
+    assert method.__module__ == "webhook_repository", method.__module__
 
     parent = type(repo).__mro__[1]
     assert parent.__module__ == "repository_transaction", parent.__module__

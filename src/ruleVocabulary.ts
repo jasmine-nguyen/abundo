@@ -1,8 +1,8 @@
 // WHIT-563 — the client's rule-condition vocabulary. MIRRORS the server's RULE_FIELD_OPERATORS /
-// RULE_LOGIC / RULE_DIRECTIONS (lambda_api/api_constants.py, itself a mirror of shared/rule_engine).
+// RULE_LOGIC / RULE_DIRECTIONS (shared/constants.py, used by both the rule engine and the API).
 // The engine evaluates only these (field, operator) pairs, so the builder's pickers must offer
 // exactly this set — a pair the UI offers but the engine can't evaluate silently matches nothing.
-// Guarded by ruleVocabulary.logic.test.ts (parity with api_constants.py + merchant_groups.py).
+// Guarded by ruleVocabulary.logic.test.ts (parity with shared/constants.py + merchant_groups.py).
 import type { RuleLogic } from './api';
 
 export const RULE_FIELD_OPERATORS: Record<string, string[]> = {

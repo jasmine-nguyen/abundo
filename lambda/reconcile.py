@@ -1,7 +1,7 @@
 """Pending -> posted settlement planning, pure (no database) (WHIT-624).
 
 `plan_reconcile` takes the new charges, the stored posted rows and the pending pools and
-returns a plan of steps. `insert_or_reconcile` (repository.py) carries the plan out against
+returns a plan of steps. `insert_or_reconcile` (webhook_repository.py) carries the plan out against
 the table; the budget-alert preview (budget_alerts.py) carries it out in memory with
 `apply_plan`. One planner, so the two can't drift.
 """

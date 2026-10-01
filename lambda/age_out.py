@@ -31,7 +31,7 @@ from datetime import date, timedelta
 
 from constants import ACCOUNT_ID_MAP, PENDING_AGE_OUT_DAYS
 from pending_carry import find_carry_twin, is_filed, load_is_unfiled, with_carried_category
-from repository import TransactionRepository
+from webhook_repository import TransactionRepository
 from repository_category import CategoryRepository
 from repository_errors import DatabaseError
 from spend import melbourne_today
