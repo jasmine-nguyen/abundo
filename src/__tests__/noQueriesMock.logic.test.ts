@@ -37,8 +37,6 @@ const ALLOWED = new Set<string>([
   'goalsHubPayoffFloor.screen.test.tsx',
   'goalsHubPureHero.screen.test.tsx',
   'goalTooAggressive.screen.test.tsx',
-  'insightsColourSlots.screen.test.tsx',
-  'InsightsScreen.screen.test.tsx',
   'loanCeilingCopy.screen.test.tsx',
   'loanFactsForm.edit.screen.test.tsx',
   'loanFactsForm.screen.test.tsx',

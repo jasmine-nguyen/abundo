@@ -53,6 +53,8 @@ describe('no test mocks the api', () => {
       'earnedVsSpentGate.screen.test.tsx': 5,
       'insightsIncomePalette.screen.test.tsx': 4,
       'insightsScreenGaps.screen.test.tsx': 33,
+      'insightsColourSlots.screen.test.tsx': 45,
+      'InsightsScreen.screen.test.tsx': 165,
       'goalScreenData.screen.test.tsx': 35,
       'goalScreenData.edges.screen.test.tsx': 33,
       'goalKeepLastGood.edges.screen.test.tsx': 12,

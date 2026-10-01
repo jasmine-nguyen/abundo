@@ -23,7 +23,7 @@ type AiSlice = Pick<AppContext, 'aiInsights' | 'aiInsightsLoading' | 'aiInsights
 type Spend = Record<string, { posted: number; pending: number }>;
 
 export const refreshAiInsights = jest.fn(async () => {});
-export const generateAiInsights = jest.fn(async () => {});
+export const generateAiInsights = jest.fn<AppContext['generateAiInsights']>(async () => {});
 
 const AI_DEFAULTS = { aiInsights: null, aiInsightsLoading: false, aiInsightsError: false };
 let ai: AiSlice = { ...AI_DEFAULTS, refreshAiInsights, generateAiInsights };
@@ -78,4 +78,9 @@ export function renderInsights() {
 /** Draw the tab without waiting, for held / still-loading replies. */
 export function drawInsights() {
   return render(<WithQueries><InsightsTab /></WithQueries>);
+}
+
+/** Redraw an already-drawn tab, e.g. after setAi() changed the AI slice. */
+export function redrawInsights(view: ReturnType<typeof render>) {
+  view.rerender(<WithQueries><InsightsTab /></WithQueries>);
 }
