@@ -17,6 +17,7 @@ import type { Transaction, Category, Rule } from '../context';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 import { installFakeServer } from './support/fakeServer';
+import { refreshInAct } from './support/renderWithQueries';
 
 // Live auth store (superset). The static-'authed' siblings never touch mockStatus, so it stays
 // 'authed' for them; the two sign-out siblings mutate it via mockSetStatus to drive sign-out.
@@ -149,7 +150,7 @@ it('[WHIT-360] exclude rollback un-stamps only the marked list, not an unrelated
   expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([txn({ budget_excluded: true })]); // marked, not removed
 
   // A background refetch of the unrelated 'food' list lands while the save is still pending.
-  act(() => { queryClient.setQueryData(['budgetTransactions', 'food'], [txn({ transaction_id: 't9new' })]); });
+  await refreshInAct(() => queryClient.setQueryData(['budgetTransactions', 'food'], [txn({ transaction_id: 't9new' })]));
 
   await act(async () => { held.fail('PATCH'); await pending; });
 
@@ -446,7 +447,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
       expect(foodList()).toEqual([]); // food shrank optimistically; shopping was never touched
 
       // A background refetch of the UNRELATED shopping list lands while the save is still pending.
-      act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('t9new', { category: 'shopping' })]); });
+      await refreshInAct(() => queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('t9new', { category: 'shopping' })]));
 
       await act(async () => { held.fail('PATCH'); await pending; });
 
@@ -483,7 +484,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
         expect(foodList()).toEqual([]); // both dropped optimistically; shopping untouched
 
         // A background refetch of the UNRELATED shopping list lands while the batch is still pending.
-        act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]); });
+        await refreshInAct(() => queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]));
 
         await act(async () => { held.release(); await pending; });
 
@@ -505,7 +506,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
         expect(foodList()).toEqual([]);            // both shrank optimistically
         expect(budgetList('coffee')).toEqual([]);
 
-        act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]); });
+        await refreshInAct(() => queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]));
 
         await act(async () => { held.fail('PATCH'); await pending; });
 
@@ -530,7 +531,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
         // WHIT-525: the row is stamped budget_excluded in place (not removed).
         expect(foodList()).toEqual([txn('t1', { budget_excluded: true })]);
 
-        act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]); });
+        await refreshInAct(() => queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]));
 
         await act(async () => { held.fail('PATCH'); await pending; });
 
@@ -598,7 +599,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
         expect(foodList()).toEqual([txn('t1', { budget_excluded: true })]);
 
         // shopping's refetch lands mid-save, now holding real rows.
-        act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]); });
+        await refreshInAct(() => queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]));
 
         await act(async () => { held.fail('PATCH'); await pending; });
 

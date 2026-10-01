@@ -14,6 +14,7 @@ import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
+import { refreshInAct } from './support/renderWithQueries';
 
 const server = installFakeServer();
 
@@ -90,7 +91,7 @@ describe('deleteGoal — failure edges', () => {
     const result = mountAppContext();
     let p!: Promise<boolean>;
     act(() => { p = result.current.deleteGoal('g1'); });      // optimistic remove -> [g2]
-    act(() => { queryClient.removeQueries({ queryKey: ['goals'] }); }); // cache evicted mid-flight
+    await refreshInAct(() => queryClient.removeQueries({ queryKey: ['goals'] })); // cache evicted mid-flight
     await act(async () => {
       held.fail('DELETE', { status: 500 });
       await p;
@@ -110,7 +111,7 @@ describe('deleteRule — cache evicted mid-flight is a NO-OP (asymmetry vs delet
     const result = mountAppContext();
     let p!: Promise<void>;
     act(() => { p = result.current.deleteRule('r1'); });
-    act(() => { queryClient.removeQueries({ queryKey: ['rules'] }); });
+    await refreshInAct(() => queryClient.removeQueries({ queryKey: ['rules'] }));
     await act(async () => {
       held.fail('DELETE', { status: 500 });
       await p;
