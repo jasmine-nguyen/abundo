@@ -1,19 +1,11 @@
 // No test may mock api.ts in any form (bare auto-mock, factory mock, jest.doMock): a mock skips
 // the real request code (src/api.ts). Suites use `installFakeServer()` instead.
 import { describe, it, expect } from '@jest/globals';
-import { readdirSync, readFileSync } from 'fs';
-import { join, relative } from 'path';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { testFiles } from './support/sourceScan';
 
 const API_MOCK = /^\s*jest\.(mock|doMock)\(\s*['"](\.\.\/)+api['"]/m;
-
-function testFiles(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) return testFiles(path);
-    if (!/\.tsx?$/.test(entry.name)) return [];
-    return [relative(__dirname, path)];
-  });
-}
 
 function mocksApi(file: string): boolean {
   return API_MOCK.test(readFileSync(join(__dirname, file), 'utf8'));

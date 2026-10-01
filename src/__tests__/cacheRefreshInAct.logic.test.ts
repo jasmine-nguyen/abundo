@@ -6,12 +6,11 @@
 // cache call is caught anywhere in the body, not just as the first statement.
 // Fail-on-revert: put one direct cache call back inside act and this goes red, naming the file.
 import { describe, it, expect } from '@jest/globals';
-import { readdirSync, readFileSync, statSync } from 'fs';
-import { basename, join, relative, sep } from 'path';
-import { matchingBrace, stripComments } from './support/sourceScan';
+import { readFileSync } from 'fs';
+import { basename, join } from 'path';
+import { matchingBrace, stripComments, testFiles } from './support/sourceScan';
 
 const TESTS_DIR = __dirname;
-const SUPPORT_DIR = join(TESTS_DIR, 'support');
 // Built from parts so this file never contains the pattern it hunts for.
 const CACHE_METHODS = ['invalidate', 'refetch', 'reset', 'remove'].map((verb) => verb + 'Queries').concat('set' + 'QueryData');
 const CACHE_CALL = new RegExp('\\.\\s*(' + CACHE_METHODS.join('|') + ')\\b');
@@ -28,16 +27,8 @@ function callsCacheInsideAct(source: string): boolean {
   return false;
 }
 
-function testFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    const abs = join(dir, entry);
-    if (abs === SUPPORT_DIR) continue;
-    if (statSync(abs).isDirectory()) out.push(...testFiles(abs));
-    else if (/\.tsx?$/.test(entry) && entry !== basename(__filename)) out.push(abs);
-  }
-  return out;
-}
+const scannedFiles = (): string[] =>
+  testFiles(TESTS_DIR).filter((file) => !file.startsWith('support/') && file !== basename(__filename));
 
 const ACT = 'act' + '(';
 const REFRESH_IN_ACT = 'refreshIn' + 'Act(';
@@ -53,6 +44,7 @@ describe('cache refreshes in screen tests go through refreshInAct', () => {
     ['a cache call after the first statement', `${ACT}async () => { foo(); client.${'invalidate' + 'Queries'}(); });`],
     ['a third statement, multi-line', `${ACT}async () => {\n  foo();\n  bar(1);\n  client.${'refetch' + 'Queries'}();\n});`],
     ['a write mid-save', `await ${ACT}async () => { const p = save(); client.${'set' + 'QueryData'}(['k'], []); ok = await p; });`],
+    ['a paren inside a string before the cache call', `await ${ACT}async () => { foo(')'); client.${'set' + 'QueryData'}(['k'], []); ok = await p; });`],
   ])('flags a direct cache call inside act: %s', (_name, source) => {
     expect(callsCacheInsideAct(source)).toBe(true);
   });
@@ -68,9 +60,14 @@ describe('cache refreshes in screen tests go through refreshInAct', () => {
   });
 
   it('no test file outside support/ calls the query cache directly inside act', () => {
-    const offenders = testFiles(TESTS_DIR)
-      .filter((abs) => callsCacheInsideAct(readFileSync(abs, 'utf8')))
-      .map((abs) => relative(TESTS_DIR, abs).split(sep).join('/'));
+    const offenders = scannedFiles().filter((file) => callsCacheInsideAct(readFileSync(join(TESTS_DIR, file), 'utf8')));
     expect(offenders).toEqual([]);
+  });
+
+  it('scans the real test tree, skipping support/ and itself', () => {
+    const files = scannedFiles();
+    expect(files).toContain('goalsHub.screen.test.tsx');
+    expect(files.filter((file) => file.startsWith('support/'))).toEqual([]);
+    expect(files).not.toContain('cacheRefreshInAct.logic.test.ts');
   });
 });

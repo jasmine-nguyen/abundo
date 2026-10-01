@@ -1,5 +1,5 @@
 // WHIT-681 QA — matchingBrace (support/sourceScan.ts) now takes any open/close pair. The cache-in-act
-// guards rely on the '(' ')' form; the colour guards rely on the '{' '}' default staying put.
+// guard (cacheRefreshInAct.logic.test.ts) relies on the '(' ')' form; the colour guards rely on the '{' '}' default staying put.
 import { describe, it, expect } from '@jest/globals';
 import { matchingBrace, styleBlocks } from './support/sourceScan';
 
@@ -24,5 +24,9 @@ describe('matchingBrace default is unchanged for the colour guards', () => {
     const blocks = styleBlocks("const s = { card: { transform: [{ scale: f(1) }], label: '}', color: c(2) } };");
     const card = blocks.find((block) => block.name === 'card');
     expect(card?.body).toBe(" transform: [{ scale: f(1) }], label: '}', color: c(2) ");
+  });
+
+  it('matches braces by default, skipping a quoted brace', () => {
+    expect(matchingBrace('a: { b: { c: 1 }, d: "}" } tail', 3)).toBe(25);
   });
 });

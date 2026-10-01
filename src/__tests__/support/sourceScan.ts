@@ -9,8 +9,8 @@
 // The shadowed-folder guard (themeLayout.logic.test.ts) is the fourth consumer: it drives walkSrc
 // (below) to catch a file and a same-named folder sitting side by side.
 //
-// The cache-in-act guards (cacheRefreshInAct / cacheRefreshAnywhereInAct .logic.test.ts) use
-// stripComments and matchingBrace to read each act(...) body whole.
+// The cache-in-act guard (cacheRefreshInAct.logic.test.ts) uses stripComments and matchingBrace
+// to read each act(...) body whole.
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, relative, sep } from 'path';
 
@@ -36,6 +36,18 @@ export function shippedSourceFiles(): string[] {
   };
   for (const dir of SCAN_DIRS) walk(join(ROOT, dir));
   return out.sort();
+}
+
+// Every .ts/.tsx file under `dir`, relative to `root` and forward-slashed — the test-tree guards
+// (noAutoMockApi, noQueriesMock, cacheRefreshInAct, cacheInActSingleGuard, testQueryClientShared)
+// scan this.
+export function testFiles(root: string, dir: string = root): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return testFiles(root, path);
+    if (!/\.tsx?$/.test(entry.name)) return [];
+    return [relative(root, path).split(sep).join('/')];
+  });
 }
 
 // A comment describing a colour is documentation, not shipped colour — src/theme.ts spells several
