@@ -1,0 +1,233 @@
+"""WHIT-678-perm QA: the transaction-trigger role, enforced against the pending mirror's real calls.
+
+The static guard (test_trigger_iam_dynamodb_actions.py) proves the needed verbs are granted
+somewhere in the policy. These tests read the policy per statement and play the WHIT-678 live
+incident (Cettire + SP RUSHFASTERAU) through a FakeTable that refuses, with AccessDenied, any
+call the trigger policy in terraform/iam.tf would refuse, including the LeadingKeys scope.
+"""
+
+import copy
+import fnmatch
+import importlib
+import pathlib
+import re
+import sys
+from datetime import date
+from decimal import Decimal
+
+import pytest
+from _boto_stubs import install_import_satisfiers, use_condition_fields
+from _dynamo_fakes import FakeTable, _client_error
+from _terraform import TERRAFORM_DIR, granted_dynamodb_actions, tf_block
+
+install_import_satisfiers(ssm_default="test-api-key")
+
+WESTPAC_AID = "A3AC9195-9E8D-48B8-86D0-46D130D7F64A"
+WESTPAC_SOURCE = {"bid": "fiskil_77", "aid": WESTPAC_AID}
+WESTPAC = "westpac-altitude-qantas-black"
+TODAY = date(2026, 10, 1)
+
+_SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
+_SHARED_MODULES = {path.stem for path in pathlib.Path(_SHARED_DIR).glob("*.py")} - {"ssm"}
+
+_OPERATION_TO_ACTION = {
+    "get_item": "GetItem",
+    "put_item": "PutItem",
+    "query": "Query",
+    "update_item": "UpdateItem",
+    "delete_item": "DeleteItem",
+    "batch_writer": "BatchWriteItem",
+}
+
+
+def _statements() -> list[str]:
+    """Each top-level `{ ... }` of the trigger policy's Statement list, as text."""
+    block = tf_block((TERRAFORM_DIR / "iam.tf").read_text(), "aws_iam_role_policy", "transaction_trigger_dynamodb")
+    body = block[block.index("Statement"):]
+    statements, depth, start = [], 0, None
+    for position, char in enumerate(body):
+        if char == "{":
+            if depth == 0:
+                start = position
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                statements.append(body[start:position + 1])
+            if depth < 0:
+                break
+    return statements
+
+
+def _leading_keys(statement: str):
+    match = re.search(r'"dynamodb:LeadingKeys"\s*=\s*\[([^\]]*)\]', statement)
+    if match is None:
+        return None
+    return re.findall(r'"([^"]+)"', match.group(1))
+
+
+def _allows(action: str, pk) -> bool:
+    for statement in _statements():
+        if action not in granted_dynamodb_actions(statement):
+            continue
+        patterns = _leading_keys(statement)
+        if patterns is None:
+            return True
+        # ForAllValues:StringLike → the request's partition key must match one pattern.
+        if pk is not None and any(fnmatch.fnmatchcase(pk, pattern) for pattern in patterns):
+            return True
+    return False
+
+
+def _pk_of(operation, subject):
+    if operation == "query":
+        return None
+    return subject.get("pk")
+
+
+def _access_denied():
+    return _client_error("AccessDeniedException", "not authorized (trigger role)")
+
+
+def _enforce_trigger_policy(table: FakeTable) -> FakeTable:
+    for operation, action in _OPERATION_TO_ACTION.items():
+        table.fail(
+            operation,
+            error=_access_denied(),
+            when=lambda subject, operation=operation, action=action: not _allows(action, _pk_of(operation, subject)),
+        )
+    return table
+
+
+@pytest.fixture
+def layer():
+    with use_condition_fields():
+        sys.path.insert(0, _SHARED_DIR)
+        saved = {name: sys.modules.pop(name, None) for name in _SHARED_MODULES | {"pending_mirror"}}
+        try:
+            yield (
+                importlib.import_module("repository_transaction"),
+                importlib.import_module("pending_mirror"),
+                importlib.import_module("repository_category"),
+            )
+        finally:
+            for name, module in saved.items():
+                sys.modules.pop(name, None)
+                if module is not None:
+                    sys.modules[name] = module
+            sys.path.remove(_SHARED_DIR)
+
+
+@pytest.fixture
+def repo(layer):
+    repository = layer[0].TransactionRepository()
+    repository._table = _enforce_trigger_policy(FakeTable())
+    return repository
+
+
+def _row(transaction_id, description, amount, day="2026-09-30", **fields):
+    return {
+        "pk": f"ACCOUNT#{WESTPAC}",
+        "sk": f"TXN#{transaction_id}",
+        "transaction_id": transaction_id,
+        "account_id": WESTPAC,
+        "date": day,
+        "amount": Decimal(amount),
+        "description": description,
+        "merchant_name": "",
+        "status": "pending",
+        "category": "Unfiled",
+        **fields,
+    }
+
+
+def _is_unfiled(category):
+    return category not in ("shopping", "clothing")
+
+
+def _seed_rush_and_cettire(repo, merchant):
+    rows = [
+        _row("old_cettire", "Pending - Cettire          ", "-260.36", category="shopping", notes="The North Face Jacket"),
+        _row("new_cettire", "PENDING - Cettire           ", "-260.36", category="shopping", filed_by_rule="rule-1"),
+        _row("old_rush", "Pending - SP RUSHFASTERAU", "-192.00", day="2026-09-29", category="shopping",
+             notes="Patagonia Backpack"),
+        _row("new_rush", "PENDING - SP RUSHFASTERAU", "-192.00", category="shopping", filed_by_rule="rule-1"),
+    ]
+    for row in rows:
+        row["merchant_name"] = merchant.clean_merchant(row["description"], "")
+    repo._table.seed(*rows)
+
+
+def _bank(*ids):
+    return [{"id": transaction_id, "accountId": WESTPAC_AID, "pending": True, "date": "2026-09-30"}
+            for transaction_id in ids]
+
+
+# [A1] P0 — the live incident, replayed under the trigger role's real policy.
+def test_the_rush_and_cettire_doubles_are_removed_with_notes_kept_under_the_trigger_policy(layer, repo):
+    _, mirror, _ = layer
+    _seed_rush_and_cettire(repo, importlib.import_module("merchant"))
+    bank = _bank("new_cettire", "new_rush")
+
+    result = mirror.mirror_account(repo, lambda *args: copy.deepcopy(bank), WESTPAC_SOURCE, TODAY, _is_unfiled)
+
+    assert result["failed"] == 0, f"a call was refused by the trigger policy (AccessDenied): {result}"
+    assert result["carried"] == 2
+    keys = {key[1] for key in repo._table.store}
+    assert keys == {"TXN#new_cettire", "TXN#new_rush"}
+    assert repo._table.store[(f"ACCOUNT#{WESTPAC}", "TXN#new_cettire")]["notes"] == "The North Face Jacket"
+    assert repo._table.store[(f"ACCOUNT#{WESTPAC}", "TXN#new_rush")]["notes"] == "Patagonia Backpack"
+
+
+# [A2] P0 — UpdateItem can't widen quietly: EVERY statement granting it carries the scope.
+def test_every_statement_granting_update_item_is_scoped_to_transaction_rows_on_the_base_table():
+    granting = [statement for statement in _statements() if "UpdateItem" in granted_dynamodb_actions(statement)]
+    assert granting, "no statement grants UpdateItem, so carry_onto_pending gets AccessDenied"
+    for statement in granting:
+        assert _leading_keys(statement) == ["ACCOUNT#*"], f"UpdateItem not scoped to ACCOUNT# rows:\n{statement}"
+        assert '"ForAllValues:StringLike"' in statement, f"the ACCOUNT#* wildcard needs StringLike:\n{statement}"
+        assert "/index/" not in statement, f"UpdateItem should be base-table only:\n{statement}"
+
+
+# [A3] P1 — the rows the trigger updates are the ones the repository writes: their pk matches the scope.
+def test_every_account_rows_pk_is_inside_the_update_scope(layer):
+    repository_transaction = layer[0]
+    constants = importlib.import_module("constants")
+    repository = repository_transaction.TransactionRepository()
+    repository._table = FakeTable()
+    repository.insert_transactions([
+        {"transaction_id": f"t-{account_id}", "account_id": account_id, "date": "2026-09-30",
+         "amount": Decimal("-1"), "status": "pending"}
+        for account_id in constants.ACCOUNT_ID_MAP.values()
+    ])
+
+    pks = {key[0] for key in repository._table.store}
+    assert len(pks) == len(constants.ACCOUNT_ID_MAP)
+    for pk in pks:
+        assert _allows("UpdateItem", pk), f"the trigger role can't update a row with pk {pk!r}"
+
+
+# [A4] P1 — per the plan, the category colour backfill (pk CATEGORIES) stays denied for this role.
+def test_the_categories_row_is_outside_the_update_scope():
+    assert not _allows("UpdateItem", "CATEGORIES")
+    assert not _allows("PutItem", "CATEGORIES")
+
+
+# [A5] P1 — with the backfill denied, the mirror's category read still fails open.
+def test_the_category_read_still_succeeds_when_its_backfill_is_denied(layer):
+    _, _, repository_category = layer
+    pending_carry = importlib.import_module("pending_carry")
+    category_repo = repository_category.CategoryRepository()
+    table = _enforce_trigger_policy(FakeTable())
+    unslotted = {
+        cat_id: {key: value for key, value in category.items() if key != "colorSlot"}
+        for cat_id, category in repository_category.SEED_CATEGORIES.items()
+    }
+    table.seed({"pk": "CATEGORIES", "sk": "CATEGORIES", "items": unslotted, "version": Decimal(1)})
+    category_repo._table = table
+
+    is_unfiled = pending_carry.load_is_unfiled(category_repo)
+
+    assert table.update_keys, "the store should need a backfill, so the denied write is attempted"
+    assert is_unfiled("not-a-category")
+    assert not is_unfiled(next(iter(repository_category.SEED_CATEGORIES)))
