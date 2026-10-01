@@ -2,27 +2,28 @@
 // reads the live GoalRecord from the ['goals'] cache and, on Save, resends the WHOLE manual
 // record via saveGoal (a whole-record PUT upsert) with the new balance + as-of. Rendered via
 // <Overlays /> with the store's `sheet` set to goalbalance (same style as PayCycleSheet's test).
-// The queries mock is hand-rolled because support/screenQueryMocks doesn't expose useGoalsQuery.
+// The goals come from the fake server via support/openOverlays (WHIT-671).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
 import { Modal } from 'react-native';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
+import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 import type { GoalRecord } from '../api';
 
 let mockState: AppContext;
-let mockGoals: GoalRecord[];
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => ({
-  useIsAuthed: () => true,
-  useGoalsQuery: () => ({ data: mockGoals }),
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { Overlays } from '../components/Overlays';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { openOverlays, overlaysTree } from './support/openOverlays';
+
+const server = installFakeServer();
+useTestQueryClient();
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -50,22 +51,30 @@ function sheetState(goalId = 'g2'): AppContext {
   } as unknown as AppContext;
 }
 
+// The goals the server holds for this test; openSheet seeds them before the sheet opens.
+let goals: GoalRecord[];
+
+function openSheet(goalId = 'g2') {
+  server.seed('/goals', goals);
+  return openOverlays(sheetState(goalId), (next) => { mockState = next; });
+}
+
 beforeEach(() => {
   fns.saveGoal.mockClear().mockImplementation(async () => true);
   fns.showToast.mockClear();
   fns.setSheet.mockClear();
-  mockGoals = [CAR_LOAN];
-  mockState = sheetState();
+  resetAuth();
+  goals = [CAR_LOAN];
 });
 
-it('shows the goal name and prefills the current balance', () => {
-  render(<Overlays />);
+it('shows the goal name and prefills the current balance', async () => {
+  await openSheet();
   expect(screen.getByText(/Car loan/)).toBeTruthy();
   expect(screen.getByDisplayValue('12000')).toBeTruthy();
 });
 
 it('Save resends the FULL manual record with the new balance + as-of today, then closes', async () => {
-  render(<Overlays />);
+  await openSheet();
   fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
   await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
 
@@ -84,7 +93,7 @@ it('Save resends the FULL manual record with the new balance + as-of today, then
 });
 
 it('a $0 balance is valid (a paid-off manual debt)', async () => {
-  render(<Overlays />);
+  await openSheet();
   fireEvent.changeText(screen.getByTestId('goal-balance-input'), '0');
   await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
   expect(fns.showToast).not.toHaveBeenCalled();
@@ -93,7 +102,7 @@ it('a $0 balance is valid (a paid-off manual debt)', async () => {
 });
 
 it('rejects a non-numeric balance with a toast and no save', async () => {
-  render(<Overlays />);
+  await openSheet();
   fireEvent.changeText(screen.getByTestId('goal-balance-input'), '12abc');
   await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
   expect(fns.showToast).toHaveBeenCalledWith('Enter a balance of $0 or more.');
@@ -101,7 +110,7 @@ it('rejects a non-numeric balance with a toast and no save', async () => {
 });
 
 it('rejects a negative balance', async () => {
-  render(<Overlays />);
+  await openSheet();
   fireEvent.changeText(screen.getByTestId('goal-balance-input'), '-5');
   await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
   expect(fns.showToast).toHaveBeenCalledWith('Enter a balance of $0 or more.');
@@ -110,7 +119,7 @@ it('rejects a negative balance', async () => {
 
 it('a failed save keeps the sheet OPEN (does not navigate/close)', async () => {
   fns.saveGoal.mockImplementation(async () => false);
-  render(<Overlays />);
+  await openSheet();
   fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
   await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
   expect(fns.saveGoal).toHaveBeenCalledTimes(1);
@@ -118,14 +127,14 @@ it('a failed save keeps the sheet OPEN (does not navigate/close)', async () => {
   expect(fns.setSheet).not.toHaveBeenCalled();
 });
 
-it('renders nothing when the goal is absent (deleted elsewhere / cold cache)', () => {
-  mockGoals = []; // g2 not in the cache
-  render(<Overlays />);
+it('renders nothing when the goal is absent (deleted elsewhere / cold cache)', async () => {
+  goals = []; // g2 not on the server
+  await openSheet();
   expect(screen.queryByTestId('goal-balance-save')).toBeNull();
 });
 
 it('picking a date backdates manual_as_of to the chosen ISO date', async () => {
-  render(<Overlays />);
+  await openSheet();
   fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
   fireEvent.press(screen.getByTestId('mock-datepicker')); // the mock fires 2026-06-20
   await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
@@ -137,14 +146,13 @@ it('picking a date backdates manual_as_of to the chosen ISO date', async () => {
 // per-goal re-seed on remount, and the hardware-back dismiss. Own beforeEach seeds a SECOND goal. =====
 describe('goal-balance sheet — adversarial gaps (WHIT-235)', () => {
   beforeEach(() => {
-    mockGoals = [CAR_LOAN, HOLIDAY];
-    mockState = sheetState();
+    goals = [CAR_LOAN, HOLIDAY];
   });
 
   // [A18] a BLANK balance is rejected — the tests above cover '12abc' and '-5' but never the
   // empty string, which is the most common real mis-tap (open sheet, clear field, hit save).
   it('rejects a blank balance with a toast and no save', async () => {
-    render(<Overlays />);
+    await openSheet();
     fireEvent.changeText(screen.getByTestId('goal-balance-input'), '');
     await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
     expect(fns.showToast).toHaveBeenCalledWith('Enter a balance of $0 or more.');
@@ -154,7 +162,7 @@ describe('goal-balance sheet — adversarial gaps (WHIT-235)', () => {
   // [A19] a DECIMAL like "12.5" is accepted and passed through unrounded — the whole point of the
   // decimal-pad. The tests above only exercised whole numbers, so nothing proves the fractional path.
   it('accepts a decimal balance and passes it through as a float', async () => {
-    render(<Overlays />);
+    await openSheet();
     fireEvent.changeText(screen.getByTestId('goal-balance-input'), '12.5');
     await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
     expect(fns.showToast).not.toHaveBeenCalled();
@@ -165,19 +173,19 @@ describe('goal-balance sheet — adversarial gaps (WHIT-235)', () => {
   // [A20] the sheet RE-SEEDS its balance per goal. SheetHost keys the sheet on goalId, so switching
   // which goal is open must remount and re-run the useState initialiser off the NEW record — else a
   // stale 12000 would ride into the wrong goal's save. Guards the key={goalId} remount.
-  it('re-seeds the balance input when reopened for a different goalId', () => {
-    const { rerender } = render(<Overlays />);
+  it('re-seeds the balance input when reopened for a different goalId', async () => {
+    const { rerender } = await openSheet();
     expect(screen.getByDisplayValue('12000')).toBeTruthy(); // g2
     mockState = sheetState('g5');
-    rerender(<Overlays />);
+    await act(async () => { rerender(overlaysTree()); });
     expect(screen.getByDisplayValue('300')).toBeTruthy();   // g5 — not the stale 12000
     expect(screen.queryByDisplayValue('12000')).toBeNull();
   });
 
   // [A21] hardware-back / scrim dismiss closes the sheet via setSheet(null). onRequestClose is the
   // back-button + is wired identically to the scrim tap (the shared SheetHost dismiss).
-  it('dismissing via hardware back closes the sheet (setSheet null)', () => {
-    render(<Overlays />);
+  it('dismissing via hardware back closes the sheet (setSheet null)', async () => {
+    await openSheet();
     fireEvent(screen.UNSAFE_getByType(Modal), 'requestClose');
     expect(fns.setSheet).toHaveBeenCalledWith(null);
   });
@@ -187,14 +195,14 @@ describe('goal-balance sheet — adversarial gaps (WHIT-235)', () => {
 // keep the instant on-screen update correct. (The server keeps an omitted ladder under option B,
 // so the data is safe regardless — this is about the optimistic view, not data loss.)
 it('Save carries a saved checkpoint ladder through untouched', async () => {
-  mockGoals = [{
+  goals = [{
     ...CAR_LOAN,
     checkpoints: [
       { id: 'cp-1', label: 'Under 10k', amount: 10000 },
       { id: 'cp-2', label: 'Under 5k', amount: 5000 },
     ],
   }];
-  render(<Overlays />);
+  await openSheet();
   fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
   await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
 
@@ -206,7 +214,7 @@ it('Save carries a saved checkpoint ladder through untouched', async () => {
 });
 
 it('Save omits checkpoints entirely for a goal that has none', async () => {
-  render(<Overlays />);                       // CAR_LOAN has no ladder
+  await openSheet();                          // CAR_LOAN has no ladder
   fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
   await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
 

@@ -14,7 +14,7 @@ const WHOLE_APP_SUITES = [
   'sessionGuardSaveRunnerQa.provider.screen.test.tsx',
 ];
 
-// WHIT-670 — the <Overlays/> pop-up suites moved onto the fake server (WHIT-671 extends this list).
+// WHIT-670/671 — the <Overlays/> pop-up suites moved onto the fake server.
 const POPUP_SUITES = [
   'addRuleConfirmBudgetExcluded.screen.test.tsx',
   'addRulePreview.screen.test.tsx',
@@ -37,6 +37,14 @@ const POPUP_SUITES = [
   'incomeCategory.screen.test.tsx',
   'confirmSheetMountStability.screen.test.tsx',
   'confirmSheetRefile.screen.test.tsx',
+  'fileByShopOffScreenClash.screen.test.tsx',
+  'fileByShopSheet.screen.test.tsx',
+  'fileByShopSheetGaps.screen.test.tsx',
+  'filingSuggestions.screen.test.tsx',
+  'filingSuggestions.gaps.screen.test.tsx',
+  'goalBalanceSheet.screen.test.tsx',
+  'PayCycleSheet.screen.test.tsx',
+  'sheetHostMotion.screen.test.tsx',
 ];
 
 const QUERIES_MOCK = /jest\.(mock|doMock)\(\s*['"](\.\.\/)+queries['"]/;
