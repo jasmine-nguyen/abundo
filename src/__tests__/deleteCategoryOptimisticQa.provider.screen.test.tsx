@@ -21,7 +21,8 @@ jest.mock('../auth', () => ({
 }));
 
 import { AppProvider, useAppContext } from '../context';
-import type { Transaction, Category, Rule } from '../context';
+import type { Transaction, Category } from '../types';
+import type { Rule } from '../model';
 import type { TransactionFeedPage, TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';

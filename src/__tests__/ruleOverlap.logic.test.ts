@@ -4,7 +4,8 @@
 // `decide` marks them conflicted, WHIT-355). CONSERVATIVE by design: it fires only on a PROVABLE
 // overlap (text by containment, amount by interval intersection), so it never false-blocks.
 import { describe, it, expect } from '@jest/globals';
-import { ruleOverlap, type Rule } from '../context';
+import { ruleOverlap } from '../context';
+import type { Rule } from '../model';
 import type { RuleCondition, RuleLogic } from '../api';
 
 const classic = (id: string, pattern: string, categoryId: string): Rule =>

@@ -8,7 +8,7 @@ import React from 'react';
 import { Alert } from 'react-native';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import { makeState, cat, txn, budget, rule } from './factory';
-import type { Budget, Rule } from '../context';
+import type { Budget, Rule } from '../model';
 
 let mockTx: ReturnType<typeof txData>;
 let mockBudgets: Budget[] = [];

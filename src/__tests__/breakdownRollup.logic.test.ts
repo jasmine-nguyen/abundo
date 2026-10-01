@@ -2,7 +2,8 @@
 // refund detail) to size each parent, rather than tallying floored leaves on-device. Since the
 // server always emits __rollup__ (WHIT-358), this is the only path; this file covers it.
 import { describe, it, expect } from '@jest/globals';
-import { categoryBreakdown, readRollup } from '../context';
+import { categoryBreakdown } from '../context';
+import { readRollup } from '../model';
 import { C } from '../theme';
 import { makeState, cat, spend, withRollup } from './factory';
 

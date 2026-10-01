@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmtExact } from '../../src/theme';
 import { Icon } from '../../src/icons';
 import { useAppContext, spreadPreview, SPREAD_MIN_CYCLES, SPREAD_MAX_CYCLES } from '../../src/context';
-import type { Category } from '../../src/context';
+import type { Category } from '../../src/types';
 import { useBudgetsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';

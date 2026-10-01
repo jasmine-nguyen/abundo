@@ -3,7 +3,8 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { C, FONT, tint } from '../theme';
 import { Icon, Glyph } from '../icons';
-import { useAppContext, transactionView, Transaction, Category } from '../context';
+import { useAppContext, transactionView } from '../context';
+import type { Transaction, Category } from '../types';
 
 // WHIT-203: the category taxonomy comes in as a prop (from the screen's query composite),
 // so the row doesn't read the store for it. openPicker stays on the store (client-state).

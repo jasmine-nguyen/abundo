@@ -2,7 +2,8 @@
 // helper: depth-first (parent before its children), siblings A–Z, orphans/cross-bucket links
 // surfaced as roots, and cycle-safety (no infinite loop, no dropped category).
 import { it, expect, describe } from '@jest/globals';
-import { categoryTreeRows, type Category } from '../context';
+import { categoryTreeRows } from '../context';
+import type { Category } from '../types';
 
 const cat = (id: string, name: string, parent: string | null = null, bucket: Category['bucket'] = 'Lifestyle'): Category =>
   ({ id, name, icon: 'tag', color: '#fff', bucket, recent: 0, parent });

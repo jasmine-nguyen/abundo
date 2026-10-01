@@ -2,8 +2,9 @@
 // budgetDetail (the single-category screen). These drive every number and colour
 // on the budgets screens, so they're the highest-value regression lock.
 import { describe, it, expect } from '@jest/globals';
-import { elapsedFrac, budgetViews, budgetDetail, groupTransactionsByDate } from '../context';
-import type { Budget } from '../context';
+import { budgetViews, budgetDetail, groupTransactionsByDate } from '../context';
+import { elapsedFrac } from '../payCycle';
+import type { Budget } from '../model';
 import { C } from '../theme';
 import { makeState, cat, budget, txn } from './factory';
 

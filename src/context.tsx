@@ -13,12 +13,6 @@ export type { ApplyRulesResult, ApplyRulesJob } from './api';
 export { unionById, budgetSubtreeContains } from './transactionCache';
 export type { FilingResult, FilingTarget, FilingWhen } from './filingRun';
 export { APPLY_RULES_MAX_WRITES } from './filingRun';
-// WHIT-630: temporary pass-through of the pieces moved to leaf files, so importers keep working
-// until slice 2 repoints them.
-export type { Bucket, Category, Transaction } from './types';
-export type { Budget, Rule, RuleWrite, HomeLoanState } from './model';
-export { toCategory, toBudget, toRule, EMPTY_LOAN_FACTS, loanFactsReady, UNCATEGORIZED_KEY, EARNED_KEY, INCOME_KEY, ROLLUP_KEY, readRollup, readIncomeSources } from './model';
-export { cycleName, cycleClock, cycleStart, cycleClockView, elapsedFrac } from './payCycle';
 import type { Bucket, Category, Transaction } from './types';
 import { loanFactsReady, toCategory, toRule, EMPTY_LOAN_FACTS, UNCATEGORIZED_KEY, EARNED_KEY, INCOME_KEY, ROLLUP_KEY, readRollup, type Budget, type Rule, type RuleWrite, type HomeLoanState } from './model';
 import { cycleName, cycleClock, cycleClockView, elapsedFrac } from './payCycle';

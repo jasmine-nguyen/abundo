@@ -5,7 +5,7 @@
 // the Income branch is untouched by the pace change.
 import { describe, it, expect } from '@jest/globals';
 import { budgetDetail } from '../context';
-import type { Budget } from '../context';
+import type { Budget } from '../model';
 import { C } from '../theme';
 import { makeState, cat, budget } from './factory';
 

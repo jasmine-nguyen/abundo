@@ -10,7 +10,7 @@ import { AccessibilityInfo, StyleSheet } from 'react-native';
 import { render, screen, fireEvent, within } from '@testing-library/react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
 import type { AppContext, LoanFacts } from '../context';
-import { UNCATEGORIZED_KEY } from '../context';
+import { UNCATEGORIZED_KEY } from '../model';
 import { C } from '../theme';
 import { CATEGORY_COLORS } from '../chartColors';
 

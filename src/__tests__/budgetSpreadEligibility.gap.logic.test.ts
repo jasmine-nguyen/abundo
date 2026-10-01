@@ -5,7 +5,7 @@
 // These add: pending spend counts toward the overspend, and the spread>rollover check ordering.
 import { describe, it, expect } from '@jest/globals';
 import { budgetSpreadEligibility } from '../context';
-import type { Budget } from '../context';
+import type { Budget } from '../model';
 import { cat, budget } from './factory';
 
 const spend = cat({ id: 'sink', name: 'Sink', bucket: 'Lifestyle' });

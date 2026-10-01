@@ -7,7 +7,8 @@
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import { StyleSheet, ScrollView } from 'react-native';
-import type { AppContext, Category } from '../context';
+import type { AppContext } from '../context';
+import type { Category } from '../types';
 
 let mockState: AppContext;
 jest.mock('../context', () => {

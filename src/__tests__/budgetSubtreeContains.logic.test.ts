@@ -3,7 +3,7 @@
 // this file pins the individual branches with a hand-built tree so a failure names the exact case.
 import { describe, it, expect } from '@jest/globals';
 import { budgetSubtreeContains } from '../context';
-import type { Category } from '../context';
+import type { Category } from '../types';
 
 // Minimal Category; only id/parent/bucket drive the rule.
 const cat = (id: string, parent: string | null, bucket: string): Category =>

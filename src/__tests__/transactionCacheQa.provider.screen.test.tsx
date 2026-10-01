@@ -14,7 +14,7 @@ import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import type { InfiniteData, QueryKey } from '@tanstack/react-query';
 import { AppProvider, useAppContext } from '../context';
-import type { Transaction, Category } from '../context';
+import type { Transaction, Category } from '../types';
 import type { TransactionFeedPage, TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
 

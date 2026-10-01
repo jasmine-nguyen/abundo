@@ -21,7 +21,7 @@ jest.mock('../auth', () => ({
 }));
 
 import { useGoalScreenData } from '../queries';
-import { EMPTY_LOAN_FACTS } from '../context';
+import { EMPTY_LOAN_FACTS } from '../model';
 
 const server = installFakeServer();
 

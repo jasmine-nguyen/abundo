@@ -3,7 +3,8 @@
 // Identity is case/whitespace-insensitive but space-PRESERVING (a rule matches a raw
 // `description contains value`), so near-duplicates are intentionally NOT flagged.
 import { describe, it, expect } from '@jest/globals';
-import { ruleConflict, type Rule } from '../context';
+import { ruleConflict } from '../context';
+import type { Rule } from '../model';
 
 const rule = (id: string, pattern: string, categoryId: string): Rule =>
   ({ id, pattern, categoryId, isNew: false });

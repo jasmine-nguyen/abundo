@@ -20,7 +20,7 @@ import { installFakeServer } from './support/fakeServer';
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 
 import { useInsightsScreenData } from '../queries';
-import { UNCATEGORIZED_KEY } from '../context';
+import { UNCATEGORIZED_KEY } from '../model';
 
 const server = installFakeServer();
 

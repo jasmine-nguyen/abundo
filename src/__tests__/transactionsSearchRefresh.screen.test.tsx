@@ -9,7 +9,7 @@ import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import type { QueryClient } from '@tanstack/react-query';
 import { makeClient, wrapper } from './support/queryClient';
-import type { Transaction } from '../context';
+import type { Transaction } from '../types';
 import { installFakeServer } from './support/fakeServer';
 
 jest.mock('../auth', () => ({

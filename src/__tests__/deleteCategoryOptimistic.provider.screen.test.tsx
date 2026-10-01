@@ -5,7 +5,8 @@ import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import type { InfiniteData, QueryKey } from '@tanstack/react-query';
 import { AppProvider, useAppContext } from '../context';
-import type { Transaction, Category, Rule } from '../context';
+import type { Transaction, Category } from '../types';
+import type { Rule } from '../model';
 import type { TransactionFeedPage } from '../api';
 import { queryClient } from '../queryClient';
 

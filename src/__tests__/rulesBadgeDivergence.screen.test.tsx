@@ -14,7 +14,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { makeClient, wrapper } from './support/queryClient';
-import type { Rule } from '../context';
+import type { Rule } from '../model';
 import { installFakeServer } from './support/fakeServer';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));

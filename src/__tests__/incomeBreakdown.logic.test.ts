@@ -7,7 +7,7 @@ import { describe, it, expect } from '@jest/globals';
 import { incomeBreakdown } from '../context';
 import { C } from '../theme';
 import { cat } from './factory';
-import type { Category } from '../context';
+import type { Category } from '../types';
 
 function lookup(cats: Category[]) {
   const byId = new Map(cats.map((c) => [c.id, c]));

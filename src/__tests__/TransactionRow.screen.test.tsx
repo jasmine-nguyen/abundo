@@ -6,7 +6,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { makeState, cat, txn } from './factory';
-import type { Category } from '../context';
+import type { Category } from '../types';
 
 // WHIT-192: the row reads only openPicker (client-state) from the store now; the
 // category taxonomy arrives as a prop from the screen's query composite. So the mocked

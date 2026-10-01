@@ -5,7 +5,9 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act, renderHook } from '@testing-library/react-native';
-import type { AppContext, Rule, Category } from '../context';
+import type { AppContext } from '../context';
+import type { Category } from '../types';
+import type { Rule } from '../model';
 import type { RulesScreenData } from '../queries';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 

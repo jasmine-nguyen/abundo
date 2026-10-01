@@ -57,7 +57,7 @@ jest.mock('expo-router', () => {
 });
 
 import Insights from '../../app/(tabs)/insights';
-import { UNCATEGORIZED_KEY } from '../context';
+import { UNCATEGORIZED_KEY } from '../model';
 
 const server = installFakeServer();
 

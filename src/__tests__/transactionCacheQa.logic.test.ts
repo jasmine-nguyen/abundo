@@ -10,7 +10,7 @@ import { it, expect, describe, beforeEach, afterEach } from '@jest/globals';
 import type { QueryKey } from '@tanstack/react-query';
 import { makeQueryClient, queryClient } from '../queryClient';
 import { readTransactionCopies, findTransaction, refreshAfter } from '../transactionCache';
-import type { Transaction } from '../context';
+import type { Transaction } from '../types';
 
 const tx = (id: string, category: string): Transaction => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',

@@ -8,7 +8,7 @@ import { renderHook, act } from '@testing-library/react-native';
 import { useFilingRun, type FilingResult, type FilingTarget } from '../filingRun';
 import { runOptimisticSave, type SaveSteps } from '../optimisticSave';
 import type { ApplyRulesResult, UncategorizedMerchantGroup } from '../api';
-import type { Transaction } from '../context';
+import type { Transaction } from '../types';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 
