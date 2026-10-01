@@ -260,18 +260,31 @@ the card number for card builds) and check where it is:
        (`skip`, `unpin`), with what happens if they pick it and what it costs.
      Then ask the user.
 
-     **Locked tests.** The tests written before the code (and QA's) are locked:
-     the build puts back any change to them. When the block ends with "The
-     implementer wants to change N locked test file(s)", `unpin` is how a change
-     to them gets approved. (A block that only says "Only if this is about a
-     locked test" isn't about tests: mention `unpin` only if the question is
-     about one.) Say in plain
-     words how many tests it unlocks and which (what each checks, not its path),
-     using only the count the block gives, and that each is unlocked for one
-     round, then locked again at its new contents. If the user approves changing
-     a locked test, in any words, resume with `unpin: <their words>`: the reply
-     must start with `unpin`, or the tests stay locked and the build puts the old
-     version back.
+     **Pauses with an Options list** (from the implementer) take a JSON reply,
+     and the build rejects anything else:
+     - Ask with AskUserQuestion using exactly the block's options, in its order:
+       its labels, "(Recommended)" on the one it recommends, and what each
+       does and costs in plain words. Don't add, merge or drop options.
+     - An option that "unlocks N locked test(s)" lets the implementer change
+       those tests (the ones written before the code, or QA's), for one round.
+       The build then locks them again at the new version. Say how many and
+       what each checks, using only the block's count.
+     - The user picks an option: reply `{"pause_id": "<id>", "choice": "<its
+       id>"}`, with the pause ID and option ID copied from the block. The
+       build reads which tests to unlock from the option itself, so never add
+       `tests` or `files` to a picked option.
+     - The user types their own answer: reply with `"choice": "other"`, their
+       words in `answer`, and `"tests": "keep"`, unless they clearly said a
+       locked test may change. Then use `"tests": "unpin"` and list those
+       files from the block's schema in `files`. If you can't tell which,
+       ask them; never guess.
+     - If the build answers "Reply rejected", fix the field it names and
+       resend. The question is still open, so don't ask the user again.
+
+     **Pauses without options** take the decision in plain words. The hint on
+     the last line may offer `skip`, or `unpin: <reason>`. `unpin` unlocks
+     every locked test for one round: mention it only if the question is about
+     a locked test.
 
    Every pause also accepts **Stop**: it ends the build there and nothing
    ships.
@@ -282,8 +295,8 @@ the card number for card builds) and check where it is:
    never edit the card's code or tests yourself, and never touch the build's
    saved progress (the `.build/` folder, including `build_graph.db`) at all, not
    even to "unstick" it. Every change goes through a resume reply, so the build
-   knows about it: a locked test through `unpin`, anything else through the
-   user's decision in words. If no reply fits, tell the user what's stuck and
+   knows about it: a locked test through an option that unlocks it (or
+   `unpin`), anything else through the user's decision. If no reply fits, tell the user what's stuck and
    ask. The one time you change code is BUILD FAILED (step 5).
 
    **Recommendations are the helper's, not yours.** Mark "(Recommended)" on the
@@ -303,9 +316,10 @@ the card number for card builds) and check where it is:
    | PLAN FOR REVIEW | `go` (recommended answers) · `go: Q1 <answer>; Q2 <answer>` · `rework: <feedback>` |
    | CARD LOOKS INVALID | `close` · `rework: <why it's still needed>` |
    | QUESTIONS BEFORE PLANNING | `go` (recommendations) or `Q1: <answer>; Q2: <answer>` |
-   | DECISION NEEDED | the decision in plain words · `skip` · `unpin: <the user's words>` (approves changing the locked tests the block names) |
+   | DECISION NEEDED with Options | `{"pause_id": "<id>", "choice": "A"}` · `{"pause_id": "<id>", "choice": "other", "tests": "keep", "answer": "<the user's words>"}` |
+   | DECISION NEEDED without options | the decision in plain words · `skip` · `unpin: <reason>` |
 
-   If the reply contains quotes, backticks or `$`, pass it through a
+   If the reply contains quotes (every JSON reply does), backticks or `$`, pass it through a
    quoted heredoc so the shell doesn't touch it:
    ```
    python3 build_graph.py --thread <id> --resume "$(cat <<'EOF'

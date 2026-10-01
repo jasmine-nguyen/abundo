@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 import hashlib
 import inspect
+import json
 import operator
 import os
 import re
@@ -32,12 +33,14 @@ import sys
 import tempfile
 import time
 import traceback
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, NotRequired, TypedDict
 
+import jsonschema
 from claude_agent_sdk import (
     ClaudeAgentOptions,
     CLIConnectionError,
@@ -110,9 +113,7 @@ class BuildState(TypedDict):
     test_feedback: NotRequired[str]
     test_rejection: NotRequired[str]
     pinned: NotRequired[dict[str, str]]
-    unpin_request: NotRequired[list[str]]
-    unpin_named: NotRequired[bool]
-    unpinned: NotRequired[list[str]]
+    unpinned: NotRequired[dict[str, str]]
     user_decisions: NotRequired[list[str]]
     # implementation
     implementer_session: NotRequired[str]
@@ -124,6 +125,9 @@ class BuildState(TypedDict):
     escalation_source: NotRequired[str]
     escalation_next: NotRequired[str]
     escalation_answer: NotRequired[str]
+    pause_id: NotRequired[str]
+    pause_options: NotRequired[list[dict]]
+    pause_recommended: NotRequired[str]
     # review
     code_verdict: NotRequired[str]
     code_feedback: NotRequired[str]
@@ -300,7 +304,12 @@ REPRODUCER_OUTPUT = _output(
 )
 TEST_WRITER_OUTPUT = _output(seams=TEXTS, test_files=TEXTS, command=TEXT, summary=TEXT)
 IMPLEMENTER_OUTPUT = _output(
-    status=_one_of("DONE", "ESCALATE"), summary=TEXT, escalation=TEXT, follow_ups=TEXTS, unpin_files=TEXTS
+    status=_one_of("DONE", "ESCALATE"),
+    summary=TEXT,
+    escalation=TEXT,
+    options=_list_of(id=TEXT, label=TEXT, what_happens=TEXT, cost=TEXT, unpin_files=TEXTS),
+    recommended=TEXT,
+    follow_ups=TEXTS,
 )
 CODE_CRITIC_OUTPUT = _output(
     blocking_bugs=TEXTS,
@@ -985,11 +994,18 @@ def pinned_paths(state: BuildState, paths) -> list[str]:
     return sorted({relative for relative in map(repo_path, paths) if relative in locked})
 
 
+def unpinned_files(state: BuildState) -> dict[str, str]:
+    """Unlocked test files and the fingerprint each had when it was unlocked."""
+    unpinned = state.get("unpinned") or {}
+    return unpinned if isinstance(unpinned, dict) else dict.fromkeys(unpinned, "")
+
+
 def unpin_update(state: BuildState, files: list[str], approval: str) -> dict:
     """Unlock pinned test files for the implementer's next round; the checks after it pin them again."""
+    pinned = state.get("pinned", {})
     return {
-        "pinned": {path: digest for path, digest in state.get("pinned", {}).items() if path not in files},
-        "unpinned": sorted({*state.get("unpinned", []), *files}),
+        "pinned": {path: digest for path, digest in pinned.items() if path not in files},
+        "unpinned": {**unpinned_files(state), **{path: pinned[path] for path in files if path in pinned}},
         "user_decisions": [
             *state.get("user_decisions", []), f"Unlocked {', '.join(files)} so the implementer could change it: {approval}"
         ],
@@ -997,17 +1013,27 @@ def unpin_update(state: BuildState, files: list[str], approval: str) -> dict:
 
 
 def relock(state: BuildState) -> dict:
-    """Pin the test files the user unlocked again, at the contents the implementer left them in."""
-    if not state.get("unpinned"):
+    """Pin the test files the user unlocked again, at the contents the implementer left them in.
+    The user approved changing them, not deleting them, so a deleted one is put back first."""
+    unpinned = unpinned_files(state)
+    if not unpinned:
         return {}
-    pins = pin(state, state["unpinned"])
+    history = []
+    for path, digest in unpinned.items():
+        copy = pin_copy(state, digest) if digest else None
+        if not (ROOT / path).is_file() and copy and copy.is_file():
+            (ROOT / path).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(copy, ROOT / path)
+            print(f"   ↺ Put back {path}: it was deleted while unlocked, and only changing it was approved", flush=True)
+            history.append(f"• put back {path}: deleted while unlocked")
+    pins = pin(state, unpinned)
     if pins:
         print(f"   🔒 Locked {', '.join(sorted(pins))} again, at the implementer's new version", flush=True)
-    gone = [path for path in state["unpinned"] if path not in pins]
+    gone = [path for path in unpinned if path not in pins]
     if gone:
-        print(f"   ⚠️ {', '.join(gone)} was deleted while unlocked, so it's no longer locked", flush=True)
-    history = [f"• unlocked test file deleted, no longer locked: {', '.join(gone)}"] if gone else []
-    return {"pinned": {**state.get("pinned", {}), **pins}, "unpinned": [], "history": history}
+        print(f"   ⚠️ {', '.join(gone)} was deleted while unlocked, and there's no copy to put back", flush=True)
+        history.append(f"• unlocked test file deleted, no longer locked: {', '.join(gone)}")
+    return {"pinned": {**state.get("pinned", {}), **pins}, "unpinned": {}, "history": history}
 
 
 def restore_pins(state: BuildState) -> list[str]:
@@ -1729,7 +1755,7 @@ def pinned_block(state: BuildState) -> str:
         return ""
     return (
         "## Pinned test files (read-only: the pipeline puts back any change; if one is wrong, ESCALATE "
-        "and list it in `unpin_files`)\n" + bullets(sorted(state["pinned"]))
+        "with an option whose `unpin_files` lists it)\n" + bullets(sorted(state["pinned"]))
     )
 
 
@@ -1739,7 +1765,7 @@ def unpinned_block(state: BuildState) -> str:
     return (
         "## Test files you may change this round\nThe user approved changing these pinned test files. Make only "
         "the change they approved. The pipeline pins them again, at your new contents, when you finish:\n"
-        + bullets(state["unpinned"])
+        + bullets(sorted(unpinned_files(state)))
     )
 
 
@@ -1762,12 +1788,21 @@ async def implementer(state: BuildState):
     }
     if out["status"] == "ESCALATE":
         question = out["escalation"] or out["summary"]
+        options = {}
+        for option in out.get("options", []):
+            key = option.get("id", "").strip()
+            if key and key.lower() not in ("other", "stop") and key not in options:
+                options[key] = {**option, "id": key, "unpin_files": pinned_paths(state, option.get("unpin_files", []))}
+        options = list(options.values())
+        if out.get("options") and not options:
+            question += "\n\n**Options**\n" + bullets(f"{o.get('label', '')} — {o.get('what_happens', '')}" for o in out["options"])
         return {
             **session_update,
             "escalation": question,
             "escalation_source": "implementer",
-            "unpin_request": pinned_paths(state, out.get("unpin_files", [])),
-            "unpin_named": bool(out.get("unpin_files")),
+            "pause_id": uuid.uuid4().hex[:6],
+            "pause_options": options,
+            "pause_recommended": out.get("recommended", ""),
             "history": [f"✗ implementer: escalated — {first_line(question)}"],
         }
     rounds = state.get("implementation_attempts", 0) + 1
@@ -1788,48 +1823,135 @@ ESCALATION_HINTS = {
 }
 
 
-def files_to_unpin(state: BuildState) -> list[str]:
-    """The test files an "unpin" reply unlocks: the ones the implementer named, else every pinned one."""
-    if state.get("unpin_named"):
-        return state.get("unpin_request", [])
-    return sorted(state.get("pinned", {}))
-
-
 def unpin_hint(state: BuildState) -> str:
-    files = files_to_unpin(state)
-    if state.get("unpin_named") and not files:
-        return "\n\nThe implementer named test files to unlock, but none of them is locked, so \"unpin\" unlocks nothing."
+    """For a question without options: plain "unpin" unlocks every pinned test for one round."""
+    files = sorted(state.get("pinned", {}))
     if not files:
         return ""
-    named = f"{plural(len(files), 'locked test file')}: {', '.join(files)}"
-    it = "it" if len(files) == 1 else "them"
-    if not state.get("unpin_named"):
-        return (
-            f"\n\nOnly if this is about a locked test: \"unpin: <reason>\" unlocks all {named}, for the "
-            "implementer's next round only."
-        )
     return (
-        f"\n\nThe implementer wants to change {named}. \"unpin: <reason>\" unlocks {it} for the implementer's "
-        f"next round only, and locks {it} again at the new contents once the checks run. Any other reply keeps "
-        f"{it} locked."
+        f"\n\nOnly if this is about a locked test: \"unpin: <reason>\" unlocks all "
+        f"{plural(len(files), 'locked test file')}: {', '.join(files)}, for the implementer's next round only."
     )
+
+
+# --- structured replies (stage 2) ---
+#
+# The implementer's options reach the build as SDK-checked JSON. The reply comes
+# back from the chat session as text on the command line, so the build checks it
+# against a schema made for this pause before resuming. Which tests a choice
+# unlocks is read off the option itself, never worked out by the messenger.
+
+
+def structured_pause(values: dict) -> bool:
+    return values.get("escalation_source") == "implementer" and bool(values.get("pause_options"))
+
+
+def reply_schema(values: dict) -> dict:
+    """What a reply to this pause must look like: this pause's ID, and one of its options or your own answer."""
+    locked = sorted(values.get("pinned", {}))
+    properties = {
+        "pause_id": {"const": values["pause_id"]},
+        "choice": {"enum": [option["id"] for option in values["pause_options"]] + ["other"]},
+        "tests": {"enum": ["keep", "unpin"] if locked else ["keep"]},
+        "answer": {"type": "string"},
+    }
+    other = {"required": ["tests", "answer"], "properties": {"answer": {"pattern": r"\S"}}}
+    if locked:
+        properties["files"] = {"type": "array", "items": {"enum": locked}, "uniqueItems": True}
+        other["if"] = {"properties": {"tests": {"const": "unpin"}}, "required": ["tests"]}
+        other["then"] = {"required": ["files"], "properties": {"files": {"minItems": 1}}}
+    return {
+        "type": "object",
+        "required": ["pause_id", "choice"],
+        "properties": properties,
+        "additionalProperties": False,
+        "if": {"properties": {"choice": {"const": "other"}}},
+        "then": other,
+        # A picked option already says which tests it unlocks.
+        "else": {"properties": {"tests": False, "files": False}},
+    }
+
+
+def check_reply(values: dict, text: str) -> tuple[dict | str | None, str]:
+    """The resume value for this reply, or None and why the reply was rejected."""
+    if not structured_pause(values) or split_reply(text)[0] in STOPS:
+        return text, ""
+    try:
+        reply = json.loads(text)
+    except json.JSONDecodeError:
+        return None, "this question needs a JSON reply, in the shape below"
+    errors = sorted(jsonschema.Draft202012Validator(reply_schema(values)).iter_errors(reply), key=str)
+    if errors:
+        error = errors[0]
+        where = ".".join(str(part) for part in error.absolute_path)
+        if not where:
+            where = error.message.split("'")[1] if error.validator == "required" else "reply"
+        if error.schema is False:
+            return None, "a picked option already says which tests it unlocks, so leave out tests and files"
+        return None, f"{where}: {error.message}"
+    return reply, ""
+
+
+def reply_format(values: dict) -> str:
+    pause = values["pause_id"]
+    example = json.dumps({"pause_id": pause, "choice": values["pause_options"][0]["id"]})
+    own = {"pause_id": pause, "choice": "other", "tests": "keep", "answer": "<the user's own words>"}
+    return (
+        f"Reply with JSON (pause {pause}). To pick an option: {example}\n"
+        f"For the user's own answer: {json.dumps(own)}. Use \"tests\": \"unpin\" with \"files\": [...] "
+        "to unlock locked tests for one round. \"stop\" ends the build.\n"
+        f"Reply schema: {json.dumps(reply_schema(values))}"
+    )
+
+
+def option_lines(values: dict) -> str:
+    lines = []
+    for option in values["pause_options"]:
+        recommended = " (recommended)" if option["id"] == values.get("pause_recommended") else ""
+        files = option["unpin_files"]
+        unlocks = f" Choosing it unlocks {plural(len(files), 'locked test')}: {', '.join(files)}." if files else ""
+        lines.append(
+            f"{option['id']}) {option['label']}{recommended} — {option.get('what_happens', '')} "
+            f"Cost: {option.get('cost', '')}{unlocks}"
+        )
+    return "\n".join(lines)
+
+
+def chosen(state: BuildState, reply: dict) -> tuple[str, list[str]]:
+    """What the user chose, in words for the implementer and reviewers, and the tests it unlocks."""
+    if reply["choice"] == "other":
+        files = reply.get("files", []) if reply.get("tests") == "unpin" else []
+        unlocks = f" Unlock for one round: {', '.join(files)}." if files else " Keep every test locked."
+        return f"The user gave their own answer: {reply['answer']}{unlocks}", files
+    option = next(option for option in state["pause_options"] if option["id"] == reply["choice"])
+    words = f" The user added: {reply['answer']}" if reply.get("answer") else ""
+    return f"The user chose {option['id']}) {option['label']}.{words}", option["unpin_files"]
 
 
 def escalation(state: BuildState):
     source = state.get("escalation_source", "implementer")
-    hint = unpin_hint(state) if source == "implementer" else ""
-    reply = interrupt(
-        f"DECISION NEEDED (from the {NODE_LABELS[source]})\n\n{state['escalation']}\n\n"
-        f"Reply with your decision, or \"stop\" to end the build.{ESCALATION_HINTS.get(source, '')}{hint}"
-    )
-    word, rest = split_reply(reply)
+    if structured_pause(state):
+        ask = f"Options:\n{option_lines(state)}\n\n{reply_format(state)}"
+    else:
+        hint = unpin_hint(state) if source == "implementer" else ""
+        ask = f"Reply with your decision, or \"stop\" to end the build.{ESCALATION_HINTS.get(source, '')}{hint}"
+    reply = interrupt(f"DECISION NEEDED (from the {NODE_LABELS[source]})\n\n{state['escalation']}\n\n{ask}")
+    if isinstance(reply, dict):
+        answer, files = chosen(state, reply)
+        word, rest = "", ""
+    else:
+        word, rest = split_reply(reply)
+        answer = reply.strip()
+        # A build paused before options existed may have named the files "unpin" unlocks.
+        offered = state.get("unpin_request") if state.get("unpin_named") else sorted(state.get("pinned", {}))
+        files = offered if word == "unpin" and source == "implementer" else []
     if word in STOPS:
         return {"escalation": "", **stopped("escalation")}
     update = {
         "escalation": "",
-        "escalation_answer": reply,
+        "escalation_answer": answer,
         "escalation_next": source,
-        "history": [f"• escalation answered: {first_line(reply)}"],
+        "history": [f"• escalation answered: {first_line(answer)}"],
     }
     if source in ("test_writer", "reproducer"):
         update["test_attempts"] = 0
@@ -1837,12 +1959,11 @@ def escalation(state: BuildState):
         update.update(escalation_next=SKIP_TO[source], escalation_answer="", test_feedback="")
     if source == "implementer":
         update["code_decisions"] = []  # answered now, so don't ask the implementer to escalate them again
-        update["unpin_request"], update["unpin_named"] = [], False
+        update["pause_options"] = []
         # Reviewers see every answer, so they don't send back what the user decided.
-        update["user_decisions"] = [*state.get("user_decisions", []), reply.strip()]
-        files = files_to_unpin(state)
-        if word == "unpin" and files:
-            update.update(unpin_update(state, files, rest or "approved"))
+        update["user_decisions"] = [*state.get("user_decisions", []), answer]
+        if files:
+            update.update(unpin_update(state, files, answer if isinstance(reply, dict) else rest or "approved"))
             update["history"].append(f"• unpinned for one round: {', '.join(files)}")
     return update
 
@@ -1857,7 +1978,7 @@ def failing_checks(state: BuildState) -> list[str]:
     if tampered:
         problems.append(
             "Pinned test files were changed or deleted, and the pipeline has no copy to put back. Restore "
-            "them; if one is genuinely wrong, reply with status ESCALATE and list it in `unpin_files` instead:\n"
+            "them; if one is genuinely wrong, ESCALATE instead, with an option whose `unpin_files` lists it:\n"
             f"{bullets(tampered)}"
         )
     commands = check_commands()
@@ -1873,15 +1994,15 @@ def failing_checks(state: BuildState) -> list[str]:
     if restored and problems:
         problems.insert(0, (
             "You changed or deleted pinned test files, so the pipeline put them back before running the "
-            f"checks:\n{bullets(restored)}\nDon't edit them. If one is genuinely wrong, reply with status "
-            "ESCALATE and list it in `unpin_files`: the user can unlock it for one round."
+            f"checks:\n{bullets(restored)}\nDon't edit them. If one is genuinely wrong, ESCALATE with an option "
+            "whose `unpin_files` lists it: the user can unlock it for one round."
         ))
     return problems
 
 
 def checks(state: BuildState):
-    problems = failing_checks(state)
     relocked = relock(state)
+    problems = failing_checks(state)
     if not problems:
         ok, output = commit_all(state, commit_message(state))
         if not ok:
@@ -2077,9 +2198,8 @@ def next_slice(state: BuildState):
         # a behaviour the plan changes). They still run in every check, and the code review
         # flags any change that weakens them.
         "pinned": {},
-        "unpinned": [],
-        "unpin_request": [],
-        "unpin_named": False,
+        "unpinned": {},
+        "pause_options": [],
         "tests": "",
         "test_attempts": 0,
         "test_feedback": "",
@@ -2114,6 +2234,7 @@ def pr_body(state: BuildState) -> str:
             f"**Door:** {DOORS[door] if door else 'not assessed'}",
             f"**Blast radius:** {state.get('blast_radius') or 'not assessed'}",
             *state.get("risks", []),
+            *(f"**Decided during the build:** {' '.join(decision.split())}" for decision in state.get("user_decisions", [])),
         ])),
     ]
     if state.get("manual_checks"):
@@ -2612,8 +2733,12 @@ async def resume_build(graph, config, snapshot, reply: str):
             print(f"This build already finished ({outcome}). After fixing a failed build by hand use --recheck; "
                   "to start over use --restart.")
         return None
+    value, problem = check_reply(snapshot.values, reply)
+    if value is None:
+        print(f"Reply rejected: {problem}. The build is still paused on the same question.\n\n{reply_format(snapshot.values)}")
+        return None
     print_history(snapshot.values)
-    return await graph.ainvoke(Command(resume=reply), config)
+    return await graph.ainvoke(Command(resume=value), config)
 
 
 async def retry_build(graph, config, snapshot):
@@ -2820,9 +2945,8 @@ async def replan_build(graph, config, snapshot, feedback: str, pid: int | None):
             "escalation_answer": "",
             "escalation_next": "",
             "pinned": {},
-            "unpinned": [],
-            "unpin_request": [],
-            "unpin_named": False,
+            "unpinned": {},
+            "pause_options": [],
             "user_decisions": [],
             "repro": "",
             "tests": "",

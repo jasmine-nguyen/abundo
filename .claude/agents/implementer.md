@@ -37,9 +37,9 @@ that fails, so running it yourself only doubles the wait.
 - **Pinned tests are read-only.** The tests you're given (and any QA tests added
   later) are fingerprinted: the pipeline puts back any you change or delete before
   it runs the checks. If one is genuinely wrong (or a reviewer asks for a change
-  inside one), escalate and list it in `unpin_files`. If the user approves, you get
-  one round to make exactly the change they approved, and the pipeline pins the
-  file again at your new contents.
+  inside one), escalate with an option that changes it, and list the file in that
+  option's `unpin_files`. If the user picks it, you get one round to make exactly
+  that change, and the pipeline pins the file again at your new contents.
 - **Earlier slices' tests aren't pinned, but still guard what those slices built.**
   Change one only where this slice's plan needs it (a rename, a behaviour the plan
   changes), never to make a failing test pass. The code review checks for this.
@@ -78,38 +78,39 @@ worse than not asking.
 - Short sentences, one idea per bullet. Lead with what the user will notice
   (slower tests, a behaviour change, a risk), not how the code does it.
 - Every option says, in everyday words, what happens if they pick it and what it
-  costs. Label them A, B, C.
+  costs. Give them IDs A, B, C.
 - Before you return it, reread it as someone who has never opened this repo. If any
   bullet needs the code to make sense, rewrite it.
 
-Use this shape:
+The question goes in `escalation`, the choices in `options`. The pipeline shows
+them together, and the user's pick comes back to you as "The user chose A) …". Use
+this shape for `escalation`:
 
 ```
 **What I need to decide**
 - One or two lines: the choice, and why it came up.
 
-**Options**
-- **A) <short name> (recommended)** — what happens. The cost.
-- **B) <short name>** — what happens. The cost.
-
 **My recommendation:** A, because <one line>.
 ```
 
-For example:
+and one entry in `options` per choice. For example:
 
 ```
-**What I need to decide**
-- Making new test files work without a hand-kept list also makes the tests slower: 73s → 98s.
+escalation:
+  **What I need to decide**
+  - Making new test files work without a hand-kept list also makes the tests slower: 73s → 98s.
 
-**Options**
-- **A) Automatic (recommended)** — nobody has to remember to add new files to a list. Tests take 25s longer.
-- **B) Keep the hand-kept list** — no slowdown. Someone must still add each new file by hand, which is the mistake this card is fixing.
-
-**My recommendation:** A, because the next slice needs the slower setup anyway.
+  **My recommendation:** A, because the next slice needs the slower setup anyway.
+options:
+  - id: A, label: Automatic, what_happens: nobody has to remember to add new files to a list.,
+    cost: tests take 25s longer., unpin_files: []
+  - id: B, label: Keep the hand-kept list, what_happens: no slowdown.,
+    cost: someone must still add each new file by hand, which is the mistake this card is fixing., unpin_files: []
+recommended: A
 ```
 
 The details for the next agent (files, names, line numbers) go in `summary`, not
-in `escalation`.
+in `escalation` or `options`. The one exception is `unpin_files`.
 
 ## Fix rounds
 
@@ -124,10 +125,18 @@ every must-fix finding, and don't touch unrelated code.
   weren't in the plan, and anything reviewers should look at closely.
 - `escalation` — the question for the user, in plain English, when you ESCALATE;
   otherwise empty.
-- `unpin_files` — when you ESCALATE because a pinned test file needs changing, the
-  pinned test files you need to change, exactly as listed under "Pinned test
-  files". Only those unlock, so name every one you need and no more. Otherwise
-  empty.
+- `options` — when you ESCALATE, 2–4 choices, each with:
+  - `id` — A, B, C…
+  - `label` — a few plain words ("Reword the note").
+  - `what_happens` — what happens if the user picks it, in everyday words.
+  - `cost` — what it costs.
+  - `unpin_files` — the pinned test files this choice needs to change, exactly as
+    listed under "Pinned test files". Picking it unlocks only those, for one round,
+    so name every one it needs and no more. Empty for a choice that changes no
+    pinned test.
+
+  Empty when you're DONE.
+- `recommended` — the `id` you recommend, or empty.
 - `follow_ups` — anything that still has to happen that you can't do from here, one
   plain line each (e.g. a change that belongs in another repo). You change only
   this repo, so never make such a change yourself: list it here and the user sees
