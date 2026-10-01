@@ -38,6 +38,17 @@ export function shippedSourceFiles(): string[] {
   return out.sort();
 }
 
+// Every .ts/.tsx file under `dir`, relative to `root` and forward-slashed — the test-tree guards
+// (noAutoMockApi, noQueriesMock) scan this.
+export function testFiles(root: string, dir: string = root): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return testFiles(root, path);
+    if (!/\.tsx?$/.test(entry.name)) return [];
+    return [relative(root, path).split(sep).join('/')];
+  });
+}
+
 // A comment describing a colour is documentation, not shipped colour — src/theme.ts spells several
 // out in the token comments on purpose. The `[^:]` guard keeps `https://` inside a string from
 // reading as the start of a line comment.
