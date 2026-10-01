@@ -12,9 +12,7 @@ export const QUERIES_MOCK = /^\s*jest\.(mock|doMock)\(\s*['"](\.\.\/)+(src\/)?qu
 const ALLOWED = new Set<string>([
   'accountDetail.screen.test.tsx',
   'accountsTab.screen.test.tsx',
-  'aiCoachFollowUp.screen.test.tsx',
   'applyRulesButton.screen.test.tsx',
-  'askButton.screen.test.tsx',
   'budgetDetailLoadMore.screen.test.tsx',
   'budgetEditSave.screen.test.tsx',
   'budgetSpread.screen.test.tsx',
@@ -23,7 +21,6 @@ const ALLOWED = new Set<string>([
   'categoryDetail.screen.test.tsx',
   'categoryEditSummaryToast.screen.test.tsx',
   'categoryFields.screen.test.tsx',
-  'chatSheet.screen.test.tsx',
   'earnedVsSpentGate.screen.test.tsx',
   'equityCardDepositTarget.screen.test.tsx',
   'fileByShopButton.screen.test.tsx',

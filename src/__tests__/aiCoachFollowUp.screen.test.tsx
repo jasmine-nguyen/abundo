@@ -1,33 +1,43 @@
 // Card 609 — "Ask a follow-up →" on the Insights AI card: shown only once there is advice, and it
 // opens the chat seeded with the card's summary (the chat provider focuses the keyboard for a seed).
+// WHIT-687 — the card's goal inputs come from the real screen data code over the fake server.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { fireEvent, screen } from '@testing-library/react-native';
+import { installFakeServer } from './support/fakeServer';
+import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { resetAuth } from './support/authMock';
 
 let mockAi: { summary: string; suggestions: string[]; generated_at: string } | null = null;
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => ({
+  ...(jest.requireActual('../context') as object),
   useAppContext: () => ({
     aiInsights: mockAi, aiInsightsLoading: false, aiInsightsError: false, generateAiInsights: jest.fn(),
   }),
-  aiGoalSignal: () => null,
 }));
-jest.mock('../queries', () => ({ useGoalScreenData: () => ({ loanFacts: {}, homeLoan: {} }) }));
 const mockOpenChat = jest.fn();
 jest.mock('../chat/ChatContext', () => ({ useChat: () => ({ openChat: mockOpenChat }) }));
 
 import { AiCoachCard } from '../components/AiCoachCard';
 
-beforeEach(() => { mockOpenChat.mockClear(); });
+installFakeServer();
+useTestQueryClient();
 
-it('is hidden before there is any advice', () => {
+beforeEach(() => {
+  resetAuth();
+  mockOpenChat.mockClear();
+});
+
+it('is hidden before there is any advice', async () => {
   mockAi = null;
-  render(<AiCoachCard />);
+  await renderWithQueries(<AiCoachCard />);
   expect(screen.queryByTestId('ai-ask-follow-up')).toBeNull();
 });
 
-it('opens the chat seeded with the summary', () => {
+it('opens the chat seeded with the summary', async () => {
   mockAi = { summary: 'You are pacing well this cycle.', suggestions: ['Trim coffee'], generated_at: '2026-09-20T00:00:00Z' };
-  render(<AiCoachCard />);
+  await renderWithQueries(<AiCoachCard />);
   fireEvent.press(screen.getByText('Ask a follow-up →'));
   expect(mockOpenChat).toHaveBeenCalledWith({ seed: 'You are pacing well this cycle.' });
 });
