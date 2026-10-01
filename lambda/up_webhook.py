@@ -42,9 +42,12 @@ TRANSACTION_CREATED = "TRANSACTION_CREATED"
 
 # The Up-native account UUID of the home loan — what fetch_transaction returns. This
 # is a THIRD id vocabulary, distinct from the internal "up-homeloan" and BankSync's
-# raw account id. If Up is ever re-linked this UUID rotates and the match silently
-# stops firing — confirm at cutover.
+# raw account id. The live id comes from get_homeloan_account_id (WHIT-618); this is
+# only the fallback when that lookup fails or is ambiguous.
 UP_HOMELOAN_ACCOUNT_ID = "fbef6cbc-09b3-4b6f-826c-6a178707a178"
+UP_HOME_LOAN_ACCOUNT_TYPE = "HOME_LOAN"
+UP_HOMELOAN_ACCOUNTS_ENDPOINT = (
+    f"https://api.up.com.au/api/v1/accounts?filter[accountType]={UP_HOME_LOAN_ACCOUNT_TYPE}")
 
 UP_TRANSACTION_ENDPOINT = "https://api.up.com.au/api/v1/transactions/"
 UP_PERSONAL_ACCESS_TOKEN_PATH = "/abundo/up-personal-access-token"
@@ -126,22 +129,58 @@ def fetch_transaction(transaction_id: str) -> dict:
     return body["data"]
 
 
+_homeloan_account_id = None
+
+
+def get_homeloan_account_id() -> str:
+    """The Up home loan's account id, asked of Up by account type and saved for the warm
+    container. On a failed, empty or ambiguous lookup it logs and returns the fixed
+    UP_HOMELOAN_ACCOUNT_ID without saving, so the next transaction asks again."""
+    global _homeloan_account_id
+    if _homeloan_account_id is not None:
+        return _homeloan_account_id
+
+    try:
+        request = urllib.request.Request(UP_HOMELOAN_ACCOUNTS_ENDPOINT)
+        request.add_header("Authorization", f"Bearer {get_personal_access_token()}")
+        with urllib.request.urlopen(request, timeout=UP_FETCH_TIMEOUT_SECONDS) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        account_ids = [account["id"] for account in body["data"]
+                       if account["attributes"]["accountType"] == UP_HOME_LOAN_ACCOUNT_TYPE]
+    except Exception as error:
+        logger.warning("UP_WEBHOOK_HOMELOAN_LOOKUP_FALLBACK reason=lookup_failed error=%s",
+                       error)
+        return UP_HOMELOAN_ACCOUNT_ID
+
+    if len(account_ids) != 1:
+        reason = "none_found" if not account_ids else "several_found"
+        logger.warning("UP_WEBHOOK_HOMELOAN_LOOKUP_FALLBACK reason=%s count=%s",
+                       reason, len(account_ids))
+        return UP_HOMELOAN_ACCOUNT_ID
+
+    _homeloan_account_id = account_ids[0]
+    if _homeloan_account_id != UP_HOMELOAN_ACCOUNT_ID:
+        logger.info("UP_WEBHOOK_HOMELOAN_ID_CHANGED account=%s", _homeloan_account_id)
+    return _homeloan_account_id
+
+
 def get_transaction_id(payload: dict) -> str:
     return payload["data"]["relationships"]["transaction"]["data"]["id"]
 
 
 def repayment_skip_reason(transaction: dict) -> str | None:
     """Why this transaction gets no push, or None for a positive home-loan credit worth
-    notifying: the Up home-loan account AND at least the $10 floor (compared in cents).
+    notifying: at least the $10 floor (compared in cents) AND the Up home-loan account.
+    The floor is checked first so small transactions never trigger the account lookup.
     Interest debits are negative, so they fall below the floor and are excluded. Any
     positive credit >= $10 on the loan fires — a redraw reversal or interest refund would
     too (accepted for scope)."""
     account_id = transaction["relationships"]["account"]["data"]["id"]
     value_in_base_units = int(transaction["attributes"]["amount"]["valueInBaseUnits"])
-    if account_id != UP_HOMELOAN_ACCOUNT_ID:
-        return "not_homeloan_account"
     if value_in_base_units < MIN_REPAYMENT_NOTIFY * 100:
         return "below_floor"
+    if account_id != get_homeloan_account_id():
+        return "not_homeloan_account"
     return None
 
 
