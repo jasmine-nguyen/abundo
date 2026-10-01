@@ -211,35 +211,59 @@ def test_the_series_is_capped_at_thirteen_bars(ai_chat):  # [A14]
     assert len(out["card"]["series"]) == 13
 
 
-def test_a_delta_with_the_wrong_sign_is_dropped(ai_chat):  # [A15]
-    # 31.11 against a 60 budget is 28.89 UNDER. A +28.89 delta says "over" and must not survive.
-    card = _card(budget_line=60, delta={"amount": 28.89, "vs": "budget"})
+def test_an_under_budget_delta_is_negative(ai_chat):  # [A15]
+    # 31.11 against a 60 budget is 28.89 UNDER, so negative (the app shows it as under).
+    card = _card(budget_line=60, delta={"vs": "budget"})
     out = ai_chat.validate_reply({"text": "ok", "card": card}, _chat_data(), TOOL_NUMBERS)
-    assert "delta" not in out["card"]
+    assert out["card"]["delta"] == {"amount": -28.89, "vs": "budget"}
 
 
-def test_a_delta_with_the_right_sign_is_kept(ai_chat):  # [A15]
-    card = _card(budget_line=60, delta={"amount": -28.89, "vs": "budget"})
+def test_an_over_budget_delta_is_positive(ai_chat):  # [A15]
+    card = _card(value=60, budget_line=31.11, delta={"vs": "budget"})
+    out = ai_chat.validate_reply({"text": "ok", "card": card}, _chat_data(), TOOL_NUMBERS)
+    assert out["card"]["delta"] == {"amount": 28.89, "vs": "budget"}
+
+
+def test_an_ai_amount_with_the_wrong_sign_is_ignored(ai_chat):  # [A15]
+    card = _card(budget_line=60, delta={"amount": 28.89, "vs": "budget"})
     out = ai_chat.validate_reply({"text": "ok", "card": card}, _chat_data(), TOOL_NUMBERS)
     assert out["card"]["delta"] == {"amount": -28.89, "vs": "budget"}
 
 
 def test_a_zero_delta_is_dropped(ai_chat):  # [A15]
-    # "vs previous" would always pass a zero (the value is itself a tool number), and it would
-    # render as a meaningless "−$0 vs previous".
-    out = ai_chat.validate_reply(
-        {"text": "ok", "card": _card(delta={"amount": 0, "vs": "previous"})}, _chat_data(), TOOL_NUMBERS)
+    # It would render as a meaningless "−$0 vs budget".
+    card = _card(budget_line=31.11, delta={"vs": "budget"})
+    out = ai_chat.validate_reply({"text": "ok", "card": card}, _chat_data(), TOOL_NUMBERS)
     assert "delta" not in out["card"]
 
 
-def test_a_vs_previous_delta_must_point_the_right_way(ai_chat):  # [A15]
-    # 31.11 now vs 33.34 last period is DOWN 2.23. "+2.23 vs previous" would read as up.
-    wrong = ai_chat.validate_reply(
-        {"text": "ok", "card": _card(delta={"amount": 2.23, "vs": "previous"})}, _chat_data(), TOOL_NUMBERS)
-    right = ai_chat.validate_reply(
-        {"text": "ok", "card": _card(delta={"amount": -2.23, "vs": "previous"})}, _chat_data(), TOOL_NUMBERS)
-    assert "delta" not in wrong["card"]
-    assert right["card"]["delta"] == {"amount": -2.23, "vs": "previous"}
+def test_vs_budget_without_a_budget_line_is_dropped(ai_chat):  # [A15]
+    out = ai_chat.validate_reply(
+        {"text": "ok", "card": _card(delta={"vs": "budget"})}, _chat_data(), TOOL_NUMBERS)
+    assert "delta" not in out["card"]
+
+
+def test_a_vs_previous_delta_points_the_right_way(ai_chat):  # [A15]
+    # 31.11 now vs 33.34 last period is DOWN 2.23.
+    series = [{"label": "27 Aug", "value": 33.34}, {"label": "10 Sep", "value": 31.11}]
+    card = _card(series=series, delta={"amount": 2.23, "vs": "previous"})
+    out = ai_chat.validate_reply({"text": "ok", "card": card}, _chat_data(), TOOL_NUMBERS)
+    assert out["card"]["delta"] == {"amount": -2.23, "vs": "previous"}
+
+
+def test_vs_previous_is_dropped_when_the_last_bar_isnt_the_value(ai_chat):  # [A15]
+    # A 3-cycle average isn't any one bar, so there's no clear "previous" to compare with.
+    series = [{"label": "30 Jul", "value": 60}, {"label": "13 Aug", "value": 0},
+              {"label": "27 Aug", "value": 33.34}]
+    card = _card(series=series, delta={"vs": "previous"})
+    out = ai_chat.validate_reply({"text": "ok", "card": card}, _chat_data(), TOOL_NUMBERS)
+    assert "delta" not in out["card"]
+
+
+def test_vs_previous_with_a_single_bar_is_dropped(ai_chat):  # [A15]
+    card = _card(series=[{"label": "10 Sep", "value": 31.11}], delta={"vs": "previous"})
+    out = ai_chat.validate_reply({"text": "ok", "card": card}, _chat_data(), TOOL_NUMBERS)
+    assert "delta" not in out["card"]
 
 
 def _deeplink(date_from, date_to, category_id="eatingout"):
