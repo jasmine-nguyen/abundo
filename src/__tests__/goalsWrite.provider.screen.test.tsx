@@ -13,6 +13,7 @@ import { AppProvider, useAppContext } from '../context';
 import type { GoalRecord, GoalWriteBody } from '../api';
 import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';
+import { refreshInAct } from './support/renderWithQueries';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 
@@ -219,7 +220,7 @@ it('a failed EDIT does NOT resurrect a goal that was concurrently deleted mid-fl
   const result = mount([GOAL_G1]);
 
   let ok: boolean | undefined;
-  await act(async () => {
+  await refreshInAct(async () => {
     const p = result.current.saveGoal('g1', { ...NEW_BODY, name: 'Renamed' });
     queryClient.setQueryData<GoalRecord[]>(['goals'], []); // a concurrent delete lands
     ok = await p;
@@ -234,7 +235,7 @@ it('a succeeded EDIT does NOT resurrect a goal that was concurrently deleted mid
   const result = mount([GOAL_G1]);
 
   let ok: boolean | undefined;
-  await act(async () => {
+  await refreshInAct(async () => {
     const p = result.current.saveGoal('g1', { ...NEW_BODY, name: 'Renamed' });
     queryClient.setQueryData<GoalRecord[]>(['goals'], []); // a concurrent delete lands
     ok = await p;
