@@ -20,8 +20,8 @@ jest.mock('expo-router', () => {
   };
 });
 
-// Real ScrollChromeHeader, but stub its geometry hook so it renders without a NavBarsProvider
-// (mirrors tabScreensClearance). The header still renders left → title → right in JSX order.
+// Real ScrollChromeHeader, but stub its geometry hook so it renders without a NavBarsProvider.
+// The header still renders left → title → right in JSX order.
 jest.mock('../motion/useNavBarsHeader', () => ({
   HEADER_BODY_HEIGHT: 58,
   TAB_BAR_CLEARANCE: 120,
