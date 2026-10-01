@@ -2,9 +2,8 @@
 
 The webhook (lambda/rule_ingest.py) and the "Apply my rules" sweep (lambda_api/handler.py) both file
 charges, and both must auto-spread a bill the SAME way — so the side-effect lives here, in one shared
-place, exactly as the categorisation itself lives once in rule_engine. Constants-free at import
-(the cadence→cycles bounds come through spend.cadence_cycles), and takes its repos as arguments so the webhook's
-TransactionRepository subclass wiring is untouched.
+place, exactly as the categorisation itself lives once in rule_engine. It takes its repos as arguments
+so the webhook's TransactionRepository subclass wiring is untouched.
 
 Behaviour: a rule marked `spread` that has not yet seeded its plan creates the category's spread ONCE
 via the create-only `set_spread_if_absent`, then flips `spread_seeded` so it never re-seeds — even

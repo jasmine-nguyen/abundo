@@ -9,8 +9,6 @@ is an opaque uuid minted when the job starts. The shared partition lets a future
 read every job in one Query (the RULE store's rationale). Each row carries a numeric
 ``expires_at`` (epoch seconds) so DynamoDB TTL removes finished jobs after ``JOB_TTL_SECONDS`` —
 the same auto-expiry the dead-letter / push-receipt rows use.
-
-Kept constants-free: the one tunable — the TTL — is defined LOCALLY below.
 """
 
 import logging
@@ -21,16 +19,13 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
+from constants import JOB_TTL_SECONDS
 from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
 
 logger = logging.getLogger(__name__)
 
 # Every job row shares this partition so a future list reads them in one Query.
 _PK = "JOB"
-
-# A finished job is only useful while the app is still polling it, so it self-deletes a day
-# later via DynamoDB TTL (epoch-seconds `expires_at`, same mechanism as the dead-letter rows).
-JOB_TTL_SECONDS = 24 * 60 * 60
 
 # The running tallies a job carries. update_progress accepts any subset of these; anything else
 # in the passed dict is ignored, so an outcome-list key can't accidentally land a list in a
