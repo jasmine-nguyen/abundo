@@ -20,12 +20,12 @@ export function WithQueries({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Run a cache refresh (invalidate/refetch) inside act, then yield one macrotask so the query
- * library's batched notifications (one setTimeout(0) flush) re-render inside act too. Without the yield
- * the re-render lands after act, React logs an act warning, and under coverage that log alone
- * can stall the test past waitFor's 1s timeout.
+ * Run a cache refresh or write (invalidate/refetch/setQueryData/remove…) inside act, then yield one
+ * macrotask so the query library's batched notifications (one setTimeout(0) flush) re-render inside
+ * act too. Without the yield the re-render lands after act, React logs an act warning, and under
+ * coverage that log alone can stall the test past waitFor's 1s timeout.
  */
-export async function refreshInAct(refresh: () => Promise<unknown>) {
+export async function refreshInAct(refresh: () => unknown) {
   await act(async () => {
     await refresh();
     await new Promise((resolve) => setTimeout(resolve, 0));

@@ -20,7 +20,7 @@ import ast
 import pathlib
 import re
 
-from _terraform import DYNAMODB_VERB_TO_ACTION, TERRAFORM_DIR, granted_dynamodb_actions, tf_block
+from _terraform import DYNAMODB_VERB_TO_ACTION, TERRAFORM_DIR, granted_dynamodb_actions, leading_keys, tf_block
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _SHARED = _REPO_ROOT / "shared"
@@ -37,11 +37,10 @@ def _granted_actions() -> set[str]:
     return granted_dynamodb_actions(_app_api_policy_block())
 
 
-def _leading_keys() -> set[str]:
-    block = _app_api_policy_block()
-    match = re.search(r'"dynamodb:LeadingKeys"\s*=\s*\[([^\]]*)\]', block)
-    assert match, "app_api_dynamodb has no dynamodb:LeadingKeys condition — the DeleteItem scope is gone"
-    return set(re.findall(r'"([^"]+)"', match.group(1)))
+def _delete_scope() -> set[str]:
+    scope = leading_keys(_app_api_policy_block())
+    assert scope, "app_api_dynamodb has no dynamodb:LeadingKeys condition — the DeleteItem scope is gone"
+    return set(scope)
 
 
 def _scanned_modules() -> list[pathlib.Path]:
@@ -124,8 +123,8 @@ def test_delete_item_only_ever_targets_rule_or_transaction_rows():
     # literal "RULE" pk) or, from the transaction repository only, a transaction row (its
     # "ACCOUNT#..." pk comes from the id lookup, WHIT-654) — so a bug can never delete anything
     # else (and the grant would deny it anyway).
-    leading_keys = _leading_keys()
-    assert leading_keys == {"RULE", "ACCOUNT#*"}, f"unexpected LeadingKeys scope: {leading_keys}"
+    scope = _delete_scope()
+    assert scope == {"RULE", "ACCOUNT#*"}, f"unexpected LeadingKeys scope: {scope}"
     assert '"ForAllValues:StringLike"' in _app_api_policy_block(), (
         "the ACCOUNT#* wildcard only matches under StringLike"
     )

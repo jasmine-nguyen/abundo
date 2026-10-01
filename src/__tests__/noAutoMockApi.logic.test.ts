@@ -86,6 +86,14 @@ describe('no test mocks the api', () => {
       'incomeCategory.screen.test.tsx': 18,
       'multiSelectSheet.screen.test.tsx': 6,
       'pickerSheetTree.screen.test.tsx': 54,
+      'fileByShopOffScreenClash.screen.test.tsx': 2,
+      'fileByShopSheet.screen.test.tsx': 21,
+      'fileByShopSheetGaps.screen.test.tsx': 27,
+      'filingSuggestions.screen.test.tsx': 8,
+      'filingSuggestions.gaps.screen.test.tsx': 6,
+      'goalBalanceSheet.screen.test.tsx': 28,
+      'PayCycleSheet.screen.test.tsx': 7,
+      'sheetHostMotion.screen.test.tsx': 38,
     };
 
     const shortfalls = Object.entries(baselines).flatMap(([file, baseline]) => {

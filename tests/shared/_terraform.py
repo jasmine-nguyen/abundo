@@ -1,5 +1,6 @@
 """WHIT-646: the single copy of the terraform readers used by the alarm-wiring tests."""
 
+import fnmatch
 import pathlib
 import re
 
@@ -49,3 +50,44 @@ def granted_dynamodb_actions(policy_block):
     """The DynamoDB actions a policy block grants. `"dynamodb:LeadingKeys"` matches the same
     pattern but is a condition key, not an action, so it's dropped."""
     return set(re.findall(r'"dynamodb:(\w+)"', policy_block)) - {"LeadingKeys"}
+
+
+def policy_statements(resource_name):
+    """WHIT-680: each top-level `{ ... }` of an aws_iam_role_policy's Statement list, as text."""
+    block = tf_block((TERRAFORM_DIR / "iam.tf").read_text(), "aws_iam_role_policy", resource_name)
+    body = block[block.index("Statement"):]
+    statements, depth, start = [], 0, None
+    for position, char in enumerate(body):
+        if char == "{":
+            if depth == 0:
+                start = position
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                statements.append(body[start:position + 1])
+            if depth < 0:
+                break
+    return statements
+
+
+def leading_keys(statement):
+    """The statement's dynamodb:LeadingKeys patterns, or None when it isn't row-scoped."""
+    match = re.search(r'"dynamodb:LeadingKeys"\s*=\s*\[([^\]]*)\]', statement)
+    if match is None:
+        return None
+    return re.findall(r'"([^"]+)"', match.group(1))
+
+
+def allows(statements, action, pk):
+    """Whether any statement grants the action on a row with this partition key (None for a query)."""
+    for statement in statements:
+        if action not in granted_dynamodb_actions(statement):
+            continue
+        patterns = leading_keys(statement)
+        if patterns is None:
+            return True
+        # ForAllValues:StringLike → the request's partition key must match one pattern.
+        if pk is not None and any(fnmatch.fnmatchcase(pk, pattern) for pattern in patterns):
+            return True
+    return False

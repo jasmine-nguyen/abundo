@@ -28,8 +28,10 @@ def test_shared_readers_read_monitoring_tf():
 
 def test_no_test_file_keeps_its_own_terraform_reader():
     # WHIT-649: a hand-built <repo>/terraform path is a local copy of TERRAFORM_DIR too.
+    # WHIT-680: so is a policy-statement splitter or a LeadingKeys regex.
     local_copy = re.compile(
-        r"^\s*def _(tf_block|tf_attr|filter_pattern)\(|"
+        r"^\s*def _(tf_block|tf_attr|filter_pattern|statements|leading_keys|allows|policy_statements)\(|"
+        r'"dynamodb:LeadingKeys"\\s\*=|'
         r'resource "aws_cloudwatch_log_metric_filter" "[^"{]+"\.\*\?|'
         r'(parents\[\d+\]|_ROOT|_REPO_ROOT)\)?\s*/\s*"terraform"',
         re.M)

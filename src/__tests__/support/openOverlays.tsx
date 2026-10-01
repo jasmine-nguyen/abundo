@@ -1,12 +1,15 @@
 // WHIT-670 — draw <Overlays/> over the real query hooks the way the app opens a pop-up: the tab
 // screens underneath have already loaded what the pop-up reads, then the sheet opens. The add-rule
 // form fills itself only once, on open (useSheetDraft's lazy init), so opening it before the rules
-// and categories have loaded would fill it from empty lists.
+// and categories have loaded would fill it from empty lists. The Goals hub warms goals the same way,
+// so the goal-balance sheet prefills from the saved goal.
 // (Not a *.test file, so the jest testMatch never runs it as a suite.)
 import React from 'react';
 import { act } from '@testing-library/react-native';
 import { Overlays } from '../../components/Overlays';
-import { useCategories, useRecentTransactionsScreenData, useRulesScreenData, useTransactionResolver } from '../../queries';
+import {
+  useCategories, useGoalsQuery, useIsAuthed, useRecentTransactionsScreenData, useRulesScreenData, useTransactionResolver,
+} from '../../queries';
 import { renderWithQueries, WithQueries } from './renderWithQueries';
 
 // Stands in for the tab screens under the overlay layer.
@@ -15,6 +18,7 @@ function ScreensUnderneath() {
   useRulesScreenData();
   useTransactionResolver();
   useRecentTransactionsScreenData();
+  useGoalsQuery(useIsAuthed());
   return null;
 }
 

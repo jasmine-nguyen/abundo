@@ -81,13 +81,14 @@ describe('picker and confirm pop-up suites run on the fake server', () => {
     expect(problems).toEqual([]);
   });
 
-  it('the shared guard lists all 21 pop-up suites, including the 5 picker/confirm ones', () => {
+  // 21 from WHIT-670 + the 8 WHIT-671 moved.
+  it('the shared guard lists all 29 pop-up suites, including the 5 picker/confirm ones', () => {
     const guard = source('whit641WholeAppSuitesRealQueries.logic.test.ts');
     const popupList = guard.match(/const POPUP_SUITES = \[([\s\S]*?)\];/);
 
     expect(popupList).not.toBeNull();
     const listed = [...(popupList?.[1] ?? '').matchAll(/'([^']+\.test\.tsx)'/g)].map((m) => m[1]);
     expect(Object.keys(PICKER_CONFIRM_SUITES).filter((file) => !listed.includes(file))).toEqual([]);
-    expect(listed).toHaveLength(21);
+    expect(listed).toHaveLength(29);
   });
 });

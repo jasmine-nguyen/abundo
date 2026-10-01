@@ -17,6 +17,7 @@ import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { makeClient, wrapper } from './support/queryClient';
 import type { Transaction } from '../context';
 import { installFakeServer } from './support/fakeServer';
+import { refreshInAct } from './support/renderWithQueries';
 
 let mockAuthStatus = 'authed';
 jest.mock('../auth', () => ({
@@ -87,7 +88,7 @@ describe('[R] useTransactionResolver — cross-scoped-cache merge edges', () => 
     const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
 
     await waitFor(() => expect(result.current.findTx('past')).toBeDefined());
-    act(() => { client.setQueryData(drillKey, [tx('past', { notes: 'seen' })]); });
+    await refreshInAct(() => client.setQueryData(drillKey, [tx('past', { notes: 'seen' })]));
     await waitFor(() => expect(result.current.findTx('past')!.notes).toBe('seen'));
   });
 
@@ -156,11 +157,11 @@ describe('[R] useTransactionResolver — cross-scoped-cache merge edges', () => 
     const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
     expect(result.current.transactions).toHaveLength(0);
 
-    act(() => { client.setQueryData([...transactionsSearchKey, 'all', 'deep'], { transactions: [tx('searched')], truncated: false }); });
+    await refreshInAct(() => client.setQueryData([...transactionsSearchKey, 'all', 'deep'], { transactions: [tx('searched')], truncated: false }));
     await waitFor(() => expect(result.current.findTx('searched')).toBeDefined());
-    act(() => { client.setQueryData([...budgetTransactionsKey, 'rent'], [tx('budgeted')]); });
+    await refreshInAct(() => client.setQueryData([...budgetTransactionsKey, 'rent'], [tx('budgeted')]));
     await waitFor(() => expect(result.current.findTx('budgeted')).toBeDefined());
-    act(() => { client.setQueryData([...categoryTransactionsKey, 'coffee', 0], [tx('drilled')]); });
+    await refreshInAct(() => client.setQueryData([...categoryTransactionsKey, 'coffee', 0], [tx('drilled')]));
     await waitFor(() => expect(result.current.findTx('drilled')).toBeDefined());
   });
 });
