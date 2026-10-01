@@ -53,6 +53,7 @@ describe('cache refreshes in screen tests go through refreshInAct', () => {
     ['a cache call after the first statement', `${ACT}async () => { foo(); client.${'invalidate' + 'Queries'}(); });`],
     ['a third statement, multi-line', `${ACT}async () => {\n  foo();\n  bar(1);\n  client.${'refetch' + 'Queries'}();\n});`],
     ['a write mid-save', `await ${ACT}async () => { const p = save(); client.${'set' + 'QueryData'}(['k'], []); ok = await p; });`],
+    ['a paren inside a string before the cache call', `await ${ACT}async () => { foo(')'); client.${'set' + 'QueryData'}(['k'], []); ok = await p; });`],
   ])('flags a direct cache call inside act: %s', (_name, source) => {
     expect(callsCacheInsideAct(source)).toBe(true);
   });
