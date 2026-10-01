@@ -21,11 +21,13 @@ from anthropic_client import AnthropicError, post_messages
 from api_constants import (
     ANTHROPIC_CHAT_MAX_TOKENS,
     ANTHROPIC_CHAT_TIMEOUT_SECONDS,
+    CHAT_DEADLINE_MARGIN_SECONDS,
     CHAT_LIST_MAX,
     CHAT_MAX_LOOKBACK_CYCLES,
     CHAT_MAX_LOOKBACK_MONTHS,
     CHAT_MAX_TOOL_ROUNDS,
     CHAT_MESSAGE_MAX_LEN,
+    CHAT_MIN_CALL_SECONDS,
     UNCATEGORIZED_KEY,
 )
 from budget_standing import budget_standing, standing_window
@@ -391,9 +393,12 @@ def _run_tool(call: dict, data: ChatData, tool_numbers: set) -> dict:
             "content": json.dumps(output, cls=DecimalEncoder)}
 
 
-def run_chat(job_id: str, messages: list[dict], data: ChatData, job_repo) -> dict:
+def run_chat(job_id: str, messages: list[dict], data: ChatData, job_repo, seconds_left) -> dict:
     """The tool loop. Rounds 1..N-1 must call some tool; the last round must call `respond`, so a
-    runaway loop ends with an answer (or a failure) rather than hanging."""
+    runaway loop ends with an answer (or a failure) rather than hanging.
+
+    `seconds_left()` reads the worker's remaining time. Each model call gets that minus a margin
+    (capped per call); with too little left the run fails before paying for another call."""
     system = system_prompt(data.today)
     model_messages = to_model_messages(messages)
     tool_numbers: set = set()
@@ -402,10 +407,13 @@ def run_chat(job_id: str, messages: list[dict], data: ChatData, job_repo) -> dic
             tool_choice = {"type": "tool", "name": "respond"}
         else:
             tool_choice = {"type": "any"}
+        budget = seconds_left() - CHAT_DEADLINE_MARGIN_SECONDS
+        if budget < CHAT_MIN_CALL_SECONDS:
+            raise ChatError(f"out of time before round {round_number}")
         if os.environ.get(_DEBUG_LOG_ENV) == "1":
             logger.info("chat debug request: %s", json.dumps({"system": system, "messages": model_messages}))
         reply = post_messages(system, model_messages, TOOLS, tool_choice,
-                              ANTHROPIC_CHAT_MAX_TOKENS, ANTHROPIC_CHAT_TIMEOUT_SECONDS)
+                              ANTHROPIC_CHAT_MAX_TOKENS, min(ANTHROPIC_CHAT_TIMEOUT_SECONDS, budget))
         calls = [block for block in reply.get("content") or [] if block.get("type") == "tool_use"]
         logger.info("chat job %s round %d tools %s", job_id, round_number,
                     [call["name"] for call in calls])
@@ -460,7 +468,8 @@ def lambda_handler(event: dict, context=None) -> dict:
     try:
         data = load_chat_data(TransactionRepository(), CategoryRepository(), BudgetRepository(),
                               PayCycleRepository())
-        reply = run_chat(job_id, event["messages"], data, job_repo)
+        reply = run_chat(job_id, event["messages"], data, job_repo,
+                         lambda: context.get_remaining_time_in_millis() / 1000)
         job_repo.finish_chat_job(job_id, STATUS_SUCCEEDED, json.dumps(reply))
         logger.info("chat job %s succeeded", job_id)
         return {"jobId": job_id, "status": STATUS_SUCCEEDED}

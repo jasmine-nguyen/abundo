@@ -10,8 +10,6 @@ from decimal import Decimal
 
 import pytest
 
-from _terraform import TERRAFORM_DIR, tf_attr, tf_block
-
 TODAY = "2026-09-20"
 CYCLE_START = "2026-09-10"
 
@@ -60,7 +58,7 @@ class ScriptedModel:
 
     def __call__(self, system, messages, tools, tool_choice, max_tokens, timeout):
         self.requests.append({"system": system, "messages": json.loads(json.dumps(messages)),
-                              "tool_choice": tool_choice})
+                              "tool_choice": tool_choice, "timeout": timeout})
         return self._replies.pop(0)
 
 
@@ -96,12 +94,22 @@ GOOD_ANSWER = {
 }
 
 
-def _run(ai_chat, monkeypatch, replies, messages=None, data=None):
+class FakeContext:
+    """The Lambda context: only the remaining time is read."""
+
+    def __init__(self, remaining_ms=200_000):
+        self.remaining_ms = remaining_ms
+
+    def get_remaining_time_in_millis(self):
+        return self.remaining_ms
+
+
+def _run(ai_chat, monkeypatch, replies, messages=None, data=None, seconds_left=lambda: 200):
     model = ScriptedModel(replies)
     monkeypatch.setattr(ai_chat, "post_messages", model)
     job_repo = FakeJobRepo()
     reply = ai_chat.run_chat("job1", messages or [{"role": "user", "text": "Average eating out, 3 cycles?"}],
-                             data or _data(ai_chat), job_repo)
+                             data or _data(ai_chat), job_repo, seconds_left)
     return reply, model, job_repo
 
 
@@ -271,7 +279,7 @@ def test_worker_stores_the_reply_as_json_and_succeeds(ai_chat, monkeypatch, work
         _reply(_tool_use("query_transactions", AVG_QUERY)),
         _reply(_tool_use("respond", GOOD_ANSWER, "c2")),
     ]))
-    assert ai_chat.lambda_handler(EVENT) == {"jobId": "job1", "status": "succeeded"}
+    assert ai_chat.lambda_handler(EVENT, FakeContext()) == {"jobId": "job1", "status": "succeeded"}
     finished = worker.finished[0]
     assert finished["status"] == "succeeded"
     assert json.loads(finished["reply"])["card"]["value"] == 31.11
@@ -281,7 +289,7 @@ def test_worker_marks_an_anthropic_failure_as_assistant_unavailable(ai_chat, mon
     def down(*args):
         raise ai_chat.AnthropicError(529, "overloaded")
     monkeypatch.setattr(ai_chat, "post_messages", down)
-    assert ai_chat.lambda_handler(EVENT)["status"] == "failed"
+    assert ai_chat.lambda_handler(EVENT, FakeContext())["status"] == "failed"
     assert worker.finished == [{"status": "failed", "reply": None, "error": "assistant unavailable"}]
 
 
@@ -289,7 +297,7 @@ def test_worker_marks_any_other_failure_failed(ai_chat, monkeypatch, worker):
     def broken(*repos):
         raise RuntimeError("db down")
     monkeypatch.setattr(ai_chat, "load_chat_data", broken)
-    assert ai_chat.lambda_handler(EVENT)["status"] == "failed"
+    assert ai_chat.lambda_handler(EVENT, FakeContext())["status"] == "failed"
     assert worker.finished[0]["error"] == "could not answer"
 
 
@@ -417,12 +425,24 @@ def test_worker_still_returns_failed_when_marking_the_job_failed_also_fails(ai_c
 
     monkeypatch.setattr(ai_chat, "run_chat", boom)
     monkeypatch.setattr(worker, "finish_chat_job", db_down)
-    assert ai_chat.lambda_handler(EVENT) == {"jobId": "job1", "status": "failed"}
+    assert ai_chat.lambda_handler(EVENT, FakeContext()) == {"jobId": "job1", "status": "failed"}
 
 
-def test_every_model_round_fits_inside_the_worker_timeout(ai_chat):
-    # If CHAT_MAX_TOOL_ROUNDS slow model calls outlast the worker's Lambda timeout, AWS kills the
-    # worker mid-loop: its "failed" write never runs and the job hangs as "running".
-    worker = tf_block((TERRAFORM_DIR / "lambda.tf").read_text(), "aws_lambda_function", "ai_chat_worker")
-    timeout = int(tf_attr(worker, "timeout"))
-    assert ai_chat.CHAT_MAX_TOOL_ROUNDS * ai_chat.ANTHROPIC_CHAT_TIMEOUT_SECONDS < timeout
+# --- the time budget (WHIT-612) --------------------------------------------------------------
+
+
+def test_each_model_call_is_capped_at_the_per_call_limit(ai_chat, monkeypatch):
+    _, model, _ = _run(ai_chat, monkeypatch, [
+        _reply(_tool_use("query_transactions", AVG_QUERY)),
+        _reply(_tool_use("respond", GOOD_ANSWER, "c2")),
+    ], seconds_left=lambda: 1000)
+    assert [request["timeout"] for request in model.requests] == [60, 60]
+
+
+def test_too_little_time_left_fails_before_calling_the_model(ai_chat, monkeypatch):
+    model = ScriptedModel([_reply(_tool_use("respond", GOOD_ANSWER))])
+    monkeypatch.setattr(ai_chat, "post_messages", model)
+    # 19.9s left - 10s margin = 9.9s, just under the 10s minimum for a call.
+    with pytest.raises(ai_chat.ChatError):
+        ai_chat.run_chat("job1", EVENT["messages"], _data(ai_chat), FakeJobRepo(), lambda: 19.9)
+    assert model.requests == []
