@@ -4,8 +4,9 @@ The webhook only ever hears about new or changed rows, never drops. So once an h
 in-scope account, we fetch BankSync's full transaction list and delete our pendings inside the
 check window whose id the bank no longer has. Posted rows and rows outside the window are
 never touched. A pending the user edited has its edit moved onto its settled twin, then is
-deleted (WHIT-663); no twin yet → it's kept for next hour, with the age-out sweep as the
-backstop. Any doubt about the bank's reply → that account is skipped and nothing is deleted.
+deleted (WHIT-663); failing that, it moves onto the bank's re-issued pending copy, or is just
+deleted when that copy already holds the same edit (WHIT-678). Otherwise it's kept for next
+hour, with the age-out sweep as the backstop. Any doubt about the bank's reply → that account is skipped and nothing is deleted.
 """
 
 import json
@@ -28,7 +29,7 @@ from constants import (
     PENDING_STATUS,
     POSTED_STATUS,
 )
-from pending_carry import find_carry_twin, is_user_edited, load_is_unfiled, with_carried_category
+from pending_carry import find_carry_twin, find_identical_copy, is_user_edited, load_is_unfiled, with_carried_category
 from repository_category import CategoryRepository
 from repository_errors import DatabaseError
 from repository_transaction import TransactionRepository, read_date_range_pages
@@ -120,6 +121,10 @@ def mirror_account(
 
     bank_ids = {str(row["id"]) for row in bank_rows}
     missing = [row for row in pendings if row["transaction_id"] not in bank_ids]
+    live_pendings = [
+        row for row in stored
+        if row.get("status") == PENDING_STATUS and row["transaction_id"] in bank_ids
+    ]
     if len(missing) > PENDING_MIRROR_MAX_REMOVALS:
         logger.error(
             "pending_mirror %s: %d pendings missing from the bank list (cap %d), skipping",
@@ -130,7 +135,9 @@ def mirror_account(
     result = _result(len(pendings))
     for row in missing:
         if is_user_edited(row, is_unfiled):
-            posted_rows = _carry(repo, account_id, row, posted_rows, is_unfiled, result)
+            posted_rows, live_pendings = _carry(
+                repo, account_id, row, posted_rows, live_pendings, is_unfiled, result,
+            )
             continue
         try:
             deleted = repo.delete_if_still_pending(row["pk"], row["sk"])
@@ -154,40 +161,87 @@ def _carry(
     account_id: str,
     pending: dict,
     posted_rows: list[dict],
+    live_pendings: list[dict],
     is_unfiled: Callable[[Optional[str]], bool],
     result: dict,
-) -> list[dict]:
-    """Move a user-edited pending's edit onto its settled twin, then delete the pending. No
-    confident twin → keep it for next hour. The pending is only deleted once the carry is saved.
-    Returns posted_rows without the claimed twin, so no other pending can carry onto it."""
+) -> tuple[list[dict], list[dict]]:
+    """Move a user-edited pending's edit onto its settled twin — or, with none, onto the bank's
+    re-issued pending copy — then delete the pending. No confident twin → delete it only if a live
+    copy already holds the same edit, else keep it for next hour. The pending is only deleted
+    once the carry is saved. Returns both pools without the claimed twin, so no other pending can
+    carry onto it."""
     transaction_id = pending["transaction_id"]
     twin = find_carry_twin(pending, posted_rows, is_unfiled)
     if twin is None:
-        logger.info("pending_mirror %s: kept (user-edited, no settled twin yet) txn=%s", account_id, transaction_id)
-        result["kept"] += 1
-        return posted_rows
+        twin = find_carry_twin(pending, live_pendings, is_unfiled)
+    if twin is None:
+        _remove_if_identical_copy(repo, account_id, pending, live_pendings, result)
+        return posted_rows, live_pendings
     try:
-        repo.insert_transactions([with_carried_category(twin, pending, is_unfiled=is_unfiled)])
+        saved = _save_carry(repo, twin, pending, is_unfiled)
     except DatabaseError:
         logger.exception("pending_mirror %s: carry failed, keeping txn=%s", account_id, transaction_id)
         result["failed"] += 1
-        return posted_rows
-    posted_rows = [posted for posted in posted_rows if posted.get("sk") != twin.get("sk")]
+        return posted_rows, live_pendings
+    if not saved:
+        logger.info(
+            "pending_mirror %s: twin gone before carry, keeping txn=%s twin=%s",
+            account_id, transaction_id, twin.get("transaction_id"),
+        )
+        result["gone"] += 1
+        return posted_rows, live_pendings
+    posted_rows = [row for row in posted_rows if row.get("sk") != twin.get("sk")]
+    live_pendings = [row for row in live_pendings if row.get("sk") != twin.get("sk")]
     try:
         deleted = repo.delete_if_still_pending(pending["pk"], pending["sk"])
     except DatabaseError:
         logger.exception("pending_mirror %s: delete after carry failed txn=%s", account_id, transaction_id)
         result["failed"] += 1
-        return posted_rows
+        return posted_rows, live_pendings
     if not deleted:
         result["gone"] += 1
-        return posted_rows
+        return posted_rows, live_pendings
     logger.info(
-        "pending_mirror carried account=%s pending=%s -> posted=%s",
-        account_id, transaction_id, twin.get("transaction_id"),
+        "pending_mirror carried account=%s pending=%s -> %s=%s",
+        account_id, transaction_id, twin.get("status"), twin.get("transaction_id"),
     )
     result["carried"] += 1
-    return posted_rows
+    return posted_rows, live_pendings
+
+
+def _save_carry(repo: Any, twin: dict, pending: dict, is_unfiled: Callable[[Optional[str]], bool]) -> bool:
+    """Write the pending's edit onto the twin. A pending twin is updated in place, never
+    re-inserted, so one the bank dropped mid-run isn't brought back. False → the twin is gone."""
+    carried = with_carried_category(twin, pending, is_unfiled=is_unfiled)
+    if twin.get("status") == PENDING_STATUS:
+        return repo.carry_onto_pending(twin["pk"], twin["sk"], carried)
+    repo.insert_transactions([carried])
+    return True
+
+
+def _remove_if_identical_copy(
+    repo: Any, account_id: str, pending: dict, live_pendings: list[dict], result: dict,
+) -> None:
+    transaction_id = pending["transaction_id"]
+    identical = find_identical_copy(pending, live_pendings)
+    if identical is None:
+        logger.info("pending_mirror %s: kept (user-edited, no settled twin yet) txn=%s", account_id, transaction_id)
+        result["kept"] += 1
+        return
+    try:
+        deleted = repo.delete_if_still_pending(pending["pk"], pending["sk"])
+    except DatabaseError:
+        logger.exception("pending_mirror %s: delete failed txn=%s", account_id, transaction_id)
+        result["failed"] += 1
+        return
+    if not deleted:
+        result["gone"] += 1
+        return
+    logger.info(
+        "pending_mirror replaced account=%s pending=%s by=%s",
+        account_id, transaction_id, identical.get("transaction_id"),
+    )
+    result["removed"] += 1
 
 
 def mirror_pendings(

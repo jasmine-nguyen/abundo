@@ -238,6 +238,39 @@ class TransactionRepository:
                 return False
             handle_database_error(e, "delete")
 
+    def carry_onto_pending(self, pk: str, sk: str, carried: Transaction) -> bool:
+        """Write a carried edit onto a still-pending row (WHIT-678): its category, notes, tags,
+        exclusion, rule stamp and budget flag. Never recreates the row. Returns False when the
+        row is gone or has since posted."""
+        names = {"#s": "status"}
+        values: dict[str, Any] = {":pending": PENDING_STATUS}
+        set_clauses = []
+        for index, field in enumerate(
+            ("category", "notes", "tags", "budget_excluded", "filed_by_rule", "counts_to_budget")
+        ):
+            if carried.get(field) is None:
+                continue
+            names[f"#f{index}"] = field
+            values[f":v{index}"] = carried[field]
+            set_clauses.append(f"#f{index} = :v{index}")
+        update_expression = "SET " + ", ".join(set_clauses)
+        if carried.get("filed_by_rule") is None:
+            names["#p"] = "filed_by_rule"
+            update_expression += " REMOVE #p"
+        try:
+            self._get_table().update_item(
+                Key={"pk": pk, "sk": sk},
+                UpdateExpression=update_expression,
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
+                ConditionExpression="attribute_exists(pk) AND #s = :pending",
+            )
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            handle_database_error(e, "write")
+
     def is_deleted(self, account_id: str, transaction_id: str) -> bool:
         """True while the user's "deleted by you" marker for this transaction hasn't expired."""
         key = {"pk": _build_deleted_pk(_build_pk(account_id)), "sk": _build_sk(transaction_id)}

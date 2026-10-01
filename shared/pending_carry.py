@@ -119,6 +119,17 @@ def find_carry_twin(pending: dict, posted_rows: list[dict], is_unfiled) -> dict 
     return None
 
 
+def find_identical_copy(pending: dict, live_pendings: list[dict]) -> dict | None:
+    """A live pending that is the same purchase as `pending` and already holds its category and
+    user fields, or None (WHIT-678). Deleting `pending` then loses nothing, so any match will do."""
+    for row in live_pendings:
+        if (_is_carry_twin(pending, row)
+                and row.get("category") == pending.get("category")
+                and _same_user_fields(pending, row)):
+            return row
+    return None
+
+
 def with_carried_category(
     posted_txn: Transaction, source_row: dict, *,
     is_unfiled: Optional[Callable[[Optional[str]], bool]] = None,
