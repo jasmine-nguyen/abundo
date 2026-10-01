@@ -2,20 +2,15 @@
 // real send, and a failing haptic never stops the message going out.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, screen } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import type { ChatReply } from '../api';
 import { installFakeServer } from './support/fakeServer';
+import { resetAuth } from './support/authMock';
+import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
-jest.mock('../queries', () => ({
-  useIsAuthed: () => true,
-  useCategories: () => ({
-    categories: [], category: () => undefined,
-    isLoading: false, isError: false, refetch: () => {}, refetchStale: () => {},
-  }),
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }) }));
 
 import { ChatProvider, CHAT_CONSENT_KEY, useChat } from '../chat/ChatContext';
@@ -23,6 +18,7 @@ import type { ChatContextValue } from '../chat/ChatContext';
 import { ChatSheet } from '../chat/ChatSheet';
 
 const server = installFakeServer();
+useTestQueryClient();
 const chatPosts = () => server.sent('POST', '/ai/chat');
 const impactAsync = jest.mocked(Haptics.impactAsync);
 
@@ -43,7 +39,7 @@ async function flush() {
 }
 
 async function mountOpen() {
-  render(<ChatProvider><Probe /><ChatSheet /></ChatProvider>);
+  await renderWithQueries(<ChatProvider><Probe /><ChatSheet /></ChatProvider>);
   await flush();
   act(() => chat.openChat());
 }
@@ -61,6 +57,7 @@ async function sendAndAnswer(doSend: () => void, jobId: string) {
 
 beforeEach(async () => {
   jest.clearAllMocks();
+  resetAuth();
   await AsyncStorage.clear();
   await AsyncStorage.setItem(CHAT_CONSENT_KEY, '2026-09-01T00:00:00.000Z');
 });
