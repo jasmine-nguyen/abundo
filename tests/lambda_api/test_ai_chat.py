@@ -82,7 +82,7 @@ GOOD_ANSWER = {
     "text": "You spent **$31.11** per cycle on Eating Out.",
     "card": {"type": "metric_bars", "label": "Eating Out · 3-cycle average", "value": 31.11,
              "category_id": "eatingout", "budget_line": 60,
-             "delta": {"amount": -28.89, "vs": "budget"},
+             "delta": {"vs": "budget"},
              "series": [{"label": "30 Jul", "value": 60}, {"label": "13 Aug", "value": 0},
                         {"label": "27 Aug", "value": 33.34}]},
     "source": "3 completed pay cycles · 30 Jul – 9 Sep",
@@ -187,13 +187,13 @@ def test_a_card_is_dropped_when_no_tool_ran_this_turn(ai_chat, monkeypatch):
     assert "card" not in reply
 
 
-def test_a_delta_that_isnt_derived_from_tool_numbers_is_dropped(ai_chat, monkeypatch):
+def test_a_made_up_ai_delta_amount_is_ignored(ai_chat, monkeypatch):
     made_up_delta = {**GOOD_ANSWER, "card": {**GOOD_ANSWER["card"], "delta": {"amount": 5, "vs": "budget"}}}
     reply, _, _ = _run(ai_chat, monkeypatch, [
         _reply(_tool_use("query_transactions", AVG_QUERY)),
         _reply(_tool_use("respond", made_up_delta, "c2")),
     ])
-    assert "delta" not in reply["card"] and reply["card"]["value"] == 31.11
+    assert reply["card"]["delta"] == {"amount": -28.89, "vs": "budget"}
 
 
 @pytest.mark.parametrize("action", [
