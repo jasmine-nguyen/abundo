@@ -234,8 +234,9 @@ describe('styleBlocks reads a whole block past nested braces (the [^}]* bug)', (
 // accentAltSweep — WHIT-398 — [G1][G2][G3][G4] the SWEEP itself, not the token.
 //
 // The card's acceptance criterion is ZERO VISUAL CHANGE across 52 rewritten call sites in 19
-// files. The token pin ([Q16]) and its distance from C.accent ([Q17]) live above;
-// insightsSegmentedControl.gaps.screen.test.tsx pins ONE of the 52 surfaces ([A10]/[A11]).
+// files. The token pin ([Q16]) and its distance from C.accent ([Q17]) live above
+// (accentAltToken.logic.test.ts also pins the token). The Insights cycle toggle's colour is
+// guarded by that token pin and this code scan, not by a render test (WHIT-687 deleted it).
 // That leaves the sweep's two real risks unguarded:
 //
 //   1. The blue is used at NINE different written alphas (.07 .1 .10 .14 .16 .22 .25 .32 .4).
@@ -247,10 +248,9 @@ describe('styleBlocks reads a whole block past nested braces (the [^}]* bug)', (
 // Same shape as the other structural guard in this suite, themeLayout.logic.test.ts: derive the
 // list from the tree rather than hard-coding filenames, so a NEW offender is caught the day it
 // appears instead of the day someone remembers to update a list.
-// The tests themselves are exempt from the scan (shippedCode() excludes __tests__):
-// insightsSegmentedControl.gaps.screen.test.tsx pins the raw literal ON PURPOSE — asserting
-// against tint(C.accentAlt,…) there would pass even if the token were repainted — and
-// the [Q16] token pin above pins the token's rgba output.
+// The tests themselves are exempt from the scan (shippedCode() excludes __tests__): render
+// tests pin the raw literal ON PURPOSE — asserting against tint(C.accentAlt,…) would pass even
+// if the token were repainted — and the [Q16] token pin above pins the token's rgba output.
 // ============================================================================================
 
 const RAW_CHIP_BLUE = /['"`]rgba\(\s*124\s*,\s*140\s*,\s*255\s*[,)]/i;

@@ -2,26 +2,21 @@
 // step, suggested prompts, the answer card's category colour, and the action chips.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { ChatReply } from '../api';
 import { chartCategoryColor } from '../chartColors';
+import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';
+import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { resetAuth } from './support/authMock';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 // Eating Out carries a stored colour slot that differs from its built-in default, so a card that
-// ignored the slot would draw a different colour.
-const EATING_OUT = { id: 'eatingout', name: 'Eating Out', colorSlot: 5 };
-const SALARY = { id: 'salary', name: 'Salary', bucket: 'Income', colorSlot: 2 };
-jest.mock('../queries', () => ({
-  useIsAuthed: () => true,
-  useCategories: () => ({
-    categories: [EATING_OUT, SALARY],
-    category: (id: string | null) => [EATING_OUT, SALARY].find((c) => c.id === id),
-    isLoading: false, isError: false, refetch: () => {}, refetchStale: () => {},
-  }),
-}));
+// ignored the slot would draw a different colour. The real category reads load them off the server.
+const EATING_OUT = { id: 'eatingout', name: 'Eating Out', parent: null, colorSlot: 5 };
+const SALARY = { id: 'salary', name: 'Salary', parent: null, bucket: 'Income', colorSlot: 2 };
 
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }) }));
@@ -33,6 +28,7 @@ import { ChatAnswer } from '../chat/ChatAnswer';
 import { C } from '../theme';
 
 const server = installFakeServer();
+useTestQueryClient();
 const chatPosts = () => server.sent('POST', '/ai/chat');
 
 const REPLY: ChatReply = {
@@ -60,7 +56,7 @@ async function flush() {
 }
 
 async function mountOpen() {
-  const view = render(<ChatProvider><Probe /><ChatSheet /></ChatProvider>);
+  const view = await renderWithQueries(<ChatProvider><Probe /><ChatSheet /></ChatProvider>);
   await flush();
   act(() => chat.openChat());
   return view;
@@ -74,11 +70,18 @@ async function askAndAnswer() {
   await flush();
   await act(async () => { jest.advanceTimersByTime(1000); });
   await flush();
+  // The answer card is the first thing to read categories: let that read land and redraw the card
+  // (the query library schedules its redraw on a timer).
+  await act(async () => { jest.advanceTimersByTime(0); });
+  await flush();
   jest.useRealTimers();
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
 }
 
 beforeEach(async () => {
   jest.clearAllMocks();
+  resetAuth();
+  server.seed('/categories', [EATING_OUT, SALARY]);
   await AsyncStorage.clear();
 });
 
@@ -191,22 +194,22 @@ function StyleFlat(style: unknown): Record<string, unknown> {
 }
 
 describe('the answer card difference colour', () => {
-  const deltaColor = (categoryId: string, amount: number) => {
+  const deltaColor = async (categoryId: string, amount: number) => {
     const card = { ...REPLY.card!, categoryId, delta: { amount, vs: 'budget' as const } };
-    render(<ChatAnswer text="ok" reply={{ ...REPLY, card }} onAction={() => {}} />);
+    await renderWithQueries(<ChatAnswer text="ok" reply={{ ...REPLY, card }} onAction={() => {}} />);
     return StyleFlat(screen.getByTestId('chat-card-delta').props.style).color;
   };
 
-  it('is red over a spending budget and green under it', () => {
-    expect(deltaColor('eatingout', 14)).toBe(C.bad);
+  it('is red over a spending budget and green under it', async () => {
+    expect(await deltaColor('eatingout', 14)).toBe(C.bad);
     screen.unmount();
-    expect(deltaColor('eatingout', -14)).toBe(C.chatUnder);
+    expect(await deltaColor('eatingout', -14)).toBe(C.chatUnder);
   });
 
-  it('is green over an Income target — earning more than planned is good news', () => {
-    expect(deltaColor('salary', 200)).toBe(C.chatUnder);
+  it('is green over an Income target — earning more than planned is good news', async () => {
+    expect(await deltaColor('salary', 200)).toBe(C.chatUnder);
     screen.unmount();
-    expect(deltaColor('salary', -200)).toBe(C.bad);
+    expect(await deltaColor('salary', -200)).toBe(C.bad);
   });
 });
 
@@ -231,8 +234,8 @@ describe('the answer card budget line', () => {
   const dashedLine = () => screen.getByTestId('chat-card-budget-line')
     .find((node) => node.props.strokeDasharray === '5 4');
 
-  it('draws a dashed line the measured width of the plot, with no % lengths', () => {
-    render(<ChatAnswer text="ok" reply={REPLY} onAction={() => {}} />);
+  it('draws a dashed line the measured width of the plot, with no % lengths', async () => {
+    await renderWithQueries(<ChatAnswer text="ok" reply={REPLY} onAction={() => {}} />);
     expectNoPercentLengths();
 
     layout(300);

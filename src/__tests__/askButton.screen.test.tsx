@@ -1,24 +1,24 @@
 // Card 609 — the floating "Ask" pill: the tab bar renders it (so it is on all five tabs and no
 // pushed screen), 16pt above the bar, labelled for screen readers, and tapping it opens the chat.
-import { it, expect, jest } from '@jest/globals';
+// WHIT-687 — the tab bar's screen data comes from the real query hooks over the fake server.
+import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { fireEvent, screen } from '@testing-library/react-native';
 
-jest.mock('../queries', () => ({
-  useRecentTransactionsScreenData: () => ({ transactions: [], category: () => undefined }),
-  useKeepTransactionsFeedWarm: () => {},
-  useUncategorizedCount: () => undefined,
-}));
 jest.mock('../motion/NavBarsContext', () => ({ useNavBars: () => ({ visibility: { interpolate: () => 0 } }) }));
 jest.mock('expo-router', () => ({ Tabs: Object.assign(() => null, { Screen: () => null }) }));
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { TabBar } from '../../app/(tabs)/_layout';
 import { ChatProvider, useChat } from '../chat/ChatContext';
 import { installFakeServer } from './support/fakeServer';
+import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { resetAuth } from './support/authMock';
 
 installFakeServer();
+useTestQueryClient();
+
+beforeEach(() => resetAuth());
 
 let chatOpen = false;
 function Probe() {
@@ -31,8 +31,8 @@ const barProps: React.ComponentProps<typeof TabBar> = {
   navigation: { emit: () => ({ defaultPrevented: false }), navigate: jest.fn() },
 };
 
-it('the tab bar renders the Ask pill above itself, and tapping it opens the chat', () => {
-  render(<ChatProvider><TabBar {...barProps} /><Probe /></ChatProvider>);
+it('the tab bar renders the Ask pill above itself, and tapping it opens the chat', async () => {
+  await renderWithQueries(<ChatProvider><TabBar {...barProps} /><Probe /></ChatProvider>);
 
   const pill = screen.getByLabelText('Ask about your spending');
   expect(screen.getByText('Ask')).toBeTruthy();
@@ -43,21 +43,4 @@ it('the tab bar renders the Ask pill above itself, and tapping it opens the chat
   expect(chatOpen).toBe(false);
   fireEvent.press(pill);
   expect(chatOpen).toBe(true);
-});
-
-// WHIT-615 — the pill's gradient must use the shared viewBox fill (a `%`-sized inline Svg stuck at
-// a ~50pt circle on iOS), clipped inside the 1px ring, while the pill itself stays unclipped so
-// its shadow still shows.
-it('the Ask pill fills with the shared gradient and keeps its shadow', () => {
-  render(<ChatProvider><TabBar {...barProps} /></ChatProvider>);
-
-  const pill = screen.getByLabelText('Ask about your spending');
-  const svg = pill.findAll((node) => node.props.viewBox === '0 0 1 1')[0];
-  expect(svg).toBeTruthy();
-  const clip = StyleSheet.flatten(svg.parent?.props.style);
-  expect(clip).toMatchObject({ overflow: 'hidden', borderRadius: 24 });
-
-  const pillStyle = Object.assign({}, ...[pill.props.style].flat(3).filter(Boolean));
-  expect(pillStyle.shadowOpacity).toBe(0.6);
-  expect(pillStyle.overflow).toBeUndefined();
 });

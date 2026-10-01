@@ -1,12 +1,12 @@
 // WHIT-398 — [G5][G6] two SWEPT surfaces, rendered, pinned to the pre-token colour.
 //
-// The sweep rewrote 52 call sites; exactly one of them (the Insights cycle toggle) has a render-
-// level colour assertion, in insightsSegmentedControl.gaps.screen.test.tsx [A10]/[A11]. These two
-// are the shared components — the selected-row wash appears on Transactions AND budget detail, and
+// The sweep rewrote 52 call sites. The Insights cycle toggle's colour is guarded by
+// accentAltToken.logic.test.ts and the themeTokenInvariants code scan, not by a render test
+// (WHIT-687 deleted that one). These two are the shared components — the selected-row wash appears on Transactions AND budget detail, and
 // the retry pill appears on transaction/[id] AND account/[id] — so one repaint here is visible on
 // four screens.
 //
-// Both assert the RAW pre-token literal, matching the convention [A10] established: asserting
+// Both assert the RAW pre-token literal on purpose: asserting
 // against tint(C.accentAlt, a) would still pass if the token itself were repainted, which is the
 // one regression these tests exist to catch. accentAltToken.logic.test.ts owns the token's value;
 // these own "the component still asks for it".
