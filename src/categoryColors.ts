@@ -4,7 +4,7 @@
 // budgets, transactions and legend rows. (The Insights pie has its own separate OKLCH ramp in
 // src/chartColors.ts.)
 import { C } from './theme';
-import type { Bucket } from './context';
+import type { Bucket } from './types';
 
 export const BUCKET_COLOR: Record<Bucket, string> = {
   Living: '#7aa2f7', Lifestyle: '#bb9af7', Income: C.good, Savings: '#73daca',

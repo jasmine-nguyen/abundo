@@ -1,10 +1,8 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { C, tint, fmt, fmtExact, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
-import { normalizeColorSlot } from './chartColors';
-import { colorForCategory } from './categoryColors';
 import { writeFailureMessage, ApiError } from './apiError';
-import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, utcDayMsToISO, MS_PER_DAY } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, deleteTransaction as apiDeleteTransaction, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup } from './api';
+import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, deleteTransaction as apiDeleteTransaction, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup } from './api';
 import * as Crypto from 'expo-crypto';
 import { usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
@@ -15,101 +13,26 @@ export type { ApplyRulesResult, ApplyRulesJob } from './api';
 export { unionById, budgetSubtreeContains } from './transactionCache';
 export type { FilingResult, FilingTarget, FilingWhen } from './filingRun';
 export { APPLY_RULES_MAX_WRITES } from './filingRun';
-// WHIT-190a: the categorise write double-writes the query cache (for the migrated
-// Transactions list) alongside the old store (for the tab badge + budget detail).
-// Import the singleton directly (not the ['transactions'] key from ./queries) to avoid
-// a circular import — ./queries imports from this module.
+// WHIT-630: temporary pass-through of the pieces moved to leaf files, so importers keep working
+// until slice 2 repoints them.
+export type { Bucket, Category, Transaction } from './types';
+export type { Budget, Rule, RuleWrite, HomeLoanState } from './model';
+export { toCategory, toBudget, toRule, EMPTY_LOAN_FACTS, loanFactsReady, UNCATEGORIZED_KEY, EARNED_KEY, INCOME_KEY, ROLLUP_KEY, readRollup, readIncomeSources } from './model';
+export { cycleName, cycleClock, cycleStart, cycleClockView, elapsedFrac } from './payCycle';
+import type { Bucket, Category, Transaction } from './types';
+import { loanFactsReady, toCategory, toRule, EMPTY_LOAN_FACTS, UNCATEGORIZED_KEY, EARNED_KEY, INCOME_KEY, ROLLUP_KEY, readRollup, type Budget, type Rule, type RuleWrite, type HomeLoanState } from './model';
+import { cycleName, cycleClock, cycleClockView, elapsedFrac } from './payCycle';
+import { availableToSpend, paceTarget } from './budgetMath';
+import { breakdownKey, budgetsKey, categoriesKey, filingSuggestionsKey, goalsKey, loanFactsKey, milestonesKey, payCycleKey, rulesKey, transactionsSearchKey } from './queryKeys';
 import { queryClient } from './queryClient';
 import { readTransactionCopies, findTransaction, patchTransactionsCache, patchAllCopies, removeFromAllCopies, optimisticRefile, refreshAfter } from './transactionCache';
 import { runOptimisticSave, type SaveSteps } from './optimisticSave';
 import { useFilingRun, type FilingResult, type FilingTarget, type FilingWhen } from './filingRun';
 import { getStatus, subscribe } from './auth';
 
-// The empty loan-facts shape shown until the user saves the form. Kept as a
-// module const so every "unset" origin (initial state, a failed fetch) agrees.
-// Exported (WHIT-197) so the Goal/milestone query composite has the same all-null
-// default before the loan-facts read resolves.
-export const EMPTY_LOAN_FACTS: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null, payoffGoalDate: null, depositTarget: null };
-
-// Loan facts are "ready" only when the user has saved all six fields — until then
-// the app shows a set-up prompt instead of any fabricated number. Narrows to
-// LoanFactsInput so callers can read the fields as plain numbers.
-export function loanFactsReady(f: LoanFacts): f is LoanFactsInput {
-  return typeof f.original === 'number' && typeof f.homeValue === 'number' && typeof f.lvr === 'number'
-    && typeof f.ratePct === 'number' && typeof f.baseRepay === 'number' && typeof f.extra === 'number';
-}
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-export type Bucket = 'Living' | 'Lifestyle' | 'Income' | 'Savings';
-
-export interface Category {
-  id: string;
-  name: string;
-  icon: string;
-  color: string;
-  bucket: Bucket;
-  recent: number;
-  // Id of the parent this category rolls up into; null (or absent) means
-  // top-level. Optional so existing category literals stay valid; toCategory
-  // always normalises it to a value.
-  parent?: string | null;
-  // The server's permanent chart-colour slot, an integer in [0,20). Optional so existing
-  // category literals — and a server that predates slots — stay valid; absent means the
-  // Insights chart falls back to the id-derived colour.
-  colorSlot?: number;
-}
-export interface Budget {
-  id: string; budget: number; posted: number; pending: number;
-  // Rollover (envelope carryover). `rollover` off => `carryover` is ignored. `carryover` is
-  // the signed buffer this cycle adds to the target (positive = saved up, negative = a prior
-  // spike's overspend carried as a deficit). Default off/0 for a non-rollover/legacy budget.
-  rollover: boolean; carryover: number;
-  // Bill spread (WHIT-504): `spreadAdjustment` is the signed dollars this cycle's spendable
-  // moves by (a positive cushion in the anchor cycle, a negative slice in a payback cycle);
-  // default 0 for a non-spread budget. `spread` carries the plan detail for the status line.
-  // A category has rollover OR a spread, never both, so at most one of carryover/spreadAdjustment
-  // is ever non-zero.
-  spreadAdjustment: number; spread?: SpreadPlan;
-  // The spendable this cycle, computed server-side on the unified Smoothing model (WHIT-549).
-  // Absent on a server that predates it — the screen falls back to the old parts-sum below.
-  available?: number;
-}
-export interface Transaction {
-  transaction_id: string;
-  date: string;            // "YYYY-MM-DD"
-  authorized_date: string;
-  description: string;
-  merchant_name: string;
-  amount: number;
-  account_id: string;
-  account_name: string;
-  category: string | null;
-  status: 'pending' | 'posted';
-  type: string;
-  counts_to_budget: boolean;
-  // WHIT-275: user-authored, optional. Absent when never set or cleared (the
-  // server REMOVEs a cleared field, so it reads back undefined, not ""/[]).
-  notes?: string;
-  tags?: string[];
-  // WHIT-296: user override to exclude this transaction from budgets ("mark as
-  // transfer"). Absent (undefined) = not excluded; only True is stored server-side.
-  budget_excluded?: boolean;
-  // WHIT-536/539: the store id of the rule that auto-filed this charge's category.
-  // Server-stamped, sparse — absent when filed by hand or by the bank. The detail
-  // screen resolves it against the rules cache to explain the category (WHIT-539).
-  filed_by_rule?: string;
-}
-// `pattern` mirrors the server rule's `value`; `field`/`operator` carry the
-// server facts (default description/contains for app-authored rules) so a rule
-// surfaced from BankSync renders truthfully. `isNew` flags the "NEW" badge and
-// is client-only (server rules load as isNew:false).
-export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; field?: string; operator?: string; budgetExcluded?: boolean; spread?: boolean; spreadAmount?: number | null; spreadGapDays?: number | null; conditions?: RuleCondition[] | null; logic?: RuleLogic | null; }
-// WHIT-563: the multi-condition payload a rule writer sends when the builder produced more than a
-// plain "description contains" rule. Absent on the classic single-condition path (which stays a
-// flat value write, preserving the WHIT-538 preview flow and pattern-based conflict detection).
-export interface RuleWrite { conditions: RuleCondition[]; logic: RuleLogic; }
 // WHIT-539: the line shown when a rule auto-filed a charge but there is no readable
 // merchant text to name it — a rule that matched on category type (its pattern is a raw
 // enum, not human text), or a stamp whose rule was since renamed/deleted (a dangling id).
@@ -125,10 +48,6 @@ export function ruleFiledLabel(rule: Rule): string {
   const operator = rule.operator ?? 'contains';
   return `Filed by your rule: ${operator} "${rule.pattern}"`;
 }
-// The live home-loan balance from BankSync (WHIT-8). `balance` is the outstanding
-// mortgage principal as a positive number, null until the balance poller's first
-// run lands.
-export interface HomeLoanState { balance: number | null; asOf: string | null; }
 export type Sheet =
   // WHIT-324: the detail screen and the Transactions list share ONE categorize flow — picker →
   // confirm offering "All from this merchant" vs "Just this one". (Pre-324 a detail re-file set a
@@ -468,11 +387,6 @@ export function ruleOverlap(
   return null;
 }
 
-// The pay-cycle length -> its human name. Pure + exported so the provider and the
-// tests share one source of truth (rather than each reimplementing the mapping).
-export function cycleName(length: number): 'Weekly' | 'Fortnightly' | 'Monthly' {
-  return length === 7 ? 'Weekly' : length === 14 ? 'Fortnightly' : 'Monthly';
-}
 
 // A home loan is repaid on its own MONTHLY schedule — a fixed direct debit —
 // independent of how often the user is paid. So the payoff projection (WHIT-114)
@@ -654,50 +568,6 @@ export interface AppContext {
 	generateAiInsights: (goal?: AiGoalSignal | null) => Promise<void>;
 }
 
-/**
- * Map a raw category object from the categories API into the client-side
- * `Category` shape, defaulting any missing field so downstream budget math never
- * sees `undefined`/`NaN`. The server always returns `recent: 0`, and `icon`
- * falls back to a key that is guaranteed to exist in the icon map (`coffee`)
- * rather than the server's own default, so the chip always renders a glyph.
- *
- * @param raw - A single category record as returned by the categories API.
- * @returns A fully-populated `Category` safe to store and render.
- */
-export function toCategory(raw: any): Category {
-  return {
-    id: raw.id,
-    name: raw.name,
-    bucket: raw.bucket,
-    icon: raw.icon ?? 'coffee',
-    color: colorForCategory(raw.id),
-    recent: typeof raw.recent === 'number' ? raw.recent : 0,
-    parent: raw.parent ?? null,
-    // The Insights chart's permanent colour. Absent or unusable → undefined, so the chart falls
-    // back to the id-derived colour. NOT `raw.colorSlot || undefined` (that drops slot 0, a real
-    // slot — Eating Out) and NOT `?? 0` (that would paint every slot-less category one pink, which
-    // reads as a rendering bug rather than a loud failure).
-    colorSlot: normalizeColorSlot(raw.colorSlot),
-  };
-}
-
-// Merge a server budget target into the client Budget shape. The server rollup owns
-// the target AND the computed posted/pending spend for the window, so we take all three
-// straight from it. Module-level + exported so the ['budgets'] query's selectBudgets
-// reuses the exact same mapping.
-export function toBudget(id: string, rollup: BudgetRollup): Budget {
-  // rollover/carryover are absent on a non-rollover/legacy budget — default them so every
-  // Budget has a concrete shape (no `undefined` leaking into the available/remain math).
-  return {
-    id, budget: rollup.target, posted: rollup.posted, pending: rollup.pending,
-    rollover: rollup.rollover ?? false, carryover: rollup.carryover ?? 0,
-    spreadAdjustment: rollup.spread?.adjustment ?? 0, spread: rollup.spread,
-    // Pass through the server-computed spendable; stays undefined when the server omits it,
-    // so the screens' `?? <parts-sum>` fallback fires (WHIT-549).
-    available: rollup.available,
-  };
-}
-
 // Bill-spread cycle bounds the app offers, mirroring the server (SPREAD_MIN/MAX_CYCLES,
 // lambda_api/api_constants.py). Advisory only — the server re-validates and 400s a bad value —
 // so a bound change server-side just needs these kept in step; the stepper clamps to them.
@@ -717,13 +587,6 @@ export function spreadPreview(amount: number, cycles: number): { cushion: number
   const firstSlice = (base + (extra > 0 ? 1 : 0)) / 100;
   const lastSlice = base / 100;
   return { cushion: amount, firstSlice, lastSlice };
-}
-
-// Map a server rule into the client `Rule` shape. `value` -> `pattern`
-// (what the list renders); loaded rules are never "new". Module-level + exported
-// (WHIT-195) so the ['rules'] query's selectRules reuses the exact same mapping.
-export function toRule(raw: RuleRecord): Rule {
-  return { id: raw.id, pattern: raw.value, categoryId: raw.categoryId, isNew: false, field: raw.field, operator: raw.operator, budgetExcluded: raw.budgetExcluded, spread: raw.spread, spreadAmount: raw.spreadAmount, spreadGapDays: raw.spreadGapDays, conditions: raw.conditions, logic: raw.logic };
 }
 
 // WHIT-559: a spread rule save can be refused for a spread-specific reason the user can act on —
@@ -759,9 +622,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // updater to the cache — including the client-only isNew "NEW" badge, which a refetch
   // would reset to false. Guards an evicted/absent cache (gcTime is finite): when the
   // Rules screen was never opened there's nothing to patch, and opening it fetches fresh.
-  // Literal ['rules'] key (not the queries.ts const) to avoid a circular import.
   const patchRules = useCallback((fn: (prev: Rule[]) => Rule[]) => {
-    queryClient.setQueryData<Rule[]>(['rules'], (prev) => (prev ? fn(prev) : prev));
+    queryClient.setQueryData<Rule[]>(rulesKey, (prev) => (prev ? fn(prev) : prev));
   }, []);
 
 	// WHIT-268: bumped once per sign-out (the anon subscription below). An async AI
@@ -897,7 +759,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // this cache on open, so a cold write is a belt-and-braces guard, not the norm.
   const persistPayCycle = useCallback(
     async (mutate: (prev: { length: number; last_pay_date: string }) => { length: number; last_pay_date: string }) => {
-      const prev = queryClient.getQueryData<{ length: number; last_pay_date: string }>(['payCycle']);
+      const prev = queryClient.getQueryData<{ length: number; last_pay_date: string }>(payCycleKey);
       if (!prev) return;
       const next = mutate(prev);
       // Drop any stale server days_left from the optimistic write — the new length/payday
@@ -908,8 +770,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // re-seated nor toasted into the next session.
       return runSave({
         apply: () => {
-          queryClient.setQueryData(['payCycle'], optimistic);
-          return () => queryClient.setQueryData(['payCycle'], prev);
+          queryClient.setQueryData(payCycleKey, optimistic);
+          return () => queryClient.setQueryData(payCycleKey, prev);
         },
         send: () => apiSetPayCycle(optimistic),
         onSaved: () => {
@@ -917,9 +779,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           // the migrated Budgets/Insights reads. Also refetch ['payCycle'] so the server's
           // authoritative days_left is recomputed for the new settings (WHIT-341); the flat
           // ['budgets']/['breakdown'] keys make each of these a single refresh (WHIT-72).
-          queryClient.invalidateQueries({ queryKey: ['payCycle'] });
-          queryClient.invalidateQueries({ queryKey: ['budgets'] });
-          queryClient.invalidateQueries({ queryKey: ['breakdown'] });
+          queryClient.invalidateQueries({ queryKey: payCycleKey });
+          queryClient.invalidateQueries({ queryKey: budgetsKey });
+          queryClient.invalidateQueries({ queryKey: breakdownKey });
         },
         onFailed: () => showToast('Could not save pay cycle. Please try again.'),
         whenSignedOut: undefined,
@@ -945,17 +807,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // sources prev from the query cache (EMPTY_LOAN_FACTS when cold — the same default the
   // form shows), not a store useState.
   const saveLoanFacts = useCallback(async (next: LoanFactsInput): Promise<boolean> => {
-    const prev = queryClient.getQueryData<LoanFacts>(['loanFacts']) ?? EMPTY_LOAN_FACTS;
+    const prev = queryClient.getQueryData<LoanFacts>(loanFactsKey) ?? EMPTY_LOAN_FACTS;
     // WHIT-271: a sign-out during the round-trip makes this a no-op — no re-seat of the old mortgage
     // details, no toast, and no `true` (which would fire the form's router.back() post-redirect).
     return runSave({
       apply: () => {
-        queryClient.setQueryData(['loanFacts'], next);
-        return () => queryClient.setQueryData(['loanFacts'], prev);
+        queryClient.setQueryData(loanFactsKey, next);
+        return () => queryClient.setQueryData(loanFactsKey, prev);
       },
       send: () => apiSetLoanFacts(next),
       onSaved: () => {
-        queryClient.invalidateQueries({ queryKey: ['loanFacts'] });
+        queryClient.invalidateQueries({ queryKey: loanFactsKey });
         return true;
       },
       onFailed: () => {
@@ -972,17 +834,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // load-bearing: milestones is SECONDARY in useGoalScreenData (out of that composite's refetch),
   // so this save's own invalidation is what refreshes the screen (WHIT-367 wired it that way).
   const saveMilestones = useCallback(async (next: MilestoneRecord[]): Promise<boolean> => {
-    const prev = queryClient.getQueryData<MilestoneRecord[]>(['milestones']) ?? [];
+    const prev = queryClient.getQueryData<MilestoneRecord[]>(milestonesKey) ?? [];
     // WHIT-271: a sign-out during the round-trip makes this a no-op — no re-seat of the old plan,
     // no toast, and no `true` (which would fire the editor's router.back() post-redirect).
     return runSave({
       apply: () => {
-        queryClient.setQueryData(['milestones'], next);
-        return () => queryClient.setQueryData(['milestones'], prev);
+        queryClient.setQueryData(milestonesKey, next);
+        return () => queryClient.setQueryData(milestonesKey, prev);
       },
       send: () => apiSetMilestones(next),
       onSaved: () => {
-        queryClient.invalidateQueries({ queryKey: ['milestones'] });
+        queryClient.invalidateQueries({ queryKey: milestonesKey });
         return true;
       },
       onFailed: () => {
@@ -1025,7 +887,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // (the eager store is gone). By the time the confirm sheet is open the Transactions
     // list + pickers have warmed both caches; an empty fallback just closes the sheet.
     const transactions = readTransactionCopies(queryClient, { includeScopedLists: false });
-    const categories = queryClient.getQueryData<Category[]>(['categories']) ?? [];
+    const categories = queryClient.getQueryData<Category[]>(categoriesKey) ?? [];
     const transaction = transactions.find((t) => t.transaction_id === txId);
     const category = categories.find((c) => c.id === categoryId);
     if (!transaction || !category) {
@@ -1072,7 +934,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // even a full-description fallback) PLUS each swept charge's merchant slice ONLY when it's a
       // real merchant substring (merchantSlice != null), never the full-description fallback — so a
       // noisy no-merchant pending auth in the sweep can't mint a match-nothing rule.
-      const existingRules = queryClient.getQueryData<Rule[]>(['rules']) ?? [];
+      const existingRules = queryClient.getQueryData<Rule[]>(rulesKey) ?? [];
       const candidateValues = [
         ruleValue,
         ...sameMerchantIds
@@ -1206,7 +1068,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // their PREVIOUS category (never a blanket null — a re-filed charge may have been categorised).
   const applyCategoryToMany = useCallback(async (txIds: string[], categoryId: string): Promise<void> => {
     const transactions = readTransactionCopies(queryClient, { includeScopedLists: false });
-    const categories = queryClient.getQueryData<Category[]>(['categories']) ?? [];
+    const categories = queryClient.getQueryData<Category[]>(categoriesKey) ?? [];
     const category = categories.find((c) => c.id === categoryId);
     // Only touch ids that are actually in the cache; dedupe defensively.
     const ids = Array.from(new Set(txIds)).filter((id) => transactions.some((t) => t.transaction_id === id));
@@ -1346,7 +1208,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // a KEY (a target>0 rollup is a real budget row, matching selectBudgets' own filter).
       // Treating it as an array here would throw `.some is not a function` on the Record.
       // (WHIT-72 flattened the key to ['budgets']; the prefix match still finds it.)
-      const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
+      const c = queryClient.getQueryData<Category[]>(categoriesKey)?.find((x) => x.id === categoryId);
       // WHIT-202: a Savings-bucket category can't carry a target — the screens skip it
       // (budgetViews/budgetDetail), so a saved one is an invisible, un-editable phantom.
       // Short-circuit before the doomed round-trip; the server rejects it too (belt +
@@ -1357,7 +1219,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
       const existing = queryClient
-        .getQueriesData<Record<string, BudgetRollup>>({ queryKey: ['budgets'] })
+        .getQueriesData<Record<string, BudgetRollup>>({ queryKey: budgetsKey })
         .some(([, data]) => !!data && (data[categoryId]?.target ?? 0) > 0);
       // WHIT-271: `c` (category name) + `saved.target` (dollar figure) are the OLD session's data,
       // and app/budget/edit.tsx invalidates + navigates on `true` — runSave returns false after a
@@ -1393,11 +1255,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const saveSpread = useCallback(
     async (categoryId: string, amount: number, cycles: number): Promise<boolean> => {
       if (amount <= 0 || cycles < SPREAD_MIN_CYCLES || cycles > SPREAD_MAX_CYCLES) return false;
-      const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
+      const c = queryClient.getQueryData<Category[]>(categoriesKey)?.find((x) => x.id === categoryId);
       return runSave({
         send: () => apiSetSpread(categoryId, amount, cycles),
         onSaved: () => {
-          queryClient.invalidateQueries({ queryKey: ['budgets'] });
+          queryClient.invalidateQueries({ queryKey: budgetsKey });
           if (c) showToast(`Bill spread set for ${c.name}.`);
           return true;
         },
@@ -1416,11 +1278,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // screen can't setState-after-unmount. Idempotent server-side (200 with no plan).
   const removeSpread = useCallback(
     async (categoryId: string): Promise<boolean> => {
-      const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
+      const c = queryClient.getQueryData<Category[]>(categoriesKey)?.find((x) => x.id === categoryId);
       return runSave({
         send: () => apiDeleteSpread(categoryId),
         onSaved: () => {
-          queryClient.invalidateQueries({ queryKey: ['budgets'] });
+          queryClient.invalidateQueries({ queryKey: budgetsKey });
           if (c) showToast(`Bill spread removed for ${c.name}.`);
           return true;
         },
@@ -1442,13 +1304,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // with the server rollup.
   const deleteBudget = useCallback(
     async (categoryId: string): Promise<boolean> => {
-      const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
+      const c = queryClient.getQueryData<Category[]>(categoriesKey)?.find((x) => x.id === categoryId);
       // WHIT-271: runSave skips the restore after sign-out, so stale rollups never reach the
       // cleared cache, and no toast reaches the next session.
       return runSave({
         apply: () => {
           // Snapshot every ['budgets'] entry so a failure can restore exactly what was there.
-          const snapshots = queryClient.getQueriesData<Record<string, BudgetRollup>>({ queryKey: ['budgets'] });
+          const snapshots = queryClient.getQueriesData<Record<string, BudgetRollup>>({ queryKey: budgetsKey });
           snapshots.forEach(([key, data]) => {
             if (!data || !(categoryId in data)) return;
             const { [categoryId]: _removed, ...rest } = data;
@@ -1458,7 +1320,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         },
         send: () => apiDeleteBudget(categoryId),
         onSaved: () => {
-          queryClient.invalidateQueries({ queryKey: ['budgets'] });
+          queryClient.invalidateQueries({ queryKey: budgetsKey });
           if (c) showToast(`${c.name} budget removed.`);
           return true;
         },
@@ -1494,8 +1356,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return runSave({
         send: async () => toCategory(await createCategory(input)),
         onSaved: (created) => {
-          queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? [...prev, created] : prev));
-          queryClient.invalidateQueries({ queryKey: ['categories'] });
+          queryClient.setQueryData<Category[]>(categoriesKey, (prev) => (prev ? [...prev, created] : prev));
+          queryClient.invalidateQueries({ queryKey: categoriesKey });
           if (!opts?.silent) showToast('Category created.');
           return created;
         },
@@ -1529,13 +1391,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return runSave({
         send: () => updateCategory(editId, input),
         onSaved: (updated) => {
-          const previousName = queryClient.getQueryData<Category[]>(['categories'])?.find((c) => c.id === editId)?.name;
-          queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? prev.map((c) => (c.id === editId ? toCategory(updated) : c)) : prev));
+          const previousName = queryClient.getQueryData<Category[]>(categoriesKey)?.find((c) => c.id === editId)?.name;
+          queryClient.setQueryData<Category[]>(categoriesKey, (prev) => (prev ? prev.map((c) => (c.id === editId ? toCategory(updated) : c)) : prev));
           // WHIT-203: the setQueryData shows the change instantly on the migrated screens /
           // pickers; the invalidate then reconciles with the server.
-          queryClient.invalidateQueries({ queryKey: ['categories'] });
+          queryClient.invalidateQueries({ queryKey: categoriesKey });
           // WHIT-576: a rename changes the category text a search matches on.
-          if (updated.name !== previousName) queryClient.invalidateQueries({ queryKey: ['transactionsSearch'] });
+          if (updated.name !== previousName) queryClient.invalidateQueries({ queryKey: transactionsSearchKey });
           if (!opts?.silent) showToast('Category updated.');
           return true;
         },
@@ -1562,15 +1424,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // function` and abort the rest of the cascade.
       // The undo restores whole snapshots, so a change to categories/rules/budgets made while
       // the delete is in flight is lost on failure (rare: the delete is modal).
-      const categoriesBefore = queryClient.getQueryData<Category[]>(['categories']);
-      const rulesBefore = queryClient.getQueryData<Rule[]>(['rules']);
-      const budgetSnapshots = queryClient.getQueriesData<Record<string, BudgetRollup>>({ queryKey: ['budgets'] });
+      const categoriesBefore = queryClient.getQueryData<Category[]>(categoriesKey);
+      const rulesBefore = queryClient.getQueryData<Rule[]>(rulesKey);
+      const budgetSnapshots = queryClient.getQueriesData<Record<string, BudgetRollup>>({ queryKey: budgetsKey });
       const unfiledIds = new Set(
         readTransactionCopies(queryClient, { includeScopedLists: true })
           .filter((t) => t.category === id)
           .map((t) => t.transaction_id),
       );
-      queryClient.setQueryData<Category[]>(['categories'], (prev) => prev?.filter((c) => c.id !== id));
+      queryClient.setQueryData<Category[]>(categoriesKey, (prev) => prev?.filter((c) => c.id !== id));
       budgetSnapshots.forEach(([key, data]) => {
         if (!data || !(id in data)) return;
         const { [id]: _removed, ...rest } = data;
@@ -1579,8 +1441,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       patchRules((prev) => prev.filter((r) => r.categoryId !== id));
       patchAllCopies((t) => (t.category === id ? { ...t, category: null } : t));
       return () => {
-        queryClient.setQueryData(['categories'], categoriesBefore);
-        queryClient.setQueryData(['rules'], rulesBefore);
+        queryClient.setQueryData(categoriesKey, categoriesBefore);
+        queryClient.setQueryData(rulesKey, rulesBefore);
         budgetSnapshots.forEach(([key, data]) => queryClient.setQueryData(key, data));
         patchAllCopies((t) => (unfiledIds.has(t.transaction_id) ? { ...t, category: id } : t));
       };
@@ -1610,7 +1472,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const deleteRule = useCallback(async (id: string) => {
     // WHIT-192: source the rules snapshot (for the rollback) from the ['rules'] query cache
     // the screen reads, not a store useState.
-    const current = queryClient.getQueryData<Rule[]>(['rules']) ?? [];
+    const current = queryClient.getQueryData<Rule[]>(rulesKey) ?? [];
     const index = current.findIndex((r) => r.id === id);
     if (index === -1) return;
     const removed = current[index];
@@ -1645,7 +1507,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!value || !categoryId) return;
     // WHIT-192: the toast copy needs the category name — sourced from the ['categories']
     // query cache the screens read, not a store useState.
-    const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
+    const c = queryClient.getQueryData<Category[]>(categoriesKey)?.find((x) => x.id === categoryId);
     const tempRuleId = 'tmp-' + Date.now();
     const optimistic: Rule = write
       ? { id: tempRuleId, pattern: value, categoryId, isNew: true, budgetExcluded, spread, field: write.conditions[0].field, operator: write.conditions[0].operator, conditions: write.conditions, logic: write.logic }
@@ -1671,7 +1533,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // WHIT-542: this shop now has a rule, so it is no longer a hand-filing habit. The "file now"
         // arm reaches this via refreshAfterApplyRules; the "save rule only" arm (here) mints without a
         // sweep, so invalidate the suggestions itself or an accepted "make a rule?" card lingers.
-        queryClient.invalidateQueries({ queryKey: ['filingSuggestions'] });
+        queryClient.invalidateQueries({ queryKey: filingSuggestionsKey });
       },
       onFailed: (e) => showToast(ruleWriteErrorMessage(e, 'Could not save rule. Please try again.', spread)),
       whenSignedOut: undefined,
@@ -1686,7 +1548,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!value || !categoryId) return;
     // WHIT-192: source the `before` snapshot (for rollback) + the category name from the
     // query caches the screens read, not store useStates.
-    const before = queryClient.getQueryData<Rule[]>(['rules'])?.find((r) => r.id === id);
+    const before = queryClient.getQueryData<Rule[]>(rulesKey)?.find((r) => r.id === id);
     if (!before) return;
     // WHIT-563: carry conditions/logic on a multi edit; explicitly null them on a classic edit so an
     // edit that reduces a multi rule to one condition doesn't leave stale rows on the optimistic copy
@@ -1694,7 +1556,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const patch = write
       ? { pattern: value, categoryId, budgetExcluded, spread, field: write.conditions[0].field, operator: write.conditions[0].operator, conditions: write.conditions, logic: write.logic }
       : { pattern: value, categoryId, budgetExcluded, spread, conditions: null, logic: null };
-    const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
+    const c = queryClient.getQueryData<Category[]>(categoriesKey)?.find((x) => x.id === categoryId);
     // WHIT-540: editing a rule now RE-FILES the stored charges it already touched (the server moves
     // them to the new target, or clears the ones the edit no longer matches), so the server-derived
     // reads DO move — refresh the count, feed, budgets and merchant groups. `skipRules` leaves the
@@ -1728,7 +1590,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const id = editId ?? Crypto.randomUUID();
     // Snapshot the pre-edit record (for the rollback) from the ['goals'] query cache the hub
     // reads, not a store useState — same source-of-truth choice as the rule writers (WHIT-192).
-    const before = queryClient.getQueryData<GoalRecord[]>(['goals'])?.find((g) => g.id === id) ?? null;
+    const before = queryClient.getQueryData<GoalRecord[]>(goalsKey)?.find((g) => g.id === id) ?? null;
     // Checkpoints need their permanent ids BEFORE the optimistic row lands in the cache: a
     // GoalRecord promises every checkpoint has one, and the celebration keys on it. Mint any
     // missing id here (like the goal id above) and send the SAME ids on, so the optimistic row
@@ -1741,14 +1603,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return runSave({
       apply: () => {
         // Upsert into the cache: replace the id in place if present, else append.
-        queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => {
+        queryClient.setQueryData<GoalRecord[]>(goalsKey, (prev) => {
           const list = prev ?? [];
           const at = list.findIndex((g) => g.id === id);
           if (at >= 0) { const next = [...list]; next[at] = optimistic; return next; }
           return [...list, optimistic];
         });
         // Roll back: restore the prior record for an edit, or drop the appended one for a create.
-        return () => queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => {
+        return () => queryClient.setQueryData<GoalRecord[]>(goalsKey, (prev) => {
           const list = prev ?? [];
           return before ? list.map((g) => (g.id === id ? before : g)) : list.filter((g) => g.id !== id);
         });
@@ -1756,7 +1618,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       send: () => apiSaveGoal(id, { ...body, checkpoints }),
       onSaved: (saved) => {
         // Swap the optimistic row for the server's authoritative one (same id).
-        queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) =>
+        queryClient.setQueryData<GoalRecord[]>(goalsKey, (prev) =>
           (prev ?? []).map((g) => (g.id === id ? saved : g)));
         return true;
       },
@@ -1774,7 +1636,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // (unknown id → 200), so a rollback that races a refresh can't wedge. Unlike deleteRule
   // (whose patchRules no-ops on an evicted cache), this resurrects the row via `prev ?? []`.
   const deleteGoal = useCallback(async (id: string): Promise<boolean> => {
-    const current = queryClient.getQueryData<GoalRecord[]>(['goals']) ?? [];
+    const current = queryClient.getQueryData<GoalRecord[]>(goalsKey) ?? [];
     const index = current.findIndex((g) => g.id === id);
     if (index === -1) return false;
     const removed = current[index];
@@ -1784,8 +1646,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // doesn't fire.
     return runSave({
       apply: () => {
-        queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => (prev ?? []).filter((g) => g.id !== id));
-        return () => queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => reinsertBefore(prev ?? [], removed, successorIds));
+        queryClient.setQueryData<GoalRecord[]>(goalsKey, (prev) => (prev ?? []).filter((g) => g.id !== id));
+        return () => queryClient.setQueryData<GoalRecord[]>(goalsKey, (prev) => reinsertBefore(prev ?? [], removed, successorIds));
       },
       send: () => apiDeleteGoal(id),
       onSaved: () => true,
@@ -1821,70 +1683,6 @@ export function useAppContext(): AppContext {
 // ---------------------------------------------------------------------------
 // Derived-value selectors (ported from renderVals). Pure functions over state.
 // ---------------------------------------------------------------------------
-
-// The current pay-cycle anchor, computed ONCE on the shared UTC-whole-day clock (WHIT-575). Both
-// cycleClock (daysLeft) and cycleStart (the "Started {date}" line) read this, so the hero's countdown
-// and start date can't drift apart. Returns the raw pieces; each caller applies its own edge policy
-// (cycleClock clamps to full length before the first payday; cycleStart hides the line for a
-// future/unparseable date). A NaN pay (unparseable last_pay_date) propagates through the pieces
-// exactly as dateutil's primitives define — the callers guard it.
-function currentCycleAnchor(
-  payCycle: { length: number; last_pay_date: string },
-  today?: Date,
-): { pay: number; todayMs: number; elapsedDays: number; cyclesElapsed: number; startMs: number } {
-  const length = payCycle.length;
-  const pay = isoToUtcDayMs(payCycle.last_pay_date);
-  const todayMs = dateToUtcDayMs(today ?? new Date());
-  const elapsedDays = wholeDaysBetween(pay, todayMs);        // integer-exact whole days
-  const cyclesElapsed = Math.max(0, Math.floor(elapsedDays / length));
-  const startMs = pay + cyclesElapsed * length * MS_PER_DAY;
-  return { pay, todayMs, elapsedDays, cyclesElapsed, startMs };
-}
-
-// The persisted pay cycle -> the live "days until the next payday" + cycle length,
-// mirroring the server's current_cycle_window. Computed in UTC whole days (every
-// UTC day is exactly 24h) so a Melbourne daylight-saving change can't shift the
-// count by a day. daysLeft is clamped to [0, length]; on payday it reads `length`
-// (a fresh cycle just began). Pure: the same (payCycle, today) always give the
-// same result.
-export function cycleClock(
-  payCycle: { length: number; last_pay_date: string },
-  today?: Date,
-): { cycleLen: number; daysLeft: number } {
-  const length = payCycle.length;
-  const { elapsedDays, cyclesElapsed } = currentCycleAnchor(payCycle, today);
-  const daysIntoCycle = elapsedDays - cyclesElapsed * length;
-  const daysLeft = Math.max(0, Math.min(length, length - daysIntoCycle));
-  return { cycleLen: length, daysLeft };
-}
-
-// The current cycle's START date (ISO "YYYY-MM-DD"): the most recent payday on or before today, on
-// the shared currentCycleAnchor clock — so it never drifts from the days-left countdown, and never
-// across a Melbourne daylight-saving change. Empty string when there's no started cycle to show: the
-// first payday is still in the future (showing "Started today" would be false), or the date is
-// unparseable (pay is NaN → utcDayMsToISO returns '').
-export function cycleStart(
-  payCycle: { length: number; last_pay_date: string },
-  today?: Date,
-): string {
-  const { pay, todayMs, startMs } = currentCycleAnchor(payCycle, today);
-  if (pay > todayMs) return '';
-  return utcDayMsToISO(startMs);
-}
-
-// The cycle clock the screens read: prefer the server's authoritative `days_left` (one clock,
-// no UTC/Melbourne drift on the countdown — WHIT-341), falling back to the client cycleClock
-// only for an older server / cold cache where the field is absent.
-export function cycleClockView(
-  payCycle: { length: number; last_pay_date: string; days_left?: number },
-): { cycleLen: number; daysLeft: number } {
-  // Clamp to [0, length] like cycleClock does — the server path bypasses cycleClock's own
-  // clamp, so a corrupt/older cache value can't drive elapsedFrac out of [0,1] (negative bars).
-  const daysLeft = payCycle.days_left ?? cycleClock(payCycle).daysLeft;
-  return { cycleLen: payCycle.length, daysLeft: Math.max(0, Math.min(payCycle.length, daysLeft)) };
-}
-
-export function elapsedFrac(s: { cycleLen: number; daysLeft: number }) { return (s.cycleLen - s.daysLeft) / s.cycleLen; }
 
 // (cycleWindow was removed in WHIT-342: the category drill-in now fetches its window
 // server-side, and it was the last caller — the server owns the cycle window.)
@@ -2198,15 +1996,13 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     // fund adds room; a prior spike's deficit removes it). A bill spread adds its own signed
     // adjustment (a cushion this cycle, a slice in a payback cycle). Rollover XOR spread, so
     // at most one term is non-zero; Non-rollover/non-spend/Income => both 0, available == budget.
-    // Prefer the server-computed spendable (WHIT-549); fall back to the parts-sum for a server
-    // that predates it. `??` (not `||`) so a legitimate 0 from the server is kept, not overridden.
-    const available = b.available ?? (b.budget + (b.rollover ? b.carryover : 0) + b.spreadAdjustment);
+    const available = availableToSpend(b);
     // Bars/remain divide by `available`, but it can be 0 or negative (a drained/borrowed
     // envelope) — fall back to the base target, then 1, so a percentage is never NaN.
     const den = available > 0 ? available : (b.budget > 0 ? b.budget : 1);
     // Pace stays on the base per-cycle target: "should I have spent this much of THIS
     // cycle's plan by now" — the buffer isn't part of the cycle's pace.
-    const target = b.budget * elapsed;
+    const target = paceTarget(b, s);
     const postedPct = Math.max(0, Math.min(100, (posted / den) * 100));
     let carryoverLabel = '';
     if (b.rollover && b.carryover > 0.5) carryoverLabel = `+${fmt(b.carryover)} carried over`;
@@ -2395,43 +2191,6 @@ export function eligibleChildren(
     !isAncestorOfSelf(c.id) &&
     selfDepth + subtreeHeight(childrenOf, c.id) <= MAX_CATEGORY_DEPTH,
   );
-}
-
-// The sentinel category id the /breakdown endpoint uses for spend that counts to
-// budget but has no home in the taxonomy (a raw BankSync enum, a deleted category,
-// or null). Mirrors UNCATEGORIZED_KEY in lambda_api/api_constants.py.
-export const UNCATEGORIZED_KEY = '__uncategorized__';
-
-// The sentinel key the /breakdown endpoint uses for the total EARNED this cycle (all
-// Income-bucket categories) — read by the Insights Earned-vs-Spent chart, never a spend
-// row. Mirrors EARNED_KEY in lambda_api/api_constants.py.
-export const EARNED_KEY = '__earned__';
-
-// The sentinel key the /breakdown endpoint uses for the PER-SOURCE income breakdown (WHIT-366):
-// {income_category_id: CategorySpend} for each Income-bucket category that earned this cycle.
-// Rides in the same map as the per-category spend (same CategorySpend shape) but is income, not
-// a spend row — read via `readIncomeSources`, and skipped in `categoryBreakdown` so it never
-// counts as spend. Mirrors INCOME_KEY in lambda_api/api_constants.py.
-export const INCOME_KEY = '__income__';
-
-// The sentinel key the /breakdown endpoint uses for the server-owned parent roll-up (WHIT-349):
-// netted parent totals + refund detail. It rides in the same map as the per-category spend but
-// has a different shape, so it's read via `readRollup`, not the index type. Mirrors ROLLUP_KEY
-// in lambda_api/api_constants.py. Defined here (not imported from ./api) so mocking ./api in a
-// screen test doesn't have to stub it — same as the two sentinels above.
-export const ROLLUP_KEY = '__rollup__';
-
-/** Read the __rollup__ roll-up out of a /breakdown response. Since WHIT-358 the server always
- * emits it, so `undefined` means only a pre-WHIT-358 server or a cold `{}` cache before first fetch. */
-export function readRollup(breakdown: Record<string, CategorySpend>): BreakdownRollup | undefined {
-  return (breakdown as Record<string, unknown>)[ROLLUP_KEY] as BreakdownRollup | undefined;
-}
-
-/** Read the __income__ per-source income map out of a /breakdown response (WHIT-366). `undefined`
- * means no income this cycle (or a pre-WHIT-366 server) — the drill-into-Earned screen shows its
- * empty state. Shaping into a sorted, zero-dropped list lives in `useInsightsScreenData`. */
-export function readIncomeSources(breakdown: Record<string, CategorySpend>): Record<string, CategorySpend> | undefined {
-  return (breakdown as Record<string, unknown>)[INCOME_KEY] as Record<string, CategorySpend> | undefined;
 }
 
 // One row for the Insights "Earning" toggle (WHIT-373). Same shape the retired /breakdown earned
@@ -3108,7 +2867,7 @@ export function budgetSpreadEligibility(
   }
   if (budget.spread) return { entry: 'edit', overspend: 0 };
   // Matches budgetDetail's spendable envelope exactly (WHIT-549 server value, else the parts-sum).
-  const available = budget.available ?? (budget.budget + (budget.rollover ? budget.carryover : 0) + budget.spreadAdjustment);
+  const available = availableToSpend(budget);
   const spent = budget.posted + budget.pending;
   const overspend = Math.round(Math.max(0, spent - available) * 100) / 100;
   if (budget.rollover) return { entry: 'hidden', overspend };
@@ -3132,9 +2891,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   // Rollover: the spendable envelope this cycle is target + buffer (see budgetViews); a bill
   // spread adds its signed adjustment instead (rollover XOR spread). `den` guards the bar
   // percentages against a 0/negative envelope. No rollover/spend adjustment => available == budget.
-  // Prefer the server-computed spendable (WHIT-549); fall back to the parts-sum for a server
-  // that predates it. `??` (not `||`) so a legitimate 0 from the server is kept, not overridden.
-  const available = b.available ?? (b.budget + (b.rollover ? b.carryover : 0) + b.spreadAdjustment);
+  const available = availableToSpend(b);
   const den = available > 0 ? available : (b.budget > 0 ? b.budget : 1);
   const postedPct = Math.max(0, Math.min(100, (posted / den) * 100));
   // The server already filters to contributing rows; during the optimistic window an
@@ -3185,7 +2942,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   // Pace rides the base per-cycle target (not the rollover buffer), matching budgetViews'
   // list label — so the same budget reads the same state on both screens. Spending past
   // today's linear target but still under the envelope is a caution, not a green "keep it up".
-  const target = b.budget * elapsed;
+  const target = paceTarget(b, s);
   const aheadOfPace = !over && spent - target > 0.5;
   const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
   const remain = available - spent;
