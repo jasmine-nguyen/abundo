@@ -1,4 +1,4 @@
-import { Transaction, Category, Bucket } from "./context";
+import type { Transaction, Category, Bucket } from "./types";
 import { ApiError } from "./apiError";
 import { getAuthToken } from "./auth";
 import { withBodyTimeout } from "./httpTimeout";

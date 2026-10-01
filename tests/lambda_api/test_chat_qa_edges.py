@@ -211,35 +211,59 @@ def test_the_series_is_capped_at_thirteen_bars(ai_chat):  # [A14]
     assert len(out["card"]["series"]) == 13
 
 
-def test_a_delta_with_the_wrong_sign_is_dropped(ai_chat):  # [A15]
-    # 31.11 against a 60 budget is 28.89 UNDER. A +28.89 delta says "over" and must not survive.
-    card = _card(budget_line=60, delta={"amount": 28.89, "vs": "budget"})
+def test_an_under_budget_delta_is_negative(ai_chat):  # [A15]
+    # 31.11 against a 60 budget is 28.89 UNDER, so negative (the app shows it as under).
+    card = _card(budget_line=60, delta={"vs": "budget"})
     out = ai_chat.validate_reply({"text": "ok", "card": card}, _chat_data(), TOOL_NUMBERS)
-    assert "delta" not in out["card"]
+    assert out["card"]["delta"] == {"amount": -28.89, "vs": "budget"}
 
 
-def test_a_delta_with_the_right_sign_is_kept(ai_chat):  # [A15]
-    card = _card(budget_line=60, delta={"amount": -28.89, "vs": "budget"})
+def test_an_over_budget_delta_is_positive(ai_chat):  # [A15]
+    card = _card(value=60, budget_line=31.11, delta={"vs": "budget"})
+    out = ai_chat.validate_reply({"text": "ok", "card": card}, _chat_data(), TOOL_NUMBERS)
+    assert out["card"]["delta"] == {"amount": 28.89, "vs": "budget"}
+
+
+def test_an_ai_amount_with_the_wrong_sign_is_ignored(ai_chat):  # [A15]
+    card = _card(budget_line=60, delta={"amount": 28.89, "vs": "budget"})
     out = ai_chat.validate_reply({"text": "ok", "card": card}, _chat_data(), TOOL_NUMBERS)
     assert out["card"]["delta"] == {"amount": -28.89, "vs": "budget"}
 
 
 def test_a_zero_delta_is_dropped(ai_chat):  # [A15]
-    # "vs previous" would always pass a zero (the value is itself a tool number), and it would
-    # render as a meaningless "−$0 vs previous".
-    out = ai_chat.validate_reply(
-        {"text": "ok", "card": _card(delta={"amount": 0, "vs": "previous"})}, _chat_data(), TOOL_NUMBERS)
+    # It would render as a meaningless "−$0 vs budget".
+    card = _card(budget_line=31.11, delta={"vs": "budget"})
+    out = ai_chat.validate_reply({"text": "ok", "card": card}, _chat_data(), TOOL_NUMBERS)
     assert "delta" not in out["card"]
 
 
-def test_a_vs_previous_delta_must_point_the_right_way(ai_chat):  # [A15]
-    # 31.11 now vs 33.34 last period is DOWN 2.23. "+2.23 vs previous" would read as up.
-    wrong = ai_chat.validate_reply(
-        {"text": "ok", "card": _card(delta={"amount": 2.23, "vs": "previous"})}, _chat_data(), TOOL_NUMBERS)
-    right = ai_chat.validate_reply(
-        {"text": "ok", "card": _card(delta={"amount": -2.23, "vs": "previous"})}, _chat_data(), TOOL_NUMBERS)
-    assert "delta" not in wrong["card"]
-    assert right["card"]["delta"] == {"amount": -2.23, "vs": "previous"}
+def test_vs_budget_without_a_budget_line_is_dropped(ai_chat):  # [A15]
+    out = ai_chat.validate_reply(
+        {"text": "ok", "card": _card(delta={"vs": "budget"})}, _chat_data(), TOOL_NUMBERS)
+    assert "delta" not in out["card"]
+
+
+def test_a_vs_previous_delta_points_the_right_way(ai_chat):  # [A15]
+    # 31.11 now vs 33.34 last period is DOWN 2.23.
+    series = [{"label": "27 Aug", "value": 33.34}, {"label": "10 Sep", "value": 31.11}]
+    card = _card(series=series, delta={"amount": 2.23, "vs": "previous"})
+    out = ai_chat.validate_reply({"text": "ok", "card": card}, _chat_data(), TOOL_NUMBERS)
+    assert out["card"]["delta"] == {"amount": -2.23, "vs": "previous"}
+
+
+def test_vs_previous_is_dropped_when_the_last_bar_isnt_the_value(ai_chat):  # [A15]
+    # A 3-cycle average isn't any one bar, so there's no clear "previous" to compare with.
+    series = [{"label": "30 Jul", "value": 60}, {"label": "13 Aug", "value": 0},
+              {"label": "27 Aug", "value": 33.34}]
+    card = _card(series=series, delta={"vs": "previous"})
+    out = ai_chat.validate_reply({"text": "ok", "card": card}, _chat_data(), TOOL_NUMBERS)
+    assert "delta" not in out["card"]
+
+
+def test_vs_previous_with_a_single_bar_is_dropped(ai_chat):  # [A15]
+    card = _card(series=[{"label": "10 Sep", "value": 31.11}], delta={"vs": "previous"})
+    out = ai_chat.validate_reply({"text": "ok", "card": card}, _chat_data(), TOOL_NUMBERS)
+    assert "delta" not in out["card"]
 
 
 def _deeplink(date_from, date_to, category_id="eatingout"):
@@ -294,6 +318,10 @@ def _scripted(replies, requests):
     return post
 
 
+def _plenty_of_time():
+    return 200
+
+
 def _tool(name, tool_input, call_id="c1"):
     return {"content": [{"type": "tool_use", "id": call_id, "name": name, "input": tool_input}],
             "stop_reason": "tool_use"}
@@ -306,7 +334,7 @@ def test_an_unknown_tool_name_goes_back_as_is_error_and_the_loop_continues(ai_ch
         _tool("respond", {"text": "Sorry, I can't do that."}, "c2"),
     ], requests))
     job_repo = _JobRepo()
-    reply = ai_chat.run_chat("job", [{"role": "user", "text": "hi"}], _chat_data(), job_repo)
+    reply = ai_chat.run_chat("job", [{"role": "user", "text": "hi"}], _chat_data(), job_repo, _plenty_of_time)
     assert reply == {"text": "Sorry, I can't do that."}
     result = requests[1][-1]["content"][0]
     assert result["is_error"] is True and result["tool_use_id"] == "c1"
@@ -321,7 +349,7 @@ def test_a_bad_status_line_argument_still_runs_the_tool(ai_chat, monkeypatch):  
         _tool("respond", {"text": "ok"}, "c2"),
     ], requests))
     job_repo = _JobRepo()
-    ai_chat.run_chat("job", [{"role": "user", "text": "hi"}], _chat_data(), job_repo)
+    ai_chat.run_chat("job", [{"role": "user", "text": "hi"}], _chat_data(), job_repo, _plenty_of_time)
     assert job_repo.statuses == ["Working on it…"]
     assert requests[1][-1]["content"][0]["is_error"] is True
 
@@ -330,7 +358,7 @@ def test_a_plain_text_reply_with_no_tool_call_fails_the_job(ai_chat, monkeypatch
     monkeypatch.setattr(ai_chat, "post_messages", _scripted([
         {"content": [{"type": "text", "text": "Here you go"}], "stop_reason": "end_turn"}], []))
     with pytest.raises(ai_chat.ChatError):
-        ai_chat.run_chat("job", [{"role": "user", "text": "hi"}], _chat_data(), _JobRepo())
+        ai_chat.run_chat("job", [{"role": "user", "text": "hi"}], _chat_data(), _JobRepo(), _plenty_of_time)
 
 
 def test_numbers_from_a_previous_message_do_not_validate_this_card(ai_chat, monkeypatch):  # [A17]
@@ -341,12 +369,12 @@ def test_numbers_from_a_previous_message_do_not_validate_this_card(ai_chat, monk
         _tool("query_transactions", {"filters": {"category_ids": ["eatingout"]}, "metric": "sum"}),
         _tool("respond", {"text": "a", "card": _card(value=42)}, "c2"),
     ], []))
-    first = ai_chat.run_chat("job1", [{"role": "user", "text": "q1"}], data, _JobRepo())
+    first = ai_chat.run_chat("job1", [{"role": "user", "text": "q1"}], data, _JobRepo(), _plenty_of_time)
     assert first["card"]["value"] == 42.0
 
     monkeypatch.setattr(ai_chat, "post_messages", _scripted([
         _tool("respond", {"text": "b", "card": _card(value=42)})], []))
-    second = ai_chat.run_chat("job2", [{"role": "user", "text": "q2"}], data, _JobRepo())
+    second = ai_chat.run_chat("job2", [{"role": "user", "text": "q2"}], data, _JobRepo(), _plenty_of_time)
     assert "card" not in second
 
 

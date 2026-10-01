@@ -10,8 +10,9 @@
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext, toRule } from '../context';
-import type { Rule } from '../context';
+import { AppProvider, useAppContext } from '../context';
+import { toRule } from '../model';
+import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));

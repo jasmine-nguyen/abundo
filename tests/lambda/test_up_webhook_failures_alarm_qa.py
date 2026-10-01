@@ -76,6 +76,7 @@ def up(lam, monkeypatch):
     monkeypatch.setattr(module, "DeviceRepository", lambda: _FakeDevice(["ExponentPushToken[abc]"]))
     monkeypatch.setattr(module, "send_push", lambda *a, **k: {"sent": 1, "ok": 1, "pruned": []})
     monkeypatch.setattr(module, "_personal_access_token", "pat-value")
+    monkeypatch.setattr(module, "get_homeloan_account_id", lambda: HOMELOAN_UUID)
     return module
 
 

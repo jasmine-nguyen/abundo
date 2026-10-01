@@ -10,7 +10,7 @@ import React from 'react';
 import { renderHook, waitFor } from '@testing-library/react-native';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient, wrapper } from './support/queryClient';
-import { cycleClock } from '../context';
+import { cycleClock } from '../payCycle';
 import { installFakeServer } from './support/fakeServer';
 
 let mockAuthStatus = 'authed';

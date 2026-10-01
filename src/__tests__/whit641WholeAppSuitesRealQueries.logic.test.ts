@@ -64,7 +64,6 @@ describe('whole-app suites use the real screen data code', () => {
     const offenders = WHOLE_APP_SUITES.flatMap(usesHandWrittenShapes);
 
     expect(offenders).toEqual([]);
-    expect(existsSync(join(__dirname, 'support', 'screenQueryMocks.ts'))).toBe(true);
   });
 
   it('overlaysRealData draws Overlays through the shared query setup, and all 7 are pinned in the fake-server baselines', () => {

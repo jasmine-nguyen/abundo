@@ -11,7 +11,7 @@ import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { AppProvider, useAppContext } from '../context';
-import type { Category, Transaction } from '../context';
+import type { Category, Transaction } from '../types';
 import type { BudgetRollup } from '../api';
 import { useCategories, usePayCycle } from '../queries';
 import { queryClient } from '../queryClient';

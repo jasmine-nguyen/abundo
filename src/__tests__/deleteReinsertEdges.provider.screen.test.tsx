@@ -8,7 +8,7 @@ import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
-import type { Rule } from '../context';
+import type { Rule } from '../model';
 import type { GoalRecord } from '../api';
 import { queryClient } from '../queryClient';
 

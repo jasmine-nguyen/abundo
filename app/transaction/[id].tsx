@@ -3,7 +3,8 @@ import { Alert, View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
-import { transactionView, useAppContext, contributesToBudget, budgetSpreadEligibility, ruleFiledLabel, RULE_FILED_FALLBACK, Transaction } from '../../src/context';
+import { transactionView, useAppContext, contributesToBudget, budgetSpreadEligibility, ruleFiledLabel, RULE_FILED_FALLBACK } from '../../src/context';
+import type { Transaction } from '../../src/types';
 import { formatDayMonthYear } from '../../src/dateutil';
 import { useTransactionDetailScreenData, useTransactionResolver, useBudgetsScreenData, useRulesScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';

@@ -81,7 +81,7 @@ def post(system: str, user_prefix: str, model_input: dict) -> str:
 
 
 def post_messages(system: str, messages: list, tools: list, tool_choice: dict,
-                  max_tokens: int, timeout: int) -> dict:
+                  max_tokens: int, timeout: float) -> dict:
     """POST a multi-turn, tool-calling request and return the whole reply envelope
     (`content` blocks + `stop_reason`), for the chat worker's tool loop.
 
@@ -100,7 +100,7 @@ def post_messages(system: str, messages: list, tools: list, tool_choice: dict,
     return _send(body, timeout)
 
 
-def _send(body: dict, timeout: int) -> dict:
+def _send(body: dict, timeout: float) -> dict:
     """The one urllib POST to the Messages API: headers, error mapping, JSON parse."""
     try:
         # get_api_key() reads SSM; a missing/denied param raises ValueError. Keep it

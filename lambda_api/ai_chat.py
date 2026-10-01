@@ -21,11 +21,13 @@ from anthropic_client import AnthropicError, post_messages
 from api_constants import (
     ANTHROPIC_CHAT_MAX_TOKENS,
     ANTHROPIC_CHAT_TIMEOUT_SECONDS,
+    CHAT_DEADLINE_MARGIN_SECONDS,
     CHAT_LIST_MAX,
     CHAT_MAX_LOOKBACK_CYCLES,
     CHAT_MAX_LOOKBACK_MONTHS,
     CHAT_MAX_TOOL_ROUNDS,
     CHAT_MESSAGE_MAX_LEN,
+    CHAT_MIN_CALL_SECONDS,
     UNCATEGORIZED_KEY,
 )
 from budget_standing import budget_standing, standing_window
@@ -73,6 +75,8 @@ unfinished period if the user asks for it.
 - Always fill `source` with the exact period used, e.g. "3 completed pay cycles · 12 Jun – 11 Sep".
 - Include a metric_bars card when the answer is a figure over time: one series point per period \
 with a short label such as "Jun" or "12 Jun".
+- Set card.delta.vs to "budget" when budget_line is set, or "previous" when the last bar is the \
+value. The server works out the amount.
 - Offer at most 2 actions. A deeplink opens one category's transactions over the exact dates \
 you used.
 - For a fuzzy grouping with no category (e.g. "date nights"), list the transactions and group \
@@ -189,12 +193,13 @@ TOOLS = [
                         "delta": {
                             "type": "object",
                             "properties": {
-                                "amount": {"type": "number",
-                                           "description": "value minus the comparison. Positive = more than it."},
                                 "vs": {"type": "string", "enum": ["budget", "previous"],
-                                       "description": '"budget" compares value with budget_line, so set budget_line.'},
+                                       "description": (
+                                           "budget: compares value with budget_line (set budget_line). "
+                                           "previous: compares the last bar (which must be value) with "
+                                           "the bar before. The server works out the amount.")},
                             },
-                            "required": ["amount", "vs"],
+                            "required": ["vs"],
                         },
                         "category_id": {"type": "string"},
                         "budget_line": {"type": "number"},
@@ -278,19 +283,21 @@ def _known_category(category_id, data: ChatData) -> bool:
     return category_id == UNCATEGORIZED_KEY or category_id in data.names
 
 
-def _validate_delta(delta, value: Decimal, budget_line, tool_numbers: set):
-    """A delta is kept only if it's exactly the card value minus the budget line (vs budget) or
-    minus a tool number (vs previous). Signed, because the app colours it by sign: positive
-    reads "over", so an under-budget gap sent as positive would show a red "+$28.89 vs budget"."""
+def _card_delta(delta, value: Decimal, budget_line, series_values: list):
+    """The delta line, worked out here from the card's own figures; any amount the AI sends is
+    ignored. Signed, because the app colours it by sign: positive reads "over", so an
+    under-budget gap shown as positive would be a red "+$28.89 vs budget"."""
     if not delta or delta.get("vs") not in ("budget", "previous"):
         return None
-    amount = _cents(delta["amount"])
     if delta["vs"] == "budget":
-        compared = [] if budget_line is None else [budget_line]
+        if budget_line is None:
+            return None
+        amount = value - budget_line
     else:
-        compared = tool_numbers
-    # Zero says nothing, and "vs previous" would always pass it (value is itself a tool number).
-    if amount == 0 or not any(value - other == amount for other in compared):
+        if len(series_values) < 2 or series_values[-1] != value:
+            return None
+        amount = value - series_values[-2]
+    if amount == 0:
         return None
     return {"amount": float(amount), "vs": delta["vs"]}
 
@@ -319,7 +326,8 @@ def _validate_card(card, data: ChatData, tool_numbers: set):
         out["categoryId"] = card["category_id"]
     if budget_line is not None:
         out["budgetLine"] = float(budget_line)
-    delta = _validate_delta(card.get("delta"), value, budget_line, tool_numbers)
+    delta = _card_delta(card.get("delta"), value, budget_line,
+                        [point_value for _label, point_value in series])
     if delta is not None:
         out["delta"] = delta
     return out
@@ -391,9 +399,12 @@ def _run_tool(call: dict, data: ChatData, tool_numbers: set) -> dict:
             "content": json.dumps(output, cls=DecimalEncoder)}
 
 
-def run_chat(job_id: str, messages: list[dict], data: ChatData, job_repo) -> dict:
+def run_chat(job_id: str, messages: list[dict], data: ChatData, job_repo, seconds_left) -> dict:
     """The tool loop. Rounds 1..N-1 must call some tool; the last round must call `respond`, so a
-    runaway loop ends with an answer (or a failure) rather than hanging."""
+    runaway loop ends with an answer (or a failure) rather than hanging.
+
+    `seconds_left()` reads the worker's remaining time. Each model call gets that minus a margin
+    (capped per call); with too little left the run fails before paying for another call."""
     system = system_prompt(data.today)
     model_messages = to_model_messages(messages)
     tool_numbers: set = set()
@@ -402,10 +413,13 @@ def run_chat(job_id: str, messages: list[dict], data: ChatData, job_repo) -> dic
             tool_choice = {"type": "tool", "name": "respond"}
         else:
             tool_choice = {"type": "any"}
+        budget = seconds_left() - CHAT_DEADLINE_MARGIN_SECONDS
+        if budget < CHAT_MIN_CALL_SECONDS:
+            raise ChatError(f"out of time before round {round_number}")
         if os.environ.get(_DEBUG_LOG_ENV) == "1":
             logger.info("chat debug request: %s", json.dumps({"system": system, "messages": model_messages}))
         reply = post_messages(system, model_messages, TOOLS, tool_choice,
-                              ANTHROPIC_CHAT_MAX_TOKENS, ANTHROPIC_CHAT_TIMEOUT_SECONDS)
+                              ANTHROPIC_CHAT_MAX_TOKENS, min(ANTHROPIC_CHAT_TIMEOUT_SECONDS, budget))
         calls = [block for block in reply.get("content") or [] if block.get("type") == "tool_use"]
         logger.info("chat job %s round %d tools %s", job_id, round_number,
                     [call["name"] for call in calls])
@@ -460,7 +474,8 @@ def lambda_handler(event: dict, context=None) -> dict:
     try:
         data = load_chat_data(TransactionRepository(), CategoryRepository(), BudgetRepository(),
                               PayCycleRepository())
-        reply = run_chat(job_id, event["messages"], data, job_repo)
+        reply = run_chat(job_id, event["messages"], data, job_repo,
+                         lambda: context.get_remaining_time_in_millis() / 1000)
         job_repo.finish_chat_job(job_id, STATUS_SUCCEEDED, json.dumps(reply))
         logger.info("chat job %s succeeded", job_id)
         return {"jobId": job_id, "status": STATUS_SUCCEEDED}

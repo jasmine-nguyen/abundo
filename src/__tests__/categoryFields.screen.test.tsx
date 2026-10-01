@@ -16,7 +16,8 @@ import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import { CategoryFields } from '../components/CategoryFields';
 import { ICON_KEYS } from '../icons';
-import { Bucket, Category, MAX_CHILDREN_PER_CATEGORY } from '../context';
+import { MAX_CHILDREN_PER_CATEGORY } from '../context';
+import type { Bucket, Category } from '../types';
 import { cat } from './factory';
 
 // WHIT-459: the categoryFullParent suite (folded at the END) mounts the app/category/edit SCREEN,

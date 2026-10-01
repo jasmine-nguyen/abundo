@@ -1,0 +1,14 @@
+build_graph.py
+requirements.txt
+.claude/commands/build.md
+.claude/agents/implementer.md
+.claude/agents/qa.md
+.claude/agents/solution-critic.md
+.claude/agents/solution-designer.md
+.claude/agents/test-writer.md
+.claude/agents/reproducer.md
+.claude/agents/code-critic.md
+.claude/hooks/protect-build-state.py
+.claude/hooks/show-pause-first.py
+.github/pull_request_template.md
+project-context-template.md

@@ -9,27 +9,27 @@
 // ceiling, not just the 1e9 pinned literally in format.logic.test.ts.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react-native';
-import type { AppContext, LoanFacts, LoanFactsInput } from '../context';
+import { screen, fireEvent } from '@testing-library/react-native';
+import type { AppContext, LoanFactsInput } from '../context';
 
-let mockState: AppContext;
+let mockState: Pick<AppContext, 'saveLoanFacts' | 'showToast'>;
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 const mockBack = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack, push: jest.fn() }) }));
 
 import Loan from '../../app/loan';
 import { LOANFACTS_FIELD_MAX } from '../loanLimits';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient, renderLoaded } from './support/renderWithQueries';
 
-const EMPTY: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
-
-function state(over: Partial<AppContext>): AppContext {
-  return { loanFacts: EMPTY, saveLoanFacts: jest.fn(), showToast: jest.fn(), ...over } as unknown as AppContext;
-}
+installFakeServer();
+useTestQueryClient();
 
 function fill(over: Partial<Record<'orig' | 'home' | 'lvr' | 'rate' | 'base' | 'extra' | 'deposit', string>> = {}) {
   const v = { orig: '600000', home: '770000', lvr: '80', rate: '5.74', base: '1240', extra: '200', deposit: '', ...over };
@@ -45,10 +45,10 @@ function fill(over: Partial<Record<'orig' | 'home' | 'lvr' | 'rate' | 'base' | '
 function setup() {
   const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
   const showToast = jest.fn();
-  mockState = state({
+  mockState = {
     saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'],
     showToast: showToast as AppContext['showToast'],
-  });
+  };
   return { saveLoanFacts, showToast };
 }
 
@@ -66,9 +66,9 @@ function dollarsNamedIn(sentence: string): number {
 }
 
 // Trigger each ceiling toast and hand back the exact string the screen passed to showToast.
-function amountCeilingToast(): string {
+async function amountCeilingToast(): Promise<string> {
   const { showToast, saveLoanFacts } = setup();
-  render(<Loan />);
+  await renderLoaded(<Loan />);
   fill({ home: String(LOANFACTS_FIELD_MAX + 1) });
   fireEvent.press(screen.getByText('Save loan details'));
   expect(saveLoanFacts).not.toHaveBeenCalled();
@@ -76,9 +76,9 @@ function amountCeilingToast(): string {
   return String((showToast as jest.Mock).mock.calls[0][0]);
 }
 
-function depositCeilingToast(): string {
+async function depositCeilingToast(): Promise<string> {
   const { showToast, saveLoanFacts } = setup();
-  render(<Loan />);
+  await renderLoaded(<Loan />);
   fill({ deposit: String(LOANFACTS_FIELD_MAX + 1) });
   fireEvent.press(screen.getByText('Save loan details'));
   expect(saveLoanFacts).not.toHaveBeenCalled();
@@ -86,19 +86,22 @@ function depositCeilingToast(): string {
   return String((showToast as jest.Mock).mock.calls[0][0]);
 }
 
-beforeEach(() => { mockBack.mockClear(); });
+beforeEach(() => {
+  mockBack.mockClear();
+  resetAuth();
+});
 
 describe('the ceiling toast tells the truth about the ceiling', () => {
-  it('[C1] the amounts toast names the ceiling EXACTLY', () => {
+  it('[C1] the amounts toast names the ceiling EXACTLY', async () => {
     // "or less" is an inclusive promise, so the figure has to be the actual bound. Naming less
     // is safe but wrong; naming MORE is the harmful direction — it sends the user round a loop,
     // retyping the figure the message told them and getting the same message back. Exact
     // equality catches both, so there is no separate "never above" case to write.
-    expect(dollarsNamedIn(amountCeilingToast())).toBe(LOANFACTS_FIELD_MAX);
+    expect(dollarsNamedIn(await amountCeilingToast())).toBe(LOANFACTS_FIELD_MAX);
   });
 
-  it('[C2] the deposit-target toast names the ceiling EXACTLY too', () => {
-    expect(dollarsNamedIn(depositCeilingToast())).toBe(LOANFACTS_FIELD_MAX);
+  it('[C2] the deposit-target toast names the ceiling EXACTLY too', async () => {
+    expect(dollarsNamedIn(await depositCeilingToast())).toBe(LOANFACTS_FIELD_MAX);
   });
 });
 
@@ -106,14 +109,14 @@ describe('the corrected wording (WHIT-393)', () => {
   // The guard is strict `>`, so exactly the ceiling is ACCEPTED (locked by [G4]-[G6]). The old
   // copy said "under $1B", which was wrong by a dollar. These lock the fix so it can't drift
   // back, independently of the figure.
-  it('[C3] the amounts toast says "or less", never "under"', () => {
-    const toast = amountCeilingToast();
+  it('[C3] the amounts toast says "or less", never "under"', async () => {
+    const toast = await amountCeilingToast();
     expect(toast).toContain('or less');
     expect(toast).not.toMatch(/\bunder\b/i);
   });
 
-  it('[C4] the deposit-target toast says "or less", never "under"', () => {
-    const toast = depositCeilingToast();
+  it('[C4] the deposit-target toast says "or less", never "under"', async () => {
+    const toast = await depositCeilingToast();
     expect(toast).toContain('or less');
     expect(toast).not.toMatch(/\bunder\b/i);
   });

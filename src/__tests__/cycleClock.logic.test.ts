@@ -1,7 +1,7 @@
 // WHIT-9: the "days until next payday" clock. Runs under TZ=Australia/Melbourne
 // (see the test script) so the daylight-saving-immunity is genuinely exercised.
 import { describe, it, expect } from '@jest/globals';
-import { cycleClock, cycleClockView, cycleStart } from '../context';
+import { cycleClock, cycleClockView, cycleStart } from '../payCycle';
 
 // Build a local-calendar Date for a given Y-M-D (month is 1-based here for clarity).
 const day = (y: number, m: number, d: number) => new Date(y, m - 1, d);

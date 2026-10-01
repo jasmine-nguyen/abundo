@@ -15,7 +15,7 @@ import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
-import type { Transaction } from '../context';
+import type { Transaction } from '../types';
 import type { TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
 

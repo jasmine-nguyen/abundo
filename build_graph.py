@@ -108,6 +108,7 @@ class BuildState(TypedDict):
     current_slice: NotRequired[int]
     # tests
     repro: NotRequired[str]
+    repro_command: NotRequired[str]
     tests: NotRequired[str]
     test_attempts: NotRequired[int]
     test_feedback: NotRequired[str]
@@ -170,7 +171,9 @@ MAX_SESSION_RESUMES = 2
 CHECK_TIMEOUT_S = 900
 
 APPROVALS = {"go", "approve", "approved", "yes", "y", "lgtm", "ok"}
-STOPS = {"stop", "cancel", "abort"}
+# Only a bare stop word, or one followed by ":" and a reason, ends the build: "Cancel button should be
+# red" is an answer.
+STOP_REPLY = re.compile(r"\s*(?:stop|cancel|abort)\s*(?:[:.!].*)?", re.I | re.S)
 BUG_TYPES = {"bug", "defect"}
 TYPE_TO_PREFIX = {
     "story": "feat", "feature": "feat",
@@ -743,6 +746,10 @@ def split_reply(reply: str) -> tuple[str, str]:
     return match.group(1).lower(), match.group(2).strip()
 
 
+def is_stop(reply) -> bool:
+    return isinstance(reply, str) and bool(STOP_REPLY.fullmatch(reply))
+
+
 def stopped(node: str) -> dict:
     """The user said "stop" at a pause: end the build there, ship nothing."""
     return {"outcome": "stopped", "history": [f"• {node}: stopped by the user"]}
@@ -825,7 +832,8 @@ def run(command: str | list[str], timeout: float | None = None, cwd: Path | None
 
 
 def git_status() -> list[tuple[str, str]]:
-    """(status, path) for every uncommitted change, untracked files included."""
+    """(status, path) for every uncommitted change, untracked files included. Paths are from the
+    git top, even when the pipeline lives in a subfolder."""
     out = subprocess.run(
         ["git", "status", "--porcelain", "-z", "--untracked-files=all"],
         cwd=ROOT, check=True, capture_output=True, text=True,
@@ -851,7 +859,7 @@ def commit_all(state: BuildState, message: str) -> tuple[bool, str]:
     """Commit every change except files that were already untracked when the build started."""
     still_untracked = {path for status, path in git_status() if status == "??"}
     excluded = [
-        f":(exclude,literal){path}" for path in state.get("untracked_at_start", []) if path in still_untracked
+        f":(top,exclude,literal){path}" for path in state.get("untracked_at_start", []) if path in still_untracked
     ]
     git("add", "-A", "--", ".", *excluded)
     if run(["git", "diff", "--cached", "--quiet"])[0] == 0:
@@ -902,10 +910,12 @@ def exclude_build_dir() -> None:
     exclude = Path(git("rev-parse", "--git-path", "info/exclude"))
     if not exclude.is_absolute():
         exclude = ROOT / exclude
-    if "/.build/" not in read_text(exclude).splitlines():
+    where = subfolder()
+    pattern = "/.build/" if where == "." else f"/{where}/.build/"  # anchored at the git top
+    if pattern not in read_text(exclude).splitlines():
         exclude.parent.mkdir(parents=True, exist_ok=True)
         with exclude.open("a") as f:
-            f.write("\n/.build/\n")
+            f.write(f"\n{pattern}\n")
 
 
 # Installed packages git doesn't carry into a worktree, linked from the main checkout.
@@ -918,7 +928,7 @@ def add_worktree() -> Path:
     git("worktree", "add", "--detach", str(worktree), "HEAD")
     for name in DEPENDENCY_DIRS:
         for source in [ROOT / name, *ROOT.glob(f"*/{name}")]:
-            target = worktree / source.relative_to(ROOT)
+            target = worktree / subfolder() / source.relative_to(ROOT)
             if source.is_dir() and target.parent.is_dir() and not target.exists():
                 target.symlink_to(source)
     return worktree
@@ -937,9 +947,13 @@ def remove_worktree(worktree: Path) -> None:
 # "don't weaken the tests" is enforced rather than requested.
 
 
+def git_top() -> Path:
+    return Path(git("rev-parse", "--show-toplevel")).resolve()
+
+
 def subfolder() -> str:
     """Where ROOT sits under the git top: "." unless the pipeline lives in a subfolder."""
-    return ROOT.resolve().relative_to(Path(git("rev-parse", "--show-toplevel")).resolve()).as_posix()
+    return ROOT.resolve().relative_to(git_top()).as_posix()
 
 
 def strip_cd_to_root(command: str) -> str:
@@ -1234,9 +1248,17 @@ def answers_differ(decisions: list[dict], text: str) -> bool:
             continue
         recommended = re.match(r"\s*\(?([A-Z])\b[).:,]?", decisions[n - 1]["recommendation"])
         letter = answer_letter(answer)
-        if not recommended or not letter or letter != recommended.group(1):
+        if not recommended or not letter:
+            return True
+        options = decisions[n - 1].get("options", "")
+        if letter != recommended.group(1) and not (keeps_plan(options, letter) and keeps_plan(options, recommended.group(1))):
             return True
     return False
+
+
+def keeps_plan(options: str, letter: str) -> bool:
+    """A long-term-fix answer that builds this plan as it is: "Card only", or "Later" (filed as its own card)."""
+    return bool(re.match(r"(?:card only|later)\b", option_text(options, letter), re.I))
 
 
 def spelled_answers(decisions: list[dict], text: str) -> str:
@@ -1386,7 +1408,7 @@ def clarify(state: BuildState):
         '"stop" ends the build.'
     )
     word, rest = split_reply(reply)
-    if word in STOPS:
+    if is_stop(reply):
         return {"clarify_questions": [], **stopped("clarify")}
     answer = "Use your recommended answer for every question." if word in APPROVALS and not rest else reply
     answered = f"{state.get('clarify_answers', '')}\n\n{questions}\n\nAnswer: {answer}".strip()
@@ -1477,6 +1499,8 @@ def plan_brief(state: BuildState) -> str:
         f"PLAN FOR REVIEW — {state.get('card_number') or 'ad-hoc request'} · {critic_summary(state)}",
         *plan_summary(state),
     ]
+    if len(state.get("slices") or []) > 1:
+        lines += section("Slices", [f"{s['title']}: {s['delivers']}" for s in state["slices"]])
     if state.get("complexity") == "significant" and state.get("complexity_reason"):
         lines += ["", f"Why this needs your sign-off: {state['complexity_reason']}"]
     if state.get("plan_verdict") == "NEEDS REWORK":
@@ -1539,7 +1563,7 @@ def sign_off(state: BuildState):
     if state.get("validity", "VALID") != "VALID":
         reply = interrupt(invalid_brief(state))
         word, rest = split_reply(reply)
-        if word in STOPS:
+        if is_stop(reply):
             return {"plan_decision": "STOPPED", **stopped("sign_off")}
         if word == "close":
             return {
@@ -1553,7 +1577,7 @@ def sign_off(state: BuildState):
         return approve(state, "", "AUTO_APPROVED")
     reply = interrupt(plan_brief(state))
     word, rest = split_reply(reply)
-    if word in STOPS:
+    if is_stop(reply):
         return {"plan_decision": "STOPPED", **stopped("sign_off")}
     if word not in APPROVALS:
         return _sent_back(state, rest if word == "rework" else reply)
@@ -1629,6 +1653,9 @@ def prepare_branch(state: BuildState):
     if requested and requested != branch:
         if run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{requested}"])[0] == 0:
             git("checkout", requested)
+        elif run(["git", "ls-remote", "--exit-code", "--heads", "origin", requested], timeout=30)[0] == 0:
+            git("fetch", "origin", requested)  # build on top of what's pushed, so the push isn't rejected
+            git("checkout", "-b", requested, "--track", f"origin/{requested}")
         else:
             git("checkout", "-b", requested)
         branch = requested
@@ -1670,6 +1697,7 @@ async def reproducer(state: BuildState):
         return {
             **done,
             "repro": f"`{out['command']}` fails on: {out['symptom']}\n\n{out['summary']}",
+            "repro_command": out["command"],
             "tests": out["summary"],
             "pinned": {**state.get("pinned", {}), **pin(state, out["test_files"])},
             "history": [f"✓ reproducer: red on {first_line(out['symptom'])}"],
@@ -1876,7 +1904,13 @@ def reply_schema(values: dict) -> dict:
 
 def check_reply(values: dict, text: str) -> tuple[dict | str | None, str]:
     """The resume value for this reply, or None and why the reply was rejected."""
-    if not structured_pause(values) or split_reply(text)[0] in STOPS:
+    if re.fullmatch(r"\s*rework\s*:?\s*", text, re.I):
+        return None, 'say what to change: "rework: <what to change>"'
+    if not structured_pause(values):
+        if re.match(r"\s*\{", text) and '"pause_id"' in text:
+            return None, "this question has no options to pick from, so reply with the decision in plain words, not JSON"
+        return text, ""
+    if is_stop(text):
         return text, ""
     try:
         reply = json.loads(text)
@@ -1947,7 +1981,7 @@ def escalation(state: BuildState):
         # A build paused before options existed may have named the files "unpin" unlocks.
         offered = state.get("unpin_request") if state.get("unpin_named") else sorted(state.get("pinned", {}))
         files = offered if word == "unpin" and source == "implementer" else []
-    if word in STOPS:
+    if is_stop(reply):
         return {"escalation": "", **stopped("escalation")}
     update = {
         "escalation": "",
@@ -1993,6 +2027,13 @@ def failing_checks(state: BuildState) -> list[str]:
         print(f"   {'✅' if code == 0 else '❌'} {command}", flush=True)
         if code != 0:
             problems.append(f"$ {command}\n{tail(output)}")
+    # The bug's reproduction may not be a test the checks pick up, so it's run as well: the fix must turn it green.
+    repro = state.get("repro_command", "")
+    if repro and repro not in commands:
+        code, output = run(strip_cd_to_root(repro), timeout=CHECK_TIMEOUT_S)
+        print(f"   {'✅' if code == 0 else '❌'} {repro} (the bug's reproduction)", flush=True)
+        if code != 0:
+            problems.append(f"The bug still reproduces:\n$ {repro}\n{tail(output)}")
     if restored and problems:
         problems.insert(0, (
             "You changed or deleted pinned test files, so the pipeline put them back before running the "
@@ -2092,8 +2133,9 @@ async def qa(state: BuildState):
     patch.parent.mkdir(parents=True, exist_ok=True)
     patch.unlink(missing_ok=True)
     worktree = add_worktree()
+    workdir = worktree / subfolder()
     extra = (
-        f"## Your worktree\n`{worktree}`: your working directory, a checkout of HEAD with the main "
+        f"## Your worktree\n`{workdir}`: your working directory, in a checkout of HEAD with the main "
         f"checkout's installed packages linked in. Work only there; never touch the main checkout at "
         f"`{ROOT}`. The pipeline removes the worktree when you finish.\n\n"
         f"## Where your tests go\nSave your test changes as a patch at `{patch}` "
@@ -2101,7 +2143,7 @@ async def qa(state: BuildState):
         f"{qa_depth_block(state)}"
     )
     try:
-        result = await run_agent("qa", review_block(state, "qa", extra), QA_OUTPUT, cwd=worktree)
+        result = await run_agent("qa", review_block(state, "qa", extra), QA_OUTPUT, cwd=workdir)
     finally:
         remove_worktree(worktree)
     out = result.output
@@ -2149,7 +2191,7 @@ def failing_qa_tests(state: BuildState) -> list[str] | None:
     command = state.get("qa_test_command", "")
     if not command.strip() or BASH_DENY["writer"].search(command):
         return None
-    code, output = run(command, timeout=CHECK_TIMEOUT_S, cwd=Path(git("rev-parse", "--show-toplevel")))
+    code, output = run(command, timeout=CHECK_TIMEOUT_S, cwd=git_top())
     if code in (126, 127) or NO_TESTS_RAN.search(output):
         return None
     print(f"   {'✅' if code == 0 else '❌'} {command}", flush=True)
@@ -2597,8 +2639,11 @@ async def print_status(graph, config, thread: str, snapshot) -> int:
         return 1
     print(f"Thread: {thread}")
     print(f"Card: {values.get('card_number') or '(ad-hoc)'} · type: {values.get('card_type', '')}")
+    running = running_pid(thread)
+    if running:
+        print(f"Running now (process {running}): wait for it to finish or pause.")
     if snapshot.interrupts:
-        print("Paused: waiting for your reply (--resume)")
+        print(f"Paused: waiting for your reply (--resume) to this:\n\n{snapshot.interrupts[0].value}\n")
     print(f"Next step: {', '.join(snapshot.next) or 'finished'}")
     print(f"Outcome: {values.get('outcome') or 'in progress'}")
     plan = BUILD_DIR / thread / "plan.md"
@@ -2613,6 +2658,27 @@ async def print_status(graph, config, thread: str, snapshot) -> int:
         print_timings(timings, unfinished=bool(snapshot.next))
     print_history(values)
     return 0
+
+
+FINAL_HEADLINES = {
+    "closed": "card closed",
+    "failed": "failed",
+    "stopped": "cancelled",
+    "ship_error": "passed, PR failed",
+    "shipped": "PR opened",
+    "pushed": "branch pushed",
+}
+
+
+def ping_user(title: str) -> None:
+    """Play herdr's needs-input sound when the build runs in a herdr pane. The user mutes
+    herdr's "finished" sound, since every step's agent finishing would ping them."""
+    if os.environ.get("HERDR_ENV") != "1" or not shutil.which("herdr"):
+        return
+    try:
+        run(["herdr", "notification", "show", title, "--sound", "request"], timeout=10)
+    except OSError:
+        pass
 
 
 def report(thread: str, result: dict) -> int:
@@ -2633,8 +2699,13 @@ def report(thread: str, result: dict) -> int:
         if result.get("checks_feedback"):
             print(f"\n## Automatic checks\n{result['checks_feedback']}")
         for key, label in REVIEW_LABELS.items():
-            if result.get(f"{key}_verdict") == "NEEDS_REWORK":
-                print(f"\n## {label}\n{review_findings(result, key)}")
+            if result.get(f"{key}_verdict") == "NEEDS_REWORK" and result.get(f"{key}_feedback"):
+                print(f"\n## {label}\n{result[f'{key}_feedback']}")
+        if result.get("code_decisions"):
+            print(
+                "\n## Decisions for the user\nThe code took these without sign-off. Ask the user about each "
+                f"one, and change the code only as they decide:\n{bullets(result['code_decisions'])}"
+            )
         if result.get("pinned"):
             print(
                 f"\n## Locked test files\n{bullets(sorted(result['pinned']))}\nThe recheck puts back any change to "
@@ -2662,10 +2733,13 @@ def report(thread: str, result: dict) -> int:
     else:
         print("Done.")
     print("=" * 60)
+    ping_user(f"/build {thread}: {FINAL_HEADLINES.get(outcome, 'done')}")
+    if outcome not in ("shipped", "pushed"):  # a failed build prints these again once it ships
+        return code
     if result.get("follow_ups"):
         print("\nFOLLOW-UPS THE BUILD COULDN'T DO:")
         print(bullets(result["follow_ups"]))
-    if result.get("manual_checks") and outcome in ("shipped", "pushed"):
+    if result.get("manual_checks"):
         print("\nMANUAL CHECKS (also in the PR):")
         print(bullets(result["manual_checks"]))
     if result.get("tech_debt"):
@@ -2705,6 +2779,10 @@ async def start_build(graph, saver, config, snapshot, args):
         print(f"Commit or stash these changes before starting a build:\n{bullets(modified)}")
         return None
     if snapshot.values:
+        old = snapshot.values
+        if old.get("base_branch") and old.get("branch") and git("branch", "--show-current") == old["branch"]:
+            git("checkout", old["base_branch"])  # the new build branches from the base, not the old attempt
+            print(f"Switched to {old['base_branch']}: the discarded attempt stays on {old['branch']}.")
         await saver.adelete_thread(thread)
     shutil.rmtree(BUILD_DIR / thread, ignore_errors=True)
     print(f"Starting build (thread {thread})...\n")
@@ -2786,6 +2864,17 @@ async def recheck_build(graph, config, snapshot, unpin: list[str]):
 # --- stopping a running build ---
 
 
+def save_pause(thread: str, snapshot) -> None:
+    """What the build waits on, for the hook that shows it to the user before they're asked
+    (.claude/hooks/show-pause-first.py). Its "shown" mark is cleared: this is a new pause."""
+    folder = BUILD_DIR / thread
+    (folder / "pause.shown").unlink(missing_ok=True)
+    if snapshot.interrupts:
+        write_text(folder / "pause.txt", snapshot.interrupts[0].value)
+    else:
+        (folder / "pause.txt").unlink(missing_ok=True)
+
+
 def pid_file(thread: str) -> Path:
     return BUILD_DIR / f"{thread}.pid"
 
@@ -2805,7 +2894,30 @@ def running_pid(thread: str) -> int | None:
     """The process ID of a build of this thread that's still running, if there is one."""
     text = read_text(pid_file(thread)).strip()
     pid = int(text) if text.isdigit() else None
-    return pid if pid and pid != os.getpid() and alive(pid) else None
+    if not pid or pid == os.getpid() or not alive(pid):
+        return None
+    # A pid file left by a killed build may name a process that later got the same number.
+    code, command = run(["ps", "-o", "command=", "-p", str(pid)])
+    return pid if code == 0 and "build_graph" in command else None
+
+
+def take_lock(thread: str, running: int | None) -> bool:
+    """Record this run as the thread's build. False if another run took it first."""
+    path = pid_file(thread)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | (os.O_TRUNC if running else os.O_EXCL))
+    except FileExistsError:
+        if running_pid(thread):  # another run took it since `running` was read
+            return False
+        path.unlink(missing_ok=True)  # stale: its build is gone
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+        except FileExistsError:
+            return False
+    with os.fdopen(fd, "w") as f:
+        f.write(str(os.getpid()))
+    return True
 
 
 def descendants(pid: int) -> list[int]:
@@ -2839,8 +2951,9 @@ def discard_build_work(state: BuildState, to: str) -> None:
     lock = Path(git("rev-parse", "--git-path", "index.lock"))
     (lock if lock.is_absolute() else ROOT / lock).unlink(missing_ok=True)  # left by a killed commit
     git("reset", "--hard", to)
+    top = git_top()
     for path in stray_changes(state):
-        (ROOT / path).unlink(missing_ok=True)
+        (top / path).unlink(missing_ok=True)
 
 
 def remote_tip(branch: str) -> str:
@@ -2872,9 +2985,26 @@ def pr_exists(branch: str) -> bool | None:
     return any(line.split()[0] == tip for line in output.splitlines())
 
 
-def stop_running_build(values: dict, pid: int | None, replan: bool = False) -> bool:
+def pushed_by_build(values: dict) -> bool | None:
+    """Whether the build's own commits are on origin. A branch that was already pushed before the
+    build started doesn't count. None if origin can't be reached."""
+    if values.get("outcome") == "pushed":
+        return True
+    branch, base = values.get("branch"), values.get("build_base")
+    if not branch or not base:
+        return False
+    code, output = run(["git", "ls-remote", "--exit-code", "--heads", "origin", branch], timeout=30)
+    if code == 2:
+        return False
+    if code != 0 or not output.strip():
+        return None
+    return run(["git", "merge-base", "--is-ancestor", output.split()[0], base])[0] != 0
+
+
+def stop_running_build(values: dict, pid: int | None, replan: bool = False, before_stop=None) -> bool:
     """Stop the build of this thread running as `pid`, if any. False if it can't be stopped any more.
-    A replan may still throw away pushed work, as long as no PR was opened from it."""
+    A replan may still throw away pushed work, as long as no PR was opened from it. `before_stop`
+    runs once every check has passed but before anything is stopped; if it fails, nothing is."""
     if not values:
         print("No saved build for this thread.")
         return False
@@ -2883,9 +3013,10 @@ def stop_running_build(values: dict, pid: int | None, replan: bool = False) -> b
         print("This build already finished. Open a new card for the change, or change the PR directly.")
         return False
     branch = values.get("branch")
-    pushed = outcome == "pushed" or (
-        branch and run(["git", "ls-remote", "--exit-code", "--heads", "origin", branch], timeout=30)[0] == 0
-    )
+    pushed = pushed_by_build(values)
+    if pushed is None:
+        print(f"Couldn't reach origin to check whether {branch} was pushed, so nothing was changed.")
+        return False
     if pushed and not replan:
         print(f"Branch {branch} is already pushed, so its work can't be thrown away. Change the PR directly.")
         return False
@@ -2897,9 +3028,32 @@ def stop_running_build(values: dict, pid: int | None, replan: bool = False) -> b
         if found is None:
             print(f"Couldn't check GitHub for a PR on {branch}, so nothing was changed.")
             return False
+    if not safe_to_discard(values, pid):
+        return False
+    if before_stop:
+        try:
+            before_stop()
+        except subprocess.CalledProcessError as e:
+            print(f"`{' '.join(e.cmd)}` failed, so nothing was changed:\n{e.stderr or e.output or ''}")
+            return False
     if pid:
         print("⏹ Stopping the running build…", flush=True)
         stop_process_tree(pid)
+    return True
+
+
+def safe_to_discard(values: dict, pid: int | None) -> bool:
+    """Whether throwing the build's work away can only touch the build's own work."""
+    branch, current = values.get("branch"), git("branch", "--show-current")
+    if values.get("build_base") and branch and current != branch:
+        print(f"You're on {current or 'a detached HEAD'}, not the build's branch {branch}. "
+              f"Check out {branch} first, so nothing else is thrown away.")
+        return False
+    changes = stray_changes(values) if values.get("build_base") and not pid else []
+    if changes:
+        print("The build isn't running, so these uncommitted changes aren't its half-written work. "
+              f"Commit, stash or delete them first:\n{bullets(changes)}")
+        return False
     return True
 
 
@@ -2927,9 +3081,9 @@ def keep_pushed_work(branch: str) -> dict:
 
 async def replan_build(graph, config, snapshot, feedback: str, pid: int | None):
     values = snapshot.values
-    if not stop_running_build(values, pid, replan=True):
+    kept = {}
+    if not stop_running_build(values, pid, replan=True, before_stop=lambda: kept.update(keep_pushed_work(values.get("branch", "")))):
         return None
-    kept = keep_pushed_work(values.get("branch", ""))
     if values.get("build_base"):
         discard_build_work(values, values["build_base"])
         print("🗑 Threw away the unfinished work", flush=True)
@@ -2951,6 +3105,7 @@ async def replan_build(graph, config, snapshot, feedback: str, pid: int | None):
             "pause_options": [],
             "user_decisions": [],
             "repro": "",
+            "repro_command": "",
             "tests": "",
             "test_attempts": 0,
             "test_feedback": "",
@@ -2980,15 +3135,16 @@ async def replan_build(graph, config, snapshot, feedback: str, pid: int | None):
     return await graph.ainvoke(None, config)
 
 
-def clean_backups(values: dict) -> int:
-    """Delete the local backup branches replans left, once the build is done."""
-    if not values:
-        print("No saved build for this thread.")
+def clean_backups(values: dict, branch: str | None = None) -> int:
+    """Delete the local backup branches replans left, once the build is done. With no saved
+    build (e.g. its worktree was removed), --branch names the build's branch."""
+    if not values and not branch:
+        print("No saved build for this thread. Add --branch <the build's branch> to delete its backups.")
         return 1
-    if values.get("outcome") not in ("shipped", "pushed", "closed", "stopped"):
+    if values and values.get("outcome") not in ("shipped", "pushed", "closed", "stopped"):
         print("This build isn't done yet, so its backups are kept.")
         return 1
-    branch = values.get("branch")
+    branch = branch or values.get("branch")
     if not branch:
         print("No backup branches: this build never made a branch.")
         return 0
@@ -3033,8 +3189,10 @@ async def main(argv: list[str] | None = None) -> int:
             print(f"A build of {args.thread} is already running. Wait for it, or stop it with --replan or --cancel.")
             return 1
         if args.clean_backups:
-            return clean_backups(snapshot.values)
-        write_text(pid_file(args.thread), str(os.getpid()))
+            return clean_backups(snapshot.values, args.branch)
+        if not take_lock(args.thread, running):
+            print(f"Another run of {args.thread} just started. Wait for it, or stop it with --replan or --cancel.")
+            return 1
         try:
             if args.replan is not None:
                 result = await replan_build(graph, config, snapshot, args.replan, running)
@@ -3052,9 +3210,11 @@ async def main(argv: list[str] | None = None) -> int:
             if not isinstance(e, (BuildError, AgentError)):
                 traceback.print_exc()
             stopped = await graph.aget_state(config)
+            save_pause(args.thread, stopped)
             print("\n" + "=" * 60)
             print(f"BUILD STOPPED at {', '.join(stopped.next) or 'the end'}:\n{e}")
             print("=" * 60)
+            ping_user(f"/build {args.thread}: stopped")
             print(f"\nFix the cause, then run:\n  {rerun()} --thread {args.thread} --retry")
             return 1
         finally:
@@ -3062,6 +3222,7 @@ async def main(argv: list[str] | None = None) -> int:
                 pid_file(args.thread).unlink()
         if result is None:
             return 1
+        save_pause(args.thread, await graph.aget_state(config))
         return report(args.thread, result)
 
 

@@ -4,7 +4,9 @@
 // them (no client-side window/category filtering — that moved to the server, tested in pytest).
 // Pure over { transactions, category }, so it runs headlessly via makeState.
 import { describe, it, expect } from '@jest/globals';
-import { categoryTransactions, categoryBreakdown, UNCATEGORIZED_KEY, type Transaction } from '../context';
+import { categoryTransactions, categoryBreakdown } from '../context';
+import type { Transaction } from '../types';
+import { UNCATEGORIZED_KEY } from '../model';
 import { makeState, cat, txn, spend, withRollup } from './factory';
 
 const cats = [

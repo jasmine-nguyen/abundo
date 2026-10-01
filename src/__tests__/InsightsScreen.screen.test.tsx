@@ -7,7 +7,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import { AccessibilityInfo, StyleSheet } from 'react-native';
 import { screen, fireEvent, within, waitFor } from '@testing-library/react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
-import { UNCATEGORIZED_KEY } from '../context';
+import { UNCATEGORIZED_KEY } from '../model';
 import { C } from '../theme';
 import { CATEGORY_COLORS } from '../chartColors';
 import { queryClient } from '../queryClient';

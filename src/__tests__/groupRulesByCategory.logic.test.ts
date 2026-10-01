@@ -1,7 +1,9 @@
 // Pure selector behind the Rules screen's grouped + searchable list. Locks the grouping,
 // A–Z ordering, orphan handling, and search filter — a revert of any of these fails here.
 import { describe, it, expect } from '@jest/globals';
-import { groupRulesByCategory, UNCATEGORIZED_RULE_GROUP, type Category, type Rule } from '../context';
+import { groupRulesByCategory, UNCATEGORIZED_RULE_GROUP } from '../context';
+import type { Category } from '../types';
+import type { Rule } from '../model';
 
 const cat = (id: string, name: string): Category =>
   ({ id, name, icon: 'tag', color: '#fff', bucket: 'Lifestyle', recent: 0 });

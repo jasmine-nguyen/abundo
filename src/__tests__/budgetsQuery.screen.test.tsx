@@ -35,7 +35,7 @@ import Budgets from '../../app/(tabs)/budgets';
 // The REAL query hooks (real ../api over the fake server, ../auth mocked above) — driven directly
 // by the folded WHIT-72 tests via renderHook; the same regime the screen renders under.
 import { useBudgetsScreenData, useBudgetDetailScreenData } from '../queries';
-import { cycleStart } from '../context';
+import { cycleStart } from '../payCycle';
 
 const server = installFakeServer();
 // The Budgets reads. `/budgets?` (with the query mark) counts the rollup read only, never a

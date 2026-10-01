@@ -3,7 +3,8 @@
 // implementer's ruleConflict.logic.test.ts (which only covers case/whitespace folding for
 // the SAME-category duplicate path — never the differing-category conflict path).
 import { describe, it, expect } from '@jest/globals';
-import { ruleConflict, type Rule } from '../context';
+import { ruleConflict } from '../context';
+import type { Rule } from '../model';
 
 const rule = (id: string, pattern: string, categoryId: string): Rule =>
   ({ id, pattern, categoryId, isNew: false });

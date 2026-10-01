@@ -5,8 +5,6 @@ for a debt (paydown) goal — send ONE Expo push, once ever per checkpoint. Reus
 mortgage-milestone marker SHAPE (repository_notify's NOTIFY#GOALCHECKPOINT set) without touching
 the mortgage feature (shared/milestones.py, NOTIFY#MILESTONE) — the crossing predicate is net-new
 because crossed_milestones is downward-only and structurally can't detect an upward crossing.
-
-Imports no name from `constants` at load.
 """
 
 import logging

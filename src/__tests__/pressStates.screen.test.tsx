@@ -9,7 +9,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 import { render } from '@testing-library/react-native';
 import { makeState, cat, txn } from './factory';
-import type { Category } from '../context';
+import type { Category } from '../types';
 
 // WHIT-192: the row reads only openPicker from the store; category is a prop.
 let mockState: { openPicker: jest.Mock; category: (id: string | null) => Category | undefined };

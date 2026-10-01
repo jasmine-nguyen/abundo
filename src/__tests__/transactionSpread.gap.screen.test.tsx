@@ -7,7 +7,7 @@ import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { makeState, cat, txn, budget } from './factory';
-import type { Budget } from '../context';
+import type { Budget } from '../model';
 
 let mockTx: ReturnType<typeof txData>;
 let mockBudgets: Budget[] = [];

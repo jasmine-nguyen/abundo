@@ -4,7 +4,8 @@
 // spreadPreview at cycles=1/24/sub-cent, the spreadLine deadband, the over/canStartSpread
 // boundaries, and toBudget's spread object passthrough identity.
 import { describe, it, expect } from '@jest/globals';
-import { budgetViews, budgetDetail, toBudget, spreadPreview } from '../context';
+import { budgetViews, budgetDetail, spreadPreview } from '../context';
+import { toBudget } from '../model';
 import { makeState, cat, budget } from './factory';
 
 const sink = (over = {}) => cat({ id: 'sink', name: 'Sink', bucket: 'Lifestyle', ...over });

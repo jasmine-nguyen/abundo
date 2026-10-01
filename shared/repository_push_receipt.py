@@ -12,9 +12,6 @@ Layout: one item per receipt id, grouped under a SINGLE partition
 lets the sweep Query every pending id in one call instead of scanning the table. Each
 write sets an ``expires_at`` epoch-seconds TTL so an id that is never resolved (Expo
 retains receipts ~24h) self-cleans instead of accumulating.
-
-The TTL is defined LOCALLY (not imported from the shared ``constants`` module), the
-same way shared/push.py keeps its Expo constants local.
 """
 
 import logging
@@ -25,6 +22,7 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
+from constants import RECEIPT_TTL_SECONDS
 from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
 
 logger = logging.getLogger(__name__)
@@ -32,10 +30,6 @@ logger = logging.getLogger(__name__)
 # All pending receipt ids share one partition so the sweep Queries them in a single
 # call; a per-id partition would force a full-table Scan.
 _PENDING_PK = "PUSHRECEIPT#PENDING"
-
-# A stashed receipt id self-expires after ~24h — Expo retains receipts about that long,
-# so an id the sweep never resolves is reaped by TTL rather than left forever.
-RECEIPT_TTL_SECONDS = 24 * 60 * 60
 
 
 class PushReceiptRepository:

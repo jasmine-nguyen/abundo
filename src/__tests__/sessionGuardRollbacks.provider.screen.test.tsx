@@ -22,7 +22,7 @@ jest.mock('../auth', () => ({
 }));
 
 import { AppProvider, useAppContext } from '../context';
-import type { Bucket } from '../context';
+import type { Bucket } from '../types';
 import { queryClient } from '../queryClient';
 import { ApiError } from '../apiError';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';

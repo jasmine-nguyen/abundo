@@ -16,7 +16,7 @@ resource "null_resource" "prepare_lambda_deps" {
 }
 
 # Webhook lambda source: only its webhook-specific modules (handler.py,
-# repository.py, reconcile.py with the settlement planner, budget_alerts.py,
+# webhook_repository.py, reconcile.py with the settlement planner, budget_alerts.py,
 # banksync.py). constants.py,
 # models.py, encoders.py, and ssm.py come from the shared layer attached below —
 # same single-source pattern as the api/sync/authorizer lambdas (WHIT-88).
@@ -267,9 +267,10 @@ resource "aws_lambda_function" "apply_rules_worker" {
 
 # Card 609: the Ask Abundo chat worker. Runs the model's tool loop for one message outside the 30s
 # gateway window and writes the answer to the job row the app polls. Reuses the app_api zip (it is
-# lambda_api code: ai_chat.py + chat_tools.py + handler helpers). 210s = 6 model rounds at up to
-# 30s each (ANTHROPIC_CHAT_TIMEOUT_SECONDS), plus the reads — so the worker always finishes or
-# marks the job failed before AWS stops it. The app waits longer still (CHAT_MAX_WAIT_MS).
+# lambda_api code: ai_chat.py + chat_tools.py + handler helpers). 210s is the worker's whole budget:
+# run_chat shares the time left across the model calls (each up to ANTHROPIC_CHAT_TIMEOUT_SECONDS,
+# less as time runs out), keeping CHAT_DEADLINE_MARGIN_SECONDS back so it always finishes or marks
+# the job failed before AWS stops it. The app waits longer still (CHAT_MAX_WAIT_MS).
 # AI_CHAT_DEBUG_LOG is deliberately NOT set here — set it by hand on a dev worker only, to check
 # what reaches the model.
 resource "aws_lambda_function" "ai_chat_worker" {

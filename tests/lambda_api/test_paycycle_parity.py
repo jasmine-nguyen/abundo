@@ -6,7 +6,7 @@ on clean data, the server's `get_paycycle_view` days_left EXACTLY equals what th
 client's `cycleClock` would compute for the same (payday, length, today).
 
 Here the reference `_client_days_left` is a faithful, INDEPENDENT re-implementation of
-the CLIENT algorithm (src/context.tsx cycleClock: whole-day modular arithmetic), NOT of
+the CLIENT algorithm (src/payCycle.ts cycleClock: whole-day modular arithmetic), NOT of
 the server's cycle-start-plus-length math. So if the server formula drifts, the two code
 paths disagree and this fails (fail-on-revert for get_paycycle_view). The client half of
 the parity is separately locked by src/__tests__/cycleClock.logic.test.ts.

@@ -111,9 +111,12 @@ AI_CHAT_JOBS_PATH = "/ai/chat/jobs"
 # One chat model call writes tool calls AND the final reply, so it needs more room than
 # the one-shot insights call (ANTHROPIC_MAX_TOKENS).
 ANTHROPIC_CHAT_MAX_TOKENS = 1500
-# Per model call, capped so CHAT_MAX_TOOL_ROUNDS of these fit inside the worker's 210s Lambda
-# timeout (terraform/lambda.tf) — otherwise AWS kills it mid-loop and the job is never marked failed.
-ANTHROPIC_CHAT_TIMEOUT_SECONDS = 30
+# The cap on one model call; the real limit is the worker's time left (see ai_chat.run_chat).
+ANTHROPIC_CHAT_TIMEOUT_SECONDS = 60
+# Worker time kept back from the model calls to check the reply and write the job row.
+CHAT_DEADLINE_MARGIN_SECONDS = 10
+# With less call time than this left, the worker fails rather than start another model call.
+CHAT_MIN_CALL_SECONDS = 10
 # Tool rounds per user message; the last round forces the answer, so a loop fails fast.
 CHAT_MAX_TOOL_ROUNDS = 6
 # Only the most recent messages are sent to the model as context.
@@ -135,36 +138,20 @@ CHAT_LIST_MAX = 200
 # cycles prior). A safety bound on how far into the past a single request may reach —
 # each request scans exactly ONE length-day window regardless of `cycle`, so the read
 # cost is flat; the cap just rejects an absurd/out-of-range ?cycle= with a 400 rather
-# than serving it. Kept API-only (the shared spend helper stays constant-free and pure);
-# deliberately NOT reusing INSIGHTS_PRIOR_CYCLES so widening the
+# than serving it. Kept API-only; deliberately NOT reusing INSIGHTS_PRIOR_CYCLES so widening the
 # AI trend can't silently change the breakdown lookback.
 BREAKDOWN_MAX_LOOKBACK = 12
 
-# The (field, operator) pairs a rule may use — MIRRORS shared/rule_engine._FIELD_OPERATORS and MUST
-# stay in lockstep with it (WHIT-541). The engine is constants-free, so the two lists are unlinked:
-# a pair the validator accepts but the engine can't evaluate silently matches nothing. Widen BOTH
-# together.
-RULE_FIELD_OPERATORS = {
-    "description": frozenset({"contains", "equals"}),
-    "merchant": frozenset({"contains", "equals"}),
-    "category": frozenset({"equals"}),
-    "account": frozenset({"equals"}),
-    "amount": frozenset({"less_than", "less_than_or_equal", "greater_than", "greater_than_or_equal"}),
-    "direction": frozenset({"is"}),
-}
-# Derived: every field, and the union of every operator — the legacy single-condition create check
-# still validates field/operator independently, then the (field, operator) pair is verified against
-# RULE_FIELD_OPERATORS.
-RULE_FIELDS = frozenset(RULE_FIELD_OPERATORS)
-RULE_OPERATORS = frozenset().union(*RULE_FIELD_OPERATORS.values())
-# How a multi-condition rule combines its conditions: "all" = AND, "any" = OR.
-RULE_LOGIC = frozenset({"all", "any"})
-# The one direction condition's allowed values.
-RULE_DIRECTIONS = frozenset({"debit", "credit"})
+# The rule vocabulary (RULE_FIELD_OPERATORS etc.) lives in shared/constants.py (WHIT-608).
 # Applied when a create request omits them: the plain "description contains X"
 # rule that the current in-app UI produces.
 DEFAULT_RULE_FIELD = "description"
 DEFAULT_RULE_OPERATOR = "contains"
+
+# How many DISTINCT days a merchant must be hand-filed to the SAME category before a rule is
+# suggested (WHIT-542). Below this it is a one-off, not a habit, and a nudge on a single filing is
+# noise.
+MIN_FILING_HABIT_DAYS = 4
 
 # --- Categories (user-defined taxonomy) ------------------------------------
 # API Gateway route path for the category CRUD endpoints.

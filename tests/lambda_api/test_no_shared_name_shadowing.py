@@ -1,15 +1,15 @@
-"""WHIT-581 — lambda_api never reuses a shared module name, and each constant has one home.
+"""WHIT-581 / WHIT-608 — no server function reuses a shared module name, and each constant has one home.
 
-The deployed API puts lambda_api/ ahead of the shared layer on the import path, so a
-lambda_api module with a shared module's name silently replaces it. That is how the old
+Each deployed function puts its own folder ahead of the shared layer on the import path, so a
+function module with a shared module's name silently replaces it. That is how the old
 lambda_api/constants.py forced every shared constant to be mirrored by hand. These checks
 are static (nothing is imported):
 
-  [G1] no module name is both a lambda_api module and a shared module/package
+  [G1] no module name in any lambda*/ function folder is also a shared module/package
   [G2] no constant is defined in both api_constants.py and shared/constants.py
   [G3] every name a lambda_api module imports from either constants file exists there
 
-Fail-on-revert: create lambda_api/constants.py -> G1 reddens;
+Fail-on-revert: create lambda/repository.py (or lambda_api/constants.py) -> G1 reddens;
 re-add a mirror such as MAX_PAGE_SIZE to api_constants.py -> G2 reddens.
 """
 
@@ -27,9 +27,14 @@ _CONSTANT_FILES = {
 }
 
 
-def _lambda_api_names() -> set[str]:
-    # On disk, not just tracked: tests put lambda_api/ first on the import path, so a stray file changes them.
-    return {path.stem for path in _LAMBDA_API.glob("*.py")}
+def _function_names() -> dict[str, set[str]]:
+    # On disk, not just tracked: tests put each function folder first on the import path, and the
+    # webhook deploys its raw folder, so a stray file changes them.
+    return {
+        folder.name: {path.stem for path in folder.glob("*.py")}
+        for folder in sorted(_ROOT.glob("lambda*/"))
+        if folder.is_dir()
+    }
 
 
 def _shared_names() -> set[str]:
@@ -47,19 +52,27 @@ def _uppercase_names(path: pathlib.Path) -> set[str]:
 
 def test_the_scans_find_real_names():
     # Guards a vacuous pass: an empty scan would make every check below trivially green.
+    functions = _function_names()
     assert "constants" in _shared_names()
-    assert "handler" in _lambda_api_names()
-    assert "api_constants" in _lambda_api_names()
+    for folder in ("lambda", "lambda_api", "lambda_sync_trigger", "lambda_balance_poller"):
+        assert folder in functions, f"the scan missed {folder}/"
+    assert "webhook_repository" in functions["lambda"]
+    assert "handler" in functions["lambda_api"]
+    assert "api_constants" in functions["lambda_api"]
     assert _uppercase_names(_CONSTANT_FILES["constants"])
     assert _uppercase_names(_CONSTANT_FILES["api_constants"])
 
 
-def test_no_lambda_api_module_shares_a_name_with_a_shared_module():
+def test_no_function_module_shares_a_name_with_a_shared_module():
     # [G1]
-    clashes = sorted(_lambda_api_names() & _shared_names())
+    clashes = sorted(
+        f"{folder}/{name}.py"
+        for folder, names in _function_names().items()
+        for name in names & _shared_names()
+    )
     assert clashes == [], (
-        f"lambda_api modules {clashes} have the same name as a shared module — at runtime the "
-        "lambda_api copy silently replaces the shared one. Rename the lambda_api file."
+        f"{clashes} have the same name as a shared module — at runtime the function's copy "
+        "silently replaces the shared one. Rename the function's file."
     )
 
 

@@ -120,6 +120,7 @@ def wired(lam, monkeypatch):
 
     monkeypatch.setattr(up, "send_push", fake_send_push)
     monkeypatch.setattr(up, "fetch_transaction", lambda _id: _up_transaction())
+    monkeypatch.setattr(up, "get_homeloan_account_id", lambda: HOMELOAN_UUID)
 
     return type("Wired", (), {"up": up, "notify": notify, "device": device, "sent": sent})
 
@@ -152,27 +153,34 @@ def test_get_transaction_id(lam):
     assert lam.up_webhook.get_transaction_id(_webhook_payload(transaction_id="txn-9")) == "txn-9"
 
 
-def test_repayment_skip_reason_none_for_qualifying(lam):
-    assert lam.up_webhook.repayment_skip_reason(_up_transaction(cents=357300)) is None
+@pytest.fixture
+def skip_up(lam, monkeypatch):
+    """up_webhook with the home-loan lookup stubbed, so repayment_skip_reason stays offline."""
+    monkeypatch.setattr(lam.up_webhook, "get_homeloan_account_id", lambda: HOMELOAN_UUID)
+    return lam.up_webhook
 
 
-def test_repayment_skip_reason_wrong_account(lam):
+def test_repayment_skip_reason_none_for_qualifying(skip_up):
+    assert skip_up.repayment_skip_reason(_up_transaction(cents=357300)) is None
+
+
+def test_repayment_skip_reason_wrong_account(skip_up):
     txn = _up_transaction(account_id="some-other-account", cents=357300)
-    assert lam.up_webhook.repayment_skip_reason(txn) == "not_homeloan_account"
+    assert skip_up.repayment_skip_reason(txn) == "not_homeloan_account"
 
 
-def test_repayment_skip_reason_sub_floor(lam):
+def test_repayment_skip_reason_sub_floor(skip_up):
     # $5 < the $10 floor.
-    assert lam.up_webhook.repayment_skip_reason(_up_transaction(cents=500)) == "below_floor"
+    assert skip_up.repayment_skip_reason(_up_transaction(cents=500)) == "below_floor"
 
 
-def test_repayment_skip_reason_negative_interest(lam):
-    assert lam.up_webhook.repayment_skip_reason(_up_transaction(cents=-234828)) == "below_floor"
+def test_repayment_skip_reason_negative_interest(skip_up):
+    assert skip_up.repayment_skip_reason(_up_transaction(cents=-234828)) == "below_floor"
 
 
-def test_repayment_skip_reason_boundary_is_inclusive(lam):
+def test_repayment_skip_reason_boundary_is_inclusive(skip_up):
     # Exactly $10 (1000 cents) qualifies.
-    assert lam.up_webhook.repayment_skip_reason(_up_transaction(cents=1000)) is None
+    assert skip_up.repayment_skip_reason(_up_transaction(cents=1000)) is None
 
 
 def test_get_signing_secret_caches(lam, monkeypatch):
@@ -252,7 +260,9 @@ def fetch_wired(lam, monkeypatch, request):
     """`wired`, but with the REAL fetch_transaction and a cached token, so a test
     patches urlopen and the marker code actually runs."""
     real_fetch = lam.up_webhook.fetch_transaction
+    real_homeloan_lookup = lam.up_webhook.get_homeloan_account_id
     wired = request.getfixturevalue("wired")
+    wired.real_homeloan_lookup = real_homeloan_lookup
     monkeypatch.setattr(wired.up, "fetch_transaction", real_fetch)
     monkeypatch.setattr(wired.up, "_personal_access_token", "old-pat-value")
     return wired
@@ -448,6 +458,7 @@ def test_already_fired_id_skips(lam, monkeypatch, caplog):
     sent = []
     monkeypatch.setattr(up, "send_push", lambda *a: sent.append(a) or {"ok": 1})
     monkeypatch.setattr(up, "fetch_transaction", lambda _id: _up_transaction())
+    monkeypatch.setattr(up, "get_homeloan_account_id", lambda: HOMELOAN_UUID)
     caplog.set_level(logging.INFO)
 
     assert up.lambda_handler(_event(_webhook_payload()), None) == up.OK_RESPONSE
@@ -618,9 +629,9 @@ def test_partial_transaction_missing_account_returns_500(wired, monkeypatch):
 # Up sends valueInBaseUnits as a JSON integer, but the code defensively wraps it in int().
 # Lock that coercion: a string amount still qualifies. Remove the int() and a str >= int
 # comparison raises TypeError in Python 3.
-def test_value_in_base_units_string_is_coerced(lam):
+def test_value_in_base_units_string_is_coerced(skip_up):
     txn = _up_transaction(cents="357300")  # a string, as some JSON:API encoders emit
-    assert lam.up_webhook.repayment_skip_reason(txn) is None
+    assert skip_up.repayment_skip_reason(txn) is None
 
 
 def _boom(message):
@@ -700,3 +711,51 @@ def test_each_delivery_logs_exactly_one_outcome(wired, monkeypatch, caplog, setu
     assert wired.up.lambda_handler(_event(_webhook_payload()), None) == wired.up.OK_RESPONSE
     outcomes = [m for m in _OUTCOMES for r in caplog.records if m in r.getMessage().split()]
     assert outcomes == [expected]
+
+
+# --- WHIT-618: the home loan is found by account type, with a fixed-id fallback ---
+
+@pytest.mark.parametrize("body", [{"items": []}, {"data": [{"id": "loan-x"}]}],
+                         ids=["no_data", "no_attributes"])
+def test_homeloan_lookup_with_unexpected_shape_falls_back_unsaved(lam, monkeypatch, caplog, body):
+    up = lam.up_webhook
+    monkeypatch.setattr(up, "get_personal_access_token", lambda: "up-token")
+    calls = []
+
+    def fake_urlopen(request, timeout=None):
+        calls.append(request)
+        return _FakeHTTPResponse(body)
+
+    monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
+    caplog.set_level(logging.INFO)
+
+    assert up.get_homeloan_account_id() == HOMELOAN_UUID
+    assert up.get_homeloan_account_id() == HOMELOAN_UUID
+    [first, _second] = _marker_records(caplog, "UP_WEBHOOK_HOMELOAN_LOOKUP_FALLBACK")
+    assert "reason=lookup_failed" in first.getMessage().split()
+    assert len(calls) == 2
+
+
+def test_homeloan_lookup_token_failure_falls_back(lam, monkeypatch, caplog):
+    up = lam.up_webhook
+    monkeypatch.setattr(up, "get_personal_access_token", _boom("SSM down"))
+    caplog.set_level(logging.INFO)
+    assert up.get_homeloan_account_id() == HOMELOAN_UUID
+    [record] = _marker_records(caplog, "UP_WEBHOOK_HOMELOAN_LOOKUP_FALLBACK")
+    assert "reason=lookup_failed" in record.getMessage().split()
+
+
+def test_homeloan_lookup_failure_still_pushes_on_fixed_id(fetch_wired, monkeypatch, caplog):
+    up = fetch_wired.up
+    monkeypatch.setattr(up, "get_homeloan_account_id", fetch_wired.real_homeloan_lookup)
+
+    def fake_urlopen(request, timeout=None):
+        if "/transactions/" in request.full_url:
+            return _FakeHTTPResponse({"data": _up_transaction()})
+        raise _http_error(500)
+
+    monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
+    caplog.set_level(logging.INFO)
+    assert up.lambda_handler(_event(_webhook_payload()), None) == up.OK_RESPONSE
+    assert len(fetch_wired.sent) == 1
+    assert _marker_records(caplog, "UP_WEBHOOK_HOMELOAN_LOOKUP_FALLBACK", logging.WARNING)

@@ -39,7 +39,8 @@ export function shippedSourceFiles(): string[] {
 }
 
 // Every .ts/.tsx file under `dir`, relative to `root` and forward-slashed — the test-tree guards
-// (noAutoMockApi, noQueriesMock) scan this.
+// (noAutoMockApi, noQueriesMock, cacheRefreshInAct, cacheInActSingleGuard, testQueryClientShared)
+// scan this.
 export function testFiles(root: string, dir: string = root): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);

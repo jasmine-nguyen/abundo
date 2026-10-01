@@ -11,7 +11,7 @@ import { resetAuth } from './support/authMock';
 import { breakdownWire, seedInsights, renderInsights, drawInsights, resetAi, setAi } from './support/insightsScreen';
 import { queryClient } from '../queryClient';
 import { breakdownKey } from '../queries';
-import { UNCATEGORIZED_KEY } from '../context';
+import { UNCATEGORIZED_KEY } from '../model';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());

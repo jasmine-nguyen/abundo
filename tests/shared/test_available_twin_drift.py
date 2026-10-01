@@ -3,15 +3,16 @@
 The spendable a budget row shows is computed in TWO places that MUST agree:
 
     - server: lambda_api/handler.py  -> row["available"] = unified_available(target, buffer, payback)
-    - client: src/context.tsx        -> the `?? (b.budget + (b.rollover ? b.carryover : 0)
-                                          + b.spreadAdjustment)` fallback, used when an older
-                                          server omits the field
+    - client: src/budgetMath.ts      -> availableToSpend's `?? (budget.budget + (budget.rollover
+                                          ? budget.carryover : 0) + budget.spreadAdjustment)`
+                                          fallback, used when an older server omits the field
 
 If the two drift, a user on an old app build (falling back to the client formula) sees a
 different number than the server sends. Nothing else guards this pair, so this test:
 
-  1. pins the client fallback expression as TEXT — it must appear verbatim at BOTH read
-     sites (budgetViews + budgetDetail), so a one-sided edit fails loudly; and
+  1. pins the client fallback expression as TEXT — it must appear verbatim exactly ONCE, in
+     availableToSpend (WHIT-630: budgetViews, budgetDetail and spread eligibility all call it),
+     so a second, drifting copy fails loudly; and
   2. pins that the server engine `unified_available(target, buffer, payback)` equals that
      same parts-sum for the four row kinds (rollover / spread / plain / income), so a change
      to either side (e.g. a clamp or rounding sneaking into the engine) goes red.
@@ -28,11 +29,11 @@ import pytest
 pytestmark = pytest.mark.crosslang
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_TS_TWIN = _REPO_ROOT / "src" / "context.tsx"
+_TS_TWIN = _REPO_ROOT / "src" / "budgetMath.ts"
 
-# The exact client fallback, sans the leading `b.available ?? (` and trailing `)` — the
-# parts-sum the server's `available` must reproduce. Both read sites carry it verbatim.
-_CLIENT_FALLBACK = "b.budget + (b.rollover ? b.carryover : 0) + b.spreadAdjustment"
+# The exact client fallback, sans the leading `budget.available ?? (` and trailing `)` — the
+# parts-sum the server's `available` must reproduce.
+_CLIENT_FALLBACK = "budget.budget + (budget.rollover ? budget.carryover : 0) + budget.spreadAdjustment"
 
 
 def _client_available(budget, rollover, carryover, spread_adjustment):
@@ -41,20 +42,19 @@ def _client_available(budget, rollover, carryover, spread_adjustment):
     return budget + (carryover if rollover else 0) + spread_adjustment
 
 
-def test_the_client_fallback_appears_verbatim_at_both_read_sites():
-    # budgetViews + budgetDetail each compute `available` the same way. Exactly two occurrences —
-    # a one-sided edit (or a third, unguarded copy) fails here.
+def test_the_client_fallback_appears_verbatim_once():
+    # Every screen reads `available` through availableToSpend, so there is exactly one copy.
     ts = _TS_TWIN.read_text()
     occurrences = ts.count(_CLIENT_FALLBACK)
-    assert occurrences == 2, f"expected the client fallback at both read sites, found {occurrences}"
+    assert occurrences == 1, f"expected the client fallback once in availableToSpend, found {occurrences}"
 
 
-def test_both_sites_use_the_nullish_guarded_read_not_the_bare_sum():
-    # The read must be `b.available ?? (<fallback>)` — `??` (not `||`) so a legitimate server 0
-    # is kept. Pins the guard so a refactor can't drop back to the bare parts-sum.
+def test_the_read_uses_the_nullish_guard_not_the_bare_sum():
+    # The read must be `budget.available ?? (<fallback>)` — `??` (not `||`) so a legitimate
+    # server 0 is kept. Pins the guard so a refactor can't drop back to the bare parts-sum.
     ts = _TS_TWIN.read_text()
-    guarded = f"b.available ?? ({_CLIENT_FALLBACK})"
-    assert ts.count(guarded) == 2, "both read sites must use the `b.available ?? (...)` guarded form"
+    guarded = f"budget.available ?? ({_CLIENT_FALLBACK})"
+    assert ts.count(guarded) == 1, "availableToSpend must use the `budget.available ?? (...)` guarded form"
 
 
 @pytest.mark.parametrize(

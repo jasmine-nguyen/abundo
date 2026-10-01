@@ -13,14 +13,14 @@ on real traffic. Only unfiled charges are touched; one agreed live category is s
 rules leave the charge unfiled, and a rule to a deleted category is skipped.
 
 Not a method on the transaction store — a plain function taking the stores as arguments (the same
-shape as budget_alerts.capture_pre_write), so the WHIT-454 subclass wiring stays untouched. Imports
-no shared `constants`; rule_book (and the rule_engine it wraps) is constants-free.
+shape as budget_alerts.capture_pre_write), so the WHIT-454 subclass wiring stays untouched.
 """
 
 import logging
 from typing import Callable, Optional
 
 from rule_book import RuleBook
+from rule_spreading import SpreadSeeder
 from spend import counts_to_budget
 
 logger = logging.getLogger(__name__)
@@ -67,9 +67,6 @@ def apply(rows: list, *, rule_repo, category_repo,
         return rows, None
     seeder = None
     if budget_repo is not None and paycycle_repo is not None:
-        # Lazy import keeps THIS module's load constants-free (its docstring invariant): rule_spreading
-        # -> spend -> constants, which must not be pulled at rule_ingest import time.
-        from rule_spreading import SpreadSeeder
         seeder = SpreadSeeder(budget_repo, paycycle_repo, rule_repo)
     book.file_charges(rows, seeder, counts_to_budget=counts_to_budget)
     return rows, book.is_unfiled

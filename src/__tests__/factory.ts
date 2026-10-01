@@ -2,9 +2,11 @@
 // The selectors (budgetViews, transactionView, budgetDetail, ...) only read a
 // handful of AppContext fields, so we build just those and cast — no provider,
 // no React, so these run headlessly anywhere (incl. the CI merge gate).
-import { cycleName, ROLLUP_KEY } from '../context';
+import { ROLLUP_KEY } from '../model';
+import { cycleName } from '../payCycle';
 import { MILESTONES } from '../milestones';
-import type { Category, Transaction, Budget, HomeLoanState, Rule } from '../context';
+import type { Category, Transaction } from '../types';
+import type { Budget, HomeLoanState, Rule } from '../model';
 import type { AiGoalSignal, BreakdownRollup, CategorySpend, LoanFacts, MilestoneRecord, Repayment } from '../api';
 import type { GoalScreenData } from '../queries';
 

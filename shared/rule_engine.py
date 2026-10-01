@@ -10,37 +10,15 @@ Matching is LITERAL — what BankSync itself would do with the same leaf rule �
 fuzzy merchant-similarity gate the client's "every charge from this merchant" sweep uses.
 A rule is by definition "description contains VALUE" / "category equals VALUE".
 
-No I/O and NO `from constants import`: it stays pure and constants-free. Stdlib
-`re` + `hashlib` only.
+No I/O: it stays pure. Stdlib `re` + `hashlib`, plus the rule vocabulary
+(which field allows which operator, all/any) from `constants`.
 """
 
 import hashlib
 import re
 from decimal import Decimal, InvalidOperation
 
-# The (field, operator) pairs the engine can evaluate — the SOURCE OF TRUTH for the match
-# vocabulary. `lambda_api/api_constants.py` (RULE_FIELDS/RULE_OPERATORS) mirrors this for request
-# validation and MUST be widened in lockstep: the engine is constants-free, so the two lists are
-# unlinked and a field the validator accepts but the engine can't evaluate silently matches nothing.
-#   description/merchant: `contains` (substring) + `equals` (exact, folded).
-#   category: `equals` — a raw-enum mapping (FOOD_AND_DRINK -> groceries) for rules made outside
-#             the app; unfiled rows carry raw enums, so it is worth honouring when present.
-#   account: `equals` against the internal account_id.
-#   amount: `less_than`/`less_than_or_equal`/`greater_than`/`greater_than_or_equal` a plain positive
-#           dollar value, compared to the charge's MAGNITUDE (abs) — spend is stored negative, so
-#           "under $30" means abs(amount) < 30.
-#   direction: `is` "debit" (spend, amount < 0) / "credit" (income, amount > 0).
-_FIELD_OPERATORS = {
-    "description": {"contains", "equals"},
-    "merchant": {"contains", "equals"},
-    "category": {"equals"},
-    "account": {"equals"},
-    "amount": {"less_than", "less_than_or_equal", "greater_than", "greater_than_or_equal"},
-    "direction": {"is"},
-}
-
-# The two ways a multi-condition rule combines its conditions: "all" = AND, "any" = OR.
-_LOGIC = {"all", "any"}
+from constants import RULE_FIELD_OPERATORS, RULE_LOGIC
 
 # Back-compat shorthands for the two shapes that predate multi-condition rules (WHIT-541).
 _DESCRIPTION_CONTAINS = ("description", "contains")
@@ -219,7 +197,7 @@ def _conditions_of(rule: dict) -> tuple[list[dict], str]:
     conditions = rule.get("conditions")
     if conditions:
         logic = rule.get("logic")
-        return conditions, (logic if logic in _LOGIC else "all")
+        return conditions, (logic if logic in RULE_LOGIC else "all")
     return [{"field": rule.get("field"), "operator": rule.get("operator"),
              "value": rule.get("value")}], "all"
 
@@ -303,7 +281,7 @@ def _skip_reason(rule: dict, is_unfiled) -> str | None:
         return "empty rule value"
     for condition in conditions:
         field, operator = condition.get("field"), condition.get("operator")
-        if field not in _FIELD_OPERATORS or operator not in _FIELD_OPERATORS[field]:
+        if field not in RULE_FIELD_OPERATORS or operator not in RULE_FIELD_OPERATORS[field]:
             return "unsupported rule type"
         # A text condition with an empty value would match nothing (or, on `contains`, everything);
         # amount/direction carry no text value, so they are exempt.

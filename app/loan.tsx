@@ -3,7 +3,8 @@ import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { C, FONT, fmtCompact } from '../src/theme';
-import { useAppContext, EMPTY_LOAN_FACTS } from '../src/context';
+import { useAppContext } from '../src/context';
+import { EMPTY_LOAN_FACTS } from '../src/model';
 import { useLoanFactsQuery, useIsAuthed } from '../src/queries';
 import { Header } from '../src/components/Header';
 import { NativeDateField } from '../src/components/NativeDateField';

@@ -1,5 +1,5 @@
 """WHIT-337 QA gaps (adversarial) — the ANZ pending-column geometry MOVED from
-lambda/repository.py._pending_merchant_column to lambda/merchant.py, exposed as
+lambda/webhook_repository.py._pending_merchant_column to lambda/merchant.py, exposed as
 public pending_merchant_column / is_anz_pending. Intended ZERO behaviour change.
 These pin the gaps the implementer's tests + the repointed suites don't: the two
 public functions' cross-contract, and the clean_merchant-vs-positional divergence that

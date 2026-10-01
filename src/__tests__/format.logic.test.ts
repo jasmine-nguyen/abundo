@@ -2,7 +2,8 @@
 // display name), fmt/tint (money + colour tokens), and cycleName (Weekly /
 // Fortnightly / Monthly).
 import { describe, it, expect } from '@jest/globals';
-import { cleanName, merchantLabel, cycleName } from '../context';
+import { cleanName, merchantLabel } from '../context';
+import { cycleName } from '../payCycle';
 import { fmt, fmt2, fmtBalance, fmtExact, fmtCompact, tint, agoLabel, breakdownLineStyle, ADJUSTMENT_ROW, RECONCILE_EPSILON, C } from '../theme';
 import { txn } from './factory';
 
