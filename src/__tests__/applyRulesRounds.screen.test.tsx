@@ -11,7 +11,7 @@
 //   [A17] a round that files nothing and shrinks nothing stops offering another tap.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react-native';
+import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, ApplyRulesResult, FilingResult, FilingTarget, FilingWhen } from '../context';
 
 let mockState: AppContext;
@@ -19,9 +19,15 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { Overlays } from '../components/Overlays';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { openOverlays, overlaysTree } from './support/openOverlays';
+
+const server = installFakeServer();
+useTestQueryClient();
 
 const fns = {
   setSheet: jest.fn(),
@@ -33,7 +39,7 @@ const fns = {
 const filed = (result: ApplyRulesResult): FilingResult => ({ status: 'filed', report: result });
 const FAILED: FilingResult = { status: 'failed', background: false };
 
-const CATEGORIES = [{ id: 'groceries', name: 'Groceries' }];
+const CATEGORIES = [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null }];
 
 const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
   dryRun: true, rulesConsidered: 2, unfiled: 639, matched: 512, conflicted: 0, conflictedSamples: [],
@@ -48,14 +54,15 @@ const filedRows = (count: number, tag = 'a') =>
   Array.from({ length: count }, (_, i) => ({ id: `${tag}${i}`, category: 'groceries' }));
 
 function mount() {
-  mockState = { sheet: { mode: 'applyRules' }, toast: null, categories: CATEGORIES, ...fns } as unknown as AppContext;
-  return render(<Overlays />);
+  server.seed('/categories', CATEGORIES);
+  const state = { sheet: { mode: 'applyRules' }, toast: null, ...fns } as unknown as AppContext;
+  return openOverlays(state, (next) => { mockState = next; });
 }
 
 /** Mount and let the mount-time preview resolve. */
 async function mountWithPreview(preview: ApplyRulesResult | null) {
   fns.previewFiling.mockResolvedValue(preview ? filed(preview) : FAILED);
-  const view = mount();
+  const view = await mount();
   await act(async () => {});
   return view;
 }
@@ -68,7 +75,10 @@ async function firstRound() {
   await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
 }
 
-beforeEach(() => { jest.clearAllMocks(); });
+beforeEach(() => {
+  jest.clearAllMocks();
+  resetAuth();
+});
 
 // --- [A12] the mount effect ---------------------------------------------------
 
@@ -81,7 +91,7 @@ it('does not re-scan history when an unrelated context change re-renders it', as
   expect(fns.previewFiling).toHaveBeenCalledTimes(1);
 
   mockState = { ...mockState, toast: 'Saved' } as unknown as AppContext;
-  await act(async () => { view.rerender(<Overlays />); });
+  await act(async () => { view.rerender(overlaysTree()); });
 
   expect(fns.previewFiling).toHaveBeenCalledTimes(1);
   expect(screen.getByText('File 4 charges')).toBeTruthy();   // the same plan, undisturbed

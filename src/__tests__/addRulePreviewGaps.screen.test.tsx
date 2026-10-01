@@ -14,7 +14,7 @@
 //   - [A40] null sample descriptions from byRule[0].samples are filtered out, not rendered blank
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react-native';
+import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, FilingResult, FilingTarget, FilingWhen } from '../context';
 import type { ApplyRulesResult } from '../api';
 import { APPLY_RULES_MAX_WRITES } from '../context';
@@ -25,9 +25,15 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { Overlays } from '../components/Overlays';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { openOverlays, overlaysTree } from './support/openOverlays';
+
+const server = installFakeServer();
+useTestQueryClient();
 
 const fns = {
   setSheet: jest.fn(),
@@ -38,7 +44,7 @@ const fns = {
 };
 
 const CATEGORIES = [
-  { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null },
+  { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null },
 ];
 
 const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
@@ -56,15 +62,17 @@ function deferred<T>() {
 }
 
 async function mountConfirm(pattern = 'COLES', categoryId = 'groceries') {
-  mockState = {
-    sheet: { mode: 'addRuleConfirm', pattern, categoryId }, toast: null, categories: CATEGORIES, ...fns,
-  } as unknown as AppContext;
-  const utils = render(<Overlays />);
+  server.seed('/categories', CATEGORIES);
+  const state = { sheet: { mode: 'addRuleConfirm', pattern, categoryId }, toast: null, ...fns } as unknown as AppContext;
+  const utils = await openOverlays(state, (next) => { mockState = next; });
   await act(async () => {}); // let the mount-time preview resolve
   return utils;
 }
 
-beforeEach(() => { jest.clearAllMocks(); });
+beforeEach(() => {
+  jest.clearAllMocks();
+  resetAuth();
+});
 
 // --- Back navigation ----------------------------------------------------------
 
@@ -141,7 +149,7 @@ it('[A34] dismissed mid-write: success toasts but does not setSheet(null)', asyn
 
   await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
   mockState = { ...mockState, sheet: null } as unknown as AppContext;
-  await act(async () => { rerender(<Overlays />); });
+  await act(async () => { rerender(overlaysTree()); });
 
   await act(async () => { pending.resolve({ status: 'filed', report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) }); });
 
@@ -160,7 +168,7 @@ it('[A35] dismissed mid-write: non-clash failure toasts off screen', async () =>
 
   await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
   mockState = { ...mockState, sheet: null } as unknown as AppContext;
-  await act(async () => { rerender(<Overlays />); });
+  await act(async () => { rerender(overlaysTree()); });
 
   await act(async () => { pending.resolve({ status: 'failed', background: false }); });
 
@@ -178,7 +186,7 @@ it('[A36] dismissed mid-write: 409-clash toasts off screen', async () => {
 
   await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
   mockState = { ...mockState, sheet: null } as unknown as AppContext;
-  await act(async () => { rerender(<Overlays />); });
+  await act(async () => { rerender(overlaysTree()); });
 
   await act(async () => { pending.resolve({ status: 'clash', error: new ApiError(409, null), background: false }); });
 

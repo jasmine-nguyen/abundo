@@ -6,7 +6,7 @@
 // sweep) to primary and demotes the one-round instant file. Context is mocked, like the sync sheet.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react-native';
+import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, ApplyRulesResult, ApplyRulesJob, FilingResult, FilingTarget, FilingWhen } from '../context';
 
 let mockState: AppContext;
@@ -14,9 +14,15 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { Overlays } from '../components/Overlays';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { openOverlays } from './support/openOverlays';
+
+const server = installFakeServer();
+useTestQueryClient();
 
 const fns = {
   setSheet: jest.fn(),
@@ -26,7 +32,7 @@ const fns = {
   retryApplyRulesJob: jest.fn<() => Promise<FilingResult>>(),
 };
 
-const CATEGORIES = [{ id: 'groceries', name: 'Groceries' }];
+const CATEGORIES = [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null }];
 
 const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
   dryRun: true, rulesConsidered: 2, unfiled: 639, matched: 512, conflicted: 0, conflictedSamples: [],
@@ -43,13 +49,17 @@ const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
 /** Mount the apply-rules sheet with a given job state (null = the preview arm). */
 async function mountWith(applyRulesJob: ApplyRulesJob | null, preview: ApplyRulesResult | null = report()) {
   fns.previewFiling.mockResolvedValue(preview ? { status: 'filed', report: preview } : { status: 'failed', background: false });
-  mockState = { sheet: { mode: 'applyRules' }, toast: null, categories: CATEGORIES, applyRulesJob, ...fns } as unknown as AppContext;
-  render(<Overlays />);
+  server.seed('/categories', CATEGORIES);
+  const state = { sheet: { mode: 'applyRules' }, toast: null, applyRulesJob, ...fns } as unknown as AppContext;
+  await openOverlays(state, (next) => { mockState = next; });
   await act(async () => {});
   return screen;
 }
 
-beforeEach(() => { jest.clearAllMocks(); });
+beforeEach(() => {
+  jest.clearAllMocks();
+  resetAuth();
+});
 
 // --- the capped preview (decision A: async primary) --------------------------
 

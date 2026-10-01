@@ -8,9 +8,9 @@
 //   - the progress bar clamps to 100% when filed exceeds matched (a late count race).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react-native';
+import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, ApplyRulesJob, FilingResult, FilingTarget, FilingWhen } from '../context';
-import type { ApplyRulesResult, UncategorizedMerchantGroup, UncategorizedMerchants } from '../api';
+import type { ApplyRulesResult, UncategorizedMerchantGroup } from '../api';
 import { APPLY_RULES_MAX_WRITES } from '../context';
 import { ApiError } from '../apiError';
 
@@ -19,9 +19,15 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
-jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { Overlays } from '../components/Overlays';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { openOverlays } from './support/openOverlays';
+
+const server = installFakeServer();
+useTestQueryClient();
 
 const fns = {
   setSheet: jest.fn(),
@@ -32,14 +38,13 @@ const fns = {
   retryApplyRulesJob: jest.fn<() => Promise<FilingResult>>(),
 };
 
-const CATEGORIES = [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null }];
+const CATEGORIES = [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null }];
 const OVER = APPLY_RULES_MAX_WRITES + 200; // guaranteed over the per-call cap
 
 const group = (over: Partial<UncategorizedMerchantGroup> = {}): UncategorizedMerchantGroup => ({
   merchant: 'Coles', rulePattern: 'coles', groupedBy: 'merchant', count: OVER,
   samples: ['COLES 1234 RICHMOND'], firstDate: '2026-06-01', lastDate: '2026-08-01', alsoCatches: [], ...over,
 });
-const merchants = (g: UncategorizedMerchantGroup): UncategorizedMerchants => ({ unfiled: g.count, groups: [g], ungrouped: { count: 0, samples: [] } });
 
 const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
   dryRun: true, rulesConsidered: 1, unfiled: OVER, matched: OVER, conflicted: 0, conflictedSamples: [],
@@ -55,25 +60,28 @@ const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
 
 async function mountFileByShop(applyRulesJob: ApplyRulesJob | null, g = group()) {
   fns.previewFiling.mockResolvedValue({ status: 'filed', report: report({ matched: g.count }) });
-  mockState = {
-    sheet: { mode: 'fileByShopConfirm', group: g, categoryId: 'groceries' }, toast: null,
-    categories: CATEGORIES, uncategorizedMerchants: merchants(g), applyRulesJob, ...fns,
+  server.seed('/categories', CATEGORIES);
+  const state = {
+    sheet: { mode: 'fileByShopConfirm', group: g, categoryId: 'groceries' }, toast: null, applyRulesJob, ...fns,
   } as unknown as AppContext;
-  render(<Overlays />);
+  await openOverlays(state, (next) => { mockState = next; });
   await act(async () => {});
 }
 
 async function mountAddRule(applyRulesJob: ApplyRulesJob | null, budgetExcluded = false, pattern = 'COLES') {
   fns.previewFiling.mockResolvedValue({ status: 'filed', report: report() });
-  mockState = {
-    sheet: { mode: 'addRuleConfirm', pattern, categoryId: 'groceries', budgetExcluded }, toast: null,
-    categories: CATEGORIES, applyRulesJob, ...fns,
+  server.seed('/categories', CATEGORIES);
+  const state = {
+    sheet: { mode: 'addRuleConfirm', pattern, categoryId: 'groceries', budgetExcluded }, toast: null, applyRulesJob, ...fns,
   } as unknown as AppContext;
-  render(<Overlays />);
+  await openOverlays(state, (next) => { mockState = next; });
   await act(async () => {});
 }
 
-beforeEach(() => { jest.clearAllMocks(); });
+beforeEach(() => {
+  jest.clearAllMocks();
+  resetAuth();
+});
 
 // --- file-this-shop -----------------------------------------------------------
 
