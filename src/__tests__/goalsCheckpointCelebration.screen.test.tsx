@@ -5,10 +5,11 @@
 // celebration hook/diff run; only the data boundary and the router are stubbed.
 // WHIT-685: the goal and its balance come from the fake server through the real screen data code
 // (useGoalsScreenData); a balance move is a re-seeded server reply and a cache refresh, as in the app.
-// Timers stay real (only today's date is pinned), so the "clears itself" tests wait out the burst.
+// Timers stay real (only today's date is pinned), except in the "clears itself" tests, which move
+// the balance on a fully fake clock and run the burst's timer out.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { screen, waitFor } from '@testing-library/react-native';
+import { act, screen } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
@@ -69,6 +70,23 @@ async function moveBalance(balance: number) {
   await refreshInAct(() => queryClient.invalidateQueries());
 }
 
+// Same move, but on a fully fake clock, so the burst's own timer can be run out instead of waited for.
+// refreshInAct can't be used here: its setTimeout(0) yield never fires on a fake clock. The refresh
+// settles inside act, and the query library's setTimeout(0) flush is run inside act too.
+async function moveBalanceOnFakeClock(balance: number) {
+  jest.useFakeTimers({ now: new Date(2026, 6, 11) });
+  seedBalance(balance);
+  const refresh = queryClient.invalidateQueries();
+  await act(async () => {
+    await refresh;
+    jest.advanceTimersByTime(0);
+  });
+}
+
+async function runOutBurst(ms: number) {
+  await act(async () => { jest.advanceTimersByTime(ms); });
+}
+
 beforeEach(() => {
   resetAuth();
   mockReduceMotion = false;
@@ -102,9 +120,10 @@ describe('checkpoint celebration on the Goals hub (WHIT-481)', () => {
 
   it('clears itself after the burst so there is no stuck overlay', async () => {
     await renderWithQueries(<Goals />);
-    await moveBalance(6000);
+    await moveBalanceOnFakeClock(6000);
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
-    await waitFor(() => expect(screen.queryByTestId('checkpoint-celebration')).toBeNull(), { timeout: 2000 }); // FALL_MS 1200
+    await runOutBurst(1200); // FALL_MS
+    expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
   });
 
   it('keeps the mortgage card untouched whether or not a burst is showing', async () => {
@@ -118,9 +137,10 @@ describe('checkpoint celebration on the Goals hub (WHIT-481)', () => {
   it('reduce-motion still shows and clears the banner (no stuck overlay)', async () => {
     mockReduceMotion = true;
     await renderWithQueries(<Goals />);
-    await moveBalance(6000);
+    await moveBalanceOnFakeClock(6000);
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
     expect(screen.getByTestId('checkpoint-celebration-label')).toBeTruthy();
-    await waitFor(() => expect(screen.queryByTestId('checkpoint-celebration')).toBeNull(), { timeout: 2000 }); // REDUCED_MS 900
+    await runOutBurst(900); // REDUCED_MS
+    expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
   });
 });
