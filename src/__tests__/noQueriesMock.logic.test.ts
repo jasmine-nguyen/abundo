@@ -46,15 +46,10 @@ const ALLOWED = new Set<string>([
   'tabBadgeQuery.screen.test.tsx',
   'tabBarNoSettings.screen.test.tsx',
   'tabDotNotDuplicated.screen.test.tsx',
-  'transactionsAccountsRemoved.screen.test.tsx',
-  'transactionsScreenStates.screen.test.tsx',
-  'transactionsSearchGaps.screen.test.tsx',
-  'transactionsSearchServer.screen.test.tsx',
   'uncategorizedCountWiring.screen.test.tsx',
   'uncategorizedMerchantsGate.screen.test.tsx',
   'uncategorizedMoreAffordance.screen.test.tsx',
   'westpacAccountsTab.screen.test.tsx',
-  'whit328SelectGap.screen.test.tsx',
   'whit330TabDot.screen.test.tsx',
 ]);
 
