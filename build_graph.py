@@ -2884,10 +2884,9 @@ async def recheck_build(graph, config, snapshot, unpin: list[str]):
 
 
 def save_pause(thread: str, snapshot) -> None:
-    """What the build waits on, for the hook that shows it to the user before they're asked
-    (.claude/hooks/show-pause-first.py). Its "shown" mark is cleared: this is a new pause."""
+    """What the build waits on, for the build-pause mod that shows it to the user in the question box
+    (mods/build-pause in the claude repo)."""
     folder = BUILD_DIR / thread
-    (folder / "pause.shown").unlink(missing_ok=True)
     values = snapshot.values or {}
     if snapshot.interrupts:
         write_text(folder / "pause.txt", snapshot.interrupts[0].value)
