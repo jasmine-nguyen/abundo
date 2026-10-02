@@ -100,20 +100,24 @@ it('a hard read failure with nothing cached shows the inline error + an accessib
 // plus a failed taxonomy stacks both spinner and error, and a refetch failure over cached rows
 // keeps the LIST. [A-acct-cache] below supersedes the old "cache-first" test (dropped WHIT-459).
 it('while loading with nothing cached, shows the spinner and NOT the empty "No transactions" message', async () => {
-  server.hold('/transactions');
+  const held = server.hold('/transactions');
   render(<WithQueries><AccountDetail /></WithQueries>);
   await waitFor(() => expect(server.sent('GET', '/transactions')).toHaveLength(1));
   expect(screen.getByTestId('account-loading')).toBeTruthy();
   expect(screen.queryByText('No transactions')).toBeNull();
+  held.release();
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
 });
 
 it('with an empty cache, a pending list plus a failed taxonomy renders BOTH the spinner and the error, no content', async () => {
-  server.hold('/transactions');
+  const held = server.hold('/transactions');
   server.fail('/categories', 500);
   render(<WithQueries><AccountDetail /></WithQueries>);
   await waitFor(() => expect(screen.getByTestId('account-error')).toBeTruthy());
   expect(screen.getByTestId('account-loading')).toBeTruthy();
   expect(screen.queryByText('No transactions')).toBeNull();
+  held.release();
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
 });
 
 it('a background refetch failure over cached rows keeps the transaction list rendered', async () => {
