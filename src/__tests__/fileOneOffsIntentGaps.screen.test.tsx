@@ -10,18 +10,10 @@
 //        jump does not silently re-filter the list when the user later cancels selection.
 //   [G3] the landed selection is FUNCTIONAL end-to-end: tick a row → Re-categorize hands exactly that
 //        id to the multi-picker and leaves selection mode (regression guard on the existing flow).
+// The screen and its data code are real, over the pretend server (WHIT-686).
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
-
-let mockTx: Record<string, unknown>;
-let mockServerCount: number | undefined;
-let mockMerchants: unknown;
-jest.mock('../queries', () => ({
-  useTransactionsScreenData: () => mockTx,
-  useUncategorizedCount: () => mockServerCount,
-  useUncategorizedMerchants: () => ({ merchants: mockMerchants, isLoading: false, isError: false }),
-}));
+import { screen, fireEvent, waitFor } from '@testing-library/react-native';
 
 // Stateful flag + STABLE spies (module-scope, so identity survives re-renders — a fresh jest.fn per
 // render would defeat toHaveBeenCalled assertions and change the effect's dep identity).
@@ -38,33 +30,40 @@ jest.mock('../context', () => {
     }),
   };
 });
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => {
   const ReactLib = require('react');
   return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
 });
 
 import Transactions from '../../app/(tabs)/transactions';
-import { transactionsScreenData } from './support/transactionsScreenData';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient, renderWithQueries, WithQueries } from './support/renderWithQueries';
+import { queryClient } from '../queryClient';
 
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 };
-const category = (id: string | null) => (id === 'groceries' ? CAT : undefined);
+const server = installFakeServer();
+useTestQueryClient();
+
+const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null };
 const unfiled = (id: string) => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01', description: 'COLES',
   merchant_name: 'Coles', amount: -12.5, account_id: 'a1', account_name: 'ANZ', category: null,
   status: 'posted', type: 'PAYMENT', counts_to_budget: true,
 });
 
-function txData(over: Record<string, unknown> = {}) {
-  return transactionsScreenData({ transactions: [unfiled('t1')], category, ...over });
-}
+const settle = () => waitFor(() => expect(queryClient.isFetching()).toBe(0));
 
 beforeEach(() => {
-  mockTx = txData();
-  mockServerCount = 3;
-  mockMerchants = { unfiled: 3, groups: [], ungrouped: { count: 3, samples: ['ONE OFF'] } };
+  resetAuth();
   mockPendingFlag = false;
   mockClearSpy.mockClear();
   mockOpenMultiPicker.mockClear();
+  server.seed('/categories', [CAT]);
+  server.seed('/transactions/feed', { transactions: [unfiled('t1')], nextCursor: null });
+  server.seed('/transactions/uncategorized/feed', { transactions: [unfiled('t1')], nextCursor: null });
+  server.seed('/transactions/uncategorized/count', { count: 3 });
+  server.seed('/transactions/uncategorized/merchants', { unfiled: 3, groups: [], ungrouped: { count: 3, samples: ['ONE OFF'] } });
 });
 
 describe('WHIT-544 GAP — the intent is consumed on a flag CHANGE, not just at mount', () => {
@@ -75,17 +74,18 @@ describe('WHIT-544 GAP — the intent is consumed on a flag CHANGE, not just at 
   // GENUINE FAIL-ON-REVERT: gut the effect deps to [] (or drop pendingUncategorizedSelect from them)
   // and this reddens — the mount-time value was false so the effect never re-fires. [I1]/[I3] would
   // STILL pass under that break (they mount with the flag already true), which is why this is a gap.
-  it('[G1] enters selection mode when the flag flips true on an already-mounted screen', () => {
-    const { rerender } = render(<Transactions />);
+  it('[G1] enters selection mode when the flag flips true on an already-mounted screen', async () => {
+    const { rerender } = await renderWithQueries(<Transactions />);
     expect(screen.getByText('Select')).toBeTruthy();       // normal: not selecting
     expect(screen.queryByText('0 selected')).toBeNull();
 
     mockPendingFlag = true;                                 // the sheet armed the jump
-    rerender(<Transactions />);                             // the overlay-driven re-render
+    rerender(<WithQueries><Transactions /></WithQueries>);  // the overlay-driven re-render
 
     expect(screen.getByText('Cancel')).toBeTruthy();        // now in selection mode
     expect(screen.getByText('0 selected')).toBeTruthy();     // the action bar is up
     expect(mockClearSpy).toHaveBeenCalledTimes(1);              // consumed and cleared
+    await settle();
   });
 });
 
@@ -94,18 +94,19 @@ describe('WHIT-544 GAP — the jump clears a stale search query', () => {
   // the user later cancels selection the list is not silently filtered by a query they can no longer
   // see (the search box is hidden in selection mode).
   // FAIL-ON-REVERT: remove `setSearch('')` from the effect → after Cancel the box shows 'coles' again.
-  it('[G2] resets the search box so a pre-jump query does not linger after Cancel', () => {
-    const { rerender } = render(<Transactions />);
+  it('[G2] resets the search box so a pre-jump query does not linger after Cancel', async () => {
+    const { rerender } = await renderWithQueries(<Transactions />);
     const searchBox = screen.getByLabelText('Search transactions');
     fireEvent.changeText(searchBox, 'coles');
     expect(screen.getByLabelText('Search transactions').props.value).toBe('coles'); // sanity: it stuck
 
     mockPendingFlag = true;                                 // jump armed
-    rerender(<Transactions />);
+    rerender(<WithQueries><Transactions /></WithQueries>);
     expect(screen.getByText('Cancel')).toBeTruthy();         // selection mode → search box hidden
 
     fireEvent.press(screen.getByText('Cancel'));             // leave selection → search box returns
     expect(screen.getByLabelText('Search transactions').props.value).toBe(''); // NOT 'coles'
+    await settle();
   });
 });
 
@@ -115,9 +116,9 @@ describe('WHIT-544 GAP — the landed selection is functional (regression guard)
   // exits selection. Guards that the WHIT-544 jump doesn't break the WHIT-291 flow it feeds into.
   // (Behaviour-lock on the existing flow reached via the new entry point, not a fail-on-revert of the
   // WHIT-544 diff itself.)
-  it('[G3] a tick + Re-categorize after the jump batches exactly the picked id and exits selection', () => {
+  it('[G3] a tick + Re-categorize after the jump batches exactly the picked id and exits selection', async () => {
     mockPendingFlag = true;
-    render(<Transactions />);
+    await renderWithQueries(<Transactions />);
     expect(screen.getByText('0 selected')).toBeTruthy();
 
     fireEvent.press(screen.getByRole('checkbox'));           // tick the one leftover row (t1)
