@@ -2,29 +2,20 @@
 // edit screen read through the real query hooks over the fake server: the Uncategorized drill,
 // Retry recovering after a failure, a cycle switch re-reading under its own cache key, an edit
 // screen whose taxonomy FAILED (not just loading), and a background re-read not wiping typing.
+// The screens draw inside the real AppProvider (WHIT-692), so Save runs the real saveCategory and
+// the fake server's request log shows what it sent.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, renderWithQueries, renderLoaded, refreshInAct, WithQueries } from './support/renderWithQueries';
+import { useTestQueryClient, renderLoaded, refreshInAct } from './support/renderWithQueries';
+import { renderWithApp, WithApp, resetAppProbe } from './support/renderWithApp';
 import { resetAuth } from './support/authMock';
 import { setParams, resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
 
-const mockSaveCategory = jest.fn(async (_id: string | null, _form: unknown, _opts?: unknown) => true);
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({
-      openPicker: jest.fn(), category: () => undefined,
-      saveCategory: mockSaveCategory, createCategoryInline: jest.fn(), deleteCategory: jest.fn(),
-      showToast: jest.fn(), getSessionEpoch: () => 0,
-    }),
-  };
-});
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import CategoryDetail from '../../app/category/[id]';
@@ -42,15 +33,17 @@ const ROW = {
 };
 
 async function draw(ui: React.ReactElement) {
-  const view = await renderWithQueries(ui);
+  const view = await renderWithApp(ui);
   await refreshInAct(() => undefined);
   return view;
 }
 
+const categoryPatches = () => server.sentUnder('PATCH', '/categories');
+
 beforeEach(() => {
   resetAuth();
   resetRouter();
-  mockSaveCategory.mockClear();
+  resetAppProbe();
   server.seed('/categories', CATEGORIES);
 });
 
@@ -113,7 +106,7 @@ describe('category drill-in edges', () => {
 
     server.once('GET', COFFEE_ROWS, { status: 200, body: [{ ...ROW, transaction_id: 't9', amount: -42 }] });
     setParams({ id: 'coffee', cycle: '1' });
-    view.rerender(<WithQueries><CategoryDetail /></WithQueries>);
+    view.rerender(<WithApp><CategoryDetail /></WithApp>);
     await waitFor(() => expect(screen.getByText('$42')).toBeTruthy());
     expect(server.sent('GET', `${COFFEE_ROWS}?cycle=1`)).toHaveLength(1);
     expect(screen.getByText('Spent last cycle')).toBeTruthy();
@@ -140,7 +133,7 @@ describe('category edit edges', () => {
     fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Renamed');
     fireEvent.press(screen.getByText('Save category'));
     await refreshInAct(() => undefined);
-    expect(mockSaveCategory).not.toHaveBeenCalled();
+    expect(categoryPatches()).toEqual([]);
   });
 
   // [A8] (P1) A background re-read that returns the same list must not re-seed the form over
@@ -157,9 +150,10 @@ describe('category edit edges', () => {
     expect(screen.getByDisplayValue('Renamed')).toBeTruthy();
 
     fireEvent.press(screen.getByText('Save category'));
-    await waitFor(() => expect(mockSaveCategory).toHaveBeenCalledWith(
-      'coffee', expect.objectContaining({ name: 'Renamed', bucket: 'Lifestyle' }), { silent: true },
-    ));
+    await waitFor(() => expect(server.sent('PATCH', '/categories/coffee')).toHaveLength(1));
+    expect(server.sent('PATCH', '/categories/coffee')[0].body).toEqual(
+      { name: 'Renamed', bucket: 'Lifestyle', icon: 'coffee', parent: null },
+    );
   });
 
   // A sub-category in a bucket other than the form's default (Lifestyle), under a same-bucket parent.
@@ -169,14 +163,19 @@ describe('category edit edges', () => {
   ];
   const UNTOUCHED_SAVE = { name: 'Parking', bucket: 'Living', icon: 'car', parent: 'transport' };
 
+  async function saveAndExpectUntouched() {
+    fireEvent.press(screen.getByText('Save category'));
+    await waitFor(() => expect(server.sent('PATCH', '/categories/parking')).toHaveLength(1));
+    expect(server.sent('PATCH', '/categories/parking')[0].body).toEqual(UNTOUCHED_SAVE);
+  }
+
   // [A9] (P1) Warm cache (the list already loaded when the form opens): a plain re-save keeps the
   // sub-category under its parent.
   it('warm open: re-saving a Living sub-category keeps its parent', async () => {
     server.seed('/categories', PARKING_UNDER_TRANSPORT);
     setParams({ categoryId: 'parking' });
-    await renderLoaded(<CategoryEdit />);
-    fireEvent.press(screen.getByText('Save category'));
-    await waitFor(() => expect(mockSaveCategory).toHaveBeenCalledWith('parking', UNTOUCHED_SAVE, { silent: true }));
+    await renderLoaded(<CategoryEdit />, WithApp);
+    await saveAndExpectUntouched();
   });
 
   // [A10] (P0) REAL BUG — cold open (the list lands after the form mounts, e.g. a deep link). The
@@ -188,7 +187,6 @@ describe('category edit edges', () => {
     setParams({ categoryId: 'parking' });
     await draw(<CategoryEdit />);
     expect(screen.getByDisplayValue('Parking')).toBeTruthy();
-    fireEvent.press(screen.getByText('Save category'));
-    await waitFor(() => expect(mockSaveCategory).toHaveBeenCalledWith('parking', UNTOUCHED_SAVE, { silent: true }));
+    await saveAndExpectUntouched();
   });
 });

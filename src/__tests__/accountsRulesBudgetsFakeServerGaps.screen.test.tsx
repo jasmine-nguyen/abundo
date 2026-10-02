@@ -2,13 +2,15 @@
 // Budgets screens: recovery after Retry (not just a re-request), a balances-only failure that must
 // not blank the cards, the pull re-reading the list and showing the bank's fresh balance, and the
 // "payday is today" edge of the Budgets "Started …" line. Real ../queries + ../api; only fetch is faked.
+// The screens draw inside the real AppProvider (WHIT-692), so the toast is the real one, read off the probe.
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import { RefreshControl } from 'react-native';
 import { pinToday } from './support/clock';
 import { installFakeServer } from './support/fakeServer';
-import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { renderWithApp, shownToasts, resetAppProbe } from './support/renderWithApp';
 import { resetAuth } from './support/authMock';
 import { setParams, resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
@@ -16,20 +18,6 @@ import { queryClient } from '../queryClient';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
-
-const mockShowToast = jest.fn();
-const mockDeleteRule = jest.fn();
-const mockSetSheet = jest.fn();
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({
-      showToast: mockShowToast, openPicker: jest.fn(), category: () => undefined,
-      setSheet: mockSetSheet, deleteRule: mockDeleteRule,
-    }),
-  };
-});
 
 import Accounts from '../../app/(tabs)/accounts';
 import AccountDetail from '../../app/account/[id]';
@@ -51,10 +39,8 @@ const bal = (over: Record<string, unknown> = {}) => ({
 const seedFeed = (transactions: unknown[]) => server.seed('/transactions/feed', { transactions, nextCursor: null });
 
 beforeEach(() => {
-  mockShowToast.mockClear();
-  mockDeleteRule.mockClear();
-  mockSetSheet.mockClear();
   resetAuth();
+  resetAppProbe();
   resetRouter();
 });
 
@@ -64,7 +50,7 @@ describe('Accounts tab', () => {
   it('[A1] Retry after a cold failure draws the cards once the server answers', async () => {
     seedFeed([ROW]);
     server.fail('/transactions/feed', 500);
-    await renderWithQueries(<Accounts />);
+    await renderWithApp(<Accounts />);
     expect(screen.getByTestId('accounts-error')).toBeTruthy();
 
     server.seed('/accounts/balances', [bal({ amount: 250.5 })]);
@@ -86,7 +72,7 @@ describe('Accounts tab', () => {
   it('[A2] a failed balances read keeps the cards with the "—" placeholder, no error', async () => {
     seedFeed([ROW]);
     server.fail('/accounts/balances', 500);
-    await renderWithQueries(<Accounts />);
+    await renderWithApp(<Accounts />);
     expect(screen.getByText('ANZ')).toBeTruthy();
     expect(screen.getByText('—')).toBeTruthy();
     expect(screen.queryByTestId('accounts-error')).toBeNull();
@@ -97,7 +83,7 @@ describe('Accounts tab', () => {
   it('[A3] a pull re-reads the feed and shows the bank\'s fresh balance', async () => {
     seedFeed([ROW]);
     server.seed('/accounts/balances', [bal({ amount: 100 })]);
-    await renderWithQueries(<Accounts />);
+    await renderWithApp(<Accounts />);
     expect(screen.getByText('$100.00')).toBeTruthy();
     const feedReads = server.sentUnder('GET', '/transactions/feed').length;
 
@@ -106,7 +92,7 @@ describe('Accounts tab', () => {
     expect(await screen.findByText('$321.09')).toBeTruthy();
     expect(server.sent('POST', '/accounts/balances/refresh')).toHaveLength(1);
     await waitFor(() => expect(server.sentUnder('GET', '/transactions/feed').length).toBe(feedReads + 1));
-    await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Balances up to date'));
+    await waitFor(() => expect(shownToasts()).toEqual(['Balances up to date']));
     await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
   });
 
@@ -114,10 +100,10 @@ describe('Accounts tab', () => {
   it('[A4] a failed live refresh keeps the last saved balance and toasts', async () => {
     seedFeed([ROW]);
     server.seed('/accounts/balances', [bal({ amount: 100 })]);
-    await renderWithQueries(<Accounts />);
+    await renderWithApp(<Accounts />);
     server.once('POST', '/accounts/balances/refresh', { status: 500 });
     act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
-    await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Could not refresh balances. Showing last saved.'));
+    await waitFor(() => expect(shownToasts()).toEqual(['Could not refresh balances. Showing last saved.']));
     expect(screen.getByText('$100.00')).toBeTruthy();
     await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
   });
@@ -129,7 +115,7 @@ describe('Account detail', () => {
   it('[A5] shows only the opened account\'s rows from the shared recent list', async () => {
     setParams({ id: 'a1' });
     server.seed('/transactions', [ROW, { ...ROW, transaction_id: 't2', account_id: 'a2', account_name: 'Up' }]);
-    await renderWithQueries(<AccountDetail />);
+    await renderWithApp(<AccountDetail />);
     expect(screen.getByText('1 transaction')).toBeTruthy();
   });
 
@@ -138,7 +124,7 @@ describe('Account detail', () => {
     setParams({ id: 'a1' });
     server.seed('/transactions', [ROW]);
     server.fail('/accounts/balances', 500);
-    await renderWithQueries(<AccountDetail />);
+    await renderWithApp(<AccountDetail />);
     expect(screen.getByText('1 transaction')).toBeTruthy();
     expect(screen.queryByTestId('account-balance')).toBeNull();
     expect(screen.queryByTestId('account-error')).toBeNull();
@@ -148,7 +134,7 @@ describe('Account detail', () => {
   it('[A7] Retry after a cold failure draws the list once the server answers', async () => {
     setParams({ id: 'a1' });
     server.fail('/transactions', 500);
-    await renderWithQueries(<AccountDetail />);
+    await renderWithApp(<AccountDetail />);
     expect(screen.getByTestId('account-error')).toBeTruthy();
     server.once('GET', '/transactions', { body: [ROW] });
     fireEvent.press(screen.getByTestId('account-retry'));
@@ -163,7 +149,7 @@ describe('Rules', () => {
   it('[A8] Retry after a failure draws the rules once the server answers', async () => {
     server.seed('/categories', [{ id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle' }]);
     server.fail('/rules', 500);
-    await renderWithQueries(<Rules />);
+    await renderWithApp(<Rules />);
     expect(screen.getByText('Could not load your rules.')).toBeTruthy();
     server.once('GET', '/rules', { body: [{ id: 'e1', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs' }] });
     fireEvent.press(screen.getByTestId('rules-retry'));
@@ -184,7 +170,7 @@ describe('Budgets "Started …" line', () => {
     pinToday(today);
     try {
       server.seed('/paycycle', { length: 14, last_pay_date: '2026-09-18' });
-      await renderWithQueries(<Budgets />);
+      await renderWithApp(<Budgets />);
       expect(screen.getByText('Started 18 Sep')).toBeTruthy();
     } finally {
       jest.useRealTimers();
@@ -196,7 +182,7 @@ describe('Budgets "Started …" line', () => {
     pinToday(today);
     try {
       server.seed('/paycycle', { length: 14, last_pay_date: '2026-09-19' });
-      await renderWithQueries(<Budgets />);
+      await renderWithApp(<Budgets />);
       expect(server.sent('GET', '/paycycle')).toHaveLength(1);
       expect(screen.queryByText(/^Started /)).toBeNull();
     } finally {

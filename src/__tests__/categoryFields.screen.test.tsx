@@ -9,33 +9,27 @@
 //       "None (top-level)"), and the parent block hides identically when nothing is eligible.
 // WHIT-459 folded in the full-parent greying tests (WHIT-441): the COMPONENT-level ones
 // (categoryFieldsFullParent, same no-mock regime as here) and the SCREEN-level ones
-// (categoryFullParent, which mounts app/category/edit behind the module mocks below). See the
+// (categoryFullParent, which mounts app/category/edit inside the real AppProvider). See the
 // // ===== headers at the END.
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react-native';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import { CategoryFields } from '../components/CategoryFields';
 import { ICON_KEYS } from '../icons';
 import { MAX_CHILDREN_PER_CATEGORY } from '../context';
 import type { Bucket, Category } from '../types';
 import { cat } from './factory';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, renderWithQueries, refreshInAct } from './support/renderWithQueries';
+import { useTestQueryClient, refreshInAct } from './support/renderWithQueries';
+import { renderWithApp, resetAppProbe } from './support/renderWithApp';
 import { resetAuth } from './support/authMock';
 
-// WHIT-459: the categoryFullParent suite (folded at the END) mounts the app/category/edit SCREEN,
-// which reads the taxonomy through the real query hooks over the fake server (WHIT-688) and needs
-// the module mocks below. CategoryFields is PURE-PRESENTATIONAL (it uses no context / query / router
-// hook — only the pure exports eligibleParents / childCount / BUCKETS), so mounting the COMPONENT
-// directly in the categoryFields + categoryFieldsFullParent suites is UNAFFECTED: the mocks are
-// INERT for them (requireActual keeps every pure context export real; useAppContext / useRouter are
-// simply never called from the component).
-const mockSaveCategory = jest.fn(async (_id: string | null, _form: { name: string; bucket: string; icon: string; parent?: string | null }, _opts?: { silent?: boolean }) => true);
-jest.mock('../../src/context', () => {
-  const actual = jest.requireActual('../../src/context') as typeof import('../../src/context');
-  return { ...actual, useAppContext: () => ({ saveCategory: mockSaveCategory, deleteCategory: jest.fn(), showToast: jest.fn(), getSessionEpoch: () => 0 }) };
-});
-
+// WHIT-459: the categoryFullParent suite (folded at the END) mounts the app/category/edit SCREEN
+// inside the real AppProvider (WHIT-692): it reads the taxonomy through the real query hooks over
+// the fake server (WHIT-688), and Save runs the real saveCategory. CategoryFields is
+// PURE-PRESENTATIONAL (it uses no context / query / router hook — only the pure exports
+// eligibleParents / childCount / BUCKETS), so the auth and router mocks below are INERT for the
+// categoryFields + categoryFieldsFullParent suites.
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('expo-router', () => ({
@@ -264,9 +258,10 @@ it('the held parent is exempt at the component level even when full (the landmin
 });
 
 // ===== WHIT-459: folded from categoryFullParent.screen.test.tsx (WHIT-441 full-parent greying, SCREEN-level, 2 its) =====
-// DIFFERENT regime: mounts the app/category/edit SCREEN (CategoryEdit) over the fake server, with the
-// module-scope context / auth / expo-router mocks hoisted at the top. Its local `cat` shadows the imported
-// factory `cat` within this block only; the mocks it needs are INERT for the component suites above.
+// DIFFERENT regime: mounts the app/category/edit SCREEN (CategoryEdit) inside the real AppProvider over
+// the fake server, with the module-scope auth / expo-router mocks hoisted at the top. Its local `cat`
+// shadows the imported factory `cat` within this block only; the mocks it needs are INERT for the
+// component suites above.
 describe('categoryFullParent', () => {
 // Wire categories, as /categories sends them.
 const cat = (id: string, parent: string | null) => ({ id, name: id, bucket: 'Lifestyle', icon: 'coffee', parent });
@@ -274,13 +269,19 @@ const childrenOf = (parent: string, n: number, prefix: string) =>
   Array.from({ length: n }, (_, i) => cat(`${prefix}${i}`, parent));
 // Flush the query library's one-tick redraw after the fetch settles, so no tap lands before it.
 async function drawEdit() {
-  await renderWithQueries(<CategoryEdit />);
+  await renderWithApp(<CategoryEdit />);
   await refreshInAct(() => undefined);
+}
+
+// The parent the real saveCategory sent for 'coffee'.
+async function savedParent() {
+  await waitFor(() => expect(server.sent('PATCH', '/categories/coffee')).toHaveLength(1));
+  return (server.sent('PATCH', '/categories/coffee')[0].body as { parent?: string | null }).parent;
 }
 
 beforeEach(() => {
   resetAuth();
-  mockSaveCategory.mockClear();
+  resetAppProbe();
 });
 
 it('greys out a parent at the child cap, and a tap on it does nothing', async () => {
@@ -298,7 +299,7 @@ it('greys out a parent at the child cap, and a tap on it does nothing', async ()
   act(() => { fireEvent.press(screen.getByText('Save category')); });
 
   // Fail-on-revert: drop the `full`/disabled logic → the tap selects 'treats' → parent:'treats'.
-  expect(mockSaveCategory).toHaveBeenCalledWith('coffee', expect.objectContaining({ parent: null }), { silent: true });
+  expect(await savedParent()).toBeNull();
 });
 
 it('keeps the category’s OWN full parent selectable — a plain rename never detaches it', async () => {
@@ -320,6 +321,6 @@ it('keeps the category’s OWN full parent selectable — a plain rename never d
 
   // Fail-on-revert: drop the `p.id !== heldParentId` guard → treats is greyed + disabled → the
   // re-pick is a no-op → save writes parent:null → this assertion fails.
-  expect(mockSaveCategory).toHaveBeenCalledWith('coffee', expect.objectContaining({ parent: 'treats' }), { silent: true });
+  expect(await savedParent()).toBe('treats');
 });
 });
