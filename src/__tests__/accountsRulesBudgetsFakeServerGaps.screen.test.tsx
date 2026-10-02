@@ -6,6 +6,7 @@ import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import { RefreshControl } from 'react-native';
+import { pinToday } from './support/clock';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
@@ -175,21 +176,12 @@ describe('Rules', () => {
 });
 
 describe('Budgets "Started …" line', () => {
-  const pinToday = () => {
-    jest.useFakeTimers({
-      doNotFake: [
-        'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate', 'clearImmediate',
-        'nextTick', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame',
-        'requestIdleCallback', 'cancelIdleCallback', 'hrtime', 'performance',
-      ],
-    });
-    jest.setSystemTime(new Date('2026-09-18T10:00:00+10:00'));
-  };
+  const today = new Date('2026-09-18T10:00:00+10:00');
 
   // [A9] Payday is today → the cycle has started today: "Started 18 Sep". Fail-on-revert: change
   // cycleStart's `pay > todayMs` to `>=` → no line → red.
   it('[A9] a last_pay_date of today shows "Started 18 Sep"', async () => {
-    pinToday();
+    pinToday(today);
     try {
       server.seed('/paycycle', { length: 14, last_pay_date: '2026-09-18' });
       await renderWithQueries(<Budgets />);
@@ -201,7 +193,7 @@ describe('Budgets "Started …" line', () => {
 
   // [A10] Payday tomorrow (the nearest future day) → no started cycle → no line.
   it('[A10] a last_pay_date of tomorrow shows no "Started …" line', async () => {
-    pinToday();
+    pinToday(today);
     try {
       server.seed('/paycycle', { length: 14, last_pay_date: '2026-09-19' });
       await renderWithQueries(<Budgets />);

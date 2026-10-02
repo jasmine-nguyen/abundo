@@ -58,7 +58,7 @@ function search(text: string) {
 }
 
 // The query library hands its screen updates over on a timer, which the fake clock holds back:
-// run it once the first load has landed. Microtasks stay real so the fake server answers.
+// run it once the first load has landed. The fake server replies with promises, which fake timers never hold back.
 const flush = () => act(async () => { jest.runOnlyPendingTimers(); });
 async function drawRules() {
   await renderWithQueries(<Rules />);
@@ -66,7 +66,7 @@ async function drawRules() {
 }
 
 beforeEach(() => {
-  jest.useFakeTimers({ doNotFake: ['nextTick', 'queueMicrotask', 'setImmediate', 'clearImmediate'] });
+  jest.useFakeTimers();
   fns.setSheet.mockClear();
   fns.deleteRule.mockClear();
   resetAuth();

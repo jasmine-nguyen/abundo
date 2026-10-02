@@ -7,66 +7,39 @@
 //        cycle 1 (the cycle-keyed error path, end to end)
 //   [A8] a POPULATED coach (summary + suggestions) is hidden on the last cycle and its
 //        content is restored on switch back (not just the "Worth a look" header)
-// Same harness as insightsBreakdownQuery.screen.test.tsx: real ../api over the fake server;
-// ../auth + expo-router mocked; ../context PARTIALLY mocked (real selectors, a MUTABLE
-// useAppContext so a test can populate the AI coach).
+// WHIT-691: runs on the shared Insights kit (support/insightsScreen.tsx) — real ../api over the
+// fake server, with setAi() populating the AI coach.
 import { it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
-import { QueryClientProvider } from '@tanstack/react-query';
-import { makeClient } from './support/queryClient';
+import { screen, fireEvent } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient } from './support/renderWithQueries';
+import { resetAuth } from './support/authMock';
+import { seedInsights, renderInsights, resetAi, setAi } from './support/insightsScreen';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
-
-// Mutable AI slice so [A8] can populate the coach (summary + suggestions).
-type Ai = { summary: string; suggestions: string[]; generated_at: string } | null;
-let mockAi: Ai = null;
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({
-      aiInsights: mockAi,
-      aiInsightsLoading: false,
-      aiInsightsError: false,
-      refreshAiInsights: jest.fn(),
-      generateAiInsights: jest.fn(),
-      loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null },
-      homeLoan: { balance: null, asOf: null },
-    }),
-  };
-});
-
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
 jest.mock('expo-router', () => {
   const ReactLib = require('react');
   return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
 });
 
-import Insights from '../../app/(tabs)/insights';
-
 const server = installFakeServer();
+useTestQueryClient();
 
-const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
 const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
 const BREAKDOWN = { coffee: { posted: 40, pending: 10 } };
 
-function renderInsights(client = makeClient()) {
-  return render(React.createElement(QueryClientProvider, { client }, React.createElement(Insights)));
-}
-
 beforeEach(() => {
-  mockAi = null;
-  server.seed('/breakdown', BREAKDOWN);
-  server.seed('/categories', CATS);
-  server.seed('/paycycle', PAY_CYCLE);
+  resetAuth();
+  resetAi();
+  seedInsights(server, { breakdown: BREAKDOWN, categories: CATS });
 });
 
 // [A6] a11y lock — VoiceOver reads the active segment. Asserts BOTH segments so a
 // "both selected" / "hardcoded true" regression bites (the implementer's tests never
 // read accessibilityState).
 it('[A6] segmented control accessibilityState.selected tracks the active segment (both segments)', async () => {
-  renderInsights();
+  await renderInsights();
   await screen.findByText('Cafes & Coffee');
 
   // on mount: current selected, prev NOT
@@ -85,7 +58,7 @@ it('[A6] segmented control accessibilityState.selected tracks the active segment
 // cycle whose read FAILS must show the inline error + Retry (not a stale cycle-0 hero or
 // a confident $0), and Retry must refetch cycle 1 specifically.
 it('[A7] a past-cycle read that FAILS shows inline error + Retry; Retry refetches cycle 1', async () => {
-  renderInsights(makeClient());
+  await renderInsights();
   await screen.findByText('Cafes & Coffee');
 
   // Cycle 0 is cached now, so from here only the cycle-1 read reaches the server — and it fails.
@@ -108,12 +81,16 @@ it('[A7] a past-cycle read that FAILS shows inline error + Retry; Retry refetche
 // tips, not merely the header the implementer checks) and come back intact on switch
 // back — proves it's a conditional render, not a permanent unmount or a header-only hide.
 it('[A8] a populated AI coach (summary + tips) is hidden on last cycle and restored on switch back', async () => {
-  mockAi = {
-    summary: 'You spent a lot on coffee this cycle.',
-    suggestions: ['Brew at home twice a week', 'Skip the afternoon latte'],
-    generated_at: '2026-07-08T00:00:00Z',
-  };
-  renderInsights();
+  setAi({
+    aiInsights: {
+      summary: 'You spent a lot on coffee this cycle.',
+      suggestions: ['Brew at home twice a week', 'Skip the afternoon latte'],
+      generated_at: '2026-07-08T00:00:00Z',
+      cycle_start: '2026-07-01',
+      cached: false,
+    },
+  });
+  await renderInsights();
   await screen.findByText('Cafes & Coffee');
 
   // current cycle: the populated coach content is on screen

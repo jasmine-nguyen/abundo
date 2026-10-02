@@ -2,15 +2,19 @@
 // not sticky. The implementer's goals.paydown.screen.test.tsx locks the three static
 // renders (hint under the figure / hint replacing static / no hint when realistic). This
 // adds the dynamic case they didn't: editing the goal date to a realistic one must CLEAR
-// the hint on the next render. Same mock pattern; fake clock pinned to 2026-07-04.
-import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+// the hint on the next render. Fake clock pinned to 2026-07-04.
+// WHIT-685: drawn over the fake server, so the real screen data code runs.
+import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { render, screen } from '@testing-library/react-native';
-import { makeGoalData } from './factory';
-import type { GoalScreenData } from '../queries';
+import { screen } from '@testing-library/react-native';
+import { installFakeServer } from './support/fakeServer';
+import { refreshInAct, renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { resetAuth } from './support/authMock';
+import { pinToday } from './support/clock';
+import { seedGoal } from './support/goalsScreen';
+import { queryClient } from '../queryClient';
 
-let mockGoal: GoalScreenData;
-jest.mock('../queries', () => ({ useGoalScreenData: () => mockGoal }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => ({}) };
@@ -22,27 +26,32 @@ jest.mock('expo-router', () => ({
 
 import Mortgage from '../../app/mortgage';
 
-const SET_FACTS = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 3667, extra: 500 };
-const goalData = (over: Partial<GoalScreenData> = {}) => makeGoalData({ loanFacts: SET_FACTS, ...over });
+const SET_FACTS = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 3667, extra: 500, payoffGoalDate: null };
 
-beforeEach(() => { jest.useFakeTimers({ now: new Date(2026, 6, 4) }); });
+const server = installFakeServer();
+useTestQueryClient();
+
+beforeEach(() => {
+  resetAuth();
+  pinToday(new Date(2026, 6, 4));
+});
 afterEach(() => { jest.useRealTimers(); });
 
-it('editing the goal date from too-soon to realistic CLEARS the hint on re-render (WHIT-215, NEW)', () => {
+it('editing the goal date from too-soon to realistic CLEARS the hint on re-render (WHIT-215, NEW)', async () => {
   // Start too-soon: 6 months out on a 900k 'none' loan → hint shown.
-  mockGoal = goalData({
+  seedGoal(server, {
     homeLoan: { balance: 900000, asOf: null },
     loanFacts: { ...SET_FACTS, payoffGoalDate: '2027-01-01' },
   });
-  const { rerender } = render(<Mortgage />);
+  await renderWithQueries(<Mortgage />);
   expect(screen.getByTestId('goal-too-aggressive-hint')).toBeTruthy();
 
   // User pushes the goal date out to a realistic one; the very next render must drop the hint.
-  mockGoal = goalData({
+  seedGoal(server, {
     homeLoan: { balance: 900000, asOf: null },
     loanFacts: { ...SET_FACTS, payoffGoalDate: '2035-06-01' },
   });
-  rerender(<Mortgage />);
+  await refreshInAct(() => queryClient.invalidateQueries());
   expect(screen.queryByTestId('goal-too-aggressive-hint')).toBeNull();
   // The honest figure still renders — the loan is still 'none', just no longer too soon.
   expect(screen.getByText(/To clear it by Jun 2035 you'd need .* more than now\./)).toBeTruthy();

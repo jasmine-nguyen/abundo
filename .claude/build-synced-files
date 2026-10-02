@@ -9,6 +9,5 @@ requirements.txt
 .claude/agents/reproducer.md
 .claude/agents/code-critic.md
 .claude/hooks/protect-build-state.py
-.claude/hooks/show-pause-first.py
 .github/pull_request_template.md
 project-context-template.md
