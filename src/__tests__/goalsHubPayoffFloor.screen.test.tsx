@@ -11,7 +11,8 @@ import { screen, within } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
-import { pinToday, seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
+import { pinToday } from './support/clock';
+import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
 import { EMPTY_LOAN_FACTS } from './factory';
 import type { LoanFacts } from '../api';
 

@@ -8,7 +8,8 @@ import { act, render, screen, fireEvent, within, waitFor } from '@testing-librar
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
-import { pinToday, seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
+import { pinToday } from './support/clock';
+import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
 import { EMPTY_LOAN_FACTS } from './factory';
 import { queryClient } from '../queryClient';
 import type { GoalRecord } from '../api';

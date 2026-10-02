@@ -10,7 +10,6 @@
 //   await renderWithQueries(<Mortgage />);
 //
 // (Not a *.test file, so the jest testMatch never runs it as a suite.)
-import { jest } from '@jest/globals';
 import type { installFakeServer } from './fakeServer';
 import type { GoalRecord, LoanFacts, MilestoneRecord, PayCycle, Repayment } from '../../api';
 import type { HomeLoanState } from '../../model';
@@ -19,18 +18,6 @@ import { DEFAULT_MILESTONES, LOAN_FACTS, NO_REPAYMENT } from '../factory';
 type FakeServer = ReturnType<typeof installFakeServer>;
 
 const AS_OF = '2026-07-04T00:00:00Z';
-
-/** Pin today's date only. Timers stay real, so the fake server's replies and waitFor still settle. */
-export function pinToday(now: Date) {
-  jest.useFakeTimers({
-    now,
-    doNotFake: [
-      'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate', 'clearImmediate',
-      'nextTick', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame',
-      'requestIdleCallback', 'cancelIdleCallback', 'hrtime', 'performance',
-    ],
-  });
-}
 
 function seedHomeLoan(server: FakeServer, homeLoan: HomeLoanState) {
   server.seed('/homeloan', { balance: homeLoan.balance, as_of: homeLoan.asOf, currency: 'AUD' });
