@@ -8,10 +8,9 @@ import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import { RefreshControl } from 'react-native';
 import { pinToday } from './support/clock';
 import { installFakeServer } from './support/fakeServer';
-import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { renderWithQueries, useTestQueryClient, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { setParams, resetRouter } from './support/routerMock';
-import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -78,7 +77,7 @@ describe('Accounts tab', () => {
     await waitFor(() => expect(server.sent('GET', '/accounts/balances').length).toBe(balanceReads + 1));
     expect(server.sent('POST', '/accounts/balances/refresh')).toHaveLength(0);
     expect(await screen.findByText('$250.50')).toBeTruthy();
-    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await settle();
   });
 
   // [A2] A balances outage alone must not blank the cards or show the list error: the card
@@ -154,7 +153,7 @@ describe('Account detail', () => {
     fireEvent.press(screen.getByTestId('account-retry'));
     expect(await screen.findByText('1 transaction')).toBeTruthy();
     expect(screen.queryByTestId('account-error')).toBeNull();
-    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await settle();
   });
 });
 
@@ -171,7 +170,7 @@ describe('Rules', () => {
     expect(screen.getByText('Subscriptions')).toBeTruthy();
     expect(screen.queryByText('Could not load your rules.')).toBeNull();
     expect(screen.getByText(/You have 1 active rule/)).toBeTruthy();
-    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await settle();
   });
 });
 

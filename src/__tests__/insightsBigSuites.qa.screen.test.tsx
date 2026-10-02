@@ -7,7 +7,7 @@ import { screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { queryClient } from '../queryClient';
 import { breakdownKey } from '../queries';
 import { installFakeServer } from './support/fakeServer';
-import { refreshInAct, useTestQueryClient } from './support/renderWithQueries';
+import { refreshInAct, useTestQueryClient, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { breakdownWire, seedInsights, renderInsights, drawInsights, resetAi, refreshAiInsights } from './support/insightsScreen';
 
@@ -33,10 +33,6 @@ const posted = (n: number) => ({ posted: n, pending: 0 });
 const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', bucket: 'Lifestyle', recent: 0 }];
 const breakdownReads = () => server.sentUnder('GET', '/breakdown').length;
 
-async function settled() {
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
-}
-
 beforeEach(() => {
   resetAuth();
   resetAi();
@@ -54,7 +50,7 @@ describe('the earned-vs-spent card stays hidden over a real loading/error state 
     } finally {
       await refreshInAct(() => held.release());
     }
-    await settled();
+    await settle();
     expect(await screen.findByTestId('insights-earned-spent')).toBeTruthy(); // positive control
   });
 
@@ -89,13 +85,13 @@ describe('cycle switch reads each cycle from its own reply', () => {
     server.once('GET', '/breakdown', { body: breakdownWire({ spend: { coffee: posted(125) } }) });
     fireEvent.press(screen.getByTestId('insights-cycle-prev'));
     await waitFor(() => expect(queryClient.getQueryState([...breakdownKey, 1])?.status).toBe('success'));
-    await settled();
+    await settle();
     expect(screen.getByText('LAST PAY CYCLE')).toBeTruthy();
     expect(screen.getByTestId('insights-hero-total').props.children).toBe('$125');
     expect(server.sentUnder('GET', '/breakdown').slice(-1)[0].path).toMatch(/&cycle=1$/);
 
     fireEvent.press(screen.getByTestId('insights-cycle-current'));
-    await settled();
+    await settle();
     expect(screen.getByText('THIS PAY CYCLE')).toBeTruthy();
     expect(screen.getByTestId('insights-hero-total').props.children).toBe('$40');
   });
@@ -109,7 +105,7 @@ describe('focus refresh is staleness-gated', () => {
     const before = breakdownReads();
 
     await refreshInAct(() => mockFocus());
-    await settled();
+    await settle();
 
     expect(breakdownReads()).toBe(before);
     expect(refreshAiInsights).toHaveBeenCalledTimes(1);

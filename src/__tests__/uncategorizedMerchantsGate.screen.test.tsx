@@ -17,7 +17,7 @@
 // The screen and its data code are real, over the pretend server (WHIT-686).
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, screen, fireEvent } from '@testing-library/react-native';
 import { txn } from './factory';
 
 // Real selectors (countUncategorized / isUncategorized / transactionGroups); only useAppContext stubbed.
@@ -34,7 +34,7 @@ jest.mock('expo-router', () => {
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, renderWithQueries, WithQueries, refreshInAct } from './support/renderWithQueries';
+import { useTestQueryClient, renderWithQueries, WithQueries, refreshInAct, settle, loaded } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { uncategorizedCountKey, uncategorizedFeedKey } from '../queries';
 
@@ -57,9 +57,6 @@ const merchants = (over: Record<string, unknown> = {}) => ({
 const BUTTON = 'transactions-file-by-shop';
 const shopsRequests = () => server.sentUnder('GET', MERCHANTS);
 const seedUncategorizedFeed = (transactions: unknown[]) => server.seed(UNCATEGORIZED_FEED, { transactions, nextCursor: null });
-const settle = () => waitFor(() => expect(queryClient.isFetching()).toBe(0));
-const loaded = (queryKey: readonly unknown[]) =>
-  waitFor(() => expect(queryClient.getQueryState(queryKey)?.status).toBe('success'));
 
 async function renderTab() {
   await renderWithQueries(<Transactions />);

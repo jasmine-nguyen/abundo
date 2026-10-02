@@ -2,13 +2,12 @@
 // step, suggested prompts, the answer card's category colour, and the action chips.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, screen } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { ChatReply } from '../api';
 import { chartCategoryColor } from '../chartColors';
-import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';
-import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { renderWithQueries, useTestQueryClient, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -75,7 +74,7 @@ async function askAndAnswer() {
   await act(async () => { jest.advanceTimersByTime(0); });
   await flush();
   jest.useRealTimers();
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settle();
 }
 
 beforeEach(async () => {

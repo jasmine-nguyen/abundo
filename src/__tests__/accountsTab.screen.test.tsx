@@ -14,7 +14,7 @@ import { StyleSheet, RefreshControl } from 'react-native';
 import { C } from '../theme';
 import { Icon } from '../icons';
 import { installFakeServer } from './support/fakeServer';
-import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct } from './support/renderWithQueries';
+import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { queryClient } from '../queryClient';
 
@@ -89,7 +89,7 @@ it('shows the cold-load spinner (empty + loading)', async () => {
   await waitFor(() => expect(feedReads()).toHaveLength(1));
   expect(screen.getByTestId('accounts-loading')).toBeTruthy();
   feed.release();
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settle();
 });
 
 it('shows the inline retry on a cold error (empty + error), and Retry re-reads the feed', async () => {
@@ -99,7 +99,7 @@ it('shows the inline retry on a cold error (empty + error), and Retry re-reads t
   expect(feedReads()).toHaveLength(1);
   fireEvent.press(screen.getByTestId('accounts-retry'));
   await waitFor(() => expect(feedReads()).toHaveLength(2));
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settle();
 });
 
 it('keeps its cards through a background error when txns are cached (cache-first)', async () => {
@@ -172,7 +172,7 @@ it('does NOT raise the pull spinner during a cold load (inline spinner owns it)'
   expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false); // ...but gated off
   liveRefresh.release();
   feed.release();
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settle();
 });
 
 // WHIT-643: the home loan gets ~2 transactions a month, so it usually isn't in the newest

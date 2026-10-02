@@ -13,7 +13,7 @@ import { CATEGORY_COLORS } from '../chartColors';
 import { queryClient } from '../queryClient';
 import { breakdownKey } from '../queries';
 import { installFakeServer } from './support/fakeServer';
-import { refreshInAct, useTestQueryClient } from './support/renderWithQueries';
+import { refreshInAct, useTestQueryClient, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import {
   breakdownWire, seedInsights, renderInsights, drawInsights, redrawInsights, resetAi, setAi,
@@ -58,14 +58,10 @@ function seedBreakdown(wire: Parameters<typeof breakdownWire>[0], categories: un
 
 const breakdownReads = () => server.sentUnder('GET', '/breakdown').length;
 
-async function settled() {
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
-}
-
 async function showLastCycle() {
   fireEvent.press(screen.getByTestId('insights-cycle-prev'));
   await waitFor(() => expect(queryClient.getQueryState([...breakdownKey, 1])?.status).toBe('success'));
-  await settled();
+  await settle();
 }
 
 beforeEach(() => {
@@ -151,7 +147,7 @@ describe('the earned-vs-spent chart is never drawn over an empty/loading/error s
     expect(screen.getByTestId('insights-loading')).toBeTruthy();
     expect(screen.queryByTestId('insights-earned-spent')).toBeNull();
     await refreshInAct(() => held.release());
-    await settled();
+    await settle();
     expect(await screen.findByTestId('insights-earned-spent')).toBeTruthy(); // positive control
   });
 
@@ -175,7 +171,7 @@ it('refreshes breakdown (query) AND AI on focus', async () => {
   const before = breakdownReads();
 
   await refreshInAct(() => mockFocus());
-  await settled();
+  await settle();
 
   expect(breakdownReads()).toBeGreaterThan(before);
   expect(refreshAiInsights).toHaveBeenCalled();
@@ -202,7 +198,7 @@ it('shows a spinner (not the empty state, not a false $0) while a first fetch is
   expect(screen.queryByText('No spending yet this pay cycle.')).toBeNull();
   expect(screen.queryByText('$0')).toBeNull(); // hero must not show a confident $0
   held.release();
-  await settled();
+  await settle();
 });
 
 it('shows an inline error + Retry (not a false $0) on a sustained breakdown failure', async () => {
@@ -211,7 +207,7 @@ it('shows an inline error + Retry (not a false $0) on a sustained breakdown fail
   expect(screen.getByTestId('insights-error')).toBeTruthy();
   const before = breakdownReads();
   await refreshInAct(() => fireEvent.press(screen.getByTestId('insights-retry')));
-  await settled();
+  await settle();
   expect(breakdownReads()).toBeGreaterThan(before); // Retry re-reads the breakdown
   expect(screen.queryByText('$0')).toBeNull();
 });
@@ -224,7 +220,7 @@ it('keeps rows visible while another read is still loading (does not flash the s
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
   expect(screen.queryByTestId('insights-loading')).toBeNull();
   held.release();
-  await settled();
+  await settle();
 });
 
 // --- AI insights (WHIT-104) — unchanged behaviour, still on the context store ---

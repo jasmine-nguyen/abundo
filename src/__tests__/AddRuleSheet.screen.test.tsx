@@ -18,7 +18,7 @@ import { queryClient } from '../queryClient';
 import { categoriesKey } from '../queries';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { refreshInAct, useTestQueryClient } from './support/renderWithQueries';
+import { refreshInAct, useTestQueryClient, settle } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
 
 const server = installFakeServer();
@@ -39,8 +39,6 @@ async function openSheet(state: Record<string, unknown>, rules: unknown[] = [], 
   server.seed('/rules', rules);
   return openOverlays({ toast: null, ...state } as unknown as AppContext, setMockState);
 }
-
-const settled = () => waitFor(() => expect(queryClient.isFetching()).toBe(0));
 
 const fns = {
   updateRule: jest.fn(),
@@ -281,7 +279,7 @@ describe('AddRuleSheet — WHIT-284 drop effect (draft re-clean)', () => {
   it('[WHIT-284] a categories LOAD ERROR (empty list, not loading) does NOT drop a valid restored id or wipe the draft', async () => {
     server.fail('/categories', 500);
     await openSheet(ruleState({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) }));
-    await settled(); // opening the sheet retries the failed read; let it fail again
+    await settle(); // opening the sheet retries the failed read; let it fail again
     expect(lastDraftCategoryId()).toBe('subs'); // error → don't drop → draft keeps the id (recoverable)
 
     // The retry succeeds: the real list arrives with 'subs' still present → selection survived intact.

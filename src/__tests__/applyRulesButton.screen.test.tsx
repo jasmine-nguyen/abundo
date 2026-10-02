@@ -8,7 +8,7 @@
 // The screen and its data code are real, over the pretend server (WHIT-686).
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
-import { screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { screen, fireEvent } from '@testing-library/react-native';
 
 const mockSetSheet = jest.fn();
 jest.mock('../context', () => {
@@ -27,8 +27,7 @@ jest.mock('expo-router', () => {
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, renderWithQueries } from './support/renderWithQueries';
-import { queryClient } from '../queryClient';
+import { useTestQueryClient, renderWithQueries, settle } from './support/renderWithQueries';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -46,7 +45,6 @@ const BUTTON = 'transactions-apply-rules';
 
 const seedUncategorizedFeed = (transactions: unknown[], nextCursor: string | null = null) =>
   server.seed(UNCATEGORIZED_FEED, { transactions, nextCursor });
-const settle = () => waitFor(() => expect(queryClient.isFetching()).toBe(0));
 
 /** Render, wait for the first reads, and switch to the Uncategorized tab unless told otherwise. */
 async function renderTab(tab: 'all' | 'uncategorized' = 'uncategorized') {

@@ -7,7 +7,7 @@ import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import { makeGoalData, LOAN_FACTS } from './factory';
 import { installFakeServer } from './support/fakeServer';
-import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries } from './support/renderWithQueries';
+import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedGoal, seedGoalsHub } from './support/goalsScreen';
 import { queryClient } from '../queryClient';
@@ -141,7 +141,7 @@ describe('the mortgage and milestone screens over the fake server', () => {
     expect(screen.queryByText('$67,100')).toBeNull();
 
     await act(async () => { held.release(); });
-    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await settle();
     await refreshInAct(() => {});
     expect(screen.getByText('$67,100')).toBeTruthy();
     expect(screen.queryByText("We'll show your payoff progress once your balance loads.")).toBeNull();
@@ -156,7 +156,7 @@ describe('the mortgage and milestone screens over the fake server', () => {
     expect(screen.queryByText("Couldn't load your balance.")).toBeNull();
 
     await act(async () => { held.release(); });
-    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await settle();
     await refreshInAct(() => {});
     expect(screen.getByText('$596,642')).toBeTruthy();
   });
@@ -169,7 +169,7 @@ describe('the mortgage and milestone screens over the fake server', () => {
     expect(screen.getByText("Couldn't load your balance.")).toBeTruthy();
 
     await refreshInAct(() => fireEvent.press(screen.getByTestId('hero-balance-retry')));
-    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await settle();
     await refreshInAct(() => {});
     expect(screen.queryByText("Couldn't load your balance.")).toBeNull();
     expect(screen.getByText('$67,100')).toBeTruthy();
@@ -183,7 +183,7 @@ describe('the mortgage and milestone screens over the fake server', () => {
     expect(screen.getByText("Couldn't load your balance.")).toBeTruthy();
 
     await refreshInAct(() => fireEvent.press(screen.getByTestId('milestone-balance-retry')));
-    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await settle();
     await refreshInAct(() => {});
     expect(screen.queryByText("Couldn't load your balance.")).toBeNull();
     expect(screen.getByText('$596,642')).toBeTruthy();
@@ -197,7 +197,7 @@ describe('the mortgage and milestone screens over the fake server', () => {
     expect(screen.getByText("Couldn't load your last repayment.")).toBeTruthy();
 
     await refreshInAct(() => fireEvent.press(screen.getByTestId('repayment-retry')));
-    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await settle();
     await refreshInAct(() => {});
     expect(screen.queryByText("Couldn't load your last repayment.")).toBeNull();
     expect(screen.getByText('$1,268 principal · $232 interest')).toBeTruthy();
@@ -262,7 +262,7 @@ describe('the milestone editor over the fake server', () => {
     const held = server.hold('/milestones');
     render(<WithQueries><MilestoneEdit /></WithQueries>);
     await act(async () => { held.fail('GET', { status: 500 }); });
-    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await settle();
     await refreshInAct(() => {});
     // The blank row would fail validation anyway, so the Save button's own disabled state is what
     // proves the unresolved-plan guard (not just the ordering check).

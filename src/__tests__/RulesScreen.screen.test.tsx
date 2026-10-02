@@ -9,7 +9,7 @@ import type { AppContext } from '../context';
 import type { RuleRecord } from '../api';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { installFakeServer } from './support/fakeServer';
-import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct } from './support/renderWithQueries';
+import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle as settleQueries } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { queryClient } from '../queryClient';
 import { rulesKey } from '../queryKeys';
@@ -81,7 +81,7 @@ it('shows a loading state while rules load (nothing cached yet)', async () => {
   const held = await renderHeldRules();
   expect(screen.getByText('Loading rules…')).toBeTruthy();
   held.release();
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settleQueries();
 });
 
 it('shows an error with a retry that refetches', async () => {
@@ -97,7 +97,7 @@ it('shows an error with a retry that refetches', async () => {
   expect(rulesReads()).toHaveLength(1);
   fireEvent.press(retry);
   await waitFor(() => expect(rulesReads()).toHaveLength(2));
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settleQueries();
 });
 
 it('renders a rule and deletes it via the trash button', async () => {
@@ -279,7 +279,7 @@ it('[G5] intro + add-rule footer render in the loading state', async () => {
   expect(screen.getByText(/You have 0 active rules/)).toBeTruthy();
   expect(screen.getByText('Add a rule')).toBeTruthy();
   held.release();
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settleQueries();
 });
 it('[G5] intro + add-rule footer render in the no-match state', async () => {
   server.seed('/rules', TWO_RULES);

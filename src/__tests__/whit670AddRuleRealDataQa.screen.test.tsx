@@ -3,7 +3,7 @@
 // the real selectCategories output (sorted by the sheet), and a malformed /categories payload goes
 // through the real "fail loudly" select into the sheet's error gate.
 import { it, expect, jest, beforeEach } from '@jest/globals';
-import { screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { screen, fireEvent } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 
 let mockState: AppContext;
@@ -13,10 +13,9 @@ jest.mock('../context', () => {
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { queryClient } from '../queryClient';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient } from './support/renderWithQueries';
+import { useTestQueryClient, settle } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
 
 const server = installFakeServer();
@@ -107,7 +106,7 @@ it('[A4] a malformed /categories payload is an error, so a restored category is 
   server.seed('/categories', { categories: CATS });
   fns.readSheetDraft.mockImplementation(() => ({ pattern: 'NETFLIX', categoryId: 'subs' }));
   await open();
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settle();
   expect(screen.queryByText('Subscriptions')).toBeNull(); // the list never loaded
   expect(lastDraftCategoryId()).toBe('subs');
   fireEvent.press(screen.getByText('Add rule'));
