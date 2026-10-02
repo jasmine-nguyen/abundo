@@ -11,9 +11,6 @@ export const QUERIES_MOCK = /^\s*jest\.(mock|doMock)\(\s*['"](\.\.\/)+(src\/)?qu
 // layout or animation), then remove its line here.
 const ALLOWED = new Set<string>([
   'applyRulesButton.screen.test.tsx',
-  'categoryDetail.screen.test.tsx',
-  'categoryEditSummaryToast.screen.test.tsx',
-  'categoryFields.screen.test.tsx',
   'equityCardDepositTarget.screen.test.tsx',
   'fileByShopButton.screen.test.tsx',
   'fileOneOffsIntent.screen.test.tsx',

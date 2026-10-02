@@ -3,19 +3,22 @@
 // + categoryEditParentClear + categoryEditParentPick + categoryEditDelete. WHIT-459 folded in the
 // reason / save-failure family (categoryEditReasonGaps), the session-stamp guard
 // (categoryEditSignOutGuard) and the cold-cache seed guard (categoryEditColdSeed) — see the
-// // ===== headers below. All suites drive the real host with a SUPERSET mock of ../../src/context,
-// ../../src/queries and expo-router; each keeps its own scoped beforeEach so its params/seed can't
-// leak. deleteCategory is a hoisted mock so the delete suite can assert it; createCategoryInline is
-// inert for the suites that never call it. The union carries three extras the siblings needed: the
-// ../auth stub + the `mockEpoch` session stamp (getSessionEpoch reads it; only SignOutGuard bumps it)
-// and a reassignable `mockCategory` (only ColdSeed reassigns it) — all inert for every other suite.
+// // ===== headers below. WHIT-688: the taxonomy is read by the real query hooks over the fake
+// server — each test sets `categories` and drawEdit() seeds /categories with it. The save and
+// delete writers stay stubbed on a SUPERSET mock of ../../src/context (a follow-up card moves them);
+// each suite keeps its own scoped beforeEach so its params/seed can't leak. deleteCategory is a
+// hoisted mock so the delete suite can assert it; createCategoryInline is inert for the suites that
+// never call it. The `mockEpoch` session stamp (getSessionEpoch reads it) is bumped only by
+// SignOutGuard — inert for every other suite.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import React from 'react';
-import { ScrollView } from 'react-native';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { Category } from '../types';
 import { MAX_CHILDREN_PER_CATEGORY } from '../context';
 import { ApiError } from '../apiError';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries } from './support/renderWithQueries';
+import { resetAuth } from './support/authMock';
 
 const mockSaveCategory = jest.fn(async (_id: string | null, _form: unknown, _opts?: { silent?: boolean }) => true as boolean);
 const mockCreateInline = jest.fn(async (form: { name: string; bucket: string; icon: string; parent?: string | null }, _opts?: { silent?: boolean }) => ({
@@ -26,22 +29,11 @@ const mockDeleteCategory = jest.fn(async (_id: string) => true);
 // WHIT-459 union (folded from categoryEditSignOutGuard): the SignOutGuard suite bumps this session
 // stamp mid-save; every other suite leaves it 0 (resetMocks / their own beforeEach re-zero it).
 let mockEpoch = 0;
-// SignOutGuard also stubs ../auth so the real context (requireActual below) resolves its auth import
-// deterministically. INERT for every other suite — the screen keys on the epoch, never getStatus.
-jest.mock('../../src/auth', () => ({ getStatus: () => 'authed' }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../../src/context', () => {
   const actual = jest.requireActual('../../src/context') as typeof import('../../src/context');
   return { ...actual, useAppContext: () => ({ saveCategory: mockSaveCategory, createCategoryInline: mockCreateInline, deleteCategory: mockDeleteCategory, showToast: mockShowToast, getSessionEpoch: () => mockEpoch }) };
 });
-
-let mockCategories: Category[] = [];
-// `let` (was const) so the WHIT-459-folded ColdSeed suite can reassign it to model a cold/late
-// taxonomy resolve; every other suite leaves this default derivation in place (ColdSeed is folded
-// LAST so its reassignment can't leak into another suite).
-let mockCategory: (id: string | null) => Category | undefined = (id) => mockCategories.find((c) => c.id === id);
-jest.mock('../../src/queries', () => ({
-  useCategories: () => ({ category: mockCategory, categories: mockCategories, isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn() }),
-}));
 
 const mockBack = jest.fn();
 let mockParams: { categoryId?: string } = {};
@@ -52,15 +44,31 @@ jest.mock('expo-router', () => ({
 
 import CategoryEdit from '../../app/category/edit';
 
+const server = installFakeServer();
+useTestQueryClient();
+
+// The taxonomy /categories answers with; drawEdit() seeds it right before the screen draws.
+// The query library redraws the screen one timer tick after the fetch settles; flush that tick so
+// a test never taps before the form has filled (seen flaking under a loaded CPU).
+let categories: Category[] = [];
+async function drawEdit() {
+  server.seed('/categories', categories);
+  const view = await renderWithQueries(<CategoryEdit />);
+  await refreshInAct(() => undefined);
+  return view;
+}
+
+beforeEach(() => resetAuth());
+
 const LIVING = (id: string, name: string, parent: string | null = null): Category =>
   ({ id, name, bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent });
 
 // Reset EVERY shared mock to a clean default per test — clearMocks wipes calls but NOT
-// implementations or the module-level `mockParams`/`mockCategories`, so each suite's beforeEach must
+// implementations or the module-level `mockParams`/`categories`, so each suite's beforeEach must
 // re-establish them or a prior suite's override leaks in.
 function resetMocks(params: { categoryId?: string }) {
   mockParams = params;
-  mockCategories = [];
+  categories = [];
   mockEpoch = 0;
   mockSaveCategory.mockClear(); mockSaveCategory.mockImplementation(async () => true);
   mockCreateInline.mockClear();
@@ -75,8 +83,8 @@ describe('categoryEditSummaryToast', () => {
 
   it('editing a parent and attaching 2 children shows one "Category updated, with 2 sub-categories."', async () => {
     mockParams = { categoryId: 'transport' };
-    mockCategories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking'), LIVING('petrol', 'Petrol')];
-    render(<CategoryEdit />);
+    categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking'), LIVING('petrol', 'Petrol')];
+    await drawEdit();
     fireEvent.press(screen.getByTestId('attachChild-parking'));
     fireEvent.press(screen.getByTestId('attachChild-petrol'));
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
@@ -90,8 +98,8 @@ describe('categoryEditSummaryToast', () => {
   // change the `n === 1 ? 'y' : 'ies'` ternary and this exact string breaks.
   it('creating a parent with 1 attached child shows one "Category created, with 1 sub-category."', async () => {
     mockParams = {};
-    mockCategories = [LIVING('parking', 'Parking')];
-    render(<CategoryEdit />);
+    categories = [LIVING('parking', 'Parking')];
+    await drawEdit();
     fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Transport');
     fireEvent.press(screen.getByText('Living'));
     fireEvent.press(screen.getByTestId('attachChild-parking'));
@@ -107,9 +115,9 @@ describe('categoryEditSummaryToast', () => {
   // prove the single-count nor the leading verb clause. This does.
   it('a single failed child shows exactly one full "Category updated, but 1 sub-category couldn\'t be attached — add it from its page."', async () => {
     mockParams = { categoryId: 'transport' };
-    mockCategories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking')];
+    categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking')];
     mockSaveCategory.mockImplementation(async (id) => id !== 'parking'); // self ok, child fails, NO per-op toast
-    render(<CategoryEdit />);
+    await drawEdit();
     fireEvent.press(screen.getByTestId('attachChild-parking'));
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
   
@@ -123,9 +131,9 @@ describe('categoryEditSummaryToast', () => {
   // singular branch would wrongly render "it"/"sub-category" here.
   it('two failed children show one plural "...2 sub-categories couldn\'t be attached — add them from its page."', async () => {
     mockParams = { categoryId: 'transport' };
-    mockCategories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking'), LIVING('petrol', 'Petrol')];
+    categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking'), LIVING('petrol', 'Petrol')];
     mockSaveCategory.mockImplementation(async (id) => id === 'transport'); // self ok, both children fail
-    render(<CategoryEdit />);
+    await drawEdit();
     fireEvent.press(screen.getByTestId('attachChild-parking'));
     fireEvent.press(screen.getByTestId('attachChild-petrol'));
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
@@ -139,9 +147,9 @@ describe('categoryEditSummaryToast', () => {
   // silent), fires NO summary, does NOT navigate back, and never attempts child ops.
   it('a failed parent create shows the failure toast, no summary, and does not navigate back', async () => {
     mockParams = {};
-    mockCategories = [];
+    categories = [];
     mockCreateInline.mockResolvedValue(null); // parent create fails
-    render(<CategoryEdit />);
+    await drawEdit();
     fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Groceries');
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
   
@@ -155,9 +163,9 @@ describe('categoryEditSummaryToast', () => {
   // [B6] UPDATE where the parent self-save fails: same ownership as [B5] on the update branch.
   it('a failed parent update shows the failure toast, no summary, and does not navigate back', async () => {
     mockParams = { categoryId: 'transport' };
-    mockCategories = [LIVING('transport', 'Transport')];
+    categories = [LIVING('transport', 'Transport')];
     mockSaveCategory.mockResolvedValue(false); // self update fails
-    render(<CategoryEdit />);
+    await drawEdit();
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
   
     await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Could not save category. Please try again.'));
@@ -171,11 +179,11 @@ describe('categoryEditSubcategories', () => {
   beforeEach(() => { resetMocks({}); });
 
   it('creates the parent first, then attaches the picked child and creates the new inline child under it', async () => {
-    mockCategories = [
+    categories = [
       { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },
       { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a87c', recent: 0, parent: null },
     ];
-    render(<CategoryEdit />);
+    await drawEdit();
   
     // Name the new parent + move it to Living (so the Living 'parking' becomes attachable).
     fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Transport');
@@ -206,8 +214,8 @@ describe('categoryEditSubcategories', () => {
   
   it('shows one plain toast when a new category is saved with no sub-categories', async () => {
     // WHIT-240: the no-children path still owns exactly one toast, matching the writer's old copy.
-    mockCategories = [];
-    render(<CategoryEdit />);
+    categories = [];
+    await drawEdit();
     fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Groceries');
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
     await waitFor(() => expect(mockCreateInline).toHaveBeenCalledWith(expect.objectContaining({ name: 'Groceries' }), { silent: true }));
@@ -215,12 +223,12 @@ describe('categoryEditSubcategories', () => {
     expect(mockShowToast).toHaveBeenCalledWith('Category created.');
   });
   
-  it('a cross-bucket category is not offered as an attachable child', () => {
-    mockCategories = [
+  it('a cross-bucket category is not offered as an attachable child', async () => {
+    categories = [
       { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },
       { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a87c', recent: 0, parent: null },
     ];
-    render(<CategoryEdit />);
+    await drawEdit();
     fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Transport');
     fireEvent.press(screen.getByText('Living'));
     // Living 'parking' is attachable; Lifestyle 'coffee' is not.
@@ -233,11 +241,11 @@ describe('categoryEditSubcategoriesGaps', () => {
   beforeEach(() => { resetMocks({ categoryId: 'transport' }); });
 
   it('editing an existing parent updates it then attaches the picked child', async () => {
-    mockCategories = [
+    categories = [
       { id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },
       { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },
     ];
-    render(<CategoryEdit />);
+    await drawEdit();
     fireEvent.press(screen.getByTestId('attachChild-parking'));
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
   
@@ -254,13 +262,13 @@ describe('categoryEditSubcategoriesGaps', () => {
   // [A3] A category already parented under this one is listed as "Already nested" and is NOT
   // re-offered in the attach list. Fail-on-revert: drop the `c.parent !== categoryId` filter and
   // attachChild-parking renders.
-  it('a current child shows as Already nested and is not offered to re-attach', () => {
-    mockCategories = [
+  it('a current child shows as Already nested and is not offered to re-attach', async () => {
+    categories = [
       { id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },
       { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: 'transport' }, // already a child
       { id: 'petrol', name: 'Petrol', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },         // free to attach
     ];
-    render(<CategoryEdit />);
+    await drawEdit();
     expect(screen.getByText(/Already nested: Parking/)).toBeTruthy();
     expect(screen.queryByTestId('attachChild-parking')).toBeNull();  // not re-offered
     expect(screen.getByTestId('attachChild-petrol')).toBeTruthy();   // an unrelated one still is
@@ -270,14 +278,14 @@ describe('categoryEditSubcategoriesGaps', () => {
 describe('categoryEditParentClear', () => {
   beforeEach(() => { resetMocks({ categoryId: 'coffee' }); });
 
-  it('drops a stale cross-bucket parent to top-level before saving', () => {
+  it('drops a stale cross-bucket parent to top-level before saving', async () => {
     // coffee (Lifestyle) has a corrupt/legacy parent pointing at rent (Living) — a
     // cross-bucket link the server's same-bucket rule would never allow on write.
-    mockCategories = [
+    categories = [
       { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0, parent: 'rent' },
       { id: 'rent', name: 'Rent', bucket: 'Living', icon: 'home', color: '#8AB4F8', recent: 0, parent: null },
     ];
-    render(<CategoryEdit />);
+    await drawEdit();
   
     act(() => { fireEvent.press(screen.getByText('Save category')); });
   
@@ -285,12 +293,12 @@ describe('categoryEditParentClear', () => {
     expect(mockSaveCategory).toHaveBeenCalledWith('coffee', expect.objectContaining({ parent: null }), { silent: true });
   });
   
-  it('keeps a valid same-bucket parent through a save', () => {
-    mockCategories = [
+  it('keeps a valid same-bucket parent through a save', async () => {
+    categories = [
       { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0, parent: 'treats' },
       { id: 'treats', name: 'Treats', bucket: 'Lifestyle', icon: 'gift', color: '#F0B27A', recent: 0, parent: null },
     ];
-    render(<CategoryEdit />);
+    await drawEdit();
   
     act(() => { fireEvent.press(screen.getByText('Save category')); });
   
@@ -301,13 +309,13 @@ describe('categoryEditParentClear', () => {
 describe('categoryEditParentPick', () => {
   beforeEach(() => { resetMocks({ categoryId: 'coffee' }); });
 
-  it('picking a parent in the shared picker stamps it onto the saved category', () => {
+  it('picking a parent in the shared picker stamps it onto the saved category', async () => {
     // coffee (editing) starts top-level; treats is a same-bucket, eligible parent.
-    mockCategories = [
+    categories = [
       { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0, parent: null },
       { id: 'treats', name: 'Treats', bucket: 'Lifestyle', icon: 'gift', color: '#F0B27A', recent: 0, parent: null },
     ];
-    render(<CategoryEdit />);
+    await drawEdit();
     // 'Treats' shows twice: as the parent-picker chip (CategoryFields, rendered first) AND as an
     // attachable sub-category below. The parent chip is the first match — pick it, then save.
     const treatsChips = screen.getAllByText('Treats');
@@ -324,10 +332,10 @@ describe('categoryEditDelete', () => {
   afterEach(() => { jest.spyOn(console, 'error').mockRestore(); });
 
   it('pressing Delete category calls deleteCategory once and navigates back', async () => {
-    mockCategories = [
+    categories = [
       { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a87c', recent: 0, parent: null },
     ];
-    render(<CategoryEdit />);
+    await drawEdit();
   
     await act(async () => { fireEvent.press(screen.getByText('Delete category')); });
   
@@ -343,11 +351,11 @@ describe('categoryEditDelete', () => {
   // early-returns on the stuck `submitting` flag → deleteCategory called only once.
   it('re-enables Delete so a retry runs after deleteCategory throws', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    mockCategories = [
+    categories = [
       { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a87c', recent: 0, parent: null },
     ];
     mockDeleteCategory.mockRejectedValueOnce(new Error('network blew up'));
-    render(<CategoryEdit />);
+    await drawEdit();
   
     await act(async () => { fireEvent.press(screen.getByText('Delete category')); }); // throws → guard logs
     await act(async () => { fireEvent.press(screen.getByText('Delete category')); }); // only fires if re-enabled
@@ -355,20 +363,6 @@ describe('categoryEditDelete', () => {
     expect(mockDeleteCategory).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
     expect(errorSpy).toHaveBeenCalled();
-  });
-  
-  // The Save + Delete buttons live at the bottom of the form scroll, so the keyboard opens over
-  // them. The scroll must inset for the keyboard AND keep taps alive, or they're unreachable while
-  // typing. Fail-on-revert: drop the props in app/category/edit.tsx → find() returns undefined.
-  it('wraps the form in a keyboard-inset, tap-persisting scroll so Save/Delete stay reachable', () => {
-    mockCategories = [{ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a87c', recent: 0, parent: null }];
-    const { UNSAFE_getAllByType } = render(<CategoryEdit />);
-    const formScroll = UNSAFE_getAllByType(ScrollView).find(
-      (sv) => sv.props.automaticallyAdjustKeyboardInsets === true && sv.props.keyboardShouldPersistTaps === 'handled',
-    );
-    expect(formScroll).toBeTruthy();
-    // Save must live INSIDE that insetted scroll — that's what keeps it reachable over the keyboard.
-    expect(formScroll!.findAll((n) => n === screen.getByText('Save category'))).toHaveLength(1);
   });
 });
 
@@ -383,7 +377,7 @@ describe('categoryEditReasonGaps', () => {
   
   beforeEach(() => {
     mockParams = { categoryId: 'transport' };
-    mockCategories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking'), LIVING('petrol', 'Petrol')];
+    categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking'), LIVING('petrol', 'Petrol')];
     mockSaveCategory.mockClear(); mockSaveCategory.mockImplementation(async () => true);
     mockCreateInline.mockClear();
     mockCreateInline.mockImplementation(async (form) => ({ id: form.name.toLowerCase(), name: form.name, bucket: form.bucket, icon: form.icon, color: '#fff', recent: 0, parent: form.parent ?? null } as unknown as Category | null));
@@ -408,7 +402,7 @@ describe('categoryEditReasonGaps', () => {
     // makes them safe, and nothing outside it awaits them.
     it('never starts the child writes when the parent is refused with a reason', async () => {
       mockSaveCategory.mockRejectedValue(new ApiError(400, CAP));
-      render(<CategoryEdit />);
+      await drawEdit();
       fireEvent.press(screen.getByTestId('attachChild-parking'));
       addNewChild('Tolls');
       await save();
@@ -426,7 +420,7 @@ describe('categoryEditReasonGaps', () => {
     // the log; drop the condition and every 50-cap refusal becomes a console.error too.
     it('does not re-throw a refusal it already explained', async () => {
       mockSaveCategory.mockRejectedValue(new ApiError(400, CAP));
-      render(<CategoryEdit />);
+      await drawEdit();
       await save();
   
       await waitFor(() => expect(mockShowToast).toHaveBeenCalled());
@@ -436,7 +430,7 @@ describe('categoryEditReasonGaps', () => {
     // WHIT-249: the button must come back so the user can shorten the name / pick a new parent.
     it('re-enables Save after a refusal so the user can retry', async () => {
       mockSaveCategory.mockRejectedValue(new ApiError(400, CAP));
-      render(<CategoryEdit />);
+      await drawEdit();
       await save();
       await waitFor(() => expect(mockShowToast).toHaveBeenCalledTimes(1));
   
@@ -453,7 +447,7 @@ describe('categoryEditReasonGaps', () => {
         if (id === 'transport' || id === 'parking') return true;
         throw new ApiError(400, CAP);
       });
-      render(<CategoryEdit />);
+      await drawEdit();
       fireEvent.press(screen.getByTestId('attachChild-parking'));
       fireEvent.press(screen.getByTestId('attachChild-petrol'));
       await save();
@@ -467,7 +461,7 @@ describe('categoryEditReasonGaps', () => {
     // through createCategoryInline — untouched by every existing child test.
     it('folds a reason from a refused NEW inline sub-category', async () => {
       mockCreateInline.mockRejectedValue(new ApiError(400, CAP));
-      render(<CategoryEdit />);
+      await drawEdit();
       addNewChild('Tolls');
       await save();
   
@@ -484,7 +478,7 @@ describe('categoryEditReasonGaps', () => {
         throw new ApiError(400, CAP);
       });
       mockCreateInline.mockRejectedValue(new ApiError(400, CAP));
-      render(<CategoryEdit />);
+      await drawEdit();
       fireEvent.press(screen.getByTestId('attachChild-parking'));
       addNewChild('Tolls');
       await save();
@@ -505,7 +499,7 @@ describe('categoryEditReasonGaps', () => {
         if (id === 'transport') return true;
         throw new ApiError(400, multi);
       });
-      render(<CategoryEdit />);
+      await drawEdit();
       fireEvent.press(screen.getByTestId('attachChild-parking'));
       await save();
   
@@ -521,7 +515,7 @@ describe('categoryEditReasonGaps', () => {
         if (id === 'transport') return true;
         throw new ApiError(400, 'z'.repeat(200));
       });
-      render(<CategoryEdit />);
+      await drawEdit();
       fireEvent.press(screen.getByTestId('attachChild-parking'));
       await save();
   
@@ -537,7 +531,7 @@ describe('categoryEditReasonGaps', () => {
         if (id === 'transport') return true;
         throw new ApiError(409, 'that name is taken.');
       });
-      render(<CategoryEdit />);
+      await drawEdit();
       fireEvent.press(screen.getByTestId('attachChild-parking'));
       await save();
   
@@ -555,7 +549,7 @@ describe('categoryEditChildReason', () => {
   
   beforeEach(() => {
     mockParams = { categoryId: 'transport' };
-    mockCategories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking'), LIVING('petrol', 'Petrol')];
+    categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking'), LIVING('petrol', 'Petrol')];
     mockSaveCategory.mockClear(); mockSaveCategory.mockImplementation(async () => true);
     mockCreateInline.mockClear();
     mockCreateInline.mockImplementation(async (form) => ({ id: form.name.toLowerCase(), name: form.name, bucket: form.bucket, icon: form.icon, color: '#fff', recent: 0, parent: form.parent ?? null } as unknown as Category | null));
@@ -572,7 +566,7 @@ describe('categoryEditChildReason', () => {
   // [C1] ONE child refused for a stated reason -> the reason replaces the generic tail.
   it('folds a single child refusal reason into the one summary toast', async () => {
     rejectChildrenWith(new ApiError(400, CAP));
-    render(<CategoryEdit />);
+    await drawEdit();
     fireEvent.press(screen.getByTestId('attachChild-parking'));
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
   
@@ -585,7 +579,7 @@ describe('categoryEditChildReason', () => {
   // [C2] TWO children refused for the SAME reason -> one cause, stated once, plural count.
   it('folds a shared reason across two refused children', async () => {
     rejectChildrenWith(new ApiError(400, CAP));
-    render(<CategoryEdit />);
+    await drawEdit();
     fireEvent.press(screen.getByTestId('attachChild-parking'));
     fireEvent.press(screen.getByTestId('attachChild-petrol'));
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
@@ -601,7 +595,7 @@ describe('categoryEditChildReason', () => {
       if (id === 'transport') return true;
       throw new ApiError(400, id === 'parking' ? CAP : 'a sub-category must be in the same bucket as its parent');
     });
-    render(<CategoryEdit />);
+    await drawEdit();
     fireEvent.press(screen.getByTestId('attachChild-parking'));
     fireEvent.press(screen.getByTestId('attachChild-petrol'));
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
@@ -614,7 +608,7 @@ describe('categoryEditChildReason', () => {
   // [C4] A plain failure has no reason to give -> we must never invent one.
   it('keeps the generic tail for a network failure', async () => {
     rejectChildrenWith(new Error('network blew up'));
-    render(<CategoryEdit />);
+    await drawEdit();
     fireEvent.press(screen.getByTestId('attachChild-parking'));
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
   
@@ -630,7 +624,7 @@ describe('categoryEditChildReason', () => {
       if (id === 'parking') throw new ApiError(400, CAP);
       return false;                                   // petrol fails with nothing to say
     });
-    render(<CategoryEdit />);
+    await drawEdit();
     fireEvent.press(screen.getByTestId('attachChild-parking'));
     fireEvent.press(screen.getByTestId('attachChild-petrol'));
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
@@ -643,7 +637,7 @@ describe('categoryEditChildReason', () => {
   // [C6] A 5xx is our fault, not a rule the user broke — never surface it.
   it('keeps the generic tail for a 500', async () => {
     rejectChildrenWith(new ApiError(500, 'boom'));
-    render(<CategoryEdit />);
+    await drawEdit();
     fireEvent.press(screen.getByTestId('attachChild-parking'));
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
   
@@ -657,9 +651,9 @@ describe('categoryEditChildReason', () => {
   // stated reason (a bare falsy result) is what routes here rather than to the server's own words.
   it('names the child cap instead of the circular advice when the parent is full', async () => {
     const kids = Array.from({ length: 50 }, (_, i) => LIVING(`kid${i}`, `Kid ${i}`, 'transport'));
-    mockCategories = [LIVING('transport', 'Transport'), LIVING('spare', 'Spare'), ...kids];
+    categories = [LIVING('transport', 'Transport'), LIVING('spare', 'Spare'), ...kids];
     mockSaveCategory.mockImplementation(async (id) => id === 'transport');  // the 'spare' attach fails, no reason
-    render(<CategoryEdit />);
+    await drawEdit();
     fireEvent.press(screen.getByTestId('attachChild-spare'));
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
   
@@ -686,10 +680,10 @@ describe('categoryEditChildReasonGaps', () => {
   it('keeps the generic tail when the destination parent is one short of the cap (49)', async () => {
     mockParams = { categoryId: 'transport' };
     const kids = Array.from({ length: MAX_CHILDREN_PER_CATEGORY - 1 }, (_, i) => LIVING(`kid${i}`, `Kid ${i}`, 'transport'));
-    mockCategories = [LIVING('transport', 'Transport'), LIVING('spare', 'Spare'), ...kids];
+    categories = [LIVING('transport', 'Transport'), LIVING('spare', 'Spare'), ...kids];
     mockSaveCategory.mockImplementation(async (id) => id === 'transport');   // 'spare' attach fails, no reason
   
-    render(<CategoryEdit />);
+    await drawEdit();
     fireEvent.press(screen.getByTestId('attachChild-spare'));
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
   
@@ -705,11 +699,11 @@ describe('categoryEditChildReasonGaps', () => {
     mockParams = {};                                             // create mode, no categoryId
     // A NEW category defaults to the Lifestyle bucket, and an attach candidate must share it.
     const SPARE: Category = { id: 'spare', name: 'Spare', bucket: 'Lifestyle', icon: 'coffee', color: '#fff', recent: 0, parent: null };
-    mockCategories = [SPARE];                                    // the only attachable child
+    categories = [SPARE];                                    // the only attachable child
     mockCreateInline.mockImplementation(async (form) => ({ id: 'coffee', name: form.name, bucket: form.bucket, icon: form.icon, color: '#fff', recent: 0, parent: form.parent ?? null } as unknown as Category | null));
     mockSaveCategory.mockImplementation(async () => false);      // the 'spare' attach fails, no reason
   
-    render(<CategoryEdit />);
+    await drawEdit();
     fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Coffee');   // canSave needs a name
     fireEvent.press(screen.getByTestId('attachChild-spare'));
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
@@ -724,7 +718,7 @@ describe('categoryEditSaveThrow', () => {
   
   beforeEach(() => {
     mockParams = {};
-    mockCategories = [];
+    categories = [];
     mockSaveCategory.mockClear(); mockSaveCategory.mockImplementation(async () => true);
     mockCreateInline.mockClear();
     mockCreateInline.mockImplementation(async (form) => ({ id: form.name.toLowerCase(), name: form.name, bucket: form.bucket, icon: form.icon, color: '#fff', recent: 0, parent: form.parent ?? null } as unknown as Category | null));
@@ -740,9 +734,9 @@ describe('categoryEditSaveThrow', () => {
   it('re-enables Save so a retry runs after the parent create throws (create branch)', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     mockParams = {}; // no categoryId → CREATE → createCategoryInline is the parent write
-    mockCategories = [];
+    categories = [];
     mockCreateInline.mockRejectedValueOnce(new Error('network blew up')); // 1st press: unexpected throw
-    render(<CategoryEdit />);
+    await drawEdit();
     fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Groceries');
   
     await act(async () => { fireEvent.press(screen.getByText('Save category')); }); // throws → guard logs, submitting reset
@@ -760,9 +754,9 @@ describe('categoryEditSaveThrow', () => {
   it('re-enables Save so a retry runs after the parent update throws (edit branch)', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     mockParams = { categoryId: 'transport' };
-    mockCategories = [{ id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null }];
+    categories = [{ id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null }];
     mockSaveCategory.mockRejectedValueOnce(new Error('network blew up')); // 1st press throws
-    render(<CategoryEdit />);
+    await drawEdit();
   
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
@@ -781,7 +775,7 @@ describe('categoryEditParentReason', () => {
   
   beforeEach(() => {
     mockParams = { categoryId: 'transport' };
-    mockCategories = [LIVING('transport', 'Transport')];
+    categories = [LIVING('transport', 'Transport')];
     mockEpoch = 0;
     mockSaveCategory.mockClear(); mockSaveCategory.mockImplementation(async () => true);
     mockCreateInline.mockClear();
@@ -792,7 +786,7 @@ describe('categoryEditParentReason', () => {
   // [P1] the reason replaces the generic line, and a refused save does not navigate away.
   it('shows the server reason when the parent update is refused', async () => {
     mockSaveCategory.mockRejectedValue(new ApiError(400, 'a sub-category must be in the same bucket as its parent'));
-    render(<CategoryEdit />);
+    await drawEdit();
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
   
     await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith(
@@ -804,9 +798,9 @@ describe('categoryEditParentReason', () => {
   // [P2] the 409 win — retrying a duplicate name never works, so saying "try again" was a lie.
   it('shows a 409 duplicate refusal on create', async () => {
     mockParams = {};
-    mockCategories = [];
+    categories = [];
     mockCreateInline.mockRejectedValue(new ApiError(409, 'category already exists'));
-    render(<CategoryEdit />);
+    await drawEdit();
     fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Groceries');
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
   
@@ -819,7 +813,7 @@ describe('categoryEditParentReason', () => {
   it('falls back and still lets an unexplained failure reach the guard log', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     mockSaveCategory.mockRejectedValue(new Error('network blew up'));
-    render(<CategoryEdit />);
+    await drawEdit();
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
   
     await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Could not save category. Please try again.'));
@@ -830,7 +824,7 @@ describe('categoryEditParentReason', () => {
   // [P4] WHIT-282: a sign-out mid-save must not toast into the next session.
   it('stays silent when the session changed mid-save', async () => {
     mockSaveCategory.mockImplementation(async () => { mockEpoch = 1; throw new ApiError(400, 'a category can have at most 50 sub-categories'); });
-    render(<CategoryEdit />);
+    await drawEdit();
     await act(async () => { fireEvent.press(screen.getByText('Save category')); });
   
     expect(mockShowToast).not.toHaveBeenCalled();
@@ -847,7 +841,7 @@ const LIVING = (id: string, name: string, parent: string | null = null): Categor
 beforeEach(() => {
   mockEpoch = 0;
   mockParams = {};
-  mockCategories = [];
+  categories = [];
   mockSaveCategory.mockClear(); mockSaveCategory.mockImplementation(async () => true);
   mockCreateInline.mockClear();
   mockCreateInline.mockImplementation(async (form) => ({ id: form.name.toLowerCase(), name: form.name, bucket: form.bucket, icon: form.icon, color: '#fff', recent: 0, parent: form.parent ?? null } as unknown as Category | null));
@@ -859,9 +853,9 @@ beforeEach(() => {
 // Fail-on-revert: drop the :100 epoch guard → the `if (!ok)` generic toast fires → this test fails.
 it('a session change on the parent update write shows no toast and does not navigate', async () => {
   mockParams = { categoryId: 'transport' };
-  mockCategories = [LIVING('transport', 'Transport')];
+  categories = [LIVING('transport', 'Transport')];
   mockSaveCategory.mockImplementation(async () => { mockEpoch += 1; return false; });
-  render(<CategoryEdit />);
+  await drawEdit();
 
   await act(async () => { fireEvent.press(screen.getByText('Save category')); });
 
@@ -875,7 +869,7 @@ it('a session change on the parent update write shows no toast and does not navi
 // Fail-on-revert: drop the :104 epoch guard → the `if (!created)` generic toast fires → fails.
 it('a session change on the parent create write shows no toast and does not navigate', async () => {
   mockParams = {}; // no categoryId → the create path
-  render(<CategoryEdit />);
+  await drawEdit();
   fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'New cat'); // canSave needs a name
   mockCreateInline.mockImplementation(async () => { mockEpoch += 1; return null; });
 
@@ -893,9 +887,9 @@ it('a session change on the parent create write shows no toast and does not navi
 // Fail-on-revert: restore `getStatus() === 'anon'` → status 'authed' → guard passes → toast + nav fire.
 it('a different-account sign-in mid-save (epoch bumped, status authed) shows no toast and does not navigate', async () => {
   mockParams = { categoryId: 'transport' };
-  mockCategories = [LIVING('transport', 'Transport')];
+  categories = [LIVING('transport', 'Transport')];
   mockSaveCategory.mockImplementation(async () => { mockEpoch += 1; return true; }); // re-auth: success-shaped, new session
-  render(<CategoryEdit />);
+  await drawEdit();
 
   await act(async () => { fireEvent.press(screen.getByText('Save category')); });
 
@@ -908,7 +902,7 @@ it('a different-account sign-in mid-save (epoch bumped, status authed) shows no 
 // DURING the child writes. The post-Promise.allSettled guard (:122) must bail: NO summary toast, NO nav.
 it('a session change during the child writes fires no summary toast and does not navigate', async () => {
   mockParams = { categoryId: 'transport' };
-  mockCategories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking')];
+  categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking')];
   let call = 0;
   mockSaveCategory.mockImplementation(async () => {
     call += 1;
@@ -916,7 +910,7 @@ it('a session change during the child writes fires no summary toast and does not
     mockEpoch += 1;              // session change lands during the child write
     return false;
   });
-  render(<CategoryEdit />);
+  await drawEdit();
   fireEvent.press(screen.getByTestId('attachChild-parking'));
 
   await act(async () => { fireEvent.press(screen.getByText('Save category')); });
@@ -930,9 +924,9 @@ it('a session change during the child writes fires no summary toast and does not
 // must STILL toast — the guard must not over-suppress the real error path.
 it('an in-session parent-save failure still shows the failure toast (guard does not over-suppress)', async () => {
   mockParams = { categoryId: 'transport' };
-  mockCategories = [LIVING('transport', 'Transport')];
+  categories = [LIVING('transport', 'Transport')];
   mockSaveCategory.mockResolvedValue(false); // real failure, epoch unchanged
-  render(<CategoryEdit />);
+  await drawEdit();
 
   await act(async () => { fireEvent.press(screen.getByText('Save category')); });
 
@@ -942,39 +936,42 @@ it('an in-session parent-save failure still shows the failure toast (guard does 
 });
 
 // ===== WHIT-459: folded from categoryEditColdSeed.screen.test.tsx (WHIT-203 cold-cache seed guard, 2 its) =====
-// Folded LAST: its it bodies reassign the shared `mockCategory`, so no other suite may run after it.
-// The scoped beforeEach re-establishes ColdSeed's original fixture (categoryId:'coffee', empty
-// taxonomy, default derivation) that the now-shared expo-router / queries mocks otherwise wouldn't give it.
+// The category list is held on the server, so the screen mounts over a cold taxonomy and it lands
+// a beat later on release().
 describe('categoryEditColdSeed', () => {
-const COFFEE: Category = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 };
+const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', parent: null };
   beforeEach(() => {
     mockParams = { categoryId: 'coffee' };
-    mockCategories = [];
-    mockCategory = (id) => mockCategories.find((c) => c.id === id);
     mockSaveCategory.mockClear();
+    server.seed('/categories', [COFFEE]);
   });
 
-it('blocks Save while the edited category is still loading (no default-overwrite)', () => {
-  mockCategory = () => undefined; // taxonomy not loaded yet
-  render(<CategoryEdit />);
+  const drawCold = async () => {
+    const held = server.hold('/categories');
+    render(<WithQueries><CategoryEdit /></WithQueries>);
+    await waitFor(() => expect(server.sent('GET', '/categories')).toHaveLength(1));
+    return held;
+  };
+
+it('blocks Save while the edited category is still loading (no default-overwrite)', async () => {
+  const held = await drawCold();
   // Type a name so the ONLY thing blocking Save is the editing-unloaded guard (not an empty
   // name) — this is what gives the test teeth: without the guard, Save would fire here and
   // write the default bucket/icon over the real category.
   fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Renamed');
   fireEvent.press(screen.getByText('Save category'));
   expect(mockSaveCategory).not.toHaveBeenCalled();
+  await refreshInAct(() => held.release());
 });
 
-it('re-seeds the form once the category resolves (late)', () => {
+it('re-seeds the form once the category resolves (late)', async () => {
   // Cold at mount: the useState initializer seeds blank. This is the case the useEffect
   // exists for — asserting a warm mount would only exercise the initializer, not the fix.
-  mockCategory = () => undefined;
-  const { rerender } = render(<CategoryEdit />);
+  const held = await drawCold();
   expect(screen.getByPlaceholderText('e.g. Coffee runs').props.value).toBe('');
 
-  // The category resolves a beat later → the useEffect re-seeds the form from it.
-  mockCategory = (id) => (id === 'coffee' ? COFFEE : undefined);
-  rerender(<CategoryEdit />);
-  expect(screen.getByDisplayValue('Cafes & Coffee')).toBeTruthy();
+  // The category list lands a beat later → the useEffect re-seeds the form from it.
+  await refreshInAct(() => held.release());
+  await waitFor(() => expect(screen.getByDisplayValue('Cafes & Coffee')).toBeTruthy());
 });
 });
