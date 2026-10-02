@@ -35,7 +35,6 @@ useTestQueryClient();
 async function coldOpen(categoryId: string) {
   setParams({ categoryId });
   await renderWithQueries(<CategoryEdit />);
-  await refreshInAct(() => undefined);
 }
 
 async function saveAndExpect(form: object) {

@@ -48,14 +48,10 @@ const server = installFakeServer();
 useTestQueryClient();
 
 // The taxonomy /categories answers with; drawEdit() seeds it right before the screen draws.
-// The query library redraws the screen one timer tick after the fetch settles; flush that tick so
-// a test never taps before the form has filled (seen flaking under a loaded CPU).
 let categories: Category[] = [];
 async function drawEdit() {
   server.seed('/categories', categories);
-  const view = await renderWithQueries(<CategoryEdit />);
-  await refreshInAct(() => undefined);
-  return view;
+  return renderWithQueries(<CategoryEdit />);
 }
 
 beforeEach(() => resetAuth());

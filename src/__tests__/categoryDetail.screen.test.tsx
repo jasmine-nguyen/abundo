@@ -44,13 +44,6 @@ const SALARY_ROW = {
   category: 'salary', type: 'deposit', counts_to_budget: true,
 };
 
-// Flush the query library's one-tick redraw after the fetch settles, so no check runs before it.
-async function drawDetail() {
-  const view = await renderWithQueries(<CategoryDetail />);
-  await refreshInAct(() => undefined);
-  return view;
-}
-
 beforeEach(() => {
   resetAuth();
   resetRouter();
@@ -62,13 +55,13 @@ beforeEach(() => {
 // The total-card label must reflect WHICH cycle was drilled (matching the Insights hero's
 // "THIS / LAST PAY CYCLE"), not hard-code "this cycle".
 it('labels the total "this cycle" for cycle 0 and "last cycle" for cycle 1', async () => {
-  const { unmount } = await drawDetail();
+  const { unmount } = await renderWithQueries(<CategoryDetail />);
   expect(screen.getByText('Spent this cycle')).toBeTruthy();
   expect(screen.queryByText('Spent last cycle')).toBeNull();
   unmount();
 
   setParams({ id: 'coffee', cycle: '1' });
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(screen.getByText('Spent last cycle')).toBeTruthy();
   expect(screen.queryByText('Spent this cycle')).toBeNull();
 });
@@ -77,7 +70,7 @@ it('labels the total "this cycle" for cycle 0 and "last cycle" for cycle 1', asy
 it('labels the total "Earned" for an Income-bucket category', async () => {
   server.seed('/categories/salary/transactions', [SALARY_ROW]);
   setParams({ id: 'salary', cycle: '0' });
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(screen.getByText('Earned this cycle')).toBeTruthy();
   expect(screen.queryByText('Spent this cycle')).toBeNull();
   expect(screen.getByText('$4,200')).toBeTruthy();
@@ -100,7 +93,7 @@ it('waits for the category taxonomy before rendering the detail (spinner, not a 
 // WHIT-374 regression — once categories are loaded, a background refetch over cached rows keeps
 // the detail visible, no spinner.
 it('keeps the detail visible during a background refetch once the taxonomy is loaded', async () => {
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   const held = server.hold(COFFEE_ROWS);
   await refreshInAct(() => { void queryClient.refetchQueries(); });
   expect(queryClient.isFetching()).toBeGreaterThan(0);
@@ -113,7 +106,7 @@ it('keeps the detail visible during a background refetch once the taxonomy is lo
 // an older cycle. Fail-on-revert: reverting the Math.min(1, …) clamp sends cycle 2 to the server.
 it('clamps an out-of-range cycle down to 1 before the fetch', async () => {
   setParams({ id: 'coffee', cycle: '2' });
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(server.sent('GET', `${COFFEE_ROWS}?cycle=1`)).toHaveLength(1);
   expect(server.sentUnder('GET', COFFEE_ROWS)).toHaveLength(1);
 });
@@ -121,7 +114,7 @@ it('clamps an out-of-range cycle down to 1 before the fetch', async () => {
 // WHIT-309 — lower bound: a negative cycle clamps to 0, and the label agrees ("this cycle").
 it('clamps a negative cycle up to 0 (fetch cycle 0, label "this cycle")', async () => {
   setParams({ id: 'coffee', cycle: '-1' });
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(server.sent('GET', COFFEE_ROWS)).toHaveLength(1);
   expect(server.sentUnder('GET', COFFEE_ROWS)).toHaveLength(1);
   expect(screen.getByText('Spent this cycle')).toBeTruthy();
@@ -130,7 +123,7 @@ it('clamps a negative cycle up to 0 (fetch cycle 0, label "this cycle")', async 
 // WHIT-309 — a fractional cycle in (0,1) floors to 0, so the fetch + label are the current cycle.
 it('floors a fractional cycle (0.5) to 0', async () => {
   setParams({ id: 'coffee', cycle: '0.5' });
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(server.sent('GET', COFFEE_ROWS)).toHaveLength(1);
   expect(server.sentUnder('GET', COFFEE_ROWS)).toHaveLength(1);
   expect(screen.getByText('Spent this cycle')).toBeTruthy();
@@ -140,7 +133,7 @@ it('floors a fractional cycle (0.5) to 0', async () => {
 // Fail-on-revert: reverting the `|| 0` sends NaN through the clamp into the fetch.
 it.each(['abc', '', undefined, '  '])('falls ?cycle=%j back to the current cycle', async (bad) => {
   setParams({ id: 'coffee', cycle: bad });
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(server.sent('GET', COFFEE_ROWS)).toHaveLength(1);
   expect(server.sentUnder('GET', COFFEE_ROWS)).toHaveLength(1);
   expect(screen.getByText('Spent this cycle')).toBeTruthy();
@@ -149,14 +142,14 @@ it.each(['abc', '', undefined, '  '])('falls ?cycle=%j back to the current cycle
 // WHIT-309 (qa gap) — a huge finite cycle ('1e9') clamps to 1 (the upper bound holds far beyond 2).
 it('clamps a huge finite cycle (1e9) down to 1', async () => {
   setParams({ id: 'coffee', cycle: '1e9' });
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(server.sent('GET', `${COFFEE_ROWS}?cycle=1`)).toHaveLength(1);
   expect(server.sentUnder('GET', COFFEE_ROWS)).toHaveLength(1);
   expect(screen.getByText('Spent last cycle')).toBeTruthy();
 });
 
 it('renders the category name, the total card, and the grouped transactions', async () => {
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(screen.getAllByText('Cafes & Coffee')).toHaveLength(2); // header + the row's category
   expect(screen.getByTestId('category-total')).toBeTruthy();
   expect(screen.getByText('$9')).toBeTruthy();                   // 8.5 rounds
@@ -170,21 +163,21 @@ it('shows the pending line only when there is pending spend', async () => {
     { ...ROW, amount: -12 },
     { ...ROW, transaction_id: 't2', amount: -8, status: 'pending' },
   ]);
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(screen.getByText('$20')).toBeTruthy();
   expect(screen.getByText('$8 pending')).toBeTruthy();
 });
 
 it('shows the empty state when nothing matches this category/cycle', async () => {
   server.seed(COFFEE_ROWS, []);
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(screen.getByText('No transactions')).toBeTruthy();
   expect(screen.queryByTestId('category-total')).toBeNull();
 });
 
 it('a hard read failure with nothing cached shows the inline error + an accessible Retry', async () => {
   server.fail(COFFEE_ROWS, 500);
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(screen.getByTestId('category-error')).toBeTruthy();
   const retry = screen.getByTestId('category-retry');
   expect(retry.props.accessibilityLabel).toBe('Retry loading this category');
@@ -194,7 +187,7 @@ it('a hard read failure with nothing cached shows the inline error + an accessib
 });
 
 it('does NOT show the error when a background refetch fails over cached rows (cache-first)', async () => {
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   server.fail(COFFEE_ROWS, 500);
   await refreshInAct(() => queryClient.refetchQueries());
   expect(server.sent('GET', COFFEE_ROWS)).toHaveLength(2);
@@ -208,7 +201,7 @@ it('does NOT show the error when a background refetch fails over cached rows (ca
 // Fail-on-revert: dropping the `?? 'Category'` fallback makes the title `undefined`.
 it('shows the fallback header title "Category" when there are no rows', async () => {
   server.seed(COFFEE_ROWS, []);
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(screen.getByText('Category')).toBeTruthy();
 });
 
@@ -216,7 +209,7 @@ it('shows the fallback header title "Category" when there are no rows', async ()
 // list, NOT the empty state — the screen branches on having a detail, not on total > 0.
 it('renders the $0 total card and list (not the empty state) for a zero-total detail', async () => {
   server.seed(COFFEE_ROWS, [{ ...ROW, counts_to_budget: false }]);
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(screen.getByTestId('category-total')).toBeTruthy();
   expect(screen.getByText('$0')).toBeTruthy();
   expect(screen.getByText('ST Ali')).toBeTruthy();
@@ -235,7 +228,7 @@ describe('WHIT-374 gap — cold taxonomy over cached transactions', () => {
   // `&& categoriesReady` from hasCache makes the cold detail render and this assertion fail.
   it('shows the error+retry (not a cold detail) when the taxonomy fails over cached transactions', async () => {
     server.fail('/categories', 500);
-    await drawDetail();
+    await renderWithQueries(<CategoryDetail />);
     expect(screen.getByTestId('category-error')).toBeTruthy();
     expect(screen.queryByTestId('category-total')).toBeNull(); // no cold "$0" total card
     fireEvent.press(screen.getByTestId('category-retry'));
@@ -254,7 +247,7 @@ const SEP_11 = `${THIS_YEAR}-09-11`;
 
 it('a from/to pair fetches that date range and labels the total with the dates', async () => {
   setParams({ id: 'coffee', from: JUN_12, to: SEP_11 });
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(server.sentUnder('GET', COFFEE_ROWS).map((request) => request.path)).toEqual([
     `${COFFEE_ROWS}?from=${JUN_12}&to=${SEP_11}`,
   ]);
@@ -268,7 +261,7 @@ it.each([
   [{ from: '2026-09-11', to: '2026-06-12' }],               // out of order
 ])('a bad range falls back to the cycle view (%j)', async (range) => {
   setParams({ id: 'coffee', cycle: '1', ...range });
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(server.sentUnder('GET', COFFEE_ROWS).map((request) => request.path)).toEqual([`${COFFEE_ROWS}?cycle=1`]);
   expect(screen.getByText('Spent last cycle')).toBeTruthy();
 });
@@ -277,7 +270,7 @@ it.each([
 // what the screen fetches and labels.
 it('a valid range with a leftover cycle=1 still shows the range, not last cycle', async () => {
   setParams({ id: 'coffee', cycle: '1', from: JUN_12, to: SEP_11 });
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(server.sentUnder('GET', COFFEE_ROWS).map((request) => request.path)).toEqual([
     `${COFFEE_ROWS}?from=${JUN_12}&to=${SEP_11}`,
   ]);
@@ -288,7 +281,7 @@ it('a valid range with a leftover cycle=1 still shows the range, not last cycle'
 // [A23] QA: a same-day range (from === to) is valid, not "out of order".
 it('a one-day range is accepted', async () => {
   setParams({ id: 'coffee', from: '2026-09-11', to: '2026-09-11' });
-  await drawDetail();
+  await renderWithQueries(<CategoryDetail />);
   expect(server.sentUnder('GET', COFFEE_ROWS).map((request) => request.path)).toEqual([
     `${COFFEE_ROWS}?from=2026-09-11&to=2026-09-11`,
   ]);

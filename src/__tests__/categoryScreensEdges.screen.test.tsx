@@ -41,12 +41,6 @@ const ROW = {
   account_name: 'Everyday', category: 'coffee', status: 'posted', type: 'purchase', counts_to_budget: true,
 };
 
-async function draw(ui: React.ReactElement) {
-  const view = await renderWithQueries(ui);
-  await refreshInAct(() => undefined);
-  return view;
-}
-
 beforeEach(() => {
   resetAuth();
   resetRouter();
@@ -64,7 +58,7 @@ describe('category drill-in edges', () => {
   it('the Uncategorized drill asks for the sentinel id and titles the screen "Uncategorized"', async () => {
     setParams({ id: '__uncategorized__', cycle: '0' });
     server.seed('/categories/__uncategorized__/transactions', [{ ...ROW, category: null, amount: -20 }]);
-    await draw(<CategoryDetail />);
+    await renderWithQueries(<CategoryDetail />);
     expect(server.sent('GET', '/categories/__uncategorized__/transactions')).toHaveLength(1);
     expect(screen.getAllByText('Uncategorized')).toHaveLength(2); // the header + the row's label
     expect(screen.getByText('$20')).toBeTruthy();
@@ -74,7 +68,7 @@ describe('category drill-in edges', () => {
   // [A2] (P0) Retry after a hard read failure actually recovers: the detail replaces the error.
   it('Retry after a failed first read shows the detail once the server answers', async () => {
     server.once('GET', COFFEE_ROWS, { status: 500 });
-    await draw(<CategoryDetail />);
+    await renderWithQueries(<CategoryDetail />);
     expect(screen.getByTestId('category-error')).toBeTruthy();
 
     fireEvent.press(screen.getByTestId('category-retry'));
@@ -86,7 +80,7 @@ describe('category drill-in edges', () => {
   // [A3] (P0) Retry after the taxonomy failed re-reads /categories and the detail then renders.
   it('Retry after the category list failed shows the detail once the list loads', async () => {
     server.once('GET', '/categories', { status: 500 });
-    await draw(<CategoryDetail />);
+    await renderWithQueries(<CategoryDetail />);
     expect(screen.getByTestId('category-error')).toBeTruthy();
 
     fireEvent.press(screen.getByTestId('category-retry'));
@@ -98,7 +92,7 @@ describe('category drill-in edges', () => {
   it('shows the error card when both the rows and the category list fail', async () => {
     server.fail(COFFEE_ROWS, 500);
     server.fail('/categories', 500);
-    await draw(<CategoryDetail />);
+    await renderWithQueries(<CategoryDetail />);
     expect(screen.getByTestId('category-error')).toBeTruthy();
     expect(screen.queryByTestId('category-loading')).toBeNull();
     expect(screen.queryByTestId('category-total')).toBeNull();
@@ -108,7 +102,7 @@ describe('category drill-in edges', () => {
   // rows, not this cycle's cached ones. Fail-on-revert: drop `cycle` from the query key and the
   // cached cycle-0 rows answer for cycle 1.
   it('switching to last cycle re-reads ?cycle=1 and shows that cycle\'s total, not the cached one', async () => {
-    const view = await draw(<CategoryDetail />);
+    const view = await renderWithQueries(<CategoryDetail />);
     expect(screen.getByText('$9')).toBeTruthy();
 
     server.once('GET', COFFEE_ROWS, { status: 200, body: [{ ...ROW, transaction_id: 't9', amount: -42 }] });
@@ -123,7 +117,7 @@ describe('category drill-in edges', () => {
   // [A6] (P1) A row filed under a category the taxonomy doesn't know still counts and lists.
   it('counts a row whose category is missing from the list (no crash, row listed)', async () => {
     server.seed(COFFEE_ROWS, [ROW, { ...ROW, transaction_id: 't2', amount: -1.5, category: 'gone', merchant_name: 'Ghost' }]);
-    await draw(<CategoryDetail />);
+    await renderWithQueries(<CategoryDetail />);
     expect(screen.getByText('$10')).toBeTruthy();
     expect(screen.getByText('2 transactions')).toBeTruthy();
     expect(screen.getByText('Ghost')).toBeTruthy();
@@ -136,7 +130,7 @@ describe('category edit edges', () => {
   it('blocks Save on an existing category when the category list fails to load', async () => {
     setParams({ categoryId: 'coffee' });
     server.fail('/categories', 500);
-    await draw(<CategoryEdit />);
+    await renderWithQueries(<CategoryEdit />);
     fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Renamed');
     fireEvent.press(screen.getByText('Save category'));
     await refreshInAct(() => undefined);
@@ -148,7 +142,7 @@ describe('category edit edges', () => {
   // fresh `existing` object re-runs the seed effect, wiping "Renamed".
   it('a background re-read with an unchanged list keeps the name the user is typing', async () => {
     setParams({ categoryId: 'coffee' });
-    await draw(<CategoryEdit />);
+    await renderWithQueries(<CategoryEdit />);
     expect(screen.getByDisplayValue('Cafes & Coffee')).toBeTruthy();
 
     fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Renamed');
@@ -186,7 +180,7 @@ describe('category edit edges', () => {
   it('cold open: re-saving a Living sub-category keeps its parent (no silent detach)', async () => {
     server.seed('/categories', PARKING_UNDER_TRANSPORT);
     setParams({ categoryId: 'parking' });
-    await draw(<CategoryEdit />);
+    await renderWithQueries(<CategoryEdit />);
     expect(screen.getByDisplayValue('Parking')).toBeTruthy();
     fireEvent.press(screen.getByText('Save category'));
     await waitFor(() => expect(mockSaveCategory).toHaveBeenCalledWith('parking', UNTOUCHED_SAVE, { silent: true }));
