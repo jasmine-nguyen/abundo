@@ -6,14 +6,17 @@
 //   [A9] the MILESTONE screen IGNORES depositTarget entirely: with a target set it shows
 //        the plain equity figure and NONE of the mortgage card's target chrome
 //        (regression guard for the scope boundary — milestone.tsx must never wire it in).
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+// WHIT-685: drawn over the fake server, so the real screen data code runs.
+import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen } from '@testing-library/react-native';
-import { makeGoalData, LOAN_FACTS } from './factory';
-import type { GoalScreenData } from '../queries';
+import { screen } from '@testing-library/react-native';
+import { LOAN_FACTS } from './factory';
+import { installFakeServer } from './support/fakeServer';
+import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { resetAuth } from './support/authMock';
+import { seedGoal } from './support/goalsScreen';
 
-let mockGoal: GoalScreenData;
-jest.mock('../queries', () => ({ useGoalScreenData: () => mockGoal }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => ({}) };
@@ -26,23 +29,26 @@ jest.mock('expo-router', () => ({
 import Mortgage from '../../app/mortgage';
 import Milestone from '../../app/milestone';
 
-beforeEach(() => { mockGoal = makeGoalData(); });
+const server = installFakeServer();
+useTestQueryClient();
 
-it('[A8] mortgage equity chip ROUNDS the pct: equity 49,600 / target 100,000 -> "50%"', () => {
+beforeEach(() => { resetAuth(); });
+
+it('[A8] mortgage equity chip ROUNDS the pct: equity 49,600 / target 100,000 -> "50%"', async () => {
   // 49600/100000 = 49.6% -> Math.round -> 50. balance 566400 -> equity 49600.
-  mockGoal = makeGoalData({ loanFacts: { ...LOAN_FACTS, depositTarget: 100000 }, homeLoan: { balance: 566400, asOf: '2026-07-04T00:24:37.614Z' } });
-  render(<Mortgage />);
+  seedGoal(server, { loanFacts: { ...LOAN_FACTS, depositTarget: 100000 }, homeLoan: { balance: 566400, asOf: '2026-07-04T00:24:37.614Z' } });
+  await renderWithQueries(<Mortgage />);
   expect(screen.getByText('$49,600 unlocked')).toBeTruthy();
   expect(screen.getByText('of $100,000 needed')).toBeTruthy();
   expect(screen.getByText('50%')).toBeTruthy();      // rounded up from 49.6
   expect(screen.queryByText('49.6%')).toBeNull();    // fail-on-revert: dropping Math.round -> "49.6%"
 });
 
-it('[A9] the MILESTONE equity card ignores a set depositTarget — no chip, no "needed", no bar', () => {
+it('[A9] the MILESTONE equity card ignores a set depositTarget — no chip, no "needed", no bar', async () => {
   // Same fixture that drives the mortgage card into its target-set state; the milestone
   // screen reads a different selector (usableEquityLabel) and must stay target-agnostic.
-  mockGoal = makeGoalData({ loanFacts: { ...LOAN_FACTS, depositTarget: 100000 }, homeLoan: { balance: 566000, asOf: '2026-07-04T00:24:37.614Z' } });
-  render(<Milestone />);
+  seedGoal(server, { loanFacts: { ...LOAN_FACTS, depositTarget: 100000 }, homeLoan: { balance: 566000, asOf: '2026-07-04T00:24:37.614Z' } });
+  await renderWithQueries(<Milestone />);
   // The plain equity figure still shows (equity 50000)...
   expect(screen.getByText('$50,000')).toBeTruthy();
   expect(screen.getByText('Equity for your next place')).toBeTruthy();
