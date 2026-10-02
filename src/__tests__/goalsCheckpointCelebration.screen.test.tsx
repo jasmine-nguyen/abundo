@@ -3,9 +3,20 @@
 // rung, silence on an identical redraw, the mortgage card untouched, and reduce-motion degrading
 // to a plain banner that still clears (no stuck overlay). The REAL balanceGoalView + the real
 // celebration hook/diff run; only the data boundary and the router are stubbed.
+// WHIT-685: the goal and its balance come from the fake server through the real screen data code
+// (useGoalsScreenData); a balance move is a re-seeded server reply and a cache refresh, as in the app.
+// Timers stay real (only today's date is pinned), except in the "clears itself" tests, which move
+// the balance on a fully fake clock and run the burst's timer out.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, act } from '@testing-library/react-native';
+import { act, screen } from '@testing-library/react-native';
+import { installFakeServer } from './support/fakeServer';
+import { refreshInAct, renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { resetAuth } from './support/authMock';
+import { pinToday, seedGoalsHub } from './support/goalsScreen';
+import { EMPTY_LOAN_FACTS } from './factory';
+import { queryClient } from '../queryClient';
+import type { GoalRecord } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => {
   const { View, Text } = require('react-native');
@@ -16,8 +27,7 @@ jest.mock('../motion/ScrollChromeHeader', () => {
   };
 });
 
-let mockData: ReturnType<typeof baseData>;
-jest.mock('../queries', () => ({ useGoalsScreenData: () => mockData }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 const mockOpenGoalBalance = jest.fn();
 jest.mock('../context', () => {
@@ -37,84 +47,100 @@ import Goals from '../../app/(tabs)/goals';
 
 const PAY_CYCLE = { length: 14, last_pay_date: '2026-06-06' };
 // A grow goal with a two-rung ladder on a synced account, so the reached count is driven purely
-// by the balanceFor stub below.
-const GOAL = {
+// by the account's live balance on the server.
+const GOAL: GoalRecord = {
   id: 'g1', name: 'Holiday', icon: 'wallet', direction: 'grow',
   target_amount: 10000, target_date: '2026-08-15', account_id: 'up-spending',
-  checkpoints: [{ amount: 2000 }, { amount: 5000 }],
+  checkpoints: [{ id: 'a', label: 'A', amount: 2000 }, { id: 'b', label: 'B', amount: 5000 }],
 };
-const READY_FACTS = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
 
-function baseData(balance: number) {
-  return {
-    goals: [GOAL] as unknown[],
-    payCycle: PAY_CYCLE,
-    balanceFor: (id: string | null | undefined) => (id === 'up-spending' ? balance : null),
-    loanFacts: READY_FACTS,
-    homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:00:00Z' },
-    mortgageError: false,
-    isLoading: false,
-    isError: false,
-    refetch: jest.fn(),
-    refetchStale: jest.fn(),
-  };
+const server = installFakeServer();
+useTestQueryClient();
+
+function seedBalance(balance: number) {
+  seedGoalsHub(server, {
+    goals: [GOAL], payCycle: PAY_CYCLE, balances: { 'up-spending': balance },
+    loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:00:00Z' },
+  });
+}
+
+// The server now reports a new balance and the screen's data refreshes, as a poll would.
+async function moveBalance(balance: number) {
+  seedBalance(balance);
+  await refreshInAct(() => queryClient.invalidateQueries());
+}
+
+// Same move, but on a fully fake clock, so the burst's own timer can be run out instead of waited for.
+// refreshInAct can't be used here: its setTimeout(0) yield never fires on a fake clock. The refresh
+// settles inside act, and the query library's setTimeout(0) flush is run inside act too.
+async function moveBalanceOnFakeClock(balance: number) {
+  jest.useFakeTimers({ now: new Date(2026, 6, 11) });
+  seedBalance(balance);
+  const refresh = queryClient.invalidateQueries();
+  await act(async () => {
+    await refresh;
+    jest.advanceTimersByTime(0);
+  });
+}
+
+async function runOutBurst(ms: number) {
+  await act(async () => { jest.advanceTimersByTime(ms); });
 }
 
 beforeEach(() => {
+  resetAuth();
   mockReduceMotion = false;
-  jest.useFakeTimers({ now: new Date(2026, 6, 11) });
-  mockData = baseData(4000); // past the 2000 rung, not the 5000 rung → reached 1
+  pinToday(new Date(2026, 6, 11));
+  seedBalance(4000); // past the 2000 rung, not the 5000 rung → reached 1
 });
 afterEach(() => { jest.useRealTimers(); });
 
 describe('checkpoint celebration on the Goals hub (WHIT-481)', () => {
-  it('does not burst on first paint, even for a goal already past a rung', () => {
-    mockData = baseData(6000); // already past BOTH rungs when the screen opens → reached 2
-    render(<Goals />);
+  it('does not burst on first paint, even for a goal already past a rung', async () => {
+    seedBalance(6000); // already past BOTH rungs when the screen opens → reached 2
+    await renderWithQueries(<Goals />);
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
   });
 
-  it('bursts once when a balance moves past a new rung', () => {
-    const { rerender } = render(<Goals />);          // seed at reached 1, no burst
+  it('bursts once when a balance moves past a new rung', async () => {
+    await renderWithQueries(<Goals />);              // seed at reached 1, no burst
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
 
-    mockData = baseData(6000);                        // 4000 → 6000 crosses the 5000 rung (reached 2)
-    rerender(<Goals />);
+    await moveBalance(6000);                          // 4000 → 6000 crosses the 5000 rung (reached 2)
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
     expect(screen.getByText(/Holiday: checkpoint reached/)).toBeTruthy();
   });
 
-  it('is silent on an identical redraw (same data reference)', () => {
-    const { rerender } = render(<Goals />);
-    rerender(<Goals />);                              // same mockData identity → memo stable, no burst
+  it('is silent when a refresh brings back identical data', async () => {
+    await renderWithQueries(<Goals />);
+    await moveBalance(4000);                          // same reply → the cache keeps its data, no burst
+    expect(server.sent('GET', '/accounts/balances')).toHaveLength(2);
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
   });
 
-  it('clears itself after the burst so there is no stuck overlay', () => {
-    const { rerender } = render(<Goals />);
-    mockData = baseData(6000);
-    rerender(<Goals />);
+  it('clears itself after the burst so there is no stuck overlay', async () => {
+    await renderWithQueries(<Goals />);
+    await moveBalanceOnFakeClock(6000);
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
-    act(() => { jest.advanceTimersByTime(1200); });                  // FALL_MS
+    await runOutBurst(1200); // FALL_MS
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
   });
 
-  it('keeps the mortgage card untouched whether or not a burst is showing', () => {
-    const { rerender } = render(<Goals />);
+  it('keeps the mortgage card untouched whether or not a burst is showing', async () => {
+    await renderWithQueries(<Goals />);
     expect(screen.getByTestId('mortgage-link')).toBeTruthy();
-    mockData = baseData(6000);
-    rerender(<Goals />);
+    await moveBalance(6000);
+    expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
     expect(screen.getByTestId('mortgage-link')).toBeTruthy(); // still there under the confetti
   });
 
-  it('reduce-motion still shows and clears the banner (no stuck overlay)', () => {
+  it('reduce-motion still shows and clears the banner (no stuck overlay)', async () => {
     mockReduceMotion = true;
-    const { rerender } = render(<Goals />);
-    mockData = baseData(6000);
-    rerender(<Goals />);
+    await renderWithQueries(<Goals />);
+    await moveBalanceOnFakeClock(6000);
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
     expect(screen.getByTestId('checkpoint-celebration-label')).toBeTruthy();
-    act(() => { jest.advanceTimersByTime(900); });                   // REDUCED_MS
+    await runOutBurst(900); // REDUCED_MS
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
   });
 });

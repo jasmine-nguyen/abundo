@@ -2,20 +2,23 @@
 //   1. a11y on BOTH new mortgage-screen error affordances (#4): accessibilityRole/Label/testID on
 //      the two Retry buttons + accessibilityLiveRegion on the two error copies. Nothing
 //      else asserts these props, so a revert that drops them is currently invisible.
-//   2. hero branch PRECEDENCE (#2): facts UNSET + homeLoanError must show the "set up loan"
+//   2. hero branch PRECEDENCE (#2): facts UNSET + a failed balance read must show the "set up loan"
 //      prompt, NOT the balance error — the `!g.factsReady` branch sits ABOVE the
 //      `homeLoanError` branch in goals.tsx. Guards a future re-order that would surface a
 //      balance error over a user who hasn't set up their loan (no balance to fail yet from
 //      their POV). The existing #2 test only covers facts SET, so it can't catch this.
-// Same mock scaffolding as repayment.errorBoundary.screen.test.tsx.
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+// WHIT-685: drawn over the fake server; a failed read is a 500 from it, so the real screen data
+// code decides the error flags.
+import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen } from '@testing-library/react-native';
-import { makeGoalData, EMPTY_LOAN_FACTS, NO_REPAYMENT } from './factory';
-import type { GoalScreenData } from '../queries';
+import { screen } from '@testing-library/react-native';
+import { EMPTY_LOAN_FACTS } from './factory';
+import { installFakeServer } from './support/fakeServer';
+import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { resetAuth } from './support/authMock';
+import { seedGoal } from './support/goalsScreen';
 
-let mockGoal: GoalScreenData;
-jest.mock('../queries', () => ({ useGoalScreenData: () => mockGoal }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => ({}) };
@@ -29,16 +32,21 @@ jest.mock('expo-router', () => ({
 
 import Mortgage from '../../app/mortgage';
 
+const server = installFakeServer();
+useTestQueryClient();
+
 beforeEach(() => {
+  resetAuth();
   mockPush.mockClear();
 });
 
 // #4 — the hero balance-error Retry must be a labelled button and its copy a live region.
 // Asserting the actual props (not just presence) fails-on-revert if the a11y attributes
-// are stripped. facts SET + balance null + homeLoanError so we land on the error hero.
-it('WHIT-121 #4: the hero balance-error Retry + copy carry the a11y props', () => {
-  mockGoal = makeGoalData({ homeLoan: { balance: null, asOf: null }, homeLoanError: true, isError: true });
-  render(<Mortgage />);
+// are stripped. facts SET + a failed balance read so we land on the error hero.
+it('WHIT-121 #4: the hero balance-error Retry + copy carry the a11y props', async () => {
+  seedGoal(server);
+  server.fail('/homeloan', 500);
+  await renderWithQueries(<Mortgage />);
 
   const retry = screen.getByTestId('hero-balance-retry');
   expect(retry.props.accessibilityRole).toBe('button');
@@ -47,11 +55,12 @@ it('WHIT-121 #4: the hero balance-error Retry + copy carry the a11y props', () =
   expect(screen.getByText("Couldn't load your balance.").props.accessibilityLiveRegion).toBe('polite');
 });
 
-// #4 — same for the repayment card's error affordance. all-null + repaymentError so we land
+// #4 — same for the repayment card's error affordance. A failed repayment read so we land
 // on the repayment error branch (not the real card, not the empty state).
-it('WHIT-121 #4: the repayment-error Retry + copy carry the a11y props', () => {
-  mockGoal = makeGoalData({ repayment: NO_REPAYMENT, repaymentError: true });
-  render(<Mortgage />);
+it('WHIT-121 #4: the repayment-error Retry + copy carry the a11y props', async () => {
+  seedGoal(server);
+  server.fail('/repayment', 500);
+  await renderWithQueries(<Mortgage />);
 
   const retry = screen.getByTestId('repayment-retry');
   expect(retry.props.accessibilityRole).toBe('button');
@@ -65,14 +74,10 @@ it('WHIT-121 #4: the repayment-error Retry + copy carry the a11y props', () => {
 // for yet, from the user's POV). Re-ordering the goals.tsx hero branches so `homeLoanError`
 // precedes `!g.factsReady` turns this red. Pairs with the facts-SET #2 test that locks the
 // other side of the fork.
-it('WHIT-121 #2: with facts UNSET, a balance error yields the set-up prompt, not the error', () => {
-  mockGoal = makeGoalData({
-    loanFacts: EMPTY_LOAN_FACTS,
-    homeLoan: { balance: null, asOf: null },
-    homeLoanError: true,
-    isError: true,
-  });
-  render(<Mortgage />);
+it('WHIT-121 #2: with facts UNSET, a balance error yields the set-up prompt, not the error', async () => {
+  seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS });
+  server.fail('/homeloan', 500);
+  await renderWithQueries(<Mortgage />);
 
   expect(screen.getByText('Set up loan details →')).toBeTruthy();
   expect(screen.queryByText("Couldn't load your balance.")).toBeNull();
