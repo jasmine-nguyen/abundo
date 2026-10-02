@@ -8,7 +8,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries } from './support/renderWithQueries';
+import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { setParams, resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
@@ -183,7 +183,7 @@ it('a hard read failure with nothing cached shows the inline error + an accessib
   expect(retry.props.accessibilityLabel).toBe('Retry loading this category');
   fireEvent.press(retry);
   await waitFor(() => expect(server.sent('GET', COFFEE_ROWS)).toHaveLength(2));
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settle();
 });
 
 it('does NOT show the error when a background refetch fails over cached rows (cache-first)', async () => {
@@ -233,7 +233,7 @@ describe('WHIT-374 gap — cold taxonomy over cached transactions', () => {
     expect(screen.queryByTestId('category-total')).toBeNull(); // no cold "$0" total card
     fireEvent.press(screen.getByTestId('category-retry'));
     await waitFor(() => expect(server.sent('GET', '/categories')).toHaveLength(2));
-    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await settle();
   });
 });
 

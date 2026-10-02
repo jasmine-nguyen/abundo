@@ -8,7 +8,7 @@
 // The screen and its data code are real, over the pretend server (WHIT-686).
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, screen, fireEvent } from '@testing-library/react-native';
 
 const mockSetSheet = jest.fn();
 jest.mock('../context', () => {
@@ -27,8 +27,7 @@ jest.mock('expo-router', () => {
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, renderWithQueries, WithQueries } from './support/renderWithQueries';
-import { queryClient } from '../queryClient';
+import { useTestQueryClient, renderWithQueries, WithQueries, settle } from './support/renderWithQueries';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -54,7 +53,6 @@ const BUTTON = 'transactions-file-by-shop';
 const APPLY_RULES = 'transactions-apply-rules';
 
 const seedUncategorizedFeed = (transactions: unknown[]) => server.seed(UNCATEGORIZED_FEED, { transactions, nextCursor: null });
-const settle = () => waitFor(() => expect(queryClient.isFetching()).toBe(0));
 
 async function renderTab(tab: 'all' | 'uncategorized' = 'uncategorized') {
   await renderWithQueries(<Transactions />);

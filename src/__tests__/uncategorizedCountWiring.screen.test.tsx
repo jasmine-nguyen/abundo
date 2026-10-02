@@ -11,7 +11,7 @@
 // undefined" is the count request held open.
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, within, waitFor } from '@testing-library/react-native';
+import { render, screen, fireEvent, within } from '@testing-library/react-native';
 import { txn } from './factory';
 
 // Real selectors (countUncategorized / transactionGroups); only useAppContext is stubbed.
@@ -36,7 +36,7 @@ import Transactions from '../../app/(tabs)/transactions';
 import { TabBar } from '../../app/(tabs)/_layout';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, renderWithQueries, WithQueries } from './support/renderWithQueries';
+import { useTestQueryClient, renderWithQueries, WithQueries, settle, loaded } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { transactionsKey, uncategorizedFeedKey } from '../queries';
 
@@ -50,9 +50,6 @@ const COUNT = '/transactions/uncategorized/count';
 
 // No categories are seeded, so every row resolves to Uncategorized.
 const seedFeed = (path: string, transactions: unknown[]) => server.seed(path, { transactions, nextCursor: null });
-const settle = () => waitFor(() => expect(queryClient.isFetching()).toBe(0));
-const loaded = (queryKey: readonly unknown[]) =>
-  waitFor(() => expect(queryClient.getQueryState(queryKey)?.status).toBe('success'));
 
 const barProps: React.ComponentProps<typeof TabBar> = {
   state: { index: 0, routes: [{ key: 'transactions', name: 'transactions' }] },

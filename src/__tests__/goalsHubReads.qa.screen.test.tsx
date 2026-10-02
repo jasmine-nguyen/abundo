@@ -6,7 +6,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import React from 'react';
 import { act, render, screen, fireEvent, within, waitFor } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
-import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries } from './support/renderWithQueries';
+import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
@@ -108,7 +108,7 @@ describe('secondary reads degrade one card, never the hub', () => {
     expect(within(screen.getByTestId('mortgage-link')).getByText('$596,642')).toBeTruthy();
     server.fail('/homeloan', 500);
     await refreshInAct(() => queryClient.refetchQueries());
-    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await settle();
     expect(server.sent('GET', '/homeloan')).toHaveLength(2);
     const card = within(screen.getByTestId('mortgage-link'));
     expect(card.getByText('$596,642')).toBeTruthy();
@@ -122,7 +122,7 @@ describe('secondary reads degrade one card, never the hub', () => {
     expect(within(screen.getByTestId('mortgage-link')).getByText('Tap to see your payoff plan')).toBeTruthy();
     server.fail('/homeloan', 500);
     await refreshInAct(() => queryClient.refetchQueries());
-    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await settle();
     expect(server.sent('GET', '/homeloan')).toHaveLength(2);
     const card = within(screen.getByTestId('mortgage-link'));
     expect(card.getByText('Tap to see your payoff plan')).toBeTruthy();

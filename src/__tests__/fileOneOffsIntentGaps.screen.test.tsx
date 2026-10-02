@@ -13,7 +13,7 @@
 // The screen and its data code are real, over the pretend server (WHIT-686).
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
-import { screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { screen, fireEvent } from '@testing-library/react-native';
 
 // Stateful flag + STABLE spies (module-scope, so identity survives re-renders — a fresh jest.fn per
 // render would defeat toHaveBeenCalled assertions and change the effect's dep identity).
@@ -39,8 +39,7 @@ jest.mock('expo-router', () => {
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, renderWithQueries, WithQueries } from './support/renderWithQueries';
-import { queryClient } from '../queryClient';
+import { useTestQueryClient, renderWithQueries, WithQueries, settle } from './support/renderWithQueries';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -51,8 +50,6 @@ const unfiled = (id: string) => ({
   merchant_name: 'Coles', amount: -12.5, account_id: 'a1', account_name: 'ANZ', category: null,
   status: 'posted', type: 'PAYMENT', counts_to_budget: true,
 });
-
-const settle = () => waitFor(() => expect(queryClient.isFetching()).toBe(0));
 
 beforeEach(() => {
   resetAuth();

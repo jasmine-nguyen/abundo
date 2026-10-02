@@ -10,7 +10,7 @@ import { StyleSheet } from 'react-native';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { C } from '../theme';
 import { installFakeServer } from './support/fakeServer';
-import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct } from './support/renderWithQueries';
+import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { setParams, resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
@@ -92,7 +92,7 @@ it('a hard read failure with nothing cached shows the inline error + an accessib
 
   fireEvent.press(retry);
   await waitFor(() => expect(server.sent('GET', '/transactions')).toHaveLength(2));
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settle();
 });
 
 // WHIT-276 adversarial gaps (folded in) — the states that only appear when DetailStates is
@@ -106,7 +106,7 @@ it('while loading with nothing cached, shows the spinner and NOT the empty "No t
   expect(screen.getByTestId('account-loading')).toBeTruthy();
   expect(screen.queryByText('No transactions')).toBeNull();
   held.release();
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settle();
 });
 
 it('with an empty cache, a pending list plus a failed taxonomy renders BOTH the spinner and the error, no content', async () => {
@@ -117,7 +117,7 @@ it('with an empty cache, a pending list plus a failed taxonomy renders BOTH the 
   expect(screen.getByTestId('account-loading')).toBeTruthy();
   expect(screen.queryByText('No transactions')).toBeNull();
   held.release();
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settle();
 });
 
 it('a background refetch failure over cached rows keeps the transaction list rendered', async () => {

@@ -6,10 +6,10 @@
 // read only the editor's writers off it). expo-router's useRouter is mocked to capture navigation.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
+import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import { EMPTY_LOAN_FACTS, LOAN_FACTS } from './factory';
 import { installFakeServer } from './support/fakeServer';
-import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries } from './support/renderWithQueries';
+import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedGoal } from './support/goalsScreen';
 import { queryClient } from '../queryClient';
@@ -58,7 +58,7 @@ function drawHeld(ui: React.ReactElement) {
 // into the next test.
 async function releaseAndSettle(held: { release: () => void }) {
   await act(async () => { held.release(); });
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settle();
   await refreshInAct(() => {});
 }
 
