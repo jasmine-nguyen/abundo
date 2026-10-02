@@ -54,7 +54,7 @@ export function seedGoal(
   server.seed('/milestones', milestones);
 }
 
-interface GoalsHubSeed {
+export interface GoalsHubSeed {
   goals?: GoalRecord[];
   payCycle?: PayCycle;
   balances?: Record<string, number>;
