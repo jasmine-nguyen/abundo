@@ -73,16 +73,9 @@ async function moveBalance(balance: number) {
 }
 
 // Same move, but on a fully fake clock, so the burst's own timer can be run out instead of waited for.
-// refreshInAct can't be used here: its setTimeout(0) yield never fires on a fake clock. The refresh
-// settles inside act, and the query library's setTimeout(0) flush is run inside act too.
 async function moveBalanceOnFakeClock(balance: number) {
   jest.useFakeTimers({ now: new Date(2026, 6, 11) });
-  seedBalance(balance);
-  const refresh = queryClient.invalidateQueries();
-  await act(async () => {
-    await refresh;
-    jest.advanceTimersByTime(0);
-  });
+  await moveBalance(balance);
 }
 
 async function runOutBurst(ms: number) {

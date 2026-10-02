@@ -9,25 +9,7 @@ export const QUERIES_MOCK = /^\s*jest\.(mock|doMock)\(\s*['"](\.\.\/)+(src\/)?qu
 
 // This list may only shrink. Move a file onto the fake server (or delete it if it only checks
 // layout or animation), then remove its line here.
-const ALLOWED = new Set<string>([
-  'applyRulesButton.screen.test.tsx',
-  'fileByShopButton.screen.test.tsx',
-  'fileOneOffsIntent.screen.test.tsx',
-  'fileOneOffsIntentGaps.screen.test.tsx',
-  'transactionDetail.screen.test.tsx',
-  'transactionDetailDeleteGaps.screen.test.tsx',
-  'transactionEdit.screen.test.tsx',
-  'transactionsAccountsRemoved.screen.test.tsx',
-  'transactionSpread.gap.screen.test.tsx',
-  'transactionsScreenStates.screen.test.tsx',
-  'transactionsSearchGaps.screen.test.tsx',
-  'transactionsSearchServer.screen.test.tsx',
-  'uncategorizedCountWiring.screen.test.tsx',
-  'uncategorizedMerchantsGate.screen.test.tsx',
-  'uncategorizedMoreAffordance.screen.test.tsx',
-  'whit328SelectGap.screen.test.tsx',
-  'whit330Transactions.screen.test.tsx',
-]);
+const ALLOWED = new Set<string>([]);
 
 function mocksQueries(file: string): boolean {
   return QUERIES_MOCK.test(readFileSync(join(__dirname, file), 'utf8'));

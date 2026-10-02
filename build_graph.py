@@ -1510,9 +1510,10 @@ def plan_summary(state: BuildState) -> list[str]:
     ]
 
 
-def plan_brief(state: BuildState) -> str:
+def plan_brief(state: BuildState, boxed: bool = False) -> str:
     """Only what's needed to decide: the why/what/how summary and any open questions.
-    Files, tests, critic notes and risks stay in the plan file."""
+    Files, tests, critic notes and risks stay in the plan file. `boxed`, for the question box,
+    leaves out the questions and how to reply: the box asks them itself."""
     lines = [
         f"PLAN FOR REVIEW — {state.get('card_number') or 'ad-hoc request'} · {critic_summary(state)}",
         *plan_summary(state),
@@ -1523,17 +1524,17 @@ def plan_brief(state: BuildState) -> str:
         lines += ["", f"Why this needs your sign-off: {state['complexity_reason']}"]
     if state.get("plan_verdict") == "NEEDS REWORK":
         lines += section("The critic's unresolved concerns", [plain_finding(f) for f in state.get("plan_findings", [])])
-    if state.get("decisions"):
+    if state.get("decisions") and not boxed:
         lines += ["", "Decisions for you:", format_questions(state["decisions"])]
-    lines += [
-        "",
-        f"The technical details (files, tests, risks), if you want them: {plan_file(state).relative_to(ROOT)}",
-        "",
-        (
-            'Reply "go" to approve (recommended answers), "go: Q1 <answer>; Q2 <answer>" to approve '
-            'with your answers, "rework: <feedback>" to send it back, or "stop" to end the build.'
-        ),
-    ]
+    lines += ["", f"The technical details (files, tests, risks), if you want them: {plan_file(state).relative_to(ROOT)}"]
+    if not boxed:
+        lines += [
+            "",
+            (
+                'Reply "go" to approve (recommended answers), "go: Q1 <answer>; Q2 <answer>" to approve '
+                'with your answers, "rework: <feedback>" to send it back, or "stop" to end the build.'
+            ),
+        ]
     return "\n".join(lines)
 
 
@@ -1550,18 +1551,21 @@ def auto_approved_brief(state: BuildState) -> str:
     ])
 
 
-def invalid_brief(state: BuildState) -> str:
+def invalid_brief(state: BuildState, boxed: bool = False) -> str:
     lines = [
         f"CARD LOOKS INVALID — {state.get('card_number') or 'ad-hoc request'}: "
         f"{VALIDITY_WORDS.get(state['validity'], state['validity'])}",
         *section("Problem", state.get("problem", [])),
         *section("What the card should become", state.get("solution", [])),
-        "",
-        (
-            'Reply "close" if the card is not needed, "rework: <why it is still needed>" to plan it '
-            'anyway, or "stop" to end the build without deciding.'
-        ),
     ]
+    if not boxed:
+        lines += [
+            "",
+            (
+                'Reply "close" if the card is not needed, "rework: <why it is still needed>" to plan it '
+                'anyway, or "stop" to end the build without deciding.'
+            ),
+        ]
     return "\n".join(lines)
 
 
@@ -2939,13 +2943,13 @@ def ask_for(snapshot) -> dict | None:
     stop = {"id": "stop", "label": "Stop", "description": "End the build"}
     questions, final = [], None
     if node == "sign_off" and values.get("validity", "VALID") != "VALID":
-        kind = "invalid_card"
+        kind, intro = "invalid_card", invalid_brief(values, boxed=True)
         final = {
             "id": "final", "question": "Close the card? To plan it anyway, type why it's still needed.",
             "options": [{"id": "close", "label": "Close the card", "description": "It isn't needed"}, stop],
         }
     elif node == "sign_off":
-        kind = "sign_off"
+        kind, intro = "sign_off", plan_brief(values, boxed=True)
         for n, decision in enumerate(values.get("decisions", []), 1):
             options = lettered(decision.get("options", ""))
             if not 2 <= len(options) <= 4:
@@ -2960,7 +2964,7 @@ def ask_for(snapshot) -> dict | None:
             "options": [{"id": "go", "label": "Approve", "description": "Build it, with the answers above"}, stop],
         }
     elif node == "clarify":
-        kind = "clarify"
+        kind, intro = "clarify", "QUESTIONS BEFORE PLANNING: the card was too thin to plan."
         for n, item in enumerate(values.get("clarify_questions", []), 1):
             recommendation = item.get("recommendation", "")
             questions.append({
@@ -2972,6 +2976,7 @@ def ask_for(snapshot) -> dict | None:
             })
     elif node == "escalation" and structured_pause(values):
         kind = "decision"
+        intro = f"DECISION NEEDED (from the {NODE_LABELS['implementer']})\n\n{values['escalation']}"
         options = [
             {"id": o["id"], "label": first_line(f"{o['id']}) {o['label']}", 60),
              "description": first_line(f"{o.get('what_happens', '')} Cost: {o.get('cost', '')}", 160)}
@@ -2986,7 +2991,8 @@ def ask_for(snapshot) -> dict | None:
         return None
     if len(questions) + bool(final) > MAX_ASKED or not questions and not final:
         return None
-    return {"id": asked, "kind": kind, "questions": questions, "final": final}
+    # `intro`: the block, less the questions and how to reply, which the box asks itself.
+    return {"id": asked, "kind": kind, "intro": intro, "questions": questions, "final": final}
 
 
 def reply_from_answer(values: dict, ask: dict, answer: dict) -> tuple[str, str]:

@@ -3,7 +3,7 @@
 // useTestQueryClient() at file scope: no retries, and a cleared cache between tests.
 // (Not a *.test file, so the jest testMatch never runs it as a suite.)
 import React from 'react';
-import { beforeEach, afterEach, expect } from '@jest/globals';
+import { beforeEach, afterEach, expect, jest } from '@jest/globals';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { act, render, waitFor } from '@testing-library/react-native';
 import { queryClient } from '../../queryClient';
@@ -19,23 +19,42 @@ export function WithQueries({ children }: { children: React.ReactNode }) {
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }
 
+// Mirrors @testing-library/react-native's check: legacy fake timers mark setTimeout as a mock,
+// modern ones hang a `clock` on it.
+function fakeTimersOn() {
+  return (setTimeout as any)._isMockFunction === true || Object.prototype.hasOwnProperty.call(setTimeout, 'clock');
+}
+
 /**
- * Run a cache refresh or write (invalidate/refetch/setQueryData/remove…) inside act, then yield one
- * macrotask so the query library's batched notifications (one setTimeout(0) flush) re-render inside
- * act too. Without the yield the re-render lands after act, React logs an act warning, and under
- * coverage that log alone can stall the test past waitFor's 1s timeout.
+ * Run a cache refresh or write (invalidate/refetch/setQueryData/remove…) inside act, then flush one
+ * tick so the query library's batched notifications (one setTimeout(0) flush) re-render inside act
+ * too. On a fake clock the tick is advanced by hand, in its own sync act: advancing inside an async
+ * act also runs React's faked "was this act awaited?" check too early. Otherwise it yields a real
+ * macrotask. Without
+ * it the re-render lands after act, React logs an act warning, and under coverage that log alone
+ * can stall the test past waitFor's 1s timeout.
  */
 export async function refreshInAct(refresh: () => unknown) {
+  if (fakeTimersOn()) {
+    await act(async () => {
+      await refresh();
+    });
+    act(() => {
+      jest.advanceTimersByTime(0);
+    });
+    return;
+  }
   await act(async () => {
     await refresh();
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
 }
 
-/** Render inside WithQueries and wait until the first reads have settled. */
+/** Render inside WithQueries, wait until the first reads have settled, then flush their redraw. */
 export async function renderWithQueries(ui: React.ReactElement) {
   const view = render(<WithQueries>{ui}</WithQueries>);
   await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await refreshInAct(() => undefined);
   return view;
 }
 
@@ -51,5 +70,6 @@ export async function renderLoaded(ui: React.ReactElement, Wrapper: React.Compon
     view.rerender(<Wrapper><React.Fragment key="loaded">{ui}</React.Fragment></Wrapper>);
   });
   await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await refreshInAct(() => undefined);
   return view;
 }

@@ -5,21 +5,12 @@
 // shop" handles the shops with NO rule yet — so once every shop is filed it must hide, even while
 // stray one-off charges keep the count above zero. It shares the other gates (uncategorized tab,
 // whole-history count > 0, not selection mode, not the cold spinner / error state).
+// The screen and its data code are real, over the pretend server (WHIT-686).
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
-
-let mockTx: Record<string, unknown>;
-let mockServerCount: number | undefined;
-let mockMerchants: unknown;
-jest.mock('../queries', () => ({
-  useTransactionsScreenData: () => mockTx,
-  useUncategorizedCount: () => mockServerCount,
-  useUncategorizedMerchants: () => ({ merchants: mockMerchants, isLoading: false, isError: false }),
-}));
+import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 
 const mockSetSheet = jest.fn();
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 };
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return {
@@ -27,28 +18,30 @@ jest.mock('../context', () => {
     useAppContext: () => ({ openMultiPicker: jest.fn(), showToast: jest.fn(), openPicker: jest.fn(), setSheet: mockSetSheet }),
   };
 });
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => {
   const ReactLib = require('react');
   return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
 });
 
 import Transactions from '../../app/(tabs)/transactions';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient, renderWithQueries, WithQueries } from './support/renderWithQueries';
+import { queryClient } from '../queryClient';
 
-const category = (id: string | null) => (id === 'groceries' ? CAT : undefined);
+const server = installFakeServer();
+useTestQueryClient();
+
+const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
+const COUNT = '/transactions/uncategorized/count';
+const MERCHANTS = '/transactions/uncategorized/merchants';
+const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null };
 const unfiled = (id: string) => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01', description: 'COLES',
   merchant_name: 'Coles', amount: -12.5, account_id: 'a1', account_name: 'ANZ', category: null,
   status: 'posted', type: 'PAYMENT', counts_to_budget: true,
 });
-
-function txData(over: Record<string, unknown> = {}) {
-  return {
-    transactions: [unfiled('t1')], category, balances: new Map(),
-    isLoading: false, isError: false, isFetching: false, refetch: jest.fn(), refetchStale: jest.fn(),
-    refetchList: jest.fn(() => Promise.resolve()), refreshLiveBalances: jest.fn(() => Promise.resolve()),
-    hasMore: false, loadMore: jest.fn(), isLoadingMore: false, ...over,
-  };
-}
 
 const merchants = (over: Record<string, unknown> = {}) => ({
   unfiled: 20,
@@ -58,22 +51,35 @@ const merchants = (over: Record<string, unknown> = {}) => ({
 });
 
 const BUTTON = 'transactions-file-by-shop';
+const APPLY_RULES = 'transactions-apply-rules';
 
-function renderTab(tab: 'all' | 'uncategorized' = 'uncategorized') {
-  render(<Transactions />);
-  if (tab === 'uncategorized') fireEvent.press(screen.getByTestId('tab-uncategorized'));
+const seedUncategorizedFeed = (transactions: unknown[]) => server.seed(UNCATEGORIZED_FEED, { transactions, nextCursor: null });
+const settle = () => waitFor(() => expect(queryClient.isFetching()).toBe(0));
+
+async function renderTab(tab: 'all' | 'uncategorized' = 'uncategorized') {
+  await renderWithQueries(<Transactions />);
+  if (tab === 'all') return;
+  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  await settle();
 }
 
-beforeEach(() => { mockTx = txData(); mockServerCount = 5; mockMerchants = merchants(); mockSetSheet.mockClear(); });
+beforeEach(() => {
+  resetAuth();
+  mockSetSheet.mockClear();
+  server.seed('/categories', [CAT]);
+  server.seed(COUNT, { count: 5 });
+  server.seed(MERCHANTS, merchants());
+  seedUncategorizedFeed([unfiled('t1')]);
+});
 
 describe('the "File by shop" button', () => {
-  it('shows on the Uncategorized tab when there are rule-able shops', () => {
-    renderTab();
+  it('shows on the Uncategorized tab when there are rule-able shops', async () => {
+    await renderTab();
     expect(screen.getByTestId(BUTTON)).toBeTruthy();
   });
 
-  it('opens the file-by-shop list sheet when pressed', () => {
-    renderTab();
+  it('opens the file-by-shop list sheet when pressed', async () => {
+    await renderTab();
     fireEvent.press(screen.getByTestId(BUTTON));
     expect(mockSetSheet).toHaveBeenCalledWith({ mode: 'fileByShopList' });
   });
@@ -81,47 +87,60 @@ describe('the "File by shop" button', () => {
   // The extra gate this button adds over "Apply my rules". Fail-on-revert: drop the
   // `merchants?.groups.length > 0` clause and the button shows with an empty shop list — opening a
   // sheet with nothing to pick. Every shop filed but a stray one-off keeps the count > 0.
-  it('is hidden when there are no rule-able shops, even with unfiled charges left', () => {
-    mockMerchants = merchants({ groups: [], unfiled: 1, ungrouped: { count: 1, samples: ['ONE OFF'] } });
-    mockServerCount = 1;
-    renderTab();
+  it('is hidden when there are no rule-able shops, even with unfiled charges left', async () => {
+    server.seed(MERCHANTS, merchants({ groups: [], unfiled: 1, ungrouped: { count: 1, samples: ['ONE OFF'] } }));
+    server.seed(COUNT, { count: 1 });
+    await renderTab();
+    expect(screen.getByTestId(APPLY_RULES)).toBeTruthy(); // the other gates are open
     expect(screen.queryByTestId(BUTTON)).toBeNull();
   });
 
-  // While the shops are still loading (or pre-auth) the hook is undefined — the button waits rather
-  // than flashing in and out.
-  it('is hidden while the shop list is still loading (merchants undefined)', () => {
-    mockMerchants = undefined;
-    renderTab();
+  // While the shops are still loading the hook is undefined — the button waits rather than
+  // flashing in and out.
+  it('is hidden while the shop list is still loading', async () => {
+    const held = server.hold(MERCHANTS);
+    render(<WithQueries><Transactions /></WithQueries>);
+    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    expect(await screen.findByTestId(APPLY_RULES)).toBeTruthy();
+    expect(screen.queryByTestId(BUTTON)).toBeNull();
+    held.release();
+    await settle();
+  });
+
+  it('is not on the All tab', async () => {
+    await renderTab('all');
+    expect(screen.getByText('5')).toBeTruthy(); // the count has resolved
     expect(screen.queryByTestId(BUTTON)).toBeNull();
   });
 
-  it('is not on the All tab', () => {
-    renderTab('all');
+  it('is gone once the server count resolves to zero', async () => {
+    server.seed(COUNT, { count: 0 });
+    seedUncategorizedFeed([]);
+    await renderTab();
+    expect(screen.getByText('All caught up')).toBeTruthy();
     expect(screen.queryByTestId(BUTTON)).toBeNull();
   });
 
-  it('is gone once the server count resolves to zero', () => {
-    mockServerCount = 0;
-    mockTx = txData({ transactions: [] });
-    renderTab();
+  it('is hidden during the cold load', async () => {
+    await renderTab('all');
+    const held = server.hold(UNCATEGORIZED_FEED);
+    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    expect(await screen.findByTestId('transactions-loading')).toBeTruthy();
+    expect(screen.queryByTestId(BUTTON)).toBeNull();
+    held.release();
+    await settle();
+  });
+
+  it('is hidden while the list is in its error state', async () => {
+    server.fail(UNCATEGORIZED_FEED, 500);
+    await renderTab();
+    expect(screen.getByTestId('transactions-error')).toBeTruthy();
     expect(screen.queryByTestId(BUTTON)).toBeNull();
   });
 
-  it('is hidden during the cold load', () => {
-    mockTx = txData({ transactions: [], isLoading: true });
-    renderTab();
-    expect(screen.queryByTestId(BUTTON)).toBeNull();
-  });
-
-  it('is hidden while the list is in its error state', () => {
-    mockTx = txData({ transactions: [], isError: true });
-    renderTab();
-    expect(screen.queryByTestId(BUTTON)).toBeNull();
-  });
-
-  it('is hidden in selection mode', () => {
-    renderTab();
+  it('is hidden in selection mode', async () => {
+    await renderTab();
+    expect(screen.getByTestId(BUTTON)).toBeTruthy();
     fireEvent.press(screen.getByText('Select'));
     expect(screen.queryByTestId(BUTTON)).toBeNull();
   });

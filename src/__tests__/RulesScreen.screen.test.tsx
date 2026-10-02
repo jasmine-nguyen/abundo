@@ -48,11 +48,6 @@ function search(text: string) {
 // The query library hands its screen updates over on a timer, which the fake clock holds back:
 // run it once the first load has landed. The fake server replies with promises, which fake timers never hold back.
 const flush = () => act(async () => { jest.runOnlyPendingTimers(); });
-async function drawRules() {
-  await renderWithApp(<Rules />);
-  await flush();
-}
-
 // Tap a rule's trash button, then let the real deleteRule's DELETE and its follow-up reads land.
 async function deleteRule(id: string) {
   fireEvent.press(screen.getByTestId(`delete-rule-${id}`));
@@ -88,7 +83,7 @@ it('shows a loading state while rules load (nothing cached yet)', async () => {
 
 it('shows an error with a retry that refetches', async () => {
   server.fail('/rules', 500);
-  await drawRules();
+  await renderWithApp(<Rules />);
   expect(screen.getByText('Could not load your rules.')).toBeTruthy();
   // WHIT-198 GAP (authored by qa) — Rules' retry migrated to the shared RetryButton. Pressing by
   // visible text alone would pass for a bare Pressable too, so lock the a11y contract (role +
@@ -104,7 +99,7 @@ it('shows an error with a retry that refetches', async () => {
 
 it('renders a rule and deletes it via the trash button', async () => {
   server.seed('/rules', [NETFLIX]);
-  await drawRules();
+  await renderWithApp(<Rules />);
   expect(screen.getByText('NETFLIX')).toBeTruthy();
   expect(screen.getByText('Subscriptions')).toBeTruthy();
   await deleteRule('e1');
@@ -115,7 +110,7 @@ it('renders a rule and deletes it via the trash button', async () => {
 it('a failed delete puts the rule back and toasts', async () => {
   server.seed('/rules', [NETFLIX]);
   server.once('DELETE', '/rules/e1', { status: 500 });
-  await drawRules();
+  await renderWithApp(<Rules />);
   await deleteRule('e1');
   expect(screen.getByText('NETFLIX')).toBeTruthy();
   expect(shownToasts()).toEqual(['Could not delete rule. Please try again.']);
@@ -123,7 +118,7 @@ it('a failed delete puts the rule back and toasts', async () => {
 
 it('tapping a rule body opens the edit sheet with its id', async () => {
   server.seed('/rules', [NETFLIX]);
-  await drawRules();
+  await renderWithApp(<Rules />);
   fireEvent.press(screen.getByTestId('edit-rule-e1'));
   expect(currentSheet()).toEqual({ mode: 'addrule', ruleId: 'e1' });
 });
@@ -131,7 +126,6 @@ it('tapping a rule body opens the edit sheet with its id', async () => {
 // A loaded rule is never new (toRule sets isNew:false); only the create writer puts a fresh,
 // isNew rule into the ['rules'] cache (context.tsx). Mirror that write, then read the badge.
 it('renders the NEW badge on a freshly-created rule (isNew survives the cache mirror)', async () => {
-  jest.useRealTimers(); // refreshInAct waits on a real timer; this test needs no search clock
   await renderWithApp(<Rules />);
   expect(screen.queryByText('NEW')).toBeNull();
   await refreshInAct(() => queryClient.setQueryData(rulesKey, [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: true }]));
@@ -141,7 +135,7 @@ it('renders the NEW badge on a freshly-created rule (isNew survives the cache mi
 
 it('groups rules under their category headers', async () => {
   server.seed('/rules', TWO_RULES);
-  await drawRules();
+  await renderWithApp(<Rules />);
   expect(screen.getByText('Subscriptions')).toBeTruthy();
   expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
   expect(screen.getByText('NETFLIX')).toBeTruthy();
@@ -150,7 +144,7 @@ it('groups rules under their category headers', async () => {
 
 it('typing in the search box filters rows and hides the emptied group', async () => {
   server.seed('/rules', TWO_RULES);
-  await drawRules();
+  await renderWithApp(<Rules />);
   search('netflix');
   expect(screen.getByText('NETFLIX')).toBeTruthy();
   expect(screen.getByText('Subscriptions')).toBeTruthy();
@@ -161,7 +155,7 @@ it('typing in the search box filters rows and hides the emptied group', async ()
 
 it('search matches a category name, keeping a rule whose pattern does not match', async () => {
   server.seed('/rules', TWO_RULES);
-  await drawRules();
+  await renderWithApp(<Rules />);
   search('coffee');
   // STARBUCKS's pattern has no "coffee", but its category "Cafes & Coffee" does.
   expect(screen.getByText('STARBUCKS')).toBeTruthy();
@@ -171,7 +165,7 @@ it('search matches a category name, keeping a rule whose pattern does not match'
 
 it('clearing the search restores the full grouped list', async () => {
   server.seed('/rules', TWO_RULES);
-  await drawRules();
+  await renderWithApp(<Rules />);
   search('netflix');
   expect(screen.queryByText('STARBUCKS')).toBeNull();
   fireEvent.press(screen.getByLabelText('Clear search'));
@@ -182,7 +176,7 @@ it('clearing the search restores the full grouped list', async () => {
 
 it('shows a no-match state when the search matches nothing', async () => {
   server.seed('/rules', TWO_RULES);
-  await drawRules();
+  await renderWithApp(<Rules />);
   search('zzznope');
   expect(screen.getByText('No rules match “zzznope”.')).toBeTruthy();
   expect(screen.queryByText('NETFLIX')).toBeNull();
@@ -198,7 +192,7 @@ it('shows a no-match state when the search matches nothing', async () => {
 it('degrades gracefully when the taxonomy is cold: rules list under Uncategorized and stay actionable', async () => {
   server.fail('/categories', 500); // categories outage
   server.seed('/rules', [NETFLIX]);
-  await drawRules();
+  await renderWithApp(<Rules />);
   expect(screen.getByText('Uncategorized')).toBeTruthy();
   expect(screen.getByText('NETFLIX')).toBeTruthy();
   // still editable + deletable
@@ -213,7 +207,6 @@ it('degrades gracefully when the taxonomy is cold: rules list under Uncategorize
 // [A24] With zero rules and no query the pinned search box is hidden (nothing to search);
 // it must appear once rules exist. Guards the `rules.length > 0 || query.length > 0` gate.
 it('[A24] hides the search box when there are no rules, shows it once rules load', async () => {
-  jest.useRealTimers(); // refreshInAct waits on a real timer; this test needs no search clock
   await renderWithApp(<Rules />);
   expect(screen.queryByLabelText('Search rules')).toBeNull();
 
@@ -226,7 +219,7 @@ it('[A24] hides the search box when there are no rules, shows it once rules load
 // filters the visible list — it reads `rules` (raw), not the filtered groups.
 it('[A25] intro count stays the total (2) even when the filter hides one rule', async () => {
   server.seed('/rules', TWO_RULES);
-  await drawRules();
+  await renderWithApp(<Rules />);
   expect(screen.getByText(/You have 2 active rules/)).toBeTruthy();
 
   search('netflix');
@@ -239,7 +232,7 @@ it('[A25] intro count stays the total (2) even when the filter hides one rule', 
 it('[A26] renders two "Uncategorized" headers when a real category collides with orphans', async () => {
   server.seed('/categories', [{ id: 'real', name: 'Uncategorized', icon: 'tag', color: '#abc', bucket: 'Lifestyle' }]);
   server.seed('/rules', [rule('r1', 'REALONE', 'real'), rule('r2', 'GHOST', 'deleted')]);
-  await drawRules();
+  await renderWithApp(<Rules />);
   expect(screen.getAllByText('Uncategorized')).toHaveLength(2);
   expect(screen.getByText('REALONE')).toBeTruthy();
   expect(screen.getByText('GHOST')).toBeTruthy();
@@ -255,7 +248,7 @@ it('[A26] renders two "Uncategorized" headers when a real category collides with
 // against, so it can't prove off-screen rows are skipped; that's a device check, [M1]/[M2].)
 it('[G1] a large (60-rule) list still renders the first row, its header, the intro and the footer', async () => {
   server.seed('/rules', Array.from({ length: 60 }, (_, i) => rule(`e${i}`, `RULE${i}`, 'subs')));
-  await drawRules();
+  await renderWithApp(<Rules />);
   expect(screen.getByTestId('edit-rule-e0')).toBeTruthy();
   expect(screen.getByText('Subscriptions')).toBeTruthy();
   expect(screen.getByText(/You have 60 active rules/)).toBeTruthy();
@@ -268,7 +261,7 @@ it('[G1] a large (60-rule) list still renders the first row, its header, the int
 // just don't resolve.
 it('[G4] an orphan-only list renders under exactly one Uncategorized section and stays actionable', async () => {
   server.seed('/rules', [rule('o1', 'GHOSTA', 'gone'), rule('o2', 'GHOSTB', 'alsogone')]);
-  await drawRules();
+  await renderWithApp(<Rules />);
   expect(screen.getAllByText('Uncategorized')).toHaveLength(1);
   expect(screen.getByText('GHOSTA')).toBeTruthy();
   expect(screen.getByText('GHOSTB')).toBeTruthy();
@@ -283,7 +276,7 @@ it('[G4] an orphan-only list renders under exactly one Uncategorized section and
 // path (only shown when rows exist) would fail this.
 it('[G5] intro + add-rule footer render in the error state', async () => {
   server.fail('/rules', 500);
-  await drawRules();
+  await renderWithApp(<Rules />);
   expect(screen.getByText('Could not load your rules.')).toBeTruthy();
   expect(screen.getByText(/You have 0 active rules/)).toBeTruthy();
   expect(screen.getByText('Add a rule')).toBeTruthy();
@@ -298,7 +291,7 @@ it('[G5] intro + add-rule footer render in the loading state', async () => {
 });
 it('[G5] intro + add-rule footer render in the no-match state', async () => {
   server.seed('/rules', TWO_RULES);
-  await drawRules();
+  await renderWithApp(<Rules />);
   search('zzznope');
   expect(screen.getByText('No rules match “zzznope”.')).toBeTruthy();
   expect(screen.getByText(/You have 2 active rules/)).toBeTruthy();
@@ -311,7 +304,7 @@ it('[G5] intro + add-rule footer render in the no-match state', async () => {
 // through-tap the prop protects). Removing the prop drops the match count to 0.
 it('[G6] keeps keyboardShouldPersistTaps + non-sticky headers and still deletes through a tap', async () => {
   server.seed('/rules', TWO_RULES);
-  await drawRules();
+  await renderWithApp(<Rules />);
   expect(screen.UNSAFE_queryAllByProps({ keyboardShouldPersistTaps: 'handled' }).length).toBeGreaterThan(0);
   expect(screen.UNSAFE_queryAllByProps({ stickySectionHeadersEnabled: false }).length).toBeGreaterThan(0);
   await deleteRule('e2');

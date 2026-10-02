@@ -2,24 +2,17 @@
 // on the All tab, a not-in-budget uncategorized charge is still selectable and can be handed to
 // the bulk picker (openMultiPicker). This pins that reachable path — see the ranked critique for
 // whether it's acceptable (the user explicitly opts into selection mode) vs a real leak.
+// The screen and its data code are real, over the pretend server (WHIT-686).
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
-
-let mockTx: ReturnType<typeof txData>;
-jest.mock('../queries', () => ({
-  useTransactionsScreenData: () => mockTx,
-  // WHIT-501: the screen now reads the server tally for the count. Mirror the LOCAL count here so
-  // the badge and "All caught up" gating stay driven by these fixtures exactly as before.
-  useUncategorizedCount: () => (jest.requireActual('../context') as typeof import('../context')).countUncategorized(mockTx as any),
-  useUncategorizedMerchants: () => ({ merchants: undefined, isLoading: false, isError: false }),
-}));
+import { screen, fireEvent } from '@testing-library/react-native';
 
 const mockOpenMultiPicker = jest.fn();
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => ({ openPicker: () => {}, openMultiPicker: mockOpenMultiPicker }) };
 });
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('expo-router', () => {
   const React = require('react');
@@ -27,6 +20,12 @@ jest.mock('expo-router', () => {
 });
 
 import Transactions from '../../app/(tabs)/transactions';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient, renderWithQueries } from './support/renderWithQueries';
+
+const server = installFakeServer();
+useTestQueryClient();
 
 // A not-in-budget uncategorized transfer: null category, counts_to_budget false.
 const transfer = {
@@ -34,15 +33,15 @@ const transfer = {
   description: 'INTERNAL TRANSFER', merchant_name: 'Internal Transfer', amount: -500, account_id: 'a1',
   account_name: 'ANZ', category: null, status: 'posted', type: 'transfer', counts_to_budget: false,
 };
-const category = (_id: string | null) => undefined;
 
-function txData(over: Partial<{ transactions: unknown[] }> = {}) {
-  return { transactions: [], category, isLoading: false, isError: false, isFetching: false, refetch: jest.fn(), refetchStale: jest.fn(), ...over };
-}
-beforeEach(() => { mockOpenMultiPicker.mockClear(); mockTx = txData({ transactions: [transfer] }); });
+beforeEach(() => {
+  resetAuth();
+  mockOpenMultiPicker.mockClear();
+  server.seed('/transactions/feed', { transactions: [transfer], nextCursor: null });
+});
 
-it('a not-in-budget uncategorized transfer is still bulk-selectable on the All tab and handed to the picker', () => {
-  render(<Transactions />);
+it('a not-in-budget uncategorized transfer is still bulk-selectable on the All tab and handed to the picker', async () => {
+  await renderWithQueries(<Transactions />);
   // WHIT-330: the transfer now also shows on the Uncategorized tab, but this test exercises the
   // All-tab selection path specifically.
   fireEvent.press(screen.getByText('Select'));

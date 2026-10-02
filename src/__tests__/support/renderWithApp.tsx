@@ -7,7 +7,7 @@ import { expect } from '@jest/globals';
 import { render, waitFor } from '@testing-library/react-native';
 import { AppProvider, useAppContext, type Sheet } from '../../context';
 import { queryClient } from '../../queryClient';
-import { WithQueries } from './renderWithQueries';
+import { WithQueries, refreshInAct } from './renderWithQueries';
 
 let toasts: string[] = [];
 let sheet: Sheet = null;
@@ -40,9 +40,10 @@ export function WithApp({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Render inside the real AppProvider and wait until the first reads have settled. */
+/** Render inside the real AppProvider, wait until the first reads have settled, then flush their redraw. */
 export async function renderWithApp(ui: React.ReactElement) {
   const view = render(<WithApp>{ui}</WithApp>);
   await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await refreshInAct(() => undefined);
   return view;
 }

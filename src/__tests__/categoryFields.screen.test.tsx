@@ -20,7 +20,7 @@ import { MAX_CHILDREN_PER_CATEGORY } from '../context';
 import type { Bucket, Category } from '../types';
 import { cat } from './factory';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, refreshInAct } from './support/renderWithQueries';
+import { useTestQueryClient } from './support/renderWithQueries';
 import { renderWithApp, resetAppProbe } from './support/renderWithApp';
 import { resetAuth } from './support/authMock';
 
@@ -267,12 +267,6 @@ describe('categoryFullParent', () => {
 const cat = (id: string, parent: string | null) => ({ id, name: id, bucket: 'Lifestyle', icon: 'coffee', parent });
 const childrenOf = (parent: string, n: number, prefix: string) =>
   Array.from({ length: n }, (_, i) => cat(`${prefix}${i}`, parent));
-// Flush the query library's one-tick redraw after the fetch settles, so no tap lands before it.
-async function drawEdit() {
-  await renderWithApp(<CategoryEdit />);
-  await refreshInAct(() => undefined);
-}
-
 // The parent the real saveCategory sent for 'coffee'.
 async function savedParent() {
   await waitFor(() => expect(server.sent('PATCH', '/categories/coffee')).toHaveLength(1));
@@ -292,7 +286,7 @@ it('greys out a parent at the child cap, and a tap on it does nothing', async ()
     cat('treats', null),
     ...childrenOf('treats', MAX_CHILDREN_PER_CATEGORY, 'kid'),
   ]);
-  await drawEdit();
+  await renderWithApp(<CategoryEdit />);
 
   expect(screen.getByText('treats · full')).toBeTruthy();     // greyed + labelled
   fireEvent.press(screen.getByTestId('parent-treats'));        // disabled → no-op
@@ -311,7 +305,7 @@ it('keeps the category’s OWN full parent selectable — a plain rename never d
     cat('treats', null),
     ...childrenOf('treats', MAX_CHILDREN_PER_CATEGORY - 1, 'kid'),   // + coffee = 50
   ]);
-  await drawEdit();
+  await renderWithApp(<CategoryEdit />);
 
   expect(screen.queryByText('treats · full')).toBeNull();     // held parent is never greyed
   // Deselect then re-pick the held parent, then save: it must land back on 'treats'.

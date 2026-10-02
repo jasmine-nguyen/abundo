@@ -43,7 +43,7 @@ describe('testFiles walker (WHIT-673)', () => {
   it('the real test tree scan uses the same keys the allow-list uses', () => {
     const files = testFiles(join(__dirname));
     expect(files).toContain('goalsHub.screen.test.tsx');
-    expect(files).toContain('support/transactionsScreenData.ts');
+    expect(files).toContain('support/fakeServer.ts');
     expect(files).not.toContain('motionScroll.screen.test.tsx');
   });
 });
