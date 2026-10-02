@@ -39,13 +39,6 @@ const ALLOWED = new Set<string>([
   'repayment.edges.screen.test.tsx',
   'repayment.errorBoundary.screen.test.tsx',
   'RulesScreen.screen.test.tsx',
-  'settingsGear.screen.test.tsx',
-  'settingsGearSelection.screen.test.tsx',
-  'settingsLogout.screen.test.tsx',
-  'settingsProfile.screen.test.tsx',
-  'tabBadgeQuery.screen.test.tsx',
-  'tabBarNoSettings.screen.test.tsx',
-  'tabDotNotDuplicated.screen.test.tsx',
   'transactionDetail.screen.test.tsx',
   'transactionDetailDeleteGaps.screen.test.tsx',
   'transactionEdit.screen.test.tsx',
@@ -59,7 +52,6 @@ const ALLOWED = new Set<string>([
   'uncategorizedMoreAffordance.screen.test.tsx',
   'westpacAccountsTab.screen.test.tsx',
   'whit328SelectGap.screen.test.tsx',
-  'whit330TabDot.screen.test.tsx',
   'whit330Transactions.screen.test.tsx',
 ]);
 

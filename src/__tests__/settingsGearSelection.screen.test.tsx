@@ -4,19 +4,16 @@
 // selection with their picks intact. settingsGear covers the gear in the DEFAULT state only.
 // Fail-on-revert: gate `left={!selectionMode && <SettingsButton/>}` (hide the gear while
 // selecting) → getByLabelText('Settings') throws → this goes RED.
+// Runs over the fake server: the real useTransactionsScreenData reads the seeded feed.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { screen, fireEvent } from '@testing-library/react-native';
+import { installFakeServer } from './support/fakeServer';
+import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { resetAuth } from './support/authMock';
 
 const mockPush = jest.fn();
-let mockTx: ReturnType<typeof txData>;
-jest.mock('../queries', () => ({
-  useTransactionsScreenData: () => mockTx,
-  // WHIT-501: the screen now reads the server tally for the count. Mirror the LOCAL count here so
-  // the badge and "All caught up" gating stay driven by these fixtures exactly as before.
-  useUncategorizedCount: () => (jest.requireActual('../context') as typeof import('../context')).countUncategorized(mockTx as any),
-  useUncategorizedMerchants: () => ({ merchants: undefined, isLoading: false, isError: false }),
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 const mockOpenMultiPicker = jest.fn();
 jest.mock('../context', () => {
@@ -31,20 +28,26 @@ jest.mock('expo-router', () => {
 
 import Transactions from '../../app/(tabs)/transactions';
 
+const server = installFakeServer();
+useTestQueryClient();
+
 const charge = {
   transaction_id: 'c1', date: '2026-07-01', authorized_date: '2026-07-01',
   description: 'COFFEE', merchant_name: 'Cafe', amount: -5, account_id: 'a1',
   account_name: 'ANZ', category: null, status: 'posted', type: 'purchase', counts_to_budget: true,
 };
-const category = (_id: string | null) => undefined;
 
-function txData(over: Partial<{ transactions: unknown[] }> = {}) {
-  return { transactions: [], category, isLoading: false, isError: false, isFetching: false, refetch: jest.fn(), refetchStale: jest.fn(), ...over };
-}
-beforeEach(() => { mockPush.mockClear(); mockOpenMultiPicker.mockClear(); mockTx = txData({ transactions: [charge] }); });
+beforeEach(() => {
+  mockPush.mockClear();
+  mockOpenMultiPicker.mockClear();
+  resetAuth();
+  server.seed('/transactions/feed', { transactions: [charge], nextCursor: null });
+  server.seed('/categories', []);
+  server.seed('/transactions/uncategorized/count', { count: 1 });
+});
 
-it('keeps the gear reachable in selection mode: tapping it pushes /settings and leaves the selection intact', () => {
-  render(<Transactions />);
+it('keeps the gear reachable in selection mode: tapping it pushes /settings and leaves the selection intact', async () => {
+  await renderWithQueries(<Transactions />);
   fireEvent.press(screen.getByText('Select'));
   fireEvent.press(screen.getByLabelText('Select Cafe'));
   expect(screen.getByText('1 selected')).toBeTruthy();

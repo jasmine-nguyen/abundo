@@ -10,6 +10,9 @@ import { it, expect, jest, describe, beforeEach } from '@jest/globals';
 import React from 'react';
 import { Text } from 'react-native';
 import { render, screen, fireEvent } from '@testing-library/react-native';
+import { installFakeServer } from './support/fakeServer';
+import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { resetAuth } from './support/authMock';
 
 const mockPush = jest.fn();
 jest.mock('expo-router', () => {
@@ -33,30 +36,7 @@ jest.mock('../motion/useNavBarsHeader', () => ({
 }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
-const category = (_id: string | null) => undefined;
-jest.mock('../queries', () => ({
-  useBudgetsScreenData: () => ({ budgets: [], category, cycleLen: 14, daysLeft: 7, isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn() }),
-  useTransactionsScreenData: () => ({
-    transactions: [], category, balances: new Map(), isLoading: false, isError: false,
-    refetch: jest.fn(), refetchStale: jest.fn(), refetchList: jest.fn(() => Promise.resolve()),
-    refreshLiveBalances: jest.fn(() => Promise.resolve()), hasMore: false, loadMore: jest.fn(), isLoadingMore: false,
-  }),
-  // WHIT-501: no uncategorized charges in these fixtures — the server tally is 0, matching the empty list.
-  useUncategorizedCount: () => 0,
-  useUncategorizedMerchants: () => ({ merchants: undefined, isLoading: false, isError: false }),
-  useInsightsScreenData: () => ({ breakdown: {}, earned: 0, incomeSources: [], category, isLoading: false, isError: false, categoriesError: false, refetch: jest.fn(), refetchStale: jest.fn() }),
-  useGoalsScreenData: () => ({
-    goals: [], payCycle: { length: 14, last_pay_date: '2024-01-03' }, balanceFor: () => null,
-    loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null },
-    homeLoan: { balance: null, asOf: null }, mortgageError: false, isLoading: false, isError: false,
-    refetch: jest.fn(), refetchStale: jest.fn(),
-  }),
-  useGoalScreenData: () => ({
-    loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null },
-    homeLoan: { balance: null, asOf: null }, repayment: { amount: null, date: null, principal: null, interest: null },
-    refetchStale: jest.fn(),
-  }),
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 // Real selectors (budgetViews / transactionGroups / accountSummaries / categoryBreakdown / …),
 // benign useAppContext covering every slice the five screens read.
@@ -80,7 +60,14 @@ import Accounts from '../../app/(tabs)/accounts';
 import Insights from '../../app/(tabs)/insights';
 import Goals from '../../app/(tabs)/goals';
 
-beforeEach(() => { mockPush.mockClear(); });
+// Every tab reads the server defaults (empty lists, a zero uncategorized count).
+installFakeServer();
+useTestQueryClient();
+
+beforeEach(() => {
+  mockPush.mockClear();
+  resetAuth();
+});
 
 describe('SettingsButton (the header gear)', () => {
   it('is an accessible "Settings" button and navigates to /settings on press', () => {
@@ -118,8 +105,8 @@ describe.each([
   ['Insights', <Insights />],
   ['Goals', <Goals />],
 ] as [string, React.ReactElement][])('the Settings gear is present on %s', (_name, ui) => {
-  it('renders a "Settings" header button that opens /settings', () => {
-    render(ui);
+  it('renders a "Settings" header button that opens /settings', async () => {
+    await renderWithQueries(ui);
     const btn = screen.getByLabelText('Settings');
     fireEvent.press(btn);
     expect(mockPush).toHaveBeenCalledWith('/settings');
