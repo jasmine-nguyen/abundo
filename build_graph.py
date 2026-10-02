@@ -684,6 +684,19 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
     }.get(name)
 
 
+def write_progress(thread: str, **fields) -> None:
+    """Where the build is, for anything watching it (the build-pause mod's pane, band and alerts):
+    .build/<thread>/progress.json, replaced whole so a reader never sees half of it."""
+    path = BUILD_DIR / thread / "progress.json"
+    try:
+        progress = json.loads(read_text(path) or "{}")
+    except json.JSONDecodeError:
+        progress = {}
+    progress.update(fields, thread=thread, updated_at=time.time(), max_rounds=MAX_IMPLEMENTATION_ROUNDS)
+    write_text(path.with_suffix(".tmp"), json.dumps(progress, indent=2))
+    path.with_suffix(".tmp").replace(path)
+
+
 def announce(name: str, node):
     """Wrap a step so it prints its own progress lines."""
 
@@ -691,11 +704,16 @@ def announce(name: str, node):
         message = running_message(name, state)
         if message:
             print(f"⌛ {message}…", flush=True)
+            write_progress(
+                state["thread_id"], status="running", step=message, card=state.get("card_number") or "",
+                round=state.get("implementation_attempts", 0), pid=os.getpid(),
+            )
 
     def after(state: BuildState, update: dict | None):
         message = finished_message(name, state, update or {})
         if message:
             print(message, flush=True)
+            write_progress(state["thread_id"], last=message)
 
     if inspect.iscoroutinefunction(node):
 
@@ -2785,6 +2803,7 @@ async def start_build(graph, saver, config, snapshot, args):
             print(f"Switched to {old['base_branch']}: the discarded attempt stays on {old['branch']}.")
         await saver.adelete_thread(thread)
     shutil.rmtree(BUILD_DIR / thread, ignore_errors=True)
+    write_progress(thread, started_at=time.time(), card=args.card or "")
     print(f"Starting build (thread {thread})...\n")
     return await graph.ainvoke(
         {
@@ -2869,10 +2888,14 @@ def save_pause(thread: str, snapshot) -> None:
     (.claude/hooks/show-pause-first.py). Its "shown" mark is cleared: this is a new pause."""
     folder = BUILD_DIR / thread
     (folder / "pause.shown").unlink(missing_ok=True)
+    values = snapshot.values or {}
     if snapshot.interrupts:
         write_text(folder / "pause.txt", snapshot.interrupts[0].value)
+        write_progress(thread, status="paused", waiting=first_line(snapshot.interrupts[0].value, 200))
     else:
         (folder / "pause.txt").unlink(missing_ok=True)
+        outcome = values.get("outcome", "")
+        write_progress(thread, status="finished" if outcome else "stopped", outcome=outcome, waiting="")
 
 
 def last_save_file(thread: str) -> Path:
