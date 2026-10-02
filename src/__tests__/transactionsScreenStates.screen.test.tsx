@@ -169,12 +169,14 @@ it('swaps the button for a spinner while the next page is loading', async () => 
   seedFeed([row('t1')], 'c1');
   await draw();
   const held = server.hold(FEED);
-  server.once('GET', FEED, { body: { transactions: [], nextCursor: null } });
+  server.once('GET', FEED, { body: { transactions: [{ ...row('t2'), amount: -7 }], nextCursor: null } });
   fireEvent.press(screen.getByTestId('transactions-load-more'));
   expect(await screen.findByTestId('transactions-load-more-spinner')).toBeTruthy();
   expect(screen.queryByTestId('transactions-load-more')).toBeNull(); // button hidden while loading
   held.release();
-  await waitFor(() => expect(screen.queryByTestId('transactions-load-more-spinner')).toBeNull());
+  await settle();
+  expect(await screen.findByText('-$7.00', {}, { timeout: 3000 })).toBeTruthy(); // page 2 is in
+  expect(screen.queryByTestId('transactions-load-more-spinner')).toBeNull();
 });
 
 // WHIT: on the Uncategorized tab, when everything is filed ("All caught up"), Load More must
