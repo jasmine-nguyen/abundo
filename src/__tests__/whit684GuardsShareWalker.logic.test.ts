@@ -10,6 +10,7 @@ const GUARDS = [
   'cacheRefreshInAct.logic.test.ts',
   'cacheInActSingleGuard.logic.test.ts',
   'testQueryClientShared.logic.test.ts',
+  'whit672BudgetLoanSuitesRealQueries.logic.test.ts',
 ];
 // Built from parts so this file never contains what it hunts for.
 const OWN_WALK = new RegExp('\\b(' + ['readdir' + 'Sync', 'stat' + 'Sync'].join('|') + ')\\b');
