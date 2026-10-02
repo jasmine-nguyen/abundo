@@ -10,7 +10,8 @@ import { screen } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
-import { pinToday, seedGoal } from './support/goalsScreen';
+import { pinToday } from './support/clock';
+import { seedGoal } from './support/goalsScreen';
 import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
