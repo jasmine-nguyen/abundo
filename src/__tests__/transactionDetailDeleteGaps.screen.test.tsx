@@ -1,22 +1,12 @@
 // WHIT-654 QA — the Delete button on the transaction detail screen: the confirm wording and style,
 // double taps, the in-flight state, a throwing writer, the only-cached-row case, and no button on
-// "not found". The context writer is mocked; the screen is real.
+// "not found". The context writer is mocked; the screen and its data code are real, over the
+// pretend server (WHIT-686).
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { Alert } from 'react-native';
-import { render, screen, fireEvent, act } from '@testing-library/react-native';
-import { makeState, cat, txn } from './factory';
-
-let mockTx: ReturnType<typeof txData>;
-jest.mock('../queries', () => ({
-  useTransactionDetailScreenData: () => mockTx,
-  useTransactionResolver: () => ({
-    transactions: mockTx.transactions,
-    findTx: (id: string) => (mockTx.transactions as { transaction_id: string }[]).find((t) => t.transaction_id === id),
-  }),
-  useBudgetsScreenData: () => ({ budgets: [] }),
-  useRulesScreenData: () => ({ rules: [], isLoading: false }),
-}));
+import { screen, fireEvent } from '@testing-library/react-native';
+import { txn } from './factory';
 
 const mockDeleteTransaction = jest.fn<(txId: string) => Promise<boolean>>();
 jest.mock('../context', () => {
@@ -31,6 +21,7 @@ jest.mock('../context', () => {
     }),
   };
 });
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 let mockId = 't1';
 const mockBack = jest.fn();
@@ -41,30 +32,32 @@ jest.mock('expo-router', () => ({
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import TransactionDetail from '../../app/transaction/[id]';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient, renderWithQueries, refreshInAct } from './support/renderWithQueries';
+import { queryClient } from '../queryClient';
+import { transactionsKey } from '../queries';
 
-const category = makeState({ categories: [cat()] }).category;
+const server = installFakeServer();
+useTestQueryClient();
 
-function txData(over: Partial<{ transactions: unknown[]; isLoading: boolean; isError: boolean }> = {}) {
-  return {
-    transactions: [txn({ transaction_id: 't1', category: 'coffee' })],
-    category, balances: new Map(),
-    isLoading: false, isError: false, isFetching: false,
-    refetch: jest.fn(), refetchStale: jest.fn(),
-    ...over,
-  };
-}
+const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', parent: null };
 
 type AlertButton = { text: string; style?: string; onPress?: () => void };
 let alertSpy: ReturnType<typeof jest.spyOn>;
 
 beforeEach(() => {
+  resetAuth();
   mockId = 't1';
-  mockTx = txData();
+  server.seed('/categories', [COFFEE]);
+  server.seed('/transactions/feed', { transactions: [txn({ transaction_id: 't1', category: 'coffee' })], nextCursor: null });
   mockBack.mockClear();
   mockDeleteTransaction.mockReset();
   alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
 });
 afterEach(() => { alertSpy.mockRestore(); });
+
+const draw = () => renderWithQueries(<TransactionDetail />);
 
 function openConfirm() {
   fireEvent.press(screen.getByTestId('transaction-delete'));
@@ -73,8 +66,8 @@ function openConfirm() {
 }
 
 // [C1]
-it('the confirm says it cannot be undone and Delete is the destructive choice', () => {
-  render(<TransactionDetail />);
+it('the confirm says it cannot be undone and Delete is the destructive choice', async () => {
+  await draw();
   const { title, message, buttons, confirm } = openConfirm();
   expect(title).toBe('Delete this transaction?');
   expect(message).toMatch(/can't be undone/);
@@ -86,10 +79,10 @@ it('the confirm says it cannot be undone and Delete is the destructive choice', 
 // [C2]
 it('a double confirm in the same frame deletes once and goes back once', async () => {
   mockDeleteTransaction.mockResolvedValue(true);
-  render(<TransactionDetail />);
+  await draw();
   const { confirm } = openConfirm();
 
-  await act(async () => { confirm.onPress?.(); confirm.onPress?.(); });
+  await refreshInAct(() => { confirm.onPress?.(); confirm.onPress?.(); });
 
   expect(mockDeleteTransaction).toHaveBeenCalledTimes(1);
   expect(mockBack).toHaveBeenCalledTimes(1);
@@ -99,15 +92,15 @@ it('a double confirm in the same frame deletes once and goes back once', async (
 it('while the delete runs the button says "Deleting…" and is disabled', async () => {
   let finish: (ok: boolean) => void = () => {};
   mockDeleteTransaction.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
-  render(<TransactionDetail />);
+  await draw();
 
-  await act(async () => { openConfirm().confirm.onPress?.(); });
+  await refreshInAct(() => { openConfirm().confirm.onPress?.(); });
 
   const button = screen.getByTestId('transaction-delete');
   expect(screen.getByText('Deleting…')).toBeTruthy();
   expect(button.props.accessibilityState).toEqual({ disabled: true });
 
-  await act(async () => { finish(false); });
+  await refreshInAct(() => finish(false));
   expect(screen.getByText('Delete transaction')).toBeTruthy();
   expect(mockBack).not.toHaveBeenCalled();
 });
@@ -116,38 +109,42 @@ it('while the delete runs the button says "Deleting…" and is disabled', async 
 it('a writer that throws leaves the user on the screen with the button re-enabled', async () => {
   const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
   mockDeleteTransaction.mockRejectedValue(new Error('boom'));
-  render(<TransactionDetail />);
+  await draw();
 
-  await act(async () => { openConfirm().confirm.onPress?.(); });
+  await refreshInAct(() => { openConfirm().confirm.onPress?.(); });
 
   expect(mockBack).not.toHaveBeenCalled();
   expect(screen.getByTestId('transaction-delete').props.accessibilityState).toEqual({ disabled: false });
   consoleError.mockRestore();
 });
 
-// [C5]
+// [C5] The delete empties every list cache and the feed is reloading with nothing cached — the
+// screen would normally show its spinner, but it keeps the charge up until the delete answers.
 it('deleting the ONLY cached charge never flashes the empty/loading states before going back', async () => {
   let finish: (ok: boolean) => void = () => {};
   mockDeleteTransaction.mockImplementation(() => {
-    mockTx = txData({ transactions: [], isLoading: true });
+    void queryClient.resetQueries({ queryKey: transactionsKey });
     return new Promise((resolve) => { finish = resolve; });
   });
-  const view = render(<TransactionDetail />);
+  await draw();
+  const reload = server.hold('/transactions/feed');
 
-  await act(async () => { openConfirm().confirm.onPress?.(); });
-  view.rerender(<TransactionDetail />);
+  await refreshInAct(() => { openConfirm().confirm.onPress?.(); });
 
+  expect(queryClient.getQueryState(transactionsKey)?.status).toBe('pending');
+  expect(screen.queryByTestId('transaction-loading')).toBeNull();
   expect(screen.queryByText('Transaction not found')).toBeNull();
   expect(screen.getByTestId('transaction-delete')).toBeTruthy();
 
-  await act(async () => { finish(true); });
+  await refreshInAct(() => finish(true));
   expect(mockBack).toHaveBeenCalledTimes(1);
+  await refreshInAct(() => reload.release());
 });
 
 // [C6]
-it('a stale id shows "not found" with no Delete button', () => {
+it('a stale id shows "not found" with no Delete button', async () => {
   mockId = 'gone';
-  render(<TransactionDetail />);
+  await draw();
   expect(screen.getByText('Transaction not found')).toBeTruthy();
   expect(screen.queryByTestId('transaction-delete')).toBeNull();
 });

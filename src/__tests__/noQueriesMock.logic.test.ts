@@ -46,11 +46,7 @@ const ALLOWED = new Set<string>([
   'tabBadgeQuery.screen.test.tsx',
   'tabBarNoSettings.screen.test.tsx',
   'tabDotNotDuplicated.screen.test.tsx',
-  'transactionDetail.screen.test.tsx',
-  'transactionDetailDeleteGaps.screen.test.tsx',
-  'transactionEdit.screen.test.tsx',
   'transactionsAccountsRemoved.screen.test.tsx',
-  'transactionSpread.gap.screen.test.tsx',
   'transactionsScreenStates.screen.test.tsx',
   'transactionsSearchGaps.screen.test.tsx',
   'transactionsSearchServer.screen.test.tsx',
@@ -60,7 +56,6 @@ const ALLOWED = new Set<string>([
   'westpacAccountsTab.screen.test.tsx',
   'whit328SelectGap.screen.test.tsx',
   'whit330TabDot.screen.test.tsx',
-  'whit330Transactions.screen.test.tsx',
 ]);
 
 function mocksQueries(file: string): boolean {
