@@ -25,8 +25,7 @@ jest.mock('expo-router', () => {
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, renderWithQueries, WithQueries } from './support/renderWithQueries';
-import { queryClient } from '../queryClient';
+import { useTestQueryClient, renderWithQueries, WithQueries, settle, loaded } from './support/renderWithQueries';
 import { uncategorizedFeedKey } from '../queries';
 
 const server = installFakeServer();
@@ -38,9 +37,6 @@ const MORE = 'transactions-uncategorized-more';
 const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null };
 
 const seedUncategorizedFeed = (nextCursor: string | null) => server.seed(UNCATEGORIZED_FEED, { transactions: [], nextCursor });
-const settle = () => waitFor(() => expect(queryClient.isFetching()).toBe(0));
-const loaded = (queryKey: readonly unknown[]) =>
-  waitFor(() => expect(queryClient.getQueryState(queryKey)?.status).toBe('success'));
 
 async function renderTab() {
   const view = await renderWithQueries(<Transactions />);

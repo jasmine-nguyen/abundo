@@ -3,11 +3,9 @@
 // provider records every toast shown and the open sheet, for tests to read what the user sees.
 // Call resetAppProbe() in beforeEach. (Not a *.test file, so the jest testMatch never runs it.)
 import React, { useEffect } from 'react';
-import { expect } from '@jest/globals';
-import { render, waitFor } from '@testing-library/react-native';
+import { render } from '@testing-library/react-native';
 import { AppProvider, useAppContext, type Sheet } from '../../context';
-import { queryClient } from '../../queryClient';
-import { WithQueries, refreshInAct } from './renderWithQueries';
+import { WithQueries, refreshInAct, settle } from './renderWithQueries';
 
 let toasts: string[] = [];
 let sheet: Sheet = null;
@@ -43,7 +41,7 @@ export function WithApp({ children }: { children: React.ReactNode }) {
 /** Render inside the real AppProvider, wait until the first reads have settled, then flush their redraw. */
 export async function renderWithApp(ui: React.ReactElement) {
   const view = render(<WithApp>{ui}</WithApp>);
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settle();
   await refreshInAct(() => undefined);
   return view;
 }

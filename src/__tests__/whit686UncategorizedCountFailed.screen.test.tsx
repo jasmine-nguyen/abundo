@@ -29,7 +29,7 @@ import Transactions from '../../app/(tabs)/transactions';
 import { TabBar } from '../../app/(tabs)/_layout';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, renderWithQueries, refreshInAct } from './support/renderWithQueries';
+import { useTestQueryClient, renderWithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { uncategorizedCountKey, uncategorizedFeedKey } from '../queries';
 
@@ -53,7 +53,6 @@ const merchants = {
 
 const seedFeed = (path: string, transactions: unknown[], nextCursor: string | null = null) =>
   server.seed(path, { transactions, nextCursor });
-const settle = () => waitFor(() => expect(queryClient.isFetching()).toBe(0));
 const countFailed = () => waitFor(() => expect(queryClient.getQueryState(uncategorizedCountKey)?.status).toBe('error'));
 
 const barProps: React.ComponentProps<typeof TabBar> = {

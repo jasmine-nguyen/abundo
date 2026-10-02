@@ -12,7 +12,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import React from 'react';
 import { act, render, screen, fireEvent, within, waitFor } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
-import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries } from './support/renderWithQueries';
+import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
@@ -315,7 +315,7 @@ describe('loading + error', () => {
     await renderWithQueries(<Goals />);
     server.fail('/goals', 500);
     await refreshInAct(() => queryClient.refetchQueries());
-    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await settle();
     expect(server.sent('GET', '/goals')).toHaveLength(2);
     expect(screen.queryByTestId('goals-error')).toBeNull();
     expect(screen.getByTestId('goal-card-g1')).toBeTruthy();

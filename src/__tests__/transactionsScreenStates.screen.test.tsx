@@ -37,7 +37,7 @@ jest.mock('expo-router', () => {
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries } from './support/renderWithQueries';
+import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries, settle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { transactionsKey, uncategorizedCountKey } from '../queries';
 
@@ -69,7 +69,6 @@ async function draw() {
   await renderWithQueries(<Transactions />);
   await waitFor(() => expect(screen.queryByTestId('transactions-loading')).toBeNull());
 }
-const settle = () => waitFor(() => expect(queryClient.isFetching()).toBe(0));
 
 const refreshControl = () => screen.UNSAFE_getByType(RefreshControl);
 const isSpinning = () => refreshControl().props.refreshing;

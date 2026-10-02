@@ -19,7 +19,7 @@ jest.mock('expo-router', () => {
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, renderWithQueries, refreshInAct } from './support/renderWithQueries';
+import { useTestQueryClient, renderWithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { uncategorizedFeedKey } from '../queryKeys';
 
@@ -44,7 +44,6 @@ const gets = (path: string) => server.sentUnder('GET', path).filter((request) =>
 const cursorGets = (path: string) => server.sentUnder('GET', `${path}?cursor=`).length;
 const refreshControl = () => screen.UNSAFE_getByType(RefreshControl);
 const pull = () => act(async () => { refreshControl().props.onRefresh(); });
-const settle = () => waitFor(() => expect(queryClient.isFetching()).toBe(0));
 
 beforeEach(() => {
   resetAuth();

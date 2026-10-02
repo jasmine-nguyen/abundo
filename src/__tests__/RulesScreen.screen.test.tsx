@@ -9,7 +9,7 @@ import { render, screen, fireEvent, act, renderHook, waitFor } from '@testing-li
 import type { RuleRecord } from '../api';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, refreshInAct } from './support/renderWithQueries';
+import { useTestQueryClient, refreshInAct, settle as settleQueries } from './support/renderWithQueries';
 import { renderWithApp, WithApp, shownToasts, currentSheet, resetAppProbe } from './support/renderWithApp';
 import { resetAuth } from './support/authMock';
 import { queryClient } from '../queryClient';
@@ -52,7 +52,7 @@ const flush = () => act(async () => { jest.runOnlyPendingTimers(); });
 async function deleteRule(id: string) {
   fireEvent.press(screen.getByTestId(`delete-rule-${id}`));
   await waitFor(() => expect(server.sent('DELETE', `/rules/${id}`)).toHaveLength(1));
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settleQueries();
   await flush();
 }
 
@@ -78,7 +78,7 @@ it('shows a loading state while rules load (nothing cached yet)', async () => {
   const held = await renderHeldRules();
   expect(screen.getByText('Loading rules…')).toBeTruthy();
   held.release();
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settleQueries();
 });
 
 it('shows an error with a retry that refetches', async () => {
@@ -94,7 +94,7 @@ it('shows an error with a retry that refetches', async () => {
   expect(rulesReads()).toHaveLength(1);
   fireEvent.press(retry);
   await waitFor(() => expect(rulesReads()).toHaveLength(2));
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settleQueries();
 });
 
 it('renders a rule and deletes it via the trash button', async () => {
@@ -287,7 +287,7 @@ it('[G5] intro + add-rule footer render in the loading state', async () => {
   expect(screen.getByText(/You have 0 active rules/)).toBeTruthy();
   expect(screen.getByText('Add a rule')).toBeTruthy();
   held.release();
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settleQueries();
 });
 it('[G5] intro + add-rule footer render in the no-match state', async () => {
   server.seed('/rules', TWO_RULES);

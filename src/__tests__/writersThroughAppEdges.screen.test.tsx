@@ -6,7 +6,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent, waitFor, act } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, refreshInAct } from './support/renderWithQueries';
+import { useTestQueryClient, refreshInAct, settle } from './support/renderWithQueries';
 import { renderWithApp, shownToasts, currentSheet, resetAppProbe } from './support/renderWithApp';
 import { resetAuth, setAuthStatus } from './support/authMock';
 import { setParams, resetRouter, routerSpies } from './support/routerMock';
@@ -52,7 +52,7 @@ describe('Rules delete through the real deleteRule', () => {
 
     fireEvent.press(screen.getByTestId('delete-rule-e1'));
     await waitFor(() => expect(server.sent('DELETE', '/rules/e1')).toHaveLength(1));
-    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await settle();
 
     expect(screen.queryByText('NETFLIX')).toBeNull();
     expect(screen.getByText('SPOTIFY')).toBeTruthy();

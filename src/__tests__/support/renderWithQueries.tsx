@@ -50,10 +50,17 @@ export async function refreshInAct(refresh: () => unknown) {
   });
 }
 
+/** Wait until no query is fetching. */
+export const settle = () => waitFor(() => expect(queryClient.isFetching()).toBe(0));
+
+/** Wait until one query has loaded. */
+export const loaded = (queryKey: readonly unknown[]) =>
+  waitFor(() => expect(queryClient.getQueryState(queryKey)?.status).toBe('success'));
+
 /** Render inside WithQueries, wait until the first reads have settled, then flush their redraw. */
 export async function renderWithQueries(ui: React.ReactElement) {
   const view = render(<WithQueries>{ui}</WithQueries>);
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settle();
   await refreshInAct(() => undefined);
   return view;
 }
@@ -69,7 +76,7 @@ export async function renderLoaded(ui: React.ReactElement, Wrapper: React.Compon
   await act(async () => {
     view.rerender(<Wrapper><React.Fragment key="loaded">{ui}</React.Fragment></Wrapper>);
   });
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settle();
   await refreshInAct(() => undefined);
   return view;
 }

@@ -3,10 +3,10 @@
 // api.ts, so a change to how goals, recent transactions or balances reach the form turns one red.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
+import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import type { GoalRecord, AccountBalance } from '../api';
 import { installFakeServer } from './support/fakeServer';
-import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries } from './support/renderWithQueries';
+import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { txn } from './factory';
 import { queryClient } from '../queryClient';
@@ -178,7 +178,7 @@ describe('editing waits for the real goals read', () => {
     render(<WithQueries><GoalEdit /></WithQueries>);
     expect(saveDisabled()).toBe(false);
     await act(async () => { held.release(); });
-    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    await settle();
   });
 
   // [A10] (P1) The edited goal disappears on a background refetch: Save blocks again, and the
