@@ -5,8 +5,9 @@
 // celebration hook/diff run; only the data boundary and the router are stubbed.
 // WHIT-685: the goal and its balance come from the fake server through the real screen data code
 // (useGoalsScreenData); a balance move is a re-seeded server reply and a cache refresh, as in the app.
-// Timers stay real (only today's date is pinned), except in the "clears itself" tests, which move
-// the balance on a fully fake clock and run the burst's timer out.
+// Timers stay real (only today's date is pinned), except in the tests that show a burst. Those move
+// the balance on a fully fake clock, so the confetti animation never ticks outside act, and the
+// "clears itself" tests run the burst's timer out.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { act, screen } from '@testing-library/react-native';
@@ -107,7 +108,7 @@ describe('checkpoint celebration on the Goals hub (WHIT-481)', () => {
     await renderWithQueries(<Goals />);              // seed at reached 1, no burst
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
 
-    await moveBalance(6000);                          // 4000 → 6000 crosses the 5000 rung (reached 2)
+    await moveBalanceOnFakeClock(6000);               // 4000 → 6000 crosses the 5000 rung (reached 2)
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
     expect(screen.getByText(/Holiday: checkpoint reached/)).toBeTruthy();
   });
@@ -130,7 +131,7 @@ describe('checkpoint celebration on the Goals hub (WHIT-481)', () => {
   it('keeps the mortgage card untouched whether or not a burst is showing', async () => {
     await renderWithQueries(<Goals />);
     expect(screen.getByTestId('mortgage-link')).toBeTruthy();
-    await moveBalance(6000);
+    await moveBalanceOnFakeClock(6000);
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
     expect(screen.getByTestId('mortgage-link')).toBeTruthy(); // still there under the confetti
   });
