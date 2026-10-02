@@ -75,6 +75,7 @@ describe('no test mocks the api', () => {
       'goalsHubPureHero.screen.test.tsx': 15,
       'goalsCheckpointCelebration.screen.test.tsx': 14,
       'goalsCheckpointCelebrationPaydown.screen.test.tsx': 8,
+      'goalEdit.screen.test.tsx': 143,
       'payCycleServerDaysLeft.screen.test.tsx': 8,
       'transactionsScreenData.screen.test.tsx': 106,
       'transactionsSearchQueries.screen.test.tsx': 35,

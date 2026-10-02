@@ -20,7 +20,6 @@ const ALLOWED = new Set<string>([
   'fileByShopButton.screen.test.tsx',
   'fileOneOffsIntent.screen.test.tsx',
   'fileOneOffsIntentGaps.screen.test.tsx',
-  'goalEdit.screen.test.tsx',
   'nativeDateCallSites.screen.test.tsx',
   'RulesScreen.screen.test.tsx',
   'settingsGear.screen.test.tsx',
