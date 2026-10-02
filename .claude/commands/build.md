@@ -163,11 +163,11 @@ the card number for card builds) and check where it is:
       in bold, lines as bullets): the header line, Problem, Task, Solution, and
       the last line on how to change the plan. As with PLAN FOR REVIEW, rewrite
       any line that isn't plain English, and change nothing else.
-   2. Send a push notification (the PushNotification tool, if you have it),
-      since the user may have walked away: the card, "plan approved
-      automatically", and the Task in one plain line, e.g. "WHIT-42: plan
-      approved automatically. Building: a total at the bottom of the spending
-      list".
+   2. Unless the build-pause mod is loaded (see step 3), send a push
+      notification (the PushNotification tool, if you have it), since the user
+      may have walked away: the card, "plan approved automatically", and the
+      Task in one plain line, e.g. "WHIT-42: plan approved automatically.
+      Building: a total at the bottom of the spending list".
 
    Don't ask anything: the build is already running.
 
@@ -201,11 +201,29 @@ the card number for card builds) and check where it is:
    box alone never tells the user enough to answer, and a one-line recap of
    the block doesn't count.
 
-   The user may have walked away while the build ran. So at every pause, first
-   send them a push notification (the PushNotification tool, if you have it):
-   one plain line saying the card and what it's waiting for, e.g. "WHIT-42:
-   the plan is ready for your sign-off". Do the same when the build ends (PR
-   opened, failed or stopped).
+   **When the build-pause mod is loaded** (the mod in the claude repo's
+   `mods/build-pause`, installed on the user's machine), it does three of this
+   step's jobs in code, so they can't slip:
+   - It writes the question box itself, from what the build asks
+     (progress.json), whatever wording you give it, with the block above the
+     first question. So ask once, with the pause's question in your words.
+   - It saves the user's picks. Its note on the box's result starts
+     `build-pause: the user's answers are saved`: then run exactly the command
+     in that note (`--resume-answer`), and don't write a `--resume` reply. The
+     build makes the reply from the picks itself. If you write one anyway, the
+     mod runs `--resume-answer` instead and says so.
+   - It chimes and sends a macOS notification when the build pauses or ends,
+     so don't send push notifications.
+
+   When no such note comes back (the mod isn't loaded, e.g. in a cloud
+   session, or the pause has more questions than the box holds), do this step
+   and step 4 as written below.
+
+   The user may have walked away while the build ran. So, without the mod, at
+   every pause first send them a push notification (the PushNotification
+   tool, if you have it): one plain line saying the card and what it's waiting
+   for, e.g. "WHIT-42: the plan is ready for your sign-off". Do the same when
+   the build ends (PR opened, failed or stopped).
 
    - **PLAN FOR REVIEW** — before any question, show the summary in your
      message exactly as printed, formatted as Markdown (section titles in
@@ -316,7 +334,9 @@ the card number for card builds) and check where it is:
    …", and never blend your view into the summary. The recommendation and your
    note must never read as if they disagree without saying so.
 
-4. Resume with the user's reply:
+4. Resume with the user's reply. With the mod's saved answers (step 3), run the
+   command its note gives: `python3 build_graph.py --thread <id> --resume-answer`.
+   Otherwise:
    `python3 build_graph.py --thread <id> --resume "<reply>"`
 
    Any pause: `stop` ends the build.

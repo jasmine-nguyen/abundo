@@ -2547,6 +2547,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--resume", metavar="REPLY", help="answer the question a paused build is waiting on")
+    action.add_argument(
+        "--resume-answer", action="store_true",
+        help="answer it with the picks the user made in the question box (.build/<thread>/answer.json)",
+    )
     action.add_argument("--status", action="store_true", help="show where a build is")
     action.add_argument("--retry", action="store_true", help="re-run the step that stopped with an error")
     action.add_argument("--recheck", action="store_true", help="re-run checks and reviews after fixing a failed build")
@@ -2572,7 +2576,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         args.details = sys.stdin.read() if args.details_file == "-" else Path(args.details_file).read_text()
     continuing = (
         args.resume is not None or args.replan is not None or args.cancel or args.status or args.retry or args.recheck
-        or args.clean_backups
+        or args.clean_backups or args.resume_answer
     )
     if args.request and not args.card and not continuing:
         args.thread = args.thread or hashlib.sha256(args.request.encode()).hexdigest()[:8]
@@ -2582,7 +2586,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if continuing:
         if not args.thread:
             parser.error(
-                "--resume, --replan, --cancel, --clean-backups, --status, --retry and --recheck need --thread (or --card)"
+                "--resume, --resume-answer, --replan, --cancel, --clean-backups, --status, --retry and --recheck need --thread (or --card)"
             )
     elif args.card and not (args.details or "").strip():
         parser.error(f"--card {args.card} requires --details or --details-file (fetch the card first)")
@@ -2840,6 +2844,30 @@ async def resume_build(graph, config, snapshot, reply: str):
     return await graph.ainvoke(Command(resume=value), config)
 
 
+async def answer_build(graph, config, snapshot, thread: str):
+    """Resume with the picks the user made in the question box, saved by the build-pause mod."""
+    if not snapshot.interrupts:
+        print("This build isn't waiting for a reply.")
+        return None
+    ask = ask_for(snapshot)
+    if not ask:
+        print("This question isn't asked through the question box: reply with --resume.")
+        return None
+    try:
+        answer = json.loads(read_text(BUILD_DIR / thread / ANSWER_FILE))
+    except json.JSONDecodeError:
+        answer = None
+    if not isinstance(answer, dict):
+        print("No answers are saved for this question: ask the user in the question box, or reply with --resume.")
+        return None
+    reply, problem = reply_from_answer(snapshot.values, ask, answer)
+    if not reply:
+        print(f"Can't use the saved answers: {problem}.")
+        return None
+    print(f"The user's answers, as the build's reply: {reply}\n")
+    return await resume_build(graph, config, snapshot, reply)
+
+
 async def retry_build(graph, config, snapshot):
     if snapshot.interrupts:
         print("This build is waiting for your reply. Use --resume.")
@@ -2883,14 +2911,128 @@ async def recheck_build(graph, config, snapshot, unpin: list[str]):
 # --- stopping a running build ---
 
 
+# --- answering a pause through the question box ---
+# At each pause, progress.json carries `ask`: the pause's questions and options, with ids. The build-pause
+# mod (mods/build-pause in the claude repo) asks them in the question box and saves the picks, by id, to
+# .build/<thread>/answer.json; `--resume-answer` turns them into this pause's reply. So neither writing
+# the options nor turning the user's picks into the reply's format is left to the chat.
+
+MAX_ASKED = 4  # the question box holds at most 4 questions of 2-4 options each
+ANSWER_FILE = "answer.json"
+
+
+def lettered(options: str) -> list[dict]:
+    """A decision's options, written "A) keep · B) move", as [{id, label}]."""
+    parts = re.split(r"\b([A-Z])\)", options)
+    return [
+        {"id": letter, "label": f"{letter}) {wording.strip().strip('·,;').strip()}"}
+        for letter, wording in zip(parts[1::2], parts[2::2])
+    ]
+
+
+def ask_for(snapshot) -> dict | None:
+    """The questions this pause asks, for the question box; None when they don't fit it, so the chat asks."""
+    if not snapshot.interrupts or not snapshot.next:
+        return None
+    values, node = snapshot.values or {}, snapshot.next[0]
+    asked = hashlib.sha256(str(snapshot.interrupts[0].value).encode()).hexdigest()[:12]
+    stop = {"id": "stop", "label": "Stop", "description": "End the build"}
+    questions, final = [], None
+    if node == "sign_off" and values.get("validity", "VALID") != "VALID":
+        kind = "invalid_card"
+        final = {
+            "id": "final", "question": "Close the card? To plan it anyway, type why it's still needed.",
+            "options": [{"id": "close", "label": "Close the card", "description": "It isn't needed"}, stop],
+        }
+    elif node == "sign_off":
+        kind = "sign_off"
+        for n, decision in enumerate(values.get("decisions", []), 1):
+            options = lettered(decision.get("options", ""))
+            if not 2 <= len(options) <= 4:
+                return None
+            recommended = re.match(r"\s*\(?([A-Z])\b", decision.get("recommendation", ""))
+            questions.append({
+                "id": f"Q{n}", "question": decision["question"], "options": options,
+                "recommended": recommended.group(1) if recommended else "",
+            })
+        final = {
+            "id": "final", "question": "Approve the plan? To send it back, type what to change.",
+            "options": [{"id": "go", "label": "Approve", "description": "Build it, with the answers above"}, stop],
+        }
+    elif node == "clarify":
+        kind = "clarify"
+        for n, item in enumerate(values.get("clarify_questions", []), 1):
+            recommendation = item.get("recommendation", "")
+            questions.append({
+                "id": f"Q{n}", "question": item["question"], "recommended": "rec",
+                "options": [
+                    {"id": "rec", "label": first_line(recommendation, 60), "description": "The designer's recommendation"},
+                    {"id": "designer", "label": "Let the designer decide", "description": "Use their judgement"},
+                ],
+            })
+    elif node == "escalation" and structured_pause(values):
+        kind = "decision"
+        options = [
+            {"id": o["id"], "label": first_line(f"{o['id']}) {o['label']}", 60),
+             "description": first_line(f"{o.get('what_happens', '')} Cost: {o.get('cost', '')}", 160)}
+            for o in values["pause_options"]
+        ]
+        questions = [{
+            "id": "choice", "question": "What should the build do? To answer in your own words, type it.",
+            "options": options + ([stop] if len(options) < 4 else []),
+            "recommended": values.get("pause_recommended", ""),
+        }]
+    else:
+        return None
+    if len(questions) + bool(final) > MAX_ASKED or not questions and not final:
+        return None
+    return {"id": asked, "kind": kind, "questions": questions, "final": final}
+
+
+def reply_from_answer(values: dict, ask: dict, answer: dict) -> tuple[str, str]:
+    """This pause's reply, made from the picks saved in answer.json; or "" and why it can't be."""
+    if answer.get("id") != ask["id"]:
+        return "", "these answers are for an earlier question; ask the user again"
+    picks = answer.get("answers") or {}
+    typed = lambda pick: pick.get("text", "").strip() if isinstance(pick, dict) else ""
+    final = picks.get("final")
+    if ask["kind"] in ("sign_off", "invalid_card"):
+        if final == "stop":
+            return "stop", ""
+        if typed(final):
+            return f"rework: {typed(final)}", ""
+        if ask["kind"] == "invalid_card":
+            return ("close", "") if final == "close" else ("", "the user didn't answer whether to close the card")
+        if final != "go":
+            return "", "the user didn't answer whether to approve the plan"
+        parts = [f"{q['id']} {typed(picks[q['id']]) or picks[q['id']]}" for q in ask["questions"] if picks.get(q["id"])]
+        return ("go: " + "; ".join(parts) if parts else "go"), ""
+    if ask["kind"] == "clarify":
+        answers = []
+        for q, item in zip(ask["questions"], values.get("clarify_questions", [])):
+            pick = picks.get(q["id"], "rec")
+            words = typed(pick) or ("use your judgement" if pick == "designer" else item.get("recommendation", ""))
+            answers.append(f"{q['id']}: {words}")
+        return "; ".join(answers), ""
+    pick = picks.get("choice")
+    if pick == "stop" or is_stop(typed(pick)):
+        return "stop", ""
+    if typed(pick):
+        return json.dumps({"pause_id": values["pause_id"], "choice": "other", "tests": "keep", "answer": typed(pick)}), ""
+    if isinstance(pick, str) and pick:
+        return json.dumps({"pause_id": values["pause_id"], "choice": pick}), ""
+    return "", "the user didn't pick an option"
+
+
 def save_pause(thread: str, snapshot) -> None:
     """Whether the build waits on the user, and the question it asks them word for word, in
     progress.json: the build-pause mod (mods/build-pause in the claude repo) puts it in front of them."""
+    (BUILD_DIR / thread / ANSWER_FILE).unlink(missing_ok=True)
     if snapshot.interrupts:
-        write_progress(thread, status="paused", question=snapshot.interrupts[0].value)
+        write_progress(thread, status="paused", question=snapshot.interrupts[0].value, ask=ask_for(snapshot))
     else:
         outcome = (snapshot.values or {}).get("outcome", "")
-        write_progress(thread, status="finished" if outcome else "stopped", outcome=outcome, question="")
+        write_progress(thread, status="finished" if outcome else "stopped", outcome=outcome, question="", ask=None)
 
 
 def last_save_file(thread: str) -> Path:
@@ -3255,6 +3397,8 @@ async def main(argv: list[str] | None = None) -> int:
                 result = await cancel_build(graph, config, snapshot, running)
             elif args.resume is not None:
                 result = await resume_build(graph, config, snapshot, args.resume)
+            elif args.resume_answer:
+                result = await answer_build(graph, config, snapshot, args.thread)
             elif args.retry:
                 result = await retry_build(graph, config, snapshot)
             elif args.recheck:
