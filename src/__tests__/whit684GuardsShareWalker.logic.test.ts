@@ -23,4 +23,14 @@ describe('test-tree guards share one test-file walker', () => {
     expect(code).not.toMatch(LOCAL_WALKER);
     expect(code).not.toMatch(OWN_WALK);
   });
+
+  // WHIT-698 — these go through findOffenders (built on testFiles), so they import that instead.
+  it.each(['sharedLoadedWait.logic.test.ts', 'sharedQueryWaits.screen.test.tsx'])(
+    '%s does not walk the test tree itself',
+    (guard) => {
+      const code = stripComments(readFileSync(join(TESTS_DIR, guard), 'utf8'));
+      expect(code).not.toMatch(LOCAL_WALKER);
+      expect(code).not.toMatch(OWN_WALK);
+    },
+  );
 });

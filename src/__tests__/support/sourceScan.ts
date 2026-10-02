@@ -11,6 +11,9 @@
 //
 // The cache-in-act guard (cacheRefreshInAct.logic.test.ts) uses stripComments and matchingBrace
 // to read each act(...) body whole.
+//
+// The shared-wait guards (sharedLoadedWait.logic, sharedQueryWaits.screen) hand their line rule to
+// findOffenders.
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, relative, sep } from 'path';
 
@@ -48,6 +51,24 @@ export function testFiles(root: string, dir: string = root): string[] {
     if (!/\.tsx?$/.test(entry.name)) return [];
     return [relative(root, path).split(sep).join('/')];
   });
+}
+
+const TESTS_DIR = join(__dirname, '..');
+
+// Every `file:line` under the test tree whose line matches, skipping allow-listed files
+// (keys are testFiles keys: root-relative, forward-slashed).
+export function findOffenders(
+  match: (line: string) => boolean,
+  allowed: Set<string>,
+  root: string = TESTS_DIR,
+): string[] {
+  return testFiles(root)
+    .filter((file) => !allowed.has(file))
+    .flatMap((file) =>
+      readFileSync(join(root, file), 'utf8')
+        .split('\n')
+        .flatMap((line, index) => (match(line) ? [`${file}:${index + 1}`] : [])),
+    );
 }
 
 // A comment describing a colour is documentation, not shipped colour — src/theme.ts spells several
