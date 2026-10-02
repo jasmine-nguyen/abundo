@@ -2,8 +2,9 @@
 // of hand-written query shapes, each keeps its minimum expect( count in the noAutoMockApi
 // baselines, and the old shared query-shapes file is gone with nothing left loading it.
 import { describe, it, expect } from '@jest/globals';
-import { existsSync, readdirSync, readFileSync } from 'fs';
-import { join, relative } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
+import { testFiles } from './support/sourceScan';
 
 const MOVED_SUITES = [
   'budgetDetailLoadMore.screen.test.tsx',
@@ -24,15 +25,6 @@ const OLD_SHAPES_LOADS = [
 ];
 
 const source = (file: string) => readFileSync(join(__dirname, file), 'utf8');
-
-function testFiles(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) return testFiles(path);
-    if (!/\.tsx?$/.test(entry.name)) return [];
-    return [relative(__dirname, path)];
-  });
-}
 
 describe('WHIT-672 budget and loan suites run on the fake server', () => {
   it('each moved suite uses the real queries over the fake server and is pinned in the baselines', () => {
