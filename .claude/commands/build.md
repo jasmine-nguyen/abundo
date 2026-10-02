@@ -199,14 +199,17 @@ the card number for card builds) and check where it is:
    pause, show what the block says in your own message BEFORE you ask
    anything, in the same message as the question and above it. The question
    box alone never tells the user enough to answer, and a one-line recap of
-   the block doesn't count.
+   the block doesn't count. The one exception: when your instructions say the
+   build-pause mod is loaded, don't show the block at all. The mod puts it in
+   the Build plan pane, and a second copy in the chat is noise.
 
    **When the build-pause mod is loaded** (the mod in the claude repo's
    `mods/build-pause`, installed on the user's machine), it does three of this
    step's jobs in code, so they can't slip:
-   - It writes the question box itself, from what the build asks
-     (progress.json), whatever wording you give it, with the block above the
-     first question. So ask once, with the pause's question in your words.
+   - It opens the Build plan pane with the block, and writes the question box
+     itself from what the build asks (progress.json), whatever wording you
+     give it. So don't show the block, and ask once, with the pause's question
+     in your words.
    - It saves the user's picks. Its note on the box's result starts
      `build-pause: the user's answers are saved`: then run exactly the command
      in that note (`--resume-answer`), and don't write a `--resume` reply. The
@@ -225,7 +228,7 @@ the card number for card builds) and check where it is:
    for, e.g. "WHIT-42: the plan is ready for your sign-off". Do the same when
    the build ends (PR opened, failed or stopped).
 
-   - **PLAN FOR REVIEW** — before any question, show the summary in your
+   - **PLAN FOR REVIEW** — without the mod, before any question, show the summary in your
      message exactly as printed, formatted as Markdown (section titles in
      bold, lines as bullets): the header line, Problem, Task and Solution,
      the "Why this needs your sign-off" line, any unresolved critic concerns,
