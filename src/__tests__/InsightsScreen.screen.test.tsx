@@ -5,7 +5,7 @@
 // which the kit stands in for with a slice a test can set.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { AccessibilityInfo, StyleSheet } from 'react-native';
-import { screen, fireEvent, within, waitFor } from '@testing-library/react-native';
+import { screen, fireEvent, within } from '@testing-library/react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { UNCATEGORIZED_KEY } from '../model';
 import { C } from '../theme';
@@ -13,7 +13,7 @@ import { CATEGORY_COLORS } from '../chartColors';
 import { queryClient } from '../queryClient';
 import { breakdownKey } from '../queries';
 import { installFakeServer } from './support/fakeServer';
-import { refreshInAct, useTestQueryClient, settle } from './support/renderWithQueries';
+import { refreshInAct, useTestQueryClient, settle, loaded } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import {
   breakdownWire, seedInsights, renderInsights, drawInsights, redrawInsights, resetAi, setAi,
@@ -60,7 +60,7 @@ const breakdownReads = () => server.sentUnder('GET', '/breakdown').length;
 
 async function showLastCycle() {
   fireEvent.press(screen.getByTestId('insights-cycle-prev'));
-  await waitFor(() => expect(queryClient.getQueryState([...breakdownKey, 1])?.status).toBe('success'));
+  await loaded([...breakdownKey, 1]);
   await settle();
 }
 
@@ -142,7 +142,7 @@ describe('the earned-vs-spent chart is never drawn over an empty/loading/error s
     const held = server.hold('/paycycle');
     drawInsights();
     expect(await screen.findByTestId('insights-loading')).toBeTruthy();
-    await waitFor(() => expect(queryClient.getQueryState([...breakdownKey, 0])?.status).toBe('success'));
+    await loaded([...breakdownKey, 0]);
     await refreshInAct(() => Promise.resolve());
     expect(screen.getByTestId('insights-loading')).toBeTruthy();
     expect(screen.queryByTestId('insights-earned-spent')).toBeNull();
