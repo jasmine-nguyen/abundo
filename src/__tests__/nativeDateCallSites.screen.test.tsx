@@ -12,11 +12,16 @@
 //
 // Platform is PINNED to iOS per test (not left to the per-worker RN default) so the pill-gate
 // assertions are deterministic. The global datetimepicker mock is overridden to CAPTURE props.
+// Runs over the fake server: the real goals, recent-transactions, balances and loan-facts reads
+// answer from seeded data; saveGoal/saveLoanFacts (writers) stay stubbed on the store.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { Platform } from 'react-native';
-import { render, screen, fireEvent } from '@testing-library/react-native';
-import type { GoalRecord, AccountBalance } from '../api';
+import { screen, fireEvent } from '@testing-library/react-native';
+import { installFakeServer } from './support/fakeServer';
+import { renderWithQueries, renderLoaded, useTestQueryClient } from './support/renderWithQueries';
+import { resetAuth } from './support/authMock';
+import { resetRouter } from './support/routerMock';
 
 // Capture every props object the picker is rendered with, across re-renders.
 let mockPickerProps: Array<Record<string, unknown>> = [];
@@ -41,31 +46,30 @@ jest.mock('../context', () => {
   return { ...actual, useAppContext: () => mockAppCtx };
 });
 
-let mockGoals: GoalRecord[];
-let mockBalances: Map<string, AccountBalance>;
-jest.mock('../queries', () => ({
-  useIsAuthed: () => true,
-  useGoalsQuery: () => ({ data: mockGoals }),
-  useRecentTransactionsScreenData: () => ({ transactions: [{ account_id: 'acc-1', account_name: 'Everyday' }], balances: mockBalances }),
-  useLoanFactsQuery: () => ({ data: undefined }), // → EMPTY_LOAN_FACTS: every field unset, payoff null
-}));
-
-let mockParams: { id?: string };
-jest.mock('expo-router', () => ({
-  useLocalSearchParams: () => mockParams,
-  useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import GoalEdit from '../../app/goal/edit';
 import Loan from '../../app/loan';
 
+const server = installFakeServer();
+useTestQueryClient();
+
 const ORIGINAL_OS = Platform.OS;
+
+const EVERYDAY = {
+  transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
+  description: 'PURCHASE', merchant_name: 'Shop', amount: -42, account_id: 'acc-1',
+  account_name: 'Everyday', category: null, status: 'posted', type: 'purchase', counts_to_budget: true,
+};
 
 beforeEach(() => {
   mockPickerProps = [];
-  mockParams = {};
-  mockGoals = [];
-  mockBalances = new Map([['acc-1', { account_id: 'acc-1', amount: 2500, available_balance: null, currency: 'AUD', as_of: '2026-07-01', account_type: 'savings' }]]);
+  resetAuth();
+  resetRouter(); // no id → the create form
+  // /goals and /loanfacts keep their empty defaults → no goal to edit, every loan field unset.
+  server.seed('/transactions', [EVERYDAY]);
+  server.seed('/accounts/balances', [{ account_id: 'acc-1', amount: 2500, available_balance: null, currency: 'AUD', as_of: '2026-07-01', account_type: 'savings' }]);
   Platform.OS = 'ios' as typeof Platform.OS;
 });
 afterEach(() => { Platform.OS = ORIGINAL_OS; });
@@ -75,8 +79,8 @@ describe('the iOS pill gate is wired correctly at each call-site', () => {
   // refactor passed alwaysShowPillIOS here, an empty REQUIRED field would show a "tomorrow" pill
   // that reads as already-set. goalEdit's setTargetDate() TOLERATES either variant, so only this
   // asserts the affordance is present.
-  it('[Q1] goal edit: an unset TARGET DATE shows "Set date", never an inline pill', () => {
-    render(<GoalEdit />);
+  it('[Q1] goal edit: an unset TARGET DATE shows "Set date", never an inline pill', async () => {
+    await renderWithQueries(<GoalEdit />);
     // create form, source unchosen → AS OF hidden, so TARGET is the only date field.
     expect(screen.getByTestId('date-open')).toBeTruthy();
     expect(screen.getByText('Set date')).toBeTruthy();
@@ -86,8 +90,8 @@ describe('the iOS pill gate is wired correctly at each call-site', () => {
   // [Q2] loan payoff — unset + iOS → the inline pill (alwaysShowPillIOS), NOT a "Set date"
   // affordance. loanFactsForm implicitly relies on this (it taps mock-datepicker directly) but
   // conflates it with the save; this pins it explicitly on iOS.
-  it('[Q2] loan: an unset payoff date shows the inline pill (alwaysShowPillIOS)', () => {
-    render(<Loan />);
+  it('[Q2] loan: an unset payoff date shows the inline pill (alwaysShowPillIOS)', async () => {
+    await renderLoaded(<Loan />);
     expect(screen.getByTestId('mock-datepicker')).toBeTruthy();
     expect(screen.queryByTestId('date-open')).toBeNull();
   });
@@ -97,8 +101,8 @@ describe('the goal call-sites forward their date constraints', () => {
   // [Q3] AS OF must cap at today (maximumDate, no minimumDate); TARGET DATE must floor at tomorrow
   // (minimumDate, no maximumDate). Drop either at the JSX call-site and the picker would offer
   // illegal days — the isolation forwarding test can't catch a call-site that stops passing them.
-  it('[Q3] AS OF picker gets maximumDate only; TARGET DATE picker gets minimumDate only', () => {
-    render(<GoalEdit />);
+  it('[Q3] AS OF picker gets maximumDate only; TARGET DATE picker gets minimumDate only', async () => {
+    await renderWithQueries(<GoalEdit />);
     fireEvent.press(screen.getByTestId('goal-source-manual')); // reveal AS OF (seeded today → "Change")
     // AS OF is the first date field; open it so its pill mounts with maximumDate (today), no minimumDate.
     fireEvent.press(screen.getAllByTestId('date-open')[0]);

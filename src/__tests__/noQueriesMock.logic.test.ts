@@ -10,10 +10,7 @@ export const QUERIES_MOCK = /^\s*jest\.(mock|doMock)\(\s*['"](\.\.\/)+(src\/)?qu
 // This list may only shrink. Move a file onto the fake server (or delete it if it only checks
 // layout or animation), then remove its line here.
 const ALLOWED = new Set<string>([
-  'accountDetail.screen.test.tsx',
-  'accountsTab.screen.test.tsx',
   'applyRulesButton.screen.test.tsx',
-  'budgetsWrapperStates.screen.test.tsx',
   'categoryDetail.screen.test.tsx',
   'categoryEditSummaryToast.screen.test.tsx',
   'categoryFields.screen.test.tsx',
@@ -35,10 +32,8 @@ const ALLOWED = new Set<string>([
   'goalTooAggressive.screen.test.tsx',
   'milestone.screen.test.tsx',
   'mortgage.screen.test.tsx',
-  'nativeDateCallSites.screen.test.tsx',
   'repayment.edges.screen.test.tsx',
   'repayment.errorBoundary.screen.test.tsx',
-  'RulesScreen.screen.test.tsx',
   'transactionDetail.screen.test.tsx',
   'transactionDetailDeleteGaps.screen.test.tsx',
   'transactionEdit.screen.test.tsx',
@@ -50,7 +45,6 @@ const ALLOWED = new Set<string>([
   'uncategorizedCountWiring.screen.test.tsx',
   'uncategorizedMerchantsGate.screen.test.tsx',
   'uncategorizedMoreAffordance.screen.test.tsx',
-  'westpacAccountsTab.screen.test.tsx',
   'whit328SelectGap.screen.test.tsx',
   'whit330Transactions.screen.test.tsx',
 ]);
