@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,18 +30,28 @@ export default function CategoryEdit() {
   // WHIT-203: the useState seeds run once, but on the query layer `existing` may resolve a
   // beat AFTER mount (cold cache / deep-link). Re-seed when it arrives so an edit never
   // shows — or SAVES — a blank "create" form over a real category.
-  useEffect(() => {
-    if (existing) { setName(existing.name); setBucket(existing.bucket); setIcon(existing.icon); setParent(existing.parent ?? null); }
-  }, [existing]);
-
   // A sub must share its parent's bucket (server rule), never be its own ancestor, and never
   // nest under itself — the shared helper enforces all three. The picker itself lives in
   // CategoryFields, which recomputes the same eligible set from the in-form bucket (WHIT-239).
+  const eligibleParent = (id: string | null, inBucket: Bucket) =>
+    id !== null && eligibleParents(categories, categoryId ?? null, inBucket).some((c) => c.id === id) ? id : null;
+  // The re-seed checks the parent against the category's own bucket; the validity effect below
+  // would see the form's OLD bucket in this same pass (and wrongly drop a non-Lifestyle parent),
+  // so it skips once and re-checks when the seeded bucket lands.
+  const justSeeded = useRef(false);
+  useEffect(() => {
+    if (!existing) return;
+    setName(existing.name); setBucket(existing.bucket); setIcon(existing.icon);
+    setParent(eligibleParent(existing.parent ?? null, existing.bucket));
+    justSeeded.current = true;
+  }, [existing]);
+
   // Keep the held parent valid: if it ever becomes ineligible (the bucket changed, or a
   // legacy/cross-bucket link loaded), drop it to top-level. Without this a stale parent
   // could be invisible in the picker yet silently re-saved. Runs after the re-seed above.
   useEffect(() => {
-    setParent((cur) => (cur !== null && !eligibleParents(categories, categoryId ?? null, bucket).some((c) => c.id === cur) ? null : cur));
+    if (justSeeded.current) { justSeeded.current = false; return; }
+    setParent((cur) => eligibleParent(cur, bucket));
   }, [bucket, categories, categoryId]);
 
   // WHIT-237: build the family from the parent's side. `attachIds` = existing categories to
