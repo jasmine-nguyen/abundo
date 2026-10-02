@@ -9,9 +9,6 @@
       "WebFetch(domain:api.banksync.io)"
     ]
   },
-  "enabledPlugins": {
-    "expo@claude-plugins-official": true
-  },
   "hooks": {
     "SessionStart": [
       {
