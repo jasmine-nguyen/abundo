@@ -5,20 +5,12 @@
 // in history — exactly when the button is still needed. And it is hidden behind the cold spinner
 // and the load-error state like every other control on this screen, so it never renders over
 // "Couldn't load your transactions."
+// The screen and its data code are real, over the pretend server (WHIT-686).
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
-
-let mockTx: Record<string, unknown>;
-let mockServerCount: number | undefined;
-jest.mock('../queries', () => ({
-  useTransactionsScreenData: () => mockTx,
-  useUncategorizedCount: () => mockServerCount,
-  useUncategorizedMerchants: () => ({ merchants: undefined, isLoading: false, isError: false }),
-}));
+import { screen, fireEvent, waitFor } from '@testing-library/react-native';
 
 const mockSetSheet = jest.fn();
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 };
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return {
@@ -26,92 +18,113 @@ jest.mock('../context', () => {
     useAppContext: () => ({ openMultiPicker: jest.fn(), showToast: jest.fn(), openPicker: jest.fn(), setSheet: mockSetSheet }),
   };
 });
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => {
   const ReactLib = require('react');
   return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
 });
 
 import Transactions from '../../app/(tabs)/transactions';
+import { resetAuth } from './support/authMock';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient, renderWithQueries } from './support/renderWithQueries';
+import { queryClient } from '../queryClient';
 
-const category = (id: string | null) => (id === 'groceries' ? CAT : undefined);
+const server = installFakeServer();
+useTestQueryClient();
+
+const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
+const COUNT = '/transactions/uncategorized/count';
+const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null };
 const unfiled = (id: string) => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01', description: 'COLES',
   merchant_name: 'Coles', amount: -12.5, account_id: 'a1', account_name: 'ANZ', category: null,
   status: 'posted', type: 'PAYMENT', counts_to_budget: true,
 });
 
-function txData(over: Record<string, unknown> = {}) {
-  return {
-    transactions: [unfiled('t1')], category, balances: new Map(),
-    isLoading: false, isError: false, isFetching: false, refetch: jest.fn(), refetchStale: jest.fn(),
-    refetchList: jest.fn(() => Promise.resolve()), refreshLiveBalances: jest.fn(() => Promise.resolve()),
-    hasMore: false, loadMore: jest.fn(), isLoadingMore: false, ...over,
-  };
-}
-
 const BUTTON = 'transactions-apply-rules';
 
-/** Render and switch to the Uncategorized tab unless told otherwise. */
-function renderTab(tab: 'all' | 'uncategorized' = 'uncategorized') {
-  render(<Transactions />);
-  if (tab === 'uncategorized') fireEvent.press(screen.getByTestId('tab-uncategorized'));
+const seedUncategorizedFeed = (transactions: unknown[], nextCursor: string | null = null) =>
+  server.seed(UNCATEGORIZED_FEED, { transactions, nextCursor });
+const settle = () => waitFor(() => expect(queryClient.isFetching()).toBe(0));
+
+/** Render, wait for the first reads, and switch to the Uncategorized tab unless told otherwise. */
+async function renderTab(tab: 'all' | 'uncategorized' = 'uncategorized') {
+  await renderWithQueries(<Transactions />);
+  if (tab === 'all') return;
+  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  await settle();
 }
 
-beforeEach(() => { mockTx = txData(); mockServerCount = 5; mockSetSheet.mockClear(); });
+beforeEach(() => {
+  resetAuth();
+  mockSetSheet.mockClear();
+  server.seed('/categories', [CAT]);
+  server.seed(COUNT, { count: 5 });
+  seedUncategorizedFeed([unfiled('t1')]);
+});
 
 describe('the "Apply my rules" button', () => {
-  it('shows on the Uncategorized tab when there are unfiled charges', () => {
-    renderTab();
+  it('shows on the Uncategorized tab when there are unfiled charges', async () => {
+    await renderTab();
     expect(screen.getByTestId(BUTTON)).toBeTruthy();
   });
 
-  it('opens the apply-rules sheet when pressed', () => {
-    renderTab();
+  it('opens the apply-rules sheet when pressed', async () => {
+    await renderTab();
     fireEvent.press(screen.getByTestId(BUTTON));
     expect(mockSetSheet).toHaveBeenCalledWith({ mode: 'applyRules' });
   });
 
-  it('is not on the All tab', () => {
-    renderTab('all');
+  it('is not on the All tab', async () => {
+    await renderTab('all');
+    expect(screen.getByText('5')).toBeTruthy(); // the count has resolved
     expect(screen.queryByTestId(BUTTON)).toBeNull();
   });
 
   // "All caught up" — offering a sweep with nothing to sweep is noise.
-  it('is gone once the server count resolves to zero', () => {
-    mockServerCount = 0;
-    mockTx = txData({ transactions: [] });
-    renderTab();
+  it('is gone once the server count resolves to zero', async () => {
+    server.seed(COUNT, { count: 0 });
+    seedUncategorizedFeed([]);
+    await renderTab();
+    expect(screen.getByText('All caught up')).toBeTruthy();
     expect(screen.queryByTestId(BUTTON)).toBeNull();
   });
 
   // The whole-history gate: the loaded page is empty (the rows sit deeper in history), but the
   // badge says 339 remain — which is exactly the state a capped run leaves behind. Fail-on-revert:
   // gate on the local loaded-page count instead and the button vanishes mid-way through the job.
-  it('stays visible when the loaded page is empty but history still has unfiled charges', () => {
-    mockServerCount = 339;
-    mockTx = txData({ transactions: [], hasMore: true });
-    renderTab();
+  it('stays visible when the loaded page is empty but history still has unfiled charges', async () => {
+    server.seed(COUNT, { count: 339 });
+    seedUncategorizedFeed([], 'c1');
+    await renderTab();
     expect(screen.getByTestId(BUTTON)).toBeTruthy();
   });
 
   // Fail-on-revert for the two gates the review added: drop `!showSpinner` / `!showError` and the
   // button renders over the cold spinner or alongside "Couldn't load your transactions."
-  it('is hidden during the cold load', () => {
-    mockTx = txData({ transactions: [], isLoading: true });
-    renderTab();
+  it('is hidden during the cold load', async () => {
+    await renderTab('all');
+    const held = server.hold(UNCATEGORIZED_FEED);
+    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    expect(await screen.findByTestId('transactions-loading')).toBeTruthy();
     expect(screen.queryByTestId(BUTTON)).toBeNull();
+    held.release();
+    await settle();
   });
 
-  it('is hidden while the list is in its error state', () => {
-    mockTx = txData({ transactions: [], isError: true });
-    renderTab();
+  it('is hidden while the list is in its error state', async () => {
+    server.fail(UNCATEGORIZED_FEED, 500);
+    await renderTab();
+    expect(screen.getByTestId('transactions-error')).toBeTruthy();
     expect(screen.queryByTestId(BUTTON)).toBeNull();
   });
 
   // Selection mode is its own task ("re-categorise these 6"); a whole-history sweep alongside it
   // would be two competing bulk actions on one screen.
-  it('is hidden in selection mode', () => {
-    renderTab();
+  it('is hidden in selection mode', async () => {
+    await renderTab();
+    expect(screen.getByTestId(BUTTON)).toBeTruthy();
     fireEvent.press(screen.getByText('Select'));
     expect(screen.queryByTestId(BUTTON)).toBeNull();
   });
