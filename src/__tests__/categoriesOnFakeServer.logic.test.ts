@@ -30,7 +30,7 @@ describe('Category screen tests run the real screen data code', () => {
   it('the category suites draw over the fake server, with the real category selector and the shared sign-in stand-in', () => {
     const notOnFakeServer = SLICE_FILES.filter((file) => {
       const source = read(file);
-      return !/installFakeServer\(\)/.test(source) || !/renderWithQueries|renderLoaded/.test(source);
+      return !/installFakeServer\(\)/.test(source) || !/renderWithQueries|renderLoaded|renderWithApp/.test(source);
     });
     expect(notOnFakeServer).toEqual([]);
 

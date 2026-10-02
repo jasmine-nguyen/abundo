@@ -1,29 +1,19 @@
 // WHIT-688 fix round QA — the cold-open re-seed fix in app/category/edit.tsx: the seed now checks
 // the parent against the category's OWN bucket and the "keep the parent valid" effect skips once.
 // These pin the two halves the skip could hide: a bad legacy parent is still dropped, and the
-// validity check still runs on later bucket changes.
+// validity check still runs on later bucket changes. The screen draws inside the real AppProvider
+// (WHIT-692), so Save runs the real saveCategory and the fake server shows the PATCH body.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, renderWithQueries, refreshInAct } from './support/renderWithQueries';
+import { useTestQueryClient, refreshInAct } from './support/renderWithQueries';
+import { renderWithApp, resetAppProbe } from './support/renderWithApp';
 import { resetAuth } from './support/authMock';
 import { setParams, resetRouter } from './support/routerMock';
 
-const mockSaveCategory = jest.fn(async (_id: string | null, _form: unknown, _opts?: unknown) => true);
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({
-      openPicker: jest.fn(), category: () => undefined,
-      saveCategory: mockSaveCategory, createCategoryInline: jest.fn(), deleteCategory: jest.fn(),
-      showToast: jest.fn(), getSessionEpoch: () => 0,
-    }),
-  };
-});
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import CategoryEdit from '../../app/category/edit';
@@ -34,18 +24,19 @@ useTestQueryClient();
 // Cold open: the form mounts before the list lands, so the late re-seed fills it.
 async function coldOpen(categoryId: string) {
   setParams({ categoryId });
-  await renderWithQueries(<CategoryEdit />);
+  await renderWithApp(<CategoryEdit />);
 }
 
-async function saveAndExpect(form: object) {
+async function saveAndExpect(body: object) {
   fireEvent.press(screen.getByText('Save category'));
-  await waitFor(() => expect(mockSaveCategory).toHaveBeenCalledWith('parking', form, { silent: true }));
+  await waitFor(() => expect(server.sent('PATCH', '/categories/parking')).toHaveLength(1));
+  expect(server.sent('PATCH', '/categories/parking')[0].body).toEqual(body);
 }
 
 beforeEach(() => {
   resetAuth();
   resetRouter();
-  mockSaveCategory.mockClear();
+  resetAppProbe();
 });
 
 describe('category edit: cold-open re-seed', () => {

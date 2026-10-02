@@ -68,11 +68,13 @@ export async function renderWithQueries(ui: React.ReactElement) {
 /**
  * Load the screen's data, then remount it over the warm cache — the way the app opens a form that
  * fills its fields once on first draw (the Loan form, app/loan.tsx) after the data has loaded.
+ * `Wrapper` must include WithQueries (support/renderWithApp's WithApp does).
  */
-export async function renderLoaded(ui: React.ReactElement) {
-  const view = await renderWithQueries(<React.Fragment key="loading">{ui}</React.Fragment>);
+export async function renderLoaded(ui: React.ReactElement, Wrapper: React.ComponentType<{ children: React.ReactNode }> = WithQueries) {
+  const view = render(<Wrapper><React.Fragment key="loading">{ui}</React.Fragment></Wrapper>);
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
   await act(async () => {
-    view.rerender(<WithQueries><React.Fragment key="loaded">{ui}</React.Fragment></WithQueries>);
+    view.rerender(<Wrapper><React.Fragment key="loaded">{ui}</React.Fragment></Wrapper>);
   });
   await settle();
   await refreshInAct(() => undefined);
