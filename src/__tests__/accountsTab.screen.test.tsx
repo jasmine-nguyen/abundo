@@ -1,16 +1,22 @@
 // The Accounts tab, now its own bottom-bar screen (moved out of the Transactions segmented
 // control). These assertions were relocated from transactionsScreenStates.screen.test.tsx:
 // they render app/(tabs)/accounts directly — the cards show on mount, so there is no segment
-// to press. The accounts view DERIVES from the transactions query (one card per account_id)
-// and shows the live poller-fed balance per card. `../queries` is mocked so each gating branch
-// is driven deterministically; `../context` keeps the real selectors with a stubbed
-// useAppContext. Fail-on-revert: dropping `transactions.length === 0` from showError makes the
-// "error with cached cards" case surface the error.
+// to press. The accounts view DERIVES from the transactions feed (one card per account_id)
+// and shows the live poller-fed balance per card. Runs over the fake server: the real
+// useTransactionsScreenData reads the seeded GET /transactions/feed + /accounts/balances.
+// `../context` keeps the real selectors with a stubbed useAppContext. Fail-on-revert: dropping
+// `transactions.length === 0` from showError makes the "error with cached cards" case surface
+// the error.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react-native';
-import { StyleSheet, ScrollView, RefreshControl } from 'react-native';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
+import { StyleSheet, RefreshControl } from 'react-native';
 import { C } from '../theme';
+import { Icon } from '../icons';
+import { installFakeServer } from './support/fakeServer';
+import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct } from './support/renderWithQueries';
+import { resetAuth } from './support/authMock';
+import { queryClient } from '../queryClient';
 
 const bal = (over: Record<string, unknown> = {}) => ({
   account_id: 'a1', amount: 96270.59, available_balance: 96270.59, currency: 'AUD',
@@ -18,10 +24,8 @@ const bal = (over: Record<string, unknown> = {}) => ({
 });
 const colorOf = (node: unknown) => (StyleSheet.flatten((node as { props: { style?: unknown } }).props.style) as { color?: string }).color;
 
-let mockTx: ReturnType<typeof txData>;
-jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 };
 const mockShowToast = jest.fn();
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
@@ -42,10 +46,8 @@ jest.mock('expo-router', () => {
 
 import Accounts from '../../app/(tabs)/accounts';
 
-const refetch = jest.fn();
-const refetchStale = jest.fn();
-const refetchList = jest.fn(() => Promise.resolve());
-const refreshLiveBalances = jest.fn(() => Promise.resolve());
+const server = installFakeServer();
+useTestQueryClient();
 
 const ROW = {
   transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
@@ -53,117 +55,87 @@ const ROW = {
   account_name: 'ANZ', category: 'groceries', status: 'posted', type: 'purchase', counts_to_budget: true,
 };
 
-function txData(over: Partial<{
-  transactions: unknown[]; isLoading: boolean; isError: boolean; balances: Map<string, unknown>;
-}> = {}) {
-  return {
-    transactions: [] as unknown[], category: (id: string | null) => (id === 'groceries' ? CAT : undefined),
-    balances: new Map<string, unknown>(), isLoading: false, isError: false,
-    refetch, refetchStale, refetchList, refreshLiveBalances, ...over,
-  };
-}
+const seedFeed = (transactions: unknown[]) => server.seed('/transactions/feed', { transactions, nextCursor: null });
+const feedReads = () => server.sentUnder('GET', '/transactions/feed');
 
 beforeEach(() => {
-  refetch.mockClear();
-  refetchStale.mockClear();
   mockPush.mockClear();
   mockShowToast.mockClear();
-  mockTx = txData();
+  resetAuth();
+  server.seed('/categories', [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart' }]);
 });
 
-it('derives one card per account_id from the transactions (consistent name)', () => {
+it('derives one card per account_id from the transactions (consistent name)', async () => {
   const anz = { ...ROW, transaction_id: 't1', account_id: 'a1', account_name: 'ANZ' };
   const up = { ...ROW, transaction_id: 't2', account_id: 'a2', account_name: 'Up Homeloan' };
   const up2 = { ...ROW, transaction_id: 't3', account_id: 'a2', account_name: 'Up Homeloan' };
-  mockTx = txData({ transactions: [anz, up, up2] });
-  render(<Accounts />);
+  seedFeed([anz, up, up2]);
+  await renderWithQueries(<Accounts />);
   // One card per account; the Up account (2 txns) collapses to a single consistent name.
   expect(screen.getByText('ANZ')).toBeTruthy();
   expect(screen.getAllByText('Up Homeloan')).toHaveLength(1);
 });
 
-it('tapping an account card navigates to that account\'s detail route', () => {
-  mockTx = txData({ transactions: [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }] });
-  render(<Accounts />);
+it('tapping an account card navigates to that account\'s detail route', async () => {
+  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
+  await renderWithQueries(<Accounts />);
   fireEvent.press(screen.getByText('ANZ'));
   expect(mockPush).toHaveBeenCalledWith('/account/a1');
 });
 
-it('shows the cold-load spinner (empty + loading)', () => {
-  mockTx = txData({ transactions: [], isLoading: true, isError: false });
-  render(<Accounts />);
+it('shows the cold-load spinner (empty + loading)', async () => {
+  const feed = server.hold('/transactions/feed');
+  render(<WithQueries><Accounts /></WithQueries>);
+  await waitFor(() => expect(feedReads()).toHaveLength(1));
   expect(screen.getByTestId('accounts-loading')).toBeTruthy();
+  feed.release();
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
 });
 
-it('shows the inline retry on a cold error (empty + error), and Retry calls refetch', () => {
-  mockTx = txData({ transactions: [], isError: true });
-  render(<Accounts />);
+it('shows the inline retry on a cold error (empty + error), and Retry re-reads the feed', async () => {
+  server.fail('/transactions/feed', 500);
+  await renderWithQueries(<Accounts />);
   expect(screen.getByTestId('accounts-error')).toBeTruthy();
+  expect(feedReads()).toHaveLength(1);
   fireEvent.press(screen.getByTestId('accounts-retry'));
-  expect(refetch).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(feedReads()).toHaveLength(2));
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
 });
 
-it('keeps its cards through a background error when txns are cached (cache-first)', () => {
-  mockTx = txData({ transactions: [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }], isError: true });
-  render(<Accounts />);
+it('keeps its cards through a background error when txns are cached (cache-first)', async () => {
+  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
+  await renderWithQueries(<Accounts />);
+  server.fail('/transactions/feed', 500);
+  await refreshInAct(() => queryClient.refetchQueries());
   expect(screen.getByText('ANZ')).toBeTruthy();
   expect(screen.queryByTestId('accounts-error')).toBeNull();
 });
 
-it('settled with no transactions shows the empty state', () => {
-  mockTx = txData({ transactions: [] });
-  render(<Accounts />);
+it('settled with no transactions shows the empty state', async () => {
+  await renderWithQueries(<Accounts />);
   expect(screen.getByText('No accounts yet')).toBeTruthy();
 });
 
-it('an account card shows its live balance — green when in credit (amount >= 0)', () => {
-  mockTx = txData({
-    transactions: [{ ...ROW, account_id: 'a1', account_name: 'Up Spending' }],
-    balances: new Map([['a1', bal({ amount: 96270.59 })]]),
-  });
-  render(<Accounts />);
+it('an account card shows its live balance — green when in credit (amount >= 0)', async () => {
+  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'Up Spending' }]);
+  server.seed('/accounts/balances', [bal({ amount: 96270.59 })]);
+  await renderWithQueries(<Accounts />);
   const label = screen.getByText('$96,270.59'); // bare, no + sign
   expect(colorOf(label)).toBe(C.good);
 });
 
-it('an account card shows a negative balance in red (money owed)', () => {
-  mockTx = txData({
-    transactions: [{ ...ROW, account_id: 'a1', account_name: 'Up Homeloan' }],
-    balances: new Map([['a1', bal({ amount: -596642.43 })]]),
-  });
-  render(<Accounts />);
+it('an account card shows a negative balance in red (money owed)', async () => {
+  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'Up Homeloan' }]);
+  server.seed('/accounts/balances', [bal({ amount: -596642.43 })]);
+  await renderWithQueries(<Accounts />);
   const label = screen.getByText('-$596,642.43');
   expect(colorOf(label)).toBe(C.bad);
 });
 
-it('an account with no balance yet shows a dim "—" placeholder', () => {
-  mockTx = txData({
-    transactions: [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }],
-    balances: new Map(), // not polled yet
-  });
-  render(<Accounts />);
+it('an account with no balance yet shows a dim "—" placeholder', async () => {
+  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]); // balances not polled yet
+  await renderWithQueries(<Accounts />);
   expect(screen.getByText('—')).toBeTruthy();
-});
-
-// The list fills the viewport (flexGrow:1) so a short account list is one full-screen
-// pull-to-refresh target — a short ScrollView otherwise had no grabbable area and the pull
-// never caught. The fill must COEXIST with the shared clearances, not replace them: the wrapper
-// flattens [{ paddingHorizontal:18, ...contentPadding }, contentContainerStyle], so flexGrow
-// merges on top of paddingTop (clears the floating header) + paddingBottom (clears the tab bar).
-// If a change made the screen style REPLACE the shared padding, the pull spinner would draw
-// behind the header and the last card would hide under the tab bar.
-// NOTE: RN Testing Library can't fire a real drag, so this locks that the fill is APPLIED, not
-// that the gesture works on device. Fail-on-revert: drop the fill → flexGrow undefined → red;
-// break the wrapper's merge → the padding asserts → red. (flexGrow is not an RN default.)
-it('fills the viewport (flexGrow:1) without clobbering the shared header/tab-bar/horizontal clearances', () => {
-  mockTx = txData({ transactions: [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }] });
-  render(<Accounts />);
-  const scroll = screen.UNSAFE_getAllByType(ScrollView)[0];
-  const cc = StyleSheet.flatten(scroll.props.contentContainerStyle);
-  expect(cc.flexGrow).toBe(1);
-  expect(cc.paddingHorizontal).toBe(18);
-  expect(cc.paddingTop).toBeGreaterThan(0);    // header clearance survives
-  expect(cc.paddingBottom).toBeGreaterThan(0); // tab-bar clearance survives
 });
 
 // R2: a pull on the settled "No accounts yet" empty list must still show the spinner. The fill
@@ -171,15 +143,16 @@ it('fills the viewport (flexGrow:1) without clobbering the shared header/tab-bar
 // pull feeling dead (refresh ran, no feedback). `!showSpinner` shows it whenever the cold-load
 // spinner isn't already owning the screen. Fail-on-revert: restore the `length > 0` gate → an
 // empty-list pull reports refreshing=false → red.
-it('shows the pull spinner when pulling the settled empty list', () => {
-  mockTx = txData({ transactions: [] }); // settled + empty → "No accounts yet"
-  // Hold the pull open so `refreshing` stays observable while in flight.
-  refetchList.mockReturnValueOnce(new Promise<void>(() => {}));
-  refreshLiveBalances.mockReturnValueOnce(new Promise<void>(() => {}));
-  render(<Accounts />);
+it('shows the pull spinner when pulling the settled empty list', async () => {
+  await renderWithQueries(<Accounts />);
   expect(screen.getByText('No accounts yet')).toBeTruthy();
+  // Hold the live balance refresh open so `refreshing` stays observable while in flight.
+  const liveRefresh = server.hold('/accounts/balances/refresh');
   act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
+  await waitFor(() => expect(server.sent('POST', '/accounts/balances/refresh')).toHaveLength(1));
   expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
+  liveRefresh.release();
+  await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
 });
 
 // WHIT-489 divergent gate (the OTHER half): the Accounts RefreshControl gates on
@@ -188,31 +161,31 @@ it('shows the pull spinner when pulling the settled empty list', () => {
 // that window; the two must never double-spin. The sibling above proves settled-empty → DOES spin.
 // Fail-on-revert: change accounts.tsx to `refreshing={pulling}` (drop `&& !showSpinner`) → a
 // cold-load pull reports refreshing=true alongside accounts-loading → RED.
-it('does NOT raise the pull spinner during a cold load (inline spinner owns it)', () => {
-  mockTx = txData({ transactions: [], isLoading: true }); // cold load → showSpinner true
-  refetchList.mockClear(); refreshLiveBalances.mockClear(); // beforeEach doesn't reset these
-  refetchList.mockReturnValueOnce(new Promise<void>(() => {}));
-  refreshLiveBalances.mockReturnValueOnce(new Promise<void>(() => {}));
-  render(<Accounts />);
+it('does NOT raise the pull spinner during a cold load (inline spinner owns it)', async () => {
+  const feed = server.hold('/transactions/feed');
+  const liveRefresh = server.hold('/accounts/balances/refresh');
+  render(<WithQueries><Accounts /></WithQueries>);
+  await waitFor(() => expect(feedReads()).toHaveLength(1));
   expect(screen.getByTestId('accounts-loading')).toBeTruthy(); // inline cold-load spinner is up
   act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
-  expect(refetchList).toHaveBeenCalledTimes(1);                // the pull DID fire (pulling=true)
+  await waitFor(() => expect(server.sent('POST', '/accounts/balances/refresh')).toHaveLength(1)); // the pull DID fire
   expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false); // ...but gated off
+  liveRefresh.release();
+  feed.release();
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
 });
 
 // WHIT-643: the home loan gets ~2 transactions a month, so it usually isn't in the newest
 // loaded window — but the balance poller has saved its balance. The tab must still show a card
 // for every account in the balances payload, not only accounts seen in the loaded transactions.
 // Fail-on-revert: derive cards from transactions only → no "Up Homeloan" card → red.
-it('shows a card for a balance-only account (no loaded transactions) with its live balance', () => {
-  mockTx = txData({
-    transactions: [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }],
-    balances: new Map([
-      ['a1', bal({ account_id: 'a1', amount: 96270.59 })],
-      ['up-homeloan', bal({ account_id: 'up-homeloan', amount: -500000, account_type: 'mortgage' })],
-    ]),
-  });
-  render(<Accounts />);
+it('shows a card for a balance-only account (no loaded transactions) with its live balance', async () => {
+  seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
+  server.seed('/accounts/balances', [
+    bal({ account_id: 'a1', amount: 96270.59 }),
+    bal({ account_id: 'up-homeloan', amount: -500000, account_type: 'mortgage' }),
+  ]);
+  await renderWithQueries(<Accounts />);
   expect(screen.getByText('ANZ')).toBeTruthy();
   expect(screen.getByText('Up Homeloan')).toBeTruthy();
   expect(colorOf(screen.getByText('-$500,000.00'))).toBe(C.bad);
@@ -221,12 +194,39 @@ it('shows a card for a balance-only account (no loaded transactions) with its li
   expect(mockPush).toHaveBeenCalledWith('/account/up-homeloan');
 });
 
-it('with no loaded transactions but a saved balance, shows the card, not "No accounts yet"', () => {
-  mockTx = txData({
-    transactions: [],
-    balances: new Map([['up-homeloan', bal({ account_id: 'up-homeloan', amount: -500000 })]]),
-  });
-  render(<Accounts />);
+it('with no loaded transactions but a saved balance, shows the card, not "No accounts yet"', async () => {
+  server.seed('/accounts/balances', [bal({ account_id: 'up-homeloan', amount: -500000 })]);
+  await renderWithQueries(<Accounts />);
   expect(screen.queryByText('No accounts yet')).toBeNull();
   expect(screen.getByText('Up Homeloan')).toBeTruthy();
+});
+
+// WHIT-490 (folded in from westpacAccountsTab) — the one behaviour a FOURTH account newly
+// requires: the chip colour is ACCOUNT_ACCENTS[i % length], so shrink the palette to three and
+// card 4 wears card 1's colour, and the two read as the same account at a glance.
+it('gives the fourth account its own accent colour instead of reusing the first', async () => {
+  const row = (over: Record<string, unknown>) => ({ ...ROW, ...over });
+  seedFeed([
+    row({ transaction_id: 's1', account_id: 'up-spending', account_name: 'Up Spending' }),
+    row({ transaction_id: 'a1', account_id: 'anz-rewards-black-visa', account_name: 'ANZ Rewards Black Visa' }),
+    row({ transaction_id: 'h1', account_id: 'up-homeloan', account_name: 'Up Homeloan' }),
+    row({
+      transaction_id: 'bank_tx_b220e370', account_id: 'westpac-altitude-qantas-black',
+      account_name: 'Altitude Qantas Black Card', merchant_name: 'UNIFLEXREMEDIALMASSAGE',
+      description: 'UNIFLEXREMEDIALMASSAGE ALTONA NORT AUS', amount: -155, category: 'health',
+    }),
+  ]);
+  server.seed('/accounts/balances', [
+    bal({ account_id: 'up-spending', amount: 96270.59 }),
+    bal({ account_id: 'anz-rewards-black-visa', amount: -6492.26 }),
+    bal({ account_id: 'up-homeloan', amount: -596642.43 }),
+    bal({ account_id: 'westpac-altitude-qantas-black', amount: -230, available_balance: 5770 }),
+  ]);
+  await renderWithQueries(<Accounts />);
+
+  // Filtered by name: the account chip is the only "bank" Icon today, but any future
+  // chrome icon would otherwise break this with a baffling message.
+  const chips = screen.UNSAFE_getAllByType(Icon).filter((i) => (i.props as { name: string }).name === 'bank');
+  expect(chips).toHaveLength(4);
+  expect(new Set(chips.map((i) => (i.props as { color: string }).color)).size).toBe(4);
 });

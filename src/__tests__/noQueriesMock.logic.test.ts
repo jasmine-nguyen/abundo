@@ -9,42 +9,7 @@ export const QUERIES_MOCK = /^\s*jest\.(mock|doMock)\(\s*['"](\.\.\/)+(src\/)?qu
 
 // This list may only shrink. Move a file onto the fake server (or delete it if it only checks
 // layout or animation), then remove its line here.
-const ALLOWED = new Set<string>([
-  'accountDetail.screen.test.tsx',
-  'accountsTab.screen.test.tsx',
-  'budgetsWrapperStates.screen.test.tsx',
-  'categoryDetail.screen.test.tsx',
-  'categoryEditSummaryToast.screen.test.tsx',
-  'categoryFields.screen.test.tsx',
-  'equityCardDepositTarget.screen.test.tsx',
-  'goalEdit.screen.test.tsx',
-  'goalErrorStates.a11y.screen.test.tsx',
-  'goals.paydown.screen.test.tsx',
-  'goalsCheckpointCelebration.screen.test.tsx',
-  'goalsCheckpointCelebrationPaydown.screen.test.tsx',
-  'goalsHub.screen.test.tsx',
-  'goalsHubEdges.screen.test.tsx',
-  'goalsHubOverpaid.screen.test.tsx',
-  'goalsHubOwing.screen.test.tsx',
-  'goalsHubPayoffFloor.screen.test.tsx',
-  'goalsHubPureHero.screen.test.tsx',
-  'goalTooAggressive.screen.test.tsx',
-  'milestone.screen.test.tsx',
-  'mortgage.screen.test.tsx',
-  'nativeDateCallSites.screen.test.tsx',
-  'repayment.edges.screen.test.tsx',
-  'repayment.errorBoundary.screen.test.tsx',
-  'RulesScreen.screen.test.tsx',
-  'settingsGear.screen.test.tsx',
-  'settingsGearSelection.screen.test.tsx',
-  'settingsLogout.screen.test.tsx',
-  'settingsProfile.screen.test.tsx',
-  'tabBadgeQuery.screen.test.tsx',
-  'tabBarNoSettings.screen.test.tsx',
-  'tabDotNotDuplicated.screen.test.tsx',
-  'westpacAccountsTab.screen.test.tsx',
-  'whit330TabDot.screen.test.tsx',
-]);
+const ALLOWED = new Set<string>([]);
 
 function mocksQueries(file: string): boolean {
   return QUERIES_MOCK.test(readFileSync(join(__dirname, file), 'utf8'));

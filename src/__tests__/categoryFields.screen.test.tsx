@@ -19,24 +19,24 @@ import { ICON_KEYS } from '../icons';
 import { MAX_CHILDREN_PER_CATEGORY } from '../context';
 import type { Bucket, Category } from '../types';
 import { cat } from './factory';
+import { installFakeServer } from './support/fakeServer';
+import { useTestQueryClient, renderWithQueries, refreshInAct } from './support/renderWithQueries';
+import { resetAuth } from './support/authMock';
 
 // WHIT-459: the categoryFullParent suite (folded at the END) mounts the app/category/edit SCREEN,
-// which needs these three module mocks. CategoryFields is PURE-PRESENTATIONAL (it uses no context /
-// query / router hook — only the pure exports eligibleParents / childCount / BUCKETS), so mounting the
-// COMPONENT directly in the categoryFields + categoryFieldsFullParent suites is UNAFFECTED: the mocks
-// are INERT for them (requireActual keeps every pure context export real; useAppContext / useCategories
-// / useRouter are simply never called from the component).
+// which reads the taxonomy through the real query hooks over the fake server (WHIT-688) and needs
+// the module mocks below. CategoryFields is PURE-PRESENTATIONAL (it uses no context / query / router
+// hook — only the pure exports eligibleParents / childCount / BUCKETS), so mounting the COMPONENT
+// directly in the categoryFields + categoryFieldsFullParent suites is UNAFFECTED: the mocks are
+// INERT for them (requireActual keeps every pure context export real; useAppContext / useRouter are
+// simply never called from the component).
 const mockSaveCategory = jest.fn(async (_id: string | null, _form: { name: string; bucket: string; icon: string; parent?: string | null }, _opts?: { silent?: boolean }) => true);
 jest.mock('../../src/context', () => {
   const actual = jest.requireActual('../../src/context') as typeof import('../../src/context');
   return { ...actual, useAppContext: () => ({ saveCategory: mockSaveCategory, deleteCategory: jest.fn(), showToast: jest.fn(), getSessionEpoch: () => 0 }) };
 });
 
-let mockCategories: Category[] = [];
-const mockCategory = (id: string | null) => mockCategories.find((c) => c.id === id);
-jest.mock('../../src/queries', () => ({
-  useCategories: () => ({ category: mockCategory, categories: mockCategories, isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn() }),
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('expo-router', () => ({
   useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
@@ -44,6 +44,9 @@ jest.mock('expo-router', () => ({
 }));
 
 import CategoryEdit from '../../app/category/edit';
+
+const server = installFakeServer();
+useTestQueryClient();
 
 const handlers = {
   onNameChange: jest.fn(),
@@ -261,26 +264,34 @@ it('the held parent is exempt at the component level even when full (the landmin
 });
 
 // ===== WHIT-459: folded from categoryFullParent.screen.test.tsx (WHIT-441 full-parent greying, SCREEN-level, 2 its) =====
-// DIFFERENT regime: mounts the app/category/edit SCREEN (CategoryEdit), driven by the module-scope
-// context / queries / expo-router mocks hoisted at the top. Its local `cat` shadows the imported
+// DIFFERENT regime: mounts the app/category/edit SCREEN (CategoryEdit) over the fake server, with the
+// module-scope context / auth / expo-router mocks hoisted at the top. Its local `cat` shadows the imported
 // factory `cat` within this block only; the mocks it needs are INERT for the component suites above.
 describe('categoryFullParent', () => {
-const cat = (id: string, parent: string | null): Category =>
-  ({ id, name: id, bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0, parent });
-const childrenOf = (parent: string, n: number, prefix: string): Category[] =>
+// Wire categories, as /categories sends them.
+const cat = (id: string, parent: string | null) => ({ id, name: id, bucket: 'Lifestyle', icon: 'coffee', parent });
+const childrenOf = (parent: string, n: number, prefix: string) =>
   Array.from({ length: n }, (_, i) => cat(`${prefix}${i}`, parent));
+// Flush the query library's one-tick redraw after the fetch settles, so no tap lands before it.
+async function drawEdit() {
+  await renderWithQueries(<CategoryEdit />);
+  await refreshInAct(() => undefined);
+}
 
-beforeEach(() => { mockSaveCategory.mockClear(); });
+beforeEach(() => {
+  resetAuth();
+  mockSaveCategory.mockClear();
+});
 
-it('greys out a parent at the child cap, and a tap on it does nothing', () => {
+it('greys out a parent at the child cap, and a tap on it does nothing', async () => {
   // 'treats' already holds the maximum children; 'coffee' (top-level, being edited) is not one of
   // them, so attaching it would overflow — the chip must be disabled.
-  mockCategories = [
+  server.seed('/categories', [
     cat('coffee', null),
     cat('treats', null),
     ...childrenOf('treats', MAX_CHILDREN_PER_CATEGORY, 'kid'),
-  ];
-  render(<CategoryEdit />);
+  ]);
+  await drawEdit();
 
   expect(screen.getByText('treats · full')).toBeTruthy();     // greyed + labelled
   fireEvent.press(screen.getByTestId('parent-treats'));        // disabled → no-op
@@ -290,16 +301,16 @@ it('greys out a parent at the child cap, and a tap on it does nothing', () => {
   expect(mockSaveCategory).toHaveBeenCalledWith('coffee', expect.objectContaining({ parent: null }), { silent: true });
 });
 
-it('keeps the category’s OWN full parent selectable — a plain rename never detaches it', () => {
+it('keeps the category’s OWN full parent selectable — a plain rename never detaches it', async () => {
   // 'coffee' already sits under 'treats', which is at the cap (coffee is one of its 50 children).
   // From coffee's side treats is NOT full — re-saving under it adds nothing — so it must stay
   // pickable. This is the landmine: greying the held parent would let a rename drop the link.
-  mockCategories = [
+  server.seed('/categories', [
     cat('coffee', 'treats'),
     cat('treats', null),
     ...childrenOf('treats', MAX_CHILDREN_PER_CATEGORY - 1, 'kid'),   // + coffee = 50
-  ];
-  render(<CategoryEdit />);
+  ]);
+  await drawEdit();
 
   expect(screen.queryByText('treats · full')).toBeNull();     // held parent is never greyed
   // Deselect then re-pick the held parent, then save: it must land back on 'treats'.

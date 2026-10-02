@@ -3,9 +3,17 @@
 // strictly-above case. The card's gate moved from `Math.round(paidDown) > 0` to the shared
 // `paidDownReady` — same predicate — so it must STILL fall to the plain "$X owing" line, never an
 // incoherent "$1 / 0% gone" rich card. Mirrors goalsHubRichGaps' harness (REAL goalView runs).
+// WHIT-685: the hub's data comes from the fake server through the real screen data code
+// (useGoalsScreenData), so a broken conversion of the server's reply reddens these too.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, within } from '@testing-library/react-native';
+import { screen, within } from '@testing-library/react-native';
+import { installFakeServer } from './support/fakeServer';
+import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { resetAuth } from './support/authMock';
+import { pinToday } from './support/clock';
+import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
+import type { LoanFacts } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => {
   const { View, Text } = require('react-native');
@@ -16,8 +24,7 @@ jest.mock('../motion/ScrollChromeHeader', () => {
   };
 });
 
-let mockData: ReturnType<typeof baseData>;
-jest.mock('../queries', () => ({ useGoalsScreenData: () => mockData }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => ({ openGoalBalance: jest.fn() }) };
@@ -26,30 +33,27 @@ jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }), useFoc
 
 import Goals from '../../app/(tabs)/goals';
 
-const READY_FACTS = { original: 500000, homeValue: 900000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, payoffGoalDate: null };
+const PAY_CYCLE = { length: 14, last_pay_date: '2026-06-06' };
+const READY_FACTS: LoanFacts = { original: 500000, homeValue: 900000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, payoffGoalDate: null };
 
-function baseData(over: Record<string, unknown> = {}) {
-  return {
-    goals: [] as unknown[],
-    payCycle: { length: 14, last_pay_date: '2026-06-06' },
-    balanceFor: () => null,
-    loanFacts: READY_FACTS,
-    homeLoan: { balance: 500001, asOf: '2026-07-04T00:00:00Z' }, // $1 ABOVE original
-    mortgageError: false,
-    isLoading: false,
-    isError: false,
-    refetch: jest.fn(),
-    refetchStale: jest.fn(),
-    ...over,
-  };
-}
+const server = installFakeServer();
+useTestQueryClient();
 
-beforeEach(() => { jest.useFakeTimers({ now: new Date(2026, 6, 11) }); mockData = baseData(); });
+// The home loan sits $1 ABOVE the original by default. `balances` is account id → live balance (the
+// old balanceFor lookup); an account left out is unpolled.
+const HUB: GoalsHubSeed = { payCycle: PAY_CYCLE, balances: {}, loanFacts: READY_FACTS, homeLoan: { balance: 500001, asOf: '2026-07-04T00:00:00Z' } };
+const seedHub = (over: GoalsHubSeed = {}) => seedGoalsHub(server, { ...HUB, ...over });
+
+beforeEach(() => {
+  resetAuth();
+  pinToday(new Date(2026, 6, 11));
+  seedHub();
+});
 afterEach(() => { jest.useRealTimers(); });
 
 describe('WHIT-372 mortgage card — balance above the original', () => {
-  it('balance above original → plain "$500,001 owing" line, never a rich "$1 / 0% gone" card', () => {
-    render(<Goals />);
+  it('balance above original → plain "$500,001 owing" line, never a rich "$1 / 0% gone" card', async () => {
+    await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('mortgage-link'));
     expect(card.getByText('$500,001')).toBeTruthy();
     expect(card.queryByText('PAID DOWN SO FAR')).toBeNull();

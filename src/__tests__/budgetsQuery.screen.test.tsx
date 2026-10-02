@@ -12,6 +12,7 @@ import { makeClient, wrapper, pause } from './support/queryClient';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
+import { pinToday } from './support/clock';
 
 // auth: controllable status + a real subscribe, so the "fires on login" test can flip it.
 let mockAuthStatus = 'authed';
@@ -178,25 +179,35 @@ it('hides a Savings-bucket budget end-to-end and keeps it out of the hero total 
 });
 
 // WHIT-574 — [A-hookrender] through-the-hook render: a known last_pay_date fetched via the REAL
-// pay-cycle query renders a known "Started …" on the hero. The wrapper-states screen tests mock
-// useBudgetsScreenData directly; this drives the actual hook + cycleStart + formatDayMonth end to
-// end. Time is pinned (fake Date only; timers stay real so findByText polling works) so the ambient
+// pay-cycle query renders a known "Started …" on the hero. This drives the actual hook +
+// cycleStart + formatDayMonth end to end. Time is pinned (fake Date only; timers stay real so findByText polling works) so the ambient
 // `new Date()` inside cycleStart is deterministic.
 it('through the hook: a known last_pay_date renders a known "Started …" (WHIT-574)', async () => {
-  jest.useFakeTimers({
-    doNotFake: [
-      'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate', 'clearImmediate',
-      'nextTick', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame',
-      'requestIdleCallback', 'cancelIdleCallback', 'hrtime', 'performance',
-    ],
-  });
-  jest.setSystemTime(new Date('2026-09-18T10:00:00+10:00')); // 18 Sep 2026, Melbourne local day
+  pinToday(new Date('2026-09-18T10:00:00+10:00')); // 18 Sep 2026, Melbourne local day
   try {
     // last_pay_date 1 Sep, 30-day cycle, today 18 Sep → cyclesElapsed 0 → start stays 1 Sep.
     // Also proves the no-leading-zero format ("1 Sep") survives a real render.
     server.seed('/paycycle', { length: 30, last_pay_date: '2026-09-01' });
     renderBudgets();
     expect(await screen.findByText('Started 1 Sep')).toBeTruthy();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+// WHIT-574 (moved from budgetsWrapperStates, WHIT-688) — a first payday still in the future has
+// no started cycle, so cycleStart is '' and the hero shows no "Started …" line (showing "Started
+// today" would be false). Fail-on-revert: render the line unconditionally → "Started " → red.
+it('through the hook: a future last_pay_date renders no "Started …" line', async () => {
+  pinToday(new Date('2026-09-18T10:00:00+10:00'));
+  try {
+    server.seed('/paycycle', { length: 30, last_pay_date: '2026-09-25' });
+    const client = makeClient();
+    renderBudgets(client);
+    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    expect(payCycleReads()).toHaveLength(1);
+    expect(screen.queryByText(/^Started /)).toBeNull();
   } finally {
     jest.useRealTimers();
   }
