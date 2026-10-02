@@ -3,11 +3,11 @@
 // the earned-vs-spent card is hidden whether or not the screen's spinner/error gate exists. These
 // draw real server states where income IS present while the screen is loading or erroring.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { screen, fireEvent } from '@testing-library/react-native';
 import { queryClient } from '../queryClient';
 import { breakdownKey } from '../queries';
 import { installFakeServer } from './support/fakeServer';
-import { refreshInAct, useTestQueryClient, settle } from './support/renderWithQueries';
+import { refreshInAct, useTestQueryClient, settle, loaded } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { breakdownWire, seedInsights, renderInsights, drawInsights, resetAi, refreshAiInsights } from './support/insightsScreen';
 
@@ -44,7 +44,7 @@ describe('the earned-vs-spent card stays hidden over a real loading/error state 
     const held = server.hold('/categories');
     drawInsights();
     try {
-      await waitFor(() => expect(queryClient.getQueryState([...breakdownKey, 0])?.status).toBe('success'));
+      await loaded([...breakdownKey, 0]);
       expect(screen.getByTestId('insights-loading')).toBeTruthy();
       expect(screen.queryByTestId('insights-earned-spent')).toBeNull();
     } finally {
@@ -84,7 +84,7 @@ describe('cycle switch reads each cycle from its own reply', () => {
 
     server.once('GET', '/breakdown', { body: breakdownWire({ spend: { coffee: posted(125) } }) });
     fireEvent.press(screen.getByTestId('insights-cycle-prev'));
-    await waitFor(() => expect(queryClient.getQueryState([...breakdownKey, 1])?.status).toBe('success'));
+    await loaded([...breakdownKey, 1]);
     await settle();
     expect(screen.getByText('LAST PAY CYCLE')).toBeTruthy();
     expect(screen.getByTestId('insights-hero-total').props.children).toBe('$125');
