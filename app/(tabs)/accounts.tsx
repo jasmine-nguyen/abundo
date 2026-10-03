@@ -57,8 +57,7 @@ export default function Accounts() {
         />
       )}
     >
-      <StaleDataLine idPrefix="accounts" error={refreshError} updatedAt={updatedAt} />
-      <ListStates
+      {!showError && <StaleDataLine idPrefix="accounts" error={refreshError} updatedAt={updatedAt} />}      <ListStates
         showSpinner={showSpinner}
         showError={showError}
         idPrefix="accounts"

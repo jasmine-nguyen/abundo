@@ -232,7 +232,7 @@ export default function Transactions() {
           </Pressable>
         )}
 
-        {!searchingServer && <StaleDataLine idPrefix="transactions" error={refreshError} updatedAt={updatedAt} />}
+        {!searchingServer && !showError && <StaleDataLine idPrefix="transactions" error={refreshError} updatedAt={updatedAt} />}
         <ListStates
           showSpinner={showSpinner}
           showError={showError}

@@ -5,7 +5,6 @@
 // expo-router mocked; the screen renders under a real QueryClientProvider so the actual query
 // behaviour runs.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { RefreshControl } from 'react-native';
 import { screen, fireEvent, act, waitFor, renderHook } from '@testing-library/react-native';
 import { QueryClient } from '@tanstack/react-query';
 import { makeClient, wrapper, pause } from './support/queryClient';
@@ -14,6 +13,7 @@ import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
 import { pinToday } from './support/clock';
+import { pullControl, pullAndSettle } from './support/pull';
 
 // auth: controllable status + a real subscribe, so the "fires on login" test can flip it.
 let mockAuthStatus = 'authed';
@@ -635,11 +635,6 @@ describe('WHIT-573 hero over-budget — gaps', () => {
 // reads failed, which load time the line names, the spinner during a cold load, a pull from the
 // error card, and the pay-cycle error card's reason.
 describe('WHIT-713 QA: pull-to-refresh + quiet stale line edges', () => {
-  const pullControl = () => screen.UNSAFE_getByType(RefreshControl);
-  async function pullAndSettle() {
-    act(() => { pullControl().props.onRefresh(); });
-    await waitFor(() => expect(pullControl().props.refreshing).toBe(false));
-  }
   async function renderLoaded() {
     renderBudgets();
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();

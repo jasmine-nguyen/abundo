@@ -5,9 +5,10 @@
 // line must name the ORIGINAL load time (not the pull's time).
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
-import { RefreshControl } from 'react-native';
+import { screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { pinToday } from './support/clock';
+import { pullAndSettle } from './support/pull';
+import { txn } from './factory';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { renderWithApp, resetAppProbe } from './support/renderWithApp';
@@ -25,17 +26,7 @@ const server = installFakeServer();
 useTestQueryClient();
 
 const FEED = '/transactions/feed';
-const ROW = {
-  transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'WOOLWORTHS', merchant_name: 'Woolworths', amount: -42, account_id: 'a1',
-  account_name: 'ANZ', category: 'groceries', status: 'posted', type: 'purchase', counts_to_budget: true,
-};
-
-const pullControl = () => screen.UNSAFE_getByType(RefreshControl);
-async function pullAndSettle() {
-  act(() => { pullControl().props.onRefresh(); });
-  await waitFor(() => expect(pullControl().props.refreshing).toBe(false));
-}
+const ROW = txn({ amount: -42, account_name: 'ANZ' });
 
 beforeEach(() => {
   pinToday(new Date('2026-09-18T09:40:00+10:00'));
@@ -73,7 +64,7 @@ it('Transactions: a failed pull after Load More keeps the rows and shows the ori
   await renderWithApp(<Transactions />);
   expect(await screen.findByText('-$42.00')).toBeTruthy();
 
-  server.once('GET', FEED, { body: { transactions: [{ ...ROW, transaction_id: 't2', amount: -7 }], nextCursor: null } });
+  server.once('GET', FEED, { body: { transactions: [txn({ transaction_id: 't2', amount: -7, account_name: 'ANZ' })], nextCursor: null } });
   fireEvent.press(screen.getByTestId('transactions-load-more'));
   expect(await screen.findByText('-$7.00')).toBeTruthy();
   expect(screen.queryByTestId('transactions-stale')).toBeNull();

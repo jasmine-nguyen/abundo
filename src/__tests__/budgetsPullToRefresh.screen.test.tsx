@@ -3,12 +3,12 @@
 // pinned to 9:40am Melbourne so the line's "showing <time>" is a known literal: data loaded
 // at the pinned time, and real timers never move the faked Date.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { RefreshControl } from 'react-native';
 import { screen, act, waitFor, fireEvent } from '@testing-library/react-native';
 import { resetRouter } from './support/routerMock';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
+import { pullControl, pullAndSettle } from './support/pull';
 import { BUDGETS, seedBudgets, renderBudgets } from './support/budgetsScreen';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -20,13 +20,6 @@ const budgetReads = () => server.sentUnder('GET', '/budgets?');
 async function renderLoadedBudgets() {
   renderBudgets();
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-}
-
-const pullControl = () => screen.UNSAFE_getByType(RefreshControl);
-
-async function pullAndSettle() {
-  act(() => { pullControl().props.onRefresh(); });
-  await waitFor(() => expect(pullControl().props.refreshing).toBe(false));
 }
 
 beforeEach(() => {
