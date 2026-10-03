@@ -116,7 +116,9 @@ in `escalation` or `options`. The one exception is `unpin_files`.
 
 You may be resumed (or restarted) with findings from the automatic checks
 (typecheck, lint, tests, pinned-test changes, git hooks) and from reviewers. Fix
-every must-fix finding, and don't touch unrelated code.
+every must-fix finding, and don't touch unrelated code. A small fold-in from the
+code review is a must-fix: bring the code it names in line, the same way as the
+change.
 
 ## Output
 

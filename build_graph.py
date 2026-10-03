@@ -318,6 +318,7 @@ CODE_CRITIC_OUTPUT = _output(
     blocking_bugs=TEXTS,
     standards_breaches=TEXTS,
     decisions_to_escalate=TEXTS,
+    fold_ins=TEXTS,
     advisory=TEXTS,
     tech_debt=_list_of(title=TEXT, problem=TEXT, fix=TEXT),
 )
@@ -464,8 +465,32 @@ def _transient(terminal_reason: str | None, status: int | None) -> bool:
 AGENT_RETRY = RetryPolicy(max_attempts=2, retry_on=lambda e: getattr(e, "transient", False))
 
 
-def agent_prompt(prompt_file: str) -> str:
-    return (ROOT / ".claude" / "agents" / prompt_file).read_text()
+# The one definition of "small" that the planner, the plan critic and the code critic share, so a
+# small same-pattern fix is folded into this PR at every step instead of being filed as a card.
+FOLD_IN_RULE = """
+
+## Small fold-ins
+
+When the change leaves nearby code doing the same thing the old way, bringing that code in line is
+a **small fold-in** if all of these hold:
+
+- it uses the same pattern the change already uses;
+- it touches a handful of files at most;
+- it needs no new decisions from the user;
+- it stays out of risky areas: money, user data, auth, and data already saved;
+- it's roughly under an hour of work.
+
+A small fold-in goes into this PR, not into a separate card. Anything bigger, riskier or unrelated
+to the card is a card.
+"""
+FOLD_IN_AGENTS = {"designer", "plan_critic", "code_critic"}
+
+
+def agent_prompt(name: str) -> str:
+    prompt = (ROOT / ".claude" / "agents" / AGENTS[name].prompt_file).read_text()
+    if name in FOLD_IN_AGENTS:
+        prompt += FOLD_IN_RULE
+    return prompt
 
 
 async def run_agent(
@@ -474,7 +499,7 @@ async def run_agent(
     agent = AGENTS[name]
     options = ClaudeAgentOptions(
         model=DEFAULT_MODEL,
-        system_prompt=agent_prompt(agent.prompt_file),
+        system_prompt=agent_prompt(name),
         tools=list(agent.tools),
         allowed_tools=list(agent.tools),
         hooks=guard_hooks(agent.policy),
@@ -2115,13 +2140,19 @@ async def code_critic(state: BuildState):
     result = await run_agent("code_critic", review_block(state, "code"), CODE_CRITIC_OUTPUT)
     out = result.output
     bugs, breaches, decisions = out["blocking_bugs"], out["standards_breaches"], out["decisions_to_escalate"]
+    fold_ins = out["fold_ins"]
     feedback = []
     if bugs:
         feedback.append(f"### Bugs\n{bullets(bugs)}")
     if breaches:
         feedback.append(f"### Standards breaches\n{bullets(breaches)}")
+    if fold_ins:
+        feedback.append(f"### Small fold-ins: bring this nearby code in line in this PR\n{bullets(fold_ins)}")
     rework = bool(feedback or decisions)
-    summary = f"code review: {len(bugs)} bug(s), {len(breaches)} standards breach(es), {len(decisions)} decision(s)"
+    summary = (
+        f"code review: {len(bugs)} bug(s), {len(breaches)} standards breach(es), "
+        f"{len(fold_ins)} fold-in(s), {len(decisions)} decision(s)"
+    )
     return {
         "code_verdict": "NEEDS_REWORK" if rework else "APPROVED",
         "code_feedback": "\n\n".join(feedback),

@@ -51,8 +51,12 @@ with low confidence.
 - **Advisory** — a smell from the list below, a minor bug, or any other judgement
   call. Phrase smells as "possible Feature Envy", never as violations. A written repo
   standard overrides the smell list: if the repo endorses a pattern, don't flag it.
-- **Tech debt** — a real improvement that's too big for this change (roughly more
-  than 15 minutes, or outside the files it touches). File it as a card instead.
+- **Fold-in** — the change leaves nearby code doing the same thing the old way, and
+  bringing it in line is a small fold-in (see "Small fold-ins" below). Being outside
+  the files the change touches doesn't make it a card. Put it in `fold_ins`: it goes
+  back to the implementer this round.
+- **Tech debt** — a real improvement that is NOT a small fold-in: bigger, riskier or
+  unrelated to the card. File it as a card instead.
 - Skip anything a linter or formatter already enforces, and style nitpicks on code
   that follows existing patterns.
 - The tests written before the code (the proof tests) sit in a new test file of
@@ -93,9 +97,10 @@ will put it to the user.
   `path:line — trigger → wrong outcome (confidence) → smallest fix`.
 - `standards_breaches` — one each: `path:line — the rule broken (where it's written) → the fix`.
 - `decisions_to_escalate` — one line each, or empty.
+- `fold_ins` — one each: `path:line — what still does it the old way → bring it in line like <path:line in the change>`.
 - `advisory` — minor bugs and possible smells, one line each with `path:line`.
 - `tech_debt` — ready-to-file cards: `title`, `problem` (with location), `fix`.
 
-Anything in `blocking_bugs`, `standards_breaches` or `decisions_to_escalate` sends the
+Anything in `blocking_bugs`, `standards_breaches`, `fold_ins` or `decisions_to_escalate` sends the
 change back, so only list what you've verified. Nothing else you write is read, so
 don't write a report: return these fields and stop.

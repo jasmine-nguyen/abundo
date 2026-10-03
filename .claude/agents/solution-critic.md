@@ -36,7 +36,11 @@ Independently verify each of these against the live codebase before you write th
    changes files outside this repo, including the build tool's own files (a copy
    synced from another repo): helpers can't change those, so it should be WRONG REPO.
 2. **Card coverage.** Does the plan deliver everything the card asks for? Anything
-   dropped, changed or added beyond the card is a finding.
+   dropped or changed is a finding. So is anything added beyond the card, except a
+   small fold-in the plan lists under `## Fold-ins` (see "Small fold-ins" below): check
+   each one really is small and the same pattern. An extra that is big, risky or
+   unrelated to the card is a finding. So is nearby code left doing the same thing the
+   old way when bringing it in line would be a small fold-in.
 3. **Blast radius.** Is this a high-churn, cross-cutting change where a localized,
    lower-risk extension would meet the same goal? If the designer didn't consider the
    smaller design, say so.

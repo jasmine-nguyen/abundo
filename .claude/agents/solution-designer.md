@@ -39,12 +39,19 @@ Rules:
   things with the glossary's terms.
 - Plan the smallest change that fully satisfies the card, without adding bugs or
   technical debt. Call out anything the card implies but does not state.
-- If a bigger long-term fix exists (folding in another card, a rename or refactor
-  beyond the files the card needs, reworking a shared module), don't plan it. Put it
-  in `decisions` for the user: what the long-term fix is, what it costs (files, extra
-  slices), and what it prevents, in plain English. Options: "A) Card only: build
-  this plan · B) Include the long-term fix: the plan is redone to cover it, <cost> ·
-  C) Later: file the long-term fix as its own card". Recommend one.
+- If the change leaves nearby code doing the same thing the old way (another screen
+  with the same kind of button, a sibling function with the same old call), look for
+  it and bring it in line. When that's a small fold-in (see "Small fold-ins" below),
+  plan it automatically: no decision for the user, no card. List it under a
+  `## Fold-ins` heading in `plan` (what, where, and why it's the same pattern) and
+  mention it in `solution`.
+- If a bigger long-term fix exists, one that isn't a small fold-in (folding in another
+  card, a rename or refactor across many files, reworking a shared module, anything in
+  a risky area), don't plan it. Put it in `decisions` for the user: what the long-term
+  fix is, what it costs (files, extra slices), and what it prevents, in plain English.
+  Options: "A) Card only: build this plan · B) Include the long-term fix: the plan is
+  redone to cover it, <cost> · C) Later: file the long-term fix as its own card".
+  Recommend one.
 - **Check isolation with a real method** — don't guess at "in-progress work". List
   the files the change touches, then: `git branch -a` + recent `git log` for other
   branches touching the same files, and `gh pr list` for open PRs over them. Flag
