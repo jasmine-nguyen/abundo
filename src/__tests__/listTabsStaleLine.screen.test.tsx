@@ -6,14 +6,12 @@
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react-native';
-import { pinToday } from './support/clock';
 import { pullAndSettle } from './support/pull';
 import { txn } from './factory';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
-import { renderWithApp, resetAppProbe } from './support/renderWithApp';
-import { resetAuth } from './support/authMock';
-import { resetRouter } from './support/routerMock';
+import { renderWithApp } from './support/renderWithApp';
+import { LIST_ROW, resetListTabs } from './support/listTabsScreen';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -26,14 +24,8 @@ const server = installFakeServer();
 useTestQueryClient();
 
 const FEED = '/transactions/feed';
-const ROW = txn({ amount: -42, account_name: 'ANZ' });
-
 beforeEach(() => {
-  pinToday(new Date('2026-09-18T09:40:00+10:00'));
-  resetAuth();
-  resetAppProbe();
-  resetRouter();
-  server.seed('/categories', [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null }]);
+  resetListTabs(server);
 });
 
 afterEach(() => {
@@ -41,7 +33,7 @@ afterEach(() => {
 });
 
 it('Accounts: a pull that loses the connection keeps the cards and says "You look offline · showing 9:40am", cleared by a good pull', async () => {
-  server.seed(FEED, { transactions: [ROW], nextCursor: null });
+  server.seed(FEED, { transactions: [LIST_ROW], nextCursor: null });
   await renderWithApp(<Accounts />);
   expect(screen.getByText('ANZ')).toBeTruthy();
   expect(screen.queryByTestId('accounts-stale')).toBeNull();
@@ -60,7 +52,7 @@ it('Accounts: a pull that loses the connection keeps the cards and says "You loo
 });
 
 it('Transactions: a failed pull after Load More keeps the rows and shows the original load time; the line hides during a search', async () => {
-  server.seed(FEED, { transactions: [ROW], nextCursor: 'c1' });
+  server.seed(FEED, { transactions: [LIST_ROW], nextCursor: 'c1' });
   await renderWithApp(<Transactions />);
   expect(await screen.findByText('-$42.00')).toBeTruthy();
 
