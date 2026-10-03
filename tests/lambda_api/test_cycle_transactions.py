@@ -30,6 +30,16 @@ class _FakePayCycleRepo:
         return {"length": 30, "last_pay_date": "2026-07-01"}
 
 
+class _NoBudgetsRepo:
+    def list_budgets(self):
+        return {}
+
+
+class _NoCategoriesRepo:
+    def list_categories(self):
+        return []
+
+
 def _txn(txn_id, date_, amount, category="coffee", status="posted", counts=True, excluded=False):
     row = {
         "transaction_id": txn_id,
@@ -73,6 +83,8 @@ def _event(cycle=None):
 def _call(handler, monkeypatch, event):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: _DateFilteringTransactionRepo(TXNS))
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: _FakePayCycleRepo())
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: _NoBudgetsRepo())
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: _NoCategoriesRepo())
     return handler.lambda_handler(event, None)
 
 

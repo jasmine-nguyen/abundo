@@ -75,13 +75,13 @@ jest.mock('expo-haptics', () => ({
   ImpactFeedbackStyle: { Light: 'light', Medium: 'medium', Heavy: 'heavy' },
 }));
 
-// The Insights CSV export (WHIT-700) writes a file and opens the share menu — both native.
+// The Insights export (WHIT-700; an Excel file since WHIT-703) writes a file and opens the share menu — both native.
 // Stub them so every screen that loads Insights renders headlessly; the export's own screen
 // test mocks src/cycleShare directly.
 jest.mock('expo-file-system', () => ({
   Paths: { cache: {} },
   File: class {
-    uri = 'file:///cache/export.csv';
+    uri = 'file:///cache/export.xlsx';
     create() {}
     write() {}
   },

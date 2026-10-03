@@ -30,6 +30,16 @@ class _FakePayCycleRepo:
         return {"length": 30, "last_pay_date": "2026-07-01"}
 
 
+class _NoBudgetsRepo:
+    def list_budgets(self):
+        return {}
+
+
+class _NoCategoriesRepo:
+    def list_categories(self):
+        return []
+
+
 def _txn(txn_id, date_, amount, account, **extra):
     row = {
         "transaction_id": txn_id,
@@ -81,6 +91,8 @@ def _call(handler, monkeypatch, event, repo=None):
     repo = repo or _PerAccountRepo(BY_ACCOUNT)
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: _FakePayCycleRepo())
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: _NoBudgetsRepo())
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: _NoCategoriesRepo())
     return handler.lambda_handler(event, None)
 
 
@@ -142,11 +154,25 @@ def test_bad_cycle_values_are_rejected(handler, monkeypatch, today, bad):
     assert "error" in json.loads(response["body"])
 
 
+# WHIT-703: with no budgets set, `budgets` is {} and the categories are never read.
+@pytest.mark.parametrize("cycle", [None, {"cycle": "1"}])
+def test_no_budgets_skips_the_category_read(handler, monkeypatch, today, cycle):
+    class _UnreadCategoryRepo:
+        def list_categories(self):
+            raise AssertionError("categories read with no budgets")
+
+    _call(handler, monkeypatch, _event())
+    monkeypatch.setattr(handler, "CategoryRepository", _UnreadCategoryRepo)
+    response = handler.lambda_handler(_event(cycle), None)
+    assert response["statusCode"] == 200
+    assert json.loads(response["body"])["budgets"] == {}
+
+
 # [A5] an empty window returns 200 with an empty list, still carrying the dates.
 def test_empty_cycle_returns_dates_and_no_rows(handler, monkeypatch, today):
     response = _call(handler, monkeypatch, _event(), _PerAccountRepo({}))
     assert response["statusCode"] == 200
-    assert json.loads(response["body"]) == {"start": "2026-07-01", "end": "2026-07-25", "transactions": []}
+    assert json.loads(response["body"]) == {"start": "2026-07-01", "end": "2026-07-25", "transactions": [], "budgets": {}}
 
 
 # [A6] the route is GET-only and exact-path.
