@@ -1,4 +1,4 @@
-// Card 609 — the floating round Ask button: the tab bar renders it (so it is on all five tabs and no
+// Card 609 — the floating "Ask" pill: the tab bar renders it (so it is on all five tabs and no
 // pushed screen), 16pt above the bar, labelled for screen readers, and tapping it opens the chat.
 // WHIT-687 — the tab bar's screen data comes from the real query hooks over the fake server.
 import { it, expect, jest, beforeEach } from '@jest/globals';
@@ -31,16 +31,16 @@ const barProps: React.ComponentProps<typeof TabBar> = {
   navigation: { emit: () => ({ defaultPrevented: false }), navigate: jest.fn() },
 };
 
-it('the tab bar renders the round Ask button above itself, icon only, and tapping it opens the chat', async () => {
+it('the tab bar renders the Ask pill above itself, and tapping it opens the chat', async () => {
   await renderWithQueries(<ChatProvider><TabBar {...barProps} /><Probe /></ChatProvider>);
 
-  const button = screen.getByLabelText('Ask about your spending');
-  expect(screen.queryByText('Ask')).toBeNull();
+  const pill = screen.getByLabelText('Ask about your spending');
+  expect(screen.getByText('Ask')).toBeTruthy();
   // 16pt above the bar's (initial) 90pt height, pinned to the right.
-  const style = Object.assign({}, ...[button.props.style].flat(3).filter(Boolean));
-  expect(style).toMatchObject({ position: 'absolute', right: 18, bottom: 106, width: 48, height: 48, borderRadius: 24 });
+  const style = Object.assign({}, ...[pill.props.style].flat(3).filter(Boolean));
+  expect(style).toMatchObject({ position: 'absolute', right: 18, bottom: 106 });
 
   expect(chatOpen).toBe(false);
-  fireEvent.press(button);
+  fireEvent.press(pill);
   expect(chatOpen).toBe(true);
 });

@@ -70,7 +70,7 @@ export interface ChatContextValue {
   acceptConsent: () => void;
 }
 
-// Safe default so a screen that renders the Ask button or the insights card WITHOUT the provider
+// Safe default so a screen that renders the Ask pill or the insights card WITHOUT the provider
 // (the bare screen tests) doesn't crash — the same stance as NavBarsContext.
 const noop = () => {};
 const DEFAULT_VALUE: ChatContextValue = {
