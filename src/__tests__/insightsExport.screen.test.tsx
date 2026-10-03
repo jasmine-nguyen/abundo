@@ -8,7 +8,7 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedInsights, renderInsights, resetAi } from './support/insightsScreen';
-import { shareCycleCsv } from '../cycleShare';
+import { shareCycleExport } from '../cycleShare';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
@@ -16,9 +16,9 @@ jest.mock('expo-router', () => {
   const ReactLib = require('react');
   return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
 });
-jest.mock('../cycleShare', () => ({ shareCycleCsv: jest.fn() }));
+jest.mock('../cycleShare', () => ({ shareCycleExport: jest.fn() }));
 
-const share = shareCycleCsv as jest.MockedFunction<typeof shareCycleCsv>;
+const share = shareCycleExport as jest.MockedFunction<typeof shareCycleExport>;
 const server = installFakeServer();
 useTestQueryClient();
 

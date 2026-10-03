@@ -1,20 +1,19 @@
-// WHIT-700: turn one pay cycle's transactions into CSV text for the Insights export.
+// WHIT-700 / WHIT-703: turn one pay cycle's data into the Insights export workbook (.xlsx).
 // Pure — no screen or file access — so it runs in the fast logic tests.
-import type { CycleTransaction } from './api';
+import type { CycleTransaction, CycleTransactions } from './api';
 import type { Category } from './types';
+import { buildXlsx, type Cell } from './xlsx';
 
-const BOM = '﻿';
 const UNCATEGORISED = 'Uncategorised';
 const MAX_PARENT_STEPS = 5;
 
-export const CSV_HEADER = [
+export const TRANSACTION_HEADER = [
   'Date', 'Amount', 'Parent category', 'Category', 'Description', 'Account', 'Status', 'Counts to budget',
 ];
 
-function escapeField(value: string): string {
-  if (!/[",\r\n]/.test(value)) return value;
-  return `"${value.replace(/"/g, '""')}"`;
-}
+export const BUDGET_HEADER = [
+  'Parent category', 'Category', 'Budget', 'Spent', 'Pending', 'Left to spend', 'Carry-over', 'Available',
+];
 
 // The top-level ancestor, so the file groups by the categories the user sees at the top.
 // Stops at the last known category if a parent id is unknown, and after a few steps so a
@@ -35,26 +34,38 @@ function categoryColumns(id: string | null, category: (id: string) => Category |
   return [topLevel(own, category).name, own.name];
 }
 
-export function buildCycleCsv(
+export function buildTransactionRows(
   rows: CycleTransaction[],
   category: (id: string) => Category | undefined,
-): string {
-  const lines = rows.map((row) => {
+): Cell[][] {
+  const cells = rows.map((row): Cell[] => {
     const [parentName, categoryName] = categoryColumns(row.category, category);
     return [
       row.date,
-      row.amount.toFixed(2),
+      row.amount,
       parentName,
       categoryName,
       row.merchant_name || row.description,
       row.account_name,
       row.status,
       row.counts_to_budget_effective ? 'Yes' : 'No',
-    ].map(escapeField).join(',');
+    ];
   });
-  return BOM + [CSV_HEADER.join(','), ...lines].join('\r\n');
+  return [TRANSACTION_HEADER, ...cells];
 }
 
-export function cycleCsvFileName(start: string, end: string): string {
-  return `transactions_${start}_to_${end}.csv`;
+// isPastCycle drives the Budgets tab's last-cycle rules, which arrive with the budget rows.
+export function buildCycleWorkbook(
+  data: CycleTransactions,
+  category: (id: string) => Category | undefined,
+  _isPastCycle: boolean,
+): Uint8Array {
+  return buildXlsx([
+    { name: 'Transactions', rows: buildTransactionRows(data.transactions, category) },
+    { name: 'Budgets', rows: [BUDGET_HEADER] },
+  ]);
+}
+
+export function cycleFileName(start: string, end: string): string {
+  return `transactions_${start}_to_${end}.xlsx`;
 }

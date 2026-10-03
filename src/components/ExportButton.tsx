@@ -1,8 +1,9 @@
-// WHIT-700: the Insights header's Export button — shares the selected cycle as a .csv file.
+// WHIT-700 / WHIT-703: the Insights header's Export button — shares the selected cycle as an
+// Excel (.xlsx) file.
 import React, { useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text } from 'react-native';
 import { C, FONT } from '../theme';
-import { shareCycleCsv } from '../cycleShare';
+import { shareCycleExport } from '../cycleShare';
 import type { Category } from '../types';
 
 export function ExportButton({ cycle, category }: {
@@ -18,7 +19,7 @@ export function ExportButton({ cycle, category }: {
     running.current = true;
     setBusy(true);
     try {
-      await shareCycleCsv(cycle, category);
+      await shareCycleExport(cycle, category);
     } catch {
       Alert.alert("Couldn't export", 'Please try again.');
     } finally {
@@ -34,7 +35,7 @@ export function ExportButton({ cycle, category }: {
       hitSlop={8}
       style={styles.hdrBtn}
       accessibilityRole="button"
-      accessibilityLabel="Export this cycle's transactions as a CSV file"
+      accessibilityLabel="Export this cycle's transactions as an Excel file"
       accessibilityState={{ busy }}
     >
       {busy ? <ActivityIndicator color={C.accentSoft} /> : <Text style={styles.hdrBtnText}>Export</Text>}

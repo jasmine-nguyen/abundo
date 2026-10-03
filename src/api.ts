@@ -840,7 +840,7 @@ export interface CycleTransactions {
 
 /**
  * Fetch every transaction in one pay cycle (spend, income, transfers, pending), newest
- * first, plus the cycle's [start, end] dates — the source of the Insights CSV export.
+ * first, plus the cycle's [start, end] dates — the source of the Insights Excel export.
  *
  * @param cycle - 0 = current (default), n >= 1 = the nth prior cycle. Only sent when > 0.
  * @throws If the response status is not OK.

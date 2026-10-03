@@ -382,7 +382,7 @@ const styles = StyleSheet.create({
   hdrBtn: { height: 40, paddingHorizontal: 8, alignItems: 'flex-end', justifyContent: 'center' },
   hdrBtnText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentSoft },
   // Extra bottom padding so the last rows can scroll clear of the floating action bar and the
-  // Ask pill (card 609).
+  // Ask button (card 609).
   contentWithBar: { paddingBottom: 108 + ASK_BUTTON_CLEARANCE },
   actionBar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingTop: 12, paddingHorizontal: 18, backgroundColor: '#161620', borderTopWidth: 1, borderTopColor: C.hairline },
   actionCount: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: C.textMid },
