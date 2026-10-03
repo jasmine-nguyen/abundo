@@ -46,6 +46,9 @@ FILING_SUGGESTIONS_PATH = "/transactions/filing-suggestions"
 # API Gateway route path for the Transactions-tab search over ALL history (WHIT-576). The app
 # used to filter only its loaded feed pages, so an older match showed "No matches".
 TRANSACTIONS_SEARCH_PATH = "/transactions/search"
+# API Gateway route path for every transaction in one pay cycle (WHIT-700), for the Insights CSV
+# export. Same ?cycle= look-back and window as /breakdown; returns {start, end, transactions}.
+TRANSACTIONS_CYCLE_PATH = "/transactions/cycle"
 # Ceiling on rows one apply-rules request will write. A secondary guard behind the wall-clock
 # budget below: the response reports `remaining` and the app says "tap again", which is safe
 # because re-running only ever files what is STILL unfiled.

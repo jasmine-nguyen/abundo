@@ -14,7 +14,8 @@
         {
           "faceIDPermission": "Abundo uses Face ID to unlock your account and protect your login."
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "name": "Abundo",
     "slug": "abundo",

@@ -75,6 +75,22 @@ jest.mock('expo-haptics', () => ({
   ImpactFeedbackStyle: { Light: 'light', Medium: 'medium', Heavy: 'heavy' },
 }));
 
+// The Insights CSV export (WHIT-700) writes a file and opens the share menu — both native.
+// Stub them so every screen that loads Insights renders headlessly; the export's own screen
+// test mocks src/cycleShare directly.
+jest.mock('expo-file-system', () => ({
+  Paths: { cache: {} },
+  File: class {
+    uri = 'file:///cache/export.csv';
+    create() {}
+    write() {}
+  },
+}));
+jest.mock('expo-sharing', () => ({
+  shareAsync: jest.fn(async () => undefined),
+  isAvailableAsync: jest.fn(async () => true),
+}));
+
 // Auth native modules (WHIT-160) have no JS-only impl; stub them so any screen that
 // transitively imports src/auth (via app/index or the auth gate) renders headlessly.
 // Tests that exercise the auth flow itself mock these per-case with real behaviour.

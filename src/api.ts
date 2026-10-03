@@ -829,6 +829,28 @@ export const fetchCategoryTransactions = endpoint(
   },
 );
 
+/** One exported row: the transaction plus the server's budget rule applied to it (WHIT-700). */
+export type CycleTransaction = Transaction & { counts_to_budget_effective: boolean };
+
+export interface CycleTransactions {
+  start: string;
+  end: string;
+  transactions: CycleTransaction[];
+}
+
+/**
+ * Fetch every transaction in one pay cycle (spend, income, transfers, pending), newest
+ * first, plus the cycle's [start, end] dates — the source of the Insights CSV export.
+ *
+ * @param cycle - 0 = current (default), n >= 1 = the nth prior cycle. Only sent when > 0.
+ * @throws If the response status is not OK.
+ */
+export const fetchCycleTransactions = endpoint(
+  "plain",
+  (send, cycle: number = 0): Promise<CycleTransactions> =>
+    send({ path: `/transactions/cycle${cycle > 0 ? `?cycle=${encodeURIComponent(cycle)}` : ''}` }),
+);
+
 /**
  * Set (persist) a single transaction's category. Thin wrapper over
  * setTransactionFields (WHIT-278): the route/headers/body/error-guard live there, so

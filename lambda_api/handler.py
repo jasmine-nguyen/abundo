@@ -49,6 +49,7 @@ from api_constants import (
     UNCATEGORIZED_MERCHANTS_PATH,
     FILING_SUGGESTIONS_PATH,
     TRANSACTIONS_SEARCH_PATH,
+    TRANSACTIONS_CYCLE_PATH,
 )
 from constants import (
     ACCOUNT_ID_MAP,
@@ -206,6 +207,11 @@ def lambda_handler(event, context):
         # other GET transaction routes; the PATCH "/transactions/{id}" branch is method-gated.
         if path == TRANSACTIONS_SEARCH_PATH and method == "GET":
             return get_transactions_search(event, TransactionRepository(), CategoryRepository())
+
+        # Every transaction in one pay cycle, for the Insights CSV export (WHIT-700). An EXACT
+        # path, disjoint from the other GET transaction routes.
+        if path == TRANSACTIONS_CYCLE_PATH and method == "GET":
+            return get_cycle_transactions(event, TransactionRepository(), PayCycleRepository())
 
         # Apply the user's BankSync rules to charges ALREADY stored (BankSync only applies them
         # to incoming charges — WHIT-502). POST-only, and it PREVIEWS unless the body says
@@ -2105,20 +2111,26 @@ def _cycle_window_for(paycycle_repo: PayCycleRepository) -> tuple[str, str]:
     return _cycle_window_for_lookback(paycycle_repo, 0)
 
 
-def _windowed_rows_response(transactions: list[dict], predicate: Callable[[dict], bool]) -> dict:
-    """Filter windowed transactions by `predicate`, strip the storage keys, sort
-    newest-first, and wrap as a 200 array — the shared tail of the cycle-scoped
-    drill-in endpoints (/budgets/{category}/transactions and
-    /categories/{id}/transactions). Each endpoint supplies only its predicate; the
-    window + fetch differ (budget = current cycle, category = ?cycle= look-back), so
-    those stay in the callers.
+def _windowed_rows(transactions: list[dict], predicate: Callable[[dict], bool]) -> list[dict]:
+    """Filter windowed transactions by `predicate`, strip the storage keys, and sort
+    newest-first — shared by the cycle-scoped drill-ins and the cycle export.
     """
     rows = [transaction for transaction in transactions if predicate(transaction)]
     for transaction in rows:
         transaction.pop("pk", None)
         transaction.pop("sk", None)
     rows.sort(key=lambda transaction: transaction["date"], reverse=True)
-    return _json_response(200, rows)
+    return rows
+
+
+def _windowed_rows_response(transactions: list[dict], predicate: Callable[[dict], bool]) -> dict:
+    """_windowed_rows wrapped as a 200 array — the shared tail of the cycle-scoped
+    drill-in endpoints (/budgets/{category}/transactions and
+    /categories/{id}/transactions). Each endpoint supplies only its predicate; the
+    window + fetch differ (budget = current cycle, category = ?cycle= look-back), so
+    those stay in the callers.
+    """
+    return _json_response(200, _windowed_rows(transactions, predicate))
 
 
 def get_paycycle_view(paycycle_repo: PayCycleRepository) -> dict:
@@ -2506,6 +2518,29 @@ def get_category_transactions(
             return transaction.get("category") == category_id
 
     return _windowed_rows_response(transactions, predicate)
+
+
+def get_cycle_transactions(
+    event: dict,
+    transaction_repo: TransactionRepository,
+    paycycle_repo: PayCycleRepository,
+) -> dict:
+    """GET /transactions/cycle — every transaction in one pay cycle (spend, income,
+    transfers, pending), newest-first, for the Insights CSV export (WHIT-700).
+
+    Same ?cycle= look-back and window as /breakdown. Each row carries
+    `counts_to_budget_effective` (contributes_to_budget), so the export's yes/no column
+    follows the budget's own rule. Returns {start, end, transactions} so the app can
+    name the file after the window.
+    """
+    cycle, cycle_error = _parse_breakdown_cycle(event)
+    if cycle_error is not None:
+        return cycle_error
+    start, end = _cycle_window_for_lookback(paycycle_repo, cycle)
+    rows = _windowed_rows(read_window(transaction_repo, start, end), lambda _: True)
+    for row in rows:
+        row["counts_to_budget_effective"] = contributes_to_budget(row)
+    return _json_response(200, {"start": start, "end": end, "transactions": rows})
 
 
 def _window_category_spend(transactions: list[dict], categories: list[dict],

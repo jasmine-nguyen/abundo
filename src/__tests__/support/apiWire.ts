@@ -26,6 +26,7 @@ export const WIRE: Record<string, [() => Promise<unknown>, Wire]> = {
   fetchBudgetTransactions: [() => api.fetchBudgetTransactions('groceries'), [null, '/budgets/groceries/transactions', 15000, undefined]],
   fetchBreakdown: [() => api.fetchBreakdown(14, 1), [null, '/breakdown?days=14&cycle=1', 15000, undefined]],
   fetchCategoryTransactions: [() => api.fetchCategoryTransactions('groceries', 0), [null, '/categories/groceries/transactions', 15000, undefined]],
+  fetchCycleTransactions: [() => api.fetchCycleTransactions(1), [null, '/transactions/cycle?cycle=1', 15000, undefined]],
   setTransactionCategory: [() => api.setTransactionCategory('t1', 'groceries'), ['PATCH', '/transactions/t1', 15000, '{"category":"groceries"}']],
   setTransactionFields: [() => api.setTransactionFields('t1', { notes: 'n' }), ['PATCH', '/transactions/t1', 15000, '{"notes":"n"}']],
   deleteTransaction: [() => api.deleteTransaction('t1'), ['DELETE', '/transactions/t1', 15000, undefined]],

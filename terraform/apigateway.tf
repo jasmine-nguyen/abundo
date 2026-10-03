@@ -40,6 +40,8 @@ locals {
     "GET /transactions/filing-suggestions",
     # WHIT-576: search over ALL history for the Transactions tab. Same shared integration + authorizer.
     "GET /transactions/search",
+    # WHIT-700: every transaction in one pay cycle, for the Insights CSV export. Same shared integration + authorizer.
+    "GET /transactions/cycle",
     "POST /transactions/uncategorized/apply-rules",
     # WHIT-537: async apply-rules job — start (POST) + poll status (GET {id}). Both ride the
     # shared app_api integration + app_api_apigw_invoke permission (execution_arn/*/*), so no new
