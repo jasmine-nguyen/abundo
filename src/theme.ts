@@ -75,8 +75,10 @@ export const C = {
   // literals (baseline 14) — a later cleanup can point it at these tokens too.
   heroInkSoft: 'rgba(20,18,50,.62)',
   heroBlobFill: 'rgba(255,255,255,.1)',
-  // WHIT-560: the unfilled track behind the apply-rules progress bar — a faint neutral rail.
-  progressTrack: 'rgba(255,255,255,.1)',
+  // The unfilled rail behind every progress bar (budget, goal, mortgage, apply-rules).
+  progressTrack: 'rgba(255,255,255,.07)',
+  // The "today" target tick on budget bars.
+  progressTick: 'rgba(255,255,255,.85)',
 
   // Card 609 — Ask Abundo chat (the design handoff's Tokyo Night values).
   chatSheet: '#1a1b26',

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, Alert } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
@@ -30,7 +30,7 @@ export default function BudgetDetail() {
   // early returns below, to satisfy the rules of hooks).
   const runDelete = useInFlightGuard();
 
-  const onDelete = () => runDelete(async () => {
+  const onConfirmDelete = () => runDelete(async () => {
     if (deleting) return;
     setDeleting(true);
     try {
@@ -44,6 +44,15 @@ export default function BudgetDetail() {
       throw error;
     }
   });
+
+  const onDelete = () => Alert.alert(
+    'Delete this budget?',
+    "Its spending limit will be removed. The category and its transactions stay. This can't be undone.",
+    [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: onConfirmDelete },
+    ],
+  );
 
   // WHIT-72: a first-load pay-cycle failure would render the detail's pace/projection
   // against the DEFAULT cycle (wrong). This screen is reached from the Budgets tab (which

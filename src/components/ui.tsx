@@ -71,7 +71,7 @@ export function BudgetBar({
       </View>
       {showTarget && (
         <View style={{ position: 'relative', height: 18, marginTop: 1 }}>
-          <View style={{ position: 'absolute', top: -13, bottom: 0, width: 2, backgroundColor: 'rgba(255,255,255,.85)', left: `${targetPct}%` }} />
+          <View style={{ position: 'absolute', top: -13, bottom: 0, width: 2, backgroundColor: C.progressTick, left: `${targetPct}%` }} />
         </View>
       )}
     </View>
@@ -79,7 +79,7 @@ export function BudgetBar({
 }
 
 // Plain progress bar with a gradient-ish single fill colour.
-export function Bar({ pct, color, track = 'rgba(255,255,255,.07)', height = 10, markers }: { pct: number; color: string; track?: string; height?: number; markers?: { pct: number; reached: boolean }[] }) {
+export function Bar({ pct, color, track = C.progressTrack, height = 10, markers }: { pct: number; color: string; track?: string; height?: number; markers?: { pct: number; reached: boolean }[] }) {
   const fill = (
     <View style={{ height, borderRadius: height * 0.6, backgroundColor: track, overflow: 'hidden' }}>
       <View style={{ height: '100%', width: `${pct}%`, backgroundColor: color, borderRadius: height * 0.6 }} />
@@ -118,6 +118,6 @@ export function SectionLabel({ children, style }: { children: React.ReactNode; s
 }
 
 const styles = StyleSheet.create({
-  track: { position: 'relative', backgroundColor: 'rgba(255,255,255,.07)', overflow: 'hidden' },
+  track: { position: 'relative', backgroundColor: C.progressTrack, overflow: 'hidden' },
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginHorizontal: 4, marginBottom: 8 },
 });

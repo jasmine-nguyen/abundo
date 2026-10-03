@@ -7,7 +7,7 @@
 // hide/show) is the shared hook's, which already honours reduce-motion at the provider.
 import React from 'react';
 import { View, Text, Animated, ScrollView, StyleSheet, StyleProp, ViewStyle, RefreshControlProps } from 'react-native';
-import { FONT } from '../theme';
+import { C, FONT } from '../theme';
 import { useNavBarsHeader, floatingHeaderStyle } from './useNavBarsHeader';
 
 export function ScrollChromeHeader({
@@ -57,5 +57,5 @@ const styles = StyleSheet.create({
   // centres, matching the old Insights/Goals/Settings centred headers. One replaced by an
   // action button → the title stays centred against the opposite spacer (Transactions/Budgets).
   slot: { width: 40 },
-  title: { fontFamily: FONT.display, fontWeight: '700', fontSize: 19, color: '#fff', letterSpacing: -0.2 },
+  title: { fontFamily: FONT.display, fontWeight: '700', fontSize: 19, color: C.textBright, letterSpacing: -0.2 },
 });
