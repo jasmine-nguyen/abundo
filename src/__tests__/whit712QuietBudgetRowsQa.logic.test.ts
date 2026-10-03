@@ -1,14 +1,8 @@
 // WHIT-712 QA — the pace deadband edges now that "on pace" is silent: exactly ±$0.50 off pace
 // stays quiet, a cent past it speaks; and an overspend in cents is said once, exactly.
 import { describe, it, expect } from '@jest/globals';
-import { budgetViews } from '../context';
 import { C } from '../theme';
-import { makeState, cat, budget } from './factory';
-
-const coffee = cat({ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle' });
-// 14-day cycle, 7 days left → halfway, so a $100 budget's pace target is $50.
-const rowFor = (b: object) =>
-  budgetViews(makeState({ categories: [coffee], budgets: [budget({ id: 'coffee', ...b })], cycleLen: 14, daysLeft: 7 })).rows[0];
+import { budgetRowFor as rowFor } from './support/budgetsTab';
 
 describe('pace deadband edges (WHIT-712)', () => {
   // [A1] (P0) exactly $0.50 either side of pace is still "on pace" → no line.

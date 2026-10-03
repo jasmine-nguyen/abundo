@@ -1,14 +1,8 @@
 // WHIT-712 — budget rows stay quiet by default: one money line ("$X of $Y · $Z pending"), no
 // "on pace" line, the overspend said once, and carried-over / borrowed only on the detail screen.
 import { describe, it, expect } from '@jest/globals';
-import { budgetViews } from '../context';
 import { C } from '../theme';
-import { makeState, cat, budget } from './factory';
-
-const coffee = cat({ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle' });
-// 14-day cycle, 7 days left → halfway, so a $100 budget's pace target is $50.
-const rowFor = (b: object) =>
-  budgetViews(makeState({ categories: [coffee], budgets: [budget({ id: 'coffee', ...b })], cycleLen: 14, daysLeft: 7 })).rows[0];
+import { budgetRowFor as rowFor } from './support/budgetsTab';
 
 describe('budget rows only speak up when off pace (WHIT-712)', () => {
   it('an on-pace row shows no pace line', () => {

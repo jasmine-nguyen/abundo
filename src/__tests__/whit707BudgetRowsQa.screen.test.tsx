@@ -9,6 +9,7 @@ import { routerSpies, resetRouter, setParams } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { pinToday } from './support/clock';
+import { COFFEE, seedBudgetsTab } from './support/budgetsTab';
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
@@ -25,13 +26,10 @@ const server = installFakeServer();
 useTestQueryClient();
 
 const SALARY = { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase', color: '#35d9a0', recent: 0 };
-const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 };
 
-function seed(categories: unknown[], budgets: Record<string, unknown>, daysLeft = 6) {
-  server.seed('/paycycle', { length: 14, last_pay_date: '2026-09-25', days_left: daysLeft });
-  server.seed('/categories', categories);
-  server.seed('/budgets', budgets);
-}
+// Last paid Fri 25 Sep, so the income "next pay ~Fri" checks line up with the pinned clock.
+const seed = (categories: unknown[], budgets: Record<string, unknown>, daysLeft = 6) =>
+  seedBudgetsTab(server, budgets, categories, daysLeft, '2026-09-25');
 
 beforeEach(() => {
   resetRouter();
