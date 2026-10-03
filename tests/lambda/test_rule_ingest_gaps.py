@@ -213,6 +213,6 @@ def test_reprocess_reads_rules_once_across_many_rows(lam, repo):
 
     summary = lam.reprocess.reprocess_failed(repo, rule_repo=rule_store, category_repo=category_store)
 
-    assert summary == {"reprocessed": 3, "skipped": 0, "errors": 0}
+    assert summary == {"reprocessed": 3, "skipped": 0, "errors": 0, "dropped_zero": 0}
     assert rule_store.list_calls == 1
     assert category_store.list_calls == 1

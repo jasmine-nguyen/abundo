@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 def reprocess_failed(repo, *, rule_repo=None, category_repo=None) -> dict:
     """Re-drive every dead-lettered row and return a summary of what happened:
-    ``{"reprocessed": n, "skipped": n, "errors": n}``.
+    ``{"reprocessed": n, "skipped": n, "errors": n, "dropped_zero": n}``. A $0.00 row is never
+    stored (WHIT-705): its dead-letter is cleared and counted under ``dropped_zero``.
 
     Never raises for a single bad row — a poison row is skipped (left in place) so
     it can't halt recovery for the rows behind it. A row is deleted ONLY after its
@@ -38,7 +39,7 @@ def reprocess_failed(repo, *, rule_repo=None, category_repo=None) -> dict:
     any existing caller is unchanged.
     """
     rows = repo.get_failed_transactions()
-    summary = {"reprocessed": 0, "skipped": 0, "errors": 0}
+    summary = {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0}
 
     book = None
     if rule_repo is not None and category_repo is not None:
@@ -66,6 +67,17 @@ def reprocess_failed(repo, *, rule_repo=None, category_repo=None) -> dict:
         except Exception:
             logger.warning("FAILED row %s still cannot be normalised; leaving in place", row.get("sk"))
             summary["skipped"] += 1
+            continue
+
+        # A $0.00 row is never stored (WHIT-705): clear its dead-letter instead of inserting it.
+        # A DB error leaves the row in place to retry next run.
+        if txn["amount"] == 0:
+            try:
+                repo.delete_failed_transaction(row["sk"])
+                summary["dropped_zero"] += 1
+            except Exception:
+                logger.exception("FAILED $0.00 row %s could not be cleared; leaving in place", row.get("sk"))
+                summary["errors"] += 1
             continue
 
         # File it by the user's rules before inserting, if the stores were supplied (WHIT-530).

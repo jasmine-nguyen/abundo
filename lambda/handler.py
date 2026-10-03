@@ -135,6 +135,15 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
         logger.info("skipped %d re-sent transaction(s) the user deleted",
                     received_count - len(normalised_transactions))
 
+    # A $0.00 row is information only (WHIT-705): e.g. Westpac's "FOREIGN FEE" rows, whose real fee
+    # is already folded into the purchase. Drop it before rules, alerts or the write see it.
+    received_count = len(normalised_transactions)
+    normalised_transactions = [
+        transaction for transaction in normalised_transactions if transaction["amount"] != 0
+    ]
+    if received_count > len(normalised_transactions):
+        logger.info("skipped %d $0.00 transaction(s)", received_count - len(normalised_transactions))
+
     # Apply the user's rules as each charge lands (WHIT-530): BankSync no longer labels charges
     # for us, so our server files each unfiled one by our own rules here, BEFORE the budget
     # snapshot and the write see the category. Best-effort inside `apply` — a rules-read failure

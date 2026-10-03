@@ -70,7 +70,7 @@ def test_recovery_sweep_replays_the_duplicated_backlog_into_exactly_two_rows(lam
 
     summary = lam.reprocess.reprocess_failed(repo)
 
-    assert summary == {"reprocessed": 4, "skipped": 0, "errors": 0}
+    assert summary == {"reprocessed": 4, "skipped": 0, "errors": 0, "dropped_zero": 0}
     assert _failed_keys(repo) == []                       # backlog fully drained
     stored = _txn_rows(repo)
     assert set(stored) == {f"TXN#{_MASSAGE_ID}", f"TXN#{_FEE_ID}"}   # exactly two rows
