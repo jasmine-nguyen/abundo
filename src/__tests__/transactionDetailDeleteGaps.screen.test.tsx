@@ -2,9 +2,8 @@
 // double taps, the in-flight state, a throwing writer, the only-cached-row case, and no button on
 // "not found". The context writer is mocked; the screen and its data code are real, over the
 // pretend server (WHIT-686).
-import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { Alert } from 'react-native';
 import { screen, fireEvent } from '@testing-library/react-native';
 import { txn } from './factory';
 
@@ -33,6 +32,7 @@ jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({
 
 import TransactionDetail from '../../app/transaction/[id]';
 import { resetAuth } from './support/authMock';
+import { spyOnAlert } from './support/alertSpy';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
@@ -40,11 +40,9 @@ import { transactionsKey } from '../queries';
 
 const server = installFakeServer();
 useTestQueryClient();
+const alerts = spyOnAlert();
 
 const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', parent: null };
-
-type AlertButton = { text: string; style?: string; onPress?: () => void };
-let alertSpy: ReturnType<typeof jest.spyOn>;
 
 beforeEach(() => {
   resetAuth();
@@ -53,26 +51,24 @@ beforeEach(() => {
   server.seed('/transactions/feed', { transactions: [txn({ transaction_id: 't1', category: 'coffee' })], nextCursor: null });
   mockBack.mockClear();
   mockDeleteTransaction.mockReset();
-  alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
 });
-afterEach(() => { alertSpy.mockRestore(); });
 
 const draw = () => renderWithQueries(<TransactionDetail />);
 
 function openConfirm() {
   fireEvent.press(screen.getByTestId('transaction-delete'));
-  const [title, message, buttons] = alertSpy.mock.calls[alertSpy.mock.calls.length - 1] as [string, string, AlertButton[]];
-  return { title, message, buttons, confirm: buttons.find((button) => button.text === 'Delete')! };
+  const last = alerts.last();
+  return { ...last, confirm: last.button('Delete') };
 }
 
 // [C1]
 it('the confirm says it cannot be undone and Delete is the destructive choice', async () => {
   await draw();
-  const { title, message, buttons, confirm } = openConfirm();
+  const { title, message, button, confirm } = openConfirm();
   expect(title).toBe('Delete this transaction?');
   expect(message).toMatch(/can't be undone/);
   expect(confirm.style).toBe('destructive');
-  expect(buttons.find((button) => button.text === 'Cancel')?.style).toBe('cancel');
+  expect(button('Cancel').style).toBe('cancel');
   expect(mockDeleteTransaction).not.toHaveBeenCalled();
 });
 

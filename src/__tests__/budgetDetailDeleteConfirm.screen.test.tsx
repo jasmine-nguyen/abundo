@@ -1,8 +1,7 @@
 // WHIT-708 — "Delete budget" asks first. Pressing it opens a native confirm; only the
 // destructive "Delete" removes the budget and goes back, "Cancel" does nothing.
-import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { Alert } from 'react-native';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 
 const mockBack = jest.fn();
@@ -21,14 +20,13 @@ jest.mock('expo-router', () => ({
 
 import BudgetDetail from '../../app/budget/[id]';
 import { resetAuth } from './support/authMock';
+import { spyOnAlert } from './support/alertSpy';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 
 const server = installFakeServer();
 useTestQueryClient();
-
-type AlertButton = { text: string; style?: string; onPress?: () => void | Promise<void> };
-let alertSpy: ReturnType<typeof jest.spyOn>;
+const alerts = spyOnAlert();
 
 beforeEach(() => {
   resetAuth();
@@ -39,15 +37,12 @@ beforeEach(() => {
   server.seed('/budgets', { coffee: { target: 100, posted: 40, pending: 10 } });
   server.seed('/budgets/coffee/transactions', []);
   server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01', days_left: 12 });
-  alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
 });
-afterEach(() => { alertSpy.mockRestore(); });
 
 function openConfirm() {
   fireEvent.press(screen.getByText('Delete budget'));
-  expect(alertSpy).toHaveBeenCalledTimes(1);
-  const [title, , buttons] = alertSpy.mock.calls[0] as [string, string, AlertButton[]];
-  return { title, buttons, button: (text: string) => buttons.find((b) => b.text === text)! };
+  expect(alerts.spy).toHaveBeenCalledTimes(1);
+  return alerts.last();
 }
 
 it('user must confirm before a budget is deleted; Delete removes it once and goes back', async () => {

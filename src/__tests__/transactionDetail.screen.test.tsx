@@ -3,9 +3,8 @@
 // query the lists use, found by id. WHIT-686: the real screen data code runs over the pretend
 // server. Verifies the fields render, the pending label, the "not found" state for a stale id,
 // and cache-first error handling.
-import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
+import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
-import { Alert } from 'react-native';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { txn } from './factory';
 import type { Transaction } from '../types';
@@ -43,6 +42,7 @@ jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({
 
 import TransactionDetail from '../../app/transaction/[id]';
 import { resetAuth } from './support/authMock';
+import { pressAlertButton, spyOnAlert } from './support/alertSpy';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
@@ -410,17 +410,13 @@ describe('rule attribution line', () => {
 
 // WHIT-654: delete a charge (e.g. a duplicate) from its detail screen, behind a confirmation.
 describe('delete this transaction', () => {
-  type AlertButton = { text: string; style?: string; onPress?: () => void };
-  let alertSpy: ReturnType<typeof jest.spyOn>;
-  beforeEach(() => { alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {}); });
-  afterEach(() => { alertSpy.mockRestore(); });
+  const alerts = spyOnAlert();
 
   function tapDeleteAndChoose(choice: 'Cancel' | 'Delete') {
     fireEvent.press(screen.getByTestId('transaction-delete'));
-    expect(alertSpy).toHaveBeenCalledTimes(1);
-    const [title, , buttons] = alertSpy.mock.calls[0] as [string, string, AlertButton[]];
-    expect(title).toBe('Delete this transaction?');
-    buttons.find((button) => button.text === choice)?.onPress?.();
+    expect(alerts.spy).toHaveBeenCalledTimes(1);
+    expect(alerts.last().title).toBe('Delete this transaction?');
+    pressAlertButton(alerts, choice);
   }
 
   it('asks for confirmation, and Cancel deletes nothing', async () => {
