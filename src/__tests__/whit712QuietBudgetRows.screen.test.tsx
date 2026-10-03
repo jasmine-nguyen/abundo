@@ -8,6 +8,7 @@ import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { seedBudgetsTab } from './support/budgetsTab';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -17,14 +18,8 @@ import Budgets from '../../app/(tabs)/budgets';
 const server = installFakeServer();
 useTestQueryClient();
 
-const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 };
-
 // 14-day cycle, 7 days left → halfway, so a $100 budget's pace target is $50.
-function seed(coffee: Record<string, unknown>) {
-  server.seed('/paycycle', { length: 14, last_pay_date: '2026-09-26', days_left: 7 });
-  server.seed('/categories', [COFFEE]);
-  server.seed('/budgets', { coffee });
-}
+const seed = (coffee: Record<string, unknown>) => seedBudgetsTab(server, { coffee });
 
 beforeEach(() => {
   resetRouter();

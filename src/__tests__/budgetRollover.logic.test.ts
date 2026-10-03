@@ -23,7 +23,8 @@ describe('budgetViews — positive carryover (sinking fund)', () => {
     expect(row.remainAmount).toBe('$300');      // available = 100 + 200
     expect(row.remainLabel).toBe('left');
     expect(row.over).toBe(false);
-    expect(row.spentLabel).toBe('$0 of $300'); // "of" is the available envelope    // Hero totals count the envelope so the top number matches the rows.
+    expect(row.spentLabel).toBe('$0 of $300'); // "of" is the available envelope
+    // Hero totals count the envelope so the top number matches the rows.
     expect([totBudget, totSpent, totRemain]).toEqual([300, 0, 300]);
   });
 
@@ -42,7 +43,8 @@ describe('budgetViews — negative carryover (borrow)', () => {
   it('a deficit lowers the envelope', () => {
     const row = budgetViews(state({ budget: 100, posted: 0, pending: 0, rollover: true, carryover: -40 })).rows[0];
     expect(row.remainAmount).toBe('$60');       // available = 100 - 40
-    expect(row.over).toBe(false);  });
+    expect(row.over).toBe(false);
+  });
 
   it('spending past the reduced envelope reads over budget', () => {
     const row = budgetViews(state({ budget: 100, posted: 80, pending: 0, rollover: true, carryover: -40 })).rows[0];
@@ -73,7 +75,8 @@ describe('budgetViews — rollover off', () => {
   it('a carryover value is ignored while the flag is off', () => {
     const row = budgetViews(state({ budget: 100, posted: 30, pending: 0, rollover: false, carryover: 200 })).rows[0];
     expect(row.remainAmount).toBe('$70');   // available == budget (buffer ignored)
-    expect(row.spentLabel).toBe('$30 of $100');  });
+    expect(row.spentLabel).toBe('$30 of $100');
+  });
 });
 
 // ── budgetDetail mirrors the envelope + surfaces the buffer line ─────────────
