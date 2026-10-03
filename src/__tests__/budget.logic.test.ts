@@ -62,9 +62,9 @@ describe('budgetViews', () => {
   it('folds pending into the spent amount and names it separately (WHIT-707)', () => {
     // spent = posted + pending = 50; the pending part is also called out.
     const withPending = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 10 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(withPending.spentLabel).toBe('$50 spent of $100 · $10 pending');
+    expect(withPending.spentLabel).toBe('$50 of $100 · $10 pending');
     const noPending = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(noPending.spentLabel).toBe('$40 spent of $100');
+    expect(noPending.spentLabel).toBe('$40 of $100');
   });
 
   it('skips a budget whose category no longer exists', () => {
@@ -75,7 +75,7 @@ describe('budgetViews', () => {
   it('shows exact cents on a fractional spent + left so the list row matches the detail and reconciles to the budget', () => {
     // posted 62.50 + pending 11.00 = 73.50 spent of $80 → 6.50 left (the Cafes & Coffee case).
     const row = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 80, posted: 62.5, pending: 11 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(row.spentLabel).toBe('$73.50 spent of $80 · $11 pending'); // fail-on-revert: fmt(73.5) → '$74'
+    expect(row.spentLabel).toBe('$73.50 of $80 · $11 pending'); // fail-on-revert: fmt(73.5) → '$74'
     expect(row.remainAmount).toBe('$6.50');             // spent + left = the $80 budget
   });
 });
@@ -594,7 +594,7 @@ describe('budgetViews — server-computed available (WHIT-549)', () => {
       budgets: [budget({ budget: 100, posted: 0, pending: 0, available: 500 })],
       cycleLen: 14, daysLeft: 7 })).rows[0];
     expect(row.remainAmount).toBe('$500');
-    expect(row.spentLabel).toBe('$0 spent of $500');
+    expect(row.spentLabel).toBe('$0 of $500');
   });
 
   it('falls back to the parts-sum when the server omits available', () => {
@@ -647,7 +647,7 @@ describe('budgetViews/budgetDetail — negative server available (WHIT-549 gap)'
     expect(row.postedPct).toBeCloseTo(20, 5);   // finite AND correct: den fell back to the base target
     // "of" reflects the SERVER envelope (fmt drops the sign, so it prints as $50) — proving it isn't
     // the +100 the fallback parts-sum would have produced.
-    expect(row.spentLabel).toBe('$20 spent of $50');
+    expect(row.spentLabel).toBe('$20 of $50');
   });
 
   it('[Gc2] budgetDetail reads a negative server available as over budget', () => {

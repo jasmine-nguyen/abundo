@@ -16,16 +16,14 @@ const state = (b: object) => makeState({
 
 // ── positive buffer: unused budget accumulates ───────────────────────────────
 describe('budgetViews — positive carryover (sinking fund)', () => {
-  it('adds the buffer to the spendable envelope and shows the rolled-over chip', () => {
+  it('adds the buffer to the spendable envelope', () => {
     const { rows, totBudget, totSpent, totRemain } = budgetViews(
       state({ budget: 100, posted: 0, pending: 0, rollover: true, carryover: 200 }));
     const row = rows[0];
     expect(row.remainAmount).toBe('$300');      // available = 100 + 200
     expect(row.remainLabel).toBe('left');
     expect(row.over).toBe(false);
-    expect(row.spentLabel).toBe('$0 spent of $300'); // "of" is the available envelope
-    expect(row.carryoverLabel).toBe('+$200 carried over');
-    // Hero totals count the envelope so the top number matches the rows.
+    expect(row.spentLabel).toBe('$0 of $300'); // "of" is the available envelope    // Hero totals count the envelope so the top number matches the rows.
     expect([totBudget, totSpent, totRemain]).toEqual([300, 0, 300]);
   });
 
@@ -41,18 +39,17 @@ describe('budgetViews — positive carryover (sinking fund)', () => {
 
 // ── negative buffer: overspend carries as a deficit ──────────────────────────
 describe('budgetViews — negative carryover (borrow)', () => {
-  it('a deficit lowers the envelope and shows the borrowed chip', () => {
+  it('a deficit lowers the envelope', () => {
     const row = budgetViews(state({ budget: 100, posted: 0, pending: 0, rollover: true, carryover: -40 })).rows[0];
     expect(row.remainAmount).toBe('$60');       // available = 100 - 40
-    expect(row.over).toBe(false);
-    expect(row.carryoverLabel).toBe('$40 borrowed');
-  });
+    expect(row.over).toBe(false);  });
 
   it('spending past the reduced envelope reads over budget', () => {
     const row = budgetViews(state({ budget: 100, posted: 80, pending: 0, rollover: true, carryover: -40 })).rows[0];
     expect(row.over).toBe(true);                    // 80 > available 60
     expect(row.remainLabel).toBe('over');
-    expect(row.paceLabel).toBe('$20 over budget'); // spent - available
+    expect(row.remainAmount).toBe('$20'); // spent - available, said once (WHIT-712)
+    expect(row.paceLabel).toBe('');
   });
 });
 
@@ -76,9 +73,7 @@ describe('budgetViews — rollover off', () => {
   it('a carryover value is ignored while the flag is off', () => {
     const row = budgetViews(state({ budget: 100, posted: 30, pending: 0, rollover: false, carryover: 200 })).rows[0];
     expect(row.remainAmount).toBe('$70');   // available == budget (buffer ignored)
-    expect(row.spentLabel).toBe('$30 spent of $100');
-    expect(row.carryoverLabel).toBe('');
-  });
+    expect(row.spentLabel).toBe('$30 of $100');  });
 });
 
 // ── budgetDetail mirrors the envelope + surfaces the buffer line ─────────────
@@ -125,35 +120,27 @@ describe('toBudget — rollover fields', () => {
 });
 
 // ===== WHIT-459 carryover label deadband (folded from budgetRolloverGaps.logic.test.ts, describe b)
-describe('carryover chip/line deadband (|value| must EXCEED 0.5 to show)', () => {
+describe('carryover detail line deadband (|value| must EXCEED 0.5 to show)', () => {
   const sink = cat({ id: 'sink', name: 'Sink', bucket: 'Lifestyle' });
-  const rowFor = (carryover: number) =>
-    budgetViews(makeState({
-      categories: [sink], cycleLen: 14, daysLeft: 7,
-      budgets: [budget({ id: 'sink', budget: 100, posted: 0, pending: 0, rollover: true, carryover })],
-    })).rows[0];
   const detailFor = (carryover: number) =>
     budgetDetail(makeState({
       categories: [sink], cycleLen: 14, daysLeft: 7,
       budgets: [budget({ id: 'sink', budget: 100, posted: 0, pending: 0, rollover: true, carryover })],
     }), 'sink')!;
 
-  it('exactly +0.5 shows no chip and no detail line (boundary is strict >)', () => {
-    expect(rowFor(0.5).carryoverLabel).toBe('');
+  it('exactly +0.5 shows no detail line (boundary is strict >)', () => {
     expect(detailFor(0.5).carryoverLine).toBe('');
   });
 
-  it('exactly -0.5 shows no chip (boundary is strict <)', () => {
-    expect(rowFor(-0.5).carryoverLabel).toBe('');
+  it('exactly -0.5 shows no detail line (boundary is strict <)', () => {
+    expect(detailFor(-0.5).carryoverLine).toBe('');
   });
 
-  it('just past +0.5 shows the rolled-over chip + line', () => {
-    expect(rowFor(0.51).carryoverLabel.startsWith('+')).toBe(true);
-    expect(rowFor(0.51).carryoverLabel).toContain('carried over');
-    expect(detailFor(0.51).carryoverLine).toContain('carried over');
+  it('just past +0.5 shows the carried-over line', () => {
+    expect(detailFor(0.51).carryoverLine).toBe('Includes $1 carried over from past cycles');
   });
 
-  it('just past -0.5 shows the borrowed chip', () => {
-    expect(rowFor(-0.51).carryoverLabel).toContain('borrowed');
+  it('just past -0.5 shows the borrowed line', () => {
+    expect(detailFor(-0.51).carryoverLine).toBe('Includes $1 borrowed from this cycle');
   });
 });

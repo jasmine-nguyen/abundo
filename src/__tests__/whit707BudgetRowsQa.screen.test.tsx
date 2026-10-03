@@ -85,12 +85,13 @@ it('[A23] 14 days left → "next pay ~17 Oct"', async () => {
   expect(await screen.findByText('$1,000 earned · next pay ~17 Oct')).toBeTruthy();
 });
 
-// [A24] (P0) over but rollover → quiet "$X over budget", no spread link.
-it('[A24] over + rollover → quiet text, no spread link', async () => {
+// [A24] (P0) over but rollover → the overspend shows once on the amount, no spread link.
+it('[A24] over + rollover → overspend said once, no spread link', async () => {
   seed([COFFEE], { coffee: { target: 100, posted: 120, pending: 0, rollover: true, carryover: 0 } });
   await renderWithQueries(<Budgets />);
   await screen.findByText('Cafes & Coffee');
-  expect(screen.getByText('$20 over budget')).toBeTruthy();
+  expect(screen.getByText('$20')).toBeTruthy();
+  expect(screen.queryByText('$20 over budget')).toBeNull();
   expect(screen.queryByTestId('budget-row-spread-coffee')).toBeNull();
   expect(screen.queryByText('Spread it over pay cycles →')).toBeNull();
 });
@@ -109,10 +110,10 @@ it('[A25] spread link prefill keeps cents; the row press still opens the detail'
 });
 
 // [A26] (P1) pending is named on the row.
-it('[A26] a row with pending reads "spent of … · … pending"', async () => {
+it('[A26] a row with pending reads "… of … · … pending"', async () => {
   seed([COFFEE], { coffee: { target: 100, posted: 40, pending: 10 } });
   await renderWithQueries(<Budgets />);
-  expect(await screen.findByText('$50 spent of $100 · $10 pending')).toBeTruthy();
+  expect(await screen.findByText('$50 of $100 · $10 pending')).toBeTruthy();
 });
 
 // [A27] (P1) the detail screen's marker uses the same word: "today's pace", not "today's target".

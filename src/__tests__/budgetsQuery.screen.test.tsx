@@ -86,17 +86,15 @@ it('does not render the redundant per-row "target" caption (the pace tick is lab
   expect(screen.getByText("Solid = spent · faded = pending · line = today's pace")).toBeTruthy();
 });
 
-it('still renders the per-row pace STATUS after the caption removal (info kept, not lost)', async () => {
-  // WHIT-281 — [A-pace] the fix removed the redundant \"target\" caption but the pace STATUS
-  // ($X over/under budget) must survive. The logic layer proves budgetViews COMPUTES paceLabel;
-  // this proves the screen still RENDERS it. Removing budgets.tsx:101 (the paceLabel <Text/>)
-  // is invisible to the logic tests AND to the absence/legend test above — this is the guard.
-  // Over-budget so the label is date-independent: spent 120 of 100 -> exactly "$20 over budget".
-  // Rollover, so no spread can start and the line stays the quiet text, not the link (WHIT-707).
+it('an over-budget row says the overspend once (WHIT-712)', async () => {
+  // Over-budget so the amount is date-independent: spent 120 of 100 -> "$20" "over" on the amount,
+  // and no repeated "$20 over budget" pace line. Rollover, so no spread link can start (WHIT-707).
   server.seed('/budgets', { coffee: { target: 100, posted: 120, pending: 0, rollover: true, carryover: 0 } });
   renderBudgets();
   await screen.findByText('Cafes & Coffee');
-  expect(screen.getByText('$20 over budget')).toBeTruthy();
+  expect(screen.getByText('$20')).toBeTruthy();
+  expect(screen.getByText('over')).toBeTruthy();
+  expect(screen.queryByText('$20 over budget')).toBeNull();
 });
 
 it('shows a spinner first, then the rows (cache-first render)', async () => {
