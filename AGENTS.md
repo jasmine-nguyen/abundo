@@ -173,6 +173,13 @@ Check these before changing the touched area:
 - Keep code flat — early exits over nested if/else. Avoid ternary unless trivial.
 - No overly defensive programming or unnecessary isinstance checks.
 - Only manage exceptions when necessary.
+- No copy-pasted test code. Before writing setup or helper code in a test,
+  check `src/__tests__/support/` for one that already exists. If the same
+  setup would end up in 2+ test files, move it into `support/` in the same
+  change and import it — never copy it from another test file.
+- Plans must say "use / add a `support/` tool" — never "copy the pattern
+  from <other test>".
+- Reviewers treat copied test code as a must-fix, not a follow-up card.
 
 ## Hot shared files
 
