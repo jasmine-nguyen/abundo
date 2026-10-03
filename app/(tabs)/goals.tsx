@@ -8,7 +8,7 @@ import { useGoalsScreenData } from '../../src/queries';
 import { useCheckpointCelebration } from '../../src/hooks/useCheckpointCelebration';
 import { MONTHS, formatDayMonthYear, parseISODate } from '../../src/dateutil';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { Bar, RetryButton, HeroGradientFill } from '../../src/components/ui';
+import { Bar, RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/components/ui';
 import { SettingsButton } from '../../src/components/SettingsButton';
 import { Celebration } from '../../src/components/Celebration';
 import { PayoffSummary } from '../../src/components/PayoffSummary';
@@ -86,11 +86,7 @@ export default function Goals() {
     <ScrollChromeHeader
       title="Goals"
       left={<SettingsButton />}
-      right={(
-        <Pressable testID="add-goal" onPress={() => router.push('/goal/edit')} style={styles.addBtn}>
-          <Glyph name="plus" size={22} color={C.accentSoft} />
-        </Pressable>
-      )}
+      right={<HeaderIconButton testID="add-goal" icon="plus" accessibilityLabel="Add goal" onPress={() => router.push('/goal/edit')} />}
       contentContainerStyle={(showSpinner || showError) ? styles.fill : undefined}
     >
       {showSpinner ? (
@@ -252,7 +248,6 @@ export default function Goals() {
 const styles = StyleSheet.create({
   // Grows the ScrollView content so the spinner/error state centres mid-viewport (WHIT-199).
   fill: { flexGrow: 1 },
-  addBtn: { width: 40, height: 40, backgroundColor: tint(C.accentAlt, 0.16), borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
 
   // The mortgage entry — a light hero-tinted card so it reads as the headline goal.
   mortgageChip: { width: 44, height: 44, borderRadius: 14, backgroundColor: 'rgba(21,18,58,.16)', alignItems: 'center', justifyContent: 'center' },

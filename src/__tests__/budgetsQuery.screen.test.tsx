@@ -159,6 +159,13 @@ it('the add-budget button navigates to the picker', async () => {
   expect(routerSpies.push).toHaveBeenCalledWith('/budget/pick');
 });
 
+it('the header "+" button navigates to the picker (WHIT-711)', async () => {
+  renderBudgets();
+  await screen.findByText('Cafes & Coffee');
+  fireEvent.press(screen.getByLabelText('Add budget'));
+  expect(routerSpies.push).toHaveBeenCalledWith('/budget/pick');
+});
+
 it('hides a Savings-bucket budget end-to-end and keeps it out of the hero total (WHIT-201)', async () => {
   // A stored Savings budget (reachable by re-bucketing an already-budgeted category, or
   // a deep-linked write) must not render a row AND must not inflate the "of $X" pill.

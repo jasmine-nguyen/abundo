@@ -10,7 +10,7 @@ import type { Rule } from '../src/model';
 import { useRulesScreenData, useCategories } from '../src/queries';
 import { useDebouncedValue } from '../src/hooks/useDebouncedValue';
 import { Header } from '../src/components/Header';
-import { RetryButton } from '../src/components/ui';
+import { RetryButton, HeaderIconButton } from '../src/components/ui';
 
 // How long typing must settle before the filter recomputes. The text box stays instant;
 // only the (potentially large) grouping recompute waits, so fast typing never stutters.
@@ -135,11 +135,7 @@ export default function Rules() {
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header
         title="Automation rules"
-        right={
-          <Pressable onPress={() => s.setSheet({ mode: 'addrule' })} style={styles.addBtn}>
-            <Glyph name="plus" size={22} color={C.accentSoft} />
-          </Pressable>
-        }
+        right={<HeaderIconButton icon="plus" accessibilityLabel="Add rule" onPress={() => s.setSheet({ mode: 'addrule' })} />}
       />
 
       {/* Pinned search — stays in reach above the scrolling list. Reads live `query`, so the
@@ -187,7 +183,6 @@ export default function Rules() {
 }
 
 const styles = StyleSheet.create({
-  addBtn: { width: 40, height: 40, backgroundColor: tint(C.accentAlt, 0.16), borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   searchWrap: { paddingHorizontal: 18, paddingTop: 6, paddingBottom: 4 },
   search: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 13, paddingVertical: 4, paddingHorizontal: 14 },
   searchInput: { flex: 1, fontFamily: FONT.body, fontSize: 14, color: C.textBright, paddingVertical: 8, padding: 0 },

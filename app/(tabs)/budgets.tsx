@@ -7,7 +7,7 @@ import { Icon, Glyph } from '../../src/icons';
 import { budgetViews, type BudgetView } from '../../src/context';
 import { useBudgetsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { BudgetBar, RetryButton, HeroGradientFill } from '../../src/components/ui';
+import { BudgetBar, RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/components/ui';
 import { SettingsButton } from '../../src/components/SettingsButton';
 
 function resetsLabel(daysLeft: number): string {
@@ -91,11 +91,7 @@ export default function Budgets() {
     <ScrollChromeHeader
       title="Budgets"
       left={<SettingsButton />}
-      right={(
-        <Pressable onPress={() => router.push('/budget/pick')} style={styles.addBtn}>
-          <Glyph name="plus" size={22} color={C.accentSoft} />
-        </Pressable>
-      )}
+      right={<HeaderIconButton icon="plus" accessibilityLabel="Add budget" onPress={() => router.push('/budget/pick')} />}
       contentContainerStyle={(showSpinner || showError) ? styles.fill : undefined}
     >
       {showSpinner ? (
@@ -174,7 +170,6 @@ export default function Budgets() {
 const styles = StyleSheet.create({
   // Grows the ScrollView content so the spinner/error state centres mid-viewport (WHIT-199).
   fill: { flexGrow: 1 },
-  addBtn: { width: 40, height: 40, backgroundColor: tint(C.accentAlt, 0.16), borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
 
   hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 24, paddingTop: 26, paddingBottom: 22, marginBottom: 22, backgroundColor: C.accent },
   heroBlob1: { position: 'absolute', right: -30, top: -30, width: 150, height: 150, borderRadius: 75, backgroundColor: C.heroBlobFill },
