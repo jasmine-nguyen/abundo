@@ -486,15 +486,13 @@ const BASELINE: Record<string, number> = {
   'src/AuthGate.tsx': 1,
   'src/components/CategoryFields.tsx': 8,
   'src/components/EarnedVsSpent.tsx': 1,
-  'src/components/Header.tsx': 3,
+  'src/components/Header.tsx': 2,
   'src/components/Overlays.tsx': 20,
   'src/components/PayoffSummary.tsx': 5,
   'src/components/QuickCreateCategory.tsx': 3,
   'src/components/TransactionRow.tsx': 3,
-  'src/components/ui.tsx': 3,
   'src/context.tsx': 5,
   'src/icons.tsx': 2,
-  'src/motion/ScrollChromeHeader.tsx': 1,
 };
 
 const counts = new Map<string, number>();
