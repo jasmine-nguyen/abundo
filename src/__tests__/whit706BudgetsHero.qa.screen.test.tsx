@@ -9,6 +9,7 @@ import { refreshInAct } from './support/renderWithQueries';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
+import { COFFEE, SALARY } from './support/budgetCategories';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -20,9 +21,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 import Budgets from '../../app/(tabs)/budgets';
 
 const server = installFakeServer();
-const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 };
 const GROCERIES = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd1b9', recent: 12 };
-const SALARY = { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'cash', color: '#7fd1b9', recent: 0 };
 
 function renderBudgets(client = makeClient()) {
   return { client, ...render(React.createElement(QueryClientProvider, { client }, React.createElement(Budgets))) };
@@ -59,7 +58,7 @@ describe('Budgets top card — QA edges', () => {
       server.seed('/paycycle', { length: 30, last_pay_date: '2026-09-01', days_left: 13 });
       server.seed('/budgets', {});
       renderBudgets();
-      expect(await screen.findByText('Add your first budget')).toBeTruthy();
+      expect(await screen.findByText('Add a spending budget')).toBeTruthy();
       expect(screen.getByText('13')).toBeTruthy();
       expect(screen.getByText('days left')).toBeTruthy();
       expect(screen.getByText('Next payday 1 Oct')).toBeTruthy();
@@ -77,7 +76,7 @@ describe('Budgets top card — QA edges', () => {
     server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01', days_left: 1 });
     server.seed('/budgets', {});
     renderBudgets();
-    await screen.findByText('Add your first budget');
+    await screen.findByText('Add a spending budget');
     expect(screen.getByText('day left')).toBeTruthy();
     expect(screen.queryByText('days left')).toBeNull();
   });
@@ -86,11 +85,11 @@ describe('Budgets top card — QA edges', () => {
   it('[A4] empty → a budget appears on refetch → money view returns, first-time prompt goes', async () => {
     server.seed('/budgets', {});
     const { client } = renderBudgets();
-    await screen.findByText('Add your first budget');
+    await screen.findByText('Add a spending budget');
     server.seed('/budgets', { coffee: { target: 100, posted: 40, pending: 10 } });
     await refreshInAct(() => client.invalidateQueries({ queryKey: ['budgets'] }));
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-    expect(screen.queryByText('Add your first budget')).toBeNull();
+    expect(screen.queryByText('Add a spending budget')).toBeNull();
     expect(screen.getByText('Left to spend')).toBeTruthy();
     expect(screen.getByText("Solid = spent · faded = pending · line = today's pace")).toBeTruthy(); // caption back
     expect(screen.getByText('Add a budget')).toBeTruthy(); // dashed button back
@@ -100,8 +99,8 @@ describe('Budgets top card — QA edges', () => {
   it('[A5] the empty screen shows exactly one labelled add-budget button', async () => {
     server.seed('/budgets', {});
     renderBudgets();
-    await screen.findByText('Add your first budget');
-    expect(screen.getAllByText(/add your first budget|add a budget/i)).toHaveLength(1);
+    await screen.findByText('Add a spending budget');
+    expect(screen.getAllByText(/add a spending budget|add a budget/i)).toHaveLength(1);
   });
 
   // [A6] (P1) income-only budgets have rows → not the first-time prompt
@@ -110,7 +109,7 @@ describe('Budgets top card — QA edges', () => {
     server.seed('/budgets', { salary: { target: 5000, posted: 1000, pending: 0 } });
     renderBudgets();
     await screen.findByText('Salary');
-    expect(screen.queryByText('Add your first budget')).toBeNull();
+    expect(screen.queryByText('Add a spending budget')).toBeNull();
     expect(screen.getByText('Add a budget')).toBeTruthy();
   });
 
@@ -149,7 +148,7 @@ describe('Budgets top card — QA edges', () => {
   });
 
   // [A10] (P1) the empty-state button press does not double-navigate
-  it('[A10] tapping "Add your first budget" pushes the picker exactly once', async () => {
+  it('[A10] tapping "Add a spending budget" pushes the picker exactly once', async () => {
     server.seed('/budgets', {});
     renderBudgets();
     fireEvent.press(await screen.findByTestId('budgets-hero-add'));
