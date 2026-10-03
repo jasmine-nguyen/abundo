@@ -8,9 +8,8 @@
 // budgetDetailRowTargets are folded in as child describes at the END of this file. All five
 // share the same ../context + expo-router mocks (module-scope mock fns below) and each folded
 // block re-seeds the server in its own beforeEach.
-import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { Alert } from 'react-native';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 
 // Superset of the folded files' router/context handles: the delete block asserts back() + the
@@ -35,6 +34,7 @@ jest.mock('expo-router', () => ({
 
 import BudgetDetail from '../../app/budget/[id]';
 import { resetAuth } from './support/authMock';
+import { pressAlertButton, spyOnAlert } from './support/alertSpy';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 
@@ -209,24 +209,20 @@ describe('budgetDetailRefile — related-transaction details arrow', () => {
 // superset mocks; CATS reuses the survivor const, the rollup is block-scoped.
 describe('budgetDetailDelete — Delete button (WHIT-203)', () => {
   const BUDGET = { target: 100, posted: 40, pending: 10 };
-  type AlertButton = { text: string; onPress?: () => void | Promise<void> };
-  let alertSpy: ReturnType<typeof jest.spyOn>;
+  const alerts = spyOnAlert();
 
   beforeEach(() => {
     mockDeleteBudget.mockClear();
     mockBack.mockClear();
     mockDeleteBudget.mockResolvedValue(true);
     seedDetail({ budget: BUDGET, transactions: [], daysLeft: 12 });
-    alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   });
-  afterEach(() => { alertSpy.mockRestore(); });
 
   // WHIT-708: Delete budget opens a confirm first; this confirms it.
   async function deleteAndConfirm() {
     fireEvent.press(screen.getByText('Delete budget'));
     expect(mockDeleteBudget).not.toHaveBeenCalled();
-    const buttons = alertSpy.mock.calls[alertSpy.mock.calls.length - 1][2] as AlertButton[];
-    await act(async () => { await buttons.find((b) => b.text === 'Delete')!.onPress!(); });
+    await act(async () => { await pressAlertButton(alerts, 'Delete'); });
   }
 
   it('pressing Delete budget removes this budget once and navigates back to the Budgets tab', async () => {
