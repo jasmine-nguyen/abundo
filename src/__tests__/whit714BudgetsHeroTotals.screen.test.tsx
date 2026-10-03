@@ -7,6 +7,7 @@ import { render, screen, waitFor } from '@testing-library/react-native';
 import { makeClient, wrapper } from './support/queryClient';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
+import { COFFEE, SALARY, SAVINGS } from './support/budgetCategories';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -19,9 +20,6 @@ import Budgets from '../../app/(tabs)/budgets';
 
 const server = installFakeServer();
 
-const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 };
-const SALARY = { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'cash', color: '#7fd1b9', recent: 0 };
-const SAVINGS = { id: 'rainy', name: 'Rainy Day', bucket: 'Savings', icon: 'piggy-bank', color: '#9ad', recent: 0 };
 const NO_SPENDING = /^No spending budgets yet/;
 
 const renderBudgets = () => render(<Budgets />, { wrapper: wrapper(makeClient()) });
