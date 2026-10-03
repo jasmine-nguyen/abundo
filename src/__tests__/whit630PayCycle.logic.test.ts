@@ -1,7 +1,7 @@
 // WHIT-630 QA: plain value tests on the pay-cycle clock in its new home, src/payCycle.ts.
 // Runs under TZ=Australia/Melbourne (the npm test script), so the daylight-saving cases are real.
 import { describe, it, expect } from '@jest/globals';
-import { cycleName, cycleClock, cycleStart, cycleClockView, elapsedFrac, nextPaydayISO } from '../payCycle';
+import { cycleName, cycleClock, cycleClockView, elapsedFrac } from '../payCycle';
 
 const day = (y: number, m: number, d: number) => new Date(y, m - 1, d);
 const cycle = (length: number, last_pay_date: string) => ({ length, last_pay_date });
@@ -41,21 +41,6 @@ describe('cycleClock', () => {
   });
 });
 
-describe('cycleStart', () => {
-  it('[A17] (P1) is the most recent payday on or before today', () => {
-    expect(cycleStart(cycle(14, '2026-06-06'), day(2026, 6, 25))).toBe('2026-06-20');
-    expect(cycleStart(cycle(14, '2026-06-06'), day(2026, 6, 6))).toBe('2026-06-06');
-  });
-
-  it('[A17] (P1) is empty for a future first payday', () => {
-    expect(cycleStart(cycle(14, '2026-07-10'), day(2026, 7, 1))).toBe('');
-  });
-
-  it('[A17] (P1) is empty for an unparseable date', () => {
-    expect(cycleStart(cycle(14, 'not-a-date'), day(2026, 7, 1))).toBe('');
-  });
-});
-
 describe('cycleClockView', () => {
   it('[A18] (P0) prefers the server days_left over the client clock', () => {
     expect(cycleClockView({ length: 14, last_pay_date: '1999-01-01', days_left: 3 })).toEqual({ cycleLen: 14, daysLeft: 3 });
@@ -76,17 +61,5 @@ describe('elapsedFrac', () => {
     expect(elapsedFrac({ cycleLen: 14, daysLeft: 14 })).toBe(0);
     expect(elapsedFrac({ cycleLen: 14, daysLeft: 7 })).toBe(0.5);
     expect(elapsedFrac({ cycleLen: 14, daysLeft: 0 })).toBe(1);
-  });
-});
-
-describe('nextPaydayISO (WHIT-707)', () => {
-  it('adds the days left to today', () => {
-    expect(nextPaydayISO(6, day(2026, 10, 3))).toBe('2026-10-09');
-    expect(nextPaydayISO(0, day(2026, 10, 3))).toBe('2026-10-03');
-  });
-
-  it('crosses a month end, a daylight-saving change and a year end', () => {
-    expect(nextPaydayISO(14, day(2026, 9, 25))).toBe('2026-10-09');
-    expect(nextPaydayISO(30, day(2026, 12, 15))).toBe('2027-01-14');
   });
 });

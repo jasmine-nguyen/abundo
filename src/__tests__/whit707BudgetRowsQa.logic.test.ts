@@ -5,7 +5,6 @@
 import { describe, it, expect } from '@jest/globals';
 import { budgetViews } from '../context';
 import { C } from '../theme';
-import { nextPaydayISO } from '../payCycle';
 import { formatWeekdayShort } from '../dateutil';
 import { makeState, cat, budget } from './factory';
 
@@ -162,16 +161,8 @@ describe('Spending before Earning ordering', () => {
 });
 
 describe('date helpers around Melbourne daylight saving', () => {
-  // [A17] (P1) late evening the night before DST starts (4 Oct 2026) still counts local days.
-  it('[A17] nextPaydayISO from 23:30 local on 3 Oct + 1 → 4 Oct', () => {
-    expect(nextPaydayISO(1, new Date(2026, 9, 3, 23, 30))).toBe('2026-10-04');
-    expect(nextPaydayISO(1, new Date(2026, 9, 4, 0, 15))).toBe('2026-10-05');
-  });
-
-  // [A18] (P1) across DST end (5 Apr 2026) the date doesn't slip a day.
-  it('[A18] nextPaydayISO across DST end', () => {
-    expect(nextPaydayISO(3, new Date(2026, 3, 4, 23, 59))).toBe('2026-04-07');
-  });
+  // [A17] and [A18] (late evening around the DST changes) now run through nextPayday in
+  // whit710PayCycleCleanup.logic.test.ts.
 
   // [A19] (P2) weekday on the DST-change days, and garbage input → ''.
   it('[A19] formatWeekdayShort on DST days and garbage', () => {
