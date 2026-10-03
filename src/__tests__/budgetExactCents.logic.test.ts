@@ -21,7 +21,7 @@ describe('budgetViews — income earn-target with fractional earned (GAP)', () =
 
   it('[A10] under target: earned + "to go" show exact cents, target stays whole', () => {
     const row = budgetViews(state(1000.25)).rows[0];
-    expect(row.spentLabel).toBe('$1,000.25 earned of $5,000'); // fail-on-revert: fmt(1000.25) → '$1,000'
+    expect(row.spentLabel).toBe('$1,000.25 earned'); // fail-on-revert: fmt(1000.25) → '$1,000'
     expect(row.remainLabel).toBe('to go');
     expect(row.remainAmount).toBe('$3,999.75');                // 5000 - 1000.25; fmt would read '$4,000'
   });
@@ -30,12 +30,12 @@ describe('budgetViews — income earn-target with fractional earned (GAP)', () =
     const row = budgetViews(state(5006.5)).rows[0]; // earned 5006.50 ≥ 5000 floor
     expect(row.remainLabel).toBe('over target');
     expect(row.remainAmount).toBe('$6.50');                    // 5006.50 - 5000; fmt(6.5) rounds
-    expect(row.spentLabel).toBe('$5,006.50 earned of $5,000');
+    expect(row.spentLabel).toBe('$5,006.50 earned');
   });
 
   it('[A12] pending folds into earned with cents (no separate breakout)', () => {
     const row = budgetViews(state(1000.25, 200.25)).rows[0];
-    expect(row.spentLabel).toBe('$1,200.50 earned of $5,000'); // 1000.25 + 200.25
+    expect(row.spentLabel).toBe('$1,200.50 earned'); // 1000.25 + 200.25
   });
 });
 
@@ -72,11 +72,10 @@ describe('budgetViews / budgetDetail — over-budget spend with cents (GAP)', ()
     expect(row.spentLabel).toBe('$90.25 spent of $80'); // fail-on-revert: fmt(90.25) → '$90'
     expect(row.remainLabel).toBe('over');
     expect(row.remainAmount).toBe('$10.25');            // unsigned |80 - 90.25|; fmt would read '$10'
-    // FINDING: the "over budget" pace ARM was ALSO switched to fmtExact on this branch
-    // (context.tsx:1789), so it now shows cents too. That CONTRADICTS the card's
-    // "pace/daily projections intentionally unchanged". Asserting the AS-BUILT value here so
-    // this stays a live fail-on-revert lock; the deviation is raised in the critique for a call.
-    expect(row.paceLabel).toBe('$10.25 over budget');   // was '$10 over budget' on main
+    // WHIT-707: no rollover, so this row can start a spread; the line offers it, prefilled
+    // with the exact-cents overspend.
+    expect(row.paceLabel).toBe('Spread it over pay cycles →');
+    expect(row.spreadPrefill).toBe(10.25);
   });
 
   it('[A15b] REGRESSION: the over-PACE arm (not over budget) still renders whole-dollar', () => {
@@ -127,14 +126,14 @@ describe('budgetViews — cents boundaries (GAP)', () => {
 describe('exact-cents change leaves whole-dollar labels untouched (regression)', () => {
   it('[A20] whole spend row unchanged', () => {
     const row = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 10 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(row.spentLabel).toBe('$50 spent of $100');
+    expect(row.spentLabel).toBe('$50 spent of $100 · $10 pending');
     expect(row.remainAmount).toBe('$50');
   });
 
   it('[A21] whole income remain ("to go") unchanged', () => {
     const row = budgetViews(makeState({ categories: [income()], budgets: [budget({ id: 'salary', budget: 5000, posted: 1000, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
     expect(row.remainAmount).toBe('$4,000');
-    expect(row.spentLabel).toBe('$1,000 earned of $5,000');
+    expect(row.spentLabel).toBe('$1,000 earned');
   });
 
   it('[A22] the raw fmt token for these values would round — proving the labels genuinely exercise cents', () => {

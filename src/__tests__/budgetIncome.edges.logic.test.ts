@@ -26,25 +26,23 @@ describe('budgetViews — income earn-target boundaries (WHIT-69)', () => {
     expect(row.remainLabel).toBe('over target');
     expect(row.remainAmount).toBe('$0');           // actual - budget = 0
     expect(row.remainColor).toBe(C.good);
-    expect(row.paceLabel).toBe('$0 over target');
+    expect(row.paceLabel).toBe(''); // WHIT-707: income has no pace line
     expect(row.over).toBe(false);
     expect(row.postedColor).not.toBe(RED);
   });
 
-  it('earned EXACTLY on the linear pace → "on pace" (muted pace), still "to go"', () => {
+  it('earned EXACTLY on the linear pace → no pace line (WHIT-707), still "to go"', () => {
     const row = budgetViews(viewState(2500)).rows[0]; // 2500 == elapsed*budget, < floor
-    expect(row.paceLabel).toBe('on pace');
-    expect(row.paceColor).toBe('#cfd2ff');
+    expect(row.paceLabel).toBe('');
     expect(row.remainLabel).toBe('to go');
     expect(row.remainColor).toBe(C.good); // remain amount is the cyan highlight
     expect(row.remainAmount).toBe('$2,500');        // 5000 - 2500 still to earn
     expect(row.over).toBe(false);
   });
 
-  it('ONLY pending earnings ($0 posted) → ahead-of-pace from pending, folded into "earned"', () => {
-    const row = budgetViews(viewState(0, 3000)).rows[0]; // actual 3000 > pace 2500
-    expect(row.spentLabel).toBe('$3,000 earned of $5,000'); // pending folded into earned, no breakout
-    expect(row.paceLabel).toContain('ahead of pace');
+  it('ONLY pending earnings ($0 posted) → folded into "earned"', () => {
+    const row = budgetViews(viewState(0, 3000)).rows[0];
+    expect(row.spentLabel).toBe('$3,000 earned'); // pending folded into earned, no breakout
     expect(row.postedPct).toBe(0);                  // nothing posted yet
     expect(row.pendingPct).toBe(60);                // 3000/5000 = 60%, not capped here
     expect(row.remainColor).not.toBe(RED);
