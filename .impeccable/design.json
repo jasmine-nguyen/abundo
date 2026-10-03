@@ -1,0 +1,524 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-03T09:02:35.318237+00:00",
+  "title": "Design System: Abundo",
+  "extensions": {
+    "colorMeta": {
+      "tokyo-blue": {
+        "role": "primary",
+        "displayName": "Tokyo Blue",
+        "canonical": "#7aa2f7",
+        "tonalRamp": [
+          "#01003c",
+          "#031a64",
+          "#1c3b87",
+          "#3a5dab",
+          "#597fd1",
+          "#7ba3f8",
+          "#9ec8ff",
+          "#c6eeff"
+        ]
+      },
+      "tokyo-blue-soft": {
+        "role": "primary",
+        "displayName": "Tokyo Blue Soft",
+        "canonical": "#9db3f9",
+        "tonalRamp": [
+          "#040035",
+          "#141d56",
+          "#2e3c78",
+          "#4b5d9c",
+          "#6b7ec1",
+          "#8ca2e6",
+          "#afc6ff",
+          "#d4ecff"
+        ]
+      },
+      "periwinkle-wash": {
+        "role": "secondary",
+        "displayName": "Periwinkle Wash",
+        "canonical": "#7c8cff",
+        "tonalRamp": [
+          "#0b0045",
+          "#190470",
+          "#2e2e99",
+          "#4951bf",
+          "#6775e5",
+          "#8899ff",
+          "#abbfff",
+          "#d3e7ff"
+        ]
+      },
+      "dusk-indigo": {
+        "role": "tertiary",
+        "displayName": "Dusk Indigo",
+        "canonical": "#8b8ff5",
+        "tonalRamp": [
+          "#0c003f",
+          "#1f0a68",
+          "#37308d",
+          "#5452b2",
+          "#7375d8",
+          "#9499ff",
+          "#b7bdff",
+          "#dde5ff"
+        ]
+      },
+      "dusk-lilac": {
+        "role": "tertiary",
+        "displayName": "Dusk Lilac",
+        "canonical": "#bb9af7",
+        "tonalRamp": [
+          "#160035",
+          "#31045b",
+          "#4e2b7d",
+          "#6d4ca1",
+          "#8f6ec7",
+          "#b291ed",
+          "#d6b5ff",
+          "#faddff"
+        ]
+      },
+      "night-bg": {
+        "role": "neutral",
+        "displayName": "Night Bg",
+        "canonical": "#16161e",
+        "tonalRamp": [
+          "#0a0a12",
+          "#24242d",
+          "#41414a",
+          "#60606a",
+          "#81818c",
+          "#a4a4af",
+          "#c8c8d3",
+          "#ededf9"
+        ]
+      },
+      "night-bg-deep": {
+        "role": "neutral",
+        "displayName": "Night Bg Deep",
+        "canonical": "#13131a",
+        "tonalRamp": [
+          "#0a0a11",
+          "#24242c",
+          "#414149",
+          "#606069",
+          "#81818b",
+          "#a4a4ae",
+          "#c8c8d2",
+          "#ededf8"
+        ]
+      },
+      "night-card": {
+        "role": "neutral",
+        "displayName": "Night Card",
+        "canonical": "#1f2030",
+        "tonalRamp": [
+          "#090918",
+          "#222334",
+          "#3f4052",
+          "#5e6072",
+          "#7f8195",
+          "#a1a3b8",
+          "#c5c7dd",
+          "#eaedff"
+        ]
+      },
+      "night-card-raised": {
+        "role": "neutral",
+        "displayName": "Night Card Raised",
+        "canonical": "#24263a",
+        "tonalRamp": [
+          "#08091a",
+          "#212337",
+          "#3e4056",
+          "#5c5f76",
+          "#7d8099",
+          "#a0a3bd",
+          "#c3c7e2",
+          "#e9edff"
+        ]
+      },
+      "ink-bright": {
+        "role": "neutral",
+        "displayName": "Ink Bright",
+        "canonical": "#d5daf5",
+        "tonalRamp": [
+          "#08091b",
+          "#202337",
+          "#3d4056",
+          "#5c6077",
+          "#7c8199",
+          "#9fa3bd",
+          "#c3c7e2",
+          "#e8edff"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#c0caf5",
+        "tonalRamp": [
+          "#060624",
+          "#1d2242",
+          "#383f62",
+          "#575f84",
+          "#7780a7",
+          "#99a3cc",
+          "#bdc7f2",
+          "#e2ecff"
+        ]
+      },
+      "ink-info": {
+        "role": "neutral",
+        "displayName": "Ink Info",
+        "canonical": "#cfd2ff",
+        "tonalRamp": [
+          "#090524",
+          "#212042",
+          "#3d3e62",
+          "#5b5d84",
+          "#7c7ea7",
+          "#9ea1cc",
+          "#c2c5f1",
+          "#e7eaff"
+        ]
+      },
+      "ink-mid": {
+        "role": "neutral",
+        "displayName": "Ink Mid",
+        "canonical": "#a9b1d6",
+        "tonalRamp": [
+          "#060721",
+          "#1e223f",
+          "#3a405f",
+          "#585f80",
+          "#7980a3",
+          "#9ba3c7",
+          "#bfc7ed",
+          "#e4ecff"
+        ]
+      },
+      "ink-dim": {
+        "role": "neutral",
+        "displayName": "Ink Dim",
+        "canonical": "#8f97c0",
+        "tonalRamp": [
+          "#060624",
+          "#1d2142",
+          "#393f62",
+          "#585e84",
+          "#7880a7",
+          "#9aa2cc",
+          "#bec6f2",
+          "#e3ecff"
+        ]
+      },
+      "ink-faint": {
+        "role": "neutral",
+        "displayName": "Ink Faint",
+        "canonical": "#565f89",
+        "tonalRamp": [
+          "#050527",
+          "#1c2146",
+          "#373f66",
+          "#555e88",
+          "#7680ac",
+          "#98a2d0",
+          "#bbc7f6",
+          "#e0ecff"
+        ]
+      },
+      "ink-faintest": {
+        "role": "neutral",
+        "displayName": "Ink Faintest",
+        "canonical": "#414868",
+        "tonalRamp": [
+          "#060722",
+          "#1d223f",
+          "#39405f",
+          "#575f81",
+          "#7880a4",
+          "#9aa3c8",
+          "#bec7ed",
+          "#e3edff"
+        ]
+      },
+      "hero-ink": {
+        "role": "neutral",
+        "displayName": "Hero Ink",
+        "canonical": "#16161e",
+        "tonalRamp": [
+          "#0a0a12",
+          "#24242d",
+          "#41414a",
+          "#60606a",
+          "#81818c",
+          "#a4a4af",
+          "#c8c8d3",
+          "#ededf9"
+        ]
+      },
+      "good-cyan": {
+        "role": "status",
+        "displayName": "Good Cyan",
+        "canonical": "#2ac3de",
+        "tonalRamp": [
+          "#001127",
+          "#003048",
+          "#005069",
+          "#00718b",
+          "#0094af",
+          "#11b9d3",
+          "#51def9",
+          "#89ffff"
+        ]
+      },
+      "surplus-green": {
+        "role": "status",
+        "displayName": "Surplus Green",
+        "canonical": "#7ee0a0",
+        "tonalRamp": [
+          "#001600",
+          "#003400",
+          "#00541d",
+          "#00763d",
+          "#32985d",
+          "#5abd7f",
+          "#80e2a2",
+          "#aeffca"
+        ]
+      },
+      "under-green": {
+        "role": "status",
+        "displayName": "Under Green",
+        "canonical": "#9ece6a",
+        "tonalRamp": [
+          "#001200",
+          "#092f00",
+          "#274f00",
+          "#457000",
+          "#66922c",
+          "#87b652",
+          "#abdb77",
+          "#d3ffa6"
+        ]
+      },
+      "warn-amber": {
+        "role": "status",
+        "displayName": "Warn Amber",
+        "canonical": "#e0af68",
+        "tonalRamp": [
+          "#210000",
+          "#411800",
+          "#613700",
+          "#835700",
+          "#a7782f",
+          "#cb9b54",
+          "#f1c078",
+          "#ffe59f"
+        ]
+      },
+      "bad-rose": {
+        "role": "status",
+        "displayName": "Bad Rose",
+        "canonical": "#f7768e",
+        "tonalRamp": [
+          "#2f0001",
+          "#590013",
+          "#80002e",
+          "#a72c4c",
+          "#ce526c",
+          "#f7768e",
+          "#ff9cb2",
+          "#ffc8d9"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "hero-number": {
+        "displayName": "Hero number",
+        "purpose": "The one big figure on a hero card."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Secondary hero figure."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Screen headers."
+      },
+      "amount": {
+        "displayName": "Amount",
+        "purpose": "Row and transaction amounts."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Merchant names, row titles, buttons."
+      },
+      "body-small": {
+        "displayName": "Body small",
+        "purpose": "Meta lines, eyebrows, pills."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Section labels above card groups."
+      },
+      "tab-label": {
+        "displayName": "Tab label",
+        "purpose": "Tab bar labels."
+      }
+    },
+    "shadows": [
+      {
+        "name": "floating-action",
+        "value": "0 10px 12px rgba(0,0,0,0.6)",
+        "purpose": "The Ask button only; it floats over scrolling content."
+      }
+    ],
+    "motion": [
+      {
+        "name": "sheet-spring",
+        "value": "spring(friction 12, tension 90), rises 64pt",
+        "purpose": "Bottom sheet open; instant under reduce motion."
+      },
+      {
+        "name": "press-feedback",
+        "value": "opacity 0.55\u20130.85, scale 0.92\u20130.96",
+        "purpose": "Pressed state on tabs, buttons, rows."
+      },
+      {
+        "name": "tab-crossfade",
+        "value": "cross-fade",
+        "purpose": "Tab switch; off under reduce motion."
+      }
+    ],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Full-width save/confirm action; the one place Tokyo Blue fills a surface.",
+      "html": "<button class=\"ds-btn-primary\">Save budget</button>",
+      "css": ".ds-btn-primary{width:100%;min-height:53px;padding:16px;border:none;border-radius:15px;background:#7aa2f7;color:#16161e;font:700 16px Inter,system-ui,sans-serif;transition:opacity .12s,transform .12s;cursor:pointer}.ds-btn-primary:active{opacity:.85;transform:scale(.96)}.ds-btn-primary:focus-visible{outline:2px solid #c0caf5;outline-offset:3px}"
+    },
+    {
+      "name": "Soft Wash Button",
+      "kind": "button",
+      "refersTo": "button-soft",
+      "description": "Add / retry / suggest actions in the Periwinkle Wash material.",
+      "html": "<button class=\"ds-btn-wash\">+ New category</button>",
+      "css": ".ds-btn-wash{width:100%;padding:14px;border-radius:14px;border:1px dashed rgba(124,140,255,.22);background:rgba(124,140,255,.1);color:#7c8cff;font:700 15px Inter,system-ui,sans-serif;cursor:pointer;transition:opacity .12s}.ds-btn-wash:active{opacity:.6}.ds-btn-wash:focus-visible{outline:2px solid #7c8cff;outline-offset:3px}"
+    },
+    {
+      "name": "Hero Card",
+      "kind": "custom",
+      "refersTo": "hero-card",
+      "description": "The one bright gradient surface per screen, holding its single big number.",
+      "html": "<div class=\"ds-hero\"><span class=\"ds-hero-b1\"></span><span class=\"ds-hero-b2\"></span><div class=\"ds-hero-eyebrow\">Days left this cycle</div><div><span class=\"ds-hero-num\">9</span> <span class=\"ds-hero-unit\">days</span></div><div class=\"ds-hero-bottom\"><div><div class=\"ds-hero-small\">Left to spend</div><div class=\"ds-hero-head\">$1,284</div></div><div class=\"ds-hero-pill\"><div class=\"ds-hero-small\">Payday</div><div class=\"ds-hero-pillb\">Thu 9 Oct</div></div></div></div>",
+      "css": ".ds-hero{position:relative;overflow:hidden;border-radius:26px;padding:26px 24px 22px;background:linear-gradient(150deg,#7aa2f7 0%,#8b8ff5 55%,#bb9af7 100%);color:#16161e;font-family:Inter,system-ui,sans-serif;max-width:360px}.ds-hero-b1{position:absolute;right:-30px;top:-30px;width:150px;height:150px;border-radius:75px;background:rgba(255,255,255,.12)}.ds-hero-b2{position:absolute;right:34px;bottom:-46px;width:90px;height:90px;border-radius:45px;background:rgba(255,255,255,.08)}.ds-hero-eyebrow{font-size:13px;font-weight:600;color:rgba(20,18,50,.65);letter-spacing:.2px}.ds-hero-num{font:800 54px/1 'Inter Tight',Inter,sans-serif;letter-spacing:-2px}.ds-hero-unit{font-size:17px;font-weight:600;color:#1a1b26}.ds-hero-bottom{margin-top:18px;display:flex;align-items:flex-end;justify-content:space-between}.ds-hero-small{font-size:13px;font-weight:600;color:rgba(20,18,50,.6)}.ds-hero-head{font:800 30px 'Inter Tight',Inter,sans-serif;letter-spacing:-1px;margin-top:2px}.ds-hero-pill{text-align:right;background:rgba(21,18,58,.12);border-radius:12px;padding:8px 12px}.ds-hero-pillb{font-size:13px;font-weight:700;margin-top:2px}"
+    },
+    {
+      "name": "Budget Row Card",
+      "kind": "card",
+      "refersTo": "card-budget-row",
+      "description": "A category budget with posted, pending and pace on one bar.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-top\"><span class=\"ds-chip\"><svg width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#9ece6a\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"9\" cy=\"20\" r=\"1.3\"/><circle cx=\"17\" cy=\"20\" r=\"1.3\"/><path d=\"M3 4h2l2.1 11.2a1.5 1.5 0 0 0 1.5 1.2h8.1a1.5 1.5 0 0 0 1.5-1.2L20 8H6.2\"/></svg></span><div class=\"ds-card-name\">Groceries<div class=\"ds-card-meta\">$62 left \u00b7 on pace</div></div><div class=\"ds-card-amt\">$238</div></div><div class=\"ds-track\"><span class=\"ds-posted\"></span><span class=\"ds-pending\"></span></div></div>",
+      "css": ".ds-card{background:#1f2030;border:1px solid rgba(122,162,247,.1);border-radius:20px;padding:16px 16px 14px;font-family:Inter,system-ui,sans-serif;max-width:360px}.ds-card-top{display:flex;align-items:center;gap:13px;margin-bottom:12px}.ds-chip{width:42px;height:42px;border-radius:13px;background:rgba(158,206,106,.15);display:flex;align-items:center;justify-content:center}.ds-card-name{flex:1;font-size:15px;font-weight:600;color:#d5daf5}.ds-card-meta{font-size:12.5px;font-weight:500;color:#2ac3de;margin-top:3px}.ds-card-amt{font:700 16px 'Inter Tight',Inter,sans-serif;letter-spacing:-.3px;color:#d5daf5}.ds-track{position:relative;height:10px;border-radius:6px;background:rgba(255,255,255,.07);overflow:hidden}.ds-posted{position:absolute;left:0;top:0;bottom:0;width:62%;background:#9ece6a}.ds-pending{position:absolute;left:62%;top:0;bottom:0;width:14%;background:rgba(158,206,106,.4)}"
+    },
+    {
+      "name": "Segmented Control",
+      "kind": "chip",
+      "refersTo": "segmented-control",
+      "description": "This cycle / Last cycle and Spending / Earning switch.",
+      "html": "<div class=\"ds-seg\"><button class=\"ds-seg-item ds-seg-on\">This cycle</button><button class=\"ds-seg-item\">Last cycle</button></div>",
+      "css": ".ds-seg{display:flex;gap:3px;padding:3px;background:#1f2030;border:1px solid rgba(122,162,247,.1);border-radius:14px;max-width:360px}.ds-seg-item{flex:1;padding:9px;border:none;border-radius:11px;background:transparent;color:#8f97c0;font:600 14px Inter,system-ui,sans-serif;cursor:pointer}.ds-seg-on{background:rgba(124,140,255,.16);color:#c0caf5;font-weight:700}.ds-seg-item:focus-visible{outline:2px solid #7aa2f7;outline-offset:1px}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Form input on edit sheets.",
+      "html": "<input class=\"ds-input\" placeholder=\"Goal name\" />",
+      "css": ".ds-input{width:100%;max-width:360px;height:50px;padding:0 14px;border-radius:14px;border:1px solid rgba(122,162,247,.1);background:#1f2030;color:#c0caf5;font:16px Inter,system-ui,sans-serif}.ds-input::placeholder{color:#565f89}.ds-input:focus-visible{outline:none;border-color:rgba(122,162,247,.16)}"
+    },
+    {
+      "name": "Transaction Row",
+      "kind": "custom",
+      "refersTo": "list-row",
+      "description": "Merchant, category and amount with a pending tag.",
+      "html": "<div class=\"ds-tx\"><span class=\"ds-tx-chip\"><svg width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#ff9e64\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4 8.5h12v4.5a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4z\"/><path d=\"M16 9.5h2a2.2 2.2 0 0 1 0 4.4h-2\"/><path d=\"M7 3v2M11 3v2\"/></svg></span><div class=\"ds-tx-body\"><div class=\"ds-tx-merchant\">Market Lane Coffee</div><div class=\"ds-tx-meta\"><span style=\"color:#ff9e64\">Coffee</span><span class=\"ds-tx-pending\">Pending</span></div></div><div class=\"ds-tx-amt\">-$5.50</div></div>",
+      "css": ".ds-tx{display:flex;align-items:center;gap:13px;padding:13px 6px;border-bottom:1px solid rgba(122,162,247,.1);font-family:Inter,system-ui,sans-serif;max-width:360px}.ds-tx:active{opacity:.6}.ds-tx-chip{width:42px;height:42px;border-radius:13px;background:rgba(255,158,100,.15);display:flex;align-items:center;justify-content:center}.ds-tx-body{flex:1}.ds-tx-merchant{font-size:15px;font-weight:600;color:#d5daf5}.ds-tx-meta{display:flex;gap:6px;align-items:center;margin-top:3px;font-size:12.5px}.ds-tx-pending{background:rgba(255,255,255,.06);border-radius:6px;padding:2px 7px 2px 5px;font-size:11px;color:#8b8b95}.ds-tx-amt{font:700 16px 'Inter Tight',Inter,sans-serif;letter-spacing:-.3px;color:#d5daf5}"
+    },
+    {
+      "name": "Tab Bar",
+      "kind": "nav",
+      "refersTo": "tab-bar",
+      "description": "Floating five-tab bar; hides on scroll.",
+      "html": "<nav class=\"ds-tabs\"><a class=\"ds-tab ds-tab-on\">Budgets</a><a class=\"ds-tab\">Transactions<i class=\"ds-dot\"></i></a><a class=\"ds-tab\">Accounts</a><a class=\"ds-tab\">Insights</a><a class=\"ds-tab\">Goals</a></nav>",
+      "css": ".ds-tabs{display:flex;justify-content:space-around;padding:10px 8px 14px;background:#16161e;border-top:1px solid rgba(122,162,247,.1);max-width:390px}.ds-tab{position:relative;flex:1;text-align:center;font:600 10.5px Inter,system-ui,sans-serif;color:#565f89;padding-top:28px;cursor:pointer;transition:opacity .1s,transform .1s}.ds-tab::before{content:'';position:absolute;top:0;left:50%;margin-left:-11px;width:22px;height:22px;border-radius:6px;border:1.9px solid currentColor;box-sizing:border-box}.ds-tab:active{opacity:.55;transform:scale(.92)}.ds-tab-on{color:#7aa2f7}.ds-dot{position:absolute;top:-3px;left:calc(50% + 6px);width:8px;height:8px;border-radius:4px;background:#f7768e;border:2px solid #16161e}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Glow",
+    "overview": "Abundo is a dim, restful room with a few lights on. Almost everything sits in deep Tokyo Night navy, in soft lavender-grey ink, at low contrast to its neighbours, so a glance at night never glares. Against that quiet, a handful of moments are allowed to shine: the blue-to-lilac hero card at the top of a screen, the cyan \"under budget\" number, the confetti when a milestone lands. Their brightness is the reward, and it only works because everything else stays dim.\n\nThe feel is calm first, rewarding second. Density is moderate: generous card padding (16\u201324pt), rows that breathe, one big number per screen. Shapes are soft and friendly \u2014 every surface is rounded (14\u201326pt), outlined with a faint blue hairline rather than lifted by a shadow. Motion is short and springy and always gives way to \"reduce motion\".",
+    "keyCharacteristics": [
+      "Dark-only Tokyo Night palette; layering by slightly lighter navy, never by shadow.",
+      "One saturated gradient surface per screen (the hero card), carrying the screen's one big number.",
+      "Soft rounded geometry throughout, from 7pt checkboxes to 26pt hero cards.",
+      "Inter Tight for numbers and titles, Inter for everything else.",
+      "Colour carries meaning: cyan = on track, rose = over, amber = warning, green = surplus."
+    ],
+    "rules": [
+      {
+        "name": "The One Tint Rule",
+        "body": "Tokyo Blue means \"you can tap this\" or \"this is selected\". It never decorates. Soft calls-to-action use the Periwinkle Wash instead.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Glow Rule",
+        "body": "Only one gradient hero card per screen. If two surfaces are both shouting, the screen is no longer quiet.",
+        "section": "colors"
+      },
+      {
+        "name": "The Derive-Don't-Copy Rule",
+        "body": "Hairlines and the gradient's first stop are built from the accent with `tint()`. A new accent-derived shade derives too; it never hard-codes a second copy of the hex.",
+        "section": "colors"
+      },
+      {
+        "name": "The Numbers-Wear-Tight Rule",
+        "body": "Money and counts are set in Inter Tight with negative tracking; words are set in Inter. A dollar figure in Inter, or a sentence in Inter Tight, reads off-brand.",
+        "section": "typography"
+      },
+      {
+        "name": "The Heavy-Is-Rare Rule",
+        "body": "Weight 800 is reserved for hero figures. Everything else lives at 600\u2013700.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-By-Default Rule",
+        "body": "Cards, rows, sheets and fields never cast shadows. A shadow is reserved for something that floats above scrolling content.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do read every colour from `C`, `BUCKET_COLOR`, `colorForCategory` or the chart palette. Raw hex in a screen is a ratchet-guarded regression.",
+      "Do keep one gradient hero card per screen, carrying that screen's single most important number.",
+      "Do separate surfaces with a lighter navy step plus a 1pt Tokyo Blue hairline.",
+      "Do set money in Inter Tight with negative tracking.",
+      "Do show pending spend as a translucent extension of the posted fill, never hidden and never merged.",
+      "Do give every motion a \"reduce motion\" fallback (instant or crossfade).",
+      "Do use Periwinkle Wash, not Tokyo Blue, for soft \"add / retry / suggest\" surfaces."
+    ],
+    "donts": [
+      "Don't add shadows to cards, rows or sheets. The Ask button is the only shadowed element.",
+      "Don't introduce a light theme or swap away from Tokyo Night. It's a brand commitment.",
+      "Don't use Tokyo Blue as decoration; it means \"tappable\" or \"selected\".",
+      "Don't write `tint(C.accent, a)` where `tint(C.accentAlt, a)` is meant. They are different blues, and a test guards it.",
+      "Don't hand-tune individual hexes in the category or chart palettes; they're computed sets.",
+      "Don't use alarm-red styling for a merely-close budget. Amber warns at 80%; rose is reserved for over budget."
+    ]
+  }
+}
