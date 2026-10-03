@@ -1,6 +1,6 @@
 #!/bin/bash
 # SessionStart hook. A cloud session starts from a fresh clone, so this installs
-# what /build and its checks (project-context.md, "Checks") need. Local sessions
+# what /build and its checks (AGENTS.md, "Checks") need. Local sessions
 # already have these, so it does nothing outside the cloud.
 [ "$CLAUDE_CODE_REMOTE" = "true" ] || exit 0
 set -euo pipefail
