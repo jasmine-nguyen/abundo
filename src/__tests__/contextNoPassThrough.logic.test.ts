@@ -16,7 +16,7 @@ const MOVED_NAMES = [
   'EMPTY_LOAN_FACTS', 'loanFactsReady', 'UNCATEGORIZED_KEY', 'EARNED_KEY', 'INCOME_KEY',
   'ROLLUP_KEY', 'readRollup', 'readIncomeSources',
   // ./payCycle
-  'cycleName', 'cycleClock', 'cycleStart', 'cycleClockView', 'elapsedFrac',
+  'cycleName', 'cycleClock', 'cycleStart', 'nextPayday', 'cycleClockView', 'elapsedFrac',
   // ./budgetMath
   'availableToSpend', 'paceTarget',
 ];

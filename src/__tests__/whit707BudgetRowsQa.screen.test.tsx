@@ -80,6 +80,7 @@ it('[A22] sections in order, income reads "earned · next pay ~Fri" with no pace
 // [A23] (P0) payday more than 6 days away (fortnightly, 14 days left) → the date.
 it('[A23] 14 days left → "next pay ~17 Oct"', async () => {
   seed([SALARY], { salary: { target: 5000, posted: 1000, pending: 0 } }, 14);
+  server.seed('/paycycle', { length: 14, last_pay_date: '2026-10-03', days_left: 14 }); // paid today → next pay in 14 days
   await renderWithQueries(<Budgets />);
   expect(await screen.findByText('$1,000 earned · next pay ~17 Oct')).toBeTruthy();
 });

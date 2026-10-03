@@ -1,7 +1,7 @@
 // WHIT-688 slice 2 — QA gaps over the fake server for the Accounts tab, account detail, Rules and
 // Budgets screens: recovery after Retry (not just a re-request), a balances-only failure that must
 // not blank the cards, the pull re-reading the list and showing the bank's fresh balance, and the
-// "payday is today" edge of the Budgets "Started …" line. Real ../queries + ../api; only fetch is faked.
+// "payday is today" edge of the Budgets "Next payday …" line (was "Started …" before WHIT-706). Real ../queries + ../api; only fetch is faked.
 // The screens draw inside the real AppProvider (WHIT-692), so the toast is the real one, read off the probe.
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
@@ -160,30 +160,30 @@ describe('Rules', () => {
   });
 });
 
-describe('Budgets "Started …" line', () => {
+describe('Budgets "Next payday …" line', () => {
   const today = new Date('2026-09-18T10:00:00+10:00');
 
-  // [A9] Payday is today → the cycle has started today: "Started 18 Sep". Fail-on-revert: change
-  // cycleStart's `pay > todayMs` to `>=` → no line → red.
-  it('[A9] a last_pay_date of today shows "Started 18 Sep"', async () => {
+  // [A9] Payday is today → a fresh cycle began, so the next payday is a full cycle on: "2 Oct".
+  // Fail-on-revert: change nextPayday's `pay > todayMs` to `>=` → "Next payday 18 Sep" → red.
+  it('[A9] a last_pay_date of today shows "Next payday 2 Oct"', async () => {
     pinToday(today);
     try {
       server.seed('/paycycle', { length: 14, last_pay_date: '2026-09-18' });
       await renderWithApp(<Budgets />);
-      expect(screen.getByText('Started 18 Sep')).toBeTruthy();
+      expect(screen.getByText('Next payday 2 Oct')).toBeTruthy();
     } finally {
       jest.useRealTimers();
     }
   });
 
-  // [A10] Payday tomorrow (the nearest future day) → no started cycle → no line.
-  it('[A10] a last_pay_date of tomorrow shows no "Started …" line', async () => {
+  // [A10] Payday tomorrow (the nearest future day) → that first payday is the next one.
+  it('[A10] a last_pay_date of tomorrow shows "Next payday 19 Sep"', async () => {
     pinToday(today);
     try {
       server.seed('/paycycle', { length: 14, last_pay_date: '2026-09-19' });
       await renderWithApp(<Budgets />);
       expect(server.sent('GET', '/paycycle')).toHaveLength(1);
-      expect(screen.queryByText(/^Started /)).toBeNull();
+      expect(screen.getByText('Next payday 19 Sep')).toBeTruthy();
     } finally {
       jest.useRealTimers();
     }
