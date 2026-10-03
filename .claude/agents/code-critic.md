@@ -61,8 +61,8 @@ with low confidence.
   that follows existing patterns.
 - The tests written before the code (the proof tests) sit in a new test file of
   their own on purpose: the pipeline locks every file they're in, and locking a
-  shared file would freeze its older tests. So don't report where they live, or a
-  few setup lines they repeat from a neighbouring test file. Anything else wrong
+  shared file would freeze its older tests. So don't report where they live. Setup
+  they copy from another test file is still a finding: it belongs in a shared helper. Anything else wrong
   with them is still a finding, but they stay locked, so fixing one pauses the build
   for the user's OK: put cosmetic points about them (a stale comment, a name) in
   `advisory`. If you're shown "Decisions the user made during the build", check

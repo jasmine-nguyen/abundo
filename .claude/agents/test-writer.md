@@ -48,6 +48,9 @@ changes), write no tests and say why in `summary`.
 - Put your tests in a new test file of your own, never in an existing one. The
   pipeline locks every test file you hand it, so adding to a shared file would lock
   its older tests too, and it rejects test files that already existed.
+- Don't copy setup or helpers from another test file: import the existing ones.
+  If you need a helper that doesn't exist yet, put it in a new shared helper file and
+  list it in `test_files` too. It's new, so locking it freezes no older tests.
 - Don't commit, stage, or switch branches — the pipeline does that.
 - Once written, your tests are pinned: the implementer isn't allowed to edit them,
   so get the expected values right.
