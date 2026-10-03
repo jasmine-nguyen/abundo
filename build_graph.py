@@ -583,7 +583,7 @@ def running_message(name: str, state: BuildState) -> str | None:
         "checks": "Running typecheck and tests",
         "code_critic": "Code review: hunting for bugs and checking your standards",
         "qa": None if qa_passed_last_round(state) else "QA: checking it does what the card asked, then testing the edge cases",
-        "ship": "Opening the PR (after re-running every check, if QA added tests)",
+        "ship": "Opening the PR (after running QA's new tests and the typecheck, if it added any)",
     }
     return messages.get(name)
 
@@ -811,6 +811,15 @@ def checks_block() -> list[str]:
 
 def check_commands() -> list[str]:
     return [line for line in checks_block() if not line.startswith("#")]
+
+
+# Checks that read the code without running it. After QA adds tests these run with QA's own
+# tests instead of the whole suite: a test file can run fine yet fail the typecheck.
+STATIC_CHECK = re.compile(r"typecheck|type-check|\btsc\b|mypy|pyright|lint|eslint|\bruff\b", re.IGNORECASE)
+
+
+def static_check_commands() -> list[str]:
+    return [command for command in check_commands() if STATIC_CHECK.search(command)]
 
 
 def check_commands_in_parallel() -> bool:
@@ -2026,6 +2035,18 @@ def escalation(state: BuildState):
     return update
 
 
+def failing_commands(commands: list[str]) -> list[str]:
+    workers = len(commands) if check_commands_in_parallel() else 1
+    with ThreadPoolExecutor(max_workers=max(workers, 1)) as pool:
+        results = list(pool.map(lambda command: run(command, timeout=CHECK_TIMEOUT_S), commands))
+    problems = []
+    for command, (code, output) in zip(commands, results):
+        print(f"   {'✅' if code == 0 else '❌'} {command}", flush=True)
+        if code != 0:
+            problems.append(f"$ {command}\n{tail(output)}")
+    return problems
+
+
 def failing_checks(state: BuildState) -> list[str]:
     """Put back tampered pinned tests, then run every command in AGENTS.md's checks block."""
     problems = []
@@ -2042,13 +2063,7 @@ def failing_checks(state: BuildState) -> list[str]:
     commands = check_commands()
     if not commands:
         problems.append(f"{AGENTS_FILE.name} has no ```checks block, so the tests can't be run.")
-    workers = len(commands) if check_commands_in_parallel() else 1
-    with ThreadPoolExecutor(max_workers=max(workers, 1)) as pool:
-        results = list(pool.map(lambda command: run(command, timeout=CHECK_TIMEOUT_S), commands))
-    for command, (code, output) in zip(commands, results):
-        print(f"   {'✅' if code == 0 else '❌'} {command}", flush=True)
-        if code != 0:
-            problems.append(f"$ {command}\n{tail(output)}")
+    problems += failing_commands(commands)
     # The bug's reproduction may not be a test the checks pick up, so it's run as well: the fix must turn it green.
     repro = state.get("repro_command", "")
     if repro and repro not in commands:
@@ -2221,13 +2236,18 @@ def failing_qa_tests(state: BuildState) -> list[str] | None:
 
 
 def recheck_qa_tests(state: BuildState, heading: str, where: str) -> dict | None:
-    """QA's tests land after the checks last passed. If any did, run QA's own command first
-    for a focused failure, then every check: new test files must pass the typecheck and
-    lint too, not just run. Returns the update that sends the work back to the
-    implementer, or None if all is green."""
+    """QA's tests land after the checks last passed. If any did, run those tests plus the
+    typecheck and lint (the rest of the code already passed every check, but a test file
+    can run fine and still fail the typecheck). Every check runs when QA gave no command
+    that runs its tests. Returns the update that sends the work back to the implementer,
+    or None if all is green."""
     if not stray_changes(state):
         return None
-    problems = failing_qa_tests(state) or failing_checks(state)
+    problems = failing_qa_tests(state)
+    if problems is None:
+        problems = failing_checks(state)
+    elif not problems:
+        problems = failing_commands(static_check_commands())
     if not problems:
         return None
     failed = state.get("implementation_attempts", 0) >= MAX_IMPLEMENTATION_ROUNDS
