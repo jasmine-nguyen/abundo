@@ -202,6 +202,7 @@ export function installFakeServer() {
   let store: Store = new Map();
   let failures = new Map<string, Reply>();
   let holds = new Map<string, Promise<void>>();
+  let openReleases = new Set<() => void>();
   let queued = new Map<string, Queued[]>();
   let log: LoggedRequest[] = [];
   let ids = 0;
@@ -247,7 +248,10 @@ export function installFakeServer() {
     global.fetch = fakeFetch as typeof fetch;
   });
 
+  // A failed assertion must not leave a request waiting forever (it would keep jest from exiting).
   afterEach(() => {
+    openReleases.forEach((release) => release());
+    openReleases = new Set();
     global.fetch = realFetch;
   });
 
@@ -265,14 +269,16 @@ export function installFakeServer() {
     fail(path: string, status: number, reason?: string) {
       failures.set(path, queuedReply({ status, reason }));
     },
-    /** Keep every call to this path waiting until release(). */
+    /** Keep every call to this path waiting until release() (or the end of the test). */
     hold(path: string) {
       let resolveHold!: () => void;
       holds.set(path, new Promise<void>((resolve) => { resolveHold = resolve; }));
       const release = () => {
         holds.delete(path);
+        openReleases.delete(release);
         resolveHold();
       };
+      openReleases.add(release);
       return {
         release,
         /** Release as a failure: `method`'s next reply on this path is `reply` (default: lost connection). */
