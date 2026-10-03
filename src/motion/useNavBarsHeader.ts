@@ -18,8 +18,8 @@ export const HEADER_BODY_HEIGHT = 58;
 // every tab list so the number lives in exactly one place.
 export const TAB_BAR_CLEARANCE = 120;
 
-// Extra bottom padding so the last row of a tab list can scroll clear of the floating "Ask" pill
-// that sits above the tab bar (card 609).
+// Extra bottom padding so the last row of a tab list can scroll clear of the floating round Ask
+// button that sits above the tab bar (card 609).
 export const ASK_BUTTON_CLEARANCE = 72;
 
 // The absolute, opaque header shell shared verbatim by the floating-header screens. The
