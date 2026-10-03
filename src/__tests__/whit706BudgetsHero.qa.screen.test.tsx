@@ -1,14 +1,12 @@
 // WHIT-706 QA: adversarial edges for the Budgets top card (hero). Real useBudgetsScreenData over
 // the fake server; ../auth + expo-router mocked; real QueryClientProvider.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
-import { QueryClientProvider } from '@tanstack/react-query';
-import { makeClient } from './support/queryClient';
+import { screen, fireEvent } from '@testing-library/react-native';
 import { refreshInAct } from './support/renderWithQueries';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
+import { BUDGET_CATS, seedBudgets, renderBudgets } from './support/budgetsScreen';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -17,21 +15,13 @@ jest.mock('../auth', () => ({
 }));
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
-import Budgets from '../../app/(tabs)/budgets';
-
 const server = installFakeServer();
-const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 };
+const [COFFEE] = BUDGET_CATS;
 const GROCERIES = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd1b9', recent: 12 };
 const SALARY = { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'cash', color: '#7fd1b9', recent: 0 };
 
-function renderBudgets(client = makeClient()) {
-  return { client, ...render(React.createElement(QueryClientProvider, { client }, React.createElement(Budgets))) };
-}
-
 beforeEach(() => {
-  server.seed('/categories', [COFFEE]);
-  server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01', days_left: 4 });
-  server.seed('/budgets', { coffee: { target: 100, posted: 40, pending: 10 } });
+  seedBudgets(server, { payCycle: { length: 30, last_pay_date: '2026-07-01', days_left: 4 } });
   resetRouter();
 });
 

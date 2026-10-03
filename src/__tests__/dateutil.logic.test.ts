@@ -52,3 +52,31 @@ describe('formatWeekdayShort (WHIT-707)', () => {
     expect(formatWeekdayShort('')).toBe('');
   });
 });
+
+// WHIT-713 QA — the clock edges the planned cases skip.
+describe('formatTimeOfDay edges', () => {
+  const now = new Date(2026, 8, 18, 15, 0);
+
+  it('[A13] noon is 12:00pm, a minute before midnight is 11:59pm, and 1am pads its minutes', () => {
+    expect(formatTimeOfDay(new Date(2026, 8, 18, 12, 0).getTime(), now)).toBe('12:00pm');
+    expect(formatTimeOfDay(new Date(2026, 8, 18, 11, 59).getTime(), now)).toBe('11:59am');
+    expect(formatTimeOfDay(new Date(2026, 8, 18, 23, 59).getTime(), now)).toBe('11:59pm');
+    expect(formatTimeOfDay(new Date(2026, 8, 18, 1, 5).getTime(), now)).toBe('1:05am');
+  });
+
+  it('[A14] the local-day boundary: 11:59pm yesterday gets the day, 12:00am today does not', () => {
+    expect(formatTimeOfDay(new Date(2026, 8, 17, 23, 59).getTime(), now)).toBe('17 Sep, 11:59pm');
+    expect(formatTimeOfDay(new Date(2026, 8, 18, 0, 0).getTime(), now)).toBe('12:00am');
+  });
+
+  it('[A15] reads the LOCAL day, not UTC: 9:40am Melbourne is still the previous UTC day', () => {
+    // 2026-09-18 09:40 +10:00 = 2026-09-17 23:40Z. A UTC day check would wrongly prefix "17 Sep".
+    expect(formatTimeOfDay(Date.parse('2026-09-18T09:40:00+10:00'), now)).toBe('9:40am');
+  });
+
+  it('[A16] across the DST switch (4 Oct 2026, Melbourne) the clock is local wall time', () => {
+    const dstDay = new Date(2026, 9, 4, 12, 0);
+    expect(formatTimeOfDay(Date.parse('2026-10-04T03:30:00+11:00'), dstDay)).toBe('3:30am');
+    expect(formatTimeOfDay(Date.parse('2026-10-04T01:30:00+10:00'), dstDay)).toBe('1:30am');
+  });
+});

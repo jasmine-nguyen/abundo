@@ -3,30 +3,22 @@
 // pinned to 9:40am Melbourne so the line's "showing <time>" is a known literal: data loaded
 // at the pinned time, and real timers never move the faked Date.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { RefreshControl } from 'react-native';
-import { render, screen, act, waitFor, fireEvent } from '@testing-library/react-native';
-import { QueryClientProvider } from '@tanstack/react-query';
-import { makeClient } from './support/queryClient';
+import { screen, act, waitFor, fireEvent } from '@testing-library/react-native';
 import { resetRouter } from './support/routerMock';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
+import { BUDGETS, seedBudgets, renderBudgets } from './support/budgetsScreen';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
-import Budgets from '../../app/(tabs)/budgets';
-
 const server = installFakeServer();
 const budgetReads = () => server.sentUnder('GET', '/budgets?');
 
-const PAY_CYCLE = { length: 30, last_pay_date: '2026-09-01' };
-const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 }];
-const BUDGETS = { coffee: { target: 100, posted: 40, pending: 10 } };
-
 async function renderLoadedBudgets() {
-  render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Budgets)));
+  renderBudgets();
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
 }
 
@@ -41,9 +33,7 @@ beforeEach(() => {
   pinToday(new Date('2026-09-18T09:40:00+10:00'));
   resetAuth();
   resetRouter();
-  server.seed('/budgets', BUDGETS);
-  server.seed('/categories', CATS);
-  server.seed('/paycycle', PAY_CYCLE);
+  seedBudgets(server, { payCycle: { length: 30, last_pay_date: '2026-09-01' } });
 });
 
 afterEach(() => {
@@ -93,7 +83,7 @@ it('a refresh that loses the connection says "You look offline · showing <time>
 
 it('the Budgets error card says you look offline when the first load loses the connection', async () => {
   server.once('GET', '/budgets', 'dropped');
-  render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Budgets)));
+  renderBudgets();
   expect(await screen.findByTestId('budgets-error')).toBeTruthy();
   expect(screen.getByText("Couldn't load your budgets.")).toBeTruthy();
   expect(screen.getByText('You look offline. Check your connection and retry.')).toBeTruthy();
@@ -102,7 +92,7 @@ it('the Budgets error card says you look offline when the first load loses the c
 
 it('the Budgets error card blames the server on a 5xx first load, and Retry still recovers', async () => {
   server.fail('/budgets', 503);
-  render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Budgets)));
+  renderBudgets();
   expect(await screen.findByTestId('budgets-error')).toBeTruthy();
   expect(screen.getByText('Our server had a problem. Try again in a moment.')).toBeTruthy();
 
