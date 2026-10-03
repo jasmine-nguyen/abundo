@@ -19,7 +19,7 @@ const MOVED_RUNTIME_NAMES: [string, string][] = [
   ['../model', 'EMPTY_LOAN_FACTS'], ['../model', 'loanFactsReady'], ['../model', 'UNCATEGORIZED_KEY'],
   ['../model', 'EARNED_KEY'], ['../model', 'INCOME_KEY'], ['../model', 'ROLLUP_KEY'],
   ['../model', 'readRollup'], ['../model', 'readIncomeSources'],
-  ['../payCycle', 'cycleName'], ['../payCycle', 'cycleClock'], ['../payCycle', 'cycleStart'],
+  ['../payCycle', 'cycleName'], ['../payCycle', 'cycleClock'],
   ['../payCycle', 'cycleClockView'], ['../payCycle', 'elapsedFrac'],
   ['../budgetMath', 'availableToSpend'], ['../budgetMath', 'paceTarget'],
 ];

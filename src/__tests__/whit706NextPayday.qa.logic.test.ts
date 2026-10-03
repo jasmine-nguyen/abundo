@@ -1,8 +1,8 @@
 // WHIT-706 QA: adversarial edges for nextPayday on the shared pay-cycle clock.
 // Runs under TZ=Australia/Melbourne (the npm test script).
 import { describe, it, expect } from '@jest/globals';
-import { nextPayday, cycleClock, cycleStart } from '../payCycle';
-import { toISODate, parseISODate } from '../dateutil';
+import { nextPayday, cycleClock } from '../payCycle';
+import { toISODate, parseISODate, isoToUtcDayMs, MS_PER_DAY } from '../dateutil';
 
 const day = (y: number, m: number, d: number) => new Date(y, m - 1, d);
 const cycle = (length: number, last_pay_date: string) => ({ length, last_pay_date });
@@ -29,9 +29,9 @@ describe('nextPayday (QA edges)', () => {
     expect(nextPayday(cycle(30, '2026-01-01'), day(2026, 10, 3))).toBe('2026-10-28');
   });
 
-  // [A17] (P0) the next payday never drifts from the countdown or the cycle start (one clock),
+  // [A17] (P0) the next payday never drifts from the countdown or the anchor (one clock),
   // across a full year including both Melbourne daylight-saving changes.
-  it('[A17] nextPayday === today + daysLeft === cycleStart + length, every day of a year', () => {
+  it('[A17] nextPayday === today + daysLeft and lands a whole number of cycles after the anchor, every day of a year', () => {
     for (const length of [7, 14, 30]) {
       const pc = cycle(length, '2026-01-05');
       for (let i = 0; i < 366; i++) {
@@ -39,7 +39,7 @@ describe('nextPayday (QA edges)', () => {
         const todayIso = toISODate(today);
         const next = nextPayday(pc, today);
         expect(next).toBe(addDays(todayIso, cycleClock(pc, today).daysLeft));
-        expect(next).toBe(addDays(cycleStart(pc, today), length));
+        expect(((isoToUtcDayMs(next) - isoToUtcDayMs('2026-01-05')) / MS_PER_DAY) % length).toBe(0);
         expect(next > todayIso).toBe(true);
       }
     }

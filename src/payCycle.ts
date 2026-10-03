@@ -9,11 +9,11 @@ export function cycleName(length: number): 'Weekly' | 'Fortnightly' | 'Monthly' 
 }
 
 // The current pay-cycle anchor, computed ONCE on the shared UTC-whole-day clock (WHIT-575).
-// cycleClock (daysLeft), cycleStart and nextPayday (the hero's "Next payday {date}" line, WHIT-706)
-// all read this, so the countdown and the dates can't drift apart. Returns the raw pieces; each
-// caller applies its own edge policy (cycleClock clamps to full length before the first payday;
-// cycleStart returns '' for a future/unparseable date; nextPayday returns a future first payday as is). A NaN pay (unparseable last_pay_date) propagates through the pieces
-// exactly as dateutil's primitives define — the callers guard it.
+// cycleClock (daysLeft) and nextPayday (the hero's "Next payday {date}" line, WHIT-706) both read
+// this, so the countdown and the date can't drift apart. Returns the raw pieces; each caller
+// applies its own edge policy (cycleClock clamps to full length before the first payday;
+// nextPayday returns a future first payday as is). A NaN pay (unparseable last_pay_date)
+// propagates through the pieces exactly as dateutil's primitives define — the callers guard it.
 function currentCycleAnchor(
   payCycle: { length: number; last_pay_date: string },
   today?: Date,
@@ -44,20 +44,6 @@ export function cycleClock(
   return { cycleLen: length, daysLeft };
 }
 
-// The current cycle's START date (ISO "YYYY-MM-DD"): the most recent payday on or before today, on
-// the shared currentCycleAnchor clock — so it never drifts from the days-left countdown, and never
-// across a Melbourne daylight-saving change. Empty string when there's no started cycle to show: the
-// first payday is still in the future (showing "Started today" would be false), or the date is
-// unparseable (pay is NaN → utcDayMsToISO returns '').
-export function cycleStart(
-  payCycle: { length: number; last_pay_date: string },
-  today?: Date,
-): string {
-  const { pay, todayMs, startMs } = currentCycleAnchor(payCycle, today);
-  if (pay > todayMs) return '';
-  return utcDayMsToISO(startMs);
-}
-
 // The NEXT payday (ISO "YYYY-MM-DD"): the end of the current cycle on the shared currentCycleAnchor
 // clock. Before the first payday, that first payday itself (however far ahead). Empty string for an
 // unparseable date (pay is NaN → utcDayMsToISO returns ''), so the screen hides the line.
@@ -80,11 +66,6 @@ export function cycleClockView(
   // clamp, so a corrupt/older cache value can't drive elapsedFrac out of [0,1] (negative bars).
   const daysLeft = payCycle.days_left ?? cycleClock(payCycle).daysLeft;
   return { cycleLen: payCycle.length, daysLeft: Math.max(0, Math.min(payCycle.length, daysLeft)) };
-}
-
-// The next payday's ISO date: today plus the cycle's days left, on the UTC whole-day clock.
-export function nextPaydayISO(daysLeft: number, today?: Date): string {
-  return utcDayMsToISO(dateToUtcDayMs(today ?? new Date()) + daysLeft * MS_PER_DAY);
 }
 
 export function elapsedFrac(s: { cycleLen: number; daysLeft: number }) { return (s.cycleLen - s.daysLeft) / s.cycleLen; }
