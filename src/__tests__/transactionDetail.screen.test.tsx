@@ -48,12 +48,10 @@ import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries } from
 import { queryClient } from '../queryClient';
 import { transactionsKey } from '../queries';
 import { removeFromAllCopies } from '../transactionCache';
+import { COFFEE_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
-
-// cat() in the factory: id 'coffee', name 'Cafes & Coffee' — here as the raw /categories record.
-const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', parent: null };
 
 function seedFeed(transactions: Transaction[]) {
   server.seed('/transactions/feed', { transactions, nextCursor: null });
@@ -72,7 +70,7 @@ const feedReads = () => server.sentUnder('GET', '/transactions/feed').length;
 beforeEach(() => {
   resetAuth();
   mockId = 't1';
-  server.seed('/categories', [COFFEE]);
+  server.seed('/categories', [{ ...COFFEE_RECORD, parent: null }]);
   seedFeed([txn({ transaction_id: 't1', category: 'coffee' })]);
   mockPush.mockClear();
   mockApplyTransactionEdit.mockClear();

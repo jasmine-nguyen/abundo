@@ -12,6 +12,7 @@ import { toCategory } from '../model';
 import {
   colorForCategory, CATEGORY_BASE, CATEGORY_SIBLINGS, PALETTE,
 } from '../categoryColors';
+import { COFFEE_RECORD } from './support/categories';
 
 // A local sRGB↔OKLab pair so the sibling relationship is recomputed from scratch, independent of
 // how the tokens were generated. If CATEGORY_SIBLINGS is edited by hand off the curve, [PIN] fails.
@@ -71,7 +72,7 @@ describe('colorForCategory — built-in categories keep today\'s colours', () =>
 
   it('toCategory derives the colour from the id, ignoring whatever hex the server sent', () => {
     // The server still stores a legacy hex (#E8A87C for coffee); the client no longer trusts it.
-    const c = toCategory({ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C' });
+    const c = toCategory({ ...COFFEE_RECORD, color: '#E8A87C' });
     expect(c.color).toBe(CATEGORY_BASE.coffee); // '#ff9e64', not the server's '#E8A87C'
   });
 
@@ -139,7 +140,7 @@ describe('CATEGORY_SIBLINGS — the OKLCH relationship to the base', () => {
 // client running AHEAD of the server still meets the old uncleaned shape.
 
 describe('toCategory — colorSlot', () => {
-  const base = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee' };
+  const base = COFFEE_RECORD;
 
   it('carries a valid slot through, and treats 0 as valid', () => {
     expect(toCategory({ ...base, colorSlot: 4 }).colorSlot).toBe(4);

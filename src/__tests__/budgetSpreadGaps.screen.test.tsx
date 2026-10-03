@@ -13,7 +13,6 @@ const mockSaveSpread = jest.fn(async (_id: string, _amount: number, _cycles: num
 const mockRemoveSpread = jest.fn(async (_id: string) => true);
 const mockBack = jest.fn();
 
-const SPEND = { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#E8A87C', bucket: 'Lifestyle', recent: 52 };
 const INCOME = { id: 'salary', name: 'Salary', icon: 'briefcase', color: '#7CC5E8', bucket: 'Income', recent: 5000 };
 let mockParams: { categoryId?: string; prefill?: string; id?: string } = { categoryId: 'coffee' };
 
@@ -35,6 +34,9 @@ import BudgetDetail from '../../app/budget/[id]';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { COFFEE } from './support/categories';
+
+const SPEND = COFFEE;
 
 const server = installFakeServer();
 useTestQueryClient();

@@ -18,9 +18,9 @@ jest.mock('../auth', () => ({
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Budgets from '../../app/(tabs)/budgets';
+import { COFFEE } from './support/categories';
 
 const server = installFakeServer();
-const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 };
 const GROCERIES = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd1b9', recent: 12 };
 const SALARY = { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'cash', color: '#7fd1b9', recent: 0 };
 

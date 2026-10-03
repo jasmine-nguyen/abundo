@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { C, FONT, fmt, tint } from '../../src/theme';
+import { C, FONT, fmt, tint, PRESSED } from '../../src/theme';
 import { formatDayMonth } from '../../src/dateutil';
 import { Icon, Glyph } from '../../src/icons';
 import { budgetViews, type BudgetView } from '../../src/context';
@@ -24,13 +24,12 @@ const SECTIONS: { section: BudgetView['section']; heading: string }[] = [
 function BudgetRow({ b }: { b: BudgetView }) {
   const router = useRouter();
   return (
-    <Pressable onPress={() => router.push(`/budget/${b.id}`)} style={[styles.row, b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }]}>
+    <Pressable onPress={() => router.push(`/budget/${b.id}`)} style={({ pressed }) => [styles.row, b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }, pressed && PRESSED]}>
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 13 }}>
         <View style={[styles.chip, { backgroundColor: b.chipBg }]}><Icon name={b.icon} size={23} color={b.color} /></View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.rowName}>{b.name}</Text>
           <Text style={styles.rowSub}>{b.spentLabel}</Text>
-          {b.carryoverLabel ? <Text style={styles.rowRollover}>{b.carryoverLabel}</Text> : null}
         </View>
         <View style={{ alignItems: 'flex-end' }}>
           <Text style={[styles.rowRemain, { color: b.remainColor }]}>{b.remainAmount}</Text>
@@ -156,7 +155,7 @@ export default function Budgets() {
         })}
 
         {noBudgets ? null : (
-          <Pressable onPress={() => router.push('/budget/pick')} style={styles.addBudget}>
+          <Pressable onPress={() => router.push('/budget/pick')} style={({ pressed }) => [styles.addBudget, pressed && PRESSED]}>
             <Glyph name="plus" size={18} color={C.accentSoft} />
             <Text style={styles.addBudgetText}>Add a budget</Text>
           </Pressable>
@@ -202,7 +201,6 @@ const styles = StyleSheet.create({
   chip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   rowName: { fontFamily: FONT.body, fontSize: 16, fontWeight: '600', color: C.textBright, letterSpacing: -0.2 },
   rowSub: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 2 },
-  rowRollover: { fontFamily: FONT.body, fontSize: 12, fontWeight: '600', color: C.textInfo, marginTop: 3 },
   rowRemain: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', letterSpacing: -0.5 },
   rowRemainLabel: { fontFamily: FONT.body, fontSize: 11, color: C.textDim, fontWeight: '500', marginTop: 1 },
   // WHIT-281: the "today's pace" tick is labelled once in the caption up top; a per-row

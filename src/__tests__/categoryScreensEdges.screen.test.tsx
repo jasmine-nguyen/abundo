@@ -20,12 +20,13 @@ jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({
 
 import CategoryDetail from '../../app/category/[id]';
 import CategoryEdit from '../../app/category/edit';
+import { COFFEE_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
 
 const COFFEE_ROWS = '/categories/coffee/transactions';
-const CATEGORIES = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', parent: null }];
+const CATEGORIES = [{ ...COFFEE_RECORD, parent: null }];
 const ROW = {
   transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
   description: 'ST ALi', merchant_name: 'ST Ali', amount: -8.5, account_id: 'a1',

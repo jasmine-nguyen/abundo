@@ -14,12 +14,13 @@ import { queryClient } from '../queryClient';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES } from './support/categories';
 
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd49b', recent: 100 } as const;
+const CAT = GROCERIES;
 const SEARCH_KEY = ['transactionsSearch', 'uncategorized', 'steven'];
 const txn = (id: string): Transaction => ({
   transaction_id: id, date: '2020-01-01', authorized_date: '2020-01-01',

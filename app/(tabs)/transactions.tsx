@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { RefreshControl, View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
-import { C, FONT, tint } from '../../src/theme';
+import { C, FONT, tint, PRESSED } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { transactionGroups, transactionMatchesSearch, countUncategorized, unionById, useAppContext, SEARCH_QUERY_MAX_LEN } from '../../src/context';
 import { useTransactionsScreenData, useUncategorizedCount, useUncategorizedMerchants } from '../../src/queries';
@@ -334,7 +334,7 @@ export default function Transactions() {
               onPress={loadMore}
               accessibilityRole="button"
               accessibilityLabel="Load older transactions"
-              style={({ pressed }) => [styles.loadMore, pressed && styles.segPressed]}
+              style={({ pressed }) => [styles.loadMore, pressed && PRESSED]}
             >
               <Text style={styles.loadMoreText}>Load More</Text>
             </Pressable>
@@ -363,7 +363,7 @@ export default function Transactions() {
 
 function Seg({ label, active, onPress, flex, badge }: { label: string; active: boolean; onPress: () => void; flex: number; badge?: number }) {
   return (
-    <Pressable testID={`tab-${label.toLowerCase()}`} onPress={onPress} style={({ pressed }) => [styles.segBtn, { flex, backgroundColor: active ? '#fff' : 'transparent' }, pressed && styles.segPressed]}>
+    <Pressable testID={`tab-${label.toLowerCase()}`} onPress={onPress} style={({ pressed }) => [styles.segBtn, { flex, backgroundColor: active ? '#fff' : 'transparent' }, pressed && PRESSED]}>
       <Text style={[styles.segText, { color: active ? C.accentInk : C.textMid }]}>{label}</Text>
       {badge !== undefined && (
         <View style={[styles.badge, { backgroundColor: active ? tint(C.accentInk, 0.18) : tint(C.bad, 0.2) }]}>
@@ -388,8 +388,6 @@ const styles = StyleSheet.create({
 
   seg: { flexDirection: 'row', gap: 4, padding: 4, backgroundColor: C.card, borderRadius: 14, marginBottom: 8 },
   segBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 9, borderRadius: 10 },
-  // WHIT-184 taste: press feedback on the segmented control.
-  segPressed: { opacity: 0.6 },
   segText: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600' },
   badge: { minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 5, alignItems: 'center', justifyContent: 'center' },
   badgeText: { fontFamily: FONT.body, fontSize: 11, fontWeight: '700' },

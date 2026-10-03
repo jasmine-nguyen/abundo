@@ -1,6 +1,6 @@
 // WHIT-184 GAP — the "visible press state" DoD on the TransactionRow, which the
 // implementer's TransactionRow.screen.test.tsx (labels + tap-to-open) never asserts. The row
-// now uses style={({pressed}) => [styles.row, pressed && styles.rowPressed]}. We call that
+// now uses style={({pressed}) => [styles.body, pressed && PRESSED]} (WHIT-717 shared style). We call that
 // style function with pressed true/false and flatten it: a revert that drops the pressed
 // branch (row feels dead again) fails here. Also guards that a NON-tappable row is disabled,
 // so it can never enter the pressed/dim state.
@@ -10,6 +10,7 @@ import { StyleSheet } from 'react-native';
 import { render } from '@testing-library/react-native';
 import { makeState, cat, txn } from './factory';
 import type { Category } from '../types';
+import { PRESSED } from '../theme';
 
 // WHIT-192: the row reads only openPicker from the store; category is a prop.
 let mockState: { openPicker: jest.Mock; category: (id: string | null) => Category | undefined };
@@ -38,15 +39,17 @@ function pressable(root: { findAll: (p: (n: Node) => boolean) => Node[] }): Node
   return hits[0];
 }
 function flat(node: Node, pressed: boolean) {
-  return StyleSheet.flatten((node.props.style as (x: { pressed: boolean }) => unknown)({ pressed })) as { opacity?: number };
+  return StyleSheet.flatten((node.props.style as (x: { pressed: boolean }) => unknown)({ pressed })) as { opacity?: number; transform?: unknown };
 }
 
-it('a tappable row dims (opacity 0.6) on press and is solid at rest', () => {
+it('a tappable row takes the shared pressed style on press and is solid at rest', () => {
   const { UNSAFE_root } = render(<TransactionRow t={txn({ transaction_id: 'tx9', category: null })} category={mockState.category} />);
   const row = pressable(UNSAFE_root as unknown as { findAll: (p: (n: Node) => boolean) => Node[] });
   expect(row.props.disabled).toBeFalsy();          // tappable → can enter pressed state
   expect(flat(row, false).opacity).toBeUndefined(); // at rest: no dim
-  expect(flat(row, true).opacity).toBe(0.6);        // pressed: dim
+  const pressed = flat(row, true);
+  expect(pressed.opacity).toBe(PRESSED.opacity);     // pressed: dim
+  expect(pressed.transform).toEqual(PRESSED.transform); // pressed: shrink
 });
 
 it('a non-tappable (categorized) row is disabled, so it never dims', () => {
