@@ -247,10 +247,10 @@ describe('partial failure', () => {
 });
 
 describe('empty budgets', () => {
-  it('empty rollup {} → empty state (hero + Add your first budget), not a spinner or error', async () => {
+  it('empty rollup {} → empty state (hero + Add a spending budget), not a spinner or error', async () => {
     server.seed('/budgets', {});
     renderBudgets();
-    expect(await screen.findByText('Add your first budget')).toBeTruthy();
+    expect(await screen.findByText('Add a spending budget')).toBeTruthy();
     expect(screen.queryByTestId('budgets-loading')).toBeNull();
     expect(screen.queryByTestId('budgets-error')).toBeNull();
     expect(screen.queryByText('Cafes & Coffee')).toBeNull();

@@ -526,6 +526,7 @@ export interface BudgetsScreenData {
   // instead. Guarded on data===undefined so a background refetch over a cached cycle keeps
   // the rows (cache-first), mirroring WHIT-194's categoriesError.
   payCycleError: boolean;
+  payCycleReady: boolean; // the pay cycle has loaded (or is cached), so days left is real, not the default
   refetch: () => void; // force a refresh (the inline Retry button)
   refetchStale: () => void; // focus refresh — only refetches queries that have gone stale
 }
@@ -563,6 +564,7 @@ export function useBudgetsScreenData(): BudgetsScreenData {
     daysLeft,
     nextPayday: nextPaydayDate,
     payCycleError,
+    payCycleReady: payCycleQuery.data !== undefined,
     ...status,
   };
 }
