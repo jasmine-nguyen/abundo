@@ -13,6 +13,7 @@ import { ASK_BUTTON_CLEARANCE } from '../../src/motion/useNavBarsHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { ListStates } from '../../src/components/ListStates';
 import { SettingsButton } from '../../src/components/SettingsButton';
+import { HeaderTextButton } from '../../src/components/ui';
 
 type Tab = 'all' | 'uncategorized';
 
@@ -129,13 +130,9 @@ export default function Transactions() {
   // offset (WHIT-211 — otherwise the spinner draws behind the opaque floating header).
   // WHIT-291: a "Select" button enters selection mode; it becomes "Cancel" while selecting.
   const headerRight = selectionMode ? (
-    <Pressable onPress={exitSelection} hitSlop={8} style={styles.hdrBtn} accessibilityRole="button">
-      <Text style={styles.hdrBtnText}>Cancel</Text>
-    </Pressable>
+    <HeaderTextButton label="Cancel" onPress={exitSelection} />
   ) : (
-    <Pressable onPress={() => { setSelectionMode(true); setSearch(''); }} hitSlop={8} style={styles.hdrBtn} accessibilityRole="button">
-      <Text style={styles.hdrBtnText}>Select</Text>
-    </Pressable>
+    <HeaderTextButton label="Select" onPress={() => { setSelectionMode(true); setSearch(''); }} />
   );
 
   return (
@@ -379,8 +376,6 @@ function Seg({ label, active, onPress, flex, badge }: { label: string; active: b
 
 const styles = StyleSheet.create({
   // WHIT-291: header Select/Cancel button.
-  hdrBtn: { height: 40, paddingHorizontal: 8, alignItems: 'flex-end', justifyContent: 'center' },
-  hdrBtnText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentSoft },
   // Extra bottom padding so the last rows can scroll clear of the floating action bar and the
   // Ask pill (card 609).
   contentWithBar: { paddingBottom: 108 + ASK_BUTTON_CLEARANCE },

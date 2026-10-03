@@ -1,8 +1,8 @@
 // WHIT-700 / WHIT-703: the Insights header's Export button — shares the selected cycle as an
 // Excel (.xlsx) file.
 import React, { useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text } from 'react-native';
-import { C, FONT } from '../theme';
+import { Alert } from 'react-native';
+import { HeaderTextButton } from './ui';
 import { shareCycleExport } from '../cycleShare';
 import type { Category } from '../types';
 
@@ -29,21 +29,12 @@ export function ExportButton({ cycle, category }: {
   };
 
   return (
-    <Pressable
+    <HeaderTextButton
+      label="Export"
       testID="insights-export"
       onPress={onPress}
-      hitSlop={8}
-      style={styles.hdrBtn}
-      accessibilityRole="button"
+      busy={busy}
       accessibilityLabel="Export this cycle's transactions as an Excel file"
-      accessibilityState={{ busy }}
-    >
-      {busy ? <ActivityIndicator color={C.accentSoft} /> : <Text style={styles.hdrBtnText}>Export</Text>}
-    </Pressable>
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  hdrBtn: { height: 40, paddingHorizontal: 8, alignItems: 'flex-end', justifyContent: 'center' },
-  hdrBtnText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentSoft },
-});
