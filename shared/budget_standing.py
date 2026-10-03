@@ -9,6 +9,9 @@ Two steps, because the caller has to read transactions in between:
    every rollover budget can fold its completed cycles.
 2. `budget_standing` — the maths over the charges read for that window.
 
+`budget_spend` is the posted/pending fold alone, over any window (the cycle export's
+past cycles, WHIT-703).
+
 Row rules:
 - posted/pending are the CURRENT cycle only [cycle_start, today].
 - A budget on an Income-bucket category is an earn-target: posted/pending are positive
@@ -76,6 +79,39 @@ def standing_window(targets: dict, pay_cycle: dict, today=None) -> StandingWindo
                           windows_by_id, reanchor_by_id)
 
 
+def _subtrees(targets: dict, categories: list) -> tuple[dict, dict]:
+    """(bucket_by_id, ids_by_target): each category's bucket, and each target's subtree ids."""
+    bucket_by_id = {c["id"]: c.get("bucket") for c in categories}
+    children = build_category_children(categories)
+    ids_by_target = {cat_id: subtree_ids(cat_id, children, bucket_by_id) for cat_id in targets}
+    return bucket_by_id, ids_by_target
+
+
+def _fold_spend(ids_by_target: dict, bucket_by_id: dict, transactions: list) -> dict:
+    """{cat_id: {"posted", "pending"}} for each target over `transactions`.
+
+    Sum every needed id once (unclamped), fold per target, then clamp the target total
+    once, so a net-negative sibling nets against the rest before the floor (WHIT-343).
+    """
+    needed_ids = set().union(*ids_by_target.values()) if ids_by_target else set()
+    income_ids = {cid for cid in needed_ids if bucket_by_id.get(cid) == INCOME_BUCKET}
+    spend_ids = needed_ids - income_ids
+
+    per_id = summarise_transactions(transactions, spend_ids, clamp=False)
+    per_id.update(summarise_income(transactions, income_ids, clamp=False))
+    return {cat_id: fold_subtree(per_id, ids) for cat_id, ids in ids_by_target.items()}
+
+
+def budget_spend(targets: dict, categories: list, transactions: list) -> dict:
+    """Each budget's {"posted", "pending"} over `transactions`, whatever window they cover.
+
+    The same subtree fold and Income earn-target rule as `budget_standing`, with no
+    rollover or spread.
+    """
+    bucket_by_id, ids_by_target = _subtrees(targets, categories)
+    return _fold_spend(ids_by_target, bucket_by_id, transactions)
+
+
 def budget_standing(targets: dict, window: StandingWindow, categories: list,
                     transactions: list) -> tuple[dict, dict]:
     """Each budget's row this cycle, plus the settlements to save.
@@ -89,9 +125,7 @@ def budget_standing(targets: dict, window: StandingWindow, categories: list,
     cycle_start = window.cycle_start
     today = window.today
     length = window.length
-    bucket_by_id = {c["id"]: c.get("bucket") for c in categories}
-    children = build_category_children(categories)
-    ids_by_target = {cat_id: subtree_ids(cat_id, children, bucket_by_id) for cat_id in targets}
+    bucket_by_id, ids_by_target = _subtrees(targets, categories)
 
     rollover_ids = {
         cat_id for cat_id, entry in targets.items()
@@ -106,21 +140,14 @@ def budget_standing(targets: dict, window: StandingWindow, categories: list,
     if window.fetch_start != cycle_start:
         current = transactions_in_window(transactions, cycle_start, today)
 
-    # Sum every needed id once (unclamped), fold per target, then clamp the target total
-    # once, so a net-negative sibling nets against the rest before the floor (WHIT-343).
-    needed_ids = set().union(*ids_by_target.values()) if ids_by_target else set()
-    income_ids = {cid for cid in needed_ids if bucket_by_id.get(cid) == INCOME_BUCKET}
-    spend_ids = needed_ids - income_ids
-
-    per_id = summarise_transactions(current, spend_ids, clamp=False)
-    per_id.update(summarise_income(current, income_ids, clamp=False))
+    spend_by_id = _fold_spend(ids_by_target, bucket_by_id, current)
 
     rollover_settlements = {}
     finished_spreads = []
     reanchored_spreads = {}
     rows = {}
     for cat_id, entry in targets.items():
-        folded = fold_subtree(per_id, ids_by_target[cat_id])
+        folded = spend_by_id[cat_id]
         row = {
             "target": entry["target"],
             "posted": folded["posted"],

@@ -174,14 +174,17 @@ describe('Transactions tab cells', () => {
   });
 });
 
-describe('Budgets tab in slice 1', () => {
+describe('Budgets tab with no budgets from the server', () => {
   // [A10] (P0) this cycle AND last cycle: the Budgets tab is the 8 titles in row 1 and nothing
-  // else, and the Transactions tab is unaffected by the past-cycle flag.
+  // else (last cycle's third title is 'Budget (current)', WHIT-703 slice 2), and the
+  // Transactions tab is unaffected by the past-cycle flag.
   it.each([false, true])('isPastCycle=%p → Budgets tab is the header row only', (isPastCycle) => {
     const files = parts(buildCycleWorkbook({ start: 's', end: 'e', transactions: NASTY }, category, isPastCycle));
     const budgets = files['xl/worksheets/sheet2.xml'];
     expect(budgets.match(/<row /g)).toHaveLength(1);
-    expect(cells(budgets).map((c) => c.text)).toEqual(BUDGET_HEADER);
+    const header = [...BUDGET_HEADER];
+    if (isPastCycle) header[2] = 'Budget (current)';
+    expect(cells(budgets).map((c) => c.text)).toEqual(header);
     expect(files['xl/workbook.xml']).toMatch(/<sheet name="Transactions" sheetId="1"[^>]*\/><sheet name="Budgets" sheetId="2"/);
 
     const presentFlag = parts(buildCycleWorkbook({ start: 's', end: 'e', transactions: NASTY }, category, false));

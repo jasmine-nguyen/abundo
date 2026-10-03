@@ -97,7 +97,7 @@ from repository import (
 from repository_job import STATUS_RUNNING, STATUS_FAILED
 from rule_engine import rule_identity
 from repository_transaction import read_window
-from budget_standing import budget_standing, standing_window
+from budget_standing import budget_spend, budget_standing, standing_window
 from rule_book import RuleBook, WriteLimit, rule_from_row, rule_reply
 from rule_spreading import SpreadSeeder
 from repayment_rules import is_repayment_credit, is_number
@@ -117,6 +117,7 @@ from spend import (
     summarise_income,
     summarise_transactions,
     summarise_uncategorized,
+    transactions_in_window,
 )
 from anthropic_client import AnthropicError
 from chat_tools import lookback_floor
@@ -208,10 +209,12 @@ def lambda_handler(event, context):
         if path == TRANSACTIONS_SEARCH_PATH and method == "GET":
             return get_transactions_search(event, TransactionRepository(), CategoryRepository())
 
-        # Every transaction in one pay cycle, for the Insights CSV export (WHIT-700). An EXACT
-        # path, disjoint from the other GET transaction routes.
+        # Every transaction and budget in one pay cycle, for the Insights export (WHIT-700,
+        # WHIT-703). An EXACT path, disjoint from the other GET transaction routes.
         if path == TRANSACTIONS_CYCLE_PATH and method == "GET":
-            return get_cycle_transactions(event, TransactionRepository(), PayCycleRepository())
+            return get_cycle_transactions(
+                event, TransactionRepository(), PayCycleRepository(), BudgetRepository(),
+                CategoryRepository())
 
         # Apply the user's BankSync rules to charges ALREADY stored (BankSync only applies them
         # to incoming charges — WHIT-502). POST-only, and it PREVIEWS unless the body says
@@ -2524,23 +2527,50 @@ def get_cycle_transactions(
     event: dict,
     transaction_repo: TransactionRepository,
     paycycle_repo: PayCycleRepository,
+    budget_repo: BudgetRepository,
+    category_repo: CategoryRepository,
 ) -> dict:
     """GET /transactions/cycle — every transaction in one pay cycle (spend, income,
-    transfers, pending), newest-first, for the Insights CSV export (WHIT-700).
+    transfers, pending), newest-first, plus each budget's numbers for that cycle, for the
+    Insights export (WHIT-700, WHIT-703).
 
     Same ?cycle= look-back and window as /breakdown. Each row carries
     `counts_to_budget_effective` (contributes_to_budget), so the export's yes/no column
-    follows the budget's own rule. Returns {start, end, transactions} so the app can
-    name the file after the window.
+    follows the budget's own rule. Returns {start, end, transactions, budgets} so the app
+    can name the file after the window.
+
+    `budgets` has the same shape as GET /budgets. Cycle 0 IS /budgets' maths (rollover and
+    spread included); a past cycle is that cycle's posted/pending against today's targets.
+    Read-only: no settlement is saved.
     """
     cycle, cycle_error = _parse_breakdown_cycle(event)
     if cycle_error is not None:
         return cycle_error
-    start, end = _cycle_window_for_lookback(paycycle_repo, cycle)
-    rows = _windowed_rows(read_window(transaction_repo, start, end), lambda _: True)
+    targets = budget_repo.list_budgets()
+    window = None
+    if targets and cycle == 0:
+        window = standing_window(targets, paycycle_repo.get_paycycle())
+        start, end = window.cycle_start, window.today
+        read_start = window.fetch_start
+    else:
+        start, end = _cycle_window_for_lookback(paycycle_repo, cycle)
+        read_start = start
+    transactions = read_window(transaction_repo, read_start, end)
+
+    budgets = {}
+    if targets:
+        categories = category_repo.list_categories()
+        if window is not None:
+            budgets, _ = budget_standing(targets, window, categories, transactions)
+        else:
+            spend = budget_spend(targets, categories, transactions)
+            budgets = {cat_id: {"target": entry["target"], **spend[cat_id]} for cat_id, entry in targets.items()}
+
+    # After the budget maths: _windowed_rows strips pk/sk from these same dicts.
+    rows = _windowed_rows(transactions_in_window(transactions, start, end), lambda _: True)
     for row in rows:
         row["counts_to_budget_effective"] = contributes_to_budget(row)
-    return _json_response(200, {"start": start, "end": end, "transactions": rows})
+    return _json_response(200, {"start": start, "end": end, "transactions": rows, "budgets": budgets})
 
 
 def _window_category_spend(transactions: list[dict], categories: list[dict],

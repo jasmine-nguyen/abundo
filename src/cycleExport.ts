@@ -2,6 +2,10 @@
 // Pure — no screen or file access — so it runs in the fast logic tests.
 import type { CycleTransaction, CycleTransactions } from './api';
 import type { Category } from './types';
+import type { Budget } from './model';
+import { selectBudgets } from './queries';
+import { budgetViews } from './context';
+import { availableToSpend } from './budgetMath';
 import { buildXlsx, type Cell } from './xlsx';
 
 const UNCATEGORISED = 'Uncategorised';
@@ -54,15 +58,48 @@ export function buildTransactionRows(
   return [TRANSACTION_HEADER, ...cells];
 }
 
-// isPastCycle drives the Budgets tab's last-cycle rules, which arrive with the budget rows.
+// Budgets-screen order (each parent then its budgeted children), then the budgets that screen
+// hides (Savings, unknown category) in server order. The pace inputs don't affect the order.
+function screenOrder(budgets: Budget[], category: (id: string) => Category | undefined): Budget[] {
+  const shownIds = budgetViews({ budgets, category, cycleLen: 1, daysLeft: 0 }).rows.map((row) => row.id);
+  const shown = new Set(shownIds);
+  const byId = new Map(budgets.map((budget) => [budget.id, budget]));
+  const ordered = shownIds.map((id) => byId.get(id)!);
+  return [...ordered, ...budgets.filter((budget) => !shown.has(budget.id))];
+}
+
+// Past budgets aren't saved, so last cycle is measured against today's target with a blank
+// carry-over (only today's buffer is stored).
+export function buildBudgetRows(
+  budgets: Budget[],
+  category: (id: string) => Category | undefined,
+  isPastCycle: boolean,
+): Cell[][] {
+  const header = [...BUDGET_HEADER];
+  if (isPastCycle) header[2] = 'Budget (current)';
+  const cells = screenOrder(budgets, category).map((budget): Cell[] => {
+    const [parentName, categoryName] = categoryColumns(budget.id, category);
+    const spent = budget.posted + budget.pending;
+    let carryOver: number | null = budget.rollover ? budget.carryover : budget.spreadAdjustment;
+    let available = availableToSpend(budget);
+    if (isPastCycle) {
+      carryOver = null;
+      available = budget.budget;
+    }
+    return [parentName, categoryName, budget.budget, spent, budget.pending, available - spent, carryOver, available];
+  });
+  return [header, ...cells];
+}
+
 export function buildCycleWorkbook(
   data: CycleTransactions,
   category: (id: string) => Category | undefined,
-  _isPastCycle: boolean,
+  isPastCycle: boolean,
 ): Uint8Array {
+  const budgets = selectBudgets(data.budgets ?? {});
   return buildXlsx([
     { name: 'Transactions', rows: buildTransactionRows(data.transactions, category) },
-    { name: 'Budgets', rows: [BUDGET_HEADER] },
+    { name: 'Budgets', rows: buildBudgetRows(budgets, category, isPastCycle) },
   ]);
 }
 
