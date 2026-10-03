@@ -1,7 +1,8 @@
 import React from 'react';
 import { ActivityIndicator, View, Text, Pressable, StyleSheet, ViewStyle, TextStyle, StyleProp } from 'react-native';
 import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
-import { C, FONT } from '../theme';
+import { C, FONT, tint } from '../theme';
+import { Glyph } from '../icons';
 
 // WHIT-615 — a full-bleed gradient layer. iOS react-native-svg saves a shape's `%` sizes from
 // its first draw and never updates them on resize, so the Rect is sized in a 0-1 viewBox that
@@ -136,7 +137,26 @@ export function SectionLabel({ children, style }: { children: React.ReactNode; s
   return <Text style={[styles.sectionLabel, style]}>{children}</Text>;
 }
 
+// WHIT-711: the tinted square icon button in a header (the "+" buttons, the Settings gear).
+export function HeaderIconButton({ icon, onPress, accessibilityLabel, testID, iconSize = 22 }: {
+  icon: string; onPress: () => void; accessibilityLabel: string; testID?: string; iconSize?: number;
+}) {
+  return (
+    <Pressable
+      testID={testID}
+      onPress={onPress}
+      hitSlop={8}
+      style={styles.hdrIconBtn}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+    >
+      <Glyph name={icon} size={iconSize} color={C.accentSoft} />
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
+  hdrIconBtn: { width: 40, height: 40, backgroundColor: tint(C.accentAlt, 0.16), borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   track: { position: 'relative', backgroundColor: C.progressTrack, overflow: 'hidden' },
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginHorizontal: 4, marginBottom: 8 },
   hdrBtn: { height: 40, paddingHorizontal: 8, alignItems: 'flex-end', justifyContent: 'center' },

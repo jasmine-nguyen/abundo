@@ -18,8 +18,9 @@ import { rulesKey } from '../queryKeys';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 // Header pulls in expo-router (a native module that can't load headlessly) and
-// isn't under test here — stub it out so the screen renders in jest.
-jest.mock('../components/Header', () => ({ Header: () => null }));
+// isn't under test here — stub it out so the screen renders in jest. The right slot (the "+"
+// button) still renders so it can be tapped.
+jest.mock('../components/Header', () => ({ Header: ({ right }: { right?: React.ReactNode }) => right ?? null }));
 jest.mock('expo-router', () => ({ useFocusEffect: () => {} }));
 
 import Rules from '../../app/rules';
@@ -121,6 +122,13 @@ it('tapping a rule body opens the edit sheet with its id', async () => {
   await renderWithApp(<Rules />);
   fireEvent.press(screen.getByTestId('edit-rule-e1'));
   expect(currentSheet()).toEqual({ mode: 'addrule', ruleId: 'e1' });
+});
+
+it('the header "+" button opens the add-rule sheet (WHIT-711)', async () => {
+  server.seed('/rules', [NETFLIX]);
+  await renderWithApp(<Rules />);
+  fireEvent.press(screen.getByLabelText('Add rule'));
+  expect(currentSheet()).toEqual({ mode: 'addrule' });
 });
 
 // A loaded rule is never new (toRule sets isNew:false); only the create writer puts a fresh,
