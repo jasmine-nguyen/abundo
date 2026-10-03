@@ -38,7 +38,9 @@ beforeEach(() => {
   resetAuth();
   pinToday(new Date('2026-10-03T10:00:00+10:00')); // Sat 3 Oct 2026, Melbourne
 });
-afterEach(() => jest.useRealTimers());
+afterEach(() => {
+  jest.useRealTimers();
+});
 
 // [A20] (P0) spend only → SPENDING heading, no EARNING heading.
 it('[A20] no income budgets → no EARNING heading', async () => {
