@@ -200,7 +200,7 @@ def test_reprocess_pending_dead_letter_preserves_user_category_on_stored_pending
 
     summary = lam.reprocess.reprocess_failed(repo)
 
-    assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0}
+    assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0}
     row = repo._table.store[(_acc(stored), "TXN#P")]
     assert row["category"] == "USER_PICKED"    # user category preserved through reprocess
     assert row["status"] == "pending"

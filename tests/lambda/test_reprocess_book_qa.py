@@ -40,7 +40,7 @@ def test_reprocess_with_an_unreadable_rule_book_still_recovers_every_row_unfiled
     summary = lam.reprocess.reprocess_failed(
         repo, rule_repo=_BrokenRuleStore(), category_repo=_Cats())
 
-    assert summary == {"reprocessed": 2, "skipped": 0, "errors": 0}
+    assert summary == {"reprocessed": 2, "skipped": 0, "errors": 0, "dropped_zero": 0}
     rows = _txn_rows(repo)
     assert rows["TXN#r1"]["category"] == "FOOD_AND_DRINK"
     assert rows["TXN#r2"]["category"] == "FOOD_AND_DRINK"
