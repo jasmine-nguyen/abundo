@@ -583,7 +583,7 @@ def running_message(name: str, state: BuildState) -> str | None:
         "checks": "Running typecheck and tests",
         "code_critic": "Code review: hunting for bugs and checking your standards",
         "qa": None if qa_passed_last_round(state) else "QA: checking it does what the card asked, then testing the edge cases",
-        "ship": "Opening the PR (after running QA's new tests, if it added any)",
+        "ship": "Opening the PR (after re-running every check, if QA added tests)",
     }
     return messages.get(name)
 
@@ -2221,14 +2221,13 @@ def failing_qa_tests(state: BuildState) -> list[str] | None:
 
 
 def recheck_qa_tests(state: BuildState, heading: str, where: str) -> dict | None:
-    """QA's tests land after the checks last passed. If any did, run just those tests
-    (the rest of the code already passed every check). Returns the update that sends
-    the work back to the implementer, or None if all is green."""
+    """QA's tests land after the checks last passed. If any did, run QA's own command first
+    for a focused failure, then every check: new test files must pass the typecheck and
+    lint too, not just run. Returns the update that sends the work back to the
+    implementer, or None if all is green."""
     if not stray_changes(state):
         return None
-    problems = failing_qa_tests(state)
-    if problems is None:
-        problems = failing_checks(state)
+    problems = failing_qa_tests(state) or failing_checks(state)
     if not problems:
         return None
     failed = state.get("implementation_attempts", 0) >= MAX_IMPLEMENTATION_ROUNDS
