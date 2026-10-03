@@ -20,6 +20,7 @@ import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES } from './support/categories';
 
 const server = installFakeServer();
 
@@ -39,7 +40,7 @@ beforeEach(() => {
 afterEach(() => { queryClient.clear(); });
 
 function mount() {
-  queryClient.setQueryData(['categories'], [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd49b', recent: 100 }]);
+  queryClient.setQueryData(['categories'], [GROCERIES]);
   queryClient.setQueryData(['rules'], [{ ...RULE }]);
   const { result } = renderHook(() => useAppContext(), { wrapper });
   return result;

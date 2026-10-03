@@ -9,7 +9,8 @@ import { routerSpies, resetRouter, setParams } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { pinToday } from './support/clock';
-import { COFFEE, seedBudgetsTab } from './support/budgetsTab';
+import { seedBudgetsTab } from './support/budgetsTab';
+import { COFFEE } from './support/categories';
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');

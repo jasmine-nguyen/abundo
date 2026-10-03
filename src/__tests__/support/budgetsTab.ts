@@ -3,8 +3,7 @@
 import type { installFakeServer } from './fakeServer';
 import { budgetViews } from '../../context';
 import { makeState, cat, budget } from '../factory';
-
-export const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 };
+import { COFFEE } from './categories';
 
 export function seedBudgetsTab(
   server: ReturnType<typeof installFakeServer>,
@@ -21,5 +20,5 @@ export function seedBudgetsTab(
 // The coffee budget's row on the same halfway cycle, so a $100 budget's pace target is $50.
 export const budgetRowFor = (b: object) =>
   budgetViews(
-    makeState({ categories: [cat({ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle' })], budgets: [budget({ id: 'coffee', ...b })], cycleLen: 14, daysLeft: 7 }),
+    makeState({ categories: [cat()], budgets: [budget({ id: 'coffee', ...b })], cycleLen: 14, daysLeft: 7 }),
   ).rows[0];

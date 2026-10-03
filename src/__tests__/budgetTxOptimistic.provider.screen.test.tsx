@@ -19,6 +19,7 @@ import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
+import { GROCERIES } from './support/categories';
 
 // Live auth store (superset). The static-'authed' siblings never touch mockStatus, so it stays
 // 'authed' for them; the two sign-out siblings mutate it via mockSetStatus to drive sign-out.
@@ -41,7 +42,7 @@ const sentBodies = (path: string) => server.sent('PATCH', path).map((request) =>
 
 function signOut() { act(() => { queryClient.clear(); mockSetStatus('anon'); }); }
 
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd49b', recent: 100 } as const;
+const CAT = GROCERIES;
 const txn = (over: Partial<Transaction> = {}): Transaction => ({
   transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
   description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
@@ -230,7 +231,6 @@ it('exclude keeps the charge in the transactions cache, flagged excluded', async
 // its header after a write. NB this suite's `txn` defaults to category:null (an unmapped charge) so
 // the applyCategory('one') re-tag is a real move, not a no-op — kept block-scoped below.
 describe('budgetTxInvalidation (folded)', () => {
-  const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd49b', recent: 100 } as const;
   const txn = (over: Partial<Transaction> = {}): Transaction => ({
     transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
     description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',

@@ -14,15 +14,15 @@ jest.mock('../auth', () => ({
 }));
 
 import { useCategories } from '../queries';
+import { COFFEE } from './support/categories';
 
 const server = installFakeServer();
-
-const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 };
+const CATEGORIES = [{ ...COFFEE, recent: 0 }];
 
 describe('useCategories reload actions still act (WHIT-669 QA)', () => {
   // [A1]
   it('a refetchStale captured before the load reloads once the loaded data is stale', async () => {
-    server.seed('/categories', [COFFEE]);
+    server.seed('/categories', CATEGORIES);
     const { result } = renderHook(() => useCategories(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
     const early = result.current.refetchStale;
     await waitFor(() => expect(result.current.categories).toHaveLength(1));
@@ -33,7 +33,7 @@ describe('useCategories reload actions still act (WHIT-669 QA)', () => {
 
   // [A2]
   it('a refetch captured before a failed load brings the categories back', async () => {
-    server.seed('/categories', [COFFEE]);
+    server.seed('/categories', CATEGORIES);
     server.once('GET', '/categories', { status: 503 });
     const { result } = renderHook(() => useCategories(), { wrapper: wrapper(makeClient()) });
     const early = result.current.refetch;

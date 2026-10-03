@@ -9,6 +9,7 @@ import {
 } from '../chartColors';
 import { toCategory } from '../model';
 import { readServerSeedSlots } from './serverSeedSlots';
+import { COFFEE_RECORD } from './support/categories';
 
 // The server's seed slots, READ from shared/repository_category.py — not retyped. A hand copy
 // going stale is the whole reason WHIT-406/415/432 exist.
@@ -67,7 +68,7 @@ describe('[A15] toCategory hands chartCategoryColor a value it can actually use'
   it('round-trips every legal slot from the wire to the painted hex', () => {
     // The two halves are tested separately today; nothing pins the JOIN. A one-off in either (a
     // stringified slot, an off-by-one range) would leave both suites green and the chart wrong.
-    const base = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee' };
+    const base = COFFEE_RECORD;
     for (let slot = 0; slot < CATEGORY_COLORS.length; slot++) {
       const stored = toCategory({ ...base, colorSlot: slot }).colorSlot;
       expect(chartCategoryColor('coffee', { slot: stored })).toBe(CATEGORY_COLORS[ASSIGNMENT_ORDER[slot]]);

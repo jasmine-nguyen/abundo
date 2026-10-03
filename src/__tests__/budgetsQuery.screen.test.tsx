@@ -37,6 +37,7 @@ import Budgets from '../../app/(tabs)/budgets';
 // by the folded WHIT-72 tests via renderHook; the same regime the screen renders under.
 import { useBudgetsScreenData, useBudgetDetailScreenData } from '../queries';
 import { nextPayday } from '../payCycle';
+import { COFFEE } from './support/categories';
 
 const server = installFakeServer();
 // The Budgets reads. `/budgets?` (with the query mark) counts the rollup read only, never a
@@ -48,7 +49,7 @@ const categoryReads = () => server.sent('GET', '/categories');
 // length 30 (NOT the default 14) so "windowed on the real length" genuinely proves
 // budgets waited for the pay cycle rather than fetching with the seeded default.
 const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
-const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 }];
+const CATS = [COFFEE];
 const BUDGETS = { coffee: { target: 100, posted: 40, pending: 10 } };
 
 function renderBudgets(client = makeClient()) {
@@ -170,7 +171,7 @@ it('hides a Savings-bucket budget end-to-end and keeps it out of the hero total 
   // Exercises the whole query -> selectBudgets -> budgetViews -> render pipeline; reverting
   // the budgetViews Savings skip (src/context.tsx) makes both assertions fail.
   server.seed('/categories', [
-    { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
+    COFFEE,
     { id: 'nest_egg', name: 'Nest Egg', bucket: 'Savings', icon: 'home', color: '#C7A8F0', recent: 0 },
   ]);
   server.seed('/budgets', {
@@ -418,7 +419,7 @@ describe('WHIT-221 parent→sub tree + de-duped hero (folded from budgetsSubcate
 // the shared module-scope expo-router mock is inert here because ../queries never imports it).
 // Fixtures block-scoped so they don't collide with the module ones. =====
 describe('WHIT-72 payCycleError guard (folded from budgetsPayCycleError)', () => {
-  const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
+  const CATS = [{ ...COFFEE, recent: 0 }];
   const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
   const BUDGETS = { coffee: { target: 100, posted: 40, pending: 10 } };
 
@@ -552,7 +553,7 @@ describe('WHIT-573 hero over-budget label + sign', () => {
 describe('WHIT-573 hero over-budget — gaps', () => {
   it('sums MULTIPLE over-budget rows into one signed hero total + coherent pill', async () => {
     server.seed('/categories', [
-      { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
+      COFFEE,
       { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd1b9', recent: 12 },
     ]);
     server.seed('/budgets', {
@@ -583,7 +584,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
 
   it('keeps an Income budget OUT of the over-budget hero (earnings do not rescue it)', async () => {
     server.seed('/categories', [
-      { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
+      COFFEE,
       { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'cash', color: '#7fd1b9', recent: 0 },
     ]);
     server.seed('/budgets', {
