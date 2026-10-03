@@ -82,4 +82,9 @@ export function cycleClockView(
   return { cycleLen: payCycle.length, daysLeft: Math.max(0, Math.min(payCycle.length, daysLeft)) };
 }
 
+// The next payday's ISO date: today plus the cycle's days left, on the UTC whole-day clock.
+export function nextPaydayISO(daysLeft: number, today?: Date): string {
+  return utcDayMsToISO(dateToUtcDayMs(today ?? new Date()) + daysLeft * MS_PER_DAY);
+}
+
 export function elapsedFrac(s: { cycleLen: number; daysLeft: number }) { return (s.cycleLen - s.daysLeft) / s.cycleLen; }

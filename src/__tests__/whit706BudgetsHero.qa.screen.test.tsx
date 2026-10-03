@@ -92,7 +92,7 @@ describe('Budgets top card — QA edges', () => {
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
     expect(screen.queryByText('Add your first budget')).toBeNull();
     expect(screen.getByText('Left to spend')).toBeTruthy();
-    expect(screen.getByText('Posted')).toBeTruthy();       // legend back
+    expect(screen.getByText("Solid = spent · faded = pending · line = today's pace")).toBeTruthy(); // caption back
     expect(screen.getByText('Add a budget')).toBeTruthy(); // dashed button back
   });
 

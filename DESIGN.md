@@ -201,7 +201,7 @@ Categories have their own fixed hues and are not part of the UI palette above. `
 - **Label** (700, 12pt, +0.3 tracking): section labels above groups of cards, in Ink Mid.
 - **Tab label** (600, 10.5pt): tab bar labels.
 
-Sizes are fixed point values today; the app does not follow the iPhone's text-size setting (Dynamic Type).
+Sizes are set in points and grow with the iPhone's text-size setting (Dynamic Type). Nothing turns scaling off, so very large settings can crowd tight rows.
 
 ### Named Rules
 **The Numbers-Wear-Tight Rule.** Money and counts are set in Inter Tight with negative tracking; words are set in Inter. A dollar figure in Inter, or a sentence in Inter Tight, reads off-brand.

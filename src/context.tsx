@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { C, tint, fmt, fmtExact, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
 import { writeFailureMessage, ApiError } from './apiError';
-import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
+import { MONTHS, formatDayMonth, formatWeekdayShort, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, deleteTransaction as apiDeleteTransaction, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup } from './api';
 import * as Crypto from 'expo-crypto';
 import { usableEquity as computeUsableEquity, milestoneTime } from './milestones';
@@ -1910,6 +1910,9 @@ export interface BudgetView {
   // isn't budgeted). `parentId` is the nearest budgeted ancestor's id (the row it
   // nests under), or null at the top level.
   depth: number; parentId: string | null;
+  // WHIT-707: Spending rows list before Earning rows; income hides the today marker; an
+  // over-budget row that can start a spread carries its overspend as the link's prefill.
+  section: 'spending' | 'earning'; showTarget: boolean; spreadPrefill: number | null;
 }
 
 // The exact slice budgetViews reads. A narrow input (not the whole AppContext) so a
@@ -1922,6 +1925,14 @@ export interface BudgetViewsInput {
   category: (id: string) => Category | undefined;
   cycleLen: number;
   daysLeft: number;
+  nextPayday?: string; // ISO "YYYY-MM-DD"; income rows read "next pay ~Fri" when set
+}
+
+// "today" / "~Fri" (within 6 days) / "~17 Oct" (further out, where a weekday is ambiguous).
+function nextPayLabel(nextPayday: string, daysLeft: number): string {
+  if (daysLeft <= 0) return 'today';
+  if (daysLeft <= 6) return `~${formatWeekdayShort(nextPayday)}`;
+  return `~${formatDayMonth(nextPayday)}`;
 }
 
 export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudget: number; totSpent: number; totRemain: number } {
@@ -2008,18 +2019,12 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
       // Income rows are kept OUT of the spend hero totals (a floor is a different
       // unit from a spend ceiling), but still listed. `over` stays false so nothing
       // downstream flips the row red.
+      // Salary lands in one lump, so an even daily pace means nothing here (WHIT-707): no pace
+      // line, no today marker — just what's earned and when the next pay is due.
       const met = actual >= b.budget;
       const pendingPct = Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
-      let paceLabel: string, paceColor: string;
-      // Same hierarchy as spend rows: the remaining amount is the cyan highlight, the pace
-      // sub-label is the muted C.textInfo lavender.
-      if (met) { paceLabel = fmtExact(actual - b.budget) + ' over target'; paceColor = C.textInfo; }
-      else if (actual - target > 0.5) { paceLabel = fmt(actual - target) + ' ahead of pace'; paceColor = C.textInfo; }
-      else if (target - actual > 0.5) { paceLabel = fmt(target - actual) + ' to go'; paceColor = C.textInfo; }
-      else { paceLabel = 'on pace'; paceColor = C.textInfo; }
-      // `actual` already includes pending, so the single "earned of budget" line counts it
-      // without the separate "(… pending)" breakout.
-      const spentLabel = `${fmtExact(actual)} earned of ${fmt(b.budget)}`;
+      let spentLabel = `${fmtExact(actual)} earned`;
+      if (s.nextPayday) spentLabel += ` · next pay ${nextPayLabel(s.nextPayday, s.daysLeft)}`;
       viewById.set(b.id, {
         id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
         spentLabel,
@@ -2027,8 +2032,9 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
         remainLabel: met ? 'over target' : 'to go',
         remainColor: C.good,
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: c.color,
-        pendingTint: tint(c.color, 0.45), paceLabel, paceColor, over: false,
+        pendingTint: tint(c.color, 0.45), paceLabel: '', paceColor: C.textInfo, over: false,
         carryoverLabel, depth, parentId,
+        section: 'earning', showTarget: false, spreadPrefill: null,
       });
       group(parentId, b.id);
       continue;
@@ -2047,21 +2053,26 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
     let paceLabel: string, paceColor: string;
     // The "left" amount is the row's cyan highlight; the pace sub-label is the muted C.textInfo.
-    // Warnings keep their own colour (over pace = amber, over budget = red).
-    if (over) { paceLabel = fmtExact(spent - available) + ' over budget'; paceColor = C.bad; }
+    // Over pace is amber. Over budget keeps red to the amount and bar (WHIT-707): the line offers
+    // the way out (a spread) when one can start, else a quiet "$X over budget".
+    const spread = budgetSpreadEligibility(c, b);
+    const spreadPrefill = spread.entry === 'start' ? spread.overspend : null;
+    if (over && spreadPrefill !== null) { paceLabel = 'Spread it over pay cycles →'; paceColor = C.accentSoft; }
+    else if (over) { paceLabel = fmtExact(spent - available) + ' over budget'; paceColor = C.textInfo; }
     else if (spent - target > 0.5) { paceLabel = fmt(spent - target) + ' over pace'; paceColor = C.warn; }
     else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under pace'; paceColor = C.textInfo; }
     else { paceLabel = 'on pace'; paceColor = C.textInfo; }
-    // `spent` (= posted + pending) already counts pending, so a single "spent of budget" line
-    // is enough — no separate "(… pending)" breakout. "of" shows the AVAILABLE envelope so it
-    // reconciles with the remaining amount (which is available − spent).
-    const spentLabel = `${fmtExact(spent)} spent of ${fmt(available)}`;
+    // "of" shows the AVAILABLE envelope so it reconciles with the remaining amount (available −
+    // spent). `spent` includes pending; when some is pending, name it too (as Insights does).
+    let spentLabel = `${fmtExact(spent)} spent of ${fmt(available)}`;
+    if (pending > 0.005) spentLabel += ` · ${fmtExact(pending)} pending`;
     viewById.set(b.id, {
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
       spentLabel, remainAmount: fmtExact(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,
       postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: over ? C.bad : c.color,
       pendingTint: tint(over ? C.bad : c.color, 0.45), paceLabel, paceColor, over,
       carryoverLabel, depth, parentId,
+      section: 'spending', showTarget: true, spreadPrefill,
     });
     group(parentId, b.id);
   }
@@ -2082,7 +2093,9 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
   for (const id of childrenByParent.get(null) ?? []) emit(id);
   for (const id of viewById.keys()) emit(id);
 
-  return { rows, totBudget, totSpent, totRemain };
+  // Spending before Earning (WHIT-707). Families are single-bucket, so each sub stays after its parent.
+  const ordered = [...rows.filter((r) => r.section === 'spending'), ...rows.filter((r) => r.section === 'earning')];
+  return { rows: ordered, totBudget, totSpent, totRemain };
 }
 
 // Which categories may be chosen as the parent of the category being edited (WHIT-221):

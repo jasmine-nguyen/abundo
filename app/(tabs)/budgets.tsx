@@ -4,7 +4,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmt, tint } from '../../src/theme';
 import { formatDayMonth } from '../../src/dateutil';
 import { Icon, Glyph } from '../../src/icons';
-import { budgetViews } from '../../src/context';
+import { budgetViews, type BudgetView } from '../../src/context';
 import { useBudgetsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { BudgetBar, RetryButton, HeroGradientFill } from '../../src/components/ui';
@@ -14,6 +14,45 @@ function resetsLabel(daysLeft: number): string {
   if (daysLeft === 0) return 'resets today';
   if (daysLeft === 1) return 'resets in 1 day';
   return `resets in ${daysLeft} days`;
+}
+
+const SECTIONS: { section: BudgetView['section']; heading: string }[] = [
+  { section: 'spending', heading: 'SPENDING' },
+  { section: 'earning', heading: 'EARNING' },
+];
+
+function BudgetRow({ b }: { b: BudgetView }) {
+  const router = useRouter();
+  return (
+    <Pressable onPress={() => router.push(`/budget/${b.id}`)} style={[styles.row, b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }]}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 13 }}>
+        <View style={[styles.chip, { backgroundColor: b.chipBg }]}><Icon name={b.icon} size={23} color={b.color} /></View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.rowName}>{b.name}</Text>
+          <Text style={styles.rowSub}>{b.spentLabel}</Text>
+          {b.carryoverLabel ? <Text style={styles.rowRollover}>{b.carryoverLabel}</Text> : null}
+        </View>
+        <View style={{ alignItems: 'flex-end' }}>
+          <Text style={[styles.rowRemain, { color: b.remainColor }]}>{b.remainAmount}</Text>
+          <Text style={styles.rowRemainLabel}>{b.remainLabel}</Text>
+        </View>
+      </View>
+      <View style={{ marginTop: 15 }}>
+        <BudgetBar postedPct={b.postedPct} pendingPct={b.pendingPct} targetPct={b.targetPct} postedColor={b.postedColor} pendingTint={b.pendingTint} showTarget={b.showTarget} />
+        {b.paceLabel ? (
+          <View style={styles.paceRow}>
+            {b.spreadPrefill !== null ? (
+              <Pressable testID={`budget-row-spread-${b.id}`} onPress={() => router.push(`/budget/spread?categoryId=${b.id}&prefill=${b.spreadPrefill}`)} hitSlop={8}>
+                <Text style={[styles.paceLabel, { color: b.paceColor }]}>{b.paceLabel}</Text>
+              </Pressable>
+            ) : (
+              <Text style={[styles.paceLabel, { color: b.paceColor }]}>{b.paceLabel}</Text>
+            )}
+          </View>
+        ) : null}
+      </View>
+    </Pressable>
+  );
 }
 
 export default function Budgets() {
@@ -28,7 +67,7 @@ export default function Budgets() {
   // Staleness-gated so hopping between tabs doesn't refetch on every tap.
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
-  const { rows, totBudget, totSpent, totRemain } = budgetViews({ budgets, category, cycleLen, daysLeft });
+  const { rows, totBudget, totSpent, totRemain } = budgetViews({ budgets, category, cycleLen, daysLeft, nextPayday });
 
   // WHIT-573: when spend has blown past the plan, totRemain is negative and the hero must read
   // "Over budget", not "Budget remaining" — fmt() strips the sign, so a bare negative total would
@@ -107,36 +146,18 @@ export default function Budgets() {
           )}
         </View>
 
-        {noBudgets ? null : (
-        <View style={styles.legend}>
-          <View style={styles.legendItem}><View style={[styles.legendSwatch, { backgroundColor: '#9aa2b5' }]} /><Text style={styles.legendText}>Posted</Text></View>
-          <View style={styles.legendItem}><View style={[styles.legendSwatch, { backgroundColor: 'rgba(154,162,181,.5)' }]} /><Text style={styles.legendText}>Pending</Text></View>
-          <View style={[styles.legendItem, { marginLeft: 'auto' }]}><View style={{ width: 2, height: 13, backgroundColor: '#fff' }} /><Text style={styles.legendText}>Today's pace</Text></View>
-        </View>
-        )}
+        {noBudgets ? null : <Text style={styles.caption}>Solid = spent · faded = pending · line = today's pace</Text>}
 
-        {rows.map((b) => (
-          <Pressable key={b.id} onPress={() => router.push(`/budget/${b.id}`)} style={[styles.row, b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 13 }}>
-              <View style={[styles.chip, { backgroundColor: b.chipBg }]}><Icon name={b.icon} size={23} color={b.color} /></View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.rowName}>{b.name}</Text>
-                <Text style={styles.rowSub}>{b.spentLabel}</Text>
-                {b.carryoverLabel ? <Text style={styles.rowRollover}>{b.carryoverLabel}</Text> : null}
-              </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={[styles.rowRemain, { color: b.remainColor }]}>{b.remainAmount}</Text>
-                <Text style={styles.rowRemainLabel}>{b.remainLabel}</Text>
-              </View>
-            </View>
-            <View style={{ marginTop: 15 }}>
-              <BudgetBar postedPct={b.postedPct} pendingPct={b.pendingPct} targetPct={b.targetPct} postedColor={b.postedColor} pendingTint={b.pendingTint} />
-              <View style={styles.paceRow}>
-                <Text style={[styles.paceLabel, { color: b.paceColor }]}>{b.paceLabel}</Text>
-              </View>
-            </View>
-          </Pressable>
-        ))}
+        {SECTIONS.map(({ section, heading }) => {
+          const sectionRows = rows.filter((b) => b.section === section);
+          if (sectionRows.length === 0) return null;
+          return (
+            <React.Fragment key={section}>
+              <Text style={styles.sectionLabel}>{heading}</Text>
+              {sectionRows.map((b) => <BudgetRow key={b.id} b={b} />)}
+            </React.Fragment>
+          );
+        })}
 
         {noBudgets ? null : (
           <Pressable onPress={() => router.push('/budget/pick')} style={styles.addBudget}>
@@ -178,22 +199,21 @@ const styles = StyleSheet.create({
   heroAdd: { marginTop: 12, alignSelf: 'flex-start', backgroundColor: tint(C.heroInk, 0.12), borderRadius: 12, paddingVertical: 10, paddingHorizontal: 16 },
   heroAddText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.heroInk },
 
-  legend: { flexDirection: 'row', alignItems: 'center', gap: 16, marginHorizontal: 4, marginBottom: 14 },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  legendSwatch: { width: 18, height: 9, borderRadius: 3 },
-  legendText: { fontFamily: FONT.body, fontSize: 12, color: '#8b8b95', fontWeight: '500' },
+  caption: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, fontWeight: '500', marginHorizontal: 4 },
+  // Same uppercase muted label as the budget detail screen's section headings.
+  sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 18, marginBottom: 8, marginHorizontal: 4 },
 
   row: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, padding: 16, paddingBottom: 14, marginBottom: 12 },
   chip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   rowName: { fontFamily: FONT.body, fontSize: 16, fontWeight: '600', color: C.textBright, letterSpacing: -0.2 },
   rowSub: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 2 },
-  rowRollover: { fontFamily: FONT.body, fontSize: 12, fontWeight: '600', color: C.accentSoft, marginTop: 3 },
+  rowRollover: { fontFamily: FONT.body, fontSize: 12, fontWeight: '600', color: C.textInfo, marginTop: 3 },
   rowRemain: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', letterSpacing: -0.5 },
   rowRemainLabel: { fontFamily: FONT.body, fontSize: 11, color: C.textDim, fontWeight: '500', marginTop: 1 },
-  // WHIT-281: the "today's pace" tick is labelled once in the legend up top; a per-row
+  // WHIT-281: the "today's pace" tick is labelled once in the caption up top; a per-row
   // "target" caption here was redundant AND overlapped the right-aligned pace status when
   // the tick sat far right. Removed — only the pace status remains, right-aligned.
-  paceRow: { height: 18, marginTop: 1, alignItems: 'flex-end', justifyContent: 'center' },
+  paceRow: { minHeight: 18, marginTop: 1, alignItems: 'flex-end', justifyContent: 'center' },
   paceLabel: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '700' },
 
   addBudget: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(C.accentAlt, 0.4), backgroundColor: tint(C.accentAlt, 0.07), borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },

@@ -44,7 +44,7 @@ describe('Budgets top card', () => {
     expect(screen.queryByText('Left to spend')).toBeNull();
     expect(screen.queryByText('Over budget')).toBeNull();
     expect(screen.queryByText('of $0')).toBeNull();
-    expect(screen.queryByText('Posted')).toBeNull();        // legend hidden
+    expect(screen.queryByText("Solid = spent · faded = pending · line = today's pace")).toBeNull(); // caption hidden
     expect(screen.queryByText('Add a budget')).toBeNull();  // the duplicate dashed button is hidden
     fireEvent.press(screen.getByTestId('budgets-hero-add'));
     expect(routerSpies.push).toHaveBeenCalledWith('/budget/pick');

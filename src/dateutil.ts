@@ -6,6 +6,7 @@
 // drifting copies.
 
 export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // An ISO "YYYY-MM-DD" -> local midnight of that day (never a UTC-parsed instant).
 export function parseISODate(iso: string): Date {
@@ -32,6 +33,14 @@ export function formatDayMonth(iso: string): string {
   const d = parseISODate(iso);
   if (Number.isNaN(d.getTime())) return '';
   return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
+
+// An ISO "YYYY-MM-DD" -> its short weekday ("Fri"), in local time. Empty string on an
+// empty/unparseable ISO, like formatDayMonth.
+export function formatWeekdayShort(iso: string): string {
+  const d = parseISODate(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return DAYS[d.getDay()];
 }
 
 // An ISO range -> "12 Jun – 11 Sep" when both ends fall in the current year; otherwise with years

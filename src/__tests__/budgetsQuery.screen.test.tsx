@@ -76,14 +76,14 @@ it('renders budget rows from the queries, fetched in parallel with the pay cycle
   expect(categoryReads()).toHaveLength(1);
 });
 
-it('does not render the redundant per-row "target" caption (the pace tick is labelled once in the legend)', async () => {
+it('does not render the redundant per-row "target" caption (the pace tick is labelled once in the caption)', async () => {
   // WHIT-281: a per-row "target" caption pinned under the moving pace tick overlapped the
   // right-aligned pace status when the tick sat far right. It was redundant — the tick is
-  // already explained once, in the top legend — so it was removed.
+  // already explained once, in the top caption (WHIT-707) — so it was removed.
   renderBudgets();
   await screen.findByText('Cafes & Coffee');
   expect(screen.queryAllByText('target')).toHaveLength(0); // the overlapping caption is gone
-  expect(screen.getByText("Today's pace")).toBeTruthy();   // the tick is still explained (legend)
+  expect(screen.getByText("Solid = spent · faded = pending · line = today's pace")).toBeTruthy();
 });
 
 it('still renders the per-row pace STATUS after the caption removal (info kept, not lost)', async () => {
@@ -92,7 +92,8 @@ it('still renders the per-row pace STATUS after the caption removal (info kept, 
   // this proves the screen still RENDERS it. Removing budgets.tsx:101 (the paceLabel <Text/>)
   // is invisible to the logic tests AND to the absence/legend test above — this is the guard.
   // Over-budget so the label is date-independent: spent 120 of 100 -> exactly "$20 over budget".
-  server.seed('/budgets', { coffee: { target: 100, posted: 120, pending: 0 } });
+  // Rollover, so no spread can start and the line stays the quiet text, not the link (WHIT-707).
+  server.seed('/budgets', { coffee: { target: 100, posted: 120, pending: 0, rollover: true, carryover: 0 } });
   renderBudgets();
   await screen.findByText('Cafes & Coffee');
   expect(screen.getByText('$20 over budget')).toBeTruthy();

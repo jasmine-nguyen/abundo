@@ -517,7 +517,7 @@ export interface BudgetsScreenData {
   category: (id: string) => Category | undefined;
   cycleLen: number;
   daysLeft: number;
-  nextPayday: string; // ISO "YYYY-MM-DD" of the payday that ends the current cycle, for the hero ('' if unknown)
+  nextPayday: string; // ISO "YYYY-MM-DD" of the payday that ends the current cycle, for the hero and the income rows' "next pay ~Fri" ('' if unknown)
   isLoading: boolean; // actively loading with nothing cached yet → show a spinner
   isError: boolean; // a read failed after its retries → show the inline retry
   // WHIT-72: the pay-cycle read failed with NO cached cycle. Budgets now fetch in parallel

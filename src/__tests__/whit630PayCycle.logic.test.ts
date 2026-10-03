@@ -1,7 +1,7 @@
 // WHIT-630 QA: plain value tests on the pay-cycle clock in its new home, src/payCycle.ts.
 // Runs under TZ=Australia/Melbourne (the npm test script), so the daylight-saving cases are real.
 import { describe, it, expect } from '@jest/globals';
-import { cycleName, cycleClock, cycleStart, cycleClockView, elapsedFrac } from '../payCycle';
+import { cycleName, cycleClock, cycleStart, cycleClockView, elapsedFrac, nextPaydayISO } from '../payCycle';
 
 const day = (y: number, m: number, d: number) => new Date(y, m - 1, d);
 const cycle = (length: number, last_pay_date: string) => ({ length, last_pay_date });
@@ -76,5 +76,17 @@ describe('elapsedFrac', () => {
     expect(elapsedFrac({ cycleLen: 14, daysLeft: 14 })).toBe(0);
     expect(elapsedFrac({ cycleLen: 14, daysLeft: 7 })).toBe(0.5);
     expect(elapsedFrac({ cycleLen: 14, daysLeft: 0 })).toBe(1);
+  });
+});
+
+describe('nextPaydayISO (WHIT-707)', () => {
+  it('adds the days left to today', () => {
+    expect(nextPaydayISO(6, day(2026, 10, 3))).toBe('2026-10-09');
+    expect(nextPaydayISO(0, day(2026, 10, 3))).toBe('2026-10-03');
+  });
+
+  it('crosses a month end, a daylight-saving change and a year end', () => {
+    expect(nextPaydayISO(14, day(2026, 9, 25))).toBe('2026-10-09');
+    expect(nextPaydayISO(30, day(2026, 12, 15))).toBe('2027-01-14');
   });
 });
