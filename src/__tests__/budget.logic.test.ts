@@ -45,7 +45,9 @@ describe('budgetViews', () => {
     const [row] = budgetViews(s).rows;
     expect(row.over).toBe(true);
     expect(row.postedPct + row.pendingPct).toBeLessThanOrEqual(100.0001);
-    expect(row.paceLabel).toContain('over budget');
+    // WHIT-707: an over-budget row that can start a spread offers it instead of "over budget".
+    expect(row.paceLabel).toBe('Spread it over pay cycles →');
+    expect(row.spreadPrefill).toBe(30);
   });
 
   it('labels pace relative to the linear target (elapsed * budget)', () => {
@@ -57,11 +59,10 @@ describe('budgetViews', () => {
     expect(over.over).toBe(false); // over PACE, not over budget
   });
 
-  it('folds pending into the spent amount and omits the "(… pending)" breakout', () => {
-    // spent = posted + pending = 50, so pending is counted without a separate breakout.
+  it('folds pending into the spent amount and names it separately (WHIT-707)', () => {
+    // spent = posted + pending = 50; the pending part is also called out.
     const withPending = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 10 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(withPending.spentLabel).toBe('$50 spent of $100');
-    expect(withPending.spentLabel).not.toContain('pending');
+    expect(withPending.spentLabel).toBe('$50 spent of $100 · $10 pending');
     const noPending = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
     expect(noPending.spentLabel).toBe('$40 spent of $100');
   });
@@ -74,7 +75,7 @@ describe('budgetViews', () => {
   it('shows exact cents on a fractional spent + left so the list row matches the detail and reconciles to the budget', () => {
     // posted 62.50 + pending 11.00 = 73.50 spent of $80 → 6.50 left (the Cafes & Coffee case).
     const row = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 80, posted: 62.5, pending: 11 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(row.spentLabel).toBe('$73.50 spent of $80'); // fail-on-revert: fmt(73.5) → '$74'
+    expect(row.spentLabel).toBe('$73.50 spent of $80 · $11 pending'); // fail-on-revert: fmt(73.5) → '$74'
     expect(row.remainAmount).toBe('$6.50');             // spent + left = the $80 budget
   });
 });
@@ -99,14 +100,14 @@ describe('budgetViews — income earn-targets (over-is-good)', () => {
     expect(row.remainAmount).toBe('$4,000');       // 5000 - 1000 still to earn
     expect(row.remainColor).not.toBe(RED);
     expect(row.postedColor).not.toBe(RED);          // bar uses the category colour, not red
-    expect(row.paceColor).not.toBe(RED);
-    expect(row.paceLabel).toContain('to go');       // 2500 target vs 1000 earned → behind, but calm
+    // WHIT-707: salary lands in one lump, so there's no even-pace line or today marker.
+    expect(row.paceLabel).toBe('');
+    expect(row.showTarget).toBe(false);
   });
 
-  it('ahead of the linear pace reads "ahead of pace" (muted pace), still not met', () => {
+  it('ahead of the linear pace still shows no pace line, still not met', () => {
     const row = budgetViews(state(3000)).rows[0];   // 3000 > 2500 target, < 5000 goal
-    expect(row.paceLabel).toContain('ahead of pace');
-    expect(row.paceColor).toBe('#cfd2ff'); // pace sub-label is muted; the remain amount is the cyan highlight
+    expect(row.paceLabel).toBe('');
     expect(row.remainLabel).toBe('to go');
     expect(row.over).toBe(false);
   });
@@ -116,14 +117,13 @@ describe('budgetViews — income earn-targets (over-is-good)', () => {
     expect(row.remainLabel).toBe('over target');
     expect(row.remainAmount).toBe('$1,000');        // 6000 - 5000 over the floor
     expect(row.remainColor).toBe(C.good);
-    expect(row.paceLabel).toContain('over target');
     expect(row.over).toBe(false);
   });
 
-  it('labels the earned/target amount as "earned", not "spent"', () => {
-    expect(budgetViews(state(1000)).rows[0].spentLabel).toBe('$1,000 earned of $5,000');
+  it('labels the earned amount as "earned", not "spent"', () => {
+    expect(budgetViews(state(1000)).rows[0].spentLabel).toBe('$1,000 earned');
     // earned already includes pending (1000 + 200), no separate pending breakout.
-    expect(budgetViews(state(1000, 200)).rows[0].spentLabel).toBe('$1,200 earned of $5,000');
+    expect(budgetViews(state(1000, 200)).rows[0].spentLabel).toBe('$1,200 earned');
   });
 
   it('excludes income rows from the spend hero totals but still lists them', () => {

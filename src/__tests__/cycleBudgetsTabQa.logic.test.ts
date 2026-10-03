@@ -18,6 +18,7 @@ const CATS: Category[] = [
   cat({ id: 'rego', name: 'Rego', bucket: 'Living', parent: 'car' }),
   cat({ id: 'holiday', name: 'Holiday', bucket: 'Savings', parent: null }),
   cat({ id: 'emergency', name: 'Emergency', bucket: 'Savings', parent: null }),
+  cat({ id: 'salary', name: 'Salary', bucket: 'Income', parent: null }),
   // A corrupt parent loop: each names the other as its parent.
   cat({ id: 'loop_a', name: 'Loop A', bucket: 'Lifestyle', parent: 'loop_b' }),
   cat({ id: 'loop_b', name: 'Loop B', bucket: 'Lifestyle', parent: 'loop_a' }),
@@ -60,6 +61,16 @@ describe('buildBudgetRows — order and the parent column', () => {
       ['Home', 'Home'],
       ['Home', 'Power'],
     ]);
+  });
+
+  // WHIT-707: the screen lists Spending before Earning, so an income budget the server sends
+  // first still comes after the spend rows in the export.
+  it('an income budget follows the spend budgets, as on the screen', () => {
+    const rows = buildBudgetRows(budgets({
+      salary: { target: 5000, posted: 1000, pending: 0 },
+      car: { target: 300, posted: 0, pending: 0 },
+    }), category, false);
+    expect(rows.slice(1).map((row) => row[1])).toEqual(['Car', 'Salary']);
   });
 
   // [B3] (P1) several Savings budgets → all listed once, after the screen's rows, in server order.

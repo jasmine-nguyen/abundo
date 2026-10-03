@@ -3,7 +3,7 @@
 // an ISO date must parse/format on the LOCAL day, never shifted by a timezone. The
 // runner pins TZ=Australia/Melbourne (UTC+10/+11), so a UTC parse would surface here.
 import { describe, it, expect } from '@jest/globals';
-import { parseISODate, toISODate, formatDayMonthYear } from '../dateutil';
+import { parseISODate, toISODate, formatDayMonthYear, formatWeekdayShort } from '../dateutil';
 
 describe('dateutil (WHIT-126)', () => {
   it('parses an ISO date to LOCAL midnight (no UTC drift)', () => {
@@ -25,5 +25,16 @@ describe('dateutil (WHIT-126)', () => {
     expect(toISODate(parseISODate(iso))).toBe(iso);
     // Zero-padding: single-digit month/day get a leading zero.
     expect(toISODate(new Date(2026, 0, 5))).toBe('2026-01-05');
+  });
+});
+
+describe('formatWeekdayShort (WHIT-707)', () => {
+  it('reads the local weekday of an ISO date', () => {
+    expect(formatWeekdayShort('2026-10-09')).toBe('Fri');
+    expect(formatWeekdayShort('2026-10-04')).toBe('Sun');
+  });
+
+  it('is empty for an unparseable date', () => {
+    expect(formatWeekdayShort('')).toBe('');
   });
 });
