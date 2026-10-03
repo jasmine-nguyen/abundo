@@ -93,7 +93,7 @@ describe('cycleClockView', () => {
 });
 
 // WHIT-574: the current cycle's START date (its payday), anchored on last_pay_date and advanced by
-// whole cycle lengths on the same UTC-whole-day clock as cycleClock — so "Started X" and the
+// whole cycle lengths on the same UTC-whole-day clock as cycleClock — so the start date and the
 // "N days left" countdown always agree in the normal case (start + daysLeft counts to the next payday).
 describe('cycleStart', () => {
   const cycle = (length: number, last_pay_date: string) => ({ length, last_pay_date });

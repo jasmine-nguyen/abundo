@@ -8,11 +8,11 @@ export function cycleName(length: number): 'Weekly' | 'Fortnightly' | 'Monthly' 
   return length === 7 ? 'Weekly' : length === 14 ? 'Fortnightly' : 'Monthly';
 }
 
-// The current pay-cycle anchor, computed ONCE on the shared UTC-whole-day clock (WHIT-575). Both
-// cycleClock (daysLeft) and cycleStart (the "Started {date}" line) read this, so the hero's countdown
-// and start date can't drift apart. Returns the raw pieces; each caller applies its own edge policy
-// (cycleClock clamps to full length before the first payday; cycleStart hides the line for a
-// future/unparseable date). A NaN pay (unparseable last_pay_date) propagates through the pieces
+// The current pay-cycle anchor, computed ONCE on the shared UTC-whole-day clock (WHIT-575).
+// cycleClock (daysLeft), cycleStart and nextPayday (the hero's "Next payday {date}" line, WHIT-706)
+// all read this, so the countdown and the dates can't drift apart. Returns the raw pieces; each
+// caller applies its own edge policy (cycleClock clamps to full length before the first payday;
+// cycleStart returns '' for a future/unparseable date; nextPayday returns a future first payday as is). A NaN pay (unparseable last_pay_date) propagates through the pieces
 // exactly as dateutil's primitives define — the callers guard it.
 function currentCycleAnchor(
   payCycle: { length: number; last_pay_date: string },
@@ -56,6 +56,18 @@ export function cycleStart(
   const { pay, todayMs, startMs } = currentCycleAnchor(payCycle, today);
   if (pay > todayMs) return '';
   return utcDayMsToISO(startMs);
+}
+
+// The NEXT payday (ISO "YYYY-MM-DD"): the end of the current cycle on the shared currentCycleAnchor
+// clock. Before the first payday, that first payday itself (however far ahead). Empty string for an
+// unparseable date (pay is NaN → utcDayMsToISO returns ''), so the screen hides the line.
+export function nextPayday(
+  payCycle: { length: number; last_pay_date: string },
+  today?: Date,
+): string {
+  const { pay, todayMs, startMs } = currentCycleAnchor(payCycle, today);
+  if (pay > todayMs) return payCycle.last_pay_date;
+  return utcDayMsToISO(startMs + payCycle.length * MS_PER_DAY);
 }
 
 // The cycle clock the screens read: prefer the server's authoritative `days_left` (one clock,

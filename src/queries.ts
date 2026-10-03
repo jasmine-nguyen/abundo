@@ -8,7 +8,7 @@ import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@t
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchTransactionsSearch, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchFilingSuggestions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listRules } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, DateRange, RuleRecord, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage, TransactionSearchResult, UncategorizedMerchants, FilingSuggestions } from './api';
-import { cycleClockView, cycleStart, cycleName } from './payCycle';
+import { cycleClockView, nextPayday, cycleName } from './payCycle';
 import { loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './model';
 import { readTransactionCopies } from './transactionCache';
 import { RECONCILE_EPSILON } from './theme';
@@ -517,7 +517,7 @@ export interface BudgetsScreenData {
   category: (id: string) => Category | undefined;
   cycleLen: number;
   daysLeft: number;
-  cycleStart: string; // ISO "YYYY-MM-DD" of the current cycle's start (its payday), for the hero
+  nextPayday: string; // ISO "YYYY-MM-DD" of the payday that ends the current cycle, for the hero ('' if unknown)
   isLoading: boolean; // actively loading with nothing cached yet → show a spinner
   isError: boolean; // a read failed after its retries → show the inline retry
   // WHIT-72: the pay-cycle read failed with NO cached cycle. Budgets now fetch in parallel
@@ -542,7 +542,7 @@ export function useBudgetsScreenData(): BudgetsScreenData {
   const payCycleQuery = usePayCycleQuery(authed);
   const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
   const { cycleLen, daysLeft } = cycleClockView(payCycle);
-  const cycleStartDate = cycleStart(payCycle);
+  const nextPaydayDate = nextPayday(payCycle);
 
   const budgetsQuery = useBudgetsQuery(cycleLen, authed);
   const categoriesQuery = useCategoriesQuery(authed);
@@ -561,7 +561,7 @@ export function useBudgetsScreenData(): BudgetsScreenData {
     category,
     cycleLen,
     daysLeft,
-    cycleStart: cycleStartDate,
+    nextPayday: nextPaydayDate,
     payCycleError,
     ...status,
   };

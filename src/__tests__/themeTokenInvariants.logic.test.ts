@@ -466,7 +466,7 @@ const RAW_COLOR = new RegExp(RAW_COLOR_SOURCE, 'g');
 // Baseline as of WHIT-398. Lower a number when you tokenise a file; delete the key at zero.
 // Never raise one — that is the regression this exists to stop.
 const BASELINE: Record<string, number> = {
-  'app/(tabs)/budgets.tsx': 10,
+  'app/(tabs)/budgets.tsx': 4,
   'app/(tabs)/goals.tsx': 2,
   'app/(tabs)/insights.tsx': 3,
   'app/settings.tsx': 5,

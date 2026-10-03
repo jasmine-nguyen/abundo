@@ -36,7 +36,7 @@ import Budgets from '../../app/(tabs)/budgets';
 // The REAL query hooks (real ../api over the fake server, ../auth mocked above) — driven directly
 // by the folded WHIT-72 tests via renderHook; the same regime the screen renders under.
 import { useBudgetsScreenData, useBudgetDetailScreenData } from '../queries';
-import { cycleStart } from '../payCycle';
+import { nextPayday } from '../payCycle';
 
 const server = installFakeServer();
 // The Budgets reads. `/budgets?` (with the query mark) counts the rollup read only, never a
@@ -178,27 +178,26 @@ it('hides a Savings-bucket budget end-to-end and keeps it out of the hero total 
   expect(screen.queryByText('of $2,100')).toBeNull();     // NOT spend + Savings target
 });
 
-// WHIT-574 — [A-hookrender] through-the-hook render: a known last_pay_date fetched via the REAL
-// pay-cycle query renders a known "Started …" on the hero. This drives the actual hook +
-// cycleStart + formatDayMonth end to end. Time is pinned (fake Date only; timers stay real so findByText polling works) so the ambient
-// `new Date()` inside cycleStart is deterministic.
-it('through the hook: a known last_pay_date renders a known "Started …" (WHIT-574)', async () => {
+// WHIT-574/706 — [A-hookrender] through-the-hook render: a known last_pay_date fetched via the REAL
+// pay-cycle query renders a known "Next payday …" on the hero. This drives the actual hook +
+// nextPayday + formatDayMonth end to end. Time is pinned (fake Date only; timers stay real so findByText polling works) so the ambient
+// `new Date()` inside nextPayday is deterministic.
+it('through the hook: a known last_pay_date renders a known "Next payday …"', async () => {
   pinToday(new Date('2026-09-18T10:00:00+10:00')); // 18 Sep 2026, Melbourne local day
   try {
-    // last_pay_date 1 Sep, 30-day cycle, today 18 Sep → cyclesElapsed 0 → start stays 1 Sep.
-    // Also proves the no-leading-zero format ("1 Sep") survives a real render.
-    server.seed('/paycycle', { length: 30, last_pay_date: '2026-09-01' });
+    // last_pay_date 3 Sep, 14-day cycle, today 18 Sep → cycle started 17 Sep → next payday 1 Oct.
+    // Also proves the no-leading-zero format ("1 Oct") survives a real render.
+    server.seed('/paycycle', { length: 14, last_pay_date: '2026-09-03' });
     renderBudgets();
-    expect(await screen.findByText('Started 1 Sep')).toBeTruthy();
+    expect(await screen.findByText('Next payday 1 Oct')).toBeTruthy();
   } finally {
     jest.useRealTimers();
   }
 });
 
-// WHIT-574 (moved from budgetsWrapperStates, WHIT-688) — a first payday still in the future has
-// no started cycle, so cycleStart is '' and the hero shows no "Started …" line (showing "Started
-// today" would be false). Fail-on-revert: render the line unconditionally → "Started " → red.
-it('through the hook: a future last_pay_date renders no "Started …" line', async () => {
+// WHIT-574/706 (moved from budgetsWrapperStates, WHIT-688) — a first payday still in the future is
+// itself the next payday, and the old "Started …" line is gone.
+it('through the hook: a future last_pay_date shows that date as the next payday', async () => {
   pinToday(new Date('2026-09-18T10:00:00+10:00'));
   try {
     server.seed('/paycycle', { length: 30, last_pay_date: '2026-09-25' });
@@ -207,6 +206,7 @@ it('through the hook: a future last_pay_date renders no "Started …" line', asy
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
     await waitFor(() => expect(client.isFetching()).toBe(0));
     expect(payCycleReads()).toHaveLength(1);
+    expect(screen.getByText('Next payday 25 Sep')).toBeTruthy();
     expect(screen.queryByText(/^Started /)).toBeNull();
   } finally {
     jest.useRealTimers();
@@ -239,10 +239,10 @@ describe('partial failure', () => {
 });
 
 describe('empty budgets', () => {
-  it('empty rollup {} → empty state (hero + Add a budget), not a spinner or error', async () => {
+  it('empty rollup {} → empty state (hero + Add your first budget), not a spinner or error', async () => {
     server.seed('/budgets', {});
     renderBudgets();
-    expect(await screen.findByText('Add a budget')).toBeTruthy();
+    expect(await screen.findByText('Add your first budget')).toBeTruthy();
     expect(screen.queryByTestId('budgets-loading')).toBeNull();
     expect(screen.queryByTestId('budgets-error')).toBeNull();
     expect(screen.queryByText('Cafes & Coffee')).toBeNull();
@@ -451,13 +451,13 @@ describe('WHIT-72 payCycleError guard (folded from budgetsPayCycleError)', () =>
       expect(result.current.budgets).toHaveLength(1);   // cached rows survive
     });
 
-    it('exposes cycleStart derived from the pay cycle (WHIT-574)', async () => {
+    it('exposes nextPayday derived from the pay cycle (WHIT-706)', async () => {
       const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient()) });
       await waitFor(() => expect(result.current.budgets).toHaveLength(1));
       // The hero reads this. It equals the pure helper on the same (len 30) cycle — proving it's
       // plumbed through, not hard-coded. Fail-on-revert: drop it from the return and this is undefined.
-      expect(result.current.cycleStart).toBe(cycleStart(PAY_CYCLE));
-      expect(result.current.cycleStart).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(result.current.nextPayday).toBe(nextPayday(PAY_CYCLE));
+      expect(result.current.nextPayday).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     });
 
     it('BOTH payCycle AND budgets fail on first load → error via both paths (payCycleError AND isError)', async () => {
@@ -497,44 +497,44 @@ describe('WHIT-72 payCycleError guard (folded from budgetsPayCycleError)', () =>
 
 // WHIT-573 — the hero must read "Over budget" with a signed total when spend has blown past the
 // plan (totRemain < 0). fmt() strips the sign, so before the fix a negative total rendered as a
-// bare positive figure under "Budget remaining" — money overspent looked like money still left.
+// bare positive figure under the money-left label — money overspent looked like money still left.
 describe('WHIT-573 hero over-budget label + sign', () => {
   it('reads "Over budget" with a signed total when spend exceeds the plan', async () => {
     // spent 200 of available 100 → totRemain -100. Fail-on-revert: without the fix the hero says
-    // "Budget remaining" + unsigned "$100" — both assertions below flip.
+    // "Left to spend" + unsigned "$100" — both assertions below flip.
     server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('Over budget')).toBeTruthy();      // label flipped
-    expect(screen.getByText('-$100')).toBeTruthy();            // sign now visible (fmt gives "$100")
-    expect(screen.queryByText('Budget remaining')).toBeNull(); // the misleading label is gone
+    expect(screen.getByText('−$100')).toBeTruthy();            // sign now visible (fmt gives "$100")
+    expect(screen.queryByText('Left to spend')).toBeNull(); // the misleading label is gone
   });
 
-  it('keeps "Budget remaining" (unsigned) when under the plan', async () => {
+  it('keeps "Left to spend" (unsigned) when under the plan', async () => {
     // spent 50 of 100 → totRemain +50: the happy path must be untouched.
     server.seed('/budgets', { coffee: { target: 100, posted: 40, pending: 10 } });
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
-    expect(screen.getByText('Budget remaining')).toBeTruthy();
+    expect(screen.getByText('Left to spend')).toBeTruthy();
     expect(screen.queryByText('Over budget')).toBeNull();
   });
 
-  it('reads "Budget remaining" when exactly on budget (totRemain === 0), not "Over budget"', async () => {
+  it('reads "Left to spend" when exactly on budget (totRemain === 0), not "Over budget"', async () => {
     server.seed('/budgets', { coffee: { target: 100, posted: 100, pending: 0 } });
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
-    expect(screen.getByText('Budget remaining')).toBeTruthy();
+    expect(screen.getByText('Left to spend')).toBeTruthy();
     expect(screen.queryByText('Over budget')).toBeNull();
   });
 
-  it('a sub-dollar negative residual stays "Budget remaining" (does not flip to "Over budget -$0")', async () => {
+  it('a sub-dollar negative residual stays "Left to spend" (does not flip to "Over budget −$0")', async () => {
     // spent 100.30 of 100 → totRemain -0.30, which fmt rounds to $0. The -0.5 dust threshold must
     // keep the headline calm. Fail-on-revert for the threshold: change `< -0.5` to `< 0` and this
-    // flips to "Over budget -$0".
+    // flips to "Over budget −$0".
     server.seed('/budgets', { coffee: { target: 100, posted: 100, pending: 0.3 } });
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
-    expect(screen.getByText('Budget remaining')).toBeTruthy();
+    expect(screen.getByText('Left to spend')).toBeTruthy();
     expect(screen.queryByText('Over budget')).toBeNull();
   });
 });
@@ -556,10 +556,10 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('Over budget')).toBeTruthy();
-    expect(screen.getByText('-$100')).toBeTruthy();       // -(300 available - 400 spent)
+    expect(screen.getByText('−$100')).toBeTruthy();       // -(300 available - 400 spent)
     expect(screen.getByText('of $300')).toBeTruthy();      // totBudget unchanged
     expect(screen.getByText('$400 spent')).toBeTruthy();   // totSpent unchanged
-    expect(screen.queryByText('Budget remaining')).toBeNull();
+    expect(screen.queryByText('Left to spend')).toBeNull();
   });
 
   it('negativity from a rollover DEFICIT (not raw overspend) still flips the hero, on the available envelope', async () => {
@@ -571,7 +571,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('Over budget')).toBeTruthy();
-    expect(screen.getByText('-$30')).toBeTruthy();
+    expect(screen.getByText('−$30')).toBeTruthy();
     expect(screen.getByText('of $20')).toBeTruthy();       // available envelope, not the $100 target
   });
 
@@ -588,7 +588,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('Salary')).toBeTruthy();       // Income row still lists
     expect(screen.getByText('Over budget')).toBeTruthy();
-    expect(screen.getByText('-$100')).toBeTruthy();
+    expect(screen.getByText('−$100')).toBeTruthy();
     expect(screen.getByText('of $100')).toBeTruthy();      // NOT of $5,100
     expect(screen.getByText('$200 spent')).toBeTruthy();   // NOT $6,200 spent
     expect(screen.queryByText('of $5,100')).toBeNull();
@@ -599,17 +599,17 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('Over budget')).toBeTruthy();
-    expect(screen.getByText('-$6,056')).toBeTruthy();
+    expect(screen.getByText('−$6,056')).toBeTruthy();
     expect(screen.getByText('of $1,000')).toBeTruthy();
     expect(screen.getByText('$7,056 spent')).toBeTruthy();
   });
 
-  it('totRemain === -0.5 EXACTLY stays "Budget remaining" (strict `< -0.5` boundary)', async () => {
+  it('totRemain === -0.5 EXACTLY stays "Left to spend" (strict `< -0.5` boundary)', async () => {
     // -0.5 < -0.5 is false → NOT over budget. The true threshold boundary the -0.30 test only approaches.
     server.seed('/budgets', { coffee: { target: 100, posted: 100, pending: 0.5 } });
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
-    expect(screen.getByText('Budget remaining')).toBeTruthy();
+    expect(screen.getByText('Left to spend')).toBeTruthy();
     expect(screen.queryByText('Over budget')).toBeNull();
   });
 
@@ -618,6 +618,6 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('Over budget')).toBeTruthy();
-    expect(screen.getByText('-$1')).toBeTruthy();          // fmt rounds 0.51 → $1
+    expect(screen.getByText('−$1')).toBeTruthy();          // fmt rounds 0.51 → $1
   });
 });

@@ -1,4 +1,5 @@
-// WHIT-574 — adversarial gaps for the Budgets "Started {date}" hero line, beyond the cycleStart
+// WHIT-574 — adversarial gaps for cycleStart (the cycle-start date; the Budgets hero showed it as
+// "Started {date}" until WHIT-706 swapped it for "Next payday", which shares the same anchor), beyond the cycleStart
 // unit cases in cycleClock.logic.test.ts. Covers the countdown/anchor composition invariant
 // [A-inv], the DEFAULT_PAY_CYCLE fallback [A-default], year-boundary formatting [A-year], and
 // started-exactly-today [A-today]. Runs under TZ=Australia/Melbourne (see the test script).
@@ -11,7 +12,7 @@ const day = (y: number, m: number, d: number) => new Date(y, m - 1, d);
 const cycle = (length: number, last_pay_date: string) => ({ length, last_pay_date });
 
 describe('cycleStart <-> cycleClock composition [A-inv]', () => {
-  // The hero shows "Started {cycleStart}" ABOVE "{daysLeft} days left". They must compose: the shown
+  // The cycle start and "{daysLeft} days left" must compose: the
   // start + one whole cycle == today + daysLeft (== the next payday). If the anchor advance in
   // cycleStart is wrong, the start no longer lands one cycle before the countdown's target.
   // Fail-on-revert: drop `cyclesElapsed * length` from cycleStart and the mid-cycle offsets break.
@@ -29,7 +30,7 @@ describe('cycleStart <-> cycleClock composition [A-inv]', () => {
 });
 
 describe('DEFAULT_PAY_CYCLE fallback produces a sane date [A-default]', () => {
-  // When the pay-cycle read has no cache the hero renders cycleStart(DEFAULT_PAY_CYCLE). Guard the
+  // When the pay-cycle read has no cache the clock runs on DEFAULT_PAY_CYCLE. Guard the
   // ACTUAL seed (imported, not copied): a real, non-empty past payday — never '' (which would hide
   // the line) and never a future date. Fails if the seed is ever changed to a future last_pay_date.
   it('the real default seed yields a non-empty payday on-or-before today', () => {
@@ -55,7 +56,7 @@ describe('year-boundary formatting drops the year [A-year]', () => {
 });
 
 describe('started exactly today [A-today]', () => {
-  // On payday cycleStart === today; the hero then reads "Started {today}" with a full countdown.
+  // On payday cycleStart === today, with a full countdown.
   it('is today, formatted without a leading zero', () => {
     expect(cycleStart(cycle(14, '2026-06-01'), day(2026, 6, 1))).toBe('2026-06-01');
     expect(formatDayMonth('2026-06-01')).toBe('1 Jun'); // "1 Jun", never "01 Jun"

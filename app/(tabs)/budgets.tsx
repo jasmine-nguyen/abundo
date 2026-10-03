@@ -10,12 +10,18 @@ import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { BudgetBar, RetryButton, HeroGradientFill } from '../../src/components/ui';
 import { SettingsButton } from '../../src/components/SettingsButton';
 
+function resetsLabel(daysLeft: number): string {
+  if (daysLeft === 0) return 'resets today';
+  if (daysLeft === 1) return 'resets in 1 day';
+  return `resets in ${daysLeft} days`;
+}
+
 export default function Budgets() {
   const router = useRouter();
   // WHIT-188: data now comes from the cached, auth-gated, self-healing query layer
   // instead of the eager global store. A transient 5xx retries with backoff (no stuck
   // banner); the inline error/retry below is the local fallback for a sustained failure.
-  const { budgets, category, cycleLen, daysLeft, cycleStart, isLoading, isError, payCycleError, refetch, refetchStale } = useBudgetsScreenData();
+  const { budgets, category, cycleLen, daysLeft, nextPayday, isLoading, isError, payCycleError, refetch, refetchStale } = useBudgetsScreenData();
 
   // Load-on-focus: refresh when the tab regains focus, but only if the data has gone
   // stale (the window rolls over on payday; a save/categorise elsewhere moves numbers).
@@ -29,6 +35,7 @@ export default function Budgets() {
   // otherwise look like money still left. The -0.5 dust threshold mirrors the per-row/carryover
   // rounding (context.tsx) so a sub-dollar residual, which fmt rounds to $0, doesn't flip the headline.
   const overBudget = totRemain < -0.5;
+  const noBudgets = rows.length === 0;
 
   // Cache-first: once we have any rows, keep showing them while a background refetch
   // runs. Error takes precedence over the spinner — a failed read must never sit under an
@@ -69,29 +76,44 @@ export default function Budgets() {
           <View style={styles.heroBlob1} />
           <View style={styles.heroBlob2} />
           <Text style={styles.heroEyebrow}>THIS PAY CYCLE</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10, marginTop: 6 }}>
-            <Text style={styles.heroDays}>{daysLeft}</Text>
-            <Text style={styles.heroDaysLabel}>days left</Text>
-          </View>
-          {cycleStart ? <Text style={[styles.heroSmall, styles.heroStarted]}>Started {formatDayMonth(cycleStart)}</Text> : null}
-          <View style={styles.heroBottom}>
-            <View>
-              <Text style={styles.heroSmall}>{overBudget ? 'Over budget' : 'Budget remaining'}</Text>
-              <Text style={styles.heroRemain}>{overBudget ? `-${fmt(totRemain)}` : fmt(totRemain)}</Text>
+          <View style={styles.heroTop}>
+            <View style={styles.heroCol}>
+              <Text style={styles.heroBig} numberOfLines={1} adjustsFontSizeToFit>{daysLeft}</Text>
+              <Text style={styles.heroLabel}>{daysLeft === 1 ? 'day left' : 'days left'}</Text>
             </View>
-            <View style={styles.heroPill}>
-              <Text style={styles.heroPillTop}>of {fmt(totBudget)}</Text>
-              <Text style={styles.heroPillBot}>{fmt(totSpent)} spent</Text>
-            </View>
+            {noBudgets ? null : (
+              <View style={styles.heroCol}>
+                <Text style={styles.heroBig} numberOfLines={1} adjustsFontSizeToFit>{overBudget ? `−${fmt(totRemain)}` : fmt(totRemain)}</Text>
+                <Text style={styles.heroLabel}>{overBudget ? 'Over budget' : 'Left to spend'}</Text>
+              </View>
+            )}
           </View>
+          {nextPayday ? <Text style={[styles.heroSmall, styles.heroPayday]}>Next payday {formatDayMonth(nextPayday)}</Text> : null}
+          {noBudgets ? (
+            <View style={styles.heroBottom}>
+              <Text style={styles.heroEmpty}>No budgets yet. Set one and this shows what's left to spend.</Text>
+              <Pressable testID="budgets-hero-add" onPress={() => router.push('/budget/pick')} style={styles.heroAdd}>
+                <Text style={styles.heroAddText}>Add your first budget</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={[styles.heroBottom, styles.heroBottomRow]}>
+              <View style={styles.heroPill}>
+                <Text style={styles.heroPillTop}>of {fmt(totBudget)}</Text>
+                <Text style={styles.heroPillBot}>{fmt(totSpent)} spent</Text>
+              </View>
+              {overBudget ? <Text style={styles.heroOver}>{`Over by ${fmt(totRemain)} · ${resetsLabel(daysLeft)}`}</Text> : null}
+            </View>
+          )}
         </View>
 
-        {/* legend */}
+        {noBudgets ? null : (
         <View style={styles.legend}>
           <View style={styles.legendItem}><View style={[styles.legendSwatch, { backgroundColor: '#9aa2b5' }]} /><Text style={styles.legendText}>Posted</Text></View>
           <View style={styles.legendItem}><View style={[styles.legendSwatch, { backgroundColor: 'rgba(154,162,181,.5)' }]} /><Text style={styles.legendText}>Pending</Text></View>
           <View style={[styles.legendItem, { marginLeft: 'auto' }]}><View style={{ width: 2, height: 13, backgroundColor: '#fff' }} /><Text style={styles.legendText}>Today's pace</Text></View>
         </View>
+        )}
 
         {rows.map((b) => (
           <Pressable key={b.id} onPress={() => router.push(`/budget/${b.id}`)} style={[styles.row, b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }]}>
@@ -116,10 +138,12 @@ export default function Budgets() {
           </Pressable>
         ))}
 
-        <Pressable onPress={() => router.push('/budget/pick')} style={styles.addBudget}>
-          <Glyph name="plus" size={18} color={C.accentSoft} />
-          <Text style={styles.addBudgetText}>Add a budget</Text>
-        </Pressable>
+        {noBudgets ? null : (
+          <Pressable onPress={() => router.push('/budget/pick')} style={styles.addBudget}>
+            <Glyph name="plus" size={18} color={C.accentSoft} />
+            <Text style={styles.addBudgetText}>Add a budget</Text>
+          </Pressable>
+        )}
       </>
       )}
     </ScrollChromeHeader>
@@ -132,19 +156,27 @@ const styles = StyleSheet.create({
   addBtn: { width: 40, height: 40, backgroundColor: tint(C.accentAlt, 0.16), borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
 
   hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 24, paddingTop: 26, paddingBottom: 22, marginBottom: 22, backgroundColor: C.accent },
-  heroBlob1: { position: 'absolute', right: -30, top: -30, width: 150, height: 150, borderRadius: 75, backgroundColor: 'rgba(255,255,255,.12)' },
-  heroBlob2: { position: 'absolute', right: 34, bottom: -46, width: 90, height: 90, borderRadius: 45, backgroundColor: 'rgba(255,255,255,.08)' },
-  heroEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: 'rgba(20,18,50,.65)', letterSpacing: 0.2 },
-  heroDays: { fontFamily: FONT.display, fontSize: 54, fontWeight: '800', color: C.heroInk, letterSpacing: -2, lineHeight: 54 },
-  heroDaysLabel: { fontFamily: FONT.body, fontSize: 17, fontWeight: '600', color: C.heroInk2 },
-  // Reuses heroSmall's muted ink (no new raw colour); only adds spacing under the days-left row.
-  heroStarted: { marginTop: 6 },
-  heroBottom: { marginTop: 18, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
-  heroSmall: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: 'rgba(20,18,50,.6)' },
-  heroRemain: { fontFamily: FONT.display, fontSize: 30, fontWeight: '800', color: C.heroInk, letterSpacing: -1, marginTop: 2 },
-  heroPill: { alignItems: 'flex-end', backgroundColor: 'rgba(21,18,58,.12)', borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12 },
-  heroPillTop: { fontFamily: FONT.body, fontSize: 12, fontWeight: '600', color: 'rgba(20,18,50,.6)' },
+  heroBlob1: { position: 'absolute', right: -30, top: -30, width: 150, height: 150, borderRadius: 75, backgroundColor: C.heroBlobFill },
+  heroBlob2: { position: 'absolute', right: 34, bottom: -46, width: 90, height: 90, borderRadius: 45, backgroundColor: C.heroBlobFill },
+  heroEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.heroInkSoft, letterSpacing: 0.2 },
+  heroTop: { flexDirection: 'row', gap: 16, marginTop: 6 },
+  // Columns share the row equally; minWidth 0 lets adjustsFontSizeToFit shrink a long amount.
+  heroCol: { flex: 1, minWidth: 0 },
+  // One style for both big numbers (days left + money left) so they read at equal weight. No fixed
+  // lineHeight, so the number scales with the user's text size instead of clipping.
+  heroBig: { fontFamily: FONT.display, fontSize: 44, fontWeight: '800', color: C.heroInk, letterSpacing: -1.5 },
+  heroLabel: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.heroInk2 },
+  heroPayday: { marginTop: 10 },
+  heroBottom: { marginTop: 16 },
+  heroBottomRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  heroSmall: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.heroInkSoft },
+  heroPill: { backgroundColor: tint(C.heroInk, 0.12), borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12 },
+  heroPillTop: { fontFamily: FONT.body, fontSize: 12, fontWeight: '600', color: C.heroInkSoft },
   heroPillBot: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.heroInk, marginTop: 2 },
+  heroOver: { flex: 1, minWidth: 0, fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.heroInk },
+  heroEmpty: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.heroInk2 },
+  heroAdd: { marginTop: 12, alignSelf: 'flex-start', backgroundColor: tint(C.heroInk, 0.12), borderRadius: 12, paddingVertical: 10, paddingHorizontal: 16 },
+  heroAddText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.heroInk },
 
   legend: { flexDirection: 'row', alignItems: 'center', gap: 16, marginHorizontal: 4, marginBottom: 14 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 7 },
