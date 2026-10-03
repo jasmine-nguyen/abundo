@@ -1,7 +1,7 @@
 // WHIT-714 — the Budgets top card must tell the truth when there are no spending budgets
 // (income-only, Savings-only) and while budgets are still loading. Real useBudgetsScreenData
 // over the fake server; ../auth + expo-router mocked; the shared query provider.
-import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react-native';
 import { makeClient, wrapper } from './support/queryClient';
@@ -23,18 +23,6 @@ const server = installFakeServer();
 const NO_SPENDING = /^No spending budgets yet/;
 
 const renderBudgets = () => render(<Budgets />, { wrapper: wrapper(makeClient()) });
-
-// A failed assertion must not leave a request waiting forever (it would keep jest from exiting).
-let releases: (() => void)[] = [];
-const hold = (path: string) => {
-  const held = server.hold(path);
-  releases.push(held.release);
-  return held;
-};
-afterEach(() => {
-  releases.forEach((release) => release());
-  releases = [];
-});
 
 beforeEach(() => {
   server.seed('/categories', [COFFEE, SALARY, SAVINGS]);
@@ -92,7 +80,7 @@ describe('WHIT-714 Budgets top card totals', () => {
   });
 
   it('while budgets load with the pay cycle ready → a days-only top card above the spinner', async () => {
-    const held = hold('/budgets');
+    const held = server.hold('/budgets');
     renderBudgets();
     expect(await screen.findByText('days left')).toBeTruthy();
     expect(screen.getByText('4')).toBeTruthy();
@@ -107,8 +95,8 @@ describe('WHIT-714 Budgets top card totals', () => {
   });
 
   it('while the pay cycle is still loading → spinner only, never the default cycle count', async () => {
-    const heldPayCycle = hold('/paycycle');
-    const heldBudgets = hold('/budgets');
+    const heldPayCycle = server.hold('/paycycle');
+    const heldBudgets = server.hold('/budgets');
     renderBudgets();
     await waitFor(() => expect(server.sent('GET', '/categories')).toHaveLength(1));
     await new Promise((resolve) => setTimeout(resolve, 20));

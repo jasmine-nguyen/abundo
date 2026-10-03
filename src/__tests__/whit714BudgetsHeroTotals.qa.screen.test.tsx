@@ -1,6 +1,6 @@
 // WHIT-714 QA: adversarial edges for the Budgets top card with no spending rows and while loading.
 // Real useBudgetsScreenData over the fake server; ../auth + expo-router mocked.
-import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen } from '@testing-library/react-native';
 import { makeClient, wrapper } from './support/queryClient';
@@ -24,12 +24,6 @@ const NO_SPENDING = /^No spending budgets yet/;
 function renderBudgets(client = makeClient()) {
   return { client, ...render(<Budgets />, { wrapper: wrapper(client) }) };
 }
-
-let releases: (() => void)[] = [];
-afterEach(() => {
-  releases.forEach((release) => release());
-  releases = [];
-});
 
 beforeEach(() => {
   server.seed('/categories', [COFFEE, SALARY, SAVINGS]);
@@ -77,7 +71,6 @@ describe('WHIT-714 top card — QA edges', () => {
   it('[A3] categories still loading → days-only card, no false empty prompt', async () => {
     server.seed('/budgets', { coffee: { target: 100, posted: 40, pending: 10 } });
     const held = server.hold('/categories');
-    releases.push(held.release);
     renderBudgets();
     expect(await screen.findByText('days left')).toBeTruthy();
     expect(screen.getByText('4')).toBeTruthy();
@@ -91,8 +84,7 @@ describe('WHIT-714 top card — QA edges', () => {
   // [A4] (P1) pay cycle fails while budgets are still loading → error card, never a days card from the default cycle
   it('[A4] pay cycle fails while budgets load → error view, no days-left card', async () => {
     server.fail('/paycycle', 500);
-    const held = server.hold('/budgets');
-    releases.push(held.release);
+    server.hold('/budgets');
     renderBudgets();
     expect(await screen.findByTestId('budgets-error')).toBeTruthy();
     expect(screen.queryByText(/days? left/)).toBeNull();
