@@ -739,6 +739,9 @@ export interface TransactionsScreenData extends RecentTransactionsScreenData {
   isLoadingMore: boolean; // the next page is in flight → Load More spinner (NOT the pull spinner)
   refetchList: () => Promise<unknown>; // pull: refresh the list (feed + categories), NOT balances
   refreshLiveBalances: () => Promise<void>; // pull: fetch fresh balances live from the bank
+  error: unknown; // the failed list read's error (the error card's reason line)
+  refreshError: unknown; // WHIT-713: a list refresh failed over rows already showing (see refreshStatus)
+  updatedAt: number; // when the showing list last loaded; 0 when nothing has
 }
 
 // A single frozen empty list for the cold case, so `transactions` keeps a STABLE identity
@@ -827,10 +830,15 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
         queryClient.invalidateQueries({ queryKey: uncategorizedCountKey }),
       ]);
     }
-    queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(activeFeedKey, (prev) =>
-      prev && prev.pages.length > 1
-        ? { pages: prev.pages.slice(0, 1), pageParams: prev.pageParams.slice(0, 1) }
-        : prev);
+    // Keep the list's original load time: setQueryData stamps "now" otherwise, and a failed
+    // refetch would then claim the trimmed list is fresh (WHIT-713).
+    if (feedQuery.data && feedQuery.data.pages.length > 1) {
+      queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(
+        activeFeedKey,
+        { pages: feedQuery.data.pages.slice(0, 1), pageParams: feedQuery.data.pageParams.slice(0, 1) },
+        { updatedAt: feedQuery.dataUpdatedAt },
+      );
+    }
     // WHIT-501: a pull is the user's explicit "get me the latest", so refresh the whole-history
     // uncategorized tally alongside the list. Without this the badge/dot keep a fresh-cached number
     // (5min staleTime) while the pull loads brand-new unfiled rows into the list — badge says 3, list
@@ -881,7 +889,11 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
     retry: () => { refetchSearch(); },
   }), [searchActive, searchData, searchIsPlaceholder, searchIsError, searchIsFetching, refetchSearch]);
 
-  return { search, transactions, category, balances, isLoading, isError, isFetching, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore };
+  // Balances stay out, as with isError: a balances hiccup isn't a list refresh failure.
+  const { refreshError, updatedAt } = refreshStatus([feedQuery, categoriesQuery]);
+  const error = feedQuery.error ?? categoriesQuery.error;
+
+  return { search, transactions, category, balances, isLoading, isError, error, refreshError, updatedAt, isFetching, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore };
 }
 
 /** The bounded "recent" reads (tab-bar dot, account detail, goal-edit picker): a fixed

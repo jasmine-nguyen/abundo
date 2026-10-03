@@ -11,7 +11,7 @@ import { useDebouncedValue } from '../../src/hooks/useDebouncedValue';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { ASK_BUTTON_CLEARANCE } from '../../src/motion/useNavBarsHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
-import { ListStates } from '../../src/components/ListStates';
+import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { SettingsButton } from '../../src/components/SettingsButton';
 import { HeaderTextButton } from '../../src/components/ui';
 
@@ -38,7 +38,7 @@ export default function Transactions() {
   const { openMultiPicker, showToast, setSheet, pendingUncategorizedSelect, clearUncategorizedSelect } = useAppContext();
   // WHIT-190a: transactions now come from the cached, auth-gated query layer — an all-accounts
   // cursor feed, so `loadMore` pages older history in and `hasMore` is false at end-of-history.
-  const { transactions, category, isLoading, isError, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore, search: serverSearch } = useTransactionsScreenData(tab, serverQuery);
+  const { transactions, category, isLoading, isError, error, refreshError, updatedAt, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore, search: serverSearch } = useTransactionsScreenData(tab, serverQuery);
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   // WHIT-291: multi-select re-categorise. `selectionMode` swaps the rows for checkboxes; `selected`
@@ -232,6 +232,7 @@ export default function Transactions() {
           </Pressable>
         )}
 
+        {!searchingServer && <StaleDataLine idPrefix="transactions" error={refreshError} updatedAt={updatedAt} />}
         <ListStates
           showSpinner={showSpinner}
           showError={showError}
@@ -239,6 +240,7 @@ export default function Transactions() {
           errorText="Couldn't load your transactions."
           retryLabel="Retry loading your transactions"
           onRetry={refetch}
+          error={error}
         />
 
         {!showSpinner && !showError && groups.map((g) => (
