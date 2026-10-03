@@ -157,7 +157,7 @@ class BuildState(TypedDict):
 ROOT = Path(__file__).resolve().parent
 BUILD_DIR = ROOT / ".build"
 DB_PATH = BUILD_DIR / "build_graph.db"
-PROJECT_CONTEXT_FILE = ROOT / "project-context.md"
+AGENTS_FILE = ROOT / "AGENTS.md"
 
 DEFAULT_MODEL = "claude-opus-5-5"
 # How hard each agent thinks. Claude Code's own default is higher; "medium" is faster
@@ -465,7 +465,7 @@ AGENT_RETRY = RetryPolicy(max_attempts=2, retry_on=lambda e: getattr(e, "transie
 
 
 def agent_prompt(prompt_file: str) -> str:
-    return (ROOT / ".claude" / "agents" / prompt_file).read_text() + "\n\n" + read_text(PROJECT_CONTEXT_FILE)
+    return (ROOT / ".claude" / "agents" / prompt_file).read_text()
 
 
 async def run_agent(
@@ -803,7 +803,7 @@ def card_title(state: BuildState) -> str:
 
 
 def checks_block() -> list[str]:
-    match = re.search(r"^```checks\n(.*?)^```", read_text(PROJECT_CONTEXT_FILE), re.DOTALL | re.MULTILINE)
+    match = re.search(r"^```checks\n(.*?)^```", read_text(AGENTS_FILE), re.DOTALL | re.MULTILINE)
     if not match:
         return []
     return [line.strip() for line in match.group(1).splitlines() if line.strip()]
@@ -2027,7 +2027,7 @@ def escalation(state: BuildState):
 
 
 def failing_checks(state: BuildState) -> list[str]:
-    """Put back tampered pinned tests, then run every command in project-context.md's checks block."""
+    """Put back tampered pinned tests, then run every command in AGENTS.md's checks block."""
     problems = []
     restored = restore_pins(state)
     if restored:
@@ -2041,7 +2041,7 @@ def failing_checks(state: BuildState) -> list[str]:
         )
     commands = check_commands()
     if not commands:
-        problems.append(f"{PROJECT_CONTEXT_FILE.name} has no ```checks block, so the tests can't be run.")
+        problems.append(f"{AGENTS_FILE.name} has no ```checks block, so the tests can't be run.")
     workers = len(commands) if check_commands_in_parallel() else 1
     with ThreadPoolExecutor(max_workers=max(workers, 1)) as pool:
         results = list(pool.map(lambda command: run(command, timeout=CHECK_TIMEOUT_S), commands))
@@ -2796,8 +2796,8 @@ async def start_build(graph, saver, config, snapshot, args):
         return None
     if not check_commands():
         print(
-            f"{PROJECT_CONTEXT_FILE.name} has no ```checks block, so the build couldn't run your tests. "
-            "Add one (see project-context-template.md), then start again."
+            f"{AGENTS_FILE.name} has no ```checks block, so the build couldn't run your tests. "
+            "Add one (see AGENTS-template.md), then start again."
         )
         return None
     modified = [path for status, path in git_status() if status != "??"]
@@ -3367,8 +3367,13 @@ async def main(argv: list[str] | None = None) -> int:
         return 1
     if paid and not args.status:
         print(f"⚠️ {paid} is set, so this build is billed per token, not to your Claude plan.\n")
-    if not PROJECT_CONTEXT_FILE.is_file():
-        print(f"Missing {PROJECT_CONTEXT_FILE.name}: copy project-context-template.md and fill it in.")
+    if not AGENTS_FILE.is_file():
+        print(f"Missing {AGENTS_FILE.name}: copy AGENTS-template.md and fill it in.")
+        return 1
+    # Claude Code skips AGENTS.md beside a CLAUDE.md, so the agents would never see it.
+    claude_md = read_text(ROOT / "CLAUDE.md")
+    if claude_md and "@AGENTS.md" not in claude_md:
+        print("CLAUDE.md doesn't import AGENTS.md, so the agents won't read it. Add an `@AGENTS.md` line to CLAUDE.md.")
         return 1
     BUILD_DIR.mkdir(exist_ok=True)
     exclude_build_dir()

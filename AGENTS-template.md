@@ -1,4 +1,4 @@
-# Project Context — <Project Name>
+# <Project Name>
 
 ## Board
 

@@ -10,4 +10,4 @@ requirements.txt
 .claude/agents/code-critic.md
 .claude/hooks/protect-build-state.py
 .github/pull_request_template.md
-project-context-template.md
+AGENTS-template.md

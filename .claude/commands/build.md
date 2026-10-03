@@ -44,7 +44,7 @@ taking a moment to write it clearly.
   clashing" · null/undefined → "missing" · deploy → "release" · helper/module →
   say what it does ("the part that works out totals").
 
-Read `project-context.md` first. It contains the board data source ID,
+`AGENTS.md` is already in your context. It contains the board data source ID,
 card prefix, default card type, card picking rules (sort field,
 blocker relation, skip patterns), and the check commands the pipeline runs.
 
@@ -66,11 +66,11 @@ the card number for card builds) and check where it is:
 1. Figure out what to build:
 
    **a) Card number given** — `$ARGUMENTS` looks like a card number
-   (matches the card prefix from project-context.md, e.g. CAD-92, WHIT-42)
+   (matches the card prefix from AGENTS.md, e.g. CAD-92, WHIT-42)
    or a bare number (e.g. 92). Look the card up by "Card ID". Fetch its
    title, description, and Type.
 
-   If project-context.md has a blocker relation, check whether all
+   If AGENTS.md has a blocker relation, check whether all
    blockers have Status = 'Done' and their PR merged (a card goes to Done
    when its PR opens, before it merges: `gh pr list --search <card ID>
    --state merged`). If not, warn the user, list the unfinished blockers,
@@ -81,18 +81,18 @@ the card number for card builds) and check where it is:
    source, Status = 'To Do', and a clear title. Set Type from the request:
    if it reports something broken or asks to look into an issue, use
    `Bug` (or `Defect` if that's the board's option); if it asks for new behaviour, use `Story`; otherwise use the
-   default card type from project-context.md. Leave the sort field empty. Tell
+   default card type from AGENTS.md. Leave the sort field empty. Tell
    the user to set the sort field and blockers on the board later. Fetch
    the card to get its assigned number.
 
    **c) Empty** — `$ARGUMENTS` is empty. Pick the next actionable card:
 
-   If project-context.md has a **sort field** and **blocker relation**:
+   If AGENTS.md has a **sort field** and **blocker relation**:
    1. Query cards with Status = 'To Do' and a non-empty sort field,
       sorted by the sort field ascending. Include url, Card ID, Name,
       the sort field, and the blocker relation.
    2. Walk that list in order. For each card:
-      - If project-context.md has skip patterns, skip cards whose Name
+      - If AGENTS.md has skip patterns, skip cards whose Name
         contains any pattern.
       - Read the blocker relation. For each blocker URL, check its
         Status. A card is ready only when every blocker is Done and its
@@ -106,10 +106,10 @@ the card number for card builds) and check where it is:
    6. If no card is ready, say so and list the blocked cards with
       their blockers. Don't pick anything.
 
-   If project-context.md does **not** have a sort field (fallback):
+   If AGENTS.md does **not** have a sort field (fallback):
    1. Query cards with Status IN ('To Do', 'In Progress'), ordered by:
       `CASE "Priority" WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END ASC`
-   2. If project-context.md has skip patterns, exclude cards whose Name
+   2. If AGENTS.md has skip patterns, exclude cards whose Name
       contains those patterns.
    3. Take the first row. Fetch it.
 
@@ -141,7 +141,7 @@ the card number for card builds) and check where it is:
    `--review-plan`.
 
    The script refuses to start if tracked files have uncommitted changes,
-   if `project-context.md` has no ```checks block (it must be able to run
+   if `AGENTS.md` has no ```checks block (it must be able to run
    the tests), or if a build for this card already exists. Relay the message; only add
    `--restart` if the user wants to throw the old build away.
 
@@ -250,7 +250,7 @@ the card number for card builds) and check where it is:
      the plan has 3 or more slices):
      1. Read the slices from the PLAN FOR REVIEW block (under "Slices"). For every slice after the first,
         create a card on the board the same way as step 1b. Title it with the
-        slice's title and describe what it delivers. If project-context.md
+        slice's title and describe what it delivers. If AGENTS.md
         has a blocker relation, set this card as each new card's blocker.
      2. Resume with `rework: Split. Plan only slice 1: <title>. The other
         slices are now their own cards: <new card IDs>.` The designer replans
