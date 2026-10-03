@@ -52,6 +52,14 @@ Check these before changing the touched area:
 
 ## Coding standards
 
+- No copy-pasted test code. Before writing setup or helper code in a test,
+  check `<shared test helpers folder, e.g. src/__tests__/support/>` for one that
+  already exists. If the same setup would end up in 2+ test files, move it into
+  that folder in the same change and import it — never copy it from another
+  test file.
+- Plans must say "use / add a shared test helper" — never "copy the pattern
+  from <other test>".
+- Reviewers treat copied test code as a must-fix, not a follow-up card.
 - ...
 
 ## Hot shared files
