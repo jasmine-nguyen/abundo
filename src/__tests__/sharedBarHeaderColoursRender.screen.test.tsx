@@ -2,7 +2,7 @@
 // budget bar and the plain bar sit on the same single rail shade.
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, type StyleProp, type TextStyle } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
 
 jest.mock('expo-router', () => ({ useRouter: () => ({ back: jest.fn(), push: jest.fn() }) }));
@@ -12,7 +12,7 @@ import { Header } from '../components/Header';
 import { BudgetBar, Bar } from '../components/ui';
 
 function colourOf(node: { props: { style?: unknown } }) {
-  return StyleSheet.flatten(node.props.style as never)?.color;
+  return StyleSheet.flatten(node.props.style as StyleProp<TextStyle>)?.color;
 }
 
 // [A1] pushed-screen title uses the theme's brightest text, not pure white (decision 2A)
