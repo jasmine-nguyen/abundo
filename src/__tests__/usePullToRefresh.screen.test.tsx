@@ -98,6 +98,20 @@ describe('usePullToRefresh', () => {
     expect(refetchList).toHaveBeenCalledTimes(1);
   });
 
+  it('a list-only pull (no live balances, no toast) raises then clears the spinner', async () => {
+    const list = deferred<void>();
+    refetchList.mockReturnValueOnce(list.promise);
+    const { result } = renderHook(() => usePullToRefresh(refetchList));
+
+    act(() => { result.current.onRefresh(); });
+    expect(result.current.pulling).toBe(true);
+    expect(refetchList).toHaveBeenCalledTimes(1);
+
+    await act(async () => { list.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(result.current.pulling).toBe(false);
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
   it('is not latched: a second pull after a failed first fires again and clears', async () => {
     refreshLiveBalances.mockReturnValueOnce(Promise.reject(new Error('offline')));
     const { result } = renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast));

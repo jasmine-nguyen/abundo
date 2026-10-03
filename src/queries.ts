@@ -484,7 +484,10 @@ export function usePayCycle(): PayCycleData {
 interface CombinedQueryStatus {
   isLoading: boolean;
   isError: boolean;
-  refetch: () => void;
+  error: unknown; // the first failed query's error (an error card's reason line)
+  refreshError: unknown; // WHIT-713: see refreshStatus
+  updatedAt: number;
+  refetch: () => Promise<unknown>;
   refetchStale: () => void;
 }
 // The minimal slice of a query result the plumbing reads — every UseQueryResult satisfies it
@@ -493,7 +496,20 @@ interface ScreenQuery {
   isLoading: boolean;
   isError: boolean;
   isStale: boolean;
-  refetch: () => unknown;
+  isRefetchError: boolean;
+  error: unknown;
+  dataUpdatedAt: number;
+  refetch: () => Promise<unknown>;
+}
+// WHIT-713: a refresh that failed over data already showing. TanStack keeps `data` on a failed
+// refetch, so the screen still shows the old numbers; `refreshError` lets it say so quietly.
+// `updatedAt` is the OLDEST load time among the queries, so the "showing <time>" line never
+// overstates how fresh the screen is. 0 when nothing has loaded.
+function refreshStatus(queries: ScreenQuery[]): { refreshError: unknown; updatedAt: number } {
+  const failed = queries.find((q) => q.isRefetchError);
+  const loadTimes = queries.map((q) => q.dataUpdatedAt).filter((time) => time > 0);
+  const updatedAt = loadTimes.length > 0 ? Math.min(...loadTimes) : 0;
+  return { refreshError: failed ? failed.error : null, updatedAt };
 }
 // TanStack results are new objects every render, so focus callbacks read them through a ref
 // to keep a stable identity — otherwise each redraw reruns the focus refetch (WHIT-668).
@@ -505,10 +521,11 @@ function useLatestRef<T>(value: T) {
 function useCombineScreenQueries(queries: ScreenQuery[]): CombinedQueryStatus {
   const isLoading = queries.some((q) => q.isLoading);
   const isError = queries.some((q) => q.isError);
+  const error = queries.find((q) => q.isError)?.error ?? null;
   const latest = useLatestRef(queries);
-  const refetch = useCallback(() => { latest.current.forEach((q) => { q.refetch(); }); }, [latest]);
+  const refetch = useCallback(() => Promise.all(latest.current.map((q) => q.refetch())), [latest]);
   const refetchStale = useCallback(() => { latest.current.forEach((q) => { if (q.isStale) q.refetch(); }); }, [latest]);
-  return { isLoading, isError, refetch, refetchStale };
+  return { isLoading, isError, error, ...refreshStatus(queries), refetch, refetchStale };
 }
 
 // --- the Budgets screen's composite view -------------------------------------
@@ -526,7 +543,10 @@ export interface BudgetsScreenData {
   // instead. Guarded on data===undefined so a background refetch over a cached cycle keeps
   // the rows (cache-first), mirroring WHIT-194's categoriesError.
   payCycleError: boolean;
-  refetch: () => void; // force a refresh (the inline Retry button)
+  error: unknown; // the failed read's error → the error card's offline-vs-server reason (WHIT-713)
+  refreshError: unknown; // a refresh failed over budgets already showing → the quiet stale line
+  updatedAt: number; // when the showing data loaded (oldest of the reads), 0 if never
+  refetch: () => Promise<unknown>; // force a refresh (the inline Retry button, and the pull)
   refetchStale: () => void; // focus refresh — only refetches queries that have gone stale
 }
 

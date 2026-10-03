@@ -269,6 +269,25 @@ describe('focus refetch', () => {
     expect(budgetReads()).toHaveLength(1);
     expect(categoryReads()).toHaveLength(1);
   });
+
+  it('WHIT-713: a failed focus refresh over showing budgets shows the quiet stale line, with no pull', async () => {
+    pinToday(new Date('2026-09-18T09:40:00+10:00'));
+    const client = makeClient({ staleTime: 45_000 });
+    // Only the screen's own focus refetch may run on return — not TanStack's refetch-on-mount.
+    client.setDefaultOptions({ queries: { ...client.getDefaultOptions().queries, refetchOnMount: false } });
+    const first = renderBudgets(client);
+    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+    first.unmount();
+
+    jest.setSystemTime(new Date('2026-09-18T09:41:00+10:00'));
+    server.once('GET', '/budgets', { status: 503 });
+    renderBudgets(client);
+
+    await waitFor(() => expect(budgetReads()).toHaveLength(2));
+    await waitFor(() => expect(screen.getByTestId('budgets-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am"));
+    expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
+    jest.useRealTimers();
+  });
 });
 
 describe('auth transition mid-session', () => {

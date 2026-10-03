@@ -3,7 +3,21 @@
 // an ISO date must parse/format on the LOCAL day, never shifted by a timezone. The
 // runner pins TZ=Australia/Melbourne (UTC+10/+11), so a UTC parse would surface here.
 import { describe, it, expect } from '@jest/globals';
-import { parseISODate, toISODate, formatDayMonthYear, formatWeekdayShort } from '../dateutil';
+import { parseISODate, toISODate, formatDayMonthYear, formatWeekdayShort, formatTimeOfDay } from '../dateutil';
+
+describe('formatTimeOfDay (WHIT-713)', () => {
+  const now = new Date(2026, 8, 18, 15, 0);
+
+  it('reads a same-day time as a short local clock time', () => {
+    expect(formatTimeOfDay(new Date(2026, 8, 18, 9, 40).getTime(), now)).toBe('9:40am');
+    expect(formatTimeOfDay(new Date(2026, 8, 18, 12, 5).getTime(), now)).toBe('12:05pm');
+    expect(formatTimeOfDay(new Date(2026, 8, 18, 0, 0).getTime(), now)).toBe('12:00am');
+  });
+
+  it('prefixes the day when the time is from an earlier day', () => {
+    expect(formatTimeOfDay(new Date(2026, 8, 17, 21, 3).getTime(), now)).toBe('17 Sep, 9:03pm');
+  });
+});
 
 describe('dateutil (WHIT-126)', () => {
   it('parses an ISO date to LOCAL midnight (no UTC drift)', () => {
