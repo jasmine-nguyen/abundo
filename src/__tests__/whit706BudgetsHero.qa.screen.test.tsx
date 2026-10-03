@@ -2,9 +2,10 @@
 // the fake server; ../auth + expo-router mocked; real QueryClientProvider.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react-native';
+import { render, screen, fireEvent } from '@testing-library/react-native';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient } from './support/queryClient';
+import { refreshInAct } from './support/renderWithQueries';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
@@ -87,7 +88,7 @@ describe('Budgets top card — QA edges', () => {
     const { client } = renderBudgets();
     await screen.findByText('Add your first budget');
     server.seed('/budgets', { coffee: { target: 100, posted: 40, pending: 10 } });
-    await act(async () => { await client.invalidateQueries({ queryKey: ['budgets'] }); });
+    await refreshInAct(() => client.invalidateQueries({ queryKey: ['budgets'] }));
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
     expect(screen.queryByText('Add your first budget')).toBeNull();
     expect(screen.getByText('Left to spend')).toBeTruthy();
