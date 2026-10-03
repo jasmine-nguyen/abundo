@@ -465,7 +465,7 @@ def _transient(terminal_reason: str | None, status: int | None) -> bool:
 AGENT_RETRY = RetryPolicy(max_attempts=2, retry_on=lambda e: getattr(e, "transient", False))
 
 
-# The one definition of "small" that the planner, the plan critic and the code critic share, so a
+# The one definition of "small" that the planner, the critics and QA share, so a
 # small same-pattern fix is folded into this PR at every step instead of being filed as a card.
 FOLD_IN_RULE = """
 
@@ -483,7 +483,7 @@ a **small fold-in** if all of these hold:
 A small fold-in goes into this PR, not into a separate card. Anything bigger, riskier or unrelated
 to the card is a card.
 """
-FOLD_IN_AGENTS = {"designer", "plan_critic", "code_critic"}
+FOLD_IN_AGENTS = {"designer", "plan_critic", "code_critic", "qa"}
 
 
 def agent_prompt(name: str) -> str:

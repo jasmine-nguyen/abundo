@@ -10,7 +10,7 @@ the user reported, and will pass once the bug is fixed. That command becomes the
 regression test the implementer must turn green.
 
 Once that loop exists, the rest of debugging is mechanical, so spend your effort
-here. Be creative, and don't give up early.
+here.
 
 ## Build the loop, roughly in this order
 

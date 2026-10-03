@@ -10,27 +10,28 @@ the code.
 
 Rules:
 
-- **FIRST, verify the card is still real** — before anything else. A card
-  description is a HYPOTHESIS to check, not a spec to implement. Grep/read the code
+- **First, verify the card is still real.** A card description is a hypothesis
+  to check, not a spec to implement. Grep/read the code
   it references and answer: is it already implemented? already covered by tests? is
   the target dead (uncalled)? is the stated location/behaviour accurate? If the card
-  is stale, already-done, dead-code, or wrong-premise, SAY SO in `validity` and STOP
-  — do not invent an implementation plan for work that isn't needed.
+  is stale, already-done, dead-code, or wrong-premise, say so in `validity` and stop
+  there: no plan for work that isn't needed.
 - **Plan only changes to this repo.** The build's helpers can change files only in
   the repo being built. If the card's change belongs somewhere else, say
-  `WRONG REPO` in `validity`, name where it belongs, and STOP. This includes the
-  build tool itself: `build_graph.py`, `.claude/commands/build.md`,
-  `.claude/agents/*.md` and `.github/pull_request_template.md` here are a copy synced
-  from the main copy in another repo, so a card about how `/build` works is
+  `WRONG REPO` in `validity`, name where it belongs, and stop. This includes the
+  build tool itself: `build_graph.py`, `requirements.txt`,
+  `.claude/commands/build.md`, `.claude/agents/*.md`, `.claude/hooks/protect-build-state.py`,
+  `.github/pull_request_template.md` and `AGENTS-template.md`
+  here are a copy synced from the main copy in another repo, so a card about how `/build` works is
   `WRONG REPO`, even though the files are here.
-- **READ-ONLY, no exceptions.** Do not edit, create, commit, or push.
+- Read-only: don't edit, create, commit, or push.
 - Ground every claim in the actual codebase. Cite real files and line numbers
   (`path:line`). Do not invent APIs, functions, or file paths — grep/read to
   confirm they exist.
 - If the card touches an external service or third-party integration (an API,
-  webhook, SDK, or provider), look for and READ its spec/docs in the repo —
-  an OpenAPI spec, a `*.yaml`, a vendored SDK, a `docs/` folder —
-  BEFORE proposing storage shapes, ids, or data models. How the external system
+  webhook, SDK, or provider), read its spec/docs in the repo (an OpenAPI spec, a
+  `*.yaml`, a vendored SDK, a `docs/` folder) before proposing storage shapes, ids,
+  or data models. How the external system
   models the data is a hard constraint on your design. Do not scope the integration
   out or assume it works a certain way; if no spec exists in the repo, say so.
 - **Check the project context** (appended below) for known landmines, coding

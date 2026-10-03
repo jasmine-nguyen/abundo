@@ -232,15 +232,11 @@ the card number for card builds) and check where it is:
      message exactly as printed, formatted as Markdown (section titles in
      bold, lines as bullets): the header line, Problem, Task and Solution,
      the "Why this needs your sign-off" line, any unresolved critic concerns,
-     and the details line. This is not optional, even when a progress
-     message already said the critic approved: the question box alone doesn't
-     tell the user what they're signing off on. Put the whole summary in the
-     same message as the AskUserQuestion call, above it, never a one-line
-     recap instead. Don't add to it, shorten it, or pull more in from the plan
-     file. The one exception is a
-     line that isn't plain English: rewrite that line (see "Plain English is
-     critical"). If the user asks for the details, show them the parts they
-     ask about, in plain English too.
+     and the details line, even when a progress message already said the
+     critic approved. Don't add to it, shorten it, or pull more in from the
+     plan file, except to rewrite a line that isn't plain English. If the user
+     asks for the details, show them the parts they ask about, in plain English
+     too.
 
      Then ask the decisions with AskUserQuestion instead of printing them a
      second time, recommended answer first and marked "(Recommended)", and
@@ -388,13 +384,13 @@ the card number for card builds) and check where it is:
      theirs, so ask about each one with AskUserQuestion first and change the
      code only as they decide. Then run
      `python3 build_graph.py --thread <id> --recheck`
+     to re-run the checks and both reviews (code review and QA) on your fixes. Repeat until
+     it passes.
      Don't change a locked test (they're listed under "Locked test files";
      the recheck puts back any change to one). If one is wrong,
      explain it to the user and ask. Only if they approve, change it and add
      `--unpin <that test file>` to the recheck: it stays locked at your new
      version.
-     to re-run the checks and both reviews (code review and QA) on your fixes. Repeat until
-     it passes.
    - **BUILD STOPPED** — a step errored (an agent ran out of turns or
      budget, returned no verdict, or files changed that shouldn't have).
      Show the user the error, fix the cause if it's yours to fix, then
