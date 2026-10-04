@@ -33,7 +33,7 @@ describe('Budgets top card', () => {
     expect(screen.queryByText('Budget remaining')).toBeNull();
     expect(screen.queryByText('Left to spend')).toBeNull();
     expect(screen.queryByText('Over budget')).toBeNull();
-    expect(screen.queryByText(/spent of/)).toBeNull();
+    expect(screen.queryByText(/ spent$/)).toBeNull();
     expect(screen.queryByText('Add a budget')).toBeNull();  // the duplicate dashed button is hidden
     fireEvent.press(screen.getByTestId('budgets-hero-add'));
     expect(routerSpies.push).toHaveBeenCalledWith('/budget/pick');
@@ -44,34 +44,36 @@ describe('Budgets top card', () => {
     expect(screen.getByText('Left to spend')).toBeTruthy();
     expect(screen.getByText('days left')).toBeTruthy();
     expect(screen.queryByText('Over budget')).toBeNull();
-    expect(screen.queryByText(/^resets /)).toBeNull();
+    expect(screen.queryByText(/resets/)).toBeNull();
     expect(screen.queryByText('Budget remaining')).toBeNull();
   });
 
-  it('over budget → real minus sign and "resets in N days", the amount said once', async () => {
+  it('over budget → real minus sign, the amount said once, no resets text', async () => {
     server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
     await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText(`${MINUS}$100`)).toBeTruthy();
     expect(screen.queryByText('-$100')).toBeNull();
-    expect(screen.getByText('resets in 4 days')).toBeTruthy();
+    expect(screen.queryByText(/resets/)).toBeNull();
     expect(screen.queryByText(/Over by/)).toBeNull();
   });
 
-  it('1 day left → singular "day left" and "resets in 1 day"', async () => {
+  it('1 day left and over → singular "day left", no resets text', async () => {
     server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01', days_left: 1 });
     server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
     await renderLoadedBudgets();
     expect(screen.getByText('day left')).toBeTruthy();
     expect(screen.queryByText('days left')).toBeNull();
-    expect(screen.getByText('resets in 1 day')).toBeTruthy();
+    expect(screen.queryByText(/resets/)).toBeNull();
   });
 
-  it('0 days left and over → "resets today"', async () => {
+  it('0 days left and over → "0 days left", no resets text', async () => {
     server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01', days_left: 0 });
     server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
     await renderLoadedBudgets();
-    expect(screen.getByText('resets today')).toBeTruthy();
+    expect(screen.getByText('0')).toBeTruthy();
+    expect(screen.getByText('days left')).toBeTruthy();
+    expect(screen.queryByText(/resets/)).toBeNull();
   });
 
   it('shows the next payday date instead of the cycle start', async () => {

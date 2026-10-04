@@ -31,7 +31,7 @@ jest.mock('../motion/useNavBarsHeader', () => ({
   floatingHeaderStyle: {},
   useNavBarsHeader: () => ({
     onScroll: jest.fn(), scrollEventThrottle: 16, headerStyle: {},
-    headerHeight: 58, headerPaddingTop: 6, contentPadding: { paddingTop: 58, paddingBottom: 120 },
+    headerHeight: 58, headerPaddingTop: 6, statusBarHeight: 0, contentPadding: { paddingTop: 58, paddingBottom: 120 },
   }),
 }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));

@@ -1898,6 +1898,9 @@ export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalV
   return { progress, pacePerPayday, paydaysLeft, status, checkpointsTotal, checkpointsReached, checkpointMarkers };
 }
 
+// Under-budget and income bars share one calm fill; rose (C.bad) means over (WHIT-729).
+const BAR_FILL = C.accentSoft;
+
 export interface BudgetView {
   id: string; name: string; color: string; icon: string; chipBg: string;
   spentLabel: string; remainAmount: string; remainLabel: string; remainColor: string;
@@ -2028,8 +2031,8 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
         remainAmount: fmtExact(met ? actual - b.budget : b.budget - actual),
         remainLabel: met ? 'above target' : 'to go',
         remainColor: C.good,
-        postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: c.color,
-        pendingTint: tint(c.color, 0.45), paceLabel: '', paceColor: C.textInfo, over: false,
+        postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: BAR_FILL,
+        pendingTint: tint(BAR_FILL, 0.45), paceLabel: '', paceColor: C.textInfo, over: false,
         depth, parentId,
         section: 'earning', showTarget: false, spreadPrefill: null, behindPace: false,
       });
@@ -2065,8 +2068,8 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     viewById.set(b.id, {
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
       spentLabel, remainAmount: fmtExact(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,
-      postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: over ? C.bad : c.color,
-      pendingTint: tint(over ? C.bad : c.color, 0.45), paceLabel, paceColor, over,
+      postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: over ? C.bad : BAR_FILL,
+      pendingTint: tint(over ? C.bad : BAR_FILL, 0.45), paceLabel, paceColor, over,
       depth, parentId,
       section: 'spending', showTarget: true, spreadPrefill, behindPace,
     });
@@ -2930,7 +2933,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
       statusLabel: met ? 'Target reached — nice' : 'On track — keep earning',
       statusColor: met ? C.good : C.textInfo,
       postedPct, pendingPct,
-      postedColor: c.color, pendingTint: tint(c.color, 0.45),
+      postedColor: BAR_FILL, pendingTint: tint(BAR_FILL, 0.45),
       dailyLabel: met ? 'Target reached' : `${fmt(perDay)}/day to target`,
       // Spread is spend-only (the server rejects it on Income), so an earn-target never
       // offers it — but both return branches carry the same keys so [id].tsx compiles.
@@ -2963,7 +2966,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
     statusLabel,
     statusColor,
     postedPct, pendingPct,
-    postedColor: over ? C.bad : c.color, pendingTint: tint(over ? C.bad : c.color, 0.45),
+    postedColor: over ? C.bad : BAR_FILL, pendingTint: tint(over ? C.bad : BAR_FILL, 0.45),
     dailyLabel: over ? 'Daily limit: $0' : `Daily limit: ${fmt(daily)}`,
     // Spreading is offered once a bill has pushed the category at least a cent over (the entry
     // prefills with `overspend`, so requiring >= 0.01 avoids offering an unsaveable $0 spread on

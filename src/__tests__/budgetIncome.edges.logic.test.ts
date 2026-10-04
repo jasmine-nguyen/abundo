@@ -22,6 +22,7 @@ describe('budgetViews — income earn-target boundaries (WHIT-69)', () => {
     expect(row.paceLabel).toBe(''); // WHIT-707: income has no pace line
     expect(row.over).toBe(false);
     expect(row.postedColor).not.toBe(RED);
+    expect(row.postedColor).toBe(C.accentSoft);
   });
 
   it('earned EXACTLY on the linear pace → no pace line (WHIT-707), still "to go"', () => {
