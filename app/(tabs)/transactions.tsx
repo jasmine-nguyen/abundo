@@ -331,21 +331,23 @@ export default function Transactions() {
             batch shows first; each tap appends the next, older batch. Hidden during a search
             (WHIT-576): the server already searched all history. */}
         {!showSpinner && !showError && hasMore && !allCaughtUp && !searchingServer && (
-          isLoadingMore ? (
-            <View testID="transactions-load-more-spinner" style={styles.loadMoreState}>
-              <ActivityIndicator color={C.accent} />
-            </View>
-          ) : (
-            <Pressable
-              testID="transactions-load-more"
-              onPress={loadMore}
-              accessibilityRole="button"
-              accessibilityLabel="Load older transactions"
-              style={({ pressed }) => [styles.loadMore, pressed && PRESSED]}
-            >
-              <Text style={styles.loadMoreText}>Load More</Text>
-            </Pressable>
-          )
+          <AskButtonClearance>
+            {isLoadingMore ? (
+              <View testID="transactions-load-more-spinner" style={styles.loadMoreState}>
+                <ActivityIndicator color={C.accent} />
+              </View>
+            ) : (
+              <Pressable
+                testID="transactions-load-more"
+                onPress={loadMore}
+                accessibilityRole="button"
+                accessibilityLabel="Load older transactions"
+                style={({ pressed }) => [styles.loadMore, pressed && PRESSED]}
+              >
+                <Text style={styles.loadMoreText}>Load More</Text>
+              </Pressable>
+            )}
+          </AskButtonClearance>
         )}
 
     </ScrollChromeHeader>
