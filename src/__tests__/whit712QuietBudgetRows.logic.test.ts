@@ -15,7 +15,7 @@ describe('budget rows only speak up when off pace (WHIT-712)', () => {
   it('under plan and over plan still speak', () => {
     const ahead = rowFor({ budget: 100, posted: 30, pending: 0 });
     expect(ahead.paceLabel).toBe('$20 under plan');
-    expect(ahead.paceColor).toBe(C.textInfo);
+    expect(ahead.paceColor).toBe(C.textDim);
     const behind = rowFor({ budget: 100, posted: 85, pending: 0 });
     expect(behind.paceLabel).toBe('$35 over plan');
     expect(behind.paceColor).toBe(C.textInfo);

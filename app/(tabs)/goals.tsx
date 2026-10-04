@@ -10,6 +10,7 @@ import { MONTHS, formatDayMonthYear, parseISODate } from '../../src/dateutil';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { Bar, RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/components/ui';
 import { SettingsButton } from '../../src/components/SettingsButton';
+import { AskButtonClearance } from '../../src/chat/AskButton';
 import { Celebration } from '../../src/components/Celebration';
 import { PayoffSummary } from '../../src/components/PayoffSummary';
 
@@ -148,93 +149,95 @@ export default function Goals() {
             )}
           </Pressable>
 
-          {goals.length === 0 ? (
-            // WHIT-295: no "No goals yet" card — the mortgage above IS a goal. Just a short additive
-            // invite to track more alongside it.
-            <Text testID="goals-empty-hint" style={styles.emptyHint}>
-              The mortgage is your first goal. Add a savings target or another debt to pay down, and we'll show how far you've come and how much to set aside each payday.
-            </Text>
-          ) : (
-            goalViews.map(({ goal, view: v }) => {
-              const pct = v.progress != null ? Math.round(v.progress * 100) : null;
-              const grow = goal.direction === 'grow';
-              // A manual goal (no synced account) keeps its own balance — show when it was last
-              // set + an in-place "Update balance" affordance. Synced goals track the live feed.
-              const manual = !goal.account_id;
-              const stale = manual && balanceIsStale(goal.manual_as_of);
-              return (
-                <Pressable
-                  key={goal.id}
-                  testID={`goal-card-${goal.id}`}
-                  onPress={() => router.push(`/goal/edit?id=${encodeURIComponent(goal.id)}`)}
-                  style={styles.goalCard}
-                >
-                  <View style={styles.goalHead}>
-                    <View style={styles.goalChip}><Icon name={goal.icon} size={22} color={C.accentSoft} /></View>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.goalName} numberOfLines={1}>{goal.name}</Text>
-                      <Text style={styles.goalSub}>
-                        {grow ? 'Saving toward' : 'Paying down'} {fmt(goal.target_amount)} · by {byLabel(goal.target_date)}
+          <AskButtonClearance>
+            {goals.length === 0 ? (
+              // WHIT-295: no "No goals yet" card — the mortgage above IS a goal. Just a short additive
+              // invite to track more alongside it.
+              <Text testID="goals-empty-hint" style={styles.emptyHint}>
+                The mortgage is your first goal. Add a savings target or another debt to pay down, and we'll show how far you've come and how much to set aside each payday.
+              </Text>
+            ) : (
+              goalViews.map(({ goal, view: v }) => {
+                const pct = v.progress != null ? Math.round(v.progress * 100) : null;
+                const grow = goal.direction === 'grow';
+                // A manual goal (no synced account) keeps its own balance — show when it was last
+                // set + an in-place "Update balance" affordance. Synced goals track the live feed.
+                const manual = !goal.account_id;
+                const stale = manual && balanceIsStale(goal.manual_as_of);
+                return (
+                  <Pressable
+                    key={goal.id}
+                    testID={`goal-card-${goal.id}`}
+                    onPress={() => router.push(`/goal/edit?id=${encodeURIComponent(goal.id)}`)}
+                    style={styles.goalCard}
+                  >
+                    <View style={styles.goalHead}>
+                      <View style={styles.goalChip}><Icon name={goal.icon} size={22} color={C.accentSoft} /></View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.goalName} numberOfLines={1}>{goal.name}</Text>
+                        <Text style={styles.goalSub}>
+                          {grow ? 'Saving toward' : 'Paying down'} {fmt(goal.target_amount)} · by {byLabel(goal.target_date)}
+                        </Text>
+                      </View>
+                      <Text style={styles.goalPct}>{pct != null ? `${pct}%` : '—'}</Text>
+                    </View>
+
+                    <View style={{ marginTop: 13 }}>
+                      {/* WHIT-486: feed the raw (unrounded) fill so a checkpoint dot never sits a
+                          pixel off the fill edge; the rounded % is only the headline number above. */}
+                      <Bar
+                        pct={v.progress != null ? v.progress * 100 : 0}
+                        color={grow ? C.goodBright : C.purple}
+                        height={10}
+                        markers={v.checkpointMarkers}
+                      />
+                    </View>
+
+                    {/* WHIT-486: the count travels with the dots — both show only when the bar has a
+                        scale to place them on (markers non-empty), so it's never "N reached" + no dots. */}
+                    {v.checkpointMarkers.length > 0 && v.checkpointsReached != null && (
+                      <Text testID={`goal-checkpoints-${goal.id}`} style={styles.goalCheckpoints}>
+                        {v.checkpointsReached} of {v.checkpointsTotal} reached
+                      </Text>
+                    )}
+
+                    <View style={styles.goalFoot}>
+                      <Text style={styles.goalFootL}>
+                        {v.pacePerPayday != null ? `${fmt(v.pacePerPayday)} / payday` : 'Waiting on your balance'}
+                      </Text>
+                      <Text style={styles.goalFootR}>
+                        {v.paydaysLeft > 0 ? `${v.paydaysLeft} payday${v.paydaysLeft === 1 ? '' : 's'} left` : 'due now'}
                       </Text>
                     </View>
-                    <Text style={styles.goalPct}>{pct != null ? `${pct}%` : '—'}</Text>
-                  </View>
 
-                  <View style={{ marginTop: 13 }}>
-                    {/* WHIT-486: feed the raw (unrounded) fill so a checkpoint dot never sits a
-                        pixel off the fill edge; the rounded % is only the headline number above. */}
-                    <Bar
-                      pct={v.progress != null ? v.progress * 100 : 0}
-                      color={grow ? C.goodBright : C.purple}
-                      height={10}
-                      markers={v.checkpointMarkers}
-                    />
-                  </View>
-
-                  {/* WHIT-486: the count travels with the dots — both show only when the bar has a
-                      scale to place them on (markers non-empty), so it's never "N reached" + no dots. */}
-                  {v.checkpointMarkers.length > 0 && v.checkpointsReached != null && (
-                    <Text testID={`goal-checkpoints-${goal.id}`} style={styles.goalCheckpoints}>
-                      {v.checkpointsReached} of {v.checkpointsTotal} reached
-                    </Text>
-                  )}
-
-                  <View style={styles.goalFoot}>
-                    <Text style={styles.goalFootL}>
-                      {v.pacePerPayday != null ? `${fmt(v.pacePerPayday)} / payday` : 'Waiting on your balance'}
-                    </Text>
-                    <Text style={styles.goalFootR}>
-                      {v.paydaysLeft > 0 ? `${v.paydaysLeft} payday${v.paydaysLeft === 1 ? '' : 's'} left` : 'due now'}
-                    </Text>
-                  </View>
-
-                  {manual && (
-                    <View style={styles.manualRow}>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={styles.asOf} numberOfLines={1}>
-                          {goal.manual_as_of ? `Balance as of ${formatDayMonthYear(goal.manual_as_of)}` : 'Balance not set'}
-                        </Text>
-                        {stale && <Text style={styles.staleTag}>Haven’t updated in a while</Text>}
+                    {manual && (
+                      <View style={styles.manualRow}>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={styles.asOf} numberOfLines={1}>
+                            {goal.manual_as_of ? `Balance as of ${formatDayMonthYear(goal.manual_as_of)}` : 'Balance not set'}
+                          </Text>
+                          {stale && <Text style={styles.staleTag}>Haven’t updated in a while</Text>}
+                        </View>
+                        <Pressable
+                          testID={`goal-balance-${goal.id}`}
+                          onPress={() => s.openGoalBalance(goal.id)}
+                          hitSlop={8}
+                          style={styles.updateBtn}
+                        >
+                          <Text style={styles.updateText}>Update balance</Text>
+                        </Pressable>
                       </View>
-                      <Pressable
-                        testID={`goal-balance-${goal.id}`}
-                        onPress={() => s.openGoalBalance(goal.id)}
-                        hitSlop={8}
-                        style={styles.updateBtn}
-                      >
-                        <Text style={styles.updateText}>Update balance</Text>
-                      </Pressable>
-                    </View>
-                  )}
-                </Pressable>
-              );
-            })
-          )}
+                    )}
+                  </Pressable>
+                );
+              })
+            )}
 
-          <Pressable testID="add-goal-cta" onPress={() => router.push('/goal/edit')} style={styles.addGoal}>
-            <Glyph name="plus" size={18} color={C.accentSoft} />
-            <Text style={styles.addGoalText}>Add a goal</Text>
-          </Pressable>
+            <Pressable testID="add-goal-cta" onPress={() => router.push('/goal/edit')} style={styles.addGoal}>
+              <Glyph name="plus" size={18} color={C.accentSoft} />
+              <Text style={styles.addGoalText}>Add a goal</Text>
+            </Pressable>
+          </AskButtonClearance>
         </>
       )}
     </ScrollChromeHeader>

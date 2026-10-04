@@ -13,7 +13,7 @@ describe('pace words (WHIT-730)', () => {
     const overPlan = budgetRowFor({ budget: 100, posted: 85, pending: 0 });
     expect(overPlan.paceColor).toBe(C.textInfo);
     const underPlan = budgetRowFor({ budget: 100, posted: 20, pending: 0 });
-    expect(underPlan.paceColor).toBe(C.textInfo);
+    expect(underPlan.paceColor).toBe(C.textDim);
   });
 
   it('[A2] within 50c of the plan says nothing; pending counts toward "over plan"', () => {

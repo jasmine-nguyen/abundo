@@ -9,8 +9,9 @@ import { useTransactionsScreenData, useUncategorizedCount, useUncategorizedMerch
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { useDebouncedValue } from '../../src/hooks/useDebouncedValue';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { ASK_BUTTON_CLEARANCE } from '../../src/motion/useNavBarsHeader';
+import { ASK_BUTTON_BOTTOM_CLEARANCE } from '../../src/motion/useNavBarsHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
+import { AskButtonClearance } from '../../src/chat/AskButton';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { SettingsButton } from '../../src/components/SettingsButton';
 import { HeaderTextButton } from '../../src/components/ui';
@@ -243,21 +244,25 @@ export default function Transactions() {
           error={error}
         />
 
-        {!showSpinner && !showError && groups.map((g) => (
-          <View key={g.label} style={{ marginTop: 18 }}>
-            <Text style={styles.groupLabel}>{g.label}</Text>
-            {g.items.map((t) => (
-              <TransactionRow
-                key={t.transaction_id}
-                t={t}
-                category={category}
-                selectable={selectionMode}
-                selected={selected.has(t.transaction_id)}
-                onToggleSelect={() => toggleSelect(t.transaction_id)}
-              />
+        {!showSpinner && !showError && groups.length > 0 && (
+          <AskButtonClearance>
+            {groups.map((g) => (
+              <View key={g.label} style={{ marginTop: 18 }}>
+                <Text style={styles.groupLabel}>{g.label}</Text>
+                {g.items.map((t) => (
+                  <TransactionRow
+                    key={t.transaction_id}
+                    t={t}
+                    category={category}
+                    selectable={selectionMode}
+                    selected={selected.has(t.transaction_id)}
+                    onToggleSelect={() => toggleSelect(t.transaction_id)}
+                  />
+                ))}
+              </View>
             ))}
-          </View>
-        ))}
+          </AskButtonClearance>
+        )}
 
         {!showSpinner && !showError && searchPending && (
           <View testID="transactions-searching" style={styles.searchStatus}>
@@ -326,21 +331,23 @@ export default function Transactions() {
             batch shows first; each tap appends the next, older batch. Hidden during a search
             (WHIT-576): the server already searched all history. */}
         {!showSpinner && !showError && hasMore && !allCaughtUp && !searchingServer && (
-          isLoadingMore ? (
-            <View testID="transactions-load-more-spinner" style={styles.loadMoreState}>
-              <ActivityIndicator color={C.accent} />
-            </View>
-          ) : (
-            <Pressable
-              testID="transactions-load-more"
-              onPress={loadMore}
-              accessibilityRole="button"
-              accessibilityLabel="Load older transactions"
-              style={({ pressed }) => [styles.loadMore, pressed && PRESSED]}
-            >
-              <Text style={styles.loadMoreText}>Load More</Text>
-            </Pressable>
-          )
+          <AskButtonClearance>
+            {isLoadingMore ? (
+              <View testID="transactions-load-more-spinner" style={styles.loadMoreState}>
+                <ActivityIndicator color={C.accent} />
+              </View>
+            ) : (
+              <Pressable
+                testID="transactions-load-more"
+                onPress={loadMore}
+                accessibilityRole="button"
+                accessibilityLabel="Load older transactions"
+                style={({ pressed }) => [styles.loadMore, pressed && PRESSED]}
+              >
+                <Text style={styles.loadMoreText}>Load More</Text>
+              </Pressable>
+            )}
+          </AskButtonClearance>
         )}
 
     </ScrollChromeHeader>
@@ -380,7 +387,7 @@ const styles = StyleSheet.create({
   // WHIT-291: header Select/Cancel button.
   // Extra bottom padding so the last rows can scroll clear of the floating action bar and the
   // Ask pill (card 609).
-  contentWithBar: { paddingBottom: 108 + ASK_BUTTON_CLEARANCE },
+  contentWithBar: { paddingBottom: 108 + ASK_BUTTON_BOTTOM_CLEARANCE },
   actionBar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingTop: 12, paddingHorizontal: 18, backgroundColor: '#161620', borderTopWidth: 1, borderTopColor: C.hairline },
   actionCount: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: C.textMid },
   actionBtn: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 13, backgroundColor: C.accent },

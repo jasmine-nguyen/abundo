@@ -2064,7 +2064,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     if (over) {
       if (spreadPrefill !== null) { paceLabel = 'Spread it over pay cycles →'; paceColor = C.accentSoft; }
     } else if (behindPace) paceLabel = fmt(spent - target) + ' over plan';
-    else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under plan'; }
+    else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under plan'; paceColor = C.textDim; }
     // "of" shows the AVAILABLE envelope so it reconciles with the remaining amount (available −
     // spent). `spent` includes pending; when some is pending, name it too (as Insights does).
     let spentLabel = `${fmtExact(spent)} of ${fmtSigned(available)}`;

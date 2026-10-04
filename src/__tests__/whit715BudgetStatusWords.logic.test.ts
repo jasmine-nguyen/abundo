@@ -12,7 +12,7 @@ describe('budget status words say good or bad plainly (WHIT-715)', () => {
   it('spending rows read "under plan" when under and "over plan" when over, both muted', () => {
     const ahead = rowFor({ budget: 100, posted: 30, pending: 0 });
     expect(ahead.paceLabel).toBe('$20 under plan');
-    expect(ahead.paceColor).toBe(C.textInfo);
+    expect(ahead.paceColor).toBe(C.textDim);
     const behind = rowFor({ budget: 100, posted: 85, pending: 0 });
     expect(behind.paceLabel).toBe('$35 over plan');
     expect(behind.paceColor).toBe(C.textInfo);

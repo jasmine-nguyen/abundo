@@ -11,7 +11,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { TabBar } from '../../app/(tabs)/_layout';
 import { ChatProvider } from '../chat/ChatContext';
-import { ASK_BUTTON_CLEARANCE } from '../motion/useNavBarsHeader';
+import { ASK_BUTTON_BOTTOM_CLEARANCE } from '../motion/useNavBarsHeader';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
@@ -68,5 +68,5 @@ it('the circle sits inside the extra list clearance, so the last row can scroll 
   const style = flat(button.props.style);
   const barHeight = 90;
   const topAboveBar = style.bottom - barHeight + style.height;
-  expect(topAboveBar).toBeLessThanOrEqual(ASK_BUTTON_CLEARANCE);
+  expect(topAboveBar).toBeLessThanOrEqual(ASK_BUTTON_BOTTOM_CLEARANCE);
 });

@@ -13,6 +13,7 @@
 //
 // (Not a *.test file, so the jest testMatch never runs it as a suite.)
 import React from 'react';
+import { StyleSheet } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Budgets from '../../../app/(tabs)/budgets';
@@ -55,4 +56,13 @@ export async function showBudgets(
 export function heroTotals() {
   const value = (id: string) => screen.queryByTestId(`budgets-hero-${id}`)?.props.children as string | undefined;
   return { spent: value('spent'), budget: value('budget'), payday: value('payday') };
+}
+
+// WHIT-730 follow-up: a budget row's effective left/right padding, by its testID.
+export function sidePadding(testID: string) {
+  const style = StyleSheet.flatten(screen.getByTestId(testID).props.style);
+  return {
+    left: style.paddingLeft ?? style.paddingHorizontal ?? style.padding,
+    right: style.paddingRight ?? style.paddingHorizontal ?? style.padding,
+  };
 }

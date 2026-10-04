@@ -28,7 +28,7 @@ describe('budget rows: calm pace line and a tick that matches it (WHIT-732)', ()
   it('the "under plan" line stays, muted', () => {
     const row = rowFor({ budget: 100, posted: 30, pending: 0 });
     expect(row.paceLabel).toBe('$20 under plan');
-    expect(row.paceColor).toBe(C.textInfo);
+    expect(row.paceColor).toBe(C.textDim);
   });
 
   it('the tick sits on the base pace target, on a bar scaled to the envelope', () => {

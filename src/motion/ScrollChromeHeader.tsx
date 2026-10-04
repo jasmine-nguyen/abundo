@@ -10,6 +10,8 @@ import { View, Text, Animated, ScrollView, StyleSheet, StyleProp, ViewStyle, Ref
 import { C, FONT } from '../theme';
 import { useNavBarsHeader, floatingHeaderStyle } from './useNavBarsHeader';
 
+export const SCREEN_PADDING = 18;
+
 export function ScrollChromeHeader({
   title, left, right, refreshControl, contentContainerStyle, keyboardShouldPersistTaps, children,
 }: {
@@ -42,7 +44,7 @@ export function ScrollChromeHeader({
         // Flatten to a single object so `contentContainerStyle.paddingTop/Bottom` stays
         // directly readable (the motion/clearance tests inspect it), while still folding in
         // a screen's extra style (e.g. Budgets' flexGrow for its centered spinner/error).
-        contentContainerStyle={StyleSheet.flatten([{ paddingHorizontal: 18, ...contentPadding }, contentContainerStyle])}
+        contentContainerStyle={StyleSheet.flatten([{ paddingHorizontal: SCREEN_PADDING, ...contentPadding }, contentContainerStyle])}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps={keyboardShouldPersistTaps}
         refreshControl={refreshControl?.(headerHeight)}
