@@ -10,7 +10,7 @@ import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { COFFEE, GROCERIES, DINING } from './support/categories';
 import { seedBudgetsTab } from './support/budgetsTab';
-import { renderLoadedBudgetsWithQueries } from './support/budgetsScreen';
+import { renderLoadedBudgetsWithQueries, sidePadding } from './support/budgetsScreen';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -22,14 +22,6 @@ beforeEach(() => {
   resetRouter();
   resetAuth();
 });
-
-const sidePadding = (testID: string) => {
-  const style = StyleSheet.flatten(screen.getByTestId(testID).props.style);
-  return {
-    left: style.paddingLeft ?? style.paddingHorizontal ?? style.padding,
-    right: style.paddingRight ?? style.paddingHorizontal ?? style.padding,
-  };
-};
 
 it('a slim $0 budget row lines up with full rows, and "under plan" is muted while "over plan" stays amber', async () => {
   // Halfway through a 14-day cycle: a $100 budget's pace target is $50.

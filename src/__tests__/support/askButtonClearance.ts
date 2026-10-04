@@ -7,9 +7,14 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import { ASK_BUTTON_CLEARANCE, ASK_BUTTON_EDGE, ASK_BUTTON_SIZE } from '../../chat/AskButton';
 import { SCREEN_PADDING } from '../../motion/ScrollChromeHeader';
 
-export function expectClearsAskButton(node: ReactTestInstance) {
+export function findAskButtonClearance(node: ReactTestInstance) {
   let host: ReactTestInstance | null = node;
   while (host && !(typeof host.type === 'string' && host.props.testID === 'ask-button-clearance')) host = host.parent;
+  return host;
+}
+
+export function expectClearsAskButton(node: ReactTestInstance) {
+  const host = findAskButtonClearance(node);
   expect(host).not.toBeNull();
 
   expect(typeof ASK_BUTTON_CLEARANCE).toBe('number');
