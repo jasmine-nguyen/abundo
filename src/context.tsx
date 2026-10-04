@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
-import { C, tint, fmt, fmtExact, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
+import { C, tint, fmt, fmtExact, fmtSigned,ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
 import { writeFailureMessage, ApiError } from './apiError';
 import { MONTHS, formatDayMonth, formatWeekdayShort, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, deleteTransaction as apiDeleteTransaction, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup } from './api';
@@ -1906,6 +1906,8 @@ export interface BudgetView {
   spentLabel: string; remainAmount: string; remainLabel: string; remainColor: string;
   postedPct: number; pendingPct: number; targetPct: number; postedColor: string;
   pendingTint: string; paceLabel: string; paceColor: string; over: boolean;
+  // WHIT-728: 'Includes spread bills' when a spread plan changes this cycle's budget, else ''.
+  spreadNote: string;
   // Sub-category tree (WHIT-221): `depth` is the indent level — the number of the
   // row's ancestors that are ALSO budgeted rows (0 = top-level or a sub whose parent
   // isn't budgeted). `parentId` is the nearest budgeted ancestor's id (the row it
@@ -2033,7 +2035,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
         remainColor: C.good,
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: BAR_FILL,
         pendingTint: tint(BAR_FILL, 0.45), paceLabel: '', paceColor: C.textInfo, over: false,
-        depth, parentId,
+        spreadNote: '', depth, parentId,
         section: 'earning', showTarget: false, spreadPrefill: null, behindPace: false,
       });
       group(parentId, b.id);
@@ -2063,14 +2065,16 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' ahead of pace'; }
     // "of" shows the AVAILABLE envelope so it reconciles with the remaining amount (available −
     // spent). `spent` includes pending; when some is pending, name it too (as Insights does).
-    let spentLabel = `${fmtExact(spent)} of ${fmt(available)}`;
+    let spentLabel = `${fmtExact(spent)} of ${fmtSigned(available)}`;
     if (pending > 0.005) spentLabel += ` · ${fmtExact(pending)} pending`;
+    let spreadNote = '';
+    if (b.spread && Math.abs(b.spreadAdjustment) > 0.005) spreadNote = 'Includes spread bills';
     viewById.set(b.id, {
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
       spentLabel, remainAmount: fmtExact(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,
       postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: over ? C.bad : BAR_FILL,
       pendingTint: tint(over ? C.bad : BAR_FILL, 0.45), paceLabel, paceColor, over,
-      depth, parentId,
+      spreadNote, depth, parentId,
       section: 'spending', showTarget: true, spreadPrefill, behindPace,
     });
     group(parentId, b.id);
@@ -2962,7 +2966,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   else if (behindPace) { statusLabel = 'Behind pace — ease up'; statusColor = C.warn; }
   return {
     ...common,
-    spentBig: fmtExact(spent), ofBudget: 'of ' + fmt(available),
+    spentBig: fmtExact(spent), ofBudget: 'of ' + fmtSigned(available),
     statusLabel,
     statusColor,
     postedPct, pendingPct,

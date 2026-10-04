@@ -635,16 +635,16 @@ describe('budgetViews/budgetDetail — negative server available (WHIT-549 gap)'
     expect(row.over).toBe(true);
     expect(row.remainLabel).toBe('over');
     expect(row.postedPct).toBeCloseTo(20, 5);   // finite AND correct: den fell back to the base target
-    // "of" reflects the SERVER envelope (fmt drops the sign, so it prints as $50) — proving it isn't
-    // the +100 the fallback parts-sum would have produced.
-    expect(row.spentLabel).toBe('$20 of $50');
+    // "of" reflects the SERVER envelope, signed since WHIT-728 — proving it isn't the +100 the
+    // fallback parts-sum would have produced.
+    expect(row.spentLabel).toBe('$20 of −$50');
   });
 
   it('[Gc2] budgetDetail reads a negative server available as over budget', () => {
     const d = budgetDetail(makeState({ categories: [cat()],
       budgets: [budget({ id: 'coffee', budget: 100, posted: 0, pending: 0, available: -50 })],
       cycleLen: 14, daysLeft: 7 }), 'coffee')!;
-    expect(d.ofBudget).toBe('of $50');       // the server envelope, not the fallback +100
+    expect(d.ofBudget).toBe('of −$50');      // the server envelope, not the fallback +100
     expect(d.statusLabel).toBe('Over budget — ease up');
   });
 

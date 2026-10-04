@@ -121,6 +121,12 @@ export function fmt(n: number): string {
   return '$' + Math.round(Math.abs(n)).toLocaleString('en-US');
 }
 
+// Signed whole dollars with a real minus (−), for a budget that can go negative (WHIT-728).
+export function fmtSigned(n: number): string {
+  if (Math.round(n) < 0) return '−' + fmt(n);
+  return fmt(n);
+}
+
 // The refund / remainder-"Other" / reversed-source / normal row convention shared by the Insights
 // category list and the Earned/Spent breakdown screen (WHIT-375/376). A refund reads as an UNSIGNED
 // green credit (fmt drops the sign; the green carries "credit"); a remainder "Other" plug is dimmed
