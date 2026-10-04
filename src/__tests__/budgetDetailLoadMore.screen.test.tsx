@@ -33,6 +33,7 @@ jest.mock('expo-router', () => ({
 }));
 
 import BudgetDetail from '../../app/budget/[id]';
+import { BudgetBar } from '../components/ui';
 import { resetAuth } from './support/authMock';
 import { pressAlertButton, spyOnAlert } from './support/alertSpy';
 import { installFakeServer } from './support/fakeServer';
@@ -344,5 +345,23 @@ describe('budgetDetailRowTargets — shared-row integration gaps', () => {
 
     fireEvent.press(screen.getByLabelText('View transaction details'));
     expect(mockPush).toHaveBeenCalledWith('/transaction/t1');    // arrow is the sole refile entry
+  });
+});
+
+// ===== WHIT-730 QA: the "today" tick and its "today's plan" label hide once over budget =====
+describe('WHIT-730 — today tick on the budget screen', () => {
+  it("[A18] (P0) an over-budget screen draws no tick and no \"today's plan\"", async () => {
+    seedDetail({ budget: { target: 80, posted: 95, pending: 0 }, transactions: [] });
+    await renderWithQueries(<BudgetDetail />);
+    await screen.findByText('Over budget — ease up');
+    expect(screen.queryByText("today's plan")).toBeNull();
+    expect(screen.UNSAFE_getByType(BudgetBar).props.showTarget).toBe(false);
+  });
+
+  it("[A19] (P1) an under-budget screen keeps the tick and \"today's plan\"", async () => {
+    seedDetail({ budget: { target: 80, posted: 40, pending: 0 }, transactions: [] });
+    await renderWithQueries(<BudgetDetail />);
+    expect(await screen.findByText("today's plan")).toBeTruthy();
+    expect(screen.UNSAFE_getByType(BudgetBar).props.showTarget).toBe(true);
   });
 });

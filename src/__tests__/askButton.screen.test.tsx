@@ -5,9 +5,11 @@ import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { fireEvent, screen } from '@testing-library/react-native';
 
-// The bars are scrolled away: each slide sits at its hidden end (outputRange[0]).
+// By default the bars are scrolled away: each slide sits at its hidden end (outputRange[0]).
+// A test sets mockBarsShown to read the shown end (outputRange[1]) instead.
+let mockBarsShown = false;
 jest.mock('../motion/NavBarsContext', () => ({
-  useNavBars: () => ({ visibility: { interpolate: ({ outputRange }: { outputRange: number[] }) => outputRange[0] } }),
+  useNavBars: () => ({ visibility: { interpolate: ({ outputRange }: { outputRange: number[] }) => outputRange[mockBarsShown ? 1 : 0] } }),
 }));
 jest.mock('expo-router', () => ({ Tabs: Object.assign(() => null, { Screen: () => null }) }));
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -21,7 +23,10 @@ import { resetAuth } from './support/authMock';
 installFakeServer();
 useTestQueryClient();
 
-beforeEach(() => resetAuth());
+beforeEach(() => {
+  resetAuth();
+  mockBarsShown = false;
+});
 
 let chatOpen = false;
 function Probe() {
@@ -57,4 +62,18 @@ it('WHIT-730: the Ask button slides off-screen with the bar, and tab labels cap 
 
   const label = screen.getByText('Transactions');
   expect(label.props).toMatchObject({ maxFontSizeMultiplier: 1.2, adjustsFontSizeToFit: true, numberOfLines: 1 });
+});
+
+it('[A20] WHIT-730: with the bars shown the Ask button sits in place, and its full-screen wrapper lets taps through', async () => {
+  mockBarsShown = true;
+  await renderWithQueries(<ChatProvider><TabBar {...barProps} /><Probe /></ChatProvider>);
+
+  const slideView = screen.getByTestId('ask-button-slide');
+  const slide = Object.assign({}, ...[slideView.props.style].flat(3).filter(Boolean));
+  expect(slide.transform).toEqual([{ translateY: 0 }]);
+  // The wrapper covers the screen, so it must pass taps to the list and tabs beneath it.
+  expect(slideView.props.pointerEvents).toBe('box-none');
+
+  fireEvent.press(screen.getByLabelText('Ask about your spending'));
+  expect(chatOpen).toBe(true);
 });
