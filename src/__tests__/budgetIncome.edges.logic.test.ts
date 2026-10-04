@@ -4,25 +4,18 @@
 // and budgetDetail. All assert against the real exported selectors, so reverting the
 // income branch fails them.
 import { describe, it, expect } from '@jest/globals';
-import { budgetViews, budgetDetail } from '../context';
 import { C } from '../theme';
-import { makeState, cat, budget } from './factory';
+import { budgetDetailFor, budgetRowFor } from './support/budgetsTab';
+import { SALARY } from './support/categories';
 
 const RED = C.bad;
-// Income category; colour deliberately NOT red so "colour is not red" tests can't
-// pass by accident on the category colour.
-const income = () => cat({ id: 'salary', name: 'Salary', color: '#7c8cff', bucket: 'Income' });
 
 // elapsed = (14 - 7)/14 = 0.5 → linear target = budget * 0.5 = 2500 for a 5000 floor.
-const viewState = (posted: number, pending = 0) => makeState({
-  categories: [income()],
-  budgets: [budget({ id: 'salary', budget: 5000, posted, pending })],
-  cycleLen: 14, daysLeft: 7,
-});
+const incomeRow = (posted: number, pending = 0) => budgetRowFor({ budget: 5000, posted, pending }, SALARY);
 
 describe('budgetViews — income earn-target boundaries (WHIT-69)', () => {
   it('earned EXACTLY at the floor → met, "above target", remain $0, green, not red', () => {
-    const row = budgetViews(viewState(5000)).rows[0];
+    const row = incomeRow(5000);
     expect(row.remainLabel).toBe('above target');
     expect(row.remainAmount).toBe('$0');           // actual - budget = 0
     expect(row.remainColor).toBe(C.good);
@@ -32,7 +25,7 @@ describe('budgetViews — income earn-target boundaries (WHIT-69)', () => {
   });
 
   it('earned EXACTLY on the linear pace → no pace line (WHIT-707), still "to go"', () => {
-    const row = budgetViews(viewState(2500)).rows[0]; // 2500 == elapsed*budget, < floor
+    const row = incomeRow(2500); // 2500 == elapsed*budget, < floor
     expect(row.paceLabel).toBe('');
     expect(row.remainLabel).toBe('to go');
     expect(row.remainColor).toBe(C.good); // remain amount is the cyan highlight
@@ -41,7 +34,7 @@ describe('budgetViews — income earn-target boundaries (WHIT-69)', () => {
   });
 
   it('ONLY pending earnings ($0 posted) → folded into "earned"', () => {
-    const row = budgetViews(viewState(0, 3000)).rows[0];
+    const row = incomeRow(0, 3000);
     expect(row.spentLabel).toBe('$3,000 earned'); // pending folded into earned, no breakout
     expect(row.postedPct).toBe(0);                  // nothing posted yet
     expect(row.pendingPct).toBe(60);                // 3000/5000 = 60%, not capped here
@@ -51,7 +44,7 @@ describe('budgetViews — income earn-target boundaries (WHIT-69)', () => {
 
   it('bar segments never exceed 100% — pendingPct is capped at 100 - postedPct', () => {
     // posted 4000 (80%) + pending 2000 (raw 40%) → capped to 20% so the bar sums to 100.
-    const row = budgetViews(viewState(4000, 2000)).rows[0];
+    const row = incomeRow(4000, 2000);
     expect(row.postedPct).toBe(80);
     expect(row.pendingPct).toBe(20);                // min(40, 100-80), NOT 40
     expect(row.postedPct + row.pendingPct).toBeLessThanOrEqual(100);
@@ -60,11 +53,7 @@ describe('budgetViews — income earn-target boundaries (WHIT-69)', () => {
 });
 
 describe('budgetDetail — income earn-target with pending (WHIT-69)', () => {
-  const detail = (posted: number, pending = 0) => budgetDetail(makeState({
-    categories: [income()],
-    budgets: [budget({ id: 'salary', budget: 5000, posted, pending })],
-    cycleLen: 14, daysLeft: 7,
-  }), 'salary')!;
+  const detail = (posted: number, pending = 0) => budgetDetailFor({ budget: 5000, posted, pending }, undefined, SALARY);
 
   it('under target with pending → perDay-to-target uses the shortfall, pendingPct not capped', () => {
     const d = detail(1000, 500);                    // actual 1500, toGo 3500, 7 days left

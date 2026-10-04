@@ -7,7 +7,8 @@ import { elapsedFrac } from '../payCycle';
 import type { Budget } from '../model';
 import { C } from '../theme';
 import { makeState, cat, budget, txn } from './factory';
-import { budgetDetailFor as detail } from './support/budgetsTab';
+import { budgetDetailFor as detail, budgetRowFor } from './support/budgetsTab';
+import { SALARY } from './support/categories';
 
 describe('elapsedFrac', () => {
   it('is (cycleLen - daysLeft) / cycleLen', () => {
@@ -85,17 +86,13 @@ describe('budgetViews', () => {
 // GOOD, so the direction and colours invert — never the red "over budget" branch —
 // and income rows are kept OUT of the spend hero totals.
 const RED = C.bad;
-const income = (over = {}) => cat({ id: 'salary', name: 'Salary', color: '#35d9a0', bucket: 'Income', ...over });
 
 describe('budgetViews — income earn-targets (over-is-good)', () => {
   // elapsed = 0.5, budget 5000 → linear target 2500.
-  const state = (posted: number, pending = 0) => makeState({
-    categories: [income()], budgets: [budget({ id: 'salary', budget: 5000, posted, pending })],
-    cycleLen: 14, daysLeft: 7,
-  });
+  const incomeRow = (posted: number, pending = 0) => budgetRowFor({ budget: 5000, posted, pending }, SALARY);
 
   it('under target early in the cycle is never red and reads "to go"', () => {
-    const row = budgetViews(state(1000)).rows[0];
+    const row = incomeRow(1000);
     expect(row.over).toBe(false);
     expect(row.remainLabel).toBe('to go');
     expect(row.remainAmount).toBe('$4,000');       // 5000 - 1000 still to earn
@@ -107,14 +104,14 @@ describe('budgetViews — income earn-targets (over-is-good)', () => {
   });
 
   it('ahead of the linear pace still shows no pace line, still not met', () => {
-    const row = budgetViews(state(3000)).rows[0];   // 3000 > 2500 target, < 5000 goal
+    const row = incomeRow(3000);   // 3000 > 2500 target, < 5000 goal
     expect(row.paceLabel).toBe('');
     expect(row.remainLabel).toBe('to go');
     expect(row.over).toBe(false);
   });
 
   it('meeting or exceeding the target is green and reads "above target"', () => {
-    const row = budgetViews(state(6000)).rows[0];   // earned 6000 ≥ 5000 floor
+    const row = incomeRow(6000);   // earned 6000 ≥ 5000 floor
     expect(row.remainLabel).toBe('above target');
     expect(row.remainAmount).toBe('$1,000');        // 6000 - 5000 over the floor
     expect(row.remainColor).toBe(C.good);
@@ -122,14 +119,14 @@ describe('budgetViews — income earn-targets (over-is-good)', () => {
   });
 
   it('labels the earned amount as "earned", not "spent"', () => {
-    expect(budgetViews(state(1000)).rows[0].spentLabel).toBe('$1,000 earned');
+    expect(incomeRow(1000).spentLabel).toBe('$1,000 earned');
     // earned already includes pending (1000 + 200), no separate pending breakout.
-    expect(budgetViews(state(1000, 200)).rows[0].spentLabel).toBe('$1,200 earned');
+    expect(incomeRow(1000, 200).spentLabel).toBe('$1,200 earned');
   });
 
   it('excludes income rows from the spend hero totals but still lists them', () => {
     const s = makeState({
-      categories: [cat({ id: 'coffee' }), income()],
+      categories: [cat({ id: 'coffee' }), SALARY],
       budgets: [
         budget({ id: 'coffee', budget: 100, posted: 40, pending: 10 }),
         budget({ id: 'salary', budget: 5000, posted: 1000, pending: 0 }),
@@ -145,10 +142,7 @@ describe('budgetViews — income earn-targets (over-is-good)', () => {
 });
 
 describe('budgetDetail — income earn-targets', () => {
-  const incomeDetail = (posted: number) => budgetDetail(makeState({
-    categories: [income()], budgets: [budget({ id: 'salary', budget: 5000, posted, pending: 0 })],
-    cycleLen: 14, daysLeft: 7,
-  }), 'salary')!;
+  const incomeDetail = (posted: number) => detail({ budget: 5000, posted }, undefined, SALARY);
 
   it('under target: calm "keep earning" status, never red, reframed daily label', () => {
     const d = incomeDetail(1000);
