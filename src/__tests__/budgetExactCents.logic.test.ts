@@ -75,10 +75,10 @@ describe('budgetViews / budgetDetail — over-budget spend with cents (GAP)', ()
   it('[A15b] REGRESSION: the over-PACE arm (not over budget) still renders whole-dollar', () => {
     // budget 100, elapsed 0.5 → target 50. spent 60.25 is over PACE (>50) but under budget (<100),
     // so it hits the `spent - target` arm, which stayed on fmt. Guards that only the over-budget
-    // arm changed — this one must NOT sprout cents ('$10 behind pace', not '$10.25').
+    // arm changed — this one must NOT sprout cents ('$10 over plan', not '$10.25').
     const row = budgetViews(makeState({ categories: [cat()], budgets: [budget({ id: 'coffee', budget: 100, posted: 60.25, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
     expect(row.over).toBe(false);
-    expect(row.paceLabel).toBe('$10 behind pace');         // fmt arm — whole-dollar, unchanged
+    expect(row.paceLabel).toBe('$10 over plan');         // fmt arm — whole-dollar, unchanged
     expect(row.spentLabel).toBe('$60.25 of $100'); // spent figure still exact
     expect(row.remainAmount).toBe('$39.75');             // 100 - 60.25
   });

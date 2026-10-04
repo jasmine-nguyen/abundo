@@ -5,7 +5,7 @@ import { budgetViews, budgetDetail } from '../context';
 import { makeState, cat, budget } from './factory';
 
 describe('row and detail pace words agree (WHIT-715 QA)', () => {
-  // [A1] (P0) "behind pace" on the row ⇔ "Behind pace — ease up" in detail; "ahead of pace" ⇒ green detail.
+  // [A1] (P0) "over plan" on the row ⇔ "Over plan — ease up" in detail; "under plan" ⇒ green detail.
   it('[A1] behind/ahead on the row matches the detail status for every case in the grid', () => {
     let behindSeen = 0;
     let aheadSeen = 0;
@@ -21,10 +21,10 @@ describe('row and detail pace words agree (WHIT-715 QA)', () => {
             const row = budgetViews(state).rows[0];
             const detail = budgetDetail(state, 'coffee')!;
             const where = JSON.stringify({ daysLeft, posted, pending, carryover, row: row.paceLabel, detail: detail.statusLabel });
-            const rowBehind = row.paceLabel.endsWith(' behind pace');
-            expect([where, rowBehind]).toEqual([where, detail.statusLabel === 'Behind pace — ease up']);
+            const rowBehind = row.paceLabel.endsWith(' over plan');
+            expect([where, rowBehind]).toEqual([where, detail.statusLabel === 'Over plan — ease up']);
             if (rowBehind) behindSeen++;
-            if (row.paceLabel.endsWith(' ahead of pace')) {
+            if (row.paceLabel.endsWith(' under plan')) {
               aheadSeen++;
               expect([where, detail.statusLabel]).toEqual([where, 'On target — keep it up']);
             }

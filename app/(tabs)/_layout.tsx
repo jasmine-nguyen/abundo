@@ -53,6 +53,8 @@ export function TabBar({ state, navigation }: TabBarShape) {
   const [barHeight, setBarHeight] = useState(90);
   const onLayout = (e: LayoutChangeEvent) => setBarHeight(e.nativeEvent.layout.height);
   const translateY = visibility.interpolate({ inputRange: [0, 1], outputRange: [barHeight, 0] });
+  // Fully below the screen when hidden: the button's 16pt gap + its 48pt height, plus margin.
+  const askTranslateY = visibility.interpolate({ inputRange: [0, 1], outputRange: [barHeight + 16 + 64, 0] });
 
   return (
     <>
@@ -77,14 +79,17 @@ export function TabBar({ state, navigation }: TabBarShape) {
                 <Glyph name={meta.icon} size={24} color={color} />
                 {meta.name === 'transactions' && hasUncategorized && <View testID="tab-uncat-dot" style={styles.dot} />}
               </View>
-              <Text style={[styles.label, { color }]} numberOfLines={1}>{meta.label}</Text>
+              {/* Like Apple's tab bar, labels barely grow with text size; a long one shrinks instead of clipping. */}
+              <Text style={[styles.label, { color }]} numberOfLines={1} maxFontSizeMultiplier={1.2} adjustsFontSizeToFit minimumFontScale={0.8}>{meta.label}</Text>
             </Pressable>
           );
         })}
       </Animated.View>
-      {/* Card 609: the Ask pill sits 16pt above the bar and outside its slide, so it stays put
-          while the bar hides on scroll. barHeight already includes the bottom safe area. */}
-      <AskButton style={{ right: 18, bottom: barHeight + 16 }} />
+      {/* The Ask button sits 16pt above the bar and slides off-screen with it on scroll (WHIT-730),
+          so it doesn't cover row content mid-list. barHeight already includes the bottom safe area. */}
+      <Animated.View testID="ask-button-slide" pointerEvents="box-none" style={[StyleSheet.absoluteFill, { transform: [{ translateY: askTranslateY }] }]}>
+        <AskButton style={{ right: 18, bottom: barHeight + 16 }} />
+      </Animated.View>
     </>
   );
 }

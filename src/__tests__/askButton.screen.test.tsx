@@ -5,7 +5,10 @@ import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { fireEvent, screen } from '@testing-library/react-native';
 
-jest.mock('../motion/NavBarsContext', () => ({ useNavBars: () => ({ visibility: { interpolate: () => 0 } }) }));
+// The bars are scrolled away: each slide sits at its hidden end (outputRange[0]).
+jest.mock('../motion/NavBarsContext', () => ({
+  useNavBars: () => ({ visibility: { interpolate: ({ outputRange }: { outputRange: number[] }) => outputRange[0] } }),
+}));
 jest.mock('expo-router', () => ({ Tabs: Object.assign(() => null, { Screen: () => null }) }));
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -43,4 +46,15 @@ it('the tab bar renders the round Ask button above itself, and tapping it opens 
   expect(chatOpen).toBe(false);
   fireEvent.press(button);
   expect(chatOpen).toBe(true);
+});
+
+it('WHIT-730: the Ask button slides off-screen with the bar, and tab labels cap their text size', async () => {
+  await renderWithQueries(<ChatProvider><TabBar {...barProps} /></ChatProvider>);
+
+  // Hidden: 90pt bar + 16pt gap + 64 → fully below the screen edge.
+  const slide = Object.assign({}, ...[screen.getByTestId('ask-button-slide').props.style].flat(3).filter(Boolean));
+  expect(slide.transform).toEqual([{ translateY: 170 }]);
+
+  const label = screen.getByText('Transactions');
+  expect(label.props).toMatchObject({ maxFontSizeMultiplier: 1.2, adjustsFontSizeToFit: true, numberOfLines: 1 });
 });

@@ -1,7 +1,7 @@
 import type { BudgetView } from './context';
 
 // WHIT-727: the Budgets tab lists spending families (a row and its budgeted sub-rows) by
-// their most urgent row — over budget, then behind pace, then the rest — keeping category
+// their most urgent row — over budget, then over plan, then the rest — keeping category
 // order within each rank. Earning rows stay last, unchanged.
 function urgency(row: BudgetView): number {
   if (row.over) return 0;

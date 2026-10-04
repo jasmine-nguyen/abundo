@@ -31,11 +31,11 @@ describe('budgetViews — positive carryover (sinking fund)', () => {
 
   it('drawing down the buffer past the base target is NOT over budget, but pace still warns', () => {
     // spent 150 > base target 100, but < available 300 → calm on the ceiling. Pace is measured
-    // on the BASE target (100 * 0.5 = 50), so 150 is well behind pace (amber), independently.
+    // on the BASE target (100 * 0.5 = 50), so 150 is well over plan (amber), independently.
     const row = budgetViews(state({ budget: 100, posted: 150, pending: 0, rollover: true, carryover: 200 })).rows[0];
     expect(row.over).toBe(false);
     expect(row.remainAmount).toBe('$150');      // 300 - 150
-    expect(row.paceLabel).toContain('behind pace');  // pace stays on the base target
+    expect(row.paceLabel).toContain('over plan');  // pace stays on the base target
   });
 });
 
@@ -88,8 +88,8 @@ describe('budgetDetail — carryover', () => {
     const d = detail({ budget: 100, posted: 250, pending: 0, rollover: true, carryover: 200 });
     expect(d.ofBudget).toBe('of $300');                 // available
     // Not over budget (250 < 300), but far past this cycle's base pace (target = 100 × 0.5 = 50):
-    // amber "behind pace", matching the list's "behind pace" for the same drawn-down sinking fund.
-    expect(d.statusLabel).toBe('Behind pace — ease up');
+    // amber "over plan", matching the list's "over plan" for the same drawn-down sinking fund.
+    expect(d.statusLabel).toBe('Over plan — ease up');
     expect(d.carryoverLine).toBe('+$200 left over from past cycles');
   });
 

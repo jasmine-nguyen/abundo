@@ -19,40 +19,52 @@ const SECTIONS: { section: BudgetView['section']; heading: string }[] = [
   { section: 'earning', heading: 'EARNING' },
 ];
 
+function RowHeader({ b }: { b: BudgetView }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 13 }}>
+      <View style={[styles.chip, { backgroundColor: b.chipBg }]}><Icon name={b.icon} size={23} color={b.color} /></View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={styles.rowName}>{b.name}</Text>
+        <Text style={styles.rowSub}>{b.spentLabel}</Text>
+      </View>
+      <View style={styles.rowRight}>
+        <Text style={[styles.rowRemain, { color: b.remainColor }]} numberOfLines={1} adjustsFontSizeToFit>{b.remainAmount}</Text>
+        <Text style={styles.rowRemainLabel} numberOfLines={1}>{b.remainLabel}</Text>
+      </View>
+    </View>
+  );
+}
+
 function BudgetRow({ b }: { b: BudgetView }) {
   const router = useRouter();
+  const note = b.note ? <Text testID={`budget-row-note-${b.id}`} style={styles.note}>{b.note}</Text> : null;
   return (
-    <Pressable onPress={() => router.push(`/budget/${b.id}`)} style={({ pressed }) => [styles.row, b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }, pressed && PRESSED]}>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 13 }}>
-        <View style={[styles.chip, { backgroundColor: b.chipBg }]}><Icon name={b.icon} size={23} color={b.color} /></View>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.rowName}>{b.name}</Text>
-          <Text style={styles.rowSub}>{b.spentLabel}</Text>
-        </View>
-        <View style={{ alignItems: 'flex-end' }}>
-          <Text style={[styles.rowRemain, { color: b.remainColor }]}>{b.remainAmount}</Text>
-          <Text style={styles.rowRemainLabel}>{b.remainLabel}</Text>
-        </View>
-      </View>
-      <View style={{ marginTop: 15 }}>
-        <BudgetBar postedPct={b.postedPct} pendingPct={b.pendingPct} targetPct={b.targetPct} postedColor={b.postedColor} pendingTint={b.pendingTint} showTarget={b.showTarget} />
-        {b.paceLabel || b.note ? (
-          <View style={styles.paceRow}>
-            {b.note ? <Text testID={`budget-row-note-${b.id}`} style={styles.note}>{b.note}</Text> : null}
-            {b.paceLabel ? (
-              <View style={styles.pace}>
-                {b.spreadPrefill !== null ? (
-                  <Pressable testID={`budget-row-spread-${b.id}`} onPress={() => router.push(`/budget/spread?categoryId=${b.id}&prefill=${b.spreadPrefill}`)} hitSlop={8}>
+    <Pressable onPress={() => router.push(`/budget/${b.id}`)} style={({ pressed }) => [styles.row, b.unspent && styles.rowSlim, b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }, pressed && PRESSED]}>
+      <RowHeader b={b} />
+      {/* WHIT-730: nothing spent yet → a slim row with no bar or pace line, so active budgets stand out. */}
+      {b.unspent ? (
+        note && <View style={styles.slimNote}>{note}</View>
+      ) : (
+        <View style={{ marginTop: 15 }}>
+          <BudgetBar postedPct={b.postedPct} pendingPct={b.pendingPct} targetPct={b.targetPct} postedColor={b.postedColor} pendingTint={b.pendingTint} showTarget={b.showTarget} />
+          {b.paceLabel || b.note ? (
+            <View style={styles.paceRow}>
+              {note}
+              {b.paceLabel ? (
+                <View style={styles.pace}>
+                  {b.spreadPrefill !== null ? (
+                    <Pressable testID={`budget-row-spread-${b.id}`} onPress={() => router.push(`/budget/spread?categoryId=${b.id}&prefill=${b.spreadPrefill}`)} hitSlop={8}>
+                      <Text style={[styles.paceLabel, { color: b.paceColor }]}>{b.paceLabel}</Text>
+                    </Pressable>
+                  ) : (
                     <Text style={[styles.paceLabel, { color: b.paceColor }]}>{b.paceLabel}</Text>
-                  </Pressable>
-                ) : (
-                  <Text style={[styles.paceLabel, { color: b.paceColor }]}>{b.paceLabel}</Text>
-                )}
-              </View>
-            ) : null}
-          </View>
-        ) : null}
-      </View>
+                  )}
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+      )}
     </Pressable>
   );
 }
@@ -236,17 +248,21 @@ const styles = StyleSheet.create({
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 18, marginBottom: 8, marginHorizontal: 4 },
 
   row: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, padding: 16, paddingBottom: 14, marginBottom: 12 },
+  rowSlim: { padding: 12, paddingBottom: 12 },
+  slimNote: { marginTop: 6 },
+  // Caps the amount column so a big number shrinks instead of squeezing the name (large text).
+  rowRight: { alignItems: 'flex-end', maxWidth: '45%' },
   chip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   rowName: { fontFamily: FONT.body, fontSize: 16, fontWeight: '600', color: C.textBright, letterSpacing: -0.2 },
   rowSub: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 2 },
   rowRemain: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', letterSpacing: -0.5 },
-  rowRemainLabel: { fontFamily: FONT.body, fontSize: 11, color: C.textDim, fontWeight: '500', marginTop: 1 },
+  rowRemainLabel: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, fontWeight: '500', marginTop: 1 },
   // WHIT-281: a per-row "target" caption overlapped the right-aligned pace status when the
   // tick sat far right. Removed — only the pace status remains, right-aligned.
   paceRow: { minHeight: 18, marginTop: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   pace: { marginLeft: 'auto' },
-  note: { fontFamily: FONT.body, fontSize: 11.5, color: C.textDim },
-  paceLabel: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '700' },
+  note: { fontFamily: FONT.body, fontSize: 12, color: C.textDim },
+  paceLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700' },
 
   addBudget: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(C.accentAlt, 0.4), backgroundColor: tint(C.accentAlt, 0.07), borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   addBudgetText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSoft },

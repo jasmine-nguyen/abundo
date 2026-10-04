@@ -55,9 +55,9 @@ describe('budgetViews', () => {
   it('labels pace relative to the linear target (elapsed * budget)', () => {
     // elapsed 0.5, budget 100 → target 50.
     const under = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 20, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(under.paceLabel).toContain('ahead of pace');
+    expect(under.paceLabel).toContain('under plan');
     const over = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 80, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(over.paceLabel).toContain('behind pace');
+    expect(over.paceLabel).toContain('over plan');
     expect(over.over).toBe(false); // over PACE, not over budget
   });
 
@@ -281,25 +281,25 @@ describe('budgetDetail', () => {
 // per-cycle budget (b.budget * elapsed), so it stays consistent with the list on both screens.
 describe('budgetDetail — spend pace status', () => {
   // FAIL-ON-REVERT: today's binary code reads 3667 <= 3667 as green "On target — keep it up".
-  it('100% spent on day 1 reads amber "behind pace", not green (the mortgage bug)', () => {
+  it('100% spent on day 1 reads amber "over plan", not green (the mortgage bug)', () => {
     const d = detail({ budget: 3667, posted: 3667 }, { cycleLen: 30, daysLeft: 29 });
-    expect(d.statusLabel).toBe('Behind pace — ease up');
+    expect(d.statusLabel).toBe('Over plan — ease up');
     expect(d.statusColor).toBe(C.warn);
     expect(d.statusColor).not.toBe(C.good);
     expect(d.dailyLabel).toBe('Daily limit: $0'); // envelope gone → nothing left per day
   });
 
-  it('behind pace but still under budget → amber, and the daily limit is not zeroed', () => {
+  it('over plan but still under budget → amber, and the daily limit is not zeroed', () => {
     // elapsed 2/14 ≈ 0.143, target ≈ 14.3; spent 60 is well past pace, still under 100.
     const d = detail({ budget: 100, posted: 60 }, { cycleLen: 14, daysLeft: 12 });
-    expect(d.statusLabel).toBe('Behind pace — ease up');
+    expect(d.statusLabel).toBe('Over plan — ease up');
     expect(d.statusColor).toBe(C.warn);
     expect(d.dailyLabel).toContain('Daily limit');
     expect(d.dailyLabel).not.toBe('Daily limit: $0');
   });
 
-  it('on/ahead of pace late in the cycle stays green even near 100% (no over-flagging)', () => {
-    // elapsed 13/14 ≈ 0.929, target ≈ 92.9; spent 90 is ahead of pace → legit late spend.
+  it('on/under plan late in the cycle stays green even near 100% (no over-flagging)', () => {
+    // elapsed 13/14 ≈ 0.929, target ≈ 92.9; spent 90 is under plan → legit late spend.
     const d = detail({ budget: 100, posted: 90 }, { cycleLen: 14, daysLeft: 1 });
     expect(d.statusLabel).toBe('On target — keep it up');
     expect(d.statusColor).toBe(C.good);
@@ -313,12 +313,12 @@ describe('budgetDetail — spend pace status', () => {
   });
 
   it('pending spend counts toward pace (low posted, high pending crosses the target)', () => {
-    // elapsed 0.5, target 50; spent = posted 10 + pending 45 = 55 → behind pace → amber.
+    // elapsed 0.5, target 50; spent = posted 10 + pending 45 = 55 → over plan → amber.
     const d = budgetDetail(makeState({
       categories: [cat()], budgets: [budget({ id: 'coffee', budget: 100, posted: 10, pending: 45 })],
       cycleLen: 14, daysLeft: 7,
     }), 'coffee')!;
-    expect(d.statusLabel).toBe('Behind pace — ease up');
+    expect(d.statusLabel).toBe('Over plan — ease up');
     expect(d.statusColor).toBe(C.warn);
   });
 
@@ -338,7 +338,7 @@ describe('budgetDetail — spend pace status', () => {
   it('rollover: pace rides the base budget while over-budget uses the buffered envelope', () => {
     // available = 100 + 100 = 200 (not over), pace target = base 100 × 0.5 = 50; spent 120 → amber.
     const d = detail({ budget: 100, posted: 120, rollover: true, carryover: 100 }, { cycleLen: 14, daysLeft: 7 });
-    expect(d.statusLabel).toBe('Behind pace — ease up');
+    expect(d.statusLabel).toBe('Over plan — ease up');
     expect(d.statusColor).toBe(C.warn);
   });
 });

@@ -12,12 +12,12 @@ describe('pace deadband edges (WHIT-712)', () => {
   });
 
   // [A2] (P0) a cent past the deadband speaks, in the right colour.
-  it('[A2] a cent past ±$0.50 → behind pace (amber) / ahead of pace (muted)', () => {
+  it('[A2] a cent past ±$0.50 → over plan (amber) / under plan (muted)', () => {
     const behind = rowFor({ budget: 100, posted: 50.51, pending: 0 });
-    expect(behind.paceLabel).toMatch(/ behind pace$/);
+    expect(behind.paceLabel).toMatch(/ over plan$/);
     expect(behind.paceColor).toBe(C.warn);
     const ahead = rowFor({ budget: 100, posted: 49.49, pending: 0 });
-    expect(ahead.paceLabel).toMatch(/ ahead of pace$/);
+    expect(ahead.paceLabel).toMatch(/ under plan$/);
     expect(ahead.paceColor).toBe(C.textInfo);
   });
 
@@ -27,7 +27,7 @@ describe('pace deadband edges (WHIT-712)', () => {
     expect(row.over).toBe(false);
     expect(row.remainAmount).toBe('$0');
     expect(row.remainLabel).toBe('left');
-    expect(row.paceLabel).toBe('$50 behind pace');
+    expect(row.paceLabel).toBe('$50 over plan');
   });
 
   // [A4] (P1) a cents overspend with no spread: the exact amount once, on the red amount only.
