@@ -13,7 +13,7 @@ export const ASK_BUTTON_SIZE = 48;
 export const ASK_BUTTON_EDGE = 18;
 const ASK_BUTTON_LANE = ASK_BUTTON_EDGE + ASK_BUTTON_SIZE;
 // Lists stop the usual 12pt card gap short of the button's lane, so it never covers a row, even at rest.
-export const ASK_BUTTON_CLEARANCE = ASK_BUTTON_LANE - SCREEN_PADDING + 12;
+export const ASK_BUTTON_RIGHT_CLEARANCE = ASK_BUTTON_LANE - SCREEN_PADDING + 12;
 
 export function AskButtonClearance({ children }: { children: React.ReactNode }) {
   return <View testID="ask-button-clearance" style={styles.clearance}>{children}</View>;
@@ -44,5 +44,5 @@ const styles = StyleSheet.create({
     shadowColor: C.askShadow, shadowOpacity: 0.6, shadowRadius: 12, shadowOffset: { width: 0, height: 10 },
     elevation: 8,
   },
-  clearance: { paddingRight: ASK_BUTTON_CLEARANCE },
+  clearance: { paddingRight: ASK_BUTTON_RIGHT_CLEARANCE },
 });

@@ -13,7 +13,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { TabBar } from '../../app/(tabs)/_layout';
 import { ChatProvider } from '../chat/ChatContext';
-import { ASK_BUTTON_CLEARANCE } from '../chat/AskButton';
+import { ASK_BUTTON_RIGHT_CLEARANCE } from '../chat/AskButton';
 import { SCREEN_PADDING } from '../motion/ScrollChromeHeader';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
@@ -34,5 +34,5 @@ const barProps: React.ComponentProps<typeof TabBar> = {
 it('[A5] list rows stop 12pt short of the drawn Ask button', async () => {
   await renderWithQueries(<ChatProvider><TabBar {...barProps} /></ChatProvider>);
   const button = StyleSheet.flatten(screen.getByLabelText('Ask about your spending').props.style);
-  expect(SCREEN_PADDING + ASK_BUTTON_CLEARANCE).toBe(button.right + button.width + 12);
+  expect(SCREEN_PADDING + ASK_BUTTON_RIGHT_CLEARANCE).toBe(button.right + button.width + 12);
 });

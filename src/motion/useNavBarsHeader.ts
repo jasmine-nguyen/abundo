@@ -20,7 +20,7 @@ export const TAB_BAR_CLEARANCE = 120;
 
 // Extra bottom padding so the last row of a tab list can scroll clear of the floating round Ask
 // button that sits above the tab bar (card 609).
-export const ASK_BUTTON_CLEARANCE = 72;
+export const ASK_BUTTON_BOTTOM_CLEARANCE = 72;
 
 // The absolute, opaque header shell shared verbatim by the floating-header screens. The
 // per-screen paddingTop (safe-area inset) and the animated headerStyle are layered on top.
@@ -50,6 +50,6 @@ export function useNavBarsHeader() {
     // Height of the fixed strip that stays behind the status bar when the header slides away.
     statusBarHeight: insets.top,
     // Spread into the ScrollView's contentContainerStyle.
-    contentPadding: { paddingTop: headerHeight, paddingBottom: TAB_BAR_CLEARANCE + ASK_BUTTON_CLEARANCE },
+    contentPadding: { paddingTop: headerHeight, paddingBottom: TAB_BAR_CLEARANCE + ASK_BUTTON_BOTTOM_CLEARANCE },
   };
 }

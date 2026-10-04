@@ -4,7 +4,7 @@
 import { expect } from '@jest/globals';
 import { StyleSheet } from 'react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
-import { ASK_BUTTON_CLEARANCE, ASK_BUTTON_EDGE, ASK_BUTTON_SIZE } from '../../chat/AskButton';
+import { ASK_BUTTON_RIGHT_CLEARANCE, ASK_BUTTON_EDGE, ASK_BUTTON_SIZE } from '../../chat/AskButton';
 import { SCREEN_PADDING } from '../../motion/ScrollChromeHeader';
 
 export function findAskButtonClearance(node: ReactTestInstance) {
@@ -17,10 +17,10 @@ export function expectClearsAskButton(node: ReactTestInstance) {
   const host = findAskButtonClearance(node);
   expect(host).not.toBeNull();
 
-  expect(typeof ASK_BUTTON_CLEARANCE).toBe('number');
+  expect(typeof ASK_BUTTON_RIGHT_CLEARANCE).toBe('number');
   const { paddingRight } = StyleSheet.flatten(host!.props.style);
-  expect(paddingRight).toBe(ASK_BUTTON_CLEARANCE);
-  expect(ASK_BUTTON_CLEARANCE).toBeGreaterThanOrEqual(ASK_BUTTON_SIZE);
+  expect(paddingRight).toBe(ASK_BUTTON_RIGHT_CLEARANCE);
+  expect(ASK_BUTTON_RIGHT_CLEARANCE).toBeGreaterThanOrEqual(ASK_BUTTON_SIZE);
   // The row's right edge stops short of the button's lane (its edge offset + its width).
-  expect(SCREEN_PADDING + ASK_BUTTON_CLEARANCE).toBeGreaterThan(ASK_BUTTON_EDGE + ASK_BUTTON_SIZE);
+  expect(SCREEN_PADDING + ASK_BUTTON_RIGHT_CLEARANCE).toBeGreaterThan(ASK_BUTTON_EDGE + ASK_BUTTON_SIZE);
 }
