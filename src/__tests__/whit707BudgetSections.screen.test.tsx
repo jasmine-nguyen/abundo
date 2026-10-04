@@ -5,7 +5,7 @@ import { it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, fireEvent } from '@testing-library/react-native';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
-import { renderBudgets } from './support/budgetsScreen';
+import { BUDGETS_CAPTION, renderBudgets } from './support/budgetsScreen';
 import { COFFEE } from './support/categories';
 
 jest.mock('../auth', () => ({
@@ -36,7 +36,7 @@ it('shows Spending and Earning sections, the caption, and a spread link that ope
 
   expect(screen.getByText('SPENDING')).toBeTruthy();
   expect(screen.getByText('EARNING')).toBeTruthy();
-  expect(screen.getByText("Solid = spent · faded = pending · line = today's pace")).toBeTruthy();
+  expect(screen.getByText(BUDGETS_CAPTION)).toBeTruthy();
   expect(screen.queryByText("Today's pace")).toBeNull();
 
   expect(screen.getByText('Spread it over pay cycles →')).toBeTruthy();

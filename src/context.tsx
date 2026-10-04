@@ -2024,7 +2024,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
         id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
         spentLabel,
         remainAmount: fmtExact(met ? actual - b.budget : b.budget - actual),
-        remainLabel: met ? 'over target' : 'to go',
+        remainLabel: met ? 'above target' : 'to go',
         remainColor: C.good,
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: c.color,
         pendingTint: tint(c.color, 0.45), paceLabel: '', paceColor: C.textInfo, over: false,
@@ -2053,8 +2053,8 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     const spreadPrefill = spread.entry === 'start' ? spread.overspend : null;
     if (over) {
       if (spreadPrefill !== null) { paceLabel = 'Spread it over pay cycles →'; paceColor = C.accentSoft; }
-    } else if (spent - target > 0.5) { paceLabel = fmt(spent - target) + ' over pace'; paceColor = C.warn; }
-    else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under pace'; }
+    } else if (spent - target > 0.5) { paceLabel = fmt(spent - target) + ' behind pace'; paceColor = C.warn; }
+    else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' ahead of pace'; }
     // "of" shows the AVAILABLE envelope so it reconciles with the remaining amount (available −
     // spent). `spent` includes pending; when some is pending, name it too (as Insights does).
     let spentLabel = `${fmtExact(spent)} of ${fmt(available)}`;
@@ -2901,8 +2901,8 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   const targetPct = Math.round(elapsed * 100);
   // One line for the accumulated buffer, shown only when rollover is on and it's non-trivial.
   let carryoverLine = '';
-  if (b.rollover && b.carryover > 0.5) carryoverLine = `Includes ${fmt(b.carryover)} carried over from past cycles`;
-  else if (b.rollover && b.carryover < -0.5) carryoverLine = `Includes ${fmt(-b.carryover)} borrowed from this cycle`;
+  if (b.rollover && b.carryover > 0.5) carryoverLine = `+${fmt(b.carryover)} left over from past cycles`;
+  else if (b.rollover && b.carryover < -0.5) carryoverLine = `${fmt(-b.carryover)} short from past cycles`;
   // Bill spread status line: the dollar effect this cycle (never a bare "X of N"), with a
   // "last cycle" tag on the final slice. The screen shows this while a plan is active.
   let spreadLine = '';
@@ -2940,10 +2940,10 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   const spent = actual;
   const over = spent > available;
   // Pace rides the base per-cycle target (not the rollover buffer), matching budgetViews'
-  // list label — so the same budget reads the same state on both screens. Spending past
+  // list label — so the same budget reads "behind pace" on both screens. Spending past
   // today's linear target but still under the envelope is a caution, not a green "keep it up".
   const target = paceTarget(b, s);
-  const aheadOfPace = !over && spent - target > 0.5;
+  const behindPace = !over && spent - target > 0.5;
   const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
   const remain = available - spent;
   const daily = remain > 0 ? remain / Math.max(1, s.daysLeft) : 0;
@@ -2953,7 +2953,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   let statusLabel = 'On target — keep it up';
   let statusColor: string = C.good;
   if (over) { statusLabel = 'Over budget — ease up'; statusColor = C.bad; }
-  else if (aheadOfPace) { statusLabel = 'Ahead of pace — ease up'; statusColor = C.warn; }
+  else if (behindPace) { statusLabel = 'Behind pace — ease up'; statusColor = C.warn; }
   return {
     ...common,
     spentBig: fmtExact(spent), ofBudget: 'of ' + fmt(available),

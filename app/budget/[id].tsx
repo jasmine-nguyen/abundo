@@ -95,7 +95,7 @@ export default function BudgetDetail() {
             </View>
             <BudgetBar postedPct={bd.postedPct} pendingPct={bd.pendingPct} targetPct={bd.targetPct} postedColor={bd.postedColor} pendingTint={bd.pendingTint} height={12} />
             <View style={styles.targetRow}>
-              <Text style={[styles.targetLabel, { left: `${bd.targetPct}%` }]}>today's pace</Text>
+              <Text style={[styles.targetLabel, { left: `${bd.targetPct}%` }]}>today's plan</Text>
             </View>
           </View>
 

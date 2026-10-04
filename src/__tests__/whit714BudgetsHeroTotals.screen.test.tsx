@@ -6,7 +6,7 @@ import { screen, waitFor } from '@testing-library/react-native';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { COFFEE, SALARY, SAVINGS } from './support/categories';
-import { BUDGET_PAY_CYCLE, seedBudgets, renderBudgets } from './support/budgetsScreen';
+import { BUDGET_PAY_CYCLE, BUDGETS_CAPTION, seedBudgets, renderBudgets } from './support/budgetsScreen';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -54,7 +54,7 @@ describe('WHIT-714 Budgets top card totals', () => {
     expect(screen.queryByText(/No budgets yet/)).toBeNull();
     expect(screen.getByText('Add a spending budget')).toBeTruthy();
     expect(screen.getByTestId('budgets-hero-add')).toBeTruthy();
-    expect(screen.queryByText("Solid = spent · faded = pending · line = today's pace")).toBeNull();
+    expect(screen.queryByText(BUDGETS_CAPTION)).toBeNull();
     expect(screen.queryByText('Add a budget')).toBeNull();
   });
 

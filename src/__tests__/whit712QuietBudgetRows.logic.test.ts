@@ -12,12 +12,12 @@ describe('budget rows only speak up when off pace (WHIT-712)', () => {
     expect(row.remainLabel).toBe('left');
   });
 
-  it('under pace and over pace still speak', () => {
+  it('ahead of pace and behind pace still speak', () => {
     const under = rowFor({ budget: 100, posted: 30, pending: 0 });
-    expect(under.paceLabel).toBe('$20 under pace');
+    expect(under.paceLabel).toBe('$20 ahead of pace');
     expect(under.paceColor).toBe(C.textInfo);
     const ahead = rowFor({ budget: 100, posted: 70, pending: 0 });
-    expect(ahead.paceLabel).toBe('$20 over pace');
+    expect(ahead.paceLabel).toBe('$20 behind pace');
     expect(ahead.paceColor).toBe(C.warn);
   });
 
@@ -44,11 +44,11 @@ describe('budget rows only speak up when off pace (WHIT-712)', () => {
     expect(rowFor({ budget: 100, posted: 40, pending: 0 }).spentLabel).toBe('$40 of $100');
   });
 
-  it('no row field mentions carried over or borrowed', () => {
+  it('no row field mentions the carry-over', () => {
     for (const carryover of [200, -40]) {
       const row = rowFor({ budget: 100, posted: 0, pending: 0, rollover: true, carryover });
       const text = Object.values(row).filter((v) => typeof v === 'string').join(' | ');
-      expect(text).not.toMatch(/carried over|borrowed/);
+      expect(text).not.toMatch(/carried over|borrowed|short from|left over from/);
       expect(row).not.toHaveProperty('carryoverLabel');
     }
   });

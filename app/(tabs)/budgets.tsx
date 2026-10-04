@@ -174,7 +174,7 @@ export default function Budgets() {
 
         <StaleDataLine idPrefix="budgets" error={refreshError} updatedAt={updatedAt} />
 
-        {noRows ? null : <Text style={styles.caption}>Solid = spent · faded = pending · line = today's pace</Text>}
+        {noRows ? null : <Text style={styles.caption}>Solid = spent · faded = pending · line = today's plan (spending evenly)</Text>}
 
         {SECTIONS.map(({ section, heading }) => {
           const sectionRows = rows.filter((b) => b.section === section);
@@ -236,7 +236,7 @@ const styles = StyleSheet.create({
   rowSub: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 2 },
   rowRemain: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', letterSpacing: -0.5 },
   rowRemainLabel: { fontFamily: FONT.body, fontSize: 11, color: C.textDim, fontWeight: '500', marginTop: 1 },
-  // WHIT-281: the "today's pace" tick is labelled once in the caption up top; a per-row
+  // WHIT-281: the "today's plan" tick is labelled once in the caption up top; a per-row
   // "target" caption here was redundant AND overlapped the right-aligned pace status when
   // the tick sat far right. Removed — only the pace status remains, right-aligned.
   paceRow: { minHeight: 18, marginTop: 1, alignItems: 'flex-end', justifyContent: 'center' },

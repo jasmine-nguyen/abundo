@@ -30,11 +30,11 @@ describe('budgetViews — positive carryover (sinking fund)', () => {
 
   it('drawing down the buffer past the base target is NOT over budget, but pace still warns', () => {
     // spent 150 > base target 100, but < available 300 → calm on the ceiling. Pace is measured
-    // on the BASE target (100 * 0.5 = 50), so 150 is well over pace (amber), independently.
+    // on the BASE target (100 * 0.5 = 50), so 150 is well behind pace (amber), independently.
     const row = budgetViews(state({ budget: 100, posted: 150, pending: 0, rollover: true, carryover: 200 })).rows[0];
     expect(row.over).toBe(false);
     expect(row.remainAmount).toBe('$150');      // 300 - 150
-    expect(row.paceLabel).toContain('over pace');  // pace stays on the base target
+    expect(row.paceLabel).toContain('behind pace');  // pace stays on the base target
   });
 });
 
@@ -89,15 +89,15 @@ describe('budgetDetail — carryover', () => {
     const d = detail({ budget: 100, posted: 250, pending: 0, rollover: true, carryover: 200 });
     expect(d.ofBudget).toBe('of $300');                 // available
     // Not over budget (250 < 300), but far past this cycle's base pace (target = 100 × 0.5 = 50):
-    // amber "ahead of pace", matching the list's "over pace" for the same drawn-down sinking fund.
-    expect(d.statusLabel).toBe('Ahead of pace — ease up');
-    expect(d.carryoverLine).toBe('Includes $200 carried over from past cycles');
+    // amber "behind pace", matching the list's "behind pace" for the same drawn-down sinking fund.
+    expect(d.statusLabel).toBe('Behind pace — ease up');
+    expect(d.carryoverLine).toBe('+$200 left over from past cycles');
   });
 
   it('negative buffer over the envelope reads over + shows the borrowed line', () => {
     const d = detail({ budget: 100, posted: 80, pending: 0, rollover: true, carryover: -40 });
     expect(d.statusLabel).toBe('Over budget — ease up'); // 80 > available 60
-    expect(d.carryoverLine).toBe('Includes $40 borrowed from this cycle');
+    expect(d.carryoverLine).toBe('$40 short from past cycles');
   });
 
   it('no line when rollover is off', () => {
@@ -140,10 +140,10 @@ describe('carryover detail line deadband (|value| must EXCEED 0.5 to show)', () 
   });
 
   it('just past +0.5 shows the carried-over line', () => {
-    expect(detailFor(0.51).carryoverLine).toBe('Includes $1 carried over from past cycles');
+    expect(detailFor(0.51).carryoverLine).toBe('+$1 left over from past cycles');
   });
 
   it('just past -0.5 shows the borrowed line', () => {
-    expect(detailFor(-0.51).carryoverLine).toBe('Includes $1 borrowed from this cycle');
+    expect(detailFor(-0.51).carryoverLine).toBe('$1 short from past cycles');
   });
 });

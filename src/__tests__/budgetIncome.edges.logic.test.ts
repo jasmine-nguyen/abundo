@@ -21,9 +21,9 @@ const viewState = (posted: number, pending = 0) => makeState({
 });
 
 describe('budgetViews — income earn-target boundaries (WHIT-69)', () => {
-  it('earned EXACTLY at the floor → met, "over target", remain $0, green, not red', () => {
+  it('earned EXACTLY at the floor → met, "above target", remain $0, green, not red', () => {
     const row = budgetViews(viewState(5000)).rows[0];
-    expect(row.remainLabel).toBe('over target');
+    expect(row.remainLabel).toBe('above target');
     expect(row.remainAmount).toBe('$0');           // actual - budget = 0
     expect(row.remainColor).toBe(C.good);
     expect(row.paceLabel).toBe(''); // WHIT-707: income has no pace line
@@ -55,7 +55,7 @@ describe('budgetViews — income earn-target boundaries (WHIT-69)', () => {
     expect(row.postedPct).toBe(80);
     expect(row.pendingPct).toBe(20);                // min(40, 100-80), NOT 40
     expect(row.postedPct + row.pendingPct).toBeLessThanOrEqual(100);
-    expect(row.remainLabel).toBe('over target');    // 6000 >= 5000 floor
+    expect(row.remainLabel).toBe('above target');    // 6000 >= 5000 floor
   });
 });
 
