@@ -4,14 +4,13 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { screen } from '@testing-library/react-native';
-import type { ReactTestInstance } from 'react-test-renderer';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { renderWithApp } from './support/renderWithApp';
 import { LIST_ROW, resetListTabs } from './support/listTabsScreen';
 import { seedBudgetsTab } from './support/budgetsTab';
 import { seedGoalsHub } from './support/goalsScreen';
-import { sidePaddingOf } from './support/budgetsScreen';
+import { rightOnlyGaps } from './support/budgetsScreen';
 import { COFFEE, GROCERIES } from './support/categories';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -48,16 +47,6 @@ const TABS: [string, () => void, React.ReactElement, string][] = [
     balances: { 'up-spending': 4000 },
   }), <Goals />, 'Emergency fund'],
 ];
-
-function rightOnlyGaps(node: ReactTestInstance) {
-  const gaps: { testID?: string; left?: unknown; right?: unknown }[] = [];
-  for (let host: ReactTestInstance | null = node; host; host = host.parent) {
-    if (typeof host.type !== 'string') continue;
-    const { left, right } = sidePaddingOf(host);
-    if ((Number(right) || 0) > (Number(left) || 0)) gaps.push({ testID: host.props.testID, left, right });
-  }
-  return gaps;
-}
 
 it.each(TABS)('%s: no wrapper above a list row leaves a right-hand lane for the Ask button', async (_tab, seed, ui, rowText) => {
   seed();

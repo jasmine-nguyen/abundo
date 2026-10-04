@@ -72,3 +72,14 @@ export function sidePaddingOf(node: ReactTestInstance) {
 export function sidePadding(testID: string) {
   return sidePaddingOf(screen.getByTestId(testID));
 }
+
+// WHIT-737: host ancestors (node up to the root) that pad the right more than the left — a lane.
+export function rightOnlyGaps(node: ReactTestInstance) {
+  const gaps: { testID?: string; left?: unknown; right?: unknown }[] = [];
+  for (let host: ReactTestInstance | null = node; host; host = host.parent) {
+    if (typeof host.type !== 'string') continue;
+    const { left, right } = sidePaddingOf(host);
+    if ((Number(right) || 0) > (Number(left) || 0)) gaps.push({ testID: host.props.testID, left, right });
+  }
+  return gaps;
+}
