@@ -40,7 +40,7 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries, settle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { transactionsKey, uncategorizedCountKey } from '../queries';
-import { COFFEE_RECORD, GROCERIES_RECORD } from './support/categories';
+import { COFFEE_RECORD, GROCERIES_TOP } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -78,7 +78,7 @@ beforeEach(() => {
   resetAuth();
   mockOpenMultiPicker.mockClear();
   mockShowToast.mockClear();
-  server.seed(CATEGORIES, [GROCERIES_RECORD]);
+  server.seed(CATEGORIES, [GROCERIES_TOP]);
   seedFeed([]);
 });
 afterEach(() => { jest.useRealTimers(); });
@@ -379,7 +379,7 @@ it('[E4] a pull on the SETTLED EMPTY list does NOT raise the pull spinner (lengt
 // two-category taxonomy (Groceries + Cafes & Coffee).
 describe('Transactions — search', () => {
 const CATS = [
-  GROCERIES_RECORD,
+  GROCERIES_TOP,
   { ...COFFEE_RECORD, color: '#E8A87C', parent: null },
 ];
 

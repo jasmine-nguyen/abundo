@@ -7,7 +7,7 @@ jest.mock('../../auth', () => require('./authMock').authMockModule());
 import * as api from '../../api';
 import { resetAuth } from './authMock';
 import { installFakeServer } from './fakeServer';
-import { GROCERIES } from './categories';
+import { ESSENTIAL_GROCERIES } from './categories';
 
 beforeEach(() => {
   resetAuth();
@@ -36,12 +36,12 @@ describe('WHIT-637 QA fake server: held reply vs time limit', () => {
 
   // [A12] releasing inside the limit delivers the data, and the limit passing later changes nothing
   it('[A12] a hold released before the limit resolves with the seeded data', async () => {
-    server.seed('/categories', [GROCERIES]);
+    server.seed('/categories', [ESSENTIAL_GROCERIES]);
     const held = server.hold('/categories');
     const read = api.fetchCategories();
     await jest.advanceTimersByTimeAsync(10_000);
     held.release();
-    await expect(read).resolves.toEqual([GROCERIES]);
+    await expect(read).resolves.toEqual([ESSENTIAL_GROCERIES]);
     await jest.advanceTimersByTimeAsync(10_000);
   });
 

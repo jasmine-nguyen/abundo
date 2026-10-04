@@ -14,6 +14,7 @@ import { StyleSheet, RefreshControl } from 'react-native';
 import { C } from '../theme';
 import { Icon } from '../icons';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_RECORD } from './support/categories';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { queryClient } from '../queryClient';
@@ -45,7 +46,6 @@ jest.mock('expo-router', () => {
 });
 
 import Accounts from '../../app/(tabs)/accounts';
-import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();

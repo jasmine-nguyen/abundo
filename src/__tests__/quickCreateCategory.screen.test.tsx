@@ -38,7 +38,7 @@ it('parentPicker carries the picked parent id on the draft', () => {
 it('changing bucket drops a now-ineligible picked parent to null', () => {
   const cats = [
     cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
-    cat({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', parent: null }),
+    cat({ name: 'Coffee', parent: null }),
   ];
   render(<QuickCreateCategory initialBucket="Living" parentPicker categories={cats} submitLabel="Create & file" onSubmit={onSubmit} />);
   fireEvent.changeText(screen.getByPlaceholderText('Category name'), 'Parking');

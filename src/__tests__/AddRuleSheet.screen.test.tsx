@@ -18,9 +18,9 @@ import { queryClient } from '../queryClient';
 import { categoriesKey } from '../queries';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_RECORD, SUBSCRIPTIONS_RECORD } from './support/categories';
 import { refreshInAct, useTestQueryClient, settle } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
-import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -30,7 +30,7 @@ beforeEach(() => resetAuth());
 const setMockState = (next: AppContext) => { mockState = next; };
 
 const CATS = [
-  { id: 'subs', name: 'Subscriptions', icon: 'film', bucket: 'Lifestyle' },
+  SUBSCRIPTIONS_RECORD,
   GROCERIES_RECORD,
 ];
 
@@ -323,7 +323,7 @@ describe('AddRuleSheet — WHIT-355 conflict adversarial', () => {
   };
 
   const CATS = [
-    { id: 'subs', name: 'Subscriptions', icon: 'film', bucket: 'Lifestyle' },
+    SUBSCRIPTIONS_RECORD,
     GROCERIES_RECORD,
     { id: 'coffee', name: 'Coffee', icon: 'cup', bucket: 'Living' },
   ];

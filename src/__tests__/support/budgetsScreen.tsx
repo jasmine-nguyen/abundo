@@ -15,7 +15,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Budgets from '../../../app/(tabs)/budgets';
 import { makeClient } from './queryClient';
 
-export { BUDGETS, BUDGETS_CAPTION, BUDGET_PAY_CYCLE, seedBudgets } from './budgetsTab';
+export { BUDGETS, BUDGET_PAY_CYCLE, seedBudgets } from './budgetsTab';
 
 export function renderBudgets(client: QueryClient = makeClient()) {
   return { client, ...render(<QueryClientProvider client={client}><Budgets /></QueryClientProvider>) };

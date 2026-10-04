@@ -18,9 +18,9 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_TOP_RECORD } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
-import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -33,7 +33,7 @@ const fns = {
   retryApplyRulesJob: jest.fn<() => Promise<FilingResult>>(),
 };
 
-const CATEGORIES = [GROCERIES_RECORD];
+const CATEGORIES = [GROCERIES_TOP_RECORD];
 
 const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
   dryRun: true, rulesConsidered: 2, unfiled: 639, matched: 512, conflicted: 0, conflictedSamples: [],

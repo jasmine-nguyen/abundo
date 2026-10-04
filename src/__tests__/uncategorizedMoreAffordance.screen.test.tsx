@@ -25,9 +25,9 @@ jest.mock('expo-router', () => {
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries, WithQueries, settle, loaded } from './support/renderWithQueries';
 import { uncategorizedFeedKey } from '../queries';
-import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -47,7 +47,7 @@ async function renderTab() {
 
 beforeEach(() => {
   resetAuth();
-  server.seed('/categories', [GROCERIES_RECORD]);
+  server.seed('/categories', [GROCERIES_TOP]);
 });
 
 describe('Uncategorized tab — "more to load" affordance suppression edges', () => {

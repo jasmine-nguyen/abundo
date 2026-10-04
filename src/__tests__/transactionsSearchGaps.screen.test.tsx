@@ -22,8 +22,8 @@ jest.mock('expo-router', () => {
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries } from './support/renderWithQueries';
-import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -53,7 +53,7 @@ async function draw() {
 beforeEach(() => {
   jest.useFakeTimers();
   resetAuth();
-  server.seed('/categories', [GROCERIES_RECORD]);
+  server.seed('/categories', [GROCERIES_TOP]);
   server.seed('/transactions/feed', { transactions: [COLES], nextCursor: 'c1' });
 });
 afterEach(() => { jest.useRealTimers(); });

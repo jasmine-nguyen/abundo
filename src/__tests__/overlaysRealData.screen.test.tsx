@@ -40,8 +40,8 @@ import { Overlays } from '../components/Overlays';
 import { queryClient } from '../queryClient';
 import { useCategories, useGoalsQuery, useIsAuthed, useRulesScreenData, useTransactionResolver } from '../queries';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES, SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient, WithQueries, renderWithQueries } from './support/renderWithQueries';
-import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -457,8 +457,8 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
 
   const RULE_INPUT = 'e.g. NETFLIX';
   const CATS = [
-    GROCERIES_RECORD,
-    { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
+    { ...GROCERIES, recent: 0 },
+    { ...SUBSCRIPTIONS, recent: 0 },
   ];
 
   // A category pill's label goes white (#fff) when selected, C.textMid otherwise
@@ -868,8 +868,8 @@ describe('WHIT-538 — Back from the add-rule preview restores the form draft', 
 
   const RULE_INPUT = 'e.g. NETFLIX';
   const CATS = [
-    GROCERIES_RECORD,
-    { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
+    { ...GROCERIES, recent: 0 },
+    { ...SUBSCRIPTIONS, recent: 0 },
   ];
   const previewReport = {
     dryRun: true, rulesConsidered: 1, unfiled: 5, matched: 5, conflicted: 0, conflictedSamples: [],

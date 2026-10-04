@@ -27,8 +27,8 @@ jest.mock('expo-router', () => {
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries, settle } from './support/renderWithQueries';
-import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -57,7 +57,7 @@ async function renderTab(tab: 'all' | 'uncategorized' = 'uncategorized') {
 beforeEach(() => {
   resetAuth();
   mockSetSheet.mockClear();
-  server.seed('/categories', [GROCERIES_RECORD]);
+  server.seed('/categories', [GROCERIES_TOP]);
   server.seed(COUNT, { count: 5 });
   seedUncategorizedFeed([unfiled('t1')]);
 });

@@ -5,9 +5,9 @@ import { pinToday } from './clock';
 import { txn } from '../factory';
 import { resetAppProbe } from './renderWithApp';
 import { resetAuth } from './authMock';
+import { GROCERIES_TOP } from './categories';
 import { resetRouter } from './routerMock';
 import type { installFakeServer } from './fakeServer';
-import { GROCERIES_RECORD } from './categories';
 
 export const LIST_ROW = txn({ amount: -42, account_name: 'ANZ' });
 
@@ -16,5 +16,5 @@ export function resetListTabs(server: ReturnType<typeof installFakeServer>) {
   resetAuth();
   resetAppProbe();
   resetRouter();
-  server.seed('/categories', [GROCERIES_RECORD]);
+  server.seed('/categories', [GROCERIES_TOP]);
 }

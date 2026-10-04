@@ -9,23 +9,20 @@ import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import type { InfiniteData } from '@tanstack/react-query';
 import { AppProvider, useAppContext } from '../context';
-import type { Transaction, Category } from '../types';
+import type { Transaction } from '../types';
 import type { TransactionFeedPage, TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
 import { findTransaction } from '../transactionCache';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
-import { GROCERIES_RECORD } from './support/categories';
+import { DELETE_DINING, DELETE_GROCERIES } from './support/deleteCategorySeed';
 
 const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
-const CATEGORIES: Category[] = [
-  { id: 'dining', name: 'Dining', bucket: 'Living', icon: 'food', color: '#f00', recent: 0, parent: null },
-  { ...GROCERIES_RECORD, color: '#0f0', recent: 0, parent: null },
-];
+const CATEGORIES = [DELETE_DINING, DELETE_GROCERIES];
 const tx = (id: string, over: Partial<Transaction> = {}): Transaction => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
   description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',

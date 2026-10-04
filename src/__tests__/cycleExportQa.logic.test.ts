@@ -137,7 +137,7 @@ describe('fetchCycleTransactions', () => {
 });
 
 describe('shareCycleExport', () => {
-  const cats = [cat({ id: 'food', name: 'Food', parent: null }), cat({ id: 'coffee', name: 'Coffee', parent: 'food' })];
+  const cats = [cat({ id: 'food', name: 'Food', parent: null }), cat({ name: 'Coffee', parent: 'food' })];
   const transactions = [row({ category: 'coffee', amount: -4.5 })];
 
   // [A21] fetch → file named after the window in the cache dir, overwritten → workbook bytes

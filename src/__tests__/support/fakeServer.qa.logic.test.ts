@@ -10,7 +10,7 @@ import * as api from '../../api';
 import { ApiError } from '../../apiError';
 import { resetAuth } from './authMock';
 import { installFakeServer } from './fakeServer';
-import { GROCERIES } from './categories';
+import { ESSENTIAL_GROCERIES } from './categories';
 
 const originalFetch = global.fetch;
 
@@ -82,19 +82,19 @@ describe('WHIT-637 QA fake server', () => {
 
   // [A6] the app gets its own copy — it can't change the store, and the test's object isn't shared
   it('[A6] replies are copies: changing a reply or the seeded object leaves the store alone', async () => {
-    const seeded = [{ ...GROCERIES }];
+    const seeded = [{ ...ESSENTIAL_GROCERIES }];
     server.seed('/categories', seeded);
-    seeded[0].name = 'Changed after seeding';
+    (seeded[0] as { name: string }).name = 'Changed after seeding';
 
     const first = await api.fetchCategories();
     (first[0] as { name: string }).name = 'Changed by the app';
 
-    await expect(api.fetchCategories()).resolves.toEqual([GROCERIES]);
+    await expect(api.fetchCategories()).resolves.toEqual([ESSENTIAL_GROCERIES]);
   });
 
   // [A7] writes land in the store, so the next read sees them
   it('[A7] create → update → delete a category is reflected in the next read', async () => {
-    server.seed('/categories', [GROCERIES]);
+    server.seed('/categories', [ESSENTIAL_GROCERIES]);
     const created = await api.createCategory(GYM);
     expect(created).toMatchObject({ id: 'gym', ...GYM });
     expect((await api.fetchCategories()).map((c) => c.id)).toEqual(['groceries', 'gym']);
@@ -103,7 +103,7 @@ describe('WHIT-637 QA fake server', () => {
     expect((await api.fetchCategories()).find((c) => c.id === 'gym')?.name).toBe('Gym & Pool');
 
     await api.deleteCategory('gym');
-    await expect(api.fetchCategories()).resolves.toEqual([GROCERIES]);
+    await expect(api.fetchCategories()).resolves.toEqual([ESSENTIAL_GROCERIES]);
   });
 
   it('[A7b] a created rule and a saved milestone plan are read back', async () => {

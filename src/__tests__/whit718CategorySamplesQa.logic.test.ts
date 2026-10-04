@@ -3,18 +3,18 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import { COFFEE, COFFEE_RECORD, GROCERIES, SUBS, SALARY, SAVINGS } from './support/categories';
 import * as budgetsTab from './support/budgetsTab';
-import { findOffenders, q } from './support/sourceScan';
+import { findOffenders } from './support/sourceScan';
+import { CATEGORIES_HOME, quoted } from './support/oneHomeGuard';
 
-const HOME = 'support/categories.ts';
 const SELF = 'whit718CategorySamplesQa.logic.test.ts';
 
 // Every piece of each sample on one line, in any order, and not as cat() overrides.
 const SAMPLE_PIECES = [
-  [`id: ${q('coffee')}`, q('Cafes & Coffee'), q('#E8A87C'), 'recent: ' + '52'],
-  [`id: ${q('groceries')}`, q('Groceries'), q('#7fd49b'), 'recent: ' + '100'],
-  [`id: ${q('subs')}`, q('Subs'), q('#f0b27a'), 'recent: ' + '0'],
-  [`id: ${q('salary')}`, q('Salary'), q('Income'), q('cash')],
-  [`id: ${q('rainy')}`, q('Rainy Day'), q('Savings'), q('piggy-bank')],
+  [`id: ${quoted('coffee')}`, quoted('Cafes & Coffee'), quoted('#E8A87C'), 'recent: ' + '52'],
+  [`id: ${quoted('groceries')}`, quoted('Groceries'), quoted('#7fd49b'), 'recent: ' + '100'],
+  [`id: ${quoted('subs')}`, quoted('Subs'), quoted('#f0b27a'), 'recent: ' + '0'],
+  [`id: ${quoted('salary')}`, quoted('Salary'), quoted('Income'), quoted('cash')],
+  [`id: ${quoted('rainy')}`, quoted('Rainy Day'), quoted('Savings'), quoted('piggy-bank')],
 ];
 
 describe('WHIT-718 QA: shared category samples', () => {
@@ -29,7 +29,7 @@ describe('WHIT-718 QA: shared category samples', () => {
   it('no test file re-spells a sample with its keys in a different order', () => {
     const offenders = findOffenders(
       (line) => !line.includes('cat(') && SAMPLE_PIECES.some((pieces) => pieces.every((piece) => line.includes(piece))),
-      new Set([HOME, SELF, 'whit718CategorySamplesOneHome.logic.test.ts', 'whit721GroceriesRecordOneHome.logic.test.ts']),
+      new Set([CATEGORIES_HOME, SELF, 'whit718CategorySamplesOneHome.logic.test.ts']),
     );
     expect(offenders).toEqual([]);
   });

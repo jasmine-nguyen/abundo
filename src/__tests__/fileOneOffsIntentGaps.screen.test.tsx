@@ -39,11 +39,12 @@ jest.mock('expo-router', () => {
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries, WithQueries, settle } from './support/renderWithQueries';
-import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
+
 const unfiled = (id: string) => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01', description: 'COLES',
   merchant_name: 'Coles', amount: -12.5, account_id: 'a1', account_name: 'ANZ', category: null,
@@ -55,7 +56,7 @@ beforeEach(() => {
   mockPendingFlag = false;
   mockClearSpy.mockClear();
   mockOpenMultiPicker.mockClear();
-  server.seed('/categories', [GROCERIES_RECORD]);
+  server.seed('/categories', [GROCERIES_TOP]);
   server.seed('/transactions/feed', { transactions: [unfiled('t1')], nextCursor: null });
   server.seed('/transactions/uncategorized/feed', { transactions: [unfiled('t1')], nextCursor: null });
   server.seed('/transactions/uncategorized/count', { count: 3 });

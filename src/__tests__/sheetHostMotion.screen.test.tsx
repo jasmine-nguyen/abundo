@@ -34,9 +34,9 @@ jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => mockReduc
 
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES, SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
-import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -254,6 +254,7 @@ describe('SheetHost keyboard avoidance (WHIT-294)', () => {
 // backdrop closes; taps on the list select a row and never leak to a close) — the "Close"
 // backdrop is what the old wrapping structure lacked, so its absence is the fail-on-revert.
 describe('SheetHost scroll-host backdrop (WHIT-288)', () => {
+  const CAT_A = { ...GROCERIES, recent: 0 };
   const CAT_B = { id: 'coffee', name: 'Coffee', icon: 'coffee', color: '#e0af68', bucket: 'Lifestyle', recent: 0 };
 
   const fns = {
@@ -266,7 +267,7 @@ describe('SheetHost scroll-host backdrop (WHIT-288)', () => {
 
   // The picker resolves the tapped charge from the feed and the recent list; seed both.
   function openPicker() {
-    server.seed('/categories', [GROCERIES_RECORD, CAT_B]);
+    server.seed('/categories', [CAT_A, CAT_B]);
     server.seed('/transactions', [TX]);
     server.seed('/transactions/feed', { transactions: [TX], nextCursor: null });
     return mount({ sheet: { mode: 'picker', txId: 't1' }, toast: null, ...fns } as unknown as AppContext);
@@ -331,8 +332,8 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
 
   function openNewRule() {
     server.seed('/categories', [
-      GROCERIES_RECORD,
-      { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
+      { ...GROCERIES, recent: 0 },
+      { ...SUBSCRIPTIONS, recent: 0 },
     ]);
     server.seed('/rules', []);
     // no ruleId → key `addrule:new`, no editing prefill
