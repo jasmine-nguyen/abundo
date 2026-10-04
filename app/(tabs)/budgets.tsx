@@ -36,9 +36,9 @@ function BudgetRow({ b }: { b: BudgetView }) {
       </View>
       <View style={{ marginTop: 15 }}>
         <BudgetBar postedPct={b.postedPct} pendingPct={b.pendingPct} targetPct={b.targetPct} postedColor={b.postedColor} pendingTint={b.pendingTint} showTarget={b.showTarget} />
-        {b.paceLabel || b.spreadNote ? (
+        {b.paceLabel || b.note ? (
           <View style={styles.paceRow}>
-            {b.spreadNote ? <Text testID={`budget-row-spread-note-${b.id}`} style={styles.spreadNote}>{b.spreadNote}</Text> : null}
+            {b.note ? <Text testID={`budget-row-note-${b.id}`} style={styles.note}>{b.note}</Text> : null}
             {b.paceLabel ? (
               <View style={styles.pace}>
                 {b.spreadPrefill !== null ? (
@@ -245,7 +245,7 @@ const styles = StyleSheet.create({
   // tick sat far right. Removed — only the pace status remains, right-aligned.
   paceRow: { minHeight: 18, marginTop: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   pace: { marginLeft: 'auto' },
-  spreadNote: { fontFamily: FONT.body, fontSize: 11.5, color: C.textDim },
+  note: { fontFamily: FONT.body, fontSize: 11.5, color: C.textDim },
   paceLabel: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '700' },
 
   addBudget: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(C.accentAlt, 0.4), backgroundColor: tint(C.accentAlt, 0.07), borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },

@@ -36,7 +36,7 @@ it('a behind-pace spread row shows the note and keeps its pace label', async () 
     coffee: { target: 100, posted: 200, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } },
   });
   await renderLoadedBudgetsWithQueries();
-  expect(screen.getByTestId('budget-row-spread-note-coffee').props.children).toBe('Includes spread bills');
+  expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes spread bills');
   expect(screen.getByText(/behind pace$/)).toBeTruthy();
   expect(screen.getByText(/^\$200 of \$300/)).toBeTruthy();
 });
