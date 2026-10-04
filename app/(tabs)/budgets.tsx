@@ -61,19 +61,20 @@ function HeroStat({ label, value, testID }: { label: string; value: string; test
   );
 }
 
-function BudgetsHero({ daysLeft, nextPayday, money, totals, children }: { daysLeft: number; nextPayday: string; money?: React.ReactNode; totals?: { spent: string; budget: string }; children?: React.ReactNode }) {
+function BudgetsHero({ daysLeft, nextPayday, money, totals, children }: { daysLeft: number; nextPayday: string; money?: { amount: string; label: string }; totals?: { spent: string; budget: string }; children?: React.ReactNode }) {
   return (
     <View style={styles.hero}>
       <HeroGradientFill />
       <View style={styles.heroBlob1} />
       <View style={styles.heroBlob2} />
       <Text style={styles.heroEyebrow}>THIS PAY CYCLE</Text>
-      <View style={styles.heroTop}>
-        <View style={styles.heroCol}>
-          <Text style={styles.heroBig} numberOfLines={1} adjustsFontSizeToFit>{daysLeft}</Text>
-          <Text style={styles.heroLabel}>{daysLeft === 1 ? 'day left' : 'days left'}</Text>
-        </View>
-        {money}
+      <View style={[styles.heroRow, styles.heroTop]}>
+        <Text style={[styles.heroCol, styles.heroBig]} numberOfLines={1} adjustsFontSizeToFit>{daysLeft}</Text>
+        {money ? <Text style={[styles.heroCol, styles.heroBig, styles.heroMoney]} numberOfLines={1} adjustsFontSizeToFit>{money.amount}</Text> : null}
+      </View>
+      <View style={styles.heroRow}>
+        <Text style={[styles.heroCol, styles.heroLabel]}>{daysLeft === 1 ? 'day left' : 'days left'}</Text>
+        {money ? <Text style={[styles.heroCol, styles.heroLabel]}>{money.label}</Text> : null}
       </View>
       {totals || nextPayday ? (
         <View style={styles.heroStats}>
@@ -158,12 +159,10 @@ export default function Budgets() {
         <BudgetsHero
           daysLeft={daysLeft}
           nextPayday={nextPayday}
-          money={hasSpending ? (
-            <View style={[styles.heroCol, styles.heroMoneyCol]}>
-              <Text style={[styles.heroBig, styles.heroMoney]} numberOfLines={1} adjustsFontSizeToFit>{overBudget ? `−${fmtExact(totRemain)}` : fmtExact(totRemain)}</Text>
-              <Text style={styles.heroLabel}>{overBudget ? 'Over budget' : 'Left to spend'}</Text>
-            </View>
-          ) : null}
+          money={hasSpending ? {
+            amount: overBudget ? `−${fmtExact(totRemain)}` : fmtExact(totRemain),
+            label: overBudget ? 'Over budget' : 'Left to spend',
+          } : undefined}
           totals={hasSpending ? { spent: fmt(totSpent), budget: fmt(totBudget) } : undefined}
         >
           {hasSpending ? null : (
@@ -211,15 +210,15 @@ const styles = StyleSheet.create({
   heroBlob1: { position: 'absolute', right: -30, top: -30, width: 150, height: 150, borderRadius: 75, backgroundColor: C.heroBlobFill },
   heroBlob2: { position: 'absolute', right: 34, bottom: -46, width: 90, height: 90, borderRadius: 45, backgroundColor: C.heroBlobFill },
   heroEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.heroInkSoft, letterSpacing: 0.2 },
-  heroTop: { flexDirection: 'row', gap: 16, marginTop: 6 },
+  // Numbers and labels sit in separate rows so the two different-sized numbers share a baseline.
+  heroRow: { flexDirection: 'row', alignItems: 'baseline', gap: 16 },
+  heroTop: { marginTop: 6 },
   // Columns share the row equally; minWidth 0 lets adjustsFontSizeToFit shrink a long amount.
   heroCol: { flex: 1, minWidth: 0 },
   // Days left at full size; heroMoney shrinks the money number to about two-thirds (WHIT-731). No
   // fixed lineHeight, so the number scales with the user's text size instead of clipping.
   heroBig: { fontFamily: FONT.display, fontSize: 44, fontWeight: '800', color: C.heroInk, letterSpacing: -1.5 },
   heroMoney: { fontSize: 30, letterSpacing: -0.8 },
-  // Bottom-aligned so the smaller money number's label lines up with "days left".
-  heroMoneyCol: { justifyContent: 'flex-end' },
   heroLabel: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.heroInk2 },
   heroStats: { flexDirection: 'row', gap: 12, marginTop: 18 },
   heroStat: { flex: 1, minWidth: 0 },
