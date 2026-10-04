@@ -126,7 +126,7 @@ it("[A27] budget detail labels the marker \"today's plan\"", async () => {
 // [A2] (P0) WHIT-715: the detail screen shows the new warning and the plain carry-over line.
 it('[A2] budget detail reads "Over plan — ease up" and "+$20 left over from past cycles"', async () => {
   setParams({ id: 'coffee' });
-  seed([COFFEE], { coffee: { target: 100, posted: 80, pending: 0, rollover: true, carryover: 20, available: 120 } });
+  seed([COFFEE], { coffee: { target: 100, posted: 100, pending: 0, rollover: true, carryover: 20, available: 120 } });
   server.seed('/budgets/coffee/transactions', []);
   await renderWithQueries(<BudgetDetail />);
   expect(await screen.findByText('Over plan — ease up')).toBeTruthy();

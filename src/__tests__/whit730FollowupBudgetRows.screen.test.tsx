@@ -1,5 +1,5 @@
 // WHIT-730 follow-up — on the Budgets tab, a slim $0 row lines up with the full rows (same
-// left/right padding), "$X under plan" is quiet (grey, not bold) while "over plan" stays amber and bold.
+// left/right padding), "$X under plan" is quiet (grey, not bold) while "over plan" keeps WHIT-732's calm colour, bold.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import { screen } from '@testing-library/react-native';
 import { StyleSheet } from 'react-native';
@@ -23,7 +23,7 @@ beforeEach(() => {
   resetAuth();
 });
 
-it('a slim $0 budget row lines up with full rows, and "under plan" is muted while "over plan" stays amber', async () => {
+it('a slim $0 budget row lines up with full rows, and "under plan" is muted while "over plan" keeps its calm colour', async () => {
   // Halfway through a 14-day cycle: a $100 budget's pace target is $50.
   seedBudgetsTab(server, {
     coffee: { target: 100, posted: 0, pending: 0 },
@@ -41,6 +41,6 @@ it('a slim $0 budget row lines up with full rows, and "under plan" is muted whil
   expect(under.fontWeight).not.toBe('700');
 
   const over = StyleSheet.flatten(screen.getByText('$30 over plan').props.style);
-  expect(over.color).toBe(C.warn);
+  expect(over.color).toBe(C.textInfo);
   expect(over.fontWeight).toBe('700');
 });

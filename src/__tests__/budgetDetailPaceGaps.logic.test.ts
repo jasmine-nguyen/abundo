@@ -10,30 +10,32 @@ import { cat } from './factory';
 import { budgetDetailFor as detail } from './support/budgetsTab';
 
 describe('budgetDetail pace — gaps', () => {
-  // [G1] EXACT boundary: spent - target == 0.5 is NOT > 0.5 → stays green.
-  // Fail-on-revert if the branch is loosened to `>= 0.5`.
+  // [G1] EXACT boundary: spent - target == 0.5 is NOT > 0.5 → stays green, even with little
+  // room left per day. Fail-on-revert if the branch is loosened to `>= 0.5`.
   it('[G1] spent-target exactly 0.50 over stays green (strict >, not >=)', () => {
-    // elapsed 7/14 = 0.5, target = 100*0.5 = 50; spent 50.5 → diff exactly 0.50.
-    const d = detail({ budget: 100, posted: 50.5 }, { cycleLen: 14, daysLeft: 7 });
+    // elapsed 7/14 = 0.5, base target = 100*0.5 = 50; available 55 (borrowed), spent 50.5 →
+    // diff exactly 0.50, and $4.50 over 7 days is under half the daily plan.
+    const d = detail({ budget: 100, posted: 50.5, rollover: true, carryover: -45 }, { cycleLen: 14, daysLeft: 7 });
     expect(d.statusLabel).toBe('On target — keep it up');
     expect(d.statusColor).toBe(C.good);
   });
 
-  // [G2] Just past the boundary flips amber — locks the tolerance tightly with [G1].
-  it('[G2] spent-target 0.51 over flips to amber', () => {
-    const d = detail({ budget: 100, posted: 50.51 }, { cycleLen: 14, daysLeft: 7 });
+  // [G2] Just past the boundary flips to "over plan" — locks the tolerance tightly with [G1].
+  it('[G2] spent-target 0.51 over with little room left flips to over plan', () => {
+    const d = detail({ budget: 100, posted: 50.51, rollover: true, carryover: -45 }, { cycleLen: 14, daysLeft: 7 });
     expect(d.statusLabel).toBe('Over plan — ease up');
-    expect(d.statusColor).toBe(C.warn);
+    expect(d.statusColor).toBe(C.textInfo);
   });
 
   // [G3] Negative carryover (borrowed envelope): pace still rides the BASE budget, so spent
-  // under the shrunken available but past base pace reads amber, not green.
-  it('[G3] borrowed envelope: under reduced available but past base pace → amber', () => {
-    // available = 100 + (-20) = 80; elapsed 0.5 → base target 50; spent 70 < 80 (not over) but 70-50=20 → amber.
+  // under the shrunken available but past base pace reads over plan, not green.
+  it('[G3] borrowed envelope: under reduced available but past base pace → over plan', () => {
+    // available = 100 + (-20) = 80; elapsed 0.5 → base target 50; spent 70 < 80 (not over) but
+    // 70-50=20 ahead and $1.43/day left is under half the $5.71 daily plan.
     const d = detail({ budget: 100, posted: 70, rollover: true, carryover: -20 }, { cycleLen: 14, daysLeft: 7 });
     expect(d.statusColor).not.toBe(C.good);
     expect(d.statusLabel).toBe('Over plan — ease up');
-    expect(d.statusColor).toBe(C.warn);
+    expect(d.statusColor).toBe(C.textInfo);
   });
 
   // [G4] Negative carryover, spent past the shrunken available → over (red) wins over amber.
@@ -53,28 +55,29 @@ describe('budgetDetail pace — gaps', () => {
     expect(d.spentBig).toBe('$100'); // sanity: 100% spent
   });
 
-  // [G6] End of cycle with a rollover buffer: past base budget (target) but under available → amber.
-  it('[G6] elapsed=1: spent over base budget but under buffered available → amber', () => {
-    // target = base 100 * 1 = 100; available = 100 + 50 = 150; spent 110 → not over, 110-100=10 → amber.
-    const d = detail({ budget: 100, posted: 110, rollover: true, carryover: 50 }, { cycleLen: 14, daysLeft: 0 });
+  // [G6] End of cycle with a rollover buffer: past base budget (target) but under available → over plan.
+  it('[G6] elapsed=1: spent over base budget but under buffered available → over plan', () => {
+    // target = base 100 * 1 = 100; available = 100 + 50 = 150; spent 147 → not over, 47 ahead, and
+    // $3 left is under half the $10.71 daily plan.
+    const d = detail({ budget: 100, posted: 147, rollover: true, carryover: 50 }, { cycleLen: 14, daysLeft: 0 });
     expect(d.statusLabel).toBe('Over plan — ease up');
-    expect(d.statusColor).toBe(C.warn);
+    expect(d.statusColor).toBe(C.textInfo);
   });
 
   // [G7] Pairing invariant: the label and colour are NEVER mismatched across a spread of
-  // scenarios (e.g. an amber label with a green colour). Guards the two `let`s staying in lock-step.
+  // scenarios (e.g. an over-plan label with a green colour). Guards the two `let`s staying in lock-step.
   it('[G7] statusLabel and statusColor are always the matching pair', () => {
     const scenarios: Array<[Partial<Budget>, { cycleLen: number; daysLeft: number }]> = [
       [{ budget: 100, posted: 0 }, { cycleLen: 14, daysLeft: 7 }],       // green
-      [{ budget: 100, posted: 60 }, { cycleLen: 14, daysLeft: 12 }],     // amber
+      [{ budget: 100, posted: 60 }, { cycleLen: 14, daysLeft: 12 }],     // over plan (muted)
       [{ budget: 100, posted: 130 }, { cycleLen: 14, daysLeft: 7 }],     // red
-      [{ budget: 3667, posted: 3667 }, { cycleLen: 30, daysLeft: 29 }],  // amber (mortgage)
+      [{ budget: 3667, posted: 3667 }, { cycleLen: 30, daysLeft: 29 }],  // over plan (mortgage)
       [{ budget: 100, posted: 90 }, { cycleLen: 14, daysLeft: 1 }],      // green (late, under plan)
       [{ budget: 100, posted: 100 }, { cycleLen: 14, daysLeft: 0 }],     // green (end, 100%)
     ];
     const pair: Record<string, string> = {
       'On target — keep it up': C.good,
-      'Over plan — ease up': C.warn,
+      'Over plan — ease up': C.textInfo,
       'Over budget — ease up': C.bad,
     };
     for (const [b, clock] of scenarios) {

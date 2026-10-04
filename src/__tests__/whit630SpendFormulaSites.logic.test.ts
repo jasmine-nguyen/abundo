@@ -71,11 +71,12 @@ describe('the three sites agree with availableToSpend', () => {
 });
 
 describe('pace stays on the base target, not the spendable', () => {
-  // budget 100, envelope 1000, half-way through: pace target is 50, so 80 spent is over plan.
-  const roomy = { budget: 100, posted: 80, pending: 0, available: 1000 };
+  // budget 100, envelope 1000, half-way through: pace target is 50 (not 500), so 800 spent is $750
+  // over plan, with little room left per day.
+  const roomy = { budget: 100, posted: 800, pending: 0, available: 1000 };
 
   it('[A5] (P0) budgetViews flags over plan', () => {
-    expect(budgetViews(state(roomy)).rows[0].paceLabel).toContain('over plan');
+    expect(budgetViews(state(roomy)).rows[0].paceLabel).toBe('$750 over plan');
   });
 
   it('[A5] (P0) budgetDetail flags under plan', () => {

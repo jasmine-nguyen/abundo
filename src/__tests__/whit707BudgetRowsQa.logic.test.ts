@@ -79,12 +79,12 @@ describe('over budget: spread link vs quiet line (decision 2)', () => {
   });
 
   // [A9] (P0) under budget → never a link (no prefill), even if over plan.
-  it('[A9] over plan but under budget → no prefill, amber pace line', () => {
+  it('[A9] over plan but under budget → no prefill, muted pace line', () => {
     const row = spendRow({ budget: 100, posted: 90, pending: 0 }); // target 50
     expect(row.over).toBe(false);
     expect(row.spreadPrefill).toBeNull();
     expect(row.paceLabel).toBe('$40 over plan');
-    expect(row.paceColor).toBe(C.warn);
+    expect(row.paceColor).toBe(C.textInfo);
   });
 
   // [A10] (P1) exactly at the limit is not over → no link, "left" $0.
