@@ -1,23 +1,14 @@
 // WHIT-727 — urgentFirst ordering rules and the behindPace flag it ranks on.
 import { describe, it, expect } from '@jest/globals';
-import { budgetViews } from '../context';
 import { urgentFirst } from '../budgetOrder';
-import type { Budget } from '../model';
-import type { Category } from '../types';
-import { makeState, cat, budget } from './factory';
-import { budgetRowFor } from './support/budgetsTab';
+import { cat, budget } from './factory';
+import { budgetRowFor, budgetRowsFor as rowsFor } from './support/budgetsTab';
+import { COFFEE as coffee, DINING as dining, GROCERIES as groceries, SALARY as salary } from './support/categories';
 
-// Halfway through a 14-day cycle, so a $100 budget's pace is $50.
-const rowsFor = (categories: Category[], budgets: Budget[]) =>
-  budgetViews(makeState({ categories, budgets, cycleLen: 14, daysLeft: 7 })).rows;
 const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
 
-const groceries = cat({ id: 'groceries', name: 'Groceries', bucket: 'Living' });
-const dining = cat({ id: 'dining', name: 'Dining' });
 const shopping = cat({ id: 'shopping', name: 'Shopping' });
-const coffee = cat();
 const latte = cat({ id: 'latte', name: 'Lattes', parent: 'coffee' });
-const salary = cat({ id: 'salary', name: 'Salary', bucket: 'Income' });
 const bonus = cat({ id: 'bonus', name: 'Bonus', bucket: 'Income', parent: 'salary' });
 
 describe('urgentFirst', () => {

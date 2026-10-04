@@ -3,6 +3,7 @@
 // (7 → halfway, so pace = half the budget).
 import type { installFakeServer } from './fakeServer';
 import type { Budget } from '../../model';
+import type { Category } from '../../types';
 import { budgetViews, budgetDetail } from '../../context';
 import { makeState, cat, budget } from '../factory';
 import { COFFEE } from './categories';
@@ -28,11 +29,12 @@ export function seedBudgetsTab(
   seedBudgets(server, { budgets, categories, payCycle: { length: 14, last_pay_date: lastPayDate, days_left: daysLeft } });
 }
 
-// A budget's row (coffee by default) on the same halfway cycle, so a $100 budget's pace target is $50.
-export const budgetRowFor = (b: Partial<Budget>, c = cat()) =>
-  budgetViews(
-    makeState({ categories: [c], budgets: [budget({ id: c.id, ...b })], cycleLen: 14, daysLeft: 7 }),
-  ).rows[0];
+// The Budgets tab's rows on the same halfway cycle, so a $100 budget's pace target is $50.
+export const budgetRowsFor = (categories: Category[], budgets: Budget[]) =>
+  budgetViews(makeState({ categories, budgets, cycleLen: 14, daysLeft: 7 })).rows;
+
+// A budget's row (coffee by default) on that halfway cycle.
+export const budgetRowFor = (b: Partial<Budget>, c = cat()) => budgetRowsFor([c], [budget({ id: c.id, ...b })])[0];
 
 // A budget's detail (coffee by default, no pending unless given), halfway through a 14-day cycle by default.
 export const budgetDetailFor = (b: Partial<Budget>, clock = { cycleLen: 14, daysLeft: 7 }, c = cat()) =>
