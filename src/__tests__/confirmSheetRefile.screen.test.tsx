@@ -18,13 +18,13 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_TOP_RECORD } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
 
 const server = installFakeServer();
 useTestQueryClient();
 
-const CAT = { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Living', parent: null };
 const TX = { transaction_id: 't1', amount: -12.5, description: 'COLES', merchant_name: 'Coles' };
 
 const fns = {
@@ -38,7 +38,7 @@ beforeEach(() => {
 
 // The confirm resolves the tapped charge from the feed and the recent list; seed both.
 function openConfirm() {
-  server.seed('/categories', [CAT]);
+  server.seed('/categories', [GROCERIES_TOP_RECORD]);
   server.seed('/transactions', [TX]);
   server.seed('/transactions/feed', { transactions: [TX], nextCursor: null });
   const state = { sheet: { mode: 'confirm', txId: 't1', categoryId: 'groceries' }, toast: null, ...fns } as unknown as AppContext;

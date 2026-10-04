@@ -29,6 +29,7 @@ import Transactions from '../../app/(tabs)/transactions';
 import { TabBar } from '../../app/(tabs)/_layout';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { uncategorizedCountKey, uncategorizedFeedKey } from '../queries';
@@ -41,7 +42,6 @@ const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
 const RECENT = '/transactions';
 const COUNT = '/transactions/uncategorized/count';
 const MERCHANTS = '/transactions/uncategorized/merchants';
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null };
 const FILE_BY_SHOP = 'transactions-file-by-shop';
 const APPLY_RULES = 'transactions-apply-rules';
 
@@ -74,7 +74,7 @@ async function setCount(count: number) {
 
 beforeEach(() => {
   resetAuth();
-  server.seed('/categories', [CAT]);
+  server.seed('/categories', [GROCERIES_TOP]);
   server.seed(MERCHANTS, merchants);
 });
 
