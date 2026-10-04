@@ -1906,8 +1906,8 @@ export interface BudgetView {
   spentLabel: string; remainAmount: string; remainLabel: string; remainColor: string;
   postedPct: number; pendingPct: number; targetPct: number; postedColor: string;
   pendingTint: string; paceLabel: string; paceColor: string; over: boolean;
-  // WHIT-728: 'Includes spread bills' when a spread plan changes this cycle's budget, else ''.
-  spreadNote: string;
+  // WHIT-728: a muted line saying why this cycle's budget differs from the target (spread or rollover), else ''.
+  note: string;
   // Sub-category tree (WHIT-221): `depth` is the indent level — the number of the
   // row's ancestors that are ALSO budgeted rows (0 = top-level or a sub whose parent
   // isn't budgeted). `parentId` is the nearest budgeted ancestor's id (the row it
@@ -2035,7 +2035,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
         remainColor: C.good,
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: BAR_FILL,
         pendingTint: tint(BAR_FILL, 0.45), paceLabel: '', paceColor: C.textInfo, over: false,
-        spreadNote: '', depth, parentId,
+        note: '', depth, parentId,
         section: 'earning', showTarget: false, spreadPrefill: null, behindPace: false,
       });
       group(parentId, b.id);
@@ -2067,14 +2067,16 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     // spent). `spent` includes pending; when some is pending, name it too (as Insights does).
     let spentLabel = `${fmtExact(spent)} of ${fmtSigned(available)}`;
     if (pending > 0.005) spentLabel += ` · ${fmtExact(pending)} pending`;
-    let spreadNote = '';
-    if (b.spread && Math.abs(b.spreadAdjustment) > 0.005) spreadNote = 'Includes spread bills';
+    let note = '';
+    if (b.spread && Math.abs(b.spreadAdjustment) > 0.005) note = 'Includes spread bills';
+    else if (b.rollover && b.carryover < -0.5) note = 'Includes past overspend';
+    else if (b.rollover && b.carryover > 0.5) note = 'Includes past leftovers';
     viewById.set(b.id, {
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
       spentLabel, remainAmount: fmtExact(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,
       postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: over ? C.bad : BAR_FILL,
       pendingTint: tint(over ? C.bad : BAR_FILL, 0.45), paceLabel, paceColor, over,
-      spreadNote, depth, parentId,
+      note, depth, parentId,
       section: 'spending', showTarget: true, spreadPrefill, behindPace,
     });
     group(parentId, b.id);

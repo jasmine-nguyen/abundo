@@ -16,7 +16,7 @@ describe('budget rows keep the minus on a negative budget (WHIT-728)', () => {
   it('a payback cycle reads "$617.75 of −$659" and notes the spread', () => {
     const row = budgetRowFor(payback);
     expect(row.spentLabel).toMatch(/^\$617\.75 of −\$659(?![\d,])/);
-    expect((row as unknown as { spreadNote: string }).spreadNote).toBe('Includes spread bills');
+    expect(row.note).toBe('Includes spread bills');
     expect(row.remainLabel).toBe('over');
     expect(row.remainAmount).toBe('$1,276.75');
   });
@@ -25,24 +25,24 @@ describe('budget rows keep the minus on a negative budget (WHIT-728)', () => {
     const row = budgetRowFor({ budget: 100, posted: 50, pending: 0, spreadAdjustment: 200, spread: plan({ index: 0, adjustment: 200 }) });
     expect(row.spentLabel).not.toContain(MINUS);
     expect(row.spentLabel).toMatch(/^\$50 of \$300(?![\d,])/);
-    expect((row as unknown as { spreadNote: string }).spreadNote).toBe('Includes spread bills');
+    expect(row.note).toBe('Includes spread bills');
   });
 
   it('no spread → no note, label unchanged', () => {
     const row = budgetRowFor({ budget: 100, posted: 50, pending: 0 });
-    expect((row as unknown as { spreadNote: string }).spreadNote).toBe('');
+    expect(row.note).toBe('');
     expect(row.spentLabel).toMatch(/^\$50 of \$100(?![\d,])/);
   });
 
   it('spread set but adjustment 0 → no note', () => {
     const row = budgetRowFor({ budget: 100, posted: 50, pending: 0, spreadAdjustment: 0, spread: plan({ adjustment: 0 }) });
-    expect((row as unknown as { spreadNote: string }).spreadNote).toBe('');
+    expect(row.note).toBe('');
   });
 
   it('an Income row has an empty note', () => {
     const salary = cat({ id: 'salary', name: 'Salary', bucket: 'Income' });
     const row = budgetRowsFor([salary], [budget({ id: 'salary', budget: 5000, posted: 2500, pending: 0 })])[0];
-    expect((row as unknown as { spreadNote: string }).spreadNote).toBe('');
+    expect(row.note).toBe('');
   });
 
   it('the detail screen reads "of −$659"', () => {
