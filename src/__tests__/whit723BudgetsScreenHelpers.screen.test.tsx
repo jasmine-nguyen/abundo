@@ -28,13 +28,16 @@ describe('WHIT-723 shared Budgets screen steps', () => {
     });
     expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
     expect(screen.getByText('Groceries')).toBeTruthy();
-    expect(screen.getByText('resets in 4 days')).toBeTruthy();
+    expect(screen.getByText('4')).toBeTruthy();
+    expect(screen.getByText('days left')).toBeTruthy();
+    expect(screen.queryByText(/resets/)).toBeNull();
     first.unmount();
 
     await showBudgets(server, { coffee: { target: 100, posted: 150, pending: 0 } }, { categories: [COFFEE], daysLeft: 1 });
     expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
     expect(screen.queryByText('Groceries')).toBeNull();
-    expect(screen.getByText('resets in 1 day')).toBeTruthy();
+    expect(screen.getByText('day left')).toBeTruthy();
+    expect(screen.queryByText(/resets/)).toBeNull();
   });
 
   it('renderLoadedBudgets returns an already-loaded screen on the client it was given', async () => {

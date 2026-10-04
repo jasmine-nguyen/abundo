@@ -30,7 +30,7 @@ describe('WHIT-714 Budgets top card totals', () => {
     renderBudgets();
     await screen.findByText('Salary');
     expect(screen.queryByText('Left to spend')).toBeNull();
-    expect(screen.queryByText(/spent of/)).toBeNull();
+    expect(screen.queryByTestId('budgets-hero-spent')).toBeNull();
     expect(screen.getByText(NO_SPENDING)).toBeTruthy();
     expect(screen.queryByTestId('budgets-hero-add')).toBeNull();
     expect(screen.getByText('Add a budget')).toBeTruthy();
@@ -43,7 +43,7 @@ describe('WHIT-714 Budgets top card totals', () => {
     renderBudgets();
     await screen.findByText('Salary');
     expect(screen.queryByText('Over budget')).toBeNull();
-    expect(screen.queryByText(/^resets /)).toBeNull();
+    expect(screen.queryByTestId('budgets-hero-spent')).toBeNull();
   });
 
   it('Savings-only budgets → not "No budgets yet"; offers "Add a spending budget"', async () => {
@@ -64,7 +64,7 @@ describe('WHIT-714 Budgets top card totals', () => {
     });
     await renderLoadedBudgets();
     expect(screen.getByText('Left to spend')).toBeTruthy();
-    expect(screen.getByText('$50 spent of $100 · $10 pending')).toBeTruthy();
+    expect(screen.getByText('$50 / $100 spent')).toBeTruthy();
     expect(screen.queryByText(NO_SPENDING)).toBeNull();
   });
 

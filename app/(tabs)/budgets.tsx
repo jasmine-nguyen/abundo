@@ -13,12 +13,6 @@ import { StaleDataLine } from '../../src/components/ListStates';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { loadFailureReason } from '../../src/apiError';
 
-function resetsLabel(daysLeft: number): string {
-  if (daysLeft === 0) return 'resets today';
-  if (daysLeft === 1) return 'resets in 1 day';
-  return `resets in ${daysLeft} days`;
-}
-
 const SECTIONS: { section: BudgetView['section']; heading: string }[] = [
   { section: 'spending', heading: 'SPENDING' },
   { section: 'earning', heading: 'EARNING' },
@@ -57,7 +51,7 @@ function BudgetRow({ b }: { b: BudgetView }) {
   );
 }
 
-function BudgetsHero({ daysLeft, nextPayday, money, children }: { daysLeft: number; nextPayday: string; money?: React.ReactNode; children?: React.ReactNode }) {
+function BudgetsHero({ daysLeft, nextPayday, money, spentLine, children }: { daysLeft: number; nextPayday: string; money?: React.ReactNode; spentLine?: string; children?: React.ReactNode }) {
   return (
     <View style={styles.hero}>
       <HeroGradientFill />
@@ -71,7 +65,8 @@ function BudgetsHero({ daysLeft, nextPayday, money, children }: { daysLeft: numb
         </View>
         {money}
       </View>
-      {nextPayday ? <Text style={[styles.heroSmall, styles.heroPayday]}>Next payday {formatDayMonth(nextPayday)}</Text> : null}
+      {spentLine ? <Text testID="budgets-hero-spent" style={[styles.heroSmall, styles.heroSpent]}>{spentLine}</Text> : null}
+      {nextPayday ? <Text testID="budgets-hero-payday" style={[styles.heroSmall, spentLine ? styles.heroPaydayTight : styles.heroPayday]}>Next payday {formatDayMonth(nextPayday)}</Text> : null}
       {children}
     </View>
   );
@@ -91,12 +86,11 @@ export default function Budgets() {
   // Staleness-gated so hopping between tabs doesn't refetch on every tap.
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
-  const { rows, totBudget, totSpent, totPending, totRemain } = budgetViews({ budgets, category, cycleLen, daysLeft, nextPayday });
+  const { rows, totBudget, totSpent, totRemain } = budgetViews({ budgets, category, cycleLen, daysLeft, nextPayday });
 
   // Over from a cent over, matching the rows (WHIT-716); the tiny threshold only absorbs float dust so "−$0" never shows.
   const overBudget = totRemain < -0.005;
-  let pillLabel = `${fmtExact(totSpent)} spent of ${fmt(totBudget)}`;
-  if (totPending > 0.005) pillLabel += ` · ${fmtExact(totPending)} pending`;
+  const spentLine = `${fmt(totSpent)} / ${fmt(totBudget)} spent`;
   const noRows = rows.length === 0;
   // WHIT-714: income rows and Savings budgets never feed the totals, so the money side only
   // means something when there's at least one spending row.
@@ -150,15 +144,9 @@ export default function Budgets() {
               <Text style={styles.heroLabel}>{overBudget ? 'Over budget' : 'Left to spend'}</Text>
             </View>
           ) : null}
+          spentLine={hasSpending ? spentLine : undefined}
         >
-          {hasSpending ? (
-            <View style={styles.heroBottom}>
-              <View testID="budgets-hero-pill" style={styles.heroPill}>
-                <Text style={styles.heroPillText}>{pillLabel}</Text>
-              </View>
-              {overBudget ? <Text testID="budgets-hero-resets" style={styles.heroResets}>{resetsLabel(daysLeft)}</Text> : null}
-            </View>
-          ) : (
+          {hasSpending ? null : (
             <View style={styles.heroBottom}>
               <Text style={styles.heroEmpty}>No spending budgets yet. Set one and this shows what's left to spend.</Text>
               {noRows ? (
@@ -211,11 +199,10 @@ const styles = StyleSheet.create({
   heroBig: { fontFamily: FONT.display, fontSize: 44, fontWeight: '800', color: C.heroInk, letterSpacing: -1.5 },
   heroLabel: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.heroInk2 },
   heroPayday: { marginTop: 10 },
+  heroSpent: { marginTop: 16 },
+  heroPaydayTight: { marginTop: 4 },
   heroBottom: { marginTop: 16 },
   heroSmall: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.heroInkSoft },
-  heroPill: { alignSelf: 'flex-start', maxWidth: '100%',backgroundColor: tint(C.heroInk, 0.12), borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12 },
-  heroPillText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.heroInk },
-  heroResets: { marginTop: 10, fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.heroInk },
   heroEmpty: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.heroInk2 },
   heroAdd: { marginTop: 12, alignSelf: 'flex-start', backgroundColor: tint(C.heroInk, 0.12), borderRadius: 12, paddingVertical: 10, paddingHorizontal: 16 },
   heroAddText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.heroInk },
