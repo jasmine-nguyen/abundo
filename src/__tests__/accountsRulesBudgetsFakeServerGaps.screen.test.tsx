@@ -14,6 +14,7 @@ import { useTestQueryClient, settle } from './support/renderWithQueries';
 import { renderWithApp, shownToasts, resetAppProbe } from './support/renderWithApp';
 import { resetAuth } from './support/authMock';
 import { setParams, resetRouter } from './support/routerMock';
+import { heroTotals } from './support/budgetsScreen';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -171,7 +172,7 @@ describe('Budgets "Next payday …" line', () => {
     try {
       server.seed('/paycycle', { length: 14, last_pay_date: '2026-09-18' });
       await renderWithApp(<Budgets />);
-      expect(screen.getByText('Next payday 2 Oct')).toBeTruthy();
+      expect(heroTotals().payday).toBe('2 Oct');
     } finally {
       jest.useRealTimers();
     }
@@ -184,7 +185,7 @@ describe('Budgets "Next payday …" line', () => {
       server.seed('/paycycle', { length: 14, last_pay_date: '2026-09-19' });
       await renderWithApp(<Budgets />);
       expect(server.sent('GET', '/paycycle')).toHaveLength(1);
-      expect(screen.getByText('Next payday 19 Sep')).toBeTruthy();
+      expect(heroTotals().payday).toBe('19 Sep');
     } finally {
       jest.useRealTimers();
     }
