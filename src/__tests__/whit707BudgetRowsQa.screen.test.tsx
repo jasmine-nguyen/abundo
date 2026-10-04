@@ -9,6 +9,8 @@ import { routerSpies, resetRouter, setParams } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { pinToday } from './support/clock';
+import { seedBudgetsTab } from './support/budgetsTab';
+import { COFFEE } from './support/categories';
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
@@ -25,13 +27,10 @@ const server = installFakeServer();
 useTestQueryClient();
 
 const SALARY = { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase', color: '#35d9a0', recent: 0 };
-const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 };
 
-function seed(categories: unknown[], budgets: Record<string, unknown>, daysLeft = 6) {
-  server.seed('/paycycle', { length: 14, last_pay_date: '2026-09-25', days_left: daysLeft });
-  server.seed('/categories', categories);
-  server.seed('/budgets', budgets);
-}
+// Last paid Fri 25 Sep, so the income "next pay ~Fri" checks line up with the pinned clock.
+const seed = (categories: unknown[], budgets: Record<string, unknown>, daysLeft = 6) =>
+  seedBudgetsTab(server, budgets, categories, daysLeft, '2026-09-25');
 
 beforeEach(() => {
   resetRouter();
@@ -85,12 +84,13 @@ it('[A23] 14 days left → "next pay ~17 Oct"', async () => {
   expect(await screen.findByText('$1,000 earned · next pay ~17 Oct')).toBeTruthy();
 });
 
-// [A24] (P0) over but rollover → quiet "$X over budget", no spread link.
-it('[A24] over + rollover → quiet text, no spread link', async () => {
+// [A24] (P0) over but rollover → the overspend shows once on the amount, no spread link.
+it('[A24] over + rollover → overspend said once, no spread link', async () => {
   seed([COFFEE], { coffee: { target: 100, posted: 120, pending: 0, rollover: true, carryover: 0 } });
   await renderWithQueries(<Budgets />);
   await screen.findByText('Cafes & Coffee');
-  expect(screen.getByText('$20 over budget')).toBeTruthy();
+  expect(screen.getByText('$20')).toBeTruthy();
+  expect(screen.queryByText('$20 over budget')).toBeNull();
   expect(screen.queryByTestId('budget-row-spread-coffee')).toBeNull();
   expect(screen.queryByText('Spread it over pay cycles →')).toBeNull();
 });
@@ -109,10 +109,10 @@ it('[A25] spread link prefill keeps cents; the row press still opens the detail'
 });
 
 // [A26] (P1) pending is named on the row.
-it('[A26] a row with pending reads "spent of … · … pending"', async () => {
+it('[A26] a row with pending reads "… of … · … pending"', async () => {
   seed([COFFEE], { coffee: { target: 100, posted: 40, pending: 10 } });
   await renderWithQueries(<Budgets />);
-  expect(await screen.findByText('$50 spent of $100 · $10 pending')).toBeTruthy();
+  expect(await screen.findByText('$50 of $100 · $10 pending')).toBeTruthy();
 });
 
 // [A27] (P1) the detail screen's marker uses the same word: "today's pace", not "today's target".

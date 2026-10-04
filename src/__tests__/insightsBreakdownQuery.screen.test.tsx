@@ -58,11 +58,12 @@ jest.mock('expo-router', () => {
 
 import Insights from '../../app/(tabs)/insights';
 import { UNCATEGORIZED_KEY } from '../model';
+import { COFFEE } from './support/categories';
 
 const server = installFakeServer();
 
 const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
-const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
+const CATS = [{ ...COFFEE, recent: 0 }];
 const BREAKDOWN = { coffee: { posted: 40, pending: 10 } };
 
 function renderInsights(client = makeClient()) {

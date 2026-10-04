@@ -15,19 +15,25 @@ import { useCallback, useState } from 'react';
 // returned the stored values), and success is otherwise silent — so an unchanged pull looks
 // broken. Accounts passes "Balances up to date" so the pull always gives visible feedback;
 // screens that omit it keep the silent-on-success behaviour.
+//
+// WHIT-713: the live-balance call and the toast are optional. Budgets passes only its refetch,
+// so a pull refreshes the screen's data alone; the spinner invariant is the same.
 export function usePullToRefresh(
   refetchList: () => Promise<unknown>,
-  refreshLiveBalances: () => Promise<unknown>,
-  showToast: (message: string) => void,
+  refreshLiveBalances?: () => Promise<unknown>,
+  showToast?: (message: string) => void,
   successMessage?: string,
 ): { pulling: boolean; onRefresh: () => void } {
   const [pulling, setPulling] = useState(false);
   const onRefresh = useCallback(() => {
     setPulling(true);
-    const livePull = refreshLiveBalances()
-      .then(() => { if (successMessage) showToast(successMessage); })
-      .catch(() => showToast('Could not refresh balances. Showing last saved.'));
-    Promise.allSettled([refetchList(), livePull]).finally(() => setPulling(false));
+    const pulls = [refetchList()];
+    if (refreshLiveBalances) {
+      pulls.push(refreshLiveBalances()
+        .then(() => { if (successMessage) showToast?.(successMessage); })
+        .catch(() => showToast?.('Could not refresh balances. Showing last saved.')));
+    }
+    Promise.allSettled(pulls).finally(() => setPulling(false));
   }, [refetchList, refreshLiveBalances, showToast, successMessage]);
   return { pulling, onRefresh };
 }

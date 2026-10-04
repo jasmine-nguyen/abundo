@@ -23,12 +23,13 @@ import { seedTransactionsCache } from './support/transactionsCache';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES } from './support/categories';
 
 const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd49b', recent: 100 } as const;
+const CAT = GROCERIES;
 const txn = (over: Partial<Transaction> = {}): Transaction => ({
   transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
   description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',

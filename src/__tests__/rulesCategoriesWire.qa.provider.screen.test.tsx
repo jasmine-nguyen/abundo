@@ -12,11 +12,11 @@ import { queryClient } from '../queryClient';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { resetAuth, setAuthToken } from './support/authMock';
+import { SUBS } from './support/categories';
 
 const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-const SUBS: Category = { id: 'subs', name: 'Subs', bucket: 'Lifestyle', icon: 'film', color: '#f0b27a', recent: 0 } as Category;
 const NETFLIX: Rule = { id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false, field: 'description', operator: 'contains' };
 const rules = () => queryClient.getQueryData<Rule[]>(['rules']);
 const categoryIds = () => queryClient.getQueryData<Category[]>(['categories'])?.map((c) => c.id);

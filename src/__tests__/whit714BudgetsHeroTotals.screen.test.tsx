@@ -2,12 +2,11 @@
 // (income-only, Savings-only) and while budgets are still loading. Real useBudgetsScreenData
 // over the fake server; ../auth + expo-router mocked; the shared query provider.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react-native';
-import { makeClient, wrapper } from './support/queryClient';
+import { screen, waitFor } from '@testing-library/react-native';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
-import { COFFEE, SALARY, SAVINGS } from './support/budgetCategories';
+import { COFFEE, SALARY, SAVINGS } from './support/categories';
+import { BUDGET_PAY_CYCLE, seedBudgets, renderBudgets } from './support/budgetsScreen';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -16,18 +15,12 @@ jest.mock('../auth', () => ({
 }));
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
-import Budgets from '../../app/(tabs)/budgets';
-
 const server = installFakeServer();
 
 const NO_SPENDING = /^No spending budgets yet/;
 
-const renderBudgets = () => render(<Budgets />, { wrapper: wrapper(makeClient()) });
-
 beforeEach(() => {
-  server.seed('/categories', [COFFEE, SALARY, SAVINGS]);
-  server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01', days_left: 4 });
-  server.seed('/budgets', { coffee: { target: 100, posted: 40, pending: 10 } });
+  seedBudgets(server, { categories: [COFFEE, SALARY, SAVINGS], payCycle: { ...BUDGET_PAY_CYCLE, days_left: 4 } });
   resetRouter();
 });
 

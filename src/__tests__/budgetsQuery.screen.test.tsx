@@ -4,15 +4,16 @@
 // length, and nothing fetches before login. Real ../api over the fake server; ../auth +
 // expo-router mocked; the screen renders under a real QueryClientProvider so the actual query
 // behaviour runs.
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
-import { render, screen, fireEvent, act, waitFor, renderHook } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { screen, fireEvent, act, waitFor, renderHook } from '@testing-library/react-native';
+import { QueryClient } from '@tanstack/react-query';
 import { makeClient, wrapper, pause } from './support/queryClient';
+import { BUDGETS, BUDGET_PAY_CYCLE, seedBudgets, renderBudgets } from './support/budgetsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
 import { pinToday } from './support/clock';
+import { pullControl, pullAndSettle } from './support/pull';
 
 // auth: controllable status + a real subscribe, so the "fires on login" test can flip it.
 let mockAuthStatus = 'authed';
@@ -32,11 +33,11 @@ function setAuth(next: string) {
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
-import Budgets from '../../app/(tabs)/budgets';
 // The REAL query hooks (real ../api over the fake server, ../auth mocked above) — driven directly
 // by the folded WHIT-72 tests via renderHook; the same regime the screen renders under.
 import { useBudgetsScreenData, useBudgetDetailScreenData } from '../queries';
 import { nextPayday } from '../payCycle';
+import { COFFEE, SALARY } from './support/categories';
 
 const server = installFakeServer();
 // The Budgets reads. `/budgets?` (with the query mark) counts the rollup read only, never a
@@ -45,22 +46,12 @@ const budgetReads = () => server.sentUnder('GET', '/budgets?');
 const payCycleReads = () => server.sent('GET', '/paycycle');
 const categoryReads = () => server.sent('GET', '/categories');
 
-// length 30 (NOT the default 14) so "windowed on the real length" genuinely proves
-// budgets waited for the pay cycle rather than fetching with the seeded default.
-const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
-const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 }];
-const BUDGETS = { coffee: { target: 100, posted: 40, pending: 10 } };
-
-function renderBudgets(client = makeClient()) {
-  return render(React.createElement(QueryClientProvider, { client }, React.createElement(Budgets)));
-}
-
 beforeEach(() => {
   mockAuthStatus = 'authed';
   mockAuthListeners.clear();
-  server.seed('/budgets', BUDGETS);
-  server.seed('/categories', CATS);
-  server.seed('/paycycle', PAY_CYCLE);
+  // The shared pay cycle has length 30 (NOT the default 14), so "windowed on the real length"
+  // genuinely proves budgets waited for the pay cycle rather than fetching with the default.
+  seedBudgets(server);
   resetRouter();
 });
 
@@ -86,17 +77,15 @@ it('does not render the redundant per-row "target" caption (the pace tick is lab
   expect(screen.getByText("Solid = spent · faded = pending · line = today's pace")).toBeTruthy();
 });
 
-it('still renders the per-row pace STATUS after the caption removal (info kept, not lost)', async () => {
-  // WHIT-281 — [A-pace] the fix removed the redundant \"target\" caption but the pace STATUS
-  // ($X over/under budget) must survive. The logic layer proves budgetViews COMPUTES paceLabel;
-  // this proves the screen still RENDERS it. Removing budgets.tsx:101 (the paceLabel <Text/>)
-  // is invisible to the logic tests AND to the absence/legend test above — this is the guard.
-  // Over-budget so the label is date-independent: spent 120 of 100 -> exactly "$20 over budget".
-  // Rollover, so no spread can start and the line stays the quiet text, not the link (WHIT-707).
+it('an over-budget row says the overspend once (WHIT-712)', async () => {
+  // Over-budget so the amount is date-independent: spent 120 of 100 -> "$20" "over" on the amount,
+  // and no repeated "$20 over budget" pace line. Rollover, so no spread link can start (WHIT-707).
   server.seed('/budgets', { coffee: { target: 100, posted: 120, pending: 0, rollover: true, carryover: 0 } });
   renderBudgets();
   await screen.findByText('Cafes & Coffee');
-  expect(screen.getByText('$20 over budget')).toBeTruthy();
+  expect(screen.getByText('$20')).toBeTruthy();
+  expect(screen.getByText('over')).toBeTruthy();
+  expect(screen.queryByText('$20 over budget')).toBeNull();
 });
 
 it('shows a spinner first, then the rows (cache-first render)', async () => {
@@ -172,7 +161,7 @@ it('hides a Savings-bucket budget end-to-end and keeps it out of the hero total 
   // Exercises the whole query -> selectBudgets -> budgetViews -> render pipeline; reverting
   // the budgetViews Savings skip (src/context.tsx) makes both assertions fail.
   server.seed('/categories', [
-    { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
+    COFFEE,
     { id: 'nest_egg', name: 'Nest Egg', bucket: 'Savings', icon: 'home', color: '#C7A8F0', recent: 0 },
   ]);
   server.seed('/budgets', {
@@ -269,6 +258,25 @@ describe('focus refetch', () => {
     expect(budgetReads()).toHaveLength(1);
     expect(categoryReads()).toHaveLength(1);
   });
+
+  it('WHIT-713: a failed focus refresh over showing budgets shows the quiet stale line, with no pull', async () => {
+    pinToday(new Date('2026-09-18T09:40:00+10:00'));
+    const client = makeClient({ staleTime: 45_000 });
+    // Only the screen's own focus refetch may run on return — not TanStack's refetch-on-mount.
+    client.setDefaultOptions({ queries: { ...client.getDefaultOptions().queries, refetchOnMount: false } });
+    const first = renderBudgets(client);
+    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+    first.unmount();
+
+    jest.setSystemTime(new Date('2026-09-18T09:41:00+10:00'));
+    server.once('GET', '/budgets', { status: 503 });
+    renderBudgets(client);
+
+    await waitFor(() => expect(budgetReads()).toHaveLength(2));
+    await waitFor(() => expect(screen.getByTestId('budgets-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am"));
+    expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
+    jest.useRealTimers();
+  });
 });
 
 describe('auth transition mid-session', () => {
@@ -292,8 +300,7 @@ describe('save → cache invalidation', () => {
     // — a static import, so identity is guaranteed). Behaviourally, invalidating ['budgets']
     // must refetch the (flat, WHIT-72) budgets query; a local client with no gcTime timer
     // proves that without leaking a background timer into the worker.
-    const client = makeClient();
-    render(React.createElement(QueryClientProvider, { client }, React.createElement(Budgets)));
+    const { client } = renderBudgets();
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
     const before = budgetReads().length;
 
@@ -324,8 +331,7 @@ describe('parallel fetch (no waterfall)', () => {
 // shifts the budgets key, so it doesn't itself trigger a refetch — only the invalidate does.
 describe('length change refetches once, not twice', () => {
   it('writing a new-length pay cycle does NOT refetch; the invalidate is the single refresh', async () => {
-    const client = makeClient();
-    render(React.createElement(QueryClientProvider, { client }, React.createElement(Budgets)));
+    const { client } = renderBudgets();
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
     const afterLoad = budgetReads().length;
 
@@ -391,9 +397,7 @@ describe('WHIT-221 parent→sub tree + de-duped hero (folded from budgetsSubcate
   }
 
   beforeEach(() => {
-    server.seed('/budgets', BUDGETS);
-    server.seed('/categories', CATS);
-    server.seed('/paycycle', PAY_CYCLE);
+    seedBudgets(server, { payCycle: PAY_CYCLE, budgets: BUDGETS, categories: CATS });
   });
 
   it('[A26] hero de-dups: the "of" pill counts the parent cap once, not parent + sub', async () => {
@@ -418,16 +422,12 @@ describe('WHIT-221 parent→sub tree + de-duped hero (folded from budgetsSubcate
 // ===== WHIT-72 (folded from budgetsPayCycleError.screen.test.tsx) — the payCycleError guard,
 // driven via renderHook on the REAL hooks (real ../api, ../auth mocked; NO expo-router mock originally —
 // the shared module-scope expo-router mock is inert here because ../queries never imports it).
-// Fixtures block-scoped so they don't collide with the module ones. =====
+// The shared Budgets fixtures, except a coffee category with no recent spend. =====
 describe('WHIT-72 payCycleError guard (folded from budgetsPayCycleError)', () => {
-  const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
-  const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
-  const BUDGETS = { coffee: { target: 100, posted: 40, pending: 10 } };
+  const CATS = [{ ...COFFEE, recent: 0 }];
 
   beforeEach(() => {
-    server.seed('/budgets', BUDGETS);
-    server.seed('/categories', CATS);
-    server.seed('/paycycle', PAY_CYCLE);
+    seedBudgets(server, { categories: CATS });
   });
 
   describe('useBudgetsScreenData — payCycleError guard (WHIT-72)', () => {
@@ -464,7 +464,7 @@ describe('WHIT-72 payCycleError guard (folded from budgetsPayCycleError)', () =>
       await waitFor(() => expect(result.current.budgets).toHaveLength(1));
       // The hero reads this. It equals the pure helper on the same (len 30) cycle — proving it's
       // plumbed through, not hard-coded. Fail-on-revert: drop it from the return and this is undefined.
-      expect(result.current.nextPayday).toBe(nextPayday(PAY_CYCLE));
+      expect(result.current.nextPayday).toBe(nextPayday(BUDGET_PAY_CYCLE));
       expect(result.current.nextPayday).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     });
 
@@ -554,7 +554,7 @@ describe('WHIT-573 hero over-budget label + sign', () => {
 describe('WHIT-573 hero over-budget — gaps', () => {
   it('sums MULTIPLE over-budget rows into one signed hero total + coherent pill', async () => {
     server.seed('/categories', [
-      { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
+      COFFEE,
       { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd1b9', recent: 12 },
     ]);
     server.seed('/budgets', {
@@ -584,10 +584,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
   });
 
   it('keeps an Income budget OUT of the over-budget hero (earnings do not rescue it)', async () => {
-    server.seed('/categories', [
-      { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
-      { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'cash', color: '#7fd1b9', recent: 0 },
-    ]);
+    server.seed('/categories', [COFFEE, SALARY]);
     server.seed('/budgets', {
       coffee: { target: 100, posted: 200, pending: 0 },
       salary: { target: 5000, posted: 6000, pending: 0 },
@@ -627,5 +624,94 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText('−$1')).toBeTruthy();          // fmt rounds 0.51 → $1
+  });
+});
+
+// WHIT-713 QA — the edges the pull/stale-line acceptance tests don't reach: which of the three
+// reads failed, which load time the line names, the spinner during a cold load, a pull from the
+// error card, and the pay-cycle error card's reason.
+describe('WHIT-713 QA: pull-to-refresh + quiet stale line edges', () => {
+  async function renderLoaded() {
+    renderBudgets();
+    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+  }
+
+  beforeEach(() => { pinToday(new Date('2026-09-18T09:40:00+10:00')); });
+  afterEach(() => { jest.useRealTimers(); });
+
+  it('[A1] a failed CATEGORIES refresh (budgets fine) still shows the stale line', async () => {
+    await renderLoaded();
+    server.once('GET', '/categories', { status: 503 });
+    await pullAndSettle();
+    await waitFor(() => expect(screen.getByTestId('budgets-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am"));
+    expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
+  });
+
+  it('[A2] a failed PAY-CYCLE refresh over a cached cycle shows the stale line, not the error card', async () => {
+    await renderLoaded();
+    server.once('GET', '/paycycle', 'dropped');
+    await pullAndSettle();
+    await waitFor(() => expect(screen.getByTestId('budgets-stale')).toHaveTextContent('You look offline · showing 9:40am'));
+    expect(screen.queryByTestId('budgets-error')).toBeNull();
+  });
+
+  it('[A3] the line names the OLDEST load time: budgets refreshed at 10:05 but categories failed → 9:40am', async () => {
+    await renderLoaded();
+    jest.setSystemTime(new Date('2026-09-18T10:05:00+10:00'));
+    server.once('GET', '/categories', { status: 503 });
+    await pullAndSettle();
+    await waitFor(() => expect(screen.getByTestId('budgets-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am"));
+  });
+
+  it('[A4] after a good pull at 10:05, a later failed pull names 10:05am, not the first load', async () => {
+    await renderLoaded();
+    jest.setSystemTime(new Date('2026-09-18T10:05:00+10:00'));
+    await pullAndSettle();
+    expect(screen.queryByTestId('budgets-stale')).toBeNull();
+
+    jest.setSystemTime(new Date('2026-09-18T10:30:00+10:00'));
+    server.once('GET', '/budgets', { status: 503 });
+    await pullAndSettle();
+    await waitFor(() => expect(screen.getByTestId('budgets-stale')).toHaveTextContent("Couldn't refresh · showing 10:05am"));
+  });
+
+  it("[A5] data loaded yesterday reads with the day, so it can't pass for today", async () => {
+    await renderLoaded();
+    jest.setSystemTime(new Date('2026-09-19T08:00:00+10:00'));
+    server.once('GET', '/budgets', { status: 503 });
+    await pullAndSettle();
+    await waitFor(() => expect(screen.getByTestId('budgets-stale')).toHaveTextContent("Couldn't refresh · showing 18 Sep, 9:40am"));
+  });
+
+  it('[A6] during the cold-load spinner the pull spinner stays off (no double spinner)', async () => {
+    const held = server.hold('/budgets');
+    renderBudgets();
+    expect(await screen.findByTestId('budgets-loading')).toBeTruthy();
+    act(() => { pullControl().props.onRefresh(); });
+    expect(pullControl().props.refreshing).toBe(false);
+    held.release();
+    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+  });
+
+  it('[A7] pulling down on the error card recovers the budgets', async () => {
+    server.once('GET', '/budgets', { status: 503 });
+    renderBudgets();
+    expect(await screen.findByTestId('budgets-error')).toBeTruthy();
+    await pullAndSettle();
+    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+    expect(screen.queryByTestId('budgets-error')).toBeNull();
+    expect(screen.queryByTestId('budgets-stale')).toBeNull();
+  });
+
+  it('[A8] a first-load PAY-CYCLE drop shows the error card with the offline reason', async () => {
+    server.once('GET', '/paycycle', 'dropped');
+    renderBudgets();
+    expect(await screen.findByTestId('budgets-error')).toBeTruthy();
+    expect(screen.getByText('You look offline. Check your connection and retry.')).toBeTruthy();
+  });
+
+  it('[A9] no stale line on a normal load', async () => {
+    await renderLoaded();
+    expect(screen.queryByTestId('budgets-stale')).toBeNull();
   });
 });

@@ -1903,8 +1903,6 @@ export interface BudgetView {
   spentLabel: string; remainAmount: string; remainLabel: string; remainColor: string;
   postedPct: number; pendingPct: number; targetPct: number; postedColor: string;
   pendingTint: string; paceLabel: string; paceColor: string; over: boolean;
-  // Smoothing chip: "+$40 carried over" / "$20 borrowed", or '' when off / near zero.
-  carryoverLabel: string;
   // Sub-category tree (WHIT-221): `depth` is the indent level — the number of the
   // row's ancestors that are ALSO budgeted rows (0 = top-level or a sub whose parent
   // isn't budgeted). `parentId` is the nearest budgeted ancestor's id (the row it
@@ -2009,9 +2007,6 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     // cycle's plan by now" — the buffer isn't part of the cycle's pace.
     const target = paceTarget(b, s);
     const postedPct = Math.max(0, Math.min(100, (posted / den) * 100));
-    let carryoverLabel = '';
-    if (b.rollover && b.carryover > 0.5) carryoverLabel = `+${fmt(b.carryover)} carried over`;
-    else if (b.rollover && b.carryover < -0.5) carryoverLabel = `${fmt(-b.carryover)} borrowed`;
 
     if (c.bucket === 'Income') {
       // Earn-target (floor): over-is-good, so the direction and colours invert —
@@ -2033,7 +2028,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
         remainColor: C.good,
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: c.color,
         pendingTint: tint(c.color, 0.45), paceLabel: '', paceColor: C.textInfo, over: false,
-        carryoverLabel, depth, parentId,
+        depth, parentId,
         section: 'earning', showTarget: false, spreadPrefill: null,
       });
       group(parentId, b.id);
@@ -2051,27 +2046,25 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     if (depth === 0) { totBudget += available; totSpent += spent; totRemain += remain; }
     const over = spent > available;
     const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
-    let paceLabel: string, paceColor: string;
-    // The "left" amount is the row's cyan highlight; the pace sub-label is the muted C.textInfo.
-    // Over pace is amber. Over budget keeps red to the amount and bar (WHIT-707): the line offers
-    // the way out (a spread) when one can start, else a quiet "$X over budget".
+    // Quiet unless off pace (WHIT-712): no line when on pace, and an overspend is said once by the
+    // red amount — the line only offers the way out (a spread) when one can start.
+    let paceLabel = '', paceColor: string = C.textInfo;
     const spread = budgetSpreadEligibility(c, b);
     const spreadPrefill = spread.entry === 'start' ? spread.overspend : null;
-    if (over && spreadPrefill !== null) { paceLabel = 'Spread it over pay cycles →'; paceColor = C.accentSoft; }
-    else if (over) { paceLabel = fmtExact(spent - available) + ' over budget'; paceColor = C.textInfo; }
-    else if (spent - target > 0.5) { paceLabel = fmt(spent - target) + ' over pace'; paceColor = C.warn; }
-    else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under pace'; paceColor = C.textInfo; }
-    else { paceLabel = 'on pace'; paceColor = C.textInfo; }
+    if (over) {
+      if (spreadPrefill !== null) { paceLabel = 'Spread it over pay cycles →'; paceColor = C.accentSoft; }
+    } else if (spent - target > 0.5) { paceLabel = fmt(spent - target) + ' over pace'; paceColor = C.warn; }
+    else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under pace'; }
     // "of" shows the AVAILABLE envelope so it reconciles with the remaining amount (available −
     // spent). `spent` includes pending; when some is pending, name it too (as Insights does).
-    let spentLabel = `${fmtExact(spent)} spent of ${fmt(available)}`;
+    let spentLabel = `${fmtExact(spent)} of ${fmt(available)}`;
     if (pending > 0.005) spentLabel += ` · ${fmtExact(pending)} pending`;
     viewById.set(b.id, {
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
       spentLabel, remainAmount: fmtExact(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,
       postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: over ? C.bad : c.color,
       pendingTint: tint(over ? C.bad : c.color, 0.45), paceLabel, paceColor, over,
-      carryoverLabel, depth, parentId,
+      depth, parentId,
       section: 'spending', showTarget: true, spreadPrefill,
     });
     group(parentId, b.id);

@@ -40,6 +40,7 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries, settle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { transactionsKey, uncategorizedCountKey } from '../queries';
+import { COFFEE_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -116,6 +117,15 @@ it('empty + error shows the inline retry, and Retry re-reads the list and the st
   await settle();
 });
 
+it('empty + error says why: offline when the connection drops, our server on a 5xx', async () => {
+  server.once('GET', FEED, 'dropped');
+  await draw();
+  expect(screen.getByTestId('transactions-error')).toHaveTextContent(/You look offline\. Check your connection and retry\./);
+  server.once('GET', FEED, { status: 503 });
+  fireEvent.press(screen.getByTestId('transactions-retry'));
+  await waitFor(() => expect(screen.getByTestId('transactions-error')).toHaveTextContent(/Our server had a problem\. Try again in a moment\./));
+});
+
 it('empty + loading shows the spinner', async () => {
   const held = server.hold(FEED);
   render(<WithQueries><Transactions /></WithQueries>);
@@ -155,6 +165,17 @@ it('shows Load More when there is more history, and tapping it pages older rows 
   expect(server.sent('GET', '/transactions/feed?cursor=c1')).toHaveLength(1);
   expect(screen.getByText('-$42.00')).toBeTruthy();
   expect(screen.queryByTestId('transactions-load-more')).toBeNull(); // end of history now
+});
+
+it('a failed Load More does not show the quiet "couldn\'t refresh" line', async () => {
+  seedFeed([row('t1')], 'c1');
+  await draw();
+  server.once('GET', FEED, { status: 503 });
+  fireEvent.press(screen.getByTestId('transactions-load-more'));
+  await waitFor(() => expect(gets(FEED)).toBe(2));
+  await settle();
+  expect(screen.getByText('-$42.00')).toBeTruthy();
+  expect(screen.queryByTestId('transactions-stale')).toBeNull();
 });
 
 it('hides Load More at end-of-history (no next cursor)', async () => {
@@ -361,7 +382,7 @@ it('[E4] a pull on the SETTLED EMPTY list does NOT raise the pull spinner (lengt
 describe('Transactions — search', () => {
 const CATS = [
   CAT,
-  { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', parent: null },
+  { ...COFFEE_RECORD, color: '#E8A87C', parent: null },
 ];
 
 const row = (over: Record<string, unknown>) => ({

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Animated, LayoutChangeEvent } from 'react-native';
 import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { C, FONT } from '../../src/theme';
+import { C, FONT, PRESSED } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { countUncategorized } from '../../src/context';
 import { useRecentTransactionsScreenData, useKeepTransactionsFeedWarm, useUncategorizedCount } from '../../src/queries';
@@ -67,7 +67,7 @@ export function TabBar({ state, navigation }: TabBarShape) {
               key={route.key}
               // Press feedback (WHIT-184 taste): instant dim + slight shrink on tap so a
               // tab doesn't feel dead. Pure visual — no animation lib, no data path.
-              style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}
+              style={({ pressed }) => [styles.item, pressed && PRESSED]}
               onPress={() => {
                 const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
                 if (!focused && !event.defaultPrevented) navigation.navigate(route.name);
@@ -138,8 +138,6 @@ const styles = StyleSheet.create({
   // flex:1 (not a fixed width) so the five items share the row evenly (WHIT-495 dropped
   // Settings to a header gear); a fixed width overflowed narrow phones at six.
   item: { flex: 1, minWidth: 0, alignItems: 'center', gap: 5 },
-  // WHIT-184 taste: pressed-state feedback for the tab buttons.
-  itemPressed: { opacity: 0.55, transform: [{ scale: 0.92 }] },
   label: { fontFamily: FONT.body, fontSize: 10.5, fontWeight: '600' },
   dot: { position: 'absolute', top: -3, right: 4, width: 8, height: 8, borderRadius: 4, backgroundColor: C.bad, borderWidth: 2, borderColor: C.bg },
 });

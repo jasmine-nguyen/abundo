@@ -21,11 +21,12 @@ jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => 
 
 import { useInsightsScreenData } from '../queries';
 import { UNCATEGORIZED_KEY } from '../model';
+import { COFFEE } from './support/categories';
 
 const server = installFakeServer();
 
 const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
-const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
+const CATS = [{ ...COFFEE, recent: 0 }];
 // An Uncategorized-ONLY cycle — the row that survives with or without taxonomy.
 const UNCAT_ONLY = { [UNCATEGORIZED_KEY]: { posted: 25, pending: 0 } };
 

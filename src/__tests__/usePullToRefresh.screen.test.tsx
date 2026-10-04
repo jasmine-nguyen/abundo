@@ -98,6 +98,20 @@ describe('usePullToRefresh', () => {
     expect(refetchList).toHaveBeenCalledTimes(1);
   });
 
+  it('a list-only pull (no live balances, no toast) raises then clears the spinner', async () => {
+    const list = deferred<void>();
+    refetchList.mockReturnValueOnce(list.promise);
+    const { result } = renderHook(() => usePullToRefresh(refetchList));
+
+    act(() => { result.current.onRefresh(); });
+    expect(result.current.pulling).toBe(true);
+    expect(refetchList).toHaveBeenCalledTimes(1);
+
+    await act(async () => { list.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(result.current.pulling).toBe(false);
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
   it('is not latched: a second pull after a failed first fires again and clears', async () => {
     refreshLiveBalances.mockReturnValueOnce(Promise.reject(new Error('offline')));
     const { result } = renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast));
@@ -107,6 +121,33 @@ describe('usePullToRefresh', () => {
     await act(async () => { result.current.onRefresh(); await Promise.resolve(); await Promise.resolve(); });
     expect(refreshLiveBalances).toHaveBeenCalledTimes(2);
     expect(refetchList).toHaveBeenCalledTimes(2);
+    expect(result.current.pulling).toBe(false);
+  });
+
+  // WHIT-713 QA
+  it('[A10] a list-only pull whose refetch REJECTS still clears the spinner and is not latched', async () => {
+    refetchList.mockReturnValueOnce(Promise.reject(new Error('API error: 503')));
+    const { result } = renderHook(() => usePullToRefresh(refetchList));
+    await act(async () => { result.current.onRefresh(); await Promise.resolve(); await Promise.resolve(); });
+    expect(result.current.pulling).toBe(false);
+
+    await act(async () => { result.current.onRefresh(); await Promise.resolve(); await Promise.resolve(); });
+    expect(refetchList).toHaveBeenCalledTimes(2);
+    expect(result.current.pulling).toBe(false);
+  });
+
+  it('[A11] a toast + success message with no live-balance call never toasts (the toast belongs to the balance pull)', async () => {
+    const { result } = renderHook(() => usePullToRefresh(refetchList, undefined, showToast, 'Balances up to date'));
+    await act(async () => { result.current.onRefresh(); await Promise.resolve(); await Promise.resolve(); });
+    expect(result.current.pulling).toBe(false);
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('[A12] live balances without a toast: a failed balance pull clears the spinner without throwing', async () => {
+    refreshLiveBalances.mockReturnValueOnce(Promise.reject(new Error('offline')));
+    const { result } = renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances));
+    await act(async () => { result.current.onRefresh(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(refreshLiveBalances).toHaveBeenCalledTimes(1);
     expect(result.current.pulling).toBe(false);
   });
 });

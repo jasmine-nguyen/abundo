@@ -484,7 +484,10 @@ export function usePayCycle(): PayCycleData {
 interface CombinedQueryStatus {
   isLoading: boolean;
   isError: boolean;
-  refetch: () => void;
+  error: unknown; // the first failed query's error (an error card's reason line)
+  refreshError: unknown; // WHIT-713: see refreshStatus
+  updatedAt: number;
+  refetch: () => Promise<unknown>;
   refetchStale: () => void;
 }
 // The minimal slice of a query result the plumbing reads — every UseQueryResult satisfies it
@@ -493,7 +496,20 @@ interface ScreenQuery {
   isLoading: boolean;
   isError: boolean;
   isStale: boolean;
-  refetch: () => unknown;
+  isRefetchError: boolean;
+  error: unknown;
+  dataUpdatedAt: number;
+  refetch: () => Promise<unknown>;
+}
+// WHIT-713: a refresh that failed over data already showing. TanStack keeps `data` on a failed
+// refetch, so the screen still shows the old numbers; `refreshError` lets it say so quietly.
+// `updatedAt` is the OLDEST load time among the queries, so the "showing <time>" line never
+// overstates how fresh the screen is. 0 when nothing has loaded.
+function refreshStatus(queries: ScreenQuery[]): { refreshError: unknown; updatedAt: number } {
+  const failed = queries.find((q) => q.isRefetchError);
+  const loadTimes = queries.map((q) => q.dataUpdatedAt).filter((time) => time > 0);
+  const updatedAt = loadTimes.length > 0 ? Math.min(...loadTimes) : 0;
+  return { refreshError: failed ? failed.error : null, updatedAt };
 }
 // TanStack results are new objects every render, so focus callbacks read them through a ref
 // to keep a stable identity — otherwise each redraw reruns the focus refetch (WHIT-668).
@@ -505,10 +521,11 @@ function useLatestRef<T>(value: T) {
 function useCombineScreenQueries(queries: ScreenQuery[]): CombinedQueryStatus {
   const isLoading = queries.some((q) => q.isLoading);
   const isError = queries.some((q) => q.isError);
+  const error = queries.find((q) => q.isError)?.error ?? null;
   const latest = useLatestRef(queries);
-  const refetch = useCallback(() => { latest.current.forEach((q) => { q.refetch(); }); }, [latest]);
+  const refetch = useCallback(() => Promise.all(latest.current.map((q) => q.refetch())), [latest]);
   const refetchStale = useCallback(() => { latest.current.forEach((q) => { if (q.isStale) q.refetch(); }); }, [latest]);
-  return { isLoading, isError, refetch, refetchStale };
+  return { isLoading, isError, error, ...refreshStatus(queries), refetch, refetchStale };
 }
 
 // --- the Budgets screen's composite view -------------------------------------
@@ -527,7 +544,10 @@ export interface BudgetsScreenData {
   // the rows (cache-first), mirroring WHIT-194's categoriesError.
   payCycleError: boolean;
   payCycleReady: boolean; // the pay cycle has loaded (or is cached), so days left is real, not the default
-  refetch: () => void; // force a refresh (the inline Retry button)
+  error: unknown; // the failed read's error → the error card's offline-vs-server reason (WHIT-713)
+  refreshError: unknown; // a refresh failed over budgets already showing → the quiet stale line
+  updatedAt: number; // when the showing data loaded (oldest of the reads), 0 if never
+  refetch: () => Promise<unknown>; // force a refresh (the inline Retry button, and the pull)
   refetchStale: () => void; // focus refresh — only refetches queries that have gone stale
 }
 
@@ -721,6 +741,9 @@ export interface TransactionsScreenData extends RecentTransactionsScreenData {
   isLoadingMore: boolean; // the next page is in flight → Load More spinner (NOT the pull spinner)
   refetchList: () => Promise<unknown>; // pull: refresh the list (feed + categories), NOT balances
   refreshLiveBalances: () => Promise<void>; // pull: fetch fresh balances live from the bank
+  error: unknown; // the failed list read's error (the error card's reason line)
+  refreshError: unknown; // WHIT-713: a list refresh failed over rows already showing (see refreshStatus)
+  updatedAt: number; // when the showing list last loaded; 0 when nothing has
 }
 
 // A single frozen empty list for the cold case, so `transactions` keeps a STABLE identity
@@ -809,10 +832,15 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
         queryClient.invalidateQueries({ queryKey: uncategorizedCountKey }),
       ]);
     }
-    queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(activeFeedKey, (prev) =>
-      prev && prev.pages.length > 1
-        ? { pages: prev.pages.slice(0, 1), pageParams: prev.pageParams.slice(0, 1) }
-        : prev);
+    // Keep the list's original load time: setQueryData stamps "now" otherwise, and a failed
+    // refetch would then claim the trimmed list is fresh (WHIT-713).
+    if (feedQuery.data && feedQuery.data.pages.length > 1) {
+      queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(
+        activeFeedKey,
+        { pages: feedQuery.data.pages.slice(0, 1), pageParams: feedQuery.data.pageParams.slice(0, 1) },
+        { updatedAt: feedQuery.dataUpdatedAt },
+      );
+    }
     // WHIT-501: a pull is the user's explicit "get me the latest", so refresh the whole-history
     // uncategorized tally alongside the list. Without this the badge/dot keep a fresh-cached number
     // (5min staleTime) while the pull loads brand-new unfiled rows into the list — badge says 3, list
@@ -863,7 +891,11 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
     retry: () => { refetchSearch(); },
   }), [searchActive, searchData, searchIsPlaceholder, searchIsError, searchIsFetching, refetchSearch]);
 
-  return { search, transactions, category, balances, isLoading, isError, isFetching, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore };
+  // Balances stay out, as with isError: a balances hiccup isn't a list refresh failure.
+  const { refreshError, updatedAt } = refreshStatus([feedQuery, categoriesQuery]);
+  const error = feedQuery.error ?? categoriesQuery.error;
+
+  return { search, transactions, category, balances, isLoading, isError, error, refreshError, updatedAt, isFetching, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore };
 }
 
 /** The bounded "recent" reads (tab-bar dot, account detail, goal-edit picker): a fixed

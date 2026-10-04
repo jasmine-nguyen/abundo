@@ -2,10 +2,11 @@
 // and copy, the retry wiring, and that NOTHING renders when neither state is active (the one edge
 // the screen suites don't isolate). Spinner/error are driven by explicit booleans the caller
 // computes (mutually exclusive on the real screens).
-import { it, expect, jest } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
-import { ListStates } from '../components/ListStates';
+import { ListStates, StaleDataLine } from '../components/ListStates';
+import { pinToday } from './support/clock';
 
 it('renders the spinner (only) with the prefixed testID when loading', () => {
   render(<ListStates showSpinner showError={false} idPrefix="accounts" errorText="Couldn't load your accounts." retryLabel="Retry loading your accounts" onRetry={jest.fn()} />);
@@ -33,4 +34,42 @@ it('renders nothing when neither state is active', () => {
   render(<ListStates showSpinner={false} showError={false} idPrefix="accounts" errorText="x" retryLabel="y" onRetry={jest.fn()} />);
   expect(screen.queryByTestId('accounts-loading')).toBeNull();
   expect(screen.queryByTestId('accounts-error')).toBeNull();
+});
+
+it('with an error, adds the reason line under the error copy', () => {
+  render(<ListStates showSpinner={false} showError idPrefix="accounts" errorText="Couldn't load your accounts." retryLabel="y" onRetry={jest.fn()} error={new TypeError('Network request failed')} />);
+  expect(screen.getByText("Couldn't load your accounts.")).toBeTruthy();
+  expect(screen.getByText('You look offline. Check your connection and retry.')).toBeTruthy();
+});
+
+it('without an error, shows no reason line', () => {
+  render(<ListStates showSpinner={false} showError idPrefix="accounts" errorText="Couldn't load your accounts." retryLabel="y" onRetry={jest.fn()} />);
+  expect(screen.queryByText(/look offline|server had a problem/)).toBeNull();
+});
+
+describe('StaleDataLine (WHIT-713)', () => {
+  beforeEach(() => { pinToday(new Date('2026-09-18T15:00:00+10:00')); });
+  afterEach(() => { jest.useRealTimers(); });
+
+  const loadedAt = new Date('2026-09-18T09:40:00+10:00').getTime();
+
+  it('renders nothing with no refresh error', () => {
+    render(<StaleDataLine idPrefix="budgets" error={null} updatedAt={loadedAt} />);
+    expect(screen.queryByTestId('budgets-stale')).toBeNull();
+  });
+
+  it('renders nothing when nothing has loaded yet', () => {
+    render(<StaleDataLine idPrefix="budgets" error={new Error('API error: 503')} updatedAt={0} />);
+    expect(screen.queryByTestId('budgets-stale')).toBeNull();
+  });
+
+  it('says it could not refresh, with the load time, for a server error', () => {
+    render(<StaleDataLine idPrefix="budgets" error={new Error('API error: 503')} updatedAt={loadedAt} />);
+    expect(screen.getByTestId('budgets-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am");
+  });
+
+  it('says you look offline for a lost connection', () => {
+    render(<StaleDataLine idPrefix="accounts" error={new TypeError('Network request failed')} updatedAt={loadedAt} />);
+    expect(screen.getByTestId('accounts-stale')).toHaveTextContent('You look offline · showing 9:40am');
+  });
 });
