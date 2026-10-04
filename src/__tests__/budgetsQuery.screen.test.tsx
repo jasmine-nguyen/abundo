@@ -8,7 +8,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import { screen, fireEvent, act, waitFor, renderHook } from '@testing-library/react-native';
 import { QueryClient } from '@tanstack/react-query';
 import { makeClient, wrapper, pause } from './support/queryClient';
-import { BUDGETS, BUDGETS_CAPTION, BUDGET_PAY_CYCLE, seedBudgets, renderBudgets } from './support/budgetsScreen';
+import { BUDGETS, BUDGETS_CAPTION, BUDGET_PAY_CYCLE, seedBudgets, renderBudgets, renderLoadedBudgets } from './support/budgetsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
@@ -56,8 +56,7 @@ beforeEach(() => {
 });
 
 it('renders budget rows from the queries, fetched in parallel with the pay cycle', async () => {
-  renderBudgets();
-  expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+  await renderLoadedBudgets();
   // WHIT-72: budgets fetch in PARALLEL now (flat key, no gate), so they fire with the default
   // length (14) before the cycle resolves — and never refetch to 30. The server ignores the
   // length anyway (it derives the window itself), so the rendered rows are still correct.
@@ -71,8 +70,7 @@ it('does not render the redundant per-row "target" caption (the pace tick is lab
   // WHIT-281: a per-row "target" caption pinned under the moving pace tick overlapped the
   // right-aligned pace status when the tick sat far right. It was redundant — the tick is
   // already explained once, in the top caption (WHIT-707) — so it was removed.
-  renderBudgets();
-  await screen.findByText('Cafes & Coffee');
+  await renderLoadedBudgets();
   expect(screen.queryAllByText('target')).toHaveLength(0); // the overlapping caption is gone
   expect(screen.getByText(BUDGETS_CAPTION)).toBeTruthy();
 });
@@ -81,8 +79,7 @@ it('an over-budget row says the overspend once (WHIT-712)', async () => {
   // Over-budget so the amount is date-independent: spent 120 of 100 -> "$20" "over" on the amount,
   // and no repeated "$20 over budget" pace line. Rollover, so no spread link can start (WHIT-707).
   server.seed('/budgets', { coffee: { target: 100, posted: 120, pending: 0, rollover: true, carryover: 0 } });
-  renderBudgets();
-  await screen.findByText('Cafes & Coffee');
+  await renderLoadedBudgets();
   expect(screen.getByText('$20')).toBeTruthy();
   expect(screen.getByText('over')).toBeTruthy();
   expect(screen.queryByText('$20 over budget')).toBeNull();
@@ -96,8 +93,7 @@ it('shows a spinner first, then the rows (cache-first render)', async () => {
 
 it('a transient 5xx retries with backoff and self-heals — no error shown', async () => {
   server.once('GET', '/budgets', { status: 503 });
-  renderBudgets(makeClient({ retry: 2 })); // retry enabled (fast delay)
-  expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+  await renderLoadedBudgets(makeClient({ retry: 2 })); // retry enabled (fast delay)
   expect(screen.queryByTestId('budgets-error')).toBeNull();
   expect(budgetReads()).toHaveLength(2); // first failed, retry succeeded
 });
@@ -142,15 +138,13 @@ it('does not fetch before login, then fires the moment auth flips to authed', as
 });
 
 it('the add-budget button navigates to the picker', async () => {
-  renderBudgets();
-  await screen.findByText('Cafes & Coffee');
+  await renderLoadedBudgets();
   fireEvent.press(screen.getByText('Add a budget'));
   expect(routerSpies.push).toHaveBeenCalledWith('/budget/pick');
 });
 
 it('the header "+" button navigates to the picker (WHIT-711)', async () => {
-  renderBudgets();
-  await screen.findByText('Cafes & Coffee');
+  await renderLoadedBudgets();
   fireEvent.press(screen.getByLabelText('Add budget'));
   expect(routerSpies.push).toHaveBeenCalledWith('/budget/pick');
 });
@@ -168,8 +162,7 @@ it('hides a Savings-bucket budget end-to-end and keeps it out of the hero total 
     coffee: { target: 100, posted: 40, pending: 10 },
     nest_egg: { target: 2000, posted: 0, pending: 0 },
   });
-  renderBudgets();
-  expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+  await renderLoadedBudgets();
   expect(screen.queryByText('Nest Egg')).toBeNull();      // Savings row hidden
   expect(screen.getByText('$50 spent of $100 · $10 pending')).toBeTruthy(); // spend budget only
   expect(screen.queryByText(/of \$2,100/)).toBeNull();     // NOT spend + Savings target
@@ -199,8 +192,7 @@ it('through the hook: a future last_pay_date shows that date as the next payday'
   try {
     server.seed('/paycycle', { length: 30, last_pay_date: '2026-09-25' });
     const client = makeClient();
-    renderBudgets(client);
-    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+    await renderLoadedBudgets(client);
     await waitFor(() => expect(client.isFetching()).toBe(0));
     expect(payCycleReads()).toHaveLength(1);
     expect(screen.getByText('Next payday 25 Sep')).toBeTruthy();
@@ -249,8 +241,7 @@ describe('empty budgets', () => {
 
 describe('focus refetch', () => {
   it('does not storm: fresh data + focus effect → each fetcher called exactly once', async () => {
-    renderBudgets(); // staleTime 60s → refetchStale is a no-op
-    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+    await renderLoadedBudgets(); // staleTime 60s → refetchStale is a no-op
     await act(async () => {
       await Promise.resolve();
     });
@@ -264,8 +255,7 @@ describe('focus refetch', () => {
     const client = makeClient({ staleTime: 45_000 });
     // Only the screen's own focus refetch may run on return — not TanStack's refetch-on-mount.
     client.setDefaultOptions({ queries: { ...client.getDefaultOptions().queries, refetchOnMount: false } });
-    const first = renderBudgets(client);
-    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+    const first = await renderLoadedBudgets(client);
     first.unmount();
 
     jest.setSystemTime(new Date('2026-09-18T09:41:00+10:00'));
@@ -281,8 +271,7 @@ describe('focus refetch', () => {
 
 describe('auth transition mid-session', () => {
   it('authed→locked keeps cached rows and fires no new fetch (no doomed 401 retry)', async () => {
-    renderBudgets();
-    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+    await renderLoadedBudgets();
     const before = budgetReads().length;
 
     await act(async () => {
@@ -300,8 +289,7 @@ describe('save → cache invalidation', () => {
     // — a static import, so identity is guaranteed). Behaviourally, invalidating ['budgets']
     // must refetch the (flat, WHIT-72) budgets query; a local client with no gcTime timer
     // proves that without leaking a background timer into the worker.
-    const { client } = renderBudgets();
-    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+    const { client } = await renderLoadedBudgets();
     const before = budgetReads().length;
 
     await refreshInAct(() => client.invalidateQueries({ queryKey: ['budgets'] })); // what edit.tsx does after a save
@@ -331,8 +319,7 @@ describe('parallel fetch (no waterfall)', () => {
 // shifts the budgets key, so it doesn't itself trigger a refetch — only the invalidate does.
 describe('length change refetches once, not twice', () => {
   it('writing a new-length pay cycle does NOT refetch; the invalidate is the single refresh', async () => {
-    const { client } = renderBudgets();
-    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+    const { client } = await renderLoadedBudgets();
     const afterLoad = budgetReads().length;
 
     // persistPayCycle writes the new-length cycle into the cache. With the flat key this must
@@ -511,8 +498,7 @@ describe('WHIT-573 hero over-budget label + sign', () => {
     // spent 200 of available 100 → totRemain -100. Fail-on-revert: without the fix the hero says
     // "Left to spend" + unsigned "$100" — both assertions below flip.
     server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();      // label flipped
     expect(screen.getByText('−$100')).toBeTruthy();            // sign now visible (fmtExact gives "$100")
     expect(screen.queryByText('Left to spend')).toBeNull(); // the misleading label is gone
@@ -521,16 +507,14 @@ describe('WHIT-573 hero over-budget label + sign', () => {
   it('keeps "Left to spend" (unsigned) when under the plan', async () => {
     // spent 50 of 100 → totRemain +50: the happy path must be untouched.
     server.seed('/budgets', { coffee: { target: 100, posted: 40, pending: 10 } });
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.getByText('Left to spend')).toBeTruthy();
     expect(screen.queryByText('Over budget')).toBeNull();
   });
 
   it('reads "Left to spend" when exactly on budget (totRemain === 0), not "Over budget"', async () => {
     server.seed('/budgets', { coffee: { target: 100, posted: 100, pending: 0 } });
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.getByText('Left to spend')).toBeTruthy();
     expect(screen.queryByText('Over budget')).toBeNull();
   });
@@ -539,8 +523,7 @@ describe('WHIT-573 hero over-budget label + sign', () => {
     // spent 100.30 of 100 → totRemain -0.30. With cents shown, a visible "$0.30" must never sit
     // under "Left to spend". Fail-on-revert: restore the old `< -0.5` threshold and this flips back.
     server.seed('/budgets', { coffee: { target: 100, posted: 100, pending: 0.3 } });
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText('−$0.30')).toBeTruthy();
     expect(screen.queryByText('Left to spend')).toBeNull();
@@ -561,8 +544,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
       coffee: { target: 100, posted: 150, pending: 0 },
       groceries: { target: 200, posted: 250, pending: 0 },
     });
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText('−$100')).toBeTruthy();       // -(300 available - 400 spent)
     expect(screen.getByText('$400 spent of $300')).toBeTruthy(); // totSpent + totBudget unchanged
@@ -575,8 +557,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     server.seed('/budgets', {
       coffee: { target: 100, posted: 50, pending: 0, rollover: true, carryover: -80 },
     });
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText('−$30')).toBeTruthy();
     expect(screen.getByText('$50 spent of $20')).toBeTruthy(); // available envelope, not the $100 target
@@ -588,8 +569,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
       coffee: { target: 100, posted: 200, pending: 0 },
       salary: { target: 5000, posted: 6000, pending: 0 },
     });
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.getByText('Salary')).toBeTruthy();       // Income row still lists
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText('−$100')).toBeTruthy();
@@ -599,8 +579,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
 
   it('renders a large deficit as the exact comma-grouped -$6,056 with a coherent pill', async () => {
     server.seed('/budgets', { coffee: { target: 1000, posted: 7056, pending: 0 } });
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText('−$6,056')).toBeTruthy();
     expect(screen.getByText('$7,056 spent of $1,000')).toBeTruthy();
@@ -608,16 +587,14 @@ describe('WHIT-573 hero over-budget — gaps', () => {
 
   it('under a cent over (-0.004) stays "Left to spend" — float dust never shows "−$0"', async () => {
     server.seed('/budgets', { coffee: { target: 100, posted: 100, pending: 0.004 } });
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.getByText('Left to spend')).toBeTruthy();
     expect(screen.queryByText('Over budget')).toBeNull();
   });
 
   it('a cent over (-0.01) flips to "Over budget −$0.01"', async () => {
     server.seed('/budgets', { coffee: { target: 100, posted: 100.01, pending: 0 } });
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText('−$0.01')).toBeTruthy();
   });
@@ -627,16 +604,11 @@ describe('WHIT-573 hero over-budget — gaps', () => {
 // reads failed, which load time the line names, the spinner during a cold load, a pull from the
 // error card, and the pay-cycle error card's reason.
 describe('WHIT-713 QA: pull-to-refresh + quiet stale line edges', () => {
-  async function renderLoaded() {
-    renderBudgets();
-    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-  }
-
   beforeEach(() => { pinToday(new Date('2026-09-18T09:40:00+10:00')); });
   afterEach(() => { jest.useRealTimers(); });
 
   it('[A1] a failed CATEGORIES refresh (budgets fine) still shows the stale line', async () => {
-    await renderLoaded();
+    await renderLoadedBudgets();
     server.once('GET', '/categories', { status: 503 });
     await pullAndSettle();
     await waitFor(() => expect(screen.getByTestId('budgets-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am"));
@@ -644,7 +616,7 @@ describe('WHIT-713 QA: pull-to-refresh + quiet stale line edges', () => {
   });
 
   it('[A2] a failed PAY-CYCLE refresh over a cached cycle shows the stale line, not the error card', async () => {
-    await renderLoaded();
+    await renderLoadedBudgets();
     server.once('GET', '/paycycle', 'dropped');
     await pullAndSettle();
     await waitFor(() => expect(screen.getByTestId('budgets-stale')).toHaveTextContent('You look offline · showing 9:40am'));
@@ -652,7 +624,7 @@ describe('WHIT-713 QA: pull-to-refresh + quiet stale line edges', () => {
   });
 
   it('[A3] the line names the OLDEST load time: budgets refreshed at 10:05 but categories failed → 9:40am', async () => {
-    await renderLoaded();
+    await renderLoadedBudgets();
     jest.setSystemTime(new Date('2026-09-18T10:05:00+10:00'));
     server.once('GET', '/categories', { status: 503 });
     await pullAndSettle();
@@ -660,7 +632,7 @@ describe('WHIT-713 QA: pull-to-refresh + quiet stale line edges', () => {
   });
 
   it('[A4] after a good pull at 10:05, a later failed pull names 10:05am, not the first load', async () => {
-    await renderLoaded();
+    await renderLoadedBudgets();
     jest.setSystemTime(new Date('2026-09-18T10:05:00+10:00'));
     await pullAndSettle();
     expect(screen.queryByTestId('budgets-stale')).toBeNull();
@@ -672,7 +644,7 @@ describe('WHIT-713 QA: pull-to-refresh + quiet stale line edges', () => {
   });
 
   it("[A5] data loaded yesterday reads with the day, so it can't pass for today", async () => {
-    await renderLoaded();
+    await renderLoadedBudgets();
     jest.setSystemTime(new Date('2026-09-19T08:00:00+10:00'));
     server.once('GET', '/budgets', { status: 503 });
     await pullAndSettle();
@@ -707,7 +679,7 @@ describe('WHIT-713 QA: pull-to-refresh + quiet stale line edges', () => {
   });
 
   it('[A9] no stale line on a normal load', async () => {
-    await renderLoaded();
+    await renderLoadedBudgets();
     expect(screen.queryByTestId('budgets-stale')).toBeNull();
   });
 });

@@ -6,17 +6,39 @@
 //   jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 //   const server = installFakeServer();
 //   beforeEach(() => seedBudgets(server));
-//   renderBudgets();
+//   renderBudgets();                          // draw the tab
+//   await renderLoadedBudgets();              // draw it and wait for the coffee row
+//   await showBudgets(server, budgets, opts); // seed coffee + groceries (4 days left), draw, wait
 //
 // (Not a *.test file, so the jest testMatch never runs it as a suite.)
 import React from 'react';
-import { render } from '@testing-library/react-native';
+import { render, screen } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Budgets from '../../../app/(tabs)/budgets';
 import { makeClient } from './queryClient';
+import type { installFakeServer } from './fakeServer';
+import { COFFEE, GROCERIES } from './categories';
+import { BUDGET_PAY_CYCLE, seedBudgets } from './budgetsTab';
 
 export { BUDGETS, BUDGETS_CAPTION, BUDGET_PAY_CYCLE, seedBudgets } from './budgetsTab';
 
 export function renderBudgets(client: QueryClient = makeClient()) {
   return { client, ...render(<QueryClientProvider client={client}><Budgets /></QueryClientProvider>) };
+}
+
+export async function renderLoadedBudgets(client?: QueryClient) {
+  const view = renderBudgets(client);
+  await screen.findByText('Cafes & Coffee');
+  return view;
+}
+
+type ShowOpts = { categories?: object; daysLeft?: number };
+
+export async function showBudgets(
+  server: ReturnType<typeof installFakeServer>,
+  budgets: object,
+  { categories = [COFFEE, GROCERIES], daysLeft = 4 }: ShowOpts = {},
+) {
+  seedBudgets(server, { budgets, categories, payCycle: { ...BUDGET_PAY_CYCLE, days_left: daysLeft } });
+  return renderLoadedBudgets();
 }

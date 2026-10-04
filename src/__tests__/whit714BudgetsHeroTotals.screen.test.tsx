@@ -6,7 +6,7 @@ import { screen, waitFor } from '@testing-library/react-native';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { COFFEE, SALARY, SAVINGS } from './support/categories';
-import { BUDGET_PAY_CYCLE, BUDGETS_CAPTION, seedBudgets, renderBudgets } from './support/budgetsScreen';
+import { BUDGET_PAY_CYCLE, BUDGETS_CAPTION, seedBudgets, renderBudgets, renderLoadedBudgets } from './support/budgetsScreen';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -63,8 +63,7 @@ describe('WHIT-714 Budgets top card totals', () => {
       salary: { target: 5000, posted: 1000, pending: 0 },
       rainy: { target: 300, posted: 100, pending: 0 },
     });
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.getByText('Left to spend')).toBeTruthy();
     expect(screen.getByText('$50 spent of $100 · $10 pending')).toBeTruthy();
     expect(screen.queryByText(NO_SPENDING)).toBeNull();

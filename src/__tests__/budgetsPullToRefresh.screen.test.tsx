@@ -9,18 +9,13 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
 import { pullControl, pullAndSettle } from './support/pull';
-import { BUDGETS, seedBudgets, renderBudgets } from './support/budgetsScreen';
+import { BUDGETS, seedBudgets, renderBudgets, renderLoadedBudgets } from './support/budgetsScreen';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const server = installFakeServer();
 const budgetReads = () => server.sentUnder('GET', '/budgets?');
-
-async function renderLoadedBudgets() {
-  renderBudgets();
-  expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-}
 
 beforeEach(() => {
   pinToday(new Date('2026-09-18T09:40:00+10:00'));

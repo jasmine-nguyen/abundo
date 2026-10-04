@@ -5,7 +5,7 @@ import { it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, fireEvent } from '@testing-library/react-native';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
-import { BUDGETS_CAPTION, renderBudgets } from './support/budgetsScreen';
+import { BUDGETS_CAPTION, renderLoadedBudgets } from './support/budgetsScreen';
 import { COFFEE } from './support/categories';
 
 jest.mock('../auth', () => ({
@@ -31,8 +31,7 @@ beforeEach(() => {
 });
 
 it('shows Spending and Earning sections, the caption, and a spread link that opens spread prefilled', async () => {
-  renderBudgets();
-  expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+  await renderLoadedBudgets();
 
   expect(screen.getByText('SPENDING')).toBeTruthy();
   expect(screen.getByText('EARNING')).toBeTruthy();
