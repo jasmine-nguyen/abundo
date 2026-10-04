@@ -8,7 +8,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import { screen, fireEvent, act, waitFor, renderHook } from '@testing-library/react-native';
 import { QueryClient } from '@tanstack/react-query';
 import { makeClient, wrapper, pause } from './support/queryClient';
-import { BUDGETS, BUDGET_PAY_CYCLE, seedBudgets, renderBudgets } from './support/budgetsScreen';
+import { BUDGETS, BUDGETS_CAPTION, BUDGET_PAY_CYCLE, seedBudgets, renderBudgets } from './support/budgetsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
@@ -74,7 +74,7 @@ it('does not render the redundant per-row "target" caption (the pace tick is lab
   renderBudgets();
   await screen.findByText('Cafes & Coffee');
   expect(screen.queryAllByText('target')).toHaveLength(0); // the overlapping caption is gone
-  expect(screen.getByText("Solid = spent · faded = pending · line = today's pace")).toBeTruthy();
+  expect(screen.getByText(BUDGETS_CAPTION)).toBeTruthy();
 });
 
 it('an over-budget row says the overspend once (WHIT-712)', async () => {

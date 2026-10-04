@@ -6,7 +6,7 @@ import { refreshInAct } from './support/renderWithQueries';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
-import { seedBudgets, renderBudgets } from './support/budgetsScreen';
+import { BUDGETS_CAPTION, seedBudgets, renderBudgets } from './support/budgetsScreen';
 import { COFFEE, SALARY } from './support/categories';
 
 jest.mock('../auth', () => ({
@@ -80,7 +80,7 @@ describe('Budgets top card — QA edges', () => {
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
     expect(screen.queryByText('Add a spending budget')).toBeNull();
     expect(screen.getByText('Left to spend')).toBeTruthy();
-    expect(screen.getByText("Solid = spent · faded = pending · line = today's pace")).toBeTruthy(); // caption back
+    expect(screen.getByText(BUDGETS_CAPTION)).toBeTruthy(); // caption back
     expect(screen.getByText('Add a budget')).toBeTruthy(); // dashed button back
   });
 

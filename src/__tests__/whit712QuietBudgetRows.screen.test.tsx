@@ -47,5 +47,5 @@ it('a rollover row shows no carried-over or borrowed text', async () => {
   seed({ target: 100, posted: 0, pending: 0, rollover: true, carryover: 200 });
   await renderWithQueries(<Budgets />);
   await screen.findByText('Cafes & Coffee');
-  expect(screen.queryByText(/carried over|borrowed/)).toBeNull();
+  expect(screen.queryByText(/carried over|borrowed|short from|left over from/)).toBeNull();
 });
