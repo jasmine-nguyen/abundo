@@ -18,9 +18,10 @@ jest.mock('../auth', () => ({
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Budgets from '../../app/(tabs)/budgets';
+import { COFFEE } from './support/categories';
 
 const server = installFakeServer();
-const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 }];
+const CATS = [COFFEE];
 const MINUS = '−';
 
 function renderBudgets() {

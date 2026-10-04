@@ -17,6 +17,7 @@ jest.mock('../auth', () => ({
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Budgets from '../../app/(tabs)/budgets';
+import { COFFEE } from './support/categories';
 
 const server = installFakeServer();
 
@@ -25,7 +26,7 @@ beforeEach(() => {
   server.seed('/paycycle', { length: 14, last_pay_date: '2026-07-01' });
   server.seed('/categories', [
     { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase', color: '#35d9a0', recent: 0 },
-    { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
+    COFFEE,
   ]);
   server.seed('/budgets', {
     salary: { target: 5000, posted: 1000, pending: 0 },

@@ -40,6 +40,7 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries, settle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { transactionsKey, uncategorizedCountKey } from '../queries';
+import { COFFEE_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -361,7 +362,7 @@ it('[E4] a pull on the SETTLED EMPTY list does NOT raise the pull spinner (lengt
 describe('Transactions — search', () => {
 const CATS = [
   CAT,
-  { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', parent: null },
+  { ...COFFEE_RECORD, color: '#E8A87C', parent: null },
 ];
 
 const row = (over: Record<string, unknown>) => ({

@@ -40,6 +40,7 @@ import TransactionDetail from '../../app/transaction/[id]';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries } from './support/renderWithQueries';
+import { COFFEE_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -109,7 +110,7 @@ describe('WHIT-330 on the Transactions tab', () => {
 describe('WHIT-328 — detail screen re-file for an uncategorized charge', () => {
   beforeEach(() => {
     mockOpenPicker.mockClear();
-    server.seed('/categories', [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', parent: null }]);
+    server.seed('/categories', [{ ...COFFEE_RECORD, parent: null }]);
     server.seed('/transactions/feed', {
       transactions: [txn({ transaction_id: 't1', category: null, counts_to_budget: false })],
       nextCursor: null,

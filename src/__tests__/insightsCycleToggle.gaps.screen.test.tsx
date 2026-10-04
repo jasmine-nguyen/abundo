@@ -15,6 +15,7 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedInsights, renderInsights, resetAi, setAi } from './support/insightsScreen';
+import { COFFEE } from './support/categories';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
@@ -26,7 +27,7 @@ jest.mock('expo-router', () => {
 const server = installFakeServer();
 useTestQueryClient();
 
-const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
+const CATS = [{ ...COFFEE, recent: 0 }];
 const BREAKDOWN = { coffee: { posted: 40, pending: 10 } };
 
 beforeEach(() => {

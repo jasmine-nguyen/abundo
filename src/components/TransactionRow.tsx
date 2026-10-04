@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
-import { C, FONT, tint } from '../theme';
+import { C, FONT, tint, PRESSED } from '../theme';
 import { Icon, Glyph } from '../icons';
 import { useAppContext, transactionView } from '../context';
 import type { Transaction, Category } from '../types';
@@ -49,7 +49,7 @@ export function TransactionRow({ t, category, selectable = false, selected = fal
         // an unlabelled second tap target. The whole-row tap still works for sighted users.
         accessibilityElementsHidden={selectable}
         importantForAccessibility={selectable ? 'no-hide-descendants' : 'auto'}
-        style={({ pressed }) => [styles.body, pressed && styles.rowPressed]}
+        style={({ pressed }) => [styles.body, pressed && PRESSED]}
       >
         <View style={[styles.chip, { backgroundColor: v.chipBg }]}>
           <Icon name={v.icon} size={22} color={v.iconColor} />
@@ -88,7 +88,6 @@ const styles = StyleSheet.create({
   // WHIT-291: a faint accent wash marks a selected row in selection mode.
   rowSelected: { backgroundColor: tint(C.accentAlt, 0.1) },
   body: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 13, paddingVertical: 13, paddingLeft: 6 },
-  rowPressed: { opacity: 0.6 },
   check: { paddingLeft: 6, paddingRight: 2, paddingVertical: 13, alignItems: 'center', justifyContent: 'center' },
   checkBox: { width: 22, height: 22, borderRadius: 7, borderWidth: 2, borderColor: C.hairlineStrong, alignItems: 'center', justifyContent: 'center' },
   checkBoxOn: { backgroundColor: C.accent, borderColor: C.accent },

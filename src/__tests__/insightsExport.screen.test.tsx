@@ -9,6 +9,7 @@ import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedInsights, renderInsights, resetAi } from './support/insightsScreen';
 import { shareCycleExport } from '../cycleShare';
+import { COFFEE } from './support/categories';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
@@ -22,7 +23,7 @@ const share = shareCycleExport as jest.MockedFunction<typeof shareCycleExport>;
 const server = installFakeServer();
 useTestQueryClient();
 
-const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
+const CATS = [{ ...COFFEE, recent: 0 }];
 
 beforeEach(() => {
   resetAuth();

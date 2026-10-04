@@ -237,7 +237,7 @@ Soft, wide and confident.
 - **Shape:** gently rounded (15pt), full width, 16pt vertical padding, at least 53pt tall.
 - **Primary:** a Tokyo Blue fill with Night ink, 16pt Inter 700.
 - **Soft / secondary:** a Periwinkle Wash (0.1 fill, 0.22 border) with Periwinkle or Ink text.
-- **Pressed:** dims to ~0.6–0.85 opacity and shrinks slightly (0.92–0.96 scale). There is no separate hover state on iOS.
+- **Pressed:** dims to ~0.6–0.85 opacity and shrinks slightly (0.92–0.96 scale). There is no separate hover state on iOS. Every tappable button, row and field uses the one shared `PRESSED` style in `src/theme.ts` (0.8 / 0.96); don't define a local one.
 - **Icon button:** a 40×40pt square, 12pt radius, `rgba(255,255,255,.06)` fill (header actions such as the settings gear).
 
 ### Segmented control

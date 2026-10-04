@@ -21,12 +21,13 @@ import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES } from './support/categories';
 
 const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd49b', recent: 100 } as const;
+const CAT = GROCERIES;
 const SEARCH_KEY = ['transactionsSearch', 'all', 'steven'];
 const txn = (over: Partial<Transaction> = {}): Transaction => ({
   transaction_id: 'deep1', date: '2020-01-01', authorized_date: '2020-01-01',

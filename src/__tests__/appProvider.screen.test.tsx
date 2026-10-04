@@ -15,6 +15,7 @@ import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 import { installFakeServer, type LoggedRequest } from './support/fakeServer';
+import { GROCERIES } from './support/categories';
 
 // The writers guard the load-error banner on auth (retired), but auth still gates
 // nothing in these direct-action tests; pin 'authed' for parity with the app.
@@ -24,7 +25,7 @@ const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd49b', recent: 100 } as const;
+const CAT = GROCERIES;
 const TXN = {
   transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
   description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',

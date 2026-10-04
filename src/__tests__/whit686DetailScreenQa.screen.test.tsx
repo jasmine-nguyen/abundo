@@ -30,16 +30,16 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { transactionsSearchKey, uncategorizedFeedKey } from '../queries';
+import { COFFEE_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
 
-const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', parent: null };
 const ROW = txn({ transaction_id: 't1', category: 'coffee', amount: -130 });
 
 beforeEach(() => {
   resetAuth();
-  server.seed('/categories', [COFFEE]);
+  server.seed('/categories', [{ ...COFFEE_RECORD, parent: null }]);
   server.seed('/transactions/feed', { transactions: [ROW], nextCursor: null });
 });
 

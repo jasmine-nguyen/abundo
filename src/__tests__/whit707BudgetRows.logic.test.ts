@@ -45,9 +45,9 @@ describe('budgetViews rows (WHIT-707)', () => {
     expect(income.remainLabel).toBe('to go');
 
     // Pending gets its own words; the limit stays visible. No pending → unchanged.
-    expect(byId('coffee').spentLabel).toBe('$50 spent of $100 · $10 pending');
+    expect(byId('coffee').spentLabel).toBe('$50 of $100 · $10 pending');
     expect(byId('coffee').showTarget).toBe(true);
-    expect(byId('latte').spentLabel).toBe('$5 spent of $30');
+    expect(byId('latte').spentLabel).toBe('$5 of $30');
 
     // Over budget + spreadable: rose on amount and bar; the pace line becomes the spread link.
     const over = byId('rent');
@@ -57,10 +57,10 @@ describe('budgetViews rows (WHIT-707)', () => {
     expect(over.paceColor).not.toBe(C.bad);
     expect(over.spreadPrefill).toBe(20);
 
-    // Over budget but rollover (can't spread): a quiet, muted "$X over budget".
+    // Over budget but rollover (can't spread): no pace line, the red amount says it once (WHIT-712).
     const quiet = byId('gym');
-    expect(quiet.paceLabel).toBe('$20 over budget');
-    expect(quiet.paceColor).toBe(C.textInfo);
+    expect(quiet.paceLabel).toBe('');
+    expect(quiet.remainAmount).toBe('$20');
     expect(quiet.spreadPrefill).toBeNull();
 
     // Payday more than 6 days away reads as a date, not a weekday; no payday → just "earned".

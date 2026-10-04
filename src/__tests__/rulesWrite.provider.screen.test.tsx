@@ -18,6 +18,7 @@ import { seedTransactionsCache } from './support/transactionsCache';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
+import { SUBS } from './support/categories';
 
 const server = installFakeServer();
 const rulesReads = () => server.sent('GET', '/rules');
@@ -39,7 +40,7 @@ afterEach(() => {
 // deleteCategory reads, then mount (the provider no longer eager-loads).
 function mountWithSeededCache() {
   queryClient.setQueryData<Rule[]>(['rules'], [RULE_E1]);
-  queryClient.setQueryData(['categories'], [{ id: 'subs', name: 'Subs', bucket: 'Lifestyle', icon: 'film', color: '#f0b27a', recent: 0 }]);
+  queryClient.setQueryData(['categories'], [SUBS]);
   const { result } = renderHook(() => useAppContext(), { wrapper });
   return result;
 }
@@ -139,10 +140,9 @@ it('deleteCategory drops the category rules from the cache without resurrecting 
 // crash / fabricate a partial cache); updateRule / deleteRule FAILURE paths write optimistically
 // then roll back; and a MOUNTED useRulesQuery observer sees the write instantly with NO refetch.
 // Reuses this file's RULE_E1 / cacheRules (byte-identical). Block-scopes the gaps-only helpers
-// (observerWrapper, seedCache, mount) and consts (SERVER_RULE, SUBS_CAT).
+// (observerWrapper, seedCache, mount) and consts (SERVER_RULE).
 describe('WHIT-195/192 rule-write gaps (folded)', () => {
   const SERVER_RULE = { id: 'e1', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs' } as const;
-  const SUBS_CAT = { id: 'subs', name: 'Subs', bucket: 'Lifestyle', icon: 'film', color: '#f0b27a', recent: 0 };
   // The mounted-observer wrapper: the singleton queryClient wraps AppProvider, so an active
   // useRulesQuery observer and the context's patchRules share the exact same cache.
   const observerWrapper = ({ children }: { children: React.ReactNode }) => (
@@ -160,7 +160,7 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
   // WHIT-192: seed the caches the writers read (the provider no longer eager-loads).
   function seedCache(over: { rules?: Rule[]; transactions?: Transaction[] } = {}) {
     queryClient.setQueryData<Rule[]>(['rules'], over.rules ?? [RULE_E1]);
-    queryClient.setQueryData(['categories'], [SUBS_CAT]);
+    queryClient.setQueryData(['categories'], [SUBS]);
     seedTransactionsCache(queryClient, over.transactions ?? []);
   }
   function mount() {
@@ -190,7 +190,7 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
   it('a create while the Rules screen was never opened is a no-op on the (absent) cache — no crash, no phantom cache', async () => {
     // No ['rules'] seed: the query was never mounted, so getQueryData is undefined. Seed only
     // categories (the toast lookup) to prove the absent-cache guard, not a missing-category one.
-    queryClient.setQueryData(['categories'], [SUBS_CAT]);
+    queryClient.setQueryData(['categories'], [SUBS]);
     server.once('POST', '/rules', { body: { id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' } });
     const result = mount();
 

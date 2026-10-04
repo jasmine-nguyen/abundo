@@ -37,13 +37,14 @@ import { resetAuth } from './support/authMock';
 import { pressAlertButton, spyOnAlert } from './support/alertSpy';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { COFFEE as COFFEE_CATEGORY } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
 
 beforeEach(() => resetAuth());
 
-const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
+const CATS = [{ ...COFFEE_CATEGORY, recent: 0 }];
 const COFFEE = { target: 80, posted: 52, pending: 0 };
 
 // A 30-day cycle with the server's own countdown, so daysLeft never follows the real clock.

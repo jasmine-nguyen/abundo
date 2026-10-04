@@ -1,4 +1,5 @@
 // Design tokens ported from Whittle.dc.html (Whittle).
+import type { ViewStyle } from 'react-native';
 
 // Convert a #rrggbb hex + alpha into an rgba() string (port of prototype `tint`).
 // Declared above C so the tokens below can build themselves from a base hex.
@@ -16,6 +17,9 @@ export function tint(hex: string, a: number): string {
 // (src/context.tsx repeats this hex in its CATEGORY palette; that is a different colour that
 // happens to match, not the accent, and is deliberately not wired to this.)
 const ACCENT = '#7aa2f7';
+
+// The one pressed (dim + shrink) look for every tappable thing — DESIGN.md Buttons → Pressed.
+export const PRESSED: ViewStyle = { opacity: 0.8, transform: [{ scale: 0.96 }] };
 
 export const C = {
   bg: '#16161e',

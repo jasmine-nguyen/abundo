@@ -20,7 +20,6 @@ import { ScrollView, Switch } from 'react-native';
 const mockSaveBudget = jest.fn(async (_id: string, _amount: number, _rollover?: boolean) => true);
 const mockReplace = jest.fn();
 
-const SPEND = { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#E8A87C', bucket: 'Lifestyle', recent: 52 };
 // `let` (was const): the folded income/rollover blocks reassign mockParams per test; the survivor
 // tests never do, so they keep the initial coffee value.
 let mockParams: { categoryId: string } = { categoryId: 'coffee' };
@@ -40,6 +39,9 @@ import BudgetPick from '../../app/budget/pick';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { COFFEE } from './support/categories';
+
+const SPEND = COFFEE;
 
 const server = installFakeServer();
 useTestQueryClient();

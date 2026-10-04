@@ -27,11 +27,10 @@ import TransactionDetail from '../../app/transaction/[id]';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries } from './support/renderWithQueries';
+import { COFFEE_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
-
-const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', parent: null };
 
 function seedRow(over: Partial<Transaction> = {}) {
   server.seed('/transactions/feed', { transactions: [txn({ transaction_id: 't1', category: 'coffee', ...over })], nextCursor: null });
@@ -43,7 +42,7 @@ beforeEach(() => {
   resetAuth();
   mockEdit.mockClear();
   mockToast.mockClear();
-  server.seed('/categories', [COFFEE]);
+  server.seed('/categories', [{ ...COFFEE_RECORD, parent: null }]);
   seedRow({ notes: 'old note', tags: ['work'] });
 });
 

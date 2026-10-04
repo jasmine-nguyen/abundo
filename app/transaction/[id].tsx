@@ -2,7 +2,7 @@ import React, { useRef, useState } from 'react';
 import { Alert, View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { C, FONT, tint } from '../../src/theme';
+import { C, FONT, tint, PRESSED } from '../../src/theme';
 import { transactionView, useAppContext, contributesToBudget, budgetSpreadEligibility, ruleFiledLabel, RULE_FILED_FALLBACK } from '../../src/context';
 import type { Transaction } from '../../src/types';
 import { formatDayMonthYear } from '../../src/dateutil';
@@ -242,7 +242,7 @@ function BudgetExcludeToggle({ transaction }: { transaction: Transaction }) {
       accessibilityState={{ checked: excluded }}
       accessibilityLabel="Exclude from budgets"
       accessibilityHint="Marks this as a transfer so it doesn't count toward budgets or insights"
-      style={({ pressed }) => [styles.toggleRow, pressed && styles.fieldPressed]}
+      style={({ pressed }) => [styles.toggleRow, pressed && PRESSED]}
     >
       <View style={styles.toggleText}>
         <Text style={styles.toggleTitle}>Exclude from budgets</Text>
@@ -407,7 +407,7 @@ function Field({ label, value, valueColor, last, onPress, actionLabel }: {
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={actionLabel}
-      style={({ pressed }) => [styles.field, last && styles.fieldLast, pressed && styles.fieldPressed]}
+      style={({ pressed }) => [styles.field, last && styles.fieldLast, pressed && PRESSED]}
     >
       {inner}
     </Pressable>
@@ -423,7 +423,6 @@ const styles = StyleSheet.create({
   card: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, paddingHorizontal: 16, marginTop: 6 },
   field: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: C.hairline },
   fieldLast: { borderBottomWidth: 0 },
-  fieldPressed: { opacity: 0.6 },
   fieldLabel: { fontFamily: FONT.body, fontSize: 13.5, color: C.textMid },
   fieldValueWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1, justifyContent: 'flex-end' },
   fieldValue: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: C.textBright, flexShrink: 1, textAlign: 'right' },
