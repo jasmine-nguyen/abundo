@@ -2,11 +2,11 @@
 // payday, and an over-budget next step. Real useBudgetsScreenData over the fake server; ../auth +
 // expo-router mocked; rendered under a real QueryClientProvider.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { screen, fireEvent } from '@testing-library/react-native';
+import { screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
-import { seedBudgets, renderBudgets, renderLoadedBudgets } from './support/budgetsScreen';
+import { seedBudgets, renderBudgets, renderLoadedBudgets, heroTotals } from './support/budgetsScreen';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -33,7 +33,7 @@ describe('Budgets top card', () => {
     expect(screen.queryByText('Budget remaining')).toBeNull();
     expect(screen.queryByText('Left to spend')).toBeNull();
     expect(screen.queryByText('Over budget')).toBeNull();
-    expect(screen.queryByText(/ spent$/)).toBeNull();
+    expect(screen.queryByTestId('budgets-hero-spent')).toBeNull();
     expect(screen.queryByText('Add a budget')).toBeNull();  // the duplicate dashed button is hidden
     fireEvent.press(screen.getByTestId('budgets-hero-add'));
     expect(routerSpies.push).toHaveBeenCalledWith('/budget/pick');
@@ -82,7 +82,7 @@ describe('Budgets top card', () => {
       // last payday 1 Sep, 30-day cycle → next payday 1 Oct
       server.seed('/paycycle', { length: 30, last_pay_date: '2026-09-01' });
       renderBudgets();
-      expect(await screen.findByText('Next payday 1 Oct')).toBeTruthy();
+      await waitFor(() => expect(heroTotals().payday).toBe('1 Oct'));
       expect(screen.queryByText(/^Started /)).toBeNull();
     } finally {
       jest.useRealTimers();

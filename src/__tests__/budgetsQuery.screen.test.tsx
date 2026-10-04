@@ -8,7 +8,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import { screen, fireEvent, act, waitFor, renderHook } from '@testing-library/react-native';
 import { QueryClient } from '@tanstack/react-query';
 import { makeClient, wrapper, pause } from './support/queryClient';
-import { BUDGETS, BUDGET_PAY_CYCLE, seedBudgets, renderBudgets, renderLoadedBudgets } from './support/budgetsScreen';
+import { BUDGETS, BUDGET_PAY_CYCLE, seedBudgets, renderBudgets, renderLoadedBudgets, heroTotals } from './support/budgetsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
@@ -162,8 +162,7 @@ it('hides a Savings-bucket budget end-to-end and keeps it out of the hero total 
   });
   await renderLoadedBudgets();
   expect(screen.queryByText('Nest Egg')).toBeNull();      // Savings row hidden
-  expect(screen.getByText('$50 / $100 spent')).toBeTruthy(); // spend budget only
-  expect(screen.queryByText(/\/ \$2,100 spent/)).toBeNull(); // NOT spend + Savings target
+  expect(heroTotals()).toMatchObject({ spent: '$50', budget: '$100' }); // spend budget only, NOT spend + Savings target ($2,100)
 });
 
 // WHIT-574/706 — [A-hookrender] through-the-hook render: a known last_pay_date fetched via the REAL
@@ -177,7 +176,7 @@ it('through the hook: a known last_pay_date renders a known "Next payday …"', 
     // Also proves the no-leading-zero format ("1 Oct") survives a real render.
     server.seed('/paycycle', { length: 14, last_pay_date: '2026-09-03' });
     renderBudgets();
-    expect(await screen.findByText('Next payday 1 Oct')).toBeTruthy();
+    await waitFor(() => expect(heroTotals().payday).toBe('1 Oct'));
   } finally {
     jest.useRealTimers();
   }
@@ -193,7 +192,7 @@ it('through the hook: a future last_pay_date shows that date as the next payday'
     await renderLoadedBudgets(client);
     await waitFor(() => expect(client.isFetching()).toBe(0));
     expect(payCycleReads()).toHaveLength(1);
-    expect(screen.getByText('Next payday 25 Sep')).toBeTruthy();
+    expect(heroTotals().payday).toBe('25 Sep');
     expect(screen.queryByText(/^Started /)).toBeNull();
   } finally {
     jest.useRealTimers();
@@ -389,9 +388,8 @@ describe('WHIT-221 parent→sub tree + de-duped hero (folded from budgetsSubcate
     renderBudgets();
     expect(await screen.findByText('Car')).toBeTruthy();
     expect(screen.getByText('Parking')).toBeTruthy();      // both rows render
-    expect(screen.getByText('$75 / $200 spent')).toBeTruthy(); // Car only
-    expect(screen.queryByText(/\/ \$250 spent/)).toBeNull(); // NOT Car + Parking
-    // Reverting the `depth === 0` guard makes totBudget 250 -> the line flips to "$105 / $250 spent".
+    expect(heroTotals()).toMatchObject({ spent: '$75', budget: '$200' }); // Car only, NOT Car + Parking
+    // Reverting the `depth === 0` guard makes totBudget 250 -> Spent flips to "$105" and Budget to "$250".
   });
 
   it('[A27] the child row is indented and the parent row is not', async () => {
@@ -545,7 +543,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText('−$100')).toBeTruthy();       // -(300 available - 400 spent)
-    expect(screen.getByText('$400 / $300 spent')).toBeTruthy(); // totSpent + totBudget unchanged
+    expect(heroTotals()).toMatchObject({ spent: '$400', budget: '$300' }); // totSpent + totBudget unchanged
     expect(screen.queryByText('Left to spend')).toBeNull();
   });
 
@@ -558,7 +556,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText('−$30')).toBeTruthy();
-    expect(screen.getByText('$50 / $20 spent')).toBeTruthy(); // available envelope, not the $100 target
+    expect(heroTotals()).toMatchObject({ spent: '$50', budget: '$20' }); // available envelope, not the $100 target
   });
 
   it('keeps an Income budget OUT of the over-budget hero (earnings do not rescue it)', async () => {
@@ -571,8 +569,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     expect(screen.getByText('Salary')).toBeTruthy();       // Income row still lists
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText('−$100')).toBeTruthy();
-    expect(screen.getByText('$200 / $100 spent')).toBeTruthy(); // NOT $6,200 / $5,100 spent
-    expect(screen.queryByText(/\/ \$5,100 spent/)).toBeNull();
+    expect(heroTotals()).toMatchObject({ spent: '$200', budget: '$100' }); // NOT $6,200 / $5,100
   });
 
   it('renders a large deficit as the exact comma-grouped -$6,056 with a coherent spent line', async () => {
@@ -580,7 +577,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText('−$6,056')).toBeTruthy();
-    expect(screen.getByText('$7,056 / $1,000 spent')).toBeTruthy();
+    expect(heroTotals()).toMatchObject({ spent: '$7,056', budget: '$1,000' });
   });
 
   it('under a cent over (-0.004) stays "Left to spend" — float dust never shows "−$0"', async () => {

@@ -6,7 +6,7 @@ import { screen, waitFor } from '@testing-library/react-native';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { COFFEE, SALARY, SAVINGS } from './support/categories';
-import { BUDGET_PAY_CYCLE, seedBudgets, renderBudgets, renderLoadedBudgets } from './support/budgetsScreen';
+import { BUDGET_PAY_CYCLE, seedBudgets, renderBudgets, renderLoadedBudgets, heroTotals } from './support/budgetsScreen';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -64,7 +64,7 @@ describe('WHIT-714 Budgets top card totals', () => {
     });
     await renderLoadedBudgets();
     expect(screen.getByText('Left to spend')).toBeTruthy();
-    expect(screen.getByText('$50 / $100 spent')).toBeTruthy();
+    expect(heroTotals()).toMatchObject({ spent: '$50', budget: '$100' });
     expect(screen.queryByText(NO_SPENDING)).toBeNull();
   });
 
@@ -73,7 +73,7 @@ describe('WHIT-714 Budgets top card totals', () => {
     renderBudgets();
     expect(await screen.findByText('days left')).toBeTruthy();
     expect(screen.getByText('4')).toBeTruthy();
-    expect(screen.getByText(/^Next payday /)).toBeTruthy();
+    expect(heroTotals()).toEqual({ spent: undefined, budget: undefined, payday: expect.stringMatching(/^\d{1,2} [A-Z][a-z]{2}$/) });
     expect(screen.getByTestId('budgets-loading')).toBeTruthy();
     expect(screen.queryByText('Left to spend')).toBeNull();
     expect(screen.queryByText(NO_SPENDING)).toBeNull();

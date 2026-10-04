@@ -52,7 +52,16 @@ function BudgetRow({ b }: { b: BudgetView }) {
   );
 }
 
-function BudgetsHero({ daysLeft, nextPayday, money, spentLine, children }: { daysLeft: number; nextPayday: string; money?: React.ReactNode; spentLine?: string; children?: React.ReactNode }) {
+function HeroStat({ label, value, testID }: { label: string; value: string; testID: string }) {
+  return (
+    <View style={styles.heroStat}>
+      <Text style={styles.heroSmall}>{label}</Text>
+      <Text testID={testID} style={styles.heroStatValue} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
+    </View>
+  );
+}
+
+function BudgetsHero({ daysLeft, nextPayday, money, totals, children }: { daysLeft: number; nextPayday: string; money?: React.ReactNode; totals?: { spent: string; budget: string }; children?: React.ReactNode }) {
   return (
     <View style={styles.hero}>
       <HeroGradientFill />
@@ -66,8 +75,17 @@ function BudgetsHero({ daysLeft, nextPayday, money, spentLine, children }: { day
         </View>
         {money}
       </View>
-      {spentLine ? <Text testID="budgets-hero-spent" style={[styles.heroSmall, styles.heroSpent]}>{spentLine}</Text> : null}
-      {nextPayday ? <Text testID="budgets-hero-payday" style={[styles.heroSmall, spentLine ? styles.heroPaydayTight : styles.heroPayday]}>Next payday {formatDayMonth(nextPayday)}</Text> : null}
+      {totals || nextPayday ? (
+        <View style={styles.heroStats}>
+          {totals ? (
+            <>
+              <HeroStat label="Spent" value={totals.spent} testID="budgets-hero-spent" />
+              <HeroStat label="Budget" value={totals.budget} testID="budgets-hero-budget" />
+            </>
+          ) : null}
+          {nextPayday ? <HeroStat label="Next payday" value={formatDayMonth(nextPayday)} testID="budgets-hero-payday" /> : null}
+        </View>
+      ) : null}
       {children}
     </View>
   );
@@ -93,7 +111,6 @@ export default function Budgets() {
 
   // Over from a cent over, matching the rows (WHIT-716); the tiny threshold only absorbs float dust so "−$0" never shows.
   const overBudget = totRemain < -0.005;
-  const spentLine = `${fmt(totSpent)} / ${fmt(totBudget)} spent`;
   const noRows = rows.length === 0;
   // WHIT-714: income rows and Savings budgets never feed the totals, so the money side only
   // means something when there's at least one spending row.
@@ -142,12 +159,12 @@ export default function Budgets() {
           daysLeft={daysLeft}
           nextPayday={nextPayday}
           money={hasSpending ? (
-            <View style={styles.heroCol}>
-              <Text style={styles.heroBig} numberOfLines={1} adjustsFontSizeToFit>{overBudget ? `−${fmtExact(totRemain)}` : fmtExact(totRemain)}</Text>
+            <View style={[styles.heroCol, styles.heroMoneyCol]}>
+              <Text style={[styles.heroBig, styles.heroMoney]} numberOfLines={1} adjustsFontSizeToFit>{overBudget ? `−${fmtExact(totRemain)}` : fmtExact(totRemain)}</Text>
               <Text style={styles.heroLabel}>{overBudget ? 'Over budget' : 'Left to spend'}</Text>
             </View>
           ) : null}
-          spentLine={hasSpending ? spentLine : undefined}
+          totals={hasSpending ? { spent: fmt(totSpent), budget: fmt(totBudget) } : undefined}
         >
           {hasSpending ? null : (
             <View style={styles.heroBottom}>
@@ -197,13 +214,16 @@ const styles = StyleSheet.create({
   heroTop: { flexDirection: 'row', gap: 16, marginTop: 6 },
   // Columns share the row equally; minWidth 0 lets adjustsFontSizeToFit shrink a long amount.
   heroCol: { flex: 1, minWidth: 0 },
-  // One style for both big numbers (days left + money left) so they read at equal weight. No fixed
-  // lineHeight, so the number scales with the user's text size instead of clipping.
+  // Days left at full size; heroMoney shrinks the money number to about two-thirds (WHIT-731). No
+  // fixed lineHeight, so the number scales with the user's text size instead of clipping.
   heroBig: { fontFamily: FONT.display, fontSize: 44, fontWeight: '800', color: C.heroInk, letterSpacing: -1.5 },
+  heroMoney: { fontSize: 30, letterSpacing: -0.8 },
+  // Bottom-aligned so the smaller money number's label lines up with "days left".
+  heroMoneyCol: { justifyContent: 'flex-end' },
   heroLabel: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.heroInk2 },
-  heroPayday: { marginTop: 10 },
-  heroSpent: { marginTop: 16 },
-  heroPaydayTight: { marginTop: 4 },
+  heroStats: { flexDirection: 'row', gap: 12, marginTop: 18 },
+  heroStat: { flex: 1, minWidth: 0 },
+  heroStatValue: { fontFamily: FONT.display, fontSize: 17, fontWeight: '700', color: C.heroInk, marginTop: 2 },
   heroBottom: { marginTop: 16 },
   heroSmall: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.heroInkSoft },
   heroEmpty: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.heroInk2 },

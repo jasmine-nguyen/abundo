@@ -6,7 +6,7 @@ import { refreshInAct } from './support/renderWithQueries';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { COFFEE, SALARY, SAVINGS } from './support/categories';
-import { BUDGET_PAY_CYCLE, seedBudgets, renderBudgets } from './support/budgetsScreen';
+import { BUDGET_PAY_CYCLE, seedBudgets, renderBudgets, heroTotals } from './support/budgetsScreen';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -53,7 +53,7 @@ describe('WHIT-714 top card — QA edges', () => {
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
     expect(screen.queryByText(NO_SPENDING)).toBeNull();
     expect(screen.getByText('Left to spend')).toBeTruthy();
-    expect(screen.getByText('$50 / $100 spent')).toBeTruthy();
+    expect(heroTotals()).toMatchObject({ spent: '$50', budget: '$100' });
   });
 
   // [A3] (P1) budgets loaded but categories still loading → days-only card + spinner, never the

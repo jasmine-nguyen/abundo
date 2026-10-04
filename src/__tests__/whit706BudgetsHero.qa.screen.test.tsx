@@ -6,7 +6,7 @@ import { refreshInAct } from './support/renderWithQueries';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
-import { seedBudgets, renderBudgets, renderLoadedBudgets } from './support/budgetsScreen';
+import { seedBudgets, renderBudgets, renderLoadedBudgets, heroTotals } from './support/budgetsScreen';
 import { COFFEE, SALARY, GROCERIES_RECORD } from './support/categories';
 
 jest.mock('../auth', () => ({
@@ -35,7 +35,7 @@ describe('Budgets top card — QA edges', () => {
     await renderLoadedBudgets();
     expect(screen.getByText('$260')).toBeTruthy();
     expect(screen.getByText('Left to spend')).toBeTruthy();
-    expect(screen.getByText('$90 / $350 spent')).toBeTruthy();
+    expect(heroTotals()).toMatchObject({ spent: '$90', budget: '$350' });
     expect(screen.getByText('4')).toBeTruthy();
   });
 
@@ -49,10 +49,9 @@ describe('Budgets top card — QA edges', () => {
       expect(await screen.findByText('Add a spending budget')).toBeTruthy();
       expect(screen.getByText('13')).toBeTruthy();
       expect(screen.getByText('days left')).toBeTruthy();
-      expect(screen.getByText('Next payday 1 Oct')).toBeTruthy();
+      expect(heroTotals()).toEqual({ spent: undefined, budget: undefined, payday: '1 Oct' });
       expect(screen.queryAllByText(/\$/)).toHaveLength(0);
       expect(screen.queryAllByText(/−/)).toHaveLength(0);
-      expect(screen.queryByText(/spent$/)).toBeNull();
       expect(screen.queryByText("Today's pace")).toBeNull();
     } finally {
       jest.useRealTimers();
@@ -104,7 +103,8 @@ describe('Budgets top card — QA edges', () => {
   it('[A7] an unparseable last_pay_date hides the next payday line', async () => {
     server.seed('/paycycle', { length: 30, last_pay_date: 'garbage', days_left: 4 });
     await renderLoadedBudgets();
-    expect(screen.queryByText(/Next payday/)).toBeNull();
+    expect(screen.queryByTestId('budgets-hero-payday')).toBeNull();
+    expect(screen.queryByText('Next payday')).toBeNull();
     expect(screen.queryByText(/NaN|undefined/)).toBeNull();
   });
 

@@ -50,3 +50,9 @@ export async function showBudgets(
   seedBudgets(server, { budgets, categories, payCycle: { ...BUDGET_PAY_CYCLE, days_left: daysLeft } });
   return renderLoadedBudgets();
 }
+
+// WHIT-731: the top card's Spent · Budget · Next payday values (undefined when a cell isn't shown).
+export function heroTotals() {
+  const value = (id: string) => screen.queryByTestId(`budgets-hero-${id}`)?.props.children as string | undefined;
+  return { spent: value('spent'), budget: value('budget'), payday: value('payday') };
+}
