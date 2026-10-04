@@ -23,3 +23,13 @@ export const GROCERIES_TOP = Object.freeze({ ...GROCERIES_TOP_RECORD, color: '#7
 export const SUBSCRIPTIONS_RECORD = Object.freeze({ id: 'subs', name: 'Subscriptions', icon: 'film', bucket: 'Lifestyle' } as const);
 
 export const SUBSCRIPTIONS = Object.freeze({ ...SUBSCRIPTIONS_RECORD, color: '#f0b27a' } as const);
+
+export const COFFEE_SHORT = Object.freeze({ id: 'coffee', name: 'Coffee', icon: 'coffee', bucket: 'Lifestyle' } as const);
+
+export const ESSENTIAL_GROCERIES_RECORD = Object.freeze({ id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Essentials' } as const);
+
+export const ESSENTIAL_GROCERIES = Object.freeze({ ...ESSENTIAL_GROCERIES_RECORD, color: '#00AA00' } as const);
+
+export const ESSENTIAL_GROCERIES_TOP = Object.freeze({ ...ESSENTIAL_GROCERIES_RECORD, recent: 0, parent: null } as const);
+
+export const DINING = Object.freeze({ id: 'dining', name: 'Dining', bucket: 'Lifestyle', icon: 'utensils', color: '#f7768e', recent: 0 } satisfies Category);

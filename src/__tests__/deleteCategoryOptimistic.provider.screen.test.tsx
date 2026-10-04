@@ -12,24 +12,13 @@ import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
+import {
+  DELETE_DINING, DELETE_GROCERIES, DELETE_DINING_RULE, DELETE_GROCERIES_RULE, DELETE_DINING_BUDGET, DELETE_GROCERIES_BUDGET, tx, page,
+} from './support/deleteCategorySeed';
 
 const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
-const DINING: Category = { id: 'dining', name: 'Dining', bucket: 'Living', icon: 'food', color: '#f00', recent: 0, parent: null };
-const GROCERIES: Category = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#0f0', recent: 0, parent: null };
-const DINING_RULE: Rule = { id: 'r1', pattern: 'COLES', categoryId: 'dining', isNew: false };
-const GROCERIES_RULE: Rule = { id: 'r2', pattern: 'WOOLIES', categoryId: 'groceries', isNew: false };
-const DINING_BUDGET = { target: 200, posted: 12.5, pending: 0 };
-const GROCERIES_BUDGET = { target: 300, posted: 0, pending: 0 };
-
-const tx = (id: string, over: Partial<Transaction> = {}): Transaction => ({
-  transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'COLES 0412 SYDNEY', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-  account_name: 'ANZ', category: 'dining', status: 'posted', type: 'PAYMENT', counts_to_budget: true, ...over,
-});
-const page = (transactions: Transaction[]) => ({ pages: [{ transactions, nextCursor: null }], pageParams: [undefined] });
 
 // A parent budget's charge list holding a Dining charge, and the Insights drill-in for Dining.
 const BUDGET_KEY = ['budgetTransactions', 'parentBudget'];
@@ -37,9 +26,9 @@ const CATEGORY_KEY = ['categoryTransactions', 'dining', 0];
 const BUDGETS_KEY = ['budgets', 14];
 
 function seed() {
-  queryClient.setQueryData(['categories'], [DINING, GROCERIES]);
-  queryClient.setQueryData(['rules'], [DINING_RULE, GROCERIES_RULE]);
-  queryClient.setQueryData(BUDGETS_KEY, { dining: DINING_BUDGET, groceries: GROCERIES_BUDGET });
+  queryClient.setQueryData(['categories'], [DELETE_DINING, DELETE_GROCERIES]);
+  queryClient.setQueryData(['rules'], [DELETE_DINING_RULE, DELETE_GROCERIES_RULE]);
+  queryClient.setQueryData(BUDGETS_KEY, { dining: DELETE_DINING_BUDGET, groceries: DELETE_GROCERIES_BUDGET });
   queryClient.setQueryData(['transactions'], page([tx('t1'), tx('t2', { category: 'groceries' })]));
   queryClient.setQueryData(BUDGET_KEY, [tx('t1'), tx('t2', { category: 'groceries' })]);
   queryClient.setQueryData(CATEGORY_KEY, [tx('t1')]);
@@ -69,7 +58,7 @@ it('deleting a category unfiles its charges on screen instantly, undoes on failu
 
   expect(categoryIds()).toEqual(['groceries']);
   expect(ruleIds()).toEqual(['r2']);
-  expect(queryClient.getQueryData(BUDGETS_KEY)).toEqual({ groceries: GROCERIES_BUDGET });
+  expect(queryClient.getQueryData(BUDGETS_KEY)).toEqual({ groceries: DELETE_GROCERIES_BUDGET });
   expect(categoryOf(feedRows())).toEqual({ t1: null, t2: 'groceries' });
   expect(categoryOf(listRows(BUDGET_KEY))).toEqual({ t1: null, t2: 'groceries' });
   expect(categoryOf(listRows(CATEGORY_KEY))).toEqual({ t1: null });
@@ -82,7 +71,7 @@ it('deleting a category unfiles its charges on screen instantly, undoes on failu
   expect(failedOk).toBe(false);
   expect(categoryIds()).toEqual(['dining', 'groceries']);
   expect(ruleIds()).toEqual(['r1', 'r2']);
-  expect(queryClient.getQueryData(BUDGETS_KEY)).toEqual({ dining: DINING_BUDGET, groceries: GROCERIES_BUDGET });
+  expect(queryClient.getQueryData(BUDGETS_KEY)).toEqual({ dining: DELETE_DINING_BUDGET, groceries: DELETE_GROCERIES_BUDGET });
   expect(categoryOf(feedRows())).toEqual({ t1: 'dining', t2: 'groceries' });
   expect(categoryOf(listRows(BUDGET_KEY))).toEqual({ t1: 'dining', t2: 'groceries' });
   expect(categoryOf(listRows(CATEGORY_KEY))).toEqual({ t1: 'dining' });

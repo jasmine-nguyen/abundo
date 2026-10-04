@@ -10,11 +10,11 @@ import { ApiError } from '../../apiError';
 import { resetAuth, setAuthToken } from './authMock';
 import { WIRE } from './apiWire';
 import { installFakeServer } from './fakeServer';
+import { ESSENTIAL_GROCERIES } from './categories';
 
 const BASE = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
 const originalFetch = global.fetch;
 
-const GROCERIES = { id: 'groceries', name: 'Groceries', bucket: 'Essentials', icon: 'cart', color: '#00AA00' };
 const GYM = { name: 'Gym', bucket: 'Lifestyle' as const, icon: 'dumbbell' };
 
 // Let every pending promise step run (auth token → fetch → body read) without touching timers.
@@ -32,8 +32,8 @@ describe('WHIT-637 fake server', () => {
   });
 
   it('answers a read with the data it was seeded with', async () => {
-    server.seed('/categories', [GROCERIES]);
-    await expect(api.fetchCategories()).resolves.toEqual([GROCERIES]);
+    server.seed('/categories', [ESSENTIAL_GROCERIES]);
+    await expect(api.fetchCategories()).resolves.toEqual([ESSENTIAL_GROCERIES]);
   });
 
   it('starts every test empty — nothing seeded in an earlier test leaks in', async () => {
@@ -107,7 +107,7 @@ describe('WHIT-637 fake server', () => {
   });
 
   it('logs every request\'s method, path and body', async () => {
-    server.seed('/categories', [GROCERIES]);
+    server.seed('/categories', [ESSENTIAL_GROCERIES]);
     await api.fetchCategories();
     await api.updateCategory('groceries', GYM);
     await api.setTransactionCategory('t1', 'groceries');
@@ -165,8 +165,8 @@ describe('WHIT-639 fake server one-shot replies (once)', () => {
 
   it('a queued reply beats a sticky failure, is keyed by method, and carries the server\'s reason', async () => {
     server.fail('/categories', 500);
-    server.once('GET', '/categories', { body: [GROCERIES] });
-    await expect(api.fetchCategories()).resolves.toEqual([GROCERIES]);
+    server.once('GET', '/categories', { body: [ESSENTIAL_GROCERIES] });
+    await expect(api.fetchCategories()).resolves.toEqual([ESSENTIAL_GROCERIES]);
     await expect(api.fetchCategories()).rejects.toThrow('API error: 500');
 
     server.once('PUT', '/rules/r1', { status: 409 });

@@ -5,16 +5,15 @@ jest.mock('../../auth', () => require('./authMock').authMockModule());
 
 import * as api from '../../api';
 import { installFakeServer } from './fakeServer';
-
-const GROCERIES = { id: 'groceries', name: 'Groceries', bucket: 'Essentials', icon: 'cart', color: '#00AA00' };
+import { ESSENTIAL_GROCERIES } from './categories';
 
 describe('WHIT-639 fake server once() reset', () => {
   const server = installFakeServer();
 
   it('queues two replies but uses only one', async () => {
-    server.once('GET', '/categories', { body: [GROCERIES] });
+    server.once('GET', '/categories', { body: [ESSENTIAL_GROCERIES] });
     server.once('GET', '/categories', { status: 500 });
-    await expect(api.fetchCategories()).resolves.toEqual([GROCERIES]);
+    await expect(api.fetchCategories()).resolves.toEqual([ESSENTIAL_GROCERIES]);
   });
 
   it('starts the next test with an empty queue', async () => {

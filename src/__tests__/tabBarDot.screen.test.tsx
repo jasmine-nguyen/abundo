@@ -13,6 +13,7 @@ import { txn } from './factory';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { COFFEE_SHORT } from './support/categories';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
@@ -27,7 +28,6 @@ const server = installFakeServer();
 useTestQueryClient();
 
 const COUNT = '/transactions/uncategorized/count';
-const COFFEE = { id: 'coffee', name: 'Coffee', icon: 'coffee', bucket: 'Lifestyle' };
 
 const navigation = { emit: () => ({ defaultPrevented: false }), navigate: jest.fn() };
 
@@ -60,7 +60,7 @@ beforeEach(() => resetAuth());
 describe('the dot falls back to the local recent-window count when the server count fails', () => {
   beforeEach(() => {
     server.fail(COUNT, 500);
-    server.seed('/categories', [COFFEE]);
+    server.seed('/categories', [COFFEE_SHORT]);
   });
 
   // WHIT-203: the dot comes from the tab bar's own recent-transactions read. Reverting the tab bar

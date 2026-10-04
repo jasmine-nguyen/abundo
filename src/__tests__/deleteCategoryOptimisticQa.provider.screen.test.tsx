@@ -26,24 +26,13 @@ import type { Rule } from '../model';
 import type { TransactionFeedPage, TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';
+import {
+  DELETE_DINING, DELETE_GROCERIES, DELETE_DINING_RULE, DELETE_GROCERIES_RULE, DELETE_DINING_BUDGET, DELETE_GROCERIES_BUDGET, tx, page,
+} from './support/deleteCategorySeed';
 
 const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
-const DINING: Category = { id: 'dining', name: 'Dining', bucket: 'Living', icon: 'food', color: '#f00', recent: 0, parent: null };
-const GROCERIES: Category = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#0f0', recent: 0, parent: null };
-const DINING_RULE: Rule = { id: 'r1', pattern: 'COLES', categoryId: 'dining', isNew: false };
-const GROCERIES_RULE: Rule = { id: 'r2', pattern: 'WOOLIES', categoryId: 'groceries', isNew: false };
-const DINING_BUDGET = { target: 200, posted: 12.5, pending: 0 };
-const GROCERIES_BUDGET = { target: 300, posted: 0, pending: 0 };
-
-const tx = (id: string, over: Partial<Transaction> = {}): Transaction => ({
-  transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'COLES 0412 SYDNEY', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-  account_name: 'ANZ', category: 'dining', status: 'posted', type: 'PAYMENT', counts_to_budget: true, ...over,
-});
-const page = (transactions: Transaction[]) => ({ pages: [{ transactions, nextCursor: null }], pageParams: [undefined] });
 
 const BUDGET_KEY = ['budgetTransactions', 'parentBudget'];
 const OTHER_BUDGET_KEY = ['budgetTransactions', 'otherBudget'];
@@ -55,10 +44,10 @@ const SEARCH_KEY = ['transactionsSearch', 'coles'];
 
 // t1 is in Dining; t2 in Groceries; t3 was already uncategorised (must never become Dining on undo).
 function seed() {
-  queryClient.setQueryData(['categories'], [DINING, GROCERIES]);
-  queryClient.setQueryData(['rules'], [DINING_RULE, GROCERIES_RULE]);
-  queryClient.setQueryData(BUDGETS_KEY, { dining: DINING_BUDGET, groceries: GROCERIES_BUDGET });
-  queryClient.setQueryData(BUDGETS_KEY_28, { dining: DINING_BUDGET });
+  queryClient.setQueryData(['categories'], [DELETE_DINING, DELETE_GROCERIES]);
+  queryClient.setQueryData(['rules'], [DELETE_DINING_RULE, DELETE_GROCERIES_RULE]);
+  queryClient.setQueryData(BUDGETS_KEY, { dining: DELETE_DINING_BUDGET, groceries: DELETE_GROCERIES_BUDGET });
+  queryClient.setQueryData(BUDGETS_KEY_28, { dining: DELETE_DINING_BUDGET });
   queryClient.setQueryData(['transactions'], page([tx('t1'), tx('t2', { category: 'groceries' }), tx('t3', { category: null })]));
   queryClient.setQueryData(['uncategorizedFeed'], page([tx('t3', { category: null })]));
   queryClient.setQueryData(['transactionsRecent'], [tx('t1'), tx('t3', { category: null })]);
@@ -116,7 +105,7 @@ it('unfiles the charge in every copy — main copies, every budget list, every c
   expect(categoryOf(listRows(CATEGORY_KEY))).toEqual({ t1: null });
   expect(categoryOf(listRows(PREV_CYCLE_CATEGORY_KEY))).toEqual({ t9: null });
   // Both budget cycles lose the Dining budget.
-  expect(queryClient.getQueryData(BUDGETS_KEY)).toEqual({ groceries: GROCERIES_BUDGET });
+  expect(queryClient.getQueryData(BUDGETS_KEY)).toEqual({ groceries: DELETE_GROCERIES_BUDGET });
   expect(queryClient.getQueryData(BUDGETS_KEY_28)).toEqual({});
 
   await act(async () => { request.resolve(); await pending; });
@@ -140,10 +129,10 @@ it('a failed delete puts back exactly what it changed: only Dining charges retur
   expect(categoryOf(listRows(OTHER_BUDGET_KEY))).toEqual({ t3: null, t4: 'groceries' });
   // t9 lived only in a scoped list — it must still come back.
   expect(categoryOf(listRows(PREV_CYCLE_CATEGORY_KEY))).toEqual({ t9: 'dining' });
-  expect(queryClient.getQueryData(BUDGETS_KEY)).toEqual({ dining: DINING_BUDGET, groceries: GROCERIES_BUDGET });
-  expect(queryClient.getQueryData(BUDGETS_KEY_28)).toEqual({ dining: DINING_BUDGET });
-  expect(queryClient.getQueryData<Rule[]>(['rules'])).toEqual([DINING_RULE, GROCERIES_RULE]);
-  expect(queryClient.getQueryData<Category[]>(['categories'])).toEqual([DINING, GROCERIES]);
+  expect(queryClient.getQueryData(BUDGETS_KEY)).toEqual({ dining: DELETE_DINING_BUDGET, groceries: DELETE_GROCERIES_BUDGET });
+  expect(queryClient.getQueryData(BUDGETS_KEY_28)).toEqual({ dining: DELETE_DINING_BUDGET });
+  expect(queryClient.getQueryData<Rule[]>(['rules'])).toEqual([DELETE_DINING_RULE, DELETE_GROCERIES_RULE]);
+  expect(queryClient.getQueryData<Category[]>(['categories'])).toEqual([DELETE_DINING, DELETE_GROCERIES]);
   // Nothing refreshes on failure.
   for (const key of [BUDGET_KEY, CATEGORY_KEY, ['uncategorizedCount'], ['breakdown']]) {
     expect([key, invalidated(key) ?? false]).toEqual([key, false]);
@@ -233,6 +222,6 @@ it('a successful delete refreshes every cycle of the charge lists but never the 
   expect(invalidated(['transactions'])).toBe(false);
   expect(invalidated(['rules'])).toBe(false);
   // The dropped rule and budget stay dropped after success.
-  expect(queryClient.getQueryData<Rule[]>(['rules'])).toEqual([GROCERIES_RULE]);
+  expect(queryClient.getQueryData<Rule[]>(['rules'])).toEqual([DELETE_GROCERIES_RULE]);
   expect(queryClient.getQueryData(BUDGETS_KEY_28)).toEqual({});
 });
