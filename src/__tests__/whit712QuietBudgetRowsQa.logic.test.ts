@@ -18,7 +18,7 @@ describe('pace deadband edges (WHIT-712)', () => {
     expect(behind.paceColor).toBe(C.warn);
     const ahead = rowFor({ budget: 100, posted: 49.49, pending: 0 });
     expect(ahead.paceLabel).toMatch(/ under plan$/);
-    expect(ahead.paceColor).toBe(C.textInfo);
+    expect(ahead.paceColor).toBe(C.textDim);
   });
 
   // [A3] (P1) spent exactly the budget is NOT over: amount "left", line is the behind-pace warning.

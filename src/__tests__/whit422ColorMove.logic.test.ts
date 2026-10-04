@@ -3,8 +3,7 @@
 // existing suites miss; the seed/sibling/OKLCH maths and the picker-chip render are already
 // covered by categoryColour.logic + overlaysPickerCreateDraftRender.screen and are NOT repeated.
 //   [A-TI]  C.textInfo is exactly '#cfd2ff' — the token a future retune must not silently move.
-//   [A-EP]  the EXPENSE budget pace sub-label ("under plan") is that muted colour.
-//           (Existing #cfd2ff pins only exercise the INCOME earn-target branch.)
+//   [A-EP]  the EXPENSE budget pace sub-label ("under plan") is the muted C.textDim (WHIT-730).
 //   [A-BC]  BUCKET_COLOR values survived the move byte-for-byte, incl. Income === C.good.
 import { describe, it, expect } from '@jest/globals';
 import { C } from '../theme';
@@ -30,12 +29,10 @@ describe('WHIT-422 — expense budget pace colour is the muted token', () => {
     cycleLen: 14, daysLeft: 7,
   })).rows[0];
 
-  it('[A-EP] "under plan" (spent 10 vs target 50) → paceColor is #cfd2ff', () => {
+  it('[A-EP] "under plan" (spent 10 vs target 50) → paceColor is the muted C.textDim', () => {
     const row = expenseRow(10);
     expect(row.paceLabel).toContain('under plan');
-    // Fail-on-revert: change context.tsx line ~1807 paceColor from C.textInfo to any other token → red.
-    expect(row.paceColor).toBe('#cfd2ff');
-    expect(row.paceColor).toBe(C.textInfo);
+    expect(row.paceColor).toBe(C.textDim);
   });
 
   it('[A-EP] exactly on pace (spent 50 == target 50) → no pace line (WHIT-712)', () => {

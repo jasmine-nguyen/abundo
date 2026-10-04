@@ -9,7 +9,7 @@ import { useRecentTransactionsScreenData, useKeepTransactionsFeedWarm, useUncate
 import { NavBarsProvider, useNavBars } from '../../src/motion/NavBarsContext';
 import { NavBarsRouteReset } from '../../src/motion/NavBarsRouteReset';
 import { useReduceMotion } from '../../src/motion/useReduceMotion';
-import { AskButton } from '../../src/chat/AskButton';
+import { AskButton, ASK_BUTTON_EDGE, ASK_BUTTON_SIZE } from '../../src/chat/AskButton';
 
 const TABS = [
   { name: 'budgets', label: 'Budgets', icon: 'navBudgets' },
@@ -54,7 +54,7 @@ export function TabBar({ state, navigation }: TabBarShape) {
   const onLayout = (e: LayoutChangeEvent) => setBarHeight(e.nativeEvent.layout.height);
   const translateY = visibility.interpolate({ inputRange: [0, 1], outputRange: [barHeight, 0] });
   // Fully below the screen when hidden: the button's 16pt gap + its 48pt height, plus margin.
-  const askTranslateY = visibility.interpolate({ inputRange: [0, 1], outputRange: [barHeight + 16 + 64, 0] });
+  const askTranslateY = visibility.interpolate({ inputRange: [0, 1], outputRange: [barHeight + 16 + ASK_BUTTON_SIZE + 16, 0] });
 
   return (
     <>
@@ -88,7 +88,7 @@ export function TabBar({ state, navigation }: TabBarShape) {
       {/* The Ask button sits 16pt above the bar and slides off-screen with it on scroll (WHIT-730),
           so it doesn't cover row content mid-list. barHeight already includes the bottom safe area. */}
       <Animated.View testID="ask-button-slide" pointerEvents="box-none" style={[StyleSheet.absoluteFill, { transform: [{ translateY: askTranslateY }] }]}>
-        <AskButton style={{ right: 18, bottom: barHeight + 16 }} />
+        <AskButton style={{ right: ASK_BUTTON_EDGE, bottom: barHeight + 16 }} />
       </Animated.View>
     </>
   );

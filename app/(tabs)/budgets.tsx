@@ -11,6 +11,7 @@ import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { BudgetBar, RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/components/ui';
 import { SettingsButton } from '../../src/components/SettingsButton';
 import { StaleDataLine } from '../../src/components/ListStates';
+import { AskButtonClearance } from '../../src/chat/AskButton';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { loadFailureReason } from '../../src/apiError';
 
@@ -38,8 +39,10 @@ function RowHeader({ b }: { b: BudgetView }) {
 function BudgetRow({ b }: { b: BudgetView }) {
   const router = useRouter();
   const note = b.note ? <Text testID={`budget-row-note-${b.id}`} style={styles.note}>{b.note}</Text> : null;
+  // Under plan is the only label that is neither behind pace nor a spread → quiet, not bold.
+  const paceStyle = [styles.paceLabel, { color: b.paceColor }, !b.behindPace && b.spreadPrefill === null && styles.paceMuted];
   return (
-    <Pressable onPress={() => router.push(`/budget/${b.id}`)} style={({ pressed }) => [styles.row, b.unspent && styles.rowSlim, b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }, pressed && PRESSED]}>
+    <Pressable testID={`budget-row-${b.id}`} onPress={() => router.push(`/budget/${b.id}`)} style={({ pressed }) => [styles.row, b.unspent && styles.rowSlim, b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }, pressed && PRESSED]}>
       <RowHeader b={b} />
       {/* WHIT-730: nothing spent yet → a slim row with no bar or pace line, so active budgets stand out. */}
       {b.unspent ? (
@@ -54,10 +57,10 @@ function BudgetRow({ b }: { b: BudgetView }) {
                 <View style={styles.pace}>
                   {b.spreadPrefill !== null ? (
                     <Pressable testID={`budget-row-spread-${b.id}`} onPress={() => router.push(`/budget/spread?categoryId=${b.id}&prefill=${b.spreadPrefill}`)} hitSlop={8}>
-                      <Text style={[styles.paceLabel, { color: b.paceColor }]}>{b.paceLabel}</Text>
+                      <Text style={paceStyle}>{b.paceLabel}</Text>
                     </Pressable>
                   ) : (
-                    <Text style={[styles.paceLabel, { color: b.paceColor }]}>{b.paceLabel}</Text>
+                    <Text style={paceStyle}>{b.paceLabel}</Text>
                   )}
                 </View>
               ) : null}
@@ -194,25 +197,27 @@ export default function Budgets() {
           )}
         </BudgetsHero>
 
-        <StaleDataLine idPrefix="budgets" error={refreshError} updatedAt={updatedAt} />
+        <AskButtonClearance>
+          <StaleDataLine idPrefix="budgets" error={refreshError} updatedAt={updatedAt} />
 
-        {SECTIONS.map(({ section, heading }) => {
-          const sectionRows = rows.filter((b) => b.section === section);
-          if (sectionRows.length === 0) return null;
-          return (
-            <React.Fragment key={section}>
-              <Text style={styles.sectionLabel}>{heading}</Text>
-              {sectionRows.map((b) => <BudgetRow key={b.id} b={b} />)}
-            </React.Fragment>
-          );
-        })}
+          {SECTIONS.map(({ section, heading }) => {
+            const sectionRows = rows.filter((b) => b.section === section);
+            if (sectionRows.length === 0) return null;
+            return (
+              <React.Fragment key={section}>
+                <Text style={styles.sectionLabel}>{heading}</Text>
+                {sectionRows.map((b) => <BudgetRow key={b.id} b={b} />)}
+              </React.Fragment>
+            );
+          })}
 
-        {noRows ? null : (
-          <Pressable onPress={() => router.push('/budget/pick')} style={({ pressed }) => [styles.addBudget, pressed && PRESSED]}>
-            <Glyph name="plus" size={18} color={C.accentSoft} />
-            <Text style={styles.addBudgetText}>Add a budget</Text>
-          </Pressable>
-        )}
+          {noRows ? null : (
+            <Pressable onPress={() => router.push('/budget/pick')} style={({ pressed }) => [styles.addBudget, pressed && PRESSED]}>
+              <Glyph name="plus" size={18} color={C.accentSoft} />
+              <Text style={styles.addBudgetText}>Add a budget</Text>
+            </Pressable>
+          )}
+        </AskButtonClearance>
       </>
       )}
     </ScrollChromeHeader>
@@ -248,7 +253,7 @@ const styles = StyleSheet.create({
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 18, marginBottom: 8, marginHorizontal: 4 },
 
   row: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, padding: 16, paddingBottom: 14, marginBottom: 12 },
-  rowSlim: { padding: 12, paddingBottom: 12 },
+  rowSlim: { paddingTop: 12, paddingBottom: 12 },
   slimNote: { marginTop: 6 },
   // Caps the amount column so a big number shrinks instead of squeezing the name (large text).
   rowRight: { alignItems: 'flex-end', maxWidth: '45%' },
@@ -263,6 +268,7 @@ const styles = StyleSheet.create({
   pace: { marginLeft: 'auto' },
   note: { fontFamily: FONT.body, fontSize: 12, color: C.textDim },
   paceLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700' },
+  paceMuted: { fontWeight: '400' },
 
   addBudget: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(C.accentAlt, 0.4), backgroundColor: tint(C.accentAlt, 0.07), borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   addBudgetText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSoft },
