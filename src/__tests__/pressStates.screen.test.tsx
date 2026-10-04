@@ -29,7 +29,7 @@ import { TransactionRow } from '../components/TransactionRow';
 type Node = { props: { style: unknown; disabled?: boolean; onPress?: unknown } };
 
 beforeEach(() => {
-  mockState = { openPicker: jest.fn(), category: makeState({ categories: [cat({ id: 'coffee' })] }).category };
+  mockState = { openPicker: jest.fn(), category: makeState({ categories: [cat()] }).category };
 });
 
 // The row's Pressable is the only node whose `style` is a function (the pressed-state fn).

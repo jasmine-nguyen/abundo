@@ -6,7 +6,7 @@ import { C } from '../theme';
 import { makeState, cat, budget } from './factory';
 
 const salary = cat({ id: 'salary', name: 'Salary', color: '#35d9a0', bucket: 'Income' });
-const coffee = cat({ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle' });
+const coffee = cat();
 const latte = cat({ id: 'latte', name: 'Lattes', bucket: 'Lifestyle', parent: 'coffee' });
 const rent = cat({ id: 'rent', name: 'Rent', bucket: 'Living', color: '#7aa2ff' });
 const gym = cat({ id: 'gym', name: 'Gym', bucket: 'Lifestyle', color: '#f0a0c0' });

@@ -152,7 +152,7 @@ function values(grid: (ReadCell | null)[][]): (string | number | null)[][] {
 const CATS: Category[] = [
   cat({ id: 'food', name: 'Food', parent: null }),
   cat({ id: 'eating-out', name: 'Eating out', parent: 'food' }),
-  cat({ id: 'coffee', name: 'Cafes & Coffee', parent: 'eating-out' }),   // 3 levels deep
+  cat({ parent: 'eating-out' }),   // 3 levels deep
   cat({ id: 'groceries', name: 'Groceries', parent: null }),
   cat({ id: 'orphan', name: 'Orphan', parent: 'gone' }),                 // parent the app doesn't know
 ];

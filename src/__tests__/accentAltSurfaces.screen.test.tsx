@@ -32,7 +32,7 @@ const CHIP_BLUE_10 = 'rgba(124,140,255,0.1)';  // was the literal 'rgba(124,140,
 const CHIP_BLUE_16 = 'rgba(124,140,255,0.16)'; // was the literal 'rgba(124,140,255,.16)'
 
 function rowState() {
-  return { openPicker: jest.fn(), category: makeState({ categories: [cat({ id: 'coffee', name: 'Cafes & Coffee' })] }).category };
+  return { openPicker: jest.fn(), category: makeState({ categories: [cat()] }).category };
 }
 // The row's outer View carries styles.row + the selected wash and has no testID; it is the render
 // root, so read it off the tree rather than inventing a testID for a colour assertion.

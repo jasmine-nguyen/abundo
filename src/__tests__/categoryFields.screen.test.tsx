@@ -102,7 +102,7 @@ it('is controlled: tapping a parent reports via onParentChange', () => {
 it('does NOT self-clear the parent when the bucket prop changes (effect stays in the host)', () => {
   const cats: Category[] = [
     cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
-    cat({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', parent: null }),
+    cat({ name: 'Coffee', parent: null }),
   ];
   const { rerender } = renderFields({ parentPicker: true, categories: cats, parent: 'car', bucket: 'Living' });
   // Switch the bucket under a Living parent — a host WOULD drop it, but the field cluster must not.
