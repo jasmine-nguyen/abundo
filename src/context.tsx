@@ -1914,6 +1914,8 @@ export interface BudgetView {
   // WHIT-707: Spending rows list before Earning rows; income hides the today marker; an
   // over-budget row that can start a spread carries its overspend as the link's prefill.
   section: 'spending' | 'earning'; showTarget: boolean; spreadPrefill: number | null;
+  // WHIT-727: true only for a spend row past its pace line but not over.
+  behindPace: boolean;
 }
 
 // The exact slice budgetViews reads. A narrow input (not the whole AppContext) so a
@@ -2032,7 +2034,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: BAR_FILL,
         pendingTint: tint(BAR_FILL, 0.45), paceLabel: '', paceColor: C.textInfo, over: false,
         depth, parentId,
-        section: 'earning', showTarget: false, spreadPrefill: null,
+        section: 'earning', showTarget: false, spreadPrefill: null, behindPace: false,
       });
       group(parentId, b.id);
       continue;
@@ -2054,9 +2056,10 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     let paceLabel = '', paceColor: string = C.textInfo;
     const spread = budgetSpreadEligibility(c, b);
     const spreadPrefill = spread.entry === 'start' ? spread.overspend : null;
+    const behindPace = !over && spent - target > 0.5;
     if (over) {
       if (spreadPrefill !== null) { paceLabel = 'Spread it over pay cycles →'; paceColor = C.accentSoft; }
-    } else if (spent - target > 0.5) { paceLabel = fmt(spent - target) + ' behind pace'; paceColor = C.warn; }
+    } else if (behindPace) { paceLabel = fmt(spent - target) + ' behind pace'; paceColor = C.warn; }
     else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' ahead of pace'; }
     // "of" shows the AVAILABLE envelope so it reconciles with the remaining amount (available −
     // spent). `spent` includes pending; when some is pending, name it too (as Insights does).
@@ -2068,7 +2071,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
       postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: over ? C.bad : BAR_FILL,
       pendingTint: tint(over ? C.bad : BAR_FILL, 0.45), paceLabel, paceColor, over,
       depth, parentId,
-      section: 'spending', showTarget: true, spreadPrefill,
+      section: 'spending', showTarget: true, spreadPrefill, behindPace,
     });
     group(parentId, b.id);
   }
