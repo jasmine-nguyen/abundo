@@ -102,6 +102,18 @@ it('shows the inline retry on a cold error (empty + error), and Retry re-reads t
   await settle();
 });
 
+it('a cold error says why: offline when the connection drops', async () => {
+  server.once('GET', '/transactions/feed', 'dropped');
+  await renderWithQueries(<Accounts />);
+  expect(screen.getByTestId('accounts-error')).toHaveTextContent(/You look offline\. Check your connection and retry\./);
+});
+
+it('a cold error says why: our server when it answers 5xx', async () => {
+  server.fail('/transactions/feed', 503);
+  await renderWithQueries(<Accounts />);
+  expect(screen.getByTestId('accounts-error')).toHaveTextContent(/Our server had a problem\. Try again in a moment\./);
+});
+
 it('keeps its cards through a background error when txns are cached (cache-first)', async () => {
   seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
   await renderWithQueries(<Accounts />);

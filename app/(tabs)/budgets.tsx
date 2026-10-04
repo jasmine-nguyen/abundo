@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmt, tint } from '../../src/theme';
 import { formatDayMonth } from '../../src/dateutil';
@@ -9,6 +9,9 @@ import { useBudgetsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { BudgetBar, RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/components/ui';
 import { SettingsButton } from '../../src/components/SettingsButton';
+import { StaleDataLine } from '../../src/components/ListStates';
+import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
+import { loadFailureReason } from '../../src/apiError';
 
 function resetsLabel(daysLeft: number): string {
   if (daysLeft === 0) return 'resets today';
@@ -60,7 +63,9 @@ export default function Budgets() {
   // WHIT-188: data now comes from the cached, auth-gated, self-healing query layer
   // instead of the eager global store. A transient 5xx retries with backoff (no stuck
   // banner); the inline error/retry below is the local fallback for a sustained failure.
-  const { budgets, category, cycleLen, daysLeft, nextPayday, isLoading, isError, payCycleError, refetch, refetchStale } = useBudgetsScreenData();
+  const {
+    budgets, category, cycleLen, daysLeft, nextPayday, isLoading, isError, payCycleError, error, refreshError, updatedAt, refetch, refetchStale,
+  } = useBudgetsScreenData();
 
   // Load-on-focus: refresh when the tab regains focus, but only if the data has gone
   // stale (the window rolls over on payday; a save/categorise elsewhere moves numbers).
@@ -83,6 +88,8 @@ export default function Budgets() {
   // this the rows would render against the DEFAULT cycle (a wrong days-left + pace bars).
   const showError = (isError && rows.length === 0) || payCycleError;
   const showSpinner = !showError && isLoading && rows.length === 0;
+  // WHIT-713: a pull refreshes the pay cycle, budgets and categories (no live balances here).
+  const { pulling, onRefresh } = usePullToRefresh(refetch);
 
   // Scroll-to-hide chrome + the floating header now live in the shared ScrollChromeHeader
   // wrapper (WHIT-199). The spinner/error states render as centered children (flexGrow so
@@ -92,7 +99,11 @@ export default function Budgets() {
       title="Budgets"
       left={<SettingsButton />}
       right={<HeaderIconButton icon="plus" accessibilityLabel="Add budget" onPress={() => router.push('/budget/pick')} />}
-      contentContainerStyle={(showSpinner || showError) ? styles.fill : undefined}
+      // Always fill the viewport, so a short budget list is still a pull-to-refresh target.
+      contentContainerStyle={styles.fill}
+      refreshControl={(headerHeight) => (
+        <RefreshControl refreshing={pulling && !showSpinner} onRefresh={onRefresh} tintColor={C.accent} progressViewOffset={headerHeight} />
+      )}
     >
       {showSpinner ? (
         <View testID="budgets-loading" style={styles.centered}>
@@ -101,6 +112,7 @@ export default function Budgets() {
       ) : showError ? (
         <View testID="budgets-error" style={styles.centered}>
           <Text style={styles.errorText}>Couldn't load your budgets.</Text>
+          <Text style={styles.errorText}>{loadFailureReason(error)}</Text>
           <RetryButton onPress={refetch} label="Retry loading your budgets" testID="budgets-retry" style={styles.retryBtn} textStyle={styles.retryText} />
         </View>
       ) : (
@@ -141,6 +153,8 @@ export default function Budgets() {
             </View>
           )}
         </View>
+
+        <StaleDataLine idPrefix="budgets" error={refreshError} updatedAt={updatedAt} />
 
         {noBudgets ? null : <Text style={styles.caption}>Solid = spent · faded = pending · line = today's pace</Text>}
 

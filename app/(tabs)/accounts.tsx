@@ -7,7 +7,7 @@ import { accountSummaries, useAppContext } from '../../src/context';
 import { useTransactionsScreenData } from '../../src/queries';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { ListStates } from '../../src/components/ListStates';
+import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { SettingsButton } from '../../src/components/SettingsButton';
 
 // The Accounts tab. Lifted out of the Transactions segmented control into its own bottom-bar
@@ -19,7 +19,7 @@ export default function Accounts() {
   const { showToast } = useAppContext();
   // Same data source as the old segment — the all-accounts cursor feed — so behaviour and the
   // cold-load/error states are identical to before the move.
-  const { transactions, balances, isLoading, isError, refetch, refetchStale, refetchList, refreshLiveBalances } = useTransactionsScreenData();
+  const { transactions, balances, isLoading, isError, error, refreshError, updatedAt, refetch, refetchStale, refetchList, refreshLiveBalances } = useTransactionsScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   // WHIT-215: derived from the transactions themselves (one card per account_id), not a
@@ -57,6 +57,7 @@ export default function Accounts() {
         />
       )}
     >
+      {!showError && <StaleDataLine idPrefix="accounts" error={refreshError} updatedAt={updatedAt} />}
       <ListStates
         showSpinner={showSpinner}
         showError={showError}
@@ -64,6 +65,7 @@ export default function Accounts() {
         errorText="Couldn't load your accounts."
         retryLabel="Retry loading your accounts"
         onRetry={refetch}
+        error={error}
       />
 
       {!showSpinner && !showError && accounts.length === 0 && (

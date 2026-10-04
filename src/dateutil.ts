@@ -43,6 +43,18 @@ export function formatWeekdayShort(iso: string): string {
   return DAYS[d.getDay()];
 }
 
+// A timestamp -> a local "9:40am" (WHIT-713), with a "17 Sep, " prefix when it isn't from `now`'s
+// local day, so an old time can't read as today's.
+export function formatTimeOfDay(ms: number, now: Date = new Date()): string {
+  const d = new Date(ms);
+  const hours = d.getHours();
+  const suffix = hours < 12 ? 'am' : 'pm';
+  const clock = `${hours % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}${suffix}`;
+  const iso = toISODate(d);
+  if (iso === toISODate(now)) return clock;
+  return `${formatDayMonth(iso)}, ${clock}`;
+}
+
 // An ISO range -> "12 Jun – 11 Sep" when both ends fall in the current year; otherwise with years
 // ("1 Aug 2025 – 31 Aug 2025"), so a past-year or 12-month range can't read as a recent one.
 export function formatDateRange(fromIso: string, toIso: string, now: Date = new Date()): string {

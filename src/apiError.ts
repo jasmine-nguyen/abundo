@@ -58,3 +58,16 @@ export function writeFailureMessage(error: unknown, fallback: string): string {
   if (reason === null) return fallback;
   return endSentence(reason[0].toUpperCase() + reason.slice(1));
 }
+
+// WHIT-713: only a lost connection (fetch's TypeError) or apiFetch's own timeout (AbortError)
+// looks offline. A server status, a sign-in problem or an unreadable body does not.
+export function readFailureIsOffline(error: unknown): boolean {
+  if (error instanceof TypeError) return true;
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+/** The reason line under a "Couldn't load …" error card. */
+export function loadFailureReason(error: unknown): string {
+  if (readFailureIsOffline(error)) return 'You look offline. Check your connection and retry.';
+  return 'Our server had a problem. Try again in a moment.';
+}
