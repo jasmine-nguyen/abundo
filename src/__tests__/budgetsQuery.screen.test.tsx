@@ -37,7 +37,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 // by the folded WHIT-72 tests via renderHook; the same regime the screen renders under.
 import { useBudgetsScreenData, useBudgetDetailScreenData } from '../queries';
 import { nextPayday } from '../payCycle';
-import { COFFEE } from './support/categories';
+import { COFFEE, SALARY } from './support/categories';
 
 const server = installFakeServer();
 // The Budgets reads. `/budgets?` (with the query mark) counts the rollup read only, never a
@@ -236,10 +236,10 @@ describe('partial failure', () => {
 });
 
 describe('empty budgets', () => {
-  it('empty rollup {} → empty state (hero + Add your first budget), not a spinner or error', async () => {
+  it('empty rollup {} → empty state (hero + Add a spending budget), not a spinner or error', async () => {
     server.seed('/budgets', {});
     renderBudgets();
-    expect(await screen.findByText('Add your first budget')).toBeTruthy();
+    expect(await screen.findByText('Add a spending budget')).toBeTruthy();
     expect(screen.queryByTestId('budgets-loading')).toBeNull();
     expect(screen.queryByTestId('budgets-error')).toBeNull();
     expect(screen.queryByText('Cafes & Coffee')).toBeNull();
@@ -584,10 +584,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
   });
 
   it('keeps an Income budget OUT of the over-budget hero (earnings do not rescue it)', async () => {
-    server.seed('/categories', [
-      COFFEE,
-      { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'cash', color: '#7fd1b9', recent: 0 },
-    ]);
+    server.seed('/categories', [COFFEE, SALARY]);
     server.seed('/budgets', {
       coffee: { target: 100, posted: 200, pending: 0 },
       salary: { target: 5000, posted: 6000, pending: 0 },

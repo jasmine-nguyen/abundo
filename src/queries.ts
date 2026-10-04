@@ -543,6 +543,7 @@ export interface BudgetsScreenData {
   // instead. Guarded on data===undefined so a background refetch over a cached cycle keeps
   // the rows (cache-first), mirroring WHIT-194's categoriesError.
   payCycleError: boolean;
+  payCycleReady: boolean; // the pay cycle has loaded (or is cached), so days left is real, not the default
   error: unknown; // the failed read's error → the error card's offline-vs-server reason (WHIT-713)
   refreshError: unknown; // a refresh failed over budgets already showing → the quiet stale line
   updatedAt: number; // when the showing data loaded (oldest of the reads), 0 if never
@@ -583,6 +584,7 @@ export function useBudgetsScreenData(): BudgetsScreenData {
     daysLeft,
     nextPayday: nextPaydayDate,
     payCycleError,
+    payCycleReady: payCycleQuery.data !== undefined,
     ...status,
   };
 }

@@ -57,13 +57,33 @@ function BudgetRow({ b }: { b: BudgetView }) {
   );
 }
 
+function BudgetsHero({ daysLeft, nextPayday, money, children }: { daysLeft: number; nextPayday: string; money?: React.ReactNode; children?: React.ReactNode }) {
+  return (
+    <View style={styles.hero}>
+      <HeroGradientFill />
+      <View style={styles.heroBlob1} />
+      <View style={styles.heroBlob2} />
+      <Text style={styles.heroEyebrow}>THIS PAY CYCLE</Text>
+      <View style={styles.heroTop}>
+        <View style={styles.heroCol}>
+          <Text style={styles.heroBig} numberOfLines={1} adjustsFontSizeToFit>{daysLeft}</Text>
+          <Text style={styles.heroLabel}>{daysLeft === 1 ? 'day left' : 'days left'}</Text>
+        </View>
+        {money}
+      </View>
+      {nextPayday ? <Text style={[styles.heroSmall, styles.heroPayday]}>Next payday {formatDayMonth(nextPayday)}</Text> : null}
+      {children}
+    </View>
+  );
+}
+
 export default function Budgets() {
   const router = useRouter();
   // WHIT-188: data now comes from the cached, auth-gated, self-healing query layer
   // instead of the eager global store. A transient 5xx retries with backoff (no stuck
   // banner); the inline error/retry below is the local fallback for a sustained failure.
   const {
-    budgets, category, cycleLen, daysLeft, nextPayday, isLoading, isError, payCycleError, error, refreshError, updatedAt, refetch, refetchStale,
+    budgets, category, cycleLen, daysLeft, nextPayday, isLoading, isError, payCycleError, payCycleReady, error, refreshError, updatedAt, refetch, refetchStale,
   } = useBudgetsScreenData();
 
   // Load-on-focus: refresh when the tab regains focus, but only if the data has gone
@@ -78,7 +98,10 @@ export default function Budgets() {
   // otherwise look like money still left. The -0.5 dust threshold mirrors the per-row/carryover
   // rounding (context.tsx) so a sub-dollar residual, which fmt rounds to $0, doesn't flip the headline.
   const overBudget = totRemain < -0.5;
-  const noBudgets = rows.length === 0;
+  const noRows = rows.length === 0;
+  // WHIT-714: income rows and Savings budgets never feed the totals, so the money side only
+  // means something when there's at least one spending row.
+  const hasSpending = rows.some((b) => b.section === 'spending');
 
   // Cache-first: once we have any rows, keep showing them while a background refetch
   // runs. Error takes precedence over the spinner — a failed read must never sit under an
@@ -105,9 +128,12 @@ export default function Budgets() {
       )}
     >
       {showSpinner ? (
-        <View testID="budgets-loading" style={styles.centered}>
-          <ActivityIndicator color={C.accent} />
-        </View>
+        <>
+          {payCycleReady ? <BudgetsHero daysLeft={daysLeft} nextPayday={nextPayday} /> : null}
+          <View testID="budgets-loading" style={styles.centered}>
+            <ActivityIndicator color={C.accent} />
+          </View>
+        </>
       ) : showError ? (
         <View testID="budgets-error" style={styles.centered}>
           <Text style={styles.errorText}>Couldn't load your budgets.</Text>
@@ -116,33 +142,17 @@ export default function Budgets() {
         </View>
       ) : (
       <>
-        {/* hero */}
-        <View style={styles.hero}>
-          <HeroGradientFill />
-          <View style={styles.heroBlob1} />
-          <View style={styles.heroBlob2} />
-          <Text style={styles.heroEyebrow}>THIS PAY CYCLE</Text>
-          <View style={styles.heroTop}>
+        <BudgetsHero
+          daysLeft={daysLeft}
+          nextPayday={nextPayday}
+          money={hasSpending ? (
             <View style={styles.heroCol}>
-              <Text style={styles.heroBig} numberOfLines={1} adjustsFontSizeToFit>{daysLeft}</Text>
-              <Text style={styles.heroLabel}>{daysLeft === 1 ? 'day left' : 'days left'}</Text>
+              <Text style={styles.heroBig} numberOfLines={1} adjustsFontSizeToFit>{overBudget ? `−${fmt(totRemain)}` : fmt(totRemain)}</Text>
+              <Text style={styles.heroLabel}>{overBudget ? 'Over budget' : 'Left to spend'}</Text>
             </View>
-            {noBudgets ? null : (
-              <View style={styles.heroCol}>
-                <Text style={styles.heroBig} numberOfLines={1} adjustsFontSizeToFit>{overBudget ? `−${fmt(totRemain)}` : fmt(totRemain)}</Text>
-                <Text style={styles.heroLabel}>{overBudget ? 'Over budget' : 'Left to spend'}</Text>
-              </View>
-            )}
-          </View>
-          {nextPayday ? <Text style={[styles.heroSmall, styles.heroPayday]}>Next payday {formatDayMonth(nextPayday)}</Text> : null}
-          {noBudgets ? (
-            <View style={styles.heroBottom}>
-              <Text style={styles.heroEmpty}>No budgets yet. Set one and this shows what's left to spend.</Text>
-              <Pressable testID="budgets-hero-add" onPress={() => router.push('/budget/pick')} style={styles.heroAdd}>
-                <Text style={styles.heroAddText}>Add your first budget</Text>
-              </Pressable>
-            </View>
-          ) : (
+          ) : null}
+        >
+          {hasSpending ? (
             <View style={[styles.heroBottom, styles.heroBottomRow]}>
               <View style={styles.heroPill}>
                 <Text style={styles.heroPillTop}>of {fmt(totBudget)}</Text>
@@ -150,12 +160,21 @@ export default function Budgets() {
               </View>
               {overBudget ? <Text style={styles.heroOver}>{`Over by ${fmt(totRemain)} · ${resetsLabel(daysLeft)}`}</Text> : null}
             </View>
+          ) : (
+            <View style={styles.heroBottom}>
+              <Text style={styles.heroEmpty}>No spending budgets yet. Set one and this shows what's left to spend.</Text>
+              {noRows ? (
+                <Pressable testID="budgets-hero-add" onPress={() => router.push('/budget/pick')} style={styles.heroAdd}>
+                  <Text style={styles.heroAddText}>Add a spending budget</Text>
+                </Pressable>
+              ) : null}
+            </View>
           )}
-        </View>
+        </BudgetsHero>
 
         <StaleDataLine idPrefix="budgets" error={refreshError} updatedAt={updatedAt} />
 
-        {noBudgets ? null : <Text style={styles.caption}>Solid = spent · faded = pending · line = today's pace</Text>}
+        {noRows ? null : <Text style={styles.caption}>Solid = spent · faded = pending · line = today's pace</Text>}
 
         {SECTIONS.map(({ section, heading }) => {
           const sectionRows = rows.filter((b) => b.section === section);
@@ -168,7 +187,7 @@ export default function Budgets() {
           );
         })}
 
-        {noBudgets ? null : (
+        {noRows ? null : (
           <Pressable onPress={() => router.push('/budget/pick')} style={({ pressed }) => [styles.addBudget, pressed && PRESSED]}>
             <Glyph name="plus" size={18} color={C.accentSoft} />
             <Text style={styles.addBudgetText}>Add a budget</Text>

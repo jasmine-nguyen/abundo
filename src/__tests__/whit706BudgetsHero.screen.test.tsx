@@ -24,10 +24,11 @@ beforeEach(() => {
 });
 
 describe('Budgets top card', () => {
-  it('no budgets → days left stays, money part is replaced by one "Add your first budget" button', async () => {
+  it('no budgets → days left stays, money part is replaced by one "Add a spending budget" button', async () => {
     server.seed('/budgets', {});
     renderBudgets();
-    expect(await screen.findByText('Add your first budget')).toBeTruthy();
+    expect(await screen.findByText('Add a spending budget')).toBeTruthy();
+    expect(screen.getByText("No spending budgets yet. Set one and this shows what's left to spend.")).toBeTruthy();
     expect(screen.getByText('days left')).toBeTruthy();
     expect(screen.queryByText('Budget remaining')).toBeNull();
     expect(screen.queryByText('Left to spend')).toBeNull();

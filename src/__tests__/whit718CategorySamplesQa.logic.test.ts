@@ -1,7 +1,7 @@
 // WHIT-718 QA — the shared category samples: frozen, one home, and no copy hiding behind a
 // different key order.
 import { describe, it, expect, jest } from '@jest/globals';
-import { COFFEE, COFFEE_RECORD, GROCERIES, SUBS } from './support/categories';
+import { COFFEE, COFFEE_RECORD, GROCERIES, SUBS, SALARY, SAVINGS } from './support/categories';
 import * as budgetsTab from './support/budgetsTab';
 import { findOffenders } from './support/sourceScan';
 
@@ -14,12 +14,14 @@ const SAMPLE_PIECES = [
   [`id: ${q('coffee')}`, q('Cafes & Coffee'), q('#E8A87C'), 'recent: ' + '52'],
   [`id: ${q('groceries')}`, q('Groceries'), q('#7fd49b'), 'recent: ' + '100'],
   [`id: ${q('subs')}`, q('Subs'), q('#f0b27a'), 'recent: ' + '0'],
+  [`id: ${q('salary')}`, q('Salary'), q('Income'), q('cash')],
+  [`id: ${q('rainy')}`, q('Rainy Day'), q('Savings'), q('piggy-bank')],
 ];
 
 describe('WHIT-718 QA: shared category samples', () => {
   // [A1]
   it('every shared sample is frozen, so one test cannot change it for the next', () => {
-    for (const sample of [COFFEE_RECORD, COFFEE, GROCERIES, SUBS]) {
+    for (const sample of [COFFEE_RECORD, COFFEE, GROCERIES, SUBS, SALARY, SAVINGS]) {
       expect(Object.isFrozen(sample)).toBe(true);
     }
   });
