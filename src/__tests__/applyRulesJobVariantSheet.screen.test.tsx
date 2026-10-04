@@ -23,6 +23,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_TOP_RECORD } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
 
@@ -38,7 +39,7 @@ const fns = {
   retryApplyRulesJob: jest.fn<() => Promise<FilingResult>>(),
 };
 
-const CATEGORIES = [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null }];
+const CATEGORIES = [GROCERIES_TOP_RECORD];
 const OVER = APPLY_RULES_MAX_WRITES + 200; // guaranteed over the per-call cap
 
 const group = (over: Partial<UncategorizedMerchantGroup> = {}): UncategorizedMerchantGroup => ({

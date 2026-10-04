@@ -19,7 +19,7 @@ import { seedTransactionsCache, readTransactionsCache } from './support/transact
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
-import { GROCERIES } from './support/categories';
+import { DINING, GROCERIES } from './support/categories';
 
 const server = installFakeServer();
 // The `updates` of every batch save the app sent, in order.
@@ -82,7 +82,7 @@ it('applyCategoryToMany reverts only the rejected chunk to its previous category
   seedTransactionsCache(queryClient, many.map((t) => ({ ...t })));
   queryClient.setQueryData(['categories'], [
     { ...CAT } as Category,
-    { id: 'dining', name: 'Dining', bucket: 'Lifestyle', icon: 'utensils', color: '#f7768e', recent: 0 } as Category,
+    { ...DINING },
   ]);
   queryClient.setQueryData(['budgets', 14], {});
   queryClient.setQueryData(['rules'], []);

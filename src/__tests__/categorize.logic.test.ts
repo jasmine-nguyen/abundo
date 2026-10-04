@@ -8,7 +8,7 @@ import { UNCATEGORIZED_KEY } from '../model';
 import { C } from '../theme';
 import { makeState, cat, txn } from './factory';
 
-const state = () => makeState({ categories: [cat({ id: 'coffee', name: 'Cafes & Coffee', color: '#E8A87C' })] });
+const state = () => makeState({ categories: [cat()] });
 
 describe('isUncategorized', () => {
   it('is true when category is null', () => {
@@ -31,7 +31,7 @@ describe('isUncategorized', () => {
 describe('countUncategorized', () => {
   it('counts every uncategorized transaction, transfers included (WHIT-330)', () => {
     const s = makeState({
-      categories: [cat({ id: 'coffee' })],
+      categories: [cat()],
       transactions: [
         txn({ transaction_id: '1', category: null, counts_to_budget: true }),   // counts
         txn({ transaction_id: '2', category: 'coffee', counts_to_budget: true }), // categorized → no
@@ -45,7 +45,7 @@ describe('countUncategorized', () => {
   it('counts a user-excluded (budget_excluded) uncategorized charge (WHIT-330)', () => {
     // WHIT-296 used to drop this; WHIT-330 counts it so the badge matches the row label.
     const s = makeState({
-      categories: [cat({ id: 'coffee' })],
+      categories: [cat()],
       transactions: [
         txn({ transaction_id: '1', category: null, counts_to_budget: true }),                        // counts
         txn({ transaction_id: '2', category: null, counts_to_budget: true, budget_excluded: true }), // still uncategorized → counts
@@ -91,7 +91,7 @@ describe('transactionView', () => {
 describe('transactionGroups', () => {
   it('the uncategorized tab lists unmapped rows and drops categorized ones', () => {
     const s = makeState({
-      categories: [cat({ id: 'coffee' })],
+      categories: [cat()],
       transactions: [
         txn({ transaction_id: '1', category: null, counts_to_budget: true, date: '2026-05-01' }),
         txn({ transaction_id: '2', category: 'coffee', counts_to_budget: true, date: '2026-05-01' }),
@@ -105,7 +105,7 @@ describe('transactionGroups', () => {
   it('the uncategorized tab KEEPS a user-excluded uncategorized charge (WHIT-330)', () => {
     // WHIT-296 dropped it here; WHIT-330 lists it so the tab matches the badge + row label.
     const s = makeState({
-      categories: [cat({ id: 'coffee' })],
+      categories: [cat()],
       transactions: [
         txn({ transaction_id: '1', category: null, counts_to_budget: true, date: '2026-05-01' }),
         txn({ transaction_id: '2', category: null, counts_to_budget: true, budget_excluded: true, date: '2026-05-01' }),
@@ -118,7 +118,7 @@ describe('transactionGroups', () => {
 
   it('the all tab keeps every transaction, grouped by date', () => {
     const s = makeState({
-      categories: [cat({ id: 'coffee' })],
+      categories: [cat()],
       transactions: [
         txn({ transaction_id: '1', date: '2026-05-01' }),
         txn({ transaction_id: '2', date: '2026-05-02' }),
@@ -134,7 +134,7 @@ describe('transactionGroups', () => {
 // non-tappable look from WHIT-328, but it is still labelled, counted, and listed.)
 describe('WHIT-330 — badge/tab count every uncategorized charge, transfers included', () => {
   const oneUncat = (over: Parameters<typeof txn>[0]) =>
-    makeState({ categories: [cat({ id: 'coffee' })], transactions: [txn({ transaction_id: 'x', category: null, ...over })] });
+    makeState({ categories: [cat()], transactions: [txn({ transaction_id: 'x', category: null, ...over })] });
 
   it('an IN-BUDGET uncategorized charge is actionable: tappable row, counted, listed', () => {
     const s = oneUncat({ counts_to_budget: true });
@@ -154,7 +154,7 @@ describe('WHIT-330 — badge/tab count every uncategorized charge, transfers inc
 
   it('a list of only not-in-budget uncategorized transfers is fully counted (WHIT-330)', () => {
     const s = makeState({
-      categories: [cat({ id: 'coffee' })],
+      categories: [cat()],
       transactions: [
         txn({ transaction_id: 'a', category: null, counts_to_budget: false }),                        // bank transfer
         txn({ transaction_id: 'b', category: null, counts_to_budget: true, budget_excluded: true }),  // user-excluded
@@ -206,7 +206,7 @@ describe('WHIT-330 [A-style] — every uncategorized row is the purple, tappable
 // isUncategorized (the taxonomy test), not a shallow `category == null`.
 describe('WHIT-330 [A-unmapped] — a not-in-budget UNKNOWN-id charge is counted + listed', () => {
   const s = () => makeState({
-    categories: [cat({ id: 'coffee' })],
+    categories: [cat()],
     transactions: [txn({ transaction_id: 'x', category: 'FOOD_AND_DRINK', counts_to_budget: false })],
   });
 
@@ -230,7 +230,7 @@ describe('WHIT-330 [A-unmapped] — a not-in-budget UNKNOWN-id charge is counted
 describe('WHIT-328 [A-unmapped-in] — an in-budget unknown-id charge stays actionable', () => {
   it('is tappable, labelled Uncategorized, counted, and listed', () => {
     const st = makeState({
-      categories: [cat({ id: 'coffee' })],
+      categories: [cat()],
       transactions: [txn({ transaction_id: 'x', category: 'RAW_ENUM', counts_to_budget: true })],
     });
     const v = transactionView(st, st.transactions[0]);
@@ -260,7 +260,7 @@ describe('WHIT-328 [A-search] — search surfaces a not-in-budget transfer under
 // not-in-budget transfer ($500), both unmapped.
 function feedWithTransfer() {
   return makeState({
-    categories: [cat({ id: 'coffee' })],
+    categories: [cat()],
     transactions: [
       txn({ transaction_id: 'u1', category: null, counts_to_budget: true, amount: -30, status: 'posted', date: '2026-06-10' }),
       txn({ transaction_id: 'xfer', category: null, counts_to_budget: false, amount: -500, status: 'posted', date: '2026-06-10' }),
@@ -272,7 +272,7 @@ function feedWithTransfer() {
 // server-side (contributes_to_budget gate), so the drill only ever sees the in-budget charge.
 function uncatDrillRows() {
   return makeState({
-    categories: [cat({ id: 'coffee' })],
+    categories: [cat()],
     transactions: [
       txn({ transaction_id: 'u1', category: null, counts_to_budget: true, amount: -30, status: 'posted', date: '2026-06-10' }),
     ],

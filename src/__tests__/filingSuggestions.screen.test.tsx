@@ -22,6 +22,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
 
@@ -34,7 +35,7 @@ const fns = { setSheet: jest.fn(), showToast: jest.fn() };
 
 const CATEGORIES = [
   { id: 'dining', name: 'Dining', bucket: 'Lifestyle', icon: 'food', color: '#F2994A', parent: null },
-  { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null },
+  GROCERIES_TOP,
 ];
 
 // One unfiled shop so the sheet renders its main list view (an empty groups list shows the

@@ -10,7 +10,7 @@ describe('budgetViews totPending (WHIT-716)', () => {
       categories: [
         cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
         cat({ id: 'parking', name: 'Parking', bucket: 'Living', parent: 'car' }),
-        cat({ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle' }),
+        cat(),
         cat({ id: 'salary', name: 'Salary', bucket: 'Income' }),
         cat({ id: 'rainy', name: 'Rainy Day', bucket: 'Savings' }),
       ],

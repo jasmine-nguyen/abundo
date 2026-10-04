@@ -9,6 +9,7 @@ import { render, screen, fireEvent, act, renderHook, waitFor } from '@testing-li
 import type { RuleRecord } from '../api';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { installFakeServer } from './support/fakeServer';
+import { COFFEE_RECORD, SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient, refreshInAct, settle as settleQueries } from './support/renderWithQueries';
 import { renderWithApp, WithApp, shownToasts, currentSheet, resetAppProbe } from './support/renderWithApp';
 import { resetAuth } from './support/authMock';
@@ -28,8 +29,7 @@ import Rules from '../../app/rules';
 const server = installFakeServer();
 useTestQueryClient();
 
-const SUBS = { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle' };
-const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#e8a87c', bucket: 'Lifestyle' };
+const COFFEE = { ...COFFEE_RECORD, color: '#e8a87c' };
 
 const rule = (id: string, value: string, categoryId: string): RuleRecord => (
   { id, field: 'description', operator: 'contains', value, categoryId }
@@ -61,7 +61,7 @@ beforeEach(() => {
   jest.useFakeTimers();
   resetAuth();
   resetAppProbe();
-  server.seed('/categories', [SUBS, COFFEE]);
+  server.seed('/categories', [SUBSCRIPTIONS, COFFEE]);
 });
 
 afterEach(() => {

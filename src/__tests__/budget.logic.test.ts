@@ -20,7 +20,7 @@ describe('elapsedFrac', () => {
 
 describe('budgetViews', () => {
   const base = () => makeState({
-    categories: [cat({ id: 'coffee', name: 'Cafes & Coffee', color: '#E8A87C' })],
+    categories: [cat()],
     cycleLen: 14, daysLeft: 7, // elapsed = 0.5
   });
 
@@ -70,7 +70,7 @@ describe('budgetViews', () => {
   });
 
   it('skips a budget whose category no longer exists', () => {
-    const s = makeState({ categories: [cat({ id: 'coffee' })], budgets: [budget({ id: 'ghost', budget: 50, posted: 0, pending: 0 })], cycleLen: 14, daysLeft: 7 });
+    const s = makeState({ categories: [cat()], budgets: [budget({ id: 'ghost', budget: 50, posted: 0, pending: 0 })], cycleLen: 14, daysLeft: 7 });
     expect(budgetViews(s).rows).toHaveLength(0);
   });
 
@@ -126,7 +126,7 @@ describe('budgetViews — income earn-targets (over-is-good)', () => {
 
   it('excludes income rows from the spend hero totals but still lists them', () => {
     const s = makeState({
-      categories: [cat({ id: 'coffee' }), SALARY],
+      categories: [cat(), SALARY],
       budgets: [
         budget({ id: 'coffee', budget: 100, posted: 40, pending: 10 }),
         budget({ id: 'salary', budget: 5000, posted: 1000, pending: 0 }),
@@ -169,7 +169,7 @@ describe('budgetViews — Savings budgets are skipped (WHIT-201)', () => {
   it('omits a Savings budget row and excludes it from the hero totals, while other buckets still render', () => {
     const s = makeState({
       categories: [
-        cat({ id: 'coffee', bucket: 'Lifestyle' }),
+        cat(),
         cat({ id: 'salary', name: 'Salary', bucket: 'Income' }),
         cat({ id: 'nest_egg', name: 'Nest Egg', bucket: 'Savings' }),
       ],

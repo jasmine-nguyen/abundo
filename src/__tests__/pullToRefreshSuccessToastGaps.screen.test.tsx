@@ -25,12 +25,12 @@ jest.mock('../auth', () => ({
 
 const mockShowToast = jest.fn<(m: string) => void>();
 
-const CATS = [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 }];
+const mockCategories = [{ ...GROCERIES_RECORD, color: '#7FD49B', recent: 0 }];
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return {
     ...actual,
-    useAppContext: () => ({ retryLoad: jest.fn(), openMultiPicker: jest.fn(), showToast: mockShowToast, category: (id: string | null) => CATS.find((c) => c.id === id) }),
+    useAppContext: () => ({ retryLoad: jest.fn(), openMultiPicker: jest.fn(), showToast: mockShowToast, category: (id: string | null) => mockCategories.find((c) => c.id === id) }),
   };
 });
 
@@ -41,6 +41,7 @@ jest.mock('expo-router', () => {
 
 import Accounts from '../../app/(tabs)/accounts';
 import Transactions from '../../app/(tabs)/transactions';
+import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 const FEED = '/transactions/feed';
@@ -61,7 +62,7 @@ const flush = async () => { await act(async () => { await Promise.resolve(); awa
 beforeEach(() => {
   mockAuthStatus = 'authed';
   server.seed(FEED, { transactions: TXNS, nextCursor: null });
-  server.seed('/categories', CATS);
+  server.seed('/categories', mockCategories);
   // The live refresh echoes the stored balances unless a test queues its own reply.
   server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]);
   server.seed('/transactions/uncategorized/count', { count: 0 });

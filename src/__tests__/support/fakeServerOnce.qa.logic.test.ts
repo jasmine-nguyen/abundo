@@ -8,9 +8,9 @@ import * as api from '../../api';
 import { ApiError } from '../../apiError';
 import { resetAuth } from './authMock';
 import { installFakeServer } from './fakeServer';
+import { ESSENTIAL_GROCERIES } from './categories';
 
 const JOBS = '/transactions/uncategorized/apply-rules/jobs';
-const GROCERIES = { id: 'groceries', name: 'Groceries', bucket: 'Essentials', icon: 'cart', color: '#00AA00' };
 const RUNNING = { jobId: 'job-1', status: 'running', attempted: 1 };
 const SUCCEEDED = { jobId: 'job-1', status: 'succeeded', attempted: 2 };
 
@@ -29,7 +29,7 @@ describe('WHIT-639 QA — once() edge cases', () => {
   // the preview-then-commit pattern filingRunEdges [A15] and filingRunSaveRunner.qa [A3] rely on.
   it('[A1] two held requests on one path take the queued replies in the order they were sent', async () => {
     server.once('POST', '/categories', { status: 409, reason: 'first' });
-    server.once('POST', '/categories', { body: GROCERIES });
+    server.once('POST', '/categories', { body: ESSENTIAL_GROCERIES });
     const held = server.hold('/categories');
 
     const first = api.createCategory({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }).catch((e: unknown) => e);
@@ -38,7 +38,7 @@ describe('WHIT-639 QA — once() edge cases', () => {
     held.release();
 
     expect(await first).toMatchObject({ name: 'ApiError', status: 409, serverMessage: 'first' });
-    await expect(second).resolves.toEqual(GROCERIES);
+    await expect(second).resolves.toEqual(ESSENTIAL_GROCERIES);
   });
 
   // [A2] (P0) A request cut off by its own time limit while held must NOT use up a queued reply —
@@ -88,10 +88,10 @@ describe('WHIT-639 QA — once() edge cases', () => {
 
   // [A6] (P1) A queued reply wins over seeded data, then the seeded data comes back.
   it('[A6] a queued reply beats seeded data once, then the seeded data answers again', async () => {
-    server.seed('/categories', [GROCERIES]);
+    server.seed('/categories', [ESSENTIAL_GROCERIES]);
     server.once('GET', '/categories', { body: [] });
     await expect(api.fetchCategories()).resolves.toEqual([]);
-    await expect(api.fetchCategories()).resolves.toEqual([GROCERIES]);
+    await expect(api.fetchCategories()).resolves.toEqual([ESSENTIAL_GROCERIES]);
   });
 
   // [A7] (P1) A queued error on a withReason call with no reason → no server message.

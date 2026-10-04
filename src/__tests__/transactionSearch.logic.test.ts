@@ -5,7 +5,7 @@ import { transactionMatchesSearch } from '../context';
 import { makeState, cat, txn } from './factory';
 
 const cats = [
-  cat({ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle' }),
+  cat(),
   cat({ id: 'groceries', name: 'Groceries', bucket: 'Living' }),
 ];
 const s = makeState({ categories: cats });

@@ -19,6 +19,7 @@ import {
   breakdownWire, seedInsights, renderInsights, drawInsights, redrawInsights, resetAi, setAi,
   refreshAiInsights, generateAiInsights,
 } from './support/insightsScreen';
+import { GROCERIES_RECORD } from './support/categories';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
@@ -46,7 +47,7 @@ const posted = (n: number) => ({ posted: n, pending: 0 });
 
 const CATS = [
   { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', bucket: 'Lifestyle', recent: 0 },
-  { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Living', recent: 0 },
+  { ...GROCERIES_RECORD, recent: 0 },
 ];
 
 const READY_LOAN_FACTS = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 3667, extra: 500 };

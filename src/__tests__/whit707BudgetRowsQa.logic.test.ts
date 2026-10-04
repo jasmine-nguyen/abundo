@@ -11,7 +11,7 @@ import { budgetRowFor as spendRow } from './support/budgetsTab';
 
 const salary = cat({ id: 'salary', name: 'Salary', color: '#35d9a0', bucket: 'Income' });
 const bonus = cat({ id: 'bonus', name: 'Bonus', color: '#35d9a0', bucket: 'Income', parent: 'salary' });
-const coffee = cat({ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle' });
+const coffee = cat();
 const latte = cat({ id: 'latte', name: 'Lattes', bucket: 'Lifestyle', parent: 'coffee' });
 const rent = cat({ id: 'rent', name: 'Rent', bucket: 'Living' });
 

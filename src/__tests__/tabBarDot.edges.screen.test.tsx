@@ -7,6 +7,7 @@ import { txn } from './factory';
 import { installFakeServer } from './support/fakeServer';
 import { WithQueries, refreshInAct, renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { COFFEE_SHORT } from './support/categories';
 import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -20,7 +21,6 @@ const server = installFakeServer();
 useTestQueryClient();
 
 const COUNT = '/transactions/uncategorized/count';
-const COFFEE = { id: 'coffee', name: 'Coffee', icon: 'coffee', bucket: 'Lifestyle' };
 
 const singleTab: React.ComponentProps<typeof TabBar> = {
   state: { index: 0, routes: [{ key: 'transactions', name: 'transactions' }] },
@@ -29,7 +29,7 @@ const singleTab: React.ComponentProps<typeof TabBar> = {
 
 beforeEach(() => {
   resetAuth();
-  server.seed('/categories', [COFFEE]);
+  server.seed('/categories', [COFFEE_SHORT]);
 });
 
 // [A1] WHIT-501: a RESOLVED server 0 is trusted over the recent window. Fail-on-revert: make the

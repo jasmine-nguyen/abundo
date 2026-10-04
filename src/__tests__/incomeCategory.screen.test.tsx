@@ -23,6 +23,7 @@ jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn(), back: jes
 import CategoryList from '../../app/category/index';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_TOP_RECORD } from './support/categories';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
 
@@ -32,7 +33,6 @@ useTestQueryClient();
 beforeEach(() => resetAuth());
 
 const INCOME_CAT = { id: 'salary', name: 'Salary', icon: 'briefcase', bucket: 'Income', parent: null };
-const SPEND_CAT = { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Living', parent: null };
 
 const sheetFns = {
   chooseCategory: jest.fn(), saveManualRule: jest.fn(), updateRule: jest.fn(),
@@ -47,7 +47,7 @@ function seedTransactions(transactions: unknown[]) {
   server.seed('/transactions/feed', { transactions, nextCursor: null });
 }
 
-function openPicker(tx: any, fns: Record<string, unknown>, categories: unknown[] = [INCOME_CAT, SPEND_CAT]) {
+function openPicker(tx: any, fns: Record<string, unknown>, categories: unknown[] = [INCOME_CAT, GROCERIES_TOP_RECORD]) {
   server.seed('/categories', categories);
   seedTransactions([tx]);
   const state = { sheet: { mode: 'picker', txId: tx.transaction_id }, toast: null, ...fns } as unknown as AppContext;
@@ -55,14 +55,14 @@ function openPicker(tx: any, fns: Record<string, unknown>, categories: unknown[]
 }
 
 function openRuleSheet(fns: Record<string, unknown>) {
-  server.seed('/categories', [INCOME_CAT, SPEND_CAT]);
+  server.seed('/categories', [INCOME_CAT, GROCERIES_TOP_RECORD]);
   server.seed('/rules', []);
   const state = { sheet: { mode: 'addrule' }, toast: null, ...fns } as unknown as AppContext;
   return openOverlays(state, setMockState);
 }
 
 it('Categories list renders the Income group + its categories (WHIT-158)', async () => {
-  server.seed('/categories', [INCOME_CAT, SPEND_CAT]);
+  server.seed('/categories', [INCOME_CAT, GROCERIES_TOP_RECORD]);
   await renderWithQueries(<CategoryList />);
   expect(screen.getByText('Income')).toBeTruthy();   // the bucket header (was filtered out)
   expect(screen.getByText('Salary')).toBeTruthy();   // the income category itself
@@ -74,7 +74,7 @@ it('does not badge a Savings category as "budgeted", even with a phantom target 
   // exactly one badge must render — proving the badge still works AND that Savings is
   // suppressed. Fail-on-revert: dropping the `c.bucket !== 'Savings'` guard shows two.
   const SAVINGS_CAT = { id: 'nest_egg', name: 'Nest Egg', icon: 'piggy', bucket: 'Savings', parent: null };
-  server.seed('/categories', [SPEND_CAT, SAVINGS_CAT]);
+  server.seed('/categories', [GROCERIES_TOP_RECORD, SAVINGS_CAT]);
   server.seed('/budgets', {
     groceries: { target: 100, posted: 0, pending: 0 },
     nest_egg: { target: 50, posted: 0, pending: 0 }, // a pre-guard phantom row
@@ -155,7 +155,7 @@ describe('WHIT-158 income category interaction (folded)', () => {
 
   describe('Categories list — Income group visibility (WHIT-158)', () => {
     it('hides the Income header when there are no income categories (regression guard)', async () => {
-      server.seed('/categories', [SPEND_CAT]);
+      server.seed('/categories', [GROCERIES_TOP_RECORD]);
       await renderWithQueries(<CategoryList />);
       expect(screen.queryByText('Income')).toBeNull(); // .filter(g => g.items.length) must still hold
       expect(screen.getByText('Groceries')).toBeTruthy();

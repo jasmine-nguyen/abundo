@@ -6,11 +6,9 @@ import { categoryBreakdown } from '../context';
 import { UNCATEGORIZED_KEY, EARNED_KEY, INCOME_KEY } from '../model';
 import { C } from '../theme';
 import { makeState, cat, spend, withRollup } from './factory';
+import { COFFEE, GROCERIES } from './support/categories';
 
-const cats = [
-  cat({ id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#E8A87C' }),
-  cat({ id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7FD49B' }),
-];
+const cats = [COFFEE, GROCERIES];
 
 describe('categoryBreakdown', () => {
   it('joins spend with the taxonomy and sorts highest-spend first', () => {

@@ -19,7 +19,7 @@ describe('budgetEditInfo', () => {
 
   it('is in "edit" mode when a budget already exists', () => {
     const s = makeState({
-      categories: [cat({ id: 'coffee', recent: 52 })],
+      categories: [cat()],
       budgets: [budget({ id: 'coffee', budget: 80 })],
     });
     const info = budgetEditInfo(s, 'coffee');
@@ -29,12 +29,12 @@ describe('budgetEditInfo', () => {
   });
 
   it('reflects the pay-cycle word (fortnight for length 14)', () => {
-    const s = makeState({ categories: [cat({ id: 'coffee' })], cycleLen: 14 });
+    const s = makeState({ categories: [cat()], cycleLen: 14 });
     expect(budgetEditInfo(s, 'coffee').lastWord).toBe('fortnight');
   });
 
   it('frames a spend category as spend (recommendation on, spend history)', () => {
-    const info = budgetEditInfo(makeState({ categories: [cat({ id: 'coffee', recent: 52 })] }), 'coffee');
+    const info = budgetEditInfo(makeState({ categories: [cat()] }), 'coffee');
     expect(info.isIncome).toBe(false);
     expect(info.hasRecommendation).toBe(true);
     expect(info.recommendCta).toBe('Use my average spend');

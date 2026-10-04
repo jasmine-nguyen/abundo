@@ -3,6 +3,7 @@
 // in the fast logic project alongside the other selector tests.
 import { describe, it, expect } from '@jest/globals';
 import { selectBudgets, selectCategories, budgetsKey, breakdownKey, categoriesKey, payCycleKey } from '../queries';
+import { GROCERIES_RECORD } from './support/categories';
 
 describe('query keys', () => {
   it('budgetsKey is a flat, un-windowed key (WHIT-72: server derives the window)', () => {
@@ -56,7 +57,7 @@ describe('selectCategories', () => {
 
   it('gives each built-in id its fixed Tokyo Night hue, spread across the wheel', () => {
     const out = selectCategories([
-      { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 },
+      { ...GROCERIES_RECORD, color: '#7FD49B', recent: 0 },
       { id: 'shopping', name: 'Shopping', bucket: 'Lifestyle', icon: 'bag', color: '#6FD0C9', recent: 0 },
       { id: 'fitness', name: 'Fitness', bucket: 'Lifestyle', icon: 'dumbbell', color: '#8FD46B', recent: 0 },
       { id: 'travel', name: 'Travel', bucket: 'Lifestyle', icon: 'plane', color: '#6FB6D0', recent: 0 },

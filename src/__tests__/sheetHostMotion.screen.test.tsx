@@ -34,6 +34,7 @@ jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => mockReduc
 
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES, SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
 
@@ -253,7 +254,7 @@ describe('SheetHost keyboard avoidance (WHIT-294)', () => {
 // backdrop closes; taps on the list select a row and never leak to a close) — the "Close"
 // backdrop is what the old wrapping structure lacked, so its absence is the fail-on-revert.
 describe('SheetHost scroll-host backdrop (WHIT-288)', () => {
-  const CAT_A = { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 };
+  const CAT_A = { ...GROCERIES, recent: 0 };
   const CAT_B = { id: 'coffee', name: 'Coffee', icon: 'coffee', color: '#e0af68', bucket: 'Lifestyle', recent: 0 };
 
   const fns = {
@@ -331,8 +332,8 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
 
   function openNewRule() {
     server.seed('/categories', [
-      { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },
-      { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
+      { ...GROCERIES, recent: 0 },
+      { ...SUBSCRIPTIONS, recent: 0 },
     ]);
     server.seed('/rules', []);
     // no ruleId → key `addrule:new`, no editing prefill

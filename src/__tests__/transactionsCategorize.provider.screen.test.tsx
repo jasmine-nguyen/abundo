@@ -14,7 +14,7 @@ import { seedTransactionsCache, readTransactionsCache, seedTransactionsPages, ty
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
-import { GROCERIES } from './support/categories';
+import { DINING, GROCERIES } from './support/categories';
 
 const server = installFakeServer();
 const ruleMints = () => server.sent('POST', '/rules');
@@ -25,7 +25,6 @@ const batchSaves = () => server.sent('PATCH', '/transactions');
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const CAT = GROCERIES;
-const DINING = { id: 'dining', name: 'Dining', bucket: 'Lifestyle', icon: 'utensils', color: '#f7768e', recent: 0 } as const;
 const txn = (id: string): Transaction => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
   description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',

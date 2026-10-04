@@ -5,6 +5,7 @@ import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
+import { SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { renderWithApp, shownToasts, resetAppProbe } from './support/renderWithApp';
 import { resetAuth } from './support/authMock';
@@ -21,7 +22,6 @@ import CategoryEdit from '../../app/category/edit';
 const server = installFakeServer();
 useTestQueryClient();
 
-const SUBS = { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle' };
 const NETFLIX = { id: 'e1', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs' };
 
 beforeEach(() => {
@@ -31,7 +31,7 @@ beforeEach(() => {
 });
 
 it('user taps a rule\'s trash button → the real app sends DELETE /rules/e1, and on a server error the rule comes back with a toast', async () => {
-  server.seed('/categories', [SUBS]);
+  server.seed('/categories', [SUBSCRIPTIONS]);
   server.seed('/rules', [NETFLIX]);
   server.once('DELETE', '/rules/e1', { status: 500 });
   await renderWithApp(<Rules />);

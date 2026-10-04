@@ -8,7 +8,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import { screen, fireEvent, act, waitFor, renderHook } from '@testing-library/react-native';
 import { QueryClient } from '@tanstack/react-query';
 import { makeClient, wrapper, pause } from './support/queryClient';
-import { BUDGETS, BUDGETS_CAPTION, BUDGET_PAY_CYCLE, seedBudgets, renderBudgets } from './support/budgetsScreen';
+import { BUDGETS, BUDGET_PAY_CYCLE, seedBudgets, renderBudgets } from './support/budgetsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
@@ -37,7 +37,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 // by the folded WHIT-72 tests via renderHook; the same regime the screen renders under.
 import { useBudgetsScreenData, useBudgetDetailScreenData } from '../queries';
 import { nextPayday } from '../payCycle';
-import { COFFEE, SALARY } from './support/categories';
+import { COFFEE, SALARY, GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 // The Budgets reads. `/budgets?` (with the query mark) counts the rollup read only, never a
@@ -67,14 +67,12 @@ it('renders budget rows from the queries, fetched in parallel with the pay cycle
   expect(categoryReads()).toHaveLength(1);
 });
 
-it('does not render the redundant per-row "target" caption (the pace tick is labelled once in the caption)', async () => {
+it('does not render the per-row "target" caption', async () => {
   // WHIT-281: a per-row "target" caption pinned under the moving pace tick overlapped the
-  // right-aligned pace status when the tick sat far right. It was redundant — the tick is
-  // already explained once, in the top caption (WHIT-707) — so it was removed.
+  // right-aligned pace status when the tick sat far right, so it was removed.
   renderBudgets();
   await screen.findByText('Cafes & Coffee');
-  expect(screen.queryAllByText('target')).toHaveLength(0); // the overlapping caption is gone
-  expect(screen.getByText(BUDGETS_CAPTION)).toBeTruthy();
+  expect(screen.queryAllByText('target')).toHaveLength(0);
 });
 
 it('an over-budget row says the overspend once (WHIT-712)', async () => {
@@ -555,7 +553,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
   it('sums MULTIPLE over-budget rows into one signed hero total + coherent pill', async () => {
     server.seed('/categories', [
       COFFEE,
-      { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd1b9', recent: 12 },
+      { ...GROCERIES_RECORD, color: '#7fd1b9', recent: 12 },
     ]);
     server.seed('/budgets', {
       coffee: { target: 100, posted: 150, pending: 0 },

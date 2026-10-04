@@ -6,6 +6,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent, waitFor, act } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
+import { SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient, refreshInAct, settle } from './support/renderWithQueries';
 import { renderWithApp, shownToasts, currentSheet, resetAppProbe } from './support/renderWithApp';
 import { resetAuth, setAuthStatus } from './support/authMock';
@@ -24,7 +25,6 @@ import CategoryEdit from '../../app/category/edit';
 const server = installFakeServer();
 useTestQueryClient();
 
-const SUBS = { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle' };
 const rule = (id: string, value: string) => ({ id, field: 'description', operator: 'contains', value, categoryId: 'subs' });
 const NETFLIX = rule('e1', 'NETFLIX');
 const SPOTIFY = rule('e2', 'SPOTIFY');
@@ -41,7 +41,7 @@ beforeEach(() => {
 });
 
 describe('Rules delete through the real deleteRule', () => {
-  beforeEach(() => server.seed('/categories', [SUBS]));
+  beforeEach(() => server.seed('/categories', [SUBSCRIPTIONS]));
 
   // [A1] (P0) success: one DELETE, the row is gone, no toast, and the rules list is NOT re-read
   // (skipRules — a re-read would race the optimistic removal).
