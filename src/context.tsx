@@ -1933,9 +1933,9 @@ function nextPayLabel(nextPayday: string, daysLeft: number): string {
   return `~${formatDayMonth(nextPayday)}`;
 }
 
-export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudget: number; totSpent: number; totRemain: number } {
+export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudget: number; totSpent: number; totPending: number; totRemain: number } {
   const elapsed = elapsedFrac(s);
-  let totBudget = 0, totSpent = 0, totRemain = 0;
+  let totBudget = 0, totSpent = 0, totPending = 0, totRemain = 0;
 
   // Pass 1: which budgeted categories produce a row (everything but Savings, which is
   // skipped entirely). Needed up front so the tree walk below can tell whether a row's
@@ -2043,7 +2043,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     // (depth 0). A budgeted sub is already inside its parent's rolled-up spend, so
     // adding it again would double-count (WHIT-221). Same-bucket means a spend row's
     // budgeted ancestors are all spend, so depth 0 == no budgeted spend ancestor.
-    if (depth === 0) { totBudget += available; totSpent += spent; totRemain += remain; }
+    if (depth === 0) { totBudget += available; totSpent += spent; totPending += pending; totRemain += remain; }
     const over = spent > available;
     const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
     // Quiet unless off pace (WHIT-712): no line when on pace, and an overspend is said once by the
@@ -2088,7 +2088,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
 
   // Spending before Earning (WHIT-707). Families are single-bucket, so each sub stays after its parent.
   const ordered = [...rows.filter((r) => r.section === 'spending'), ...rows.filter((r) => r.section === 'earning')];
-  return { rows: ordered, totBudget, totSpent, totRemain };
+  return { rows: ordered, totBudget, totSpent, totPending, totRemain };
 }
 
 // Which categories may be chosen as the parent of the category being edited (WHIT-221):

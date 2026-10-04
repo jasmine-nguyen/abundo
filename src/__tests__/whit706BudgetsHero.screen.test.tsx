@@ -33,7 +33,7 @@ describe('Budgets top card', () => {
     expect(screen.queryByText('Budget remaining')).toBeNull();
     expect(screen.queryByText('Left to spend')).toBeNull();
     expect(screen.queryByText('Over budget')).toBeNull();
-    expect(screen.queryByText('of $0')).toBeNull();
+    expect(screen.queryByText(/spent of/)).toBeNull();
     expect(screen.queryByText(BUDGETS_CAPTION)).toBeNull(); // caption hidden
     expect(screen.queryByText('Add a budget')).toBeNull();  // the duplicate dashed button is hidden
     fireEvent.press(screen.getByTestId('budgets-hero-add'));
@@ -46,18 +46,19 @@ describe('Budgets top card', () => {
     expect(screen.getByText('Left to spend')).toBeTruthy();
     expect(screen.getByText('days left')).toBeTruthy();
     expect(screen.queryByText('Over budget')).toBeNull();
-    expect(screen.queryByText(/^Over by /)).toBeNull();
+    expect(screen.queryByText(/^resets /)).toBeNull();
     expect(screen.queryByText('Budget remaining')).toBeNull();
   });
 
-  it('over budget → real minus sign and "Over by $X · resets in N days"', async () => {
+  it('over budget → real minus sign and "resets in N days", the amount said once', async () => {
     server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText(`${MINUS}$100`)).toBeTruthy();
     expect(screen.queryByText('-$100')).toBeNull();
-    expect(screen.getByText('Over by $100 · resets in 4 days')).toBeTruthy();
+    expect(screen.getByText('resets in 4 days')).toBeTruthy();
+    expect(screen.queryByText(/Over by/)).toBeNull();
   });
 
   it('1 day left → singular "day left" and "resets in 1 day"', async () => {
@@ -67,7 +68,7 @@ describe('Budgets top card', () => {
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('day left')).toBeTruthy();
     expect(screen.queryByText('days left')).toBeNull();
-    expect(screen.getByText('Over by $100 · resets in 1 day')).toBeTruthy();
+    expect(screen.getByText('resets in 1 day')).toBeTruthy();
   });
 
   it('0 days left and over → "resets today"', async () => {
@@ -75,7 +76,7 @@ describe('Budgets top card', () => {
     server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
-    expect(screen.getByText('Over by $100 · resets today')).toBeTruthy();
+    expect(screen.getByText('resets today')).toBeTruthy();
   });
 
   it('shows the next payday date instead of the cycle start', async () => {

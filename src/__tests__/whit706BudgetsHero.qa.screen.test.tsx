@@ -36,8 +36,7 @@ describe('Budgets top card — QA edges', () => {
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('$260')).toBeTruthy();
     expect(screen.getByText('Left to spend')).toBeTruthy();
-    expect(screen.getByText('of $350')).toBeTruthy();
-    expect(screen.getByText('$90 spent')).toBeTruthy();
+    expect(screen.getByText('$90 spent of $350 · $10 pending')).toBeTruthy();
     expect(screen.getByText('4')).toBeTruthy();
   });
 
@@ -112,28 +111,32 @@ describe('Budgets top card — QA edges', () => {
     expect(screen.queryByText(/NaN|undefined/)).toBeNull();
   });
 
-  // [A8] (P0) the over sub-line follows the same -0.5 threshold as the label
-  it('[A8] totRemain exactly -0.5 → no "Over by" line; -0.51 → "Over by $1"', async () => {
-    server.seed('/budgets', { coffee: { target: 100, posted: 100, pending: 0.5 } });
+  // [A8] (P0) the over sub-line follows the same 1-cent threshold as the label (WHIT-716)
+  it('[A8] under a cent over → no over line; a cent over → "−$0.01" and the resets line', async () => {
+    server.seed('/budgets', { coffee: { target: 100, posted: 100, pending: 0.004 } });
     const first = renderBudgets();
     await screen.findByText('Cafes & Coffee');
-    expect(screen.queryByText(/^Over by /)).toBeNull();
+    expect(screen.getByText('Left to spend')).toBeTruthy();
+    expect(screen.queryByText(/^resets /)).toBeNull();
     expect(screen.queryAllByText(/−/)).toHaveLength(0);
     first.unmount();
 
-    server.seed('/budgets', { coffee: { target: 100, posted: 100.51, pending: 0 } });
+    server.seed('/budgets', { coffee: { target: 100, posted: 100, pending: 0.01 } });
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
-    expect(screen.getByText('Over by $1 · resets in 4 days')).toBeTruthy();
+    expect(screen.getByText('−$0.01')).toBeTruthy();
+    expect(screen.getByText('Over budget')).toBeTruthy();
+    expect(screen.getByText('resets in 4 days')).toBeTruthy();
   });
 
-  // [A9] (P1) a large deficit: comma-grouped in both the big number and the sub-line, no hyphen anywhere
-  it('[A9] large deficit → "−$6,056" and "Over by $6,056", no hyphen-minus figure', async () => {
+  // [A9] (P1) a large deficit: comma-grouped in the big number, said once, no hyphen anywhere
+  it('[A9] large deficit → "−$6,056" once, no hyphen-minus figure', async () => {
     server.seed('/budgets', { coffee: { target: 1000, posted: 7056, pending: 0 } });
     renderBudgets();
     await screen.findByText('Cafes & Coffee');
     expect(screen.getByText('−$6,056')).toBeTruthy();
-    expect(screen.getByText('Over by $6,056 · resets in 4 days')).toBeTruthy();
+    expect(screen.getByText('resets in 4 days')).toBeTruthy();
+    expect(screen.queryByText(/Over by/)).toBeNull();
     expect(screen.queryAllByText(/-\$/)).toHaveLength(0);
   });
 

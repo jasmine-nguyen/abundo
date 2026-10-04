@@ -54,8 +54,7 @@ describe('WHIT-714 top card — QA edges', () => {
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
     expect(screen.queryByText(NO_SPENDING)).toBeNull();
     expect(screen.getByText('Left to spend')).toBeTruthy();
-    expect(screen.getByText('of $100')).toBeTruthy();
-    expect(screen.getByText('$50 spent')).toBeTruthy();
+    expect(screen.getByText('$50 spent of $100 · $10 pending')).toBeTruthy();
   });
 
   // [A3] (P1) budgets loaded but categories still loading → days-only card + spinner, never the

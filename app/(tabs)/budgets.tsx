@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { C, FONT, fmt, tint, PRESSED } from '../../src/theme';
+import { C, FONT, fmt, fmtExact, tint, PRESSED } from '../../src/theme';
 import { formatDayMonth } from '../../src/dateutil';
 import { Icon, Glyph } from '../../src/icons';
 import { budgetViews, type BudgetView } from '../../src/context';
@@ -91,13 +91,12 @@ export default function Budgets() {
   // Staleness-gated so hopping between tabs doesn't refetch on every tap.
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
-  const { rows, totBudget, totSpent, totRemain } = budgetViews({ budgets, category, cycleLen, daysLeft, nextPayday });
+  const { rows, totBudget, totSpent, totPending, totRemain } = budgetViews({ budgets, category, cycleLen, daysLeft, nextPayday });
 
-  // WHIT-573: when spend has blown past the plan, totRemain is negative and the hero must read
-  // "Over budget", not "Budget remaining" — fmt() strips the sign, so a bare negative total would
-  // otherwise look like money still left. The -0.5 dust threshold mirrors the per-row/carryover
-  // rounding (context.tsx) so a sub-dollar residual, which fmt rounds to $0, doesn't flip the headline.
-  const overBudget = totRemain < -0.5;
+  // Over from a cent over, matching the rows (WHIT-716); the tiny threshold only absorbs float dust so "−$0" never shows.
+  const overBudget = totRemain < -0.005;
+  let pillLabel = `${fmtExact(totSpent)} spent of ${fmt(totBudget)}`;
+  if (totPending > 0.005) pillLabel += ` · ${fmtExact(totPending)} pending`;
   const noRows = rows.length === 0;
   // WHIT-714: income rows and Savings budgets never feed the totals, so the money side only
   // means something when there's at least one spending row.
@@ -147,7 +146,7 @@ export default function Budgets() {
           nextPayday={nextPayday}
           money={hasSpending ? (
             <View style={styles.heroCol}>
-              <Text style={styles.heroBig} numberOfLines={1} adjustsFontSizeToFit>{overBudget ? `−${fmt(totRemain)}` : fmt(totRemain)}</Text>
+              <Text style={styles.heroBig} numberOfLines={1} adjustsFontSizeToFit>{overBudget ? `−${fmtExact(totRemain)}` : fmtExact(totRemain)}</Text>
               <Text style={styles.heroLabel}>{overBudget ? 'Over budget' : 'Left to spend'}</Text>
             </View>
           ) : null}
@@ -155,10 +154,9 @@ export default function Budgets() {
           {hasSpending ? (
             <View style={[styles.heroBottom, styles.heroBottomRow]}>
               <View style={styles.heroPill}>
-                <Text style={styles.heroPillTop}>of {fmt(totBudget)}</Text>
-                <Text style={styles.heroPillBot}>{fmt(totSpent)} spent</Text>
+                <Text style={styles.heroPillText}>{pillLabel}</Text>
               </View>
-              {overBudget ? <Text style={styles.heroOver}>{`Over by ${fmt(totRemain)} · ${resetsLabel(daysLeft)}`}</Text> : null}
+              {overBudget ? <Text style={styles.heroOver}>{resetsLabel(daysLeft)}</Text> : null}
             </View>
           ) : (
             <View style={styles.heroBottom}>
@@ -218,9 +216,8 @@ const styles = StyleSheet.create({
   heroBottom: { marginTop: 16 },
   heroBottomRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   heroSmall: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.heroInkSoft },
-  heroPill: { backgroundColor: tint(C.heroInk, 0.12), borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12 },
-  heroPillTop: { fontFamily: FONT.body, fontSize: 12, fontWeight: '600', color: C.heroInkSoft },
-  heroPillBot: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.heroInk, marginTop: 2 },
+  heroPill: { flexShrink: 1, backgroundColor: tint(C.heroInk, 0.12), borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12 },
+  heroPillText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.heroInk },
   heroOver: { flex: 1, minWidth: 0, fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.heroInk },
   heroEmpty: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.heroInk2 },
   heroAdd: { marginTop: 12, alignSelf: 'flex-start', backgroundColor: tint(C.heroInk, 0.12), borderRadius: 12, paddingVertical: 10, paddingHorizontal: 16 },
