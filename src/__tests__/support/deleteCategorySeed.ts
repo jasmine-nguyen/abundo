@@ -1,4 +1,4 @@
-// The delete-category setup both deleteCategoryOptimistic tests seed (WHIT-628, shared by WHIT-719):
+// The delete-category setup the deleteCategoryOptimistic and transactionCache tests seed (WHIT-628, shared by WHIT-719):
 // two categories, a rule and a budget for each, and the charges filed under them.
 import type { Transaction, Category } from '../../types';
 import type { Rule } from '../../model';
