@@ -40,7 +40,7 @@ import { Overlays } from '../components/Overlays';
 import { queryClient } from '../queryClient';
 import { useCategories, useGoalsQuery, useIsAuthed, useRulesScreenData, useTransactionResolver } from '../queries';
 import { installFakeServer } from './support/fakeServer';
-import { SUBSCRIPTIONS } from './support/categories';
+import { GROCERIES, SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient, WithQueries, renderWithQueries } from './support/renderWithQueries';
 
 const server = installFakeServer();
@@ -457,7 +457,7 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
 
   const RULE_INPUT = 'e.g. NETFLIX';
   const CATS = [
-    { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },
+    { ...GROCERIES, recent: 0 },
     { ...SUBSCRIPTIONS, recent: 0 },
   ];
 
@@ -868,7 +868,7 @@ describe('WHIT-538 — Back from the add-rule preview restores the form draft', 
 
   const RULE_INPUT = 'e.g. NETFLIX';
   const CATS = [
-    { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },
+    { ...GROCERIES, recent: 0 },
     { ...SUBSCRIPTIONS, recent: 0 },
   ];
   const previewReport = {

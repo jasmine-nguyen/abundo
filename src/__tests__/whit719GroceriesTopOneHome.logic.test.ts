@@ -2,15 +2,11 @@
 // and without its colour) lives once, in support/categories.ts. Every other test file imports it.
 import { describe, it, expect } from '@jest/globals';
 import { GROCERIES_TOP, GROCERIES_TOP_RECORD } from './support/categories';
-import { findOffenders } from './support/sourceScan';
+import { findCopies, quoted } from './support/oneHomeGuard';
 
-const HOME = 'support/categories.ts';
-
-// Built from pieces so this file never matches its own scan.
-const q = (text: string) => `'${text}'`;
 const COPIES = [
-  `icon: ${q('cart')}, color: ${q('#7FD49B')}, parent: null`,
-  `name: ${q('Groceries')}, icon: ${q('cart')}, bucket: ${q('Living')}, parent: null`,
+  `icon: ${quoted('cart')}, color: ${quoted('#7FD49B')}, parent: null`,
+  `name: ${quoted('Groceries')}, icon: ${quoted('cart')}, bucket: ${quoted('Living')}, parent: null`,
 ];
 
 describe('the shared top-level groceries sample has one home', () => {
@@ -22,10 +18,6 @@ describe('the shared top-level groceries sample has one home', () => {
   });
 
   it('no other test file spells out a copy of the groceries row', () => {
-    const offenders = findOffenders(
-      (line) => COPIES.some((copy) => line.includes(copy)),
-      new Set([HOME, 'whit719GroceriesTopOneHome.logic.test.ts']),
-    );
-    expect(offenders).toEqual([]);
+    expect(findCopies(COPIES, ['whit719GroceriesTopOneHome.logic.test.ts'])).toEqual([]);
   });
 });

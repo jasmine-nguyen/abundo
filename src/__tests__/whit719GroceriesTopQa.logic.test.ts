@@ -3,28 +3,10 @@
 import { describe, it, expect } from '@jest/globals';
 import { GROCERIES_TOP, GROCERIES_TOP_RECORD } from './support/categories';
 import { findOffenders } from './support/sourceScan';
+import { isCopyOf } from './support/inlineRecords';
 
 const SELF = 'whit719GroceriesTopQa.logic.test.ts';
 const ALLOWED = new Set(['support/categories.ts', 'whit719GroceriesTopOneHome.logic.test.ts', SELF]);
-
-// Every one-line `{ key: value, ... }` on the line, read as a plain object (string, number or null values only).
-function inlineObjects(line: string): Record<string, unknown>[] {
-  return (line.match(/\{[^{}]*\}/g) ?? []).map((literal) => {
-    const record: Record<string, unknown> = {};
-    for (const [, key, value] of literal.matchAll(/(\w+): ('[^']*'|null|-?\d+)/g)) {
-      if (value === 'null') record[key] = null;
-      else if (value.startsWith("'")) record[key] = value.slice(1, -1);
-      else record[key] = Number(value);
-    }
-    return record;
-  });
-}
-
-const sameRecord = (a: Record<string, unknown>, b: Record<string, unknown>) =>
-  Object.keys(a).length === Object.keys(b).length && Object.entries(b).every(([key, value]) => a[key] === value);
-
-const isCopyOf = (sample: Record<string, unknown>) => (line: string) =>
-  inlineObjects(line).some((record) => sameRecord(record, sample));
 
 describe('WHIT-719 QA: the groceries row has one home, in any key order', () => {
   // [A1] the colourless twin written in the home's own key order (bucket before icon) is still a copy

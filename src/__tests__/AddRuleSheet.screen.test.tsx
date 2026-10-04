@@ -18,7 +18,7 @@ import { queryClient } from '../queryClient';
 import { categoriesKey } from '../queries';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { SUBSCRIPTIONS_RECORD } from './support/categories';
+import { GROCERIES_RECORD, SUBSCRIPTIONS_RECORD } from './support/categories';
 import { refreshInAct, useTestQueryClient, settle } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
 
@@ -31,7 +31,7 @@ const setMockState = (next: AppContext) => { mockState = next; };
 
 const CATS = [
   SUBSCRIPTIONS_RECORD,
-  { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Living' },
+  GROCERIES_RECORD,
 ];
 
 // Seed what the sheet reads from the server, then open it over the loaded screens.
@@ -324,7 +324,7 @@ describe('AddRuleSheet — WHIT-355 conflict adversarial', () => {
 
   const CATS = [
     SUBSCRIPTIONS_RECORD,
-    { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Living' },
+    GROCERIES_RECORD,
     { id: 'coffee', name: 'Coffee', icon: 'cup', bucket: 'Living' },
   ];
 

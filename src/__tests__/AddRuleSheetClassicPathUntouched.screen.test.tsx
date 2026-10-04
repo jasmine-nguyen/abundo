@@ -16,7 +16,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { SUBSCRIPTIONS_RECORD } from './support/categories';
+import { GROCERIES_RECORD, SUBSCRIPTIONS_RECORD } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
 
@@ -33,7 +33,7 @@ const fns = {
 
 const CATS = [
   SUBSCRIPTIONS_RECORD,
-  { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Living' },
+  GROCERIES_RECORD,
 ];
 
 // An existing CLASSIC rule (no `conditions`) filing COLESSHOP as Groceries.
