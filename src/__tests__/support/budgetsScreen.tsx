@@ -15,6 +15,7 @@
 import React from 'react';
 import { StyleSheet } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
+import type { ReactTestInstance } from 'react-test-renderer';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Budgets from '../../../app/(tabs)/budgets';
 import { makeClient } from './queryClient';
@@ -58,11 +59,27 @@ export function heroTotals() {
   return { spent: value('spent'), budget: value('budget'), payday: value('payday') };
 }
 
-// WHIT-730 follow-up: a budget row's effective left/right padding, by its testID.
-export function sidePadding(testID: string) {
-  const style = StyleSheet.flatten(screen.getByTestId(testID).props.style);
+// WHIT-730 follow-up: a node's effective left/right padding.
+export function sidePaddingOf(node: ReactTestInstance) {
+  const style = StyleSheet.flatten(node.props.style) ?? {};
   return {
     left: style.paddingLeft ?? style.paddingHorizontal ?? style.padding,
     right: style.paddingRight ?? style.paddingHorizontal ?? style.padding,
   };
+}
+
+// WHIT-730 follow-up: a budget row's effective left/right padding, by its testID.
+export function sidePadding(testID: string) {
+  return sidePaddingOf(screen.getByTestId(testID));
+}
+
+// WHIT-737: host ancestors (node up to the root) that pad the right more than the left — a lane.
+export function rightOnlyGaps(node: ReactTestInstance) {
+  const gaps: { testID?: string; left?: unknown; right?: unknown }[] = [];
+  for (let host: ReactTestInstance | null = node; host; host = host.parent) {
+    if (typeof host.type !== 'string') continue;
+    const { left, right } = sidePaddingOf(host);
+    if ((Number(right) || 0) > (Number(left) || 0)) gaps.push({ testID: host.props.testID, left, right });
+  }
+  return gaps;
 }

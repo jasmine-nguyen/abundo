@@ -11,7 +11,6 @@ import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { BudgetBar, RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/components/ui';
 import { SettingsButton } from '../../src/components/SettingsButton';
 import { StaleDataLine } from '../../src/components/ListStates';
-import { AskButtonClearance } from '../../src/chat/AskButton';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { loadFailureReason } from '../../src/apiError';
 
@@ -197,27 +196,25 @@ export default function Budgets() {
           )}
         </BudgetsHero>
 
-        <AskButtonClearance>
-          <StaleDataLine idPrefix="budgets" error={refreshError} updatedAt={updatedAt} />
+        <StaleDataLine idPrefix="budgets" error={refreshError} updatedAt={updatedAt} />
 
-          {SECTIONS.map(({ section, heading }) => {
-            const sectionRows = rows.filter((b) => b.section === section);
-            if (sectionRows.length === 0) return null;
-            return (
-              <React.Fragment key={section}>
-                <Text style={styles.sectionLabel}>{heading}</Text>
-                {sectionRows.map((b) => <BudgetRow key={b.id} b={b} />)}
-              </React.Fragment>
-            );
-          })}
+        {SECTIONS.map(({ section, heading }) => {
+          const sectionRows = rows.filter((b) => b.section === section);
+          if (sectionRows.length === 0) return null;
+          return (
+            <React.Fragment key={section}>
+              <Text style={styles.sectionLabel}>{heading}</Text>
+              {sectionRows.map((b) => <BudgetRow key={b.id} b={b} />)}
+            </React.Fragment>
+          );
+        })}
 
-          {noRows ? null : (
-            <Pressable onPress={() => router.push('/budget/pick')} style={({ pressed }) => [styles.addBudget, pressed && PRESSED]}>
-              <Glyph name="plus" size={18} color={C.accentSoft} />
-              <Text style={styles.addBudgetText}>Add a budget</Text>
-            </Pressable>
-          )}
-        </AskButtonClearance>
+        {noRows ? null : (
+          <Pressable onPress={() => router.push('/budget/pick')} style={({ pressed }) => [styles.addBudget, pressed && PRESSED]}>
+            <Glyph name="plus" size={18} color={C.accentSoft} />
+            <Text style={styles.addBudgetText}>Add a budget</Text>
+          </Pressable>
+        )}
       </>
       )}
     </ScrollChromeHeader>
