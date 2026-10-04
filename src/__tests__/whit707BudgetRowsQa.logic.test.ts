@@ -7,6 +7,7 @@ import { budgetViews } from '../context';
 import { C } from '../theme';
 import { formatWeekdayShort } from '../dateutil';
 import { makeState, cat, budget } from './factory';
+import { budgetRowFor as spendRow } from './support/budgetsTab';
 
 const salary = cat({ id: 'salary', name: 'Salary', color: '#35d9a0', bucket: 'Income' });
 const bonus = cat({ id: 'bonus', name: 'Bonus', color: '#35d9a0', bucket: 'Income', parent: 'salary' });
@@ -18,10 +19,6 @@ const incomeRow = (daysLeft: number, nextPayday: string) => budgetViews({
   ...makeState({ categories: [salary], budgets: [budget({ id: 'salary', budget: 5000, posted: 1000, pending: 0 })], cycleLen: 14, daysLeft }),
   nextPayday,
 }).rows[0];
-
-const spendRow = (over: Parameters<typeof budget>[0]) => budgetViews(makeState({
-  categories: [coffee], budgets: [budget({ id: 'coffee', ...over })], cycleLen: 14, daysLeft: 7,
-})).rows[0];
 
 describe('income "next pay" label boundaries (decision 3)', () => {
   // [A1] (P0) 1 day out → weekday.

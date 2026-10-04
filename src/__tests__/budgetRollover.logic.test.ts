@@ -4,9 +4,10 @@
 // pace stays on the base target, and the bar denominator can never divide by 0. toBudget
 // defaults the fields for a non-rollover/legacy budget.
 import { describe, it, expect } from '@jest/globals';
-import { budgetViews, budgetDetail } from '../context';
+import { budgetViews } from '../context';
 import { toBudget } from '../model';
 import { makeState, cat, budget } from './factory';
+import { budgetDetailFor } from './support/budgetsTab';
 
 const sink = (over = {}) => cat({ id: 'sink', name: 'Sink', bucket: 'Lifestyle', ...over });
 const state = (b: object) => makeState({
@@ -81,9 +82,7 @@ describe('budgetViews — rollover off', () => {
 
 // ── budgetDetail mirrors the envelope + surfaces the buffer line ─────────────
 describe('budgetDetail — carryover', () => {
-  const detail = (b: object) => budgetDetail(makeState({
-    categories: [sink()], budgets: [budget({ id: 'sink', ...b })], cycleLen: 14, daysLeft: 7,
-  }), 'sink')!;
+  const detail = (b: object) => budgetDetailFor(b, undefined, sink());
 
   it('positive buffer: header is the envelope and the rolled-over line shows', () => {
     const d = detail({ budget: 100, posted: 250, pending: 0, rollover: true, carryover: 200 });
@@ -126,10 +125,7 @@ describe('toBudget — rollover fields', () => {
 describe('carryover detail line deadband (|value| must EXCEED 0.5 to show)', () => {
   const sink = cat({ id: 'sink', name: 'Sink', bucket: 'Lifestyle' });
   const detailFor = (carryover: number) =>
-    budgetDetail(makeState({
-      categories: [sink], cycleLen: 14, daysLeft: 7,
-      budgets: [budget({ id: 'sink', budget: 100, posted: 0, pending: 0, rollover: true, carryover })],
-    }), 'sink')!;
+    budgetDetailFor({ budget: 100, posted: 0, rollover: true, carryover }, undefined, sink);
 
   it('exactly +0.5 shows no detail line (boundary is strict >)', () => {
     expect(detailFor(0.5).carryoverLine).toBe('');
