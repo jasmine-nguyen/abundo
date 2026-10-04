@@ -37,7 +37,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 // by the folded WHIT-72 tests via renderHook; the same regime the screen renders under.
 import { useBudgetsScreenData, useBudgetDetailScreenData } from '../queries';
 import { nextPayday } from '../payCycle';
-import { COFFEE, SALARY } from './support/categories';
+import { COFFEE, SALARY, GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 // The Budgets reads. `/budgets?` (with the query mark) counts the rollup read only, never a
@@ -553,7 +553,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
   it('sums MULTIPLE over-budget rows into one signed hero total + coherent pill', async () => {
     server.seed('/categories', [
       COFFEE,
-      { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd1b9', recent: 12 },
+      { ...GROCERIES_RECORD, color: '#7fd1b9', recent: 12 },
     ]);
     server.seed('/budgets', {
       coffee: { target: 100, posted: 150, pending: 0 },

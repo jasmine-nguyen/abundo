@@ -2,9 +2,10 @@
 // two categories, a rule and a budget for each, and the charges filed under them.
 import type { Transaction, Category } from '../../types';
 import type { Rule } from '../../model';
+import { GROCERIES_TOP_RECORD } from './categories';
 
 export const DELETE_DINING = { id: 'dining', name: 'Dining', bucket: 'Living', icon: 'food', color: '#f00', recent: 0, parent: null } satisfies Category;
-export const DELETE_GROCERIES = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#0f0', recent: 0, parent: null } satisfies Category;
+export const DELETE_GROCERIES = { ...GROCERIES_TOP_RECORD, color: '#0f0', recent: 0 } satisfies Category;
 export const DELETE_DINING_RULE: Rule = { id: 'r1', pattern: 'COLES', categoryId: 'dining', isNew: false };
 export const DELETE_GROCERIES_RULE: Rule = { id: 'r2', pattern: 'WOOLIES', categoryId: 'groceries', isNew: false };
 export const DELETE_DINING_BUDGET = { target: 200, posted: 12.5, pending: 0 };

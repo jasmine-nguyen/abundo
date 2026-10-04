@@ -1,5 +1,6 @@
 // The sample categories the tests seed, kept in one place (WHIT-718, WHIT-719; income + Savings from WHIT-714). Frozen so no test can change
-// them for the next one; spread to make a variant ({ ...COFFEE, recent: 0 }).
+// them for the next one; spread to make a variant ({ ...COFFEE, recent: 0 }). A *_RECORD is the raw server
+// record: seed it into the fake server, which leaves colour and recent to the app (WHIT-721).
 import type { Category } from '../../types';
 
 export const COFFEE_RECORD = Object.freeze({ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee' } as const);
