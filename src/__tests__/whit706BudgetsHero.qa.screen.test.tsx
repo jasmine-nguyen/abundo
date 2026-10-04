@@ -6,7 +6,8 @@ import { refreshInAct } from './support/renderWithQueries';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
-import { BUDGET_CATS, seedBudgets, renderBudgets } from './support/budgetsScreen';
+import { seedBudgets, renderBudgets } from './support/budgetsScreen';
+import { COFFEE } from './support/categories';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -16,7 +17,6 @@ jest.mock('../auth', () => ({
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const server = installFakeServer();
-const [COFFEE] = BUDGET_CATS;
 const GROCERIES = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd1b9', recent: 12 };
 const SALARY = { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'cash', color: '#7fd1b9', recent: 0 };
 

@@ -22,6 +22,7 @@ jest.mock('../context', () => {
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import CategoryDetail from '../../app/category/[id]';
+import { COFFEE_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -29,7 +30,7 @@ useTestQueryClient();
 const COFFEE_ROWS = '/categories/coffee/transactions';
 
 const CATEGORIES = [
-  { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee' },
+  COFFEE_RECORD,
   { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase' },
 ];
 

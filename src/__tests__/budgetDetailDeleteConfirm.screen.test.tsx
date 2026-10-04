@@ -23,6 +23,7 @@ import { resetAuth } from './support/authMock';
 import { spyOnAlert } from './support/alertSpy';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { COFFEE } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -33,7 +34,7 @@ beforeEach(() => {
   mockBack.mockClear();
   mockDeleteBudget.mockClear();
   mockDeleteBudget.mockResolvedValue(true);
-  server.seed('/categories', [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }]);
+  server.seed('/categories', [{ ...COFFEE, recent: 0 }]);
   server.seed('/budgets', { coffee: { target: 100, posted: 40, pending: 10 } });
   server.seed('/budgets/coffee/transactions', []);
   server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01', days_left: 12 });

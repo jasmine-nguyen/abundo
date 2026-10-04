@@ -43,6 +43,7 @@ jest.mock('expo-router', () => {
 });
 
 import Insights from '../../app/(tabs)/insights';
+import { COFFEE } from './support/categories';
 
 const server = installFakeServer();
 
@@ -167,7 +168,7 @@ it('[A13] a parent accessibilityState.expanded tracks open/closed', async () => 
 // Its own coffee fixtures + nested beforeEach (re-seeds ALL three fetchers) keep it isolated
 // from this file's tree fixtures.
 describe('cycle-independent hero (pay cycle pending)', () => {
-  const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
+  const CATS = [{ ...COFFEE, recent: 0 }];
   const BREAKDOWN = { coffee: { posted: 40, pending: 10 } };
 
   beforeEach(() => {

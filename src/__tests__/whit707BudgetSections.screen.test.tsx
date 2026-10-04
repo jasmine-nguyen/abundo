@@ -6,6 +6,7 @@ import { screen, fireEvent } from '@testing-library/react-native';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { renderBudgets } from './support/budgetsScreen';
+import { COFFEE } from './support/categories';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -21,7 +22,7 @@ beforeEach(() => {
   server.seed('/paycycle', { length: 14, last_pay_date: '2026-07-01' });
   server.seed('/categories', [
     { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase', color: '#35d9a0', recent: 0 },
-    { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
+    COFFEE,
   ]);
   server.seed('/budgets', {
     salary: { target: 5000, posted: 1000, pending: 0 },

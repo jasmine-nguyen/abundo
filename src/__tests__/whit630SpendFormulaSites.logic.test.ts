@@ -82,7 +82,7 @@ describe('pace stays on the base target, not the spendable', () => {
     expect(budgetDetail(state(roomy), 'food')?.statusLabel).toBe('Ahead of pace — ease up');
   });
 
-  it('[A5] (P1) on the first day nothing is over pace yet', () => {
-    expect(budgetViews(state({ budget: 100, posted: 0, pending: 0 }, 14)).rows[0].paceLabel).toBe('on pace');
+  it('[A5] (P1) on the first day nothing is over pace yet (on pace → no line)', () => {
+    expect(budgetViews(state({ budget: 100, posted: 0, pending: 0 }, 14)).rows[0].paceLabel).toBe('');
   });
 });

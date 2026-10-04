@@ -9,6 +9,7 @@ import type { Category, Transaction } from '../types';
 import type { Budget, HomeLoanState, Rule } from '../model';
 import type { AiGoalSignal, BreakdownRollup, CategorySpend, LoanFacts, MilestoneRecord, Repayment } from '../api';
 import type { GoalScreenData } from '../queries';
+import { COFFEE } from './support/categories';
 
 // A saved-plan fixture (the suggested template as MilestoneRecord rows, with ids). The default
 // for milestone view-math tests that just need SOME plan — the empty-state tests pass [] instead.
@@ -38,7 +39,7 @@ export function asShortfallGoal(g: AiGoalSignal | null): Extract<AiGoalSignal, {
 }
 
 export function cat(over: Partial<Category> = {}): Category {
-  return { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#E8A87C', bucket: 'Lifestyle', recent: 52, ...over };
+  return { ...COFFEE, ...over };
 }
 
 export function txn(over: Partial<Transaction> = {}): Transaction {

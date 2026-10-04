@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
 import { RefreshControl, View, Text, Pressable, StyleSheet } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { C, FONT, tint, fmtBalance, ACCOUNT_ACCENTS } from '../../src/theme';
+import { C, FONT, tint, fmtBalance, ACCOUNT_ACCENTS, PRESSED } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { accountSummaries, useAppContext } from '../../src/context';
 import { useTransactionsScreenData } from '../../src/queries';
@@ -89,7 +89,7 @@ export default function Accounts() {
               <Pressable
                 key={a.id}
                 onPress={() => router.push(`/account/${a.id}`)}
-                style={({ pressed }) => [styles.acct, pressed && styles.acctPressed]}
+                style={({ pressed }) => [styles.acct, pressed && PRESSED]}
               >
                 <View style={[styles.acctChip, { backgroundColor: tint(color, 0.15) }]}><Icon name="bank" size={22} color={color} /></View>
                 <View style={{ flex: 1 }}>
@@ -120,7 +120,6 @@ const styles = StyleSheet.create({
   emptySub: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, marginTop: 6, textAlign: 'center', lineHeight: 20 },
 
   acct: { flexDirection: 'row', alignItems: 'center', gap: 13, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 15, paddingHorizontal: 16, marginBottom: 10 },
-  acctPressed: { opacity: 0.6 },
   acctChip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   acctName: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
   acctSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },

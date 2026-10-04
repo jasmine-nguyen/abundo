@@ -29,9 +29,13 @@ jest.mock('expo-router', () => ({
 }));
 
 import CategoryEdit from '../../app/category/edit';
+import { COFFEE, COFFEE_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
+
+// The coffee fields an edit-screen save sends (everything but the id).
+const COFFEE_SAVED = { name: COFFEE_RECORD.name, bucket: COFFEE_RECORD.bucket, icon: COFFEE_RECORD.icon };
 
 // The taxonomy /categories answers with; drawEdit() seeds it right before the screen draws.
 let categories: Category[] = [];
@@ -274,7 +278,7 @@ describe('categoryEditParentClear', () => {
     // coffee (Lifestyle) has a corrupt/legacy parent pointing at rent (Living) — a
     // cross-bucket link the server's same-bucket rule would never allow on write.
     categories = [
-      { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0, parent: 'rent' },
+      { ...COFFEE, recent: 0, parent: 'rent' },
       { id: 'rent', name: 'Rent', bucket: 'Living', icon: 'home', color: '#8AB4F8', recent: 0, parent: null },
     ];
     await drawEdit();
@@ -283,12 +287,12 @@ describe('categoryEditParentClear', () => {
 
     // Saved with parent cleared to null — the invisible cross-bucket link is not re-persisted.
     await waitFor(() => expect(patchBodies('coffee')).toEqual([
-      { name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', parent: null }]));
+      { ...COFFEE_SAVED, parent: null }]));
   });
 
   it('keeps a valid same-bucket parent through a save', async () => {
     categories = [
-      { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0, parent: 'treats' },
+      { ...COFFEE, recent: 0, parent: 'treats' },
       { id: 'treats', name: 'Treats', bucket: 'Lifestyle', icon: 'gift', color: '#F0B27A', recent: 0, parent: null },
     ];
     await drawEdit();
@@ -296,7 +300,7 @@ describe('categoryEditParentClear', () => {
     await save();
 
     await waitFor(() => expect(patchBodies('coffee')).toEqual([
-      { name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', parent: 'treats' }]));
+      { ...COFFEE_SAVED, parent: 'treats' }]));
   });
 });
 
@@ -306,7 +310,7 @@ describe('categoryEditParentPick', () => {
   it('picking a parent in the shared picker stamps it onto the saved category', async () => {
     // coffee (editing) starts top-level; treats is a same-bucket, eligible parent.
     categories = [
-      { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0, parent: null },
+      { ...COFFEE, recent: 0, parent: null },
       { id: 'treats', name: 'Treats', bucket: 'Lifestyle', icon: 'gift', color: '#F0B27A', recent: 0, parent: null },
     ];
     await drawEdit();
@@ -318,7 +322,7 @@ describe('categoryEditParentPick', () => {
     await save();
 
     await waitFor(() => expect(patchBodies('coffee')).toEqual([
-      { name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', parent: 'treats' }]));
+      { ...COFFEE_SAVED, parent: 'treats' }]));
   });
 });
 
@@ -846,10 +850,9 @@ describe('categoryEditSignOutGuard', () => {
 // The category list is held on the server, so the screen mounts over a cold taxonomy and it lands
 // a beat later on release().
 describe('categoryEditColdSeed', () => {
-  const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', parent: null };
   beforeEach(() => {
     resetMocks({ categoryId: 'coffee' });
-    server.seed('/categories', [COFFEE]);
+    server.seed('/categories', [{ ...COFFEE_RECORD, parent: null }]);
   });
 
   const drawCold = async () => {

@@ -34,12 +34,10 @@ import TransactionDetail from '../../app/transaction/[id]';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries } from './support/renderWithQueries';
+import { COFFEE_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
-
-// The taxonomy knows only 'coffee' — a budget on any other category has no category behind it.
-const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', parent: null };
 
 const rollup = (over: Partial<BudgetRollup> = {}): BudgetRollup => ({ target: 100, posted: 40, pending: 10, ...over });
 
@@ -48,7 +46,8 @@ const seedSpend = (over: Partial<Transaction> = {}) =>
 
 beforeEach(() => {
   resetAuth();
-  server.seed('/categories', [COFFEE]);
+  // The taxonomy knows only 'coffee' — a budget on any other category has no category behind it.
+  server.seed('/categories', [{ ...COFFEE_RECORD, parent: null }]);
   mockPush.mockClear();
   mockApplyTransactionEdit.mockClear();
   mockToast.mockClear();

@@ -12,6 +12,7 @@ import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
+import { SUBS } from './support/categories';
 
 const server = installFakeServer();
 
@@ -24,7 +25,7 @@ afterEach(() => { queryClient.clear(); });
 
 function mountWithSeededCache() {
   queryClient.setQueryData<Rule[]>(['rules'], [RULE_E1]);
-  queryClient.setQueryData(['categories'], [{ id: 'subs', name: 'Subs', bucket: 'Lifestyle', icon: 'film', color: '#f0b27a', recent: 0 }]);
+  queryClient.setQueryData(['categories'], [SUBS]);
   const { result } = renderHook(() => useAppContext(), { wrapper });
   return result;
 }

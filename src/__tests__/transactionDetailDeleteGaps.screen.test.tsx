@@ -37,17 +37,16 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { transactionsKey } from '../queries';
+import { COFFEE_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
 const alerts = spyOnAlert();
 
-const COFFEE = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', parent: null };
-
 beforeEach(() => {
   resetAuth();
   mockId = 't1';
-  server.seed('/categories', [COFFEE]);
+  server.seed('/categories', [{ ...COFFEE_RECORD, parent: null }]);
   server.seed('/transactions/feed', { transactions: [txn({ transaction_id: 't1', category: 'coffee' })], nextCursor: null });
   mockBack.mockClear();
   mockDeleteTransaction.mockReset();
