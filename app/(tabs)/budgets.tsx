@@ -6,6 +6,7 @@ import { formatDayMonth } from '../../src/dateutil';
 import { Icon, Glyph } from '../../src/icons';
 import { budgetViews, type BudgetView } from '../../src/context';
 import { useBudgetsScreenData } from '../../src/queries';
+import { urgentFirst } from '../../src/budgetOrder';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { BudgetBar, RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/components/ui';
 import { SettingsButton } from '../../src/components/SettingsButton';
@@ -91,7 +92,9 @@ export default function Budgets() {
   // Staleness-gated so hopping between tabs doesn't refetch on every tap.
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
-  const { rows, totBudget, totSpent, totPending, totRemain } = budgetViews({ budgets, category, cycleLen, daysLeft, nextPayday });
+  const view = budgetViews({ budgets, category, cycleLen, daysLeft, nextPayday });
+  const { totBudget, totSpent, totPending, totRemain } = view;
+  const rows = urgentFirst(view.rows);
 
   // Over from a cent over, matching the rows (WHIT-716); the tiny threshold only absorbs float dust so "−$0" never shows.
   const overBudget = totRemain < -0.005;
