@@ -1,5 +1,6 @@
-// WHIT-726 → WHIT-731 — Budgets top card: no pill and no "resets in"; one row of three labelled
-// values, Spent · Budget · Next payday (whole dollars, pending included in Spent). No pending on the card.
+// WHIT-726 → WHIT-731 — Budgets top card: no pill, no "resets in" and no pending on the card. The
+// over-budget values and the Spent · Budget · Next payday order are covered in
+// whit731BudgetsHeroStats.screen.test.tsx.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, within } from '@testing-library/react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
@@ -17,8 +18,6 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 const server = installFakeServer();
 
-const STAT_IDS = ['budgets-hero-spent', 'budgets-hero-budget', 'budgets-hero-payday'];
-
 function seedCoffee(coffee: { target: number; posted: number; pending?: number }) {
   seedBudgets(server, {
     budgets: { coffee },
@@ -35,30 +34,18 @@ function hero(): ReactTestInstance {
   return node;
 }
 
-function statIdsInHero() {
-  return hero()
-    .findAll((node) => typeof node.type === 'string' && STAT_IDS.includes(node.props.testID))
-    .map((node) => node.props.testID);
-}
-
 beforeEach(() => resetRouter());
 
-describe('WHIT-731 Budgets top card: Spent · Budget · Next payday', () => {
-  it('over budget → Spent $6,137 · Budget $5,785 · Next payday, with no resets or pending on the card', async () => {
+describe('WHIT-731 Budgets top card: no pill, resets or pending', () => {
+  it('over budget with pending → no resets, pending or pill on the card', async () => {
     seedCoffee({ target: 5785, posted: 5948.92, pending: 187.76 });
     await renderLoadedBudgets();
 
-    // 5948.92 posted + 187.76 pending − 5785 budget = 351.68 over (the money number keeps its cents).
-    expect(screen.getByText('−$351.68')).toBeTruthy();
     expect(screen.getByText('Over budget')).toBeTruthy();
-    expect(heroTotals()).toMatchObject({ spent: '$6,137', budget: '$5,785' });
-    expect(heroTotals().payday).toMatch(/^\d{1,2} [A-Z][a-z]{2}$/);
-
     expect(within(hero()).queryByText(/resets/)).toBeNull();
     expect(within(hero()).queryByText(/pending/)).toBeNull();
     expect(screen.queryByTestId('budgets-hero-pill')).toBeNull();
     expect(screen.queryByTestId('budgets-hero-resets')).toBeNull();
-    expect(statIdsInHero()).toEqual(STAT_IDS);
   });
 
   it('under budget → same three values: Spent $4,501 · Budget $5,785 · Next payday', async () => {
@@ -71,6 +58,5 @@ describe('WHIT-731 Budgets top card: Spent · Budget · Next payday', () => {
 
     expect(within(hero()).queryByText(/resets/)).toBeNull();
     expect(screen.queryByTestId('budgets-hero-pill')).toBeNull();
-    expect(statIdsInHero()).toEqual(STAT_IDS);
   });
 });
