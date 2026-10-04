@@ -4,17 +4,16 @@
 // spreadPreview at cycles=1/24/sub-cent, the spreadLine deadband, the over/canStartSpread
 // boundaries, and toBudget's spread object passthrough identity.
 import { describe, it, expect } from '@jest/globals';
-import { budgetViews, budgetDetail, spreadPreview } from '../context';
+import { budgetViews, spreadPreview } from '../context';
 import { toBudget } from '../model';
 import { makeState, cat, budget } from './factory';
+import { budgetDetailFor } from './support/budgetsTab';
 
 const sink = (over = {}) => cat({ id: 'sink', name: 'Sink', bucket: 'Lifestyle', ...over });
 const state = (b: object) => makeState({
   categories: [sink()], budgets: [budget({ id: 'sink', ...b })], cycleLen: 14, daysLeft: 7,
 });
-const detail = (b: object, category = sink()) => budgetDetail(makeState({
-  categories: [category], budgets: [budget({ id: 'sink', ...b })], cycleLen: 14, daysLeft: 7,
-}), 'sink')!;
+const detail = (b: object, category = sink()) => budgetDetailFor(b, undefined, category);
 
 // ── negative / extreme envelope stays finite (den guard + adjustment fold) ────
 describe('budgetViews/budgetDetail — extreme spread envelope', () => {

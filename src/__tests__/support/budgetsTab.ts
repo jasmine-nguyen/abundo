@@ -34,9 +34,9 @@ export const budgetRowFor = (b: object) =>
     makeState({ categories: [cat()], budgets: [budget({ id: 'coffee', ...b })], cycleLen: 14, daysLeft: 7 }),
   ).rows[0];
 
-// The coffee budget's detail (no pending unless given), halfway through a 14-day cycle by default.
+// A budget's detail (coffee by default, no pending unless given), halfway through a 14-day cycle by default.
 export const budgetDetailFor = (b: object, clock = { cycleLen: 14, daysLeft: 7 }, c = cat()) =>
-  budgetDetail(makeState({ categories: [c], budgets: [budget({ id: 'coffee', pending: 0, ...b })], ...clock }), 'coffee')!;
+  budgetDetail(makeState({ categories: [c], budgets: [budget({ id: c.id, pending: 0, ...b })], ...clock }), c.id)!;
 
 // Every text field of a budget row, joined, for "no row says X" checks.
 export const rowText = (row: object) => Object.values(row).filter((v) => typeof v === 'string').join(' | ');

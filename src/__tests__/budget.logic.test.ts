@@ -7,7 +7,7 @@ import { elapsedFrac } from '../payCycle';
 import type { Budget } from '../model';
 import { C } from '../theme';
 import { makeState, cat, budget, txn } from './factory';
-import { budgetDetailFor } from './support/budgetsTab';
+import { budgetDetailFor as detail } from './support/budgetsTab';
 
 describe('elapsedFrac', () => {
   it('is (cycleLen - daysLeft) / cycleLen', () => {
@@ -145,13 +145,13 @@ describe('budgetViews — income earn-targets (over-is-good)', () => {
 });
 
 describe('budgetDetail — income earn-targets', () => {
-  const detail = (posted: number) => budgetDetail(makeState({
+  const incomeDetail = (posted: number) => budgetDetail(makeState({
     categories: [income()], budgets: [budget({ id: 'salary', budget: 5000, posted, pending: 0 })],
     cycleLen: 14, daysLeft: 7,
   }), 'salary')!;
 
   it('under target: calm "keep earning" status, never red, reframed daily label', () => {
-    const d = detail(1000);
+    const d = incomeDetail(1000);
     expect(d.statusLabel).toBe('On track — keep earning');
     expect(d.statusColor).not.toBe(RED);
     expect(d.postedColor).not.toBe(RED);
@@ -160,7 +160,7 @@ describe('budgetDetail — income earn-targets', () => {
   });
 
   it('target reached: green status and no daily-to-go', () => {
-    const d = detail(6000);
+    const d = incomeDetail(6000);
     expect(d.statusLabel).toBe('Target reached — nice');
     expect(d.statusColor).toBe(C.good);
     expect(d.dailyLabel).toBe('Target reached');
@@ -284,8 +284,6 @@ describe('budgetDetail', () => {
 // today's linear target is an amber caution, not a green "keep it up". Pace rides the base
 // per-cycle budget (b.budget * elapsed), so it stays consistent with the list on both screens.
 describe('budgetDetail — spend pace status', () => {
-  const detail = budgetDetailFor;
-
   // FAIL-ON-REVERT: today's binary code reads 3667 <= 3667 as green "On target — keep it up".
   it('100% spent on day 1 reads amber "behind pace", not green (the mortgage bug)', () => {
     const d = detail({ budget: 3667, posted: 3667 }, { cycleLen: 30, daysLeft: 29 });
@@ -617,10 +615,6 @@ describe('budgetViews — server-computed available (WHIT-549)', () => {
 });
 
 describe('budgetDetail — server-computed available (WHIT-549)', () => {
-  const detail = (b: object) => budgetDetail(makeState({
-    categories: [cat()], budgets: [budget({ id: 'coffee', ...b })], cycleLen: 14, daysLeft: 7,
-  }), 'coffee')!;
-
   it('uses the server available for the header envelope', () => {
     expect(detail({ budget: 100, posted: 0, pending: 0, available: 500 }).ofBudget).toBe('of $500');
   });

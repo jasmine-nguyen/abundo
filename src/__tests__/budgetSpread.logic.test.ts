@@ -11,14 +11,13 @@ import { cycleName } from '../payCycle';
 import type { Category } from '../types';
 import type { Budget } from '../model';
 import { makeState, cat, budget } from './factory';
+import { budgetDetailFor } from './support/budgetsTab';
 
 const sink = (over = {}) => cat({ id: 'sink', name: 'Sink', bucket: 'Lifestyle', ...over });
 const state = (b: object) => makeState({
   categories: [sink()], budgets: [budget({ id: 'sink', ...b })], cycleLen: 14, daysLeft: 7,
 });
-const detail = (b: object, category = sink()) => budgetDetail(makeState({
-  categories: [category], budgets: [budget({ id: 'sink', ...b })], cycleLen: 14, daysLeft: 7,
-}), 'sink')!;
+const detail = (b: object, category = sink()) => budgetDetailFor(b, undefined, category);
 const plan = (over = {}) => ({ amount: 1390.91, cycles: 4, index: 0, adjustment: 1390.91, ...over });
 
 // ── toBudget maps + defaults ─────────────────────────────────────────────────
