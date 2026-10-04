@@ -277,23 +277,25 @@ describe('budgetDetail', () => {
 });
 
 // The detail status must be pace-aware, matching the list (budgetViews): spending past
-// today's linear target is an amber caution, not a green "keep it up". Pace rides the base
+// today's linear target with little room left per day is a muted caution (WHIT-732), not a
+// green "keep it up". Pace rides the base
 // per-cycle budget (b.budget * elapsed), so it stays consistent with the list on both screens.
 describe('budgetDetail — spend pace status', () => {
   // FAIL-ON-REVERT: today's binary code reads 3667 <= 3667 as green "On target — keep it up".
-  it('100% spent on day 1 reads amber "over plan", not green (the mortgage bug)', () => {
+  it('100% spent on day 1 reads muted "over plan", not green (the mortgage bug)', () => {
     const d = detail({ budget: 3667, posted: 3667 }, { cycleLen: 30, daysLeft: 29 });
     expect(d.statusLabel).toBe('Over plan — ease up');
-    expect(d.statusColor).toBe(C.warn);
+    expect(d.statusColor).toBe(C.textInfo);
     expect(d.statusColor).not.toBe(C.good);
     expect(d.dailyLabel).toBe('Daily limit: $0'); // envelope gone → nothing left per day
   });
 
-  it('over plan but still under budget → amber, and the daily limit is not zeroed', () => {
-    // elapsed 2/14 ≈ 0.143, target ≈ 14.3; spent 60 is well past pace, still under 100.
+  it('over plan but still under budget → muted, and the daily limit is not zeroed', () => {
+    // elapsed 2/14 ≈ 0.143, target ≈ 14.3; spent 60 is well past pace, still under 100;
+    // $40 over 12 days ($3.33/day) is under half the daily plan ($3.57).
     const d = detail({ budget: 100, posted: 60 }, { cycleLen: 14, daysLeft: 12 });
     expect(d.statusLabel).toBe('Over plan — ease up');
-    expect(d.statusColor).toBe(C.warn);
+    expect(d.statusColor).toBe(C.textInfo);
     expect(d.dailyLabel).toContain('Daily limit');
     expect(d.dailyLabel).not.toBe('Daily limit: $0');
   });
@@ -313,13 +315,13 @@ describe('budgetDetail — spend pace status', () => {
   });
 
   it('pending spend counts toward pace (low posted, high pending crosses the target)', () => {
-    // elapsed 0.5, target 50; spent = posted 10 + pending 45 = 55 → over plan → amber.
+    // elapsed 0.5, target 50; spent = posted 10 + pending 75 = 85 → $2.14/day left → over plan.
     const d = budgetDetail(makeState({
-      categories: [cat()], budgets: [budget({ id: 'coffee', budget: 100, posted: 10, pending: 45 })],
+      categories: [cat()], budgets: [budget({ id: 'coffee', budget: 100, posted: 10, pending: 75 })],
       cycleLen: 14, daysLeft: 7,
     }), 'coffee')!;
     expect(d.statusLabel).toBe('Over plan — ease up');
-    expect(d.statusColor).toBe(C.warn);
+    expect(d.statusColor).toBe(C.textInfo);
   });
 
   it('$0 spent is never flagged — green', () => {
@@ -336,10 +338,11 @@ describe('budgetDetail — spend pace status', () => {
   });
 
   it('rollover: pace rides the base budget while over-budget uses the buffered envelope', () => {
-    // available = 100 + 100 = 200 (not over), pace target = base 100 × 0.5 = 50; spent 120 → amber.
-    const d = detail({ budget: 100, posted: 120, rollover: true, carryover: 100 }, { cycleLen: 14, daysLeft: 7 });
+    // available = 100 + 100 = 200 (not over), pace target = base 100 × 0.5 = 50; spent 160 leaves
+    // $5.71/day, under half the $14.29 daily plan → over plan.
+    const d = detail({ budget: 100, posted: 160, rollover: true, carryover: 100 }, { cycleLen: 14, daysLeft: 7 });
     expect(d.statusLabel).toBe('Over plan — ease up');
-    expect(d.statusColor).toBe(C.warn);
+    expect(d.statusColor).toBe(C.textInfo);
   });
 });
 

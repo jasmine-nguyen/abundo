@@ -12,8 +12,8 @@ type Detail = ReturnType<typeof budgetDetailFor> & { showTarget?: boolean };
 
 describe('Budgets rows (WHIT-730)', () => {
   it('pace words say over/under plan, over rows hide the tick, and $0 rows are unspent', () => {
-    const overPlan = budgetRowFor({ budget: 100, posted: 70, pending: 0 }) as Row;
-    expect(overPlan.paceLabel).toBe('$20 over plan');
+    const overPlan = budgetRowFor({ budget: 100, posted: 85, pending: 0 }) as Row;
+    expect(overPlan.paceLabel).toBe('$35 over plan');
     expect(overPlan.showTarget).toBe(true);
     expect(overPlan.unspent).toBe(false);
 
@@ -39,7 +39,7 @@ describe('Budgets rows (WHIT-730)', () => {
   });
 
   it('the budget detail screen says "Over plan — ease up" and hides the tick when over', () => {
-    const overPlan = budgetDetailFor({ budget: 100, posted: 70 }) as Detail;
+    const overPlan = budgetDetailFor({ budget: 100, posted: 85 }) as Detail;
     expect(overPlan.statusLabel).toBe('Over plan — ease up');
     expect(overPlan.showTarget).toBe(true);
 

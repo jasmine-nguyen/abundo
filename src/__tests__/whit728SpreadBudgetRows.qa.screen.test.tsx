@@ -32,11 +32,12 @@ it('the top card budget total keeps the minus on a payback cycle', async () => {
 // [A2] a cushion row that is over plan → the note on the left AND the pace label both drawn.
 it('a behind-pace spread row shows the note and keeps its pace label', async () => {
   seedBudgetsTab(server, {
-    // $100 + $200 cushion = $300 available; pace runs on the $100 target, so $200 spent is behind.
-    coffee: { target: 100, posted: 200, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } },
+    // $100 + $200 cushion = $300 available; pace runs on the $100 target, so $250 spent is behind,
+    // with little room left per day.
+    coffee: { target: 100, posted: 250, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } },
   });
   await renderLoadedBudgetsWithQueries();
   expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes spread bills');
   expect(screen.getByText(/over plan$/)).toBeTruthy();
-  expect(screen.getByText(/^\$200 of \$300/)).toBeTruthy();
+  expect(screen.getByText(/^\$250 of \$300/)).toBeTruthy();
 });
