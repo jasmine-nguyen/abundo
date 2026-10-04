@@ -26,9 +26,10 @@ export function ScrollChromeHeader({
   keyboardShouldPersistTaps?: 'always' | 'never' | 'handled';
   children: React.ReactNode;
 }) {
-  const { onScroll, scrollEventThrottle, headerStyle, headerHeight, headerPaddingTop, contentPadding } = useNavBarsHeader();
+  const { onScroll, scrollEventThrottle, headerStyle, headerHeight, headerPaddingTop, statusBarHeight, contentPadding } = useNavBarsHeader();
   return (
     <View style={{ flex: 1 }}>
+      <View pointerEvents="none" style={[styles.statusStrip, { height: statusBarHeight }]} />
       <Animated.View style={[floatingHeaderStyle, { paddingTop: headerPaddingTop }, headerStyle]}>
         {left ?? <View style={styles.slot} />}
         <Text style={styles.title}>{title}</Text>
@@ -57,5 +58,7 @@ const styles = StyleSheet.create({
   // centres, matching the old Insights/Goals/Settings centred headers. One replaced by an
   // action button → the title stays centred against the opposite spacer (Transactions/Budgets).
   slot: { width: 40 },
+  // Sits above the sliding header (zIndex 10) so the status bar keeps a solid backing when it hides.
+  statusStrip: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 11, backgroundColor: C.bg },
   title: { fontFamily: FONT.display, fontWeight: '700', fontSize: 19, color: C.textBright, letterSpacing: -0.2 },
 });

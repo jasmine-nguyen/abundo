@@ -23,6 +23,7 @@ jest.mock('../motion/useNavBarsHeader', () => ({
     headerStyle: {},
     headerHeight: 58,
     headerPaddingTop: 6,
+    statusBarHeight: 0,
     contentPadding: { paddingTop: 58, paddingBottom: 999 },
   }),
 }));
