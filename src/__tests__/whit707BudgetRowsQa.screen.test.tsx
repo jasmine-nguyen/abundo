@@ -10,6 +10,7 @@ import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { pinToday } from './support/clock';
 import { seedBudgetsTab } from './support/budgetsTab';
+import { renderLoadedBudgetsWithQueries } from './support/budgetsScreen';
 import { COFFEE } from './support/categories';
 
 jest.mock('../context', () => {
@@ -44,8 +45,7 @@ afterEach(() => {
 // [A20] (P0) spend only → SPENDING heading, no EARNING heading.
 it('[A20] no income budgets → no EARNING heading', async () => {
   seed([COFFEE], { coffee: { target: 100, posted: 40, pending: 0 } });
-  await renderWithQueries(<Budgets />);
-  await screen.findByText('Cafes & Coffee');
+  await renderLoadedBudgetsWithQueries();
   expect(screen.getByText('SPENDING')).toBeTruthy();
   expect(screen.queryByText('EARNING')).toBeNull();
 });
@@ -87,8 +87,7 @@ it('[A23] 14 days left → "next pay ~17 Oct"', async () => {
 // [A24] (P0) over but rollover → the overspend shows once on the amount, no spread link.
 it('[A24] over + rollover → overspend said once, no spread link', async () => {
   seed([COFFEE], { coffee: { target: 100, posted: 120, pending: 0, rollover: true, carryover: 0 } });
-  await renderWithQueries(<Budgets />);
-  await screen.findByText('Cafes & Coffee');
+  await renderLoadedBudgetsWithQueries();
   expect(screen.getByText('$20')).toBeTruthy();
   expect(screen.queryByText('$20 over budget')).toBeNull();
   expect(screen.queryByTestId('budget-row-spread-coffee')).toBeNull();
@@ -98,8 +97,7 @@ it('[A24] over + rollover → overspend said once, no spread link', async () => 
 // [A25] (P0) the spread link carries exact-cents prefill; pressing the row body still opens detail.
 it('[A25] spread link prefill keeps cents; the row press still opens the detail', async () => {
   seed([COFFEE], { coffee: { target: 80, posted: 90.25, pending: 0 } });
-  await renderWithQueries(<Budgets />);
-  await screen.findByText('Cafes & Coffee');
+  await renderLoadedBudgetsWithQueries();
   fireEvent.press(screen.getByTestId('budget-row-spread-coffee'));
   expect(routerSpies.push).toHaveBeenCalledTimes(1);
   expect(routerSpies.push).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=10.25');
