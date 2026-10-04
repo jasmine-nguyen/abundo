@@ -34,6 +34,7 @@ jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => mockReduc
 
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
 
@@ -332,7 +333,7 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
   function openNewRule() {
     server.seed('/categories', [
       { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },
-      { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
+      { ...SUBSCRIPTIONS, recent: 0 },
     ]);
     server.seed('/rules', []);
     // no ruleId → key `addrule:new`, no editing prefill

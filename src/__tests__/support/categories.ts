@@ -17,3 +17,7 @@ export const SAVINGS: Category = Object.freeze({ id: 'rainy', name: 'Rainy Day',
 export const GROCERIES_TOP_RECORD = Object.freeze({ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null } as const);
 
 export const GROCERIES_TOP = Object.freeze({ ...GROCERIES_TOP_RECORD, color: '#7FD49B' } as const);
+
+export const SUBSCRIPTIONS_RECORD = Object.freeze({ id: 'subs', name: 'Subscriptions', icon: 'film', bucket: 'Lifestyle' } as const);
+
+export const SUBSCRIPTIONS = Object.freeze({ ...SUBSCRIPTIONS_RECORD, color: '#f0b27a' } as const);
