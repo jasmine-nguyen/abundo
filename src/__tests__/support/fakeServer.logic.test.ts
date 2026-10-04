@@ -10,11 +10,11 @@ import { ApiError } from '../../apiError';
 import { resetAuth, setAuthToken } from './authMock';
 import { WIRE } from './apiWire';
 import { installFakeServer } from './fakeServer';
+import { GROCERIES } from './categories';
 
 const BASE = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
 const originalFetch = global.fetch;
 
-const GROCERIES = { id: 'groceries', name: 'Groceries', bucket: 'Essentials', icon: 'cart', color: '#00AA00' };
 const GYM = { name: 'Gym', bucket: 'Lifestyle' as const, icon: 'dumbbell' };
 
 // Let every pending promise step run (auth token → fetch → body read) without touching timers.

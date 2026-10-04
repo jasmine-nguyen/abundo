@@ -8,8 +8,7 @@ import { findOffenders, q } from './support/sourceScan';
 const isGroceriesCopy = (line: string) =>
   line.includes(`id: ${q('groceries')}`) &&
   line.includes(`name: ${q('Groceries')}`) &&
-  line.includes(`icon: ${q('cart')}`) &&
-  line.includes(`bucket: ${q('Living')}`);
+  line.includes(`icon: ${q('cart')}`);
 
 describe('the shared Groceries sample has one home', () => {
   it('support/categories exports the raw Groceries record, and GROCERIES keeps its value', () => {

@@ -10,10 +10,10 @@ import * as api from '../../api';
 import { ApiError } from '../../apiError';
 import { resetAuth } from './authMock';
 import { installFakeServer } from './fakeServer';
+import { GROCERIES } from './categories';
 
 const originalFetch = global.fetch;
 
-const GROCERIES = { id: 'groceries', name: 'Groceries', bucket: 'Essentials', icon: 'cart', color: '#00AA00' };
 const GYM = { name: 'Gym', bucket: 'Lifestyle' as const, icon: 'dumbbell' };
 
 async function flush(): Promise<void> {

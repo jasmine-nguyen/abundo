@@ -12,14 +12,13 @@ import { queryClient } from '../queryClient';
 import { useCategories } from '../queries';
 import { categoriesKey } from '../queryKeys';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_RECORD } from './support/categories';
 import { resetAuth } from './support/authMock';
 import { useTestQueryClient, WithQueries, settle, loaded, refreshInAct } from './support/renderWithQueries';
 
 const server = installFakeServer();
 useTestQueryClient();
 beforeEach(() => resetAuth());
-
-const GROCERIES = { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Essentials', recent: 0, parent: null };
 
 function CategoryNames() {
   const { categories } = useCategories();
@@ -31,7 +30,7 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 100));
 describe('shared query waits (QA)', () => {
   // [A1] settle() must not return while a read is still in flight.
   it('settle() keeps waiting while a read is held, and returns once it lands', async () => {
-    server.seed('/categories', [GROCERIES]);
+    server.seed('/categories', [GROCERIES_RECORD]);
     const held = server.hold('/categories');
     render(<WithQueries><CategoryNames /></WithQueries>);
 
@@ -50,7 +49,7 @@ describe('shared query waits (QA)', () => {
 
   // [A2] loaded(key) must not return while that query is still loading.
   it('loaded(key) keeps waiting while that query is held, and returns once it succeeds', async () => {
-    server.seed('/categories', [GROCERIES]);
+    server.seed('/categories', [GROCERIES_RECORD]);
     const held = server.hold('/categories');
     render(<WithQueries><CategoryNames /></WithQueries>);
 

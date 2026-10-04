@@ -7,8 +7,7 @@ jest.mock('../../auth', () => require('./authMock').authMockModule());
 import * as api from '../../api';
 import { resetAuth } from './authMock';
 import { installFakeServer } from './fakeServer';
-
-const GROCERIES = { id: 'groceries', name: 'Groceries', bucket: 'Essentials', icon: 'cart', color: '#00AA00' };
+import { GROCERIES } from './categories';
 
 beforeEach(() => {
   resetAuth();

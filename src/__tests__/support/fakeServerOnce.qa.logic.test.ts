@@ -8,9 +8,9 @@ import * as api from '../../api';
 import { ApiError } from '../../apiError';
 import { resetAuth } from './authMock';
 import { installFakeServer } from './fakeServer';
+import { GROCERIES } from './categories';
 
 const JOBS = '/transactions/uncategorized/apply-rules/jobs';
-const GROCERIES = { id: 'groceries', name: 'Groceries', bucket: 'Essentials', icon: 'cart', color: '#00AA00' };
 const RUNNING = { jobId: 'job-1', status: 'running', attempted: 1 };
 const SUCCEEDED = { jobId: 'job-1', status: 'succeeded', attempted: 2 };
 
