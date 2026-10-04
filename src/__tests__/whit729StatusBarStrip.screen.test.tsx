@@ -8,17 +8,7 @@ import { View, Text, Animated, StyleSheet } from 'react-native';
 import { render } from '@testing-library/react-native';
 import { C } from '../theme';
 
-jest.mock('react-native-safe-area-context', () => {
-  const ReactLib = require('react');
-  const inset = { top: 47, right: 0, bottom: 34, left: 0 };
-  return {
-    SafeAreaProvider: ({ children }: { children: unknown }) => ReactLib.createElement(ReactLib.Fragment, null, children),
-    SafeAreaView: ({ children }: { children: unknown }) => ReactLib.createElement(ReactLib.Fragment, null, children),
-    useSafeAreaInsets: () => inset,
-    useSafeAreaFrame: () => ({ x: 0, y: 0, width: 390, height: 844 }),
-    SafeAreaInsetsContext: ReactLib.createContext(inset),
-  };
-});
+jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 47, right: 0, bottom: 34, left: 0 }) }));
 
 import { ScrollChromeHeader } from '../motion/ScrollChromeHeader';
 
