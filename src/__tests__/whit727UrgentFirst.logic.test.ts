@@ -1,4 +1,4 @@
-// WHIT-727 — the Budgets tab lists urgent spending families first: over budget → behind pace →
+// WHIT-727 — the Budgets tab lists urgent spending families first: over budget → over plan →
 // the rest, each family (a parent and its sub-budgets) moving as one block. Earning stays last.
 import { it, expect } from '@jest/globals';
 import { budgetViews } from '../context';
@@ -22,7 +22,7 @@ it('orders spending families over → behind → on pace, keeping subs under the
       budgets: [
         budget({ id: 'salary', budget: 5000, posted: 1000, pending: 0 }), // earning
         budget({ id: 'groceries', budget: 100, posted: 50, pending: 0 }), // on pace
-        budget({ id: 'dining', budget: 100, posted: 70, pending: 0 }), // behind pace
+        budget({ id: 'dining', budget: 100, posted: 70, pending: 0 }), // over plan
         budget({ id: 'coffee', budget: 200, posted: 100, pending: 0 }), // parent on pace…
         budget({ id: 'latte', budget: 20, posted: 30, pending: 0 }), // …its sub over budget
         budget({ id: 'shopping', budget: 100, posted: 150, pending: 0 }), // over budget

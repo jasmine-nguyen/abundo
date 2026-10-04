@@ -73,7 +73,7 @@ it('[A22] sections in order, income reads "earned · next pay ~Fri" with no pace
   expect(order).toEqual(['SPENDING', 'Cafes & Coffee', 'EARNING', 'Salary']);
   expect(screen.getByText('$1,000 earned · next pay ~Fri')).toBeTruthy();
   expect(screen.getAllByText('to go')).toHaveLength(1);
-  expect(screen.queryByText(/ahead of pace|behind pace|\$[\d,]+ to go|on pace|above target/)).toBeNull();
+  expect(screen.queryByText(/under plan|over plan|\$[\d,]+ to go|on pace|above target/)).toBeNull();
 });
 
 // [A23] (P0) payday more than 6 days away (fortnightly, 14 days left) → the date.
@@ -124,12 +124,12 @@ it("[A27] budget detail labels the marker \"today's plan\"", async () => {
 });
 
 // [A2] (P0) WHIT-715: the detail screen shows the new warning and the plain carry-over line.
-it('[A2] budget detail reads "Behind pace — ease up" and "+$20 left over from past cycles"', async () => {
+it('[A2] budget detail reads "Over plan — ease up" and "+$20 left over from past cycles"', async () => {
   setParams({ id: 'coffee' });
   seed([COFFEE], { coffee: { target: 100, posted: 80, pending: 0, rollover: true, carryover: 20, available: 120 } });
   server.seed('/budgets/coffee/transactions', []);
   await renderWithQueries(<BudgetDetail />);
-  expect(await screen.findByText('Behind pace — ease up')).toBeTruthy();
+  expect(await screen.findByText('Over plan — ease up')).toBeTruthy();
   expect(screen.getByText('+$20 left over from past cycles')).toBeTruthy();
   expect(screen.queryByText(/Ahead of pace|carried over|borrowed/)).toBeNull();
 });

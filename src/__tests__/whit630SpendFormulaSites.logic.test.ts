@@ -71,18 +71,18 @@ describe('the three sites agree with availableToSpend', () => {
 });
 
 describe('pace stays on the base target, not the spendable', () => {
-  // budget 100, envelope 1000, half-way through: pace target is 50, so 80 spent is behind pace.
+  // budget 100, envelope 1000, half-way through: pace target is 50, so 80 spent is over plan.
   const roomy = { budget: 100, posted: 80, pending: 0, available: 1000 };
 
-  it('[A5] (P0) budgetViews flags behind pace', () => {
-    expect(budgetViews(state(roomy)).rows[0].paceLabel).toContain('behind pace');
+  it('[A5] (P0) budgetViews flags over plan', () => {
+    expect(budgetViews(state(roomy)).rows[0].paceLabel).toContain('over plan');
   });
 
-  it('[A5] (P0) budgetDetail flags ahead of pace', () => {
-    expect(budgetDetail(state(roomy), 'food')?.statusLabel).toBe('Behind pace — ease up');
+  it('[A5] (P0) budgetDetail flags under plan', () => {
+    expect(budgetDetail(state(roomy), 'food')?.statusLabel).toBe('Over plan — ease up');
   });
 
-  it('[A5] (P1) on the first day nothing is behind pace yet (on pace → no line)', () => {
+  it('[A5] (P1) on the first day nothing is over plan yet (on pace → no line)', () => {
     expect(budgetViews(state({ budget: 100, posted: 0, pending: 0 }, 14)).rows[0].paceLabel).toBe('');
   });
 });

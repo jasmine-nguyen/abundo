@@ -22,7 +22,7 @@ describe('budgetDetail pace — gaps', () => {
   // [G2] Just past the boundary flips amber — locks the tolerance tightly with [G1].
   it('[G2] spent-target 0.51 over flips to amber', () => {
     const d = detail({ budget: 100, posted: 50.51 }, { cycleLen: 14, daysLeft: 7 });
-    expect(d.statusLabel).toBe('Behind pace — ease up');
+    expect(d.statusLabel).toBe('Over plan — ease up');
     expect(d.statusColor).toBe(C.warn);
   });
 
@@ -32,7 +32,7 @@ describe('budgetDetail pace — gaps', () => {
     // available = 100 + (-20) = 80; elapsed 0.5 → base target 50; spent 70 < 80 (not over) but 70-50=20 → amber.
     const d = detail({ budget: 100, posted: 70, rollover: true, carryover: -20 }, { cycleLen: 14, daysLeft: 7 });
     expect(d.statusColor).not.toBe(C.good);
-    expect(d.statusLabel).toBe('Behind pace — ease up');
+    expect(d.statusLabel).toBe('Over plan — ease up');
     expect(d.statusColor).toBe(C.warn);
   });
 
@@ -57,7 +57,7 @@ describe('budgetDetail pace — gaps', () => {
   it('[G6] elapsed=1: spent over base budget but under buffered available → amber', () => {
     // target = base 100 * 1 = 100; available = 100 + 50 = 150; spent 110 → not over, 110-100=10 → amber.
     const d = detail({ budget: 100, posted: 110, rollover: true, carryover: 50 }, { cycleLen: 14, daysLeft: 0 });
-    expect(d.statusLabel).toBe('Behind pace — ease up');
+    expect(d.statusLabel).toBe('Over plan — ease up');
     expect(d.statusColor).toBe(C.warn);
   });
 
@@ -69,12 +69,12 @@ describe('budgetDetail pace — gaps', () => {
       [{ budget: 100, posted: 60 }, { cycleLen: 14, daysLeft: 12 }],     // amber
       [{ budget: 100, posted: 130 }, { cycleLen: 14, daysLeft: 7 }],     // red
       [{ budget: 3667, posted: 3667 }, { cycleLen: 30, daysLeft: 29 }],  // amber (mortgage)
-      [{ budget: 100, posted: 90 }, { cycleLen: 14, daysLeft: 1 }],      // green (late, ahead of pace)
+      [{ budget: 100, posted: 90 }, { cycleLen: 14, daysLeft: 1 }],      // green (late, under plan)
       [{ budget: 100, posted: 100 }, { cycleLen: 14, daysLeft: 0 }],     // green (end, 100%)
     ];
     const pair: Record<string, string> = {
       'On target — keep it up': C.good,
-      'Behind pace — ease up': C.warn,
+      'Over plan — ease up': C.warn,
       'Over budget — ease up': C.bad,
     };
     for (const [b, clock] of scenarios) {
@@ -93,7 +93,7 @@ describe('budgetDetail pace — gaps', () => {
     const d = detail({ budget: 1000, posted: 900 }, { cycleLen: 14, daysLeft: 7 }, income);
     expect(d.statusLabel).toBe('On track — keep earning');
     expect(d.statusColor).toBe(C.textInfo);
-    expect(d.statusLabel).not.toBe('Behind pace — ease up');
+    expect(d.statusLabel).not.toBe('Over plan — ease up');
     expect(d.statusColor).not.toBe(C.warn);
   });
 });

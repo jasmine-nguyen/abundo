@@ -1,6 +1,6 @@
 // Card 609 — the floating round Ask button that opens the Ask Abundo chat. Rendered by the tab bar,
-// so it shows on all five tabs and never on pushed screens. It is NOT part of the bar's scroll-to-hide
-// slide: the spec keeps it visible while scrolling. WHIT-704 — a 48pt circle, icon only.
+// so it shows on all five tabs and never on pushed screens. WHIT-730: the tab bar slides it away with
+// the bar on scroll, so it doesn't cover row content mid-list. WHIT-704 — a 48pt circle, icon only.
 import React from 'react';
 import { Pressable, StyleSheet, StyleProp, ViewStyle } from 'react-native';
 import { C, PRESSED } from '../theme';

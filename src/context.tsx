@@ -1918,6 +1918,8 @@ export interface BudgetView {
   section: 'spending' | 'earning'; showTarget: boolean; spreadPrefill: number | null;
   // WHIT-727: true only for a spend row past its pace line but not over.
   behindPace: boolean;
+  // WHIT-730: a spend row with nothing spent yet (and not over), drawn slim without a bar.
+  unspent: boolean;
 }
 
 // The exact slice budgetViews reads. A narrow input (not the whole AppContext) so a
@@ -2036,7 +2038,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: BAR_FILL,
         pendingTint: tint(BAR_FILL, 0.45), paceLabel: '', paceColor: C.textInfo, over: false,
         note: '', depth, parentId,
-        section: 'earning', showTarget: false, spreadPrefill: null, behindPace: false,
+        section: 'earning', showTarget: false, spreadPrefill: null, behindPace: false, unspent: false,
       });
       group(parentId, b.id);
       continue;
@@ -2061,8 +2063,8 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     const behindPace = !over && spent - target > 0.5;
     if (over) {
       if (spreadPrefill !== null) { paceLabel = 'Spread it over pay cycles →'; paceColor = C.accentSoft; }
-    } else if (behindPace) { paceLabel = fmt(spent - target) + ' behind pace'; paceColor = C.warn; }
-    else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' ahead of pace'; }
+    } else if (behindPace) { paceLabel = fmt(spent - target) + ' over plan'; paceColor = C.warn; }
+    else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under plan'; }
     // "of" shows the AVAILABLE envelope so it reconciles with the remaining amount (available −
     // spent). `spent` includes pending; when some is pending, name it too (as Insights does).
     let spentLabel = `${fmtExact(spent)} of ${fmtSigned(available)}`;
@@ -2071,13 +2073,14 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     if (b.spread && Math.abs(b.spreadAdjustment) > 0.005) note = 'Includes spread bills';
     else if (b.rollover && b.carryover < -0.5) note = 'Includes past overspend';
     else if (b.rollover && b.carryover > 0.5) note = 'Includes past leftovers';
+    const unspent = !over && spent < 0.005;
     viewById.set(b.id, {
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
       spentLabel, remainAmount: fmtExact(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,
       postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: over ? C.bad : BAR_FILL,
       pendingTint: tint(over ? C.bad : BAR_FILL, 0.45), paceLabel, paceColor, over,
       note, depth, parentId,
-      section: 'spending', showTarget: true, spreadPrefill, behindPace,
+      section: 'spending', showTarget: !over, spreadPrefill, behindPace, unspent,
     });
     group(parentId, b.id);
   }
@@ -2938,7 +2941,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
       spentBig: fmtExact(actual), ofBudget: 'of ' + fmt(b.budget),
       statusLabel: met ? 'Target reached — nice' : 'On track — keep earning',
       statusColor: met ? C.good : C.textInfo,
-      postedPct, pendingPct,
+      postedPct, pendingPct, showTarget: true,
       postedColor: BAR_FILL, pendingTint: tint(BAR_FILL, 0.45),
       dailyLabel: met ? 'Target reached' : `${fmt(perDay)}/day to target`,
       // Spread is spend-only (the server rejects it on Income), so an earn-target never
@@ -2952,7 +2955,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   const spent = actual;
   const over = spent > available;
   // Pace rides the base per-cycle target (not the rollover buffer), matching budgetViews'
-  // list label — so the same budget reads "behind pace" on both screens. Spending past
+  // list label — so the same budget reads "over plan" on both screens. Spending past
   // today's linear target but still under the envelope is a caution, not a green "keep it up".
   const target = paceTarget(b, s);
   const behindPace = !over && spent - target > 0.5;
@@ -2965,13 +2968,13 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   let statusLabel = 'On target — keep it up';
   let statusColor: string = C.good;
   if (over) { statusLabel = 'Over budget — ease up'; statusColor = C.bad; }
-  else if (behindPace) { statusLabel = 'Behind pace — ease up'; statusColor = C.warn; }
+  else if (behindPace) { statusLabel = 'Over plan — ease up'; statusColor = C.warn; }
   return {
     ...common,
     spentBig: fmtExact(spent), ofBudget: 'of ' + fmtSigned(available),
     statusLabel,
     statusColor,
-    postedPct, pendingPct,
+    postedPct, pendingPct, showTarget: !over,
     postedColor: over ? C.bad : BAR_FILL, pendingTint: tint(over ? C.bad : BAR_FILL, 0.45),
     dailyLabel: over ? 'Daily limit: $0' : `Daily limit: ${fmt(daily)}`,
     // Spreading is offered once a bill has pushed the category at least a cent over (the entry

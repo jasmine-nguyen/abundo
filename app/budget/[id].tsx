@@ -93,10 +93,12 @@ export default function BudgetDetail() {
               <Text style={[styles.status, { color: bd.statusColor }]}>{bd.statusLabel}</Text>
               <Text style={styles.daysLeft}>{bd.daysLeftLabel}</Text>
             </View>
-            <BudgetBar postedPct={bd.postedPct} pendingPct={bd.pendingPct} targetPct={bd.targetPct} postedColor={bd.postedColor} pendingTint={bd.pendingTint} height={12} />
-            <View style={styles.targetRow}>
-              <Text style={[styles.targetLabel, { left: `${bd.targetPct}%` }]}>today's plan</Text>
-            </View>
+            <BudgetBar postedPct={bd.postedPct} pendingPct={bd.pendingPct} targetPct={bd.targetPct} postedColor={bd.postedColor} pendingTint={bd.pendingTint} height={12} showTarget={bd.showTarget} />
+            {bd.showTarget ? (
+              <View style={styles.targetRow}>
+                <Text style={[styles.targetLabel, { left: `${bd.targetPct}%` }]}>today's plan</Text>
+              </View>
+            ) : null}
           </View>
 
           <View style={styles.dailyBox}>
