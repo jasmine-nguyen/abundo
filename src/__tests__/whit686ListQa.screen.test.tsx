@@ -19,6 +19,7 @@ jest.mock('expo-router', () => {
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { uncategorizedFeedKey } from '../queryKeys';
@@ -31,7 +32,6 @@ const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
 const COUNT = '/transactions/uncategorized/count';
 const REFRESH = '/accounts/balances/refresh';
 
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null };
 const row = (id: string, amount: number, category: string | null = 'groceries') => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01', description: 'WOOLWORTHS',
   merchant_name: 'Woolworths', amount, account_id: 'a1', account_name: 'ANZ', category,
@@ -47,7 +47,7 @@ const pull = () => act(async () => { refreshControl().props.onRefresh(); });
 
 beforeEach(() => {
   resetAuth();
-  server.seed('/categories', [CAT]);
+  server.seed('/categories', [GROCERIES_TOP]);
   server.seed(FEED, { transactions: [row('t1', -42)], nextCursor: null });
 });
 

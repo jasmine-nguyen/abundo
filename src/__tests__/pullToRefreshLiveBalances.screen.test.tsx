@@ -24,12 +24,12 @@ jest.mock('../auth', () => ({
 
 const mockShowToast = jest.fn<(m: string) => void>();
 
-const CATS = [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 }];
+const mockCategories = [{ ...GROCERIES_RECORD, color: '#7FD49B', recent: 0 }];
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return {
     ...actual,
-    useAppContext: () => ({ retryLoad: jest.fn(), openMultiPicker: jest.fn(), showToast: mockShowToast, category: (id: string | null) => CATS.find((c) => c.id === id) }),
+    useAppContext: () => ({ retryLoad: jest.fn(), openMultiPicker: jest.fn(), showToast: mockShowToast, category: (id: string | null) => mockCategories.find((c) => c.id === id) }),
   };
 });
 
@@ -39,6 +39,7 @@ jest.mock('expo-router', () => {
 });
 
 import Accounts from '../../app/(tabs)/accounts';
+import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 const BALANCES = '/accounts/balances';
@@ -61,7 +62,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   beforeEach(() => {
     mockAuthStatus = 'authed';
     server.seed('/transactions/feed', { transactions: TXNS, nextCursor: null });
-    server.seed('/categories', CATS);
+    server.seed('/categories', mockCategories);
     server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]);
     mockShowToast.mockReset();
   });

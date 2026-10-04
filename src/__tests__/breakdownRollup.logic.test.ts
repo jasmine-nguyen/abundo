@@ -55,7 +55,7 @@ describe('categoryBreakdown — server __rollup__ (WHIT-349)', () => {
         cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
         cat({ id: 'travel', name: 'Travel', bucket: 'Living', parent: 'car' }),
         cat({ id: 'petrol', name: 'Petrol', bucket: 'Living', parent: 'travel' }),
-        cat({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', parent: null }),
+        cat({ name: 'Coffee', parent: null }),
       ],
       breakdown: withRollup(
         {
@@ -115,7 +115,7 @@ describe('categoryBreakdown — server __rollup__ (WHIT-349)', () => {
     // depth-0 row, total = their floored sum.
     const s = makeState({
       categories: [
-        cat({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', parent: null }),
+        cat({ name: 'Coffee', parent: null }),
         cat({ id: 'groceries', name: 'Groceries', bucket: 'Living', parent: null }),
       ],
       breakdown: withRollup(

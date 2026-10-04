@@ -22,7 +22,7 @@ import type { installFakeServer } from './fakeServer';
 import { COFFEE, GROCERIES } from './categories';
 import { BUDGET_PAY_CYCLE, seedBudgets } from './budgetsTab';
 
-export { BUDGETS, BUDGETS_CAPTION, BUDGET_PAY_CYCLE, seedBudgets } from './budgetsTab';
+export { BUDGETS, BUDGET_PAY_CYCLE, seedBudgets } from './budgetsTab';
 
 export function renderBudgets(client: QueryClient = makeClient()) {
   return { client, ...render(<QueryClientProvider client={client}><Budgets /></QueryClientProvider>) };

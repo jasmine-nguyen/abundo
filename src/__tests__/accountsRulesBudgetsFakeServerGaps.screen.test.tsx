@@ -9,6 +9,7 @@ import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import { RefreshControl } from 'react-native';
 import { pinToday } from './support/clock';
 import { installFakeServer } from './support/fakeServer';
+import { SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient, settle } from './support/renderWithQueries';
 import { renderWithApp, shownToasts, resetAppProbe } from './support/renderWithApp';
 import { resetAuth } from './support/authMock';
@@ -146,7 +147,7 @@ describe('Account detail', () => {
 describe('Rules', () => {
   // [A8] Retry after a failure draws the rules once the server answers (not just a re-request).
   it('[A8] Retry after a failure draws the rules once the server answers', async () => {
-    server.seed('/categories', [{ id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle' }]);
+    server.seed('/categories', [SUBSCRIPTIONS]);
     server.fail('/rules', 500);
     await renderWithApp(<Rules />);
     expect(screen.getByText('Could not load your rules.')).toBeTruthy();

@@ -6,7 +6,7 @@ import { screen, fireEvent } from '@testing-library/react-native';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
-import { BUDGETS_CAPTION, seedBudgets, renderBudgets, renderLoadedBudgets } from './support/budgetsScreen';
+import { seedBudgets, renderBudgets, renderLoadedBudgets } from './support/budgetsScreen';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -34,7 +34,6 @@ describe('Budgets top card', () => {
     expect(screen.queryByText('Left to spend')).toBeNull();
     expect(screen.queryByText('Over budget')).toBeNull();
     expect(screen.queryByText(/spent of/)).toBeNull();
-    expect(screen.queryByText(BUDGETS_CAPTION)).toBeNull(); // caption hidden
     expect(screen.queryByText('Add a budget')).toBeNull();  // the duplicate dashed button is hidden
     fireEvent.press(screen.getByTestId('budgets-hero-add'));
     expect(routerSpies.push).toHaveBeenCalledWith('/budget/pick');

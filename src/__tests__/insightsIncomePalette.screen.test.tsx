@@ -13,6 +13,7 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { breakdownWire, seedInsights, renderInsights, resetAi } from './support/insightsScreen';
+import { GROCERIES_RECORD } from './support/categories';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
@@ -26,7 +27,7 @@ const server = installFakeServer();
 useTestQueryClient();
 
 const CATS = [
-  { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Living', recent: 0 },
+  { ...GROCERIES_RECORD, recent: 0 },
   { id: 'salary', name: 'Salary', icon: 'briefcase', bucket: 'Income', recent: 0, colorSlot: 2 },
 ];
 

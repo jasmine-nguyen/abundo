@@ -8,43 +8,37 @@ import { describe, it, expect } from '@jest/globals';
 import { budgetViews, budgetDetail } from '../context';
 import { fmt, fmtExact } from '../theme';
 import { makeState, cat, budget } from './factory';
-
-const income = (over = {}) => cat({ id: 'salary', name: 'Salary', color: '#35d9a0', bucket: 'Income', ...over });
+import { budgetDetailFor, budgetRowFor } from './support/budgetsTab';
+import { SALARY } from './support/categories';
 
 // ── INCOME earn-target branch, fractional earned — list rows ──────────────────
 // [A10] under target with cents: "earned"/"to go" figures carry the cents.
 describe('budgetViews — income earn-target with fractional earned (GAP)', () => {
-  const state = (posted: number, pending = 0, b = 5000) => makeState({
-    categories: [income()], budgets: [budget({ id: 'salary', budget: b, posted, pending })],
-    cycleLen: 14, daysLeft: 7, // elapsed 0.5 → target 2500
-  });
+  const incomeRow = (posted: number, pending = 0, b = 5000) => budgetRowFor({ budget: b, posted, pending }, SALARY); // elapsed 0.5 → target 2500
 
   it('[A10] under target: earned + "to go" show exact cents, target stays whole', () => {
-    const row = budgetViews(state(1000.25)).rows[0];
+    const row = incomeRow(1000.25);
     expect(row.spentLabel).toBe('$1,000.25 earned'); // fail-on-revert: fmt(1000.25) → '$1,000'
     expect(row.remainLabel).toBe('to go');
     expect(row.remainAmount).toBe('$3,999.75');                // 5000 - 1000.25; fmt would read '$4,000'
   });
 
   it('[A11] over target: the "above target" surplus shows exact cents', () => {
-    const row = budgetViews(state(5006.5)).rows[0]; // earned 5006.50 ≥ 5000 floor
+    const row = incomeRow(5006.5); // earned 5006.50 ≥ 5000 floor
     expect(row.remainLabel).toBe('above target');
     expect(row.remainAmount).toBe('$6.50');                    // 5006.50 - 5000; fmt(6.5) rounds
     expect(row.spentLabel).toBe('$5,006.50 earned');
   });
 
   it('[A12] pending folds into earned with cents (no separate breakout)', () => {
-    const row = budgetViews(state(1000.25, 200.25)).rows[0];
+    const row = incomeRow(1000.25, 200.25);
     expect(row.spentLabel).toBe('$1,200.50 earned'); // 1000.25 + 200.25
   });
 });
 
 // ── INCOME earn-target branch, fractional earned — detail hero ────────────────
 describe('budgetDetail — income earn-target hero with cents (GAP)', () => {
-  const detail = (posted: number, pending = 0) => budgetDetail(makeState({
-    categories: [income()], budgets: [budget({ id: 'salary', budget: 5000, posted, pending })],
-    cycleLen: 14, daysLeft: 7,
-  }), 'salary')!;
+  const detail = (posted: number, pending = 0) => budgetDetailFor({ budget: 5000, posted, pending }, undefined, SALARY);
 
   it('[A13] hero earned shows exact cents; "of $X" target stays whole', () => {
     const d = detail(1000.25);
@@ -131,7 +125,7 @@ describe('exact-cents change leaves whole-dollar labels untouched (regression)',
   });
 
   it('[A21] whole income remain ("to go") unchanged', () => {
-    const row = budgetViews(makeState({ categories: [income()], budgets: [budget({ id: 'salary', budget: 5000, posted: 1000, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
+    const row = budgetRowFor({ budget: 5000, posted: 1000, pending: 0 }, SALARY);
     expect(row.remainAmount).toBe('$4,000');
     expect(row.spentLabel).toBe('$1,000 earned');
   });

@@ -12,14 +12,13 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { queryClient } from '../queryClient';
 import { categoriesKey, useCategories } from '../queries';
 import { installFakeServer } from './support/fakeServer';
+import { ESSENTIAL_GROCERIES_TOP } from './support/categories';
 import { resetAuth } from './support/authMock';
 import { useTestQueryClient, WithQueries, renderWithQueries } from './support/renderWithQueries';
 
 const server = installFakeServer();
 useTestQueryClient();
 beforeEach(() => resetAuth());
-
-const GROCERIES = { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Essentials', recent: 0, parent: null };
 
 function CategoryNames() {
   const { categories, isError } = useCategories();
@@ -38,7 +37,7 @@ describe('renderWithQueries', () => {
 
   // [A4] callers assert synchronously after the await — the seeded read must already be drawn.
   it('returns only after the first reads have landed', async () => {
-    server.seed('/categories', [GROCERIES]);
+    server.seed('/categories', [ESSENTIAL_GROCERIES_TOP]);
     await renderWithQueries(<CategoryNames />);
     expect(queryClient.isFetching()).toBe(0);
     expect(screen.getByText('Groceries')).toBeTruthy();
@@ -63,7 +62,7 @@ describe('renderWithQueries', () => {
 
   // [A6] WithQueries alone draws without waiting (for tests that hold a read or start signed out).
   it('WithQueries draws immediately, before the read lands', () => {
-    server.seed('/categories', [GROCERIES]);
+    server.seed('/categories', [ESSENTIAL_GROCERIES_TOP]);
     const view = render(<WithQueries><CategoryNames /></WithQueries>);
     expect(screen.getByText('none')).toBeTruthy();
     view.unmount();
@@ -73,9 +72,9 @@ describe('renderWithQueries', () => {
 // [A3] the cache is cleared between tests — two tests in order, the second sees nothing cached.
 describe('useTestQueryClient clears the cache between tests', () => {
   it('first test fills the categories cache', async () => {
-    server.seed('/categories', [GROCERIES]);
+    server.seed('/categories', [ESSENTIAL_GROCERIES_TOP]);
     await renderWithQueries(<CategoryNames />);
-    expect(queryClient.getQueryData(categoriesKey)).toEqual([GROCERIES]);
+    expect(queryClient.getQueryData(categoriesKey)).toEqual([ESSENTIAL_GROCERIES_TOP]);
   });
 
   it('second test starts with an empty cache', () => {

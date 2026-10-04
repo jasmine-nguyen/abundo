@@ -14,6 +14,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { SUBSCRIPTIONS_RECORD } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
 
@@ -29,7 +30,7 @@ const fns = {
 };
 
 const CATS = [
-  { id: 'subs', name: 'Subscriptions', icon: 'film', bucket: 'Lifestyle' },
+  SUBSCRIPTIONS_RECORD,
 ];
 
 async function open(sheet: Record<string, unknown>, rules: unknown[]) {

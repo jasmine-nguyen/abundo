@@ -42,6 +42,8 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { COFFEE } from './support/categories';
 
 const SPEND = COFFEE;
+const INCOME = { id: 'salary', name: 'Salary', icon: 'briefcase', color: '#7fd49b', bucket: 'Income', recent: 0 };
+const PICK_INCOME = { ...INCOME, recent: 4000 };
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -122,12 +124,10 @@ it('wraps the form in a keyboard-inset, tap-persisting scroll so Save stays reac
 
 // ===== WHIT-169 (folded from budgetEditIncome.screen.test.tsx) =====
 // edit.tsx must GATE the spend UI for an income category, and a Savings deep-link lands on a
-// "can't budget" state. SPEND reuses the module-scope const; INCOME is block-scoped (the pick
-// blocks below use a different INCOME.recent). replace is the module-scope mockReplace here
+// "can't budget" state. SPEND and INCOME reuse the module-scope consts (the pick blocks below use
+// PICK_INCOME, a different recent). replace is the module-scope mockReplace here
 // (inert: these render-only tests never press Save).
 describe('budgetEditIncome (folded)', () => {
-  const INCOME = { id: 'salary', name: 'Salary', icon: 'briefcase', color: '#7fd49b', bucket: 'Income', recent: 0 };
-
   describe('BudgetEdit — income framing is wired into the screen (WHIT-169)', () => {
     it('income category: prompt shown, recommend button + "Recommended:" line absent, earning history, dashed stats', async () => {
       mockParams = { categoryId: 'salary' };
@@ -177,10 +177,8 @@ describe('budgetEditIncome (folded)', () => {
 
 // ===== budget-rollover (folded from budgetEditRollover.screen.test.tsx) =====
 // edit.tsx must WIRE the rollover Switch. mockSaveBudget/mockReplace reuse the module-scope mocks;
-// SPEND reuses the outer const; INCOME is block-scoped. Own beforeEach re-clears the writer/replace.
+// SPEND and INCOME reuse the outer consts. Own beforeEach re-clears the writer/replace.
 describe('budgetEditRollover (folded)', () => {
-  const INCOME = { id: 'salary', name: 'Salary', icon: 'briefcase', color: '#7fd49b', bucket: 'Income', recent: 0 };
-
   beforeEach(() => { mockSaveBudget.mockClear(); mockReplace.mockClear(); });
 
   it('spend budget: flipping the Smoothing toggle ON makes Save pass rollover=true', async () => {
@@ -282,15 +280,14 @@ describe('budgetEditRollover (folded)', () => {
 
 // ===== WHIT-69 (folded from budgetPickIncome.screen.test.tsx) =====
 // app/budget/pick.tsx lists Income categories in "Add a budget" while hiding already-budgeted ones.
-// Renders BudgetPick (imported at module scope). SPEND reuses the outer const; INCOME (recent 4000,
-// differs from the edit blocks' INCOME) + SIDE are block-scoped.
+// Renders BudgetPick (imported at module scope). SPEND and PICK_INCOME (recent 4000, unlike the edit
+// blocks' INCOME) reuse the outer consts; SIDE is block-scoped.
 describe('budgetPickIncome (folded)', () => {
-  const INCOME = { id: 'salary', name: 'Salary', icon: 'briefcase', color: '#7fd49b', bucket: 'Income', recent: 4000 };
   const SIDE = { id: 'side_gig', name: 'Side Gig', icon: 'briefcase', color: '#7fd49b', bucket: 'Income', recent: 300 };
 
   describe('BudgetPick — income is pickable (WHIT-69)', () => {
     it('lists an Income category alongside spend categories', async () => {
-      seedServer([INCOME, SPEND]);
+      seedServer([PICK_INCOME, SPEND]);
       await renderWithQueries(<BudgetPick />);
       expect(screen.getByText('Salary')).toBeTruthy();          // was filtered out pre-WHIT-69
       expect(screen.getByText('Cafes & Coffee')).toBeTruthy();  // control: spend still listed
@@ -298,7 +295,7 @@ describe('budgetPickIncome (folded)', () => {
 
     it('still hides an income category that already has a budget', async () => {
       // A rollup needs a target above 0, or the budgets read drops it.
-      seedServer([INCOME, SIDE], { salary: { target: 1, posted: 0, pending: 0 } });
+      seedServer([PICK_INCOME, SIDE], { salary: { target: 1, posted: 0, pending: 0 } });
       await renderWithQueries(<BudgetPick />);
       expect(screen.queryByText('Salary')).toBeNull();          // already budgeted → excluded
       expect(screen.getByText('Side Gig')).toBeTruthy();        // not budgeted → still pickable
@@ -307,7 +304,7 @@ describe('budgetPickIncome (folded)', () => {
     // WHIT-169: an income row must NOT show its spend `recent` (4000) as an average —
     // it shows an "earn-target" tag instead. A spend row still shows its avg.
     it('shows "earn-target" for income rows, not a spend average, while spend rows keep theirs', async () => {
-      seedServer([INCOME, SPEND]);
+      seedServer([PICK_INCOME, SPEND]);
       await renderWithQueries(<BudgetPick />);
       expect(screen.getByText('earn-target')).toBeTruthy();     // income row's right side
       expect(screen.queryByText('$4,000')).toBeNull();          // income spend-avg suppressed
@@ -319,14 +316,13 @@ describe('budgetPickIncome (folded)', () => {
 
 // ===== WHIT-201 (folded from budgetPickSavings.screen.test.tsx) =====
 // Savings categories are NOT budgetable — pick.tsx excludes them (Income stays pickable). SPEND
-// reuses the outer const; SAVINGS + INCOME (recent 4000) are block-scoped.
+// and PICK_INCOME (recent 4000) reuse the outer consts; SAVINGS is block-scoped.
 describe('budgetPickSavings (folded)', () => {
   const SAVINGS = { id: 'nest_egg', name: 'Nest Egg', icon: 'home', color: '#C7A8F0', bucket: 'Savings', recent: 0 };
-  const INCOME = { id: 'salary', name: 'Salary', icon: 'briefcase', color: '#7fd49b', bucket: 'Income', recent: 4000 };
 
   describe('BudgetPick — Savings is not budgetable (WHIT-201)', () => {
     it('hides a Savings category while still listing spend and income categories', async () => {
-      seedServer([SAVINGS, INCOME, SPEND]);
+      seedServer([SAVINGS, PICK_INCOME, SPEND]);
       await renderWithQueries(<BudgetPick />);
       expect(screen.queryByText('Nest Egg')).toBeNull();        // Savings excluded
       expect(screen.getByText('Salary')).toBeTruthy();          // Income still pickable (WHIT-69)

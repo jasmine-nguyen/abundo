@@ -10,7 +10,7 @@ import { UNCATEGORIZED_KEY } from '../model';
 import { makeState, cat, txn, spend, withRollup } from './factory';
 
 const cats = [
-  cat({ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle' }),
+  cat(),
   cat({ id: 'groceries', name: 'Groceries', bucket: 'Living' }),
 ];
 
@@ -90,7 +90,7 @@ describe('categoryTransactions', () => {
   it('reconciles the drilled total with the categoryBreakdown row', () => {
     const treeCats = [
       cat({ id: 'food', name: 'Food', bucket: 'Living' }),
-      cat({ id: 'coffee', name: 'Coffee', bucket: 'Living', parent: 'food' }),
+      cat({ name: 'Coffee', bucket: 'Living', parent: 'food' }),
     ];
     const breakdown = withRollup(
       {
@@ -131,7 +131,7 @@ describe('categoryBreakdown drillId', () => {
   it('sets drillId to the row’s own id for a leaf and Uncategorized, and to the parent for a "Directly in X" row', () => {
     const treeCats = [
       cat({ id: 'food', name: 'Food', bucket: 'Living' }),
-      cat({ id: 'coffee', name: 'Coffee', bucket: 'Living', parent: 'food' }),
+      cat({ name: 'Coffee', bucket: 'Living', parent: 'food' }),
     ];
     const breakdown = withRollup(
       {
@@ -172,7 +172,7 @@ describe('categoryBreakdown drillId', () => {
   // refund and clamps its bucket to 0), so the sign flip can't silently invert spend totals.
   it('leaves a spend-bucket drill on the spend sign (a positive amount is a refund, clamps to 0)', () => {
     const s = makeState({
-      categories: [cat({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle' })],
+      categories: [cat({ name: 'Coffee' })],
       transactions: [
         txn({ transaction_id: 'c1', category: 'coffee', amount: -20, status: 'posted', date: '2026-06-10' }),
         txn({ transaction_id: 'r1', category: 'coffee', amount: 50, status: 'posted', date: '2026-06-11' }), // refund > spend
@@ -187,7 +187,7 @@ describe('categoryBreakdown drillId', () => {
 // WHIT-308/WHIT-342 adversarial gaps — client total math over server-scoped rows: a runtime-stray
 // status is listed but adds 0; a refund netting BOTH buckets negative is non-null with total 0
 // (NOT the null empty state). (Exact-id-match on the returned rows is a server concern — pytest.)
-const gapsCats = [cat({ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle' })];
+const gapsCats = [cat()];
 
 describe('categoryTransactions — adversarial gaps', () => {
   // [A-G1] The total loop is `if posted … else if pending …` — a stray status contributes to

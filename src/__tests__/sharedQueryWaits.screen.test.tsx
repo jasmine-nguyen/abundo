@@ -12,6 +12,7 @@ import { queryClient } from '../queryClient';
 import { useCategories } from '../queries';
 import { categoriesKey } from '../queryKeys';
 import { installFakeServer } from './support/fakeServer';
+import { ESSENTIAL_GROCERIES_TOP } from './support/categories';
 import { resetAuth } from './support/authMock';
 import * as support from './support/renderWithQueries';
 import { findOffenders } from './support/sourceScan';
@@ -19,8 +20,6 @@ import { findOffenders } from './support/sourceScan';
 const server = installFakeServer();
 support.useTestQueryClient();
 beforeEach(() => resetAuth());
-
-const GROCERIES = { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Essentials', recent: 0, parent: null };
 
 function CategoryNames() {
   const { categories } = useCategories();
@@ -33,7 +32,7 @@ describe('shared query waits', () => {
     expect(typeof settle).toBe('function');
     expect(typeof loaded).toBe('function');
 
-    server.seed('/categories', [GROCERIES]);
+    server.seed('/categories', [ESSENTIAL_GROCERIES_TOP]);
     render(<WithQueries><CategoryNames /></WithQueries>);
 
     await loaded(categoriesKey);

@@ -6,8 +6,8 @@ import { refreshInAct } from './support/renderWithQueries';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
-import { BUDGETS_CAPTION, seedBudgets, renderBudgets, renderLoadedBudgets } from './support/budgetsScreen';
-import { COFFEE, SALARY } from './support/categories';
+import { seedBudgets, renderBudgets, renderLoadedBudgets } from './support/budgetsScreen';
+import { COFFEE, SALARY, GROCERIES_RECORD } from './support/categories';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -17,7 +17,7 @@ jest.mock('../auth', () => ({
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const server = installFakeServer();
-const GROCERIES = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd1b9', recent: 12 };
+const GROCERIES = { ...GROCERIES_RECORD, color: '#7fd1b9', recent: 12 };
 
 beforeEach(() => {
   seedBudgets(server, { payCycle: { length: 30, last_pay_date: '2026-07-01', days_left: 4 } });
@@ -79,7 +79,6 @@ describe('Budgets top card — QA edges', () => {
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
     expect(screen.queryByText('Add a spending budget')).toBeNull();
     expect(screen.getByText('Left to spend')).toBeTruthy();
-    expect(screen.getByText(BUDGETS_CAPTION)).toBeTruthy(); // caption back
     expect(screen.getByText('Add a budget')).toBeTruthy(); // dashed button back
   });
 

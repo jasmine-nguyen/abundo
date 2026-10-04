@@ -26,7 +26,7 @@ import { TransactionRow } from '../components/TransactionRow';
 
 const openPicker = jest.fn();
 function stateWith() {
-  return { openPicker, category: makeState({ categories: [cat({ id: 'coffee', name: 'Cafes & Coffee', color: '#E8A87C' })] }).category };
+  return { openPicker, category: makeState({ categories: [cat()] }).category };
 }
 
 beforeEach(() => {

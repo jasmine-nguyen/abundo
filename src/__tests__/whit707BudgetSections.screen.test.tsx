@@ -1,11 +1,11 @@
-// WHIT-707 — the Budgets tab shows Spending and Earning sections, a one-line caption instead of
-// the swatch legend, and an over-budget row's spread link opens the spread screen prefilled.
+// WHIT-707 — the Budgets tab shows Spending and Earning sections with no swatch legend, and an
+// over-budget row's spread link opens the spread screen prefilled.
 // Real ../api over the fake server; ../auth + expo-router mocked.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, fireEvent } from '@testing-library/react-native';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
-import { BUDGETS_CAPTION, renderLoadedBudgets } from './support/budgetsScreen';
+import { renderLoadedBudgets } from './support/budgetsScreen';
 import { COFFEE } from './support/categories';
 
 jest.mock('../auth', () => ({
@@ -30,12 +30,11 @@ beforeEach(() => {
   });
 });
 
-it('shows Spending and Earning sections, the caption, and a spread link that opens spread prefilled', async () => {
+it('shows Spending and Earning sections and a spread link that opens spread prefilled', async () => {
   await renderLoadedBudgets();
 
   expect(screen.getByText('SPENDING')).toBeTruthy();
   expect(screen.getByText('EARNING')).toBeTruthy();
-  expect(screen.getByText(BUDGETS_CAPTION)).toBeTruthy();
   expect(screen.queryByText("Today's pace")).toBeNull();
 
   expect(screen.getByText('Spread it over pay cycles →')).toBeTruthy();

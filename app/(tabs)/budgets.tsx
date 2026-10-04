@@ -152,11 +152,11 @@ export default function Budgets() {
           ) : null}
         >
           {hasSpending ? (
-            <View style={[styles.heroBottom, styles.heroBottomRow]}>
-              <View style={styles.heroPill}>
+            <View style={styles.heroBottom}>
+              <View testID="budgets-hero-pill" style={styles.heroPill}>
                 <Text style={styles.heroPillText}>{pillLabel}</Text>
               </View>
-              {overBudget ? <Text style={styles.heroOver}>{resetsLabel(daysLeft)}</Text> : null}
+              {overBudget ? <Text testID="budgets-hero-resets" style={styles.heroResets}>{resetsLabel(daysLeft)}</Text> : null}
             </View>
           ) : (
             <View style={styles.heroBottom}>
@@ -171,8 +171,6 @@ export default function Budgets() {
         </BudgetsHero>
 
         <StaleDataLine idPrefix="budgets" error={refreshError} updatedAt={updatedAt} />
-
-        {noRows ? null : <Text style={styles.caption}>Solid = spent · faded = pending · line = today's plan (spending evenly)</Text>}
 
         {SECTIONS.map(({ section, heading }) => {
           const sectionRows = rows.filter((b) => b.section === section);
@@ -214,16 +212,14 @@ const styles = StyleSheet.create({
   heroLabel: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.heroInk2 },
   heroPayday: { marginTop: 10 },
   heroBottom: { marginTop: 16 },
-  heroBottomRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   heroSmall: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.heroInkSoft },
-  heroPill: { flexShrink: 1, backgroundColor: tint(C.heroInk, 0.12), borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12 },
+  heroPill: { alignSelf: 'flex-start', maxWidth: '100%',backgroundColor: tint(C.heroInk, 0.12), borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12 },
   heroPillText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.heroInk },
-  heroOver: { flex: 1, minWidth: 0, fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.heroInk },
+  heroResets: { marginTop: 10, fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.heroInk },
   heroEmpty: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.heroInk2 },
   heroAdd: { marginTop: 12, alignSelf: 'flex-start', backgroundColor: tint(C.heroInk, 0.12), borderRadius: 12, paddingVertical: 10, paddingHorizontal: 16 },
   heroAddText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.heroInk },
 
-  caption: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, fontWeight: '500', marginHorizontal: 4 },
   // Same uppercase muted label as the budget detail screen's section headings.
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 18, marginBottom: 8, marginHorizontal: 4 },
 
@@ -233,9 +229,8 @@ const styles = StyleSheet.create({
   rowSub: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 2 },
   rowRemain: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', letterSpacing: -0.5 },
   rowRemainLabel: { fontFamily: FONT.body, fontSize: 11, color: C.textDim, fontWeight: '500', marginTop: 1 },
-  // WHIT-281: the "today's plan" tick is labelled once in the caption up top; a per-row
-  // "target" caption here was redundant AND overlapped the right-aligned pace status when
-  // the tick sat far right. Removed — only the pace status remains, right-aligned.
+  // WHIT-281: a per-row "target" caption overlapped the right-aligned pace status when the
+  // tick sat far right. Removed — only the pace status remains, right-aligned.
   paceRow: { minHeight: 18, marginTop: 1, alignItems: 'flex-end', justifyContent: 'center' },
   paceLabel: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '700' },
 
