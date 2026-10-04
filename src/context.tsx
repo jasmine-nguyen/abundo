@@ -16,7 +16,7 @@ export { APPLY_RULES_MAX_WRITES } from './filingRun';
 import type { Bucket, Category, Transaction } from './types';
 import { loanFactsReady, toCategory, toRule, EMPTY_LOAN_FACTS, UNCATEGORIZED_KEY, EARNED_KEY, INCOME_KEY, ROLLUP_KEY, readRollup, type Budget, type Rule, type RuleWrite, type HomeLoanState } from './model';
 import { cycleName, cycleClock, cycleClockView, elapsedFrac } from './payCycle';
-import { availableToSpend, paceTarget } from './budgetMath';
+import { availableToSpend, pacePct, paceTarget, paceWarning } from './budgetMath';
 import { breakdownKey, budgetsKey, categoriesKey, filingSuggestionsKey, goalsKey, loanFactsKey, milestonesKey, payCycleKey, rulesKey, transactionsSearchKey } from './queryKeys';
 import { queryClient } from './queryClient';
 import { readTransactionCopies, findTransaction, patchTransactionsCache, patchAllCopies, removeFromAllCopies, optimisticRefile, refreshAfter } from './transactionCache';
@@ -2060,10 +2060,10 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     let paceLabel = '', paceColor: string = C.textInfo;
     const spread = budgetSpreadEligibility(c, b);
     const spreadPrefill = spread.entry === 'start' ? spread.overspend : null;
-    const behindPace = !over && spent - target > 0.5;
+    const behindPace = paceWarning({ spent, target, available, over }, s);
     if (over) {
       if (spreadPrefill !== null) { paceLabel = 'Spread it over pay cycles →'; paceColor = C.accentSoft; }
-    } else if (behindPace) { paceLabel = fmt(spent - target) + ' over plan'; paceColor = C.warn; }
+    } else if (behindPace) paceLabel = fmt(spent - target) + ' over plan';
     else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under plan'; }
     // "of" shows the AVAILABLE envelope so it reconciles with the remaining amount (available −
     // spent). `spent` includes pending; when some is pending, name it too (as Insights does).
@@ -2077,7 +2077,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     viewById.set(b.id, {
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
       spentLabel, remainAmount: fmtExact(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,
-      postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: over ? C.bad : BAR_FILL,
+      postedPct, pendingPct, targetPct: pacePct(target, den), postedColor: over ? C.bad : BAR_FILL,
       pendingTint: tint(over ? C.bad : BAR_FILL, 0.45), paceLabel, paceColor, over,
       note, depth, parentId,
       section: 'spending', showTarget: !over, spreadPrefill, behindPace, unspent,
@@ -2955,10 +2955,10 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   const spent = actual;
   const over = spent > available;
   // Pace rides the base per-cycle target (not the rollover buffer), matching budgetViews'
-  // list label — so the same budget reads "over plan" on both screens. Spending past
-  // today's linear target but still under the envelope is a caution, not a green "keep it up".
+  // list label — so the same budget reads "over plan" on both screens. The muted caution only
+  // shows when the shared paceWarning rule fires (WHIT-732).
   const target = paceTarget(b, s);
-  const behindPace = !over && spent - target > 0.5;
+  const behindPace = paceWarning({ spent, target, available, over }, s);
   const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
   const remain = available - spent;
   const daily = remain > 0 ? remain / Math.max(1, s.daysLeft) : 0;
@@ -2968,9 +2968,10 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   let statusLabel = 'On target — keep it up';
   let statusColor: string = C.good;
   if (over) { statusLabel = 'Over budget — ease up'; statusColor = C.bad; }
-  else if (behindPace) { statusLabel = 'Over plan — ease up'; statusColor = C.warn; }
+  else if (behindPace) { statusLabel = 'Over plan — ease up'; statusColor = C.textInfo; }
   return {
     ...common,
+    targetPct: pacePct(target, den),
     spentBig: fmtExact(spent), ofBudget: 'of ' + fmtSigned(available),
     statusLabel,
     statusColor,

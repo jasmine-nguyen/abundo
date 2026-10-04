@@ -36,13 +36,13 @@ afterEach(() => {
 // [A4] (P0) the whole family moves up on screen, sub-budget still directly under its parent.
 it('shows a family with a behind-pace sub above an on-pace budget, sub under its parent', async () => {
   // 7 of 14 days left → pace is half the budget. Subscriptions $50/$100 on pace; Coffee
-  // $100/$200 on pace; its sub Dining $35/$50 is over plan.
+  // $100/$200 on pace; its sub Dining $45/$50 is over plan.
   seedBudgetsTab(
     server,
     {
       subs: { target: 100, posted: 50, pending: 0 },
       coffee: { target: 200, posted: 100, pending: 0 },
-      dining: { target: 50, posted: 35, pending: 0 },
+      dining: { target: 50, posted: 45, pending: 0 },
     },
     [SUBSCRIPTIONS, COFFEE, { ...DINING, parent: 'coffee' }],
   );

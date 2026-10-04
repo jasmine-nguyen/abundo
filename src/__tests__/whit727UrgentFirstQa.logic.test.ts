@@ -16,7 +16,7 @@ describe('urgentFirst — edges', () => {
   it('lifts a three-level family by its over grandchild, keeping it in one block', () => {
     const rows = rowsFor([groceries, dining, coffee, latte, oat], [
       budget({ id: 'groceries', budget: 100, posted: 50, pending: 0 }),
-      budget({ id: 'dining', budget: 100, posted: 70, pending: 0 }),
+      budget({ id: 'dining', budget: 100, posted: 85, pending: 0 }),
       budget({ id: 'coffee', budget: 300, posted: 100, pending: 0 }),
       budget({ id: 'latte', budget: 100, posted: 50, pending: 0 }),
       budget({ id: 'oat', budget: 20, posted: 30, pending: 0 }),
@@ -33,7 +33,7 @@ describe('urgentFirst — edges', () => {
     const loopB = cat({ id: 'loop_b', name: 'Loop B', parent: 'loop_a' });
     const rows = rowsFor([groceries, dining, loopA, loopB], [
       budget({ id: 'groceries', budget: 100, posted: 50, pending: 0 }),
-      budget({ id: 'dining', budget: 100, posted: 70, pending: 0 }),
+      budget({ id: 'dining', budget: 100, posted: 85, pending: 0 }),
       budget({ id: 'loop_a', budget: 100, posted: 150, pending: 0 }),
       budget({ id: 'loop_b', budget: 100, posted: 10, pending: 0 }),
     ]);

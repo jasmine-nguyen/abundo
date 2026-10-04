@@ -9,9 +9,9 @@ import { budgetRowFor, budgetRowsFor, budgetDetailFor } from './support/budgetsT
 import { budget, cat } from './factory';
 
 describe('pace words (WHIT-730)', () => {
-  it('[A1] "over plan" is amber and "under plan" is muted', () => {
-    const overPlan = budgetRowFor({ budget: 100, posted: 70, pending: 0 });
-    expect(overPlan.paceColor).toBe(C.warn);
+  it('[A1] "over plan" and "under plan" are both muted (WHIT-732)', () => {
+    const overPlan = budgetRowFor({ budget: 100, posted: 85, pending: 0 });
+    expect(overPlan.paceColor).toBe(C.textInfo);
     const underPlan = budgetRowFor({ budget: 100, posted: 20, pending: 0 });
     expect(underPlan.paceColor).toBe(C.textInfo);
   });
@@ -19,15 +19,15 @@ describe('pace words (WHIT-730)', () => {
   it('[A2] within 50c of the plan says nothing; pending counts toward "over plan"', () => {
     expect(budgetRowFor({ budget: 100, posted: 50.4, pending: 0 }).paceLabel).toBe('');
     expect(budgetRowFor({ budget: 100, posted: 49.6, pending: 0 }).paceLabel).toBe('');
-    expect(budgetRowFor({ budget: 100, posted: 40, pending: 25 }).paceLabel).toBe('$15 over plan');
+    expect(budgetRowFor({ budget: 100, posted: 40, pending: 45 }).paceLabel).toBe('$35 over plan');
   });
 
   it('[A3] the row and the detail screen use the same "over plan" word for one budget', () => {
-    const row = budgetRowFor({ budget: 100, posted: 70, pending: 0 });
-    const detail = budgetDetailFor({ budget: 100, posted: 70 });
+    const row = budgetRowFor({ budget: 100, posted: 85, pending: 0 });
+    const detail = budgetDetailFor({ budget: 100, posted: 85 });
     expect(row.paceLabel).toMatch(/over plan$/);
     expect(detail.statusLabel.toLowerCase()).toContain('over plan');
-    expect(detail.statusColor).toBe(C.warn);
+    expect(detail.statusColor).toBe(C.textInfo);
   });
 });
 

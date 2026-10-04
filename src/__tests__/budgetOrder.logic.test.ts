@@ -22,7 +22,7 @@ describe('urgentFirst', () => {
     const rows = rowsFor([groceries, coffee, latte], [
       budget({ id: 'groceries', budget: 100, posted: 50, pending: 0 }),
       budget({ id: 'coffee', budget: 200, posted: 100, pending: 0 }),
-      budget({ id: 'latte', budget: 20, posted: 15, pending: 0 }),
+      budget({ id: 'latte', budget: 20, posted: 17, pending: 0 }),
     ]);
     const ordered = urgentFirst(rows);
     expect(ids(ordered)).toEqual(['coffee', 'latte', 'groceries']);
@@ -51,7 +51,7 @@ describe('urgentFirst', () => {
 
 describe('behindPace', () => {
   it('is true for a row past its pace line', () => {
-    const row = budgetRowFor({ budget: 100, posted: 70, pending: 0 });
+    const row = budgetRowFor({ budget: 100, posted: 85, pending: 0 });
     expect(row.behindPace).toBe(true);
     expect(row.paceLabel).toMatch(/over plan$/);
   });

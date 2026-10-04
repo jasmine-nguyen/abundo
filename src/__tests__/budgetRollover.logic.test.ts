@@ -30,11 +30,12 @@ describe('budgetViews — positive carryover (sinking fund)', () => {
   });
 
   it('drawing down the buffer past the base target is NOT over budget, but pace still warns', () => {
-    // spent 150 > base target 100, but < available 300 → calm on the ceiling. Pace is measured
-    // on the BASE target (100 * 0.5 = 50), so 150 is well over plan (amber), independently.
-    const row = budgetViews(state({ budget: 100, posted: 150, pending: 0, rollover: true, carryover: 200 })).rows[0];
+    // spent 250 > base target 100, but < available 300 → calm on the ceiling. Pace is measured
+    // on the BASE target (100 * 0.5 = 50), so 250 is well over plan, and $50 over 7 days is under
+    // half the $21.43 daily plan (WHIT-732), so the line shows.
+    const row = budgetViews(state({ budget: 100, posted: 250, pending: 0, rollover: true, carryover: 200 })).rows[0];
     expect(row.over).toBe(false);
-    expect(row.remainAmount).toBe('$150');      // 300 - 150
+    expect(row.remainAmount).toBe('$50');       // 300 - 250
     expect(row.paceLabel).toContain('over plan');  // pace stays on the base target
   });
 });

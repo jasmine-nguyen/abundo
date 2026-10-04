@@ -9,13 +9,13 @@ import { SALARY } from './support/categories';
 const incomeRow = (b: object) => rowFor({ pending: 0, ...b }, SALARY);
 
 describe('budget status words say good or bad plainly (WHIT-715)', () => {
-  it('spending rows read "under plan" (muted) when under and "over plan" (amber) when over', () => {
+  it('spending rows read "under plan" when under and "over plan" when over, both muted', () => {
     const ahead = rowFor({ budget: 100, posted: 30, pending: 0 });
     expect(ahead.paceLabel).toBe('$20 under plan');
     expect(ahead.paceColor).toBe(C.textInfo);
-    const behind = rowFor({ budget: 100, posted: 70, pending: 0 });
-    expect(behind.paceLabel).toBe('$20 over plan');
-    expect(behind.paceColor).toBe(C.warn);
+    const behind = rowFor({ budget: 100, posted: 85, pending: 0 });
+    expect(behind.paceLabel).toBe('$35 over plan');
+    expect(behind.paceColor).toBe(C.textInfo);
     for (const row of [ahead, behind]) expect(row.paceLabel).not.toMatch(/over pace|under pace/);
   });
 
@@ -27,11 +27,11 @@ describe('budget status words say good or bad plainly (WHIT-715)', () => {
   });
 
   it('a budget spent faster than planned reads "over plan" on the row and in detail', () => {
-    const b = { budget: 100, posted: 70 };
-    expect(rowFor({ ...b, pending: 0 }).paceLabel).toBe('$20 over plan');
+    const b = { budget: 100, posted: 85 };
+    expect(rowFor({ ...b, pending: 0 }).paceLabel).toBe('$35 over plan');
     const d = spendDetail(b);
     expect(d.statusLabel).toBe('Over plan — ease up');
-    expect(d.statusColor).toBe(C.warn);
+    expect(d.statusColor).toBe(C.textInfo);
   });
 
   it('the detail carry-over line says left over from / short from past cycles', () => {
