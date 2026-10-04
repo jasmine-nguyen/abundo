@@ -124,3 +124,14 @@ it("[A27] budget detail labels the marker \"today's plan\"", async () => {
   expect(await screen.findByText("today's plan")).toBeTruthy();
   expect(screen.queryByText("today's target")).toBeNull();
 });
+
+// [A2] (P0) WHIT-715: the detail screen shows the new warning and the plain carry-over line.
+it('[A2] budget detail reads "Behind pace — ease up" and "+$20 left over from past cycles"', async () => {
+  setParams({ id: 'coffee' });
+  seed([COFFEE], { coffee: { target: 100, posted: 80, pending: 0, rollover: true, carryover: 20, available: 120 } });
+  server.seed('/budgets/coffee/transactions', []);
+  await renderWithQueries(<BudgetDetail />);
+  expect(await screen.findByText('Behind pace — ease up')).toBeTruthy();
+  expect(screen.getByText('+$20 left over from past cycles')).toBeTruthy();
+  expect(screen.queryByText(/Ahead of pace|carried over|borrowed/)).toBeNull();
+});

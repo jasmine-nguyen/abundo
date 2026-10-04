@@ -7,6 +7,7 @@ import { elapsedFrac } from '../payCycle';
 import type { Budget } from '../model';
 import { C } from '../theme';
 import { makeState, cat, budget, txn } from './factory';
+import { budgetDetailFor } from './support/budgetsTab';
 
 describe('elapsedFrac', () => {
   it('is (cycleLen - daysLeft) / cycleLen', () => {
@@ -283,11 +284,10 @@ describe('budgetDetail', () => {
 // today's linear target is an amber caution, not a green "keep it up". Pace rides the base
 // per-cycle budget (b.budget * elapsed), so it stays consistent with the list on both screens.
 describe('budgetDetail — spend pace status', () => {
-  const detail = (over: Partial<Budget>, clock: { cycleLen: number; daysLeft: number }) =>
-    budgetDetail(makeState({ categories: [cat()], budgets: [budget({ id: 'coffee', pending: 0, ...over })], ...clock }), 'coffee')!;
+  const detail = budgetDetailFor;
 
   // FAIL-ON-REVERT: today's binary code reads 3667 <= 3667 as green "On target — keep it up".
-  it('100% spent on day 1 reads amber "ahead of pace", not green (the mortgage bug)', () => {
+  it('100% spent on day 1 reads amber "behind pace", not green (the mortgage bug)', () => {
     const d = detail({ budget: 3667, posted: 3667 }, { cycleLen: 30, daysLeft: 29 });
     expect(d.statusLabel).toBe('Behind pace — ease up');
     expect(d.statusColor).toBe(C.warn);
@@ -295,7 +295,7 @@ describe('budgetDetail — spend pace status', () => {
     expect(d.dailyLabel).toBe('Daily limit: $0'); // envelope gone → nothing left per day
   });
 
-  it('over pace but still under budget → amber, and the daily limit is not zeroed', () => {
+  it('behind pace but still under budget → amber, and the daily limit is not zeroed', () => {
     // elapsed 2/14 ≈ 0.143, target ≈ 14.3; spent 60 is well past pace, still under 100.
     const d = detail({ budget: 100, posted: 60 }, { cycleLen: 14, daysLeft: 12 });
     expect(d.statusLabel).toBe('Behind pace — ease up');
@@ -304,8 +304,8 @@ describe('budgetDetail — spend pace status', () => {
     expect(d.dailyLabel).not.toBe('Daily limit: $0');
   });
 
-  it('on/under pace late in the cycle stays green even near 100% (no over-flagging)', () => {
-    // elapsed 13/14 ≈ 0.929, target ≈ 92.9; spent 90 is under pace → legit late spend.
+  it('on/ahead of pace late in the cycle stays green even near 100% (no over-flagging)', () => {
+    // elapsed 13/14 ≈ 0.929, target ≈ 92.9; spent 90 is ahead of pace → legit late spend.
     const d = detail({ budget: 100, posted: 90 }, { cycleLen: 14, daysLeft: 1 });
     expect(d.statusLabel).toBe('On target — keep it up');
     expect(d.statusColor).toBe(C.good);
@@ -319,7 +319,7 @@ describe('budgetDetail — spend pace status', () => {
   });
 
   it('pending spend counts toward pace (low posted, high pending crosses the target)', () => {
-    // elapsed 0.5, target 50; spent = posted 10 + pending 45 = 55 → over pace → amber.
+    // elapsed 0.5, target 50; spent = posted 10 + pending 45 = 55 → behind pace → amber.
     const d = budgetDetail(makeState({
       categories: [cat()], budgets: [budget({ id: 'coffee', budget: 100, posted: 10, pending: 45 })],
       cycleLen: 14, daysLeft: 7,

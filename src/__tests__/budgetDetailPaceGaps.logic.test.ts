@@ -4,13 +4,10 @@
 // the statusLabel↔statusColor pairing invariant, spent==available at 100%, and confirms
 // the Income branch is untouched by the pace change.
 import { describe, it, expect } from '@jest/globals';
-import { budgetDetail } from '../context';
 import type { Budget } from '../model';
 import { C } from '../theme';
-import { makeState, cat, budget } from './factory';
-
-const detail = (over: Partial<Budget>, clock: { cycleLen: number; daysLeft: number }, c = cat()) =>
-  budgetDetail(makeState({ categories: [c], budgets: [budget({ id: 'coffee', pending: 0, ...over })], ...clock }), 'coffee')!;
+import { cat } from './factory';
+import { budgetDetailFor as detail } from './support/budgetsTab';
 
 describe('budgetDetail pace — gaps', () => {
   // [G1] EXACT boundary: spent - target == 0.5 is NOT > 0.5 → stays green.
@@ -72,7 +69,7 @@ describe('budgetDetail pace — gaps', () => {
       [{ budget: 100, posted: 60 }, { cycleLen: 14, daysLeft: 12 }],     // amber
       [{ budget: 100, posted: 130 }, { cycleLen: 14, daysLeft: 7 }],     // red
       [{ budget: 3667, posted: 3667 }, { cycleLen: 30, daysLeft: 29 }],  // amber (mortgage)
-      [{ budget: 100, posted: 90 }, { cycleLen: 14, daysLeft: 1 }],      // green (late, under pace)
+      [{ budget: 100, posted: 90 }, { cycleLen: 14, daysLeft: 1 }],      // green (late, ahead of pace)
       [{ budget: 100, posted: 100 }, { cycleLen: 14, daysLeft: 0 }],     // green (end, 100%)
     ];
     const pair: Record<string, string> = {
@@ -89,7 +86,7 @@ describe('budgetDetail pace — gaps', () => {
 
   // [G8] Regression guard: the Income branch is untouched by the pace change. An income
   // (earn-target) budget far past linear pace must still read the calm earn copy/colour,
-  // never the amber spend caution. (Not expected to fail on reverting `aheadOfPace`.)
+  // never the amber spend caution. (Not expected to fail on reverting `behindPace`.)
   it('[G8] income budget past pace stays "keep earning", never amber', () => {
     const income = cat({ id: 'coffee', bucket: 'Income', name: 'Salary' });
     // actual 900 < target 1000 (not met) but way past linear pace (500). Income → calm.
