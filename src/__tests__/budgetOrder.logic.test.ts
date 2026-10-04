@@ -2,13 +2,10 @@
 import { describe, it, expect } from '@jest/globals';
 import { urgentFirst } from '../budgetOrder';
 import { cat, budget } from './factory';
-import { budgetRowFor, budgetRowsFor as rowsFor } from './support/budgetsTab';
-import { COFFEE as coffee, DINING as dining, GROCERIES as groceries, SALARY as salary } from './support/categories';
-
-const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
+import { budgetRowFor, budgetRowsFor as rowsFor, rowIds as ids } from './support/budgetsTab';
+import { COFFEE as coffee, DINING as dining, GROCERIES as groceries, LATTE as latte, SALARY as salary } from './support/categories';
 
 const shopping = cat({ id: 'shopping', name: 'Shopping' });
-const latte = cat({ id: 'latte', name: 'Lattes', parent: 'coffee' });
 const bonus = cat({ id: 'bonus', name: 'Bonus', bucket: 'Income', parent: 'salary' });
 
 describe('urgentFirst', () => {

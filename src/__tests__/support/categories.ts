@@ -34,3 +34,5 @@ export const ESSENTIAL_GROCERIES = Object.freeze({ ...ESSENTIAL_GROCERIES_RECORD
 export const ESSENTIAL_GROCERIES_TOP = Object.freeze({ ...ESSENTIAL_GROCERIES_RECORD, recent: 0, parent: null } as const);
 
 export const DINING = Object.freeze({ id: 'dining', name: 'Dining', bucket: 'Lifestyle', icon: 'utensils', color: '#f7768e', recent: 0 } satisfies Category);
+
+export const LATTE: Category = Object.freeze({ ...COFFEE, id: 'latte', name: 'Lattes', parent: 'coffee' });

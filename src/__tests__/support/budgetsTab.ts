@@ -33,6 +33,8 @@ export function seedBudgetsTab(
 export const budgetRowsFor = (categories: Category[], budgets: Budget[]) =>
   budgetViews(makeState({ categories, budgets, cycleLen: 14, daysLeft: 7 })).rows;
 
+export const rowIds = (rows: { id: string }[]) => rows.map((r) => r.id);
+
 // A budget's row (coffee by default) on that halfway cycle.
 export const budgetRowFor = (b: Partial<Budget>, c = cat()) => budgetRowsFor([c], [budget({ id: c.id, ...b })])[0];
 

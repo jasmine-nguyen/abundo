@@ -2,22 +2,12 @@
 // by its grandchild, a corrupt parent loop (no row dropped or doubled), and the CSV export
 // keeping category order (sign-off Q2). Expected orders are written by hand.
 import { describe, it, expect } from '@jest/globals';
-import { budgetViews } from '../context';
 import { urgentFirst } from '../budgetOrder';
 import { buildBudgetRows } from '../cycleExport';
-import type { Budget } from '../model';
-import type { Category } from '../types';
-import { makeState, cat, budget } from './factory';
+import { cat, budget } from './factory';
+import { budgetRowsFor as rowsFor, rowIds as ids } from './support/budgetsTab';
+import { COFFEE as coffee, DINING as dining, GROCERIES as groceries, LATTE as latte } from './support/categories';
 
-// Halfway through a 14-day cycle, so a $100 budget's pace is $50.
-const rowsFor = (categories: Category[], budgets: Budget[]) =>
-  budgetViews(makeState({ categories, budgets, cycleLen: 14, daysLeft: 7 })).rows;
-const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
-
-const groceries = cat({ id: 'groceries', name: 'Groceries' });
-const dining = cat({ id: 'dining', name: 'Dining' });
-const coffee = cat();
-const latte = cat({ id: 'latte', name: 'Lattes', parent: 'coffee' });
 const oat = cat({ id: 'oat', name: 'Oat lattes', parent: 'latte' });
 
 describe('urgentFirst — edges', () => {
