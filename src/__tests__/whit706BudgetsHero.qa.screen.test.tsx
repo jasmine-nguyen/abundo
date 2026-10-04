@@ -26,7 +26,7 @@ beforeEach(() => {
 
 describe('Budgets top card — QA edges', () => {
   // [A1] (P0) under budget: the money-left amount itself is on the card next to its label
-  it('[A1] under budget shows the left-to-spend amount (summed across rows) and the pill', async () => {
+  it('[A1] under budget shows the left-to-spend amount (summed across rows) and the spent line', async () => {
     server.seed('/categories', [COFFEE, GROCERIES]);
     server.seed('/budgets', {
       coffee: { target: 100, posted: 40, pending: 10 },
@@ -35,12 +35,12 @@ describe('Budgets top card — QA edges', () => {
     await renderLoadedBudgets();
     expect(screen.getByText('$260')).toBeTruthy();
     expect(screen.getByText('Left to spend')).toBeTruthy();
-    expect(screen.getByText('$90 spent of $350 · $10 pending')).toBeTruthy();
+    expect(screen.getByText('$90 / $350 spent')).toBeTruthy();
     expect(screen.getByText('4')).toBeTruthy();
   });
 
   // [A2] (P0) empty: no money figure or minus sign anywhere, days count kept, payday kept
-  it('[A2] no budgets → no "$" figure, no pill, but the days count and next payday stay', async () => {
+  it('[A2] no budgets → no "$" figure, no spent line, but the days count and next payday stay', async () => {
     pinToday(new Date('2026-09-18T10:00:00+10:00'));
     try {
       server.seed('/paycycle', { length: 30, last_pay_date: '2026-09-01', days_left: 13 });
@@ -108,12 +108,11 @@ describe('Budgets top card — QA edges', () => {
     expect(screen.queryByText(/NaN|undefined/)).toBeNull();
   });
 
-  // [A8] (P0) the over sub-line follows the same 1-cent threshold as the label (WHIT-716)
-  it('[A8] under a cent over → no over line; a cent over → "−$0.01" and the resets line', async () => {
+  // [A8] (P0) "Over budget" follows the 1-cent threshold (WHIT-716)
+  it('[A8] under a cent over → "Left to spend"; a cent over → "−$0.01" and "Over budget"', async () => {
     server.seed('/budgets', { coffee: { target: 100, posted: 100, pending: 0.004 } });
     const first = await renderLoadedBudgets();
     expect(screen.getByText('Left to spend')).toBeTruthy();
-    expect(screen.queryByText(/^resets /)).toBeNull();
     expect(screen.queryAllByText(/−/)).toHaveLength(0);
     first.unmount();
 
@@ -121,7 +120,6 @@ describe('Budgets top card — QA edges', () => {
     await renderLoadedBudgets();
     expect(screen.getByText('−$0.01')).toBeTruthy();
     expect(screen.getByText('Over budget')).toBeTruthy();
-    expect(screen.getByText('resets in 4 days')).toBeTruthy();
   });
 
   // [A9] (P1) a large deficit: comma-grouped in the big number, said once, no hyphen anywhere
@@ -129,7 +127,6 @@ describe('Budgets top card — QA edges', () => {
     server.seed('/budgets', { coffee: { target: 1000, posted: 7056, pending: 0 } });
     await renderLoadedBudgets();
     expect(screen.getByText('−$6,056')).toBeTruthy();
-    expect(screen.getByText('resets in 4 days')).toBeTruthy();
     expect(screen.queryByText(/Over by/)).toBeNull();
     expect(screen.queryAllByText(/-\$/)).toHaveLength(0);
   });

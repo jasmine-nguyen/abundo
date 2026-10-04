@@ -162,8 +162,8 @@ it('hides a Savings-bucket budget end-to-end and keeps it out of the hero total 
   });
   await renderLoadedBudgets();
   expect(screen.queryByText('Nest Egg')).toBeNull();      // Savings row hidden
-  expect(screen.getByText('$50 spent of $100 · $10 pending')).toBeTruthy(); // spend budget only
-  expect(screen.queryByText(/of \$2,100/)).toBeNull();     // NOT spend + Savings target
+  expect(screen.getByText('$50 / $100 spent')).toBeTruthy(); // spend budget only
+  expect(screen.queryByText(/\/ \$2,100 spent/)).toBeNull(); // NOT spend + Savings target
 });
 
 // WHIT-574/706 — [A-hookrender] through-the-hook render: a known last_pay_date fetched via the REAL
@@ -385,13 +385,13 @@ describe('WHIT-221 parent→sub tree + de-duped hero (folded from budgetsSubcate
     seedBudgets(server, { payCycle: PAY_CYCLE, budgets: BUDGETS, categories: CATS });
   });
 
-  it('[A26] hero de-dups: the "of" pill counts the parent cap once, not parent + sub', async () => {
+  it('[A26] hero de-dups: the spent line counts the parent cap once, not parent + sub', async () => {
     renderBudgets();
     expect(await screen.findByText('Car')).toBeTruthy();
     expect(screen.getByText('Parking')).toBeTruthy();      // both rows render
-    expect(screen.getByText('$75 spent of $200')).toBeTruthy(); // Car only
-    expect(screen.queryByText(/of \$250/)).toBeNull();      // NOT Car + Parking
-    // Reverting the `depth === 0` guard makes totBudget 250 -> the pill flips to "$105 spent of $250".
+    expect(screen.getByText('$75 / $200 spent')).toBeTruthy(); // Car only
+    expect(screen.queryByText(/\/ \$250 spent/)).toBeNull(); // NOT Car + Parking
+    // Reverting the `depth === 0` guard makes totBudget 250 -> the line flips to "$105 / $250 spent".
   });
 
   it('[A27] the child row is indented and the parent row is not', async () => {
@@ -533,7 +533,7 @@ describe('WHIT-573 hero over-budget label + sign', () => {
 // Income kept out of the over-budget hero, a large signed total's exact comma-grouped string + pill
 // coherence, and the 1-cent threshold boundaries (WHIT-716: 0.004 over stays calm, 0.01 over flips).
 describe('WHIT-573 hero over-budget — gaps', () => {
-  it('sums MULTIPLE over-budget rows into one signed hero total + coherent pill', async () => {
+  it('sums MULTIPLE over-budget rows into one signed hero total + coherent spent line', async () => {
     server.seed('/categories', [
       COFFEE,
       { ...GROCERIES_RECORD, color: '#7fd1b9', recent: 12 },
@@ -545,7 +545,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText('−$100')).toBeTruthy();       // -(300 available - 400 spent)
-    expect(screen.getByText('$400 spent of $300')).toBeTruthy(); // totSpent + totBudget unchanged
+    expect(screen.getByText('$400 / $300 spent')).toBeTruthy(); // totSpent + totBudget unchanged
     expect(screen.queryByText('Left to spend')).toBeNull();
   });
 
@@ -558,7 +558,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText('−$30')).toBeTruthy();
-    expect(screen.getByText('$50 spent of $20')).toBeTruthy(); // available envelope, not the $100 target
+    expect(screen.getByText('$50 / $20 spent')).toBeTruthy(); // available envelope, not the $100 target
   });
 
   it('keeps an Income budget OUT of the over-budget hero (earnings do not rescue it)', async () => {
@@ -571,16 +571,16 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     expect(screen.getByText('Salary')).toBeTruthy();       // Income row still lists
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText('−$100')).toBeTruthy();
-    expect(screen.getByText('$200 spent of $100')).toBeTruthy(); // NOT $6,200 spent of $5,100
-    expect(screen.queryByText(/of \$5,100/)).toBeNull();
+    expect(screen.getByText('$200 / $100 spent')).toBeTruthy(); // NOT $6,200 / $5,100 spent
+    expect(screen.queryByText(/\/ \$5,100 spent/)).toBeNull();
   });
 
-  it('renders a large deficit as the exact comma-grouped -$6,056 with a coherent pill', async () => {
+  it('renders a large deficit as the exact comma-grouped -$6,056 with a coherent spent line', async () => {
     server.seed('/budgets', { coffee: { target: 1000, posted: 7056, pending: 0 } });
     await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText('−$6,056')).toBeTruthy();
-    expect(screen.getByText('$7,056 spent of $1,000')).toBeTruthy();
+    expect(screen.getByText('$7,056 / $1,000 spent')).toBeTruthy();
   });
 
   it('under a cent over (-0.004) stays "Left to spend" — float dust never shows "−$0"', async () => {
