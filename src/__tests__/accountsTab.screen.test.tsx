@@ -45,6 +45,7 @@ jest.mock('expo-router', () => {
 });
 
 import Accounts from '../../app/(tabs)/accounts';
+import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -62,7 +63,7 @@ beforeEach(() => {
   mockPush.mockClear();
   mockShowToast.mockClear();
   resetAuth();
-  server.seed('/categories', [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart' }]);
+  server.seed('/categories', [GROCERIES_RECORD]);
 });
 
 it('derives one card per account_id from the transactions (consistent name)', async () => {

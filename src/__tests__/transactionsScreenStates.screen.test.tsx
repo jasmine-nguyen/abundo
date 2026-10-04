@@ -40,7 +40,7 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries, settle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { transactionsKey, uncategorizedCountKey } from '../queries';
-import { COFFEE_RECORD } from './support/categories';
+import { COFFEE_RECORD, GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -51,8 +51,6 @@ const COUNT = '/transactions/uncategorized/count';
 const CATEGORIES = '/categories';
 const BALANCES = '/accounts/balances';
 const REFRESH = '/accounts/balances/refresh';
-
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null };
 
 const ROW = {
   transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
@@ -80,7 +78,7 @@ beforeEach(() => {
   resetAuth();
   mockOpenMultiPicker.mockClear();
   mockShowToast.mockClear();
-  server.seed(CATEGORIES, [CAT]);
+  server.seed(CATEGORIES, [GROCERIES_RECORD]);
   seedFeed([]);
 });
 afterEach(() => { jest.useRealTimers(); });
@@ -381,7 +379,7 @@ it('[E4] a pull on the SETTLED EMPTY list does NOT raise the pull spinner (lengt
 // two-category taxonomy (Groceries + Cafes & Coffee).
 describe('Transactions — search', () => {
 const CATS = [
-  CAT,
+  GROCERIES_RECORD,
   { ...COFFEE_RECORD, color: '#E8A87C', parent: null },
 ];
 

@@ -8,6 +8,7 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { breakdownWire, seedInsights, renderInsights, resetAi } from './support/insightsScreen';
+import { GROCERIES_RECORD } from './support/categories';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
@@ -33,7 +34,7 @@ describe('the Insights tab drawn over the fake server with the shared kit', () =
         income: { salary: { posted: 3000, pending: 0 } },
       }),
       categories: [
-        { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Living', recent: 0, colorSlot: 1 },
+        { ...GROCERIES_RECORD, recent: 0, colorSlot: 1 },
         { id: 'salary', name: 'Salary', icon: 'briefcase', bucket: 'Income', recent: 0, colorSlot: 2 },
       ],
     });

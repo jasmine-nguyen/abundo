@@ -27,6 +27,7 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, WithQueries, settle, loaded } from './support/renderWithQueries';
 import { uncategorizedFeedKey } from '../queries';
+import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -34,7 +35,6 @@ useTestQueryClient();
 const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
 const COUNT = '/transactions/uncategorized/count';
 const MORE = 'transactions-uncategorized-more';
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null };
 
 const seedUncategorizedFeed = (nextCursor: string | null) => server.seed(UNCATEGORIZED_FEED, { transactions: [], nextCursor });
 
@@ -47,7 +47,7 @@ async function renderTab() {
 
 beforeEach(() => {
   resetAuth();
-  server.seed('/categories', [CAT]);
+  server.seed('/categories', [GROCERIES_RECORD]);
 });
 
 describe('Uncategorized tab — "more to load" affordance suppression edges', () => {

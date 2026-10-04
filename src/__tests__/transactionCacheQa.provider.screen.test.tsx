@@ -20,6 +20,7 @@ import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 
@@ -27,7 +28,7 @@ const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{c
 
 const CATEGORIES: Category[] = [
   { id: 'dining', name: 'Dining', bucket: 'Living', icon: 'food', color: '#f00', recent: 0, parent: null },
-  { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#0f0', recent: 0, parent: null },
+  { ...GROCERIES_RECORD, color: '#0f0', recent: 0, parent: null },
 ];
 const tx = (id: string, over: Partial<Transaction> = {}): Transaction => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',

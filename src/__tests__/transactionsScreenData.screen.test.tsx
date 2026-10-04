@@ -36,7 +36,7 @@ function setAuth(next: string) {
 
 const mockShowToast = jest.fn<(m: string) => void>();
 
-const CATS = [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 }];
+const mockCategories = [{ ...GROCERIES_RECORD, color: '#7FD49B', recent: 0 }];
 
 // ../context — PARTIALLY mocked (real selectors, stubbed useAppContext for TransactionRow +
 // retryLoad) so ../queries' real imports still resolve; the screen renders under a real
@@ -46,7 +46,7 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return {
     ...actual,
-    useAppContext: () => ({ retryLoad: jest.fn(), openMultiPicker: jest.fn(), showToast: mockShowToast, category: (id: string | null) => CATS.find((c) => c.id === id) }),
+    useAppContext: () => ({ retryLoad: jest.fn(), openMultiPicker: jest.fn(), showToast: mockShowToast, category: (id: string | null) => mockCategories.find((c) => c.id === id) }),
   };
 });
 
@@ -59,6 +59,7 @@ jest.mock('expo-router', () => {
 
 import { useTransactionsScreenData, useRecentTransactionsScreenData, useTransactionDetailScreenData, accountBalancesKey, transactionsSearchKey } from '../queries';
 import Transactions from '../../app/(tabs)/transactions';
+import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 const FEED = '/transactions/feed';
@@ -82,7 +83,7 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
     mockAuthStatus = 'authed';
     mockAuthListeners.clear();
     server.seed(FEED, { transactions: TXNS, nextCursor: null });
-    server.seed('/categories', CATS);
+    server.seed('/categories', mockCategories);
   });
 
   it('refetchStale no-ops on a FRESH cache (instant-from-cache on revisit)', async () => {
@@ -378,7 +379,7 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
     mockAuthStatus = 'authed';
     mockAuthListeners.clear();
     server.seed(FEED, { transactions: TXNS, nextCursor: null });
-    server.seed('/categories', CATS);
+    server.seed('/categories', mockCategories);
   });
 
   it('renders transaction rows from the query', async () => {
@@ -488,7 +489,7 @@ describe('useTransactionDetailScreenData (WHIT-614)', () => {
     mockAuthStatus = 'authed';
     mockAuthListeners.clear();
     server.seed(FEED, { transactions: TXNS, nextCursor: null });
-    server.seed('/categories', CATS);
+    server.seed('/categories', mockCategories);
   });
 
   it('never creates a search query in the cache', async () => {

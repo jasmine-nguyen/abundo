@@ -18,11 +18,10 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
+import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
-
-const CAT = { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Living', parent: null };
 
 const fns = {
   chooseCategory: jest.fn(), applyCategoryToMany: jest.fn(), createCategoryInline: jest.fn(),
@@ -34,7 +33,7 @@ beforeEach(() => {
 });
 
 function openSheet(sheet: Record<string, unknown>) {
-  server.seed('/categories', [CAT]);
+  server.seed('/categories', [GROCERIES_RECORD]);
   const state = { sheet, toast: null, ...fns } as unknown as AppContext;
   return openOverlays(state, (next) => { mockState = next; });
 }

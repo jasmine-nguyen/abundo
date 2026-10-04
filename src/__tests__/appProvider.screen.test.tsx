@@ -15,7 +15,7 @@ import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 import { installFakeServer, type LoggedRequest } from './support/fakeServer';
-import { GROCERIES } from './support/categories';
+import { GROCERIES, GROCERIES_RECORD } from './support/categories';
 
 // The writers guard the load-error banner on auth (retired), but auth still gates
 // nothing in these direct-action tests; pin 'authed' for parity with the app.
@@ -505,7 +505,7 @@ it('saveCategory threads a chosen parent through (create + edit); omitting it le
   // (an id, or null to detach) it must reach the API; when a caller omits it, the field
   // must NOT be sent (server leave-as-is) — that's what the two tests above assert.
   server.once('POST', '/categories', { body: { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#f00', recent: 0, parent: 'car' } });
-  server.once('PATCH', '/categories/groceries', { body: { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#0f0', recent: 0, parent: null } });
+  server.once('PATCH', '/categories/groceries', { body: { ...GROCERIES_RECORD, color: '#0f0', recent: 0, parent: null } });
   seed();
   const result = mount();
 

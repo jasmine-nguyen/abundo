@@ -26,7 +26,9 @@ describe('the shared category samples have one home', () => {
   });
 
   it('no other test file spells out a copy of those samples', () => {
-    const offenders = findOffenders((line) => COPIES.some((copy) => line.includes(copy)), new Set([HOME, 'whit718CategorySamplesOneHome.logic.test.ts']));
+    // Groceries copies in any field order are caught by the WHIT-721 guard, which pins GROCERIES' full value too.
+    const allowed = new Set([HOME, 'whit718CategorySamplesOneHome.logic.test.ts', 'whit721GroceriesRecordOneHome.logic.test.ts']);
+    const offenders = findOffenders((line) => COPIES.some((copy) => line.includes(copy)), allowed);
     expect(offenders).toEqual([]);
   });
 });

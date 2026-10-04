@@ -32,6 +32,7 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { uncategorizedCountKey, uncategorizedFeedKey } from '../queries';
+import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -41,7 +42,6 @@ const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
 const RECENT = '/transactions';
 const COUNT = '/transactions/uncategorized/count';
 const MERCHANTS = '/transactions/uncategorized/merchants';
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null };
 const FILE_BY_SHOP = 'transactions-file-by-shop';
 const APPLY_RULES = 'transactions-apply-rules';
 
@@ -74,7 +74,7 @@ async function setCount(count: number) {
 
 beforeEach(() => {
   resetAuth();
-  server.seed('/categories', [CAT]);
+  server.seed('/categories', [GROCERIES_RECORD]);
   server.seed(MERCHANTS, merchants);
 });
 

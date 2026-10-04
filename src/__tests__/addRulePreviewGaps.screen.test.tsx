@@ -31,6 +31,7 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
+import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -44,7 +45,7 @@ const fns = {
 };
 
 const CATEGORIES = [
-  { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null },
+  GROCERIES_RECORD,
 ];
 
 const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({

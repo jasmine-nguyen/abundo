@@ -37,6 +37,7 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, WithQueries, refreshInAct, settle, loaded } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { uncategorizedCountKey, uncategorizedFeedKey } from '../queries';
+import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -45,7 +46,6 @@ const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
 const COUNT = '/transactions/uncategorized/count';
 const MERCHANTS = '/transactions/uncategorized/merchants';
 // Only 'groceries' is a real category → every other/`null` row is Uncategorized.
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null };
 
 const merchants = (over: Record<string, unknown> = {}) => ({
   unfiled: 20,
@@ -72,7 +72,7 @@ async function setCount(count: number) {
 
 beforeEach(() => {
   resetAuth();
-  server.seed('/categories', [CAT]);
+  server.seed('/categories', [GROCERIES_RECORD]);
   server.seed(MERCHANTS, merchants());
 });
 

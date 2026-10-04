@@ -29,6 +29,7 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
+import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -41,7 +42,7 @@ const fns = {
 };
 
 const CATEGORIES = [
-  { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null },
+  GROCERIES_RECORD,
   { id: 'fuel', name: 'Fuel', bucket: 'Living', icon: 'car', color: '#F2C94C', parent: null },
 ];
 

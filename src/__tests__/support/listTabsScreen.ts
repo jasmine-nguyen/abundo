@@ -7,6 +7,7 @@ import { resetAppProbe } from './renderWithApp';
 import { resetAuth } from './authMock';
 import { resetRouter } from './routerMock';
 import type { installFakeServer } from './fakeServer';
+import { GROCERIES_RECORD } from './categories';
 
 export const LIST_ROW = txn({ amount: -42, account_name: 'ANZ' });
 
@@ -15,5 +16,5 @@ export function resetListTabs(server: ReturnType<typeof installFakeServer>) {
   resetAuth();
   resetAppProbe();
   resetRouter();
-  server.seed('/categories', [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null }]);
+  server.seed('/categories', [GROCERIES_RECORD]);
 }

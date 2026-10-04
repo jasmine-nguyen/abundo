@@ -20,6 +20,7 @@ import { refreshInAct, useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
 import { queryClient } from '../queryClient';
 import { categoriesKey } from '../queries';
+import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -33,7 +34,7 @@ const fns = {
 };
 
 const CATEGORIES = [
-  { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null },
+  GROCERIES_RECORD,
   { id: 'fuel', name: 'Fuel', bucket: 'Living', icon: 'car', parent: null },
 ];
 

@@ -30,7 +30,7 @@ describe('WHIT-718 QA: shared category samples', () => {
   it('no test file re-spells a sample with its keys in a different order', () => {
     const offenders = findOffenders(
       (line) => !line.includes('cat(') && SAMPLE_PIECES.some((pieces) => pieces.every((piece) => line.includes(piece))),
-      new Set([HOME, SELF, 'whit718CategorySamplesOneHome.logic.test.ts']),
+      new Set([HOME, SELF, 'whit718CategorySamplesOneHome.logic.test.ts', 'whit721GroceriesRecordOneHome.logic.test.ts']),
     );
     expect(offenders).toEqual([]);
   });

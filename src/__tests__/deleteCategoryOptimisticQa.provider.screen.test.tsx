@@ -26,13 +26,14 @@ import type { Rule } from '../model';
 import type { TransactionFeedPage, TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const DINING: Category = { id: 'dining', name: 'Dining', bucket: 'Living', icon: 'food', color: '#f00', recent: 0, parent: null };
-const GROCERIES: Category = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#0f0', recent: 0, parent: null };
+const GROCERIES: Category = { ...GROCERIES_RECORD, color: '#0f0', recent: 0, parent: null };
 const DINING_RULE: Rule = { id: 'r1', pattern: 'COLES', categoryId: 'dining', isNew: false };
 const GROCERIES_RULE: Rule = { id: 'r2', pattern: 'WOOLIES', categoryId: 'groceries', isNew: false };
 const DINING_BUDGET = { target: 200, posted: 12.5, pending: 0 };

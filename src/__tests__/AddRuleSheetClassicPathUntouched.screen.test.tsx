@@ -18,6 +18,7 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
+import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -32,7 +33,7 @@ const fns = {
 
 const CATS = [
   { id: 'subs', name: 'Subscriptions', icon: 'film', bucket: 'Lifestyle' },
-  { id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Living' },
+  GROCERIES_RECORD,
 ];
 
 // An existing CLASSIC rule (no `conditions`) filing COLESSHOP as Groceries.

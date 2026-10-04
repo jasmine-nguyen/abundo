@@ -28,6 +28,7 @@ import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, WithQueries, settle } from './support/renderWithQueries';
+import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -35,7 +36,6 @@ useTestQueryClient();
 const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
 const COUNT = '/transactions/uncategorized/count';
 const MERCHANTS = '/transactions/uncategorized/merchants';
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null };
 const unfiled = (id: string) => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01', description: 'COLES',
   merchant_name: 'Coles', amount: -12.5, account_id: 'a1', account_name: 'ANZ', category: null,
@@ -64,7 +64,7 @@ async function renderTab(tab: 'all' | 'uncategorized' = 'uncategorized') {
 beforeEach(() => {
   resetAuth();
   mockSetSheet.mockClear();
-  server.seed('/categories', [CAT]);
+  server.seed('/categories', [GROCERIES_RECORD]);
   server.seed(COUNT, { count: 5 });
   server.seed(MERCHANTS, merchants());
   seedUncategorizedFeed([unfiled('t1')]);

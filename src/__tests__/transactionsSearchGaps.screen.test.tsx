@@ -23,12 +23,12 @@ import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries } from './support/renderWithQueries';
+import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
 useTestQueryClient();
 
 const SEARCH = '/transactions/search';
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null };
 const row = (id: string, merchant: string, amount: number, date = '2026-07-01', cat: string | null = null) => ({
   transaction_id: id, date, authorized_date: date, description: merchant.toUpperCase(),
   merchant_name: merchant, amount, account_id: 'a1', account_name: 'ANZ', category: cat,
@@ -53,7 +53,7 @@ async function draw() {
 beforeEach(() => {
   jest.useFakeTimers();
   resetAuth();
-  server.seed('/categories', [CAT]);
+  server.seed('/categories', [GROCERIES_RECORD]);
   server.seed('/transactions/feed', { transactions: [COLES], nextCursor: 'c1' });
 });
 afterEach(() => { jest.useRealTimers(); });
