@@ -9,7 +9,6 @@ import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { SettingsButton } from '../../src/components/SettingsButton';
-import { AskButtonClearance } from '../../src/chat/AskButton';
 
 // The Accounts tab. Lifted out of the Transactions segmented control into its own bottom-bar
 // tab: it derives one card per account_id from the same transactions query the Transactions
@@ -79,34 +78,32 @@ export default function Accounts() {
 
       {!showSpinner && !showError && accounts.length > 0 && (
         <View style={{ marginTop: 14 }}>
-          <AskButtonClearance>
-            {accounts.map((a, i) => {
-              const color = ACCOUNT_ACCENTS[i % ACCOUNT_ACCENTS.length];
-              // WHIT-212: signed live balance from the poller-fed query — green when in credit,
-              // red when owing. Absent until the account's first poll → a dim "—".
-              const bal = balances.get(a.id);
-              let subtitle = `${a.count} ${a.count === 1 ? 'transaction' : 'transactions'}`;
-              if (a.count === 0) subtitle = 'No recent transactions';
-              return (
-                <Pressable
-                  key={a.id}
-                  onPress={() => router.push(`/account/${a.id}`)}
-                  style={({ pressed }) => [styles.acct, pressed && PRESSED]}
-                >
-                  <View style={[styles.acctChip, { backgroundColor: tint(color, 0.15) }]}><Icon name="bank" size={22} color={color} /></View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.acctName}>{a.name}</Text>
-                    <Text style={styles.acctSub}>{subtitle}</Text>
-                  </View>
-                  {bal ? (
-                    <Text style={[styles.acctBal, { color: bal.amount < 0 ? C.bad : C.good }]} numberOfLines={1} adjustsFontSizeToFit>{fmtBalance(bal.amount)}</Text>
-                  ) : (
-                    <Text style={styles.acctBalPending}>—</Text>
-                  )}
-                </Pressable>
-              );
-            })}
-          </AskButtonClearance>
+          {accounts.map((a, i) => {
+            const color = ACCOUNT_ACCENTS[i % ACCOUNT_ACCENTS.length];
+            // WHIT-212: signed live balance from the poller-fed query — green when in credit,
+            // red when owing. Absent until the account's first poll → a dim "—".
+            const bal = balances.get(a.id);
+            let subtitle = `${a.count} ${a.count === 1 ? 'transaction' : 'transactions'}`;
+            if (a.count === 0) subtitle = 'No recent transactions';
+            return (
+              <Pressable
+                key={a.id}
+                onPress={() => router.push(`/account/${a.id}`)}
+                style={({ pressed }) => [styles.acct, pressed && PRESSED]}
+              >
+                <View style={[styles.acctChip, { backgroundColor: tint(color, 0.15) }]}><Icon name="bank" size={22} color={color} /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.acctName}>{a.name}</Text>
+                  <Text style={styles.acctSub}>{subtitle}</Text>
+                </View>
+                {bal ? (
+                  <Text style={[styles.acctBal, { color: bal.amount < 0 ? C.bad : C.good }]} numberOfLines={1} adjustsFontSizeToFit>{fmtBalance(bal.amount)}</Text>
+                ) : (
+                  <Text style={styles.acctBalPending}>—</Text>
+                )}
+              </Pressable>
+            );
+          })}
         </View>
       )}
     </ScrollChromeHeader>

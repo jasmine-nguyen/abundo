@@ -8,7 +8,6 @@ import { useInsightsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { RetryButton, HeroGradientFill } from '../../src/components/ui';
 import { SettingsButton } from '../../src/components/SettingsButton';
-import { AskButtonClearance } from '../../src/chat/AskButton';
 import { ExportButton } from '../../src/components/ExportButton';
 import { AiCoachCard } from '../../src/components/AiCoachCard';
 import { SpendingDonut } from '../../src/components/SpendingDonut';
@@ -158,152 +157,150 @@ export default function Insights() {
           <EarnedVsSpent earned={earned} spent={total} testID="insights-earned-spent" />
         )}
 
-        <AskButtonClearance>
-          {/* WHIT-373: one list, a switch — Spending shows the category breakdown, Earning shows the
-              same cycle's income sources. Only shown when a side has content (else it's a dead switch). */}
-          {showToggle && (
-            <SegmentedControl
-              value={side}
-              onChange={setSideChoice}
-              options={[
-                { value: 'spending', label: 'Spending', testID: 'insights-side-spending', activeTint: tint(C.bad, 0.16), activeTextColor: C.bad },
-                { value: 'earning', label: 'Earning', testID: 'insights-side-earning', activeTint: tint(C.good, 0.16), activeTextColor: C.good },
-              ]}
-            />
-          )}
+        {/* WHIT-373: one list, a switch — Spending shows the category breakdown, Earning shows the
+            same cycle's income sources. Only shown when a side has content (else it's a dead switch). */}
+        {showToggle && (
+          <SegmentedControl
+            value={side}
+            onChange={setSideChoice}
+            options={[
+              { value: 'spending', label: 'Spending', testID: 'insights-side-spending', activeTint: tint(C.bad, 0.16), activeTextColor: C.bad },
+              { value: 'earning', label: 'Earning', testID: 'insights-side-earning', activeTint: tint(C.good, 0.16), activeTextColor: C.good },
+            ]}
+          />
+        )}
 
-          {/* Spending side: each row's bar is its share of total spend this cycle (matches the donut) —
-              NOT spend-vs-budget. Caption it so the short bars aren't read as "budget barely used". */}
-          {!showSpinner && !showError && side === 'spending' && rows.length > 0 && (
-            <Text testID="insights-bars-caption" style={styles.barsCaption}>
-              Each bar shows the category's share of total spend — not its budget.
-            </Text>
-          )}
-          {!showSpinner && !showError && side === 'spending' && rows.length === 0 && (
-            <Text style={styles.empty}>
-              {cycle === 0 ? 'No spending yet this pay cycle.' : 'No spending in that pay cycle.'}
-            </Text>
-          )}
+        {/* Spending side: each row's bar is its share of total spend this cycle (matches the donut) —
+            NOT spend-vs-budget. Caption it so the short bars aren't read as "budget barely used". */}
+        {!showSpinner && !showError && side === 'spending' && rows.length > 0 && (
+          <Text testID="insights-bars-caption" style={styles.barsCaption}>
+            Each bar shows the category's share of total spend — not its budget.
+          </Text>
+        )}
+        {!showSpinner && !showError && side === 'spending' && rows.length === 0 && (
+          <Text style={styles.empty}>
+            {cycle === 0 ? 'No spending yet this pay cycle.' : 'No spending in that pay cycle.'}
+          </Text>
+        )}
 
-          {/* WHIT-194: suppress the row list under an error — otherwise the surviving
-              taxonomy-free Uncategorized row would render beneath the "Couldn't load" card. */}
-          {!showError && side === 'spending' && visibleRows.map((r) => {
-            // WHIT-349/357: a muted display-only line under an expanded parent — no bar. A refund
-            // line shows a credit in green and taps into that sub's charges. A WHIT-357 "Other" line
-            // plugs the residual so the expanded rows sum to the node; it is neutral and NOT tappable
-            // (it isn't a real category, so there is nothing to drill into).
-            if (r.isRefund || r.isRemainder) {
-              // WHIT-375: the refund/"Other" amount + colours come from the one shared convention
-              // (see breakdownLineStyle) so this can't drift from the breakdown screen again.
-              const { amountText, amountColor, nameColor } = breakdownLineStyle(r);
-              const body = (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}>
-                  <View style={[styles.chip, { backgroundColor: r.chipBg }]}><Icon name={r.icon} size={23} color={r.color} /></View>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={[styles.rowName, { color: nameColor }]} numberOfLines={1}>{r.name}</Text>
-                    <Text style={styles.rowSub}>{r.spentLabel}</Text>
-                  </View>
-                  <Text style={[styles.rowAmount, { color: amountColor }]}>{amountText}</Text>
-                </View>
-              );
-              return (
-                <View key={r.id} style={[styles.row, { marginLeft: r.depth * 18, borderLeftWidth: 2, borderLeftColor: r.color }]}>
-                  {r.isRefund ? (
-                    <Pressable
-                      onPress={() => router.push(`/category/${encodeURIComponent(r.drillId)}?cycle=${cycle}`)}
-                      accessibilityRole="button"
-                    >
-                      {body}
-                    </Pressable>
-                  ) : body}
-                </View>
-              );
-            }
-            // Bar width is the row's share of the cycle total; within it, split posted
-            // vs pending so the pending portion reads distinctly.
-            // Clamp the bar at 100% so it can never overflow its track (a corrupt parent
-            // cycle can inflate pct past 100 — unreachable via the app, but cheap to guard).
-            const barPct = Math.min(100, r.pct);
-            const postedW = r.spent > 0 ? barPct * (r.posted / r.spent) : 0;
-            const pendingW = Math.max(0, barPct - postedW);
-            const open = expanded.has(r.id);
-            return (
-              <View key={r.id} style={[styles.row, r.depth > 0 && { marginLeft: r.depth * 18, borderLeftWidth: 2, borderLeftColor: r.color }]}>
-                <Pressable
-                  // WHIT-308: a parent row still expands its subs; a leaf / "Directly in X" /
-                  // Uncategorized row drills into its transactions for the selected cycle.
-                  onPress={r.hasChildren ? () => toggle(r.id) : () => router.push(`/category/${encodeURIComponent(r.drillId)}?cycle=${cycle}`)}
-                  accessibilityRole="button"
-                  accessibilityState={r.hasChildren ? { expanded: open } : undefined}
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}
-                >
-                  <View style={[styles.chip, { backgroundColor: r.chipBg }]}><Icon name={r.icon} size={23} color={r.color} /></View>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={styles.rowName} numberOfLines={1}>{r.name}</Text>
-                    <Text style={styles.rowSub}>{r.spentLabel}</Text>
-                  </View>
-                  {r.hasChildren && <Icon name={open ? 'chevronDown' : 'chevron'} size={18} color={C.textDim} />}
-                  <Text style={styles.rowAmount}>{fmt(r.spent)}</Text>
-                </Pressable>
-                <View style={styles.track}>
-                  <View style={{ width: `${postedW}%`, backgroundColor: r.color, height: '100%', borderRadius: 5 }} />
-                  {pendingW > 0 && (
-                    <View style={{ width: `${pendingW}%`, backgroundColor: tint(r.color, 0.45), height: '100%', borderRadius: 5 }} />
-                  )}
-                </View>
-              </View>
-            );
-          })}
-
-          {/* Earning side: one row per income source, biggest first, each with a green bar for its
-              share of total income. WHIT-373 folds in the retired /breakdown earned view. */}
-          {!showSpinner && !showError && side === 'earning' && incomeRows.length > 0 && (
-            <Text testID="insights-income-caption" style={styles.barsCaption}>
-              Each bar shows the source's share of total income.
-            </Text>
-          )}
-          {!showSpinner && !showError && side === 'earning' && incomeRows.length === 0 && (
-            <Text style={styles.empty}>
-              {cycle === 0 ? 'No income yet this pay cycle.' : 'No income in that pay cycle.'}
-            </Text>
-          )}
-          {!showSpinner && !showError && side === 'earning' && incomeRows.map((r) => {
-            // WHIT-375/376: amount text + colours come from the one shared convention (see
-            // breakdownLineStyle) — the same rule the spending rows use. A muted plug isn't a real
-            // source: it's dimmed, gets no bar, and doesn't drill.
-            const { amountText, amountColor, nameColor } = breakdownLineStyle({ isReversed: r.reversed, isRemainder: r.muted, spent: r.amount });
-            const barPct = incomeShareTotal > 0 && !r.muted && r.amount > 0 ? Math.min(100, (r.amount / incomeShareTotal) * 100) : 0;
-            // Each source's bar is its own chart-palette colour, so the Earning list matches the pie
-            // and the spending rows (one colour per source), not a single flat green (WHIT chart palette).
+        {/* WHIT-194: suppress the row list under an error — otherwise the surviving
+            taxonomy-free Uncategorized row would render beneath the "Couldn't load" card. */}
+        {!showError && side === 'spending' && visibleRows.map((r) => {
+          // WHIT-349/357: a muted display-only line under an expanded parent — no bar. A refund
+          // line shows a credit in green and taps into that sub's charges. A WHIT-357 "Other" line
+          // plugs the residual so the expanded rows sum to the node; it is neutral and NOT tappable
+          // (it isn't a real category, so there is nothing to drill into).
+          if (r.isRefund || r.isRemainder) {
+            // WHIT-375: the refund/"Other" amount + colours come from the one shared convention
+            // (see breakdownLineStyle) so this can't drift from the breakdown screen again.
+            const { amountText, amountColor, nameColor } = breakdownLineStyle(r);
             const body = (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}>
                 <View style={[styles.chip, { backgroundColor: r.chipBg }]}><Icon name={r.icon} size={23} color={r.color} /></View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={[styles.rowName, { color: nameColor }]} numberOfLines={1}>{r.name}</Text>
-                  {r.pending > 0 && <Text style={styles.rowSub}>{fmt(r.pending)} pending</Text>}
+                  <Text style={styles.rowSub}>{r.spentLabel}</Text>
                 </View>
                 <Text style={[styles.rowAmount, { color: amountColor }]}>{amountText}</Text>
               </View>
             );
             return (
-              <View key={r.id} style={styles.row}>
-                {r.muted ? body : (
+              <View key={r.id} style={[styles.row, { marginLeft: r.depth * 18, borderLeftWidth: 2, borderLeftColor: r.color }]}>
+                {r.isRefund ? (
                   <Pressable
                     onPress={() => router.push(`/category/${encodeURIComponent(r.drillId)}?cycle=${cycle}`)}
                     accessibilityRole="button"
                   >
                     {body}
                   </Pressable>
-                )}
-                {barPct > 0 && (
-                  <View style={styles.track}>
-                    <View style={{ width: `${barPct}%`, backgroundColor: r.color, height: '100%', borderRadius: 5 }} />
-                  </View>
-                )}
+                ) : body}
               </View>
             );
-          })}
-        </AskButtonClearance>
+          }
+          // Bar width is the row's share of the cycle total; within it, split posted
+          // vs pending so the pending portion reads distinctly.
+          // Clamp the bar at 100% so it can never overflow its track (a corrupt parent
+          // cycle can inflate pct past 100 — unreachable via the app, but cheap to guard).
+          const barPct = Math.min(100, r.pct);
+          const postedW = r.spent > 0 ? barPct * (r.posted / r.spent) : 0;
+          const pendingW = Math.max(0, barPct - postedW);
+          const open = expanded.has(r.id);
+          return (
+            <View key={r.id} style={[styles.row, r.depth > 0 && { marginLeft: r.depth * 18, borderLeftWidth: 2, borderLeftColor: r.color }]}>
+              <Pressable
+                // WHIT-308: a parent row still expands its subs; a leaf / "Directly in X" /
+                // Uncategorized row drills into its transactions for the selected cycle.
+                onPress={r.hasChildren ? () => toggle(r.id) : () => router.push(`/category/${encodeURIComponent(r.drillId)}?cycle=${cycle}`)}
+                accessibilityRole="button"
+                accessibilityState={r.hasChildren ? { expanded: open } : undefined}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}
+              >
+                <View style={[styles.chip, { backgroundColor: r.chipBg }]}><Icon name={r.icon} size={23} color={r.color} /></View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.rowName} numberOfLines={1}>{r.name}</Text>
+                  <Text style={styles.rowSub}>{r.spentLabel}</Text>
+                </View>
+                {r.hasChildren && <Icon name={open ? 'chevronDown' : 'chevron'} size={18} color={C.textDim} />}
+                <Text style={styles.rowAmount}>{fmt(r.spent)}</Text>
+              </Pressable>
+              <View style={styles.track}>
+                <View style={{ width: `${postedW}%`, backgroundColor: r.color, height: '100%', borderRadius: 5 }} />
+                {pendingW > 0 && (
+                  <View style={{ width: `${pendingW}%`, backgroundColor: tint(r.color, 0.45), height: '100%', borderRadius: 5 }} />
+                )}
+              </View>
+            </View>
+          );
+        })}
+
+        {/* Earning side: one row per income source, biggest first, each with a green bar for its
+            share of total income. WHIT-373 folds in the retired /breakdown earned view. */}
+        {!showSpinner && !showError && side === 'earning' && incomeRows.length > 0 && (
+          <Text testID="insights-income-caption" style={styles.barsCaption}>
+            Each bar shows the source's share of total income.
+          </Text>
+        )}
+        {!showSpinner && !showError && side === 'earning' && incomeRows.length === 0 && (
+          <Text style={styles.empty}>
+            {cycle === 0 ? 'No income yet this pay cycle.' : 'No income in that pay cycle.'}
+          </Text>
+        )}
+        {!showSpinner && !showError && side === 'earning' && incomeRows.map((r) => {
+          // WHIT-375/376: amount text + colours come from the one shared convention (see
+          // breakdownLineStyle) — the same rule the spending rows use. A muted plug isn't a real
+          // source: it's dimmed, gets no bar, and doesn't drill.
+          const { amountText, amountColor, nameColor } = breakdownLineStyle({ isReversed: r.reversed, isRemainder: r.muted, spent: r.amount });
+          const barPct = incomeShareTotal > 0 && !r.muted && r.amount > 0 ? Math.min(100, (r.amount / incomeShareTotal) * 100) : 0;
+          // Each source's bar is its own chart-palette colour, so the Earning list matches the pie
+          // and the spending rows (one colour per source), not a single flat green (WHIT chart palette).
+          const body = (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}>
+              <View style={[styles.chip, { backgroundColor: r.chipBg }]}><Icon name={r.icon} size={23} color={r.color} /></View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={[styles.rowName, { color: nameColor }]} numberOfLines={1}>{r.name}</Text>
+                {r.pending > 0 && <Text style={styles.rowSub}>{fmt(r.pending)} pending</Text>}
+              </View>
+              <Text style={[styles.rowAmount, { color: amountColor }]}>{amountText}</Text>
+            </View>
+          );
+          return (
+            <View key={r.id} style={styles.row}>
+              {r.muted ? body : (
+                <Pressable
+                  onPress={() => router.push(`/category/${encodeURIComponent(r.drillId)}?cycle=${cycle}`)}
+                  accessibilityRole="button"
+                >
+                  {body}
+                </Pressable>
+              )}
+              {barPct > 0 && (
+                <View style={styles.track}>
+                  <View style={{ width: `${barPct}%`, backgroundColor: r.color, height: '100%', borderRadius: 5 }} />
+                </View>
+              )}
+            </View>
+          );
+        })}
     </ScrollChromeHeader>
   );
 }

@@ -1,17 +1,18 @@
-// WHIT-730 follow-up — the floating Ask button sits over every tab. On all five tabs the list rows
-// leave a right-hand gap for it, so even at rest it never covers a row's amount, bar or note.
+// WHIT-737 — the Ask button floats over the content again. On all five tabs no wrapper above a
+// list row pads the right side more than the left, so cards run full width (no right-hand lane).
 // Real screens + ../queries + ../api over the fake server, inside the real AppProvider.
-import { it, jest, beforeEach } from '@jest/globals';
+import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { screen } from '@testing-library/react-native';
+import type { ReactTestInstance } from 'react-test-renderer';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { renderWithApp } from './support/renderWithApp';
 import { LIST_ROW, resetListTabs } from './support/listTabsScreen';
 import { seedBudgetsTab } from './support/budgetsTab';
 import { seedGoalsHub } from './support/goalsScreen';
+import { sidePaddingOf } from './support/budgetsScreen';
 import { COFFEE, GROCERIES } from './support/categories';
-import { expectClearsAskButton } from './support/askButtonClearance';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -48,8 +49,18 @@ const TABS: [string, () => void, React.ReactElement, string][] = [
   }), <Goals />, 'Emergency fund'],
 ];
 
-it.each(TABS)('%s: list rows leave a right-hand gap so the Ask button never covers them', async (_tab, seed, ui, rowText) => {
+function rightOnlyGaps(node: ReactTestInstance) {
+  const gaps: { testID?: string; left?: unknown; right?: unknown }[] = [];
+  for (let host: ReactTestInstance | null = node; host; host = host.parent) {
+    if (typeof host.type !== 'string') continue;
+    const { left, right } = sidePaddingOf(host);
+    if ((Number(right) || 0) > (Number(left) || 0)) gaps.push({ testID: host.props.testID, left, right });
+  }
+  return gaps;
+}
+
+it.each(TABS)('%s: no wrapper above a list row leaves a right-hand lane for the Ask button', async (_tab, seed, ui, rowText) => {
   seed();
   await renderWithApp(ui);
-  expectClearsAskButton(await screen.findByText(rowText));
+  expect(rightOnlyGaps(await screen.findByText(rowText))).toEqual([]);
 });

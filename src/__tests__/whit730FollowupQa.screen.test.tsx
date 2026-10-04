@@ -1,38 +1,24 @@
-// WHIT-730 follow-up QA — edges the main suites skip: nested slim rows line up, the spread link
-// keeps its accent + bold, the top summary cards stay full width, and the Insights earning rows
-// and Transactions' Load More sit in the gap too. ([A5] lives in whit730FollowupQaLane.)
+// WHIT-730 follow-up QA — edges the main suites skip: nested slim rows line up, the spread link keeps its accent + bold, and a nested row's "under plan" is muted.
 import { it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
 import { StyleSheet } from 'react-native';
 import { fireEvent, screen } from '@testing-library/react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { C } from '../theme';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
-import { renderWithApp } from './support/renderWithApp';
 import { routerSpies } from './support/routerMock';
-import { LIST_ROW, resetListTabs } from './support/listTabsScreen';
+import { resetListTabs } from './support/listTabsScreen';
 import { seedBudgetsTab } from './support/budgetsTab';
 import { renderLoadedBudgetsWithQueries, sidePadding } from './support/budgetsScreen';
-import { seedGoalsHub } from './support/goalsScreen';
-import { breakdownWire, seedInsights } from './support/insightsScreen';
-import { COFFEE, GROCERIES, LATTE, SALARY } from './support/categories';
-import { expectClearsAskButton, findAskButtonClearance } from './support/askButtonClearance';
+import { COFFEE, GROCERIES, LATTE } from './support/categories';
 import { BudgetBar } from '../components/ui';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
-import Budgets from '../../app/(tabs)/budgets';
-import Transactions from '../../app/(tabs)/transactions';
-import Insights from '../../app/(tabs)/insights';
-import Goals from '../../app/(tabs)/goals';
-
 const server = installFakeServer();
 useTestQueryClient();
-
-const PAY_CYCLE = { length: 14, last_pay_date: '2026-09-12' };
 
 beforeEach(() => {
   resetListTabs(server);
@@ -93,53 +79,4 @@ it('[A4] a nested row\'s "under plan" is grey and not bold', async () => {
   const under = flat(await screen.findByText('$40 under plan'));
   expect(under.color).toBe(C.textDim);
   expect(under.fontWeight).toBe('400');
-});
-
-// [A6] (P1) the top summary cards stay full width — outside the gap — on Budgets, Insights and Goals.
-it('[A6] Budgets: the top card stays full width; the rows sit in the gap', async () => {
-  seedBudgetsTab(server, { groceries: { target: 100, posted: 30, pending: 0 } }, [GROCERIES]);
-  await renderWithApp(<Budgets />);
-  expectClearsAskButton(await screen.findByText('Groceries'));
-  expect(findAskButtonClearance(screen.getByTestId('budgets-hero-spent'))).toBeNull();
-});
-
-it('[A6] Insights: the hero, donut and earned-vs-spent card stay full width', async () => {
-  seedInsights(server, { breakdown: breakdownWire({ spend: { coffee: { posted: 40, pending: 0 } }, earned: 100 }), categories: [{ ...COFFEE, recent: 0 }], payCycle: PAY_CYCLE });
-  await renderWithApp(<Insights />);
-  expectClearsAskButton(await screen.findByText('Cafes & Coffee'));
-  expect(findAskButtonClearance(screen.getByTestId('insights-hero-total'))).toBeNull();
-  expect(findAskButtonClearance(screen.getByTestId('insights-donut'))).toBeNull();
-  expect(findAskButtonClearance(screen.getByTestId('insights-earned-spent'))).toBeNull();
-});
-
-it('[A6] Goals: the mortgage headline card stays full width; "Add a goal" sits in the gap', async () => {
-  seedGoalsHub(server, {
-    goals: [{ id: 'g1', name: 'Emergency fund', icon: 'wallet', direction: 'grow', target_amount: 10000, target_date: '2026-12-15', account_id: 'up-spending' }],
-    payCycle: PAY_CYCLE,
-    balances: { 'up-spending': 4000 },
-  });
-  await renderWithApp(<Goals />);
-  expectClearsAskButton(await screen.findByTestId('goal-card-g1'));
-  expectClearsAskButton(screen.getByTestId('add-goal-cta'));
-  expect(findAskButtonClearance(screen.getByTestId('mortgage-link'))).toBeNull();
-});
-
-// [A7] (P1) the Insights Earning side's income rows sit in the gap too.
-it('[A7] Insights Earning side: income source rows sit in the gap', async () => {
-  seedInsights(server, {
-    breakdown: breakdownWire({ spend: { coffee: { posted: 40, pending: 0 } }, income: { salary: { posted: 3000, pending: 0 } } }),
-    categories: [{ ...COFFEE, recent: 0 }, SALARY],
-    payCycle: PAY_CYCLE,
-  });
-  await renderWithApp(<Insights />);
-  fireEvent.press(await screen.findByTestId('insights-side-earning'));
-  expectClearsAskButton(await screen.findByText('Salary'));
-});
-
-// [A8] (P1) Transactions: the segmented control/search stay full width; the plan puts Load More in the gap.
-it('[A8] Transactions: rows and Load More sit in the gap', async () => {
-  server.seed('/transactions/feed', { transactions: [LIST_ROW], nextCursor: 'c1' });
-  await renderWithApp(<Transactions />);
-  expectClearsAskButton(await screen.findByText('-$42.00'));
-  expectClearsAskButton(await screen.findByTestId('transactions-load-more'));
 });
