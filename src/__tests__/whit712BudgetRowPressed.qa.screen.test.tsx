@@ -1,19 +1,17 @@
 // WHIT-712 QA — a budget row is full-strength at rest and dims + shrinks while pressed
 // (DESIGN.md Buttons). Real ../api over the fake server; ../auth + expo-router mocked.
 import { it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
 import { StyleSheet } from 'react-native';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
-import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedBudgetsTab } from './support/budgetsTab';
+import { renderLoadedBudgetsWithQueries } from './support/budgetsScreen';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
-
-import Budgets from '../../app/(tabs)/budgets';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -35,8 +33,7 @@ const touch = { nativeEvent: { timestamp: 0, pageX: 0, pageY: 0, touches: [], ch
 // [A5] (P1) at rest the row is full-strength; press-in dims + shrinks it inside DESIGN.md's range.
 it('[A5] a pressed budget row dims and shrinks', async () => {
   seedBudgetsTab(server, { coffee: { target: 100, posted: 50, pending: 0 } });
-  await renderWithQueries(<Budgets />);
-  await screen.findByText('Cafes & Coffee');
+  await renderLoadedBudgetsWithQueries();
   expect(rowStyle().opacity ?? 1).toBe(1);
 
   await act(async () => { fireEvent(rowHost(), 'responderGrant', touch); });

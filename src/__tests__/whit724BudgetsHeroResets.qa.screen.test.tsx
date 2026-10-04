@@ -8,7 +8,7 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { COFFEE } from './support/categories';
-import { BUDGET_PAY_CYCLE, seedBudgets, renderBudgets } from './support/budgetsScreen';
+import { BUDGET_PAY_CYCLE, seedBudgets, renderLoadedBudgets } from './support/budgetsScreen';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -34,8 +34,7 @@ const flat = (node: ReactTestInstance) => StyleSheet.flatten(node.props.style) ?
 describe('WHIT-724 QA: long pill + reset line stay readable', () => {
   // [A1] (P0) the pill wraps inside the card; neither text is cut to one line
   it('[A1] long pill is capped to the card width and neither text is truncated', async () => {
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
 
     const pill = screen.getByTestId('budgets-hero-pill');
     expect(flat(pill).maxWidth).toBe('100%');
@@ -47,8 +46,7 @@ describe('WHIT-724 QA: long pill + reset line stay readable', () => {
 
   // [A2] (P0) no row anywhere between the reset line and the top card squeezes it
   it('[A2] no ancestor of the reset line inside the top card lays out in a row', async () => {
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
 
     let card = screen.getByText('THIS PAY CYCLE').parent!;
     while (String(card.type) !== 'View') card = card.parent!;

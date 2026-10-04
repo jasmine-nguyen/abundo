@@ -6,7 +6,7 @@ import { screen, fireEvent } from '@testing-library/react-native';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
-import { seedBudgets, renderBudgets } from './support/budgetsScreen';
+import { seedBudgets, renderBudgets, renderLoadedBudgets } from './support/budgetsScreen';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -40,8 +40,7 @@ describe('Budgets top card', () => {
   });
 
   it('under budget → "Left to spend", no over-budget line', async () => {
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.getByText('Left to spend')).toBeTruthy();
     expect(screen.getByText('days left')).toBeTruthy();
     expect(screen.queryByText('Over budget')).toBeNull();
@@ -51,8 +50,7 @@ describe('Budgets top card', () => {
 
   it('over budget → real minus sign and "resets in N days", the amount said once', async () => {
     server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.getByText(`${MINUS}$100`)).toBeTruthy();
     expect(screen.queryByText('-$100')).toBeNull();
@@ -63,8 +61,7 @@ describe('Budgets top card', () => {
   it('1 day left → singular "day left" and "resets in 1 day"', async () => {
     server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01', days_left: 1 });
     server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.getByText('day left')).toBeTruthy();
     expect(screen.queryByText('days left')).toBeNull();
     expect(screen.getByText('resets in 1 day')).toBeTruthy();
@@ -73,8 +70,7 @@ describe('Budgets top card', () => {
   it('0 days left and over → "resets today"', async () => {
     server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01', days_left: 0 });
     server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.getByText('resets today')).toBeTruthy();
   });
 

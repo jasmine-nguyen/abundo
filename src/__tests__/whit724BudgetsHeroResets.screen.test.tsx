@@ -8,7 +8,7 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { COFFEE } from './support/categories';
-import { BUDGET_PAY_CYCLE, seedBudgets, renderBudgets } from './support/budgetsScreen';
+import { BUDGET_PAY_CYCLE, seedBudgets, renderLoadedBudgets } from './support/budgetsScreen';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -41,8 +41,7 @@ const flat = (node: ReactTestInstance) => StyleSheet.flatten(node.props.style) ?
 
 describe('WHIT-724 Budgets top card: reset text on its own line', () => {
   it('long over-budget pill → "resets in 22 days" is not squeezed beside the pill', async () => {
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
 
     const resets = screen.getByText('resets in 22 days');
@@ -62,8 +61,7 @@ describe('WHIT-724 Budgets top card: reset text on its own line', () => {
   });
 
   it('the legend caption is gone', async () => {
-    renderBudgets();
-    await screen.findByText('Cafes & Coffee');
+    await renderLoadedBudgets();
     expect(screen.queryByText(/Solid = spent/)).toBeNull();
     expect(screen.queryByText(/faded = pending/)).toBeNull();
   });
