@@ -5,9 +5,15 @@ import { describe, it, expect } from '@jest/globals';
 import { COFFEE_RECORD, GROCERIES, GROCERIES_TOP_RECORD, SUBSCRIPTIONS, SUBSCRIPTIONS_RECORD } from './support/categories';
 import { findOffenders } from './support/sourceScan';
 import { isCopyOf } from './support/inlineRecords';
+import { CATEGORIES_HOME } from './support/oneHomeGuard';
 
 const SELF = 'whit719SubscriptionsQa.logic.test.ts';
-const ALLOWED = new Set(['support/categories.ts', 'whit719SubscriptionsOneHome.logic.test.ts', SELF]);
+const ALLOWED = new Set([
+  CATEGORIES_HOME,
+  'whit719SubscriptionsOneHome.logic.test.ts',
+  'whit719GroceriesRecordQa.logic.test.ts',
+  SELF,
+]);
 
 const offendersOf = (sample: Record<string, unknown>) => findOffenders(isCopyOf(sample), ALLOWED);
 

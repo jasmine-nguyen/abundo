@@ -12,7 +12,7 @@ const COPIES = [
   `${quoted('groceries')}, name: ${quoted('Groceries')}, bucket: ${quoted('Living')}, icon: ${quoted('cart')}, parent: null }`,
 ];
 // The WHIT-719 guard checks the groceries row's exact values, so it spells one out on purpose.
-const EXACT_VALUE_CHECKS = ['whit719GroceriesTopOneHome.logic.test.ts'];
+const EXACT_VALUE_CHECKS = ['whit719GroceriesTopOneHome.logic.test.ts', 'whit719GroceriesRecordQa.logic.test.ts'];
 
 describe('the shared category samples have one home', () => {
   it('support/categories exports the coffee, groceries and subs samples, and cat() defaults to coffee', () => {
