@@ -2,7 +2,7 @@
 // The whole point of the card is that "Could not save category. Please try again." is a LIE for a
 // permanent refusal, so these pin exactly which refusals we quote and which we still paper over.
 import { describe, it, expect } from '@jest/globals';
-import { ApiError, writeFailureReason, writeFailureMessage, endSentence } from '../apiError';
+import { ApiError, writeFailureReason, writeFailureMessage, endSentence, readFailureIsOffline, loadFailureReason } from '../apiError';
 
 const CAP = 'a category can have at most 50 sub-categories';
 
@@ -172,5 +172,37 @@ describe('endSentence', () => {
     expect(endSentence('really?')).toBe('really?');
     expect(endSentence('wow!')).toBe('wow!');
     expect(endSentence('trimmed…')).toBe('trimmed…');
+  });
+});
+
+// WHIT-713 QA — the shapes the offline rule meets in the real app, beyond the planned cases.
+describe('readFailureIsOffline / loadFailureReason edges', () => {
+  it("[A17] React Native's fetch abort (whatwg-fetch's DOMException polyfill: an Error-prototype object named AbortError) looks offline", () => {
+    // RN has no native DOMException, so whatwg-fetch builds one on Error.prototype — this is what
+    // apiFetch's timeout rejects with on a device.
+    function PolyfillDOMException(this: { message: string; name: string }, message: string, name: string) {
+      this.message = message;
+      this.name = name;
+    }
+    PolyfillDOMException.prototype = Object.create(Error.prototype);
+    const aborted = new (PolyfillDOMException as unknown as new (m: string, n: string) => Error)('Aborted', 'AbortError');
+    expect(readFailureIsOffline(aborted)).toBe(true);
+    expect(loadFailureReason(aborted)).toBe('You look offline. Check your connection and retry.');
+  });
+
+  it('[A18] a plain Error that merely SAYS "Network request failed" is not offline (only TypeError is)', () => {
+    expect(readFailureIsOffline(new Error('Network request failed'))).toBe(false);
+  });
+
+  it('[A19] null / undefined / a non-Error thrown value fall back to the server sentence', () => {
+    expect(readFailureIsOffline(null)).toBe(false);
+    expect(readFailureIsOffline(undefined)).toBe(false);
+    expect(readFailureIsOffline({ name: 'AbortError' })).toBe(false);
+    expect(loadFailureReason(null)).toBe('Our server had a problem. Try again in a moment.');
+  });
+
+  it('[A20] a 4xx ApiError and an auth 401 are not offline', () => {
+    expect(readFailureIsOffline(new ApiError(404, 'gone'))).toBe(false);
+    expect(readFailureIsOffline(new ApiError(401, null))).toBe(false);
   });
 });

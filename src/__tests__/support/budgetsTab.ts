@@ -1,9 +1,21 @@
-// Shared Budgets-tab fixtures: one spend category and a 14-day cycle with the server's
-// authoritative days_left (7 → halfway, so pace = half the budget).
+// Shared Budgets-tab fixtures. seedBudgets: a coffee budget on a 30-day cycle (each part
+// overridable). seedBudgetsTab: a 14-day cycle with the server's authoritative days_left
+// (7 → halfway, so pace = half the budget).
 import type { installFakeServer } from './fakeServer';
 import { budgetViews } from '../../context';
 import { makeState, cat, budget } from '../factory';
 import { COFFEE } from './categories';
+
+export const BUDGETS = { coffee: { target: 100, posted: 40, pending: 10 } };
+export const BUDGET_PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
+
+type Seed = { payCycle?: object; budgets?: object; categories?: object };
+
+export function seedBudgets(server: ReturnType<typeof installFakeServer>, seed: Seed = {}) {
+  server.seed('/budgets', seed.budgets ?? BUDGETS);
+  server.seed('/categories', seed.categories ?? [COFFEE]);
+  server.seed('/paycycle', seed.payCycle ?? BUDGET_PAY_CYCLE);
+}
 
 export function seedBudgetsTab(
   server: ReturnType<typeof installFakeServer>,
@@ -12,9 +24,7 @@ export function seedBudgetsTab(
   daysLeft = 7,
   lastPayDate = '2026-09-26',
 ) {
-  server.seed('/paycycle', { length: 14, last_pay_date: lastPayDate, days_left: daysLeft });
-  server.seed('/categories', categories);
-  server.seed('/budgets', budgets);
+  seedBudgets(server, { budgets, categories, payCycle: { length: 14, last_pay_date: lastPayDate, days_left: daysLeft } });
 }
 
 // The coffee budget's row on the same halfway cycle, so a $100 budget's pace target is $50.
