@@ -9,6 +9,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { createCategory, generateAiInsights } from '../api';
+import { COFFEE_SHORT } from './support/categories';
 
 jest.mock('../auth', () => ({ getAuthToken: jest.fn(async () => 'test-token') }));
 
@@ -37,7 +38,7 @@ describe('readJson success body-read timeout', () => {
   }, 3000);
 
   it('passes a fast 2xx body straight through, unclipped by the timeout', async () => {
-    const body = { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee' };
+    const body = COFFEE_SHORT;
     const fetchMock = jest.fn(async () => ({
       ok: true,
       status: 200,

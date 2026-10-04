@@ -16,6 +16,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { resetAuth, setAuthStatus } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_TOP_RECORD } from './support/categories';
 import { refreshInAct, useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
 import { queryClient } from '../queryClient';
@@ -33,7 +34,7 @@ const fns = {
 };
 
 const CATEGORIES = [
-  { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null },
+  GROCERIES_TOP_RECORD,
   { id: 'fuel', name: 'Fuel', bucket: 'Living', icon: 'car', parent: null },
 ];
 

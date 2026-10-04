@@ -14,6 +14,7 @@ import { StyleSheet, RefreshControl } from 'react-native';
 import { C } from '../theme';
 import { Icon } from '../icons';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_RECORD } from './support/categories';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { queryClient } from '../queryClient';
@@ -62,7 +63,7 @@ beforeEach(() => {
   mockPush.mockClear();
   mockShowToast.mockClear();
   resetAuth();
-  server.seed('/categories', [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart' }]);
+  server.seed('/categories', [GROCERIES_RECORD]);
 });
 
 it('derives one card per account_id from the transactions (consistent name)', async () => {

@@ -5,6 +5,7 @@ import { pinToday } from './clock';
 import { txn } from '../factory';
 import { resetAppProbe } from './renderWithApp';
 import { resetAuth } from './authMock';
+import { GROCERIES_TOP } from './categories';
 import { resetRouter } from './routerMock';
 import type { installFakeServer } from './fakeServer';
 
@@ -15,5 +16,5 @@ export function resetListTabs(server: ReturnType<typeof installFakeServer>) {
   resetAuth();
   resetAppProbe();
   resetRouter();
-  server.seed('/categories', [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null }]);
+  server.seed('/categories', [GROCERIES_TOP]);
 }

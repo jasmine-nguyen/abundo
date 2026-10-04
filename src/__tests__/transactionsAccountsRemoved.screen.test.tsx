@@ -30,12 +30,12 @@ jest.mock('expo-router', () => {
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries } from './support/renderWithQueries';
 
 const server = installFakeServer();
 useTestQueryClient();
 
-const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', parent: null };
 const ROW = {
   transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
   description: 'WOOLWORTHS', merchant_name: 'Woolworths', amount: -42, account_id: 'a1',
@@ -46,7 +46,7 @@ const seedFeed = (transactions: unknown[]) => server.seed('/transactions/feed', 
 
 beforeEach(() => {
   resetAuth();
-  server.seed('/categories', [CAT]);
+  server.seed('/categories', [GROCERIES_TOP]);
   server.seed('/accounts/balances', [{ account_id: 'a1', amount: -100 }]);
   seedFeed([ROW]);
 });
