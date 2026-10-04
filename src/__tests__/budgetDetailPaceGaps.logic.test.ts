@@ -88,7 +88,7 @@ describe('budgetDetail pace — gaps', () => {
   // (earn-target) budget far past linear pace must still read the calm earn copy/colour,
   // never the amber spend caution. (Not expected to fail on reverting `behindPace`.)
   it('[G8] income budget past pace stays "keep earning", never amber', () => {
-    const income = cat({ id: 'coffee', bucket: 'Income', name: 'Salary' });
+    const income = cat({ bucket: 'Income', name: 'Salary' });
     // actual 900 < target 1000 (not met) but way past linear pace (500). Income → calm.
     const d = detail({ budget: 1000, posted: 900 }, { cycleLen: 14, daysLeft: 7 }, income);
     expect(d.statusLabel).toBe('On track — keep earning');

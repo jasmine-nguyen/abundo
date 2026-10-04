@@ -25,7 +25,7 @@ describe('WHIT-422 — C.textInfo value pin', () => {
 describe('WHIT-422 — expense budget pace colour is the muted token', () => {
   // Lifestyle (expense) category; cycleLen 14 / daysLeft 7 → elapsed 0.5 → target = 0.5 * budget.
   const expenseRow = (posted: number) => budgetViews(makeState({
-    categories: [cat({ id: 'coffee', bucket: 'Lifestyle' })],
+    categories: [cat()],
     budgets: [budget({ id: 'coffee', budget: 100, posted, pending: 0 })],
     cycleLen: 14, daysLeft: 7,
   })).rows[0];

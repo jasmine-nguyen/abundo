@@ -13,7 +13,7 @@ import { cat, budget, txn } from './factory';
 describe('budgetDetail — narrow BudgetDetailInput', () => {
   it('drives from a plain narrow object (no AppContext) for a spend budget', () => {
     const input: BudgetDetailInput = {
-      category: (id: string) => (id === 'coffee' ? cat({ id: 'coffee', bucket: 'Lifestyle' }) : undefined),
+      category: (id: string) => (id === 'coffee' ? cat() : undefined),
       budgets: [budget({ id: 'coffee', budget: 100, posted: 40, pending: 10 })],
       // The list is the server-filtered cycle list — budgetDetail no longer filters it.
       transactions: [txn({ transaction_id: 'x1', category: 'coffee' })],
@@ -33,7 +33,7 @@ describe('budgetDetail — narrow BudgetDetailInput', () => {
 
   it('shows the exact spent total (cents) so the hero matches the rows it sums — 73.50, not a rounded $74', () => {
     const input: BudgetDetailInput = {
-      category: (id: string) => (id === 'coffee' ? cat({ id: 'coffee', bucket: 'Lifestyle' }) : undefined),
+      category: (id: string) => (id === 'coffee' ? cat() : undefined),
       // posted 62.50 + pending 11.00 = 73.50 spent of an $80 budget (the reported Cafes & Coffee case)
       budgets: [budget({ id: 'coffee', budget: 80, posted: 62.5, pending: 11 })],
       transactions: [txn({ transaction_id: 'x1', category: 'coffee' })],
@@ -58,7 +58,7 @@ describe('budgetDetail — narrow BudgetDetailInput', () => {
 
   it('returns null when the category exists but its budget row has not loaded yet', () => {
     const partial: BudgetDetailInput = {
-      category: (id: string) => (id === 'coffee' ? cat({ id: 'coffee' }) : undefined),
+      category: (id: string) => (id === 'coffee' ? cat() : undefined),
       budgets: [],                 // budgets query still loading
       transactions: [],
       cycleLen: 14,
@@ -71,7 +71,7 @@ describe('budgetDetail — narrow BudgetDetailInput', () => {
 describe('budgetEditInfo — narrow BudgetEditInput', () => {
   it('drives from a plain narrow object using the injected cycleName', () => {
     const input: BudgetEditInput = {
-      category: (id: string) => (id === 'coffee' ? cat({ id: 'coffee', recent: 52 }) : undefined),
+      category: (id: string) => (id === 'coffee' ? cat() : undefined),
       budgets: [],
       cycleName: () => 'Monthly',
     };

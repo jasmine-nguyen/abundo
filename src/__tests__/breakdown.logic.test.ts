@@ -8,7 +8,7 @@ import { C } from '../theme';
 import { makeState, cat, spend, withRollup } from './factory';
 
 const cats = [
-  cat({ id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#E8A87C' }),
+  cat(),
   cat({ id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7FD49B' }),
 ];
 

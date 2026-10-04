@@ -109,7 +109,7 @@ function values(grid: (ReadCell | null)[][]): (string | number | null)[][] {
 
 const CATS: Category[] = [
   cat({ id: 'food', name: 'Food', bucket: 'Lifestyle', parent: null }),
-  cat({ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', parent: 'food' }),
+  cat({ parent: 'food' }),
   cat({ id: 'groceries', name: 'Groceries', bucket: 'Living', parent: null }),
   cat({ id: 'salary', name: 'Salary', bucket: 'Income', parent: null }),
   cat({ id: 'nest_egg', name: 'Nest egg', bucket: 'Savings', parent: null }),
