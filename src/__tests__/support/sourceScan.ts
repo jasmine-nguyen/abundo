@@ -71,6 +71,10 @@ export function findOffenders(
     );
 }
 
+// Wraps text in single quotes, so a guard can build the literal it hunts for from pieces and
+// never match its own source.
+export const q = (text: string) => `'${text}'`;
+
 // A comment describing a colour is documentation, not shipped colour — src/theme.ts spells several
 // out in the token comments on purpose. The `[^:]` guard keeps `https://` inside a string from
 // reading as the start of a line comment.

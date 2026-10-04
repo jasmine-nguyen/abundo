@@ -2,13 +2,12 @@
 // support/categories.ts. Every other test file imports them instead of spelling them out.
 import { describe, it, expect } from '@jest/globals';
 import { COFFEE, COFFEE_RECORD, GROCERIES, SUBS } from './support/categories';
-import { findOffenders } from './support/sourceScan';
+import { findOffenders, q } from './support/sourceScan';
 import { cat } from './factory';
 
 const HOME = 'support/categories.ts';
 
 // Built from pieces so this file never matches its own scan.
-const q = (text: string) => `'${text}'`;
 const COPIES = [
   `name: ${q('Cafes & Coffee')}, bucket: ${q('Lifestyle')}, icon: ${q('coffee')}`,
   `color: ${q('#7fd49b')}, recent: ` + '100',

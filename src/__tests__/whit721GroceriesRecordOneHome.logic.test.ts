@@ -2,10 +2,9 @@
 // GROCERIES_RECORD (the raw server record). Every other test file imports or spreads it.
 import { describe, it, expect } from '@jest/globals';
 import { GROCERIES, GROCERIES_RECORD } from './support/categories';
-import { findOffenders } from './support/sourceScan';
+import { findOffenders, q } from './support/sourceScan';
 
 // Built from pieces so this file never matches its own scan.
-const q = (text: string) => `'${text}'`;
 const isGroceriesCopy = (line: string) =>
   line.includes(`id: ${q('groceries')}`) &&
   line.includes(`name: ${q('Groceries')}`) &&

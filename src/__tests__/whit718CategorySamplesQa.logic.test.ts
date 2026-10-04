@@ -3,11 +3,10 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import { COFFEE, COFFEE_RECORD, GROCERIES, SUBS, SALARY, SAVINGS } from './support/categories';
 import * as budgetsTab from './support/budgetsTab';
-import { findOffenders } from './support/sourceScan';
+import { findOffenders, q } from './support/sourceScan';
 
 const HOME = 'support/categories.ts';
 const SELF = 'whit718CategorySamplesQa.logic.test.ts';
-const q = (text: string) => `'${text}'`;
 
 // Every piece of each sample on one line, in any order, and not as cat() overrides.
 const SAMPLE_PIECES = [
