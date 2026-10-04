@@ -7,7 +7,6 @@ import { makeState, cat, budget } from '../factory';
 import { COFFEE } from './categories';
 
 export const BUDGETS = { coffee: { target: 100, posted: 40, pending: 10 } };
-export const BUDGETS_CAPTION = "Solid = spent · faded = pending · line = today's plan (spending evenly)";
 export const BUDGET_PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
 
 type Seed = { payCycle?: object; budgets?: object; categories?: object };

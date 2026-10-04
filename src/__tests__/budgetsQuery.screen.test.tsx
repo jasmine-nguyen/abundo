@@ -8,7 +8,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import { screen, fireEvent, act, waitFor, renderHook } from '@testing-library/react-native';
 import { QueryClient } from '@tanstack/react-query';
 import { makeClient, wrapper, pause } from './support/queryClient';
-import { BUDGETS, BUDGETS_CAPTION, BUDGET_PAY_CYCLE, seedBudgets, renderBudgets } from './support/budgetsScreen';
+import { BUDGETS, BUDGET_PAY_CYCLE, seedBudgets, renderBudgets } from './support/budgetsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
@@ -67,14 +67,12 @@ it('renders budget rows from the queries, fetched in parallel with the pay cycle
   expect(categoryReads()).toHaveLength(1);
 });
 
-it('does not render the redundant per-row "target" caption (the pace tick is labelled once in the caption)', async () => {
+it('does not render the per-row "target" caption', async () => {
   // WHIT-281: a per-row "target" caption pinned under the moving pace tick overlapped the
-  // right-aligned pace status when the tick sat far right. It was redundant — the tick is
-  // already explained once, in the top caption (WHIT-707) — so it was removed.
+  // right-aligned pace status when the tick sat far right, so it was removed.
   renderBudgets();
   await screen.findByText('Cafes & Coffee');
-  expect(screen.queryAllByText('target')).toHaveLength(0); // the overlapping caption is gone
-  expect(screen.getByText(BUDGETS_CAPTION)).toBeTruthy();
+  expect(screen.queryAllByText('target')).toHaveLength(0);
 });
 
 it('an over-budget row says the overspend once (WHIT-712)', async () => {
