@@ -5,7 +5,7 @@ import { describe, it, expect } from '@jest/globals';
 import { budgetViews, budgetDetail, groupTransactionsByDate } from '../context';
 import { elapsedFrac } from '../payCycle';
 import type { Budget } from '../model';
-import { C } from '../theme';
+import { C, tint } from '../theme';
 import { makeState, cat, budget, txn } from './factory';
 import { budgetDetailFor as detail, budgetRowFor } from './support/budgetsTab';
 import { SALARY } from './support/categories';
@@ -97,7 +97,8 @@ describe('budgetViews — income earn-targets (over-is-good)', () => {
     expect(row.remainLabel).toBe('to go');
     expect(row.remainAmount).toBe('$4,000');       // 5000 - 1000 still to earn
     expect(row.remainColor).not.toBe(RED);
-    expect(row.postedColor).not.toBe(RED);          // bar uses the category colour, not red
+    expect(row.postedColor).toBe(C.accentSoft);     // bar uses the shared calm fill, not red
+    expect(row.pendingTint).toBe(tint(C.accentSoft, 0.45));
     // WHIT-707: salary lands in one lump, so there's no even-pace line or today marker.
     expect(row.paceLabel).toBe('');
     expect(row.showTarget).toBe(false);
@@ -148,8 +149,9 @@ describe('budgetDetail — income earn-targets', () => {
     const d = incomeDetail(1000);
     expect(d.statusLabel).toBe('On track — keep earning');
     expect(d.statusColor).not.toBe(RED);
-    expect(d.postedColor).not.toBe(RED);
-    expect(d.dailyLabel).toContain('to target');    // "$X/day to target", not "Daily limit"
+    expect(d.postedColor).toBe(C.accentSoft);
+    expect(d.pendingTint).toBe(tint(C.accentSoft, 0.45));
+    expect(d.dailyLabel).toContain('to target');   // "$X/day to target", not "Daily limit"
     expect(d.dailyLabel).not.toContain('Daily limit');
   });
 

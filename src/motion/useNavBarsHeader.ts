@@ -47,6 +47,8 @@ export function useNavBarsHeader() {
     headerHeight,
     // Layer under floatingHeaderStyle: the safe-area top padding.
     headerPaddingTop: insets.top + 6,
+    // Height of the fixed strip that stays behind the status bar when the header slides away.
+    statusBarHeight: insets.top,
     // Spread into the ScrollView's contentContainerStyle.
     contentPadding: { paddingTop: headerHeight, paddingBottom: TAB_BAR_CLEARANCE + ASK_BUTTON_CLEARANCE },
   };
