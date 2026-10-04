@@ -70,7 +70,7 @@ function BudgetsHero({ daysLeft, nextPayday, money, totals, children }: { daysLe
       <Text style={styles.heroEyebrow}>THIS PAY CYCLE</Text>
       <View style={[styles.heroRow, styles.heroTop]}>
         <Text style={[styles.heroCol, styles.heroBig]} numberOfLines={1} adjustsFontSizeToFit>{daysLeft}</Text>
-        {money ? <Text style={[styles.heroCol, styles.heroBig, styles.heroMoney]} numberOfLines={1} adjustsFontSizeToFit>{money.amount}</Text> : null}
+        {money ? <Text style={[styles.heroCol, styles.heroBig]} numberOfLines={1} adjustsFontSizeToFit>{money.amount}</Text> : null}
       </View>
       <View style={styles.heroRow}>
         <Text style={[styles.heroCol, styles.heroLabel]}>{daysLeft === 1 ? 'day left' : 'days left'}</Text>
@@ -215,10 +215,8 @@ const styles = StyleSheet.create({
   heroTop: { marginTop: 6 },
   // Columns share the row equally; minWidth 0 lets adjustsFontSizeToFit shrink a long amount.
   heroCol: { flex: 1, minWidth: 0 },
-  // Days left at full size; heroMoney shrinks the money number to about two-thirds (WHIT-731). No
-  // fixed lineHeight, so the number scales with the user's text size instead of clipping.
+  // Days left and the money number share one size. No fixed lineHeight, so the number scales with the user's text size instead of clipping.
   heroBig: { fontFamily: FONT.display, fontSize: 44, fontWeight: '800', color: C.heroInk, letterSpacing: -1.5 },
-  heroMoney: { fontSize: 30, letterSpacing: -0.8 },
   heroLabel: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.heroInk2 },
   heroStats: { flexDirection: 'row', gap: 12, marginTop: 18 },
   heroStat: { flex: 1, minWidth: 0 },

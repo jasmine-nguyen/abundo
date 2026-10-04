@@ -1,5 +1,4 @@
-// WHIT-731 — Budgets top card: the money number is about two-thirds the height of days-left (cents
-// kept), and one full-width row of three labelled values replaces the two small lines:
+// WHIT-731 — Budgets top card: the money number is the same size as days-left (cents kept), and one full-width row of three labelled values replaces the two small lines:
 // Spent · Budget · Next payday.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { screen } from '@testing-library/react-native';
@@ -55,13 +54,12 @@ describe('WHIT-731 Budgets top card: Spent · Budget · Next payday row', () => 
     expect(screen.getAllByText(/\$187\.76 pending/)).toHaveLength(1);
   });
 
-  it('the money number is about two-thirds the height of the days-left number', async () => {
+  it('the money number is the same size as the days-left number', async () => {
     await showOverBudget();
 
     const daysLeftSize = StyleSheet.flatten(screen.getByText('22').props.style).fontSize as number;
     const moneySize = StyleSheet.flatten(screen.getByText('−$351.68').props.style).fontSize as number;
 
-    expect(moneySize / daysLeftSize).toBeGreaterThanOrEqual(0.6);
-    expect(moneySize / daysLeftSize).toBeLessThanOrEqual(0.75);
+    expect(moneySize).toBe(daysLeftSize);
   });
 });
