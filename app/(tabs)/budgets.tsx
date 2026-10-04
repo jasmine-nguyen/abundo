@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { C, FONT, fmt, fmtExact, tint, PRESSED } from '../../src/theme';
+import { C, FONT, fmt, fmtExact, fmtSigned,tint, PRESSED } from '../../src/theme';
 import { formatDayMonth } from '../../src/dateutil';
 import { Icon, Glyph } from '../../src/icons';
 import { budgetViews, type BudgetView } from '../../src/context';
@@ -36,15 +36,20 @@ function BudgetRow({ b }: { b: BudgetView }) {
       </View>
       <View style={{ marginTop: 15 }}>
         <BudgetBar postedPct={b.postedPct} pendingPct={b.pendingPct} targetPct={b.targetPct} postedColor={b.postedColor} pendingTint={b.pendingTint} showTarget={b.showTarget} />
-        {b.paceLabel ? (
+        {b.paceLabel || b.spreadNote ? (
           <View style={styles.paceRow}>
-            {b.spreadPrefill !== null ? (
-              <Pressable testID={`budget-row-spread-${b.id}`} onPress={() => router.push(`/budget/spread?categoryId=${b.id}&prefill=${b.spreadPrefill}`)} hitSlop={8}>
-                <Text style={[styles.paceLabel, { color: b.paceColor }]}>{b.paceLabel}</Text>
-              </Pressable>
-            ) : (
-              <Text style={[styles.paceLabel, { color: b.paceColor }]}>{b.paceLabel}</Text>
-            )}
+            {b.spreadNote ? <Text testID={`budget-row-spread-note-${b.id}`} style={styles.spreadNote}>{b.spreadNote}</Text> : null}
+            {b.paceLabel ? (
+              <View style={styles.pace}>
+                {b.spreadPrefill !== null ? (
+                  <Pressable testID={`budget-row-spread-${b.id}`} onPress={() => router.push(`/budget/spread?categoryId=${b.id}&prefill=${b.spreadPrefill}`)} hitSlop={8}>
+                    <Text style={[styles.paceLabel, { color: b.paceColor }]}>{b.paceLabel}</Text>
+                  </Pressable>
+                ) : (
+                  <Text style={[styles.paceLabel, { color: b.paceColor }]}>{b.paceLabel}</Text>
+                )}
+              </View>
+            ) : null}
           </View>
         ) : null}
       </View>
@@ -163,7 +168,7 @@ export default function Budgets() {
             amount: overBudget ? `−${fmtExact(totRemain)}` : fmtExact(totRemain),
             label: overBudget ? 'Over budget' : 'Left to spend',
           } : undefined}
-          totals={hasSpending ? { spent: fmt(totSpent), budget: fmt(totBudget) } : undefined}
+          totals={hasSpending ? { spent: fmt(totSpent), budget: fmtSigned(totBudget) } : undefined}
         >
           {hasSpending ? null : (
             <View style={styles.heroBottom}>
@@ -238,7 +243,9 @@ const styles = StyleSheet.create({
   rowRemainLabel: { fontFamily: FONT.body, fontSize: 11, color: C.textDim, fontWeight: '500', marginTop: 1 },
   // WHIT-281: a per-row "target" caption overlapped the right-aligned pace status when the
   // tick sat far right. Removed — only the pace status remains, right-aligned.
-  paceRow: { minHeight: 18, marginTop: 1, alignItems: 'flex-end', justifyContent: 'center' },
+  paceRow: { minHeight: 18, marginTop: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  pace: { marginLeft: 'auto' },
+  spreadNote: { fontFamily: FONT.body, fontSize: 11.5, color: C.textDim },
   paceLabel: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '700' },
 
   addBudget: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(C.accentAlt, 0.4), backgroundColor: tint(C.accentAlt, 0.07), borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
