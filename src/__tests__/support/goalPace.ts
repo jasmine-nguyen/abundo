@@ -3,10 +3,9 @@
 import type { installFakeServer } from './fakeServer';
 import type { GoalRecord } from '../../api';
 import { balanceGoalView, BalanceGoal } from '../../context';
-import { seedGoalsHub } from './goalsScreen';
-import { EMPTY_LOAN_FACTS } from '../factory';
+import { GOALS_HUB_CYCLE, seedHubWith } from './goalsScreen';
 
-export const GOAL_CYCLE = { length: 14, last_pay_date: '2026-06-06' };
+export const GOAL_CYCLE = GOALS_HUB_CYCLE;
 export const GOAL_TODAY = new Date(2026, 6, 11); // Sat 11 Jul 2026
 export const GOAL_START = { start_date: '2026-06-06', target_date: '2026-08-15' };
 
@@ -21,11 +20,5 @@ export const growGoal = (id: string, over: Partial<GoalRecord> = {}): GoalRecord
 });
 
 export function seedPaceHub(server: ReturnType<typeof installFakeServer>, goals: GoalRecord[], balances: Record<string, number>) {
-  seedGoalsHub(server, {
-    goals,
-    payCycle: GOAL_CYCLE,
-    balances,
-    loanFacts: EMPTY_LOAN_FACTS,
-    homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:00:00Z' },
-  });
+  seedHubWith(server, { goals, balances });
 }

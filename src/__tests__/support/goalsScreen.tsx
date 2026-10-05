@@ -13,7 +13,7 @@
 import type { installFakeServer } from './fakeServer';
 import type { GoalRecord, LoanFacts, MilestoneRecord, PayCycle, Repayment } from '../../api';
 import type { HomeLoanState } from '../../model';
-import { DEFAULT_MILESTONES, LOAN_FACTS, NO_REPAYMENT } from '../factory';
+import { DEFAULT_MILESTONES, EMPTY_LOAN_FACTS, LOAN_FACTS, NO_REPAYMENT } from '../factory';
 
 type FakeServer = ReturnType<typeof installFakeServer>;
 
@@ -61,4 +61,19 @@ export function seedGoalsHub(
   })));
   server.seed('/loanfacts', loanFacts);
   seedHomeLoan(server, homeLoan);
+}
+
+// The Goals-tab suites' shared world: a fortnightly cycle (paydays …Jul4, Jul18, Aug1, Aug15),
+// $4,000 in up-spending, no loan facts yet, and a home loan owing $596,642.43.
+export const GOALS_HUB_CYCLE: PayCycle = { length: 14, last_pay_date: '2026-06-06' };
+export const GOALS_HUB_DEFAULTS: GoalsHubSeed = {
+  payCycle: GOALS_HUB_CYCLE,
+  balances: { 'up-spending': 4000 },
+  loanFacts: EMPTY_LOAN_FACTS,
+  homeLoan: { balance: 596642.43, asOf: AS_OF },
+};
+
+/** seedGoalsHub over GOALS_HUB_DEFAULTS — pass only what the test changes. */
+export function seedHubWith(server: FakeServer, over: GoalsHubSeed = {}) {
+  seedGoalsHub(server, { ...GOALS_HUB_DEFAULTS, ...over });
 }

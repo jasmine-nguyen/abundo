@@ -15,8 +15,7 @@ import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
-import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
-import { EMPTY_LOAN_FACTS } from './factory';
+import { seedHubWith, type GoalsHubSeed } from './support/goalsScreen';
 import { queryClient } from '../queryClient';
 import type { GoalRecord, LoanFacts } from '../api';
 
@@ -42,7 +41,6 @@ jest.mock('expo-router', () => ({
 
 import Goals from '../../app/(tabs)/goals';
 
-const PAY_CYCLE = { length: 14, last_pay_date: '2026-06-06' }; // paydays …Jul18, Aug1, Aug15
 const GROW: GoalRecord = { id: 'g1', name: 'Emergency fund', icon: 'wallet', direction: 'grow', target_amount: 10000, target_date: '2026-08-15', account_id: 'up-spending' };
 const PAYDOWN: GoalRecord = { id: 'g2', name: 'Car loan', icon: 'car', direction: 'paydown', target_amount: 0, target_date: '2026-08-15', baseline: 20000, manual_balance: 12000, manual_as_of: '2026-07-01', account_id: null };
 // WHIT-296: a fully-populated LoanFacts (all six numbers) so loanFactsReady is true and the
@@ -54,8 +52,7 @@ const server = installFakeServer();
 useTestQueryClient();
 
 // `balances` is account id → live balance (the old balanceFor lookup); an account left out is unpolled.
-const HUB: GoalsHubSeed = { payCycle: PAY_CYCLE, balances: { 'up-spending': 4000 }, loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:00:00Z' } };
-const seedHub = (over: GoalsHubSeed = {}) => seedGoalsHub(server, { ...HUB, ...over });
+const seedHub = (over: GoalsHubSeed = {}) => seedHubWith(server, over);
 
 beforeEach(() => {
   resetAuth();

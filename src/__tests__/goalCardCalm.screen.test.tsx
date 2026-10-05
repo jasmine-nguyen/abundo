@@ -10,8 +10,8 @@ import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
-import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
-import { EMPTY_LOAN_FACTS } from './factory';
+import { seedHubWith, type GoalsHubSeed } from './support/goalsScreen';
+import { GOAL_TODAY } from './support/goalPace';
 import type { GoalRecord } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
@@ -31,18 +31,15 @@ jest.mock('expo-router', () => ({
 
 import Goals from '../../app/(tabs)/goals';
 
-const PAY_CYCLE = { length: 14, last_pay_date: '2026-06-06' }; // paydays …Jul4, Jul18, Aug1, Aug15
-
 const server = installFakeServer();
 useTestQueryClient();
 
-const HUB: GoalsHubSeed = { payCycle: PAY_CYCLE, balances: { 'up-spending': 4000 }, loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:00:00Z' } };
-const seedHub = (over: GoalsHubSeed = {}) => seedGoalsHub(server, { ...HUB, ...over });
+const seedHub = (over: GoalsHubSeed = {}) => seedHubWith(server, over);
 
 beforeEach(() => {
   mockPush.mockClear();
   resetAuth();
-  pinToday(new Date(2026, 6, 11)); // Sat 11 Jul 2026
+  pinToday(GOAL_TODAY);
   seedHub();
 });
 afterEach(() => { jest.useRealTimers(); });
