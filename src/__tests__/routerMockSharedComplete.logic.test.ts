@@ -4,23 +4,22 @@
 import { describe, it, expect } from '@jest/globals';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { stripComments, testFiles } from './support/sourceScan';
-import { overridesCoreHook, routerMockFactories } from './support/routerMockScan';
+import { testFiles } from './support/sourceScan';
+import {
+  LOCAL_ROUTER_SPY,
+  SHARED_FACTORY,
+  codeOf,
+  overridesCoreHook,
+  routerMockFactories,
+} from './support/routerMockScan';
 
 const TESTS_DIR = __dirname;
 
-// Built from parts so this file never contains the literals it hunts for.
-const SHARED_FACTORY = new RegExp("require\\('\\./support/routerMock'\\)\\.routerMock" + 'Module\\(');
-const LOCAL_ROUTER_SPY = new RegExp(
-  '^\\s*(const|let|var)\\s+mock' + '(Push|Back|Replace|Params|DismissAll)\\b',
-  'm',
-);
+// Built from parts so this file never contains the literal it hunts for.
 const TEMPORARY_SKIP_LIST = 'NOT_YET_' + 'CONVERTED';
 
-const codeOf = (file: string): string => stripComments(readFileSync(join(TESTS_DIR, file), 'utf8'));
-
 const keepsOwnRouterFake = (file: string): boolean => {
-  const code = codeOf(file);
+  const code = codeOf(TESTS_DIR, file);
   const factories = routerMockFactories(code);
   if (factories.length === 0) return false;
   if (factories.some((factory) => !SHARED_FACTORY.test(factory))) return true;

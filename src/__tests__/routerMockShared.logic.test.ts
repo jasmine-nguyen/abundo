@@ -3,10 +3,14 @@
 // local push/back/replace/params spy back into any non-allow-listed file and this goes red,
 // naming the file.
 import { describe, it, expect } from '@jest/globals';
-import { readFileSync } from 'fs';
-import { join } from 'path';
-import { stripComments, testFiles } from './support/sourceScan';
-import { overridesCoreHook, routerMockFactories } from './support/routerMockScan';
+import { testFiles } from './support/sourceScan';
+import {
+  LOCAL_ROUTER_SPY,
+  SHARED_FACTORY,
+  codeOf as codeIn,
+  overridesCoreHook,
+  routerMockFactories,
+} from './support/routerMockScan';
 
 const TESTS_DIR = __dirname;
 
@@ -16,14 +20,7 @@ const ALLOWED_INLINE = new Set([
   'rootLayout.launch.screen.test.tsx',
 ]);
 
-// Built from parts so this file never contains the literals it hunts for.
-const SHARED_FACTORY = new RegExp("require\\('\\./support/routerMock'\\)\\.routerMock" + 'Module\\(');
-const LOCAL_ROUTER_SPY = new RegExp(
-  '^\\s*(const|let|var)\\s+mock' + '(Push|Back|Replace|Params|DismissAll)\\b',
-  'm',
-);
-
-const codeOf = (file: string): string => stripComments(readFileSync(join(TESTS_DIR, file), 'utf8'));
+const codeOf = (file: string): string => codeIn(TESTS_DIR, file);
 const factoriesOf = (file: string): string[] => routerMockFactories(codeOf(file));
 
 const mockingFiles = testFiles(TESTS_DIR)

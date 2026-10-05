@@ -6,9 +6,10 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { fireEvent, screen } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
-import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { renderWithQueries, refreshInAct, settle, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
-import { routerSpies, resetRouter } from './support/routerMock';
+import { routerSpies, resetRouter, fireFocus } from './support/routerMock';
+import { queryClient } from '../queryClient';
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
@@ -28,7 +29,7 @@ jest.mock('../context', () => ({
 
 import Settings from '../../app/settings';
 
-installFakeServer();
+const server = installFakeServer();
 useTestQueryClient();
 
 beforeEach(() => {
@@ -73,5 +74,30 @@ describe('profile card', () => {
     await renderWithQueries(<Settings />);
     expect(screen.getByText('me.jasminenguyen@gmail.com')).toBeTruthy();
     expect(screen.queryByText('Jordan Diaz')).toBeNull();
+  });
+});
+
+// WHIT-753 QA [A3] — the shared router fake runs Settings' focus refresh (the old no-op
+// useFocusEffect never did). A later focus on stale data re-reads the categories and loan facts.
+// Fail-on-revert: drop the useFocusEffect line from app/settings.tsx and neither is re-read.
+describe('focus refresh', () => {
+  it('[A3] a later focus re-reads stale categories and loan facts', async () => {
+    await renderWithQueries(<Settings />);
+    const categoriesBefore = server.sent('GET', '/categories').length;
+    const loanFactsBefore = server.sent('GET', '/loanfacts').length;
+    await refreshInAct(() => queryClient.invalidateQueries({ refetchType: 'none' }));
+
+    await refreshInAct(() => fireFocus());
+    await settle();
+
+    expect(server.sent('GET', '/categories').length).toBeGreaterThan(categoriesBefore);
+    expect(server.sent('GET', '/loanfacts').length).toBeGreaterThan(loanFactsBefore);
+  });
+
+  // [A4] The shared spies are cleared between tests: an earlier Back / Log out leaves no calls here.
+  it('[A4] starts each test with no router calls carried over', async () => {
+    await renderWithQueries(<Settings />);
+    expect(routerSpies.back).not.toHaveBeenCalled();
+    expect(routerSpies.replace).not.toHaveBeenCalled();
   });
 });
