@@ -10,9 +10,9 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedBudgetsTab } from './support/budgetsTab';
-import { renderLoadedBudgetsWithQueries, showTwoRows } from './support/budgetsScreen';
+import { renderLoadedBudgetsWithQueries, showTwoRows, tickBandOf } from './support/budgetsScreen';
 import { COFFEE, GROCERIES } from './support/categories';
-import { sharedHost, textOf } from './support/layout';
+import { sharedHost, styleOf, textOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -26,13 +26,7 @@ beforeEach(() => {
 });
 
 // The height of the band under a row's bar that holds the target tick.
-function tickBandHeight(rowTestID: string) {
-  const row = screen.getByTestId(rowTestID);
-  const tick = row.findAll((n) => typeof n.type === 'string' && StyleSheet.flatten(n.props.style)?.backgroundColor === C.progressTick)[0];
-  let band = tick.parent!;
-  while (typeof band.type !== 'string') band = band.parent!;
-  return StyleSheet.flatten(band.props.style).height;
-}
+const tickBandHeight = (rowTestID: string) => styleOf(tickBandOf(screen.getByTestId(rowTestID))!).height;
 
 describe('WHIT-741 Budgets tab polish', () => {
   it('no line on the row starts with "·", and no row shows pending (WHIT-744)', async () => {

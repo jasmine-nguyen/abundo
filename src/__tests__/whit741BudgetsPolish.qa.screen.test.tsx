@@ -4,15 +4,14 @@
 // screen hides "today's plan" on a used-up budget. Real ../api over the fake server.
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { screen } from '@testing-library/react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
-import { C, MINUS } from '../theme';
+import { MINUS } from '../theme';
 import { setParams } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { seedBudgetsTab } from './support/budgetsTab';
-import { renderLoadedBudgetsWithQueries, heroTotals } from './support/budgetsScreen';
+import { renderLoadedBudgetsWithQueries, heroTotals, tickBandOf } from './support/budgetsScreen';
 import { COFFEE, GROCERIES, SALARY } from './support/categories';
 import { hostParent, styleOf } from './support/layout';
 
@@ -28,8 +27,6 @@ const server = installFakeServer();
 useTestQueryClient();
 useBudgetsSuiteReset();
 
-const ticksIn = (node: ReactTestInstance) =>
-  node.findAll((n) => typeof n.type === 'string' && StyleSheet.flatten(n.props.style)?.backgroundColor === C.progressTick);
 
 const isHostText = (n: ReactTestInstance) => String(n.type) === 'Text';
 
@@ -37,7 +34,7 @@ const isHostText = (n: ReactTestInstance) => String(n.type) === 'Text';
 const hostCells = (row: ReactTestInstance) => row.findAll((n) => isHostText(n) && hostParent(n) === row);
 
 // The height of the band holding the first tick under `root`.
-const tickBandHeight = (root: ReactTestInstance) => styleOf(hostParent(ticksIn(root)[0])).height;
+const tickBandHeight = (root: ReactTestInstance) => styleOf(tickBandOf(root)!).height;
 
 // [A13] (P0) a fully used budget ("$0 left") shows its bar with no tick; a budget with money left keeps it.
 it('[A13] "$0 left" row has no tick; a row with money left has one', async () => {
@@ -47,8 +44,8 @@ it('[A13] "$0 left" row has no tick; a row with money left has one', async () =>
   }, [COFFEE, GROCERIES]);
   await renderLoadedBudgetsWithQueries();
   await screen.findByText('Groceries');
-  expect(ticksIn(screen.getByTestId('budget-row-coffee'))).toHaveLength(0);
-  expect(ticksIn(screen.getByTestId('budget-row-groceries'))).toHaveLength(1);
+  expect(tickBandOf(screen.getByTestId('budget-row-coffee'))).toBeNull();
+  expect(tickBandOf(screen.getByTestId('budget-row-groceries'))).not.toBeNull();
 });
 
 // [A14] (P1) a row with a note gets the same short tick band as every row (WHIT-744).
@@ -126,7 +123,6 @@ it('[A20] budget detail with money left keeps "today\'s plan" and its 18pt band'
   server.seed('/budgets/coffee/transactions', []);
   const view = await renderWithQueries(<BudgetDetail />);
   expect(await screen.findByText("today's plan")).toBeTruthy();
-  const ticks = ticksIn(view.UNSAFE_root);
-  expect(ticks).toHaveLength(1);
+  expect(tickBandOf(view.UNSAFE_root)).not.toBeNull();
   expect(tickBandHeight(view.UNSAFE_root)).toBe(18);
 });

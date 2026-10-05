@@ -22,6 +22,8 @@ import { makeClient } from './queryClient';
 import { renderWithQueries } from './renderWithQueries';
 import type { installFakeServer } from './fakeServer';
 import { COFFEE, GROCERIES } from './categories';
+import { hostParent, styleOf } from './layout';
+import { C } from '../../theme';
 import { BUDGET_PAY_CYCLE, seedBudgets, seedBudgetsTab } from './budgetsTab';
 
 export { BUDGETS, BUDGET_PAY_CYCLE, seedBudgets } from './budgetsTab';
@@ -94,4 +96,20 @@ export function rightOnlyGaps(node: ReactTestInstance) {
     if ((Number(right) || 0) > (Number(left) || 0)) gaps.push({ testID: host.props.testID, left, right });
   }
   return gaps;
+}
+
+// WHIT-744: the band under a row's bar that holds the pace tick, or null when the row draws no tick.
+export function tickBandOf(row: ReactTestInstance) {
+  const tick = row.findAll((n) => typeof n.type === 'string' && styleOf(n).backgroundColor === C.progressTick)[0];
+  if (!tick) return null;
+  return hostParent(tick);
+}
+
+// WHIT-744: how far a row's note sits below its bar's bottom — the tick band (height + top margin)
+// when there is one, plus the margin above the note's wrapper.
+export function noteOffsetBelowBar(id: string) {
+  const band = tickBandOf(screen.getByTestId(`budget-row-${id}`));
+  const bandSpace = band ? (styleOf(band).height ?? 0) + (styleOf(band).marginTop ?? 0) : 0;
+  const wrapper = hostParent(screen.getByTestId(`budget-row-note-${id}`));
+  return bandSpace + (styleOf(wrapper).marginTop ?? 0);
 }
