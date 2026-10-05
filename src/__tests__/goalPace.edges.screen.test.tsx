@@ -74,10 +74,10 @@ describe('goal card pace pill + dollars edges (WHIT-748 QA)', () => {
     expect(screen.queryByTestId('goal-pace-unpolled')).toBeNull();
   });
 
-  it('[A15] a paydown judged from its start but with no bar shows the pill and no dollars', async () => {
+  it('[A15] a paydown judged from its start but with no bar shows the pill and what is still owed', async () => {
     await renderWithQueries(<Goals />);
     expect(within(screen.getByTestId('goal-pace-noscale')).getByText('Ahead by $2,000')).toBeTruthy();
-    expect(screen.queryByTestId('goal-amount-noscale')).toBeNull();
+    expect(screen.getByTestId('goal-amount-noscale')).toHaveTextContent('$8,000 owed'); // WHIT-749, $0 target
   });
 
   it('[A16] a goal past its target shows the target as the dollars moved, matching 100%', async () => {
@@ -93,6 +93,6 @@ describe('goal card pace pill + dollars edges (WHIT-748 QA)', () => {
     expect(screen.queryAllByTestId(/^goal-pace-/).map((n) => n.props.testID).sort())
       .toEqual(['goal-pace-ahead', 'goal-pace-noscale', 'goal-pace-onpace', 'goal-pace-tiny']);
     expect(screen.queryAllByTestId(/^goal-amount-/).map((n) => n.props.testID).sort())
-      .toEqual(['goal-amount-ahead', 'goal-amount-onpace', 'goal-amount-over', 'goal-amount-tiny']);
+      .toEqual(['goal-amount-ahead', 'goal-amount-noscale', 'goal-amount-onpace', 'goal-amount-over', 'goal-amount-tiny']);
   });
 });

@@ -790,3 +790,47 @@ describe('balanceGoalView — checkpoint markers, QA gaps (WHIT-486)', () => {
     expect(v.checkpointsTotal).toBe(2);
   });
 });
+
+describe('balanceGoalView — pastDue / currentAmount / checkpointReached (WHIT-749)', () => {
+  const view = (over: Partial<BalanceGoal>, balance: number | null = 4000) =>
+    balanceGoalView({ goal: goal(over), balance, payCycle: CYCLE }, TODAY);
+
+  it('pastDue is true only when the target date is strictly before today', () => {
+    expect(view({ target_date: '2026-07-10' }).pastDue).toBe(true);
+    expect(view({ target_date: '2026-07-11' }).pastDue).toBe(false);
+    // ahead of today but before the next payday (Jul 18): 0 paydays left, yet not past due
+    const soon = view({ target_date: '2026-07-15' });
+    expect(soon.paydaysLeft).toBe(0);
+    expect(soon.pastDue).toBe(false);
+  });
+
+  it('pastDue is false for an unparseable date', () => {
+    expect(view({ target_date: 'not-a-date' }).pastDue).toBe(false);
+  });
+
+  it('a met goal past its date still reports pastDue with nothing left to move', () => {
+    const v = view({ target_amount: 3000, target_date: '2026-06-01' });
+    expect(v.pastDue).toBe(true);
+    expect(v.pacePerPayday).toBe(0);
+  });
+
+  it('currentAmount is the normalised balance: saved for grow, owed for paydown', () => {
+    expect(view({}, 4000).currentAmount).toBe(4000);
+    expect(view({ direction: 'paydown', target_amount: 0 }, -9000).currentAmount).toBe(9000);
+    expect(view({ direction: 'paydown', target_amount: 0, account_id: null, manual_balance: 9000 }, null).currentAmount).toBe(9000);
+  });
+
+  it('currentAmount is null while the balance is unknown', () => {
+    expect(view({}, null).currentAmount).toBeNull();
+  });
+
+  it('checkpointReached flags each checkpoint and agrees with the count', () => {
+    const v = view({ checkpoints: [{ amount: 2000 }, { amount: 5000 }, { amount: 4000 }] }, 4000);
+    expect(v.checkpointReached).toEqual([true, false, true]);
+    expect(v.checkpointsReached).toBe(2);
+  });
+
+  it('checkpointReached is null while the balance is unknown', () => {
+    expect(view({ checkpoints: [{ amount: 2000 }] }, null).checkpointReached).toBeNull();
+  });
+});

@@ -292,10 +292,10 @@ const styles = StyleSheet.create({
 
   hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 22, paddingBottom: 20, marginBottom: 14, backgroundColor: C.accent },
   heroBlob: { position: 'absolute', right: -26, top: -26, width: 140, height: 140, borderRadius: 70, backgroundColor: 'rgba(255,255,255,.1)' },
-  heroEyebrow: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: 'rgba(20,18,50,.62)', letterSpacing: 0.3 },
+  heroEyebrow: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.heroInkSoft, letterSpacing: 0.3 },
   heroBig: { fontFamily: FONT.display, fontSize: 48, fontWeight: '800', color: C.heroInk, lineHeight: 48, letterSpacing: -2 },
   heroSetupBody: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.heroInk2, lineHeight: 20, marginTop: 10 },
-  heroSetupBtn: { alignSelf: 'flex-start', backgroundColor: 'rgba(21,18,58,.18)', borderRadius: 11, paddingVertical: 9, paddingHorizontal: 14, marginTop: 14 },
+  heroSetupBtn: { alignSelf: 'flex-start', backgroundColor: C.heroInkWash, borderRadius: 11, paddingVertical: 9, paddingHorizontal: 14, marginTop: 14 },
   heroSetupBtnText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '700', color: C.heroInk },
   equityCta: { alignSelf: 'flex-start', backgroundColor: 'rgba(201,179,245,.16)', borderRadius: 11, paddingVertical: 9, paddingHorizontal: 14, marginTop: 12 },
   equityCtaText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.purple },

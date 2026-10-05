@@ -1741,6 +1741,12 @@ export interface BalanceGoalView {
   movedAmount: number | null;     // dollars the bar has moved; null exactly when `progress` is null
   spanAmount: number | null;      // the bar's full span in dollars; null when the bar has no scale
   aheadBy: number | null;         // dollars past the straight-line schedule; set only when 'ahead'
+  // WHIT-749: the target date is strictly before today (not merely 0 paydays left).
+  pastDue: boolean;
+  // WHIT-749: the normalised current balance (saved, or owed for a paydown); null when unknown.
+  currentAmount: number | null;
+  // WHIT-749: per checkpoint, whether the balance has reached it; null when the balance is unknown.
+  checkpointReached: boolean[] | null;
 }
 
 // Count the paydays remaining before a target date: the payday dates `last_pay_date +
@@ -1893,9 +1899,10 @@ export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalV
   // balance is unknown so the card hides the line; `total` is 0 when there's no ladder.
   const checkpoints = goal.checkpoints ?? [];
   const checkpointsTotal = checkpoints.length;
+  const checkpointReached = known ? checkpoints.map((cp) => isReached(cp.amount)) : null;
   let checkpointsReached: number | null = null;
-  if (known && checkpointsTotal > 0) {
-    checkpointsReached = checkpoints.filter((cp) => isReached(cp.amount)).length;
+  if (checkpointReached && checkpointsTotal > 0) {
+    checkpointsReached = checkpointReached.filter(Boolean).length;
   }
 
   // WHIT-486: each checkpoint's dot — its position on the bar (0..1, the SAME scale as `progress`,
@@ -1910,6 +1917,9 @@ export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalV
   return {
     progress, pacePerPayday, paydaysLeft, status, checkpointsTotal, checkpointsReached, checkpointMarkers,
     movedAmount, spanAmount, aheadBy,
+    pastDue: isoToUtcDayMs(goal.target_date) < dateToUtcDayMs(today ?? new Date()),
+    currentAmount: known ? current : null,
+    checkpointReached,
   };
 }
 

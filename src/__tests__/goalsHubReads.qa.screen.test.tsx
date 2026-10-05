@@ -49,12 +49,13 @@ afterEach(() => { jest.useRealTimers(); });
 
 describe('secondary reads degrade one card, never the hub', () => {
   // [A1] a balances failure leaves the synced card waiting, the hub drawn and no error.
-  it('a failed balances read shows the synced goal as "—" + waiting, with no hub error', async () => {
+  it('a failed balances read shows the synced goal as waiting (no % or "—"), with no hub error', async () => {
     seedHub({ goals: [GROW] });
     server.fail('/accounts/balances', 500);
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('goal-card-g1'));
-    expect(card.getByText('—')).toBeTruthy();
+    expect(card.queryByText(/%$/)).toBeNull();
+    expect(card.queryByText('—')).toBeNull();
     expect(card.getByText('Waiting on your balance')).toBeTruthy();
     expect(screen.queryByTestId('goals-error')).toBeNull();
     expect(screen.queryByTestId('goals-loading')).toBeNull();

@@ -2,7 +2,7 @@
 // Independent of goalsHub.screen.test: same mock scaffold (passthrough ScrollChromeHeader,
 // injected useGoalsScreenData, stable router.push) but exercises the card branches the
 // happy-path suite doesn't — a paydown with no baseline (progress null but a real pace),
-// an overdue goal (paydaysLeft 0 -> "due now" + whole-amount pace), the singular "1 payday",
+// a goal past its date with no balance yet (still nudged), the singular "1 payday",
 // the mortgage card's third branch (balance null, no error), an unknown icon (no crash),
 // render order, and url-encoding of a goal id in the edit route. The REAL balanceGoalView
 // runs, so a selector revert reddens the %/pace/paydays assertions. Clock pinned to
@@ -58,29 +58,28 @@ afterEach(() => { jest.useRealTimers(); });
 
 describe('goal-card progress edges', () => {
   // [A20] paydown with NO baseline: balanceGoalView.progress is null (no start reference), so
-  // the % must degrade to "—" — but the PACE is still known, so the foot shows a real figure,
-  // NOT the "Waiting on your balance" copy. Guards the `pct != null ? … : '—'` split.
-  it('a paydown goal with no baseline shows "—" for % yet still a real pace', async () => {
+  // there's no % and no "0%" — but the PACE is still known, so the foot shows a real figure,
+  // NOT the "Waiting on your balance" copy.
+  it('a paydown goal with no baseline shows no % yet still a real pace', async () => {
     const goal: GoalRecord = { id: 'nb', name: 'Credit card', icon: 'cash', direction: 'paydown', target_amount: 0, target_date: '2026-08-15', account_id: null, manual_balance: 9000 };
     seedHub({ goals: [goal] });
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('goal-card-nb'));
-    expect(card.getByText('—')).toBeTruthy();                 // progress null -> dash, not "0%"
+    expect(card.queryByText(/%$/)).toBeNull();                // progress null -> no headline %
     expect(card.getByText('$3,000 / payday')).toBeTruthy();   // 9000 owed / 3 paydays
     expect(card.queryByText('Waiting on your balance')).toBeNull();
   });
 
-  // [A21] target_date already past -> paydaysLeft 0 -> "due now", and the pace collapses to
-  // the WHOLE remaining amount (not remaining/0 = Infinity). Guards the `> 0 ? … : 'due now'`
-  // arm and the paydaysLeft===0 pace branch together.
-  it('an overdue goal shows "due now" and puts the whole remaining amount on one payday', async () => {
+  // [A21] WHIT-749: a goal past its date whose balance hasn't arrived still gets the calm
+  // "pick a new one?" nudge — there's nothing to say it's been met.
+  it('a goal past its date with no balance yet still shows the nudge', async () => {
     const goal: GoalRecord = { id: 'od', name: 'Emergency fund', icon: 'wallet', direction: 'grow', target_amount: 10000, target_date: '2026-06-01', account_id: 'up-spending' };
-    seedHub({ goals: [goal] });
+    seedHub({ goals: [goal], balances: {} });
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('goal-card-od'));
-    expect(card.getByText('due now')).toBeTruthy();
-    expect(card.getByText('40%')).toBeTruthy();               // 4000/10000, unaffected by the date
-    expect(card.getByText('$6,000 / payday')).toBeTruthy();   // whole 6000 remaining, not Infinity
+    expect(card.getByText('Past your date — pick a new one?')).toBeTruthy();
+    expect(card.queryByText('Waiting on your balance')).toBeNull();
+    expect(card.queryByText('due now')).toBeNull();
   });
 
   // [A22] exactly one payday left -> singular "1 payday left" (no trailing 's'). Guards the
