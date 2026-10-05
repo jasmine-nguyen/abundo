@@ -4,12 +4,11 @@
 // other screens migrate in later cards, so the old context store stays intact until
 // the WHIT-192 cleanup.
 import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
-import { useQuery, useQueries, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@tanstack/react-query';
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchTransactionsSearch, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchFilingSuggestions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listRules } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, DateRange, RuleRecord, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage, TransactionSearchResult, UncategorizedMerchants, FilingSuggestions } from './api';
 import { cycleClockView, nextPayday, cycleName } from './payCycle';
-import { availableToSpend, nothingLeft, paidInOneGo } from './budgetMath';
 import { loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './model';
 import { readTransactionCopies } from './transactionCache';
 import { RECONCILE_EPSILON } from './theme';
@@ -550,7 +549,6 @@ export interface BudgetsScreenData {
   updatedAt: number; // when the showing data loaded (oldest of the reads), 0 if never
   refetch: () => Promise<unknown>; // force a refresh (the inline Retry button, and the pull)
   refetchStale: () => void; // focus refresh — only refetches queries that have gone stale
-  oneChargeIds: ReadonlySet<string>; // spend budgets with nothing left, paid by one charge (WHIT-739)
 }
 
 /**
@@ -575,7 +573,6 @@ export function useBudgetsScreenData(): BudgetsScreenData {
   const category = useCallback((id: string) => byId.get(id), [byId]);
 
   const status = useCombineScreenQueries([payCycleQuery, budgetsQuery, categoriesQuery]);
-  const oneChargeIds = useOneChargeIds(budgetsQuery.data, category, authed);
   // WHIT-72: a first-load pay-cycle failure (no cached cycle) → force the error card, else
   // budgets would render against the DEFAULT cycle (wrong days-left/pace).
   const payCycleError = firstLoadError(payCycleQuery);
@@ -588,31 +585,8 @@ export function useBudgetsScreenData(): BudgetsScreenData {
     nextPayday: nextPaydayDate,
     payCycleError,
     payCycleReady: payCycleQuery.data !== undefined,
-    oneChargeIds,
     ...status,
   };
-}
-
-// WHIT-739: a spend budget with nothing left might be a bill paid in one go, which shouldn't read
-// "over plan". Only its charge list can tell, so fetch it for just those budgets (usually one or
-// two). A list still loading or failed leaves the budget out, so the row keeps warning.
-function useOneChargeIds(budgets: Budget[] | undefined, category: (id: string) => Category | undefined, authed: boolean): ReadonlySet<string> {
-  const fullyUsedIds = useMemo(() => (budgets ?? [])
-    .filter((b) => {
-      const bucket = category(b.id)?.bucket;
-      if (!bucket || bucket === 'Income' || bucket === 'Savings') return false;
-      return nothingLeft(b.posted + b.pending, availableToSpend(b));
-    })
-    .map((b) => b.id), [budgets, category]);
-  const lists = useQueries({
-    queries: fullyUsedIds.map((id) => ({
-      queryKey: [...budgetTransactionsKey, id],
-      queryFn: () => fetchBudgetTransactions(id),
-      enabled: authed,
-    })),
-  });
-  const paidIds = fullyUsedIds.filter((id, i) => lists[i].data !== undefined && paidInOneGo(lists[i].data)).join(',');
-  return useMemo(() => new Set(paidIds ? paidIds.split(',') : []), [paidIds]);
 }
 
 // --- the budget-detail screen's composite view (WHIT-203) --------------------

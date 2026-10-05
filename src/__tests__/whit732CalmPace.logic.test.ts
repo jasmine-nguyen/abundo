@@ -39,7 +39,7 @@ describe('budget rows: calm pace flag and a tick that matches it (WHIT-732)', ()
     expect(cushion.targetPct).toBe(31);
   });
 
-  it('urgent-first order no longer lifts a row that is only slightly ahead', () => {
+  it('the list order does not lift a row that is only slightly ahead', () => {
     const rows = budgetRowsFor([COFFEE, GROCERIES], [
       budget({ id: 'coffee', budget: 100, posted: 30, pending: 0 }),
       budget({ id: 'groceries', budget: 100, posted: 70, pending: 0 }),

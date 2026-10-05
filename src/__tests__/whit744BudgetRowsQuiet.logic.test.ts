@@ -1,5 +1,5 @@
 // WHIT-744 — a budget row no longer carries a pending line or an over/under plan line; it still
-// marks a row that is spending too fast (behindPace), which orders urgent rows first.
+// marks a row that is spending too fast (behindPace), the same rule the detail screen uses.
 import { describe, it, expect } from '@jest/globals';
 import { budgetRowFor } from './support/budgetsTab';
 

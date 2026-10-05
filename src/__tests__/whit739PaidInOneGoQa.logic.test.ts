@@ -2,7 +2,7 @@
 // "nothing left", a rollover/server envelope, and that the one-charge flag alone never silences a
 // budget that still has money left.
 import { describe, it, expect } from '@jest/globals';
-import { budgetViews, budgetDetail } from '../context';
+import { budgetDetail } from '../context';
 import type { Budget } from '../model';
 import type { Transaction } from '../types';
 import { nothingLeft, paceWarning, paidInOneGo } from '../budgetMath';
@@ -17,8 +17,6 @@ const charge = (id: string, amount: number, over: Partial<Transaction> = {}) =>
 const mortgage = (b: Partial<Budget>) => budget({ id: 'mortgage', budget: 3667, posted: 3667, pending: 0, ...b });
 const detail = (b: Partial<Budget>, transactions: Transaction[]) =>
   budgetDetail(makeState({ categories: [MORTGAGE], budgets: [mortgage(b)], transactions, ...CYCLE }), 'mortgage')!;
-const row = (b: Partial<Budget>, oneChargeIds?: ReadonlySet<string>) =>
-  budgetViews({ ...makeState({ categories: [MORTGAGE], budgets: [mortgage(b)], ...CYCLE }), oneChargeIds }).rows[0];
 
 describe('paidInOneGo', () => {
   // [A1]
@@ -55,17 +53,6 @@ describe('paceWarning — the one-charge flag needs nothing left', () => {
   });
 });
 
-describe('budgetViews — the one-charge set alone never silences a budget with money left', () => {
-  // [A5]
-  it('mortgage $3,600 of $3,667 with the id in the set is still behind pace', () => {
-    const r = row({ posted: 3600 }, new Set(['mortgage']));
-    expect(r.behindPace).toBe(true);
-  });
-  it('a set naming another budget leaves the paid mortgage warning', () => {
-    expect(row({}, new Set(['coffee'])).behindPace).toBe(true);
-  });
-});
-
 describe('budgetDetail — envelope bigger than the base budget', () => {
   // [A4] rollover buffer: $4,000 available, all paid by one charge → quiet.
   it('rollover: one charge using the whole available envelope → "On track for payday"', () => {
@@ -82,18 +69,5 @@ describe('budgetDetail — envelope bigger than the base budget', () => {
   it('one pending charge paying it in full → quiet', () => {
     const d = detail({ posted: 0, pending: 3667 }, [charge('a', 3667, { status: 'pending' })]);
     expect(d.statusLabel).toBe('On track for payday');
-  });
-});
-
-describe('row and detail agree', () => {
-  // [A7] the set the Budgets tab builds (paidInOneGo over the same list) gives the same verdict as detail.
-  it.each([
-    ['one charge', [charge('a', 3667)]],
-    ['two charges', [charge('a', 3000), charge('b', 667)]],
-  ])('%s', (_name, transactions) => {
-    const ids = paidInOneGo(transactions) ? new Set(['mortgage']) : new Set<string>();
-    const warnsOnRow = row({}, ids).behindPace;
-    const warnsInDetail = detail({}, transactions).statusLabel === 'Over plan — ease up';
-    expect(warnsOnRow).toBe(warnsInDetail);
   });
 });

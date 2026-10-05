@@ -1,5 +1,5 @@
-// WHIT-732 QA on screen: the Budgets tab lifts only a row that must slow down to the top (no
-// pace text, WHIT-744), and the detail screen's "today's plan" label sits on the base pace
+// WHIT-732 QA on screen: the Budgets tab shows no pace text (WHIT-744) and lifts no row for
+// pace alone (WHIT-745), and the detail screen's "today's plan" label sits on the base pace
 // of a rollover envelope. Real ../api over the fake server; ../auth + expo-router mocked.
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
@@ -24,8 +24,8 @@ useTestQueryClient();
 
 useBudgetsSuiteReset({ pinClock: false });
 
-// [A14] (P0) halfway through: $70 of $100 is calm; $85 of $100 must slow down, so it's listed first.
-it('[A14] a slightly-ahead row stays in place; a row that must slow down moves up, with no pace text', async () => {
+// [A14] (P0) halfway through: $70 of $100 is calm; $85 of $100 must slow down, but neither moves (WHIT-745).
+it('[A14] neither a slightly-ahead row nor a row that must slow down moves; no pace text', async () => {
   seedBudgetsTab(server, {
     coffee: { target: 100, posted: 70, pending: 0 },
     groceries: { target: 100, posted: 85, pending: 0 },
@@ -33,7 +33,7 @@ it('[A14] a slightly-ahead row stays in place; a row that must slow down moves u
   await renderLoadedBudgetsWithQueries();
   await screen.findByText('Groceries');
   const order = screen.getAllByTestId(/^budget-row-(coffee|groceries)$/).map((r) => r.props.testID);
-  expect(order).toEqual(['budget-row-groceries', 'budget-row-coffee']);
+  expect(order).toEqual(['budget-row-coffee', 'budget-row-groceries']);
   expect(screen.queryByText(/over plan/)).toBeNull();
 });
 // [A15] (P0) detail: rollover $100 + $100 buffer, halfway → base pace $50 sits a quarter along.

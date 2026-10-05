@@ -1,4 +1,4 @@
-// WHIT-727 — urgentFirst ordering rules and the behindPace flag it ranks on.
+// WHIT-727 / WHIT-745 — urgentFirst ordering rules (over budget first, nothing else lifts) and the behindPace flag.
 import { describe, it, expect } from '@jest/globals';
 import { urgentFirst } from '../budgetOrder';
 import { cat, budget } from './factory';
@@ -18,15 +18,15 @@ describe('urgentFirst', () => {
     expect(ids(urgentFirst(rows))).toEqual(['dining', 'shopping', 'groceries']);
   });
 
-  it('lifts an on-pace parent with a behind-pace sub above an on-pace budget, sub still under it', () => {
+  it('does not lift a family whose sub is only behind pace; sub stays under its parent', () => {
     const rows = rowsFor([groceries, coffee, latte], [
       budget({ id: 'groceries', budget: 100, posted: 50, pending: 0 }),
       budget({ id: 'coffee', budget: 200, posted: 100, pending: 0 }),
       budget({ id: 'latte', budget: 20, posted: 17, pending: 0 }),
     ]);
     const ordered = urgentFirst(rows);
-    expect(ids(ordered)).toEqual(['coffee', 'latte', 'groceries']);
-    expect(ordered.map((r) => r.depth)).toEqual([0, 1, 0]);
+    expect(ids(ordered)).toEqual(['groceries', 'coffee', 'latte']);
+    expect(ordered.map((r) => r.depth)).toEqual([0, 0, 1]);
   });
 
   it('leaves a nested earning family last and in order', () => {

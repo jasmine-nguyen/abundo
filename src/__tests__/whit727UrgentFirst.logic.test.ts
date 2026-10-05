@@ -1,5 +1,5 @@
-// WHIT-727 — the Budgets tab lists urgent spending families first: over budget → over plan →
-// the rest, each family (a parent and its sub-budgets) moving as one block. Earning stays last.
+// WHIT-727 / WHIT-745 — the Budgets tab lists over-budget spending families first, then the rest
+// in category order, each family (a parent and its sub-budgets) moving as one block. Earning stays last.
 import { it, expect } from '@jest/globals';
 import { budgetViews } from '../context';
 import { urgentFirst } from '../budgetOrder';
@@ -12,7 +12,7 @@ const latte = cat({ id: 'latte', name: 'Lattes', parent: 'coffee' });
 const shopping = cat({ id: 'shopping', name: 'Shopping' });
 const salary = cat({ id: 'salary', name: 'Salary', bucket: 'Income' });
 
-it('orders spending families over → behind → on pace, keeping subs under their parent and earning last', () => {
+it('orders spending families over → the rest, keeping subs under their parent and earning last', () => {
   // Halfway through a 14-day cycle, so a $100 budget's pace is $50.
   const { rows } = budgetViews(
     makeState({
@@ -32,7 +32,7 @@ it('orders spending families over → behind → on pace, keeping subs under the
 
   const ordered = urgentFirst(rows);
 
-  expect(ordered.map((r) => r.id)).toEqual(['coffee', 'latte', 'shopping', 'dining', 'groceries', 'salary']);
+  expect(ordered.map((r) => r.id)).toEqual(['coffee', 'latte', 'shopping', 'groceries', 'dining', 'salary']);
   expect(ordered.map((r) => r.depth)).toEqual([0, 1, 0, 0, 0, 0]);
   expect(urgentFirst([])).toEqual([]);
 });

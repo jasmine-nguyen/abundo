@@ -1,15 +1,15 @@
 // WHIT-739: a bill paid in full in one go (nothing left, one counting charge) has nothing to slow
-// down — no "over plan" on the detail, and the row isn't flagged or ranked as urgent. The calm detail
-// status reads "On track for payday". A budget used up by several charges still warns.
+// down — no "over plan" on the detail. The calm detail status reads "On track for payday". A budget
+// used up by several charges still warns. (WHIT-745: the Budgets tab no longer ranks on pace, so it
+// no longer looks this up per row.)
 import { describe, it, expect } from '@jest/globals';
-import { budgetViews, budgetDetail } from '../context';
+import { budgetDetail } from '../context';
 import type { Budget } from '../model';
 import type { Transaction } from '../types';
 import { paceWarning } from '../budgetMath';
-import { urgentFirst } from '../budgetOrder';
 import { C } from '../theme';
 import { makeState, cat, budget, txn } from './factory';
-import { budgetDetailFor, rowIds } from './support/budgetsTab';
+import { budgetDetailFor } from './support/budgetsTab';
 
 const MORTGAGE = cat({ id: 'mortgage', name: 'Mortgage', bucket: 'Living' });
 const MORTGAGE_CYCLE = { cycleLen: 30, daysLeft: 21 };
@@ -32,30 +32,6 @@ describe('paceWarning — paid in one go', () => {
   });
   it('one charge but $0.01 left, far ahead → still warns', () => {
     expect(paceWarning({ ...row, spent: 3666.99, oneCharge: true }, MORTGAGE_CYCLE)).toBe(true);
-  });
-});
-
-describe('budgetViews — paid mortgage row', () => {
-  const state = (extra = {}) => ({
-    ...makeState({ categories: [MORTGAGE, cat()], budgets: [paidMortgage, budget({ budget: 100, posted: 85, pending: 0 })], ...MORTGAGE_CYCLE }),
-    ...extra,
-  });
-
-  it('with the one-charge set, the paid mortgage is not behind pace', () => {
-    const row = budgetViews(state({ oneChargeIds: new Set(['mortgage']) })).rows.find((r) => r.id === 'mortgage')!;
-    expect(row.behindPace).toBe(false);
-  });
-
-  it('without the set, it is still behind pace', () => {
-    const row = budgetViews(state()).rows.find((r) => r.id === 'mortgage')!;
-    expect(row.behindPace).toBe(true);
-  });
-
-  it('urgentFirst: a real over-plan row outranks the paid mortgage', () => {
-    const rows = budgetViews(
-      { ...makeState({ categories: [MORTGAGE, cat()], budgets: [paidMortgage, budget({ budget: 100, posted: 85, pending: 0 })], cycleLen: 14, daysLeft: 7 }), oneChargeIds: new Set(['mortgage']) },
-    ).rows;
-    expect(rowIds(urgentFirst(rows))).toEqual(['coffee', 'mortgage']);
   });
 });
 

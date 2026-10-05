@@ -1,5 +1,5 @@
-// WHIT-727 QA — on the Budgets tab, a family lifted by its behind-pace sub-budget shows above an
-// on-pace budget listed before it, with the sub directly under its parent. Real ../api over the
+// WHIT-727 QA / WHIT-745 — on the Budgets tab, a family whose sub-budget is only behind pace keeps
+// its category order (no pace tier), with the sub directly under its parent. Real ../api over the
 // fake server; ../auth + expo-router mocked.
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
@@ -21,8 +21,8 @@ useTestQueryClient();
 
 useBudgetsSuiteReset();
 
-// [A4] (P0) the whole family moves up on screen, sub-budget still directly under its parent.
-it('shows a family with a behind-pace sub above an on-pace budget, sub under its parent', async () => {
+// [A4] (P0) the family stays in category order on screen, sub-budget still directly under its parent.
+it('keeps a family with a behind-pace sub in category order, sub under its parent', async () => {
   // 7 of 14 days left → pace is half the budget. Subscriptions $50/$100 on pace; Coffee
   // $100/$200 on pace; its sub Dining $45/$50 is over plan.
   seedBudgetsTab(
@@ -37,5 +37,5 @@ it('shows a family with a behind-pace sub above an on-pace budget, sub under its
   await renderWithQueries(<Budgets />);
   await screen.findByText('Dining');
   const order = screen.getAllByText(/^(Cafes & Coffee|Dining|Subscriptions)$/).map((n) => n.props.children);
-  expect(order).toEqual(['Cafes & Coffee', 'Dining', 'Subscriptions']);
+  expect(order).toEqual(['Subscriptions', 'Cafes & Coffee', 'Dining']);
 });
