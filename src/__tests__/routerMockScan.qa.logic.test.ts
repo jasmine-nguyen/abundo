@@ -7,7 +7,7 @@
 // The fix moves the guard's matching into support/routerMockScan.ts so it can be tested here:
 //   routerMockFactories(code) → every expo-router mock factory in the (comment-stripped) code;
 //   overridesCoreHook(factory) → true if the factory redefines useFocusEffect / useRouter /
-//   useLocalSearchParams / useIsFocused in any form.
+//   useLocalSearchParams / useIsFocused in any form (key, method, shorthand or assignment).
 import { describe, it, expect } from '@jest/globals';
 import { overridesCoreHook, routerMockFactories } from './support/routerMockScan';
 
@@ -16,6 +16,7 @@ const MOCK = "jest.mock('expo-" + "router', ";
 const SHARED = "require('./support/routerMock').routerMock" + 'Module()';
 const sharedMock = `${MOCK}() => ${SHARED});`;
 const spreadMock = (extra: string) => `${MOCK}() => ({ ...${SHARED}, ${extra} }));`;
+const assignMock = (hook: string) => `${MOCK}() => { const m = ${SHARED}; m.${hook} = () => {}; return m; });`;
 const inlineNoOpFocus = `${MOCK}() => ({ useFocus` + 'Effect: () => {} }));';
 
 describe('WHIT-753 QA router guard matching', () => {
@@ -51,5 +52,20 @@ describe('WHIT-753 QA router guard matching', () => {
     expect(overridesCoreHook(sharedMock)).toBe(false);
     expect(overridesCoreHook(spreadMock('Tabs'))).toBe(false);
     expect(overridesCoreHook(spreadMock('useRootNavigationState: () => mockNavState'))).toBe(false);
+  });
+
+  // [A13]
+  it.each(['useFocus' + 'Effect', 'use' + 'Router', 'useLocal' + 'SearchParams', 'useIs' + 'Focused'])(
+    'flags a factory that assigns %s onto the shared fake',
+    (hook) => {
+      const [factory] = routerMockFactories(assignMock(hook));
+      expect(overridesCoreHook(factory)).toBe(true);
+    },
+  );
+
+  // [A14]
+  it('still allows assigning an extra the shared fake does not own', () => {
+    const [factory] = routerMockFactories(assignMock('useRootNavigationState'));
+    expect(overridesCoreHook(factory)).toBe(false);
   });
 });

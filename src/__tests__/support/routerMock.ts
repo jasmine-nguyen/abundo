@@ -1,9 +1,7 @@
 // WHIT-456 (slice 2 of WHIT-451) — shared stand-in for expo-router, extracted from the recurring
 // mock copied across the screen suites. Covers the common surface: useRouter (push/back/replace/
-// dismissAll spies), useLocalSearchParams, the run-on-mount useFocusEffect (re-fired by hand with
-// fireFocus), useIsFocused, a
-// do-nothing Tabs (and Tabs.Screen), and usePathname (default '/budgets', set via setPathname).
-// Usage in a suite:
+// dismissAll spies), useLocalSearchParams, the run-on-mount useFocusEffect (re-fired with fireFocus),
+// useIsFocused, a do-nothing Tabs, and usePathname (default '/budgets', set via setPathname). Usage:
 //
 //   jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 //   import { routerSpies, setParams, resetRouter } from './support/routerMock';

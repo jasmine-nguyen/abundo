@@ -3,7 +3,7 @@
 // redefines one of the core hooks the shared stand-in owns.
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { matchingBrace, stripComments } from './sourceScan';
+import { TESTS_DIR, matchingBrace, stripComments } from './sourceScan';
 
 // Built from parts so this file never contains the literals the guard hunts for.
 const ROUTER_MOCK_CALL = new RegExp('jest\\.mock\\(\\s*[\'"]expo-' + 'router[\'"]', 'g');
@@ -17,7 +17,8 @@ export const LOCAL_ROUTER_SPY = new RegExp(
 );
 
 // A test file's code with comments stripped, so commented-out mocks don't count.
-export const codeOf = (dir: string, file: string): string => stripComments(readFileSync(join(dir, file), 'utf8'));
+export const codeOf = (file: string, dir: string = TESTS_DIR): string =>
+  stripComments(readFileSync(join(dir, file), 'utf8'));
 
 export function routerMockFactories(code: string): string[] {
   return [...code.matchAll(ROUTER_MOCK_CALL)].map((match) => {

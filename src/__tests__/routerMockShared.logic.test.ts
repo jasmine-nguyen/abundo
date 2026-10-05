@@ -7,7 +7,7 @@ import { testFiles } from './support/sourceScan';
 import {
   LOCAL_ROUTER_SPY,
   SHARED_FACTORY,
-  codeOf as codeIn,
+  codeOf,
   overridesCoreHook,
   routerMockFactories,
 } from './support/routerMockScan';
@@ -20,12 +20,9 @@ const ALLOWED_INLINE = new Set([
   'rootLayout.launch.screen.test.tsx',
 ]);
 
-const codeOf = (file: string): string => codeIn(TESTS_DIR, file);
 const factoriesOf = (file: string): string[] => routerMockFactories(codeOf(file));
 
-const mockingFiles = testFiles(TESTS_DIR)
-  .filter((file) => file !== 'support/routerMock.ts')
-  .filter((file) => factoriesOf(file).length > 0);
+const mockingFiles = testFiles(TESTS_DIR).filter((file) => factoriesOf(file).length > 0);
 
 const mustShare = mockingFiles.filter((file) => !ALLOWED_INLINE.has(file));
 
