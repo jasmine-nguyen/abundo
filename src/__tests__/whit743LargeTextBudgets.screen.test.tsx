@@ -56,7 +56,7 @@ describe('WHIT-743 Budgets tab at very large text', () => {
     const row = within(screen.getByTestId('budget-row-coffee'));
     const texts = [
       row.getByText('Cafes & Coffee'),
-      screen.getByTestId('budget-row-pending-coffee'),
+      row.getByText(/^\$80 of/),
       row.getByText('$20'),
     ];
     for (const text of texts) {

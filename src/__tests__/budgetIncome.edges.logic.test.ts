@@ -19,15 +19,15 @@ describe('budgetViews — income earn-target boundaries (WHIT-69)', () => {
     expect(row.remainLabel).toBe('above target');
     expect(row.remainAmount).toBe('$0');           // actual - budget = 0
     expect(row.remainColor).toBe(C.good);
-    expect(row.paceLabel).toBe(''); // WHIT-707: income has no pace line
+    expect(row.behindPace).toBe(false); // WHIT-707: income has no pace warning
     expect(row.over).toBe(false);
     expect(row.postedColor).not.toBe(RED);
     expect(row.postedColor).toBe(C.accentSoft);
   });
 
-  it('earned EXACTLY on the linear pace → no pace line (WHIT-707), still "to go"', () => {
+  it('earned EXACTLY on the linear pace → no pace warning (WHIT-707), still "to go"', () => {
     const row = incomeRow(2500); // 2500 == elapsed*budget, < floor
-    expect(row.paceLabel).toBe('');
+    expect(row.behindPace).toBe(false);
     expect(row.remainLabel).toBe('to go');
     expect(row.remainColor).toBe(C.good); // remain amount is the cyan highlight
     expect(row.remainAmount).toBe('$2,500');        // 5000 - 2500 still to earn

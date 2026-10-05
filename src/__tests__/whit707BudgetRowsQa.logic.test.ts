@@ -1,6 +1,6 @@
 // WHIT-707 QA — adversarial edges on the Budgets tab row text (budgetViews): the payday label's
-// weekday/date boundary, the quiet over-budget row, pending wording
-// thresholds, Spending-before-Earning ordering with nested income, and the date helpers.
+// weekday/date boundary, the quiet over-budget row, pending in the spent amount,
+// Spending-before-Earning ordering with nested income, and the date helpers.
 // Runs under TZ=Australia/Melbourne (npm test), so the daylight-saving cases are real.
 import { describe, it, expect } from '@jest/globals';
 import { budgetViews } from '../context';
@@ -47,15 +47,15 @@ describe('income "next pay" label boundaries (decision 3)', () => {
   });
 });
 
-describe('over budget: quiet row, no pace line', () => {
+describe('over budget: quiet row, no pace warning', () => {
   // [A6] (P0) over with an active spread → the red amount says it once.
-  it('[A6] over with an active spread → no pace line (the red amount says it once)', () => {
+  it('[A6] over with an active spread → no pace warning (the red amount says it once)', () => {
     const row = spendRow({
       budget: 100, posted: 130, pending: 0, spreadAdjustment: -10,
       spread: { amount: 60, cycles: 3, index: 2, adjustment: -10 },
     });
     expect(row.over).toBe(true);
-    expect(row.paceLabel).toBe('');
+    expect(row.behindPace).toBe(false);
     expect(row.remainAmount).toBe('$40');
     expect(row.remainColor).toBe(C.bad); // rose stays on the amount
   });
@@ -65,56 +65,53 @@ describe('over budget: quiet row, no pace line', () => {
     expect(spendRow({ budget: 100, posted: 100.004, pending: 0 }).over).toBe(true);
   });
 
-  // [A8] (P0) pending pushes a row over budget and is still named.
-  it('[A8] over with pending → pending named', () => {
+  // [A8] (P0) pending pushes a row over budget.
+  it('[A8] over with pending → pending counted in spent, over', () => {
     const row = spendRow({ budget: 100, posted: 90, pending: 25 });
     expect(row.spentLabel).toBe('$115 of\u00a0$100');
-    expect(row.pendingLabel).toBe('$25\u00a0pending');
+    expect(row.over).toBe(true);
   });
 
-  // [A9] (P0) over plan but under budget → the over-plan line.
-  it('[A9] over plan but under budget → over-plan pace line', () => {
+  // [A9] (P0) over plan but under budget → behind pace.
+  it('[A9] over plan but under budget → behind pace', () => {
     const row = spendRow({ budget: 100, posted: 90, pending: 0 }); // target 50
     expect(row.over).toBe(false);
-    expect(row.paceLabel).toBe('$40 over plan');
+    expect(row.behindPace).toBe(true);
   });
 
   // [A10] (P1) exactly at the limit is not over.
   it('[A10] spent exactly = budget → not over', () => {
     const row = spendRow({ budget: 100, posted: 100, pending: 0 });
     expect(row.over).toBe(false);
-    expect(row.paceLabel).not.toContain('over budget');
+    expect(row.remainLabel).toBe('left');
   });
 
-  // [A11] (P1) rollover drained into a deficit, over → the exact overspend on the amount, no pace line.
-  it('[A11] rollover with a borrowed buffer, over → no pace line, the exact overspend on the amount', () => {
+  // [A11] (P1) rollover drained into a deficit, over → the exact overspend on the amount, no pace warning.
+  it('[A11] rollover with a borrowed buffer, over → no pace warning, the exact overspend on the amount', () => {
     const row = spendRow({ budget: 100, posted: 95, pending: 0, rollover: true, carryover: -20 });
     expect(row.over).toBe(true);
-    expect(row.paceLabel).toBe('');
+    expect(row.behindPace).toBe(false);
     expect(row.remainAmount).toBe('$15');
   });
 });
 
-describe('pending wording threshold', () => {
-  // [A12] (P1) a sub-cent pending float is noise → no "pending" breakout.
+describe('pending in the spent amount', () => {
+  // [A12] (P1) a sub-cent pending float adds no "pending" words.
   it('[A12] pending 0.004 → no pending words', () => {
     const row = spendRow({ budget: 100, posted: 40, pending: 0.004 });
     expect(row.spentLabel).not.toContain('pending');
-    expect(row.pendingLabel).toBe('');
   });
 
-  // [A13] (P1) one cent pending is real → named with cents.
-  it('[A13] pending 0.01 → named', () => {
+  // [A13] (P1) one cent pending is real → counted with cents.
+  it('[A13] pending 0.01 → counted in spent', () => {
     const row = spendRow({ budget: 100, posted: 40, pending: 0.01 });
     expect(row.spentLabel).toBe('$40.01 of\u00a0$100');
-    expect(row.pendingLabel).toBe('$0.01\u00a0pending');
   });
 
-  // [A14] (P1) rollover envelope: "of" shows the available envelope, pending still named.
-  it('[A14] rollover with carryover → "of" the envelope, plus pending', () => {
+  // [A14] (P1) rollover envelope: "of" shows the available envelope, pending counted in spent.
+  it('[A14] rollover with carryover → "of" the envelope, pending in spent', () => {
     const row = spendRow({ budget: 100, posted: 30, pending: 20, rollover: true, carryover: 50 });
     expect(row.spentLabel).toBe('$50 of\u00a0$150');
-    expect(row.pendingLabel).toBe('$20\u00a0pending');
   });
 });
 

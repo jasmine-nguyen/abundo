@@ -49,24 +49,21 @@ describe('budgetViews', () => {
     expect(row.postedPct + row.pendingPct).toBeLessThanOrEqual(100.0001);
   });
 
-  it('labels pace relative to the linear target (elapsed * budget)', () => {
+  it('marks pace relative to the linear target (elapsed * budget)', () => {
     // elapsed 0.5, budget 100 → target 50.
     const under = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 20, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(under.paceLabel).toBe('');
+    expect(under.behindPace).toBe(false);
     const over = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 80, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(over.paceLabel).toContain('over plan');
+    expect(over.behindPace).toBe(true);
     expect(over.over).toBe(false); // over PACE, not over budget
   });
 
-  it('folds pending into the spent amount and names it separately (WHIT-707)', () => {
-    // spent = posted + pending = 50; the pending part is also called out.
+  it('folds pending into the spent amount (WHIT-707)', () => {
+    // spent = posted + pending = 50.
     const withPending = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 10 })], cycleLen: 14, daysLeft: 7 })).rows[0];
     expect(withPending.spentLabel).toBe('$50 of\u00a0$100');
-    expect(withPending.pendingLabel).toBe('$10\u00a0pending');
     const noPending = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
     expect(noPending.spentLabel).toBe('$40 of\u00a0$100');
-    expect(noPending.pendingLabel).toBe('');
-    expect(noPending.pendingLabel).toBe('');
   });
 
   it('skips a budget whose category no longer exists', () => {
@@ -78,7 +75,6 @@ describe('budgetViews', () => {
     // posted 62.50 + pending 11.00 = 73.50 spent of $80 → 6.50 left (the Cafes & Coffee case).
     const row = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 80, posted: 62.5, pending: 11 })], cycleLen: 14, daysLeft: 7 })).rows[0];
     expect(row.spentLabel).toBe('$73.50 of\u00a0$80'); // fail-on-revert: fmt(73.5) → '$74'
-    expect(row.pendingLabel).toBe('$11\u00a0pending');
     expect(row.remainAmount).toBe('$6.50');             // spent + left = the $80 budget
   });
 });
@@ -100,14 +96,14 @@ describe('budgetViews — income earn-targets (over-is-good)', () => {
     expect(row.remainColor).not.toBe(RED);
     expect(row.postedColor).toBe(C.accentSoft);     // bar uses the shared calm fill, not red
     expect(row.pendingTint).toBe(tint(C.accentSoft, 0.45));
-    // WHIT-707: salary lands in one lump, so there's no even-pace line or today marker.
-    expect(row.paceLabel).toBe('');
+    // WHIT-707: salary lands in one lump, so there's no even-pace warning or today marker.
+    expect(row.behindPace).toBe(false);
     expect(row.showTarget).toBe(false);
   });
 
-  it('ahead of the linear pace still shows no pace line, still not met', () => {
+  it('ahead of the linear pace still gives no pace warning, still not met', () => {
     const row = incomeRow(3000);   // 3000 > 2500 target, < 5000 goal
-    expect(row.paceLabel).toBe('');
+    expect(row.behindPace).toBe(false);
     expect(row.remainLabel).toBe('to go');
     expect(row.over).toBe(false);
   });

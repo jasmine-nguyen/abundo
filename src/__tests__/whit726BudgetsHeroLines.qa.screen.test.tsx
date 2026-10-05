@@ -1,5 +1,5 @@
 // WHIT-726 → WHIT-731 QA — adversarial edges of the Spent · Budget · Next payday row on the Budgets
-// top card: pending leaves the card but stays on the rows, the empty state keeps only the payday,
+// top card: pending is gone from the card and the rows (WHIT-744), the empty state keeps only the payday,
 // and the whole-dollar rounding at the half-dollar edge with thousands separators.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { screen } from '@testing-library/react-native';
@@ -20,13 +20,11 @@ const server = installFakeServer();
 beforeEach(() => resetRouter());
 
 describe('WHIT-731 QA — the Spent · Budget · Next payday row', () => {
-  // [A1] (P0) pending leaves the card but stays on the row
-  it('[A1] pending is gone from the card but still on the coffee row', async () => {
+  // [A1] (P0) pending is gone from the card and from the row (WHIT-744)
+  it('[A1] pending is gone from both the card and the coffee row (WHIT-744)', async () => {
     await showBudgets(server, { coffee: { target: 5785, posted: 5948.92, pending: 187.76 } }, { categories: [COFFEE], daysLeft: 22 });
     expect(heroTotals()).toMatchObject({ spent: '$6,136.68', budget: '$5,785' });
-    const pendingTexts = screen.getAllByText(/\$187\.76 pending/);
-    expect(pendingTexts).toHaveLength(1);
-    expect(pendingTexts[0].props.testID).toBe('budget-row-pending-coffee');
+    expect(screen.queryByText(/pending/)).toBeNull();
     expect(screen.queryByText(/resets/)).toBeNull();
   });
 

@@ -1,5 +1,5 @@
 // WHIT-741 QA — the Budgets polish on screen, beyond the main suite: no tick on a "$0 left" row,
-// a note-only row keeps its 18pt band, the top card's label and value columns line up one-for-one,
+// a note-only row has the short tick band (WHIT-744), the top card's label and value columns line up one-for-one,
 // the days column sizes to its number, "−$" stays glued in the hero and the row, and the detail
 // screen hides "today's plan" on a used-up budget. Real ../api over the fake server.
 import { it, expect, jest } from '@jest/globals';
@@ -51,15 +51,15 @@ it('[A13] "$0 left" row has no tick; a row with money left has one', async () =>
   expect(ticksIn(screen.getByTestId('budget-row-groceries'))).toHaveLength(1);
 });
 
-// [A14] (P1) a row with a note but no pace line keeps today's 18pt band (critic tweak).
-it('[A14] a note-only row keeps the full tick band', async () => {
+// [A14] (P1) a row with a note gets the same short tick band as every row (WHIT-744).
+it('[A14] a note-only row has the short tick band', async () => {
   seedBudgetsTab(server, {
     coffee: { target: 100, posted: 20, pending: 0, rollover: true, carryover: 40 },
   });
   await renderLoadedBudgetsWithQueries();
   expect(screen.getByTestId('budget-row-note-coffee')).toBeTruthy();
   expect(screen.queryByText(/over plan/)).toBeNull();
-  expect(tickBandHeight(screen.getByTestId('budget-row-coffee'))).toBe(18);
+  expect(tickBandHeight(screen.getByTestId('budget-row-coffee'))).toBe(3);
 });
 
 // [A15] (P0) an earning row never shows a pending line, even with pending money.

@@ -50,28 +50,24 @@ describe('pacePct — where the tick goes', () => {
 });
 
 describe('budget rows with the new rule', () => {
-  // [A6] (P0) slightly ahead → no line at all.
-  it('[A6] ahead of pace but with room → no line, not urgent', () => {
+  // [A6] (P0) slightly ahead → not flagged.
+  it('[A6] ahead of pace but with room → not urgent', () => {
     const row = rowFor({ budget: 100, posted: 74, pending: 0 });
-    expect(row.paceLabel).toBe('');
     expect(row.behindPace).toBe(false);
   });
 
   // [A7] (P0) pending spend counts toward the warning on the row.
-  it('[A7] pending pushes a row into "over plan"', () => {
-    expect(rowFor({ budget: 100, posted: 70, pending: 0 }).paceLabel).toBe('');
+  it('[A7] pending pushes a row behind pace', () => {
+    expect(rowFor({ budget: 100, posted: 70, pending: 0 }).behindPace).toBe(false);
     const row = rowFor({ budget: 100, posted: 70, pending: 15 });
-    expect(row.paceLabel).toBe('$35 over plan');
     expect(row.behindPace).toBe(true);
   });
 
   // [A9] (P0) a rollover leftovers row only warns on the envelope's daily room, not the base pace alone.
   it('[A9] $200 envelope: $150 spent is quiet, $180 spent warns', () => {
     const roomy = rowFor({ budget: 100, posted: 150, pending: 0, rollover: true, carryover: 100 });
-    expect(roomy.paceLabel).toBe('');
     expect(roomy.behindPace).toBe(false);
     const tight = rowFor({ budget: 100, posted: 180, pending: 0, rollover: true, carryover: 100 });
-    expect(tight.paceLabel).toBe('$130 over plan');
     expect(tight.behindPace).toBe(true);
   });
 
@@ -87,7 +83,7 @@ describe('budget rows with the new rule', () => {
     ];
     for (const extra of cases) {
       const row = rowFor({ budget: 100, posted: 50, pending: 0, ...extra });
-      expect(row.paceLabel).toBe('');
+      expect(row.behindPace).toBe(false);
       expect(row.targetPct).toBe(Math.round(row.postedPct));
     }
   });

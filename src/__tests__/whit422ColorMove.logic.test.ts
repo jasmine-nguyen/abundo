@@ -29,9 +29,9 @@ describe('WHIT-422 — expense budget pace line', () => {
     cycleLen: 14, daysLeft: 7,
   })).rows[0];
 
-  it('[A-EP] exactly on pace (spent 50 == target 50) → no pace line (WHIT-712)', () => {
+  it('[A-EP] exactly on pace (spent 50 == target 50) → not behind pace (WHIT-712)', () => {
     const row = expenseRow(50);
-    expect(row.paceLabel).toBe('');
+    expect(row.behindPace).toBe(false);
   });
 });
 

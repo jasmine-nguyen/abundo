@@ -51,8 +51,8 @@ describe('WHIT-731 Budgets top card: Spent · Budget · Next payday row', () => 
 
     expect(statIdsInOrder()).toEqual(STAT_IDS);
 
-    // Pending stays on the coffee row only.
-    expect(screen.getAllByText(/\$187\.76 pending/)).toHaveLength(1);
+    // Pending shows nowhere: not on the card, not on the row (WHIT-744).
+    expect(screen.queryByText(/pending/)).toBeNull();
   });
 
   it('a budget total pulled negative with cents shows the minus and the cents (WHIT-735)', async () => {

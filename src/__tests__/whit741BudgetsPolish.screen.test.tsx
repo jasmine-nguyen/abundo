@@ -1,6 +1,6 @@
-// WHIT-741 — Budgets tab polish at large text: pending on its own line, the top card's labels and
-// values in separate rows, both big numbers sized together, brighter notes, and no empty tick band
-// under a bar with nothing below it. Real ../api over the fake server.
+// WHIT-741 — Budgets tab polish at large text: no "·" on the row, the top card's labels and
+// values in separate rows, both big numbers sized together, brighter notes, and a short tick band
+// on every row (WHIT-744). Real ../api over the fake server.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { StyleSheet } from 'react-native';
 import { screen } from '@testing-library/react-native';
@@ -35,12 +35,11 @@ function tickBandHeight(rowTestID: string) {
 }
 
 describe('WHIT-741 Budgets tab polish', () => {
-  it('pending shows on its own line under "$X of $Y", and no line starts with "·"', async () => {
+  it('no line on the row starts with "·", and no row shows pending (WHIT-744)', async () => {
     await showTwoRows(server);
 
-    const pending = screen.getByTestId('budget-row-pending-coffee');
-    expect(textOf(pending).replace(/ /g, ' ')).toBe('$10 pending');
-    expect(screen.queryByTestId('budget-row-pending-groceries')).toBeNull();
+    expect(screen.queryByTestId('budget-row-pending-coffee')).toBeNull();
+    expect(screen.queryByText(/pending/)).toBeNull();
     expect(textOf(screen.getByTestId('budget-row-coffee'))).not.toContain('·');
   });
 
@@ -72,12 +71,12 @@ describe('WHIT-741 Budgets tab polish', () => {
     expect(StyleSheet.flatten(money.props.style).fontSize).toBe(44);
   });
 
-  it('a row with nothing under its bar has no empty 18pt tick band; a row with a pace line keeps it', async () => {
+  it('every row\'s tick band is short (WHIT-744)', async () => {
     await showTwoRows(server);
 
-    expect(screen.getByText(/over plan/)).toBeTruthy();
-    expect(tickBandHeight('budget-row-coffee')).toBe(18);
-    expect(tickBandHeight('budget-row-groceries')).toBeLessThan(18);
+    expect(screen.queryByText(/over plan/)).toBeNull();
+    expect(tickBandHeight('budget-row-coffee')).toBe(3);
+    expect(tickBandHeight('budget-row-groceries')).toBe(3);
   });
 
   it('the "Includes …" note is a little brighter than the dim sub-line', async () => {
