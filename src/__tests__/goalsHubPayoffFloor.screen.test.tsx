@@ -13,6 +13,7 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
+import { resetRouter } from './support/routerMock';
 import { EMPTY_LOAN_FACTS } from './factory';
 import type { LoanFacts } from '../api';
 
@@ -23,12 +24,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 const mockOpenGoalBalance = jest.fn();
 jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule(() => mockOpenGoalBalance));
 
-const mockPush = jest.fn();
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush }),
-  useFocusEffect: () => {},
-  useIsFocused: () => true,
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Goals from '../../app/(tabs)/goals';
 
@@ -43,7 +39,7 @@ const HUB: GoalsHubSeed = { payCycle: PAY_CYCLE, balances: { 'up-spending': 4000
 const seedHub = (over: GoalsHubSeed = {}) => seedGoalsHub(server, { ...HUB, ...over });
 
 beforeEach(() => {
-  mockPush.mockClear();
+  resetRouter();
   mockOpenGoalBalance.mockClear();
   resetAuth();
   pinToday(new Date(2026, 6, 11));

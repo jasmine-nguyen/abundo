@@ -14,18 +14,15 @@ import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedGoal } from './support/goalsScreen';
+import { routerSpies, resetRouter } from './support/routerMock';
 import type { MilestoneRecord } from '../api';
 
-const mockPush = jest.fn();
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => ({}) };
 });
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush, back: jest.fn() }),
-  useFocusEffect: () => {},
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Mortgage from '../../app/mortgage';
 
@@ -34,7 +31,7 @@ useTestQueryClient();
 
 beforeEach(() => {
   resetAuth();
-  mockPush.mockClear();
+  resetRouter();
 });
 
 it('renders standalone (no NavBarsProvider) with a "The mortgage" header', async () => {
@@ -92,7 +89,7 @@ it('the no-plan invite taps straight into the editor (not the read-only detail)'
   seedGoal(server, { milestones: [], homeLoan: { balance: 596642.43, asOf: null } });
   await renderWithQueries(<Mortgage />);
   fireEvent.press(screen.getByTestId('milestone-link'));
-  expect(mockPush).toHaveBeenCalledWith('/milestone/edit');
+  expect(routerSpies.push).toHaveBeenCalledWith('/milestone/edit');
 });
 
 // Shared by the WHIT-372 owing-state describes folded below (byte-identical const in both siblings).

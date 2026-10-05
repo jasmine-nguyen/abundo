@@ -17,6 +17,7 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
+import { routerSpies, resetRouter } from './support/routerMock';
 import { EMPTY_LOAN_FACTS } from './factory';
 import type { GoalRecord, LoanFacts } from '../api';
 
@@ -26,12 +27,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule());
 
-const mockPush = jest.fn();
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush }),
-  useFocusEffect: () => {},
-  useIsFocused: () => true,
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Goals from '../../app/(tabs)/goals';
 
@@ -45,7 +41,7 @@ const HUB: GoalsHubSeed = { payCycle: PAY_CYCLE, balances: { 'up-spending': 4000
 const seedHub = (over: GoalsHubSeed = {}) => seedGoalsHub(server, { ...HUB, ...over });
 
 beforeEach(() => {
-  mockPush.mockClear();
+  resetRouter();
   resetAuth();
   pinToday(new Date(2026, 6, 11)); // Sat 11 Jul 2026
   seedHub();
@@ -132,6 +128,6 @@ describe('navigation — url-encoding of the goal id', () => {
     seedHub({ goals: [goal] });
     await renderWithQueries(<Goals />);
     fireEvent.press(screen.getByTestId('goal-card-a b&c'));
-    expect(mockPush).toHaveBeenCalledWith('/goal/edit?id=a%20b%26c');
+    expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit?id=a%20b%26c');
   });
 });

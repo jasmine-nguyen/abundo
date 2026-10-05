@@ -17,6 +17,7 @@ import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedGoal } from './support/goalsScreen';
+import { resetRouter } from './support/routerMock';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => {
@@ -24,11 +25,7 @@ jest.mock('../context', () => {
   return { ...actual, useAppContext: () => ({}) };
 });
 
-const mockPush = jest.fn();
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush, back: jest.fn() }),
-  useFocusEffect: () => {},
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Mortgage from '../../app/mortgage';
 
@@ -37,7 +34,7 @@ useTestQueryClient();
 
 beforeEach(() => {
   resetAuth();
-  mockPush.mockClear();
+  resetRouter();
 });
 
 // #4 — the hero balance-error Retry must be a labelled button and its copy a live region.

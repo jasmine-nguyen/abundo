@@ -13,12 +13,11 @@ import { queryClient } from '../queryClient';
 
 jest.mock('@react-native-community/datetimepicker', () => require('./support/mockDatePicker').mockDatePickerModule());
 import { resetPickedDate } from './support/mockDatePicker';
+import { routerSpies, setParams, resetRouter } from './support/routerMock';
 
 const mockSaveGoal = jest.fn(async (_editId: string | null, _body: unknown) => true);
 const mockDeleteGoal = jest.fn(async (_id: string) => true);
 const mockShowToast = jest.fn();
-const mockBack = jest.fn();
-let mockParams: { id?: string };
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
@@ -27,10 +26,7 @@ jest.mock('../context', () => {
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-jest.mock('expo-router', () => ({
-  useLocalSearchParams: () => mockParams,
-  useRouter: () => ({ back: mockBack, push: jest.fn() }),
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import GoalEdit from '../../app/goal/edit';
 
@@ -58,8 +54,7 @@ beforeEach(() => {
   mockSaveGoal.mockClear().mockImplementation(async () => true);
   mockDeleteGoal.mockClear().mockImplementation(async () => true);
   mockShowToast.mockClear();
-  mockBack.mockClear();
-  mockParams = {};
+  resetRouter();
   resetPickedDate();
 });
 
@@ -121,7 +116,7 @@ describe('the synced-account picker reads balances + recent transactions from th
   // [A5] (P0) Editing a synced goal whose account has no balance this session: the saved account
   // stays selectable (named from transactions, no amount) and the save keeps its account_id.
   it('editing a synced goal whose account has no balance keeps that account selected and saves it', async () => {
-    mockParams = { id: 'g1' };
+    setParams({ id: 'g1' });
     server.seed('/goals', [RAINY_DAY]);
     server.seed('/accounts/balances', [balance('acc-2', 50)]);
     server.seed('/transactions', [txn({ account_id: 'acc-1', account_name: 'Everyday Savings' })]);
@@ -141,7 +136,7 @@ describe('editing waits for the real goals read', () => {
   // written over the real goal.
   it('when GET /goals fails, the edit form never enables Save and never calls the writer', async () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
-    mockParams = { id: 'g1' };
+    setParams({ id: 'g1' });
     server.fail('/goals', 500);
     await renderWithQueries(<GoalEdit />);
 
@@ -149,12 +144,12 @@ describe('editing waits for the real goals read', () => {
     expect(saveDisabled()).toBe(true);
     await press('goal-save');
     expect(mockSaveGoal).not.toHaveBeenCalled();
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 
   // [A7] (P1) The edited id isn't in the server's goals (deleted on another device) → Save blocked.
   it('an edit id missing from GET /goals keeps Save blocked', async () => {
-    mockParams = { id: 'gone' };
+    setParams({ id: 'gone' });
     server.seed('/goals', [RAINY_DAY]);
     await renderWithQueries(<GoalEdit />);
     expect(saveDisabled()).toBe(true);
@@ -163,7 +158,7 @@ describe('editing waits for the real goals read', () => {
 
   // [A8] (P0) The form fills from the goal matching the route id, not the first goal in the list.
   it('prefills from the goal whose id matches, among several', async () => {
-    mockParams = { id: 'g1' };
+    setParams({ id: 'g1' });
     server.seed('/goals', [{ ...RAINY_DAY, id: 'g0', name: 'Holiday', target_amount: 3000 }, RAINY_DAY]);
     await renderWithQueries(<GoalEdit />);
     expect(screen.getByDisplayValue('Rainy day')).toBeTruthy();
@@ -184,7 +179,7 @@ describe('editing waits for the real goals read', () => {
   // [A10] (P1) The edited goal disappears on a background refetch: Save blocks again, and the
   // typed values stay on screen (no reset to a blank form).
   it('a refetch that drops the edited goal blocks Save and keeps the typed values', async () => {
-    mockParams = { id: 'g1' };
+    setParams({ id: 'g1' });
     server.seed('/goals', [RAINY_DAY]);
     await renderWithQueries(<GoalEdit />);
     expect(saveDisabled()).toBe(false);
@@ -203,7 +198,7 @@ describe('editing waits for the real goals read', () => {
   // [A11] (P1) A failed refetch after the goal loaded keeps the cached goal: Save stays enabled.
   it('a failed GET /goals refetch keeps the loaded goal and Save', async () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
-    mockParams = { id: 'g1' };
+    setParams({ id: 'g1' });
     server.seed('/goals', [RAINY_DAY]);
     await renderWithQueries(<GoalEdit />);
     server.fail('/goals', 500);

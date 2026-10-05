@@ -8,6 +8,7 @@ import { act, render, screen, fireEvent, within, waitFor } from '@testing-librar
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { resetRouter } from './support/routerMock';
 import { pinToday } from './support/clock';
 import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
 import { EMPTY_LOAN_FACTS } from './factory';
@@ -20,11 +21,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule());
 
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn() }),
-  useFocusEffect: () => {},
-  useIsFocused: () => true,
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Goals from '../../app/(tabs)/goals';
 
@@ -40,6 +37,7 @@ const seedHub = (over: GoalsHubSeed = {}) => seedGoalsHub(server, { ...HUB, ...o
 
 beforeEach(() => {
   resetAuth();
+  resetRouter();
   pinToday(new Date(2026, 6, 11));
   seedHub();
 });
