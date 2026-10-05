@@ -15,27 +15,13 @@ import urllib.parse
 import pytest
 
 from _dynamo_fakes import FakeTable
-from _http_fakes import UP_API_URL, http_error
+from _http_fakes import UP_API_URL, FakeResponse, http_error
 
 MOCK_SECRET = "mock-secret"
 OLD_HOMELOAN_ID = "fbef6cbc-09b3-4b6f-826c-6a178707a178"
 NEW_HOMELOAN_ID = "9f9f9f9f-renumbered-loan"
 SIGNATURE_KEY = "x-up-authenticity-signature"
 ACCOUNTS_MARKER = "/accounts"
-
-
-class _FakeHTTPResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode("utf-8")
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
 
 
 class _FakeDevice:
@@ -95,7 +81,7 @@ def lookup(lam, monkeypatch):
         response = state.script.pop(0)
         if isinstance(response, Exception):
             raise response
-        return _FakeHTTPResponse(response)
+        return FakeResponse(response)
 
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
     return state
@@ -122,12 +108,12 @@ def handler(lam, monkeypatch):
     def fake_urlopen(request, timeout=None):
         url = request.full_url
         if "/transactions/" in url:
-            return _FakeHTTPResponse({"data": state.transactions[url.rsplit("/", 1)[-1]]})
+            return FakeResponse({"data": state.transactions[url.rsplit("/", 1)[-1]]})
         assert ACCOUNTS_MARKER in url
         state.account_calls += 1
         if isinstance(state.accounts, Exception):
             raise state.accounts
-        return _FakeHTTPResponse(state.accounts)
+        return FakeResponse(state.accounts)
 
     monkeypatch.setattr(up, "send_push", fake_send_push)
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
@@ -211,7 +197,7 @@ def test_non_json_body_falls_back(lam, monkeypatch, caplog):
     up = lam.up_webhook
     monkeypatch.setattr(up, "get_personal_access_token", lambda: "up-token")
 
-    class _Html(_FakeHTTPResponse):
+    class _Html(FakeResponse):
         def read(self):
             return b"<html>maintenance</html>"
 

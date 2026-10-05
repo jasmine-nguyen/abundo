@@ -8,7 +8,6 @@ import importlib
 import logging
 import pathlib
 import sys
-import urllib.error
 import urllib.parse
 from datetime import date
 from decimal import Decimal

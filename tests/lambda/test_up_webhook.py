@@ -18,7 +18,7 @@ import urllib.error
 import pytest
 
 from _dynamo_fakes import FakeTable
-from _http_fakes import UP_API_URL, http_error
+from _http_fakes import UP_API_URL, FakeResponse, http_error
 
 MOCK_SECRET = "mock-secret"
 HOMELOAN_UUID = "fbef6cbc-09b3-4b6f-826c-6a178707a178"
@@ -204,20 +204,6 @@ def test_get_personal_access_token_caches(lam, monkeypatch):
     assert calls == [up.UP_PERSONAL_ACCESS_TOKEN_PATH]
 
 
-class _FakeHTTPResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode("utf-8")
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
-
-
 def test_fetch_transaction_calls_up_with_bearer_token(lam, monkeypatch):
     up = lam.up_webhook
     monkeypatch.setattr(up, "get_personal_access_token", lambda: "up-token")
@@ -227,7 +213,7 @@ def test_fetch_transaction_calls_up_with_bearer_token(lam, monkeypatch):
         captured["url"] = request.full_url
         captured["auth"] = request.get_header("Authorization")
         captured["timeout"] = timeout
-        return _FakeHTTPResponse({"data": {"id": "txn-1", "attributes": {"x": 1}}})
+        return FakeResponse({"data": {"id": "txn-1", "attributes": {"x": 1}}})
 
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
     result = up.fetch_transaction("txn-1")
@@ -664,7 +650,7 @@ def test_replaced_token_is_used_on_next_delivery(fetch_wired, monkeypatch):
         seen.append(auth)
         if auth == "Bearer old-pat-value":
             raise http_error(401, url=UP_API_URL)
-        return _FakeHTTPResponse({"data": _up_transaction()})
+        return FakeResponse({"data": _up_transaction()})
 
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
     assert up.lambda_handler(_event(_webhook_payload()), None) == up.ERROR_RESPONSE
@@ -721,7 +707,7 @@ def test_homeloan_lookup_with_unexpected_shape_falls_back_unsaved(lam, monkeypat
 
     def fake_urlopen(request, timeout=None):
         calls.append(request)
-        return _FakeHTTPResponse(body)
+        return FakeResponse(body)
 
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
     caplog.set_level(logging.INFO)
@@ -748,7 +734,7 @@ def test_homeloan_lookup_failure_still_pushes_on_fixed_id(fetch_wired, monkeypat
 
     def fake_urlopen(request, timeout=None):
         if "/transactions/" in request.full_url:
-            return _FakeHTTPResponse({"data": _up_transaction()})
+            return FakeResponse({"data": _up_transaction()})
         raise http_error(500, url=UP_API_URL)
 
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)

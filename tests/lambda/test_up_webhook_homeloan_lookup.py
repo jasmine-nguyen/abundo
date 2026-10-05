@@ -13,25 +13,12 @@ import urllib.error
 import pytest
 
 from _dynamo_fakes import FakeTable
+from _http_fakes import FakeResponse
 
 MOCK_SECRET = "mock-secret"
 OLD_HOMELOAN_ID = "fbef6cbc-09b3-4b6f-826c-6a178707a178"
 NEW_HOMELOAN_ID = "0a1b2c3d-renumbered-home-loan"
 SIGNATURE_KEY = "x-up-authenticity-signature"
-
-
-class _FakeHTTPResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode("utf-8")
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
 
 
 class _FakeDevice:
@@ -96,9 +83,9 @@ def test_repayment_on_renumbered_home_loan_still_sends_push(lam, monkeypatch, ca
     def fake_urlopen(request, timeout=None):
         url = request.full_url
         if "/transactions/" in url:
-            return _FakeHTTPResponse(transactions[url.rsplit("/", 1)[-1]])
+            return FakeResponse(transactions[url.rsplit("/", 1)[-1]])
         assert "/accounts" in url
-        return _FakeHTTPResponse(_accounts_response(NEW_HOMELOAN_ID))
+        return FakeResponse(_accounts_response(NEW_HOMELOAN_ID))
 
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
     caplog.set_level(logging.INFO)
@@ -127,7 +114,7 @@ def test_get_homeloan_account_id_falls_back_then_reads_up_once(lam, monkeypatch,
         response = responses.pop(0)
         if isinstance(response, Exception):
             raise response
-        return _FakeHTTPResponse(response)
+        return FakeResponse(response)
 
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
     caplog.set_level(logging.INFO)
