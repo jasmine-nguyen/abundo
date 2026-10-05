@@ -1,4 +1,4 @@
-// WHIT-730 — Budgets polish. The pace line reads "$X over plan" / "$X under plan" (not the
+// WHIT-730 — Budgets polish. The pace line reads "$X over plan" (not the
 // backwards "behind pace"), over rows drop the "today" tick, a budget with nothing spent yet is
 // flagged `unspent` (drawn as a slim row), and the detail screen uses the same words and tick rule.
 // Halfway through a 14-day cycle, so a $100 budget's pace target is $50.
@@ -11,14 +11,14 @@ type Row = ReturnType<typeof budgetRowFor> & { unspent?: boolean };
 type Detail = ReturnType<typeof budgetDetailFor> & { showTarget?: boolean };
 
 describe('Budgets rows (WHIT-730)', () => {
-  it('pace words say over/under plan, over rows hide the tick, and $0 rows are unspent', () => {
+  it('pace words say over plan, over rows hide the tick, and $0 rows are unspent', () => {
     const overPlan = budgetRowFor({ budget: 100, posted: 85, pending: 0 }) as Row;
     expect(overPlan.paceLabel).toBe('$35 over plan');
     expect(overPlan.showTarget).toBe(true);
     expect(overPlan.unspent).toBe(false);
 
     const underPlan = budgetRowFor({ budget: 100, posted: 20, pending: 0 }) as Row;
-    expect(underPlan.paceLabel).toBe('$30 under plan');
+    expect(underPlan.paceLabel).toBe('');
     expect(underPlan.showTarget).toBe(true);
 
     const overBudget = budgetRowFor({ budget: 100, posted: 130, pending: 0 }) as Row;

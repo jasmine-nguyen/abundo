@@ -19,9 +19,6 @@ const SECTIONS: { section: BudgetView['section']; heading: string }[] = [
   { section: 'earning', heading: 'EARNING' },
 ];
 
-// 12pt Inter line ≈ 14.5pt + 15 + 15 → ≥ 44pt (Apple minimum) without changing the row layout.
-const SPREAD_LINK_HIT_SLOP = { top: 15, bottom: 15, left: 8, right: 8 };
-
 function RowHeader({ b }: { b: BudgetView }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 13 }}>
@@ -41,8 +38,6 @@ function RowHeader({ b }: { b: BudgetView }) {
 function BudgetRow({ b }: { b: BudgetView }) {
   const router = useRouter();
   const note = b.note ? <Text testID={`budget-row-note-${b.id}`} style={styles.note}>{b.note}</Text> : null;
-  // Under plan is the only label that is neither behind pace nor a spread → quiet, not bold.
-  const paceStyle = [styles.paceLabel, { color: b.paceColor }, !b.behindPace && b.spreadPrefill === null && styles.paceMuted];
   return (
     <Pressable testID={`budget-row-${b.id}`} onPress={() => router.push(`/budget/${b.id}`)} style={({ pressed }) => [styles.row, b.unspent && styles.rowSlim, b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }, pressed && PRESSED]}>
       <RowHeader b={b} />
@@ -57,13 +52,7 @@ function BudgetRow({ b }: { b: BudgetView }) {
               {note}
               {b.paceLabel ? (
                 <View style={styles.pace}>
-                  {b.spreadPrefill !== null ? (
-                    <Pressable testID={`budget-row-spread-${b.id}`} onPress={() => router.push(`/budget/spread?categoryId=${b.id}&prefill=${b.spreadPrefill}`)} hitSlop={SPREAD_LINK_HIT_SLOP}>
-                      <Text style={paceStyle}>{b.paceLabel}</Text>
-                    </Pressable>
-                  ) : (
-                    <Text style={paceStyle}>{b.paceLabel}</Text>
-                  )}
+                  <Text style={styles.paceLabel}>{b.paceLabel}</Text>
                 </View>
               ) : null}
             </View>
@@ -267,8 +256,7 @@ const styles = StyleSheet.create({
   paceRow: { minHeight: 18, marginTop: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   pace: { marginLeft: 'auto' },
   note: { fontFamily: FONT.body, fontSize: 12, color: C.textDim },
-  paceLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700' },
-  paceMuted: { fontWeight: '400' },
+  paceLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textInfo },
 
   addBudget: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(C.accentAlt, 0.4), backgroundColor: tint(C.accentAlt, 0.07), borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   addBudgetText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSoft },

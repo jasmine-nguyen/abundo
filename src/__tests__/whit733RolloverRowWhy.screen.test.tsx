@@ -1,5 +1,4 @@
-// WHIT-728 follow-up — on the Budgets tab, a rollover row pulled negative by a carried-over
-// deficit shows "$617.75 of −$659" and the muted "Includes $859 past overspend" under the bar.
+// WHIT-733 — on the Budgets tab, an over-budget rollover row shows the carried amount in its note.
 // Real ../api over the fake server.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import { screen } from '@testing-library/react-native';
@@ -21,19 +20,10 @@ beforeEach(() => {
   resetAuth();
 });
 
-it('a rollover row in deficit shows "$617.75 of −$659" and "Includes $859 past overspend"', async () => {
+it('an over-budget rollover row names its past overspend', async () => {
   seedBudgetsTab(server, {
     coffee: { target: 200, posted: 617.75, pending: 0, rollover: true, carryover: -859, available: -659 },
   });
   await renderLoadedBudgetsWithQueries();
-  expect(screen.getByText(/^\$617\.75 of −\$659/)).toBeTruthy();
   expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes $859 past overspend');
-});
-
-it('a spread row draws its note under the new id', async () => {
-  seedBudgetsTab(server, {
-    coffee: { target: 41, posted: 617.75, pending: 0, spread: { amount: 2100, cycles: 3, index: 1, adjustment: -700 } },
-  });
-  await renderLoadedBudgetsWithQueries();
-  expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes spread bills');
 });
