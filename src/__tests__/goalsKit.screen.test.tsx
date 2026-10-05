@@ -9,7 +9,9 @@ import { screen } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { resetRouter } from './support/routerMock';
 import { seedGoal } from './support/goalsScreen';
+import {  } from './support/routerMock';
 import type { MilestoneRecord } from '../api';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -17,16 +19,14 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as object;
   return { ...actual, useAppContext: () => ({}) };
 });
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn(), back: jest.fn() }),
-  useFocusEffect: () => {},
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const server = installFakeServer();
 useTestQueryClient();
 
 beforeEach(() => {
   resetAuth();
+  resetRouter();
 });
 
 const SAVED_PLAN: MilestoneRecord[] = [

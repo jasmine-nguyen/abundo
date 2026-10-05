@@ -16,6 +16,7 @@ import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settl
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
+import { routerSpies, resetRouter } from './support/routerMock';
 import { EMPTY_LOAN_FACTS } from './factory';
 import { queryClient } from '../queryClient';
 import type { GoalRecord, LoanFacts } from '../api';
@@ -34,12 +35,7 @@ jest.mock('../context', () => {
   return { ...actual, useAppContext: () => ({ openGoalBalance: mockOpenGoalBalance }) };
 });
 
-const mockPush = jest.fn();
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush }),
-  useFocusEffect: () => {},
-  useIsFocused: () => true,
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Goals from '../../app/(tabs)/goals';
 
@@ -60,7 +56,7 @@ const seedHub = (over: GoalsHubSeed = {}) => seedGoalsHub(server, { ...HUB, ...o
 
 beforeEach(() => {
   resetAuth();
-  mockPush.mockClear();
+  resetRouter();
   mockOpenGoalBalance.mockClear();
   pinToday(new Date(2026, 6, 11)); // Sat 11 Jul 2026
   seedHub();
@@ -244,7 +240,7 @@ describe('the mortgage card — rich payoff state', () => {
     seedHub({ loanFacts: READY_FACTS });
     await renderWithQueries(<Goals />);
     fireEvent.press(screen.getByTestId('mortgage-link'));
-    expect(mockPush).toHaveBeenCalledWith('/mortgage');
+    expect(routerSpies.push).toHaveBeenCalledWith('/mortgage');
   });
 
   it('a fully-paid loan (balance $0) reads "100% gone", never rounded down', async () => {
@@ -322,19 +318,19 @@ describe('navigation', () => {
   it('the "+" routes to the goal add screen', async () => {
     await renderWithQueries(<Goals />);
     fireEvent.press(screen.getByTestId('add-goal'));
-    expect(mockPush).toHaveBeenCalledWith('/goal/edit');
+    expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit');
   });
 
   it('a goal card routes to the edit screen with its id', async () => {
     await renderWithQueries(<Goals />);
     fireEvent.press(screen.getByTestId('goal-card-g1'));
-    expect(mockPush).toHaveBeenCalledWith('/goal/edit?id=g1');
+    expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit?id=g1');
   });
 
   it('the mortgage card routes to the full mortgage screen', async () => {
     await renderWithQueries(<Goals />);
     fireEvent.press(screen.getByTestId('mortgage-link'));
-    expect(mockPush).toHaveBeenCalledWith('/mortgage');
+    expect(routerSpies.push).toHaveBeenCalledWith('/mortgage');
   });
 });
 
@@ -415,7 +411,7 @@ it('tapping a manual goal card body still routes to edit (not the sheet)', async
   seedHub({ goals: [PAYDOWN] });
   await renderWithQueries(<Goals />);
   fireEvent.press(screen.getByTestId('goal-card-g2'));
-  expect(mockPush).toHaveBeenCalledWith('/goal/edit?id=g2');
+  expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit?id=g2');
   expect(mockOpenGoalBalance).not.toHaveBeenCalled();
 });
 

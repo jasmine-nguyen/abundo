@@ -13,16 +13,9 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { routerSpies, resetRouter } from './support/routerMock';
 
-const mockPush = jest.fn();
-jest.mock('expo-router', () => {
-  const React2 = require('react');
-  return {
-    useRouter: () => ({ push: mockPush, replace: jest.fn(), back: jest.fn() }),
-    useFocusEffect: (cb: () => void) => React2.useEffect(() => cb(), [cb]),
-    useIsFocused: () => true,
-  };
-});
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 // Real ScrollChromeHeader, but stub its geometry hook so it renders without a NavBarsProvider.
 // The header still renders left → title → right in JSX order.
@@ -66,7 +59,7 @@ installFakeServer();
 useTestQueryClient();
 
 beforeEach(() => {
-  mockPush.mockClear();
+  resetRouter();
   resetAuth();
 });
 
@@ -76,7 +69,7 @@ describe('SettingsButton (the header gear)', () => {
     const btn = screen.getByLabelText('Settings');
     expect(btn.props.accessibilityRole).toBe('button');
     fireEvent.press(btn);
-    expect(mockPush).toHaveBeenCalledWith('/settings');
+    expect(routerSpies.push).toHaveBeenCalledWith('/settings');
   });
 
   it('pads the touch target past the 44x44 minimum (hitSlop, not a scaled glyph)', () => {
@@ -110,6 +103,6 @@ describe.each([
     await renderWithQueries(ui);
     const btn = screen.getByLabelText('Settings');
     fireEvent.press(btn);
-    expect(mockPush).toHaveBeenCalledWith('/settings');
+    expect(routerSpies.push).toHaveBeenCalledWith('/settings');
   });
 });

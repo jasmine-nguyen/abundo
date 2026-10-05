@@ -18,8 +18,10 @@ import { screen, within } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { resetRouter } from './support/routerMock';
 import { pinToday } from './support/clock';
 import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
+import {  } from './support/routerMock';
 import { EMPTY_LOAN_FACTS } from './factory';
 import type { LoanFacts } from '../api';
 
@@ -30,7 +32,7 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => ({ openGoalBalance: jest.fn() }) };
 });
-jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }), useFocusEffect: () => {}, useIsFocused: () => true }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Goals from '../../app/(tabs)/goals';
 
@@ -49,6 +51,7 @@ const seedHub = (over: GoalsHubSeed = {}) => seedGoalsHub(server, { ...HUB, ...o
 
 beforeEach(() => {
   resetAuth();
+  resetRouter();
   pinToday(new Date(2026, 6, 11));
   seedHub();
 });

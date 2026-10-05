@@ -11,8 +11,8 @@ import { screen, fireEvent } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { routerSpies, resetRouter } from './support/routerMock';
 
-const mockPush = jest.fn();
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 const mockOpenMultiPicker = jest.fn();
@@ -21,10 +21,7 @@ jest.mock('../context', () => {
   return { ...actual, useAppContext: () => ({ openPicker: () => {}, openMultiPicker: mockOpenMultiPicker }) };
 });
 
-jest.mock('expo-router', () => {
-  const React = require('react');
-  return { useFocusEffect: (cb: () => void) => React.useEffect(() => cb(), [cb]), useRouter: () => ({ push: mockPush }) };
-});
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Transactions from '../../app/(tabs)/transactions';
 
@@ -38,7 +35,7 @@ const charge = {
 };
 
 beforeEach(() => {
-  mockPush.mockClear();
+  resetRouter();
   mockOpenMultiPicker.mockClear();
   resetAuth();
   server.seed('/transactions/feed', { transactions: [charge], nextCursor: null });
@@ -54,7 +51,7 @@ it('keeps the gear reachable in selection mode: tapping it pushes /settings and 
 
   // The gear coexists with the selection UI and taps without tearing it down.
   fireEvent.press(screen.getByLabelText('Settings'));
-  expect(mockPush).toHaveBeenCalledWith('/settings');
+  expect(routerSpies.push).toHaveBeenCalledWith('/settings');
   // Selection survives the navigation away (component is not unmounted on a root push).
   expect(screen.getByText('1 selected')).toBeTruthy();
   expect(screen.getByLabelText('Re-categorize selected transactions')).toBeTruthy();
