@@ -11,8 +11,8 @@ import { COFFEE as coffee, DINING as dining, GROCERIES as groceries, LATTE as la
 const oat = cat({ id: 'oat', name: 'Oat lattes', parent: 'latte' });
 
 describe('urgentFirst — edges', () => {
-  // [A1] (P0) an over grandchild lifts its whole three-level family above a behind-pace row,
-  // and all three rows stay together with their depths.
+  // [A1] (P0) an over grandchild lifts its whole three-level family above the rest (a behind-pace
+  // row isn't lifted, WHIT-745), and all three rows stay together with their depths.
   it('lifts a three-level family by its over grandchild, keeping it in one block', () => {
     const rows = rowsFor([groceries, dining, coffee, latte, oat], [
       budget({ id: 'groceries', budget: 100, posted: 50, pending: 0 }),
@@ -22,7 +22,7 @@ describe('urgentFirst — edges', () => {
       budget({ id: 'oat', budget: 20, posted: 30, pending: 0 }),
     ]);
     const ordered = urgentFirst(rows);
-    expect(ids(ordered)).toEqual(['coffee', 'latte', 'oat', 'dining', 'groceries']);
+    expect(ids(ordered)).toEqual(['coffee', 'latte', 'oat', 'groceries', 'dining']);
     expect(ordered.map((r) => r.depth)).toEqual([0, 1, 2, 0, 0]);
   });
 
@@ -41,7 +41,7 @@ describe('urgentFirst — edges', () => {
     expect(ordered).toHaveLength(rows.length);
     expect(new Set(ids(ordered))).toEqual(new Set(ids(rows)));
     expect(ids(ordered).slice(0, 2)).toEqual(['loop_a', 'loop_b']);
-    expect(ids(ordered).slice(2)).toEqual(['dining', 'groceries']);
+    expect(ids(ordered).slice(2)).toEqual(['groceries', 'dining']);
   });
 });
 

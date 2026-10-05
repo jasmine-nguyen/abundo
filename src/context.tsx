@@ -1932,7 +1932,6 @@ export interface BudgetViewsInput {
   cycleLen: number;
   daysLeft: number;
   nextPayday?: string; // ISO "YYYY-MM-DD"; income rows read "next pay ~Fri" when set
-  oneChargeIds?: ReadonlySet<string>; // budgets paid in one go (WHIT-739)
 }
 
 // "today" / "~Fri" (within 6 days) / "~17 Oct" (further out, where a weekday is ambiguous).
@@ -2063,8 +2062,8 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     if (depth === 0) { totBudget += available; totSpent += spent; totPending += pending; totRemain += remain; }
     const over = spent > available;
     const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
-    // Spending too fast (WHIT-712) puts the row urgent-first; the row itself shows no pace line (WHIT-744).
-    const behindPace = paceWarning({ spent, target, available, over, oneCharge: !!s.oneChargeIds?.has(b.id) }, s);
+    // Spending too fast (WHIT-712). The row shows no pace line (WHIT-744) and the list no longer ranks on it (WHIT-745).
+    const behindPace = paceWarning({ spent, target, available, over }, s);
     // "of" shows the exact AVAILABLE envelope so it reconciles with the remaining amount (available −
     // spent); a no-break space keeps "of" with its amount. `spent` includes pending; the bar shows it as the lighter segment.
     const spentLabel = `${fmtExact(spent)} of ${fmtSignedExact(available)}`;
