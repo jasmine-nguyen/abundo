@@ -5,7 +5,8 @@
 import { describe, it, expect } from '@jest/globals';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { matchingBrace, stripComments, testFiles } from './support/sourceScan';
+import { stripComments, testFiles } from './support/sourceScan';
+import { overridesCoreHook, routerMockFactories } from './support/routerMockScan';
 
 const TESTS_DIR = __dirname;
 
@@ -35,29 +36,18 @@ const NOT_YET_CONVERTED = new Set([
 ]);
 
 // Built from parts so this file never contains the literals it hunts for.
-const ROUTER_MOCK_CALL = new RegExp('jest\\.mock\\(\\s*[\'"]expo-' + 'router[\'"]');
 const SHARED_FACTORY = new RegExp("require\\('\\./support/routerMock'\\)\\.routerMock" + 'Module\\(');
-const CORE_KEY_OVERRIDE = new RegExp(
-  '\\b(useFocus' + 'Effect|use' + 'Router|useLocal' + 'SearchParams|useIs' + 'Focused)\\s*:',
-);
 const LOCAL_ROUTER_SPY = new RegExp(
   '^\\s*(const|let|var)\\s+mock' + '(Push|Back|Replace|Params|DismissAll)\\b',
   'm',
 );
 
-function routerMockFactory(code: string): string | null {
-  const match = ROUTER_MOCK_CALL.exec(code);
-  if (!match) return null;
-  const open = match.index + match[0].indexOf('(');
-  const close = matchingBrace(code, open, '(', ')');
-  return code.slice(open, close + 1);
-}
-
 const codeOf = (file: string): string => stripComments(readFileSync(join(TESTS_DIR, file), 'utf8'));
+const factoriesOf = (file: string): string[] => routerMockFactories(codeOf(file));
 
 const mockingFiles = testFiles(TESTS_DIR)
   .filter((file) => file !== 'support/routerMock.ts')
-  .filter((file) => routerMockFactory(codeOf(file)) !== null);
+  .filter((file) => factoriesOf(file).length > 0);
 
 const mustShare = mockingFiles.filter((file) => !ALLOWED_INLINE.has(file) && !NOT_YET_CONVERTED.has(file));
 
@@ -67,12 +57,12 @@ describe('every screen test shares one router stand-in', () => {
   });
 
   it('every file that fakes expo-router builds its fake from routerMockModule()', () => {
-    const offenders = mustShare.filter((file) => !SHARED_FACTORY.test(routerMockFactory(codeOf(file)) ?? ''));
+    const offenders = mustShare.filter((file) => !factoriesOf(file).every((factory) => SHARED_FACTORY.test(factory)));
     expect(offenders).toEqual([]);
   });
 
   it('no shared fake overrides the core hooks (useFocusEffect, useRouter, params, focus)', () => {
-    const offenders = mustShare.filter((file) => CORE_KEY_OVERRIDE.test(routerMockFactory(codeOf(file)) ?? ''));
+    const offenders = mustShare.filter((file) => factoriesOf(file).some(overridesCoreHook));
     expect(offenders).toEqual([]);
   });
 
