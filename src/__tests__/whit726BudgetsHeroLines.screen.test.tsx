@@ -48,12 +48,12 @@ describe('WHIT-731 Budgets top card: no pill, resets or pending', () => {
     expect(screen.queryByTestId('budgets-hero-resets')).toBeNull();
   });
 
-  it('under budget → same three values: Spent $4,501 · Budget $5,785 · Next payday', async () => {
+  it('under budget → same three values: Spent $4,500.60 · Budget $5,785 · Next payday', async () => {
     seedCoffee({ target: 5785, posted: 4500.6, pending: 0 });
     await renderLoadedBudgets();
 
     expect(screen.getByText('Left to spend')).toBeTruthy();
-    expect(heroTotals()).toMatchObject({ spent: '$4,501', budget: '$5,785' });
+    expect(heroTotals()).toMatchObject({ spent: '$4,500.60', budget: '$5,785' });
     expect(heroTotals().payday).toMatch(/^\d{1,2} [A-Z][a-z]{2}$/);
 
     expect(within(hero()).queryByText(/resets/)).toBeNull();

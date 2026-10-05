@@ -1,6 +1,6 @@
 // WHIT-716 — the Budgets top card: the overspend said once ("−$X" + "Over budget"), the big number
 // in the rows' cents format, and "Over budget" from 1 cent over. The Spent and Budget
-// values are whole dollars (WHIT-731). Real useBudgetsScreenData over the fake server.
+// values use the same format (WHIT-735). Real useBudgetsScreenData over the fake server.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { screen } from '@testing-library/react-native';
 import { resetRouter } from './support/routerMock';
@@ -26,14 +26,14 @@ describe('WHIT-716 Budgets top card spent line + over line', () => {
     expect(screen.queryByText(/Over by/)).toBeNull();
   });
 
-  it('big number keeps cents like the rows ("$66.25"); Spent rounds ($83.75 → "$84" of "$150")', async () => {
+  it('big number and Spent keep cents like the rows ("$66.25"; "$83.75" of "$150")', async () => {
     await showBudgets(server, {
       coffee: { target: 100, posted: 73.5, pending: 0 },
       groceries: { target: 50, posted: 10.25, pending: 0 },
     });
     expect(screen.getByText('$66.25')).toBeTruthy();
     expect(screen.getByText('Left to spend')).toBeTruthy();
-    expect(heroTotals()).toMatchObject({ spent: '$84', budget: '$150' });
+    expect(heroTotals()).toMatchObject({ spent: '$83.75', budget: '$150' });
   });
 
   it('30 cents over → "−$0.30" and "Over budget", never "Left to spend"', async () => {

@@ -12,35 +12,23 @@ describe('budget rows only speak up when off pace (WHIT-712)', () => {
     expect(row.remainLabel).toBe('left');
   });
 
-  it('under plan and over plan still speak', () => {
-    const ahead = rowFor({ budget: 100, posted: 30, pending: 0 });
-    expect(ahead.paceLabel).toBe('$20 under plan');
-    expect(ahead.paceColor).toBe(C.textDim);
+  it('over plan still speaks', () => {
     const behind = rowFor({ budget: 100, posted: 85, pending: 0 });
     expect(behind.paceLabel).toBe('$35 over plan');
-    expect(behind.paceColor).toBe(C.textInfo);
   });
 
-  it('over budget with no spread says the overspend once, in the red amount', () => {
+  it('over budget says the overspend once, in the red amount', () => {
     const row = rowFor({ budget: 100, posted: 120, pending: 0, rollover: true, carryover: 0 });
     expect(row.paceLabel).toBe('');
     expect(row.remainAmount).toBe('$20');
     expect(row.remainLabel).toBe('over');
     expect(row.remainColor).toBe(C.bad);
-    expect(row.spreadPrefill).toBeNull();
     const said = [row.spentLabel, row.remainAmount, row.paceLabel].join(' | ');
     expect(said.match(/\$20(?![\d.,])/g)).toHaveLength(1);
   });
 
-  it('over budget where a spread can start still offers the spread link', () => {
-    const row = rowFor({ budget: 100, posted: 120, pending: 0 });
-    expect(row.paceLabel).toBe('Spread it over pay cycles →');
-    expect(row.spreadPrefill).toBe(20);
-    expect(row.remainColor).toBe(C.bad);
-  });
-
   it('the money line reads "$X of $Y · $Z pending"', () => {
-    expect(rowFor({ budget: 600, posted: 374, pending: 38 }).spentLabel).toBe('$412 of $600 · $38 pending');
+    expect(rowFor({ budget: 600, posted: 374, pending: 38 }).spentLabel).toBe('$412 of $600 ·\u00a0$38\u00a0pending');
     expect(rowFor({ budget: 100, posted: 40, pending: 0 }).spentLabel).toBe('$40 of $100');
   });
 

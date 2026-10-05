@@ -4,26 +4,19 @@ Loads scripts/migrations/delete_zero_amount_transactions.py through importlib an
 main() over the shared FakeTable.
 """
 
-import importlib.util
-import pathlib
 import sys
 from decimal import Decimal
 
 import pytest
 
 from _dynamo_fakes import FakeTable, _client_error
-
-_MOD_PATH = (pathlib.Path(__file__).resolve().parents[2]
-             / "scripts" / "migrations" / "delete_zero_amount_transactions.py")
+from _migration_scripts import load_migration_script
 
 _PK = "ACCOUNT#westpac-altitude-black"
 
 
 def _load_script():
-    spec = importlib.util.spec_from_file_location("delete_zero_amount_transactions_qa", _MOD_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_migration_script("delete_zero_amount_transactions")
 
 
 def _txn(txn_id, amount, pk=_PK, **fields):

@@ -1,13 +1,8 @@
 """Shared helpers for the smooth->spread migration test suites (WHIT-559)."""
 
-import importlib.util
-import pathlib
+from _migration_scripts import load_migration_script
 
-_MOD_PATH = (pathlib.Path(__file__).resolve().parents[2]
-             / "scripts" / "migrations" / "rename_rule_smooth_to_spread.py")
-_spec = importlib.util.spec_from_file_location("rename_rule_smooth_to_spread", _MOD_PATH)
-migration = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(migration)
+migration = load_migration_script("rename_rule_smooth_to_spread")
 
 
 def seed(table, sk, **fields):

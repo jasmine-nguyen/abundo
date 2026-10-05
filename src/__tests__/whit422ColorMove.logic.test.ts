@@ -3,7 +3,7 @@
 // existing suites miss; the seed/sibling/OKLCH maths and the picker-chip render are already
 // covered by categoryColour.logic + overlaysPickerCreateDraftRender.screen and are NOT repeated.
 //   [A-TI]  C.textInfo is exactly '#cfd2ff' — the token a future retune must not silently move.
-//   [A-EP]  the EXPENSE budget pace sub-label ("under plan") is the muted C.textDim (WHIT-730).
+//   [A-EP]  an EXPENSE budget exactly on pace shows no pace sub-label (WHIT-712).
 //   [A-BC]  BUCKET_COLOR values survived the move byte-for-byte, incl. Income === C.good.
 import { describe, it, expect } from '@jest/globals';
 import { C } from '../theme';
@@ -20,20 +20,14 @@ describe('WHIT-422 — C.textInfo value pin', () => {
   });
 });
 
-// ── [A-EP] EXPENSE pace sub-label uses the muted token (NEW branch — income-only before) ──
-describe('WHIT-422 — expense budget pace colour is the muted token', () => {
+// ── [A-EP] EXPENSE pace sub-label ──
+describe('WHIT-422 — expense budget pace line', () => {
   // Lifestyle (expense) category; cycleLen 14 / daysLeft 7 → elapsed 0.5 → target = 0.5 * budget.
   const expenseRow = (posted: number) => budgetViews(makeState({
     categories: [cat()],
     budgets: [budget({ id: 'coffee', budget: 100, posted, pending: 0 })],
     cycleLen: 14, daysLeft: 7,
   })).rows[0];
-
-  it('[A-EP] "under plan" (spent 10 vs target 50) → paceColor is the muted C.textDim', () => {
-    const row = expenseRow(10);
-    expect(row.paceLabel).toContain('under plan');
-    expect(row.paceColor).toBe(C.textDim);
-  });
 
   it('[A-EP] exactly on pace (spent 50 == target 50) → no pace line (WHIT-712)', () => {
     const row = expenseRow(50);

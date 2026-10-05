@@ -1,9 +1,8 @@
-// WHIT-730 follow-up QA — edges the main suites skip: nested slim rows line up, the spread link keeps its accent + bold, and a nested row's "under plan" is muted.
+// WHIT-730 follow-up QA — edges the main suites skip: nested slim rows line up, and a slim row still opens.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import { StyleSheet } from 'react-native';
 import { fireEvent, screen } from '@testing-library/react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
-import { C } from '../theme';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { routerSpies } from './support/routerMock';
@@ -38,13 +37,12 @@ it('[A1] a nested slim $0 row lines up with its full parent row and keeps its in
   expect(sidePadding('budget-row-latte')).toEqual(sidePadding('budget-row-coffee'));
   expect(sidePadding('budget-row-latte')).toEqual({ left: 16, right: 16 });
   expect(flat(screen.getByTestId('budget-row-latte')).marginLeft).toBe(18);
-  // Still slim: tighter top/bottom than the full row.
-  expect(flat(screen.getByTestId('budget-row-latte')).paddingTop).toBe(12);
-  expect(flat(screen.getByTestId('budget-row-latte')).paddingBottom).toBe(12);
+  expect(flat(screen.getByTestId('budget-row-latte')).paddingTop).toBe(16);
+  expect(flat(screen.getByTestId('budget-row-latte')).paddingBottom).toBe(14);
 });
 
-// [A2] (P0) the slim row is still slim (one bar on screen: the full row's), shows no pace line, and opens.
-it('[A2] the slim row has no bar or pace line and still opens its budget', async () => {
+// [A2] (P0) the slim row is still slim (one bar on screen: the full row's), and opens.
+it('[A2] the slim row has no bar and still opens its budget', async () => {
   seedBudgetsTab(server, {
     coffee: { target: 100, posted: 0, pending: 0 },
     groceries: { target: 100, posted: 30, pending: 0 },
@@ -53,30 +51,6 @@ it('[A2] the slim row has no bar or pace line and still opens its budget', async
   await screen.findByText('Groceries');
 
   expect(screen.UNSAFE_queryAllByType(BudgetBar)).toHaveLength(1);
-  expect(screen.queryByText('$50 under plan')).toBeNull();
   fireEvent.press(screen.getByTestId('budget-row-coffee'));
   expect(routerSpies.push).toHaveBeenCalledWith('/budget/coffee');
-});
-
-// [A3] (P0) the spread link is neither behind pace nor under plan: it keeps its accent colour and bold.
-it('[A3] the "Spread it over pay cycles →" link stays accent and bold', async () => {
-  seedBudgetsTab(server, { coffee: { target: 80, posted: 90.25, pending: 0 } });
-  await renderLoadedBudgetsWithQueries();
-
-  const spread = flat(await screen.findByText('Spread it over pay cycles →'));
-  expect(spread.color).toBe(C.accentSoft);
-  expect(spread.fontWeight).toBe('700');
-});
-
-// [A4] (P0) "under plan" on a nested row is muted too (grey, not bold).
-it('[A4] a nested row\'s "under plan" is grey and not bold', async () => {
-  seedBudgetsTab(server, {
-    coffee: { target: 100, posted: 30, pending: 0 },
-    latte: { target: 100, posted: 10, pending: 0 },
-  }, [COFFEE, LATTE]);
-  await renderLoadedBudgetsWithQueries();
-
-  const under = flat(await screen.findByText('$40 under plan'));
-  expect(under.color).toBe(C.textDim);
-  expect(under.fontWeight).toBe('400');
 });

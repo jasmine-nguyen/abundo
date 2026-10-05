@@ -1,5 +1,5 @@
 // WHIT-707 — the Budgets tab rows: Spending before Earning, income reads "earned · next pay",
-// pending gets its own words, and an over-budget row offers a spread instead of piling on red.
+// and pending gets its own words.
 import { describe, it, expect } from '@jest/globals';
 import { budgetViews } from '../context';
 import { C } from '../theme';
@@ -21,8 +21,8 @@ describe('budgetViews rows (WHIT-707)', () => {
           budget({ id: 'salary', budget: 5000, posted: 1000, pending: 0 }),
           budget({ id: 'coffee', budget: 100, posted: 40, pending: 10 }),
           budget({ id: 'latte', budget: 30, posted: 5, pending: 0 }),
-          budget({ id: 'rent', budget: 100, posted: 120, pending: 0 }),                     // over, spreadable
-          budget({ id: 'gym', budget: 100, posted: 120, pending: 0, rollover: true }),      // over, can't spread
+          budget({ id: 'rent', budget: 100, posted: 120, pending: 0 }),                     // over
+          budget({ id: 'gym', budget: 100, posted: 120, pending: 0, rollover: true }),      // over, rollover
         ],
         cycleLen: 14, daysLeft: 6,
       }),
@@ -40,28 +40,24 @@ describe('budgetViews rows (WHIT-707)', () => {
     expect(income.spentLabel).toBe('$1,000 earned · next pay ~Fri');
     expect(income.paceLabel).toBe('');
     expect(income.showTarget).toBe(false);
-    expect(income.spreadPrefill).toBeNull();
     expect(income.remainAmount).toBe('$4,000');
     expect(income.remainLabel).toBe('to go');
 
     // Pending gets its own words; the limit stays visible. No pending → unchanged.
-    expect(byId('coffee').spentLabel).toBe('$50 of $100 · $10 pending');
+    expect(byId('coffee').spentLabel).toBe('$50 of $100 ·\u00a0$10\u00a0pending');
     expect(byId('coffee').showTarget).toBe(true);
     expect(byId('latte').spentLabel).toBe('$5 of $30');
 
-    // Over budget + spreadable: rose on amount and bar; the pace line becomes the spread link.
+    // Over budget: rose on amount and bar; the red amount says it once (WHIT-712), no pace line.
     const over = byId('rent');
     expect(over.remainColor).toBe(C.bad);
     expect(over.postedColor).toBe(C.bad);
-    expect(over.paceLabel).toBe('Spread it over pay cycles →');
-    expect(over.paceColor).not.toBe(C.bad);
-    expect(over.spreadPrefill).toBe(20);
+    expect(over.paceLabel).toBe('');
 
-    // Over budget but rollover (can't spread): no pace line, the red amount says it once (WHIT-712).
+    // Over budget with rollover: same, no pace line.
     const quiet = byId('gym');
     expect(quiet.paceLabel).toBe('');
     expect(quiet.remainAmount).toBe('$20');
-    expect(quiet.spreadPrefill).toBeNull();
 
     // Payday more than 6 days away reads as a date, not a weekday; no payday → just "earned".
     const far = budgetViews({ ...s, daysLeft: 14, nextPayday: '2026-10-17' }).rows.find((r) => r.id === 'salary')!;

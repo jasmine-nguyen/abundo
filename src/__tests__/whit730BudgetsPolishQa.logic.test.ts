@@ -1,4 +1,4 @@
-// WHIT-730 QA — edges of the Budgets polish rules: the pace words' colours and boundaries, the
+// WHIT-730 QA — edges of the Budgets polish rules: the pace words' boundaries, the
 // "today" tick at exactly-on-budget, the `unspent` (slim row) rule for pending-only, a $0
 // budget and a nested row, and the row and detail screen agreeing on the words.
 // Halfway through a 14-day cycle, so a $100 budget's pace target is $50.
@@ -9,13 +9,6 @@ import { budgetRowFor, budgetRowsFor, budgetDetailFor } from './support/budgetsT
 import { budget, cat } from './factory';
 
 describe('pace words (WHIT-730)', () => {
-  it('[A1] "over plan" and "under plan" are both muted (WHIT-732)', () => {
-    const overPlan = budgetRowFor({ budget: 100, posted: 85, pending: 0 });
-    expect(overPlan.paceColor).toBe(C.textInfo);
-    const underPlan = budgetRowFor({ budget: 100, posted: 20, pending: 0 });
-    expect(underPlan.paceColor).toBe(C.textDim);
-  });
-
   it('[A2] within 50c of the plan says nothing; pending counts toward "over plan"', () => {
     expect(budgetRowFor({ budget: 100, posted: 50.4, pending: 0 }).paceLabel).toBe('');
     expect(budgetRowFor({ budget: 100, posted: 49.6, pending: 0 }).paceLabel).toBe('');
@@ -90,6 +83,6 @@ describe('unspent / slim rows (WHIT-730)', () => {
   it('[A12] a $0 rollover row with past leftovers keeps its note for the slim layout', () => {
     const row = budgetRowFor({ budget: 100, posted: 0, pending: 0, rollover: true, carryover: 40 });
     expect(row.unspent).toBe(true);
-    expect(row.note).toBe('Includes past leftovers');
+    expect(row.note).toBe('Includes $40 past leftovers');
   });
 });

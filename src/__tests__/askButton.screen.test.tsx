@@ -17,6 +17,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { TabBar } from '../../app/(tabs)/_layout';
 import { ChatProvider, useChat } from '../chat/ChatContext';
 import { installFakeServer } from './support/fakeServer';
+import { tabBarProps } from './support/tabBar';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 
@@ -34,10 +35,7 @@ function Probe() {
   return null;
 }
 
-const barProps: React.ComponentProps<typeof TabBar> = {
-  state: { index: 0, routes: ['budgets', 'transactions', 'accounts', 'insights', 'goals'].map((name) => ({ key: name, name })) },
-  navigation: { emit: () => ({ defaultPrevented: false }), navigate: jest.fn() },
-};
+const barProps = tabBarProps();
 
 it('the tab bar renders the round Ask button above itself, and tapping it opens the chat', async () => {
   await renderWithQueries(<ChatProvider><TabBar {...barProps} /><Probe /></ChatProvider>);

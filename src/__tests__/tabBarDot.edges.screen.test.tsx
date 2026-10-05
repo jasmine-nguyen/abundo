@@ -5,6 +5,7 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react-native';
 import { txn } from './factory';
 import { installFakeServer } from './support/fakeServer';
+import { tabBarProps } from './support/tabBar';
 import { WithQueries, refreshInAct, renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { COFFEE_SHORT } from './support/categories';
@@ -22,10 +23,7 @@ useTestQueryClient();
 
 const COUNT = '/transactions/uncategorized/count';
 
-const singleTab: React.ComponentProps<typeof TabBar> = {
-  state: { index: 0, routes: [{ key: 'transactions', name: 'transactions' }] },
-  navigation: { emit: () => ({ defaultPrevented: false }), navigate: jest.fn() },
-};
+const singleTab = tabBarProps(['transactions']);
 
 beforeEach(() => {
   resetAuth();

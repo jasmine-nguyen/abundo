@@ -1,5 +1,5 @@
 // WHIT-728 follow-up QA — on the Budgets tab a rollover row with saved-up leftovers draws
-// "Includes past leftovers" under the bar, and a plain row draws no note at all.
+// "Includes $40 past leftovers" under the bar, and a plain row draws no note at all.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import { screen } from '@testing-library/react-native';
 import { resetRouter } from './support/routerMock';
@@ -21,13 +21,13 @@ beforeEach(() => {
 });
 
 // [A3]
-it('a rollover row with leftovers shows "Includes past leftovers"', async () => {
+it('a rollover row with leftovers shows "Includes $40 past leftovers"', async () => {
   seedBudgetsTab(server, {
     coffee: { target: 100, posted: 50, pending: 0, rollover: true, carryover: 40, available: 140 },
   });
   await renderLoadedBudgetsWithQueries();
   expect(screen.getByText(/^\$50 of \$140/)).toBeTruthy();
-  expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes past leftovers');
+  expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes $40 past leftovers');
 });
 
 // [A4]

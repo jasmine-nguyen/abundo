@@ -1,6 +1,6 @@
 // WHIT-716 QA — adversarial edges of the Budgets top card: spend summed across rows (spend only,
-// once per family, pending included), the 0.005 over cut-off on its exact edge, the spent line in
-// whole dollars (WHIT-731: the Spent and Budget values), and float dust in the summed cents.
+// once per family, pending included), the 0.005 over cut-off on its exact edge, the Spent and
+// Budget values with cents only when present (WHIT-735), and float dust in the summed cents.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { screen } from '@testing-library/react-native';
 import { resetRouter } from './support/routerMock';
@@ -23,13 +23,13 @@ const PARKING = { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car',
 beforeEach(() => resetRouter());
 
 describe('WHIT-716 QA — spent line totals', () => {
-  // [A1] (P0) posted + pending from several rows sums into the spent line, rounded to whole dollars
-  it('[A1] sums posted + pending across spending rows: $39.75 → "$40 / $150 spent"', async () => {
+  // [A1] (P0) posted + pending from several rows sums into Spent, cents kept (WHIT-735)
+  it('[A1] sums posted + pending across spending rows: Spent "$39.75" of "$150"', async () => {
     await showBudgets(server, {
       coffee: { target: 100, posted: 20, pending: 10.5 },
       groceries: { target: 50, posted: 5, pending: 4.25 },
     });
-    expect(heroTotals()).toMatchObject({ spent: '$40', budget: '$150' });
+    expect(heroTotals()).toMatchObject({ spent: '$39.75', budget: '$150' });
   });
 
   // [A2] (P0) Income and Savings never reach the spent line
@@ -62,21 +62,21 @@ describe('WHIT-716 QA — spent line totals', () => {
 });
 
 describe('WHIT-716 QA — money format', () => {
-  // [A5] (P0) the spent line stays whole dollars, even with rollover cents
-  it('[A5] rollover cents: spent line "$50 / $100 spent", big number "$50"', async () => {
+  // [A5] (P0) rollover cents show on Spent and Budget, like the big number (WHIT-735)
+  it('[A5] rollover cents: Spent "$50.40" of "$100.40", big number "$50"', async () => {
     await showBudgets(server, { coffee: { target: 100, posted: 50.4, pending: 0, rollover: true, carryover: 0.4 } }, { categories: [COFFEE] });
-    expect(heroTotals()).toMatchObject({ spent: '$50', budget: '$100' });
-    expect(screen.getAllByText('$50')).toHaveLength(3); // card's money + card's Spent + the row's left
+    expect(heroTotals()).toMatchObject({ spent: '$50.40', budget: '$100.40' });
+    expect(screen.getAllByText('$50')).toHaveLength(2); // card's money + the row's left
     expect(screen.getByText('Left to spend')).toBeTruthy();
   });
 
   // [A6] (P1) summed float cents (0.1 + 0.2) render cleanly, not 0.30000000000000004
-  it('[A6] float dust in summed cents: "$0 / $100 spent", left "$99.70"', async () => {
+  it('[A6] float dust in summed cents: Spent "$0.30" of "$100", left "$99.70"', async () => {
     await showBudgets(server, {
       coffee: { target: 50, posted: 0.1, pending: 0 },
       groceries: { target: 50, posted: 0.2, pending: 0 },
     });
-    expect(heroTotals()).toMatchObject({ spent: '$0', budget: '$100' });
+    expect(heroTotals()).toMatchObject({ spent: '$0.30', budget: '$100' });
     expect(screen.getByText('$99.70')).toBeTruthy();
   });
 
@@ -108,10 +108,10 @@ describe('WHIT-716 QA — over line', () => {
   });
 
   // [A10] (P1) over budget with pending: the spent line includes it, overspend amount said once
-  it('[A10] over with pending → "−$20.50" once, spent line "$121 / $100 spent"', async () => {
+  it('[A10] over with pending → "−$20.50" once, Spent "$120.50", Budget "$100"', async () => {
     await showBudgets(server, { coffee: { target: 100, posted: 90, pending: 30.5 } }, { categories: [COFFEE] });
     expect(screen.getAllByText('−$20.50')).toHaveLength(1);
     expect(screen.getByText('Over budget')).toBeTruthy();
-    expect(heroTotals()).toMatchObject({ spent: '$121', budget: '$100' });
+    expect(heroTotals()).toMatchObject({ spent: '$120.50', budget: '$100' });
   });
 });

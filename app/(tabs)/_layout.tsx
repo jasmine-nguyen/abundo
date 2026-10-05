@@ -143,6 +143,6 @@ const styles = StyleSheet.create({
   // flex:1 (not a fixed width) so the five items share the row evenly (WHIT-495 dropped
   // Settings to a header gear); a fixed width overflowed narrow phones at six.
   item: { flex: 1, minWidth: 0, alignItems: 'center', gap: 5 },
-  label: { fontFamily: FONT.body, fontSize: 10.5, fontWeight: '600' },
+  label: { fontFamily: FONT.body, fontSize: 11, fontWeight: '600' },
   dot: { position: 'absolute', top: -3, right: 4, width: 8, height: 8, borderRadius: 4, backgroundColor: C.bad, borderWidth: 2, borderColor: C.bg },
 });

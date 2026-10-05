@@ -23,7 +23,7 @@ describe('WHIT-731 QA — the Spent · Budget · Next payday row', () => {
   // [A1] (P0) pending leaves the card but stays on the row
   it('[A1] pending is gone from the card but still on the coffee row', async () => {
     await showBudgets(server, { coffee: { target: 5785, posted: 5948.92, pending: 187.76 } }, { categories: [COFFEE], daysLeft: 22 });
-    expect(heroTotals()).toMatchObject({ spent: '$6,137', budget: '$5,785' });
+    expect(heroTotals()).toMatchObject({ spent: '$6,136.68', budget: '$5,785' });
     const pendingTexts = screen.getAllByText(/\$187\.76 pending/);
     expect(pendingTexts).toHaveLength(1);
     expect(pendingTexts[0].props.testID).toBeUndefined();
@@ -43,9 +43,9 @@ describe('WHIT-731 QA — the Spent · Budget · Next payday row', () => {
     expect(screen.queryByText('Budget')).toBeNull();
   });
 
-  // [A4] (P1) half a dollar rounds up, thousands get commas
-  it('[A4] $1,234.50 of $12,345 → Spent "$1,235", Budget "$12,345"', async () => {
+  // [A4] (P1) cents stay when the amount has them (WHIT-735), thousands get commas
+  it('[A4] $1,234.50 of $12,345 → Spent "$1,234.50", Budget "$12,345"', async () => {
     await showBudgets(server, { coffee: { target: 12345, posted: 1234, pending: 0.5 } }, { categories: [COFFEE] });
-    expect(heroTotals()).toMatchObject({ spent: '$1,235', budget: '$12,345' });
+    expect(heroTotals()).toMatchObject({ spent: '$1,234.50', budget: '$12,345' });
   });
 });
