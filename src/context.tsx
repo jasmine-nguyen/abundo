@@ -1737,6 +1737,10 @@ export interface BalanceGoalView {
   // `progress`), `reached` whether the balance has passed it. Empty when the balance is unknown or
   // the bar has no scale (paydown without a start), so dots and the reached-count travel together.
   checkpointMarkers: { pct: number; reached: boolean }[];
+  // WHIT-748: the "$X of $Y" line, on the SAME scale as `progress` (so dollars and % agree).
+  movedAmount: number | null;     // dollars the bar has moved; null exactly when `progress` is null
+  spanAmount: number | null;      // the bar's full span in dollars; null when the bar has no scale
+  aheadBy: number | null;         // dollars past the straight-line schedule; set only when 'ahead'
 }
 
 // Count the paydays remaining before a target date: the payday dates `last_pay_date +
@@ -1781,11 +1785,12 @@ export const GOAL_PACE_TOLERANCE = 0.05;
 // against the straight-line EXPECTED fill at today. `currentN` is the already-normalised current
 // balance. Returns null (no honest label) when: no persisted start, the start isn't above the
 // target (nothing to measure), or the start→target span is zero/negative/unparseable.
+// `aheadBy` (WHIT-748) is the dollar gap past the expected fill, set only when ahead.
 function goalPaceStatus(
   goal: BalanceGoal,
   currentN: number,
   today: Date | undefined,
-): BalanceGoalStatus | null {
+): { status: BalanceGoalStatus; aheadBy: number | null } | null {
   if (goal.start_date == null || goal.start_balance == null || !Number.isFinite(goal.start_balance)) {
     return null;
   }
@@ -1809,9 +1814,11 @@ function goalPaceStatus(
   if (!(totalDays > 0)) return null;
   const expectedFrac = clamp01(wholeDaysBetween(startMs, dateToUtcDayMs(today ?? new Date())) / totalDays);
 
-  if (actualFrac >= expectedFrac + GOAL_PACE_TOLERANCE) return 'ahead';
-  if (actualFrac <= expectedFrac - GOAL_PACE_TOLERANCE) return 'behind';
-  return 'on_track';
+  if (actualFrac >= expectedFrac + GOAL_PACE_TOLERANCE) {
+    return { status: 'ahead', aheadBy: (actualFrac - expectedFrac) * actualDenom };
+  }
+  if (actualFrac <= expectedFrac - GOAL_PACE_TOLERANCE) return { status: 'behind', aheadBy: null };
+  return { status: 'on_track', aheadBy: null };
 }
 
 // The goal engine. Pure over its inputs. Progress, pace, and status are correct for both
@@ -1873,7 +1880,12 @@ export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalV
   }
 
   // Status only when the balance is known; goalPaceStatus guards the rest (no start, span, etc).
-  const status = known ? goalPaceStatus(goal, current, today) : null;
+  const pace = known ? goalPaceStatus(goal, current, today) : null;
+  const status = pace?.status ?? null;
+  const aheadBy = pace?.aheadBy ?? null;
+
+  const movedAmount = progress != null ? progress * barSpan : null;
+  const spanAmount = barPositionable ? barSpan : null;
 
   // Checkpoints reached (WHIT-478): count the absolute amounts the CURRENT normalised balance has
   // passed — grow reaches AT/above the amount, paydown AT/below. Uses `current`, the same balance
@@ -1895,7 +1907,10 @@ export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalV
     checkpointMarkers = checkpoints.map((cp) => ({ pct: posOnBar(cp.amount), reached: isReached(cp.amount) }));
   }
 
-  return { progress, pacePerPayday, paydaysLeft, status, checkpointsTotal, checkpointsReached, checkpointMarkers };
+  return {
+    progress, pacePerPayday, paydaysLeft, status, checkpointsTotal, checkpointsReached, checkpointMarkers,
+    movedAmount, spanAmount, aheadBy,
+  };
 }
 
 // Under-budget and income bars share one calm fill; rose (C.bad) means over (WHIT-729).
