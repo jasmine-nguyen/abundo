@@ -16,7 +16,7 @@ export { APPLY_RULES_MAX_WRITES } from './filingRun';
 import type { Bucket, Category, Transaction } from './types';
 import { loanFactsReady, toCategory, toRule, EMPTY_LOAN_FACTS, UNCATEGORIZED_KEY, EARNED_KEY, INCOME_KEY, ROLLUP_KEY, readRollup, type Budget, type Rule, type RuleWrite, type HomeLoanState } from './model';
 import { cycleName, cycleClock, cycleClockView, elapsedFrac } from './payCycle';
-import { availableToSpend, pacePct, paceTarget, paceWarning } from './budgetMath';
+import { availableToSpend, contributesToBudget, pacePct, paceTarget, paceWarning, paidInOneGo } from './budgetMath';
 import { breakdownKey, budgetsKey, categoriesKey, filingSuggestionsKey, goalsKey, loanFactsKey, milestonesKey, payCycleKey, rulesKey, transactionsSearchKey } from './queryKeys';
 import { queryClient } from './queryClient';
 import { readTransactionCopies, findTransaction, patchTransactionsCache, patchAllCopies, removeFromAllCopies, optimisticRefile, refreshAfter } from './transactionCache';
@@ -1933,6 +1933,7 @@ export interface BudgetViewsInput {
   cycleLen: number;
   daysLeft: number;
   nextPayday?: string; // ISO "YYYY-MM-DD"; income rows read "next pay ~Fri" when set
+  oneChargeIds?: ReadonlySet<string>; // budgets paid in one go (WHIT-739)
 }
 
 // "today" / "~Fri" (within 6 days) / "~17 Oct" (further out, where a weekday is ambiguous).
@@ -2060,7 +2061,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     let paceLabel = '', paceColor: string = C.textInfo;
     const spread = budgetSpreadEligibility(c, b);
     const spreadPrefill = spread.entry === 'start' ? spread.overspend : null;
-    const behindPace = paceWarning({ spent, target, available, over }, s);
+    const behindPace = paceWarning({ spent, target, available, over, oneCharge: !!s.oneChargeIds?.has(b.id) }, s);
     if (over) {
       if (spreadPrefill !== null) { paceLabel = 'Spread it over pay cycles →'; paceColor = C.accentSoft; }
     } else if (behindPace) paceLabel = fmt(spent - target) + ' over plan';
@@ -2647,16 +2648,7 @@ export function isUncategorized(s: Pick<TransactionListInput, 'category'>, t: Tr
   return categoryIsUnmapped(t.category, s.category);
 }
 
-// Whether a transaction counts toward budgets on the client: the bank said it
-// counts AND the user hasn't manually excluded it ("mark as transfer", WHIT-296).
-// Single source of truth so the uncategorized tab, its count, the row's actionable
-// "Uncategorized" state, and the "apply to every {merchant}" sweep all drop an
-// excluded transfer the same way the server does.
-export function contributesToBudget(t: Transaction): boolean {
-  // `!!` so an omitted counts_to_budget (undefined off the wire) returns a real `false`, not
-  // `undefined` — otherwise it leaks through to transactionView.tappable, whose type is boolean.
-  return !!t.counts_to_budget && !t.budget_excluded;
-}
+export { contributesToBudget, paidInOneGo };
 
 export function transactionView(s: Pick<TransactionListInput, 'category'>, t: Transaction): TransactionView {
   const uncategorized = isUncategorized(s, t);
@@ -2958,14 +2950,14 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   // list label — so the same budget reads "over plan" on both screens. The muted caution only
   // shows when the shared paceWarning rule fires (WHIT-732).
   const target = paceTarget(b, s);
-  const behindPace = paceWarning({ spent, target, available, over }, s);
+  const behindPace = paceWarning({ spent, target, available, over, oneCharge: paidInOneGo(s.transactions) }, s);
   const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
   const remain = available - spent;
   const daily = remain > 0 ? remain / Math.max(1, s.daysLeft) : 0;
   // The shared eligibility rule (same one the transaction-screen prompt reads) also computes the
   // whole-cent overspend used as the spread prefill — one source, so the two screens can't diverge.
   const spreadElig = budgetSpreadEligibility(c, b);
-  let statusLabel = 'On target — keep it up';
+  let statusLabel = 'On track for payday';
   let statusColor: string = C.good;
   if (over) { statusLabel = 'Over budget — ease up'; statusColor = C.bad; }
   else if (behindPace) { statusLabel = 'Over plan — ease up'; statusColor = C.textInfo; }

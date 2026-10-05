@@ -117,7 +117,7 @@ export default function Budgets() {
   // instead of the eager global store. A transient 5xx retries with backoff (no stuck
   // banner); the inline error/retry below is the local fallback for a sustained failure.
   const {
-    budgets, category, cycleLen, daysLeft, nextPayday, isLoading, isError, payCycleError, payCycleReady, error, refreshError, updatedAt, refetch, refetchStale,
+    budgets, category, cycleLen, daysLeft, nextPayday, isLoading, isError, payCycleError, payCycleReady, error, refreshError, updatedAt, refetch, refetchStale, oneChargeIds,
   } = useBudgetsScreenData();
 
   // Load-on-focus: refresh when the tab regains focus, but only if the data has gone
@@ -125,7 +125,7 @@ export default function Budgets() {
   // Staleness-gated so hopping between tabs doesn't refetch on every tap.
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
-  const view = budgetViews({ budgets, category, cycleLen, daysLeft, nextPayday });
+  const view = budgetViews({ budgets, category, cycleLen, daysLeft, nextPayday, oneChargeIds });
   const { totBudget, totSpent, totRemain } = view;
   const rows = urgentFirst(view.rows);
 

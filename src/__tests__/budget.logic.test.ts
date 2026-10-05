@@ -282,7 +282,7 @@ describe('budgetDetail', () => {
 // per-cycle budget (b.budget * elapsed), so it stays consistent with the list on both screens.
 describe('budgetDetail — spend pace status', () => {
   // FAIL-ON-REVERT: today's binary code reads 3667 <= 3667 as green "On target — keep it up".
-  it('100% spent on day 1 reads muted "over plan", not green (the mortgage bug)', () => {
+  it('100% spent on day 1 reads muted "over plan", not green, with no single charge behind it', () => {
     const d = detail({ budget: 3667, posted: 3667 }, { cycleLen: 30, daysLeft: 29 });
     expect(d.statusLabel).toBe('Over plan — ease up');
     expect(d.statusColor).toBe(C.textInfo);
@@ -303,14 +303,14 @@ describe('budgetDetail — spend pace status', () => {
   it('on/under plan late in the cycle stays green even near 100% (no over-flagging)', () => {
     // elapsed 13/14 ≈ 0.929, target ≈ 92.9; spent 90 is under plan → legit late spend.
     const d = detail({ budget: 100, posted: 90 }, { cycleLen: 14, daysLeft: 1 });
-    expect(d.statusLabel).toBe('On target — keep it up');
+    expect(d.statusLabel).toBe('On track for payday');
     expect(d.statusColor).toBe(C.good);
   });
 
   it('within the $0.50 pace tolerance stays green (guards against flagging rounding noise)', () => {
     // elapsed 0.5, target 50; spent 50.30 is 0.30 over → within tolerance → green.
     const d = detail({ budget: 100, posted: 50.3 }, { cycleLen: 14, daysLeft: 7 });
-    expect(d.statusLabel).toBe('On target — keep it up');
+    expect(d.statusLabel).toBe('On track for payday');
     expect(d.statusColor).toBe(C.good);
   });
 
@@ -326,7 +326,7 @@ describe('budgetDetail — spend pace status', () => {
 
   it('$0 spent is never flagged — green', () => {
     const d = detail({ budget: 100, posted: 0 }, { cycleLen: 14, daysLeft: 7 });
-    expect(d.statusLabel).toBe('On target — keep it up');
+    expect(d.statusLabel).toBe('On track for payday');
     expect(d.statusColor).toBe(C.good);
   });
 

@@ -26,7 +26,7 @@ describe('row and detail pace words agree (WHIT-715 QA)', () => {
             if (rowBehind) behindSeen++;
             if (row.paceLabel.endsWith(' under plan')) {
               aheadSeen++;
-              expect([where, detail.statusLabel]).toEqual([where, 'On target — keep it up']);
+              expect([where, detail.statusLabel]).toEqual([where, 'On track for payday']);
             }
           }
     expect(behindSeen).toBeGreaterThan(0);

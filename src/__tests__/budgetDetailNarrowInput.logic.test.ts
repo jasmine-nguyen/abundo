@@ -25,7 +25,7 @@ describe('budgetDetail — narrow BudgetDetailInput', () => {
     expect(bd!.spentBig).toBe('$50');           // posted 40 + pending 10
     expect(bd!.ofBudget).toBe('of $100');
     expect(bd!.postedPct).toBe(40);
-    expect(bd!.statusLabel).toBe('On target — keep it up');
+    expect(bd!.statusLabel).toBe('On track for payday');
     expect(bd!.statusColor).toBe(C.good);
     expect(bd!.relEmpty).toBe(false);
     expect(bd!.relItems).toHaveLength(1);
