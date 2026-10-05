@@ -24,12 +24,7 @@ jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeH
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-// WHIT-235: the hub now calls useAppContext for openGoalBalance; stub the writer, keep the real
-// balanceGoalView (the %/pace assertions run the real engine).
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openGoalBalance: jest.fn() }) };
-});
+jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule());
 
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({

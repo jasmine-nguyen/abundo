@@ -25,10 +25,7 @@ jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeH
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 const mockOpenGoalBalance = jest.fn();
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openGoalBalance: mockOpenGoalBalance }) };
-});
+jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule(() => mockOpenGoalBalance));
 
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: jest.fn() }),
