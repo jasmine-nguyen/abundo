@@ -1,4 +1,4 @@
-// WHIT-694 — the Goals checkpoint-celebration screen tests run quietly: all 6 pass and the confetti
+// WHIT-694 — the Goals checkpoint-celebration screen tests run quietly: all 7 pass and the confetti
 // animation prints no "not wrapped in act" warnings. Runs that test file in its own jest process and
 // reads what it prints, since the warnings only show up in the console output.
 import { describe, it, expect } from '@jest/globals';
@@ -25,7 +25,7 @@ describe('Goals checkpoint celebration screen tests (WHIT-694)', () => {
     const output = `${run.stdout}\n${run.stderr}`;
 
     expect(run.status).toBe(0);
-    expect(output).toMatch(/Tests:\s+6 passed, 6 total/);
+    expect(output).toMatch(/Tests:\s+7 passed, 7 total/);
     expect(output.split(ACT_WARNING).length - 1).toBe(0);
   }, 180000);
 });

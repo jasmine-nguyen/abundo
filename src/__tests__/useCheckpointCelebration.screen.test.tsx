@@ -1,102 +1,118 @@
-// WHIT-481 — the ref-held "last shown" hook that drives the confetti. The 12 logic tests lock the
-// pure diff; these lock what only the HOOK adds on top of it: which goal the burst is LABELLED off
-// when several tick up, that the label reads the goal NAME (not id), that a brand-new goal seen for
-// the first time never labels, that a new counts-array IDENTITY with unchanged reached counts does
-// NOT re-burst (the effect re-runs but must stay quiet), and that celebrationKey only ever advances
-// on a genuine tick-up. Uses the real hook + real diff; only React drives it via renderHook.
-import { describe, it, expect } from '@jest/globals';
-import { renderHook } from '@testing-library/react-native';
+// WHIT-481 / WHIT-747 — the hook that drives the confetti. The logic tests lock the pure diff; these
+// lock what only the HOOK adds on top of it: the snapshot saved on the phone (a crossing since the
+// last saved copy bursts on mount; no saved copy seeds silently; nothing is compared or saved until
+// the caller is ready), which step the burst is LABELLED off, that a new counts-array IDENTITY with
+// unchanged counts does NOT re-burst, and that celebrationKey only advances on a genuine tick-up.
+// Uses the real hook + real diff + the in-memory AsyncStorage stand-in.
+import { describe, it, expect, beforeEach } from '@jest/globals';
+import { renderHook, waitFor } from '@testing-library/react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCheckpointCelebration, CheckpointCount } from '../hooks/useCheckpointCelebration';
+import { CHECKPOINT_SNAPSHOT_KEY } from '../checkpointCelebration';
+
+const HOLIDAY = ['Holiday · $2,000 reached', 'Holiday · $5,000 reached', 'Holiday · goal reached'];
+const WEDDING = ['Wedding · $1,000 reached', 'Wedding · $3,000 reached', 'Wedding · goal reached'];
 
 // Build a fresh counts ARRAY each call so identity always differs — the caller memoises, but the
 // hook must not lean on identity for correctness, only for skipping the effect.
 const counts = (...cs: CheckpointCount[]): CheckpointCount[] => cs.map((c) => ({ ...c }));
+const holiday = (reached: number | null): CheckpointCount => ({ id: 'g1', reached, labels: HOLIDAY });
+const wedding = (reached: number | null): CheckpointCount => ({ id: 'g2', reached, labels: WEDDING });
 
-describe('useCheckpointCelebration (WHIT-481 hook layer)', () => {
-  it('seeds on first render and never bursts (key stays 0, no label)', () => {
-    // [A-H1] first effect run seeds every goal, bursts nothing — even a goal already past a rung.
-    const { result } = renderHook(({ c }: { c: CheckpointCount[] }) => useCheckpointCelebration(c), {
-      initialProps: { c: counts({ id: 'g1', name: 'Holiday', reached: 2 }) },
-    });
+const saved = async () => JSON.parse((await AsyncStorage.getItem(CHECKPOINT_SNAPSHOT_KEY)) ?? 'null');
+
+// Render the hook and wait until the saved snapshot has loaded and the first comparison has saved.
+async function renderLoaded(initial: CheckpointCount[], expectedSave: Record<string, number>) {
+  const view = renderHook(({ c, ready }: { c: CheckpointCount[]; ready: boolean }) => useCheckpointCelebration(c, ready), {
+    initialProps: { c: initial, ready: true },
+  });
+  await waitFor(async () => expect(await saved()).toEqual(expectedSave));
+  return view;
+}
+
+beforeEach(async () => {
+  await AsyncStorage.clear();
+});
+
+describe('useCheckpointCelebration', () => {
+  it('celebrates on mount a step crossed since the copy saved by an earlier launch', async () => {
+    await AsyncStorage.setItem(CHECKPOINT_SNAPSHOT_KEY, JSON.stringify({ g1: 1 }));
+    const { result } = renderHook(() => useCheckpointCelebration(counts(holiday(2)), true));
+    await waitFor(() => expect(result.current.celebrationKey).toBe(1));
+    expect(result.current.label).toBe('Holiday · $5,000 reached');
+    expect(await saved()).toEqual({ g1: 2 });
+  });
+
+  it('with no saved copy (a brand-new install) seeds silently and saves the counts', async () => {
+    const { result } = await renderLoaded(counts(holiday(2)), { g1: 2 });
     expect(result.current.celebrationKey).toBe(0);
     expect(result.current.label).toBeNull();
   });
 
-  it('labels the burst off the goal NAME, not its id', () => {
-    // [A-H2] a tick-up sets label to the human name — a test that would pass on id must be ruled out.
-    const { result, rerender } = renderHook(({ c }: { c: CheckpointCount[] }) => useCheckpointCelebration(c), {
-      initialProps: { c: counts({ id: 'g1', name: 'New car fund', reached: 1 }) },
-    });
-    rerender({ c: counts({ id: 'g1', name: 'New car fund', reached: 2 }) });
-    expect(result.current.celebrationKey).toBe(1);
-    expect(result.current.label).toBe('New car fund');
-    expect(result.current.newlyReached).toBe(1);
+  it('neither compares nor saves while the caller is not ready, then catches up once it is', async () => {
+    await AsyncStorage.setItem(CHECKPOINT_SNAPSHOT_KEY, JSON.stringify({ g1: 1 }));
+    const { result, rerender } = renderHook(
+      ({ c, ready }: { c: CheckpointCount[]; ready: boolean }) => useCheckpointCelebration(c, ready),
+      { initialProps: { c: counts(), ready: false } },
+    );
+    rerender({ c: counts(), ready: false }); // an empty first paint must not wipe the saved copy
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(await saved()).toEqual({ g1: 1 });
+    expect(result.current.celebrationKey).toBe(0);
+
+    rerender({ c: counts(holiday(2)), ready: true });
+    await waitFor(() => expect(result.current.celebrationKey).toBe(1));
+    expect(await saved()).toEqual({ g1: 2 });
   });
 
-  it('labels off the FIRST bursting goal in array order when several tick up together', () => {
-    // [A-H3] g1 and g2 both cross in one refresh → one burst, labelled off g1 (bursts[0]).
-    const { result, rerender } = renderHook(({ c }: { c: CheckpointCount[] }) => useCheckpointCelebration(c), {
-      initialProps: {
-        c: counts({ id: 'g1', name: 'Emergency', reached: 0 }, { id: 'g2', name: 'Wedding', reached: 1 }),
-      },
-    });
-    rerender({
-      c: counts({ id: 'g1', name: 'Emergency', reached: 1 }, { id: 'g2', name: 'Wedding', reached: 2 }),
-    });
-    expect(result.current.celebrationKey).toBe(1);
-    expect(result.current.label).toBe('Emergency');
+  it('treats an unreadable saved copy as none', async () => {
+    await AsyncStorage.setItem(CHECKPOINT_SNAPSHOT_KEY, 'not json');
+    const { result } = await renderLoaded(counts(holiday(2)), { g1: 2 });
+    expect(result.current.celebrationKey).toBe(0);
   });
 
-  it('labels off the goal that actually ticked, not the first goal in the array', () => {
-    // [A-H4] g1 unchanged, only g2 ticks up → label must be g2 (bursts skips the un-ticked g1).
-    const { result, rerender } = renderHook(({ c }: { c: CheckpointCount[] }) => useCheckpointCelebration(c), {
-      initialProps: {
-        c: counts({ id: 'g1', name: 'Emergency', reached: 3 }, { id: 'g2', name: 'Wedding', reached: 1 }),
-      },
-    });
-    rerender({
-      c: counts({ id: 'g1', name: 'Emergency', reached: 3 }, { id: 'g2', name: 'Wedding', reached: 2 }),
-    });
+  it('labels the burst off the highest step just reached', async () => {
+    const { result, rerender } = await renderLoaded(counts(holiday(0)), { g1: 0 });
+    rerender({ c: counts(holiday(3)), ready: true }); // jumped both checkpoints AND the target
     expect(result.current.celebrationKey).toBe(1);
-    expect(result.current.label).toBe('Wedding');
+    expect(result.current.label).toBe('Holiday · goal reached');
   });
 
-  it('does NOT re-burst when the counts array is a new identity but every reached count is unchanged', () => {
-    // [A-H5] the caller's memo yields a fresh array on any goals-identity churn; the effect re-runs
-    // but the diff finds no tick-up, so the key must stay put. This is the "plain redraw, new array"
-    // guard the identical-reference screen test can't reach.
-    const { result, rerender } = renderHook(({ c }: { c: CheckpointCount[] }) => useCheckpointCelebration(c), {
-      initialProps: { c: counts({ id: 'g1', name: 'Holiday', reached: 1 }) },
-    });
-    rerender({ c: counts({ id: 'g1', name: 'Holiday', reached: 1 }) }); // new array, same count
-    rerender({ c: counts({ id: 'g1', name: 'Holiday', reached: 1 }) }); // and again
+  it('labels off the FIRST bursting goal in array order when several tick up together', async () => {
+    const { result, rerender } = await renderLoaded(counts(holiday(0), wedding(1)), { g1: 0, g2: 1 });
+    rerender({ c: counts(holiday(1), wedding(2)), ready: true });
+    expect(result.current.celebrationKey).toBe(1);
+    expect(result.current.label).toBe('Holiday · $2,000 reached');
+  });
+
+  it('labels off the goal that actually ticked, not the first goal in the array', async () => {
+    const { result, rerender } = await renderLoaded(counts(holiday(2), wedding(1)), { g1: 2, g2: 1 });
+    rerender({ c: counts(holiday(2), wedding(2)), ready: true });
+    expect(result.current.celebrationKey).toBe(1);
+    expect(result.current.label).toBe('Wedding · $3,000 reached');
+  });
+
+  it('does NOT re-burst when the counts array is a new identity but every count is unchanged', async () => {
+    const { result, rerender } = await renderLoaded(counts(holiday(1)), { g1: 1 });
+    rerender({ c: counts(holiday(1)), ready: true });
+    rerender({ c: counts(holiday(1)), ready: true });
     expect(result.current.celebrationKey).toBe(0);
     expect(result.current.label).toBeNull();
   });
 
-  it('does not label off a brand-new goal seen for the first time even as another ticks up', () => {
-    // [A-H6] g1 ticks up (labelled), g2 appears for the first time already past rungs → seeded, must
-    // not steal the label nor add a burst.
-    const { result, rerender } = renderHook(({ c }: { c: CheckpointCount[] }) => useCheckpointCelebration(c), {
-      initialProps: { c: counts({ id: 'g1', name: 'Holiday', reached: 1 }) },
-    });
-    rerender({
-      c: counts({ id: 'g1', name: 'Holiday', reached: 2 }, { id: 'g2', name: 'Fresh', reached: 5 }),
-    });
+  it('does not label off a brand-new goal seen for the first time even as another ticks up', async () => {
+    const { result, rerender } = await renderLoaded(counts(holiday(1)), { g1: 1 });
+    rerender({ c: counts(holiday(2), wedding(2)), ready: true });
     expect(result.current.celebrationKey).toBe(1);
-    expect(result.current.label).toBe('Holiday');
-    expect(result.current.newlyReached).toBe(1);
+    expect(result.current.label).toBe('Holiday · $5,000 reached');
   });
 
-  it('advances the key once per genuine tick-up across successive refreshes', () => {
-    // [A-H7] two separate crossings → key 1 then 2 (rapid re-bursts each re-fire the overlay).
-    const { result, rerender } = renderHook(({ c }: { c: CheckpointCount[] }) => useCheckpointCelebration(c), {
-      initialProps: { c: counts({ id: 'g1', name: 'Holiday', reached: 0 }) },
-    });
-    rerender({ c: counts({ id: 'g1', name: 'Holiday', reached: 1 }) });
+  it('advances the key once per genuine tick-up across successive refreshes', async () => {
+    const { result, rerender } = await renderLoaded(counts(holiday(0)), { g1: 0 });
+    rerender({ c: counts(holiday(1)), ready: true });
     expect(result.current.celebrationKey).toBe(1);
-    rerender({ c: counts({ id: 'g1', name: 'Holiday', reached: 2 }) });
+    rerender({ c: counts(holiday(2)), ready: true });
     expect(result.current.celebrationKey).toBe(2);
-    expect(result.current.newlyReached).toBe(1);
+    expect(result.current.label).toBe('Holiday · $5,000 reached');
   });
 });

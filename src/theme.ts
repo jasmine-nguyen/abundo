@@ -96,6 +96,8 @@ export const C = {
   chatUnder: '#9ece6a',
   askRing: tint('#c0caf5', 0.08),
   askShadow: '#000000',
+  // The goal-milestone banner's soft drop shadow (WHIT-747).
+  celebrationShadow: '#000000',
 
   // Hero card gradient (Tokyo Night): accent-blue → indigo → purple, 150°.
   // The gradient starts on the accent by design, so it derives rather than copying the hex.

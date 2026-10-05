@@ -1,9 +1,9 @@
-// WHIT-481 — the confetti overlay component in isolation. The Goals screen suite proves the wiring;
-// these lock the overlay's OWN contract that the screen test doesn't reach: the "N checkpoints!"
-// sub-line only shows for a multi-rung jump, key<=0 renders nothing, a NEW celebrationKey arriving
-// mid-animation re-fires (extends the lifetime + refreshes the label) rather than being swallowed,
-// and onDone fires exactly once when the timer elapses. Fake timers keep the setTimeout lifecycle
-// deterministic; useReduceMotion is stubbed so the confetti-piece branch is exercised.
+// WHIT-481 / WHIT-747 — the confetti overlay component in isolation. The Goals screen suite proves the
+// wiring; these lock the overlay's OWN contract: the banner sits on a backing card and names the
+// milestone, key<=0 renders nothing, the overlay never blocks taps, a NEW celebrationKey arriving
+// mid-way re-fires (extends the lifetime + refreshes the label) rather than being swallowed, onDone
+// fires exactly once when the timer elapses, and reduce-motion drops the confetti but keeps the
+// banner for the same time. Fake timers keep the setTimeout lifecycle deterministic.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, act } from '@testing-library/react-native';
@@ -19,63 +19,52 @@ beforeEach(() => {
 });
 afterEach(() => { jest.useRealTimers(); });
 
-describe('Celebration overlay (WHIT-481)', () => {
+describe('Celebration overlay', () => {
   it('renders nothing at the initial key 0 (nothing celebrated yet)', () => {
-    // [A-C1] key<=0 is the "no burst" sentinel — the overlay must stay absent.
-    render(<Celebration celebrationKey={0} label="Holiday" />);
+    render(<Celebration celebrationKey={0} label="Holiday · $5,000 reached" />);
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
   });
 
-  it('shows a single-checkpoint banner with NO "N checkpoints!" sub-line for a one-rung crossing', () => {
-    // [A-C2] newlyReached 1 → banner only, no count sub-line.
-    render(<Celebration celebrationKey={1} label="Holiday" newlyReached={1} />);
-    expect(screen.getByText(/Holiday: checkpoint reached!/)).toBeTruthy();
-    expect(screen.queryByText(/checkpoints!/)).toBeNull();
-  });
-
-  it('shows the "N checkpoints!" sub-line for a multi-rung jump', () => {
-    // [A-C3] newlyReached 3 → the plural "3 checkpoints!" sub-line appears (copy for a big jump).
-    render(<Celebration celebrationKey={1} label="Holiday" newlyReached={3} />);
-    expect(screen.getByText('3 checkpoints!')).toBeTruthy();
+  it('shows the milestone on a backing card, without blocking taps', () => {
+    render(<Celebration celebrationKey={1} label="Offset · $150,000 reached" />);
+    expect(screen.getByTestId('checkpoint-celebration-label')).toHaveTextContent('Offset · $150,000 reached 🎉');
+    expect(screen.getByTestId('checkpoint-celebration-banner')).toBeTruthy();
+    expect(screen.getByTestId('checkpoint-celebration').props.pointerEvents).toBe('none');
+    expect(screen.getAllByTestId('celebration-piece').length).toBeGreaterThan(0);
   });
 
   it('falls back to a generic title when no label is given', () => {
-    // [A-C4] label null/undefined → "Checkpoint reached!" with no "<name>:" prefix.
-    render(<Celebration celebrationKey={1} label={null} newlyReached={1} />);
-    expect(screen.getByText(/^Checkpoint reached!/)).toBeTruthy();
+    render(<Celebration celebrationKey={1} label={null} />);
+    expect(screen.getByText(/^Milestone reached/)).toBeTruthy();
   });
 
-  it('re-fires and refreshes the label when a new key arrives mid-animation', () => {
-    // [A-C5] rapid successive crossings: fire key 1, advance PART way, then key 2 with a new label.
-    // The overlay must still be visible, show the NEW label, and only clear a FULL FALL_MS after the
-    // second burst — i.e. the second burst restarts the lifecycle, it isn't dropped.
-    const { rerender } = render(<Celebration celebrationKey={1} label="Holiday" newlyReached={1} />);
+  it('re-fires and refreshes the label when a new key arrives mid-way', () => {
+    const { rerender } = render(<Celebration celebrationKey={1} label="Holiday · $2,000 reached" />);
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
-    act(() => { jest.advanceTimersByTime(800); });               // partway through the 1200ms life
-    rerender(<Celebration celebrationKey={2} label="New car" newlyReached={1} />);
-    expect(screen.getByText(/New car: checkpoint reached!/)).toBeTruthy();
+    act(() => { jest.advanceTimersByTime(1600); });              // partway through the 2400ms life
+    rerender(<Celebration celebrationKey={2} label="New car · goal reached" />);
+    expect(screen.getByText(/New car · goal reached/)).toBeTruthy();
 
-    act(() => { jest.advanceTimersByTime(800); });               // 800 after burst 2: burst 1's old
-    expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy(); // timer must NOT have hidden it
-    act(() => { jest.advanceTimersByTime(400); });               // now full 1200ms past burst 2
+    act(() => { jest.advanceTimersByTime(1600); });              // burst 1's old timer must NOT hide it
+    expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
+    act(() => { jest.advanceTimersByTime(800); });               // now a full 2400ms past burst 2
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
   });
 
   it('calls onDone exactly once when the lifecycle timer elapses', () => {
-    // [A-C6] onDone is the lifecycle hook the screen relies on — fires once, on timeout, not on mount.
     const onDone = jest.fn();
-    render(<Celebration celebrationKey={1} label="Holiday" newlyReached={1} onDone={onDone} />);
+    render(<Celebration celebrationKey={1} label="Holiday · $2,000 reached" onDone={onDone} />);
     expect(onDone).not.toHaveBeenCalled();
-    act(() => { jest.advanceTimersByTime(1200); });
+    act(() => { jest.advanceTimersByTime(2400); });
     expect(onDone).toHaveBeenCalledTimes(1);
   });
 
-  it('reduce-motion still shows the banner and clears on the REDUCED_MS timer', () => {
-    // [A-C7] motion off → banner shows, no confetti pieces, clears at 900ms not 1200ms.
+  it('reduce-motion shows the banner with no confetti and clears it after the same time', () => {
     mockReduceMotion = true;
-    render(<Celebration celebrationKey={1} label="Holiday" newlyReached={1} />);
-    expect(screen.getByTestId('checkpoint-celebration-label')).toBeTruthy();
-    act(() => { jest.advanceTimersByTime(899); });
+    render(<Celebration celebrationKey={1} label="Holiday · $2,000 reached" />);
+    expect(screen.getByTestId('checkpoint-celebration-banner')).toBeTruthy();
+    expect(screen.queryAllByTestId('celebration-piece')).toHaveLength(0);
+    act(() => { jest.advanceTimersByTime(2399); });
     expect(screen.queryByTestId('checkpoint-celebration')).toBeTruthy();
     act(() => { jest.advanceTimersByTime(1); });
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();

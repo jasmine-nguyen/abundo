@@ -30,7 +30,7 @@ jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeH
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule());
 const mockPush = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }), useFocusEffect: () => {} }));
+jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }), useFocusEffect: () => {}, useIsFocused: () => true }));
 
 import Goals from '../../app/(tabs)/goals';
 

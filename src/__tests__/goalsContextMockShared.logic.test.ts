@@ -23,6 +23,8 @@ const GOALS_SUITES = [
   'goalsHubPayoffFloor.screen.test.tsx',
   'goalsCheckpointCelebration.screen.test.tsx',
   'goalsCheckpointCelebrationPaydown.screen.test.tsx',
+  'goalsCelebrationEdges.qa.screen.test.tsx',
+  'goalsCelebrationMemory.screen.test.tsx',
 ];
 
 const read = (file: string): string => readFileSync(join(__dirname, file), 'utf8');

@@ -105,6 +105,32 @@ it('SECONDARY mortgage failure sets mortgageError only — never the aggregate i
   expect(result.current.goals).toEqual(GOALS);
 });
 
+it('SECONDARY milestones (WHIT-747): a slow read never holds up the hub, and they arrive once loaded', async () => {
+  const MILESTONES = [{ id: 'm1', label: 'First', targetBalance: 600000, targetDate: '2027-01-01' }];
+  server.seed('/milestones', MILESTONES);
+  const held = server.hold('/milestones');
+  const { result } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });
+  await waitFor(() => expect(result.current.goals).toEqual(GOALS));
+
+  expect(result.current.isLoading).toBe(false);
+  expect(result.current.goalsLoaded).toBe(true);
+  expect(result.current.milestonesLoaded).toBe(false);
+  expect(result.current.milestones).toEqual([]);
+
+  await act(async () => { held.release(); });
+  await waitFor(() => expect(result.current.milestonesLoaded).toBe(true));
+  expect(result.current.milestones).toEqual(MILESTONES);
+});
+
+it('SECONDARY milestones failure does NOT set isError, and still counts as loaded (an empty plan)', async () => {
+  server.fail('/milestones', 500);
+  const { result } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });
+  await waitFor(() => expect(result.current.milestonesLoaded).toBe(true));
+
+  expect(result.current.isError).toBe(false);
+  expect(result.current.milestones).toEqual([]);
+});
+
 it('a PRIMARY goals first-load failure sets isError (nothing to show)', async () => {
   server.fail('/goals', 500);
   const { result } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });

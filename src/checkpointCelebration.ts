@@ -17,9 +17,14 @@
 
 export type ReachedSnapshot = Record<string, number>; // goalId → last-seen reached count
 
+// WHIT-747: where the snapshot is saved on the phone, so a crossing made while the app was closed
+// still celebrates on the next open.
+export const CHECKPOINT_SNAPSHOT_KEY = 'abundo.checkpointSnapshot';
+
 export interface CheckpointBurst {
   goalId: string;
   newlyReached: number; // how many rungs crossed since last seen (>= 1)
+  reached: number; // the new count — the highest step now reached is step `reached - 1`
 }
 
 export interface CheckpointDiff {
@@ -48,9 +53,19 @@ export function diffCheckpointReached(prev: ReachedSnapshot, current: Checkpoint
 
     next[id] = reached;
     if (seen !== undefined && reached > seen) {
-      bursts.push({ goalId: id, newlyReached: reached - seen });
+      bursts.push({ goalId: id, newlyReached: reached - seen, reached });
     }
   }
 
   return { bursts, next };
+}
+
+// WHIT-747: a goal's celebration steps are its checkpoints plus the target itself as the final
+// step (checkpoints or not). null while the balance is unknown.
+export function celebrationSteps(view: {
+  checkpointsReached: number | null;
+  targetReached: boolean | null;
+}): number | null {
+  if (view.targetReached === null) return null;
+  return (view.checkpointsReached ?? 0) + (view.targetReached ? 1 : 0);
 }

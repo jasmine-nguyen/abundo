@@ -1,11 +1,13 @@
 import React, { useCallback, useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useIsFocused } from 'expo-router';
 import { C, FONT, fmt, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { balanceGoalView, goalView, useAppContext, type BalanceGoalStatus } from '../../src/context';
+import { balanceGoalView, goalView, milestoneView, useAppContext, type BalanceGoalStatus } from '../../src/context';
 import { useGoalsScreenData } from '../../src/queries';
 import { useCheckpointCelebration } from '../../src/hooks/useCheckpointCelebration';
+import { celebrationSteps } from '../../src/checkpointCelebration';
+import { sortCheckpointsForDirection } from '../../src/checkpoints';
 import { MONTHS, formatDayMonthYear, parseISODate } from '../../src/dateutil';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { Bar, RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/components/ui';
@@ -48,7 +50,10 @@ function paceLabel(status: BalanceGoalStatus | null, aheadBy: number | null): { 
 export default function Goals() {
   const router = useRouter();
   const s = useAppContext(); // openGoalBalance — the in-place manual-balance update sheet (WHIT-235)
-  const { goals, payCycle, balanceFor, loanFacts, homeLoan, mortgageError, isLoading, isError, refetch, refetchStale } = useGoalsScreenData();
+  const {
+    goals, payCycle, balanceFor, loanFacts, homeLoan, mortgageError, milestones, milestonesLoaded, goalsLoaded,
+    isLoading, isError, refetch, refetchStale,
+  } = useGoalsScreenData();
 
   // WHIT-296: the mortgage card mirrors the /mortgage hero's payoff detail (paid-down figure,
   // % gone, progress bar, balance-to-go) — but only once there's genuine progress to show.
@@ -72,16 +77,32 @@ export default function Goals() {
     [goals, balanceFor, payCycle],
   );
 
-  // WHIT-481: the in-app confetti. The hook compares each goal's checkpoint reached-count against
-  // what the screen last showed and bursts when one ticks up — the mortgage card has no
-  // checkpoints and never takes part. The hook's "last shown" memory lives for this screen's
-  // lifetime, and this relies on the tab staying mounted (the default): if the Goals tab were ever
-  // set to unmount on blur, returning to it would reseed and quietly stop celebrating real crossings.
-  const checkpointCounts = useMemo(
-    () => goalViews.map(({ goal, view }) => ({ id: goal.id, name: goal.name, reached: view.checkpointsReached })),
-    [goalViews],
-  );
-  const { celebrationKey, label, newlyReached } = useCheckpointCelebration(checkpointCounts);
+  // WHIT-481 / WHIT-747: the in-app confetti. The hook compares each goal's reached steps (its
+  // checkpoints, then the target as the final step) and the mortgage's cleared milestones against
+  // the copy saved on the phone, and bursts when one ticks up — so a crossing that happened while
+  // the app was closed, or while another tab was open, celebrates the next time Goals is in view.
+  const isFocused = useIsFocused();
+  const checkpointCounts = useMemo(() => {
+    const goalCounts = goalViews.map(({ goal, view }) => ({
+      id: goal.id,
+      reached: celebrationSteps(view),
+      labels: [
+        ...sortCheckpointsForDirection(goal.checkpoints ?? [], goal.direction).map((cp) =>
+          goal.direction === 'grow' ? `${goal.name} · ${fmt(cp.amount)} reached` : `${goal.name} · down to ${fmt(cp.amount)}`,
+        ),
+        `${goal.name} · goal reached`,
+      ],
+    }));
+    const plan = milestoneView({ loanFacts, homeLoan, milestones });
+    const mortgageCount = {
+      id: 'mortgage',
+      reached: plan.hasBalance && plan.hasPlan ? plan.clearedCount : null,
+      labels: plan.rows.map((row) => `The mortgage · down to ${fmt(row.targetBalance)}`),
+    };
+    return [...goalCounts, mortgageCount];
+  }, [goalViews, loanFacts, homeLoan, milestones]);
+  const celebrationReady = isFocused && goalsLoaded && !isLoading && milestonesLoaded;
+  const { celebrationKey, label } = useCheckpointCelebration(checkpointCounts, celebrationReady);
 
   // Cache-first: keep showing goals while a background refetch runs; error takes precedence
   // over the spinner so a failed read never sits under an endless spinner with no Retry. Both
@@ -223,14 +244,20 @@ export default function Goals() {
                     </Text>
                   )}
 
-                  <View style={styles.goalFoot}>
-                    <Text style={styles.goalFootL}>
-                      {v.pacePerPayday != null ? `${fmt(v.pacePerPayday)} / payday` : 'Waiting on your balance'}
-                    </Text>
-                    <Text style={styles.goalFootR}>
-                      {v.paydaysLeft > 0 ? `${v.paydaysLeft} payday${v.paydaysLeft === 1 ? '' : 's'} left` : 'due now'}
-                    </Text>
-                  </View>
+                  {v.targetReached ? (
+                    <View style={styles.goalFoot}>
+                      <Text testID={`goal-reached-${goal.id}`} style={styles.goalReached}>Goal reached</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.goalFoot}>
+                      <Text style={styles.goalFootL}>
+                        {v.pacePerPayday != null ? `${fmt(v.pacePerPayday)} / payday` : 'Waiting on your balance'}
+                      </Text>
+                      <Text style={styles.goalFootR}>
+                        {v.paydaysLeft > 0 ? `${v.paydaysLeft} payday${v.paydaysLeft === 1 ? '' : 's'} left` : 'due now'}
+                      </Text>
+                    </View>
+                  )}
 
                   {manual && (
                     <View style={styles.manualRow}>
@@ -264,7 +291,7 @@ export default function Goals() {
     </ScrollChromeHeader>
     {/* WHIT-481: the confetti overlay, a pointerEvents="none" absolute fill sibling to the header
         so it paints over the whole tab (which fills the viewport) without blocking taps beneath. */}
-    <Celebration celebrationKey={celebrationKey} label={label} newlyReached={newlyReached} />
+    <Celebration celebrationKey={celebrationKey} label={label} />
     </>
   );
 }
@@ -306,6 +333,7 @@ const styles = StyleSheet.create({
   goalFoot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 11 },
   goalFootL: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.accentSoft },
   goalFootR: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim },
+  goalReached: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.good },
 
   // WHIT-235: the manual-goal "as of <date>" + Update balance row, under the pace foot.
   manualRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.hairline },

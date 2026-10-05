@@ -22,6 +22,7 @@ const router = {
   dismissAll: jest.fn(),
 };
 let params: Record<string, unknown> = {};
+let focused = true;
 
 // The spies, for assertions: routerSpies.push.toHaveBeenCalledWith(...).
 export const routerSpies = router;
@@ -29,13 +30,17 @@ export const routerSpies = router;
 // Set the useLocalSearchParams return for the current test.
 export const setParams = (next: Record<string, unknown>): void => { params = next; };
 
-// Clear spy calls + params. Call in beforeEach.
+// Set the useIsFocused return: false while the user is on another tab.
+export const setFocused = (next: boolean): void => { focused = next; };
+
+// Clear spy calls + params, and refocus the screen. Call in beforeEach.
 export const resetRouter = (): void => {
   router.push.mockReset();
   router.back.mockReset();
   router.replace.mockReset();
   router.dismissAll.mockReset();
   params = {};
+  focused = true;
 };
 
 // The object for jest.mock('expo-router', ...). Mirrors the inlined mock the screen suites use:
@@ -49,5 +54,6 @@ export function routerMockModule() {
     useRouter: () => router,
     useLocalSearchParams: () => params,
     useFocusEffect: (callback: () => void) => React.useEffect(() => callback(), [callback]),
+    useIsFocused: () => focused,
   };
 }
