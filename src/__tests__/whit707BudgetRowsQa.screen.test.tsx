@@ -2,27 +2,23 @@
 // section order, the income "next pay" text from the real pay-cycle clock, the quiet over line,
 // the row press opening the detail, and "today's plan" on the detail screen.
 // Real ../api over the fake server; ../auth + expo-router mocked.
-import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent } from '@testing-library/react-native';
-import { routerSpies, resetRouter, setParams } from './support/routerMock';
+import { routerSpies, setParams } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
-import { pinToday } from './support/clock';
 import { seedBudgetsTab } from './support/budgetsTab';
 import { renderLoadedBudgetsWithQueries } from './support/budgetsScreen';
 import { COFFEE } from './support/categories';
 
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ deleteBudget: jest.fn(), openPicker: jest.fn() }) };
-});
+jest.mock('../context', () => require('./support/budgetsSuite').budgetsContextMockModule());
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Budgets from '../../app/(tabs)/budgets';
 import BudgetDetail from '../../app/budget/[id]';
-import { resetAuth } from './support/authMock';
+import { useBudgetsSuiteReset } from './support/budgetsSuite';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -33,14 +29,7 @@ const SALARY = { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcas
 const seed = (categories: unknown[], budgets: Record<string, unknown>, daysLeft = 6) =>
   seedBudgetsTab(server, budgets, categories, daysLeft, '2026-09-25');
 
-beforeEach(() => {
-  resetRouter();
-  resetAuth();
-  pinToday(new Date('2026-10-03T10:00:00+10:00')); // Sat 3 Oct 2026, Melbourne
-});
-afterEach(() => {
-  jest.useRealTimers();
-});
+useBudgetsSuiteReset(); // today: Sat 3 Oct 2026, Melbourne
 
 // [A20] (P0) spend only → SPENDING heading, no EARNING heading.
 it('[A20] no income budgets → no EARNING heading', async () => {
