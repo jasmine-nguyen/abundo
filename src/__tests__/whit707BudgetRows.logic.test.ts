@@ -57,9 +57,10 @@ describe('budgetViews rows (WHIT-707)', () => {
     expect(over.paceColor).not.toBe(C.bad);
     expect(over.spreadPrefill).toBe(20);
 
-    // Over budget but rollover (can't spread): no pace line, the red amount says it once (WHIT-712).
+    // Over budget but rollover (can't spread): the red amount says it once (WHIT-712), and the
+    // pace slot links to the detail screen instead (WHIT-733).
     const quiet = byId('gym');
-    expect(quiet.paceLabel).toBe('');
+    expect(quiet.paceLabel).toBe('See what happened →');
     expect(quiet.remainAmount).toBe('$20');
     expect(quiet.spreadPrefill).toBeNull();
 

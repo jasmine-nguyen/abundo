@@ -95,11 +95,12 @@ describe('over budget: spread link vs quiet line (decision 2)', () => {
     expect(row.paceLabel).not.toContain('over budget');
   });
 
-  // [A11] (P1) rollover drained into a deficit, over → quiet text with the exact overspend.
-  it('[A11] rollover with a borrowed buffer, over → no pace line, the exact overspend on the amount', () => {
+  // [A11] (P1) rollover drained into a deficit, over → the exact overspend on the amount, and
+  // the pace slot links to the detail screen (WHIT-733).
+  it('[A11] rollover with a borrowed buffer, over → see-why link, the exact overspend on the amount', () => {
     const row = spendRow({ budget: 100, posted: 95, pending: 0, rollover: true, carryover: -20 });
     expect(row.over).toBe(true);
-    expect(row.paceLabel).toBe('');
+    expect(row.paceLabel).toBe('See what happened →');
     expect(row.remainAmount).toBe('$15');
     expect(row.spreadPrefill).toBeNull();
   });

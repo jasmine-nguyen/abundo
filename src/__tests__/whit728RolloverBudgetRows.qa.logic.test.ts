@@ -9,8 +9,8 @@ describe('rollover row note edges (WHIT-728)', () => {
   it.each([
     [-0.5, ''],
     [0.5, ''],
-    [-0.51, 'Includes past overspend'],
-    [0.51, 'Includes past leftovers'],
+    [-0.51, 'Includes $1 past overspend'],
+    [0.51, 'Includes $1 past leftovers'],
   ])('carryover %p → note %p', (carryover, expected) => {
     const row = budgetRowFor({ budget: 100, posted: 50, pending: 0, rollover: true, carryover });
     expect(row.note).toBe(expected);

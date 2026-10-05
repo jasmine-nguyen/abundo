@@ -23,7 +23,7 @@ describe('budget rows only speak up when off pace (WHIT-712)', () => {
 
   it('over budget with no spread says the overspend once, in the red amount', () => {
     const row = rowFor({ budget: 100, posted: 120, pending: 0, rollover: true, carryover: 0 });
-    expect(row.paceLabel).toBe('');
+    expect(row.paceLabel).toBe('See what happened →'); // WHIT-733: a link, not a second amount
     expect(row.remainAmount).toBe('$20');
     expect(row.remainLabel).toBe('over');
     expect(row.remainColor).toBe(C.bad);

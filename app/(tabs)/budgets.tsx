@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator, RefreshControl, type StyleProp, type TextStyle } from 'react-native';
+import { useRouter, useFocusEffect, type Href } from 'expo-router';
 import { C, FONT, fmt, fmtExact, fmtSigned,tint, PRESSED } from '../../src/theme';
 import { formatDayMonth } from '../../src/dateutil';
 import { Icon, Glyph } from '../../src/icons';
@@ -35,6 +35,16 @@ function RowHeader({ b }: { b: BudgetView }) {
   );
 }
 
+// A tappable pace line: the spread link, or "See what happened →" on an over-budget rollover row.
+function PaceLink({ testID, href, label, style }: { testID: string; href: Href; label: string; style: StyleProp<TextStyle> }) {
+  const router = useRouter();
+  return (
+    <Pressable testID={testID} onPress={() => router.push(href)} hitSlop={8}>
+      <Text style={style}>{label}</Text>
+    </Pressable>
+  );
+}
+
 function BudgetRow({ b }: { b: BudgetView }) {
   const router = useRouter();
   const note = b.note ? <Text testID={`budget-row-note-${b.id}`} style={styles.note}>{b.note}</Text> : null;
@@ -55,9 +65,9 @@ function BudgetRow({ b }: { b: BudgetView }) {
               {b.paceLabel ? (
                 <View style={styles.pace}>
                   {b.spreadPrefill !== null ? (
-                    <Pressable testID={`budget-row-spread-${b.id}`} onPress={() => router.push(`/budget/spread?categoryId=${b.id}&prefill=${b.spreadPrefill}`)} hitSlop={8}>
-                      <Text style={paceStyle}>{b.paceLabel}</Text>
-                    </Pressable>
+                    <PaceLink testID={`budget-row-spread-${b.id}`} href={`/budget/spread?categoryId=${b.id}&prefill=${b.spreadPrefill}`} label={b.paceLabel} style={paceStyle} />
+                  ) : b.seeWhy ? (
+                    <PaceLink testID={`budget-row-see-why-${b.id}`} href={`/budget/${b.id}`} label={b.paceLabel} style={paceStyle} />
                   ) : (
                     <Text style={paceStyle}>{b.paceLabel}</Text>
                   )}

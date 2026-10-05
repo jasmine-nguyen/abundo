@@ -75,7 +75,7 @@ it('[A17] (P1) a $0 row with a note shows it at 12pt', async () => {
   }, [COFFEE]);
   await renderLoadedBudgetsWithQueries();
   const note = await screen.findByTestId('budget-row-note-coffee');
-  expect(note.props.children).toBe('Includes past leftovers');
+  expect(note.props.children).toBe('Includes $40 past leftovers');
   expect(fontSize(note)).toBeGreaterThanOrEqual(12);
   expect(screen.UNSAFE_queryAllByType(BudgetBar)).toHaveLength(0);
 });

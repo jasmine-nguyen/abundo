@@ -90,6 +90,6 @@ describe('unspent / slim rows (WHIT-730)', () => {
   it('[A12] a $0 rollover row with past leftovers keeps its note for the slim layout', () => {
     const row = budgetRowFor({ budget: 100, posted: 0, pending: 0, rollover: true, carryover: 40 });
     expect(row.unspent).toBe(true);
-    expect(row.note).toBe('Includes past leftovers');
+    expect(row.note).toBe('Includes $40 past leftovers');
   });
 });

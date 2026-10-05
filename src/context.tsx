@@ -1920,6 +1920,8 @@ export interface BudgetView {
   behindPace: boolean;
   // WHIT-730: a spend row with nothing spent yet (and not over), drawn slim without a bar.
   unspent: boolean;
+  // WHIT-733: an over-budget rollover row (no spread possible) links to its detail screen.
+  seeWhy: boolean;
 }
 
 // The exact slice budgetViews reads. A narrow input (not the whole AppContext) so a
@@ -1940,6 +1942,14 @@ function nextPayLabel(nextPayday: string, daysLeft: number): string {
   if (daysLeft <= 0) return 'today';
   if (daysLeft <= 6) return `~${formatWeekdayShort(nextPayday)}`;
   return `~${formatDayMonth(nextPayday)}`;
+}
+
+// The rollover buffer in one sentence, shared by the Budgets row note and the detail screen.
+function carryoverNote(b: Pick<Budget, 'rollover' | 'carryover'>): string {
+  if (!b.rollover) return '';
+  if (b.carryover < -0.5) return `Includes ${fmt(b.carryover)} past overspend`;
+  if (b.carryover > 0.5) return `Includes ${fmt(b.carryover)} past leftovers`;
+  return '';
 }
 
 export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudget: number; totSpent: number; totPending: number; totRemain: number } {
@@ -2038,7 +2048,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: BAR_FILL,
         pendingTint: tint(BAR_FILL, 0.45), paceLabel: '', paceColor: C.textInfo, over: false,
         note: '', depth, parentId,
-        section: 'earning', showTarget: false, spreadPrefill: null, behindPace: false, unspent: false,
+        section: 'earning', showTarget: false, spreadPrefill: null, behindPace: false, unspent: false, seeWhy: false,
       });
       group(parentId, b.id);
       continue;
@@ -2061,18 +2071,18 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     const spread = budgetSpreadEligibility(c, b);
     const spreadPrefill = spread.entry === 'start' ? spread.overspend : null;
     const behindPace = paceWarning({ spent, target, available, over }, s);
+    const seeWhy = over && b.rollover;
     if (over) {
       if (spreadPrefill !== null) { paceLabel = 'Spread it over pay cycles →'; paceColor = C.accentSoft; }
+      else if (seeWhy) { paceLabel = 'See what happened →'; paceColor = C.textDim; }
     } else if (behindPace) paceLabel = fmt(spent - target) + ' over plan';
     else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under plan'; paceColor = C.textDim; }
     // "of" shows the AVAILABLE envelope so it reconciles with the remaining amount (available −
     // spent). `spent` includes pending; when some is pending, name it too (as Insights does).
     let spentLabel = `${fmtExact(spent)} of ${fmtSigned(available)}`;
     if (pending > 0.005) spentLabel += ` · ${fmtExact(pending)} pending`;
-    let note = '';
+    let note = carryoverNote(b);
     if (b.spread && Math.abs(b.spreadAdjustment) > 0.005) note = 'Includes spread bills';
-    else if (b.rollover && b.carryover < -0.5) note = 'Includes past overspend';
-    else if (b.rollover && b.carryover > 0.5) note = 'Includes past leftovers';
     const unspent = !over && spent < 0.005;
     viewById.set(b.id, {
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
@@ -2080,7 +2090,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
       postedPct, pendingPct, targetPct: pacePct(target, den), postedColor: over ? C.bad : BAR_FILL,
       pendingTint: tint(over ? C.bad : BAR_FILL, 0.45), paceLabel, paceColor, over,
       note, depth, parentId,
-      section: 'spending', showTarget: !over, spreadPrefill, behindPace, unspent,
+      section: 'spending', showTarget: !over, spreadPrefill, behindPace, unspent, seeWhy,
     });
     group(parentId, b.id);
   }
@@ -2914,10 +2924,8 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   const relItems = s.transactions.filter(contributesToBudget);
   const daysLeftLabel = `${s.daysLeft} ${s.daysLeft === 1 ? 'day' : 'days'} remaining`;
   const targetPct = Math.round(elapsed * 100);
-  // One line for the accumulated buffer, shown only when rollover is on and it's non-trivial.
-  let carryoverLine = '';
-  if (b.rollover && b.carryover > 0.5) carryoverLine = `+${fmt(b.carryover)} left over from past cycles`;
-  else if (b.rollover && b.carryover < -0.5) carryoverLine = `${fmt(-b.carryover)} short from past cycles`;
+  // One line for the accumulated buffer — the same sentence as the row's note (WHIT-733).
+  const carryoverLine = carryoverNote(b);
   // Bill spread status line: the dollar effect this cycle (never a bare "X of N"), with a
   // "last cycle" tag on the final slice. The screen shows this while a plan is active.
   let spreadLine = '';

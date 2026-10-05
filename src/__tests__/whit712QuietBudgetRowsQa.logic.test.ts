@@ -32,11 +32,11 @@ describe('pace deadband edges (WHIT-712)', () => {
   });
 
   // [A4] (P1) a cents overspend with no spread: the exact amount once, on the red amount only.
-  it('[A4] over by $20.40 (rollover, no spread) → "$20.40" once, no pace line', () => {
+  it('[A4] over by $20.40 (rollover, no spread) → "$20.40" once, the pace slot only links to see why', () => {
     const row = rowFor({ budget: 100, posted: 120.4, pending: 0, rollover: true, carryover: 0 });
     expect(row.remainAmount).toBe('$20.40');
     expect(row.remainColor).toBe(C.bad);
-    expect(row.paceLabel).toBe('');
+    expect(row.paceLabel).toBe('See what happened →'); // WHIT-733
     expect(row.spentLabel).toBe('$120.40 of $100');
   });
 });

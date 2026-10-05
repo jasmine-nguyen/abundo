@@ -53,7 +53,7 @@ describe('budgetViews — negative carryover (borrow)', () => {
     expect(row.over).toBe(true);                    // 80 > available 60
     expect(row.remainLabel).toBe('over');
     expect(row.remainAmount).toBe('$20'); // spent - available, said once (WHIT-712)
-    expect(row.paceLabel).toBe('');
+    expect(row.paceLabel).toBe('See what happened →'); // WHIT-733
   });
 });
 
@@ -91,13 +91,13 @@ describe('budgetDetail — carryover', () => {
     // Not over budget (250 < 300), but far past this cycle's base pace (target = 100 × 0.5 = 50):
     // amber "over plan", matching the list's "over plan" for the same drawn-down sinking fund.
     expect(d.statusLabel).toBe('Over plan — ease up');
-    expect(d.carryoverLine).toBe('+$200 left over from past cycles');
+    expect(d.carryoverLine).toBe('Includes $200 past leftovers');
   });
 
   it('negative buffer over the envelope reads over + shows the borrowed line', () => {
     const d = detail({ budget: 100, posted: 80, pending: 0, rollover: true, carryover: -40 });
     expect(d.statusLabel).toBe('Over budget — ease up'); // 80 > available 60
-    expect(d.carryoverLine).toBe('$40 short from past cycles');
+    expect(d.carryoverLine).toBe('Includes $40 past overspend');
   });
 
   it('no line when rollover is off', () => {
@@ -137,10 +137,10 @@ describe('carryover detail line deadband (|value| must EXCEED 0.5 to show)', () 
   });
 
   it('just past +0.5 shows the carried-over line', () => {
-    expect(detailFor(0.51).carryoverLine).toBe('+$1 left over from past cycles');
+    expect(detailFor(0.51).carryoverLine).toBe('Includes $1 past leftovers');
   });
 
   it('just past -0.5 shows the borrowed line', () => {
-    expect(detailFor(-0.51).carryoverLine).toBe('$1 short from past cycles');
+    expect(detailFor(-0.51).carryoverLine).toBe('Includes $1 past overspend');
   });
 });
