@@ -4,25 +4,18 @@
 // = 70 days, 35 elapsed → expected fill 0.5).
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { screen, within } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
+import { styleOf } from './support/layout';
 import { seedGoalsHub } from './support/goalsScreen';
 import { EMPTY_LOAN_FACTS } from './factory';
 import { C } from '../theme';
 import type { GoalRecord } from '../api';
 
-jest.mock('../motion/ScrollChromeHeader', () => {
-  const { View, Text } = require('react-native');
-  return {
-    ScrollChromeHeader: ({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) => (
-      <View><Text>{title}</Text>{right}{children}</View>
-    ),
-  };
-});
+jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
@@ -63,9 +56,6 @@ beforeEach(() => {
 });
 afterEach(() => { jest.useRealTimers(); });
 
-const colorOf = (node: unknown) =>
-  (StyleSheet.flatten((node as { props: { style?: unknown } }).props.style) as { color?: string }).color;
-
 describe('goal card pace pill + dollars (WHIT-748)', () => {
   it('a user sees how each goal is pacing, in calm colours, with dollars next to the %', async () => {
     await renderWithQueries(<Goals />);
@@ -73,8 +63,8 @@ describe('goal card pace pill + dollars (WHIT-748)', () => {
     expect(within(screen.getByTestId('goal-pace-ahead')).getByText('Ahead by $2,000')).toBeTruthy();
     expect(within(screen.getByTestId('goal-pace-onpace')).getByText('On pace')).toBeTruthy();
     const behind = within(screen.getByTestId('goal-pace-debt')).getByText('A little behind');
-    expect(colorOf(behind)).toBe(C.warn);
-    expect(colorOf(behind)).not.toBe(C.bad);
+    expect(styleOf(behind).color).toBe(C.warn);
+    expect(styleOf(behind).color).not.toBe(C.bad);
     expect(screen.queryByTestId('goal-pace-plain')).toBeNull();
 
     expect(screen.getByTestId('goal-amount-plain')).toHaveTextContent('$4,000 of $10,000');
