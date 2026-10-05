@@ -78,3 +78,6 @@ terraform/*.json
 
 # Python virtual environment (the cloud session hook creates it; older Pythons do not hide it themselves)
 .venv/
+
+# impeccable design critiques: local only (they quote real spending figures)
+.impeccable/critique/
