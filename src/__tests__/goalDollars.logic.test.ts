@@ -2,19 +2,13 @@
 // SAME scale as the % and the bar) and aheadBy (the "Ahead by $X" pill, dollars past the
 // straight-line schedule). Expecteds hand-computed in the comments. Runner pins TZ=Australia/Melbourne.
 import { describe, it, expect } from '@jest/globals';
-import { balanceGoalView, BalanceGoal } from '../context';
+import type { BalanceGoal } from '../context';
+import { goal, view } from './support/goalPace';
 
 // Paydays …Jun6, Jul4, Jul18, Aug1, Aug15. Start Jun6 → target Aug15 = 70 days; Jul11 = 35 elapsed
 // → expected fill 0.5 (on-track band [0.45, 0.55]).
-const CYCLE = { length: 14, last_pay_date: '2026-06-06' };
-const TODAY = new Date(2026, 6, 11); // Sat 11 Jul 2026
-
-function goal(over: Partial<BalanceGoal> = {}): BalanceGoal {
-  return { direction: 'grow', target_amount: 10000, target_date: '2026-08-15', account_id: 'up-spending', ...over };
-}
 const debt = (over: Partial<BalanceGoal> = {}) =>
   goal({ direction: 'paydown', target_amount: 0, account_id: null, manual_balance: 12000, manual_as_of: '2026-07-01', ...over });
-const view = (g: BalanceGoal, balance: number | null = null) => balanceGoalView({ goal: g, balance, payCycle: CYCLE }, TODAY);
 
 describe('balanceGoalView — dollars moved, span and ahead-by (WHIT-748)', () => {
   it('gives the "$X of $Y" dollars on the same scale as the %, and the ahead-by gap only when ahead', () => {

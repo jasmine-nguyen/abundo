@@ -4,16 +4,7 @@
 // Same pinned calendar as goalDollars.logic.test: start Jun6 → target Aug15 = 70 days, Jul11 = 35
 // elapsed → expected fill 0.5.
 import { describe, it, expect } from '@jest/globals';
-import { balanceGoalView, BalanceGoal } from '../context';
-
-const CYCLE = { length: 14, last_pay_date: '2026-06-06' };
-const TODAY = new Date(2026, 6, 11); // Sat 11 Jul 2026
-const START = { start_date: '2026-06-06', target_date: '2026-08-15' };
-
-function goal(over: Partial<BalanceGoal> = {}): BalanceGoal {
-  return { direction: 'grow', target_amount: 10000, target_date: '2026-08-15', account_id: 'up-spending', ...over };
-}
-const view = (g: BalanceGoal, balance: number | null = null) => balanceGoalView({ goal: g, balance, payCycle: CYCLE }, TODAY);
+import { GOAL_START as START, goal, view } from './support/goalPace';
 
 describe('balanceGoalView dollars — clamps match the bar (WHIT-748 QA)', () => {
   it('[A1] a goal past its target shows the full span, never more than the target', () => {
