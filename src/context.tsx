@@ -1934,8 +1934,6 @@ export interface BudgetView {
   depth: number; parentId: string | null;
   // WHIT-707: Spending rows list before Earning rows; income hides the today marker.
   section: 'spending' | 'earning'; showTarget: boolean;
-  // WHIT-727: true only for a spend row past its pace line but not over.
-  behindPace: boolean;
   // WHIT-730: a spend row with nothing spent yet (and not over), drawn slim without a bar.
   unspent: boolean;
 }
@@ -2091,7 +2089,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: BAR_FILL,
         pendingTint: tint(BAR_FILL, 0.45), over: false,
         note: '', depth, parentId,
-        section: 'earning', showTarget: false, behindPace: false, unspent: false,
+        section: 'earning', showTarget: false, unspent: false,
       });
       group(parentId, b.id);
       continue;
@@ -2108,8 +2106,6 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     if (depth === 0) { totBudget += available; totSpent += spent; totPending += pending; totRemain += remain; }
     const over = spent > available;
     const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
-    // Spending too fast (WHIT-712). The row shows no pace line (WHIT-744) and the list no longer ranks on it (WHIT-745).
-    const behindPace = paceWarning({ spent, target, available, over }, s);
     // "of" shows the exact AVAILABLE envelope so it reconciles with the remaining amount (available −
     // spent); a no-break space keeps "of" with its amount. `spent` includes pending; the bar shows it as the lighter segment.
     const spentLabel = `${fmtExact(spent)} of ${fmtSignedExact(available)}`;
@@ -2122,7 +2118,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
       postedPct, pendingPct, targetPct: pacePct(target, den), postedColor: over ? C.bad : BAR_FILL,
       pendingTint: tint(over ? C.bad : BAR_FILL, 0.45), over,
       note, depth, parentId,
-      section: 'spending', showTarget: !over && remain > 0.005, behindPace, unspent,
+      section: 'spending', showTarget: !over && remain > 0.005, unspent,
     });
     group(parentId, b.id);
   }

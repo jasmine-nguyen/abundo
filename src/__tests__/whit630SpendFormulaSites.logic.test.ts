@@ -75,15 +75,11 @@ describe('pace stays on the base target, not the spendable', () => {
   // over plan, with little room left per day.
   const roomy = { budget: 100, posted: 800, pending: 0, available: 1000 };
 
-  it('[A5] (P0) budgetViews flags over plan', () => {
-    expect(budgetViews(state(roomy)).rows[0].behindPace).toBe(true);
-  });
-
-  it('[A5] (P0) budgetDetail flags under plan', () => {
+  it('[A5] (P0) budgetDetail flags over plan', () => {
     expect(budgetDetail(state(roomy), 'food')?.statusLabel).toBe('Over plan — ease up');
   });
 
-  it('[A5] (P1) on the first day nothing is over plan yet (on pace → not behind)', () => {
-    expect(budgetViews(state({ budget: 100, posted: 0, pending: 0 }, 14)).rows[0].behindPace).toBe(false);
+  it('[A5] (P1) on the first day nothing is over plan yet', () => {
+    expect(budgetDetail(state({ budget: 100, posted: 0, pending: 0 }, 14), 'food')?.statusLabel).toBe('On track for payday');
   });
 });

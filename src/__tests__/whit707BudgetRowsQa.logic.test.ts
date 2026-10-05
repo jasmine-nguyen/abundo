@@ -47,15 +47,14 @@ describe('income "next pay" label boundaries (decision 3)', () => {
   });
 });
 
-describe('over budget: quiet row, no pace warning', () => {
+describe('over budget: quiet row', () => {
   // [A6] (P0) over with an active spread → the red amount says it once.
-  it('[A6] over with an active spread → no pace warning (the red amount says it once)', () => {
+  it('[A6] over with an active spread → the red amount says it once', () => {
     const row = spendRow({
       budget: 100, posted: 130, pending: 0, spreadAdjustment: -10,
       spread: { amount: 60, cycles: 3, index: 2, adjustment: -10 },
     });
     expect(row.over).toBe(true);
-    expect(row.behindPace).toBe(false);
     expect(row.remainAmount).toBe('$40');
     expect(row.remainColor).toBe(C.bad); // rose stays on the amount
   });
@@ -72,11 +71,10 @@ describe('over budget: quiet row, no pace warning', () => {
     expect(row.over).toBe(true);
   });
 
-  // [A9] (P0) over plan but under budget → behind pace.
-  it('[A9] over plan but under budget → behind pace', () => {
+  // [A9] (P0) over plan but under budget → not over.
+  it('[A9] over plan but under budget → not over', () => {
     const row = spendRow({ budget: 100, posted: 90, pending: 0 }); // target 50
     expect(row.over).toBe(false);
-    expect(row.behindPace).toBe(true);
   });
 
   // [A10] (P1) exactly at the limit is not over.
@@ -87,10 +85,9 @@ describe('over budget: quiet row, no pace warning', () => {
   });
 
   // [A11] (P1) rollover drained into a deficit, over → the exact overspend on the amount, no pace warning.
-  it('[A11] rollover with a borrowed buffer, over → no pace warning, the exact overspend on the amount', () => {
+  it('[A11] rollover with a borrowed buffer, over → the exact overspend on the amount', () => {
     const row = spendRow({ budget: 100, posted: 95, pending: 0, rollover: true, carryover: -20 });
     expect(row.over).toBe(true);
-    expect(row.behindPace).toBe(false);
     expect(row.remainAmount).toBe('$15');
   });
 });
