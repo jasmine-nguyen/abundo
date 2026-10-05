@@ -15,12 +15,8 @@ import { styleOf, sharedHost, textOf } from './support/layout';
 import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 let mockLarge = true;
-// Virtual, like jest.setup.js's default, so this file's mock replaces it.
-jest.mock(
-  '../hooks/useLargeText',
-  () => ({ ...(jest.requireActual('../hooks/useLargeText') as object), useLargeText: () => mockLarge }),
-  { virtual: true },
-);
+jest.mock('../hooks/useLargeText', () =>
+  require('./support/largeTextMock').largeTextMockModule(() => mockLarge));
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 

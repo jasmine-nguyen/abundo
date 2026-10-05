@@ -18,15 +18,8 @@ import { hostParent, sharedHost, styleOf, textOf } from './support/layout';
 import { HEADER_BODY_HEIGHT } from '../motion/useNavBarsHeader';
 
 let mockLarge = true;
-jest.mock(
-  '../hooks/useLargeText',
-  () => {
-    let actual = {};
-    try { actual = jest.requireActual('../hooks/useLargeText') as object; } catch { /* not built yet */ }
-    return { ...actual, useLargeText: () => mockLarge };
-  },
-  { virtual: true },
-);
+jest.mock('../hooks/useLargeText', () =>
+  require('./support/largeTextMock').largeTextMockModule(() => mockLarge));
 jest.mock('../context', () => require('./support/budgetsSuite').budgetsContextMockModule());
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
