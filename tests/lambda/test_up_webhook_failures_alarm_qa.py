@@ -16,6 +16,7 @@ import urllib.error
 import pytest
 
 from _dynamo_fakes import FakeTable
+from _http_fakes import UP_API_URL, http_error
 from _terraform import filter_pattern
 
 MOCK_SECRET = "mock-secret"
@@ -88,7 +89,7 @@ def _run(up, caplog, event=None):
 
 # [A8] (P0) Up answering 5xx / the network being down is a fetch failure → must still page.
 @pytest.mark.parametrize("error", [
-    urllib.error.HTTPError("https://api.up.com.au/x", 500, "boom", {}, None),
+    http_error(500, url=UP_API_URL),
     urllib.error.URLError("connection refused"),
     TimeoutError("timed out"),
 ], ids=["up_500", "network_down", "timeout"])
@@ -132,6 +133,6 @@ def test_healthy_and_scanner_traffic_do_not_match_the_merged_filter(up, monkeypa
 # one hour, still one alarm (threshold 1) and one email. Pins that the merged alarm sums them.
 def test_token_rejection_counts_under_two_terms_of_the_same_metric(up, monkeypatch, caplog):
     monkeypatch.setattr(up.urllib.request, "urlopen",
-                        _urlopen_raising(urllib.error.HTTPError("https://api.up.com.au/x", 401, "no", {}, None)))
+                        _urlopen_raising(http_error(401, url=UP_API_URL)))
     _, messages = _run(up, caplog)
     assert len(_matches_filter(messages)) == 2, messages

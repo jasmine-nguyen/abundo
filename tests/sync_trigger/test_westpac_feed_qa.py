@@ -6,36 +6,16 @@ edges that only appear once a THIRD feed exists. A 409 on the Westpac feed (a sy
 already in progress) must stay a harmless skip while the other feeds still sync.
 """
 
-import io
-import json
-import urllib.error
 
 import handler
+
+from _http_fakes import FakeResponse, http_error
 
 _WESTPAC_FEED = "zJiG0SNKKWScMp9bFdD4"
 
 
-class _FakeResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
-
-
 def _ok(job_id="job-123"):
-    return _FakeResponse({"data": {"id": job_id}})
-
-
-def _http_error(code):
-    return urllib.error.HTTPError(url="https://api.banksync.io/v1/feeds/x/sync",
-                                  code=code, msg="boom", hdrs=None, fp=io.BytesIO(b""))
+    return FakeResponse({"data": {"id": job_id}})
 
 
 # --- the feed is actually wired ----------------------------------------------
@@ -72,7 +52,7 @@ def test_westpac_409_overlap_is_a_skip_and_the_other_feeds_still_sync(monkeypatc
     def urlopen(req, timeout=None):
         urls.append(req.full_url)
         if _WESTPAC_FEED in req.full_url:
-            raise _http_error(409)
+            raise http_error(409)
         return _ok()
 
     monkeypatch.setattr(handler.urllib.request, "urlopen", urlopen)

@@ -9,50 +9,19 @@ No network and no AWS: ``urllib.request.urlopen`` is monkeypatched and ``ssm`` i
 faked by conftest.py. See conftest.py for why the import setup lives there.
 """
 
-import io
-import json
 import urllib.error
 
 import handler
 import pytest
 
+from _http_fakes import FakeResponse, http_error
+
 
 # --- helpers -----------------------------------------------------------------
 
 
-class _FakeResponse:
-    """Stand-in for the object urllib returns from urlopen().
-
-    The handler uses it as a context manager (``with urlopen(...) as resp``) and
-    calls ``resp.read()``, expecting bytes of JSON shaped {"data": {"id": ...}}.
-    """
-
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
-
-
 def _ok_response(job_id="job-123"):
-    return _FakeResponse({"data": {"id": job_id}})
-
-
-def _http_error(code):
-    """Build a urllib HTTPError with a given status code (e.g. 409, 500)."""
-    return urllib.error.HTTPError(
-        url="https://api.banksync.io/v1/feeds/x/sync",
-        code=code,
-        msg="boom",
-        hdrs=None,
-        fp=io.BytesIO(b""),
-    )
+    return FakeResponse({"data": {"id": job_id}})
 
 
 @pytest.fixture(autouse=True)
@@ -113,7 +82,7 @@ def test_trigger_sync_happy_path_builds_correct_request(monkeypatch):
 
 def test_trigger_sync_409_is_skipped(monkeypatch):
     def fake_urlopen(req, timeout=None):
-        raise _http_error(409)
+        raise http_error(409)
 
     monkeypatch.setattr(handler.urllib.request, "urlopen", fake_urlopen)
 
@@ -123,7 +92,7 @@ def test_trigger_sync_409_is_skipped(monkeypatch):
 
 def test_trigger_sync_non_409_http_error_is_raised(monkeypatch):
     def fake_urlopen(req, timeout=None):
-        raise _http_error(500)
+        raise http_error(500)
 
     monkeypatch.setattr(handler.urllib.request, "urlopen", fake_urlopen)
 
@@ -164,7 +133,7 @@ def test_lambda_handler_isolates_per_feed_failure(monkeypatch):
         calls.append(req.full_url)
         # Fail the first feed, succeed the second — proves the loop keeps going.
         if feed_ids[0] in req.full_url:
-            raise _http_error(500)
+            raise http_error(500)
         return _ok_response()
 
     monkeypatch.setattr(handler.urllib.request, "urlopen", fake_urlopen)
@@ -180,7 +149,7 @@ def test_lambda_handler_all_409_is_not_a_failure(monkeypatch):
     monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
 
     def fake_urlopen(req, timeout=None):
-        raise _http_error(409)
+        raise http_error(409)
 
     monkeypatch.setattr(handler.urllib.request, "urlopen", fake_urlopen)
 
@@ -218,7 +187,7 @@ def test_rejected_key_fails_the_run_and_next_run_uses_the_newly_saved_key(monkey
 
     def rejecting_urlopen(req, timeout=None):
         seen_keys.append(req.get_header("X-api-key"))
-        raise _http_error(401)
+        raise http_error(401)
 
     monkeypatch.setattr(handler.urllib.request, "urlopen", rejecting_urlopen)
     with pytest.raises(RuntimeError):
@@ -279,7 +248,7 @@ def test_a_pending_mirror_failure_does_not_hide_a_failed_feed(monkeypatch):
     monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
 
     def fake_urlopen(req, timeout=None):
-        raise _http_error(500)
+        raise http_error(500)
 
     def broken_mirror(api_key):
         raise RuntimeError("mirror broke")

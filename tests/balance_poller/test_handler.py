@@ -11,32 +11,15 @@ No network and no AWS: ``urllib.request.urlopen`` is monkeypatched, ``ssm`` is
 faked by conftest, and the repository is replaced with a recording fake.
 """
 
-import io
-import json
 import logging
-import urllib.error
 from decimal import Decimal
 
 import pytest
 
+from _http_fakes import FakeResponse, http_error
+
 
 # --- helpers -----------------------------------------------------------------
-
-
-class _FakeResponse:
-    """Stand-in for urlopen()'s return (used as a context manager; .read() -> bytes)."""
-
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
 
 
 # The real getBalance payload observed for the mortgage account (2026-07-04).
@@ -128,12 +111,6 @@ _PAYLOADS_BY_AID = {
 }
 
 
-def _http_error(code):
-    return urllib.error.HTTPError(
-        url="https://api.banksync.io/x", code=code, msg="boom", hdrs=None, fp=io.BytesIO(b"")
-    )
-
-
 # --- normalise_balance -------------------------------------------------------
 
 
@@ -191,7 +168,7 @@ def test_fetch_balance_builds_correct_get_request(handler, monkeypatch):
     def fake_urlopen(req, timeout=None):
         captured["req"] = req
         captured["timeout"] = timeout
-        return _FakeResponse(_OK_PAYLOAD)
+        return FakeResponse(_OK_PAYLOAD)
 
     monkeypatch.setattr(handler.urllib.request, "urlopen", fake_urlopen)
 
@@ -280,7 +257,7 @@ def test_lambda_handler_stores_homeloan_and_every_account_on_success(handler, mo
     def urlopen(req, timeout=None):
         for aid, payload in _PAYLOADS_BY_AID.items():
             if aid in req.full_url:
-                return _FakeResponse(payload)
+                return FakeResponse(payload)
         raise AssertionError(f"no stub payload for {req.full_url}")
 
     caplog.set_level(logging.ERROR)
@@ -312,7 +289,7 @@ def test_lambda_handler_swallows_http_error_and_keeps_last_good(handler, monkeyp
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
 
     def boom(req, timeout=None):
-        raise _http_error(500)
+        raise http_error(500)
 
     monkeypatch.setattr(handler.urllib.request, "urlopen", boom)
 
@@ -330,7 +307,7 @@ def test_lambda_handler_swallows_failure_payload_without_writing(handler, monkey
     monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: homeloan)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     fail = {"success": False, "error": "Provider fiskil:au does not support loans"}
-    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: _FakeResponse(fail))
+    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: FakeResponse(fail))
 
     result = handler.lambda_handler({}, None)
     assert result == {"homeloan_stored": False, "accounts_stored": 0}

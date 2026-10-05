@@ -4,24 +4,11 @@ A failed home-loan read (every account still stored) or a failed API-key fetch m
 emit BALANCE_POLL_ALL_STORED, or the balance-poll alarm would never page for them.
 """
 
-import json
 import logging
 
+from _http_fakes import FakeResponse
+
 _HEARTBEAT = "BALANCE_POLL_ALL_STORED"
-
-
-class _FakeResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
 
 
 class _FailingHomeLoanRepo:
@@ -60,7 +47,7 @@ _PAYLOADS_BY_AID = {
 def _urlopen(req, timeout=None):
     for aid, payload in _PAYLOADS_BY_AID.items():
         if aid in req.full_url:
-            return _FakeResponse(payload)
+            return FakeResponse(payload)
     raise AssertionError(f"no stub payload for {req.full_url}")
 
 

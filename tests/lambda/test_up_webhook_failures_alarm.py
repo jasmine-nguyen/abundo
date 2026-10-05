@@ -10,11 +10,11 @@ import hmac
 import json
 import logging
 import re
-import urllib.error
 
 import pytest
 
 from _dynamo_fakes import FakeTable
+from _http_fakes import UP_API_URL, http_error
 from _terraform import filter_pattern
 
 MOCK_SECRET = "mock-secret"
@@ -56,7 +56,7 @@ def _fetch_raises(up, monkeypatch):
 def _up_rejects_token(code):
     def arrange(up, monkeypatch):
         def urlopen(request, timeout=None):
-            raise urllib.error.HTTPError("https://api.up.com.au/x", code, "nope", {}, None)
+            raise http_error(code, url=UP_API_URL)
         monkeypatch.setattr(up.urllib.request, "urlopen", urlopen)
         monkeypatch.setattr(up, "_personal_access_token", "old-pat-value")
     return arrange

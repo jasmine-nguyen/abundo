@@ -15,6 +15,7 @@ import urllib.parse
 import pytest
 
 from _dynamo_fakes import FakeTable
+from _http_fakes import UP_API_URL, http_error
 
 MOCK_SECRET = "mock-secret"
 OLD_HOMELOAN_ID = "fbef6cbc-09b3-4b6f-826c-6a178707a178"
@@ -73,10 +74,6 @@ def _event(transaction_id):
 
 def _markers(caplog, marker):
     return [r for r in caplog.records if marker in r.getMessage().split()]
-
-
-def _http_error(code):
-    return urllib.error.HTTPError("https://api.up.com.au/x", code, "nope", {}, None)
 
 
 @pytest.fixture(autouse=True)
@@ -166,7 +163,8 @@ def test_entries_of_other_types_are_ignored_even_if_up_ignores_the_filter(lookup
 
 
 # [A4]
-@pytest.mark.parametrize("error", [_http_error(500), _http_error(429), _http_error(401),
+@pytest.mark.parametrize("error", [http_error(500, url=UP_API_URL), http_error(429, url=UP_API_URL),
+                                   http_error(401, url=UP_API_URL),
                                    urllib.error.URLError("refused"), TimeoutError(),
                                    socket.timeout("timed out")],
                          ids=["500", "429", "401", "urlerror", "timeout", "socket_timeout"])
@@ -188,7 +186,7 @@ def test_lookup_401_does_not_clear_the_cached_token(lam, monkeypatch):
     monkeypatch.setattr(up, "_personal_access_token", "cached-token")
 
     def fake_urlopen(request, timeout=None):
-        raise _http_error(401)
+        raise http_error(401, url=UP_API_URL)
 
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
     assert up.get_homeloan_account_id() == OLD_HOMELOAN_ID
@@ -308,7 +306,7 @@ def test_sub_floor_and_interest_on_renumbered_loan_send_nothing_and_skip_lookup(
 
 # [A15]
 def test_lookup_failure_on_a_non_loan_account_skips_without_500(handler, caplog):
-    handler.accounts = _http_error(503)
+    handler.accounts = http_error(503, url=UP_API_URL)
     handler.transactions = {"t": _transaction("t", "spending")}
     up = handler.up
     caplog.set_level(logging.INFO)

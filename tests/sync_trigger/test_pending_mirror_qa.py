@@ -5,8 +5,6 @@ over FakeTable, the same way test_pending_mirror.py does.
 
 import copy
 import importlib
-import io
-import json
 import logging
 import pathlib
 import sys
@@ -19,6 +17,7 @@ import pytest
 
 from _boto_stubs import install_import_satisfiers, use_condition_fields
 from _dynamo_fakes import FakeTable
+from _http_fakes import FakeResponse, http_error
 
 install_import_satisfiers(ssm_default="test-api-key")
 
@@ -102,27 +101,9 @@ class _Categories:
         return list(self._categories)
 
 
-class _FakeResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
-
-
 def _page(rows, has_more=False, cursor="", success=True):
     return {"success": success, "data": rows,
             "meta": {"count": len(rows), "cursor": cursor, "hasMore": has_more}}
-
-
-def _http_error(code):
-    return urllib.error.HTTPError("https://api.banksync.io/x", code, "boom", None, io.BytesIO(b""))
 
 
 # --- window edges ------------------------------------------------------------------------------
@@ -210,7 +191,7 @@ def bank_by_aid(mirror, monkeypatch):
         reply = pages[aid].pop(0)
         if isinstance(reply, Exception):
             raise reply
-        return _FakeResponse(reply)
+        return FakeResponse(reply)
 
     monkeypatch.setattr(mirror.urllib.request, "urlopen", urlopen)
     return pages, requests
@@ -240,7 +221,7 @@ def test_the_real_fetch_mirrors_both_accounts_with_their_own_lists(repo, mirror,
         assert req.get_header("X-api-key") == "the-key"
 
 
-@pytest.mark.parametrize("second_page", [_page(_bank("b"), success=False), _http_error(429)])
+@pytest.mark.parametrize("second_page", [_page(_bank("b"), success=False), http_error(429)])
 def test_a_bad_second_page_deletes_nothing_for_that_account(repo, mirror, bank_by_aid, second_page):
     # [A7] Page 1 is fine and says there's more; page 2 fails. The partial page-1 list must
     # never be used to delete (it lacks "b"). Up still runs.
@@ -334,7 +315,7 @@ def test_the_mirror_still_runs_when_every_feed_fails(monkeypatch):
     monkeypatch.setattr(handler, "forget_api_key", lambda path: None)
 
     def urlopen(req, timeout=None):
-        raise _http_error(500)
+        raise http_error(500)
 
     monkeypatch.setattr(handler.urllib.request, "urlopen", urlopen)
     calls = []

@@ -9,14 +9,14 @@ Two layers, both without network/AWS:
 """
 
 import hashlib
-import io
 import json
 import urllib.error
 from decimal import Decimal
 
 import pytest
 
-from _anthropic_fakes import FakeResponse, text_payload
+from _anthropic_fakes import text_payload
+from _http_fakes import FakeResponse, http_error
 
 from _insight_fakes import insight_puts, insight_repo
 
@@ -108,7 +108,7 @@ def test_generate_suggestions_http_error_raises_with_status(insights_ai, monkeyp
     import anthropic_client as ac
 
     def boom(req, timeout=None):
-        raise urllib.error.HTTPError("u", 429, "rate", None, io.BytesIO(b""))
+        raise http_error(429)
 
     monkeypatch.setattr(ac.urllib.request, "urlopen", boom)
 

@@ -18,6 +18,7 @@ import urllib.error
 import pytest
 
 from _dynamo_fakes import FakeTable
+from _http_fakes import UP_API_URL, http_error
 
 MOCK_SECRET = "mock-secret"
 HOMELOAN_UUID = "fbef6cbc-09b3-4b6f-826c-6a178707a178"
@@ -251,10 +252,6 @@ def _urlopen_raising(error):
     return _raise
 
 
-def _http_error(code):
-    return urllib.error.HTTPError("https://api.up.com.au/x", code, "nope", {}, None)
-
-
 @pytest.fixture
 def fetch_wired(lam, monkeypatch, request):
     """`wired`, but with the REAL fetch_transaction and a cached token, so a test
@@ -271,7 +268,7 @@ def fetch_wired(lam, monkeypatch, request):
 @pytest.mark.parametrize("code", [401, 403])
 def test_up_401_logs_token_rejected_marker_and_returns_500(fetch_wired, monkeypatch, caplog, code):
     up = fetch_wired.up
-    monkeypatch.setattr(up.urllib.request, "urlopen", _urlopen_raising(_http_error(code)))
+    monkeypatch.setattr(up.urllib.request, "urlopen", _urlopen_raising(http_error(code, url=UP_API_URL)))
     caplog.set_level(logging.INFO)
     assert up.lambda_handler(_event(_webhook_payload()), None) == up.ERROR_RESPONSE
     assert _marker_records(caplog, "UP_WEBHOOK_TOKEN_REJECTED", logging.ERROR)
@@ -283,7 +280,7 @@ def test_up_401_logs_token_rejected_marker_and_returns_500(fetch_wired, monkeypa
 @pytest.mark.parametrize("code", [401, 403])
 def test_token_rejected_clears_cached_token(fetch_wired, monkeypatch, code):
     up = fetch_wired.up
-    monkeypatch.setattr(up.urllib.request, "urlopen", _urlopen_raising(_http_error(code)))
+    monkeypatch.setattr(up.urllib.request, "urlopen", _urlopen_raising(http_error(code, url=UP_API_URL)))
     calls = []
     monkeypatch.setattr(up, "get_param", lambda path: calls.append(path) or "new")
     up.lambda_handler(_event(_webhook_payload()), None)
@@ -295,7 +292,7 @@ def test_token_rejected_clears_cached_token(fetch_wired, monkeypatch, code):
 @pytest.mark.parametrize("code", [404, 500])
 def test_up_non_auth_error_logs_fetch_failed_not_token_rejected(fetch_wired, monkeypatch, caplog, code):
     up = fetch_wired.up
-    monkeypatch.setattr(up.urllib.request, "urlopen", _urlopen_raising(_http_error(code)))
+    monkeypatch.setattr(up.urllib.request, "urlopen", _urlopen_raising(http_error(code, url=UP_API_URL)))
     caplog.set_level(logging.INFO)
     assert up.lambda_handler(_event(_webhook_payload()), None) == up.ERROR_RESPONSE
     assert _marker_records(caplog, "UP_WEBHOOK_FETCH_FAILED", logging.ERROR)
@@ -666,7 +663,7 @@ def test_replaced_token_is_used_on_next_delivery(fetch_wired, monkeypatch):
         auth = request.get_header("Authorization")
         seen.append(auth)
         if auth == "Bearer old-pat-value":
-            raise _http_error(401)
+            raise http_error(401, url=UP_API_URL)
         return _FakeHTTPResponse({"data": _up_transaction()})
 
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
@@ -752,7 +749,7 @@ def test_homeloan_lookup_failure_still_pushes_on_fixed_id(fetch_wired, monkeypat
     def fake_urlopen(request, timeout=None):
         if "/transactions/" in request.full_url:
             return _FakeHTTPResponse({"data": _up_transaction()})
-        raise _http_error(500)
+        raise http_error(500, url=UP_API_URL)
 
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
     caplog.set_level(logging.INFO)

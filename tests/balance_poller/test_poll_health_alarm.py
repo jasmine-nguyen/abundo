@@ -6,25 +6,11 @@ A metric filter counts that line; the alarm pages when 2 daily runs in a row hav
 (silence included) and emails again on recovery.
 """
 
-import json
 import logging
 import re
 
+from _http_fakes import FakeResponse
 from _terraform import MONITORING_TF, TERRAFORM_DIR, filter_pattern, tf_attr, tf_block
-
-
-class _FakeResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
 
 
 class _FakeHomeLoanRepo:
@@ -72,7 +58,7 @@ def _run_poll(handler, monkeypatch, caplog, failing_aid=None):
             if aid in req.full_url:
                 if aid == failing_aid:
                     raise RuntimeError("HTTP Error 404: Not Found")
-                return _FakeResponse(payload)
+                return FakeResponse(payload)
         raise AssertionError(f"no stub payload for {req.full_url}")
 
     monkeypatch.setattr(handler.urllib.request, "urlopen", urlopen)

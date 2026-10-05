@@ -5,25 +5,11 @@ The heartbeat must track "every balance was stored" and nothing else: follow-on 
 missed balance must. The terraform side must match the exact line CloudWatch will see.
 """
 
-import json
 import logging
 import re
 
+from _http_fakes import FakeResponse
 from _terraform import MONITORING_TF, TERRAFORM_DIR, filter_pattern, tf_attr, tf_block
-
-
-class _FakeResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
 
 
 class _FakeHomeLoanRepo:
@@ -74,7 +60,7 @@ def _stub(handler, monkeypatch, caplog, *, payloads=None, account_repo=None, url
     def default_urlopen(req, timeout=None):
         for aid, payload in payloads.items():
             if aid in req.full_url:
-                return _FakeResponse(payload)
+                return FakeResponse(payload)
         raise AssertionError(f"no stub payload for {req.full_url}")
 
     monkeypatch.setattr(handler.urllib.request, "urlopen", urlopen or default_urlopen)
