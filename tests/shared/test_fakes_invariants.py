@@ -25,8 +25,6 @@ _SHARED_LAYER = frozenset(
 )
 
 _FAKE_MODULES = [pytest.param(path, id=path.stem) for path in sorted(_SHARED_TESTS.glob("_*_fakes.py"))]
-# Loads a real scripts/ migration at import, which needs the real botocore — not a fake to keep light.
-_LOADS_A_SCRIPT = {"_migration_spread_fakes"}
 _MILESTONE_SUITES = [
     pytest.param(path, id=path.stem) for path in sorted(_SHARED_TESTS.glob("test_milestone*.py"))
 ]
@@ -68,8 +66,6 @@ def test_fake_module_imports_without_botocore_installed(path):
     # already faked — which only holds under some collection orders. The static scan can't see it
     # (botocore isn't a shared/-layer module), so prove the import survives with botocore removed.
     # _dynamo_fakes goes too, since most fake modules import it.
-    if path.stem in _LOADS_A_SCRIPT:
-        pytest.skip("loads a scripts/ migration, which imports the real botocore")
     keys = ("botocore", "botocore.exceptions", "_dynamo_fakes", path.stem)
     saved = {k: sys.modules.get(k) for k in keys}
     try:
