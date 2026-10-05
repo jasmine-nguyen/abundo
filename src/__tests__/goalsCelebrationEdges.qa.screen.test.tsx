@@ -11,6 +11,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { resetRouter, setFocused } from './support/routerMock';
 import { pinToday } from './support/clock';
 import { seedGoalsHub } from './support/goalsScreen';
 import { EMPTY_LOAN_FACTS } from './factory';
@@ -18,14 +19,7 @@ import { queryClient } from '../queryClient';
 import { CHECKPOINT_SNAPSHOT_KEY } from '../checkpointCelebration';
 import type { GoalRecord, MilestoneRecord } from '../api';
 
-jest.mock('../motion/ScrollChromeHeader', () => {
-  const { View, Text } = require('react-native');
-  return {
-    ScrollChromeHeader: ({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) => (
-      <View><Text>{title}</Text>{right}{children}</View>
-    ),
-  };
-});
+jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -34,12 +28,7 @@ jest.mock('../context', () => {
   return { ...actual, useAppContext: () => ({ openGoalBalance: jest.fn() }) };
 });
 
-let mockFocused = true;
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn() }),
-  useFocusEffect: () => {},
-  useIsFocused: () => mockFocused,
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
@@ -82,7 +71,7 @@ const savedFromEarlierLaunch = (snapshot: Record<string, number>) =>
 beforeEach(async () => {
   await AsyncStorage.clear();
   resetAuth();
-  mockFocused = true;
+  resetRouter();
   pinToday(new Date(2026, 6, 11));
   server.seed('/milestones', []);
   seedHub([HOLIDAY], { 'up-spending': 4000 }); // past $2,000 only → 1 step
@@ -157,12 +146,12 @@ describe('Goals celebrations that stick: edges (WHIT-747 QA)', () => {
   it('[A9] opening the app on another tab neither celebrates nor overwrites the saved copy until Goals is in view', async () => {
     await savedFromEarlierLaunch({ g1: 1 });
     seedHub([HOLIDAY], { 'up-spending': 6000 });
-    mockFocused = false;
+    setFocused(false);
     const view = await renderWithQueries(<Goals />);
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
     expect(await saved()).toEqual({ g1: 1 });
 
-    mockFocused = true;
+    setFocused(true);
     await act(async () => { view.rerender(<WithQueries><Goals /></WithQueries>); });
     expect(await screen.findByTestId('checkpoint-celebration-label')).toHaveTextContent(/Holiday · \$5,000 reached/);
   });

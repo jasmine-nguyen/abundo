@@ -16,6 +16,7 @@ import { act, screen } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { resetRouter, setFocused } from './support/routerMock';
 import { pinToday } from './support/clock';
 import { seedGoalsHub } from './support/goalsScreen';
 import { EMPTY_LOAN_FACTS } from './factory';
@@ -33,12 +34,7 @@ jest.mock('../context', () => {
   return { ...actual, useAppContext: () => ({ openGoalBalance: mockOpenGoalBalance }) };
 });
 
-let mockFocused = true;
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn() }),
-  useFocusEffect: () => {},
-  useIsFocused: () => mockFocused,
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 let mockReduceMotion = false;
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => mockReduceMotion }));
@@ -84,7 +80,7 @@ beforeEach(async () => {
   await AsyncStorage.clear(); // no snapshot saved by an earlier launch
   resetAuth();
   mockReduceMotion = false;
-  mockFocused = true;
+  resetRouter();
   pinToday(new Date(2026, 6, 11));
   seedBalance(4000); // past the 2000 rung, not the 5000 rung → reached 1
 });
@@ -141,12 +137,12 @@ describe('checkpoint celebration on the Goals hub (WHIT-481)', () => {
 
   it('keeps a crossing made while another tab is open and celebrates it when Goals is back in view', async () => {
     const view = await renderWithQueries(<Goals />);  // seed at reached 1
-    mockFocused = false;                              // the user switches to another tab
+    setFocused(false);                               // the user switches to another tab
     await moveBalance(6000);                          // the sync lands past the 5000 rung meanwhile
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
 
     jest.useFakeTimers({ now: new Date(2026, 6, 11) });
-    mockFocused = true;                               // back on Goals
+    setFocused(true);                                 // back on Goals
     await act(async () => { view.rerender(<WithQueries><Goals /></WithQueries>); });
     expect(screen.getByText(/Holiday · \$5,000 reached/)).toBeTruthy();
   });
