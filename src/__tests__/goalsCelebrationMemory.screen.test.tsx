@@ -17,14 +17,7 @@ import { EMPTY_LOAN_FACTS } from './factory';
 import { CHECKPOINT_SNAPSHOT_KEY } from '../checkpointCelebration';
 import type { GoalRecord, MilestoneRecord } from '../api';
 
-jest.mock('../motion/ScrollChromeHeader', () => {
-  const { View, Text } = require('react-native');
-  return {
-    ScrollChromeHeader: ({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) => (
-      <View><Text>{title}</Text>{right}{children}</View>
-    ),
-  };
-});
+jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -33,16 +26,7 @@ jest.mock('../context', () => {
   return { ...actual, useAppContext: () => ({ openGoalBalance: jest.fn() }) };
 });
 
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn() }),
-  useFocusEffect: () => {},
-  useIsFocused: () => true,
-}));
-
-jest.mock('@react-navigation/native', () => ({
-  ...(jest.requireActual('@react-navigation/native') as object),
-  useIsFocused: () => true,
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 

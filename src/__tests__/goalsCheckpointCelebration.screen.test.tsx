@@ -23,14 +23,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { queryClient } from '../queryClient';
 import type { GoalRecord } from '../api';
 
-jest.mock('../motion/ScrollChromeHeader', () => {
-  const { View, Text } = require('react-native');
-  return {
-    ScrollChromeHeader: ({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) => (
-      <View><Text>{title}</Text>{right}{children}</View>
-    ),
-  };
-});
+jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
