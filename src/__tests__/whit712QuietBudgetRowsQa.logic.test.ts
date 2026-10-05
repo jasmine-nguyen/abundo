@@ -33,6 +33,6 @@ describe('pace deadband edges (WHIT-712)', () => {
     expect(row.remainAmount).toBe('$20.40');
     expect(row.remainColor).toBe(C.bad);
     expect(row.paceLabel).toBe('');
-    expect(row.spentLabel).toBe('$120.40 of $100');
+    expect(row.spentLabel).toBe('$120.40 of\u00a0$100');
   });
 });

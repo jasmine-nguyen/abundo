@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
-import { C, tint, fmt, fmtExact, fmtSigned,ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
+import { C, tint, fmt, fmtExact, fmtSignedExact, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
 import { writeFailureMessage, ApiError } from './apiError';
 import { MONTHS, formatDayMonth, formatWeekdayShort, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, deleteTransaction as apiDeleteTransaction, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup } from './api';
@@ -1903,7 +1903,8 @@ const BAR_FILL = C.accentSoft;
 
 export interface BudgetView {
   id: string; name: string; color: string; icon: string; chipBg: string;
-  spentLabel: string; remainAmount: string; remainLabel: string; remainColor: string;
+  // WHIT-741: pending sits on its own line under spentLabel ('' when none).
+  spentLabel: string; pendingLabel: string; remainAmount: string; remainLabel: string; remainColor: string;
   postedPct: number; pendingPct: number; targetPct: number; postedColor: string;
   pendingTint: string; paceLabel: string; over: boolean;
   // WHIT-728: a muted line saying why this cycle's budget differs from the target (spread or rollover), else ''.
@@ -2039,7 +2040,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
       if (s.nextPayday) spentLabel += ` · next pay ${nextPayLabel(s.nextPayday, s.daysLeft)}`;
       viewById.set(b.id, {
         id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
-        spentLabel,
+        spentLabel, pendingLabel: '',
         remainAmount: fmtExact(met ? actual - b.budget : b.budget - actual),
         remainLabel: met ? 'above target' : 'to go',
         remainColor: C.good,
@@ -2067,20 +2068,20 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     // and being under plan is good news, so neither gets a line.
     const behindPace = paceWarning({ spent, target, available, over, oneCharge: !!s.oneChargeIds?.has(b.id) }, s);
     const paceLabel = behindPace ? fmt(spent - target) + ' over plan' : '';
-    // "of" shows the AVAILABLE envelope so it reconciles with the remaining amount (available −
-    // spent). `spent` includes pending; when some is pending, name it too (as Insights does).
-    let spentLabel = `${fmtExact(spent)} of ${fmtSigned(available)}`;
-    if (pending > 0.005) spentLabel += ` · ${fmtExact(pending)} pending`;
+    // "of" shows the exact AVAILABLE envelope so it reconciles with the remaining amount (available −
+    // spent); a no-break space keeps "of" with its amount. `spent` includes pending, named on its own line.
+    const spentLabel = `${fmtExact(spent)} of ${fmtSignedExact(available)}`;
+    const pendingLabel = pending > 0.005 ? `${fmtExact(pending)} pending` : '';
     let note = carryoverNote(b);
     if (b.spread && Math.abs(b.spreadAdjustment) > 0.005) note = 'Includes spread bills';
     const unspent = !over && spent < 0.005;
     viewById.set(b.id, {
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
-      spentLabel, remainAmount: fmtExact(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,
+      spentLabel, pendingLabel, remainAmount: fmtExact(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,
       postedPct, pendingPct, targetPct: pacePct(target, den), postedColor: over ? C.bad : BAR_FILL,
       pendingTint: tint(over ? C.bad : BAR_FILL, 0.45), paceLabel, over,
       note, depth, parentId,
-      section: 'spending', showTarget: !over, behindPace, unspent,
+      section: 'spending', showTarget: !over && remain > 0.005, behindPace, unspent,
     });
     group(parentId, b.id);
   }
@@ -2961,10 +2962,10 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   return {
     ...common,
     targetPct: pacePct(target, den),
-    spentBig: fmtExact(spent), ofBudget: 'of ' + fmtSigned(available),
+    spentBig: fmtExact(spent), ofBudget: 'of ' + fmtSignedExact(available),
     statusLabel,
     statusColor,
-    postedPct, pendingPct, showTarget: !over,
+    postedPct, pendingPct, showTarget: !over && remain > 0.005,
     postedColor: over ? C.bad : BAR_FILL, pendingTint: tint(over ? C.bad : BAR_FILL, 0.45),
     dailyLabel: over ? 'Daily limit: $0' : `Daily limit: ${fmt(daily)}`,
     // Spreading is offered once a bill has pushed the category at least a cent over (the entry

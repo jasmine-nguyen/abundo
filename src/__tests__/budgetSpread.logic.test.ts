@@ -69,7 +69,7 @@ describe('budgetViews — spread adjustment', () => {
 describe('budgetDetail — spread', () => {
   it('a cushion flips over false yet keeps the plan reachable via spreadActive', () => {
     const d = detail({ budget: 250, posted: 1390.91, pending: 0, spreadAdjustment: 1390.91, spread: plan() });
-    expect(d.ofBudget).toBe('of $1,641');         // available envelope (header rounds to whole dollars)
+    expect(d.ofBudget).toBe('of\u00a0$1,640.91');      // available envelope, exact cents (WHIT-741)
     expect(d.statusLabel).not.toBe('Over budget — ease up');
     expect(d.spreadActive).toBe(true);            // reachable to edit/remove even though not "over"
     expect(d.canStartSpread).toBe(false);         // already has a plan

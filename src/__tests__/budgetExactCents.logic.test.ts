@@ -63,7 +63,7 @@ describe('budgetViews / budgetDetail — over-budget spend with cents (GAP)', ()
   it('[A15] list row: spent + "over" figures carry cents', () => {
     const row = budgetViews(over()).rows[0];
     expect(row.over).toBe(true);
-    expect(row.spentLabel).toBe('$90.25 of $80'); // fail-on-revert: fmt(90.25) → '$90'
+    expect(row.spentLabel).toBe('$90.25 of\u00a0$80'); // fail-on-revert: fmt(90.25) → '$90'
     expect(row.remainLabel).toBe('over');
     expect(row.remainAmount).toBe('$10.25');            // unsigned |80 - 90.25|; fmt would read '$10'
   });
@@ -75,7 +75,7 @@ describe('budgetViews / budgetDetail — over-budget spend with cents (GAP)', ()
     const row = budgetViews(makeState({ categories: [cat()], budgets: [budget({ id: 'coffee', budget: 100, posted: 85.25, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
     expect(row.over).toBe(false);
     expect(row.paceLabel).toBe('$35 over plan');         // fmt arm — whole-dollar, unchanged
-    expect(row.spentLabel).toBe('$85.25 of $100'); // spent figure still exact
+    expect(row.spentLabel).toBe('$85.25 of\u00a0$100'); // spent figure still exact
     expect(row.remainAmount).toBe('$14.75');             // 100 - 85.25
   });
 
@@ -95,19 +95,19 @@ describe('budgetViews — cents boundaries (GAP)', () => {
 
   it('[A17] a single penny is visible, not swallowed to $0', () => {
     const row = budgetViews(spendState(0.01)).rows[0];
-    expect(row.spentLabel).toBe('$0.01 of $100'); // fail-on-revert: fmt(0.01) → '$0'
+    expect(row.spentLabel).toBe('$0.01 of\u00a0$100'); // fail-on-revert: fmt(0.01) → '$0'
     expect(row.remainAmount).toBe('$99.99');
   });
 
   it('[A18] a large spend keeps the thousands separator AND the cents', () => {
     const row = budgetViews(spendState(1234.5, 0, 2000)).rows[0];
-    expect(row.spentLabel).toBe('$1,234.50 of $2,000');
+    expect(row.spentLabel).toBe('$1,234.50 of\u00a0$2,000');
     expect(row.remainAmount).toBe('$765.50'); // 2000 - 1234.50
   });
 
   it('[A19] exactly-zero spend reads a bare "$0" (no phantom ".00")', () => {
     const row = budgetViews(spendState(0)).rows[0];
-    expect(row.spentLabel).toBe('$0 of $100');
+    expect(row.spentLabel).toBe('$0 of\u00a0$100');
     expect(row.remainAmount).toBe('$100');
   });
 });
@@ -116,7 +116,8 @@ describe('budgetViews — cents boundaries (GAP)', () => {
 describe('exact-cents change leaves whole-dollar labels untouched (regression)', () => {
   it('[A20] whole spend row unchanged', () => {
     const row = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 10 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(row.spentLabel).toBe('$50 of $100 ·\u00a0$10\u00a0pending');
+    expect(row.spentLabel).toBe('$50 of\u00a0$100');
+    expect(row.pendingLabel).toBe('$10\u00a0pending');
     expect(row.remainAmount).toBe('$50');
   });
 

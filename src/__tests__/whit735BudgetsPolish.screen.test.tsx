@@ -6,6 +6,7 @@ import { screen } from '@testing-library/react-native';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { showBudgets } from './support/budgetsScreen';
+import { MINUS } from '../theme';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -28,7 +29,7 @@ describe('WHIT-735 Budgets polish', () => {
 
     expect(screen.getByTestId('budgets-hero-spent')).toHaveTextContent('$6,136.68');
     expect(screen.getByTestId('budgets-hero-budget')).toHaveTextContent('$5,785');
-    expect(screen.getByText('−$351.68')).toBeTruthy();
+    expect(screen.getByText(`${MINUS}$351.68`)).toBeTruthy();
     expect(screen.getByText('Over budget')).toBeTruthy();
   });
 

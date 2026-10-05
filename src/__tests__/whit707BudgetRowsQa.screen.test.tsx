@@ -90,10 +90,11 @@ it('[A25] the row press opens the detail', async () => {
 });
 
 // [A26] (P1) pending is named on the row.
-it('[A26] a row with pending reads "… of … · … pending"', async () => {
+it('[A26] a row with pending reads "… of …", with "… pending" on its own line (WHIT-741)', async () => {
   seed([COFFEE], { coffee: { target: 100, posted: 40, pending: 10 } });
   await renderWithQueries(<Budgets />);
-  expect(await screen.findByText('$50 of $100 · $10 pending')).toBeTruthy();
+  expect(await screen.findByText('$50 of $100')).toBeTruthy();
+  expect(screen.getByText('$10 pending')).toBeTruthy();
 });
 
 // [A27] (P1) the detail screen's marker uses the same word: "today's plan", not "today's target".

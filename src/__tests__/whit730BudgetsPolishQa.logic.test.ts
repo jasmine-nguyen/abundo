@@ -25,11 +25,11 @@ describe('pace words (WHIT-730)', () => {
 });
 
 describe('today tick (WHIT-730)', () => {
-  it('[A4] spending exactly the whole budget is not over, so the tick stays', () => {
+  it('[A4] spending exactly the whole budget is not over, but nothing is left so the tick hides (WHIT-741)', () => {
     const atLimit = budgetRowFor({ budget: 100, posted: 100, pending: 0 });
     expect(atLimit.over).toBe(false);
-    expect(atLimit.showTarget).toBe(true);
-    expect(budgetDetailFor({ budget: 100, posted: 100 }).showTarget).toBe(true);
+    expect(atLimit.showTarget).toBe(false);
+    expect(budgetDetailFor({ budget: 100, posted: 100 }).showTarget).toBe(false);
   });
 
   it('[A5] one cent over hides the tick on both the row and the detail screen', () => {

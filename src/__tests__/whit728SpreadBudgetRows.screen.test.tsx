@@ -8,6 +8,7 @@ import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedBudgetsTab } from './support/budgetsTab';
 import { renderLoadedBudgetsWithQueries } from './support/budgetsScreen';
+import { MINUS } from '../theme';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -26,7 +27,7 @@ it('a payback row shows "$617.75 of −$659" and the spread note', async () => {
     coffee: { target: 41, posted: 617.75, pending: 0, spread: { amount: 2100, cycles: 3, index: 1, adjustment: -700 } },
   });
   await renderLoadedBudgetsWithQueries();
-  expect(screen.getByText(/^\$617\.75 of −\$659/)).toBeTruthy();
+  expect(screen.getByText(`$617.75 of ${MINUS}$659`)).toBeTruthy();
   expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes spread bills');
 });
 

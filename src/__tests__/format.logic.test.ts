@@ -4,7 +4,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { cleanName, merchantLabel } from '../context';
 import { cycleName } from '../payCycle';
-import { fmt, fmt2, fmtBalance, fmtExact, fmtSignedExact, fmtCompact, tint, agoLabel, breakdownLineStyle, ADJUSTMENT_ROW, RECONCILE_EPSILON, C } from '../theme';
+import { fmt, fmt2, fmtBalance, fmtExact, fmtSignedExact, MINUS, fmtCompact, tint, agoLabel, breakdownLineStyle, ADJUSTMENT_ROW, RECONCILE_EPSILON, C } from '../theme';
 import { txn } from './factory';
 
 describe('cleanName / merchantLabel', () => {
@@ -96,10 +96,10 @@ describe('fmtExact', () => {
 
 describe('fmtSignedExact', () => {
   it('adds a real minus only below zero at the cent, keeping cents only when present', () => {
-    expect(fmtSignedExact(-351.68)).toBe('−$351.68');
+    expect(fmtSignedExact(-351.68)).toBe(`${MINUS}$351.68`);
     expect(fmtSignedExact(5785)).toBe('$5,785');
-    expect(fmtSignedExact(-659)).toBe('−$659');
-    expect(fmtSignedExact(-1234.5)).toBe('−$1,234.50');
+    expect(fmtSignedExact(-659)).toBe(`${MINUS}$659`);
+    expect(fmtSignedExact(-1234.5)).toBe(`${MINUS}$1,234.50`);
     expect(fmtSignedExact(-0.004)).toBe('$0');
   });
 });

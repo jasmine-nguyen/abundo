@@ -14,6 +14,11 @@ import { StaleDataLine } from '../../src/components/ListStates';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { loadFailureReason } from '../../src/apiError';
 
+// The tick just crosses the bar when nothing sits under it, so rows end evenly (WHIT-741).
+const SHORT_TICK_TAIL = 3;
+// Both big hero numbers grow with the user's text size up to the same cap, so they stay one size (WHIT-741).
+const HERO_BIG_MAX_SCALE = 1.4;
+
 const SECTIONS: { section: BudgetView['section']; heading: string }[] = [
   { section: 'spending', heading: 'SPENDING' },
   { section: 'earning', heading: 'EARNING' },
@@ -26,6 +31,7 @@ function RowHeader({ b }: { b: BudgetView }) {
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={styles.rowName}>{b.name}</Text>
         <Text style={styles.rowSub}>{b.spentLabel}</Text>
+        {b.pendingLabel ? <Text testID={`budget-row-pending-${b.id}`} style={styles.rowSub}>{b.pendingLabel}</Text> : null}
       </View>
       <View style={styles.rowRight}>
         <Text style={[styles.rowRemain, { color: b.remainColor }]} numberOfLines={1} adjustsFontSizeToFit>{b.remainAmount}</Text>
@@ -46,7 +52,7 @@ function BudgetRow({ b }: { b: BudgetView }) {
         note && <View style={styles.slimNote}>{note}</View>
       ) : (
         <View style={{ marginTop: 15 }}>
-          <BudgetBar postedPct={b.postedPct} pendingPct={b.pendingPct} targetPct={b.targetPct} postedColor={b.postedColor} pendingTint={b.pendingTint} showTarget={b.showTarget} />
+          <BudgetBar postedPct={b.postedPct} pendingPct={b.pendingPct} targetPct={b.targetPct} postedColor={b.postedColor} pendingTint={b.pendingTint} showTarget={b.showTarget} tickTail={b.paceLabel || b.note ? undefined : SHORT_TICK_TAIL} />
           {b.paceLabel || b.note ? (
             <View style={styles.paceRow}>
               {note}
@@ -63,39 +69,41 @@ function BudgetRow({ b }: { b: BudgetView }) {
   );
 }
 
-function HeroStat({ label, value, testID }: { label: string; value: string; testID: string }) {
-  return (
-    <View style={styles.heroStat}>
-      <Text style={styles.heroSmall}>{label}</Text>
-      <Text testID={testID} style={styles.heroStatValue} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
-    </View>
-  );
-}
-
 function BudgetsHero({ daysLeft, nextPayday, money, totals, children }: { daysLeft: number; nextPayday: string; money?: { amount: string; label: string }; totals?: { spent: string; budget: string }; children?: React.ReactNode }) {
+  const stats: { label: string; value: string; testID: string }[] = [];
+  if (totals) {
+    stats.push({ label: 'Spent', value: totals.spent, testID: 'budgets-hero-spent' });
+    stats.push({ label: 'Budget', value: totals.budget, testID: 'budgets-hero-budget' });
+  }
+  if (nextPayday) stats.push({ label: 'Next payday', value: formatDayMonth(nextPayday), testID: 'budgets-hero-payday' });
   return (
     <View style={styles.hero}>
       <HeroGradientFill />
       <View style={styles.heroBlob1} />
       <View style={styles.heroBlob2} />
       <Text style={styles.heroEyebrow}>THIS PAY CYCLE</Text>
-      <View style={[styles.heroRow, styles.heroTop]}>
-        <Text style={[styles.heroCol, styles.heroBig]} numberOfLines={1} adjustsFontSizeToFit>{daysLeft}</Text>
-        {money ? <Text style={[styles.heroCol, styles.heroBig]} numberOfLines={1} adjustsFontSizeToFit>{money.amount}</Text> : null}
+      <View style={styles.heroTop}>
+        <View style={styles.heroDaysCol}>
+          <Text style={styles.heroBig} numberOfLines={1} maxFontSizeMultiplier={HERO_BIG_MAX_SCALE}>{daysLeft}</Text>
+          <Text style={styles.heroLabel}>{daysLeft === 1 ? 'day left' : 'days left'}</Text>
+        </View>
+        {money ? (
+          <View style={styles.heroMoneyCol}>
+            <Text style={styles.heroBig} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={HERO_BIG_MAX_SCALE}>{money.amount}</Text>
+            <Text style={styles.heroLabel}>{money.label}</Text>
+          </View>
+        ) : null}
       </View>
-      <View style={styles.heroRow}>
-        <Text style={[styles.heroCol, styles.heroLabel]}>{daysLeft === 1 ? 'day left' : 'days left'}</Text>
-        {money ? <Text style={[styles.heroCol, styles.heroLabel]}>{money.label}</Text> : null}
-      </View>
-      {totals || nextPayday ? (
+      {stats.length > 0 ? (
         <View style={styles.heroStats}>
-          {totals ? (
-            <>
-              <HeroStat label="Spent" value={totals.spent} testID="budgets-hero-spent" />
-              <HeroStat label="Budget" value={totals.budget} testID="budgets-hero-budget" />
-            </>
-          ) : null}
-          {nextPayday ? <HeroStat label="Next payday" value={formatDayMonth(nextPayday)} testID="budgets-hero-payday" /> : null}
+          <View style={styles.heroStatsRow}>
+            {stats.map((stat) => <Text key={stat.testID} style={[styles.heroStat, styles.heroSmall]}>{stat.label}</Text>)}
+          </View>
+          <View style={styles.heroStatsRow}>
+            {stats.map((stat) => (
+              <Text key={stat.testID} testID={stat.testID} style={[styles.heroStat, styles.heroStatValue]} numberOfLines={1} adjustsFontSizeToFit>{stat.value}</Text>
+            ))}
+          </View>
         </View>
       ) : null}
       {children}
@@ -221,15 +229,17 @@ const styles = StyleSheet.create({
   heroBlob1: { position: 'absolute', right: -30, top: -30, width: 150, height: 150, borderRadius: 75, backgroundColor: C.heroBlobFill },
   heroBlob2: { position: 'absolute', right: 34, bottom: -46, width: 90, height: 90, borderRadius: 45, backgroundColor: C.heroBlobFill },
   heroEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.heroInkSoft, letterSpacing: 0.2 },
-  // Numbers and labels sit in separate rows so the two different-sized numbers share a baseline.
-  heroRow: { flexDirection: 'row', alignItems: 'baseline', gap: 16 },
-  heroTop: { marginTop: 6 },
-  // Columns share the row equally; minWidth 0 lets adjustsFontSizeToFit shrink a long amount.
-  heroCol: { flex: 1, minWidth: 0 },
+  // The days column sizes to its number and the money column takes the rest, so neither number
+  // shrinks alone (WHIT-741). Same size + top alignment keeps their baselines level.
+  heroTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 16, marginTop: 6 },
+  heroDaysCol: { flexShrink: 0 },
+  heroMoneyCol: { flex: 1, minWidth: 0 },
   // Days left and the money number share one size. No fixed lineHeight, so the number scales with the user's text size instead of clipping.
   heroBig: { fontFamily: FONT.display, fontSize: 44, fontWeight: '800', color: C.heroInk, letterSpacing: -1.5 },
   heroLabel: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.heroInk2 },
-  heroStats: { flexDirection: 'row', gap: 12, marginTop: 18 },
+  // Labels in one row, values in the next, so a wrapped label never pushes its value out of line (WHIT-741).
+  heroStats: { marginTop: 18 },
+  heroStatsRow: { flexDirection: 'row', gap: 12 },
   heroStat: { flex: 1, minWidth: 0 },
   heroStatValue: { fontFamily: FONT.display, fontSize: 17, fontWeight: '700', color: C.heroInk, marginTop: 2 },
   heroBottom: { marginTop: 16 },
@@ -254,7 +264,7 @@ const styles = StyleSheet.create({
   // tick sat far right. Removed — only the pace status remains, right-aligned.
   paceRow: { minHeight: 18, marginTop: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   pace: { marginLeft: 'auto' },
-  note: { fontFamily: FONT.body, fontSize: 12, color: C.textDim },
+  note: { fontFamily: FONT.body, fontSize: 12, color: C.textMid },
   paceLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textInfo },
 
   addBudget: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(C.accentAlt, 0.4), backgroundColor: tint(C.accentAlt, 0.07), borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },

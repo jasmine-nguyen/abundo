@@ -2,6 +2,7 @@
 // "$617.75 of −$659" and must say why with a muted "Includes $859 past overspend" (a positive
 // carryover → "Includes $40 past leftovers"). Maths, totals and the "over" label unchanged.
 import { describe, it, expect } from '@jest/globals';
+import { MINUS } from '../theme';
 import { budgetRowFor } from './support/budgetsTab';
 
 const noteOf = (row: object) => (row as { note?: string }).note;
@@ -9,7 +10,7 @@ const noteOf = (row: object) => (row as { note?: string }).note;
 describe('rollover budget rows explain their carryover (WHIT-728)', () => {
   it('Utilities: $200 target, carryover −859 → "of −$659" + "Includes $859 past overspend"', () => {
     const row = budgetRowFor({ budget: 200, posted: 617.75, pending: 0, rollover: true, carryover: -859 });
-    expect(row.spentLabel).toMatch(/^\$617\.75 of −\$659(?![\d,])/);
+    expect(row.spentLabel).toBe(`$617.75 of\u00a0${MINUS}$659`);
     expect(noteOf(row)).toBe('Includes $859 past overspend');
     expect(row.remainLabel).toBe('over');
     expect(row.remainAmount).toBe('$1,276.75');
@@ -17,7 +18,7 @@ describe('rollover budget rows explain their carryover (WHIT-728)', () => {
 
   it('a positive carryover → "Includes $40 past leftovers", label unchanged', () => {
     const row = budgetRowFor({ budget: 100, posted: 50, pending: 0, rollover: true, carryover: 40 });
-    expect(row.spentLabel).toMatch(/^\$50 of \$140(?![\d,])/);
+    expect(row.spentLabel).toBe('$50 of\u00a0$140');
     expect(noteOf(row)).toBe('Includes $40 past leftovers');
   });
 

@@ -7,6 +7,7 @@ import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { COFFEE } from './support/categories';
 import { showBudgets } from './support/budgetsScreen';
+import { MINUS } from '../theme';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -35,7 +36,7 @@ describe('WHIT-731 Budgets top card: Spent · Budget · Next payday row', () => 
     await showOverBudget();
 
     // 5948.92 posted + 187.76 pending − 5785 budget = 351.68 over.
-    expect(screen.getByText('−$351.68')).toBeTruthy();
+    expect(screen.getByText(`${MINUS}$351.68`)).toBeTruthy();
     expect(screen.getByText('Over budget')).toBeTruthy();
 
     expect(screen.getByTestId('budgets-hero-spent')).toHaveTextContent('$6,136.68');
@@ -59,7 +60,7 @@ describe('WHIT-731 Budgets top card: Spent · Budget · Next payday row', () => 
       coffee: { target: 200, posted: 10, pending: 0, rollover: true, carryover: -859.5, available: -659.5 },
     }, { categories: [COFFEE] });
 
-    expect(screen.getByTestId('budgets-hero-budget')).toHaveTextContent('−$659.50');
+    expect(screen.getByTestId('budgets-hero-budget')).toHaveTextContent(`${MINUS}$659.50`);
     expect(screen.getByTestId('budgets-hero-spent')).toHaveTextContent('$10');
   });
 
@@ -67,7 +68,7 @@ describe('WHIT-731 Budgets top card: Spent · Budget · Next payday row', () => 
     await showOverBudget();
 
     const daysLeftSize = StyleSheet.flatten(screen.getByText('22').props.style).fontSize as number;
-    const moneySize = StyleSheet.flatten(screen.getByText('−$351.68').props.style).fontSize as number;
+    const moneySize = StyleSheet.flatten(screen.getByText(`${MINUS}$351.68`).props.style).fontSize as number;
 
     expect(moneySize).toBe(daysLeftSize);
   });

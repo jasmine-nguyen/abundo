@@ -7,6 +7,7 @@ import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
 import { seedBudgets, renderBudgets, renderLoadedBudgets, heroTotals } from './support/budgetsScreen';
+import { MINUS } from '../theme';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -16,7 +17,6 @@ jest.mock('../auth', () => ({
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const server = installFakeServer();
-const MINUS = '−';
 
 beforeEach(() => {
   seedBudgets(server, { payCycle: { length: 30, last_pay_date: '2026-07-01', days_left: 4 } });

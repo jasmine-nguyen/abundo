@@ -78,10 +78,12 @@ export function HeaderTextButton({ label, onPress, testID, busy = false, accessi
 
 // A pace progress bar: posted (solid) + pending (translucent) + target tick.
 export function BudgetBar({
-  postedPct, pendingPct, targetPct, postedColor, pendingTint, height = 10, showTarget = true,
+  postedPct, pendingPct, targetPct, postedColor, pendingTint, height = 10, showTarget = true, tickTail = 18,
 }: {
   postedPct: number; pendingPct: number; targetPct: number;
   postedColor: string; pendingTint: string; height?: number; showTarget?: boolean;
+  // How far the tick's band reaches below the bar; small when nothing sits under it (WHIT-741).
+  tickTail?: number;
 }) {
   return (
     <View>
@@ -90,7 +92,7 @@ export function BudgetBar({
         <View style={{ position: 'absolute', top: 0, bottom: 0, left: `${postedPct}%`, width: `${pendingPct}%`, backgroundColor: pendingTint }} />
       </View>
       {showTarget && (
-        <View style={{ position: 'relative', height: 18, marginTop: 1 }}>
+        <View style={{ position: 'relative', height: tickTail, marginTop: 1 }}>
           <View style={{ position: 'absolute', top: -13, bottom: 0, width: 2, backgroundColor: C.progressTick, left: `${targetPct}%` }} />
         </View>
       )}

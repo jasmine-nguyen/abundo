@@ -7,6 +7,7 @@ import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { COFFEE, SALARY, SAVINGS } from './support/categories';
 import { showBudgets, heroTotals } from './support/budgetsScreen';
+import { MINUS } from '../theme';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -110,7 +111,7 @@ describe('WHIT-716 QA — over line', () => {
   // [A10] (P1) over budget with pending: the spent line includes it, overspend amount said once
   it('[A10] over with pending → "−$20.50" once, Spent "$120.50", Budget "$100"', async () => {
     await showBudgets(server, { coffee: { target: 100, posted: 90, pending: 30.5 } }, { categories: [COFFEE] });
-    expect(screen.getAllByText('−$20.50')).toHaveLength(1);
+    expect(screen.getAllByText(`${MINUS}$20.50`)).toHaveLength(1);
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(heroTotals()).toMatchObject({ spent: '$120.50', budget: '$100' });
   });

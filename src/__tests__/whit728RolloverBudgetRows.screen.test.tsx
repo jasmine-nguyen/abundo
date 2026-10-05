@@ -9,6 +9,7 @@ import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedBudgetsTab } from './support/budgetsTab';
 import { renderLoadedBudgetsWithQueries } from './support/budgetsScreen';
+import { MINUS } from '../theme';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -26,7 +27,7 @@ it('a rollover row in deficit shows "$617.75 of −$659" and "Includes $859 past
     coffee: { target: 200, posted: 617.75, pending: 0, rollover: true, carryover: -859, available: -659 },
   });
   await renderLoadedBudgetsWithQueries();
-  expect(screen.getByText(/^\$617\.75 of −\$659/)).toBeTruthy();
+  expect(screen.getByText(`$617.75 of ${MINUS}$659`)).toBeTruthy();
   expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes $859 past overspend');
 });
 
