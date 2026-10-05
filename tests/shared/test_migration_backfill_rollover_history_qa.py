@@ -12,7 +12,7 @@ from decimal import Decimal
 import pytest
 
 from _dynamo_fakes import FakeTable, _client_error
-from _migration_scripts import load_migration_script
+from _migration_scripts import load_migration_script, use_fake_table
 from _rollover_fakes import charge, cycle_record
 from test_budget_standing import budget_standing  # noqa: F401 — the fixture
 from test_migration_backfill_rollover_history import (
@@ -23,6 +23,7 @@ from test_migration_backfill_rollover_history import (
     LENGTH,
     TRANSACTIONS,
     _utilities,
+    _Writes,
 )
 
 _KEY = {"pk": "BUDGETS", "sk": "BUDGETS"}
@@ -58,8 +59,7 @@ def _run_main(monkeypatch, table, *argv, transactions=TRANSACTIONS):
         reads.append((start, end))
         return transactions
 
-    monkeypatch.setattr(script.boto3, "resource", lambda *a, **k: type(
-        "_Resource", (), {"Table": lambda self, name: table})(), raising=False)
+    use_fake_table(monkeypatch, script, table)
     monkeypatch.setattr(script, "read_window", read_window)
     monkeypatch.setattr(script, "TransactionRepository", lambda: None)
     monkeypatch.setattr(script, "CategoryRepository", _Categories)
@@ -186,15 +186,6 @@ def test_main_with_no_budgets_item_reads_and_writes_nothing(monkeypatch, capsys,
     assert reads == []
     assert table.update_calls == []
     assert "nothing to rebuild" in capsys.readouterr().out
-
-
-class _Writes:
-    def __init__(self):
-        self.calls = []
-
-    def __call__(self, category_id, history):
-        self.calls.append((category_id, history))
-        return True
 
 
 def _run(entries, transactions=TRANSACTIONS, categories=CATEGORIES):

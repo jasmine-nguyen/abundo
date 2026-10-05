@@ -10,7 +10,7 @@ from decimal import Decimal
 import pytest
 
 from _dynamo_fakes import FakeTable, _client_error
-from _migration_scripts import load_migration_script
+from _migration_scripts import load_migration_script, use_fake_table
 
 _PK = "ACCOUNT#westpac-altitude-black"
 
@@ -144,8 +144,7 @@ def _seed_main_table():
 def _run_main(monkeypatch, table, *argv):
     script = _load_script()
     monkeypatch.setattr(script, "Attr", _Attr)
-    monkeypatch.setattr(script.boto3, "resource", lambda *a, **k: type(
-        "_Resource", (), {"Table": lambda self, name: table})(), raising=False)
+    use_fake_table(monkeypatch, script, table)
     monkeypatch.setattr(sys, "argv", ["delete_zero_amount_transactions.py", *argv])
     script.main()
 
