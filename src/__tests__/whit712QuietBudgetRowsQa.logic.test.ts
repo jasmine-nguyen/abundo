@@ -11,15 +11,11 @@ describe('pace deadband edges (WHIT-712)', () => {
     expect(rowFor({ budget: 100, posted: 49.5, pending: 0 }).paceLabel).toBe('');
   });
 
-  // [A2] (P0) a cent past the deadband speaks, in muted ink. "Over plan" also needs little room
-  // left per day (WHIT-732), so that side uses a borrowed $55 envelope.
-  it('[A2] a cent past ±$0.50 → over plan / under plan, both muted', () => {
+  // [A2] (P0) a cent past the deadband speaks. "Over plan" also needs little room
+  // left per day (WHIT-732), so it uses a borrowed $55 envelope.
+  it('[A2] a cent past +$0.50 → over plan', () => {
     const behind = rowFor({ budget: 100, posted: 50.51, pending: 0, rollover: true, carryover: -45 });
     expect(behind.paceLabel).toMatch(/ over plan$/);
-    expect(behind.paceColor).toBe(C.textInfo);
-    const ahead = rowFor({ budget: 100, posted: 49.49, pending: 0 });
-    expect(ahead.paceLabel).toMatch(/ under plan$/);
-    expect(ahead.paceColor).toBe(C.textDim);
   });
 
   // [A3] (P1) spent exactly the budget is NOT over: amount "left", line is the behind-pace warning.
@@ -32,11 +28,11 @@ describe('pace deadband edges (WHIT-712)', () => {
   });
 
   // [A4] (P1) a cents overspend with no spread: the exact amount once, on the red amount only.
-  it('[A4] over by $20.40 (rollover, no spread) → "$20.40" once, the pace slot only links to see why', () => {
+  it('[A4] over by $20.40 (rollover, no spread) → "$20.40" once, no pace line', () => {
     const row = rowFor({ budget: 100, posted: 120.4, pending: 0, rollover: true, carryover: 0 });
     expect(row.remainAmount).toBe('$20.40');
     expect(row.remainColor).toBe(C.bad);
-    expect(row.paceLabel).toBe('See what happened →'); // WHIT-733
+    expect(row.paceLabel).toBe('');
     expect(row.spentLabel).toBe('$120.40 of $100');
   });
 });

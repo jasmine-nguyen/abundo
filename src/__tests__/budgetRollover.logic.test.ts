@@ -53,7 +53,7 @@ describe('budgetViews — negative carryover (borrow)', () => {
     expect(row.over).toBe(true);                    // 80 > available 60
     expect(row.remainLabel).toBe('over');
     expect(row.remainAmount).toBe('$20'); // spent - available, said once (WHIT-712)
-    expect(row.paceLabel).toBe('See what happened →'); // WHIT-733
+    expect(row.paceLabel).toBe('');
   });
 });
 

@@ -1905,7 +1905,7 @@ export interface BudgetView {
   id: string; name: string; color: string; icon: string; chipBg: string;
   spentLabel: string; remainAmount: string; remainLabel: string; remainColor: string;
   postedPct: number; pendingPct: number; targetPct: number; postedColor: string;
-  pendingTint: string; paceLabel: string; paceColor: string; over: boolean;
+  pendingTint: string; paceLabel: string; over: boolean;
   // WHIT-728: a muted line saying why this cycle's budget differs from the target (spread or rollover), else ''.
   note: string;
   // Sub-category tree (WHIT-221): `depth` is the indent level — the number of the
@@ -1913,15 +1913,12 @@ export interface BudgetView {
   // isn't budgeted). `parentId` is the nearest budgeted ancestor's id (the row it
   // nests under), or null at the top level.
   depth: number; parentId: string | null;
-  // WHIT-707: Spending rows list before Earning rows; income hides the today marker; an
-  // over-budget row that can start a spread carries its overspend as the link's prefill.
-  section: 'spending' | 'earning'; showTarget: boolean; spreadPrefill: number | null;
+  // WHIT-707: Spending rows list before Earning rows; income hides the today marker.
+  section: 'spending' | 'earning'; showTarget: boolean;
   // WHIT-727: true only for a spend row past its pace line but not over.
   behindPace: boolean;
   // WHIT-730: a spend row with nothing spent yet (and not over), drawn slim without a bar.
   unspent: boolean;
-  // WHIT-733: an over-budget rollover row (no spread possible) links to its detail screen.
-  seeWhy: boolean;
 }
 
 // The exact slice budgetViews reads. A narrow input (not the whole AppContext) so a
@@ -2046,9 +2043,9 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
         remainLabel: met ? 'above target' : 'to go',
         remainColor: C.good,
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: BAR_FILL,
-        pendingTint: tint(BAR_FILL, 0.45), paceLabel: '', paceColor: C.textInfo, over: false,
+        pendingTint: tint(BAR_FILL, 0.45), paceLabel: '', over: false,
         note: '', depth, parentId,
-        section: 'earning', showTarget: false, spreadPrefill: null, behindPace: false, unspent: false, seeWhy: false,
+        section: 'earning', showTarget: false, behindPace: false, unspent: false,
       });
       group(parentId, b.id);
       continue;
@@ -2065,18 +2062,10 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     if (depth === 0) { totBudget += available; totSpent += spent; totPending += pending; totRemain += remain; }
     const over = spent > available;
     const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
-    // Quiet unless off pace (WHIT-712): no line when on pace, and an overspend is said once by the
-    // red amount — the line only offers the way out (a spread) when one can start.
-    let paceLabel = '', paceColor: string = C.textInfo;
-    const spread = budgetSpreadEligibility(c, b);
-    const spreadPrefill = spread.entry === 'start' ? spread.overspend : null;
+    // Quiet unless spending too fast (WHIT-712): an overspend is said once by the red amount,
+    // and being under plan is good news, so neither gets a line.
     const behindPace = paceWarning({ spent, target, available, over }, s);
-    const seeWhy = over && b.rollover;
-    if (over) {
-      if (spreadPrefill !== null) { paceLabel = 'Spread it over pay cycles →'; paceColor = C.accentSoft; }
-      else if (seeWhy) { paceLabel = 'See what happened →'; paceColor = C.textDim; }
-    } else if (behindPace) paceLabel = fmt(spent - target) + ' over plan';
-    else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under plan'; paceColor = C.textDim; }
+    const paceLabel = behindPace ? fmt(spent - target) + ' over plan' : '';
     // "of" shows the AVAILABLE envelope so it reconciles with the remaining amount (available −
     // spent). `spent` includes pending; when some is pending, name it too (as Insights does).
     let spentLabel = `${fmtExact(spent)} of ${fmtSigned(available)}`;
@@ -2088,9 +2077,9 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
       spentLabel, remainAmount: fmtExact(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,
       postedPct, pendingPct, targetPct: pacePct(target, den), postedColor: over ? C.bad : BAR_FILL,
-      pendingTint: tint(over ? C.bad : BAR_FILL, 0.45), paceLabel, paceColor, over,
+      pendingTint: tint(over ? C.bad : BAR_FILL, 0.45), paceLabel, over,
       note, depth, parentId,
-      section: 'spending', showTarget: !over, spreadPrefill, behindPace, unspent, seeWhy,
+      section: 'spending', showTarget: !over, behindPace, unspent,
     });
     group(parentId, b.id);
   }

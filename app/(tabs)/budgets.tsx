@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator, RefreshControl, type StyleProp, type TextStyle } from 'react-native';
-import { useRouter, useFocusEffect, type Href } from 'expo-router';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmt, fmtExact, fmtSigned,tint, PRESSED } from '../../src/theme';
 import { formatDayMonth } from '../../src/dateutil';
 import { Icon, Glyph } from '../../src/icons';
@@ -35,21 +35,9 @@ function RowHeader({ b }: { b: BudgetView }) {
   );
 }
 
-// A tappable pace line: the spread link, or "See what happened →" on an over-budget rollover row.
-function PaceLink({ testID, href, label, style }: { testID: string; href: Href; label: string; style: StyleProp<TextStyle> }) {
-  const router = useRouter();
-  return (
-    <Pressable testID={testID} onPress={() => router.push(href)} hitSlop={8}>
-      <Text style={style}>{label}</Text>
-    </Pressable>
-  );
-}
-
 function BudgetRow({ b }: { b: BudgetView }) {
   const router = useRouter();
   const note = b.note ? <Text testID={`budget-row-note-${b.id}`} style={styles.note}>{b.note}</Text> : null;
-  // Under plan is the only label that is neither behind pace nor a spread → quiet, not bold.
-  const paceStyle = [styles.paceLabel, { color: b.paceColor }, !b.behindPace && b.spreadPrefill === null && styles.paceMuted];
   return (
     <Pressable testID={`budget-row-${b.id}`} onPress={() => router.push(`/budget/${b.id}`)} style={({ pressed }) => [styles.row, b.unspent && styles.rowSlim, b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }, pressed && PRESSED]}>
       <RowHeader b={b} />
@@ -64,13 +52,7 @@ function BudgetRow({ b }: { b: BudgetView }) {
               {note}
               {b.paceLabel ? (
                 <View style={styles.pace}>
-                  {b.spreadPrefill !== null ? (
-                    <PaceLink testID={`budget-row-spread-${b.id}`} href={`/budget/spread?categoryId=${b.id}&prefill=${b.spreadPrefill}`} label={b.paceLabel} style={paceStyle} />
-                  ) : b.seeWhy ? (
-                    <PaceLink testID={`budget-row-see-why-${b.id}`} href={`/budget/${b.id}`} label={b.paceLabel} style={paceStyle} />
-                  ) : (
-                    <Text style={paceStyle}>{b.paceLabel}</Text>
-                  )}
+                  <Text style={styles.paceLabel}>{b.paceLabel}</Text>
                 </View>
               ) : null}
             </View>
@@ -274,8 +256,7 @@ const styles = StyleSheet.create({
   paceRow: { minHeight: 18, marginTop: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   pace: { marginLeft: 'auto' },
   note: { fontFamily: FONT.body, fontSize: 12, color: C.textDim },
-  paceLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700' },
-  paceMuted: { fontWeight: '400' },
+  paceLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textInfo },
 
   addBudget: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(C.accentAlt, 0.4), backgroundColor: tint(C.accentAlt, 0.07), borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   addBudgetText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSoft },

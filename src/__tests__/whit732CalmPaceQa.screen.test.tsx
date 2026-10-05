@@ -35,7 +35,6 @@ it('[A14] a slightly-ahead row is silent; a row that must slow down is muted, no
   seedBudgetsTab(server, { coffee: { target: 100, posted: 70, pending: 0 } });
   await renderLoadedBudgetsWithQueries();
   expect(screen.queryByText(/over plan$/)).toBeNull();
-  expect(screen.queryByText(/under plan$/)).toBeNull();
 });
 
 it('[A14] a row that must slow down reads "$35 over plan" in muted ink', async () => {

@@ -1,6 +1,6 @@
 // WHIT-707 QA — the Budgets tab and budget detail on screen: headings only for sections with rows,
-// section order, the income "next pay" text from the real pay-cycle clock, the quiet over line vs
-// the spread link, the row press still opening the detail, and "today's plan" on the detail screen.
+// section order, the income "next pay" text from the real pay-cycle clock, the quiet over line,
+// the row press opening the detail, and "today's plan" on the detail screen.
 // Real ../api over the fake server; ../auth + expo-router mocked.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
@@ -84,24 +84,18 @@ it('[A23] 14 days left → "next pay ~17 Oct"', async () => {
   expect(await screen.findByText('$1,000 earned · next pay ~17 Oct')).toBeTruthy();
 });
 
-// [A24] (P0) over but rollover → the overspend shows once on the amount, no spread link.
-it('[A24] over + rollover → overspend said once, no spread link', async () => {
+// [A24] (P0) over but rollover → the overspend shows once on the amount.
+it('[A24] over + rollover → overspend said once', async () => {
   seed([COFFEE], { coffee: { target: 100, posted: 120, pending: 0, rollover: true, carryover: 0 } });
   await renderLoadedBudgetsWithQueries();
   expect(screen.getByText('$20')).toBeTruthy();
   expect(screen.queryByText('$20 over budget')).toBeNull();
-  expect(screen.queryByTestId('budget-row-spread-coffee')).toBeNull();
-  expect(screen.queryByText('Spread it over pay cycles →')).toBeNull();
 });
 
-// [A25] (P0) the spread link carries exact-cents prefill; pressing the row body still opens detail.
-it('[A25] spread link prefill keeps cents; the row press still opens the detail', async () => {
+// [A25] (P0) pressing a full row (with a bar) opens its detail.
+it('[A25] the row press opens the detail', async () => {
   seed([COFFEE], { coffee: { target: 80, posted: 90.25, pending: 0 } });
   await renderLoadedBudgetsWithQueries();
-  fireEvent.press(screen.getByTestId('budget-row-spread-coffee'));
-  expect(routerSpies.push).toHaveBeenCalledTimes(1);
-  expect(routerSpies.push).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=10.25');
-  routerSpies.push.mockClear();
   fireEvent.press(screen.getByText('Cafes & Coffee'));
   expect(routerSpies.push).toHaveBeenCalledWith('/budget/coffee');
 });

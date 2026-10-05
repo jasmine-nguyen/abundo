@@ -17,18 +17,11 @@ describe('budget rows: calm pace line and a tick that matches it (WHIT-732)', ()
     expect(row.behindPace).toBe(false);
   });
 
-  it('a row that clearly needs slowing down says "$X over plan" in muted ink', () => {
+  it('a row that clearly needs slowing down says "$X over plan"', () => {
     // $85 of $100 at halfway: $15 over 7 days ($2.14/day) is under half the daily plan ($3.57).
     const row = rowFor({ budget: 100, posted: 85, pending: 0 });
     expect(row.paceLabel).toBe('$35 over plan');
-    expect(row.paceColor).toBe(C.textInfo);
     expect(row.behindPace).toBe(true);
-  });
-
-  it('the "under plan" line stays, muted', () => {
-    const row = rowFor({ budget: 100, posted: 30, pending: 0 });
-    expect(row.paceLabel).toBe('$20 under plan');
-    expect(row.paceColor).toBe(C.textDim);
   });
 
   it('the tick sits on the base pace target, on a bar scaled to the envelope', () => {
@@ -36,7 +29,6 @@ describe('budget rows: calm pace line and a tick that matches it (WHIT-732)', ()
     expect(rowFor({ budget: 100, posted: 30, pending: 0 }).targetPct).toBe(50);
     // Rollover leftovers: $200 envelope, $50 pace → a quarter along the bar.
     const leftovers = rowFor({ budget: 100, posted: 30, pending: 0, rollover: true, carryover: 100 });
-    expect(leftovers.paceLabel).toBe('$20 under plan');
     expect(leftovers.targetPct).toBe(25);
     // Past overspend: $70 envelope, $50 pace → right of halfway.
     expect(rowFor({ budget: 100, posted: 10, pending: 0, rollover: true, carryover: -30 }).targetPct).toBe(71);
