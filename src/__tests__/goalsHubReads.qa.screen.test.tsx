@@ -33,6 +33,7 @@ jest.mock('../context', () => {
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: jest.fn() }),
   useFocusEffect: () => {},
+  useIsFocused: () => true,
 }));
 
 import Goals from '../../app/(tabs)/goals';

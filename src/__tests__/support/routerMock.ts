@@ -49,5 +49,6 @@ export function routerMockModule() {
     useRouter: () => router,
     useLocalSearchParams: () => params,
     useFocusEffect: (callback: () => void) => React.useEffect(() => callback(), [callback]),
+    useIsFocused: () => true,
   };
 }
