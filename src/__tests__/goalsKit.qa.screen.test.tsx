@@ -10,6 +10,7 @@ import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedGoal, seedGoalsHub } from './support/goalsScreen';
+import { resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { useGoalScreenData, useGoalsScreenData, type GoalScreenData, type GoalsScreenData } from '../queries';
 import type { GoalRecord, MilestoneRecord } from '../api';
@@ -21,11 +22,7 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => ({ saveMilestones: mockSaveMilestones, showToast: jest.fn() }) };
 });
-const mockPush = jest.fn();
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush, back: jest.fn() }),
-  useFocusEffect: () => {},
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Mortgage from '../../app/mortgage';
 import Milestone from '../../app/milestone';
@@ -36,7 +33,7 @@ useTestQueryClient();
 
 beforeEach(() => {
   resetAuth();
-  mockPush.mockClear();
+  resetRouter();
   mockSaveMilestones.mockClear();
 });
 

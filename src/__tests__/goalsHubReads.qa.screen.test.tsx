@@ -8,6 +8,7 @@ import { act, render, screen, fireEvent, within, waitFor } from '@testing-librar
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { resetRouter } from './support/routerMock';
 import { pinToday } from './support/clock';
 import { seedHubWith, type GoalsHubSeed } from './support/goalsScreen';
 import { queryClient } from '../queryClient';
@@ -17,15 +18,9 @@ jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeH
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openGoalBalance: jest.fn() }) };
-});
+jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule());
 
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn() }),
-  useFocusEffect: () => {},
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Goals from '../../app/(tabs)/goals';
 
@@ -39,6 +34,7 @@ const seedHub = (over: GoalsHubSeed = {}) => seedHubWith(server, over);
 
 beforeEach(() => {
   resetAuth();
+  resetRouter();
   pinToday(new Date(2026, 6, 11));
   seedHub();
 });

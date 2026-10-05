@@ -13,6 +13,7 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { seedHubWith, type GoalsHubSeed } from './support/goalsScreen';
+import { resetRouter } from './support/routerMock';
 import type { LoanFacts } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
@@ -20,16 +21,9 @@ jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeH
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 const mockOpenGoalBalance = jest.fn();
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openGoalBalance: mockOpenGoalBalance }) };
-});
+jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule(() => mockOpenGoalBalance));
 
-const mockPush = jest.fn();
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush }),
-  useFocusEffect: () => {},
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Goals from '../../app/(tabs)/goals';
 
@@ -42,7 +36,7 @@ useTestQueryClient();
 const seedHub = (over: GoalsHubSeed = {}) => seedHubWith(server, over);
 
 beforeEach(() => {
-  mockPush.mockClear();
+  resetRouter();
   mockOpenGoalBalance.mockClear();
   resetAuth();
   pinToday(new Date(2026, 6, 11));

@@ -1056,6 +1056,13 @@ export interface GoalsScreenData {
   // mortgage hiccup shows the card's "—" + retry, never blanks the goals list.
   mortgageError: boolean;
   payCycleError: boolean; // WHIT-72: first-load pay-cycle failure → the goal page's pace can't be trusted
+  // WHIT-747: the mortgage's saved milestone plan, for the celebration. Secondary, like the
+  // mortgage reads; `milestonesLoaded` lets the celebration wait for it.
+  milestones: MilestoneRecord[];
+  milestonesLoaded: boolean;
+  // The goals list has really arrived (not the empty stand-in), so the celebration can't mistake
+  // "not loaded" for "no goals" and wipe its saved copy.
+  goalsLoaded: boolean;
   isLoading: boolean; // first load, nothing cached yet → spinner
   isError: boolean; // a PRIMARY read failed after retries → inline retry
   refetch: () => void; // force a refresh (inline Retry / pull-to-refresh)
@@ -1077,6 +1084,7 @@ export function useGoalsScreenData(): GoalsScreenData {
   const balancesQuery = useAccountBalancesQuery(authed);
   const homeLoanQuery = useHomeLoanQuery(authed);
   const loanFactsQuery = useLoanFactsQuery(authed);
+  const milestonesQuery = useMilestonesQuery(authed);
 
   // account_id → live SIGNED balance. Secondary data: a balances failure/empty just means a
   // synced card shows "—", so it must NOT gate the screen's loading/error status.
@@ -1092,7 +1100,7 @@ export function useGoalsScreenData(): GoalsScreenData {
   // Retry / pull-to-refresh fire EVERY read (incl. the secondary balances + mortgage summary)
   // so a pull refreshes the whole hub. But isLoading/isError below come from only the two
   // PRIMARY reads, so this can't be a straight `...status` spread like the other composites.
-  const combined = useCombineScreenQueries([goalsQuery, payCycleQuery, balancesQuery, homeLoanQuery, loanFactsQuery]);
+  const combined = useCombineScreenQueries([goalsQuery, payCycleQuery, balancesQuery, homeLoanQuery, loanFactsQuery, milestonesQuery]);
 
   return {
     goals: goalsQuery.data ?? EMPTY_GOALS,
@@ -1105,6 +1113,9 @@ export function useGoalsScreenData(): GoalsScreenData {
     // refetch as honest waiting copy; only a NEVER-loaded read flags the card's error.
     mortgageError: firstLoadError(homeLoanQuery),
     payCycleError: firstLoadError(payCycleQuery),
+    milestones: milestonesQuery.data ?? EMPTY_MILESTONES,
+    milestonesLoaded: !milestonesQuery.isLoading,
+    goalsLoaded: goalsQuery.isSuccess,
     isLoading: goalsQuery.isLoading || payCycleQuery.isLoading,
     isError: goalsQuery.isError || payCycleQuery.isError,
     refetch: combined.refetch,

@@ -104,7 +104,11 @@ export function GoalProgress({ goal, view, onPastDue }: { goal: GoalRecord; view
         </Text>
       )}
 
-      {nudge ? (
+      {view.targetReached ? (
+        <View style={styles.foot}>
+          <Text testID={`goal-reached-${goal.id}`} style={styles.reached}>Goal reached</Text>
+        </View>
+      ) : nudge ? (
         <Pressable testID={`goal-pastdue-${goal.id}`} onPress={onPastDue} hitSlop={8} style={styles.foot}>
           <Text style={styles.footL}>Past your date — pick a new one?</Text>
         </Pressable>
@@ -132,4 +136,5 @@ const styles = StyleSheet.create({
   foot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 11 },
   footL: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.accentSoft },
   footR: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim },
+  reached: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.good },
 });

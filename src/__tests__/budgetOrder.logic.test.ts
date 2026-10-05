@@ -1,8 +1,8 @@
-// WHIT-727 / WHIT-745 — urgentFirst ordering rules (over budget first, nothing else lifts) and the behindPace flag.
+// WHIT-727 / WHIT-745 — urgentFirst ordering rules (over budget first, nothing else lifts).
 import { describe, it, expect } from '@jest/globals';
 import { urgentFirst } from '../budgetOrder';
 import { cat, budget } from './factory';
-import { budgetRowFor, budgetRowsFor as rowsFor, rowIds as ids } from './support/budgetsTab';
+import { budgetRowsFor as rowsFor, rowIds as ids } from './support/budgetsTab';
 import { COFFEE as coffee, DINING as dining, GROCERIES as groceries, LATTE as latte, SALARY as salary } from './support/categories';
 
 const shopping = cat({ id: 'shopping', name: 'Shopping' });
@@ -46,18 +46,5 @@ describe('urgentFirst', () => {
       budget({ id: 'shopping', budget: 100, posted: 50, pending: 0 }),
     ]);
     expect(ids(urgentFirst(rows))).toEqual(['groceries', 'dining', 'shopping']);
-  });
-});
-
-describe('behindPace', () => {
-  it('is true for a row past its pace line', () => {
-    const row = budgetRowFor({ budget: 100, posted: 85, pending: 0 });
-    expect(row.behindPace).toBe(true);
-  });
-
-  it('is false for an on-pace, over-budget or income row', () => {
-    expect(budgetRowFor({ budget: 100, posted: 50, pending: 0 }).behindPace).toBe(false);
-    expect(budgetRowFor({ budget: 100, posted: 150, pending: 0 }).behindPace).toBe(false);
-    expect(budgetRowFor({ id: 'salary', budget: 5000, posted: 0, pending: 0 }, salary).behindPace).toBe(false);
   });
 });

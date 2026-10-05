@@ -89,7 +89,7 @@ describe('budgetDetail pace — gaps', () => {
 
   // [G8] Regression guard: the Income branch is untouched by the pace change. An income
   // (earn-target) budget far past linear pace must still read the calm earn copy/colour,
-  // never the amber spend caution. (Not expected to fail on reverting `behindPace`.)
+  // never the amber spend caution.
   it('[G8] income budget past pace stays "keep earning", never amber', () => {
     const income = cat({ bucket: 'Income', name: 'Salary' });
     // actual 900 < target 1000 (not met) but way past linear pace (500). Income → calm.

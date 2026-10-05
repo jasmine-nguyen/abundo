@@ -22,17 +22,14 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { seedHubWith, type GoalsHubSeed } from './support/goalsScreen';
+import { routerSpies, resetRouter } from './support/routerMock';
 import type { LoanFacts } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openGoalBalance: jest.fn() }) };
-});
-const mockPush = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }), useFocusEffect: () => {} }));
+jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule());
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Goals from '../../app/(tabs)/goals';
 
@@ -47,7 +44,7 @@ useTestQueryClient();
 const seedHub = (over: GoalsHubSeed = {}) => seedHubWith(server, { balances: {}, ...over });
 
 beforeEach(() => {
-  mockPush.mockClear();
+  resetRouter();
   resetAuth();
   pinToday(new Date(2026, 6, 11));
   seedHub();
@@ -95,7 +92,7 @@ describe('WHIT-487 plain mortgage card — owing headline gaps', () => {
     seedHub({ homeLoan: { balance: null, asOf: null } });
     await renderWithQueries(<Goals />);
     fireEvent.press(screen.getByTestId('mortgage-link'));
-    expect(mockPush).toHaveBeenCalledWith('/mortgage');
+    expect(routerSpies.push).toHaveBeenCalledWith('/mortgage');
   });
 
   // [O5] the RICH branch must NOT also render the plain headline testID — only one branch owns the

@@ -26,15 +26,12 @@ import { queryClient } from '../queryClient';
 // a past/today date and the happy paths a future one. See support/mockDatePicker.
 jest.mock('@react-native-community/datetimepicker', () => require('./support/mockDatePicker').mockDatePickerModule());
 import { setPickedDate, resetPickedDate, FUTURE, FUTURE_ISO } from './support/mockDatePicker';
+import { routerSpies, setParams, resetRouter } from './support/routerMock';
 
 const mockSaveGoal = jest.fn(async (_editId: string | null, _body: unknown) => true);
 const mockDeleteGoal = jest.fn(async (_id: string) => true);
 const mockShowToast = jest.fn();
-const mockBack = jest.fn();
-const mockReplace = jest.fn();
-const mockDismissAll = jest.fn();
 
-let mockParams: { id?: string };
 let goals: GoalRecord[];
 let balances: AccountBalance[];
 let transactions: Transaction[];
@@ -47,10 +44,7 @@ jest.mock('../context', () => {
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-jest.mock('expo-router', () => ({
-  useLocalSearchParams: () => mockParams,
-  useRouter: () => ({ back: mockBack, replace: mockReplace, dismissAll: mockDismissAll, push: jest.fn() }),
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import GoalEdit from '../../app/goal/edit';
 
@@ -122,10 +116,7 @@ beforeEach(() => {
   mockSaveGoal.mockClear().mockImplementation(async () => true);
   mockDeleteGoal.mockClear().mockImplementation(async () => true);
   mockShowToast.mockClear();
-  mockBack.mockClear();
-  mockReplace.mockClear();
-  mockDismissAll.mockClear();
-  mockParams = {};
+  resetRouter();
   goals = [];
   balances = [balance('acc-1', 2500)];
   transactions = [txn({ account_id: 'acc-1', account_name: 'Everyday Savings' })];
@@ -153,7 +144,7 @@ describe('create', () => {
     expect(body).toMatchObject({ name: 'Holiday', icon: 'star', direction: 'grow', target_amount: 5000, account_id: 'acc-1', baseline: null });
     expect(body).not.toHaveProperty('manual_balance');
     expect(body.target_date).toMatch(ISO);
-    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
   });
 
   it('a manual goal → saveGoal(null, {…manual_balance, manual_as_of}) with no account arm', async () => {
@@ -171,7 +162,7 @@ describe('create', () => {
     expect(body).toMatchObject({ name: 'Cash pot', manual_balance: 800 });
     expect(body.manual_as_of).toMatch(ISO);
     expect(body).not.toHaveProperty('account_id');
-    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
   });
 
   it('a pay-down goal saves with target_amount 0 (debt default) — 0 is valid', async () => {
@@ -230,7 +221,7 @@ describe('synced account picker', () => {
 });
 
 describe('edit', () => {
-  beforeEach(() => { mockParams = { id: 'g1' }; goals = [RAINY_DAY]; });
+  beforeEach(() => { setParams({ id: 'g1' }); goals = [RAINY_DAY]; });
 
   it('titles the screen "Edit goal" and prefills from the saved goal', async () => {
     await renderForm();
@@ -252,9 +243,9 @@ describe('edit', () => {
   it('saving an edit → back, not a replace to the Goals tab', async () => {
     await renderForm();
     await press('goal-save');
-    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
-    expect(mockReplace).not.toHaveBeenCalled();
-    expect(mockDismissAll).not.toHaveBeenCalled();
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
+    expect(routerSpies.replace).not.toHaveBeenCalled();
+    expect(routerSpies.dismissAll).not.toHaveBeenCalled();
   });
 
   it('re-seeds the form when the goals cache resolves a beat after mount', async () => {
@@ -287,9 +278,9 @@ describe('edit', () => {
     await press('goal-delete');
     expect(mockDeleteGoal).toHaveBeenCalledTimes(1);
     expect(mockDeleteGoal).toHaveBeenCalledWith('g1');
-    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/goals'));
-    expect(mockDismissAll).toHaveBeenCalledTimes(1);
-    expect(mockBack).not.toHaveBeenCalled();
+    await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/goals'));
+    expect(routerSpies.dismissAll).toHaveBeenCalledTimes(1);
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 });
 
@@ -301,7 +292,7 @@ describe('edit', () => {
 describe('WHIT-249: an unexpected writer throw re-enables the button', () => {
   it('goal-save re-enables so a retry runs after saveGoal throws', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    mockParams = { id: 'g1' };
+    setParams({ id: 'g1' });
     goals = [RAINY_DAY];
     mockSaveGoal.mockRejectedValueOnce(new Error('network blew up'));
     await renderForm();
@@ -309,13 +300,13 @@ describe('WHIT-249: an unexpected writer throw re-enables the button', () => {
     await press('goal-save'); // 1st: throws → guard logs → button must re-enable
     await press('goal-save'); // 2nd: only fires if `saving` was reset
     expect(mockSaveGoal).toHaveBeenCalledTimes(2);
-    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
     expect(errorSpy).toHaveBeenCalled();
   });
 
   it('goal-delete re-enables so a retry runs after deleteGoal throws', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    mockParams = { id: 'g1' };
+    setParams({ id: 'g1' });
     goals = [RAINY_DAY];
     mockDeleteGoal.mockRejectedValueOnce(new Error('network blew up'));
     await renderForm();
@@ -323,7 +314,7 @@ describe('WHIT-249: an unexpected writer throw re-enables the button', () => {
     await press('goal-delete');
     await press('goal-delete');
     expect(mockDeleteGoal).toHaveBeenCalledTimes(2);
-    await waitFor(() => expect(mockReplace).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledTimes(1));
     expect(errorSpy).toHaveBeenCalled();
   });
 });
@@ -426,7 +417,7 @@ describe('WHIT-257: save-time future-date guard on the target date', () => {
 
   it('editing an OVERDUE goal without touching its date still saves (guard bites only changed dates)', async () => {
     const overdue: GoalRecord = { ...RAINY_DAY, id: 'gp', target_date: '2020-01-01' };
-    mockParams = { id: 'gp' };
+    setParams({ id: 'gp' });
     goals = [overdue];
     await renderForm();
     fireEvent.changeText(screen.getByDisplayValue('Rainy day'), 'Renamed');
@@ -466,12 +457,12 @@ describe('writer failure does not navigate', () => {
     expect(mockSaveGoal).toHaveBeenCalledTimes(1);
     // Let any (wrongly) scheduled navigation flush before asserting it did NOT happen.
     await act(async () => {});
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 
   // [A21] deleteGoal → false: stay on the form, do NOT router.back.
   it('deleteGoal returns false → no back', async () => {
-    mockParams = { id: 'g1' };
+    setParams({ id: 'g1' });
     goals = [RAINY_DAY];
     mockDeleteGoal.mockImplementation(async () => false);
     await renderForm();
@@ -479,13 +470,13 @@ describe('writer failure does not navigate', () => {
 
     expect(mockDeleteGoal).toHaveBeenCalledTimes(1);
     await act(async () => {});
-    expect(mockBack).not.toHaveBeenCalled();
-    expect(mockReplace).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
+    expect(routerSpies.replace).not.toHaveBeenCalled();
   });
 });
 
 describe('edit a MANUAL goal', () => {
-  beforeEach(() => { mockParams = { id: 'g2' }; goals = [CASH_POT]; });
+  beforeEach(() => { setParams({ id: 'g2' }); goals = [CASH_POT]; });
 
   // [A22] Editing a manual goal prefills the manual arm: source=manual (its STARTING BALANCE
   // field renders, seeded), and a save carries manual_balance + manual_as_of, no account_id.
@@ -501,7 +492,7 @@ describe('edit a MANUAL goal', () => {
     expect(editId).toBe('g2');
     expect(body).toMatchObject({ manual_balance: 800, manual_as_of: '2026-01-15', direction: 'grow' });
     expect(body).not.toHaveProperty('account_id');
-    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
   });
 });
 
@@ -593,7 +584,7 @@ describe('editing before the cache resolves cannot overwrite the goal', () => {
   // over the real goal. The PRIMARY block is the disabled Save button (asserted directly below);
   // onSave's internal `editingUnloaded` early-return is defence-in-depth behind it.
   it('save is a no-op while the edited goal is still loading', async () => {
-    mockParams = { id: 'g1' };
+    setParams({ id: 'g1' });
     goals = [RAINY_DAY];
     seedServer();
     const held = server.hold('/goals'); // cold cache: g1 not loaded yet
@@ -605,7 +596,7 @@ describe('editing before the cache resolves cannot overwrite the goal', () => {
     await press('goal-save');
     expect(mockSaveGoal).not.toHaveBeenCalled();
     expect(mockShowToast).not.toHaveBeenCalled();
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
 
     await act(async () => { held.release(); });
     await waitFor(() => expect(screen.getByDisplayValue('Rainy day')).toBeTruthy());
@@ -669,7 +660,7 @@ describe('WHIT-257 QA gaps: changed-date scoping still bites on the edit path', 
   // the changed-only scope is not a blanket "any edit of an overdue goal saves any date".
   it('overdue goal, target CHANGED to a new past date → rejected, no save', async () => {
     setPickedDate(new Date(2019, 5, 15)); // 2019-06-15, past AND != the seeded 2020-01-01
-    mockParams = { id: 'gp' };
+    setParams({ id: 'gp' });
     goals = [OVERDUE];
     await renderForm();
     setTargetDate(); // picks 2019-06-15 → differs from existing.target_date → guard fires
@@ -681,7 +672,7 @@ describe('WHIT-257 QA gaps: changed-date scoping still bites on the edit path', 
   // [G2] Editing an overdue goal and CHANGING the target to a FUTURE date SAVES with the new date.
   it('overdue goal, target CHANGED to a future date → saves the new date', async () => {
     setPickedDate(FUTURE);
-    mockParams = { id: 'gp' };
+    setParams({ id: 'gp' });
     goals = [OVERDUE];
     await renderForm();
     setTargetDate();
@@ -698,7 +689,7 @@ describe('WHIT-257 QA gaps: changed-date scoping still bites on the edit path', 
     const todayMidnight = new Date();
     todayMidnight.setHours(0, 0, 0, 0);
     setPickedDate(todayMidnight); // toISODate(today) === component todayISO → today !> today
-    mockParams = { id: 'gp' };
+    setParams({ id: 'gp' });
     goals = [OVERDUE];
     await renderForm();
     setTargetDate();
@@ -715,7 +706,7 @@ describe('WHIT-257 QA gaps: a synced goal omits manual_as_of and a stale unchang
   // change, so manualAsOf can never differ from the seed to reach the guard.)
   it('synced goal with a stale future manual_as_of on the record → saves, body omits manual_as_of', async () => {
     const staleSynced: GoalRecord = { ...RAINY_DAY, id: 'gs', manual_as_of: '2999-01-01' };
-    mockParams = { id: 'gs' };
+    setParams({ id: 'gs' });
     goals = [staleSynced];
     await renderForm();
     fireEvent.changeText(screen.getByDisplayValue('Rainy day'), 'Renamed'); // target untouched
@@ -756,7 +747,7 @@ describe('WHIT-477: the checkpoint editor', () => {
     { id: 'cp-2', label: 'Halfway', amount: 5000 },
   ];
 
-  beforeEach(() => { mockParams = { id: 'g1' }; goals = [{ ...RAINY_DAY, checkpoints: LADDER }]; });
+  beforeEach(() => { setParams({ id: 'g1' }); goals = [{ ...RAINY_DAY, checkpoints: LADDER }]; });
 
   it('carries a saved ladder through an unrelated edit, ids intact', async () => {
     await renderForm();
@@ -851,7 +842,7 @@ describe('WHIT-477: the checkpoint editor', () => {
   });
 
   it('a create with no rungs sends no checkpoints', async () => {
-    mockParams = {};
+    setParams({});
     goals = [];
     await renderForm();
     fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'New goal');
@@ -881,7 +872,7 @@ describe('WHIT-477 QA gaps: checkpoint editor edges', () => {
   // has edited a rung must not clobber the in-progress edit. Fail-on-revert: drop the `seeded`
   // latch guard on the checkpoint re-seed and the refetch overwrites 'My rung' with 'Server label'.
   it('a background refetch does NOT clobber a rung the user is mid-editing', async () => {
-    mockParams = { id: 'g1' };
+    setParams({ id: 'g1' });
     goals = [{ ...RAINY_DAY, checkpoints: LADDER }];
     await renderForm();
 
@@ -903,7 +894,7 @@ describe('WHIT-477 QA gaps: checkpoint editor edges', () => {
   // which now holds `checkpoints`). Fail-on-revert: if the manual branch stopped spreading the
   // checkpoint field, the ladder would vanish for manual goals only.
   it('a manual-goal edit that adds a rung sends BOTH the ladder and the manual arm', async () => {
-    mockParams = { id: 'g2' };
+    setParams({ id: 'g2' });
     goals = [CASH_POT]; // manual grow, target 5000, no ladder
     await renderForm();
 
@@ -926,7 +917,7 @@ describe('WHIT-477 QA gaps: checkpoint editor edges', () => {
   // must block on the TARGET guard (not silently send the now-unvalidated rungs). Fail-on-revert:
   // if the target guard were dropped, the ladder would ride out against a NaN target and 400.
   it('clearing the target with rungs present blocks on the target guard, sends nothing', async () => {
-    mockParams = { id: 'g1' };
+    setParams({ id: 'g1' });
     goals = [{ ...RAINY_DAY, checkpoints: LADDER }];
     await renderForm();
 
@@ -940,7 +931,7 @@ describe('WHIT-477 QA gaps: checkpoint editor edges', () => {
   // [A-G14] A rung amount goes through parseAmount: comma-thousands is rejected (NaN → out of
   // bounds) and blocks save, the same way the goal's own amount fields treat it.
   it('a comma-thousands rung amount ("1,000") is out of bounds and blocks save', async () => {
-    mockParams = { id: 'g1' };
+    setParams({ id: 'g1' });
     goals = [RAINY_DAY]; // no ladder, target 10000
     await renderForm();
 
@@ -956,7 +947,7 @@ describe('WHIT-477 QA gaps: checkpoint editor edges', () => {
   // [A-G15] Surrounding whitespace on a rung amount is trimmed by parseAmount, so " 1000 " saves
   // as the number 1000 (not NaN, not a string).
   it('a whitespace-padded rung amount (" 1000 ") saves as the number 1000', async () => {
-    mockParams = { id: 'g1' };
+    setParams({ id: 'g1' });
     goals = [RAINY_DAY];
     await renderForm();
 
@@ -974,7 +965,7 @@ describe('WHIT-477 QA gaps: checkpoint editor edges', () => {
 // WHIT-477 folded-in UX (from the QA review): the Add button disappears at the 20-rung cap, and
 // a freshly-added blank row isn't accused with the out-of-bounds warning until it has an amount.
 describe('WHIT-477: add-cap + blank-row warning suppression', () => {
-  beforeEach(() => { mockParams = { id: 'g1' }; goals = [RAINY_DAY]; }); // grow, target 10000
+  beforeEach(() => { setParams({ id: 'g1' }); goals = [RAINY_DAY]; }); // grow, target 10000
 
   it('hides the Add button once 20 checkpoints exist', async () => {
     await renderForm();
@@ -1000,7 +991,7 @@ describe('WHIT-477: add-cap + blank-row warning suppression', () => {
 // WHIT-485 QA gaps — the one-row reflow (label input | $amount | ✕) must keep the amount's decimal
 // keyboard and survive a very long label. Characterization guards: JSX is unchanged by WHIT-485.
 describe('WHIT-485 QA gaps: one-row reflow edges', () => {
-  beforeEach(() => { mockParams = { id: 'g1' }; goals = [RAINY_DAY]; }); // grow, target 10000
+  beforeEach(() => { setParams({ id: 'g1' }); goals = [RAINY_DAY]; }); // grow, target 10000
 
   // [A-L3] The amount input keeps its decimal keyboard after the reflow (the fixed-width box still
   // opens the number pad, not a full keyboard). Characterization guard on the props the reflow

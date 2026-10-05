@@ -17,24 +17,16 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { seedHubWith, type GoalsHubSeed } from './support/goalsScreen';
+import { routerSpies, resetRouter } from './support/routerMock';
 import type { GoalRecord, LoanFacts } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-// WHIT-235: the hub now calls useAppContext for openGoalBalance; stub the writer, keep the real
-// balanceGoalView (the %/pace assertions run the real engine).
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openGoalBalance: jest.fn() }) };
-});
+jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule());
 
-const mockPush = jest.fn();
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush }),
-  useFocusEffect: () => {},
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Goals from '../../app/(tabs)/goals';
 
@@ -46,7 +38,7 @@ useTestQueryClient();
 const seedHub = (over: GoalsHubSeed = {}) => seedHubWith(server, over);
 
 beforeEach(() => {
-  mockPush.mockClear();
+  resetRouter();
   resetAuth();
   pinToday(new Date(2026, 6, 11)); // Sat 11 Jul 2026
   seedHub();
@@ -132,6 +124,6 @@ describe('navigation — url-encoding of the goal id', () => {
     seedHub({ goals: [goal] });
     await renderWithQueries(<Goals />);
     fireEvent.press(screen.getByTestId('goal-card-a b&c'));
-    expect(mockPush).toHaveBeenCalledWith('/goal/a%20b%26c');
+    expect(routerSpies.push).toHaveBeenCalledWith('/goal/a%20b%26c');
   });
 });

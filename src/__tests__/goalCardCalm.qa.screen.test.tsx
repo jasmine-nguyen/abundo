@@ -10,16 +10,14 @@ import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
+import { resetRouter } from './support/routerMock';
 import { GOAL_TODAY, growGoal, seedPaceHub } from './support/goalPace';
 import type { GoalRecord } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openGoalBalance: jest.fn() }) };
-});
-jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }), useFocusEffect: () => {} }));
+jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule());
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Goals from '../../app/(tabs)/goals';
 
@@ -37,6 +35,7 @@ const render = async (goals: GoalRecord[], balances: Record<string, number> = {}
 };
 
 beforeEach(() => {
+  resetRouter();
   resetAuth();
   pinToday(GOAL_TODAY);
 });

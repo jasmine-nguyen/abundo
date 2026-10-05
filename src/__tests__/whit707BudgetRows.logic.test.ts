@@ -35,10 +35,9 @@ describe('budgetViews rows (WHIT-707)', () => {
     expect(rows.map((r) => r.id)).toEqual(['coffee', 'latte', 'rent', 'gym', 'salary']);
     expect(rows.map((r) => r.section)).toEqual(['spending', 'spending', 'spending', 'spending', 'earning']);
 
-    // Income: no even-pace line, no today marker, "earned · next pay ~Fri"; right side unchanged.
+    // Income: no today marker, "earned · next pay ~Fri"; right side unchanged.
     const income = byId('salary');
     expect(income.spentLabel).toBe('$1,000 earned · next pay ~Fri');
-    expect(income.behindPace).toBe(false);
     expect(income.showTarget).toBe(false);
     expect(income.remainAmount).toBe('$4,000');
     expect(income.remainLabel).toBe('to go');
@@ -48,16 +47,13 @@ describe('budgetViews rows (WHIT-707)', () => {
     expect(byId('coffee').showTarget).toBe(true);
     expect(byId('latte').spentLabel).toBe('$5 of\u00a0$30');
 
-    // Over budget: rose on amount and bar; the red amount says it once (WHIT-712), no pace warning.
+    // Over budget: rose on amount and bar; the red amount says it once (WHIT-712).
     const over = byId('rent');
     expect(over.remainColor).toBe(C.bad);
     expect(over.postedColor).toBe(C.bad);
-    expect(over.behindPace).toBe(false);
 
-    // Over budget with rollover: same, no pace warning.
-    const quiet = byId('gym');
-    expect(quiet.behindPace).toBe(false);
-    expect(quiet.remainAmount).toBe('$20');
+    // Over budget with rollover: the overspend on the amount.
+    expect(byId('gym').remainAmount).toBe('$20');
 
     // Payday more than 6 days away reads as a date, not a weekday; no payday → just "earned".
     const far = budgetViews({ ...s, daysLeft: 14, nextPayday: '2026-10-17' }).rows.find((r) => r.id === 'salary')!;

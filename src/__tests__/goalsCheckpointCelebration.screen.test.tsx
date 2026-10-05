@@ -8,15 +8,19 @@
 // Timers stay real (only today's date is pinned), except in the tests that show a burst. Those move
 // the balance on a fully fake clock, so the confetti animation never ticks outside act, and the
 // "clears itself" tests run the burst's timer out.
+// WHIT-747: the phone's saved snapshot is cleared before each test (a brand-new install), and a
+// crossing made while Goals is out of focus waits for the next focus.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { act, screen } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
-import { refreshInAct, renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { resetRouter, setFocused } from './support/routerMock';
 import { pinToday } from './support/clock';
 import { seedGoalsHub } from './support/goalsScreen';
 import { EMPTY_LOAN_FACTS } from './factory';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { queryClient } from '../queryClient';
 import type { GoalRecord } from '../api';
 
@@ -25,15 +29,9 @@ jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeH
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 const mockOpenGoalBalance = jest.fn();
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openGoalBalance: mockOpenGoalBalance }) };
-});
+jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule(() => mockOpenGoalBalance));
 
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn() }),
-  useFocusEffect: () => {},
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 let mockReduceMotion = false;
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => mockReduceMotion }));
@@ -75,9 +73,11 @@ async function runOutBurst(ms: number) {
   await act(async () => { jest.advanceTimersByTime(ms); });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await AsyncStorage.clear(); // no snapshot saved by an earlier launch
   resetAuth();
   mockReduceMotion = false;
+  resetRouter();
   pinToday(new Date(2026, 6, 11));
   seedBalance(4000); // past the 2000 rung, not the 5000 rung → reached 1
 });
@@ -96,7 +96,7 @@ describe('checkpoint celebration on the Goals hub (WHIT-481)', () => {
 
     await moveBalanceOnFakeClock(6000);               // 4000 → 6000 crosses the 5000 rung (reached 2)
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
-    expect(screen.getByText(/Holiday: checkpoint reached/)).toBeTruthy();
+    expect(screen.getByText(/Holiday · \$5,000 reached/)).toBeTruthy();
   });
 
   it('is silent when a refresh brings back identical data', async () => {
@@ -110,7 +110,7 @@ describe('checkpoint celebration on the Goals hub (WHIT-481)', () => {
     await renderWithQueries(<Goals />);
     await moveBalanceOnFakeClock(6000);
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
-    await runOutBurst(1200); // FALL_MS
+    await runOutBurst(2400); // BANNER_MS
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
   });
 
@@ -128,7 +128,19 @@ describe('checkpoint celebration on the Goals hub (WHIT-481)', () => {
     await moveBalanceOnFakeClock(6000);
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
     expect(screen.getByTestId('checkpoint-celebration-label')).toBeTruthy();
-    await runOutBurst(900); // REDUCED_MS
+    await runOutBurst(2400); // BANNER_MS, the same with motion off
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
+  });
+
+  it('keeps a crossing made while another tab is open and celebrates it when Goals is back in view', async () => {
+    const view = await renderWithQueries(<Goals />);  // seed at reached 1
+    setFocused(false);                               // the user switches to another tab
+    await moveBalance(6000);                          // the sync lands past the 5000 rung meanwhile
+    expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
+
+    jest.useFakeTimers({ now: new Date(2026, 6, 11) });
+    setFocused(true);                                 // back on Goals
+    await act(async () => { view.rerender(<WithQueries><Goals /></WithQueries>); });
+    expect(screen.getByText(/Holiday · \$5,000 reached/)).toBeTruthy();
   });
 });

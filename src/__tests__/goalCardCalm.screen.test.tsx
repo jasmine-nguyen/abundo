@@ -10,6 +10,7 @@ import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
+import { routerSpies, resetRouter } from './support/routerMock';
 import { seedHubWith, type GoalsHubSeed } from './support/goalsScreen';
 import { GOAL_TODAY } from './support/goalPace';
 import type { GoalRecord } from '../api';
@@ -18,16 +19,9 @@ jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeH
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openGoalBalance: jest.fn() }) };
-});
+jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule());
 
-const mockPush = jest.fn();
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush }),
-  useFocusEffect: () => {},
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Goals from '../../app/(tabs)/goals';
 
@@ -37,7 +31,7 @@ useTestQueryClient();
 const seedHub = (over: GoalsHubSeed = {}) => seedHubWith(server, over);
 
 beforeEach(() => {
-  mockPush.mockClear();
+  resetRouter();
   resetAuth();
   pinToday(GOAL_TODAY);
   seedHub();
@@ -56,7 +50,7 @@ describe('goal card: past its date', () => {
     expect(card.getByText('40%')).toBeTruthy();
 
     fireEvent.press(screen.getByTestId('goal-pastdue-od'));
-    expect(mockPush).toHaveBeenCalledWith('/goal/edit?id=od');
+    expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit?id=od');
   });
 
   it('a goal already met but past its date gets no nudge', async () => {

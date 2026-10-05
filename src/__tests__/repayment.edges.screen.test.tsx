@@ -14,15 +14,12 @@ import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedGoal } from './support/goalsScreen';
+import { resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-const mockPush = jest.fn();
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush, back: jest.fn() }),
-  useFocusEffect: () => {},
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Mortgage from '../../app/mortgage';
 
@@ -31,7 +28,7 @@ useTestQueryClient();
 
 beforeEach(() => {
   resetAuth();
-  mockPush.mockClear();
+  resetRouter();
 });
 
 it('renders the last-repayment card even when loan facts are UNSET (un-gated from factsReady)', async () => {

@@ -10,6 +10,7 @@ import { screen } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { resetRouter } from './support/routerMock';
 import { pinToday } from './support/clock';
 import { seedGoal } from './support/goalsScreen';
 import { queryClient } from '../queryClient';
@@ -19,10 +20,7 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => ({}) };
 });
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn(), back: jest.fn() }),
-  useFocusEffect: () => {},
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Mortgage from '../../app/mortgage';
 
@@ -33,6 +31,7 @@ useTestQueryClient();
 
 beforeEach(() => {
   resetAuth();
+  resetRouter();
   pinToday(new Date(2026, 6, 4));
 });
 afterEach(() => { jest.useRealTimers(); });

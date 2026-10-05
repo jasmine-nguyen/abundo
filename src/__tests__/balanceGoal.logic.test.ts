@@ -607,6 +607,28 @@ describe('balanceGoalView — checkpoints reached-count', () => {
   });
 });
 
+describe('balanceGoalView — targetReached (WHIT-747)', () => {
+  const at = (g: BalanceGoal, balance: number | null) =>
+    balanceGoalView({ goal: g, balance, payCycle: CYCLE }, TODAY).targetReached;
+
+  it('grow: reached at or above the target, not below', () => {
+    expect(at(goal(), 9999)).toBe(false);
+    expect(at(goal(), 10000)).toBe(true);
+    expect(at(goal(), 12000)).toBe(true);
+  });
+
+  it('paydown (synced, owed stored negative): reached at or below the target owed', () => {
+    const g = goal({ direction: 'paydown', target_amount: 1000, account_id: 'up-loan' });
+    expect(at(g, -1001)).toBe(false);
+    expect(at(g, -1000)).toBe(true);
+    expect(at(g, -200)).toBe(true);
+  });
+
+  it('is null while the balance is unknown', () => {
+    expect(at(goal(), null)).toBeNull();
+  });
+});
+
 describe('balanceGoalView — checkpoint marker positions (WHIT-486)', () => {
   const CPS = (...amounts: number[]) => amounts.map((amount) => ({ amount }));
   const pcts = (v: ReturnType<typeof balanceGoalView>) => v.checkpointMarkers.map((m) => m.pct);

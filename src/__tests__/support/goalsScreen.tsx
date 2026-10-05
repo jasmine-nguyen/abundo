@@ -3,6 +3,7 @@
 // (the jest.mock calls must stay in the test file, for hoisting):
 //
 //   jest.mock('../auth', () => require('./support/authMock').authMockModule());
+//   jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule());
 //   const server = installFakeServer();
 //   useTestQueryClient();
 //   beforeEach(() => resetAuth());
@@ -10,6 +11,7 @@
 //   await renderWithQueries(<Mortgage />);
 //
 // (Not a *.test file, so the jest testMatch never runs it as a suite.)
+import { jest } from '@jest/globals';
 import type { installFakeServer } from './fakeServer';
 import type { GoalRecord, LoanFacts, MilestoneRecord, PayCycle, Repayment } from '../../api';
 import type { HomeLoanState } from '../../model';
@@ -76,4 +78,11 @@ export const GOALS_HUB_DEFAULTS: GoalsHubSeed = {
 /** seedGoalsHub over GOALS_HUB_DEFAULTS — pass only what the test changes. */
 export function seedHubWith(server: FakeServer, over: GoalsHubSeed = {}) {
   seedGoalsHub(server, { ...GOALS_HUB_DEFAULTS, ...over });
+}
+
+// The Goals screens call useAppContext only for openGoalBalance; the rest of ../context stays real
+// (balanceGoalView etc.). Pass a getter, not the fn: jest.mock factories run before the suite's consts.
+export function goalsContextMockModule(openGoalBalance: () => unknown = () => jest.fn()) {
+  const actual = jest.requireActual('../../context') as typeof import('../../context');
+  return { ...actual, useAppContext: () => ({ openGoalBalance: openGoalBalance() }) };
 }

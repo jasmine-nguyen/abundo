@@ -4,22 +4,15 @@ import { describe, it, expect } from '@jest/globals';
 import { C } from '../theme';
 import { budgetRowFor as rowFor, rowText } from './support/budgetsTab';
 
-describe('budget rows are only flagged when off pace (WHIT-712)', () => {
-  it('an on-pace row is not behind pace', () => {
+describe('budget rows stay quiet (WHIT-712)', () => {
+  it('an on-pace row shows what is left', () => {
     const row = rowFor({ budget: 100, posted: 50, pending: 0 });
-    expect(row.behindPace).toBe(false);
     expect(row.remainAmount).toBe('$50');
     expect(row.remainLabel).toBe('left');
   });
 
-  it('over plan is still flagged', () => {
-    const behind = rowFor({ budget: 100, posted: 85, pending: 0 });
-    expect(behind.behindPace).toBe(true);
-  });
-
   it('over budget says the overspend once, in the red amount', () => {
     const row = rowFor({ budget: 100, posted: 120, pending: 0, rollover: true, carryover: 0 });
-    expect(row.behindPace).toBe(false);
     expect(row.remainAmount).toBe('$20');
     expect(row.remainLabel).toBe('over');
     expect(row.remainColor).toBe(C.bad);

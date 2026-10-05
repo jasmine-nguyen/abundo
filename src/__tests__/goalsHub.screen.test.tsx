@@ -16,6 +16,7 @@ import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settl
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { seedHubWith, type GoalsHubSeed } from './support/goalsScreen';
+import { routerSpies, resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import type { GoalRecord, LoanFacts } from '../api';
 
@@ -25,19 +26,10 @@ jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeH
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-// WHIT-235: the hub now calls useAppContext for openGoalBalance. Keep the real balanceGoalView
-// (the % / pace assertions run the real engine); only the writer boundary is stubbed.
 const mockOpenGoalBalance = jest.fn();
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openGoalBalance: mockOpenGoalBalance }) };
-});
+jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule(() => mockOpenGoalBalance));
 
-const mockPush = jest.fn();
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush }),
-  useFocusEffect: () => {},
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Goals from '../../app/(tabs)/goals';
 
@@ -56,7 +48,7 @@ const seedHub = (over: GoalsHubSeed = {}) => seedHubWith(server, over);
 
 beforeEach(() => {
   resetAuth();
-  mockPush.mockClear();
+  resetRouter();
   mockOpenGoalBalance.mockClear();
   pinToday(new Date(2026, 6, 11)); // Sat 11 Jul 2026
   seedHub();
@@ -241,7 +233,7 @@ describe('the mortgage card — rich payoff state', () => {
     seedHub({ loanFacts: READY_FACTS });
     await renderWithQueries(<Goals />);
     fireEvent.press(screen.getByTestId('mortgage-link'));
-    expect(mockPush).toHaveBeenCalledWith('/mortgage');
+    expect(routerSpies.push).toHaveBeenCalledWith('/mortgage');
   });
 
   it('a fully-paid loan (balance $0) reads "100% gone", never rounded down', async () => {
@@ -319,19 +311,19 @@ describe('navigation', () => {
   it('the "+" routes to the goal add screen', async () => {
     await renderWithQueries(<Goals />);
     fireEvent.press(screen.getByTestId('add-goal'));
-    expect(mockPush).toHaveBeenCalledWith('/goal/edit');
+    expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit');
   });
 
   it('a goal card routes to its goal page (WHIT-749)', async () => {
     await renderWithQueries(<Goals />);
     fireEvent.press(screen.getByTestId('goal-card-g1'));
-    expect(mockPush).toHaveBeenCalledWith('/goal/g1');
+    expect(routerSpies.push).toHaveBeenCalledWith('/goal/g1');
   });
 
   it('the mortgage card routes to the full mortgage screen', async () => {
     await renderWithQueries(<Goals />);
     fireEvent.press(screen.getByTestId('mortgage-link'));
-    expect(mockPush).toHaveBeenCalledWith('/mortgage');
+    expect(routerSpies.push).toHaveBeenCalledWith('/mortgage');
   });
 });
 
@@ -412,7 +404,7 @@ it('tapping a manual goal card body still routes to the goal page (not the sheet
   seedHub({ goals: [PAYDOWN] });
   await renderWithQueries(<Goals />);
   fireEvent.press(screen.getByTestId('goal-card-g2'));
-  expect(mockPush).toHaveBeenCalledWith('/goal/g2');
+  expect(routerSpies.push).toHaveBeenCalledWith('/goal/g2');
   expect(mockOpenGoalBalance).not.toHaveBeenCalled();
 });
 

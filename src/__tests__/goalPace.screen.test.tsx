@@ -8,6 +8,7 @@ import { screen, within } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { resetRouter } from './support/routerMock';
 import { pinToday } from './support/clock';
 import { styleOf } from './support/layout';
 import { GOAL_START, GOAL_TODAY, growGoal, seedPaceHub } from './support/goalPace';
@@ -16,11 +17,8 @@ import type { GoalRecord } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openGoalBalance: jest.fn() }) };
-});
-jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }), useFocusEffect: () => {} }));
+jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule());
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Goals from '../../app/(tabs)/goals';
 
@@ -40,6 +38,7 @@ useTestQueryClient();
 
 beforeEach(() => {
   resetAuth();
+  resetRouter();
   pinToday(GOAL_TODAY);
   seedPaceHub(server, [PLAIN, AHEAD, ON_PACE, DEBT], { 'acct-plain': 4000, 'acct-ahead': 8000, 'acct-onpace': 6000 });
 });

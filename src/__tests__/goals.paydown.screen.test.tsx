@@ -16,6 +16,7 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { seedGoal } from './support/goalsScreen';
+import { resetRouter } from './support/routerMock';
 import type { LoanFacts } from '../api';
 import type { HomeLoanState } from '../model';
 
@@ -25,11 +26,7 @@ jest.mock('../context', () => {
   return { ...actual, useAppContext: () => ({}) };
 });
 
-const mockPush = jest.fn();
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush, back: jest.fn() }),
-  useFocusEffect: () => {},
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Mortgage from '../../app/mortgage';
 
@@ -43,7 +40,7 @@ const seedPaydown = (over: { homeLoan: HomeLoanState; loanFacts?: LoanFacts }) =
 
 beforeEach(() => {
   resetAuth();
-  mockPush.mockClear();
+  resetRouter();
   pinToday(new Date(2026, 6, 4));
 });
 afterEach(() => { jest.useRealTimers(); });
