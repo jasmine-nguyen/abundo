@@ -9,6 +9,7 @@ item's per-category map; `write(category_id, history)` saves an entry's whole ne
 from decimal import Decimal
 
 from _migration_scripts import load_migration_script
+from _rollover_fakes import charge, cycle_record
 
 LENGTH = 14
 ANCHOR = "2026-09-26"  # carryover_from: the first cycle not yet folded in
@@ -23,24 +24,14 @@ CATEGORIES = [
 ]
 
 
-def _charge(category, day, amount, status="posted"):
-    return {"category": category, "date": day, "amount": Decimal(amount), "status": status,
-            "counts_to_budget": True}
-
-
 # Utilities at a $100 target: cycle 1 spent 620 (−520), cycle 2 spent 439 (−339), cycle 3 spent
 # exactly 100 (0). Every older cycle has no spend, so each leaves +100.
 TRANSACTIONS = [
-    _charge("utilities", "2026-09-15", "-400"),
-    _charge("water", "2026-09-20", "-220", status="pending"),
-    _charge("utilities", "2026-09-01", "-439"),
-    _charge("water", "2026-08-20", "-100"),
+    charge("utilities", "2026-09-15", "-400"),
+    charge("water", "2026-09-20", "-220", status="pending"),
+    charge("utilities", "2026-09-01", "-439"),
+    charge("water", "2026-08-20", "-100"),
 ]
-
-
-def _rebuilt(window, spent, leftover):
-    return {"start": window[0], "end": window[1], "target": Decimal(100), "spent": Decimal(spent),
-            "leftover": Decimal(leftover), "rebuilt": True}
 
 
 def _utilities(carryover, **extra):
@@ -73,12 +64,12 @@ def test_rebuild_saves_the_fewest_past_cycles_that_explain_the_carryover(shared)
                 "carryover_from": ANCHOR, "carryover_len": LENGTH},
         "groceries": {"target": Decimal(500), "rollover": False},
         "gifts": {**_utilities("0")},
-        "phone": _utilities("-859", carryover_history=[_rebuilt(CYCLE_1, 620, -520)]),
+        "phone": _utilities("-859", carryover_history=[cycle_record(*CYCLE_1, 620, -520, rebuilt=True)]),
     }
 
     result = _run(entries, write)
 
-    assert write.calls == [("utilities", [_rebuilt(CYCLE_1, 620, -520), _rebuilt(CYCLE_2, 439, -339)])]
+    assert write.calls == [("utilities", [cycle_record(*CYCLE_1, 620, -520, rebuilt=True), cycle_record(*CYCLE_2, 439, -339, rebuilt=True)])]
     assert result["rebuilt"] == 1
 
 
@@ -89,19 +80,18 @@ def test_when_no_cycles_add_up_exactly_the_closest_are_saved_and_the_gap_stays_u
 
     [(category_id, history)] = write.calls
     assert category_id == "utilities"
-    assert history == [_rebuilt(CYCLE_1, 620, -520), _rebuilt(CYCLE_2, 439, -339)]
+    assert history == [cycle_record(*CYCLE_1, 620, -520, rebuilt=True), cycle_record(*CYCLE_2, 439, -339, rebuilt=True)]
     assert Decimal("-900") - sum(record["leftover"] for record in history) == Decimal("-41")
 
 
 def test_older_rebuilt_cycles_are_added_after_a_live_sealed_one_and_still_add_up(shared):
-    live = {"start": CYCLE_1[0], "end": CYCLE_1[1], "target": Decimal(100), "spent": Decimal(620),
-            "leftover": Decimal(-520)}
+    live = cycle_record(*CYCLE_1, 620, -520)
     write = _Writes()
 
     _run({"utilities": _utilities("-859", carryover_history=[live])}, write)
 
     [(_, history)] = write.calls
-    assert history == [live, _rebuilt(CYCLE_2, 439, -339)]
+    assert history == [live, cycle_record(*CYCLE_2, 439, -339, rebuilt=True)]
     assert sum(record["leftover"] for record in history) == Decimal("-859")
 
 

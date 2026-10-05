@@ -4,6 +4,8 @@ from decimal import Decimal
 
 import pytest
 
+from _rollover_fakes import charge, cycle_record
+
 TODAY = "2026-08-10"  # settle cutoff 2026-07-31
 LENGTH = 30
 W1 = ("2026-05-08", "2026-06-06")
@@ -11,17 +13,11 @@ W2 = ("2026-06-07", "2026-07-06")
 W3 = ("2026-07-07", "2026-08-05")  # still settling
 
 
-def _charge(day, amount, status="posted"):
-    return {"category": "sink", "date": day, "amount": Decimal(amount), "status": status,
-            "counts_to_budget": True}
-
-
 def _record(start, end, leftover):
-    return {"start": start, "end": end, "target": Decimal(100), "spent": Decimal(100) - Decimal(leftover),
-            "leftover": Decimal(leftover)}
+    return cycle_record(start, end, Decimal(100) - Decimal(leftover), leftover)
 
 
-CHARGES = [_charge("2026-05-10", "-180"), _charge("2026-06-20", "-12.34", "pending"), _charge("2026-07-08", "-99.99")]
+CHARGES = [charge("sink", "2026-05-10", "-180"), charge("sink", "2026-06-20", "-12.34", "pending"), charge("sink", "2026-07-08", "-99.99")]
 OLD = [_record("2026-04-08", "2026-05-07", "-7.5"), _record("2026-03-09", "2026-04-07", "33")]
 
 
