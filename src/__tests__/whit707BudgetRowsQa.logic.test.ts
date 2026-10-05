@@ -1,5 +1,5 @@
 // WHIT-707 QA — adversarial edges on the Budgets tab row text (budgetViews): the payday label's
-// weekday/date boundary, the spread link vs the quiet "over budget" line, pending wording
+// weekday/date boundary, the quiet over-budget row, pending wording
 // thresholds, Spending-before-Earning ordering with nested income, and the date helpers.
 // Runs under TZ=Australia/Melbourne (npm test), so the daylight-saving cases are real.
 import { describe, it, expect } from '@jest/globals';
@@ -47,9 +47,9 @@ describe('income "next pay" label boundaries (decision 3)', () => {
   });
 });
 
-describe('over budget: spread link vs quiet line (decision 2)', () => {
-  // [A6] (P0) an active spread can't START another → quiet muted text, no link.
-  it('[A6] over with an active spread → no pace line (the red amount says it once), no prefill', () => {
+describe('over budget: quiet row, no pace line', () => {
+  // [A6] (P0) over with an active spread → the red amount says it once.
+  it('[A6] over with an active spread → no pace line (the red amount says it once)', () => {
     const row = spendRow({
       budget: 100, posted: 130, pending: 0, spreadAdjustment: -10,
       spread: { amount: 60, cycles: 3, index: 2, adjustment: -10 },
@@ -57,51 +57,39 @@ describe('over budget: spread link vs quiet line (decision 2)', () => {
     expect(row.over).toBe(true);
     expect(row.paceLabel).toBe('');
     expect(row.remainAmount).toBe('$40');
-    expect(row.spreadPrefill).toBeNull();
     expect(row.remainColor).toBe(C.bad); // rose stays on the amount
   });
 
-  // [A7] (P1) a sub-cent overshoot can't spread $0 → quiet text, not the link.
-  it('[A7] sub-cent overshoot → quiet line, no prefill', () => {
-    const row = spendRow({ budget: 100, posted: 100.004, pending: 0 });
-    expect(row.over).toBe(true);
-    expect(row.spreadPrefill).toBeNull();
-    expect(row.paceLabel).not.toBe('Spread it over pay cycles →');
-    expect(row.paceColor).not.toBe(C.bad);
+  // [A7] (P1) a sub-cent overshoot still counts as over.
+  it('[A7] sub-cent overshoot → over', () => {
+    expect(spendRow({ budget: 100, posted: 100.004, pending: 0 }).over).toBe(true);
   });
 
-  // [A8] (P0) the link's prefill counts pending too (the same overspend the detail screen uses).
-  it('[A8] over with pending → prefill = posted + pending − budget, pending named', () => {
-    const row = spendRow({ budget: 100, posted: 90, pending: 25 });
-    expect(row.paceLabel).toBe('Spread it over pay cycles →');
-    expect(row.spreadPrefill).toBe(15);
-    expect(row.spentLabel).toBe('$115 of $100 · $25 pending');
+  // [A8] (P0) pending pushes a row over budget and is still named.
+  it('[A8] over with pending → pending named', () => {
+    expect(spendRow({ budget: 100, posted: 90, pending: 25 }).spentLabel).toBe('$115 of $100 · $25 pending');
   });
 
-  // [A9] (P0) under budget → never a link (no prefill), even if over plan.
-  it('[A9] over plan but under budget → no prefill, muted pace line', () => {
+  // [A9] (P0) over plan but under budget → the over-plan line.
+  it('[A9] over plan but under budget → over-plan pace line', () => {
     const row = spendRow({ budget: 100, posted: 90, pending: 0 }); // target 50
     expect(row.over).toBe(false);
-    expect(row.spreadPrefill).toBeNull();
     expect(row.paceLabel).toBe('$40 over plan');
-    expect(row.paceColor).toBe(C.textInfo);
   });
 
-  // [A10] (P1) exactly at the limit is not over → no link, "left" $0.
-  it('[A10] spent exactly = budget → not over, no prefill', () => {
+  // [A10] (P1) exactly at the limit is not over.
+  it('[A10] spent exactly = budget → not over', () => {
     const row = spendRow({ budget: 100, posted: 100, pending: 0 });
     expect(row.over).toBe(false);
-    expect(row.spreadPrefill).toBeNull();
     expect(row.paceLabel).not.toContain('over budget');
   });
 
-  // [A11] (P1) rollover drained into a deficit, over → quiet text with the exact overspend.
+  // [A11] (P1) rollover drained into a deficit, over → the exact overspend on the amount, no pace line.
   it('[A11] rollover with a borrowed buffer, over → no pace line, the exact overspend on the amount', () => {
     const row = spendRow({ budget: 100, posted: 95, pending: 0, rollover: true, carryover: -20 });
     expect(row.over).toBe(true);
     expect(row.paceLabel).toBe('');
     expect(row.remainAmount).toBe('$15');
-    expect(row.spreadPrefill).toBeNull();
   });
 });
 

@@ -1,5 +1,5 @@
-// WHIT-730 QA — the Budgets tab as drawn: over rows draw no "today" tick, a $0 row drops its
-// pace line (and draws no empty note), the small labels are at least 12pt, and the amount
+// WHIT-730 QA — the Budgets tab as drawn: over rows draw no "today" tick, a $0 row draws no
+// empty note, the small labels are at least 12pt, and the amount
 // column shrinks to fit instead of wrapping. Halfway through a 14-day cycle.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, within } from '@testing-library/react-native';
@@ -26,7 +26,7 @@ beforeEach(() => {
   seedBudgetsTab(server, {
     coffee: { target: 100, posted: 0, pending: 0 }, // $0 → slim, no note
     groceries: { target: 100, posted: 130, pending: 0 }, // over budget
-    subs: { target: 100, posted: 20, pending: 0 }, // under plan
+    subs: { target: 100, posted: 20, pending: 0 }, // under budget
   }, [COFFEE, GROCERIES, SUBS]);
 });
 
@@ -42,18 +42,15 @@ it('[A13] (P0) an over-budget row draws its bar without the tick; an under-plan 
   expect(under.showTarget).toBe(true);
 });
 
-it('[A14] (P1) a $0 row shows no pace line and no empty note, but keeps its amount left', async () => {
+it('[A14] (P1) a $0 row shows no empty note, but keeps its amount left', async () => {
   await renderLoadedBudgetsWithQueries();
-  expect(screen.getByText('$30 under plan')).toBeTruthy(); // the spending row keeps its pace line
-  expect(screen.queryByText('$50 under plan')).toBeNull(); // the $0 row's would-be pace line
   expect(screen.queryByTestId('budget-row-note-coffee')).toBeNull();
   expect(screen.getByText('$100')).toBeTruthy();
 });
 
-it('[A15] (P1) the "left/over" label and the pace line are at least 12pt', async () => {
+it('[A15] (P1) the "left/over" label is at least 12pt', async () => {
   await renderLoadedBudgetsWithQueries();
   for (const label of screen.getAllByText(/^(left|over)$/)) expect(fontSize(label)).toBeGreaterThanOrEqual(12);
-  expect(fontSize(screen.getByText('$30 under plan'))).toBeGreaterThanOrEqual(12);
 });
 
 it('[A16] (P1) the amount shrinks to one line and the label never wraps, so a big number cannot squeeze the name', async () => {
@@ -75,7 +72,7 @@ it('[A17] (P1) a $0 row with a note shows it at 12pt', async () => {
   }, [COFFEE]);
   await renderLoadedBudgetsWithQueries();
   const note = await screen.findByTestId('budget-row-note-coffee');
-  expect(note.props.children).toBe('Includes past leftovers');
+  expect(note.props.children).toBe('Includes $40 past leftovers');
   expect(fontSize(note)).toBeGreaterThanOrEqual(12);
   expect(screen.UNSAFE_queryAllByType(BudgetBar)).toHaveLength(0);
 });

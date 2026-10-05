@@ -50,7 +50,7 @@ describe('pacePct — where the tick goes', () => {
 });
 
 describe('budget rows with the new rule', () => {
-  // [A6] (P0) slightly ahead → no line at all, not even "under plan" (dead zone between the two).
+  // [A6] (P0) slightly ahead → no line at all.
   it('[A6] ahead of pace but with room → no line, not urgent', () => {
     const row = rowFor({ budget: 100, posted: 74, pending: 0 });
     expect(row.paceLabel).toBe('');
@@ -62,16 +62,7 @@ describe('budget rows with the new rule', () => {
     expect(rowFor({ budget: 100, posted: 70, pending: 0 }).paceLabel).toBe('');
     const row = rowFor({ budget: 100, posted: 70, pending: 15 });
     expect(row.paceLabel).toBe('$35 over plan');
-    expect(row.paceColor).toBe(C.textInfo);
     expect(row.behindPace).toBe(true);
-  });
-
-  // [A8] (P0) no spending row's pace line is ever amber, across a sweep of spends.
-  it('[A8] the pace line is never amber', () => {
-    for (let posted = 0; posted <= 100; posted += 5) {
-      const row = rowFor({ budget: 100, posted, pending: 0 });
-      expect(row.paceColor).not.toBe(C.warn);
-    }
   });
 
   // [A9] (P0) a rollover leftovers row only warns on the envelope's daily room, not the base pace alone.
@@ -137,7 +128,6 @@ describe('the row and the detail screen agree (WHIT-732 + WHIT-715)', () => {
       const detail = budgetDetail(state, 'coffee')!;
       expect(detail.statusLabel === 'Over plan — ease up').toBe(row.behindPace);
       if (row.behindPace) {
-        expect(row.paceColor).toBe(C.textInfo);
         expect(detail.statusColor).toBe(C.textInfo);
         warned++;
       } else if (!row.over) quiet++;

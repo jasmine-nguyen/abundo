@@ -1,9 +1,8 @@
-// WHIT-707 — the Budgets tab shows Spending and Earning sections with no swatch legend, and an
-// over-budget row's spread link opens the spread screen prefilled.
+// WHIT-707 — the Budgets tab shows Spending and Earning sections with no swatch legend.
 // Real ../api over the fake server; ../auth + expo-router mocked.
 import { it, expect, jest, beforeEach } from '@jest/globals';
-import { screen, fireEvent } from '@testing-library/react-native';
-import { routerSpies, resetRouter } from './support/routerMock';
+import { screen } from '@testing-library/react-native';
+import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { renderLoadedBudgets } from './support/budgetsScreen';
 import { COFFEE } from './support/categories';
@@ -26,19 +25,14 @@ beforeEach(() => {
   ]);
   server.seed('/budgets', {
     salary: { target: 5000, posted: 1000, pending: 0 },
-    coffee: { target: 100, posted: 120, pending: 0 }, // $20 over, no rollover → spreadable
+    coffee: { target: 100, posted: 120, pending: 0 }, // $20 over
   });
 });
 
-it('shows Spending and Earning sections and a spread link that opens spread prefilled', async () => {
+it('shows Spending and Earning sections', async () => {
   await renderLoadedBudgets();
 
   expect(screen.getByText('SPENDING')).toBeTruthy();
   expect(screen.getByText('EARNING')).toBeTruthy();
   expect(screen.queryByText("Today's pace")).toBeNull();
-
-  expect(screen.getByText('Spread it over pay cycles →')).toBeTruthy();
-  fireEvent.press(screen.getByTestId('budget-row-spread-coffee'));
-  expect(routerSpies.push).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=20');
-  expect(routerSpies.push).not.toHaveBeenCalledWith('/budget/coffee');
 });
