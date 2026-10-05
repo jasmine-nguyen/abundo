@@ -4,9 +4,9 @@ import type { TabBar } from '../../../app/(tabs)/_layout';
 
 export const TAB_ROUTES = ['budgets', 'transactions', 'accounts', 'insights', 'goals'];
 
-export function tabBarProps(routes: string[] = TAB_ROUTES): React.ComponentProps<typeof TabBar> {
+export function tabBarProps(routes: string[] = TAB_ROUTES, index = 0): React.ComponentProps<typeof TabBar> {
   return {
-    state: { index: 0, routes: routes.map((name) => ({ key: name, name })) },
+    state: { index, routes: routes.map((name) => ({ key: name, name })) },
     navigation: { emit: () => ({ defaultPrevented: false }), navigate: jest.fn() },
   };
 }
