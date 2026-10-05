@@ -210,8 +210,10 @@ export default function GoalEdit() {
     setSaving(true);
     try {
       const ok = await s.deleteGoal(id!);
-      if (ok) router.back();
-      else setSaving(false);
+      if (!ok) return setSaving(false);
+      // The goal's page (if we came from it) is gone too, so return straight to the Goals tab.
+      router.dismissAll?.();
+      router.replace('/(tabs)/goals');
     } catch (error) {
       setSaving(false); // WHIT-249: re-enable on an unexpected throw; re-throw so the guard logs it
       throw error;

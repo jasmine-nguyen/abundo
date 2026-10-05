@@ -2,25 +2,19 @@ import React, { useCallback, useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter, useFocusEffect, useIsFocused } from 'expo-router';
 import { C, FONT, fmt, tint } from '../../src/theme';
-import { Icon, Glyph } from '../../src/icons';
-import { balanceGoalView, goalView, milestoneView, useAppContext, type BalanceGoalStatus } from '../../src/context';
+import { Glyph } from '../../src/icons';
+import { balanceGoalView, goalView, milestoneView, useAppContext } from '../../src/context';
 import { useGoalsScreenData } from '../../src/queries';
 import { useCheckpointCelebration } from '../../src/hooks/useCheckpointCelebration';
 import { celebrationSteps } from '../../src/checkpointCelebration';
 import { sortCheckpointsForDirection } from '../../src/checkpoints';
-import { MONTHS, formatDayMonthYear, parseISODate } from '../../src/dateutil';
+import { formatDayMonthYear, parseISODate } from '../../src/dateutil';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { Bar, RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/components/ui';
+import { RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/components/ui';
 import { SettingsButton } from '../../src/components/SettingsButton';
 import { Celebration } from '../../src/components/Celebration';
 import { PayoffSummary } from '../../src/components/PayoffSummary';
-
-// "2026-08-15" -> "Aug 2026". Parsed by hand (no Date) so the label can't shift across a
-// timezone boundary. Falls back to the raw ISO if it's somehow unparseable.
-function byLabel(iso: string): string {
-  const [y, m] = iso.split('-').map(Number);
-  return MONTHS[m - 1] ? `${MONTHS[m - 1]} ${y}` : iso;
-}
+import { GoalProgress, GoalHead } from '../../src/components/GoalProgress';
 
 // WHIT-235: a manual balance is "stale" once it hasn't been updated in over 30 days — the
 // number the pace math trusts is getting old, so the card nudges the user to refresh it.
@@ -33,20 +27,11 @@ function balanceIsStale(manualAsOf: string | null | undefined): boolean {
   return days > STALE_DAYS;
 }
 
-// WHIT-748: the calm pace pill. Behind is amber, never the alarm rose.
-function paceLabel(status: BalanceGoalStatus | null, aheadBy: number | null): { text: string; color: string } | null {
-  if (status === 'on_track') return { text: 'On pace', color: C.good };
-  if (status === 'behind') return { text: 'A little behind', color: C.warn };
-  if (status !== 'ahead') return null;
-  if (aheadBy != null && aheadBy >= 1) return { text: `Ahead by ${fmt(aheadBy)}`, color: C.good };
-  return { text: 'Ahead', color: C.good };
-}
-
 // WHIT-233: the Goals hub — the tab formerly showing only the mortgage. Lists the user's
 // savings/debt goals (each a progress + pace card off the pure balanceGoalView engine) and
 // keeps the home loan as its own always-present card that taps into the full mortgage screen
-// (relocated to app/mortgage). Adding/editing a goal is a later card; the "+" and the empty
-// state route to the /goal/edit stub for now.
+// (relocated to app/mortgage). Tapping a goal opens its read-only page (app/goal/[id], WHIT-749);
+// the "+" and the empty state route to /goal/edit to add one.
 export default function Goals() {
   const router = useRouter();
   const s = useAppContext(); // openGoalBalance — the in-place manual-balance update sheet (WHIT-235)
@@ -148,7 +133,7 @@ export default function Goals() {
                 <View style={styles.mortgageRichHead}>
                   <View style={styles.mortgageChip}><Glyph name="building" size={22} color={C.heroInk} /></View>
                   <Text style={[styles.mortgageTitle, { flex: 1 }]}>The mortgage</Text>
-                  <Glyph name="chevron" size={16} color="rgba(20,18,50,.55)" />
+                  <Glyph name="chevron" size={16} color={C.heroInkSoft} />
                 </View>
                 <PayoffSummary
                   variant="card"
@@ -186,78 +171,20 @@ export default function Goals() {
             </Text>
           ) : (
             goalViews.map(({ goal, view: v }) => {
-              const pct = v.progress != null ? Math.round(v.progress * 100) : null;
-              const grow = goal.direction === 'grow';
               // A manual goal (no synced account) keeps its own balance — show when it was last
               // set + an in-place "Update balance" affordance. Synced goals track the live feed.
               const manual = !goal.account_id;
               const stale = manual && balanceIsStale(goal.manual_as_of);
-              const pace = paceLabel(v.status, v.aheadBy);
-              const amount = v.movedAmount != null && v.spanAmount != null
-                ? `${fmt(v.movedAmount)} of ${fmt(v.spanAmount)}`
-                : null;
+              const editGoal = () => router.push(`/goal/edit?id=${encodeURIComponent(goal.id)}`);
               return (
                 <Pressable
                   key={goal.id}
                   testID={`goal-card-${goal.id}`}
-                  onPress={() => router.push(`/goal/edit?id=${encodeURIComponent(goal.id)}`)}
+                  onPress={() => router.push(`/goal/${encodeURIComponent(goal.id)}`)}
                   style={styles.goalCard}
                 >
-                  <View style={styles.goalHead}>
-                    <View style={styles.goalChip}><Icon name={goal.icon} size={22} color={C.accentSoft} /></View>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.goalName} numberOfLines={1}>{goal.name}</Text>
-                      <Text style={styles.goalSub}>
-                        {grow ? 'Saving toward' : 'Paying down'} {fmt(goal.target_amount)} · by {byLabel(goal.target_date)}
-                      </Text>
-                    </View>
-                    <Text style={styles.goalPct}>{pct != null ? `${pct}%` : '—'}</Text>
-                  </View>
-
-                  <View style={{ marginTop: 13 }}>
-                    {/* WHIT-486: feed the raw (unrounded) fill so a checkpoint dot never sits a
-                        pixel off the fill edge; the rounded % is only the headline number above. */}
-                    <Bar
-                      pct={v.progress != null ? v.progress * 100 : 0}
-                      color={grow ? C.goodBright : C.purple}
-                      height={10}
-                      markers={v.checkpointMarkers}
-                    />
-                  </View>
-
-                  {(amount || pace) && (
-                    <View style={styles.goalMeta}>
-                      {amount && <Text testID={`goal-amount-${goal.id}`} style={styles.goalAmount}>{amount}</Text>}
-                      {pace && (
-                        <View testID={`goal-pace-${goal.id}`} style={[styles.pacePill, { backgroundColor: tint(pace.color, 0.14) }]}>
-                          <Text style={[styles.pacePillText, { color: pace.color }]}>{pace.text}</Text>
-                        </View>
-                      )}
-                    </View>
-                  )}
-
-                  {/* WHIT-486: the count travels with the dots — both show only when the bar has a
-                      scale to place them on (markers non-empty), so it's never "N reached" + no dots. */}
-                  {v.checkpointMarkers.length > 0 && v.checkpointsReached != null && (
-                    <Text testID={`goal-checkpoints-${goal.id}`} style={styles.goalCheckpoints}>
-                      {v.checkpointsReached} of {v.checkpointsTotal} reached
-                    </Text>
-                  )}
-
-                  {v.targetReached ? (
-                    <View style={styles.goalFoot}>
-                      <Text testID={`goal-reached-${goal.id}`} style={styles.goalReached}>Goal reached</Text>
-                    </View>
-                  ) : (
-                    <View style={styles.goalFoot}>
-                      <Text style={styles.goalFootL}>
-                        {v.pacePerPayday != null ? `${fmt(v.pacePerPayday)} / payday` : 'Waiting on your balance'}
-                      </Text>
-                      <Text style={styles.goalFootR}>
-                        {v.paydaysLeft > 0 ? `${v.paydaysLeft} payday${v.paydaysLeft === 1 ? '' : 's'} left` : 'due now'}
-                      </Text>
-                    </View>
-                  )}
+                  <GoalHead goal={goal} view={v} />
+                  <GoalProgress goal={goal} view={v} onPastDue={editGoal} />
 
                   {manual && (
                     <View style={styles.manualRow}>
@@ -301,7 +228,7 @@ const styles = StyleSheet.create({
   fill: { flexGrow: 1 },
 
   // The mortgage entry — a light hero-tinted card so it reads as the headline goal.
-  mortgageChip: { width: 44, height: 44, borderRadius: 14, backgroundColor: 'rgba(21,18,58,.16)', alignItems: 'center', justifyContent: 'center' },
+  mortgageChip: { width: 44, height: 44, borderRadius: 14, backgroundColor: C.heroInkWash, alignItems: 'center', justifyContent: 'center' },
   mortgageTitle: { fontFamily: FONT.display, fontSize: 17, fontWeight: '800', color: C.heroInk, letterSpacing: -0.3 },
   // WHIT-488: the plain card IS the /mortgage detail hero tile (taller than the rich card so the
   // gradient spreads smoothly instead of banding). Eyebrow + blob + big figure copied 1:1 from it.
@@ -320,20 +247,6 @@ const styles = StyleSheet.create({
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textDim, letterSpacing: 0.5, marginBottom: 12, marginLeft: 2 },
 
   goalCard: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, padding: 16, marginBottom: 12 },
-  goalHead: { flexDirection: 'row', alignItems: 'center', gap: 13 },
-  goalChip: { width: 42, height: 42, borderRadius: 13, backgroundColor: tint(C.accentAlt, 0.14), alignItems: 'center', justifyContent: 'center' },
-  goalName: { fontFamily: FONT.body, fontSize: 15.5, fontWeight: '700', color: C.textBright, letterSpacing: -0.2 },
-  goalSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
-  goalPct: { fontFamily: FONT.display, fontSize: 18, fontWeight: '800', color: C.text, letterSpacing: -0.5 },
-  goalMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginTop: 10 },
-  goalAmount: { fontFamily: FONT.display, fontSize: 13, fontWeight: '700', color: C.textMid, letterSpacing: -0.2 },
-  pacePill: { borderRadius: 12, paddingVertical: 4, paddingHorizontal: 10 },
-  pacePillText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600' },
-  goalCheckpoints: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim, marginTop: 8 },
-  goalFoot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 11 },
-  goalFootL: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.accentSoft },
-  goalFootR: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim },
-  goalReached: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.good },
 
   // WHIT-235: the manual-goal "as of <date>" + Update balance row, under the pace foot.
   manualRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.hairline },

@@ -75,9 +75,10 @@ export const C = {
   heroInk: '#16161e',
   heroInk2: '#1a1b26',
   // Hero-tile decoration on the accent surface: heroInkSoft is the muted eyebrow label ink,
-  // heroBlobFill the pale corner-blob wash. app/mortgage.tsx's hero still inlines these two
-  // literals (baseline 14) — a later cleanup can point it at these tokens too.
+  // heroBlobFill the pale corner-blob wash, heroInkWash the dark tint behind chips, pills and bar
+  // tracks on the hero gradient (WHIT-749).
   heroInkSoft: 'rgba(20,18,50,.62)',
+  heroInkWash: 'rgba(21,18,58,.16)',
   heroBlobFill: 'rgba(255,255,255,.1)',
   // The unfilled rail behind every progress bar (budget, goal, mortgage, apply-rules).
   progressTrack: 'rgba(255,255,255,.07)',

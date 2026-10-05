@@ -466,8 +466,7 @@ const RAW_COLOR = new RegExp(RAW_COLOR_SOURCE, 'g');
 // Baseline as of WHIT-398. Lower a number when you tokenise a file; delete the key at zero.
 // Never raise one — that is the regression this exists to stop.
 const BASELINE: Record<string, number> = {
-  'app/(tabs)/goals.tsx': 2,
-  'app/(tabs)/insights.tsx': 3,
+  'app/(tabs)/insights.tsx': 2,
   'app/settings.tsx': 5,
   'app/(tabs)/transactions.tsx': 8,
   'app/budget/[id].tsx': 4,
@@ -477,9 +476,9 @@ const BASELINE: Record<string, number> = {
   'app/category/edit.tsx': 4,
   'app/goal/edit.tsx': 4,
   'app/index.tsx': 29,
-  'app/milestone.tsx': 13,
+  'app/milestone.tsx': 7,
   'app/milestone/edit.tsx': 1,
-  'app/mortgage.tsx': 14,
+  'app/mortgage.tsx': 12,
   'app/rules.tsx': 6,
   'app/transaction/[id].tsx': 1,
   'src/AuthGate.tsx': 1,
@@ -487,7 +486,6 @@ const BASELINE: Record<string, number> = {
   'src/components/EarnedVsSpent.tsx': 1,
   'src/components/Header.tsx': 2,
   'src/components/Overlays.tsx': 20,
-  'src/components/PayoffSummary.tsx': 5,
   'src/components/QuickCreateCategory.tsx': 3,
   'src/components/TransactionRow.tsx': 3,
   'src/context.tsx': 5,

@@ -15,9 +15,8 @@ import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
-import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
+import { seedHubWith, type GoalsHubSeed } from './support/goalsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
-import { EMPTY_LOAN_FACTS } from './factory';
 import { queryClient } from '../queryClient';
 import type { GoalRecord, LoanFacts } from '../api';
 
@@ -34,7 +33,6 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import Goals from '../../app/(tabs)/goals';
 
-const PAY_CYCLE = { length: 14, last_pay_date: '2026-06-06' }; // paydays …Jul18, Aug1, Aug15
 const GROW: GoalRecord = { id: 'g1', name: 'Emergency fund', icon: 'wallet', direction: 'grow', target_amount: 10000, target_date: '2026-08-15', account_id: 'up-spending' };
 const PAYDOWN: GoalRecord = { id: 'g2', name: 'Car loan', icon: 'car', direction: 'paydown', target_amount: 0, target_date: '2026-08-15', baseline: 20000, manual_balance: 12000, manual_as_of: '2026-07-01', account_id: null };
 // WHIT-296: a fully-populated LoanFacts (all six numbers) so loanFactsReady is true and the
@@ -46,8 +44,7 @@ const server = installFakeServer();
 useTestQueryClient();
 
 // `balances` is account id → live balance (the old balanceFor lookup); an account left out is unpolled.
-const HUB: GoalsHubSeed = { payCycle: PAY_CYCLE, balances: { 'up-spending': 4000 }, loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:00:00Z' } };
-const seedHub = (over: GoalsHubSeed = {}) => seedGoalsHub(server, { ...HUB, ...over });
+const seedHub = (over: GoalsHubSeed = {}) => seedHubWith(server, over);
 
 beforeEach(() => {
   resetAuth();
@@ -97,19 +94,20 @@ describe('goal cards (real balanceGoalView)', () => {
     expect(card.getByText('$4,000 / payday')).toBeTruthy();
   });
 
-  it('a synced goal with no live balance yet shows "—" and a waiting label, not a crash', async () => {
+  it('a synced goal with no live balance yet shows no % and a waiting label, not a crash', async () => {
     seedHub({ goals: [GROW], balances: {} }); // account not polled
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('goal-card-g1'));
-    expect(card.getByText('—')).toBeTruthy();
+    expect(card.queryByText(/%$/)).toBeNull();
+    expect(card.queryByText('—')).toBeNull();
     expect(card.getByText('Waiting on your balance')).toBeTruthy();
   });
 
-  it('a synced goal whose account is missing from the balances list shows "—", while a polled one shows its balance', async () => {
+  it('a synced goal whose account is missing from the balances list waits, while a polled one shows its balance', async () => {
     const other = { ...GROW, id: 'g9', name: 'Holiday', account_id: 'up-saver' };
     seedHub({ goals: [GROW, other], balances: { 'up-saver': 2500 } }); // up-spending not in the list
     await renderWithQueries(<Goals />);
-    expect(within(screen.getByTestId('goal-card-g1')).getByText('—')).toBeTruthy();
+    expect(within(screen.getByTestId('goal-card-g1')).getByText('Waiting on your balance')).toBeTruthy();
     expect(within(screen.getByTestId('goal-card-g9')).getByText('25%')).toBeTruthy(); // 2,500 of 10,000
   });
 
@@ -120,7 +118,7 @@ describe('goal cards (real balanceGoalView)', () => {
     seedHub({ goals: [withLadder] });
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('goal-card-g1'));
-    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('2 of 4 reached');
+    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('2 of 4 milestones reached');
   });
 
   it('a goal with no checkpoints renders NO checkpoint line (unchanged from today)', async () => {
@@ -145,14 +143,14 @@ describe('goal cards (real balanceGoalView)', () => {
     const g = { ...GROW, checkpoints: [{ id: 'a', label: 'A', amount: 5000 }, { id: 'b', label: 'B', amount: 8000 }] };
     seedHub({ goals: [g] }); // balance 4000, both rungs above → 0 reached
     await renderWithQueries(<Goals />);
-    expect(within(screen.getByTestId('goal-card-g1')).getByTestId('goal-checkpoints-g1')).toHaveTextContent('0 of 2 reached');
+    expect(within(screen.getByTestId('goal-card-g1')).getByTestId('goal-checkpoints-g1')).toHaveTextContent('0 of 2 milestones reached');
   });
 
   it('shows "N of N reached" when every rung is passed', async () => {
     const g = { ...GROW, checkpoints: [{ id: 'a', label: 'A', amount: 2000 }, { id: 'b', label: 'B', amount: 3000 }] };
     seedHub({ goals: [g] }); // balance 4000, both below → 2 of 2
     await renderWithQueries(<Goals />);
-    expect(within(screen.getByTestId('goal-card-g1')).getByTestId('goal-checkpoints-g1')).toHaveTextContent('2 of 2 reached');
+    expect(within(screen.getByTestId('goal-card-g1')).getByTestId('goal-checkpoints-g1')).toHaveTextContent('2 of 2 milestones reached');
   });
 
   it('a manual paydown shows the reached-count AND keeps the "Update balance" row', async () => {
@@ -160,7 +158,7 @@ describe('goal cards (real balanceGoalView)', () => {
     seedHub({ goals: [g] }); // owed 12000 → ≤15000 reached, ≤10000 not → 1 of 2
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('goal-card-g2'));
-    expect(card.getByTestId('goal-checkpoints-g2')).toHaveTextContent('1 of 2 reached');
+    expect(card.getByTestId('goal-checkpoints-g2')).toHaveTextContent('1 of 2 milestones reached');
     expect(card.getByTestId('goal-balance-g2')).toBeTruthy();
     expect(card.getByText('Update balance')).toBeTruthy();
   });
@@ -173,7 +171,7 @@ describe('goal cards (real balanceGoalView)', () => {
     const card = within(screen.getByTestId('goal-card-g1'));
     expect(card.getAllByTestId('bar-dot-reached')).toHaveLength(2);       // filled dots
     expect(card.getAllByTestId('bar-dot')).toHaveLength(2);               // hollow dots
-    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('2 of 4 reached'); // agrees
+    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('2 of 4 milestones reached'); // agrees
   });
 
   it('renders no dots for a goal with no checkpoints', async () => {
@@ -316,10 +314,10 @@ describe('navigation', () => {
     expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit');
   });
 
-  it('a goal card routes to the edit screen with its id', async () => {
+  it('a goal card routes to its goal page (WHIT-749)', async () => {
     await renderWithQueries(<Goals />);
     fireEvent.press(screen.getByTestId('goal-card-g1'));
-    expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit?id=g1');
+    expect(routerSpies.push).toHaveBeenCalledWith('/goal/g1');
   });
 
   it('the mortgage card routes to the full mortgage screen', async () => {
@@ -400,13 +398,13 @@ it('a manual goal with a null as-of shows "Balance not set" and no stale tag', a
 });
 
 // [A17] REGRESSION: adding the nested "Update balance" button inside the card must not steal taps
-// on the card body — tapping the card (not the button) still routes to the edit screen, and the
+// on the card body — tapping the card (not the button) still routes to the goal page, and the
 // sheet does NOT open. Mirrors the existing synced-card nav test, but for a MANUAL card.
-it('tapping a manual goal card body still routes to edit (not the sheet)', async () => {
+it('tapping a manual goal card body still routes to the goal page (not the sheet)', async () => {
   seedHub({ goals: [PAYDOWN] });
   await renderWithQueries(<Goals />);
   fireEvent.press(screen.getByTestId('goal-card-g2'));
-  expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit?id=g2');
+  expect(routerSpies.push).toHaveBeenCalledWith('/goal/g2');
   expect(mockOpenGoalBalance).not.toHaveBeenCalled();
 });
 
@@ -501,7 +499,7 @@ describe('goal cards — checkpoint dots, QA gaps (WHIT-486)', () => {
     const card = within(screen.getByTestId('goal-card-g1'));
     expect(card.getAllByTestId('bar-dot-reached')).toHaveLength(1);
     expect(card.getAllByTestId('bar-dot')).toHaveLength(2);
-    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('1 of 3 reached');
+    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('1 of 3 milestones reached');
   });
 
   it('[A-gap5] headline % stays ROUNDED after the raw-fill change (bar is raw, the number is not)', async () => {
@@ -524,17 +522,17 @@ describe('goal cards — checkpoint dots, QA gaps (WHIT-486)', () => {
     const card = within(screen.getByTestId('goal-card-g1'));
     expect(card.getAllByTestId('bar-dot')).toHaveLength(1);
     expect(card.queryAllByTestId('bar-dot-reached')).toHaveLength(0);
-    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('0 of 1 reached');
+    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('0 of 1 milestone reached');
   });
 
   it('[A-gap7] degenerate goal (target==baseline → no bar scale) with a ladder: no dots AND no count', async () => {
-    // baseline==target → progress null → headline "—", no fill scale. Dots and the count line both
+    // baseline==target → progress null → no headline %, no fill scale. Dots and the count line both
     // hide (Option A), even though 4000 has technically passed the 3000 rung.
     const degenerate = { ...GROW, baseline: 10000, target_amount: 10000, checkpoints: [{ id: 'a', label: 'a', amount: 3000 }, { id: 'b', label: 'b', amount: 8000 }] };
     seedHub({ goals: [degenerate] });
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('goal-card-g1'));
-    expect(card.getByText('—')).toBeTruthy();
+    expect(card.queryByText(/%$/)).toBeNull();
     expect(card.queryAllByTestId('bar-dot')).toHaveLength(0);
     expect(card.queryAllByTestId('bar-dot-reached')).toHaveLength(0);
     expect(card.queryByTestId('goal-checkpoints-g1')).toBeNull();

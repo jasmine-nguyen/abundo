@@ -13,7 +13,7 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { resetAuth } from './support/authMock';
 import { resetRouter } from './support/routerMock';
 import { pinToday } from './support/clock';
-import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
+import { seedHubWith, type GoalsHubSeed } from './support/goalsScreen';
 import type { LoanFacts } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
@@ -24,7 +24,6 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import Goals from '../../app/(tabs)/goals';
 
-const PAY_CYCLE = { length: 14, last_pay_date: '2026-06-06' };
 const READY_FACTS: LoanFacts = { original: 500000, homeValue: 900000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, payoffGoalDate: null };
 
 const server = installFakeServer();
@@ -32,8 +31,7 @@ useTestQueryClient();
 
 // The home loan sits $1 ABOVE the original by default. `balances` is account id → live balance (the
 // old balanceFor lookup); an account left out is unpolled.
-const HUB: GoalsHubSeed = { payCycle: PAY_CYCLE, balances: {}, loanFacts: READY_FACTS, homeLoan: { balance: 500001, asOf: '2026-07-04T00:00:00Z' } };
-const seedHub = (over: GoalsHubSeed = {}) => seedGoalsHub(server, { ...HUB, ...over });
+const seedHub = (over: GoalsHubSeed = {}) => seedHubWith(server, { balances: {}, loanFacts: READY_FACTS, homeLoan: { balance: 500001, asOf: '2026-07-04T00:00:00Z' }, ...over });
 
 beforeEach(() => {
   resetAuth();

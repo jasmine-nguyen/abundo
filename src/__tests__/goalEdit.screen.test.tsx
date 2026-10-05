@@ -239,6 +239,15 @@ describe('edit', () => {
     expect(body).toMatchObject({ target_amount: 20000, account_id: 'acc-1' });
   });
 
+  // [A11] WHIT-749: saving an edit goes BACK (to the goal page it came from), never to the tab.
+  it('saving an edit → back, not a replace to the Goals tab', async () => {
+    await renderForm();
+    await press('goal-save');
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
+    expect(routerSpies.replace).not.toHaveBeenCalled();
+    expect(routerSpies.dismissAll).not.toHaveBeenCalled();
+  });
+
   it('re-seeds the form when the goals cache resolves a beat after mount', async () => {
     seedServer();
     const held = server.hold('/goals'); // cold cache: the goal isn't there yet at first render
@@ -263,12 +272,15 @@ describe('edit', () => {
     expect(screen.queryByDisplayValue('Server name')).toBeNull();
   });
 
-  it('Delete → deleteGoal(id) once, then back', async () => {
+  // WHIT-749: the goal's page is gone too, so delete returns straight to the Goals tab.
+  it('Delete → deleteGoal(id) once, then straight to the Goals tab', async () => {
     await renderForm();
     await press('goal-delete');
     expect(mockDeleteGoal).toHaveBeenCalledTimes(1);
     expect(mockDeleteGoal).toHaveBeenCalledWith('g1');
-    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/goals'));
+    expect(routerSpies.dismissAll).toHaveBeenCalledTimes(1);
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 });
 
@@ -302,7 +314,7 @@ describe('WHIT-249: an unexpected writer throw re-enables the button', () => {
     await press('goal-delete');
     await press('goal-delete');
     expect(mockDeleteGoal).toHaveBeenCalledTimes(2);
-    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledTimes(1));
     expect(errorSpy).toHaveBeenCalled();
   });
 });
@@ -459,6 +471,7 @@ describe('writer failure does not navigate', () => {
     expect(mockDeleteGoal).toHaveBeenCalledTimes(1);
     await act(async () => {});
     expect(routerSpies.back).not.toHaveBeenCalled();
+    expect(routerSpies.replace).not.toHaveBeenCalled();
   });
 });
 
