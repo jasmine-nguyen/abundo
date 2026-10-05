@@ -3,6 +3,7 @@
 // an uncategorized row is tappable (opens the categorize picker) while a
 // categorized one is not. Seeded from the QA "Automatable (UI)" feed scenarios.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { makeState, cat, txn } from './factory';
@@ -19,8 +20,7 @@ jest.mock('../context', () => {
 
 // WHIT-272: the row's trailing chevron routes to the detail page via useRouter. Stub it and
 // capture push so the chevron-routing test can assert the destination.
-const mockPush = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import { TransactionRow } from '../components/TransactionRow';
 
@@ -30,8 +30,8 @@ function stateWith() {
 }
 
 beforeEach(() => {
+  resetRouter();
   openPicker.mockClear();
-  mockPush.mockClear();
 });
 
 it('renders merchant, amount and category for a categorized row', () => {
@@ -86,6 +86,6 @@ it('the trailing chevron opens the transaction detail page without opening the p
   mockState = stateWith();
   render(<TransactionRow t={txn({ transaction_id: 'tx9', category: null })} category={mockState.category} />);
   fireEvent.press(screen.getByLabelText('View transaction details'));
-  expect(mockPush).toHaveBeenCalledWith('/transaction/tx9');
+  expect(routerSpies.push).toHaveBeenCalledWith('/transaction/tx9');
   expect(openPicker).not.toHaveBeenCalled();
 });

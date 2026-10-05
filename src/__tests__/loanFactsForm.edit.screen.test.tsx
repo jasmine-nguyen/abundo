@@ -3,6 +3,7 @@
 // this proves the form SEEDS the picker/label from the stored date and PRESERVES it on a
 // save that never touches the picker (a stale-seed bug would silently wipe the goal).
 import { it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, LoanFacts, LoanFactsInput } from '../context';
@@ -16,8 +17,7 @@ jest.mock('../context', () => {
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-const mockBack = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack, push: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Loan from '../../app/loan';
 import { resetAuth } from './support/authMock';
@@ -38,7 +38,7 @@ function state(over: Partial<LoanFormState>): LoanFormState {
 }
 
 beforeEach(() => {
-  mockBack.mockClear();
+  resetRouter();
   resetAuth();
   server.seed('/loanfacts', SAVED);
 });
@@ -58,7 +58,7 @@ it('preserves the saved goal date on a save that never opens the picker', async 
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
   // The pre-existing date rides along untouched — a stale-seed bug would send null here.
   expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ payoffGoalDate: '2035-06-01' }));
-  expect(mockBack).toHaveBeenCalled();
+  expect(routerSpies.back).toHaveBeenCalled();
 });
 
 it('clears a previously-saved goal date back to null', async () => {

@@ -6,7 +6,7 @@ import { describe, it, expect, jest } from '@jest/globals';
 
 // Importing the Settings module pulls in its top-level deps; mock the native-backed
 // ones so the module loads in the test env (we only exercise the pure initialsFrom).
-jest.mock('expo-router', () => ({ useRouter: () => ({ replace: jest.fn(), push: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 jest.mock('../../src/auth', () => ({ signOut: jest.fn(), getCurrentUser: () => null }));
 jest.mock('../../src/context', () => ({ loanFactsReady: () => false, useAppContext: () => ({}) }));
 

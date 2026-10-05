@@ -8,6 +8,7 @@
 // `transactions.length === 0` from showError makes the "error with cached cards" case surface
 // the error.
 import { it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import { StyleSheet, RefreshControl } from 'react-native';
@@ -36,14 +37,7 @@ jest.mock('../context', () => {
   };
 });
 
-const mockPush = jest.fn();
-jest.mock('expo-router', () => {
-  const ReactLib = require('react');
-  return {
-    useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]),
-    useRouter: () => ({ push: mockPush }),
-  };
-});
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Accounts from '../../app/(tabs)/accounts';
 
@@ -60,7 +54,7 @@ const seedFeed = (transactions: unknown[]) => server.seed('/transactions/feed', 
 const feedReads = () => server.sentUnder('GET', '/transactions/feed');
 
 beforeEach(() => {
-  mockPush.mockClear();
+  resetRouter();
   mockShowToast.mockClear();
   resetAuth();
   server.seed('/categories', [GROCERIES_RECORD]);
@@ -81,7 +75,7 @@ it('tapping an account card navigates to that account\'s detail route', async ()
   seedFeed([{ ...ROW, account_id: 'a1', account_name: 'ANZ' }]);
   await renderWithQueries(<Accounts />);
   fireEvent.press(screen.getByText('ANZ'));
-  expect(mockPush).toHaveBeenCalledWith('/account/a1');
+  expect(routerSpies.push).toHaveBeenCalledWith('/account/a1');
 });
 
 it('shows the cold-load spinner (empty + loading)', async () => {
@@ -204,7 +198,7 @@ it('shows a card for a balance-only account (no loaded transactions) with its li
   expect(colorOf(screen.getByText('-$500,000.00'))).toBe(C.bad);
   expect(screen.getByText('No recent transactions')).toBeTruthy();
   fireEvent.press(screen.getByText('Up Homeloan'));
-  expect(mockPush).toHaveBeenCalledWith('/account/up-homeloan');
+  expect(routerSpies.push).toHaveBeenCalledWith('/account/up-homeloan');
 });
 
 it('with no loaded transactions but a saved balance, shows the card, not "No accounts yet"', async () => {

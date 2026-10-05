@@ -25,10 +25,7 @@ jest.mock('../components/SpendingDonut', () => ({
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
-jest.mock('expo-router', () => {
-  const ReactLib = require('react');
-  return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
-});
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const server = installFakeServer();
 useTestQueryClient();

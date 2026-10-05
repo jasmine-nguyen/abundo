@@ -4,11 +4,11 @@
 // empty-field disable, and that a thrown auth call clears busy + shows a generic error
 // (not a stuck spinner). ../../src/auth + expo-router mocked (mirrors the base suite).
 import { it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 
-const mockReplace = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace, push: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const mockSignInWithPassword = jest.fn<(e: string, p: string) => Promise<unknown>>();
 const mockSignInWithGoogle = jest.fn<() => Promise<import('../auth').OAuthSignInResult>>();
@@ -26,7 +26,7 @@ function fill(getByTestId: (id: string) => unknown) {
 }
 
 beforeEach(() => {
-  mockReplace.mockReset();
+  resetRouter();
   mockSignInWithPassword.mockReset();
   mockSignInWithGoogle.mockReset();
 });
@@ -73,7 +73,7 @@ it('the keyboard "go" key (onSubmitEditing) submits the password sign-in', async
   fill(getByTestId);
   fireEvent(getByTestId('login-password'), 'submitEditing');
   await waitFor(() => expect(mockSignInWithPassword).toHaveBeenCalledWith('me@x.com', 'secret'));
-  await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/budgets'));
+  await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
 });
 
 it('clears an earlier error once a retry succeeds', async () => {
@@ -85,7 +85,7 @@ it('clears an earlier error once a retry succeeds', async () => {
   fireEvent.press(getByTestId('login-submit'));
   expect(await findByText('Incorrect email or password.')).toBeTruthy();
   fireEvent.press(getByTestId('login-submit'));
-  await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/budgets'));
+  await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
   expect(queryByText('Incorrect email or password.')).toBeNull();
 });
 
@@ -97,7 +97,7 @@ it('clears a password error when the user switches to Google and it succeeds', a
   fireEvent.press(getByTestId('login-submit'));
   expect(await findByText('Incorrect email or password.')).toBeTruthy();
   fireEvent.press(getByTestId('login-google'));
-  await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/budgets'));
+  await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
   expect(queryByText('Incorrect email or password.')).toBeNull();
 });
 
@@ -111,5 +111,5 @@ it('a THROWN auth call clears busy and shows a generic error (not a stuck spinne
   expect(await findByText(/something went wrong/i)).toBeTruthy();
   // busy cleared → a retry actually runs and navigates (proves not stuck).
   fireEvent.press(getByTestId('login-submit'));
-  await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/budgets'));
+  await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
 });

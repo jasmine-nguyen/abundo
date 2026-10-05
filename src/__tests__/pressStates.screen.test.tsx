@@ -22,7 +22,7 @@ jest.mock('../context', () => {
 // WHIT-272: the row now calls useRouter for the detail-page chevron. Stub it so the
 // direct-render row still mounts. The chevron uses a STATIC style, so the "exactly one
 // function-style node" invariant below is unchanged.
-jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import { TransactionRow } from '../components/TransactionRow';
 

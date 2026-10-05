@@ -26,10 +26,7 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => ({ openMultiPicker: jest.fn(), showToast: jest.fn() }) };
 });
-jest.mock('expo-router', () => {
-  const ReactLib = require('react');
-  return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
-});
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Transactions from '../../app/(tabs)/transactions';
 

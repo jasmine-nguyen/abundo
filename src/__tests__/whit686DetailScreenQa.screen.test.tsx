@@ -5,6 +5,7 @@
 // read never fetches, a failed feed over a recent-list row stays cache-first, and late rules /
 // budgets fill in.
 import { it, expect, jest, beforeEach } from '@jest/globals';
+import { setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { txn } from './factory';
@@ -18,10 +19,7 @@ jest.mock('../context', () => {
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-jest.mock('expo-router', () => ({
-  useLocalSearchParams: () => ({ id: 't1' }),
-  useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import TransactionDetail from '../../app/transaction/[id]';
@@ -38,6 +36,8 @@ useTestQueryClient();
 const ROW = txn({ transaction_id: 't1', category: 'coffee', amount: -130 });
 
 beforeEach(() => {
+  resetRouter();
+  setParams({ id: 't1' });
   resetAuth();
   server.seed('/categories', [{ ...COFFEE_RECORD, parent: null }]);
   server.seed('/transactions/feed', { transactions: [ROW], nextCursor: null });

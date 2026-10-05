@@ -6,15 +6,14 @@
 // same-frame double-tap fires the writer once, the Income deep-link guard, an undefined
 // categoryId, and the entry point's ABSENCE when a spend category is under budget with no plan.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 
 const mockSaveSpread = jest.fn(async (_id: string, _amount: number, _cycles: number) => true);
 const mockRemoveSpread = jest.fn(async (_id: string) => true);
-const mockBack = jest.fn();
 
 const INCOME = { id: 'salary', name: 'Salary', icon: 'briefcase', color: '#7CC5E8', bucket: 'Income', recent: 5000 };
-let mockParams: { categoryId?: string; prefill?: string; id?: string } = { categoryId: 'coffee' };
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
@@ -24,10 +23,7 @@ jest.mock('../context', () => {
   };
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: mockBack, dismissAll: jest.fn() }),
-  useLocalSearchParams: () => mockParams,
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import BudgetSpread from '../../app/budget/spread';
 import BudgetDetail from '../../app/budget/[id]';
@@ -52,12 +48,12 @@ function seedServer(categories: unknown[], budgets: Record<string, unknown> = {}
 const seedSpend = (over = {}) => seedServer([SPEND], { coffee: rollup(over) });
 
 beforeEach(() => {
+  resetRouter();
   mockSaveSpread.mockReset();
   mockSaveSpread.mockImplementation(async () => true);
   mockRemoveSpread.mockReset();
   mockRemoveSpread.mockImplementation(async () => true);
-  mockBack.mockClear();
-  mockParams = { categoryId: 'coffee' };
+  setParams({ categoryId: 'coffee' });
   resetAuth();
 });
 
@@ -66,7 +62,7 @@ describe('app/budget/spread.tsx — stepper bounds', () => {
   // [G10] Minus is enabled above the floor, disabled AT the floor, and the value never drops
   // below 1. Fail-on-revert: dropping `disabled={cycles <= SPREAD_MIN_CYCLES}` un-disables it.
   it('[G10] the minus button disables at 1 cycle and never steps below', async () => {
-    mockParams = { categoryId: 'coffee', prefill: '120' };
+    setParams({ categoryId: 'coffee', prefill: '120' });
     seedSpend();
     await renderWithQueries(<BudgetSpread />);
 
@@ -84,7 +80,7 @@ describe('app/budget/spread.tsx — stepper bounds', () => {
 
   // [G11] Plus disables AT the ceiling (24, the active plan's cycle count) and never steps past.
   it('[G11] the plus button disables at 24 cycles and never steps above', async () => {
-    mockParams = { categoryId: 'coffee' };
+    setParams({ categoryId: 'coffee' });
     seedSpend({ spread: { amount: 2400, cycles: 24, index: 1, adjustment: -100 } });
     await renderWithQueries(<BudgetSpread />);
 
@@ -103,25 +99,25 @@ describe('app/budget/spread.tsx — save failure', () => {
   // save call router.back() unconditionally, or dropping the else-branch setSubmitting(false),
   // breaks one half of this each.
   it('[G12] saveSpread → false leaves the screen mounted and re-enabled for retry', async () => {
-    mockParams = { categoryId: 'coffee', prefill: '120' };
+    setParams({ categoryId: 'coffee', prefill: '120' });
     mockSaveSpread.mockImplementation(async () => false);
     seedSpend();
     await renderWithQueries(<BudgetSpread />);
 
     await act(async () => { fireEvent.press(screen.getByTestId('spread-save')); });
     expect(mockSaveSpread).toHaveBeenCalledTimes(1);
-    expect(mockBack).not.toHaveBeenCalled();                             // stayed on the screen
+    expect(routerSpies.back).not.toHaveBeenCalled();                             // stayed on the screen
 
     await act(async () => { fireEvent.press(screen.getByTestId('spread-save')); });
     expect(mockSaveSpread).toHaveBeenCalledTimes(2);                     // re-enabled → retried
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 
   // [G13] A same-frame double-tap (both presses land before the pending save resolves) must
   // fire the writer exactly once — the in-flight latch + submitting gate. Fail-on-revert:
   // bypassing runSave (calling s.saveSpread directly) fires it twice.
   it('[G13] a double-tap while the save is in flight fires the writer once', async () => {
-    mockParams = { categoryId: 'coffee', prefill: '120' };
+    setParams({ categoryId: 'coffee', prefill: '120' });
     let resolveSave: (v: boolean) => void = () => {};
     mockSaveSpread.mockImplementation(() => new Promise<boolean>((res) => { resolveSave = res; }));
     seedSpend();
@@ -133,7 +129,7 @@ describe('app/budget/spread.tsx — save failure', () => {
     });
     expect(mockSaveSpread).toHaveBeenCalledTimes(1);
     await act(async () => { resolveSave(true); });
-    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
   });
 });
 
@@ -143,7 +139,7 @@ describe('app/budget/spread.tsx — deep-link guards', () => {
   // amount form (a spread is spend-only; the server would reject it). Fail-on-revert: dropping
   // the Income/Savings bucket guard renders the form.
   it('[G14] an Income category shows the note, not the amount form', async () => {
-    mockParams = { categoryId: 'salary' };
+    setParams({ categoryId: 'salary' });
     seedServer([INCOME]);
     await renderWithQueries(<BudgetSpread />);
 
@@ -156,7 +152,7 @@ describe('app/budget/spread.tsx — deep-link guards', () => {
   // crash — it renders just the header, no form. Fail-on-revert: dropping the `if (!cat)` guard
   // dereferences cat and throws.
   it('[G15] an undefined categoryId renders the header only, no form, no crash', async () => {
-    mockParams = {} as { categoryId?: string };
+    setParams({} as { categoryId?: string });
     seedServer([SPEND]);
     await expect(renderWithQueries(<BudgetSpread />)).resolves.toBeDefined();
     expect(screen.queryByTestId('spread-amount')).toBeNull();
@@ -170,7 +166,7 @@ describe('app/budget/[id].tsx — spread entry absent under budget', () => {
   // (canStartSpread requires currently-over — decision 3). Fail-on-revert: forcing
   // canStartSpread true (dropping the `over &&` gate) makes the button appear.
   it('[G16] under budget with no plan → no spread entry point', async () => {
-    mockParams = { id: 'coffee' };
+    setParams({ id: 'coffee' });
     seedSpend({ posted: 40 });  // 40 < 100
     server.seed('/budgets/coffee/transactions', []);
     server.seed('/paycycle', { length: 14, last_pay_date: '2026-06-06', days_left: 7 });

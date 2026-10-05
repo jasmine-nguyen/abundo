@@ -1,6 +1,7 @@
 // WHIT-672 — the Loan details form opened the way the app opens it: the saved loan facts have
 // already loaded from the (fake) server, then the form fills itself from them once.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, LoanFactsInput } from '../context';
@@ -12,8 +13,7 @@ jest.mock('../context', () => {
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-const mockBack = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack, push: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Loan from '../../app/loan';
 import { resetAuth } from './support/authMock';
@@ -29,7 +29,7 @@ const SAVED = {
 };
 
 beforeEach(() => {
-  mockBack.mockClear();
+  resetRouter();
   resetAuth();
 });
 
@@ -51,6 +51,6 @@ describe('loan form over the fake server', () => {
     await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
 
     expect(saveLoanFacts).toHaveBeenCalledWith(SAVED);
-    expect(mockBack).toHaveBeenCalled();
+    expect(routerSpies.back).toHaveBeenCalled();
   });
 });

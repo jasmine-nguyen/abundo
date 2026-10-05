@@ -51,10 +51,7 @@ jest.mock('../context', () => {
   };
 });
 
-jest.mock('expo-router', () => {
-  const ReactLib = require('react');
-  return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
-});
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Insights from '../../app/(tabs)/insights';
 import { UNCATEGORIZED_KEY } from '../model';

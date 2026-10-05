@@ -4,11 +4,11 @@
 // completeNewPassword and enter the app; "back to sign in" returns to the form.
 // ../../src/auth + expo-router mocked.
 import { it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 
-const mockReplace = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace, push: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const mockSignInWithPassword = jest.fn<(e: string, p: string) => Promise<unknown>>();
 const mockSignInWithGoogle = jest.fn<() => Promise<import('../auth').OAuthSignInResult>>();
@@ -31,7 +31,7 @@ async function reachNewPasswordForm(api: ReturnType<typeof render>) {
 }
 
 beforeEach(() => {
-  mockReplace.mockReset();
+  resetRouter();
   mockSignInWithPassword.mockReset();
   mockSignInWithGoogle.mockReset();
   mockCompleteNewPassword.mockReset();
@@ -54,7 +54,7 @@ it('mismatched passwords show an error and do NOT call completeNewPassword', asy
   fireEvent.press(api.getByTestId('newpass-submit'));
   expect(await api.findByText(/don.t match/i)).toBeTruthy();
   expect(mockCompleteNewPassword).not.toHaveBeenCalled();
-  expect(mockReplace).not.toHaveBeenCalled();
+  expect(routerSpies.replace).not.toHaveBeenCalled();
 });
 
 it('matching passwords call completeNewPassword and enter the app on success', async () => {
@@ -65,7 +65,7 @@ it('matching passwords call completeNewPassword and enter the app on success', a
   fireEvent.changeText(api.getByTestId('newpass-confirm'), 'Str0ng#Pass');
   fireEvent.press(api.getByTestId('newpass-submit'));
   await waitFor(() => expect(mockCompleteNewPassword).toHaveBeenCalledWith('Str0ng#Pass'));
-  await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/budgets'));
+  await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
 });
 
 it('a completeNewPassword error stays on the form (e.g. weak password), no navigation', async () => {
@@ -77,7 +77,7 @@ it('a completeNewPassword error stays on the form (e.g. weak password), no navig
   fireEvent.press(api.getByTestId('newpass-submit'));
   expect(await api.findByText(/requirements/i)).toBeTruthy();
   expect(api.getByTestId('newpass-form')).toBeTruthy(); // still on the set-password step
-  expect(mockReplace).not.toHaveBeenCalled();
+  expect(routerSpies.replace).not.toHaveBeenCalled();
 });
 
 it('"back to sign in" returns to the sign-in form', async () => {

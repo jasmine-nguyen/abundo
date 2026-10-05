@@ -9,6 +9,7 @@
 // share the same ../context + expo-router mocks (module-scope mock fns below) and each folded
 // block re-seeds the server in its own beforeEach.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 
@@ -16,8 +17,6 @@ import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 // writer, refile/rowTargets assert push(), rowTargets asserts openPicker(). Each is hoistable
 // into the jest.mock factories (name starts with `mock`) and read lazily at render time; every
 // folded block clears + asserts only the ones it needs (clearMocks:true also zeroes call records).
-const mockPush = jest.fn();
-const mockBack = jest.fn();
 const mockDeleteBudget = jest.fn(async (_id: string) => true);
 const mockOpenPicker = jest.fn();
 
@@ -27,10 +26,7 @@ jest.mock('../context', () => {
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush, back: mockBack }),
-  useLocalSearchParams: () => ({ id: 'coffee' }),
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import BudgetDetail from '../../app/budget/[id]';
 import { BudgetBar } from '../components/ui';
@@ -43,7 +39,11 @@ import { COFFEE as COFFEE_CATEGORY } from './support/categories';
 const server = installFakeServer();
 useTestQueryClient();
 
-beforeEach(() => resetAuth());
+beforeEach(() => {
+  resetRouter();
+  setParams({ id: 'coffee' });
+  resetAuth();
+});
 
 const CATS = [{ ...COFFEE_CATEGORY, recent: 0 }];
 const COFFEE = { target: 80, posted: 52, pending: 0 };
@@ -179,7 +179,6 @@ describe('budgetDetailRefile — related-transaction details arrow', () => {
   }
 
   beforeEach(() => {
-    mockPush.mockClear();
     seedDetail({ budget: BUDGET, transactions: [charge({})] });
   });
 
@@ -195,7 +194,7 @@ describe('budgetDetailRefile — related-transaction details arrow', () => {
 
     fireEvent.press(screen.getAllByLabelText('View transaction details')[0]);
 
-    expect(mockPush).toHaveBeenCalledWith('/transaction/t1');
+    expect(routerSpies.push).toHaveBeenCalledWith('/transaction/t1');
   });
 
   it('still shows the Pending badge on a pending charge (shared row keeps it)', async () => {
@@ -215,7 +214,6 @@ describe('budgetDetailDelete — Delete button (WHIT-203)', () => {
 
   beforeEach(() => {
     mockDeleteBudget.mockClear();
-    mockBack.mockClear();
     mockDeleteBudget.mockResolvedValue(true);
     seedDetail({ budget: BUDGET, transactions: [], daysLeft: 12 });
   });
@@ -234,7 +232,7 @@ describe('budgetDetailDelete — Delete button (WHIT-203)', () => {
 
     expect(mockDeleteBudget).toHaveBeenCalledTimes(1);
     expect(mockDeleteBudget).toHaveBeenCalledWith('coffee');
-    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
   });
 
   it('a failed delete stays on the screen (no navigation) so the user can retry', async () => {
@@ -244,7 +242,7 @@ describe('budgetDetailDelete — Delete button (WHIT-203)', () => {
     await deleteAndConfirm();
 
     expect(mockDeleteBudget).toHaveBeenCalledTimes(1);
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 });
 
@@ -292,7 +290,6 @@ describe('budgetDetailRowTargets — shared-row integration gaps', () => {
 
   beforeEach(() => {
     mockOpenPicker.mockClear();
-    mockPush.mockClear();
     seedDetail({ budget: BUDGET, transactions: [charge({})] });
   });
 
@@ -325,7 +322,7 @@ describe('budgetDetailRowTargets — shared-row integration gaps', () => {
 
     // Arrow: still present and routes to the detail page, without a second picker call.
     fireEvent.press(screen.getByLabelText('View transaction details'));
-    expect(mockPush).toHaveBeenCalledWith('/transaction/tx9');
+    expect(routerSpies.push).toHaveBeenCalledWith('/transaction/tx9');
     expect(mockOpenPicker).toHaveBeenCalledTimes(1);
   });
 
@@ -344,7 +341,7 @@ describe('budgetDetailRowTargets — shared-row integration gaps', () => {
     expect(mockOpenPicker).not.toHaveBeenCalled();               // body tap does nothing on a filed row
 
     fireEvent.press(screen.getByLabelText('View transaction details'));
-    expect(mockPush).toHaveBeenCalledWith('/transaction/t1');    // arrow is the sole refile entry
+    expect(routerSpies.push).toHaveBeenCalledWith('/transaction/t1');    // arrow is the sole refile entry
   });
 });
 

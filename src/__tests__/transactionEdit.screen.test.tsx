@@ -5,6 +5,7 @@
 // not on blur/unmount — tags add on submit/comma, duplicate tags are ignored, and a chip's ✕
 // removes it.
 import { it, expect, jest, beforeEach } from '@jest/globals';
+import { setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { screen, fireEvent } from '@testing-library/react-native';
 import { txn } from './factory';
@@ -17,10 +18,7 @@ jest.mock('../context', () => {
   return { ...actual, useAppContext: () => ({ applyTransactionEdit: mockEdit, showToast: mockToast }) };
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('expo-router', () => ({
-  useLocalSearchParams: () => ({ id: 't1' }),
-  useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import TransactionDetail from '../../app/transaction/[id]';
@@ -39,6 +37,8 @@ function seedRow(over: Partial<Transaction> = {}) {
 const draw = () => renderWithQueries(<TransactionDetail />);
 
 beforeEach(() => {
+  resetRouter();
+  setParams({ id: 't1' });
   resetAuth();
   mockEdit.mockClear();
   mockToast.mockClear();

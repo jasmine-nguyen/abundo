@@ -12,6 +12,7 @@
 // (categoryFullParent, which mounts app/category/edit inside the real AppProvider). See the
 // // ===== headers at the END.
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
+import { setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import { CategoryFields } from '../components/CategoryFields';
@@ -32,10 +33,7 @@ import { resetAuth } from './support/authMock';
 // categoryFields + categoryFieldsFullParent suites.
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
-  useLocalSearchParams: () => ({ categoryId: 'coffee' }),
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import CategoryEdit from '../../app/category/edit';
 
@@ -274,6 +272,8 @@ async function savedParent() {
 }
 
 beforeEach(() => {
+  resetRouter();
+  setParams({ categoryId: 'coffee' });
   resetAuth();
   resetAppProbe();
 });

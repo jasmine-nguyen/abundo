@@ -34,10 +34,7 @@ jest.mock('../context', () => {
   };
 });
 
-jest.mock('expo-router', () => {
-  const ReactLib = require('react');
-  return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
-});
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Accounts from '../../app/(tabs)/accounts';
 import Transactions from '../../app/(tabs)/transactions';

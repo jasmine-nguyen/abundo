@@ -14,7 +14,7 @@ jest.mock('expo-haptics', () => ({
 }));
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import { ChatProvider, CHAT_CONSENT_KEY, useChat } from '../chat/ChatContext';
 import type { ChatContextValue } from '../chat/ChatContext';

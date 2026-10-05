@@ -56,7 +56,7 @@ describe('WHIT-687 the two big Insights suites run on the fake server', () => {
     const countsViaHelper = helper !== null && block.includes(`${helper[1]}()`);
     if (!countsReads.test(block) && !countsViaHelper) problems.push('does not count breakdown reads');
     if (!/invalidateQueries|setDefaultOptions/.test(block)) problems.push('does not make the cached breakdown stale first');
-    if (!/mockFocus\(\)/.test(block)) problems.push('does not fire the stored focus callback');
+    if (!/fireFocus\(\)/.test(block)) problems.push('does not fire the stored focus callback');
     if (!/refreshAiInsights/.test(block)) problems.push('lost the AI refresh check');
     expect(problems).toEqual([]);
   });

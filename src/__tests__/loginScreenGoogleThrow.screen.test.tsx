@@ -4,11 +4,11 @@
 // state (button label back from "Connecting…"), and not navigate. The existing
 // loginScreen tests only cover resolved {ok:...} shapes, never a rejection.
 import { it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 
-const mockReplace = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace, push: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const mockSignInWithPassword = jest.fn<(e: string, p: string) => Promise<unknown>>();
 const mockSignInWithGoogle = jest.fn<() => Promise<import('../auth').OAuthSignInResult>>();
@@ -20,7 +20,7 @@ jest.mock('../../src/auth', () => ({
 import Login from '../../app/index';
 
 beforeEach(() => {
-  mockReplace.mockReset();
+  resetRouter();
   mockSignInWithPassword.mockReset();
   mockSignInWithGoogle.mockReset();
 });
@@ -32,7 +32,7 @@ it('a thrown Google sign-in shows "Something went wrong", clears busy, no nav', 
   const { getByTestId, findByText, queryByText } = render(<Login />);
   fireEvent.press(getByTestId('login-google'));
   expect(await findByText('Something went wrong. Please try again.')).toBeTruthy();
-  expect(mockReplace).not.toHaveBeenCalled();
+  expect(routerSpies.replace).not.toHaveBeenCalled();
   // Busy cleared: the button label is back to its idle text, not "Connecting…".
   await waitFor(() => expect(getByTestId('login-google')).toHaveTextContent('Continue with Google'));
   expect(queryByText('Connecting…')).toBeNull();

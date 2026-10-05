@@ -8,7 +8,7 @@ import { HeaderIconButton } from '../components/ui';
 import { SettingsButton } from '../components/SettingsButton';
 import { C, tint } from '../theme';
 
-jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 function glyphs() {
   return screen.UNSAFE_root.findAll((node) => typeof node.props.xml === 'string' && node.props.width !== undefined);

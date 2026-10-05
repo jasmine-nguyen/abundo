@@ -19,8 +19,7 @@ jest.mock('../context', () => {
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-const mockBack = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack, push: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Loan from '../../app/loan';
 import { LOANFACTS_FIELD_MAX } from '../loanLimits';
@@ -87,7 +86,6 @@ async function depositCeilingToast(): Promise<string> {
 }
 
 beforeEach(() => {
-  mockBack.mockClear();
   resetAuth();
 });
 
