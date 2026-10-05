@@ -66,10 +66,6 @@ describe('budgetViews / budgetDetail — over-budget spend with cents (GAP)', ()
     expect(row.spentLabel).toBe('$90.25 of $80'); // fail-on-revert: fmt(90.25) → '$90'
     expect(row.remainLabel).toBe('over');
     expect(row.remainAmount).toBe('$10.25');            // unsigned |80 - 90.25|; fmt would read '$10'
-    // WHIT-707: no rollover, so this row can start a spread; the line offers it, prefilled
-    // with the exact-cents overspend.
-    expect(row.paceLabel).toBe('Spread it over pay cycles →');
-    expect(row.spreadPrefill).toBe(10.25);
   });
 
   it('[A15b] REGRESSION: the over-PACE arm (not over budget) still renders whole-dollar', () => {

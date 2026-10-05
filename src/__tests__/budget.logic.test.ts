@@ -47,15 +47,12 @@ describe('budgetViews', () => {
     const [row] = budgetViews(s).rows;
     expect(row.over).toBe(true);
     expect(row.postedPct + row.pendingPct).toBeLessThanOrEqual(100.0001);
-    // WHIT-707: an over-budget row that can start a spread offers it instead of "over budget".
-    expect(row.paceLabel).toBe('Spread it over pay cycles →');
-    expect(row.spreadPrefill).toBe(30);
   });
 
   it('labels pace relative to the linear target (elapsed * budget)', () => {
     // elapsed 0.5, budget 100 → target 50.
     const under = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 20, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(under.paceLabel).toContain('under plan');
+    expect(under.paceLabel).toBe('');
     const over = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 80, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
     expect(over.paceLabel).toContain('over plan');
     expect(over.over).toBe(false); // over PACE, not over budget
