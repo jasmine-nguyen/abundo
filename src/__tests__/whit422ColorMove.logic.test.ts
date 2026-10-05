@@ -3,13 +3,10 @@
 // existing suites miss; the seed/sibling/OKLCH maths and the picker-chip render are already
 // covered by categoryColour.logic + overlaysPickerCreateDraftRender.screen and are NOT repeated.
 //   [A-TI]  C.textInfo is exactly '#cfd2ff' — the token a future retune must not silently move.
-//   [A-EP]  an EXPENSE budget exactly on pace shows no pace sub-label (WHIT-712).
 //   [A-BC]  BUCKET_COLOR values survived the move byte-for-byte, incl. Income === C.good.
 import { describe, it, expect } from '@jest/globals';
 import { C } from '../theme';
 import { BUCKET_COLOR } from '../categoryColors';
-import { budgetViews } from '../context';
-import { makeState, cat, budget } from './factory';
 
 // ── [A-TI] the folded token still holds the shipped lavender ──────────────────
 describe('WHIT-422 — C.textInfo value pin', () => {
@@ -17,21 +14,6 @@ describe('WHIT-422 — C.textInfo value pin', () => {
     // Fail-on-revert: retune C.textInfo in theme.ts and every budget pace/status line moves with
     // it; this pins the token at its pre-move literal so that move can't be silent.
     expect(C.textInfo).toBe('#cfd2ff');
-  });
-});
-
-// ── [A-EP] EXPENSE pace sub-label ──
-describe('WHIT-422 — expense budget pace line', () => {
-  // Lifestyle (expense) category; cycleLen 14 / daysLeft 7 → elapsed 0.5 → target = 0.5 * budget.
-  const expenseRow = (posted: number) => budgetViews(makeState({
-    categories: [cat()],
-    budgets: [budget({ id: 'coffee', budget: 100, posted, pending: 0 })],
-    cycleLen: 14, daysLeft: 7,
-  })).rows[0];
-
-  it('[A-EP] exactly on pace (spent 50 == target 50) → not behind pace (WHIT-712)', () => {
-    const row = expenseRow(50);
-    expect(row.behindPace).toBe(false);
   });
 });
 

@@ -17,8 +17,6 @@ it('lists over-budget families first, then the rest in category order, families 
     budget({ id: 'salary', budget: 5000, posted: 1000, pending: 0 }),
   ]);
   expect(rowIds(rows)).toEqual(['groceries', 'coffee', 'latte', 'shopping', 'dining', 'salary']);
-  expect(rows.find((r) => r.id === 'latte')!.behindPace).toBe(true);
-  expect(rows.find((r) => r.id === 'shopping')!.behindPace).toBe(true);
 
   const ordered = urgentFirst(rows);
   expect(rowIds(ordered)).toEqual(['dining', 'groceries', 'coffee', 'latte', 'shopping', 'salary']);

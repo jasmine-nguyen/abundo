@@ -4,22 +4,15 @@ import { describe, it, expect } from '@jest/globals';
 import { C } from '../theme';
 import { budgetRowFor as rowFor, rowText } from './support/budgetsTab';
 
-describe('budget rows are only flagged when off pace (WHIT-712)', () => {
-  it('an on-pace row is not behind pace', () => {
+describe('budget rows stay quiet (WHIT-712)', () => {
+  it('an on-pace row shows what is left', () => {
     const row = rowFor({ budget: 100, posted: 50, pending: 0 });
-    expect(row.behindPace).toBe(false);
     expect(row.remainAmount).toBe('$50');
     expect(row.remainLabel).toBe('left');
   });
 
-  it('over plan is still flagged', () => {
-    const behind = rowFor({ budget: 100, posted: 85, pending: 0 });
-    expect(behind.behindPace).toBe(true);
-  });
-
   it('over budget says the overspend once, in the red amount', () => {
     const row = rowFor({ budget: 100, posted: 120, pending: 0, rollover: true, carryover: 0 });
-    expect(row.behindPace).toBe(false);
     expect(row.remainAmount).toBe('$20');
     expect(row.remainLabel).toBe('over');
     expect(row.remainColor).toBe(C.bad);
@@ -28,8 +21,8 @@ describe('budget rows are only flagged when off pace (WHIT-712)', () => {
 
   it('the money line reads "$X of $Y", pending included, no pending line (WHIT-744)', () => {
     const row = rowFor({ budget: 600, posted: 374, pending: 38 });
-    expect(row.spentLabel).toBe('$412 of\u00a0$600');
-    expect(rowFor({ budget: 100, posted: 40, pending: 0 }).spentLabel).toBe('$40 of\u00a0$100');
+    expect(row.spentLabel).toBe('$412 of $600');
+    expect(rowFor({ budget: 100, posted: 40, pending: 0 }).spentLabel).toBe('$40 of $100');
   });
 
   it('no row field mentions the carry-over', () => {

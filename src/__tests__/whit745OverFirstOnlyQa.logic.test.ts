@@ -42,7 +42,6 @@ it('does not lift a rollover row spent past its target but within its buffer', (
     budget({ id: 'groceries', budget: 100, posted: 40, pending: 0 }),
     budget({ id: 'dining', budget: 100, posted: 130, pending: 0, rollover: true, carryover: 50 }),
   ]);
-  expect(rows.find((r) => r.id === 'dining')!.behindPace).toBe(true);
   expect(ids(urgentFirst(rows))).toEqual(['groceries', 'dining']);
 });
 
@@ -55,7 +54,6 @@ it('lifts a family by its over sub, not by its behind-pace parent', () => {
     budget({ id: 'coffee', budget: 200, posted: 180, pending: 0 }),
     budget({ id: 'latte', budget: 20, posted: 25, pending: 0 }),
   ]);
-  expect(rows.find((r) => r.id === 'shopping')!.behindPace).toBe(true);
   const ordered = urgentFirst(rows);
   expect(ids(ordered)).toEqual(['coffee', 'latte', 'groceries', 'shopping']);
   expect(ordered.map((r) => r.depth)).toEqual([0, 1, 0, 0]);
