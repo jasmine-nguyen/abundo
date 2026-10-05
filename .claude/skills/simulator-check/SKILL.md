@@ -20,11 +20,16 @@ install it in an unattended run.
 
 ## Preflight
 
-Stop at the first failure and leave the check manual, saying why. Never boot a
-simulator, install tools, or build or install the app.
+Stop at the first failure and leave the check manual, saying why. Never install
+tools, or build or install the app.
 
 1. AXe is installed: `command -v axe`.
 2. Exactly one simulator is booted: `xcrun simctl list devices booted`. Use its UDID.
+   None booted?
+   - Interactive session: boot the iPhone that has the app installed (step 3's
+     check, run per device from `xcrun simctl list devices available`):
+     `xcrun simctl boot <UDID>`, then `open -a Simulator`. Tell the user.
+   - Unattended (the build's QA): stop. Never boot a simulator unattended.
 3. The app is installed. Read the bundle id from `app.json`
    (`expo.ios.bundleIdentifier`), then
    `xcrun simctl get_app_container <UDID> <bundle id>`.
