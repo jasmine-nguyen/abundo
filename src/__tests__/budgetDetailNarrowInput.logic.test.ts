@@ -23,7 +23,7 @@ describe('budgetDetail — narrow BudgetDetailInput', () => {
     const bd = budgetDetail(input, 'coffee');
     expect(bd).not.toBeNull();
     expect(bd!.spentBig).toBe('$50');           // posted 40 + pending 10
-    expect(bd!.ofBudget).toBe('of $100');
+    expect(bd!.ofBudget).toBe('of\u00a0$100');
     expect(bd!.postedPct).toBe(40);
     expect(bd!.statusLabel).toBe('On track for payday');
     expect(bd!.statusColor).toBe(C.good);
@@ -42,7 +42,7 @@ describe('budgetDetail — narrow BudgetDetailInput', () => {
     };
     const bd = budgetDetail(input, 'coffee');
     expect(bd!.spentBig).toBe('$73.50');   // fail-on-revert: fmt(73.5) would render '$74'
-    expect(bd!.ofBudget).toBe('of $80');   // the target stays a whole-dollar summary
+    expect(bd!.ofBudget).toBe('of\u00a0$80');   // exact, and $80 has no cents (WHIT-741)
   });
 
   it('returns null on a cold cache (category lookup empty, no budget) — the screen shows the empty Header', () => {

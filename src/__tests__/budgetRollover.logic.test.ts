@@ -24,7 +24,7 @@ describe('budgetViews — positive carryover (sinking fund)', () => {
     expect(row.remainAmount).toBe('$300');      // available = 100 + 200
     expect(row.remainLabel).toBe('left');
     expect(row.over).toBe(false);
-    expect(row.spentLabel).toBe('$0 of $300'); // "of" is the available envelope
+    expect(row.spentLabel).toBe('$0 of\u00a0$300'); // "of" is the available envelope
     // Hero totals count the envelope so the top number matches the rows.
     expect([totBudget, totSpent, totRemain]).toEqual([300, 0, 300]);
   });
@@ -77,7 +77,7 @@ describe('budgetViews — rollover off', () => {
   it('a carryover value is ignored while the flag is off', () => {
     const row = budgetViews(state({ budget: 100, posted: 30, pending: 0, rollover: false, carryover: 200 })).rows[0];
     expect(row.remainAmount).toBe('$70');   // available == budget (buffer ignored)
-    expect(row.spentLabel).toBe('$30 of $100');
+    expect(row.spentLabel).toBe('$30 of\u00a0$100');
   });
 });
 
@@ -87,7 +87,7 @@ describe('budgetDetail — carryover', () => {
 
   it('positive buffer: header is the envelope and the rolled-over line shows', () => {
     const d = detail({ budget: 100, posted: 250, pending: 0, rollover: true, carryover: 200 });
-    expect(d.ofBudget).toBe('of $300');                 // available
+    expect(d.ofBudget).toBe('of\u00a0$300');                 // available
     // Not over budget (250 < 300), but far past this cycle's base pace (target = 100 × 0.5 = 50):
     // amber "over plan", matching the list's "over plan" for the same drawn-down sinking fund.
     expect(d.statusLabel).toBe('Over plan — ease up');
@@ -103,7 +103,7 @@ describe('budgetDetail — carryover', () => {
   it('no line when rollover is off', () => {
     const d = detail({ budget: 100, posted: 10, pending: 0, rollover: false, carryover: 200 });
     expect(d.carryoverLine).toBe('');
-    expect(d.ofBudget).toBe('of $100');
+    expect(d.ofBudget).toBe('of\u00a0$100');
   });
 });
 

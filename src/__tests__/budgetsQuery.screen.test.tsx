@@ -38,6 +38,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 import { useBudgetsScreenData, useBudgetDetailScreenData } from '../queries';
 import { nextPayday } from '../payCycle';
 import { COFFEE, SALARY, GROCERIES_RECORD } from './support/categories';
+import { MINUS } from '../theme';
 
 const server = installFakeServer();
 // The Budgets reads. `/budgets?` (with the query mark) counts the rollup read only, never a
@@ -496,7 +497,7 @@ describe('WHIT-573 hero over-budget label + sign', () => {
     server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
     await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();      // label flipped
-    expect(screen.getByText('−$100')).toBeTruthy();            // sign now visible (fmtExact gives "$100")
+    expect(screen.getByText(`${MINUS}$100`)).toBeTruthy();            // sign now visible (fmtExact gives "$100")
     expect(screen.queryByText('Left to spend')).toBeNull(); // the misleading label is gone
   });
 
@@ -521,7 +522,7 @@ describe('WHIT-573 hero over-budget label + sign', () => {
     server.seed('/budgets', { coffee: { target: 100, posted: 100, pending: 0.3 } });
     await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
-    expect(screen.getByText('−$0.30')).toBeTruthy();
+    expect(screen.getByText(`${MINUS}$0.30`)).toBeTruthy();
     expect(screen.queryByText('Left to spend')).toBeNull();
   });
 });
@@ -542,7 +543,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     });
     await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
-    expect(screen.getByText('−$100')).toBeTruthy();       // -(300 available - 400 spent)
+    expect(screen.getByText(`${MINUS}$100`)).toBeTruthy();       // -(300 available - 400 spent)
     expect(heroTotals()).toMatchObject({ spent: '$400', budget: '$300' }); // totSpent + totBudget unchanged
     expect(screen.queryByText('Left to spend')).toBeNull();
   });
@@ -555,7 +556,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     });
     await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
-    expect(screen.getByText('−$30')).toBeTruthy();
+    expect(screen.getByText(`${MINUS}$30`)).toBeTruthy();
     expect(heroTotals()).toMatchObject({ spent: '$50', budget: '$20' }); // available envelope, not the $100 target
   });
 
@@ -568,7 +569,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     await renderLoadedBudgets();
     expect(screen.getByText('Salary')).toBeTruthy();       // Income row still lists
     expect(screen.getByText('Over budget')).toBeTruthy();
-    expect(screen.getByText('−$100')).toBeTruthy();
+    expect(screen.getByText(`${MINUS}$100`)).toBeTruthy();
     expect(heroTotals()).toMatchObject({ spent: '$200', budget: '$100' }); // NOT $6,200 / $5,100
   });
 
@@ -576,7 +577,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     server.seed('/budgets', { coffee: { target: 1000, posted: 7056, pending: 0 } });
     await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
-    expect(screen.getByText('−$6,056')).toBeTruthy();
+    expect(screen.getByText(`${MINUS}$6,056`)).toBeTruthy();
     expect(heroTotals()).toMatchObject({ spent: '$7,056', budget: '$1,000' });
   });
 
@@ -591,7 +592,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     server.seed('/budgets', { coffee: { target: 100, posted: 100.01, pending: 0 } });
     await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();
-    expect(screen.getByText('−$0.01')).toBeTruthy();
+    expect(screen.getByText(`${MINUS}$0.01`)).toBeTruthy();
   });
 });
 

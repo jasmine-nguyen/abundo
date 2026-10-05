@@ -6,6 +6,7 @@ import { screen } from '@testing-library/react-native';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { showBudgets, heroTotals } from './support/budgetsScreen';
+import { MINUS } from '../theme';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -21,7 +22,7 @@ beforeEach(() => resetRouter());
 describe('WHIT-716 Budgets top card spent line + over line', () => {
   it('over budget → "−$100" and "Over budget", the amount not repeated', async () => {
     await showBudgets(server, { coffee: { target: 100, posted: 200, pending: 0 } });
-    expect(screen.getByText('−$100')).toBeTruthy();
+    expect(screen.getByText(`${MINUS}$100`)).toBeTruthy();
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.queryByText(/Over by/)).toBeNull();
   });
@@ -38,7 +39,7 @@ describe('WHIT-716 Budgets top card spent line + over line', () => {
 
   it('30 cents over → "−$0.30" and "Over budget", never "Left to spend"', async () => {
     await showBudgets(server, { coffee: { target: 100, posted: 100.3, pending: 0 } });
-    expect(screen.getByText('−$0.30')).toBeTruthy();
+    expect(screen.getByText(`${MINUS}$0.30`)).toBeTruthy();
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(screen.queryByText('Left to spend')).toBeNull();
   });

@@ -67,7 +67,9 @@ describe('over budget: quiet row, no pace line', () => {
 
   // [A8] (P0) pending pushes a row over budget and is still named.
   it('[A8] over with pending → pending named', () => {
-    expect(spendRow({ budget: 100, posted: 90, pending: 25 }).spentLabel).toBe('$115 of $100 ·\u00a0$25\u00a0pending');
+    const row = spendRow({ budget: 100, posted: 90, pending: 25 });
+    expect(row.spentLabel).toBe('$115 of\u00a0$100');
+    expect(row.pendingLabel).toBe('$25\u00a0pending');
   });
 
   // [A9] (P0) over plan but under budget → the over-plan line.
@@ -96,18 +98,23 @@ describe('over budget: quiet row, no pace line', () => {
 describe('pending wording threshold', () => {
   // [A12] (P1) a sub-cent pending float is noise → no "pending" breakout.
   it('[A12] pending 0.004 → no pending words', () => {
-    expect(spendRow({ budget: 100, posted: 40, pending: 0.004 }).spentLabel).not.toContain('pending');
+    const row = spendRow({ budget: 100, posted: 40, pending: 0.004 });
+    expect(row.spentLabel).not.toContain('pending');
+    expect(row.pendingLabel).toBe('');
   });
 
   // [A13] (P1) one cent pending is real → named with cents.
   it('[A13] pending 0.01 → named', () => {
-    expect(spendRow({ budget: 100, posted: 40, pending: 0.01 }).spentLabel).toBe('$40.01 of $100 ·\u00a0$0.01\u00a0pending');
+    const row = spendRow({ budget: 100, posted: 40, pending: 0.01 });
+    expect(row.spentLabel).toBe('$40.01 of\u00a0$100');
+    expect(row.pendingLabel).toBe('$0.01\u00a0pending');
   });
 
   // [A14] (P1) rollover envelope: "of" shows the available envelope, pending still named.
   it('[A14] rollover with carryover → "of" the envelope, plus pending', () => {
     const row = spendRow({ budget: 100, posted: 30, pending: 20, rollover: true, carryover: 50 });
-    expect(row.spentLabel).toBe('$50 of $150 ·\u00a0$20\u00a0pending');
+    expect(row.spentLabel).toBe('$50 of\u00a0$150');
+    expect(row.pendingLabel).toBe('$20\u00a0pending');
   });
 });
 

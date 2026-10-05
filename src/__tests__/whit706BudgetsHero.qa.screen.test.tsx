@@ -8,6 +8,7 @@ import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
 import { seedBudgets, renderBudgets, renderLoadedBudgets, heroTotals } from './support/budgetsScreen';
 import { COFFEE, SALARY, GROCERIES_RECORD } from './support/categories';
+import { MINUS } from '../theme';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -118,7 +119,7 @@ describe('Budgets top card — QA edges', () => {
 
     server.seed('/budgets', { coffee: { target: 100, posted: 100, pending: 0.01 } });
     await renderLoadedBudgets();
-    expect(screen.getByText('−$0.01')).toBeTruthy();
+    expect(screen.getByText(`${MINUS}$0.01`)).toBeTruthy();
     expect(screen.getByText('Over budget')).toBeTruthy();
   });
 
@@ -126,7 +127,7 @@ describe('Budgets top card — QA edges', () => {
   it('[A9] large deficit → "−$6,056" once, no hyphen-minus figure', async () => {
     server.seed('/budgets', { coffee: { target: 1000, posted: 7056, pending: 0 } });
     await renderLoadedBudgets();
-    expect(screen.getByText('−$6,056')).toBeTruthy();
+    expect(screen.getByText(`${MINUS}$6,056`)).toBeTruthy();
     expect(screen.queryByText(/Over by/)).toBeNull();
     expect(screen.queryAllByText(/-\$/)).toHaveLength(0);
   });

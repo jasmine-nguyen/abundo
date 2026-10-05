@@ -8,6 +8,7 @@ import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedBudgetsTab } from './support/budgetsTab';
 import { renderLoadedBudgetsWithQueries, heroTotals } from './support/budgetsScreen';
+import { MINUS } from '../theme';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -26,7 +27,7 @@ it('the top card budget total keeps the minus on a payback cycle', async () => {
     coffee: { target: 41, posted: 617.75, pending: 0, spread: { amount: 2100, cycles: 3, index: 1, adjustment: -700 } },
   });
   await renderLoadedBudgetsWithQueries();
-  expect(heroTotals().budget).toBe('−$659');
+  expect(heroTotals().budget).toBe(`${MINUS}$659`);
 });
 
 // [A2] a cushion row that is over plan → the note on the left AND the pace label both drawn.

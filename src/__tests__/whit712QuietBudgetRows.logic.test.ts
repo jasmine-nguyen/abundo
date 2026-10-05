@@ -27,9 +27,11 @@ describe('budget rows only speak up when off pace (WHIT-712)', () => {
     expect(said.match(/\$20(?![\d.,])/g)).toHaveLength(1);
   });
 
-  it('the money line reads "$X of $Y · $Z pending"', () => {
-    expect(rowFor({ budget: 600, posted: 374, pending: 38 }).spentLabel).toBe('$412 of $600 ·\u00a0$38\u00a0pending');
-    expect(rowFor({ budget: 100, posted: 40, pending: 0 }).spentLabel).toBe('$40 of $100');
+  it('the money line reads "$X of $Y", with "$Z pending" on its own line (WHIT-741)', () => {
+    const row = rowFor({ budget: 600, posted: 374, pending: 38 });
+    expect(row.spentLabel).toBe('$412 of\u00a0$600');
+    expect(row.pendingLabel).toBe('$38\u00a0pending');
+    expect(rowFor({ budget: 100, posted: 40, pending: 0 }).spentLabel).toBe('$40 of\u00a0$100');
   });
 
   it('no row field mentions the carry-over', () => {

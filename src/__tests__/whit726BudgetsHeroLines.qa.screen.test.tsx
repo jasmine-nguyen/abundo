@@ -26,7 +26,7 @@ describe('WHIT-731 QA — the Spent · Budget · Next payday row', () => {
     expect(heroTotals()).toMatchObject({ spent: '$6,136.68', budget: '$5,785' });
     const pendingTexts = screen.getAllByText(/\$187\.76 pending/);
     expect(pendingTexts).toHaveLength(1);
-    expect(pendingTexts[0].props.testID).toBeUndefined();
+    expect(pendingTexts[0].props.testID).toBe('budget-row-pending-coffee');
     expect(screen.queryByText(/resets/)).toBeNull();
   });
 

@@ -22,6 +22,7 @@ import { tabBarProps } from './support/tabBar';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { COFFEE } from './support/categories';
 import { showBudgets, heroTotals } from './support/budgetsScreen';
+import { MINUS } from '../theme';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -49,7 +50,7 @@ describe('WHIT-735 QA: top card amounts', () => {
   it('[A4] over budget by whole dollars shows −$100, not −$100.00', async () => {
     await showBudgets(server, { coffee: { target: 100, posted: 200, pending: 0 } }, { categories: [COFFEE] });
 
-    expect(screen.getByText('−$100')).toBeTruthy();
+    expect(screen.getByText(`${MINUS}$100`)).toBeTruthy();
     expect(screen.getByText('Over budget')).toBeTruthy();
     expect(heroTotals()).toMatchObject({ spent: '$200', budget: '$100' });
   });
