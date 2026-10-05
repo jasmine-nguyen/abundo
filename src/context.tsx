@@ -1737,6 +1737,8 @@ export interface BalanceGoalView {
   // `progress`), `reached` whether the balance has passed it. Empty when the balance is unknown or
   // the bar has no scale (paydown without a start), so dots and the reached-count travel together.
   checkpointMarkers: { pct: number; reached: boolean }[];
+  // WHIT-747: whether the balance has met the target (the goal's final step); null when unknown.
+  targetReached: boolean | null;
   // WHIT-748: the "$X of $Y" line, on the SAME scale as `progress` (so dollars and % agree).
   movedAmount: number | null;     // dollars the bar has moved; null exactly when `progress` is null
   spanAmount: number | null;      // the bar's full span in dollars; null when the bar has no scale
@@ -1907,9 +1909,11 @@ export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalV
     checkpointMarkers = checkpoints.map((cp) => ({ pct: posOnBar(cp.amount), reached: isReached(cp.amount) }));
   }
 
+  const targetReached = known ? isReached(target) : null;
+
   return {
     progress, pacePerPayday, paydaysLeft, status, checkpointsTotal, checkpointsReached, checkpointMarkers,
-    movedAmount, spanAmount, aheadBy,
+    movedAmount, spanAmount, aheadBy, targetReached,
   };
 }
 

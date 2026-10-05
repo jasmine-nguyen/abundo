@@ -16,6 +16,7 @@ import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { seedGoalsHub } from './support/goalsScreen';
 import { EMPTY_LOAN_FACTS } from './factory';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { queryClient } from '../queryClient';
 import type { GoalRecord } from '../api';
 
@@ -29,10 +30,7 @@ jest.mock('../context', () => {
   return { ...actual, useAppContext: () => ({ openGoalBalance: mockOpenGoalBalance }) };
 });
 
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn() }),
-  useFocusEffect: () => {},
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => false }));
 
@@ -66,7 +64,8 @@ async function moveOwed(owed: number, others: Record<string, number> = {}) {
   await refreshInAct(() => queryClient.invalidateQueries());
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await AsyncStorage.clear(); // no snapshot saved by an earlier launch
   resetAuth();
   pinToday(new Date(2026, 6, 11));
   seedOwed(6000); // owe 6000: at/below 8000 rung, above 5000 rung → reached 1
@@ -81,7 +80,7 @@ describe('checkpoint celebration for a paydown goal + array-identity churn (WHIT
 
     await moveOwed(4000);                                 // debt shrinks past the 5000 rung
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
-    expect(screen.getByText(/Car loan: checkpoint reached/)).toBeTruthy();
+    expect(screen.getByText(/Car loan · down to \$5,000/)).toBeTruthy();
   });
 
   it('does NOT burst when the debt rises back above a rung (re-arm, not celebrate)', async () => {

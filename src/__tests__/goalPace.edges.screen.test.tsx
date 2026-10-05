@@ -9,6 +9,7 @@ import { screen, within } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { resetRouter } from './support/routerMock';
 import { pinToday } from './support/clock';
 import { styleOf } from './support/layout';
 import { GOAL_START, GOAL_TODAY, growGoal, seedPaceHub } from './support/goalPace';
@@ -21,7 +22,7 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => ({ openGoalBalance: jest.fn() }) };
 });
-jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }), useFocusEffect: () => {} }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Goals from '../../app/(tabs)/goals';
 
@@ -45,6 +46,7 @@ useTestQueryClient();
 
 beforeEach(() => {
   resetAuth();
+  resetRouter();
   pinToday(GOAL_TODAY);
   seedPaceHub(server, [AHEAD, ON_PACE, TINY, UNPOLLED, OVER, NO_SCALE], { 'acct-ahead': 8000, 'acct-onpace': 6000, 'acct-tiny': 1.5, 'acct-over': 12000 });
 });
