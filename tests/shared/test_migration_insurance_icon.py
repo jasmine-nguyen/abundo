@@ -5,23 +5,16 @@ suites) and drives run(table, item, dry_run) over an in-memory FakeTable. `item`
 script's get_item read of the single CATEGORIES item.
 """
 
-import importlib.util
-import pathlib
 from decimal import Decimal
 
 from _dynamo_fakes import FakeTable
-
-_MOD_PATH = (pathlib.Path(__file__).resolve().parents[2]
-             / "scripts" / "migrations" / "insurance_icon_to_shield.py")
+from _migration_scripts import load_migration_script
 
 _KEY = ("CATEGORIES", "CATEGORIES")
 
 
 def _load_script():
-    spec = importlib.util.spec_from_file_location("insurance_icon_to_shield", _MOD_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_migration_script("insurance_icon_to_shield")
 
 
 def _categories_item():

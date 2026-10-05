@@ -5,21 +5,14 @@ smooth->spread migration suites) and drives run(table, rows, dry_run) over an in
 `rows` stands in for the script's scan result.
 """
 
-import importlib.util
-import pathlib
 from decimal import Decimal
 
 from _dynamo_fakes import FakeTable
-
-_MOD_PATH = (pathlib.Path(__file__).resolve().parents[2]
-             / "scripts" / "migrations" / "delete_zero_amount_transactions.py")
+from _migration_scripts import load_migration_script
 
 
 def _load_script():
-    spec = importlib.util.spec_from_file_location("delete_zero_amount_transactions", _MOD_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_migration_script("delete_zero_amount_transactions")
 
 
 _PK = "ACCOUNT#westpac-altitude-black"
