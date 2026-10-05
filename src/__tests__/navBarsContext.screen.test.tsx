@@ -13,8 +13,9 @@ import React from 'react';
 import { Animated, Text } from 'react-native';
 import { render, act } from '@testing-library/react-native';
 
-let mockPathname = '/budgets';
-jest.mock('expo-router', () => ({ usePathname: () => mockPathname }));
+import { resetRouter, setPathname } from './support/routerMock';
+
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import { applyVisibility, useNavBars, NavBarsProvider } from '../motion/NavBarsContext';
 import { NavBarsRouteReset } from '../motion/NavBarsRouteReset';
@@ -130,7 +131,7 @@ describe('WHIT-200 — NavBarsRouteReset detail push/pop (folded from navBarsRou
 
   const visValue = () => (captured.visibility as unknown as { __getValue(): number }).__getValue();
 
-  beforeEach(() => { mockPathname = '/budgets'; });
+  beforeEach(() => resetRouter());
 
   it('re-shows the nav bars on a route change (detail push/pop)', () => {
     const view = render(tree());
@@ -139,14 +140,14 @@ describe('WHIT-200 — NavBarsRouteReset detail push/pop (folded from navBarsRou
     expect(visValue()).toBe(0);
 
     // Push a detail route: pathname changes → the reset fires → bars come back.
-    mockPathname = '/budget/1';
+    setPathname('/budget/1');
     view.rerender(tree());
     expect(visValue()).toBe(1);
 
     // Hide again, then pop back to the tab: pathname changes again → re-shown.
     act(() => captured.setNavBars('hidden'));
     expect(visValue()).toBe(0);
-    mockPathname = '/budgets';
+    setPathname('/budgets');
     view.rerender(tree());
     expect(visValue()).toBe(1);
   });
@@ -177,14 +178,14 @@ describe('WHIT-200 GAP — route reset on tab->tab / short list (folded from nav
   );
   const visValue = () => (captured.visibility as unknown as { __getValue(): number }).__getValue();
 
-  beforeEach(() => { mockPathname = '/budgets'; });
+  beforeEach(() => resetRouter());
 
   it('a tab->tab switch onto an unwired short-list screen re-shows the bars', () => {
     const view = render(tree());
     act(() => captured.setNavBars('hidden'));        // bars hidden on Budgets (a long list)
     expect(visValue()).toBe(0);
 
-    mockPathname = '/insights';                       // switch to a short, unscrollable tab
+    setPathname('/insights');                         // switch to a short, unscrollable tab
     view.rerender(tree());
     expect(visValue()).toBe(1);                       // re-shown by the route reset alone
   });
@@ -193,7 +194,7 @@ describe('WHIT-200 GAP — route reset on tab->tab / short list (folded from nav
     const view = render(tree());
     act(() => {
       captured.setNavBars('hidden');                  // last-gasp scroll-hide...
-      mockPathname = '/transactions';                 // ...then a route change lands
+      setPathname('/transactions');                   // ...then a route change lands
     });
     view.rerender(tree());
     expect(visValue()).toBe(1);

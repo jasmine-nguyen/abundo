@@ -8,10 +8,9 @@ import { fireEvent, screen } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { routerSpies, resetRouter } from './support/routerMock';
 
-const mockReplace = jest.fn();
-const mockBack = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace, push: jest.fn(), back: mockBack }), useFocusEffect: () => {} }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const mockSignOut = jest.fn(async () => {});
 let mockUser: { email?: string; name?: string; picture?: string } | null = null;
@@ -35,8 +34,7 @@ useTestQueryClient();
 beforeEach(() => {
   resetAuth();
   mockUser = null;
-  mockReplace.mockClear();
-  mockBack.mockClear();
+  resetRouter();
   mockSignOut.mockClear();
 });
 
@@ -47,14 +45,14 @@ describe('Log out and Back', () => {
     await renderWithQueries(<Settings />);
     fireEvent.press(screen.getByTestId('settings-logout'));
     expect(mockSignOut).toHaveBeenCalledTimes(1);
-    expect(mockReplace).toHaveBeenCalledWith('/');
+    expect(routerSpies.replace).toHaveBeenCalledWith('/');
   });
 
   // WHIT-495: Settings is a pushed root screen, so it carries a Back control that pops the stack.
   it('renders a Back button that pops back to the origin tab', async () => {
     await renderWithQueries(<Settings />);
     fireEvent.press(screen.getByLabelText('Back'));
-    expect(mockBack).toHaveBeenCalledTimes(1);
+    expect(routerSpies.back).toHaveBeenCalledTimes(1);
   });
 });
 

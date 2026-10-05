@@ -16,25 +16,6 @@ const ALLOWED_INLINE = new Set([
   'rootLayout.launch.screen.test.tsx',
 ]);
 
-// Slice 2 of WHIT-753 converts these; emptied and deleted then.
-const NOT_YET_CONVERTED = new Set([
-  'askButton.screen.test.tsx',
-  'askButtonRound.screen.test.tsx',
-  'askButtonRoundFill.screen.test.tsx',
-  'tabBarDot.screen.test.tsx',
-  'tabBarDot.edges.screen.test.tsx',
-  'whit717TabBarPressed.qa.screen.test.tsx',
-  'uncategorizedCountWiring.screen.test.tsx',
-  'whit686UncategorizedCountFailed.screen.test.tsx',
-  'tabsDetachInactiveScreens.screen.test.tsx',
-  'tabsScreenOrder.screen.test.tsx',
-  'tabsAnimation.screen.test.tsx',
-  'navBarsContext.screen.test.tsx',
-  'notificationRouter.screen.test.tsx',
-  'RulesScreen.screen.test.tsx',
-  'settingsScreen.screen.test.tsx',
-]);
-
 // Built from parts so this file never contains the literals it hunts for.
 const SHARED_FACTORY = new RegExp("require\\('\\./support/routerMock'\\)\\.routerMock" + 'Module\\(');
 const LOCAL_ROUTER_SPY = new RegExp(
@@ -49,7 +30,7 @@ const mockingFiles = testFiles(TESTS_DIR)
   .filter((file) => file !== 'support/routerMock.ts')
   .filter((file) => factoriesOf(file).length > 0);
 
-const mustShare = mockingFiles.filter((file) => !ALLOWED_INLINE.has(file) && !NOT_YET_CONVERTED.has(file));
+const mustShare = mockingFiles.filter((file) => !ALLOWED_INLINE.has(file));
 
 describe('every screen test shares one router stand-in', () => {
   it('the scan finds the test files that fake expo-router', () => {

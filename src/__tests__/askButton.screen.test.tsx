@@ -11,7 +11,7 @@ let mockBarsShown = false;
 jest.mock('../motion/NavBarsContext', () => ({
   useNavBars: () => ({ visibility: { interpolate: ({ outputRange }: { outputRange: number[] }) => outputRange[mockBarsShown ? 1 : 0] } }),
 }));
-jest.mock('expo-router', () => ({ Tabs: Object.assign(() => null, { Screen: () => null }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { TabBar } from '../../app/(tabs)/_layout';

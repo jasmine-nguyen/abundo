@@ -22,7 +22,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 // isn't under test here — stub it out so the screen renders in jest. The right slot (the "+"
 // button) still renders so it can be tapped.
 jest.mock('../components/Header', () => ({ Header: ({ right }: { right?: React.ReactNode }) => right ?? null }));
-jest.mock('expo-router', () => ({ useFocusEffect: () => {} }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Rules from '../../app/rules';
 
