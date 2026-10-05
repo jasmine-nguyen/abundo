@@ -1,0 +1,53 @@
+// WHIT-753 — every test under src/__tests__ that fakes expo-router uses the shared stand-in
+// (support/routerMock.ts). Fail-on-revert: put an inline router mock, a core-hook override, or a
+// local push/back/replace/params spy back into any non-allow-listed file and this goes red,
+// naming the file.
+import { describe, it, expect } from '@jest/globals';
+import { testFiles } from './support/sourceScan';
+import {
+  LOCAL_ROUTER_SPY,
+  SHARED_FACTORY,
+  codeOf,
+  overridesCoreHook,
+  routerMockFactories,
+} from './support/routerMockScan';
+
+const TESTS_DIR = __dirname;
+
+// The auth-gate/redirect variants: they need Redirect / useSegments / useRootNavigationState.
+const ALLOWED_INLINE = new Set([
+  'authGate.screen.test.tsx',
+  'rootLayout.launch.screen.test.tsx',
+]);
+
+const factoriesOf = (file: string): string[] => routerMockFactories(codeOf(file));
+
+const mockingFiles = testFiles(TESTS_DIR).filter((file) => factoriesOf(file).length > 0);
+
+const mustShare = mockingFiles.filter((file) => !ALLOWED_INLINE.has(file));
+
+describe('every screen test shares one router stand-in', () => {
+  it('the scan finds the test files that fake expo-router', () => {
+    expect(mockingFiles.length).toBeGreaterThan(50);
+  });
+
+  it('every file that fakes expo-router builds its fake from routerMockModule()', () => {
+    const offenders = mustShare.filter((file) => !factoriesOf(file).every((factory) => SHARED_FACTORY.test(factory)));
+    expect(offenders).toEqual([]);
+  });
+
+  it('no shared fake overrides the core hooks (useFocusEffect, useRouter, params, focus)', () => {
+    const offenders = mustShare.filter((file) => factoriesOf(file).some(overridesCoreHook));
+    expect(offenders).toEqual([]);
+  });
+
+  it('no file that fakes expo-router keeps its own push/back/replace/params spy', () => {
+    const offenders = mustShare.filter((file) => LOCAL_ROUTER_SPY.test(codeOf(file)));
+    expect(offenders).toEqual([]);
+  });
+
+  it('each allow-listed file still exists and still fakes expo-router inline', () => {
+    const stale = [...ALLOWED_INLINE].filter((file) => !mockingFiles.includes(file));
+    expect(stale).toEqual([]);
+  });
+});

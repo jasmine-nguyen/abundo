@@ -4,6 +4,7 @@
 // server. Verifies the fields render, the pending label, the "not found" state for a stale id,
 // and cache-first error handling.
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
+import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { txn } from './factory';
@@ -31,13 +32,7 @@ jest.mock('../context', () => {
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-let mockId = 't1';
-const mockPush = jest.fn();
-const mockBack = jest.fn();
-jest.mock('expo-router', () => ({
-  useLocalSearchParams: () => ({ id: mockId }),
-  useRouter: () => ({ back: mockBack, push: mockPush }),
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import TransactionDetail from '../../app/transaction/[id]';
@@ -68,15 +63,14 @@ const draw = () => renderWithQueries(<TransactionDetail />);
 const feedReads = () => server.sentUnder('GET', '/transactions/feed').length;
 
 beforeEach(() => {
+  resetRouter();
   resetAuth();
-  mockId = 't1';
+  setParams({ id: 't1' });
   server.seed('/categories', [{ ...COFFEE_RECORD, parent: null }]);
   seedFeed([txn({ transaction_id: 't1', category: 'coffee' })]);
-  mockPush.mockClear();
   mockApplyTransactionEdit.mockClear();
   mockToast.mockClear();
   mockOpenPicker.mockClear();
-  mockBack.mockClear();
   mockDeleteTransaction.mockReset();
 });
 
@@ -104,7 +98,7 @@ it('finds a row that is only in the recent list (not the feed)', async () => {
 });
 
 it('shows a not-found state when no transaction carries the route id (stale link)', async () => {
-  mockId = 'ghost';
+  setParams({ id: 'ghost' });
   await draw();
   expect(screen.getByText('Transaction not found')).toBeTruthy();
 });
@@ -221,7 +215,7 @@ describe('re-categorize is offered regardless of the current category', () => {
 });
 
 it('the picker targets the routed transaction id (not a hardcoded one)', async () => {
-  mockId = 't2';
+  setParams({ id: 't2' });
   seedFeed([txn({ transaction_id: 't2', category: 'coffee' })]);
   await draw();
   fireEvent.press(screen.getByLabelText('Change category, currently Cafes & Coffee'));
@@ -242,7 +236,7 @@ describe('spread this bill prompt', () => {
 
     fireEvent.press(screen.getByTestId('transaction-spread'));
     expect(screen.getByText('Spread a bill in this category')).toBeTruthy();
-    expect(mockPush).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=30');
+    expect(routerSpies.push).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=30');
   });
 
   it('prefills the OVERAGE, not the tapped charge — a small charge in an over category spreads the overage', async () => {
@@ -250,7 +244,7 @@ describe('spread this bill prompt', () => {
     server.seed('/budgets', { coffee: rollup({ target: 100, posted: 130.1, pending: 0 }) });  // …category over by 30.10
     await draw();
     fireEvent.press(screen.getByTestId('transaction-spread'));
-    expect(mockPush).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=30.1');  // not 5
+    expect(routerSpies.push).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=30.1');  // not 5
   });
 
   it('active plan → shows "Edit or remove" and routes with NO prefill (never a second plan)', async () => {
@@ -262,7 +256,7 @@ describe('spread this bill prompt', () => {
 
     fireEvent.press(screen.getByTestId('transaction-spread'));
     expect(screen.getByText('Edit or remove bill spread')).toBeTruthy();
-    expect(mockPush).toHaveBeenCalledWith('/budget/spread?categoryId=coffee');
+    expect(routerSpies.push).toHaveBeenCalledWith('/budget/spread?categoryId=coffee');
   });
 
   it('hidden on a rollover category, even over budget (rollover XOR spread)', async () => {
@@ -294,7 +288,7 @@ describe('spread this bill prompt', () => {
   });
 
   it('does not crash on a not-found transaction (derivations null-guard)', async () => {
-    mockId = 'missing';
+    setParams({ id: 'missing' });
     server.seed('/budgets', { coffee: rollup({ target: 100, posted: 130, pending: 0 }) });
     await draw();
     expect(screen.getByText('Transaction not found')).toBeTruthy();
@@ -421,7 +415,7 @@ describe('delete this transaction', () => {
     await draw();
     tapDeleteAndChoose('Cancel');
     expect(mockDeleteTransaction).not.toHaveBeenCalled();
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 
   it('confirming deletes the charge and goes back, never flashing "Transaction not found"', async () => {
@@ -439,10 +433,10 @@ describe('delete this transaction', () => {
     expect(queryClient.getQueryData<{ pages: { transactions: Transaction[] }[] }>(transactionsKey)?.pages[0].transactions).toEqual([]);
     expect(screen.queryByText('Transaction not found')).toBeNull();
     expect(screen.getByText('Woolworths')).toBeTruthy();
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
 
     await refreshInAct(() => finish(true));
-    expect(mockBack).toHaveBeenCalledTimes(1);
+    expect(routerSpies.back).toHaveBeenCalledTimes(1);
   });
 
   it('a failed delete stays on the screen so the user can retry', async () => {
@@ -451,7 +445,7 @@ describe('delete this transaction', () => {
 
     await refreshInAct(() => tapDeleteAndChoose('Delete'));
 
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
     expect(screen.getByTestId('transaction-delete').props.accessibilityState).toEqual({ disabled: false });
   });
 });

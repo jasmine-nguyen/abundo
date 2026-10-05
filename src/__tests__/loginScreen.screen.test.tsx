@@ -4,12 +4,12 @@
 // Continue with Google calls signInWithGoogle; Forgot password shows the WHIT-182
 // coming-soon stub. ../../src/auth + expo-router mocked.
 import { it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import { ScrollView } from 'react-native';
 
-const mockReplace = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace, push: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const mockSignInWithPassword = jest.fn<(e: string, p: string) => Promise<unknown>>();
 const mockSignInWithGoogle = jest.fn<() => Promise<import('../auth').OAuthSignInResult>>();
@@ -21,7 +21,7 @@ jest.mock('../../src/auth', () => ({
 import Login from '../../app/index';
 
 beforeEach(() => {
-  mockReplace.mockReset();
+  resetRouter();
   mockSignInWithPassword.mockReset();
   mockSignInWithGoogle.mockReset();
 });
@@ -33,7 +33,7 @@ it('Log in calls signInWithPassword with the entered creds and enters the app on
   fireEvent.changeText(getByTestId('login-password'), 'secret');
   fireEvent.press(getByTestId('login-submit'));
   await waitFor(() => expect(mockSignInWithPassword).toHaveBeenCalledWith('me@x.com', 'secret'));
-  await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/budgets'));
+  await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
 });
 
 it('shows the error message on a failed sign-in and does NOT navigate', async () => {
@@ -43,7 +43,7 @@ it('shows the error message on a failed sign-in and does NOT navigate', async ()
   fireEvent.changeText(getByTestId('login-password'), 'wrong');
   fireEvent.press(getByTestId('login-submit'));
   expect(await findByText('Incorrect email or password.')).toBeTruthy();
-  expect(mockReplace).not.toHaveBeenCalled();
+  expect(routerSpies.replace).not.toHaveBeenCalled();
 });
 
 it('the NEW_PASSWORD_REQUIRED challenge flips into the set-password form, no navigation', async () => {
@@ -53,7 +53,7 @@ it('the NEW_PASSWORD_REQUIRED challenge flips into the set-password form, no nav
   fireEvent.changeText(getByTestId('login-password'), 'temp');
   fireEvent.press(getByTestId('login-submit'));
   expect(await findByTestId('newpass-form')).toBeTruthy(); // WHIT-181: set-password step
-  expect(mockReplace).not.toHaveBeenCalled();
+  expect(routerSpies.replace).not.toHaveBeenCalled();
 });
 
 it('Continue with Google calls signInWithGoogle and enters the app on success', async () => {
@@ -61,7 +61,7 @@ it('Continue with Google calls signInWithGoogle and enters the app on success', 
   const { getByTestId } = render(<Login />);
   fireEvent.press(getByTestId('login-google'));
   await waitFor(() => expect(mockSignInWithGoogle).toHaveBeenCalled());
-  await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/budgets'));
+  await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
 });
 
 it('a cancelled Google sign-in stays silent — no navigation, no error box', async () => {
@@ -69,7 +69,7 @@ it('a cancelled Google sign-in stays silent — no navigation, no error box', as
   const { getByTestId, queryByTestId } = render(<Login />);
   fireEvent.press(getByTestId('login-google'));
   await waitFor(() => expect(mockSignInWithGoogle).toHaveBeenCalled());
-  expect(mockReplace).not.toHaveBeenCalled();
+  expect(routerSpies.replace).not.toHaveBeenCalled();
   expect(queryByTestId('login-error')).toBeNull();
 });
 
@@ -78,7 +78,7 @@ it('a failed Google sign-in shows the returned error, no navigation', async () =
   const { getByTestId, findByText } = render(<Login />);
   fireEvent.press(getByTestId('login-google'));
   expect(await findByText("Sign-in isn't set up. Check the app configuration.")).toBeTruthy();
-  expect(mockReplace).not.toHaveBeenCalled();
+  expect(routerSpies.replace).not.toHaveBeenCalled();
 });
 
 it('Forgot password opens the reset-code request form (WHIT-182)', () => {

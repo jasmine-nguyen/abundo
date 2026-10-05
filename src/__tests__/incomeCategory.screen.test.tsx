@@ -18,7 +18,7 @@ jest.mock('../context', () => {
   return { ...actual, useAppContext: () => mockState };
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn(), back: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import CategoryList from '../../app/category/index';
 import { resetAuth } from './support/authMock';

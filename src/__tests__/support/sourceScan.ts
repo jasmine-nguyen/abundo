@@ -53,7 +53,7 @@ export function testFiles(root: string, dir: string = root): string[] {
   });
 }
 
-const TESTS_DIR = join(__dirname, '..');
+export const TESTS_DIR = join(__dirname, '..');
 
 // Every `file:line` under the test tree whose line matches, skipping allow-listed files
 // (keys are testFiles keys: root-relative, forward-slashed).

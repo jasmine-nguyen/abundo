@@ -31,10 +31,7 @@ jest.mock('../context', () => {
   };
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('expo-router', () => {
-  const ReactLib = require('react');
-  return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
-});
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';

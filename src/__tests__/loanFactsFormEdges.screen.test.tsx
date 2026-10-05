@@ -4,6 +4,7 @@
 // pressing Save on a blank form (a form opened before facts loaded) must NOT call
 // the API, so it can never overwrite saved facts with empties.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, LoanFacts, LoanFactsInput } from '../context';
@@ -17,8 +18,7 @@ jest.mock('../context', () => {
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-const mockBack = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack, push: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Loan from '../../app/loan';
 import { LOANFACTS_FIELD_MAX } from '../loanLimits';
@@ -55,7 +55,7 @@ function fill(over: Partial<Record<'orig' | 'home' | 'lvr' | 'rate' | 'base' | '
 }
 
 beforeEach(() => {
-  mockBack.mockClear();
+  resetRouter();
   resetAuth();
 });
 
@@ -66,7 +66,7 @@ it('accepts Extra = 0 (optional top-up) and saves', async () => {
   fill({ extra: '0' });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
   expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ extra: 0 }));
-  expect(mockBack).toHaveBeenCalled();
+  expect(routerSpies.back).toHaveBeenCalled();
 });
 
 it('accepts the exact upper bounds LVR = 100% and rate = 100', async () => {
@@ -128,7 +128,7 @@ it('accepts exactly the ceiling (strict >, matching the server) and saves', asyn
   fill({ orig: AT });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
   expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ original: LOANFACTS_FIELD_MAX }));
-  expect(mockBack).toHaveBeenCalled();
+  expect(routerSpies.back).toHaveBeenCalled();
 });
 
 it('a blank form (opened before facts loaded) cannot wipe saved facts on Save', async () => {
@@ -147,7 +147,7 @@ it('a blank form (opened before facts loaded) cannot wipe saved facts on Save', 
     await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
     expect(saveLoanFacts).not.toHaveBeenCalled();   // no PUT -> saved facts untouched
     expect(showToast).toHaveBeenCalled();
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   } finally {
     await act(async () => { held.release(); });
   }

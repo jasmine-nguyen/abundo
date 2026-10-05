@@ -4,35 +4,26 @@
 // handler (app/budget/edit.tsx) turns it red.
 // WHIT-459: budgetEditIncome / budgetEditRollover / budgetPickIncome / budgetPickSavings are
 // folded in as child describes at the END of this file. All five share the same ../context +
-// expo-router mocks. The expo-router factory is reconciled to a SUPERSET: it exposes
-// push/replace/back/dismissAll + useLocalSearchParams so both the edit screen (replace/params) and
-// the pick screen (back) are served; each folded block asserts only the handles it needs. Two
-// screens are imported (edit + pick).
+// expo-router mocks. The shared router fake serves both the edit screen (replace/params) and the
+// pick screen (back); each folded block asserts only the handles it needs. Two screens are
+// imported (edit + pick).
 // WHIT-672: the categories and budget rollups come from the fake server through the real query
 // hooks; ../context keeps only the saveBudget writer.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import { ScrollView, Switch } from 'react-native';
 
-// Hoisted module-scope mocks so replace() + the writer are assertable across renders
-// (see the delete test — useRouter() returns a fresh object each render).
+// Hoisted module-scope mock so the writer is assertable across renders.
 const mockSaveBudget = jest.fn(async (_id: string, _amount: number, _rollover?: boolean) => true);
-const mockReplace = jest.fn();
-
-// `let` (was const): the folded income/rollover blocks reassign mockParams per test; the survivor
-// tests never do, so they keep the initial coffee value.
-let mockParams: { categoryId: string } = { categoryId: 'coffee' };
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => ({ saveBudget: mockSaveBudget }) };
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn(), replace: mockReplace, back: jest.fn(), dismissAll: jest.fn() }),
-  useLocalSearchParams: () => mockParams,
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import BudgetEdit from '../../app/budget/edit';
 import BudgetPick from '../../app/budget/pick';
@@ -60,12 +51,12 @@ const SPREAD_COFFEE = {
   spread: { amount: 200, cycles: 4, index: 1, adjustment: -25 },
 };
 
-// mockParams is reassigned by the folded edit tests; reset it centrally so the top-level tests get
-// the `coffee` default order-independently (was a `const` before the fold made it mutable).
+// The folded edit tests set their own params; reset to `coffee` centrally so the top-level tests
+// get it order-independently.
 beforeEach(() => {
+  resetRouter();
   mockSaveBudget.mockClear();
-  mockReplace.mockClear();
-  mockParams = { categoryId: 'coffee' };
+  setParams({ categoryId: 'coffee' });
   resetAuth();
 });
 
@@ -86,7 +77,7 @@ it('pressing Add budget saves the amount once and navigates to the budgets tab',
   // toggle (spend category → the flag is sent; default off), then navigated.
   expect(mockSaveBudget).toHaveBeenCalledTimes(1);
   expect(mockSaveBudget).toHaveBeenCalledWith('coffee', 300, false);
-  await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/budgets'));
+  await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
 });
 
 // WHIT-249: an UNEXPECTED saveBudget throw used to leave the Add budget button stuck disabled
@@ -104,7 +95,7 @@ it('re-enables the Add budget button so a retry runs after saveBudget throws', a
   await act(async () => { fireEvent.press(screen.getByText('Add budget')); }); // only fires if re-enabled
 
   expect(mockSaveBudget).toHaveBeenCalledTimes(2);
-  await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/budgets'));
+  await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
   expect(errorSpy).toHaveBeenCalled();
 });
 
@@ -125,12 +116,12 @@ it('wraps the form in a keyboard-inset, tap-persisting scroll so Save stays reac
 // ===== WHIT-169 (folded from budgetEditIncome.screen.test.tsx) =====
 // edit.tsx must GATE the spend UI for an income category, and a Savings deep-link lands on a
 // "can't budget" state. SPEND and INCOME reuse the module-scope consts (the pick blocks below use
-// PICK_INCOME, a different recent). replace is the module-scope mockReplace here
+// PICK_INCOME, a different recent). replace is the shared routerSpies.replace here
 // (inert: these render-only tests never press Save).
 describe('budgetEditIncome (folded)', () => {
   describe('BudgetEdit — income framing is wired into the screen (WHIT-169)', () => {
     it('income category: prompt shown, recommend button + "Recommended:" line absent, earning history, dashed stats', async () => {
-      mockParams = { categoryId: 'salary' };
+      setParams({ categoryId: 'salary' });
       seedServer([INCOME]);
       await renderWithQueries(<BudgetEdit />);
 
@@ -143,7 +134,7 @@ describe('budgetEditIncome (folded)', () => {
     });
 
     it('spend category (control): recommendation line + button + spending history all present', async () => {
-      mockParams = { categoryId: 'coffee' };
+      setParams({ categoryId: 'coffee' });
       seedServer([SPEND]);
       await renderWithQueries(<BudgetEdit />);
 
@@ -162,7 +153,7 @@ describe('budgetEditIncome (folded)', () => {
       // revert: removing the early-return falls through to the full spend screen (history +
       // stats reappear, note gone).
       const SAVINGS = { id: 'nest_egg', name: 'Nest Egg', icon: 'piggy', color: '#8fd4c0', bucket: 'Savings', recent: 0 };
-      mockParams = { categoryId: 'nest_egg' };
+      setParams({ categoryId: 'nest_egg' });
       seedServer([SAVINGS]);
       await renderWithQueries(<BudgetEdit />);
 
@@ -176,13 +167,13 @@ describe('budgetEditIncome (folded)', () => {
 });
 
 // ===== budget-rollover (folded from budgetEditRollover.screen.test.tsx) =====
-// edit.tsx must WIRE the rollover Switch. mockSaveBudget/mockReplace reuse the module-scope mocks;
-// SPEND and INCOME reuse the outer consts. Own beforeEach re-clears the writer/replace.
+// edit.tsx must WIRE the rollover Switch. mockSaveBudget and routerSpies.replace are the shared
+// spies; SPEND and INCOME reuse the outer consts. Own beforeEach re-clears the writer.
 describe('budgetEditRollover (folded)', () => {
-  beforeEach(() => { mockSaveBudget.mockClear(); mockReplace.mockClear(); });
+  beforeEach(() => { mockSaveBudget.mockClear(); });
 
   it('spend budget: flipping the Smoothing toggle ON makes Save pass rollover=true', async () => {
-    mockParams = { categoryId: 'coffee' };
+    setParams({ categoryId: 'coffee' });
     seedServer([SPEND]);
     const { UNSAFE_getByType } = await renderWithQueries(<BudgetEdit />);
 
@@ -192,11 +183,11 @@ describe('budgetEditRollover (folded)', () => {
     await act(async () => { fireEvent.press(screen.getByText('Add budget')); });
 
     expect(mockSaveBudget).toHaveBeenCalledWith('coffee', 300, true);
-    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/budgets'));
+    await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
   });
 
   it('existing rollover-ON budget SEEDS the toggle on, so Update saves rollover=true unchanged', async () => {
-    mockParams = { categoryId: 'coffee' };
+    setParams({ categoryId: 'coffee' });
     // existing budget already has rollover ON — the editor must seed the Switch from it.
     seedServer([SPEND], { coffee: { target: 100, posted: 0, pending: 0, rollover: true, carryover: 0 } });
     const { UNSAFE_getByType } = await renderWithQueries(<BudgetEdit />);
@@ -208,7 +199,7 @@ describe('budgetEditRollover (folded)', () => {
   });
 
   it('income category: no rollover toggle, and Save passes rollover=undefined (spend-only)', async () => {
-    mockParams = { categoryId: 'salary' };
+    setParams({ categoryId: 'salary' });
     seedServer([INCOME]);
     const { UNSAFE_queryAllByType } = await renderWithQueries(<BudgetEdit />);
 
@@ -224,7 +215,7 @@ describe('budgetEditRollover (folded)', () => {
   // and Save must send rollover=undefined (never a forced true: the server 400s a rollover
   // write on a spread category).
   it('active bill spread: Smoothing shows ON+disabled, and Save passes rollover=undefined', async () => {
-    mockParams = { categoryId: 'coffee' };
+    setParams({ categoryId: 'coffee' });
     seedServer([SPEND], { coffee: SPREAD_COFFEE });
     const { UNSAFE_getByType } = await renderWithQueries(<BudgetEdit />);
 
@@ -240,7 +231,7 @@ describe('budgetEditRollover (folded)', () => {
   // GAP [A-S1] WHIT-550 — the LOCKED help copy must render while a spread is active (and the
   // normal smoothing help must NOT). Fail-on-revert: swap the locked/normal help ternary.
   it('active bill spread: shows the locked help copy, not the normal smoothing help', async () => {
-    mockParams = { categoryId: 'coffee' };
+    setParams({ categoryId: 'coffee' });
     seedServer([SPEND], { coffee: SPREAD_COFFEE });
     await renderWithQueries(<BudgetEdit />);
 
@@ -250,7 +241,7 @@ describe('budgetEditRollover (folded)', () => {
 
   // GAP [A-S1b] WHIT-550 — the reverse branch: a plain spend budget shows the normal help, not locked.
   it('plain spend budget: shows the normal smoothing help, not the locked copy', async () => {
-    mockParams = { categoryId: 'coffee' };
+    setParams({ categoryId: 'coffee' });
     seedServer([SPEND]);
     await renderWithQueries(<BudgetEdit />);
 
@@ -262,7 +253,7 @@ describe('budgetEditRollover (folded)', () => {
   // The seeded ON flag must NOT leak into save() while locked, and a stray valueChange on the
   // disabled switch must not change what Save sends. Fail-on-revert: send `rollover` while locked.
   it('spread + rollover-ON seed: a stray toggle cannot leak the flag past the lock', async () => {
-    mockParams = { categoryId: 'coffee' };
+    setParams({ categoryId: 'coffee' });
     seedServer([SPEND], { coffee: { ...SPREAD_COFFEE, rollover: true, carryover: 40 } });
     const { UNSAFE_getByType } = await renderWithQueries(<BudgetEdit />);
 

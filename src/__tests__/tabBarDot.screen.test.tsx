@@ -21,7 +21,7 @@ jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({
 jest.mock('../motion/NavBarsContext', () => ({ useNavBars: () => ({ visibility: { interpolate: () => 0 } }) }));
 // expo-router's Tabs pulls in native modules that can't load headlessly; the TabBar under
 // test doesn't use them, so stub the module.
-jest.mock('expo-router', () => ({ Tabs: Object.assign(() => null, { Screen: () => null }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import { TabBar } from '../../app/(tabs)/_layout';
 

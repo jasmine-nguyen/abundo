@@ -2,6 +2,7 @@
 // fake server — sign-out mid-delete, same-frame double taps, parent-before-children ordering, a
 // delete refused with a reason, and the exact body a new inline sub-category sends.
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
+import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { Category } from '../types';
@@ -12,12 +13,7 @@ import { resetAuth, setAuthStatus } from './support/authMock';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-const mockBack = jest.fn();
-let mockParams: { categoryId?: string } = {};
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ back: mockBack, push: jest.fn() }),
-  useLocalSearchParams: () => mockParams,
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import CategoryEdit from '../../app/category/edit';
 
@@ -34,14 +30,14 @@ async function drawEdit(categories: Category[]) {
 }
 
 beforeEach(() => {
+  resetRouter();
   resetAuth();
   resetAppProbe();
-  mockBack.mockClear();
-  mockParams = {};
+  setParams({});
 });
 
 describe('deleting a category when the session changes mid-delete', () => {
-  beforeEach(() => { mockParams = { categoryId: 'coffee' }; });
+  beforeEach(() => { setParams({ categoryId: 'coffee' }); });
 
   // [A1] The DELETE is held, the user signs out, then the server refuses. Nothing may reach the
   // next session: no failure toast, no navigation.
@@ -55,7 +51,7 @@ describe('deleting a category when the session changes mid-delete', () => {
 
     expect(server.sent('DELETE', '/categories/coffee')).toHaveLength(1);
     expect(shownToasts()).toEqual([]);
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 
   // [A2] Same, but the server then says the delete worked. The real writer returns false after a
@@ -70,28 +66,28 @@ describe('deleting a category when the session changes mid-delete', () => {
 
     expect(server.sent('DELETE', '/categories/coffee')).toHaveLength(1);
     expect(shownToasts()).toEqual([]);
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 });
 
 describe('a delete refused with a reason', () => {
   // [A3] The server's own words replace the generic line, and the screen stays put.
   it('shows the server reason as the one toast and stays on the screen', async () => {
-    mockParams = { categoryId: 'coffee' };
+    setParams({ categoryId: 'coffee' });
     server.once('DELETE', '/categories/coffee', { status: 409, reason: 'category is used by a budget' });
     await drawEdit([LIVING('coffee', 'Coffee')]);
 
     await act(async () => { fireEvent.press(screen.getByText('Delete category')); });
 
     await waitFor(() => expect(shownToasts()).toEqual(['Category is used by a budget.']));
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 });
 
 describe('same-frame double taps send once', () => {
   // [A4] Two Save taps in one frame (before `submitting` can redraw) → exactly one PATCH.
   it('two Save taps in one frame send one update', async () => {
-    mockParams = { categoryId: 'transport' };
+    setParams({ categoryId: 'transport' });
     await drawEdit([LIVING('transport', 'Transport')]);
 
     await act(async () => {
@@ -99,14 +95,14 @@ describe('same-frame double taps send once', () => {
       fireEvent.press(screen.getByText('Save category'));
     });
 
-    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
     expect(server.sent('PATCH', '/categories/transport')).toHaveLength(1);
     expect(shownToasts()).toEqual(['Category updated.']);
   });
 
   // [A5] Two Delete taps in one frame → exactly one DELETE.
   it('two Delete taps in one frame send one delete', async () => {
-    mockParams = { categoryId: 'coffee' };
+    setParams({ categoryId: 'coffee' });
     await drawEdit([LIVING('coffee', 'Coffee')]);
 
     await act(async () => {
@@ -114,7 +110,7 @@ describe('same-frame double taps send once', () => {
       fireEvent.press(screen.getByText('Delete category'));
     });
 
-    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
     expect(server.sent('DELETE', '/categories/coffee')).toHaveLength(1);
     expect(shownToasts()).toEqual(['Category deleted.']);
   });
@@ -124,7 +120,7 @@ describe('the parent is saved before its children', () => {
   // [A6] While the parent's own update is still waiting on the server, no child attach is sent.
   // The children only go once the parent has been saved.
   it('sends no child attach until the parent update has answered', async () => {
-    mockParams = { categoryId: 'transport' };
+    setParams({ categoryId: 'transport' });
     await drawEdit([LIVING('transport', 'Transport'), LIVING('parking', 'Parking')]);
     fireEvent.press(screen.getByTestId('attachChild-parking'));
     const held = server.hold('/categories/transport');
@@ -134,7 +130,7 @@ describe('the parent is saved before its children', () => {
     expect(server.sent('PATCH', '/categories/parking')).toEqual([]);
 
     await act(async () => { held.release(); });
-    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
     expect(server.sent('PATCH', '/categories/parking').map((request) => request.body)).toEqual([
       { name: 'Parking', bucket: 'Living', icon: 'car', parent: 'transport' }]);
   });
@@ -144,7 +140,7 @@ describe('a new inline sub-category', () => {
   // [A7] The full create body — name, the parent's bucket, its own icon and the parent id. The
   // big suite only checks part of it.
   it('sends its full body under the edited parent', async () => {
-    mockParams = { categoryId: 'transport' };
+    setParams({ categoryId: 'transport' });
     await drawEdit([LIVING('transport', 'Transport')]);
     fireEvent.press(screen.getByText('＋ New sub-category'));
     fireEvent.changeText(screen.getByPlaceholderText('Category name'), '  Tolls  ');

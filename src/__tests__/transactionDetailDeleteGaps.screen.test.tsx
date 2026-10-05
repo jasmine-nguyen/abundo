@@ -3,6 +3,7 @@
 // "not found". The context writer is mocked; the screen and its data code are real, over the
 // pretend server (WHIT-686).
 import { it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { screen, fireEvent } from '@testing-library/react-native';
 import { txn } from './factory';
@@ -22,12 +23,7 @@ jest.mock('../context', () => {
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-let mockId = 't1';
-const mockBack = jest.fn();
-jest.mock('expo-router', () => ({
-  useLocalSearchParams: () => ({ id: mockId }),
-  useRouter: () => ({ back: mockBack, push: jest.fn() }),
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import TransactionDetail from '../../app/transaction/[id]';
@@ -44,11 +40,11 @@ useTestQueryClient();
 const alerts = spyOnAlert();
 
 beforeEach(() => {
+  resetRouter();
   resetAuth();
-  mockId = 't1';
+  setParams({ id: 't1' });
   server.seed('/categories', [{ ...COFFEE_RECORD, parent: null }]);
   server.seed('/transactions/feed', { transactions: [txn({ transaction_id: 't1', category: 'coffee' })], nextCursor: null });
-  mockBack.mockClear();
   mockDeleteTransaction.mockReset();
 });
 
@@ -80,7 +76,7 @@ it('a double confirm in the same frame deletes once and goes back once', async (
   await refreshInAct(() => { confirm.onPress?.(); confirm.onPress?.(); });
 
   expect(mockDeleteTransaction).toHaveBeenCalledTimes(1);
-  expect(mockBack).toHaveBeenCalledTimes(1);
+  expect(routerSpies.back).toHaveBeenCalledTimes(1);
 });
 
 // [C3]
@@ -97,7 +93,7 @@ it('while the delete runs the button says "Deleting…" and is disabled', async 
 
   await refreshInAct(() => finish(false));
   expect(screen.getByText('Delete transaction')).toBeTruthy();
-  expect(mockBack).not.toHaveBeenCalled();
+  expect(routerSpies.back).not.toHaveBeenCalled();
 });
 
 // [C4]
@@ -108,7 +104,7 @@ it('a writer that throws leaves the user on the screen with the button re-enable
 
   await refreshInAct(() => { openConfirm().confirm.onPress?.(); });
 
-  expect(mockBack).not.toHaveBeenCalled();
+  expect(routerSpies.back).not.toHaveBeenCalled();
   expect(screen.getByTestId('transaction-delete').props.accessibilityState).toEqual({ disabled: false });
   consoleError.mockRestore();
 });
@@ -132,13 +128,13 @@ it('deleting the ONLY cached charge never flashes the empty/loading states befor
   expect(screen.getByTestId('transaction-delete')).toBeTruthy();
 
   await refreshInAct(() => finish(true));
-  expect(mockBack).toHaveBeenCalledTimes(1);
+  expect(routerSpies.back).toHaveBeenCalledTimes(1);
   await refreshInAct(() => reload.release());
 });
 
 // [C6]
 it('a stale id shows "not found" with no Delete button', async () => {
-  mockId = 'gone';
+  setParams({ id: 'gone' });
   await draw();
   expect(screen.getByText('Transaction not found')).toBeTruthy();
   expect(screen.queryByTestId('transaction-delete')).toBeNull();

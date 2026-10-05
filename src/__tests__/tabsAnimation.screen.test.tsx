@@ -18,8 +18,7 @@ jest.mock('expo-router', () => {
     return React2.createElement(React2.Fragment, null, children);
   };
   Tabs.Screen = () => null;
-  // TabsLayout now mounts <NavBarsRouteReset/>, which reads usePathname.
-  return { Tabs, usePathname: () => '/budgets' };
+  return { ...require('./support/routerMock').routerMockModule(), Tabs };
 });
 
 import TabsLayout from '../../app/(tabs)/_layout';

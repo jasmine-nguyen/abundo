@@ -6,7 +6,7 @@ import React from 'react';
 import { screen } from '@testing-library/react-native';
 
 jest.mock('../motion/NavBarsContext', () => ({ useNavBars: () => ({ visibility: { interpolate: () => 0 } }) }));
-jest.mock('expo-router', () => ({ Tabs: Object.assign(() => null, { Screen: () => null }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { TabBar } from '../../app/(tabs)/_layout';

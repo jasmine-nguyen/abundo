@@ -1,10 +1,10 @@
 // WHIT-708 — "Delete budget" asks first. Pressing it opens a native confirm; only the
 // destructive "Delete" removes the budget and goes back, "Cancel" does nothing.
 import { it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 
-const mockBack = jest.fn();
 const mockDeleteBudget = jest.fn(async (_id: string) => true);
 
 jest.mock('../context', () => {
@@ -13,10 +13,7 @@ jest.mock('../context', () => {
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn(), back: mockBack }),
-  useLocalSearchParams: () => ({ id: 'coffee' }),
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import BudgetDetail from '../../app/budget/[id]';
 import { resetAuth } from './support/authMock';
@@ -30,8 +27,9 @@ useTestQueryClient();
 const alerts = spyOnAlert();
 
 beforeEach(() => {
+  resetRouter();
+  setParams({ id: 'coffee' });
   resetAuth();
-  mockBack.mockClear();
   mockDeleteBudget.mockClear();
   mockDeleteBudget.mockResolvedValue(true);
   server.seed('/categories', [{ ...COFFEE, recent: 0 }]);
@@ -59,7 +57,7 @@ it('user must confirm before a budget is deleted; Delete removes it once and goe
 
   expect(mockDeleteBudget).toHaveBeenCalledTimes(1);
   expect(mockDeleteBudget).toHaveBeenCalledWith('coffee');
-  await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
 });
 
 it('user can cancel the confirm and the budget is kept', async () => {
@@ -71,6 +69,6 @@ it('user can cancel the confirm and the budget is kept', async () => {
   await act(async () => { await cancel.onPress?.(); });
 
   expect(mockDeleteBudget).not.toHaveBeenCalled();
-  expect(mockBack).not.toHaveBeenCalled();
+  expect(routerSpies.back).not.toHaveBeenCalled();
   expect(screen.getByText('Delete budget')).toBeTruthy();
 });

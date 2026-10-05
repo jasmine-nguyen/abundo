@@ -7,6 +7,7 @@
 // "NOT on the Uncategorized tab" is stale under WHIT-330 — see critique).
 // WHIT-686: both screens run their real data code over the pretend server.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
+import { setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { txn } from './factory';
@@ -25,14 +26,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 // WHIT-459 fold: superset expo-router — useFocusEffect (list screen) + useLocalSearchParams
 // (detail screen deep-link to id 't1') + useRouter with back+push (union). Each screen ignores
 // the hooks it doesn't call.
-jest.mock('expo-router', () => {
-  const ReactLib = require('react');
-  return {
-    useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]),
-    useLocalSearchParams: () => ({ id: 't1' }),
-    useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
-  };
-});
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import Transactions from '../../app/(tabs)/transactions';
@@ -52,6 +46,8 @@ const transfer = txn({
 });
 
 beforeEach(() => {
+  resetRouter();
+  setParams({ id: 't1' });
   resetAuth();
   server.seed('/categories', []);
 });

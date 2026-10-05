@@ -5,7 +5,7 @@ import React from 'react';
 import { View, StyleSheet, type StyleProp, type TextStyle } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
 
-jest.mock('expo-router', () => ({ useRouter: () => ({ back: jest.fn(), push: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import { C } from '../theme';
 import { Header } from '../components/Header';

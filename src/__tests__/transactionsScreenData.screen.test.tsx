@@ -52,10 +52,7 @@ jest.mock('../context', () => {
 
 // expo-router — mocked for the screen render. INERT for the renderHook describes (the composite
 // hook does not import expo-router; it returns refetchStale for the screen to wire to focus).
-jest.mock('expo-router', () => {
-  const ReactLib = require('react');
-  return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
-});
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import { useTransactionsScreenData, useRecentTransactionsScreenData, useTransactionDetailScreenData, accountBalancesKey, transactionsSearchKey } from '../queries';
 import Transactions from '../../app/(tabs)/transactions';

@@ -1,6 +1,7 @@
 // Card 609 — the Ask Abundo sheet, rendered with the real chat provider: the one-time consent
 // step, suggested prompts, the answer card's category colour, and the action chips.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { act, fireEvent, screen } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -17,8 +18,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 const EATING_OUT = { id: 'eatingout', name: 'Eating Out', parent: null, colorSlot: 5 };
 const SALARY = { id: 'salary', name: 'Salary', parent: null, bucket: 'Income', colorSlot: 2 };
 
-const mockPush = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import { ChatProvider, CHAT_CONSENT_KEY, useChat } from '../chat/ChatContext';
 import type { ChatContextValue } from '../chat/ChatContext';
@@ -78,6 +78,7 @@ async function askAndAnswer() {
 }
 
 beforeEach(async () => {
+  resetRouter();
   jest.clearAllMocks();
   resetAuth();
   server.seed('/categories', [EATING_OUT, SALARY]);
@@ -150,7 +151,7 @@ describe('with consent given', () => {
     await askAndAnswer();
     fireEvent.press(screen.getByTestId('chat-action-0'));
     expect(chat.open).toBe(false);
-    expect(mockPush).toHaveBeenCalledWith('/category/eatingout?from=2026-07-30&to=2026-09-09');
+    expect(routerSpies.push).toHaveBeenCalledWith('/category/eatingout?from=2026-07-30&to=2026-09-09');
   });
 
   it('a prompt chip sends its question', async () => {

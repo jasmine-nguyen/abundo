@@ -4,6 +4,7 @@
 // held and failed replies. The AI-insights feature still reads the context store (`useAppContext`),
 // which the kit stands in for with a slice a test can set.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { routerSpies, fireFocus, resetRouter } from './support/routerMock';
 import { AccessibilityInfo, StyleSheet } from 'react-native';
 import { screen, fireEvent, within } from '@testing-library/react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
@@ -24,20 +25,9 @@ import { GROCERIES_RECORD } from './support/categories';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
 
-// The focus callback runs once on mount through a real effect, and is kept in `mockFocus` so a test
-// can fire a later focus by hand. `mockPush` is the router.push spy the category-row drills call.
-const mockPush = jest.fn();
-let mockFocus: () => void = () => {};
-jest.mock('expo-router', () => {
-  const ReactLib = require('react');
-  return {
-    useFocusEffect: (cb: () => void) => {
-      mockFocus = cb;
-      ReactLib.useEffect(() => cb(), [cb]);
-    },
-    useRouter: () => ({ push: mockPush }),
-  };
-});
+// The focus callback runs once on mount; fireFocus() fires a later focus by hand. routerSpies.push
+// is the spy the category-row drills call.
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -66,9 +56,9 @@ async function showLastCycle() {
 }
 
 beforeEach(() => {
+  resetRouter();
   resetAuth();
   resetAi();
-  mockPush.mockClear();
   seedBreakdown({});
 });
 
@@ -171,7 +161,7 @@ it('refreshes breakdown (query) AND AI on focus', async () => {
   await refreshInAct(() => queryClient.invalidateQueries({ refetchType: 'none' }));
   const before = breakdownReads();
 
-  await refreshInAct(() => mockFocus());
+  await refreshInAct(() => fireFocus());
   await settle();
 
   expect(breakdownReads()).toBeGreaterThan(before);
@@ -544,7 +534,7 @@ describe('Insights refund line (WHIT-349)', () => {
 
     // A tap on the refund line drills into the refunded sub's transactions.
     fireEvent.press(screen.getByText('Tolls'));
-    expect(mockPush).toHaveBeenCalledWith(expect.stringContaining('/category/tolls'));
+    expect(routerSpies.push).toHaveBeenCalledWith(expect.stringContaining('/category/tolls'));
   });
 });
 
@@ -638,7 +628,7 @@ describe('Insights remainder/Other plug (WHIT-357/375)', () => {
     // (c) NOT tappable — no button in the row, and pressing it drills nowhere.
     expect(within(card).queryByRole('button')).toBeNull();
     fireEvent.press(other);
-    expect(mockPush).not.toHaveBeenCalled();
+    expect(routerSpies.push).not.toHaveBeenCalled();
   });
 
   it('the refund line under the SAME parent stays green + tappable — proving the plug checks are meaningful', async () => {
@@ -650,7 +640,7 @@ describe('Insights remainder/Other plug (WHIT-357/375)', () => {
     expect(amountColor(refundCard)).toBe(C.good);
     expect(within(refundCard).queryByRole('button')).toBeTruthy();
     fireEvent.press(screen.getByText('Tolls'));
-    expect(mockPush).toHaveBeenCalledWith(expect.stringContaining('/category/tolls'));
+    expect(routerSpies.push).toHaveBeenCalledWith(expect.stringContaining('/category/tolls'));
 
     // Positive control 2: a real spend row (Petrol) DOES carry a bar/track — so the plug's
     // "no track" assertion above is a real difference, not a query that never finds tracks.
@@ -769,7 +759,7 @@ describe('Insights spending/earning toggle (WHIT-373)', () => {
       await renderInsights();
       fireEvent.press(screen.getByTestId('insights-side-earning'));
       fireEvent.press(screen.getByText('Salary'));
-      expect(mockPush).toHaveBeenCalledWith('/category/salary?cycle=0');
+      expect(routerSpies.push).toHaveBeenCalledWith('/category/salary?cycle=0');
     });
 
     it('Earning with spend but no income sources shows the empty message, not a category row', async () => {
@@ -860,7 +850,7 @@ describe('Insights earning share bars (WHIT-373)', () => {
 
     // [B2] The muted reconcile plug is not a real source: it must render its label, get NO green bar,
     // and NOT be tappable. earned 3120 vs one 3000 source ⇒ a 120 plug. FAIL-ON-REVERT: wrapping the
-    // muted row in a Pressable (drill) makes the press fire mockPush; letting the plug bar makes the
+    // muted row in a Pressable (drill) makes the press fire routerSpies.push; letting the plug bar makes the
     // width count 2.
     it('[B2] the muted reconcile plug gets no bar and does not drill', async () => {
       seedSides({ spend: { coffee: posted(40) }, earned: 3120, income: { salary: posted(3000) } });
@@ -871,10 +861,10 @@ describe('Insights earning share bars (WHIT-373)', () => {
       expect(incomeBarWidths(screen.toJSON())).toHaveLength(1);
       // tapping the plug row navigates nowhere (it has no Pressable wrapper)
       fireEvent.press(screen.getByText('Pending/refund adjustment'));
-      expect(mockPush).not.toHaveBeenCalled();
+      expect(routerSpies.push).not.toHaveBeenCalled();
       // the real source still drills
       fireEvent.press(screen.getByText('Salary'));
-      expect(mockPush).toHaveBeenCalledWith('/category/salary?cycle=0');
+      expect(routerSpies.push).toHaveBeenCalledWith('/category/salary?cycle=0');
     });
 
     // [B3] Every source clawed back this cycle → the positive denominator is 0. Rows still render (as

@@ -2,6 +2,7 @@
 // converts LVR percent → fraction on save, calls saveLoanFacts + navigates back on
 // success, and blocks an incomplete/invalid save with a toast (no API call).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import { ScrollView } from 'react-native';
@@ -18,8 +19,7 @@ jest.mock('../context', () => {
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-const mockBack = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack, push: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Loan from '../../app/loan';
 import { LOANFACTS_FIELD_MAX } from '../loanLimits';
@@ -52,7 +52,7 @@ function fillValid() {
 }
 
 beforeEach(() => {
-  mockBack.mockClear();
+  resetRouter();
   resetAuth();
 });
 
@@ -65,7 +65,7 @@ it('saves the facts (LVR as a fraction) and navigates back', async () => {
 
   // 80% entered → stored as the fraction 0.8; no goal date set → payoffGoalDate null.
   expect(saveLoanFacts).toHaveBeenCalledWith({ original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, payoffGoalDate: null, depositTarget: null });
-  expect(mockBack).toHaveBeenCalled();
+  expect(routerSpies.back).toHaveBeenCalled();
 });
 
 it('sends the picked target payoff date, and clears it back to null (WHIT-126)', async () => {
@@ -120,7 +120,7 @@ it('blocks an incomplete save with a toast and no API call', async () => {
 
   expect(saveLoanFacts).not.toHaveBeenCalled();
   expect(showToast).toHaveBeenCalled();
-  expect(mockBack).not.toHaveBeenCalled();
+  expect(routerSpies.back).not.toHaveBeenCalled();
 });
 
 it('seeds inputs from already-saved facts (LVR shown as a percent)', async () => {
@@ -166,7 +166,7 @@ describe('WHIT-378 deposit-target guard + clear (gaps)', () => {
     // ...and nothing is persisted or navigated. Fail-on-revert: drop the app/loan.tsx:63 guard
     // and NaN sails through to saveLoanFacts.
     expect(saveLoanFacts).not.toHaveBeenCalled();
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 
   it('[A6b] a zero deposit target is rejected the same way (> 0 guard, not just finiteness)', async () => {
@@ -193,7 +193,7 @@ describe('WHIT-378 deposit-target guard + clear (gaps)', () => {
     // deposit-target ceiling guard and an over-ceiling value sails through to saveLoanFacts.
     expect(showToast).toHaveBeenCalledWith(DEPOSIT_TOAST);
     expect(saveLoanFacts).not.toHaveBeenCalled();
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 
   it('[A7] EDIT: a seeded target cleared to blank saves depositTarget:null (no stale value)', async () => {
@@ -280,7 +280,7 @@ describe('WHIT-382 dollar-ceiling guards (gaps)', () => {
     fill({ home: AT });
     await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
     expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ homeValue: LOANFACTS_FIELD_MAX }));
-    expect(mockBack).toHaveBeenCalled();
+    expect(routerSpies.back).toHaveBeenCalled();
   });
 
   it('[G5] extra EXACTLY at the ceiling saves', async () => {
@@ -289,7 +289,7 @@ describe('WHIT-382 dollar-ceiling guards (gaps)', () => {
     fill({ extra: AT });
     await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
     expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ extra: LOANFACTS_FIELD_MAX }));
-    expect(mockBack).toHaveBeenCalled();
+    expect(routerSpies.back).toHaveBeenCalled();
   });
 
   it('[G6] depositTarget EXACTLY at the ceiling saves (off-by-one: at passes, +1 blocked by [A8])', async () => {
@@ -298,7 +298,7 @@ describe('WHIT-382 dollar-ceiling guards (gaps)', () => {
     fill({ deposit: AT });
     await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
     expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ depositTarget: LOANFACTS_FIELD_MAX }));
-    expect(mockBack).toHaveBeenCalled();
+    expect(routerSpies.back).toHaveBeenCalled();
   });
 
   // --- Precedence: an invalid (empty/zero) required field must win over a ceiling violation ---

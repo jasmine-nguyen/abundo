@@ -3,6 +3,7 @@
 // the earned-vs-spent card is hidden whether or not the screen's spinner/error gate exists. These
 // draw real server states where income IS present while the screen is loading or erroring.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { fireFocus, resetRouter } from './support/routerMock';
 import { screen, fireEvent } from '@testing-library/react-native';
 import { queryClient } from '../queryClient';
 import { breakdownKey } from '../queries';
@@ -14,17 +15,7 @@ import { breakdownWire, seedInsights, renderInsights, drawInsights, resetAi, ref
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
 
-let mockFocus: () => void = () => {};
-jest.mock('expo-router', () => {
-  const ReactLib = require('react');
-  return {
-    useFocusEffect: (cb: () => void) => {
-      mockFocus = cb;
-      ReactLib.useEffect(() => cb(), [cb]);
-    },
-    useRouter: () => ({ push: jest.fn() }),
-  };
-});
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -34,6 +25,7 @@ const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', bucket: 'L
 const breakdownReads = () => server.sentUnder('GET', '/breakdown').length;
 
 beforeEach(() => {
+  resetRouter();
   resetAuth();
   resetAi();
 });
@@ -104,7 +96,7 @@ describe('focus refresh is staleness-gated', () => {
     refreshAiInsights.mockClear();
     const before = breakdownReads();
 
-    await refreshInAct(() => mockFocus());
+    await refreshInAct(() => fireFocus());
     await settle();
 
     expect(breakdownReads()).toBe(before);

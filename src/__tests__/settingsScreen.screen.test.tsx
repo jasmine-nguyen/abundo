@@ -6,12 +6,12 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { fireEvent, screen } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
-import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { renderWithQueries, refreshInAct, settle, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { routerSpies, resetRouter, fireFocus } from './support/routerMock';
+import { queryClient } from '../queryClient';
 
-const mockReplace = jest.fn();
-const mockBack = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace, push: jest.fn(), back: mockBack }), useFocusEffect: () => {} }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const mockSignOut = jest.fn(async () => {});
 let mockUser: { email?: string; name?: string; picture?: string } | null = null;
@@ -29,14 +29,13 @@ jest.mock('../context', () => ({
 
 import Settings from '../../app/settings';
 
-installFakeServer();
+const server = installFakeServer();
 useTestQueryClient();
 
 beforeEach(() => {
   resetAuth();
   mockUser = null;
-  mockReplace.mockClear();
-  mockBack.mockClear();
+  resetRouter();
   mockSignOut.mockClear();
 });
 
@@ -47,14 +46,14 @@ describe('Log out and Back', () => {
     await renderWithQueries(<Settings />);
     fireEvent.press(screen.getByTestId('settings-logout'));
     expect(mockSignOut).toHaveBeenCalledTimes(1);
-    expect(mockReplace).toHaveBeenCalledWith('/');
+    expect(routerSpies.replace).toHaveBeenCalledWith('/');
   });
 
   // WHIT-495: Settings is a pushed root screen, so it carries a Back control that pops the stack.
   it('renders a Back button that pops back to the origin tab', async () => {
     await renderWithQueries(<Settings />);
     fireEvent.press(screen.getByLabelText('Back'));
-    expect(mockBack).toHaveBeenCalledTimes(1);
+    expect(routerSpies.back).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -75,5 +74,30 @@ describe('profile card', () => {
     await renderWithQueries(<Settings />);
     expect(screen.getByText('me.jasminenguyen@gmail.com')).toBeTruthy();
     expect(screen.queryByText('Jordan Diaz')).toBeNull();
+  });
+});
+
+// WHIT-753 QA [A3] — the shared router fake runs Settings' focus refresh (the old no-op
+// useFocusEffect never did). A later focus on stale data re-reads the categories and loan facts.
+// Fail-on-revert: drop the useFocusEffect line from app/settings.tsx and neither is re-read.
+describe('focus refresh', () => {
+  it('[A3] a later focus re-reads stale categories and loan facts', async () => {
+    await renderWithQueries(<Settings />);
+    const categoriesBefore = server.sent('GET', '/categories').length;
+    const loanFactsBefore = server.sent('GET', '/loanfacts').length;
+    await refreshInAct(() => queryClient.invalidateQueries({ refetchType: 'none' }));
+
+    await refreshInAct(() => fireFocus());
+    await settle();
+
+    expect(server.sent('GET', '/categories').length).toBeGreaterThan(categoriesBefore);
+    expect(server.sent('GET', '/loanfacts').length).toBeGreaterThan(loanFactsBefore);
+  });
+
+  // [A4] The shared spies are cleared between tests: an earlier Back / Log out leaves no calls here.
+  it('[A4] starts each test with no router calls carried over', async () => {
+    await renderWithQueries(<Settings />);
+    expect(routerSpies.back).not.toHaveBeenCalled();
+    expect(routerSpies.replace).not.toHaveBeenCalled();
   });
 });

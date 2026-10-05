@@ -4,14 +4,13 @@
 // only override useAppContext with the writers. The categories, budget rollups, the budget's
 // charges and the pay cycle come from the fake server through the real query hooks (WHIT-672).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 
 const mockSaveSpread = jest.fn(async (_id: string, _amount: number, _cycles: number) => true);
 const mockRemoveSpread = jest.fn(async (_id: string) => true);
-const mockBack = jest.fn();
 
-let mockParams: { categoryId?: string; prefill?: string; id?: string } = { categoryId: 'coffee' };
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
@@ -21,10 +20,7 @@ jest.mock('../context', () => {
   };
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: mockBack, dismissAll: jest.fn() }),
-  useLocalSearchParams: () => mockParams,
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import BudgetSpread from '../../app/budget/spread';
 import BudgetDetail from '../../app/budget/[id]';
@@ -48,17 +44,17 @@ function seedBudgets(budgets: Record<string, unknown>) {
 }
 
 beforeEach(() => {
+  resetRouter();
   mockSaveSpread.mockClear();
   mockRemoveSpread.mockClear();
-  mockBack.mockClear();
-  mockParams = { categoryId: 'coffee' };
+  setParams({ categoryId: 'coffee' });
   resetAuth();
 });
 
 // ── the spread screen ────────────────────────────────────────────────────────
 describe('app/budget/spread.tsx', () => {
   it('seeds the amount from the prefill and saves amount + default cycles once, then navigates back', async () => {
-    mockParams = { categoryId: 'coffee', prefill: '120' };
+    setParams({ categoryId: 'coffee', prefill: '120' });
     seedBudgets({ coffee: rollup() });
     await renderWithQueries(<BudgetSpread />);
 
@@ -67,13 +63,13 @@ describe('app/budget/spread.tsx', () => {
 
     expect(mockSaveSpread).toHaveBeenCalledTimes(1);
     expect(mockSaveSpread).toHaveBeenCalledWith('coffee', 120, 3);           // default cycle count 3
-    await waitFor(() => expect(mockBack).toHaveBeenCalled());
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalled());
   });
 
   it('no budget target → shows the "set a budget first" guard, not the amount field (WHIT-556)', async () => {
     // A spend category with NO budget row (e.g. a list-render→navigate race, or the tx-screen
     // entry landing before a target exists). A save would 400, so the screen guides instead.
-    mockParams = { categoryId: 'coffee', prefill: '120' };
+    setParams({ categoryId: 'coffee', prefill: '120' });
     seedBudgets({});
     await renderWithQueries(<BudgetSpread />);
 
@@ -84,7 +80,7 @@ describe('app/budget/spread.tsx', () => {
   });
 
   it('the cycle stepper changes how many cycles the bill spreads over', async () => {
-    mockParams = { categoryId: 'coffee', prefill: '120' };
+    setParams({ categoryId: 'coffee', prefill: '120' });
     seedBudgets({ coffee: rollup() });
     await renderWithQueries(<BudgetSpread />);
 
@@ -95,7 +91,7 @@ describe('app/budget/spread.tsx', () => {
   });
 
   it('an amount of 0 keeps Save disabled (no write)', async () => {
-    mockParams = { categoryId: 'coffee' };  // no prefill → empty amount
+    setParams({ categoryId: 'coffee' });  // no prefill → empty amount
     seedBudgets({ coffee: rollup() });
     await renderWithQueries(<BudgetSpread />);
 
@@ -105,7 +101,7 @@ describe('app/budget/spread.tsx', () => {
   });
 
   it('an active plan seeds its amount, shows Remove, and Remove calls removeSpread once', async () => {
-    mockParams = { categoryId: 'coffee' };
+    setParams({ categoryId: 'coffee' });
     seedBudgets({ coffee: rollup({ spread: activePlan }) });
     await renderWithQueries(<BudgetSpread />);
 
@@ -114,13 +110,13 @@ describe('app/budget/spread.tsx', () => {
 
     expect(mockRemoveSpread).toHaveBeenCalledTimes(1);
     expect(mockRemoveSpread).toHaveBeenCalledWith('coffee');
-    await waitFor(() => expect(mockBack).toHaveBeenCalled());
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalled());
   });
 
   it('the amount field keeps only a single decimal point (shown matches saved)', async () => {
     // FAIL-ON-REVERT for cleanAmount: a second dot in "5.5.5" would otherwise display but the
     // parsed/saved value would be 5.5 — the field must collapse it so shown === saved.
-    mockParams = { categoryId: 'coffee' };
+    setParams({ categoryId: 'coffee' });
     seedBudgets({ coffee: rollup() });
     await renderWithQueries(<BudgetSpread />);
 
@@ -133,7 +129,7 @@ describe('app/budget/spread.tsx', () => {
   });
 
   it('a fresh spread (no plan) shows no Remove button', async () => {
-    mockParams = { categoryId: 'coffee', prefill: '120' };
+    setParams({ categoryId: 'coffee', prefill: '120' });
     seedBudgets({ coffee: rollup() });
     await renderWithQueries(<BudgetSpread />);
 
@@ -151,7 +147,7 @@ describe('app/budget/[id].tsx — spread entry point', () => {
   }
 
   it('over budget with no plan → "Spread this bill", not the edit label', async () => {
-    mockParams = { id: 'coffee' };
+    setParams({ id: 'coffee' });
     // posted 130 > budget 100 → over, no plan.
     seedDetail({ posted: 130 });
     await renderWithQueries(<BudgetDetail />);
@@ -161,7 +157,7 @@ describe('app/budget/[id].tsx — spread entry point', () => {
   });
 
   it('an active plan → "Edit or remove bill spread" stays reachable even when the cushion clears over', async () => {
-    mockParams = { id: 'coffee' };
+    setParams({ id: 'coffee' });
     // cushion makes spent < available, so `over` is false — the entry must key off the plan, not over.
     seedDetail({ posted: 250, spread: { amount: 300, cycles: 4, index: 0, adjustment: 300 } });
     await renderWithQueries(<BudgetDetail />);
@@ -171,7 +167,7 @@ describe('app/budget/[id].tsx — spread entry point', () => {
   });
 
   it('a rollover category that is over budget offers NO spread entry', async () => {
-    mockParams = { id: 'coffee' };
+    setParams({ id: 'coffee' });
     seedDetail({ posted: 130, rollover: true, carryover: -50 });
     await renderWithQueries(<BudgetDetail />);
 

@@ -4,6 +4,7 @@
 // Same harness as insightsCycleToggle.gaps: real ../api over the fake server; ../auth + ../context
 // (partial) + expo-router mocked, with a CAPTURED router.push so the navigation target is asserted.
 import { it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -25,11 +26,7 @@ jest.mock('../context', () => {
   };
 });
 
-const mockPush = jest.fn();
-jest.mock('expo-router', () => {
-  const ReactLib = require('react');
-  return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]), useRouter: () => ({ push: mockPush }) };
-});
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Insights from '../../app/(tabs)/insights';
 
@@ -54,7 +51,7 @@ function renderInsights() {
 }
 
 beforeEach(() => {
-  mockPush.mockReset();
+  resetRouter();
   server.seed('/breakdown', BREAKDOWN);
   server.seed('/categories', CATS);
   server.seed('/paycycle', PAY_CYCLE);
@@ -65,7 +62,7 @@ it('tapping a leaf row drills into that category for the current cycle', async (
   await screen.findByText('Food');
   fireEvent.press(screen.getByText('Food'));            // expand the parent to reveal its subs
   fireEvent.press(await screen.findByText('Coffee'));   // leaf
-  expect(mockPush).toHaveBeenCalledWith('/category/coffee?cycle=0');
+  expect(routerSpies.push).toHaveBeenCalledWith('/category/coffee?cycle=0');
 });
 
 it('tapping a "Directly in X" row drills into the PARENT id (no __direct in the path)', async () => {
@@ -73,20 +70,20 @@ it('tapping a "Directly in X" row drills into the PARENT id (no __direct in the 
   await screen.findByText('Food');
   fireEvent.press(screen.getByText('Food'));
   fireEvent.press(await screen.findByText('Directly in Food'));
-  expect(mockPush).toHaveBeenCalledWith('/category/food?cycle=0');
+  expect(routerSpies.push).toHaveBeenCalledWith('/category/food?cycle=0');
 });
 
 it('tapping Uncategorized drills into the uncategorized bucket', async () => {
   renderInsights();
   fireEvent.press(await screen.findByText('Uncategorized'));
-  expect(mockPush).toHaveBeenCalledWith('/category/__uncategorized__?cycle=0');
+  expect(routerSpies.push).toHaveBeenCalledWith('/category/__uncategorized__?cycle=0');
 });
 
 it('tapping a PARENT row expands it instead of navigating', async () => {
   renderInsights();
   fireEvent.press(await screen.findByText('Food'));
   expect(await screen.findByText('Coffee')).toBeTruthy(); // subs revealed
-  expect(mockPush).not.toHaveBeenCalled();                // no drill
+  expect(routerSpies.push).not.toHaveBeenCalled();                // no drill
 });
 
 it('carries the selected cycle: on "Last cycle" the drill pushes cycle=1', async () => {
@@ -94,5 +91,5 @@ it('carries the selected cycle: on "Last cycle" the drill pushes cycle=1', async
   await screen.findByText('Uncategorized');
   fireEvent.press(screen.getByTestId('insights-cycle-prev')); // switch to last cycle
   fireEvent.press(await screen.findByText('Uncategorized'));
-  expect(mockPush).toHaveBeenCalledWith('/category/__uncategorized__?cycle=1');
+  expect(routerSpies.push).toHaveBeenCalledWith('/category/__uncategorized__?cycle=1');
 });

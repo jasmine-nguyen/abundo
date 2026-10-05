@@ -1,11 +1,11 @@
 // WHIT-182 — the login screen's forgot-password flow: request a code → confirm it
 // with a new password → back to sign in. ../../src/auth + expo-router mocked.
 import { it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 
-const mockReplace = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace, push: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const mockRequestReset = jest.fn<(e: string) => Promise<unknown>>();
 const mockConfirmReset = jest.fn<(e: string, c: string, p: string) => Promise<unknown>>();
@@ -29,7 +29,7 @@ async function reachConfirm(api: ReturnType<typeof render>) {
 }
 
 beforeEach(() => {
-  mockReplace.mockReset();
+  resetRouter();
   mockRequestReset.mockReset();
   mockConfirmReset.mockReset();
 });
@@ -81,7 +81,7 @@ it('a valid code + matching password resets and returns to sign in with a notice
   await waitFor(() => expect(mockConfirmReset).toHaveBeenCalledWith('me@x.com', '123456', 'Str0ng#Pass'));
   await waitFor(() => expect(api.getByTestId('signin-form')).toBeTruthy());
   expect(await api.findByText(/password reset/i)).toBeTruthy(); // notice on the sign-in screen
-  expect(mockReplace).not.toHaveBeenCalled(); // reset does NOT auto-sign-in
+  expect(routerSpies.replace).not.toHaveBeenCalled(); // reset does NOT auto-sign-in
 });
 
 it('a bad code stays on the confirm form with the error', async () => {

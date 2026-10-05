@@ -20,7 +20,7 @@ jest.mock('../context', () => ({
   }),
 }));
 jest.mock('../chat/ChatContext', () => ({ useChat: () => ({ openChat: jest.fn() }) }));
-jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }) }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import { AiCoachCard } from '../components/AiCoachCard';
 import { ChatAnswer } from '../chat/ChatAnswer';

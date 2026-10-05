@@ -1,4 +1,4 @@
-// WHIT-751 QA — gaps the implementer's guard (goalsRouterMockShared.logic.test.ts) doesn't cover:
+// WHIT-751 QA — gaps the implementer's guard (routerMockShared.logic.test.ts) doesn't cover:
 // the mortgage and milestone screen tests the sign-off answer (Q2) brought into scope, and the
 // leftover empty `import {} from './support/routerMock'` lines the conversion left behind.
 import { describe, it, expect } from '@jest/globals';

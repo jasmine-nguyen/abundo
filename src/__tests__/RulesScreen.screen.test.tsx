@@ -15,6 +15,7 @@ import { renderWithApp, WithApp, shownToasts, currentSheet, resetAppProbe } from
 import { resetAuth } from './support/authMock';
 import { queryClient } from '../queryClient';
 import { rulesKey } from '../queryKeys';
+import { fireFocus } from './support/routerMock';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -22,7 +23,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 // isn't under test here — stub it out so the screen renders in jest. The right slot (the "+"
 // button) still renders so it can be tapped.
 jest.mock('../components/Header', () => ({ Header: ({ right }: { right?: React.ReactNode }) => right ?? null }));
-jest.mock('expo-router', () => ({ useFocusEffect: () => {} }));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Rules from '../../app/rules';
 
@@ -331,4 +332,30 @@ it('[G7] unmounting cancels the pending debounce timer (no leak)', () => {
   expect(jest.getTimerCount()).toBeGreaterThan(0); // trailing update pending
   unmount();
   expect(jest.getTimerCount()).toBe(0);            // cleanup cleared it
+});
+
+// WHIT-753 QA [A1] — the shared router fake runs the screen's focus refresh (the old no-op
+// useFocusEffect never did). A later focus on stale rules must re-read /rules. Fail-on-revert:
+// drop the useFocusEffect line from app/rules.tsx and no second read is sent.
+it('[A1] a later focus re-reads the rules once they are stale', async () => {
+  server.seed('/rules', [NETFLIX]);
+  await renderWithApp(<Rules />);
+  expect(rulesReads()).toHaveLength(1);
+  await refreshInAct(() => queryClient.invalidateQueries({ queryKey: rulesKey, refetchType: 'none' }));
+
+  await refreshInAct(() => fireFocus());
+  await settleQueries();
+
+  expect(rulesReads()).toHaveLength(2);
+});
+
+// [A2] A focus while the rules are still fresh sends nothing: refetchStale only re-reads stale data.
+it('[A2] a focus on fresh rules sends no extra read', async () => {
+  server.seed('/rules', [NETFLIX]);
+  await renderWithApp(<Rules />);
+
+  await refreshInAct(() => fireFocus());
+  await settleQueries();
+
+  expect(rulesReads()).toHaveLength(1);
 });

@@ -4,7 +4,7 @@
 //
 //   jest.mock('../auth', () => require('./support/authMock').authMockModule());
 //   jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
-//   jest.mock('expo-router', ...);                 // useFocusEffect + useRouter
+//   jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 //   const server = installFakeServer();
 //   useTestQueryClient();
 //   beforeEach(() => { resetAuth(); resetAi(); });

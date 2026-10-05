@@ -10,6 +10,7 @@
 // sign-out mid-save is a real setAuthStatus('anon'), and each test reads the requests sent plus
 // the toasts the user saw (shownToasts()).
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
+import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { Category } from '../types';
@@ -21,12 +22,7 @@ import { resetAuth, setAuthStatus } from './support/authMock';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-const mockBack = jest.fn();
-let mockParams: { categoryId?: string } = {};
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ back: mockBack, push: jest.fn() }),
-  useLocalSearchParams: () => mockParams,
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import CategoryEdit from '../../app/category/edit';
 import { COFFEE, COFFEE_RECORD } from './support/categories';
@@ -45,6 +41,7 @@ async function drawEdit() {
 }
 
 beforeEach(() => {
+  resetRouter();
   resetAuth();
   resetAppProbe();
 });
@@ -56,9 +53,8 @@ const GENERIC_SAVE_FAILURE = 'Could not save category. Please try again.';
 
 // Reset the module-level params / seed / router spy per test so a prior suite's values can't leak.
 function resetMocks(params: { categoryId?: string }) {
-  mockParams = params;
+  setParams(params);
   categories = [];
-  mockBack.mockClear();
 }
 
 const save = async () => { await act(async () => { fireEvent.press(screen.getByText('Save category')); }); };
@@ -78,7 +74,7 @@ describe('categoryEditSummaryToast', () => {
   afterEach(() => { jest.spyOn(console, 'error').mockRestore(); });
 
   it('editing a parent and attaching 2 children shows one "Category updated, with 2 sub-categories."', async () => {
-    mockParams = { categoryId: 'transport' };
+    setParams({ categoryId: 'transport' });
     categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking'), LIVING('petrol', 'Petrol')];
     await drawEdit();
     fireEvent.press(screen.getByTestId('attachChild-parking'));
@@ -89,13 +85,13 @@ describe('categoryEditSummaryToast', () => {
     expect(patchBodies('transport')).toEqual([{ name: 'Transport', bucket: 'Living', icon: 'car', parent: null }]);
     expect(patchBodies('parking')).toEqual([{ name: 'Parking', bucket: 'Living', icon: 'car', parent: 'transport' }]);
     expect(patchBodies('petrol')).toEqual([{ name: 'Petrol', bucket: 'Living', icon: 'car', parent: 'transport' }]);
-    expect(mockBack).toHaveBeenCalled();
+    expect(routerSpies.back).toHaveBeenCalled();
   });
 
   // [B2] CREATE verb + SINGULAR "with 1 sub-category" (not "sub-categories"). Fail-on-revert:
   // change the `n === 1 ? 'y' : 'ies'` ternary and this exact string breaks.
   it('creating a parent with 1 attached child shows one "Category created, with 1 sub-category."', async () => {
-    mockParams = {};
+    setParams({});
     categories = [LIVING('parking', 'Parking')];
     await drawEdit();
     fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Transport');
@@ -111,7 +107,7 @@ describe('categoryEditSummaryToast', () => {
   // [B3] UPDATE + one child fails: the FULL partial-failure string (leading "Category updated," +
   // singular "it") and it is the ONLY toast — children ran silent so nothing competes.
   it('a single failed child shows exactly one full "Category updated, but 1 sub-category couldn\'t be attached — add it from its page."', async () => {
-    mockParams = { categoryId: 'transport' };
+    setParams({ categoryId: 'transport' });
     categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking')];
     server.once('PATCH', '/categories/parking', { status: 500 }); // self ok, child fails, NO per-op toast
     await drawEdit();
@@ -121,13 +117,13 @@ describe('categoryEditSummaryToast', () => {
     await waitFor(() => expect(shownToasts()).toEqual([
       "Category updated, but 1 sub-category couldn't be attached — add it from its page."]));
     expect(server.sent('PATCH', '/categories/parking')).toHaveLength(1);
-    expect(mockBack).toHaveBeenCalled(); // Option A: good parent is kept, not rolled back
+    expect(routerSpies.back).toHaveBeenCalled(); // Option A: good parent is kept, not rolled back
   });
 
   // [B4] Two failures -> plural "sub-categories" + "add them". Fail-on-revert: the failed===1
   // singular branch would wrongly render "it"/"sub-category" here.
   it('two failed children show one plural "...2 sub-categories couldn\'t be attached — add them from its page."', async () => {
-    mockParams = { categoryId: 'transport' };
+    setParams({ categoryId: 'transport' });
     categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking'), LIVING('petrol', 'Petrol')];
     server.once('PATCH', '/categories/parking', { status: 500 });
     server.once('PATCH', '/categories/petrol', { status: 500 });
@@ -146,7 +142,7 @@ describe('categoryEditSummaryToast', () => {
   // to log.
   it('a failed parent create shows the failure toast, no summary, and does not navigate back', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    mockParams = {};
+    setParams({});
     categories = [LIVING('parking', 'Parking')];
     server.once('POST', '/categories', { status: 500 }); // parent create fails
     await drawEdit();
@@ -158,14 +154,14 @@ describe('categoryEditSummaryToast', () => {
     await waitFor(() => expect(shownToasts()).toEqual([GENERIC_SAVE_FAILURE]));
     expect(server.sent('POST', '/categories')).toHaveLength(1); // parent only — bailed before any child op
     expect(server.sentUnder('PATCH', '/categories')).toEqual([]);
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
     expect(errorSpy).toHaveBeenCalled();
   });
 
   // [B6] UPDATE where the parent self-save fails: same ownership as [B5] on the update branch.
   it('a failed parent update shows the failure toast, no summary, and does not navigate back', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    mockParams = { categoryId: 'transport' };
+    setParams({ categoryId: 'transport' });
     categories = [LIVING('transport', 'Transport')];
     server.once('PATCH', '/categories/transport', { status: 500 }); // self update fails
     await drawEdit();
@@ -173,7 +169,7 @@ describe('categoryEditSummaryToast', () => {
 
     await waitFor(() => expect(shownToasts()).toEqual([GENERIC_SAVE_FAILURE]));
     expect(server.sent('POST', '/categories')).toEqual([]);
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
     expect(errorSpy).toHaveBeenCalled();
   });
 });
@@ -247,7 +243,7 @@ describe('categoryEditSubcategoriesGaps', () => {
     fireEvent.press(screen.getByTestId('attachChild-parking'));
     await save();
 
-    await waitFor(() => expect(mockBack).toHaveBeenCalled());
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalled());
     // Self persisted via UPDATE (its own id), not created.
     expect(patchBodies('transport')).toEqual([{ name: 'Transport', bucket: 'Living', icon: 'car', parent: null }]);
     // Child re-parented under it, resending the child's OWN name/bucket/icon.
@@ -339,7 +335,7 @@ describe('categoryEditDelete', () => {
 
     await act(async () => { fireEvent.press(screen.getByText('Delete category')); });
 
-    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
     expect(server.sent('DELETE', '/categories/coffee')).toHaveLength(1);
     expect(shownToasts()).toEqual(['Category deleted.']);
   });
@@ -353,10 +349,10 @@ describe('categoryEditDelete', () => {
 
     await act(async () => { fireEvent.press(screen.getByText('Delete category')); });
     await waitFor(() => expect(shownToasts()).toEqual(['Could not delete category. Please try again.']));
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
 
     await act(async () => { fireEvent.press(screen.getByText('Delete category')); }); // only fires if re-enabled
-    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
     expect(server.sent('DELETE', '/categories/coffee')).toHaveLength(2);
   });
 });
@@ -392,7 +388,7 @@ describe('categoryEditReasonGaps', () => {
       expect(server.sent('PATCH', '/categories/transport')).toHaveLength(1);
       expect(server.sent('PATCH', '/categories/parking')).toEqual([]); // no attach fired
       expect(server.sent('POST', '/categories')).toEqual([]);         // no orphan sub created under nothing
-      expect(mockBack).not.toHaveBeenCalled();
+      expect(routerSpies.back).not.toHaveBeenCalled();
     });
 
     // The inverse of P3. `if (reason === null) throw error` is what keeps a HANDLED refusal out of
@@ -526,7 +522,7 @@ describe('categoryEditChildReason', () => {
     // WHIT-240 still holds: one toast.
     await waitFor(() => expect(shownToasts()).toEqual([
       `Category updated, but 1 sub-category couldn't be attached — ${CAP}.`]));
-    expect(mockBack).toHaveBeenCalled();             // WHIT-237 Option A: a good parent is kept
+    expect(routerSpies.back).toHaveBeenCalled();             // WHIT-237 Option A: a good parent is kept
   });
 
   // [C2] TWO children refused for the SAME reason -> one cause, stated once, plural count.
@@ -611,7 +607,7 @@ describe('categoryEditChildReasonGaps', () => {
 
   // A parent at 49 children is NOT full, so the "names the cap" branch must NOT fire → original advice.
   it('keeps the generic tail when the destination parent is one short of the cap (49)', async () => {
-    mockParams = { categoryId: 'transport' };
+    setParams({ categoryId: 'transport' });
     const kids = Array.from({ length: MAX_CHILDREN_PER_CATEGORY - 1 }, (_, i) => LIVING(`kid${i}`, `Kid ${i}`, 'transport'));
     categories = [LIVING('transport', 'Transport'), LIVING('spare', 'Spare'), ...kids];
     server.once('PATCH', '/categories/spare', { status: 500 });   // 'spare' attach fails, no reason
@@ -664,7 +660,7 @@ describe('categoryEditSaveThrow', () => {
     await save(); // only fires if re-enabled
 
     // Sent TWICE = the visible `submitting` flag was reset by the catch (else press #2 early-returns).
-    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
     expect(server.sent('POST', '/categories')).toHaveLength(2);
     // The retry succeeded: the failure line, then the single summary toast.
     expect(shownToasts()).toEqual([GENERIC_SAVE_FAILURE, 'Category created.']);
@@ -674,7 +670,7 @@ describe('categoryEditSaveThrow', () => {
   // [A-catsave-update] Same guarantee on the UPDATE branch, where saveCategory is the parent write.
   it('re-enables Save so a retry runs after the parent update fails unexpectedly (edit branch)', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    mockParams = { categoryId: 'transport' };
+    setParams({ categoryId: 'transport' });
     categories = [LIVING('transport', 'Transport')];
     server.once('PATCH', '/categories/transport', 'dropped'); // 1st press fails
     await drawEdit();
@@ -682,7 +678,7 @@ describe('categoryEditSaveThrow', () => {
     await save();
     await save();
 
-    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
     expect(server.sent('PATCH', '/categories/transport')).toHaveLength(2);
     expect(shownToasts()).toEqual([GENERIC_SAVE_FAILURE, 'Category updated.']);
     expect(errorSpy).toHaveBeenCalled();
@@ -702,12 +698,12 @@ describe('categoryEditParentReason', () => {
     await save();
 
     await waitFor(() => expect(shownToasts()).toEqual(['A sub-category must be in the same bucket as its parent.']));
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 
   // [P2] the 409 win — retrying a duplicate name never works, so saying "try again" was a lie.
   it('shows a 409 duplicate refusal on create', async () => {
-    mockParams = {};
+    setParams({});
     categories = [];
     server.once('POST', '/categories', { status: 409, reason: 'category already exists' });
     await drawEdit();
@@ -715,7 +711,7 @@ describe('categoryEditParentReason', () => {
     await save();
 
     await waitFor(() => expect(shownToasts()).toEqual(['Category already exists.']));
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 
   // [P3] WHIT-249: an unexplained failure is still logged. We toast the generic line AND re-throw,
@@ -742,7 +738,7 @@ describe('categoryEditParentReason', () => {
 
     expect(server.sent('PATCH', '/categories/transport')).toHaveLength(1);
     expect(shownToasts()).toEqual([]);
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 });
 
@@ -756,7 +752,7 @@ describe('categoryEditSignOutGuard', () => {
   // epoch guard must bail silently: NO toast, NO router.back().
   // Fail-on-revert: drop the epoch guard after the update → the `if (!ok)` generic toast fires.
   it('a session change on the parent update write shows no toast and does not navigate', async () => {
-    mockParams = { categoryId: 'transport' };
+    setParams({ categoryId: 'transport' });
     categories = [LIVING('transport', 'Transport')];
     await drawEdit();
     const held = server.hold('/categories/transport');
@@ -767,14 +763,14 @@ describe('categoryEditSignOutGuard', () => {
 
     expect(server.sent('PATCH', '/categories/transport')).toHaveLength(1);
     expect(shownToasts()).toEqual([]);
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 
   // [A-EDIT-CREATE] The parent CREATE path. A session change lands during the create; the guard
   // must bail silently. Holding /categories also holds its reads, so nothing settles in between.
   // Fail-on-revert: drop the epoch guard after the create → the `if (!created)` generic toast fires.
   it('a session change on the parent create write shows no toast and does not navigate', async () => {
-    mockParams = {}; // no categoryId → the create path
+    setParams({}); // no categoryId → the create path
     await drawEdit();
     fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'New cat'); // canSave needs a name
     const held = server.hold('/categories');
@@ -785,7 +781,7 @@ describe('categoryEditSignOutGuard', () => {
 
     expect(server.sent('POST', '/categories')).toHaveLength(1);
     expect(shownToasts()).toEqual([]);
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 
   // [A-EDIT-REAUTH] THE CARD'S BUG: a DIFFERENT account fully signs in mid-save. Status is 'authed'
@@ -794,7 +790,7 @@ describe('categoryEditSignOutGuard', () => {
   // bail: NO 'Category updated' summary toast, NO router.back() into the new session.
   // Fail-on-revert: restore `getStatus() === 'anon'` → status 'authed' → guard passes → toast fires.
   it('a different-account sign-in mid-save (epoch bumped, status authed) shows no toast and does not navigate', async () => {
-    mockParams = { categoryId: 'transport' };
+    setParams({ categoryId: 'transport' });
     categories = [LIVING('transport', 'Transport')];
     await drawEdit();
     const held = server.hold('/categories/transport');
@@ -806,13 +802,13 @@ describe('categoryEditSignOutGuard', () => {
 
     expect(server.sent('PATCH', '/categories/transport')).toHaveLength(1);
     expect(shownToasts()).toEqual([]);
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 
   // [A-EDIT-CHILD] Parent succeeds in-session; the session change lands DURING the child writes.
   // The post-Promise.allSettled guard must bail: NO summary toast, NO nav.
   it('a session change during the child writes fires no summary toast and does not navigate', async () => {
-    mockParams = { categoryId: 'transport' };
+    setParams({ categoryId: 'transport' });
     categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking')];
     await drawEdit();
     fireEvent.press(screen.getByTestId('attachChild-parking'));
@@ -825,14 +821,14 @@ describe('categoryEditSignOutGuard', () => {
 
     expect(server.sent('PATCH', '/categories/transport')).toHaveLength(1);
     expect(shownToasts()).toEqual([]);
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
   });
 
   // [A-EDIT-CONTROL] Regression: with NO session change, a genuine in-session FAILURE must STILL
   // toast — the guard must not over-suppress the real error path.
   it('an in-session parent-save failure still shows the failure toast (guard does not over-suppress)', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    mockParams = { categoryId: 'transport' };
+    setParams({ categoryId: 'transport' });
     categories = [LIVING('transport', 'Transport')];
     server.once('PATCH', '/categories/transport', { status: 500 }); // real failure, same session
     await drawEdit();
@@ -840,7 +836,7 @@ describe('categoryEditSignOutGuard', () => {
     await save();
 
     await waitFor(() => expect(shownToasts()).toEqual([GENERIC_SAVE_FAILURE]));
-    expect(mockBack).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
   });

@@ -16,8 +16,9 @@
 //                  /paycycle answers the server default (14 days).
 //   ../context   — one stub; the screen reads only alerts/setSheet off context (rules AND cycleName
 //                  are read from the query hooks, so both stubbed fields are vestigial).
-//   expo-router  — shared mockReplace/mockSignOut so the WHIT-198 log-out-mid-outage test can assert.
+//   expo-router  — the shared fake; routerSpies.replace + mockSignOut so the WHIT-198 log-out-mid-outage test can assert.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { Text } from 'react-native';
 import { render, screen, renderHook, act, waitFor, fireEvent } from '@testing-library/react-native';
@@ -55,11 +56,9 @@ jest.mock('../context', () => {
   };
 });
 
-const mockReplace = jest.fn();
-jest.mock('expo-router', () => {
-  const ReactLib = require('react');
-  return { useRouter: () => ({ push: jest.fn(), replace: mockReplace }), useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]) };
-});
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
+
+beforeEach(() => resetRouter());
 
 import Settings from '../../app/settings';
 import { useSettingsScreenData } from '../queries';
@@ -508,7 +507,7 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
 
       fireEvent.press(screen.getByTestId('settings-logout')); // Log out still works mid-outage
       expect(mockSignOut).toHaveBeenCalledTimes(1);
-      expect(mockReplace).toHaveBeenCalledWith('/');
+      expect(routerSpies.replace).toHaveBeenCalledWith('/');
     });
   });
 });

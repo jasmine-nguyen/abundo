@@ -5,6 +5,7 @@
 // PENDING spend still qualifies (settled status isn't required). WHIT-686: the real screen data
 // code runs over the pretend server.
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
+import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { screen, fireEvent } from '@testing-library/react-native';
 import { txn } from './factory';
@@ -23,11 +24,7 @@ jest.mock('../context', () => {
 });
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-const mockPush = jest.fn();
-jest.mock('expo-router', () => ({
-  useLocalSearchParams: () => ({ id: 't1' }),
-  useRouter: () => ({ back: jest.fn(), push: mockPush }),
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import TransactionDetail from '../../app/transaction/[id]';
@@ -45,10 +42,11 @@ const seedSpend = (over: Partial<Transaction> = {}) =>
   server.seed('/transactions/feed', { transactions: [txn({ transaction_id: 't1', category: 'coffee', amount: -130, ...over })], nextCursor: null });
 
 beforeEach(() => {
+  resetRouter();
+  setParams({ id: 't1' });
   resetAuth();
   // The taxonomy knows only 'coffee' — a budget on any other category has no category behind it.
   server.seed('/categories', [{ ...COFFEE_RECORD, parent: null }]);
-  mockPush.mockClear();
   mockApplyTransactionEdit.mockClear();
   mockToast.mockClear();
   mockOpenPicker.mockClear();
@@ -76,6 +74,6 @@ describe('spread this bill prompt — gap coverage', () => {
     server.seed('/budgets', { coffee: rollup({ target: 100, posted: 60, pending: 70 }) });
     await renderWithQueries(<TransactionDetail />);
     fireEvent.press(screen.getByTestId('transaction-spread'));
-    expect(mockPush).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=30');
+    expect(routerSpies.push).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=30');
   });
 });
