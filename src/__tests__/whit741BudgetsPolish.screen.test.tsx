@@ -4,15 +4,15 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { StyleSheet } from 'react-native';
 import { screen } from '@testing-library/react-native';
-import type { ReactTestInstance } from 'react-test-renderer';
 import { C } from '../theme';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedBudgetsTab } from './support/budgetsTab';
-import { renderLoadedBudgetsWithQueries } from './support/budgetsScreen';
+import { renderLoadedBudgetsWithQueries, showTwoRows } from './support/budgetsScreen';
 import { COFFEE, GROCERIES } from './support/categories';
+import { sharedHost, textOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -25,30 +25,6 @@ beforeEach(() => {
   resetAuth();
 });
 
-// Halfway through a 14-day cycle (7 days left), so a $100 budget's pace target is $50.
-// Coffee: $80 spent ($10 pending) → behind pace, has a pace line. Groceries: $25 spent, nothing
-// pending → no pace line, no note. Totals: spent $105 of $200 → $95 left.
-const showTwoRows = async () => {
-  seedBudgetsTab(server, {
-    coffee: { target: 100, posted: 70, pending: 10 },
-    groceries: { target: 100, posted: 25, pending: 0 },
-  }, [COFFEE, GROCERIES]);
-  await renderLoadedBudgetsWithQueries();
-  await screen.findByText('Groceries');
-};
-
-const textOf = (node: ReactTestInstance): string =>
-  node.children.map((child) => (typeof child === 'string' ? child : textOf(child))).join('');
-
-// The nearest host View above `node` that also holds `other`.
-function sharedRow(node: ReactTestInstance, other: ReactTestInstance) {
-  for (let host = node.parent; host; host = host.parent) {
-    if (typeof host.type !== 'string') continue;
-    if (host.findAll((n) => n === other).length > 0) return host;
-  }
-  throw new Error('no shared ancestor');
-}
-
 // The height of the band under a row's bar that holds the target tick.
 function tickBandHeight(rowTestID: string) {
   const row = screen.getByTestId(rowTestID);
@@ -60,7 +36,7 @@ function tickBandHeight(rowTestID: string) {
 
 describe('WHIT-741 Budgets tab polish', () => {
   it('pending shows on its own line under "$X of $Y", and no line starts with "·"', async () => {
-    await showTwoRows();
+    await showTwoRows(server);
 
     const pending = screen.getByTestId('budget-row-pending-coffee');
     expect(textOf(pending).replace(/ /g, ' ')).toBe('$10 pending');
@@ -69,7 +45,7 @@ describe('WHIT-741 Budgets tab polish', () => {
   });
 
   it('the top card puts Spent · Budget · Next payday labels in one row and their values in the next', async () => {
-    await showTwoRows();
+    await showTwoRows(server);
 
     const spent = screen.getByTestId('budgets-hero-spent');
     const payday = screen.getByTestId('budgets-hero-payday');
@@ -77,15 +53,15 @@ describe('WHIT-741 Budgets tab polish', () => {
     expect(spent.props.numberOfLines).toBe(1);
     expect(spent.props.adjustsFontSizeToFit).toBe(true);
 
-    const valuesRow = sharedRow(spent, payday);
+    const valuesRow = sharedHost(spent, payday);
     expect(textOf(valuesRow)).not.toMatch(/Spent|Budget|Next payday/);
 
-    const labelsRow = sharedRow(screen.getByText('Spent'), screen.getByText('Next payday'));
+    const labelsRow = sharedHost(screen.getByText('Spent'), screen.getByText('Next payday'));
     expect(textOf(labelsRow)).not.toContain('$105');
   });
 
   it('both big numbers grow and shrink together: same size cap, and the days number never shrinks alone', async () => {
-    await showTwoRows();
+    await showTwoRows(server);
 
     const days = screen.getByText('7');
     const money = screen.getByText('$95');
@@ -97,7 +73,7 @@ describe('WHIT-741 Budgets tab polish', () => {
   });
 
   it('a row with nothing under its bar has no empty 18pt tick band; a row with a pace line keeps it', async () => {
-    await showTwoRows();
+    await showTwoRows(server);
 
     expect(screen.getByText(/over plan/)).toBeTruthy();
     expect(tickBandHeight('budget-row-coffee')).toBe(18);

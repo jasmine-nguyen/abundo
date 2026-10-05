@@ -22,7 +22,7 @@ import { makeClient } from './queryClient';
 import { renderWithQueries } from './renderWithQueries';
 import type { installFakeServer } from './fakeServer';
 import { COFFEE, GROCERIES } from './categories';
-import { BUDGET_PAY_CYCLE, seedBudgets } from './budgetsTab';
+import { BUDGET_PAY_CYCLE, seedBudgets, seedBudgetsTab } from './budgetsTab';
 
 export { BUDGETS, BUDGET_PAY_CYCLE, seedBudgets } from './budgetsTab';
 
@@ -51,6 +51,18 @@ export async function showBudgets(
 ) {
   seedBudgets(server, { budgets, categories, payCycle: { ...BUDGET_PAY_CYCLE, days_left: daysLeft } });
   return renderLoadedBudgets();
+}
+
+// Halfway through a 14-day cycle (7 days left), so a $100 budget's pace target is $50.
+// Coffee: $80 spent ($10 pending) → behind pace, has a pace line. Groceries: $25 spent, nothing
+// pending → no pace line, no note. Totals: spent $105 of $200 → $95 left (WHIT-741, WHIT-743).
+export async function showTwoRows(server: ReturnType<typeof installFakeServer>) {
+  seedBudgetsTab(server, {
+    coffee: { target: 100, posted: 70, pending: 10 },
+    groceries: { target: 100, posted: 25, pending: 0 },
+  }, [COFFEE, GROCERIES]);
+  await renderLoadedBudgetsWithQueries();
+  await screen.findByText('Groceries');
 }
 
 // WHIT-731: the top card's Spent · Budget · Next payday values (undefined when a cell isn't shown).

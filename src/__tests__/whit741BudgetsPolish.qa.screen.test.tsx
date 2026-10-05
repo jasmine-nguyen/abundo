@@ -14,6 +14,7 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { seedBudgetsTab } from './support/budgetsTab';
 import { renderLoadedBudgetsWithQueries, heroTotals } from './support/budgetsScreen';
 import { COFFEE, GROCERIES, SALARY } from './support/categories';
+import { hostParent, styleOf } from './support/layout';
 
 jest.mock('../context', () => require('./support/budgetsSuite').budgetsContextMockModule());
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -30,22 +31,13 @@ useBudgetsSuiteReset();
 const ticksIn = (node: ReactTestInstance) =>
   node.findAll((n) => typeof n.type === 'string' && StyleSheet.flatten(n.props.style)?.backgroundColor === C.progressTick);
 
-const flat = (node: ReactTestInstance) => StyleSheet.flatten(node.props.style) ?? {};
-
-// The nearest host (rendered) element above `node`.
-function hostParent(node: ReactTestInstance) {
-  let host = node.parent!;
-  while (typeof host.type !== 'string') host = host.parent!;
-  return host;
-}
-
 const isHostText = (n: ReactTestInstance) => String(n.type) === 'Text';
 
 // Host Text children of a host row, in order.
 const hostCells = (row: ReactTestInstance) => row.findAll((n) => isHostText(n) && hostParent(n) === row);
 
 // The height of the band holding the first tick under `root`.
-const tickBandHeight = (root: ReactTestInstance) => flat(hostParent(ticksIn(root)[0])).height;
+const tickBandHeight = (root: ReactTestInstance) => styleOf(hostParent(ticksIn(root)[0])).height;
 
 // [A13] (P0) a fully used budget ("$0 left") shows its bar with no tick; a budget with money left keeps it.
 it('[A13] "$0 left" row has no tick; a row with money left has one', async () => {
@@ -91,17 +83,17 @@ it('[A16] hero labels and values are matching columns', async () => {
   const values = hostCells(valuesRow);
   expect(labels.map((l) => l.props.children)).toEqual(['Spent', 'Budget', 'Next payday']);
   expect(values.map((v) => v.props.testID)).toEqual(['budgets-hero-spent', 'budgets-hero-budget', 'budgets-hero-payday']);
-  labels.forEach((label, i) => expect(flat(label).flex).toBe(flat(values[i]).flex));
-  expect(flat(labelsRow).flexDirection).toBe('row');
-  expect(flat(valuesRow).flexDirection).toBe('row');
+  labels.forEach((label, i) => expect(styleOf(label).flex).toBe(styleOf(values[i]).flex));
+  expect(styleOf(labelsRow).flexDirection).toBe('row');
+  expect(styleOf(valuesRow).flexDirection).toBe('row');
 });
 
 // [A17] (P0) the days column sizes to its number (no flex, never shrinks); the money column takes the rest.
 it('[A17] days column is content-sized, money column flexes', async () => {
   seedBudgetsTab(server, { coffee: { target: 100, posted: 40, pending: 0 } });
   await renderLoadedBudgetsWithQueries();
-  const daysCol = flat(hostParent(screen.getByText('7')));
-  const moneyCol = flat(hostParent(screen.getByText('Left to spend')));
+  const daysCol = styleOf(hostParent(screen.getByText('7')));
+  const moneyCol = styleOf(hostParent(screen.getByText('Left to spend')));
   expect(daysCol.flex).toBeUndefined();
   expect(daysCol.flexShrink).toBe(0);
   expect(moneyCol.flex).toBe(1);

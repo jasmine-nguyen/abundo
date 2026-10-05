@@ -4,7 +4,7 @@
 // screens and ../queries run for real over the fake server.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { StyleSheet, Text } from 'react-native';
+import { Text } from 'react-native';
 import { screen, within } from '@testing-library/react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { resetRouter, setParams } from './support/routerMock';
@@ -12,8 +12,9 @@ import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedBudgetsTab, budgetDetailFor } from './support/budgetsTab';
-import { renderLoadedBudgetsWithQueries } from './support/budgetsScreen';
-import { COFFEE, GROCERIES, SALARY } from './support/categories';
+import { showTwoRows } from './support/budgetsScreen';
+import { SALARY } from './support/categories';
+import { hostParent, sharedHost, styleOf, textOf } from './support/layout';
 import { HEADER_BODY_HEIGHT } from '../motion/useNavBarsHeader';
 
 let mockLarge = true;
@@ -41,36 +42,6 @@ beforeEach(() => {
   resetAuth();
 });
 
-// 14-day cycle, 7 days left. Coffee $80 of $100 → "$20" left. Totals: $105 of $200 → "$95" left.
-const showTwoRows = async () => {
-  seedBudgetsTab(server, {
-    coffee: { target: 100, posted: 70, pending: 10 },
-    groceries: { target: 100, posted: 25, pending: 0 },
-  }, [COFFEE, GROCERIES]);
-  await renderLoadedBudgetsWithQueries();
-  await screen.findByText('Groceries');
-};
-
-const textOf = (node: ReactTestInstance): string =>
-  node.children.map((child) => (typeof child === 'string' ? child : textOf(child))).join('');
-
-const styleOf = (node: ReactTestInstance) => StyleSheet.flatten(node.props.style) ?? {};
-
-// The nearest host View above `node` that also holds `other`.
-function sharedHost(node: ReactTestInstance, other: ReactTestInstance) {
-  for (let host = node.parent; host; host = host.parent) {
-    if (typeof host.type !== 'string') continue;
-    if (host.findAll((n) => n === other).length > 0) return host;
-  }
-  throw new Error('no shared ancestor');
-}
-
-function hostParent(node: ReactTestInstance) {
-  let host = node.parent!;
-  while (typeof host.type !== 'string') host = host.parent!;
-  return host;
-}
-
 const rowParts = (id: string, name: string, remain: string) => {
   const row = within(screen.getByTestId(`budget-row-${id}`));
   return { name: row.getByText(name), remain: row.getByText(remain) };
@@ -78,7 +49,7 @@ const rowParts = (id: string, name: string, remain: string) => {
 
 describe('WHIT-743 Budgets tab at very large text', () => {
   it('a budget row stacks: the amount sits below the name, not squeezed beside it', async () => {
-    await showTwoRows();
+    await showTwoRows(server);
     const { name, remain } = rowParts('coffee', 'Cafes & Coffee', '$20');
 
     expect(styleOf(sharedHost(name, remain)).flexDirection).not.toBe('row');
@@ -88,7 +59,7 @@ describe('WHIT-743 Budgets tab at very large text', () => {
   });
 
   it('row name, sub-lines and amount stop growing at about 2× so no word splits mid-word', async () => {
-    await showTwoRows();
+    await showTwoRows(server);
     const row = within(screen.getByTestId('budget-row-coffee'));
     const texts = [
       row.getByText('Cafes & Coffee'),
@@ -102,7 +73,7 @@ describe('WHIT-743 Budgets tab at very large text', () => {
   });
 
   it('the top card stacks the days and money numbers, and both stay the same size', async () => {
-    await showTwoRows();
+    await showTwoRows(server);
     const days = screen.getByText('7');
     const money = screen.getByText('$95');
 
@@ -113,7 +84,7 @@ describe('WHIT-743 Budgets tab at very large text', () => {
   });
 
   it('the top card shows each stat as its own label-above-value pair', async () => {
-    await showTwoRows();
+    await showTwoRows(server);
     const pairs: [string, string][] = [['Spent', 'budgets-hero-spent'], ['Budget', 'budgets-hero-budget'], ['Next payday', 'budgets-hero-payday']];
     for (const [label, testID] of pairs) {
       const pair = textOf(sharedHost(screen.getByText(label), screen.getByTestId(testID)));
@@ -123,7 +94,7 @@ describe('WHIT-743 Budgets tab at very large text', () => {
   });
 
   it('the tab title cannot grow taller than its fixed-height title bar (no covering "THIS PAY CYCLE")', async () => {
-    await showTwoRows();
+    await showTwoRows(server);
     const title = screen.UNSAFE_getAllByType(Text).find((t) => textOf(t) === 'Budgets' && styleOf(t).fontSize === 19)!;
     expect(title).toBeTruthy();
     expect(typeof title.props.maxFontSizeMultiplier).toBe('number');
@@ -133,7 +104,7 @@ describe('WHIT-743 Budgets tab at very large text', () => {
 
   it('at normal text the row keeps its side-by-side layout', async () => {
     mockLarge = false;
-    await showTwoRows();
+    await showTwoRows(server);
     const { name, remain } = rowParts('coffee', 'Cafes & Coffee', '$20');
     expect(styleOf(sharedHost(name, remain)).flexDirection).toBe('row');
   });
