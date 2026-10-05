@@ -248,6 +248,15 @@ describe('edit', () => {
     expect(body).toMatchObject({ target_amount: 20000, account_id: 'acc-1' });
   });
 
+  // [A11] WHIT-749: saving an edit goes BACK (to the goal page it came from), never to the tab.
+  it('saving an edit → back, not a replace to the Goals tab', async () => {
+    await renderForm();
+    await press('goal-save');
+    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(mockDismissAll).not.toHaveBeenCalled();
+  });
+
   it('re-seeds the form when the goals cache resolves a beat after mount', async () => {
     seedServer();
     const held = server.hold('/goals'); // cold cache: the goal isn't there yet at first render
