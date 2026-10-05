@@ -21,8 +21,8 @@ describe('budget rows stay quiet (WHIT-712)', () => {
 
   it('the money line reads "$X of $Y", pending included, no pending line (WHIT-744)', () => {
     const row = rowFor({ budget: 600, posted: 374, pending: 38 });
-    expect(row.spentLabel).toBe('$412 of $600');
-    expect(rowFor({ budget: 100, posted: 40, pending: 0 }).spentLabel).toBe('$40 of $100');
+    expect(row.spentLabel).toBe('$412 of\u00a0$600');
+    expect(rowFor({ budget: 100, posted: 40, pending: 0 }).spentLabel).toBe('$40 of\u00a0$100');
   });
 
   it('no row field mentions the carry-over', () => {

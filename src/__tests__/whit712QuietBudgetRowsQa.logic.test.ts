@@ -25,6 +25,6 @@ describe('pace deadband edges (WHIT-712)', () => {
     const row = rowFor({ budget: 100, posted: 120.4, pending: 0, rollover: true, carryover: 0 });
     expect(row.remainAmount).toBe('$20.40');
     expect(row.remainColor).toBe(C.bad);
-    expect(row.spentLabel).toBe('$120.40 of $100');
+    expect(row.spentLabel).toBe('$120.40 of\u00a0$100');
   });
 });
