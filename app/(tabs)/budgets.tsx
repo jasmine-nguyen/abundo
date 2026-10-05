@@ -19,6 +19,9 @@ const SECTIONS: { section: BudgetView['section']; heading: string }[] = [
   { section: 'earning', heading: 'EARNING' },
 ];
 
+// 12pt Inter line ≈ 14.5pt + 15 + 15 → ≥ 44pt (Apple minimum) without changing the row layout.
+const SPREAD_LINK_HIT_SLOP = { top: 15, bottom: 15, left: 8, right: 8 };
+
 function RowHeader({ b }: { b: BudgetView }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 13 }}>
@@ -55,7 +58,7 @@ function BudgetRow({ b }: { b: BudgetView }) {
               {b.paceLabel ? (
                 <View style={styles.pace}>
                   {b.spreadPrefill !== null ? (
-                    <Pressable testID={`budget-row-spread-${b.id}`} onPress={() => router.push(`/budget/spread?categoryId=${b.id}&prefill=${b.spreadPrefill}`)} hitSlop={8}>
+                    <Pressable testID={`budget-row-spread-${b.id}`} onPress={() => router.push(`/budget/spread?categoryId=${b.id}&prefill=${b.spreadPrefill}`)} hitSlop={SPREAD_LINK_HIT_SLOP}>
                       <Text style={paceStyle}>{b.paceLabel}</Text>
                     </Pressable>
                   ) : (
