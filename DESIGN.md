@@ -141,7 +141,7 @@ The feel is calm first, rewarding second. Density is moderate: generous card pad
 - One saturated gradient surface per screen (the hero card), carrying the screen's one big number.
 - Soft rounded geometry throughout, from 7pt checkboxes to 26pt hero cards.
 - Inter Tight for numbers and titles, Inter for everything else.
-- Colour carries meaning: cyan = on track, rose = over, amber = warning, green = surplus.
+- Colour carries meaning: cyan = on track, rose = over, amber = a non-budget heads-up, green = surplus.
 
 ## Colors
 
@@ -163,14 +163,14 @@ A cool, low-glare night palette of navy surfaces and lavender ink, lit by one bl
 - **Night Card**: the default card, row, field and segmented-control surface.
 - **Night Card Raised**: one step brighter, for a surface inside a card.
 - **Ink Bright → Ink → Ink Mid → Ink Dim → Ink Faint → Ink Faintest**: a six-step lavender-grey text ramp. Bright for amounts and merchant names, Ink for body copy, Mid for section labels, Dim for secondary meta, Faint for placeholders and inactive tabs, Faintest for disabled.
-- **Ink Info**: a muted lavender for "pace" sub-lines and income status.
+- **Ink Info**: a muted lavender for the budget detail screen's status line (over plan, income met).
 - **Hairline**: Tokyo Blue at 10% (16% for the strong variant). Every card border and row divider.
 
 ### Status
 - **Good Cyan**: on track, under budget, a refund credit, the Income bucket.
 - **Surplus Green**: the Earned-vs-Spent surplus headline only.
 - **Under Green**: under-budget deltas in the Ask Abundo chat.
-- **Warn Amber**: the 80% budget heads-up.
+- **Warn Amber**: heads-ups outside budgets: behind schedule on Mortgage, stale Goals data, checkpoint warnings. Budgets have no amber state.
 - **Bad Rose**: over budget, the uncategorised dot, destructive actions.
 
 ### Category palettes
@@ -191,16 +191,19 @@ Categories have their own fixed hues and are not part of the UI palette above. `
 **Character:** Inter Tight's compressed, heavy numerals make a dollar figure feel solid and celebratory. Inter keeps everything around it quiet and legible.
 
 ### Hierarchy
-- **Hero number** (800, 44pt, −1.5 tracking, no fixed line-height so it scales with text size): the big number on a hero card. On Budgets, days left and money left are an equal pair at this size (deliberate, WHIT-706), with Spent · Budget · Next payday beneath.
+- **Hero number** (800, 44pt, −1.5 tracking, no fixed line-height so it scales with text size, capped at 1.4× on Budgets): the big number on a hero card. On Budgets, days left and money left are an equal pair at this size (deliberate, WHIT-706), with Spent · Budget · Next payday beneath.
+- **Hero stat** (Inter Tight 700, 17pt): the Spent · Budget · Next payday values under the hero numbers.
 - **Headline** (800, 30pt, −1 tracking): a secondary figure, such as a payoff amount.
 - **Title** (700, 19pt, −0.2 tracking): screen headers, centred between two 40pt slots.
-- **Amount** (700, 16pt, −0.3 tracking): transaction and row amounts, in Inter Tight.
-- **Body** (600, 15pt): merchant names, row titles, button labels (700 on buttons).
+- **Row amount** (700, 20pt, −0.5 tracking): the amount on a budget row, in Inter Tight.
+- **Amount** (700, 16pt, −0.3 tracking): transaction amounts, in Inter Tight.
+- **Row title** (600, 16pt, −0.2 tracking): budget row names.
+- **Body** (600, 15pt): merchant names, button labels (700 on buttons).
 - **Body small** (600, 13pt): meta lines, hero eyebrows, pill text.
 - **Label** (700, 12pt, +0.3 tracking): section labels above groups of cards, in Ink Mid.
 - **Tab label** (600, 11pt): tab bar labels.
 
-Sizes are set in points and grow with the iPhone's text-size setting (Dynamic Type). Nothing turns scaling off, so very large settings can crowd tight rows.
+Sizes are set in points. Text grows with Dynamic Type (the iPhone's text-size setting). On Budgets it stops at 2× (1.4× for the two hero numbers); tab labels stop at 1.2× and screen titles have their own cap. Other screens don't cap yet, so very large settings can still crowd tight rows there. From 1.5× the Budgets top card stacks its numbers and stats into one column, and each budget row stacks: chip + name, then the spent line, then the amount and label underneath (WHIT-743).
 
 ### Named Rules
 **The Numbers-Wear-Tight Rule.** Money and counts are set in Inter Tight with negative tracking; words are set in Inter. A dollar figure in Inter, or a sentence in Inter Tight, reads off-brand.
@@ -211,7 +214,7 @@ Sizes are set in points and grow with the iPhone's text-size setting (Dynamic Ty
 
 Single-column phone layout. Screens use 18–20pt side gutters. Cards stack with 12pt gaps; hero cards take 14–22pt below them. Inside cards the rhythm is 16pt padding, 13pt between an icon chip and its text, and 8–10pt between stacked rows.
 
-The tab bar and header float. As you scroll, the tab bar slides away (`useScrollNavBars`) and content runs underneath, so every scroll view pads its bottom to clear it. The floating "Ask" button sits 16pt above the tab bar and stays put when the bar hides.
+The tab bar and header float. As you scroll, the tab bar slides away (`useScrollNavBars`) and content runs underneath, so every scroll view pads its bottom to clear it. The floating "Ask" button sits 16pt above the tab bar, floats over content with no lane or padding reserved (overlap is accepted, WHIT-737), and stays put when the bar hides.
 
 ## Elevation & Depth
 
@@ -235,9 +238,9 @@ Borders are always 1pt hairlines in a Tokyo Blue tint (or `rgba(255,255,255,.08)
 Soft, wide and confident.
 - **Shape:** gently rounded (15pt), full width, 16pt vertical padding, at least 53pt tall.
 - **Primary:** a Tokyo Blue fill with Night ink, 16pt Inter 700.
-- **Soft / secondary:** a Periwinkle Wash (0.1 fill, 0.22 border) with Periwinkle or Ink text.
+- **Soft / secondary:** a Periwinkle Wash (0.1 fill, 0.22 border) with Periwinkle or Ink text. Retry pills and header icon buttons use a stronger 0.16 wash.
 - **Pressed:** dims to ~0.6–0.85 opacity and shrinks slightly (0.92–0.96 scale). There is no separate hover state on iOS. Every tappable button, row and field uses the one shared `PRESSED` style in `src/theme.ts` (0.8 / 0.96); don't define a local one.
-- **Icon button:** a 40×40pt square, 12pt radius, `rgba(255,255,255,.06)` fill (header actions such as the settings gear).
+- **Icon button:** a 40×40pt square, 12pt radius, `tint(C.accentAlt, 0.16)` fill (header actions such as the settings gear).
 
 ### Segmented control
 Pill-shaped switch for "This cycle / Last cycle" and "Spending / Earning". A Night Card container (14pt radius, 3pt inset, hairline border) holds segments with an 11pt radius. Inactive text is Ink Dim 600; the active segment takes a tint fill passed by the caller and bolds to 700.
@@ -247,13 +250,14 @@ Pill-shaped switch for "This cycle / Last cycle" and "Spending / Earning". A Nig
 - **Background:** Night Card.
 - **Shadow strategy:** none (see Elevation & Depth).
 - **Border:** 1pt Hairline.
-- **Internal padding:** 16pt (18pt on budget detail). Budget rows are 16pt top / 14pt bottom; a short "nothing spent yet" row keeps the same padding and is short only because it has no bar or pace line.
+- **Internal padding:** 16pt (18pt on budget detail). Budget rows are 16pt top / 14pt bottom; a short "nothing spent yet" row keeps the same padding and is short only because it has no bar.
+- **Budget rows:** name + spent meta on the left, a 20pt amount and label on the right, then the bar and an optional note left-aligned under it. No row has a pace line (WHIT-744); pending appears only as the bar's faded segment. At large text (1.5×+) the row stacks instead of squeezing (WHIT-743).
 
 ### Hero card (signature)
-The one bright surface per screen. A 150° gradient (Tokyo Blue → Dusk Indigo → Dusk Lilac) clipped to a 26pt radius, with two translucent white circles overflowing the top-right corner. Content is Night ink: a muted eyebrow (13pt, ~62% ink), the hero number (44pt Inter Tight 800), and a bottom row with a small translucent ink pill (12pt radius). On Budgets the card instead has two equal 44pt numbers (days left, money left or over) over a full-width row of three labelled values: Spent · Budget · Next payday. Its amounts show cents only when they have them. Used on Budgets, Insights, Mortgage and Milestones.
+The one bright surface per screen. A 150° gradient (Tokyo Blue → Dusk Indigo → Dusk Lilac) clipped to a 26pt radius, with two translucent white circles overflowing the top-right corner. Content is Night ink: a muted eyebrow (13pt, ~62% ink), the hero number (44pt Inter Tight 800), and a bottom row with a small translucent ink pill (12pt radius). On Budgets the card instead has two equal 44pt numbers (days left, money left or over) over a full-width row of three equal-width labelled values at 17pt: Spent · Budget · Next payday (WHIT-731). From 1.5× text the numbers and values stack into one column. Its amounts show cents only when they have them. Used on Budgets, Insights, Mortgage and Milestones.
 
 ### Progress bars
-- **BudgetBar:** a 10pt track (`rgba(255,255,255,.07)`) with a solid posted fill, a translucent pending fill after it, and a white "where you should be by now" tick below. This is how pending spend shows up honestly.
+- **BudgetBar:** a 10pt track (`rgba(255,255,255,.07)`) with a solid posted fill, a translucent pending fill after it, and a white tick that crosses the bar where you should be by now, with a short tail below (3pt on Budgets, WHIT-741). This is how pending spend shows up honestly.
 - **Bar:** a single-fill variant with optional checkpoint dots (filled = reached, hollow = not yet).
 
 ### Category chip
@@ -292,4 +296,4 @@ A confetti burst over the screen when a goal checkpoint is crossed. It never blo
 - **Don't** use Tokyo Blue as decoration; it means "tappable" or "selected".
 - **Don't** write `tint(C.accent, a)` where `tint(C.accentAlt, a)` is meant. They are different blues, and a test guards it.
 - **Don't** hand-tune individual hexes in the category or chart palettes; they're computed sets.
-- **Don't** use alarm-red styling for a merely-close budget. Amber warns at 80%; rose is reserved for over budget.
+- **Don't** use alarm-red styling for a merely-close budget. Rose is reserved for over budget. Amber is for non-budget heads-ups.
