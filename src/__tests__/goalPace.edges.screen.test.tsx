@@ -35,6 +35,8 @@ const TINY = growGoal('tiny', { target_amount: 2, ...GOAL_START, start_balance: 
 const UNPOLLED = growGoal('unpolled', { ...GOAL_START, start_balance: 2000 });
 // Past the target → the bar is full; dollars stop at the target.
 const OVER = growGoal('over');
+// WHIT-747: start 2000 and past the target → would read "Ahead", but a reached goal drops the pill.
+const DONE = growGoal('done', { ...GOAL_START, start_balance: 2000 });
 // Paydown with a start but no baseline: 20000 → 8000 owed, ahead, but no bar scale.
 const NO_SCALE: GoalRecord = {
   id: 'noscale', name: 'Card', icon: 'cash', direction: 'paydown', target_amount: 0, account_id: null,
@@ -48,7 +50,7 @@ beforeEach(() => {
   resetAuth();
   resetRouter();
   pinToday(GOAL_TODAY);
-  seedPaceHub(server, [AHEAD, ON_PACE, TINY, UNPOLLED, OVER, NO_SCALE], { 'acct-ahead': 8000, 'acct-onpace': 6000, 'acct-tiny': 1.5, 'acct-over': 12000 });
+  seedPaceHub(server, [AHEAD, ON_PACE, TINY, UNPOLLED, OVER, NO_SCALE, DONE], { 'acct-ahead': 8000, 'acct-onpace': 6000, 'acct-tiny': 1.5, 'acct-over': 12000, 'acct-done': 12000 });
 });
 afterEach(() => { jest.useRealTimers(); });
 
@@ -90,11 +92,17 @@ describe('goal card pace pill + dollars edges (WHIT-748 QA)', () => {
     expect(screen.queryByTestId('goal-pace-over')).toBeNull(); // no start → no judgement
   });
 
+  it('a reached goal shows "Goal reached" and no pace pill, even when it is ahead', async () => {
+    await renderWithQueries(<Goals />);
+    expect(screen.getByTestId('goal-reached-done')).toBeTruthy();
+    expect(screen.queryByTestId('goal-pace-done')).toBeNull();
+  });
+
   it('[A17] the home-loan card gets no pill or dollars line', async () => {
     await renderWithQueries(<Goals />);
     expect(screen.queryAllByTestId(/^goal-pace-/).map((n) => n.props.testID).sort())
       .toEqual(['goal-pace-ahead', 'goal-pace-noscale', 'goal-pace-onpace', 'goal-pace-tiny']);
     expect(screen.queryAllByTestId(/^goal-amount-/).map((n) => n.props.testID).sort())
-      .toEqual(['goal-amount-ahead', 'goal-amount-onpace', 'goal-amount-over', 'goal-amount-tiny']);
+      .toEqual(['goal-amount-ahead', 'goal-amount-done', 'goal-amount-onpace', 'goal-amount-over', 'goal-amount-tiny']);
   });
 });

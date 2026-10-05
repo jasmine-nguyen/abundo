@@ -192,7 +192,7 @@ export default function Goals() {
               // set + an in-place "Update balance" affordance. Synced goals track the live feed.
               const manual = !goal.account_id;
               const stale = manual && balanceIsStale(goal.manual_as_of);
-              const pace = paceLabel(v.status, v.aheadBy);
+              const pace = v.targetReached ? null : paceLabel(v.status, v.aheadBy);
               const amount = v.movedAmount != null && v.spanAmount != null
                 ? `${fmt(v.movedAmount)} of ${fmt(v.spanAmount)}`
                 : null;
