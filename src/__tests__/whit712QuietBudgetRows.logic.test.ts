@@ -1,36 +1,34 @@
-// WHIT-712 — budget rows stay quiet by default: one money line ("$X of $Y · $Z pending"), no
+// WHIT-712 — budget rows stay quiet by default: one money line ("$X of $Y"), no
 // "on pace" line, the overspend said once, and carried-over / borrowed only on the detail screen.
 import { describe, it, expect } from '@jest/globals';
 import { C } from '../theme';
 import { budgetRowFor as rowFor, rowText } from './support/budgetsTab';
 
-describe('budget rows only speak up when off pace (WHIT-712)', () => {
-  it('an on-pace row shows no pace line', () => {
+describe('budget rows are only flagged when off pace (WHIT-712)', () => {
+  it('an on-pace row is not behind pace', () => {
     const row = rowFor({ budget: 100, posted: 50, pending: 0 });
-    expect(row.paceLabel).toBe('');
+    expect(row.behindPace).toBe(false);
     expect(row.remainAmount).toBe('$50');
     expect(row.remainLabel).toBe('left');
   });
 
-  it('over plan still speaks', () => {
+  it('over plan is still flagged', () => {
     const behind = rowFor({ budget: 100, posted: 85, pending: 0 });
-    expect(behind.paceLabel).toBe('$35 over plan');
+    expect(behind.behindPace).toBe(true);
   });
 
   it('over budget says the overspend once, in the red amount', () => {
     const row = rowFor({ budget: 100, posted: 120, pending: 0, rollover: true, carryover: 0 });
-    expect(row.paceLabel).toBe('');
+    expect(row.behindPace).toBe(false);
     expect(row.remainAmount).toBe('$20');
     expect(row.remainLabel).toBe('over');
     expect(row.remainColor).toBe(C.bad);
-    const said = [row.spentLabel, row.remainAmount, row.paceLabel].join(' | ');
-    expect(said.match(/\$20(?![\d.,])/g)).toHaveLength(1);
+    expect(rowText(row).match(/\$20(?![\d.,])/g)).toHaveLength(1);
   });
 
-  it('the money line reads "$X of $Y", with "$Z pending" on its own line (WHIT-741)', () => {
+  it('the money line reads "$X of $Y", pending included, no pending line (WHIT-744)', () => {
     const row = rowFor({ budget: 600, posted: 374, pending: 38 });
     expect(row.spentLabel).toBe('$412 of\u00a0$600');
-    expect(row.pendingLabel).toBe('$38\u00a0pending');
     expect(rowFor({ budget: 100, posted: 40, pending: 0 }).spentLabel).toBe('$40 of\u00a0$100');
   });
 

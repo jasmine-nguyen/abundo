@@ -1,6 +1,6 @@
 // WHIT-741 QA — edges of the Budgets polish the main tests don't pin: the tick's "fully used"
-// boundary (float dust either side of a cent), pending with cents and its no-break space, the
-// earning row never growing a pending line, rollover "of" with cents, and the word joiner on
+// boundary (float dust either side of a cent), pending counted in the spent line with cents, the
+// earning row never naming pending, rollover "of" with cents, and the word joiner on
 // large and dust-sized amounts. Calls the real budgetViews / budgetDetail / fmtSignedExact.
 import { describe, it, expect } from '@jest/globals';
 import { fmtSignedExact, MINUS } from '../theme';
@@ -37,33 +37,26 @@ describe('WHIT-741 QA — tick boundary', () => {
   });
 });
 
-describe('WHIT-741 QA — pending line', () => {
-  // [A5] (P0) pending with cents keeps its cents and its no-break space ("$39.10 pending").
-  it('[A5] pending $39.10 → "$39.10 pending"; spent line has no pending words', () => {
+describe('WHIT-741 QA — pending counted in spent', () => {
+  // [A5] (P0) pending with cents is counted in spent, with no pending words (WHIT-744).
+  it('[A5] pending $39.10 → "$89.10 of $200", no pending words', () => {
     const row = budgetRowFor({ budget: 200, posted: 50, pending: 39.1 });
-    expect(row.pendingLabel).toBe(`$39.10${NBSP}pending`);
+    expect(row.spentLabel).not.toContain('pending');
     expect(row.spentLabel).toBe(`$89.10 of${NBSP}$200`);
   });
 
-  // [A6] (P1) exactly half a cent pending is still dust → no line; just over shows "$0.01 pending".
-  it('[A6] pending at the half-cent boundary', () => {
-    expect(budgetRowFor({ budget: 100, posted: 10, pending: 0.005 }).pendingLabel).toBe('');
-    expect(budgetRowFor({ budget: 100, posted: 10, pending: 0.006 }).pendingLabel).toBe(`$0.01${NBSP}pending`);
-  });
-
-  // [A7] (P1) an over-budget row with pending still names pending on its own line.
-  it('[A7] over budget + pending → pending line, no "·" on the spent line', () => {
+  // [A7] (P1) an over-budget row with pending has no "·" on the spent line.
+  it('[A7] over budget + pending → no "·" on the spent line', () => {
     const row = budgetRowFor({ budget: 100, posted: 100, pending: 20 });
     expect(row.over).toBe(true);
-    expect(row.pendingLabel).toBe(`$20${NBSP}pending`);
     expect(row.spentLabel).not.toContain('·');
   });
 
-  // [A8] (P1) earning rows never get a pending line, even with pending money.
-  it('[A8] an income row with pending has an empty pendingLabel', () => {
+  // [A8] (P1) earning rows never name pending, even with pending money.
+  it('[A8] an income row with pending has no pending words', () => {
     const row = budgetRowFor({ budget: 5000, posted: 1000, pending: 300 }, cat(SALARY));
     expect(row.section).toBe('earning');
-    expect(row.pendingLabel).toBe('');
+    expect(row.spentLabel).not.toContain('pending');
   });
 });
 

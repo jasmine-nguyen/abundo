@@ -1,5 +1,5 @@
 // WHIT-743 QA — the edges the proof tests leave: every row text is capped (sign-off answer A),
-// the pace line wraps, the money number alone may still shrink-to-fit (critic tweak), the stats
+// the note wraps, the money number alone may still shrink-to-fit (critic tweak), the stats
 // keep their values, the over-budget and earning-only top cards, and the normal layout is untouched.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, within } from '@testing-library/react-native';
@@ -31,7 +31,7 @@ beforeEach(() => {
   resetAuth();
 });
 
-// 14-day cycle, 7 days left (pace = half). Coffee $80 of $100 → "$20 left", "$30 over plan".
+// 14-day cycle, 7 days left (pace = half). Coffee $80 of $100 → "$20 left".
 // Groceries $25 of $100 + $200 spread → the spread note. Totals $105 of $400 → "$295".
 const showRows = async () => {
   seedBudgetsTab(server, {
@@ -44,38 +44,28 @@ const showRows = async () => {
 
 const coffeeRow = () => within(screen.getByTestId('budget-row-coffee'));
 
-// The line under the bar holding the note and the "over plan" pace text (pace Text → its View → the line).
-function paceLine() {
-  let hosts = 0;
-  for (let host = coffeeRow().getByText(/over plan$/).parent; host; host = host.parent) {
-    if (typeof host.type === 'string') hosts += 1;
-    if (hosts === 2) return host;
-  }
-  throw new Error('no pace line');
-}
-
 describe('WHIT-743 QA — Budgets tab at very large text', () => {
   // [A2]
-  it('every row text (name, spent line, pending, amount, its label, note, pace) is capped at 2×', async () => {
+  it('every row text (name, spent line, amount, its label, note) is capped at 2×', async () => {
     await showRows();
     const row = coffeeRow();
     const texts = [
       row.getByText('Cafes & Coffee'),
       row.getByText(/^\$80 of/),
-      screen.getByTestId('budget-row-pending-coffee'),
       row.getByText('$20'),
       row.getByText('left'),
       screen.getByTestId('budget-row-note-groceries'),
-      row.getByText(/over plan$/),
     ];
     expect(LARGE_TEXT_MAX_SCALE).toBe(2);
     for (const text of texts) expect(text.props.maxFontSizeMultiplier).toBe(LARGE_TEXT_MAX_SCALE);
   });
 
   // [A3]
-  it('the note and "over plan" line wraps instead of squeezing', async () => {
+  it('the note has no line limit, so it wraps, and its cap is the large-text cap', async () => {
     await showRows();
-    expect(styleOf(paceLine()).flexWrap).toBe('wrap');
+    const note = screen.getByTestId('budget-row-note-groceries');
+    expect(note.props.numberOfLines).toBeUndefined();
+    expect(note.props.maxFontSizeMultiplier).toBe(LARGE_TEXT_MAX_SCALE);
   });
 
   // [A4]
@@ -147,10 +137,9 @@ describe('WHIT-743 QA — Budgets tab at normal text', () => {
   });
 
   // [A10]
-  it('the amount column keeps its 45% cap and the pace line does not wrap', async () => {
+  it('the amount column keeps its 45% cap', async () => {
     await showRows();
     const row = coffeeRow();
     expect(styleOf(sharedHost(row.getByText('$20'), row.getByText('left'))).maxWidth).toBe('45%');
-    expect(styleOf(paceLine()).flexWrap).toBeUndefined();
   });
 });

@@ -1,4 +1,4 @@
-// WHIT-732 — calmer pace line on budget rows: "over plan" only shows when the user really needs
+// WHIT-732 — calmer pace flag on budget rows: a row is behind pace only when the user really needs
 // to slow down (ahead of pace AND the daily room left is under half the daily plan), in muted
 // ink, never amber. The today tick sits on the base pace target the words use, even when the bar
 // is scaled to a rollover/spread envelope. Halfway through a 14-day cycle: $100 budget → $50 pace.
@@ -9,18 +9,16 @@ import { budgetRowFor as rowFor, budgetDetailFor as detailFor, budgetRowsFor, ro
 import { budget } from './factory';
 import { COFFEE, GROCERIES } from './support/categories';
 
-describe('budget rows: calm pace line and a tick that matches it (WHIT-732)', () => {
-  it('a row only slightly ahead of pace with plenty left says nothing', () => {
+describe('budget rows: calm pace flag and a tick that matches it (WHIT-732)', () => {
+  it('a row only slightly ahead of pace with plenty left is not flagged', () => {
     // $70 of $100 at halfway: $20 ahead, but $30 over 7 days ($4.29/day) is above half the daily plan ($3.57).
     const row = rowFor({ budget: 100, posted: 70, pending: 0 });
-    expect(row.paceLabel).toBe('');
     expect(row.behindPace).toBe(false);
   });
 
-  it('a row that clearly needs slowing down says "$X over plan"', () => {
+  it('a row that clearly needs slowing down is behind pace', () => {
     // $85 of $100 at halfway: $15 over 7 days ($2.14/day) is under half the daily plan ($3.57).
     const row = rowFor({ budget: 100, posted: 85, pending: 0 });
-    expect(row.paceLabel).toBe('$35 over plan');
     expect(row.behindPace).toBe(true);
   });
 

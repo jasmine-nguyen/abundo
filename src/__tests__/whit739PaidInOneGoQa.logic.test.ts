@@ -57,9 +57,8 @@ describe('paceWarning — the one-charge flag needs nothing left', () => {
 
 describe('budgetViews — the one-charge set alone never silences a budget with money left', () => {
   // [A5]
-  it('mortgage $3,600 of $3,667 with the id in the set still reads "over plan"', () => {
+  it('mortgage $3,600 of $3,667 with the id in the set is still behind pace', () => {
     const r = row({ posted: 3600 }, new Set(['mortgage']));
-    expect(r.paceLabel).toMatch(/ over plan$/);
     expect(r.behindPace).toBe(true);
   });
   it('a set naming another budget leaves the paid mortgage warning', () => {

@@ -1,5 +1,5 @@
 // WHIT-739: a bill paid in full in one go (nothing left, one counting charge) has nothing to slow
-// down — no "over plan" line on the row or detail, and it isn't ranked as urgent. The calm detail
+// down — no "over plan" on the detail, and the row isn't flagged or ranked as urgent. The calm detail
 // status reads "On track for payday". A budget used up by several charges still warns.
 import { describe, it, expect } from '@jest/globals';
 import { budgetViews, budgetDetail } from '../context';
@@ -41,15 +41,14 @@ describe('budgetViews — paid mortgage row', () => {
     ...extra,
   });
 
-  it('with the one-charge set, the paid mortgage shows no pace line and is not behind pace', () => {
+  it('with the one-charge set, the paid mortgage is not behind pace', () => {
     const row = budgetViews(state({ oneChargeIds: new Set(['mortgage']) })).rows.find((r) => r.id === 'mortgage')!;
-    expect(row.paceLabel).toBe('');
     expect(row.behindPace).toBe(false);
   });
 
-  it('without the set, it still reads "… over plan"', () => {
+  it('without the set, it is still behind pace', () => {
     const row = budgetViews(state()).rows.find((r) => r.id === 'mortgage')!;
-    expect(row.paceLabel).toMatch(/over plan$/);
+    expect(row.behindPace).toBe(true);
   });
 
   it('urgentFirst: a real over-plan row outranks the paid mortgage', () => {

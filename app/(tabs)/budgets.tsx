@@ -15,8 +15,12 @@ import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { useLargeText, LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
 import { loadFailureReason } from '../../src/apiError';
 
-// The tick just crosses the bar when nothing sits under it, so rows end evenly (WHIT-741).
+// The tick just crosses the bar; nothing sits beside it (WHIT-741, WHIT-744).
 const SHORT_TICK_TAIL = 3;
+// Space between the bar's bottom and a note; clears the short tick (it reaches 4pt below the bar).
+const NOTE_GAP = 8;
+// The tick band's height plus its 1pt top margin in BudgetBar.
+const TICK_BAND = SHORT_TICK_TAIL + 1;
 // Both big hero numbers grow with the user's text size up to the same cap, so they stay one size (WHIT-741).
 const HERO_BIG_MAX_SCALE = 1.4;
 
@@ -31,12 +35,7 @@ function RowHeader({ b }: { b: BudgetView }) {
   const large = useLargeText();
   const chip = <View style={[styles.chip, { backgroundColor: b.chipBg }]}><Icon name={b.icon} size={23} color={b.color} /></View>;
   const name = <Text style={styles.rowName} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.name}</Text>;
-  const subs = (
-    <>
-      <Text style={styles.rowSub} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.spentLabel}</Text>
-      {b.pendingLabel ? <Text testID={`budget-row-pending-${b.id}`} style={styles.rowSub} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.pendingLabel}</Text> : null}
-    </>
-  );
+  const subs = <Text style={styles.rowSub} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.spentLabel}</Text>;
   const remain = (
     <>
       <Text style={[styles.rowRemain, { color: b.remainColor }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.remainAmount}</Text>
@@ -71,7 +70,6 @@ function RowHeader({ b }: { b: BudgetView }) {
 
 function BudgetRow({ b }: { b: BudgetView }) {
   const router = useRouter();
-  const large = useLargeText();
   const note = b.note ? <Text testID={`budget-row-note-${b.id}`} style={styles.note} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.note}</Text> : null;
   return (
     <Pressable testID={`budget-row-${b.id}`} onPress={() => router.push(`/budget/${b.id}`)} style={({ pressed }) => [styles.row,b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }, pressed && PRESSED]}>
@@ -81,17 +79,8 @@ function BudgetRow({ b }: { b: BudgetView }) {
         note && <View style={styles.slimNote}>{note}</View>
       ) : (
         <View style={{ marginTop: 15 }}>
-          <BudgetBar postedPct={b.postedPct} pendingPct={b.pendingPct} targetPct={b.targetPct} postedColor={b.postedColor} pendingTint={b.pendingTint} showTarget={b.showTarget} tickTail={b.paceLabel || b.note ? undefined : SHORT_TICK_TAIL} />
-          {b.paceLabel || b.note ? (
-            <View style={[styles.paceRow, large && styles.paceRowWrap]}>
-              {note}
-              {b.paceLabel ? (
-                <View style={styles.pace}>
-                  <Text style={styles.paceLabel} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.paceLabel}</Text>
-                </View>
-              ) : null}
-            </View>
-          ) : null}
+          <BudgetBar postedPct={b.postedPct} pendingPct={b.pendingPct} targetPct={b.targetPct} postedColor={b.postedColor} pendingTint={b.pendingTint} showTarget={b.showTarget} tickTail={SHORT_TICK_TAIL} />
+          {note && <View style={[styles.noteUnderBar, b.showTarget && styles.noteUnderTick]}>{note}</View>}
         </View>
       )}
     </Pressable>
@@ -301,13 +290,9 @@ const styles = StyleSheet.create({
   rowSub: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 2 },
   rowRemain: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', letterSpacing: -0.5 },
   rowRemainLabel: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, fontWeight: '500', marginTop: 1 },
-  // WHIT-281: a per-row "target" caption overlapped the right-aligned pace status when the
-  // tick sat far right. Removed — only the pace status remains, right-aligned.
-  paceRow: { minHeight: 18, marginTop: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  paceRowWrap: { flexWrap: 'wrap', columnGap: 8 },
-  pace: { marginLeft: 'auto' },
+  noteUnderBar: { marginTop: NOTE_GAP },
+  noteUnderTick: { marginTop: NOTE_GAP - TICK_BAND },
   note: { fontFamily: FONT.body, fontSize: 12, color: C.textMid },
-  paceLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textInfo },
 
   addBudget: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(C.accentAlt, 0.4), backgroundColor: tint(C.accentAlt, 0.07), borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   addBudgetText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSoft },

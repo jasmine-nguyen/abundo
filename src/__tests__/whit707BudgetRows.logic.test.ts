@@ -1,5 +1,5 @@
 // WHIT-707 — the Budgets tab rows: Spending before Earning, income reads "earned · next pay",
-// and pending gets its own words.
+// and pending folds into the spent amount.
 import { describe, it, expect } from '@jest/globals';
 import { budgetViews } from '../context';
 import { C } from '../theme';
@@ -12,7 +12,7 @@ const rent = cat({ id: 'rent', name: 'Rent', bucket: 'Living', color: '#7aa2ff' 
 const gym = cat({ id: 'gym', name: 'Gym', bucket: 'Lifestyle', color: '#f0a0c0' });
 
 describe('budgetViews rows (WHIT-707)', () => {
-  it('lists Spending then Earning, with income, pending and over-budget wording', () => {
+  it('lists Spending then Earning, with income and over-budget wording', () => {
     // Income listed FIRST in the input; elapsed 0.5 (14-day cycle, 6 days left → payday within a week).
     const s = {
       ...makeState({
@@ -38,27 +38,25 @@ describe('budgetViews rows (WHIT-707)', () => {
     // Income: no even-pace line, no today marker, "earned · next pay ~Fri"; right side unchanged.
     const income = byId('salary');
     expect(income.spentLabel).toBe('$1,000 earned · next pay ~Fri');
-    expect(income.paceLabel).toBe('');
+    expect(income.behindPace).toBe(false);
     expect(income.showTarget).toBe(false);
     expect(income.remainAmount).toBe('$4,000');
     expect(income.remainLabel).toBe('to go');
 
-    // Pending gets its own words; the limit stays visible. No pending → unchanged.
-    expect(byId('coffee').pendingLabel).toBe('$10\u00a0pending');
+    // Pending is counted in spent; the limit stays visible.
     expect(byId('coffee').spentLabel).toBe('$50 of\u00a0$100');
     expect(byId('coffee').showTarget).toBe(true);
     expect(byId('latte').spentLabel).toBe('$5 of\u00a0$30');
-    expect(byId('latte').pendingLabel).toBe('');
 
-    // Over budget: rose on amount and bar; the red amount says it once (WHIT-712), no pace line.
+    // Over budget: rose on amount and bar; the red amount says it once (WHIT-712), no pace warning.
     const over = byId('rent');
     expect(over.remainColor).toBe(C.bad);
     expect(over.postedColor).toBe(C.bad);
-    expect(over.paceLabel).toBe('');
+    expect(over.behindPace).toBe(false);
 
-    // Over budget with rollover: same, no pace line.
+    // Over budget with rollover: same, no pace warning.
     const quiet = byId('gym');
-    expect(quiet.paceLabel).toBe('');
+    expect(quiet.behindPace).toBe(false);
     expect(quiet.remainAmount).toBe('$20');
 
     // Payday more than 6 days away reads as a date, not a weekday; no payday → just "earned".

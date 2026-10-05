@@ -1,6 +1,6 @@
-// WHIT-741 — Budgets tab polish at large text: pending on its own line, the top card's labels and
-// values in separate rows, both big numbers sized together, brighter notes, and no empty tick band
-// under a bar with nothing below it. Real ../api over the fake server.
+// WHIT-741 — Budgets tab polish at large text: no "·" on the row, the top card's labels and
+// values in separate rows, both big numbers sized together, brighter notes, and a short tick band
+// on every row (WHIT-744). Real ../api over the fake server.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { StyleSheet } from 'react-native';
 import { screen } from '@testing-library/react-native';
@@ -10,9 +10,9 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedBudgetsTab } from './support/budgetsTab';
-import { renderLoadedBudgetsWithQueries, showTwoRows } from './support/budgetsScreen';
+import { renderLoadedBudgetsWithQueries, showTwoRows, tickBandOf } from './support/budgetsScreen';
 import { COFFEE, GROCERIES } from './support/categories';
-import { sharedHost, textOf } from './support/layout';
+import { sharedHost, styleOf, textOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -26,21 +26,14 @@ beforeEach(() => {
 });
 
 // The height of the band under a row's bar that holds the target tick.
-function tickBandHeight(rowTestID: string) {
-  const row = screen.getByTestId(rowTestID);
-  const tick = row.findAll((n) => typeof n.type === 'string' && StyleSheet.flatten(n.props.style)?.backgroundColor === C.progressTick)[0];
-  let band = tick.parent!;
-  while (typeof band.type !== 'string') band = band.parent!;
-  return StyleSheet.flatten(band.props.style).height;
-}
+const tickBandHeight = (rowTestID: string) => styleOf(tickBandOf(screen.getByTestId(rowTestID))!).height;
 
 describe('WHIT-741 Budgets tab polish', () => {
-  it('pending shows on its own line under "$X of $Y", and no line starts with "·"', async () => {
+  it('no line on the row starts with "·", and no row shows pending (WHIT-744)', async () => {
     await showTwoRows(server);
 
-    const pending = screen.getByTestId('budget-row-pending-coffee');
-    expect(textOf(pending).replace(/ /g, ' ')).toBe('$10 pending');
-    expect(screen.queryByTestId('budget-row-pending-groceries')).toBeNull();
+    expect(screen.queryByTestId('budget-row-pending-coffee')).toBeNull();
+    expect(screen.queryByText(/pending/)).toBeNull();
     expect(textOf(screen.getByTestId('budget-row-coffee'))).not.toContain('·');
   });
 
@@ -72,12 +65,12 @@ describe('WHIT-741 Budgets tab polish', () => {
     expect(StyleSheet.flatten(money.props.style).fontSize).toBe(44);
   });
 
-  it('a row with nothing under its bar has no empty 18pt tick band; a row with a pace line keeps it', async () => {
+  it('every row\'s tick band is short (WHIT-744)', async () => {
     await showTwoRows(server);
 
-    expect(screen.getByText(/over plan/)).toBeTruthy();
-    expect(tickBandHeight('budget-row-coffee')).toBe(18);
-    expect(tickBandHeight('budget-row-groceries')).toBeLessThan(18);
+    expect(screen.queryByText(/over plan/)).toBeNull();
+    expect(tickBandHeight('budget-row-coffee')).toBe(3);
+    expect(tickBandHeight('budget-row-groceries')).toBe(3);
   });
 
   it('the "Includes …" note is a little brighter than the dim sub-line', async () => {

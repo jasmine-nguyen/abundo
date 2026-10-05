@@ -1,5 +1,5 @@
-// WHIT-732 QA on screen: the Budgets tab draws the calmer pace line in muted ink (and nothing
-// when only slightly ahead), and the detail screen's "today's plan" label sits on the base pace
+// WHIT-732 QA on screen: the Budgets tab lifts only a row that must slow down to the top (no
+// pace text, WHIT-744), and the detail screen's "today's plan" label sits on the base pace
 // of a rollover envelope. Real ../api over the fake server; ../auth + expo-router mocked.
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
@@ -10,7 +10,7 @@ import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { seedBudgetsTab } from './support/budgetsTab';
 import { renderLoadedBudgetsWithQueries } from './support/budgetsScreen';
-import { C } from '../theme';
+import { COFFEE, GROCERIES } from './support/categories';
 
 jest.mock('../context', () => require('./support/budgetsSuite').budgetsContextMockModule());
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -24,20 +24,18 @@ useTestQueryClient();
 
 useBudgetsSuiteReset({ pinClock: false });
 
-// [A14] (P0) halfway through: $70 of $100 shows no pace line; $85 shows "$35 over plan" muted.
-it('[A14] a slightly-ahead row is silent; a row that must slow down is muted, not amber', async () => {
-  seedBudgetsTab(server, { coffee: { target: 100, posted: 70, pending: 0 } });
+// [A14] (P0) halfway through: $70 of $100 is calm; $85 of $100 must slow down, so it's listed first.
+it('[A14] a slightly-ahead row stays in place; a row that must slow down moves up, with no pace text', async () => {
+  seedBudgetsTab(server, {
+    coffee: { target: 100, posted: 70, pending: 0 },
+    groceries: { target: 100, posted: 85, pending: 0 },
+  }, [COFFEE, GROCERIES]);
   await renderLoadedBudgetsWithQueries();
-  expect(screen.queryByText(/over plan$/)).toBeNull();
+  await screen.findByText('Groceries');
+  const order = screen.getAllByTestId(/^budget-row-(coffee|groceries)$/).map((r) => r.props.testID);
+  expect(order).toEqual(['budget-row-groceries', 'budget-row-coffee']);
+  expect(screen.queryByText(/over plan/)).toBeNull();
 });
-
-it('[A14] a row that must slow down reads "$35 over plan" in muted ink', async () => {
-  seedBudgetsTab(server, { coffee: { target: 100, posted: 85, pending: 0 } });
-  await renderLoadedBudgetsWithQueries();
-  const line = screen.getByText('$35 over plan');
-  expect(StyleSheet.flatten(line.props.style).color).toBe(C.textInfo);
-});
-
 // [A15] (P0) detail: rollover $100 + $100 buffer, halfway → base pace $50 sits a quarter along.
 it("[A15] the detail's \"today's plan\" label sits on the base pace of a rollover envelope", async () => {
   setParams({ id: 'coffee' });
