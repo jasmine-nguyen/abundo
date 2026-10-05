@@ -78,3 +78,12 @@ def _event(category="coffee"):
         "requestContext": {"http": {"method": "GET"}},
         "pathParameters": {"category": category},
     }
+
+
+def pin_cycle_window(handler, monkeypatch, cycle_start, today):
+    """Pin the budgets read's current cycle to (cycle_start, today) in the handler and
+    budget_standing, so the cycle maths never reads the wall clock."""
+    import budget_standing
+    for module in (handler, budget_standing):
+        monkeypatch.setattr(module, "current_cycle_window",
+                            lambda last_pay_date, length, today_=None: (cycle_start, today))

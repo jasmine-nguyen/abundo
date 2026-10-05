@@ -94,7 +94,10 @@ def test_orphan_rollover_budget_still_rolls_over_like_before(budget_standing):
                                                                 charge("gone", "2026-09-18", "-5")])
 
     assert rows["gone"] == {"target": D("100"), "posted": D("5"), "pending": D("0"),
-                            "rollover": True, "carryover": D("40"), "available": D("140")}
+                            "rollover": True, "carryover": D("40"),
+                            "carryover_cycles": [{"start": "2026-09-03", "end": "2026-09-16", "target": D("100"),
+                                                  "spent": D("60"), "leftover": D("40"), "settling": True}],
+                            "carryover_earlier": D("0"), "available": D("140")}
     assert settlements["rollover"] == {}
 
 

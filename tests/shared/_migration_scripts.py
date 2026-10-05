@@ -11,3 +11,13 @@ def load_migration_script(name):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def use_fake_table(monkeypatch, script, table):
+    """Make the script's boto3.resource(...).Table(...) hand back `table`."""
+
+    class _Resource:
+        def Table(self, name):
+            return table
+
+    monkeypatch.setattr(script.boto3, "resource", lambda *a, **k: _Resource(), raising=False)

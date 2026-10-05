@@ -714,6 +714,19 @@ export interface SpreadPlan {
   adjustment: number;
 }
 
+/** One completed cycle behind a rollover carryover (WHIT-742). `leftover` is signed (target −
+ * spent); `settling` = still inside the settle lag, not yet sealed; `rebuilt` = recomputed later
+ * from saved transactions rather than recorded when it sealed. */
+export interface CarryoverCycle {
+  start: string;
+  end: string;
+  target: number;
+  spent: number;
+  leftover: number;
+  settling: boolean;
+  rebuilt?: boolean;
+}
+
 /** A budget's target plus its computed spend for the current window. */
 export interface BudgetRollup {
   target: number;
@@ -724,6 +737,10 @@ export interface BudgetRollup {
   // carried as a deficit). Absent on a non-rollover/legacy budget — the client defaults them.
   rollover?: boolean;
   carryover?: number;
+  // The cycles behind `carryover`, newest first, plus the remainder from before they were kept
+  // (WHIT-742). Together they add up to `carryover`. Rollover rows only.
+  carryover_cycles?: CarryoverCycle[];
+  carryover_earlier?: number;
   // Bill spread (WHIT-504): present only for a spend category with an active plan (see SpreadPlan).
   // A category has rollover OR a spread, never both. Absent = no plan; the client defaults it.
   spread?: SpreadPlan;

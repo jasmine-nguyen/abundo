@@ -108,11 +108,19 @@ MIXED_ROWS = {
     "food": {"target": D("400"), "posted": D("20"), "pending": D("15"), "available": D("400")},
     "fun": {
         "target": D("200"), "posted": D("40"), "pending": D("0"),
-        "rollover": True, "carryover": D("30"), "available": D("230"),
+        "rollover": True, "carryover": D("30"),
+        "carryover_cycles": [
+            {"start": "2026-09-03", "end": "2026-09-16", "target": D("200"), "spent": D("230"),
+             "leftover": D("-30"), "settling": True},
+            {"start": "2026-08-20", "end": "2026-09-02", "target": D("200"), "spent": D("150"),
+             "leftover": D("50"), "settling": False},
+        ],
+        "carryover_earlier": D("10"), "available": D("230"),
     },
     "gifts": {
         "target": D("80"), "posted": D("0"), "pending": D("0"),
-        "rollover": True, "carryover": D("25"), "available": D("105"),
+        "rollover": True, "carryover": D("25"), "carryover_cycles": [], "carryover_earlier": D("25"),
+        "available": D("105"),
     },
     "insurance": {
         "target": D("100"), "posted": D("0"), "pending": D("0"),
@@ -127,7 +135,10 @@ NO_SETTLEMENTS = {"rollover": {}, "spread_finished": [], "spread_reanchored": {}
 
 MIXED_SETTLEMENTS = {
     "rollover": {
-        "fun": {"carryover": D("60"), "carryover_from": "2026-09-03"},
+        "fun": {"carryover": D("60"), "carryover_from": "2026-09-03", "carryover_history": [
+            {"start": "2026-08-20", "end": "2026-09-02", "target": D("200"), "spent": D("150"),
+             "leftover": D("50")},
+        ]},
         "gifts": {"carryover": D("25"), "carryover_from": "2026-09-17"},
     },
     "spread_finished": ["car"],

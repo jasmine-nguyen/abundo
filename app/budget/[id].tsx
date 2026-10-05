@@ -109,7 +109,19 @@ export default function BudgetDetail() {
           {bd.carryoverLine ? (
             <View style={styles.carryoverBox}>
               <Glyph name="refresh" size={18} color={C.accentSoft} />
-              <Text style={styles.carryoverText}>{bd.carryoverLine}</Text>
+              <View style={styles.carryoverBody}>
+                <Text style={styles.carryoverText}>{bd.carryoverLine}</Text>
+                {bd.carryoverCycleLines.map((line, i) => (
+                  <View key={line.key} style={styles.cycleRow} testID={`carryover-cycle-${i}`}>
+                    <Text style={styles.cycleLabel}>
+                      {line.label}
+                      {line.settling ? <Text style={styles.cycleTag}>  settling</Text> : null}
+                      {line.rebuilt ? <Text style={styles.cycleTag}>  estimated</Text> : null}
+                    </Text>
+                    <Text style={styles.cycleAmount}>{line.amount}</Text>
+                  </View>
+                ))}
+              </View>
             </View>
           ) : null}
 
@@ -169,7 +181,13 @@ const styles = StyleSheet.create({
   dailyBox: { flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: tint(C.accentAlt, 0.1), borderRadius: 13, paddingVertical: 11, paddingHorizontal: 13, marginTop: 16 },
   dailyText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.accentSofter },
   carryoverBox: { flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: tint(C.accentAlt, 0.1), borderRadius: 13, paddingVertical: 11, paddingHorizontal: 13, marginTop: 10 },
-  carryoverText: { flex: 1, fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.accentSofter },
+  carryoverText: { flexShrink: 1, fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.accentSofter },
+  carryoverBody: { flex: 1, gap: 4 },
+  // Wraps so a long cycle label at large text pushes the amount onto the next line (WHIT-743 pattern).
+  cycleRow: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 8, justifyContent: 'space-between' },
+  cycleLabel: { flexShrink: 1, fontFamily: FONT.body, fontSize: 12.5, color: C.textMid },
+  cycleAmount: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: C.accentSofter },
+  cycleTag: { fontSize: 11.5, color: C.textDim },
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 22, marginBottom: 4, marginHorizontal: 4 },
   groupLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, marginHorizontal: 4, marginBottom: 2, marginTop: 8 },
   empty: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, textAlign: 'center', paddingVertical: 30 },

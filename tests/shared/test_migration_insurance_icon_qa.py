@@ -7,6 +7,7 @@ printed lines (boto3.resource swapped for a FakeTable).
 from decimal import Decimal
 
 from _dynamo_fakes import FakeTable
+from _migration_scripts import use_fake_table
 from test_migration_insurance_icon import _KEY, _icons, _load_script
 
 
@@ -80,19 +81,11 @@ def test_a_missing_categories_item_is_a_no_op():
     assert table.update_calls == []
 
 
-def _patch_table(script, monkeypatch, table):
-    class _Resource:
-        def Table(self, name):
-            return table
-
-    monkeypatch.setattr(script.boto3, "resource", lambda *a, **k: _Resource(), raising=False)
-
-
 # [A12] (P0) main() previews by default: prints the dry-run line, writes nothing, reads consistently.
 def test_main_previews_without_apply(monkeypatch, capsys):
     script = _load_script()
     table = _seeded()
-    _patch_table(script, monkeypatch, table)
+    use_fake_table(monkeypatch, script, table)
     monkeypatch.setattr(script.sys, "argv", ["insurance_icon_to_shield.py"])
 
     script.main()
@@ -109,7 +102,7 @@ def test_main_previews_without_apply(monkeypatch, capsys):
 def test_main_apply_writes_and_reports_a_conflict(monkeypatch, capsys):
     script = _load_script()
     table = _seeded()
-    _patch_table(script, monkeypatch, table)
+    use_fake_table(monkeypatch, script, table)
     monkeypatch.setattr(script.sys, "argv", ["insurance_icon_to_shield.py", "--apply"])
 
     table.race_next_update()

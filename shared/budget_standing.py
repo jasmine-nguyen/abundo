@@ -22,6 +22,9 @@ Row rules:
   later moved to Income/Savings is ignored. Only a rollover row carries
   `rollover`/`carryover`; only a spread row carries `spread`. Rollover wins if a corrupt
   row has both, so `available` never sums two cushions.
+- A rollover row also lists the cycles behind its carryover (`carryover_cycles`, newest
+  first, still-settling ones flagged) and `carryover_earlier`, the part from before
+  history was kept, so the cycles plus the remainder add up to `carryover` (WHIT-742).
 """
 
 from decimal import Decimal
@@ -32,6 +35,7 @@ from spend import (
     build_category_children,
     current_cycle_window,
     fold_subtree,
+    rollover_history_view,
     rollover_windows,
     seal_rollover,
     spread_state,
@@ -119,7 +123,7 @@ def budget_standing(targets: dict, window: StandingWindow, categories: list,
     `transactions` must be exactly the rows dated `window.fetch_start..window.today`: when
     no rollover widened the read, they ARE the current cycle and are summed as-is. Returns
     (rows, settlements) where settlements is
-    {"rollover": {cat_id: {carryover, carryover_from}}, "spread_finished": [cat_id],
+    {"rollover": {cat_id: {carryover, carryover_from[, carryover_history]}}, "spread_finished": [cat_id],
      "spread_reanchored": {cat_id: plan}}.
     """
     cycle_start = window.cycle_start
@@ -158,15 +162,18 @@ def budget_standing(targets: dict, window: StandingWindow, categories: list,
         if cat_id in rollover_ids:
             if cat_id in window.reanchor_by_id:
                 carryover = window.reanchor_by_id[cat_id]["carryover"]
+                cycles, earlier = rollover_history_view(entry.get("carryover_history", []), carryover)
                 rollover_settlements[cat_id] = window.reanchor_by_id[cat_id]
             else:
-                carryover, persist = seal_rollover(
+                carryover, cycles, earlier, persist = seal_rollover(
                     entry, window.windows_by_id[cat_id], ids_by_target[cat_id], transactions, length, today
                 )
                 if persist is not None:
                     rollover_settlements[cat_id] = persist
             row["rollover"] = True
             row["carryover"] = carryover
+            row["carryover_cycles"] = cycles
+            row["carryover_earlier"] = earlier
             buffer_term = carryover
         if cat_id in spread_ids:
             spread_row, finished, reanchor = spread_state(entry, cycle_start, length, window.last_pay_date, today)

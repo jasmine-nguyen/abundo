@@ -45,9 +45,11 @@ def recording_budget_repo(budgets=None):
         repo.set_kwargs = {"rollover": rollover, "anchor": anchor}
         return real_set(cat_id, target, rollover=rollover, anchor=anchor)
 
-    def settle_carryover(cat_id, carryover, carryover_from, carryover_len, carryover_paydate):
+    def settle_carryover(cat_id, carryover, carryover_from, carryover_len, carryover_paydate,
+                         carryover_history=None):
         repo.settle_calls.append((cat_id, carryover, carryover_from, carryover_len, carryover_paydate))
-        return real_settle(cat_id, carryover, carryover_from, carryover_len, carryover_paydate)
+        return real_settle(cat_id, carryover, carryover_from, carryover_len, carryover_paydate,
+                           carryover_history=carryover_history)
 
     def set_spread(cat_id, amount, cycles, spread_from, spread_len, spread_paydate):
         repo.set_spread_calls.append((cat_id, amount, cycles, spread_from, spread_len, spread_paydate))
