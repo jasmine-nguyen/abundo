@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { C, FONT, fmt, fmtExact, fmtSigned,tint, PRESSED } from '../../src/theme';
+import { C, FONT, fmtExact, fmtSignedExact, tint, PRESSED } from '../../src/theme';
 import { formatDayMonth } from '../../src/dateutil';
 import { Icon, Glyph } from '../../src/icons';
 import { budgetViews, type BudgetView } from '../../src/context';
@@ -41,7 +41,7 @@ function BudgetRow({ b }: { b: BudgetView }) {
   // Under plan is the only label that is neither behind pace nor a spread → quiet, not bold.
   const paceStyle = [styles.paceLabel, { color: b.paceColor }, !b.behindPace && b.spreadPrefill === null && styles.paceMuted];
   return (
-    <Pressable testID={`budget-row-${b.id}`} onPress={() => router.push(`/budget/${b.id}`)} style={({ pressed }) => [styles.row, b.unspent && styles.rowSlim, b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }, pressed && PRESSED]}>
+    <Pressable testID={`budget-row-${b.id}`} onPress={() => router.push(`/budget/${b.id}`)} style={({ pressed }) => [styles.row,b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }, pressed && PRESSED]}>
       <RowHeader b={b} />
       {/* WHIT-730: nothing spent yet → a slim row with no bar or pace line, so active budgets stand out. */}
       {b.unspent ? (
@@ -179,10 +179,10 @@ export default function Budgets() {
           daysLeft={daysLeft}
           nextPayday={nextPayday}
           money={hasSpending ? {
-            amount: overBudget ? `−${fmtExact(totRemain)}` : fmtExact(totRemain),
+            amount: fmtSignedExact(totRemain),
             label: overBudget ? 'Over budget' : 'Left to spend',
           } : undefined}
-          totals={hasSpending ? { spent: fmt(totSpent), budget: fmtSigned(totBudget) } : undefined}
+          totals={hasSpending ? { spent: fmtExact(totSpent), budget: fmtSignedExact(totBudget) } : undefined}
         >
           {hasSpending ? null : (
             <View style={styles.heroBottom}>
@@ -249,8 +249,7 @@ const styles = StyleSheet.create({
   // Same uppercase muted label as the budget detail screen's section headings.
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 18, marginBottom: 8, marginHorizontal: 4 },
 
-  row: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, padding: 16, paddingBottom: 14, marginBottom: 12 },
-  rowSlim: { paddingTop: 12, paddingBottom: 12 },
+  row: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14, marginBottom: 12 },
   slimNote: { marginTop: 6 },
   // Caps the amount column so a big number shrinks instead of squeezing the name (large text).
   rowRight: { alignItems: 'flex-end', maxWidth: '45%' },

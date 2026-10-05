@@ -9,7 +9,7 @@ describe('signed "of" edges (WHIT-728)', () => {
   // [A3] payback cycle with pending → "of −$659 · $17.75 pending".
   it('keeps the minus when some spend is pending', () => {
     const row = budgetRowFor({ budget: 41, posted: 600, pending: 17.75, spreadAdjustment: -700, spread: plan });
-    expect(row.spentLabel).toBe('$617.75 of −$659 · $17.75 pending');
+    expect(row.spentLabel).toBe('$617.75 of −$659 ·\u00a0$17.75\u00a0pending');
   });
 
   // [A4] a budget a few cents below zero rounds to $0 — never "−$0", on the row or the detail.

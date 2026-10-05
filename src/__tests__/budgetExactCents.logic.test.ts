@@ -120,7 +120,7 @@ describe('budgetViews — cents boundaries (GAP)', () => {
 describe('exact-cents change leaves whole-dollar labels untouched (regression)', () => {
   it('[A20] whole spend row unchanged', () => {
     const row = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 10 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(row.spentLabel).toBe('$50 of $100 · $10 pending');
+    expect(row.spentLabel).toBe('$50 of $100 ·\u00a0$10\u00a0pending');
     expect(row.remainAmount).toBe('$50');
   });
 

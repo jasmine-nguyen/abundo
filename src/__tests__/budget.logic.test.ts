@@ -64,7 +64,7 @@ describe('budgetViews', () => {
   it('folds pending into the spent amount and names it separately (WHIT-707)', () => {
     // spent = posted + pending = 50; the pending part is also called out.
     const withPending = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 10 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(withPending.spentLabel).toBe('$50 of $100 · $10 pending');
+    expect(withPending.spentLabel).toBe('$50 of $100 ·\u00a0$10\u00a0pending');
     const noPending = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
     expect(noPending.spentLabel).toBe('$40 of $100');
   });
@@ -77,7 +77,7 @@ describe('budgetViews', () => {
   it('shows exact cents on a fractional spent + left so the list row matches the detail and reconciles to the budget', () => {
     // posted 62.50 + pending 11.00 = 73.50 spent of $80 → 6.50 left (the Cafes & Coffee case).
     const row = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 80, posted: 62.5, pending: 11 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(row.spentLabel).toBe('$73.50 of $80 · $11 pending'); // fail-on-revert: fmt(73.5) → '$74'
+    expect(row.spentLabel).toBe('$73.50 of $80 ·\u00a0$11\u00a0pending'); // fail-on-revert: fmt(73.5) → '$74'
     expect(row.remainAmount).toBe('$6.50');             // spent + left = the $80 budget
   });
 });

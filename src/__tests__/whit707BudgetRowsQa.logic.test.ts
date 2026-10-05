@@ -75,7 +75,7 @@ describe('over budget: spread link vs quiet line (decision 2)', () => {
     const row = spendRow({ budget: 100, posted: 90, pending: 25 });
     expect(row.paceLabel).toBe('Spread it over pay cycles →');
     expect(row.spreadPrefill).toBe(15);
-    expect(row.spentLabel).toBe('$115 of $100 · $25 pending');
+    expect(row.spentLabel).toBe('$115 of $100 ·\u00a0$25\u00a0pending');
   });
 
   // [A9] (P0) under budget → never a link (no prefill), even if over plan.
@@ -113,13 +113,13 @@ describe('pending wording threshold', () => {
 
   // [A13] (P1) one cent pending is real → named with cents.
   it('[A13] pending 0.01 → named', () => {
-    expect(spendRow({ budget: 100, posted: 40, pending: 0.01 }).spentLabel).toBe('$40.01 of $100 · $0.01 pending');
+    expect(spendRow({ budget: 100, posted: 40, pending: 0.01 }).spentLabel).toBe('$40.01 of $100 ·\u00a0$0.01\u00a0pending');
   });
 
   // [A14] (P1) rollover envelope: "of" shows the available envelope, pending still named.
   it('[A14] rollover with carryover → "of" the envelope, plus pending', () => {
     const row = spendRow({ budget: 100, posted: 30, pending: 20, rollover: true, carryover: 50 });
-    expect(row.spentLabel).toBe('$50 of $150 · $20 pending');
+    expect(row.spentLabel).toBe('$50 of $150 ·\u00a0$20\u00a0pending');
   });
 });
 

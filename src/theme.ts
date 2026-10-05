@@ -192,6 +192,12 @@ export function fmtExact(n: number): string {
   });
 }
 
+// fmtExact with a real minus (−) when it rounds below zero at the cent.
+export function fmtSignedExact(n: number): string {
+  if (Math.round(n * 100) < 0) return '−' + fmtExact(n);
+  return fmtExact(n);
+}
+
 // One decimal place of `unit`, but ONLY when that says the figure exactly; otherwise the full
 // amount. Rounding is deliberately not allowed: this labels a LIMIT, and rounding up would name
 // an amount the limit itself rejects — "$1.3B or less" when the real cap is $1.25B sends the user
