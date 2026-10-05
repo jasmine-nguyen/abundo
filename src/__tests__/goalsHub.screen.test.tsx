@@ -322,10 +322,10 @@ describe('navigation', () => {
     expect(mockPush).toHaveBeenCalledWith('/goal/edit');
   });
 
-  it('a goal card routes to the edit screen with its id', async () => {
+  it('a goal card routes to its goal page (WHIT-749)', async () => {
     await renderWithQueries(<Goals />);
     fireEvent.press(screen.getByTestId('goal-card-g1'));
-    expect(mockPush).toHaveBeenCalledWith('/goal/edit?id=g1');
+    expect(mockPush).toHaveBeenCalledWith('/goal/g1');
   });
 
   it('the mortgage card routes to the full mortgage screen', async () => {
@@ -406,13 +406,13 @@ it('a manual goal with a null as-of shows "Balance not set" and no stale tag', a
 });
 
 // [A17] REGRESSION: adding the nested "Update balance" button inside the card must not steal taps
-// on the card body — tapping the card (not the button) still routes to the edit screen, and the
+// on the card body — tapping the card (not the button) still routes to the goal page, and the
 // sheet does NOT open. Mirrors the existing synced-card nav test, but for a MANUAL card.
-it('tapping a manual goal card body still routes to edit (not the sheet)', async () => {
+it('tapping a manual goal card body still routes to the goal page (not the sheet)', async () => {
   seedHub({ goals: [PAYDOWN] });
   await renderWithQueries(<Goals />);
   fireEvent.press(screen.getByTestId('goal-card-g2'));
-  expect(mockPush).toHaveBeenCalledWith('/goal/edit?id=g2');
+  expect(mockPush).toHaveBeenCalledWith('/goal/g2');
   expect(mockOpenGoalBalance).not.toHaveBeenCalled();
 });
 

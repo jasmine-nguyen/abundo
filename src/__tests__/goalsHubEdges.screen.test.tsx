@@ -125,13 +125,13 @@ describe('mortgage card — the third (null, no-error) branch', () => {
 });
 
 describe('navigation — url-encoding of the goal id', () => {
-  // [A26] a goal id with reserved characters is percent-encoded into the edit route, so the
+  // [A26] a goal id with reserved characters is percent-encoded into the goal page route, so the
   // param round-trips intact. Guards the encodeURIComponent call.
   it('encodes a goal id that needs escaping', async () => {
     const goal: GoalRecord = { id: 'a b&c', name: 'Weird id', icon: 'wallet', direction: 'grow', target_amount: 10000, target_date: '2026-08-15', account_id: 'up-spending' };
     seedHub({ goals: [goal] });
     await renderWithQueries(<Goals />);
     fireEvent.press(screen.getByTestId('goal-card-a b&c'));
-    expect(mockPush).toHaveBeenCalledWith('/goal/edit?id=a%20b%26c');
+    expect(mockPush).toHaveBeenCalledWith('/goal/a%20b%26c');
   });
 });

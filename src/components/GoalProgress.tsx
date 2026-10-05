@@ -4,13 +4,32 @@ import { C, FONT, fmt, tint } from '../theme';
 import { MONTHS } from '../dateutil';
 import type { BalanceGoalStatus, BalanceGoalView } from '../context';
 import type { GoalRecord } from '../api';
+import { Icon } from '../icons';
 import { Bar } from './ui';
 
 // "2026-08-15" -> "Aug 2026". Parsed by hand (no Date) so the label can't shift across a
 // timezone boundary. Falls back to the raw ISO if it's somehow unparseable.
-export function byLabel(iso: string): string {
+function byLabel(iso: string): string {
   const [y, m] = iso.split('-').map(Number);
   return MONTHS[m - 1] ? `${MONTHS[m - 1]} ${y}` : iso;
+}
+
+// WHIT-749: a goal's head row — icon chip, name, "Saving toward $Y · by Mon YYYY" and the
+// headline % (only when there's a bar to back it). Shared by the Goals-tab card and the goal page.
+export function GoalHead({ goal, view }: { goal: GoalRecord; view: BalanceGoalView }) {
+  const pct = view.progress != null ? Math.round(view.progress * 100) : null;
+  return (
+    <View style={styles.head}>
+      <View style={styles.chip}><Icon name={goal.icon} size={22} color={C.accentSoft} /></View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={styles.name} numberOfLines={1}>{goal.name}</Text>
+        <Text style={styles.sub}>
+          {goal.direction === 'grow' ? 'Saving toward' : 'Paying down'} {fmt(goal.target_amount)} · by {byLabel(goal.target_date)}
+        </Text>
+      </View>
+      {pct != null && <Text style={styles.pct}>{pct}%</Text>}
+    </View>
+  );
 }
 
 // WHIT-748: the calm pace pill. Behind is amber, never the alarm rose.
@@ -100,6 +119,11 @@ export function GoalProgress({ goal, view, onPastDue }: { goal: GoalRecord; view
 }
 
 const styles = StyleSheet.create({
+  head: { flexDirection: 'row', alignItems: 'center', gap: 13 },
+  chip: { width: 42, height: 42, borderRadius: 13, backgroundColor: tint(C.accentAlt, 0.14), alignItems: 'center', justifyContent: 'center' },
+  name: { fontFamily: FONT.body, fontSize: 15.5, fontWeight: '700', color: C.textBright, letterSpacing: -0.2 },
+  sub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
+  pct: { fontFamily: FONT.display, fontSize: 18, fontWeight: '800', color: C.text, letterSpacing: -0.5 },
   meta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   amount: { fontFamily: FONT.display, fontSize: 13, fontWeight: '700', color: C.textMid, letterSpacing: -0.2 },
   pacePill: { borderRadius: 12, paddingVertical: 4, paddingHorizontal: 10 },

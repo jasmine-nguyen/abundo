@@ -1055,6 +1055,7 @@ export interface GoalsScreenData {
   // The mortgage summary card's OWN first-load error, kept separate from the aggregate so a
   // mortgage hiccup shows the card's "—" + retry, never blanks the goals list.
   mortgageError: boolean;
+  payCycleError: boolean; // WHIT-72: first-load pay-cycle failure → the goal page's pace can't be trusted
   isLoading: boolean; // first load, nothing cached yet → spinner
   isError: boolean; // a PRIMARY read failed after retries → inline retry
   refetch: () => void; // force a refresh (inline Retry / pull-to-refresh)
@@ -1103,6 +1104,7 @@ export function useGoalsScreenData(): GoalsScreenData {
     // balance — real OR a genuine "not polled yet" null — survives a failed background
     // refetch as honest waiting copy; only a NEVER-loaded read flags the card's error.
     mortgageError: firstLoadError(homeLoanQuery),
+    payCycleError: firstLoadError(payCycleQuery),
     isLoading: goalsQuery.isLoading || payCycleQuery.isLoading,
     isError: goalsQuery.isError || payCycleQuery.isError,
     refetch: combined.refetch,

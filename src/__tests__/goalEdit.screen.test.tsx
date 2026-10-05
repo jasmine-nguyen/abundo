@@ -31,6 +31,8 @@ const mockSaveGoal = jest.fn(async (_editId: string | null, _body: unknown) => t
 const mockDeleteGoal = jest.fn(async (_id: string) => true);
 const mockShowToast = jest.fn();
 const mockBack = jest.fn();
+const mockReplace = jest.fn();
+const mockDismissAll = jest.fn();
 
 let mockParams: { id?: string };
 let goals: GoalRecord[];
@@ -47,7 +49,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => mockParams,
-  useRouter: () => ({ back: mockBack, push: jest.fn() }),
+  useRouter: () => ({ back: mockBack, replace: mockReplace, dismissAll: mockDismissAll, push: jest.fn() }),
 }));
 
 import GoalEdit from '../../app/goal/edit';
@@ -121,6 +123,8 @@ beforeEach(() => {
   mockDeleteGoal.mockClear().mockImplementation(async () => true);
   mockShowToast.mockClear();
   mockBack.mockClear();
+  mockReplace.mockClear();
+  mockDismissAll.mockClear();
   mockParams = {};
   goals = [];
   balances = [balance('acc-1', 2500)];
@@ -268,12 +272,15 @@ describe('edit', () => {
     expect(screen.queryByDisplayValue('Server name')).toBeNull();
   });
 
-  it('Delete → deleteGoal(id) once, then back', async () => {
+  // WHIT-749: the goal's page is gone too, so delete returns straight to the Goals tab.
+  it('Delete → deleteGoal(id) once, then straight to the Goals tab', async () => {
     await renderForm();
     await press('goal-delete');
     expect(mockDeleteGoal).toHaveBeenCalledTimes(1);
     expect(mockDeleteGoal).toHaveBeenCalledWith('g1');
-    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/goals'));
+    expect(mockDismissAll).toHaveBeenCalledTimes(1);
+    expect(mockBack).not.toHaveBeenCalled();
   });
 });
 
@@ -307,7 +314,7 @@ describe('WHIT-249: an unexpected writer throw re-enables the button', () => {
     await press('goal-delete');
     await press('goal-delete');
     expect(mockDeleteGoal).toHaveBeenCalledTimes(2);
-    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledTimes(1));
     expect(errorSpy).toHaveBeenCalled();
   });
 });
@@ -464,6 +471,7 @@ describe('writer failure does not navigate', () => {
     expect(mockDeleteGoal).toHaveBeenCalledTimes(1);
     await act(async () => {});
     expect(mockBack).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 });
 

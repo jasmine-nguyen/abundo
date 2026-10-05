@@ -2,7 +2,7 @@ import React, { useCallback, useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmt, tint } from '../../src/theme';
-import { Icon, Glyph } from '../../src/icons';
+import { Glyph } from '../../src/icons';
 import { balanceGoalView, goalView, useAppContext } from '../../src/context';
 import { useGoalsScreenData } from '../../src/queries';
 import { useCheckpointCelebration } from '../../src/hooks/useCheckpointCelebration';
@@ -12,7 +12,7 @@ import { RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/compo
 import { SettingsButton } from '../../src/components/SettingsButton';
 import { Celebration } from '../../src/components/Celebration';
 import { PayoffSummary } from '../../src/components/PayoffSummary';
-import { GoalProgress, byLabel } from '../../src/components/GoalProgress';
+import { GoalProgress, GoalHead } from '../../src/components/GoalProgress';
 
 // WHIT-235: a manual balance is "stale" once it hasn't been updated in over 30 days — the
 // number the pace math trusts is getting old, so the card nudges the user to refresh it.
@@ -28,8 +28,8 @@ function balanceIsStale(manualAsOf: string | null | undefined): boolean {
 // WHIT-233: the Goals hub — the tab formerly showing only the mortgage. Lists the user's
 // savings/debt goals (each a progress + pace card off the pure balanceGoalView engine) and
 // keeps the home loan as its own always-present card that taps into the full mortgage screen
-// (relocated to app/mortgage). Adding/editing a goal is a later card; the "+" and the empty
-// state route to the /goal/edit stub for now.
+// (relocated to app/mortgage). Tapping a goal opens its read-only page (app/goal/[id], WHIT-749);
+// the "+" and the empty state route to /goal/edit to add one.
 export default function Goals() {
   const router = useRouter();
   const s = useAppContext(); // openGoalBalance — the in-place manual-balance update sheet (WHIT-235)
@@ -150,8 +150,6 @@ export default function Goals() {
             </Text>
           ) : (
             goalViews.map(({ goal, view: v }) => {
-              const pct = v.progress != null ? Math.round(v.progress * 100) : null;
-              const grow = goal.direction === 'grow';
               // A manual goal (no synced account) keeps its own balance — show when it was last
               // set + an in-place "Update balance" affordance. Synced goals track the live feed.
               const manual = !goal.account_id;
@@ -161,20 +159,10 @@ export default function Goals() {
                 <Pressable
                   key={goal.id}
                   testID={`goal-card-${goal.id}`}
-                  onPress={editGoal}
+                  onPress={() => router.push(`/goal/${encodeURIComponent(goal.id)}`)}
                   style={styles.goalCard}
                 >
-                  <View style={styles.goalHead}>
-                    <View style={styles.goalChip}><Icon name={goal.icon} size={22} color={C.accentSoft} /></View>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.goalName} numberOfLines={1}>{goal.name}</Text>
-                      <Text style={styles.goalSub}>
-                        {grow ? 'Saving toward' : 'Paying down'} {fmt(goal.target_amount)} · by {byLabel(goal.target_date)}
-                      </Text>
-                    </View>
-                    {pct != null && <Text style={styles.goalPct}>{pct}%</Text>}
-                  </View>
-
+                  <GoalHead goal={goal} view={v} />
                   <GoalProgress goal={goal} view={v} onPastDue={editGoal} />
 
                   {manual && (
@@ -238,11 +226,6 @@ const styles = StyleSheet.create({
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textDim, letterSpacing: 0.5, marginBottom: 12, marginLeft: 2 },
 
   goalCard: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, padding: 16, marginBottom: 12 },
-  goalHead: { flexDirection: 'row', alignItems: 'center', gap: 13 },
-  goalChip: { width: 42, height: 42, borderRadius: 13, backgroundColor: tint(C.accentAlt, 0.14), alignItems: 'center', justifyContent: 'center' },
-  goalName: { fontFamily: FONT.body, fontSize: 15.5, fontWeight: '700', color: C.textBright, letterSpacing: -0.2 },
-  goalSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
-  goalPct: { fontFamily: FONT.display, fontSize: 18, fontWeight: '800', color: C.text, letterSpacing: -0.5 },
 
   // WHIT-235: the manual-goal "as of <date>" + Update balance row, under the pace foot.
   manualRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.hairline },
