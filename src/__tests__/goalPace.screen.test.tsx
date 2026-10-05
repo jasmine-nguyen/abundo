@@ -10,8 +10,7 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { styleOf } from './support/layout';
-import { seedGoalsHub } from './support/goalsScreen';
-import { EMPTY_LOAN_FACTS } from './factory';
+import { GOAL_START, GOAL_TODAY, growGoal, seedPaceHub } from './support/goalPace';
 import { C } from '../theme';
 import type { GoalRecord } from '../api';
 
@@ -25,19 +24,15 @@ jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }), useFoc
 
 import Goals from '../../app/(tabs)/goals';
 
-const START = { start_date: '2026-06-06', target_date: '2026-08-15' };
-const grow = (id: string, account: string, over: Partial<GoalRecord> = {}): GoalRecord => ({
-  id, name: `Grow ${id}`, icon: 'wallet', direction: 'grow', target_amount: 10000, target_date: '2026-08-15', account_id: account, ...over,
-});
 // No start → no pill. 4000 of 10000.
-const PLAIN = grow('plain', 'acct-plain');
+const PLAIN = growGoal('plain');
 // start 2000: 8000 → 0.75 (ahead by 0.25 × 8000 = $2,000); 6000 → 0.5 (on pace).
-const AHEAD = grow('ahead', 'acct-ahead', { ...START, start_balance: 2000 });
-const ON_PACE = grow('onpace', 'acct-onpace', { ...START, start_balance: 2000 });
+const AHEAD = growGoal('ahead', { ...GOAL_START, start_balance: 2000 });
+const ON_PACE = growGoal('onpace', { ...GOAL_START, start_balance: 2000 });
 // Paydown from 20000 owed, now 12000 → 0.4 vs 0.5 → behind; 8000 paid down of 20000.
 const DEBT: GoalRecord = {
   id: 'debt', name: 'Car loan', icon: 'car', direction: 'paydown', target_amount: 0, baseline: 20000,
-  manual_balance: 12000, manual_as_of: '2026-07-01', account_id: null, ...START, start_balance: 20000,
+  manual_balance: 12000, manual_as_of: '2026-07-01', account_id: null, ...GOAL_START, start_balance: 20000,
 };
 
 const server = installFakeServer();
@@ -45,14 +40,8 @@ useTestQueryClient();
 
 beforeEach(() => {
   resetAuth();
-  pinToday(new Date(2026, 6, 11));
-  seedGoalsHub(server, {
-    goals: [PLAIN, AHEAD, ON_PACE, DEBT],
-    payCycle: { length: 14, last_pay_date: '2026-06-06' },
-    balances: { 'acct-plain': 4000, 'acct-ahead': 8000, 'acct-onpace': 6000 },
-    loanFacts: EMPTY_LOAN_FACTS,
-    homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:00:00Z' },
-  });
+  pinToday(GOAL_TODAY);
+  seedPaceHub(server, [PLAIN, AHEAD, ON_PACE, DEBT], { 'acct-plain': 4000, 'acct-ahead': 8000, 'acct-onpace': 6000 });
 });
 afterEach(() => { jest.useRealTimers(); });
 

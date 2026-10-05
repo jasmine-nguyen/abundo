@@ -11,8 +11,7 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { styleOf } from './support/layout';
-import { seedGoalsHub } from './support/goalsScreen';
-import { EMPTY_LOAN_FACTS } from './factory';
+import { GOAL_START, GOAL_TODAY, growGoal, seedPaceHub } from './support/goalPace';
 import { C, tint } from '../theme';
 import type { GoalRecord } from '../api';
 
@@ -26,23 +25,19 @@ jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }), useFoc
 
 import Goals from '../../app/(tabs)/goals';
 
-const START = { start_date: '2026-06-06', target_date: '2026-08-15' };
-const grow = (id: string, over: Partial<GoalRecord> = {}): GoalRecord => ({
-  id, name: `Grow ${id}`, icon: 'wallet', direction: 'grow', target_amount: 10000, target_date: '2026-08-15', account_id: `acct-${id}`, ...over,
-});
 // 2000 start → 8000: ahead by $2,000. 6000: on pace.
-const AHEAD = grow('ahead', { ...START, start_balance: 2000 });
-const ON_PACE = grow('onpace', { ...START, start_balance: 2000 });
+const AHEAD = growGoal('ahead', { ...GOAL_START, start_balance: 2000 });
+const ON_PACE = growGoal('onpace', { ...GOAL_START, start_balance: 2000 });
 // target 2, start 0, balance 1.5 → ahead by $0.50 → plain "Ahead".
-const TINY = grow('tiny', { target_amount: 2, ...START, start_balance: 0 });
+const TINY = growGoal('tiny', { target_amount: 2, ...GOAL_START, start_balance: 0 });
 // A start but no balance polled yet → no dollars, no pill.
-const UNPOLLED = grow('unpolled', { ...START, start_balance: 2000 });
+const UNPOLLED = growGoal('unpolled', { ...GOAL_START, start_balance: 2000 });
 // Past the target → the bar is full; dollars stop at the target.
-const OVER = grow('over');
+const OVER = growGoal('over');
 // Paydown with a start but no baseline: 20000 → 8000 owed, ahead, but no bar scale.
 const NO_SCALE: GoalRecord = {
   id: 'noscale', name: 'Card', icon: 'cash', direction: 'paydown', target_amount: 0, account_id: null,
-  manual_balance: 8000, manual_as_of: '2026-07-01', ...START, start_balance: 20000,
+  manual_balance: 8000, manual_as_of: '2026-07-01', ...GOAL_START, start_balance: 20000,
 };
 
 const server = installFakeServer();
@@ -50,14 +45,8 @@ useTestQueryClient();
 
 beforeEach(() => {
   resetAuth();
-  pinToday(new Date(2026, 6, 11));
-  seedGoalsHub(server, {
-    goals: [AHEAD, ON_PACE, TINY, UNPOLLED, OVER, NO_SCALE],
-    payCycle: { length: 14, last_pay_date: '2026-06-06' },
-    balances: { 'acct-ahead': 8000, 'acct-onpace': 6000, 'acct-tiny': 1.5, 'acct-over': 12000 },
-    loanFacts: EMPTY_LOAN_FACTS,
-    homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:00:00Z' },
-  });
+  pinToday(GOAL_TODAY);
+  seedPaceHub(server, [AHEAD, ON_PACE, TINY, UNPOLLED, OVER, NO_SCALE], { 'acct-ahead': 8000, 'acct-onpace': 6000, 'acct-tiny': 1.5, 'acct-over': 12000 });
 });
 afterEach(() => { jest.useRealTimers(); });
 
