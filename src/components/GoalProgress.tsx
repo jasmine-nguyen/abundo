@@ -64,7 +64,7 @@ function footRight(view: BalanceGoalView): string | null {
 // WHIT-749: a goal's progress block — bar, amount line, pace pill, milestones count and the
 // pace foot. Shared by the Goals-tab card and the goal page so the two can't drift.
 export function GoalProgress({ goal, view, onPastDue }: { goal: GoalRecord; view: BalanceGoalView; onPastDue: () => void }) {
-  const pace = paceLabel(view.status, view.aheadBy);
+  const pace = view.targetReached ? null : paceLabel(view.status, view.aheadBy);
   const amount = amountLabel(goal, view);
   // A met goal past its date has nothing to nudge about — it falls through to the normal foot.
   const nudge = view.pastDue && (view.pacePerPayday == null || view.pacePerPayday > 0);
