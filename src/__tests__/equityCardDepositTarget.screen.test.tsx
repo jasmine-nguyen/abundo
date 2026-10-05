@@ -14,6 +14,7 @@ import { LOAN_FACTS } from './factory';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { resetRouter } from './support/routerMock';
 import { seedGoal } from './support/goalsScreen';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -21,10 +22,7 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => ({}) };
 });
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn(), back: jest.fn() }),
-  useFocusEffect: () => {},
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Mortgage from '../../app/mortgage';
 import Milestone from '../../app/milestone';
@@ -32,7 +30,7 @@ import Milestone from '../../app/milestone';
 const server = installFakeServer();
 useTestQueryClient();
 
-beforeEach(() => { resetAuth(); });
+beforeEach(() => { resetAuth(); resetRouter(); });
 
 it('[A8] mortgage equity chip ROUNDS the pct: equity 49,600 / target 100,000 -> "50%"', async () => {
   // 49600/100000 = 49.6% -> Math.round -> 50. balance 566400 -> equity 49600.

@@ -12,6 +12,7 @@ import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedGoal } from './support/goalsScreen';
+import { routerSpies, resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import type { MilestoneRecord } from '../api';
 
@@ -27,12 +28,7 @@ jest.mock('../context', () => {
   return { ...actual, useAppContext: () => ({ saveMilestones: mockSaveMilestones, showToast: mockShowToast }) };
 });
 
-const mockPush = jest.fn();
-const mockBack = jest.fn();
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush, back: mockBack }),
-  useFocusEffect: () => {},
-}));
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Milestone from '../../app/milestone';
 import Mortgage from '../../app/mortgage';
@@ -45,7 +41,7 @@ useTestQueryClient();
 // EMPTY_LOAN_FACTS to exercise the "set this up" empty state.
 beforeEach(() => {
   resetAuth();
-  mockPush.mockClear();
+  resetRouter();
   seedGoal(server);
 });
 
@@ -123,7 +119,7 @@ it('does NOT show a balance error when only repayment/loanFacts failed (balance 
 it('navigates to /milestone from the mortgage screen Sprint summary', async () => {
   await renderWithQueries(<Mortgage />);
   fireEvent.press(screen.getByTestId('milestone-link'));
-  expect(mockPush).toHaveBeenCalledWith('/milestone');
+  expect(routerSpies.push).toHaveBeenCalledWith('/milestone');
 });
 
 it('Mortgage-screen Sprint summary shows real progress when the balance has loaded', async () => {
@@ -211,7 +207,7 @@ it('milestone screen shows an equity set-up prompt when the property value is un
   // ...but equity is a prompt, not a fabricated figure.
   expect(screen.getByText(/Add your home's value/)).toBeTruthy();
   fireEvent.press(screen.getByText('Add loan details →'));
-  expect(mockPush).toHaveBeenCalledWith('/loan');
+  expect(routerSpies.push).toHaveBeenCalledWith('/loan');
 });
 
 // --- equity card copy: gap coverage (empty-state body, CTA routing, milestone subtitle) ---
@@ -230,7 +226,7 @@ it('mortgage equity card "Add loan details →" routes to /loan', async () => {
   seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
   await renderWithQueries(<Mortgage />);
   fireEvent.press(screen.getByText('Add loan details →'));
-  expect(mockPush).toHaveBeenCalledWith('/loan');
+  expect(routerSpies.push).toHaveBeenCalledWith('/loan');
 });
 
 it('milestone equity card known-state shows the current-home subtitle, not "Investment property #2"', async () => {
@@ -335,8 +331,8 @@ it('a known (last-good) balance WINS over a refetch error — shows the balance,
 
 // ===== WHIT-377 (folded from milestoneEdit.screen.test.tsx) =====
 // The milestone editor screen. It reads the saved plan from the fake server's /milestones; the
-// shared ../context mock supplies saveMilestones/showToast, and expo-router's back is the
-// shared mockBack. The editor-only fixtures (SAVED, labelAt, its own beforeEach seeding the
+// shared ../context mock supplies saveMilestones/showToast, and expo-router's back is
+// routerSpies.back. The editor-only fixtures (SAVED, labelAt, its own beforeEach seeding the
 // saved plan) are block-scoped here.
 describe('WHIT-377 milestone editor', () => {
   const SAVED: MilestoneRecord[] = [
@@ -350,7 +346,6 @@ describe('WHIT-377 milestone editor', () => {
   beforeEach(() => {
     mockSaveMilestones.mockClear();
     mockShowToast.mockClear();
-    mockBack.mockClear();
     server.seed('/milestones', SAVED);
   });
 
@@ -441,7 +436,7 @@ describe('WHIT-377 milestone editor', () => {
     const sent = mockSaveMilestones.mock.calls[0][0];
     expect(sent.map((m) => m.label)).toEqual(['Start', 'Midway', 'Payoff']);
     expect(sent.map((m) => m.targetBalance)).toEqual([300000, 200000, 100000]);
-    expect(mockBack).toHaveBeenCalled();
+    expect(routerSpies.back).toHaveBeenCalled();
   });
 
   // ===== WHIT-377 adversarial gaps (folded in) — cold-cache hydrate race + reorder bounds =====
@@ -526,13 +521,12 @@ describe('WHIT-459 empty-milestones gaps', () => {
 });
 
 // Editor gaps: same module-level mocks; a minimal labelAt + a beforeEach that clears the
-// writer/nav spies (the WHIT-377 describe's beforeEach is out of scope here).
+// writer spy; the top-level resetRouter clears nav (the WHIT-377 describe's beforeEach is out of scope here).
 describe('WHIT-459 suggested-plan gaps (editor)', () => {
   const labelAt = (i: number) => screen.getByTestId(`milestone-label-${i}`).props.value;
 
   beforeEach(() => {
     mockSaveMilestones.mockClear();
-    mockBack.mockClear();
   });
 
   // Loading the suggested plan then SAVING must persist the template rows end-to-end through
@@ -549,7 +543,7 @@ describe('WHIT-459 suggested-plan gaps (editor)', () => {
     expect(sent.map((m: { label: string }) => m.label)).toEqual(['Kickoff', 'Quarter way', 'Halfway', 'Three-quarters', 'Target']);
     expect(sent.map((m: { targetBalance: number }) => m.targetBalance)).toEqual([544000, 420000, 295000, 170000, 55000]);
     await Promise.resolve();
-    expect(mockBack).toHaveBeenCalled();
+    expect(routerSpies.back).toHaveBeenCalled();
   });
 
   // During a COLD load (saved === undefined) the suggested-plan button must NOT render — offering
@@ -572,7 +566,6 @@ describe('WHIT-459 blank-seed save guard (editor)', () => {
   beforeEach(() => {
     mockSaveMilestones.mockClear();
     mockShowToast.mockClear();
-    mockBack.mockClear();
   });
 
   // A resolved new user (saved === []) opens on ONE BLANK row. Tapping Save WITHOUT filling it must

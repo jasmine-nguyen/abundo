@@ -13,7 +13,6 @@ import { resetAuth } from './support/authMock';
 import { resetRouter } from './support/routerMock';
 import { pinToday } from './support/clock';
 import { seedGoal } from './support/goalsScreen';
-import {  } from './support/routerMock';
 import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());

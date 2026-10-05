@@ -14,7 +14,6 @@ import { resetAuth } from './support/authMock';
 import { resetRouter } from './support/routerMock';
 import { pinToday } from './support/clock';
 import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
-import {  } from './support/routerMock';
 import type { LoanFacts } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
