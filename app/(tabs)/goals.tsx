@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-nati
 import { useRouter, useFocusEffect, useIsFocused } from 'expo-router';
 import { C, FONT, fmt, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { balanceGoalView, goalView, milestoneView, useAppContext } from '../../src/context';
+import { balanceGoalView, goalView, milestoneView, useAppContext, type BalanceGoalStatus } from '../../src/context';
 import { useGoalsScreenData } from '../../src/queries';
 import { useCheckpointCelebration } from '../../src/hooks/useCheckpointCelebration';
 import { celebrationSteps } from '../../src/checkpointCelebration';
@@ -31,6 +31,15 @@ function balanceIsStale(manualAsOf: string | null | undefined): boolean {
   today.setHours(0, 0, 0, 0);
   const days = Math.floor((today.getTime() - parseISODate(manualAsOf).getTime()) / 86_400_000);
   return days > STALE_DAYS;
+}
+
+// WHIT-748: the calm pace pill. Behind is amber, never the alarm rose.
+function paceLabel(status: BalanceGoalStatus | null, aheadBy: number | null): { text: string; color: string } | null {
+  if (status === 'on_track') return { text: 'On pace', color: C.good };
+  if (status === 'behind') return { text: 'A little behind', color: C.warn };
+  if (status !== 'ahead') return null;
+  if (aheadBy != null && aheadBy >= 1) return { text: `Ahead by ${fmt(aheadBy)}`, color: C.good };
+  return { text: 'Ahead', color: C.good };
 }
 
 // WHIT-233: the Goals hub — the tab formerly showing only the mortgage. Lists the user's
@@ -183,6 +192,10 @@ export default function Goals() {
               // set + an in-place "Update balance" affordance. Synced goals track the live feed.
               const manual = !goal.account_id;
               const stale = manual && balanceIsStale(goal.manual_as_of);
+              const pace = paceLabel(v.status, v.aheadBy);
+              const amount = v.movedAmount != null && v.spanAmount != null
+                ? `${fmt(v.movedAmount)} of ${fmt(v.spanAmount)}`
+                : null;
               return (
                 <Pressable
                   key={goal.id}
@@ -211,6 +224,17 @@ export default function Goals() {
                       markers={v.checkpointMarkers}
                     />
                   </View>
+
+                  {(amount || pace) && (
+                    <View style={styles.goalMeta}>
+                      {amount && <Text testID={`goal-amount-${goal.id}`} style={styles.goalAmount}>{amount}</Text>}
+                      {pace && (
+                        <View testID={`goal-pace-${goal.id}`} style={[styles.pacePill, { backgroundColor: tint(pace.color, 0.14) }]}>
+                          <Text style={[styles.pacePillText, { color: pace.color }]}>{pace.text}</Text>
+                        </View>
+                      )}
+                    </View>
+                  )}
 
                   {/* WHIT-486: the count travels with the dots — both show only when the bar has a
                       scale to place them on (markers non-empty), so it's never "N reached" + no dots. */}
@@ -301,6 +325,10 @@ const styles = StyleSheet.create({
   goalName: { fontFamily: FONT.body, fontSize: 15.5, fontWeight: '700', color: C.textBright, letterSpacing: -0.2 },
   goalSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
   goalPct: { fontFamily: FONT.display, fontSize: 18, fontWeight: '800', color: C.text, letterSpacing: -0.5 },
+  goalMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  goalAmount: { fontFamily: FONT.display, fontSize: 13, fontWeight: '700', color: C.textMid, letterSpacing: -0.2 },
+  pacePill: { borderRadius: 12, paddingVertical: 4, paddingHorizontal: 10 },
+  pacePillText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600' },
   goalCheckpoints: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim, marginTop: 8 },
   goalFoot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 11 },
   goalFootL: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.accentSoft },
