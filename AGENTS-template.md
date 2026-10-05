@@ -38,6 +38,11 @@ one line, or add a `# one at a time` line to the block to run them in order.
 <test command, e.g. npm test>
 ```
 
+iOS app? Agents check screens in the Simulator with the `simulator-check` skill
+(`.claude/skills/simulator-check/`, needs AXe: `brew install cameroncooke/axe/axe`).
+The build's QA only drives the Simulator when Metro is running from the build's
+own checkout; otherwise screen checks stay manual.
+
 ## Glossary
 
 Domain terms agents must use in names, tests and plans.

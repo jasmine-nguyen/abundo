@@ -101,6 +101,22 @@ A thorough, tickable checklist someone with no code context can follow. Split in
 
 - **Manual** — checks a human must run by hand (visual judgement, real external
   data, cross-device, offline). These go in `manual_checks` and into the PR.
+
+  If the project has an iOS app and `.claude/skills/simulator-check/SKILL.md`
+  exists, Read it and run its preflight. Your worktree's HEAD is the commit
+  under test, and the main checkout is at the path in your prompt. If the
+  preflight passes, run the screen and navigation checks there:
+  - A check that passes stays in `manual_checks`, rewritten as
+    `<check> — simulator-checked at <short HEAD sha> (screenshot /tmp/…)`, so
+    the user can see it was done and on which commit.
+  - A check that fails goes in `real_bugs` as
+    `screen — steps → what you saw (screenshot /tmp/…)`.
+
+  If the preflight fails, those checks stay in `manual_checks`, and the first
+  entry says why, e.g. `Simulator not checked: Metro serves a different commit`.
+  On a fix round, re-run only the screen checks the fixes touch. `manual_checks`
+  replaces your previous list each round, so always return the full list,
+  including checks you didn't re-run this round.
 - **Automatable** — deterministic, scriptable checks. Automate them in Part 2 to the
   test depth your prompt gives: every one when it says thorough, only the most
   important when it says focused.

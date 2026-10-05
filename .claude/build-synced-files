@@ -9,5 +9,6 @@ requirements.txt
 .claude/agents/reproducer.md
 .claude/agents/code-critic.md
 .claude/hooks/protect-build-state.py
+.claude/skills/simulator-check/SKILL.md
 .github/pull_request_template.md
 AGENTS-template.md
