@@ -29,6 +29,7 @@ import Transactions from '../../app/(tabs)/transactions';
 import { TabBar } from '../../app/(tabs)/_layout';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { tabBarProps } from './support/tabBar';
 import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
@@ -55,10 +56,7 @@ const seedFeed = (path: string, transactions: unknown[], nextCursor: string | nu
   server.seed(path, { transactions, nextCursor });
 const countFailed = () => waitFor(() => expect(queryClient.getQueryState(uncategorizedCountKey)?.status).toBe('error'));
 
-const barProps: React.ComponentProps<typeof TabBar> = {
-  state: { index: 0, routes: [{ key: 'transactions', name: 'transactions' }] },
-  navigation: { emit: () => ({ defaultPrevented: false }), navigate: jest.fn() },
-};
+const barProps = tabBarProps(['transactions']);
 
 async function renderUncategorizedTab() {
   await renderWithQueries(<Transactions />);

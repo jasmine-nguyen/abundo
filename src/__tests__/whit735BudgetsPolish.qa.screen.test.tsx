@@ -18,6 +18,7 @@ import { ChatProvider } from '../chat/ChatContext';
 import { resetRouter } from './support/routerMock';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { tabBarProps } from './support/tabBar';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { COFFEE } from './support/categories';
 import { showBudgets, heroTotals } from './support/budgetsScreen';
@@ -63,10 +64,7 @@ describe('WHIT-735 QA: top card amounts', () => {
   });
 });
 
-const barProps: React.ComponentProps<typeof TabBar> = {
-  state: { index: 0, routes: ['budgets', 'transactions', 'accounts', 'insights', 'goals'].map((name) => ({ key: name, name })) },
-  navigation: { emit: () => ({ defaultPrevented: false }), navigate: jest.fn() },
-};
+const barProps = tabBarProps();
 
 // [A6] (P0) every tab label is at least Apple's 11pt, and still shrinks to fit on one line.
 it('[A6] all five tab labels are 11pt or more and keep their one-line shrink-to-fit', async () => {

@@ -13,6 +13,7 @@ import { TabBar } from '../../app/(tabs)/_layout';
 import { ChatProvider } from '../chat/ChatContext';
 import { ASK_BUTTON_BOTTOM_CLEARANCE } from '../motion/useNavBarsHeader';
 import { installFakeServer } from './support/fakeServer';
+import { tabBarProps } from './support/tabBar';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 
@@ -21,10 +22,7 @@ useTestQueryClient();
 
 beforeEach(() => resetAuth());
 
-const barProps: React.ComponentProps<typeof TabBar> = {
-  state: { index: 0, routes: ['budgets', 'transactions', 'accounts', 'insights', 'goals'].map((name) => ({ key: name, name })) },
-  navigation: { emit: () => ({ defaultPrevented: false }), navigate: jest.fn() },
-};
+const barProps = tabBarProps();
 
 const flat = (style: unknown) => Object.assign({}, ...[style].flat(3).filter(Boolean));
 

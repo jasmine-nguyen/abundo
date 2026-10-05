@@ -36,6 +36,7 @@ import Transactions from '../../app/(tabs)/transactions';
 import { TabBar } from '../../app/(tabs)/_layout';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { tabBarProps } from './support/tabBar';
 import { useTestQueryClient, renderWithQueries, WithQueries, settle, loaded } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { transactionsKey, uncategorizedFeedKey } from '../queries';
@@ -51,10 +52,7 @@ const COUNT = '/transactions/uncategorized/count';
 // No categories are seeded, so every row resolves to Uncategorized.
 const seedFeed = (path: string, transactions: unknown[]) => server.seed(path, { transactions, nextCursor: null });
 
-const barProps: React.ComponentProps<typeof TabBar> = {
-  state: { index: 0, routes: [{ key: 'transactions', name: 'transactions' }] },
-  navigation: { emit: () => ({ defaultPrevented: false }), navigate: jest.fn() },
-};
+const barProps = tabBarProps(['transactions']);
 
 beforeEach(() => {
   resetAuth();
