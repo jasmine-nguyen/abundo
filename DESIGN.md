@@ -30,6 +30,10 @@ typography:
     fontSize: "44px"
     fontWeight: 800
     letterSpacing: "-1.5px"
+  hero-stat:
+    fontFamily: "Inter Tight"
+    fontSize: "17px"
+    fontWeight: 700
   headline:
     fontFamily: "Inter Tight"
     fontSize: "30px"
@@ -40,11 +44,21 @@ typography:
     fontSize: "19px"
     fontWeight: 700
     letterSpacing: "-0.2px"
+  row-amount:
+    fontFamily: "Inter Tight"
+    fontSize: "20px"
+    fontWeight: 700
+    letterSpacing: "-0.5px"
   amount:
     fontFamily: "Inter Tight"
     fontSize: "16px"
     fontWeight: 700
     letterSpacing: "-0.3px"
+  row-title:
+    fontFamily: "Inter"
+    fontSize: "16px"
+    fontWeight: 600
+    letterSpacing: "-0.2px"
   body:
     fontFamily: "Inter"
     fontSize: "15px"

@@ -340,6 +340,10 @@
         "displayName": "Hero number",
         "purpose": "The one big figure on a hero card."
       },
+      "hero-stat": {
+        "displayName": "Hero stat",
+        "purpose": "Spent, Budget and Next payday values under the hero numbers."
+      },
       "headline": {
         "displayName": "Headline",
         "purpose": "Secondary hero figure."
@@ -348,13 +352,21 @@
         "displayName": "Title",
         "purpose": "Screen headers."
       },
+      "row-amount": {
+        "displayName": "Row amount",
+        "purpose": "The amount on a budget row."
+      },
       "amount": {
         "displayName": "Amount",
-        "purpose": "Row and transaction amounts."
+        "purpose": "Transaction amounts."
+      },
+      "row-title": {
+        "displayName": "Row title",
+        "purpose": "Budget row names."
       },
       "body": {
         "displayName": "Body",
-        "purpose": "Merchant names, row titles, buttons."
+        "purpose": "Merchant names, buttons."
       },
       "body-small": {
         "displayName": "Body small",
