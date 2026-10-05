@@ -11,6 +11,7 @@ import React from 'react';
 import { screen, within } from '@testing-library/react-native';
 import { txn } from './factory';
 import { installFakeServer } from './support/fakeServer';
+import { tabBarProps, TAB_ROUTES } from './support/tabBar';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { COFFEE_SHORT } from './support/categories';
@@ -29,27 +30,10 @@ useTestQueryClient();
 
 const COUNT = '/transactions/uncategorized/count';
 
-const navigation = { emit: () => ({ defaultPrevented: false }), navigate: jest.fn() };
-
-const singleTab: React.ComponentProps<typeof TabBar> = {
-  state: { index: 0, routes: [{ key: 'transactions', name: 'transactions' }] },
-  navigation,
-};
+const singleTab = tabBarProps(['transactions']);
 
 // The full navigator route set, in order, incl. the Accounts tab at index 2.
-const fiveTabs: React.ComponentProps<typeof TabBar> = {
-  state: {
-    index: 1,
-    routes: [
-      { key: 'budgets', name: 'budgets' },
-      { key: 'transactions', name: 'transactions' },
-      { key: 'accounts', name: 'accounts' },
-      { key: 'insights', name: 'insights' },
-      { key: 'goals', name: 'goals' },
-    ],
-  },
-  navigation,
-};
+const fiveTabs = tabBarProps(TAB_ROUTES, 1);
 
 // getByText returns the inner text node; its host Pressable is two parents up (composite Text →
 // host View). Scope testID queries to that per-tab subtree so a dot is attributed to the right tab.
@@ -117,10 +101,7 @@ it('lights the dot from the server count when the recent list has nothing unfile
 // Fail-on-revert: re-add `{ name: 'settings', label: 'Settings', icon: 'navSettings' }` to TABS
 // → the settings route renders a "Settings" tab.
 it('renders the five remaining tabs and never a Settings tab, even when a settings route is present', async () => {
-  const withSettings: React.ComponentProps<typeof TabBar> = {
-    state: { index: 0, routes: [...fiveTabs.state.routes, { key: 'settings', name: 'settings' }] },
-    navigation,
-  };
+  const withSettings = tabBarProps([...TAB_ROUTES, 'settings']);
   await renderWithQueries(<TabBar {...withSettings} />);
   for (const label of ['Budgets', 'Transactions', 'Accounts', 'Insights', 'Goals']) {
     expect(screen.getByText(label)).toBeTruthy();

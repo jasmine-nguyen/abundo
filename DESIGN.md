@@ -60,7 +60,7 @@ typography:
     letterSpacing: "0.3px"
   tab-label:
     fontFamily: "Inter"
-    fontSize: "10.5px"
+    fontSize: "11px"
     fontWeight: 600
 rounded:
   check: "7px"
@@ -191,14 +191,14 @@ Categories have their own fixed hues and are not part of the UI palette above. `
 **Character:** Inter Tight's compressed, heavy numerals make a dollar figure feel solid and celebratory. Inter keeps everything around it quiet and legible.
 
 ### Hierarchy
-- **Hero number** (800, 44pt, −1.5 tracking, no fixed line-height so it scales with text size): the big number on a hero card. On Budgets, days left and money left are an equal pair at this size (deliberate, WHIT-706).
+- **Hero number** (800, 44pt, −1.5 tracking, no fixed line-height so it scales with text size): the big number on a hero card. On Budgets, days left and money left are an equal pair at this size (deliberate, WHIT-706), with Spent · Budget · Next payday beneath.
 - **Headline** (800, 30pt, −1 tracking): a secondary figure, such as a payoff amount.
 - **Title** (700, 19pt, −0.2 tracking): screen headers, centred between two 40pt slots.
 - **Amount** (700, 16pt, −0.3 tracking): transaction and row amounts, in Inter Tight.
 - **Body** (600, 15pt): merchant names, row titles, button labels (700 on buttons).
 - **Body small** (600, 13pt): meta lines, hero eyebrows, pill text.
 - **Label** (700, 12pt, +0.3 tracking): section labels above groups of cards, in Ink Mid.
-- **Tab label** (600, 10.5pt): tab bar labels.
+- **Tab label** (600, 11pt): tab bar labels.
 
 Sizes are set in points and grow with the iPhone's text-size setting (Dynamic Type). Nothing turns scaling off, so very large settings can crowd tight rows.
 
@@ -247,10 +247,10 @@ Pill-shaped switch for "This cycle / Last cycle" and "Spending / Earning". A Nig
 - **Background:** Night Card.
 - **Shadow strategy:** none (see Elevation & Depth).
 - **Border:** 1pt Hairline.
-- **Internal padding:** 16pt (18pt on budget detail).
+- **Internal padding:** 16pt (18pt on budget detail). Budget rows are 16pt top / 14pt bottom; a short "nothing spent yet" row keeps the same padding and is short only because it has no bar or pace line.
 
 ### Hero card (signature)
-The one bright surface per screen. A 150° gradient (Tokyo Blue → Dusk Indigo → Dusk Lilac) clipped to a 26pt radius, with two translucent white circles overflowing the top-right corner. Content is Night ink: a muted eyebrow (13pt, ~62% ink), the hero number (44pt Inter Tight 800) — on Budgets, two side by side (days left, money left) at equal weight — and a bottom row with a small translucent ink pill (12pt radius). Used on Budgets, Insights, Mortgage and Milestones.
+The one bright surface per screen. A 150° gradient (Tokyo Blue → Dusk Indigo → Dusk Lilac) clipped to a 26pt radius, with two translucent white circles overflowing the top-right corner. Content is Night ink: a muted eyebrow (13pt, ~62% ink), the hero number (44pt Inter Tight 800), and a bottom row with a small translucent ink pill (12pt radius). On Budgets the card instead has two equal 44pt numbers (days left, money left or over) over a full-width row of three labelled values: Spent · Budget · Next payday. Its amounts show cents only when they have them. Used on Budgets, Insights, Mortgage and Milestones.
 
 ### Progress bars
 - **BudgetBar:** a 10pt track (`rgba(255,255,255,.07)`) with a solid posted fill, a translucent pending fill after it, and a white "where you should be by now" tick below. This is how pending spend shows up honestly.
@@ -265,7 +265,7 @@ A 42×42pt rounded square (13pt radius) holding a category glyph in the category
 - **Focus:** no custom ring; the system caret carries focus.
 
 ### Navigation
-- **Tab bar:** a custom floating bar on Night with a hairline top border and five tabs (Budgets, Transactions, Accounts, Insights, Goals). 24pt custom glyphs over 10.5pt labels; active is Tokyo Blue, inactive Ink Faint. A Bad Rose dot with a Night ring flags uncategorised transactions. Tabs cross-fade on switch, and the fade is off under "reduce motion".
+- **Tab bar:** a custom floating bar on Night with a hairline top border and five tabs (Budgets, Transactions, Accounts, Insights, Goals). 24pt custom glyphs over 11pt labels; active is Tokyo Blue, inactive Ink Faint. A Bad Rose dot with a Night ring flags uncategorised transactions. Tabs cross-fade on switch, and the fade is off under "reduce motion".
 - **Header:** a custom centred 19pt title between two 40pt slots; either slot can hold an icon button.
 - **Sheets:** bottom sheets rise 64pt on a spring (friction 12, tension 90) with a fade. They dismiss on a 56pt pull or a quick flick of the grabber, and appear instantly under "reduce motion".
 

@@ -28,7 +28,7 @@ describe('budget rows only speak up when off pace (WHIT-712)', () => {
   });
 
   it('the money line reads "$X of $Y · $Z pending"', () => {
-    expect(rowFor({ budget: 600, posted: 374, pending: 38 }).spentLabel).toBe('$412 of $600 · $38 pending');
+    expect(rowFor({ budget: 600, posted: 374, pending: 38 }).spentLabel).toBe('$412 of $600 ·\u00a0$38\u00a0pending');
     expect(rowFor({ budget: 100, posted: 40, pending: 0 }).spentLabel).toBe('$40 of $100');
   });
 

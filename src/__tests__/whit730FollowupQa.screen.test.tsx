@@ -37,9 +37,8 @@ it('[A1] a nested slim $0 row lines up with its full parent row and keeps its in
   expect(sidePadding('budget-row-latte')).toEqual(sidePadding('budget-row-coffee'));
   expect(sidePadding('budget-row-latte')).toEqual({ left: 16, right: 16 });
   expect(flat(screen.getByTestId('budget-row-latte')).marginLeft).toBe(18);
-  // Still slim: tighter top/bottom than the full row.
-  expect(flat(screen.getByTestId('budget-row-latte')).paddingTop).toBe(12);
-  expect(flat(screen.getByTestId('budget-row-latte')).paddingBottom).toBe(12);
+  expect(flat(screen.getByTestId('budget-row-latte')).paddingTop).toBe(16);
+  expect(flat(screen.getByTestId('budget-row-latte')).paddingBottom).toBe(14);
 });
 
 // [A2] (P0) the slim row is still slim (one bar on screen: the full row's), and opens.

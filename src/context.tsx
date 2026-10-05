@@ -2069,7 +2069,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     // "of" shows the AVAILABLE envelope so it reconciles with the remaining amount (available −
     // spent). `spent` includes pending; when some is pending, name it too (as Insights does).
     let spentLabel = `${fmtExact(spent)} of ${fmtSigned(available)}`;
-    if (pending > 0.005) spentLabel += ` · ${fmtExact(pending)} pending`;
+    if (pending > 0.005) spentLabel += ` · ${fmtExact(pending)} pending`;
     let note = carryoverNote(b);
     if (b.spread && Math.abs(b.spreadAdjustment) > 0.005) note = 'Includes spread bills';
     const unspent = !over && spent < 0.005;

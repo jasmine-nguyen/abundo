@@ -14,6 +14,7 @@ import { TabBar } from '../../app/(tabs)/_layout';
 import { ChatProvider } from '../chat/ChatContext';
 import { PRESSED } from '../theme';
 import { installFakeServer } from './support/fakeServer';
+import { tabBarProps } from './support/tabBar';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 
@@ -22,10 +23,7 @@ useTestQueryClient();
 
 beforeEach(() => resetAuth());
 
-const barProps: React.ComponentProps<typeof TabBar> = {
-  state: { index: 0, routes: ['budgets', 'transactions'].map((name) => ({ key: name, name })) },
-  navigation: { emit: () => ({ defaultPrevented: false }), navigate: jest.fn() },
-};
+const barProps = tabBarProps(['budgets', 'transactions']);
 
 type Node = { props: { style?: unknown }; parent: Node | null };
 type Look = { opacity?: number; transform?: unknown };

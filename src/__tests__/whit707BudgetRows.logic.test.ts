@@ -44,7 +44,7 @@ describe('budgetViews rows (WHIT-707)', () => {
     expect(income.remainLabel).toBe('to go');
 
     // Pending gets its own words; the limit stays visible. No pending → unchanged.
-    expect(byId('coffee').spentLabel).toBe('$50 of $100 · $10 pending');
+    expect(byId('coffee').spentLabel).toBe('$50 of $100 ·\u00a0$10\u00a0pending');
     expect(byId('coffee').showTarget).toBe(true);
     expect(byId('latte').spentLabel).toBe('$5 of $30');
 
