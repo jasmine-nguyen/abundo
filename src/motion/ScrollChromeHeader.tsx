@@ -11,6 +11,9 @@ import { C, FONT } from '../theme';
 import { useNavBarsHeader, floatingHeaderStyle } from './useNavBarsHeader';
 
 export const SCREEN_PADDING = 18;
+// The title sits in HEADER_BODY_HEIGHT minus 18px of padding (40px). 19px × 1.5 still fits, so at
+// the biggest text sizes it can't grow over the top of the screen's first card (WHIT-743).
+const TITLE_MAX_SCALE = 1.5;
 
 export function ScrollChromeHeader({
   title, left, right, refreshControl, contentContainerStyle, keyboardShouldPersistTaps, children,
@@ -34,7 +37,7 @@ export function ScrollChromeHeader({
       <View pointerEvents="none" style={[styles.statusStrip, { height: statusBarHeight }]} />
       <Animated.View style={[floatingHeaderStyle, { paddingTop: headerPaddingTop }, headerStyle]}>
         {left ?? <View style={styles.slot} />}
-        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.title} maxFontSizeMultiplier={TITLE_MAX_SCALE}>{title}</Text>
         {right ?? <View style={styles.slot} />}
       </Animated.View>
 

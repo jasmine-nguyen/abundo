@@ -2928,7 +2928,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
     const perDay = toGo > 0 ? toGo / Math.max(1, s.daysLeft) : 0;
     return {
       ...common,
-      spentBig: fmtExact(actual), ofBudget: 'of ' + fmt(b.budget),
+      spentBig: fmtExact(actual), ofBudget: 'of ' + fmt(b.budget),
       statusLabel: met ? 'Target reached — nice' : 'On track — keep earning',
       statusColor: met ? C.good : C.textInfo,
       postedPct, pendingPct, showTarget: true,

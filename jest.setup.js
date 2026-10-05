@@ -118,6 +118,20 @@ jest.mock('expo-auth-session', () => ({
   },
 }));
 
+// The React Native test setup reports fontScale 2, which would put every screen in its large-text
+// layout (WHIT-743). Default to normal text; a test that needs large text mocks the hook itself.
+// `virtual` on purpose: Jest caches each import's module id per worker, across test files, and a
+// virtual mock gets a different id from a normal one. Registering this one as virtual in every file
+// keeps that id the same everywhere, so a test's own (virtual) mock always replaces this default.
+jest.mock(
+  './src/hooks/useLargeText',
+  () => ({
+    ...jest.requireActual('./src/hooks/useLargeText'),
+    useLargeText: jest.fn(() => false),
+  }),
+  { virtual: true },
+);
+
 // Silence the act(...) / animation warnings that RN emits in the test renderer and
 // add nothing to signal.
 jest.spyOn(console, 'warn').mockImplementation(() => {});

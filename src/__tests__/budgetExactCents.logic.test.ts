@@ -43,7 +43,7 @@ describe('budgetDetail — income earn-target hero with cents (GAP)', () => {
   it('[A13] hero earned shows exact cents; "of $X" target stays whole', () => {
     const d = detail(1000.25);
     expect(d.spentBig).toBe('$1,000.25'); // fail-on-revert: fmt(1000.25) → '$1,000'
-    expect(d.ofBudget).toBe('of $5,000'); // target is a whole-dollar summary — unchanged
+    expect(d.ofBudget).toBe('of $5,000'); // target is a whole-dollar summary; no-break space keeps "of" with it (WHIT-743)
   });
 
   it('[A14] met target hero: earned-past-floor still exact to the cent', () => {
