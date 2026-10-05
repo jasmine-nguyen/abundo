@@ -20,8 +20,7 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { resetAuth } from './support/authMock';
 import { resetRouter } from './support/routerMock';
 import { pinToday } from './support/clock';
-import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
-import { EMPTY_LOAN_FACTS } from './factory';
+import { seedHubWith, type GoalsHubSeed } from './support/goalsScreen';
 import type { LoanFacts } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
@@ -32,7 +31,6 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import Goals from '../../app/(tabs)/goals';
 
-const PAY_CYCLE = { length: 14, last_pay_date: '2026-06-06' };
 const EYEBROW = 'YOUR HOME LOAN · BALANCE OWING';
 // Fully-populated LoanFacts → loanFactsReady true; original 800k well above the 596,642 balance →
 // a genuine paydown → the RICH branch.
@@ -42,8 +40,7 @@ const server = installFakeServer();
 useTestQueryClient();
 
 // `balances` is account id → live balance (the old balanceFor lookup); an account left out is unpolled.
-const HUB: GoalsHubSeed = { payCycle: PAY_CYCLE, balances: {}, loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:00:00Z' } };
-const seedHub = (over: GoalsHubSeed = {}) => seedGoalsHub(server, { ...HUB, ...over });
+const seedHub = (over: GoalsHubSeed = {}) => seedHubWith(server, { balances: {}, ...over });
 
 beforeEach(() => {
   resetAuth();

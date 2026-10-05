@@ -30,7 +30,7 @@ export function PayoffSummary({
         <Text style={s.pct}>{paidPctLabel}% gone</Text>
       </View>
       <View style={s.barWrap}>
-        <Bar pct={paidPct} color={C.goodBright} track="rgba(21,18,58,.18)" height={hero ? 12 : 11} />
+        <Bar pct={paidPct} color={C.goodBright} track={C.heroInkWash} height={hero ? 12 : 11} />
       </View>
       <View style={s.foot}>
         <Text style={s.footL}>{balanceLabel} to go</Text>
@@ -41,23 +41,23 @@ export function PayoffSummary({
 }
 
 const heroStyles = StyleSheet.create({
-  eyebrow: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: 'rgba(20,18,50,.62)', letterSpacing: 0.3 },
+  eyebrow: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.heroInkSoft, letterSpacing: 0.3 },
   figureRow: { flexDirection: 'row', alignItems: 'baseline', gap: 10, marginTop: 7 },
   big: { fontFamily: FONT.display, fontSize: 48, fontWeight: '800', color: C.heroInk, lineHeight: 48, letterSpacing: -2 },
   pct: { fontFamily: FONT.body, fontSize: 16, fontWeight: '700', color: C.heroInk2 },
   barWrap: { marginTop: 16 },
   foot: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 9 },
   footL: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: C.heroInk2 },
-  footR: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: 'rgba(20,18,50,.6)' },
+  footR: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: C.heroInkSoft },
 });
 
 const cardStyles = StyleSheet.create({
-  eyebrow: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: 'rgba(20,18,50,.62)', letterSpacing: 0.3, marginTop: 15 },
+  eyebrow: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.heroInkSoft, letterSpacing: 0.3, marginTop: 15 },
   figureRow: { flexDirection: 'row', alignItems: 'baseline', gap: 9, marginTop: 6 },
   big: { flexShrink: 1, fontFamily: FONT.display, fontSize: 30, fontWeight: '800', color: C.heroInk, letterSpacing: -1 },
   pct: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.heroInk2 },
   barWrap: { marginTop: 12 },
   foot: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
   footL: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: C.heroInk2 },
-  footR: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: 'rgba(20,18,50,.6)' },
+  footR: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: C.heroInkSoft },
 });

@@ -49,26 +49,21 @@ describe('pacePct — where the tick goes', () => {
   });
 });
 
-describe('budget rows with the new rule', () => {
+describe('budgets with the new rule', () => {
   // [A6] (P0) slightly ahead → not flagged.
   it('[A6] ahead of pace but with room → not urgent', () => {
-    const row = rowFor({ budget: 100, posted: 74, pending: 0 });
-    expect(row.behindPace).toBe(false);
+    expect(detailFor({ budget: 100, posted: 74 }).statusLabel).toBe('On track for payday');
   });
 
-  // [A7] (P0) pending spend counts toward the warning on the row.
-  it('[A7] pending pushes a row behind pace', () => {
-    expect(rowFor({ budget: 100, posted: 70, pending: 0 }).behindPace).toBe(false);
-    const row = rowFor({ budget: 100, posted: 70, pending: 15 });
-    expect(row.behindPace).toBe(true);
+  // [A7] (P0) pending spend counts toward the warning.
+  it('[A7] pending pushes a budget over plan', () => {
+    expect(detailFor({ budget: 100, posted: 70, pending: 15 }).statusLabel).toBe('Over plan — ease up');
   });
 
-  // [A9] (P0) a rollover leftovers row only warns on the envelope's daily room, not the base pace alone.
+  // [A9] (P0) a rollover leftovers budget only warns on the envelope's daily room, not the base pace alone.
   it('[A9] $200 envelope: $150 spent is quiet, $180 spent warns', () => {
-    const roomy = rowFor({ budget: 100, posted: 150, pending: 0, rollover: true, carryover: 100 });
-    expect(roomy.behindPace).toBe(false);
-    const tight = rowFor({ budget: 100, posted: 180, pending: 0, rollover: true, carryover: 100 });
-    expect(tight.behindPace).toBe(true);
+    expect(detailFor({ budget: 100, posted: 150, rollover: true, carryover: 100 }).statusLabel).toBe('On track for payday');
+    expect(detailFor({ budget: 100, posted: 180, rollover: true, carryover: 100 }).statusLabel).toBe('Over plan — ease up');
   });
 
   // [A10] (P0) the tick and the fill meet when spend is exactly on the base pace, so the words
@@ -83,32 +78,23 @@ describe('budget rows with the new rule', () => {
     ];
     for (const extra of cases) {
       const row = rowFor({ budget: 100, posted: 50, pending: 0, ...extra });
-      expect(row.behindPace).toBe(false);
       expect(row.targetPct).toBe(Math.round(row.postedPct));
     }
   });
 
-  // [A11] (P1) income rows keep the elapsed tick (hidden anyway) and never warn.
-  it('[A11] income row: tick at elapsed, no warning', () => {
+  // [A11] (P1) income rows keep the elapsed tick (hidden anyway).
+  it('[A11] income row: tick at elapsed', () => {
     const row = rowFor({ budget: 5000, posted: 4900, pending: 0 }, SALARY);
     expect(row.targetPct).toBe(50);
-    expect(row.behindPace).toBe(false);
     const d = detailFor({ budget: 5000, posted: 4900 }, HALFWAY, SALARY);
     expect(d.targetPct).toBe(50);
-  });
-
-  // [A12] (P1) over-budget rows: no pace warning even though they're far ahead.
-  it('[A12] over budget → behindPace false (the red amount speaks)', () => {
-    const row = rowFor({ budget: 100, posted: 130, pending: 0 });
-    expect(row.over).toBe(true);
-    expect(row.behindPace).toBe(false);
   });
 });
 
 describe('the row and the detail screen agree (WHIT-732 + WHIT-715)', () => {
-  // [A13] (P0) across envelopes and clocks: the row warns iff the detail says "Over plan", and
-  // both put the tick in the same place.
-  it('[A13] row warning == detail "Over plan", same tick, same muted colour', () => {
+  // [A13] (P0) across envelopes and clocks: "Over plan" on the detail is always in muted ink, and
+  // the row and the detail put the tick in the same place.
+  it('[A13] detail "Over plan" in muted colour, same tick on row and detail', () => {
     const envelopes: Partial<Budget>[] = [
       {},
       { rollover: true, carryover: 100 },
@@ -122,8 +108,7 @@ describe('the row and the detail screen agree (WHIT-732 + WHIT-715)', () => {
       const state = makeState({ budgets: [b], ...clock });
       const row = budgetViews(state).rows[0];
       const detail = budgetDetail(state, 'coffee')!;
-      expect(detail.statusLabel === 'Over plan — ease up').toBe(row.behindPace);
-      if (row.behindPace) {
+      if (detail.statusLabel === 'Over plan — ease up') {
         expect(detail.statusColor).toBe(C.textInfo);
         warned++;
       } else if (!row.over) quiet++;

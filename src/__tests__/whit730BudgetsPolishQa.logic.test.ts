@@ -1,26 +1,17 @@
-// WHIT-730 QA — edges of the Budgets polish rules: the behind-pace boundaries, the
-// "today" tick at exactly-on-budget, the `unspent` (slim row) rule for pending-only, a $0
-// budget and a nested row, and the row and detail screen agreeing.
+// WHIT-730 QA — edges of the Budgets polish rules: the over-plan boundaries on the detail screen,
+// the "today" tick at exactly-on-budget, the `unspent` (slim row) rule for pending-only, a $0
+// budget and a nested row.
 // Halfway through a 14-day cycle, so a $100 budget's pace target is $50.
 import { describe, it, expect } from '@jest/globals';
-import { C } from '../theme';
 import { SALARY } from './support/categories';
 import { budgetRowFor, budgetRowsFor, budgetDetailFor } from './support/budgetsTab';
 import { budget, cat } from './factory';
 
-describe('behind pace (WHIT-730)', () => {
-  it('[A2] within 50c of the plan is not flagged; pending counts toward being behind', () => {
-    expect(budgetRowFor({ budget: 100, posted: 50.4, pending: 0 }).behindPace).toBe(false);
-    expect(budgetRowFor({ budget: 100, posted: 49.6, pending: 0 }).behindPace).toBe(false);
-    expect(budgetRowFor({ budget: 100, posted: 40, pending: 45 }).behindPace).toBe(true);
-  });
-
-  it('[A3] a row flagged behind pace reads "over plan" on the detail screen', () => {
-    const row = budgetRowFor({ budget: 100, posted: 85, pending: 0 });
-    const detail = budgetDetailFor({ budget: 100, posted: 85 });
-    expect(row.behindPace).toBe(true);
-    expect(detail.statusLabel.toLowerCase()).toContain('over plan');
-    expect(detail.statusColor).toBe(C.textInfo);
+describe('over plan (WHIT-730)', () => {
+  it('[A2] within 50c of the plan is on track; pending counts toward being over plan', () => {
+    expect(budgetDetailFor({ budget: 100, posted: 50.4 }).statusLabel).toBe('On track for payday');
+    expect(budgetDetailFor({ budget: 100, posted: 49.6 }).statusLabel).toBe('On track for payday');
+    expect(budgetDetailFor({ budget: 100, posted: 40, pending: 45 }).statusLabel).toBe('Over plan — ease up');
   });
 });
 

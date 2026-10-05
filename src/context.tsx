@@ -1743,6 +1743,12 @@ export interface BalanceGoalView {
   movedAmount: number | null;     // dollars the bar has moved; null exactly when `progress` is null
   spanAmount: number | null;      // the bar's full span in dollars; null when the bar has no scale
   aheadBy: number | null;         // dollars past the straight-line schedule; set only when 'ahead'
+  // WHIT-749: the target date is strictly before today (not merely 0 paydays left).
+  pastDue: boolean;
+  // WHIT-749: the normalised current balance (saved, or owed for a paydown); null when unknown.
+  currentAmount: number | null;
+  // WHIT-749: per checkpoint, whether the balance has reached it; null when the balance is unknown.
+  checkpointReached: boolean[] | null;
 }
 
 // Count the paydays remaining before a target date: the payday dates `last_pay_date +
@@ -1895,9 +1901,10 @@ export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalV
   // balance is unknown so the card hides the line; `total` is 0 when there's no ladder.
   const checkpoints = goal.checkpoints ?? [];
   const checkpointsTotal = checkpoints.length;
+  const checkpointReached = known ? checkpoints.map((cp) => isReached(cp.amount)) : null;
   let checkpointsReached: number | null = null;
-  if (known && checkpointsTotal > 0) {
-    checkpointsReached = checkpoints.filter((cp) => isReached(cp.amount)).length;
+  if (checkpointReached && checkpointsTotal > 0) {
+    checkpointsReached = checkpointReached.filter(Boolean).length;
   }
 
   // WHIT-486: each checkpoint's dot — its position on the bar (0..1, the SAME scale as `progress`,
@@ -1914,6 +1921,9 @@ export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalV
   return {
     progress, pacePerPayday, paydaysLeft, status, checkpointsTotal, checkpointsReached, checkpointMarkers,
     movedAmount, spanAmount, aheadBy, targetReached,
+    pastDue: isoToUtcDayMs(goal.target_date) < dateToUtcDayMs(today ?? new Date()),
+    currentAmount: known ? current : null,
+    checkpointReached,
   };
 }
 
@@ -1934,8 +1944,6 @@ export interface BudgetView {
   depth: number; parentId: string | null;
   // WHIT-707: Spending rows list before Earning rows; income hides the today marker.
   section: 'spending' | 'earning'; showTarget: boolean;
-  // WHIT-727: true only for a spend row past its pace line but not over.
-  behindPace: boolean;
   // WHIT-730: a spend row with nothing spent yet (and not over), drawn slim without a bar.
   unspent: boolean;
 }
@@ -2091,7 +2099,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: BAR_FILL,
         pendingTint: tint(BAR_FILL, 0.45), over: false,
         note: '', depth, parentId,
-        section: 'earning', showTarget: false, behindPace: false, unspent: false,
+        section: 'earning', showTarget: false, unspent: false,
       });
       group(parentId, b.id);
       continue;
@@ -2108,8 +2116,6 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     if (depth === 0) { totBudget += available; totSpent += spent; totPending += pending; totRemain += remain; }
     const over = spent > available;
     const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
-    // Spending too fast (WHIT-712). The row shows no pace line (WHIT-744) and the list no longer ranks on it (WHIT-745).
-    const behindPace = paceWarning({ spent, target, available, over }, s);
     // "of" shows the exact AVAILABLE envelope so it reconciles with the remaining amount (available −
     // spent); a no-break space keeps "of" with its amount. `spent` includes pending; the bar shows it as the lighter segment.
     const spentLabel = `${fmtExact(spent)} of ${fmtSignedExact(available)}`;
@@ -2122,7 +2128,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
       postedPct, pendingPct, targetPct: pacePct(target, den), postedColor: over ? C.bad : BAR_FILL,
       pendingTint: tint(over ? C.bad : BAR_FILL, 0.45), over,
       note, depth, parentId,
-      section: 'spending', showTarget: !over && remain > 0.005, behindPace, unspent,
+      section: 'spending', showTarget: !over && remain > 0.005, unspent,
     });
     group(parentId, b.id);
   }

@@ -10,8 +10,7 @@ import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settl
 import { resetAuth } from './support/authMock';
 import { resetRouter } from './support/routerMock';
 import { pinToday } from './support/clock';
-import { seedGoalsHub, type GoalsHubSeed } from './support/goalsScreen';
-import { EMPTY_LOAN_FACTS } from './factory';
+import { seedHubWith, type GoalsHubSeed } from './support/goalsScreen';
 import { queryClient } from '../queryClient';
 import type { GoalRecord } from '../api';
 
@@ -25,15 +24,13 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import Goals from '../../app/(tabs)/goals';
 
-const PAY_CYCLE = { length: 14, last_pay_date: '2026-06-06' };
 const GROW: GoalRecord = { id: 'g1', name: 'Emergency fund', icon: 'wallet', direction: 'grow', target_amount: 10000, target_date: '2026-08-15', account_id: 'up-spending' };
 const READY_FACTS = { original: 800000, homeValue: 900000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, payoffGoalDate: null };
 
 const server = installFakeServer();
 useTestQueryClient();
 
-const HUB: GoalsHubSeed = { payCycle: PAY_CYCLE, balances: { 'up-spending': 4000 }, loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:00:00Z' } };
-const seedHub = (over: GoalsHubSeed = {}) => seedGoalsHub(server, { ...HUB, ...over });
+const seedHub = (over: GoalsHubSeed = {}) => seedHubWith(server, over);
 
 beforeEach(() => {
   resetAuth();
@@ -45,12 +42,13 @@ afterEach(() => { jest.useRealTimers(); });
 
 describe('secondary reads degrade one card, never the hub', () => {
   // [A1] a balances failure leaves the synced card waiting, the hub drawn and no error.
-  it('a failed balances read shows the synced goal as "—" + waiting, with no hub error', async () => {
+  it('a failed balances read shows the synced goal as waiting (no % or "—"), with no hub error', async () => {
     seedHub({ goals: [GROW] });
     server.fail('/accounts/balances', 500);
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('goal-card-g1'));
-    expect(card.getByText('—')).toBeTruthy();
+    expect(card.queryByText(/%$/)).toBeNull();
+    expect(card.queryByText('—')).toBeNull();
     expect(card.getByText('Waiting on your balance')).toBeTruthy();
     expect(screen.queryByTestId('goals-error')).toBeNull();
     expect(screen.queryByTestId('goals-loading')).toBeNull();

@@ -1,6 +1,5 @@
-// WHIT-730 — Budgets polish. A row spending too fast is flagged behind pace (WHIT-744: no
-// line on the row), over rows drop the "today" tick, a budget with nothing spent yet is
-// flagged `unspent` (drawn as a slim row), and the detail screen uses the same words and tick rule.
+// WHIT-730 — Budgets polish. Over rows drop the "today" tick, a budget with nothing spent yet is
+// flagged `unspent` (drawn as a slim row), and the detail screen says "over plan" with the same tick rule.
 // Halfway through a 14-day cycle, so a $100 budget's pace target is $50.
 import { describe, it, expect } from '@jest/globals';
 import { SALARY } from './support/categories';
@@ -11,14 +10,12 @@ type Row = ReturnType<typeof budgetRowFor> & { unspent?: boolean };
 type Detail = ReturnType<typeof budgetDetailFor> & { showTarget?: boolean };
 
 describe('Budgets rows (WHIT-730)', () => {
-  it('rows spending too fast are flagged, over rows hide the tick, and $0 rows are unspent', () => {
+  it('under-budget rows keep the tick, over rows hide it, and $0 rows are unspent', () => {
     const overPlan = budgetRowFor({ budget: 100, posted: 85, pending: 0 }) as Row;
-    expect(overPlan.behindPace).toBe(true);
     expect(overPlan.showTarget).toBe(true);
     expect(overPlan.unspent).toBe(false);
 
     const underPlan = budgetRowFor({ budget: 100, posted: 20, pending: 0 }) as Row;
-    expect(underPlan.behindPace).toBe(false);
     expect(underPlan.showTarget).toBe(true);
 
     const overBudget = budgetRowFor({ budget: 100, posted: 130, pending: 0 }) as Row;

@@ -47,7 +47,7 @@ export default function Milestone() {
             <>
               <Text style={styles.heroBig}>{v.balanceLabel}</Text>
               {v.schedule && (
-                <View style={[styles.pill, { backgroundColor: 'rgba(21,18,58,.16)' }]}>
+                <View style={[styles.pill, { backgroundColor: C.heroInkWash }]}>
                   <View style={[styles.pillDot, { backgroundColor: scheduleColor }]} />
                   <Text style={styles.pillText}>{v.schedule.label}</Text>
                 </View>
@@ -55,7 +55,7 @@ export default function Milestone() {
               {v.hasPlan && (
                 <>
                   <View style={{ marginTop: 16 }}>
-                    <Bar pct={v.overallPct} color={C.goodBright} track="rgba(21,18,58,.18)" height={12} />
+                    <Bar pct={v.overallPct} color={C.goodBright} track={C.heroInkWash} height={12} />
                   </View>
                   <View style={styles.heroRow}>
                     <Text style={styles.heroRowL}>{v.clearedCount} of {v.total} milestones reached</Text>
@@ -183,20 +183,20 @@ export default function Milestone() {
 const styles = StyleSheet.create({
   hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 22, paddingBottom: 20, marginBottom: 14, backgroundColor: C.accent },
   heroBlob: { position: 'absolute', right: -26, top: -26, width: 140, height: 140, borderRadius: 70, backgroundColor: 'rgba(255,255,255,.1)' },
-  heroEyebrow: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: 'rgba(20,18,50,.62)', letterSpacing: 0.3 },
+  heroEyebrow: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.heroInkSoft, letterSpacing: 0.3 },
   heroBig: { fontFamily: FONT.display, fontSize: 44, fontWeight: '800', color: C.heroInk, lineHeight: 46, letterSpacing: -1.6, marginTop: 6 },
   heroRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 9 },
   heroRowL: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: C.heroInk2 },
-  heroRowR: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: 'rgba(20,18,50,.6)' },
+  heroRowR: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: C.heroInkSoft },
   pill: { flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 7, borderRadius: 9, paddingVertical: 6, paddingHorizontal: 11, marginTop: 12 },
   pillDot: { width: 7, height: 7, borderRadius: 4 },
   pillText: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.heroInk },
-  syncPill: { flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 7, backgroundColor: 'rgba(21,18,58,.16)', borderRadius: 9, paddingVertical: 6, paddingHorizontal: 11, marginTop: 14 },
+  syncPill: { flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 7, backgroundColor: C.heroInkWash, borderRadius: 9, paddingVertical: 6, paddingHorizontal: 11, marginTop: 14 },
   syncDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.goodBright },
   syncText: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.heroInk },
   waiting: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14 },
   waitingText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.heroInk },
-  retryBtn: { backgroundColor: 'rgba(21,18,58,.16)', borderRadius: 9, paddingVertical: 6, paddingHorizontal: 14 },
+  retryBtn: { backgroundColor: C.heroInkWash, borderRadius: 9, paddingVertical: 6, paddingHorizontal: 14 },
   retryText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.heroInk },
 
   nextCard: { backgroundColor: tint(C.accentAlt, 0.1), borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), borderRadius: 18, padding: 16, marginBottom: 12 },

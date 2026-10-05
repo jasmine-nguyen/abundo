@@ -49,12 +49,9 @@ describe('budgetViews', () => {
     expect(row.postedPct + row.pendingPct).toBeLessThanOrEqual(100.0001);
   });
 
-  it('marks pace relative to the linear target (elapsed * budget)', () => {
+  it('spending past the linear target (elapsed * budget) is not over budget', () => {
     // elapsed 0.5, budget 100 → target 50.
-    const under = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 20, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(under.behindPace).toBe(false);
     const over = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 80, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(over.behindPace).toBe(true);
     expect(over.over).toBe(false); // over PACE, not over budget
   });
 
@@ -96,14 +93,12 @@ describe('budgetViews — income earn-targets (over-is-good)', () => {
     expect(row.remainColor).not.toBe(RED);
     expect(row.postedColor).toBe(C.accentSoft);     // bar uses the shared calm fill, not red
     expect(row.pendingTint).toBe(tint(C.accentSoft, 0.45));
-    // WHIT-707: salary lands in one lump, so there's no even-pace warning or today marker.
-    expect(row.behindPace).toBe(false);
+    // WHIT-707: salary lands in one lump, so there's no today marker.
     expect(row.showTarget).toBe(false);
   });
 
-  it('ahead of the linear pace still gives no pace warning, still not met', () => {
+  it('ahead of the linear pace is still not met', () => {
     const row = incomeRow(3000);   // 3000 > 2500 target, < 5000 goal
-    expect(row.behindPace).toBe(false);
     expect(row.remainLabel).toBe('to go');
     expect(row.over).toBe(false);
   });
