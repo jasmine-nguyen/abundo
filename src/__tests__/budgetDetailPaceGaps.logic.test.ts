@@ -16,7 +16,7 @@ describe('budgetDetail pace — gaps', () => {
     // elapsed 7/14 = 0.5, base target = 100*0.5 = 50; available 55 (borrowed), spent 50.5 →
     // diff exactly 0.50, and $4.50 over 7 days is under half the daily plan.
     const d = detail({ budget: 100, posted: 50.5, rollover: true, carryover: -45 }, { cycleLen: 14, daysLeft: 7 });
-    expect(d.statusLabel).toBe('On target — keep it up');
+    expect(d.statusLabel).toBe('On track for payday');
     expect(d.statusColor).toBe(C.good);
   });
 
@@ -50,7 +50,7 @@ describe('budgetDetail pace — gaps', () => {
   // budget is on pace → green. This is the CORRECT-100% case, opposite of the day-1 mortgage bug.
   it('[G5] elapsed=1: spent == budget == available at 100% stays green', () => {
     const d = detail({ budget: 100, posted: 100 }, { cycleLen: 14, daysLeft: 0 });
-    expect(d.statusLabel).toBe('On target — keep it up');
+    expect(d.statusLabel).toBe('On track for payday');
     expect(d.statusColor).toBe(C.good);
     expect(d.spentBig).toBe('$100'); // sanity: 100% spent
   });
@@ -76,7 +76,7 @@ describe('budgetDetail pace — gaps', () => {
       [{ budget: 100, posted: 100 }, { cycleLen: 14, daysLeft: 0 }],     // green (end, 100%)
     ];
     const pair: Record<string, string> = {
-      'On target — keep it up': C.good,
+      'On track for payday': C.good,
       'Over plan — ease up': C.textInfo,
       'Over budget — ease up': C.bad,
     };

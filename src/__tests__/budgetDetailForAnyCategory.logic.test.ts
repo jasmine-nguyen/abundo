@@ -12,7 +12,7 @@ describe('budgetDetailFor — any category', () => {
     expect(d).not.toBeNull();
     expect(d.name).toBe('Sink');
     expect(d.ofBudget).toBe('of $100');
-    expect(d.statusLabel).toBe('On target — keep it up');
+    expect(d.statusLabel).toBe('On track for payday');
   });
 
   it("folds a non-coffee budget's rollover carryover into its envelope", () => {
