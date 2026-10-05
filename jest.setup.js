@@ -118,6 +118,11 @@ jest.mock('expo-auth-session', () => ({
   },
 }));
 
+// The React Native test setup reports fontScale 2, which would put every screen in its large-text
+// layout (WHIT-743). Default to normal text; a test that needs large text mocks the hook itself.
+jest.mock('./src/hooks/useLargeText', () =>
+  require('./src/__tests__/support/largeTextMock').largeTextMockModule(() => false));
+
 // Silence the act(...) / animation warnings that RN emits in the test renderer and
 // add nothing to signal.
 jest.spyOn(console, 'warn').mockImplementation(() => {});

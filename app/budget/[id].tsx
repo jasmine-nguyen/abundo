@@ -79,9 +79,9 @@ export default function BudgetDetail() {
         <View style={styles.card}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
             <View style={[styles.chip, { backgroundColor: bd.color }]}><Icon name={bd.icon} size={32} color={C.heroInk} /></View>
-            <View>
+            <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={styles.name}>{bd.name}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 6 }}>
                 <Text style={styles.spentBig}>{bd.spentBig}</Text>
                 <Text style={styles.ofBudget}>{bd.ofBudget}</Text>
               </View>
@@ -160,8 +160,9 @@ const styles = StyleSheet.create({
   name: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', color: C.text, letterSpacing: -0.3 },
   spentBig: { fontFamily: FONT.display, fontSize: 22, fontWeight: '800', color: '#fff', letterSpacing: -0.5 },
   ofBudget: { fontFamily: FONT.body, fontSize: 14, color: C.textDim },
-  statusRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  status: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '700' },
+  // Wraps so a long status at large text drops the days onto the next line instead of running off the card (WHIT-743).
+  statusRow: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 8, rowGap: 2, alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  status: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '700', flexShrink: 1 },
   daysLeft: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim },
   targetRow: { position: 'relative', height: 16, marginTop: 1 },
   targetLabel: { position: 'absolute', top: 4, transform: [{ translateX: -32 }], fontFamily: FONT.body, fontSize: 10, color: '#73737d', fontWeight: '500' },

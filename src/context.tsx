@@ -1903,10 +1903,9 @@ const BAR_FILL = C.accentSoft;
 
 export interface BudgetView {
   id: string; name: string; color: string; icon: string; chipBg: string;
-  // WHIT-741: pending sits on its own line under spentLabel ('' when none).
-  spentLabel: string; pendingLabel: string; remainAmount: string; remainLabel: string; remainColor: string;
+  spentLabel: string; remainAmount: string; remainLabel: string; remainColor: string;
   postedPct: number; pendingPct: number; targetPct: number; postedColor: string;
-  pendingTint: string; paceLabel: string; over: boolean;
+  pendingTint: string; over: boolean;
   // WHIT-728: a muted line saying why this cycle's budget differs from the target (spread or rollover), else ''.
   note: string;
   // Sub-category tree (WHIT-221): `depth` is the indent level — the number of the
@@ -2040,12 +2039,12 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
       if (s.nextPayday) spentLabel += ` · next pay ${nextPayLabel(s.nextPayday, s.daysLeft)}`;
       viewById.set(b.id, {
         id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
-        spentLabel, pendingLabel: '',
+        spentLabel,
         remainAmount: fmtExact(met ? actual - b.budget : b.budget - actual),
         remainLabel: met ? 'above target' : 'to go',
         remainColor: C.good,
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: BAR_FILL,
-        pendingTint: tint(BAR_FILL, 0.45), paceLabel: '', over: false,
+        pendingTint: tint(BAR_FILL, 0.45), over: false,
         note: '', depth, parentId,
         section: 'earning', showTarget: false, behindPace: false, unspent: false,
       });
@@ -2064,22 +2063,19 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     if (depth === 0) { totBudget += available; totSpent += spent; totPending += pending; totRemain += remain; }
     const over = spent > available;
     const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
-    // Quiet unless spending too fast (WHIT-712): an overspend is said once by the red amount,
-    // and being under plan is good news, so neither gets a line.
+    // Spending too fast (WHIT-712) puts the row urgent-first; the row itself shows no pace line (WHIT-744).
     const behindPace = paceWarning({ spent, target, available, over, oneCharge: !!s.oneChargeIds?.has(b.id) }, s);
-    const paceLabel = behindPace ? fmt(spent - target) + ' over plan' : '';
     // "of" shows the exact AVAILABLE envelope so it reconciles with the remaining amount (available −
-    // spent); a no-break space keeps "of" with its amount. `spent` includes pending, named on its own line.
+    // spent); a no-break space keeps "of" with its amount. `spent` includes pending; the bar shows it as the lighter segment.
     const spentLabel = `${fmtExact(spent)} of ${fmtSignedExact(available)}`;
-    const pendingLabel = pending > 0.005 ? `${fmtExact(pending)} pending` : '';
     let note = carryoverNote(b);
     if (b.spread && Math.abs(b.spreadAdjustment) > 0.005) note = 'Includes spread bills';
     const unspent = !over && spent < 0.005;
     viewById.set(b.id, {
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
-      spentLabel, pendingLabel, remainAmount: fmtExact(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,
+      spentLabel, remainAmount: fmtExact(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,
       postedPct, pendingPct, targetPct: pacePct(target, den), postedColor: over ? C.bad : BAR_FILL,
-      pendingTint: tint(over ? C.bad : BAR_FILL, 0.45), paceLabel, over,
+      pendingTint: tint(over ? C.bad : BAR_FILL, 0.45), over,
       note, depth, parentId,
       section: 'spending', showTarget: !over && remain > 0.005, behindPace, unspent,
     });
@@ -2928,7 +2924,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
     const perDay = toGo > 0 ? toGo / Math.max(1, s.daysLeft) : 0;
     return {
       ...common,
-      spentBig: fmtExact(actual), ofBudget: 'of ' + fmt(b.budget),
+      spentBig: fmtExact(actual), ofBudget: 'of ' + fmt(b.budget),
       statusLabel: met ? 'Target reached — nice' : 'On track — keep earning',
       statusColor: met ? C.good : C.textInfo,
       postedPct, pendingPct, showTarget: true,

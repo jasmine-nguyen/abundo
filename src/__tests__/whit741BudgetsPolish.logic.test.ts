@@ -1,4 +1,4 @@
-// WHIT-741 — Budgets polish: pending sits on its own line (no "·"), the "of" amount shows exact
+// WHIT-741 — Budgets polish: "$X of $Y" has no "·" (pending is just counted in, WHIT-744), the "of" amount shows exact
 // cents and keeps its sign, a minus never wraps away from its "$" (word joiner U+2060), "of" never
 // wraps away from its amount (no-break space U+00A0), and a fully used budget hides its tick.
 import { describe, it, expect } from '@jest/globals';
@@ -11,17 +11,11 @@ const asSpaces = (s: string) => s.replace(/ /g, ' ');
 // $40.96 target − $700 payback slice → this cycle's budget is −$659.04.
 const payback = { budget: 40.96, posted: 617.75, pending: 0, spreadAdjustment: -700, spread: { amount: 2100, cycles: 3, index: 1, adjustment: -700 } };
 
-describe('a budget row splits spent and pending (WHIT-741)', () => {
-  it('with pending: "$50 of $100" on one line and "$10 pending" on its own', () => {
+describe('a budget row reads "$X of $Y" with pending counted in (WHIT-741, WHIT-744)', () => {
+  it('with pending: "$50 of $100", no "·"', () => {
     const row = budgetRowFor({ budget: 100, posted: 40, pending: 10 });
     expect(asSpaces(row.spentLabel)).toBe('$50 of $100');
-    expect(asSpaces(row.pendingLabel)).toBe('$10 pending');
     expect(row.spentLabel).not.toContain('·');
-  });
-
-  it('no pending (or float dust) → no pending line', () => {
-    expect(budgetRowFor({ budget: 100, posted: 40, pending: 0 }).pendingLabel).toBe('');
-    expect(budgetRowFor({ budget: 100, posted: 40, pending: 0.004 }).pendingLabel).toBe('');
   });
 });
 

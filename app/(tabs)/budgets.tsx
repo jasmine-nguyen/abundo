@@ -12,10 +12,15 @@ import { BudgetBar, RetryButton, HeroGradientFill, HeaderIconButton } from '../.
 import { SettingsButton } from '../../src/components/SettingsButton';
 import { StaleDataLine } from '../../src/components/ListStates';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
+import { useLargeText, LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
 import { loadFailureReason } from '../../src/apiError';
 
-// The tick just crosses the bar when nothing sits under it, so rows end evenly (WHIT-741).
+// The tick just crosses the bar; nothing sits beside it (WHIT-741, WHIT-744).
 const SHORT_TICK_TAIL = 3;
+// Space between the bar's bottom and a note; clears the short tick (it reaches 4pt below the bar).
+const NOTE_GAP = 8;
+// The tick band's height plus its 1pt top margin in BudgetBar.
+const TICK_BAND = SHORT_TICK_TAIL + 1;
 // Both big hero numbers grow with the user's text size up to the same cap, so they stay one size (WHIT-741).
 const HERO_BIG_MAX_SCALE = 1.4;
 
@@ -24,26 +29,48 @@ const SECTIONS: { section: BudgetView['section']; heading: string }[] = [
   { section: 'earning', heading: 'EARNING' },
 ];
 
+// At very large text the row stacks (name, then sub-lines, then amount) instead of squeezing,
+// so no word splits mid-word (WHIT-743).
 function RowHeader({ b }: { b: BudgetView }) {
+  const large = useLargeText();
+  const chip = <View style={[styles.chip, { backgroundColor: b.chipBg }]}><Icon name={b.icon} size={23} color={b.color} /></View>;
+  const name = <Text style={styles.rowName} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.name}</Text>;
+  const subs = <Text style={styles.rowSub} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.spentLabel}</Text>;
+  const remain = (
+    <>
+      <Text style={[styles.rowRemain, { color: b.remainColor }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.remainAmount}</Text>
+      <Text style={styles.rowRemainLabel} numberOfLines={1} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.remainLabel}</Text>
+    </>
+  );
+  if (large) {
+    return (
+      <View>
+        <View style={styles.rowNameLine}>
+          {chip}
+          <View style={{ flex: 1, minWidth: 0 }}>{name}</View>
+        </View>
+        <View style={styles.rowStackBody}>
+          {subs}
+          <View style={styles.rowStackRemain}>{remain}</View>
+        </View>
+      </View>
+    );
+  }
   return (
     <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 13 }}>
-      <View style={[styles.chip, { backgroundColor: b.chipBg }]}><Icon name={b.icon} size={23} color={b.color} /></View>
+      {chip}
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={styles.rowName}>{b.name}</Text>
-        <Text style={styles.rowSub}>{b.spentLabel}</Text>
-        {b.pendingLabel ? <Text testID={`budget-row-pending-${b.id}`} style={styles.rowSub}>{b.pendingLabel}</Text> : null}
+        {name}
+        {subs}
       </View>
-      <View style={styles.rowRight}>
-        <Text style={[styles.rowRemain, { color: b.remainColor }]} numberOfLines={1} adjustsFontSizeToFit>{b.remainAmount}</Text>
-        <Text style={styles.rowRemainLabel} numberOfLines={1}>{b.remainLabel}</Text>
-      </View>
+      <View style={styles.rowRight}>{remain}</View>
     </View>
   );
 }
 
 function BudgetRow({ b }: { b: BudgetView }) {
   const router = useRouter();
-  const note = b.note ? <Text testID={`budget-row-note-${b.id}`} style={styles.note}>{b.note}</Text> : null;
+  const note = b.note ? <Text testID={`budget-row-note-${b.id}`} style={styles.note} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{b.note}</Text> : null;
   return (
     <Pressable testID={`budget-row-${b.id}`} onPress={() => router.push(`/budget/${b.id}`)} style={({ pressed }) => [styles.row,b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }, pressed && PRESSED]}>
       <RowHeader b={b} />
@@ -52,17 +79,8 @@ function BudgetRow({ b }: { b: BudgetView }) {
         note && <View style={styles.slimNote}>{note}</View>
       ) : (
         <View style={{ marginTop: 15 }}>
-          <BudgetBar postedPct={b.postedPct} pendingPct={b.pendingPct} targetPct={b.targetPct} postedColor={b.postedColor} pendingTint={b.pendingTint} showTarget={b.showTarget} tickTail={b.paceLabel || b.note ? undefined : SHORT_TICK_TAIL} />
-          {b.paceLabel || b.note ? (
-            <View style={styles.paceRow}>
-              {note}
-              {b.paceLabel ? (
-                <View style={styles.pace}>
-                  <Text style={styles.paceLabel}>{b.paceLabel}</Text>
-                </View>
-              ) : null}
-            </View>
-          ) : null}
+          <BudgetBar postedPct={b.postedPct} pendingPct={b.pendingPct} targetPct={b.targetPct} postedColor={b.postedColor} pendingTint={b.pendingTint} showTarget={b.showTarget} tickTail={SHORT_TICK_TAIL} />
+          {note && <View style={[styles.noteUnderBar, b.showTarget && styles.noteUnderTick]}>{note}</View>}
         </View>
       )}
     </Pressable>
@@ -76,34 +94,41 @@ function BudgetsHero({ daysLeft, nextPayday, money, totals, children }: { daysLe
     stats.push({ label: 'Budget', value: totals.budget, testID: 'budgets-hero-budget' });
   }
   if (nextPayday) stats.push({ label: 'Next payday', value: formatDayMonth(nextPayday), testID: 'budgets-hero-payday' });
+  // At very large text the two big numbers and the stats stack, so neither number is squeezed (WHIT-743).
+  const large = useLargeText();
+  // Side by side each stat takes a third of the width; stacked it takes the full width.
+  const statWidth = large ? undefined : styles.heroStat;
+  const statLabel = (stat: typeof stats[number]) => <Text style={[statWidth, styles.heroSmall]}>{stat.label}</Text>;
+  const statValue = (stat: typeof stats[number]) => (
+    <Text testID={stat.testID} style={[statWidth, styles.heroStatValue]} numberOfLines={1} adjustsFontSizeToFit>{stat.value}</Text>
+  );
   return (
     <View style={styles.hero}>
       <HeroGradientFill />
       <View style={styles.heroBlob1} />
       <View style={styles.heroBlob2} />
       <Text style={styles.heroEyebrow}>THIS PAY CYCLE</Text>
-      <View style={styles.heroTop}>
-        <View style={styles.heroDaysCol}>
+      <View style={large ? styles.heroTopStack : styles.heroTop}>
+        <View style={large ? undefined : styles.heroDaysCol}>
           <Text style={styles.heroBig} numberOfLines={1} maxFontSizeMultiplier={HERO_BIG_MAX_SCALE}>{daysLeft}</Text>
           <Text style={styles.heroLabel}>{daysLeft === 1 ? 'day left' : 'days left'}</Text>
         </View>
         {money ? (
-          <View style={styles.heroMoneyCol}>
+          <View style={large ? undefined : styles.heroMoneyCol}>
             <Text style={styles.heroBig} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={HERO_BIG_MAX_SCALE}>{money.amount}</Text>
             <Text style={styles.heroLabel}>{money.label}</Text>
           </View>
         ) : null}
       </View>
-      {stats.length > 0 ? (
+      {stats.length > 0 && large ? (
+        <View style={[styles.heroStats, styles.heroStatsStack]}>
+          {stats.map((stat) => <View key={stat.testID}>{statLabel(stat)}{statValue(stat)}</View>)}
+        </View>
+      ) : null}
+      {stats.length > 0 && !large ? (
         <View style={styles.heroStats}>
-          <View style={styles.heroStatsRow}>
-            {stats.map((stat) => <Text key={stat.testID} style={[styles.heroStat, styles.heroSmall]}>{stat.label}</Text>)}
-          </View>
-          <View style={styles.heroStatsRow}>
-            {stats.map((stat) => (
-              <Text key={stat.testID} testID={stat.testID} style={[styles.heroStat, styles.heroStatValue]} numberOfLines={1} adjustsFontSizeToFit>{stat.value}</Text>
-            ))}
-          </View>
+          <View style={styles.heroStatsRow}>{stats.map((stat) => <React.Fragment key={stat.testID}>{statLabel(stat)}</React.Fragment>)}</View>
+          <View style={styles.heroStatsRow}>{stats.map((stat) => <React.Fragment key={stat.testID}>{statValue(stat)}</React.Fragment>)}</View>
         </View>
       ) : null}
       {children}
@@ -232,6 +257,7 @@ const styles = StyleSheet.create({
   // The days column sizes to its number and the money column takes the rest, so neither number
   // shrinks alone (WHIT-741). Same size + top alignment keeps their baselines level.
   heroTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 16, marginTop: 6 },
+  heroTopStack: { gap: 10, marginTop: 6 },
   heroDaysCol: { flexShrink: 0 },
   heroMoneyCol: { flex: 1, minWidth: 0 },
   // Days left and the money number share one size. No fixed lineHeight, so the number scales with the user's text size instead of clipping.
@@ -240,6 +266,7 @@ const styles = StyleSheet.create({
   // Labels in one row, values in the next, so a wrapped label never pushes its value out of line (WHIT-741).
   heroStats: { marginTop: 18 },
   heroStatsRow: { flexDirection: 'row', gap: 12 },
+  heroStatsStack: { gap: 10 },
   heroStat: { flex: 1, minWidth: 0 },
   heroStatValue: { fontFamily: FONT.display, fontSize: 17, fontWeight: '700', color: C.heroInk, marginTop: 2 },
   heroBottom: { marginTop: 16 },
@@ -255,17 +282,17 @@ const styles = StyleSheet.create({
   slimNote: { marginTop: 6 },
   // Caps the amount column so a big number shrinks instead of squeezing the name (large text).
   rowRight: { alignItems: 'flex-end', maxWidth: '45%' },
+  rowNameLine: { flexDirection: 'row', alignItems: 'center', gap: 13 },
+  rowStackBody: { marginTop: 6 },
+  rowStackRemain: { marginTop: 6 },
   chip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   rowName: { fontFamily: FONT.body, fontSize: 16, fontWeight: '600', color: C.textBright, letterSpacing: -0.2 },
   rowSub: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 2 },
   rowRemain: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', letterSpacing: -0.5 },
   rowRemainLabel: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, fontWeight: '500', marginTop: 1 },
-  // WHIT-281: a per-row "target" caption overlapped the right-aligned pace status when the
-  // tick sat far right. Removed — only the pace status remains, right-aligned.
-  paceRow: { minHeight: 18, marginTop: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  pace: { marginLeft: 'auto' },
+  noteUnderBar: { marginTop: NOTE_GAP },
+  noteUnderTick: { marginTop: NOTE_GAP - TICK_BAND },
   note: { fontFamily: FONT.body, fontSize: 12, color: C.textMid },
-  paceLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textInfo },
 
   addBudget: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(C.accentAlt, 0.4), backgroundColor: tint(C.accentAlt, 0.07), borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   addBudgetText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSoft },

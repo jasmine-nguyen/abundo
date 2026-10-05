@@ -52,24 +52,27 @@ it('[A8] fetches only for spend budgets with nothing left — not income, saving
   expect(server.sentUnder('GET', '/budgets/').map((r) => r.path)).toEqual([MORTGAGE_CHARGES]);
 });
 
-it('[A9] a failed charge list leaves the paid mortgage warning, with no error card', async () => {
-  seedBudgetsTab(server, { mortgage: FULL_MORTGAGE, coffee: COFFEE_ON_PACE }, [COFFEE, MORTGAGE_RECORD]);
+// Coffee is listed first and on pace, so the mortgage only goes above it while it's still urgent.
+const rowOrder = () => screen.getAllByTestId(/^budget-row-(mortgage|coffee)$/).map((r) => r.props.testID);
+
+it('[A9] a failed charge list leaves the paid mortgage urgent, with no error card', async () => {
+  seedBudgetsTab(server, { coffee: COFFEE_ON_PACE, mortgage: FULL_MORTGAGE }, [COFFEE, MORTGAGE_RECORD]);
   server.fail(MORTGAGE_CHARGES, 500);
   await renderLoadedBudgetsWithQueries();
   await waitFor(() => expect(server.sent('GET', MORTGAGE_CHARGES)).toHaveLength(1));
-  expect(screen.getByText('$1,834 over plan')).toBeTruthy();
+  expect(rowOrder()).toEqual(['budget-row-mortgage', 'budget-row-coffee']);
   expect(screen.getByText('Mortgage')).toBeTruthy();
 });
 
 it('[A10] the list is cached under the budget-detail key, and its refresh moves the row', async () => {
-  seedBudgetsTab(server, { mortgage: FULL_MORTGAGE, coffee: COFFEE_ON_PACE }, [COFFEE, MORTGAGE_RECORD]);
+  seedBudgetsTab(server, { coffee: COFFEE_ON_PACE, mortgage: FULL_MORTGAGE }, [COFFEE, MORTGAGE_RECORD]);
   server.seed(MORTGAGE_CHARGES, [charge('m1', 1833.5), charge('m2', 1833.5)]);
   await renderLoadedBudgetsWithQueries();
   await waitFor(() => expect(queryClient.getQueryData([...budgetTransactionsKey, 'mortgage'])).toHaveLength(2));
-  expect(screen.getByText('$1,834 over plan')).toBeTruthy();
+  expect(rowOrder()).toEqual(['budget-row-mortgage', 'budget-row-coffee']);
 
   // e.g. the user excludes one of the two charges → the exclusion refresh invalidates this prefix.
   server.seed(MORTGAGE_CHARGES, [charge('m1', 3667)]);
   await refreshInAct(() => queryClient.invalidateQueries({ queryKey: budgetTransactionsKey }));
-  await waitFor(() => expect(screen.queryByText('$1,834 over plan')).toBeNull());
+  await waitFor(() => expect(rowOrder()).toEqual(['budget-row-coffee', 'budget-row-mortgage']));
 });

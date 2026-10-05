@@ -1,11 +1,11 @@
-// WHIT-715 QA — the row's pace words and the detail warning never disagree, across budgets with
+// WHIT-715 QA — the row's behind-pace flag and the detail warning never disagree, across budgets with
 // pending, rollover buffers either side of zero, and every point in the cycle.
 import { describe, it, expect } from '@jest/globals';
 import { budgetViews, budgetDetail } from '../context';
 import { makeState, cat, budget } from './factory';
 
 describe('row and detail pace words agree (WHIT-715 QA)', () => {
-  // [A1] (P0) "over plan" on the row ⇔ "Over plan — ease up" in detail.
+  // [A1] (P0) behind pace on the row ⇔ "Over plan — ease up" in detail.
   it('[A1] behind on the row matches the detail status for every case in the grid', () => {
     let behindSeen = 0;
     for (const daysLeft of [1, 7, 13])
@@ -19,8 +19,8 @@ describe('row and detail pace words agree (WHIT-715 QA)', () => {
             });
             const row = budgetViews(state).rows[0];
             const detail = budgetDetail(state, 'coffee')!;
-            const where = JSON.stringify({ daysLeft, posted, pending, carryover, row: row.paceLabel, detail: detail.statusLabel });
-            const rowBehind = row.paceLabel.endsWith(' over plan');
+            const where = JSON.stringify({ daysLeft, posted, pending, carryover, row: row.behindPace, detail: detail.statusLabel });
+            const rowBehind = row.behindPace;
             expect([where, rowBehind]).toEqual([where, detail.statusLabel === 'Over plan — ease up']);
             if (rowBehind) behindSeen++;
           }

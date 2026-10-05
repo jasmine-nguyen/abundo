@@ -1,9 +1,7 @@
 // WHIT-730 follow-up — on the Budgets tab, a slim $0 row lines up with the full rows (same
-// left/right padding), and "over plan" keeps WHIT-732's calm colour, bold.
+// left/right padding), and no row shows an "over plan" line (WHIT-744).
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import { screen } from '@testing-library/react-native';
-import { StyleSheet } from 'react-native';
-import { C } from '../theme';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
@@ -23,7 +21,7 @@ beforeEach(() => {
   resetAuth();
 });
 
-it('a slim $0 budget row lines up with full rows, and "over plan" keeps its calm colour', async () => {
+it('a slim $0 budget row lines up with full rows, and no row shows "over plan"', async () => {
   // Halfway through a 14-day cycle: a $100 budget's pace target is $50.
   seedBudgetsTab(server, {
     coffee: { target: 100, posted: 0, pending: 0 },
@@ -36,7 +34,5 @@ it('a slim $0 budget row lines up with full rows, and "over plan" keeps its calm
   expect(sidePadding('budget-row-coffee')).toEqual({ left: 16, right: 16 });
   expect(sidePadding('budget-row-groceries')).toEqual({ left: 16, right: 16 });
 
-  const over = StyleSheet.flatten(screen.getByText('$30 over plan').props.style);
-  expect(over.color).toBe(C.textInfo);
-  expect(over.fontWeight).toBe('700');
+  expect(screen.queryByText(/over plan/)).toBeNull();
 });

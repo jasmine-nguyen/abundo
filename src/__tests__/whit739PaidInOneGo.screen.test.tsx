@@ -1,5 +1,5 @@
 // WHIT-739 on screen: the Budgets tab fetches the charge list for a budget with nothing left, and a
-// bill paid in one go (Mortgage) shows no "over plan" line and sits below a real over-plan row.
+// bill paid in one go (Mortgage) is not urgent, so it sits below a real over-plan row.
 // Real ../api over the fake server; ../auth + expo-router mocked.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, waitFor } from '@testing-library/react-native';
@@ -10,6 +10,8 @@ import { seedBudgetsTab } from './support/budgetsTab';
 import { renderLoadedBudgetsWithQueries } from './support/budgetsScreen';
 import { COFFEE } from './support/categories';
 import { txn } from './factory';
+import { queryClient } from '../queryClient';
+import { budgetTransactionsKey } from '../queryKeys';
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
@@ -44,19 +46,17 @@ function seedPaidMortgage(mortgageCharges: ReturnType<typeof txn>[]) {
 
 const rowOrder = () => screen.getAllByTestId(/^budget-row-(mortgage|coffee)$/).map((r) => r.props.testID);
 
-it('a mortgage paid in one charge shows no "over plan" line and sits below the over-plan row', async () => {
+it('a mortgage paid in one charge sits below the over-plan row', async () => {
   seedPaidMortgage([charge('m1', 3667)]);
   await renderLoadedBudgetsWithQueries();
-  await waitFor(() => expect(screen.queryByText(/^\$1,834 over plan$/)).toBeNull());
-  expect(screen.getByText('$35 over plan')).toBeTruthy();
-  expect(rowOrder()).toEqual(['budget-row-coffee', 'budget-row-mortgage']);
+  await waitFor(() => expect(rowOrder()).toEqual(['budget-row-coffee', 'budget-row-mortgage']));
   expect(server.sent('GET', MORTGAGE_CHARGES)).toHaveLength(1);
   expect(server.sent('GET', '/budgets/coffee/transactions')).toHaveLength(0);
 });
 
-it('a mortgage used up by two charges still reads "over plan"', async () => {
+it('a mortgage used up by two charges is still urgent, ahead of the over-plan row', async () => {
   seedPaidMortgage([charge('m1', 1833.5), charge('m2', 1833.5)]);
   await renderLoadedBudgetsWithQueries();
-  await waitFor(() => expect(server.sent('GET', MORTGAGE_CHARGES)).toHaveLength(1));
-  expect(screen.getByText('$1,834 over plan')).toBeTruthy();
+  await waitFor(() => expect(queryClient.getQueryData([...budgetTransactionsKey, 'mortgage'])).toHaveLength(2));
+  expect(rowOrder()).toEqual(['budget-row-mortgage', 'budget-row-coffee']);
 });

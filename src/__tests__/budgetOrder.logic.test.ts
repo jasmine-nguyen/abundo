@@ -53,7 +53,6 @@ describe('behindPace', () => {
   it('is true for a row past its pace line', () => {
     const row = budgetRowFor({ budget: 100, posted: 85, pending: 0 });
     expect(row.behindPace).toBe(true);
-    expect(row.paceLabel).toMatch(/over plan$/);
   });
 
   it('is false for an on-pace, over-budget or income row', () => {

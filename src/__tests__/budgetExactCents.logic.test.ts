@@ -43,7 +43,7 @@ describe('budgetDetail — income earn-target hero with cents (GAP)', () => {
   it('[A13] hero earned shows exact cents; "of $X" target stays whole', () => {
     const d = detail(1000.25);
     expect(d.spentBig).toBe('$1,000.25'); // fail-on-revert: fmt(1000.25) → '$1,000'
-    expect(d.ofBudget).toBe('of $5,000'); // target is a whole-dollar summary — unchanged
+    expect(d.ofBudget).toBe('of $5,000'); // target is a whole-dollar summary; no-break space keeps "of" with it (WHIT-743)
   });
 
   it('[A14] met target hero: earned-past-floor still exact to the cent', () => {
@@ -68,13 +68,11 @@ describe('budgetViews / budgetDetail — over-budget spend with cents (GAP)', ()
     expect(row.remainAmount).toBe('$10.25');            // unsigned |80 - 90.25|; fmt would read '$10'
   });
 
-  it('[A15b] REGRESSION: the over-PACE arm (not over budget) still renders whole-dollar', () => {
-    // budget 100, elapsed 0.5 → target 50. spent 85.25 is over PACE (>50) but under budget (<100),
-    // so it hits the `spent - target` arm, which stayed on fmt. Guards that only the over-budget
-    // arm changed — this one must NOT sprout cents ('$35 over plan', not '$35.25').
+  it('[A15b] the over-PACE row (not over budget) keeps exact cents on its amounts', () => {
+    // budget 100, elapsed 0.5 → target 50. spent 85.25 is over PACE (>50) but under budget (<100).
     const row = budgetViews(makeState({ categories: [cat()], budgets: [budget({ id: 'coffee', budget: 100, posted: 85.25, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
     expect(row.over).toBe(false);
-    expect(row.paceLabel).toBe('$35 over plan');         // fmt arm — whole-dollar, unchanged
+    expect(row.behindPace).toBe(true);
     expect(row.spentLabel).toBe('$85.25 of\u00a0$100'); // spent figure still exact
     expect(row.remainAmount).toBe('$14.75');             // 100 - 85.25
   });
@@ -117,7 +115,6 @@ describe('exact-cents change leaves whole-dollar labels untouched (regression)',
   it('[A20] whole spend row unchanged', () => {
     const row = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 10 })], cycleLen: 14, daysLeft: 7 })).rows[0];
     expect(row.spentLabel).toBe('$50 of\u00a0$100');
-    expect(row.pendingLabel).toBe('$10\u00a0pending');
     expect(row.remainAmount).toBe('$50');
   });
 

@@ -22,7 +22,9 @@ import { makeClient } from './queryClient';
 import { renderWithQueries } from './renderWithQueries';
 import type { installFakeServer } from './fakeServer';
 import { COFFEE, GROCERIES } from './categories';
-import { BUDGET_PAY_CYCLE, seedBudgets } from './budgetsTab';
+import { hostParent, styleOf } from './layout';
+import { C } from '../../theme';
+import { BUDGET_PAY_CYCLE, seedBudgets, seedBudgetsTab } from './budgetsTab';
 
 export { BUDGETS, BUDGET_PAY_CYCLE, seedBudgets } from './budgetsTab';
 
@@ -51,6 +53,18 @@ export async function showBudgets(
 ) {
   seedBudgets(server, { budgets, categories, payCycle: { ...BUDGET_PAY_CYCLE, days_left: daysLeft } });
   return renderLoadedBudgets();
+}
+
+// Halfway through a 14-day cycle (7 days left), so a $100 budget's pace target is $50.
+// Coffee: $80 spent ($10 pending) → behind pace. Groceries: $25 spent, nothing
+// pending → on pace, no note. Totals: spent $105 of $200 → $95 left (WHIT-741, WHIT-743).
+export async function showTwoRows(server: ReturnType<typeof installFakeServer>) {
+  seedBudgetsTab(server, {
+    coffee: { target: 100, posted: 70, pending: 10 },
+    groceries: { target: 100, posted: 25, pending: 0 },
+  }, [COFFEE, GROCERIES]);
+  await renderLoadedBudgetsWithQueries();
+  await screen.findByText('Groceries');
 }
 
 // WHIT-731: the top card's Spent · Budget · Next payday values (undefined when a cell isn't shown).
@@ -82,4 +96,20 @@ export function rightOnlyGaps(node: ReactTestInstance) {
     if ((Number(right) || 0) > (Number(left) || 0)) gaps.push({ testID: host.props.testID, left, right });
   }
   return gaps;
+}
+
+// WHIT-744: the band under a row's bar that holds the pace tick, or null when the row draws no tick.
+export function tickBandOf(row: ReactTestInstance) {
+  const tick = row.findAll((n) => typeof n.type === 'string' && styleOf(n).backgroundColor === C.progressTick)[0];
+  if (!tick) return null;
+  return hostParent(tick);
+}
+
+// WHIT-744: how far a row's note sits below its bar's bottom — the tick band (height + top margin)
+// when there is one, plus the margin above the note's wrapper.
+export function noteOffsetBelowBar(id: string) {
+  const band = tickBandOf(screen.getByTestId(`budget-row-${id}`));
+  const bandSpace = band ? (styleOf(band).height ?? 0) + (styleOf(band).marginTop ?? 0) : 0;
+  const wrapper = hostParent(screen.getByTestId(`budget-row-note-${id}`));
+  return bandSpace + (styleOf(wrapper).marginTop ?? 0);
 }

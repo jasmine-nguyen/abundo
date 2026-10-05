@@ -1,5 +1,5 @@
 // WHIT-728 QA — the top card's Budget total keeps its minus (fold-in), and a spread row that is
-// also off pace shows the note AND the pace label in the line under the bar.
+// also off pace still shows its note under the bar.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import { screen } from '@testing-library/react-native';
 import { resetRouter } from './support/routerMock';
@@ -30,8 +30,8 @@ it('the top card budget total keeps the minus on a payback cycle', async () => {
   expect(heroTotals().budget).toBe(`${MINUS}$659`);
 });
 
-// [A2] a cushion row that is over plan → the note on the left AND the pace label both drawn.
-it('a behind-pace spread row shows the note and keeps its pace label', async () => {
+// [A2] a cushion row that is over plan → the note is drawn; no pace text (WHIT-744).
+it('a behind-pace spread row shows the note', async () => {
   seedBudgetsTab(server, {
     // $100 + $200 cushion = $300 available; pace runs on the $100 target, so $250 spent is behind,
     // with little room left per day.
@@ -39,6 +39,6 @@ it('a behind-pace spread row shows the note and keeps its pace label', async () 
   });
   await renderLoadedBudgetsWithQueries();
   expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes spread bills');
-  expect(screen.getByText(/over plan$/)).toBeTruthy();
+  expect(screen.queryByText(/over plan/)).toBeNull();
   expect(screen.getByText(/^\$250 of \$300/)).toBeTruthy();
 });
