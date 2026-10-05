@@ -1950,6 +1950,33 @@ function carryoverNote(b: Pick<Budget, 'rollover' | 'carryover'>): string {
   return '';
 }
 
+export interface CarryoverCycleLine { key: string; label: string; amount: string; settling: boolean; rebuilt: boolean }
+
+function signedAmount(n: number): string {
+  if (n < 0) return `−${fmt(n)}`;
+  return `+${fmt(n)}`;
+}
+
+// The cycles behind the carryover note, newest first, then one line for any older remainder, so
+// the lines add up to the note (WHIT-742). Detail screen only.
+function carryoverCycleLines(b: Pick<Budget, 'rollover' | 'carryover' | 'carryoverCycles' | 'carryoverEarlier'>): CarryoverCycleLine[] {
+  if (!carryoverNote(b)) return [];
+  const cycles = b.carryoverCycles ?? [];
+  const earlier = b.carryoverEarlier ?? 0;
+  const lines: CarryoverCycleLine[] = cycles.map((cycle) => ({
+    key: cycle.start,
+    label: `${formatDayMonth(cycle.start)} – ${formatDayMonth(cycle.end)}`,
+    amount: signedAmount(cycle.leftover),
+    settling: cycle.settling,
+    rebuilt: !!cycle.rebuilt,
+  }));
+  if (Math.abs(earlier) < 0.5) return lines;
+  let label = 'Earlier cycles';
+  if (cycles.some((cycle) => cycle.rebuilt)) label = 'Not matched to a cycle';
+  else if (cycles.length > 0) label = `Before ${formatDayMonth(cycles[cycles.length - 1].start)}`;
+  return [...lines, { key: 'earlier', label, amount: signedAmount(earlier), settling: false, rebuilt: false }];
+}
+
 export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudget: number; totSpent: number; totPending: number; totRemain: number } {
   const elapsed = elapsedFrac(s);
   let totBudget = 0, totSpent = 0, totPending = 0, totRemain = 0;
@@ -2913,7 +2940,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
     if (adj > 0.005) spreadLine = `Bill spread: +${fmtExact(adj)} added this cycle`;
     else if (adj < -0.005) spreadLine = `Bill spread: ${fmtExact(-adj)} paid back this cycle${last ? ' (last cycle)' : ''}`;
   }
-  const common = { name: c.name, icon: c.icon, color: c.color, daysLeftLabel, targetPct, relItems, relEmpty: relItems.length === 0, carryoverLine, spreadLine, spreadActive, spread: b.spread };
+  const common = { name: c.name, icon: c.icon, color: c.color, daysLeftLabel, targetPct, relItems, relEmpty: relItems.length === 0, carryoverLine, carryoverCycleLines: carryoverCycleLines(b), spreadLine, spreadActive, spread: b.spread };
 
   if (isIncome) {
     // Earn-target (floor): over-is-good, so the status is never red. Under target

@@ -15,7 +15,9 @@ _BUDGETS_KEY = {"pk": "BUDGETS", "sk": "BUDGETS"}
 
 # The rollover-only fields on a budget entry (everything but `target`). Cleared when a
 # category is reclassified out of a spend bucket (rollover is spend-only). Kept local.
-_ROLLOVER_FIELDS = ("rollover", "carryover", "carryover_from", "carryover_len", "carryover_paydate")
+_ROLLOVER_FIELDS = (
+    "rollover", "carryover", "carryover_from", "carryover_len", "carryover_paydate", "carryover_history",
+)
 
 # The bill-spread fields on a budget entry (WHIT-504): the bill amount, how many cycles it
 # is paid back over, and the anchor cycle it was created in (`spread_from`) plus the pay
@@ -153,20 +155,28 @@ class BudgetRepository:
         return {"id": cat_id, "target": entry["target"]}
 
     def settle_carryover(self, cat_id: str, carryover: Decimal, carryover_from: str,
-                         carryover_len: int, carryover_paydate: str) -> dict:
+                         carryover_len: int, carryover_paydate: str,
+                         carryover_history: Optional[list] = None) -> dict:
         """Persist a rollover category's sealed carryover balance + anchor (the write-on-read
         step of the /budgets settlement). Preserves `target`/`rollover` via _merge_entry.
+
+        `carryover_history` (the sealed cycles, newest first, WHIT-742) is saved in the SAME
+        write when given, so it can never disagree with the balance; when omitted (a
+        re-anchor) the stored history is kept.
 
         Called best-effort from the read path: the caller swallows a VersionConflictError so
         a settle that loses the race never fails the GET — the balance simply re-seals on the
         next read (the displayed number is always recomputed live, not read from the store).
         """
-        return self._merge_entry(cat_id, {
+        fields = {
             "carryover": carryover,
             "carryover_from": carryover_from,
             "carryover_len": Decimal(carryover_len),
             "carryover_paydate": carryover_paydate,
-        })
+        }
+        if carryover_history is not None:
+            fields["carryover_history"] = carryover_history
+        return self._merge_entry(cat_id, fields)
 
     def delete_budget(self, cat_id: str) -> None:
         """Remove a category's budget target, if any — the cascade run when a

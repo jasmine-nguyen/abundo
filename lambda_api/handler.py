@@ -2178,7 +2178,8 @@ def _persist_rollover_settlements(budget_repo: BudgetRepository, settlements: di
     for cat_id, payload in settlements.items():
         try:
             budget_repo.settle_carryover(
-                cat_id, payload["carryover"], payload["carryover_from"], length, last_pay_date
+                cat_id, payload["carryover"], payload["carryover_from"], length, last_pay_date,
+                payload.get("carryover_history"),
             )
         except Exception as e:
             logger.warning("rollover settle failed for %s (recomputes next read): %s", cat_id, e)

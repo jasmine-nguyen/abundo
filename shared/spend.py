@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from constants import (
     HOMELOAN_ACCOUNT_ID, NON_BUDGET_CATEGORIES,
     PENDING_STATUS, POSTED_STATUS,
-    ROLLOVER_MAX_LOOKBACK_CYCLES, ROLLOVER_SETTLE_LAG_DAYS,
+    ROLLOVER_HISTORY_MAX_CYCLES, ROLLOVER_MAX_LOOKBACK_CYCLES, ROLLOVER_SETTLE_LAG_DAYS,
     SPREAD_MIN_CYCLES, SPREAD_MAX_CYCLES,
 )
 
@@ -609,15 +609,41 @@ def rollover_windows(entry: dict, cycle_start: str, length: int, last_pay_date: 
     return windows, None
 
 
+def rollover_cycle_record(target: Decimal, window_start: str, window_end: str, subtree: set,
+                          transactions: list) -> dict:
+    """One completed cycle's rollover record: {start, end, target, spent, leftover}.
+    `spent` = posted + pending over the subtree (aggregate-then-clamp, see fold_subtree);
+    `leftover` = target - spent, signed. The one place a cycle's leftover is worked out."""
+    cycle_txns = transactions_in_window(transactions, window_start, window_end)
+    per_id = summarise_transactions(cycle_txns, subtree, clamp=False)
+    spend = fold_subtree(per_id, subtree)
+    spent = spend["posted"] + spend["pending"]
+    return {"start": window_start, "end": window_end, "target": target, "spent": spent,
+            "leftover": target - spent}
+
+
+def rollover_history_view(history: list, sealed: Decimal) -> tuple[list, Decimal]:
+    """Map a stored `carryover_history` (newest first) to display cycles (`settling: False`)
+    and the remainder `earlier` = sealed - sum(leftovers): the part of the sealed balance
+    from before history was kept. Derived, never stored, so cycles + earlier == sealed."""
+    cycles = [{**record, "settling": False} for record in history]
+    earlier = sealed - sum((record["leftover"] for record in history), Decimal(0))
+    return cycles, earlier
+
+
 def seal_rollover(entry: dict, windows: list, subtree: set, transactions: list,
                   length: int, today: str):
     """Fold each completed cycle's leftover (target - spend) for one rollover category,
     sealing cycles older than the settle lag into the stored balance.
 
-    Returns (display_carryover, persist). `display_carryover` is the full buffer =
-    sealed + not-yet-sealed completed-cycle leftovers (signed). `persist` is a
-    {carryover, carryover_from} payload when the sealed balance or anchor advanced,
-    else None. The current in-progress cycle is NOT in `windows`.
+    Returns (display_carryover, cycles, earlier, persist). `display_carryover` is the full
+    buffer = sealed + not-yet-sealed completed-cycle leftovers (signed). `cycles` lists the
+    cycles behind it, newest first: the still-settling ones (`settling: True`), then the
+    sealed history (capped at ROLLOVER_HISTORY_MAX_CYCLES). `earlier` is the part of the
+    sealed balance no listed cycle explains, so sum(leftover) + earlier == display_carryover.
+    `persist` is a {carryover, carryover_from} payload when the sealed balance or anchor
+    advanced (plus `carryover_history` when a cycle sealed), else None. The current
+    in-progress cycle is NOT in `windows`.
     """
     stored_carryover = entry.get("carryover", Decimal(0))
     target = entry["target"]
@@ -625,17 +651,24 @@ def seal_rollover(entry: dict, windows: list, subtree: set, transactions: list,
     sealed = stored_carryover
     unsealed = Decimal(0)
     new_anchor = windows[0][0] if windows else entry.get("carryover_from")
+    newly_sealed = []
+    settling = []
     for window_start, window_end in windows:
-        cycle_txns = transactions_in_window(transactions, window_start, window_end)
-        per_id = summarise_transactions(cycle_txns, subtree, clamp=False)
-        spend = fold_subtree(per_id, subtree)
-        leftover = target - (spend["posted"] + spend["pending"])
+        record = rollover_cycle_record(target, window_start, window_end, subtree, transactions)
         if date.fromisoformat(window_end) < lag_cutoff:
-            sealed += leftover
+            sealed += record["leftover"]
+            newly_sealed.insert(0, record)
             new_anchor = (date.fromisoformat(window_start) + timedelta(days=length)).isoformat()
         else:
-            unsealed += leftover
+            unsealed += record["leftover"]
+            settling.insert(0, {**record, "settling": True})
+    history = entry.get("carryover_history", [])
+    if newly_sealed:
+        history = (newly_sealed + history)[:ROLLOVER_HISTORY_MAX_CYCLES]
+    sealed_cycles, earlier = rollover_history_view(history, sealed)
     persist = None
     if sealed != stored_carryover or new_anchor != entry.get("carryover_from"):
         persist = {"carryover": sealed, "carryover_from": new_anchor}
-    return sealed + unsealed, persist
+        if newly_sealed:
+            persist["carryover_history"] = history
+    return sealed + unsealed, settling + sealed_cycles, earlier, persist

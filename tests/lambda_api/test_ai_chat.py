@@ -383,7 +383,10 @@ def test_load_chat_data_works_out_budgets_from_its_own_read_without_saving(ai_ch
 
     assert data.budgets == {"groceries": {
         "target": Decimal("100"), "posted": Decimal("25"), "pending": Decimal("0"),
-        "rollover": True, "carryover": Decimal("40"), "available": Decimal("140"),
+        "rollover": True, "carryover": Decimal("40"),
+        "carryover_cycles": [{"start": "2026-08-27", "end": "2026-09-09", "target": Decimal("100"),
+                              "spent": Decimal("60"), "leftover": Decimal("40"), "settling": False}],
+        "carryover_earlier": Decimal("0"), "available": Decimal("140"),
     }}
     assert budget_repo.writes == []
     assert {t["transaction_id"] for t in data.transactions} == {"old", "prior", "now"}

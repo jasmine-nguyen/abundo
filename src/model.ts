@@ -1,6 +1,6 @@
 // WHIT-630: the client model shapes and the converters from the server payloads, moved out of
 // context.tsx so queries.ts can use them without importing the store.
-import type { BreakdownRollup, BudgetRollup, CategorySpend, LoanFacts, LoanFactsInput, RuleCondition, RuleLogic, RuleRecord, SpreadPlan } from './api';
+import type { BreakdownRollup, BudgetRollup, CarryoverCycle, CategorySpend, LoanFacts, LoanFactsInput, RuleCondition, RuleLogic, RuleRecord, SpreadPlan } from './api';
 import type { Category } from './types';
 import { colorForCategory } from './categoryColors';
 import { normalizeColorSlot } from './chartColors';
@@ -11,6 +11,8 @@ export interface Budget {
   // the signed buffer this cycle adds to the target (positive = saved up, negative = a prior
   // spike's overspend carried as a deficit). Default off/0 for a non-rollover/legacy budget.
   rollover: boolean; carryover: number;
+  // The cycles behind `carryover` (newest first) and the older remainder (WHIT-742).
+  carryoverCycles?: CarryoverCycle[]; carryoverEarlier?: number;
   // Bill spread (WHIT-504): `spreadAdjustment` is the signed dollars this cycle's spendable
   // moves by (a positive cushion in the anchor cycle, a negative slice in a payback cycle);
   // default 0 for a non-spread budget. `spread` carries the plan detail for the status line.
@@ -86,6 +88,7 @@ export function toBudget(id: string, rollup: BudgetRollup): Budget {
   return {
     id, budget: rollup.target, posted: rollup.posted, pending: rollup.pending,
     rollover: rollup.rollover ?? false, carryover: rollup.carryover ?? 0,
+    carryoverCycles: rollup.carryover_cycles ?? [], carryoverEarlier: rollup.carryover_earlier ?? 0,
     spreadAdjustment: rollup.spread?.adjustment ?? 0, spread: rollup.spread,
     // Pass through the server-computed spendable; stays undefined when the server omits it,
     // so the screens' `?? <parts-sum>` fallback fires (WHIT-549).

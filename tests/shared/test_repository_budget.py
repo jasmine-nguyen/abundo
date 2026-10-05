@@ -143,6 +143,37 @@ def test_settle_carryover_persists_balance_and_anchor_preserving_target(shared, 
     assert entry["carryover_paydate"] == "2026-01-01"
     assert entry["target"] == Decimal(58)   # not wiped by the settle
     assert entry["rollover"] is True         # flag preserved
+    assert "carryover_history" not in entry  # only saved when the seal passes one
+
+
+def test_settle_carryover_saves_the_sealed_cycles_in_the_same_write(shared, budget_repo, config_item_table):
+    old = {"start": "2026-06-07", "end": "2026-07-06", "target": Decimal(58), "spent": Decimal(60),
+           "leftover": Decimal(-2)}
+    new = {"start": "2026-07-07", "end": "2026-08-05", "target": Decimal(58), "spent": Decimal(8),
+           "leftover": Decimal(50)}
+    table = config_item_table("BUDGETS", items={"coffee": {
+        "target": Decimal(58), "rollover": True, "carryover": Decimal(-2), "carryover_history": [old]}})
+    _with_table(budget_repo, table)
+
+    budget_repo.settle_carryover("coffee", Decimal(48), "2026-08-06", 30, "2026-01-01", [new, old])
+
+    entry = table.store[_KEY]["items"]["coffee"]
+    assert entry["carryover"] == Decimal(48)
+    assert entry["carryover_history"] == [new, old]
+    assert len(table.update_calls) == 1
+
+
+def test_settle_carryover_without_history_keeps_the_stored_history(shared, budget_repo, config_item_table):
+    # A re-anchor passes no history: the cycles already saved stay.
+    old = {"start": "2026-06-07", "end": "2026-07-06", "target": Decimal(58), "spent": Decimal(60),
+           "leftover": Decimal(-2)}
+    table = config_item_table("BUDGETS", items={"coffee": {
+        "target": Decimal(58), "rollover": True, "carryover": Decimal(-2), "carryover_history": [old]}})
+    _with_table(budget_repo, table)
+
+    budget_repo.settle_carryover("coffee", Decimal(-2), "2026-08-06", 14, "2026-08-01")
+
+    assert table.store[_KEY]["items"]["coffee"]["carryover_history"] == [old]
 
 
 def test_settle_carryover_retries_once_under_a_version_race(shared, budget_repo, config_item_table):
@@ -260,7 +291,9 @@ def test_rollover_fields_tuple_matches_what_the_writes_persist(shared, budget_re
 
     budget_repo.set_budget("coffee", Decimal(100), rollover=True, anchor={
         "carryover_from": "2026-08-06", "carryover_len": Decimal(30), "carryover_paydate": "2026-01-01"})
-    budget_repo.settle_carryover("coffee", Decimal(20), "2026-08-06", 30, "2026-01-01")
+    budget_repo.settle_carryover("coffee", Decimal(20), "2026-08-06", 30, "2026-01-01", [
+        {"start": "2026-07-07", "end": "2026-08-05", "target": Decimal(100), "spent": Decimal(80),
+         "leftover": Decimal(20)}])
 
     persisted_rollover_keys = set(table.store[_KEY]["items"]["coffee"].keys()) - {"target"}
     assert persisted_rollover_keys == set(shared.budget._ROLLOVER_FIELDS)

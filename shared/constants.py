@@ -241,6 +241,10 @@ ROLLOVER_SETTLE_LAG_DAYS = 10
 # long-gap read; older leftovers are dropped and the anchor jumps forward.
 ROLLOVER_MAX_LOOKBACK_CYCLES = 12
 
+# How many sealed cycles a rollover budget keeps in its `carryover_history` (WHIT-742), newest
+# first. Bounds the size of the single BUDGETS item; anything older stays folded into the total.
+ROLLOVER_HISTORY_MAX_CYCLES = 26
+
 # How many pay cycles a bill spread may be paid back over (WHIT-504). 1 = the whole bill next
 # cycle; 24 ≈ a year of fortnights. Shared (WHIT-559) so a rule auto-spreading a bill can convert a
 # cadence to a cycles count on BOTH the webhook and the sweep, and by the API's PUT
