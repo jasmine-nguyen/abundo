@@ -5,7 +5,9 @@
 // from the fake server through the real query hooks (WHIT-670).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
 import type { AppContext } from '../context';
+import { C } from '../theme';
 
 let mockState: AppContext;
 jest.mock('../context', () => {
@@ -156,6 +158,19 @@ it('[WHIT-355] creating a CLASHING rule warns and does not mint until Replace', 
   fireEvent.press(screen.getByTestId('rule-conflict-replace'));
   expect(fns.updateRule).toHaveBeenCalledWith('b1', 'NETFLIX', 'groceries', false, undefined, false); // retarget the surviving rule
   expect(fns.saveManualRule).not.toHaveBeenCalled();                          // no second row
+});
+
+// WHIT-760 [A1] "Replace" was hand-coloured; it's now the shared filled SheetButton beside the
+// outlined "Cancel", both keeping flex: 1 so they sit side by side.
+it('[A1] the clash card shows a filled "Replace" and an outlined "Cancel" side by side', async () => {
+  await openNew({}, [NETFLIX_SUBS]);
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
+  fireEvent.press(screen.getByText('Groceries'));
+  fireEvent.press(screen.getByText('Add rule'));
+  const replace = StyleSheet.flatten(screen.getByTestId('rule-conflict-replace').props.style);
+  const cancel = StyleSheet.flatten(screen.getByTestId('rule-conflict-cancel').props.style);
+  expect(replace).toMatchObject({ backgroundColor: C.accent, flex: 1 });
+  expect(cancel).toMatchObject({ backgroundColor: 'transparent', borderWidth: 1, flex: 1 });
 });
 
 it('[WHIT-355] Cancel on a create conflict writes nothing and restores the submit button', async () => {
