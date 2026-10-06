@@ -9,6 +9,8 @@ seam lands different scopes at different keys.
 from decimal import Decimal
 import pytest
 
+from _milestone_fakes import resolved_plan
+
 _PLAN = [
     {"id": "a", "label": "Kickoff", "targetBalance": Decimal("544000"), "targetDate": "2026-06-18"},
     {"id": "b", "label": "Halfway", "targetBalance": Decimal("295000"), "targetDate": "2027-12-18"},
@@ -175,12 +177,12 @@ def test_raw_read_does_not_skip_partial_milestones(milestone_repo):
 
 
 def test_poller_resolve_skips_a_partial_row_not_raises(shared, milestone_repo):
-    # WHIT-387: a present-but-partial stored milestone is now SKIPPED by resolve_plan, not
+    # WHIT-387: a present-but-partial stored milestone is now SKIPPED by the plan read, not
     # raised into the poller's swallow. A lone bad row leaves an empty plan; it never falls
     # back to the default (which would send a wrong default celebration for corrupt data).
     partial = {"id": "bad", "label": "no balance", "targetDate": "2030-01-01"}  # no targetBalance
     _store_raw_row(milestone_repo, [partial])
-    assert shared.milestones.resolve_plan(milestone_repo) == []
+    assert resolved_plan(shared, milestone_repo) == []
 
 
 _COMPLETE2 = {"id": "m2", "label": "Target", "targetBalance": Decimal("55000"),
@@ -225,7 +227,7 @@ def test_client_read_preserves_order_of_survivors(milestone_repo):
 
 def test_poller_resolve_degrades_non_list_milestones_to_empty(shared, milestone_repo):
     # WHIT-387: a `milestones` stored as a non-list (a dict here) is not iterable as rows, so
-    # resolve_plan's isinstance guard degrades it to an empty plan rather than raising into the
+    # the plan read's isinstance guard degrades it to an empty plan rather than raising into the
     # poller's swallow. Still never the default (no wrong default celebration for corrupt data).
     _store_raw_row(milestone_repo, {"m1": _COMPLETE})
-    assert shared.milestones.resolve_plan(milestone_repo) == []
+    assert resolved_plan(shared, milestone_repo) == []

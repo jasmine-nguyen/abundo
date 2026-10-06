@@ -81,13 +81,6 @@ def test_finish_job_failed_carries_the_error(job_repo):
     assert row["completed_at"] is not None
 
 
-def test_list_jobs_reads_the_shared_partition(job_repo):
-    job_repo.create_job("job1")
-    job_repo.create_job("job2")
-    ids = {row["id"] for row in job_repo.list_jobs()}
-    assert ids == {"job1", "job2"}
-
-
 def test_a_db_fault_on_create_raises_database_error(job_repo, client_error, database_error):
     def boom(**kwargs):
         raise client_error("InternalServerError")

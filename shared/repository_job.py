@@ -5,8 +5,7 @@ Gateway window. The async worker runs the same sweep with NO cap and writes its 
 the app can poll a job by id until it finishes.
 
 Layout: one item per job under a SINGLE partition ``pk="JOB"``, ``sk="JOB#{id}"``, where ``id``
-is an opaque uuid minted when the job starts. The shared partition lets a future "list my jobs"
-read every job in one Query (the RULE store's rationale). Each row carries a numeric
+is an opaque uuid minted when the job starts. Each row carries a numeric
 ``expires_at`` (epoch seconds) so DynamoDB TTL removes finished jobs after ``JOB_TTL_SECONDS`` —
 the same auto-expiry the dead-letter / push-receipt rows use.
 """
@@ -16,7 +15,6 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import boto3
-from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 from constants import JOB_TTL_SECONDS
@@ -134,20 +132,3 @@ class JobRepository:
             )
         except ClientError as e:
             handle_database_error(e, "update job")
-
-    def list_jobs(self) -> list[dict]:
-        """Every job row, from the shared partition (paged). Not used by the server slice's own
-        routes yet — provided so the read path matches the sibling repos and a future "recent
-        jobs" view is one Query, not a Scan."""
-        jobs: list[dict] = []
-        query_kwargs: dict[str, Any] = {"KeyConditionExpression": Key("pk").eq(_PK)}
-        try:
-            while True:
-                response = self._get_table().query(**query_kwargs)
-                jobs.extend(response.get("Items", []))
-                cursor = response.get("LastEvaluatedKey")
-                if not cursor:
-                    return jobs
-                query_kwargs["ExclusiveStartKey"] = cursor
-        except ClientError as e:
-            handle_database_error(e, "list jobs")

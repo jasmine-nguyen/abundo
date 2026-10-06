@@ -40,15 +40,3 @@ class Transaction(TypedDict):
     # a rule-filed row, carried onto the posted charge when it settles, and REMOVEd the moment
     # the user files by hand. Absent/None = filed by hand or by the bank, never by a rule.
     filed_by_rule: Optional[str]
-
-
-class Category(TypedDict):
-    id: str
-    name: str
-    icon: str
-    color: str
-    bucket: str
-    # Id of the parent this category rolls up into, or None for a top-level
-    # category. Absent on rows written before sub-categories existed; the
-    # repository defaults it to None on read.
-    parent: Optional[str]

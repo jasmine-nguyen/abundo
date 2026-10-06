@@ -14,6 +14,7 @@ from _dynamo_fakes import FakeTable
 from _milestone_fakes import (
     FACTS, FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, notify_repo,
     _row, recorder, removal_calls, removed_markers, scopes_marked, scopes_read, stored_markers,
+    unreadable_milestone_repo,
 )
 
 
@@ -51,28 +52,28 @@ def test_usable_equity_clamps_at_zero(shared):
 # --- crossed_milestones (pure) ----------------------------------------------------------
 
 def test_no_crossing_when_balance_holds_above_a_target(shared):
-    assert shared.milestones.crossed_milestones(Decimal("600000"), Decimal("560000")) == []
+    assert shared.milestones.crossed_milestones(Decimal("600000"), Decimal("560000"), shared.milestones.MILESTONES) == []
 
 
 def test_first_poll_none_crosses_nothing(shared):
     # old is None (first-ever poll / seed guard) → never fire, even far below a target.
-    assert shared.milestones.crossed_milestones(None, Decimal("100000")) == []
+    assert shared.milestones.crossed_milestones(None, Decimal("100000"), shared.milestones.MILESTONES) == []
 
 
 def test_rising_balance_crosses_nothing(shared):
-    assert shared.milestones.crossed_milestones(Decimal("400000"), Decimal("410000")) == []
+    assert shared.milestones.crossed_milestones(Decimal("400000"), Decimal("410000"), shared.milestones.MILESTONES) == []
 
 
 def test_exact_boundary_landing_counts_as_crossed(shared):
     # new == target fires; the NEXT poll starting ON the boundary must not (old > target false).
-    crossed = shared.milestones.crossed_milestones(Decimal("545000"), Decimal("544000"))
+    crossed = shared.milestones.crossed_milestones(Decimal("545000"), Decimal("544000"), shared.milestones.MILESTONES)
     assert [m.sprint for m in crossed] == [0]
-    assert shared.milestones.crossed_milestones(Decimal("544000"), Decimal("543000")) == []
+    assert shared.milestones.crossed_milestones(Decimal("544000"), Decimal("543000"), shared.milestones.MILESTONES) == []
 
 
 def test_lump_sum_jump_returns_furthest_first(shared):
     # 600k -> 290k crosses Kickoff(544k), Quarter(420k), Halfway(295k); furthest (lowest) first.
-    crossed = shared.milestones.crossed_milestones(Decimal("600000"), Decimal("290000"))
+    crossed = shared.milestones.crossed_milestones(Decimal("600000"), Decimal("290000"), shared.milestones.MILESTONES)
     assert [m.target_balance for m in crossed] == [295000, 420000, 544000]
 
 
@@ -81,14 +82,15 @@ def test_lump_sum_jump_returns_furthest_first(shared):
 def _notify(shared, *, old, new, facts=FACTS, tokens=("tok",), fired=None, notify=None,
             milestone_repo=None):
     # One wrapper for the whole milestone family (WHIT-471 fold): pass `fired` to build a fresh
-    # notify repo, or `notify` to supply one you assert on; `milestone_repo` measures a saved plan.
+    # notify repo, or `notify` to supply one you assert on; `milestone_repo` measures a saved plan,
+    # and without one the store read fails so the built-in plan is measured.
     return shared.milestones.notify_milestone_crossing(
         Decimal(old) if old is not None else None,
         Decimal(new),
         loanfacts_repo=FakeLoanFactsRepo(facts),
         device_repo=FakeDeviceRepo(tokens),
         notify_repo=notify if notify is not None else notify_repo(fired),
-        milestone_repo=milestone_repo,
+        milestone_repo=milestone_repo if milestone_repo is not None else unreadable_milestone_repo(),
     )
 
 
@@ -96,7 +98,8 @@ def test_single_crossing_sends_one_push_with_both_numbers(shared, recorder):
     notify = notify_repo()
     sent = shared.milestones.notify_milestone_crossing(
         Decimal("545000"), Decimal("544000"),
-        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]), notify_repo=notify)
+        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]), notify_repo=notify,
+        milestone_repo=unreadable_milestone_repo())
     assert sent == 1
     assert len(recorder) == 1
     title, body, tokens = recorder[0]
@@ -117,7 +120,8 @@ def test_crossing_push_carries_milestone_deeplink_data(shared, monkeypatch):
     shared.milestones.notify_milestone_crossing(
         Decimal("545000"), Decimal("544000"),
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]),
-        notify_repo=notify_repo())
+        notify_repo=notify_repo(),
+        milestone_repo=unreadable_milestone_repo())
     assert captured == [{"type": "milestone"}]
 
 
@@ -125,7 +129,8 @@ def test_lump_sum_sends_furthest_and_marks_all(shared, recorder):
     notify = notify_repo()
     sent = shared.milestones.notify_milestone_crossing(
         Decimal("600000"), Decimal("290000"),
-        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]), notify_repo=notify)
+        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]), notify_repo=notify,
+        milestone_repo=unreadable_milestone_repo())
     assert sent == 1
     assert len(recorder) == 1
     assert recorder[0][0] == "\U0001f389 Milestone reached — Halfway!"  # furthest crossed (295k)
@@ -144,7 +149,8 @@ def test_lump_sum_push_carries_milestone_deeplink_data(shared, monkeypatch):
     sent = shared.milestones.notify_milestone_crossing(
         Decimal("600000"), Decimal("290000"),
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]),
-        notify_repo=notify)
+        notify_repo=notify,
+        milestone_repo=unreadable_milestone_repo())
     assert sent == 1
     assert captured == [{"type": "milestone"}]  # one push, carrying the deep-link tag
     assert stored_markers(notify) == {"0", "1", "2"}       # all crossed still marked
@@ -160,7 +166,8 @@ def test_no_device_short_circuits(shared, recorder):
     notify = notify_repo()
     sent = shared.milestones.notify_milestone_crossing(
         Decimal("545000"), Decimal("544000"),
-        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo([]), notify_repo=notify)
+        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo([]), notify_repo=notify,
+        milestone_repo=unreadable_milestone_repo())
     assert sent == 0
     assert recorder == []
     assert stored_markers(notify) == set()  # nothing marked when there was no one to send to
@@ -174,7 +181,8 @@ def test_expo_not_ok_still_marks_no_permanent_loss(shared, monkeypatch):
     notify = notify_repo()
     sent = shared.milestones.notify_milestone_crossing(
         Decimal("545000"), Decimal("544000"),
-        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]), notify_repo=notify)
+        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]), notify_repo=notify,
+        milestone_repo=unreadable_milestone_repo())
     assert sent == 1
     assert stored_markers(notify) == {"0"}  # marked even though Expo accepted nothing
 
@@ -217,12 +225,12 @@ def test_oscillation_across_boundary_never_refires(shared, recorder):
 # boundary characterization of the strict side (guards against a sloppier mutation like rounding new).
 
 def test_cents_exactly_on_target_counts_as_crossed(shared):
-    crossed = shared.milestones.crossed_milestones(Decimal("296000"), Decimal("295000.00"))
+    crossed = shared.milestones.crossed_milestones(Decimal("296000"), Decimal("295000.00"), shared.milestones.MILESTONES)
     assert [m.sprint for m in crossed] == [2]  # Halfway, landed exactly
 
 
 def test_one_cent_above_target_is_not_yet_crossed(shared):
-    assert shared.milestones.crossed_milestones(Decimal("296000"), Decimal("295000.01")) == []
+    assert shared.milestones.crossed_milestones(Decimal("296000"), Decimal("295000.01"), shared.milestones.MILESTONES) == []
 
 
 # --- lump sum: furthest already fired, a nearer one still fresh ---------------
@@ -442,7 +450,7 @@ def test_scope_is_threaded_to_plan_read_fired_state_and_mark(shared, recorder):
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
         notify_repo=notify, milestone_repo=milestone_repo, scope="user-42")
     assert sent == 1
-    assert milestone_repo.scopes_read == ["user-42"]     # resolve_plan threaded scope
+    assert milestone_repo.scopes_read == ["user-42"]     # the plan read threaded scope
     assert scopes_read(notify) == ["user-42"]            # dedup read threaded scope
     assert scopes_marked(notify) == ["user-42"]             # mark threaded the SAME scope
     assert stored_markers(notify) == {"id:m1:bal:480000.00"}

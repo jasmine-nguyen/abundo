@@ -71,7 +71,7 @@ def _eligible_rows(handler):
     predicate. Deliberately not re-implemented here: a test that re-derives eligibility would
     keep agreeing with itself while the endpoint drifted away from the badge."""
     return [row for row in _messy_rows()
-            if handler._is_unmapped_category(row.get("category"), {"groceries"})]
+            if handler.is_unfiled_category(row.get("category"), {"groceries"})]
 
 
 def _contains_rule(pattern):
@@ -155,7 +155,7 @@ def test_every_group_count_is_what_the_minted_rule_would_really_file(handler, ru
 
 def test_unfiled_equals_the_real_count_endpoint_on_the_same_rows(handler):
     # [A2] FAIL-ON-REVERT for "the same predicate as the badge". Asserted against the count
-    # endpoint itself, so a copy of _is_unmapped_category that drifts (or an extra
+    # endpoint itself, so a copy of is_unfiled_category that drifts (or an extra
     # contributes_to_budget gate slipped in here) reddens instead of quietly showing her a
     # screen whose total disagrees with the tab badge.
     taxonomy = {"groceries"}
@@ -522,7 +522,7 @@ def test_a_wording_group_and_a_merchant_group_can_both_claim_a_row_without_break
     # Counts deliberately overlap (4 + 2 = 6 > 4 unfiled) — that is the disclosure the feature
     # exists for. But the PARTITION over the raw rows is still exact and single-count.
     eligible = [r for r in _account_rows(table, ANZ)
-                if handler._is_unmapped_category(r.get("category"), set())]
+                if handler.is_unfiled_category(r.get("category"), set())]
     patterns = [g["rulePattern"] for g in body["groups"]]
     reached = {r["transaction_id"] for r in eligible
                if any(p.lower() in r["description"].lower() for p in patterns)}

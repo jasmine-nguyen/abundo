@@ -209,7 +209,7 @@ def test_income_and_mapped_never_listed(handler):
 
 def test_feed_total_equals_count_over_same_data(handler):
     # The list, drained to exhaustion, must have exactly as many rows as the badge count over
-    # the same data — the whole point of sharing _is_unmapped_category.
+    # the same data — the whole point of sharing is_unfiled_category.
     rows = {
         ANZ: [_row(ANZ, "2026-07-10", "a1", category=None),
               _row(ANZ, "2026-07-09", "a2", category="groceries"),
