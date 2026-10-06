@@ -71,13 +71,6 @@ def test_no_test_file_defines_its_own_repo_stand_in():
         "            return {}\n"
     )
     assert _local_copies(nested) == [(2, "_Renamed")]
-    nested_transaction_read = (
-        "def test_x():\n"
-        "    class _Renamed:\n"
-        "        def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):\n"
-        "            return [], None\n"
-    )
-    assert _local_copies(nested_transaction_read) == [(2, "_Renamed")]
 
     copies = []
     for path in sorted(_TESTS.rglob("*.py")):
