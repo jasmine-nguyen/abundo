@@ -8,8 +8,9 @@ test_rules_routes_multi_condition.py. Rows are keyed by id, so a dedup hit mints
 """
 
 import json
+from functools import partial
 
-from _feed_fakes import FakeCategoryRepo, Repos
+from _feed_fakes import Repos, inject_rule_routes
 
 
 _CATEGORIES = ("transport", "groceries")
@@ -20,11 +21,7 @@ def _event(method, path, body):
             "body": json.dumps(body)}
 
 
-def _inject(handler, monkeypatch, store, categories=_CATEGORIES):
-    """Point the handler at the real repositories over the store's one FakeTable."""
-    monkeypatch.setattr(handler, "RuleRepository", lambda: store.rule_repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(categories))
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: store.transaction_repo)
+_inject = partial(inject_rule_routes, categories=_CATEGORIES)
 
 
 def _post_multi(handler, amount_value, category_id="transport"):

@@ -25,8 +25,9 @@ exactly as the sibling suite does.
 
 import json
 from decimal import Decimal
+from functools import partial
 
-from _feed_fakes import SPENDING, FakeCategoryRepo, Repos, _row
+from _feed_fakes import SPENDING, Repos, _row, inject_rule_routes
 
 
 _CATEGORIES = ("groceries", "subscriptions", "insurance")
@@ -46,13 +47,7 @@ def _event(method, path, body=None, path_params=None):
     return event
 
 
-def _inject(handler, monkeypatch, store, transactions=None, categories=_CATEGORIES):
-    """Point the handler at the real repositories over the store's one FakeTable."""
-    for rows in (transactions or {}).values():
-        store.table.seed(*rows)
-    monkeypatch.setattr(handler, "RuleRepository", lambda: store.rule_repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(categories))
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: store.transaction_repo)
+_inject = partial(inject_rule_routes, categories=_CATEGORIES)
 
 
 def _charges(merchant, description, amounts, months=("01", "02", "03", "04"),
