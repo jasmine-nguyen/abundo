@@ -543,7 +543,7 @@ def test_a_charge_whose_category_is_an_empty_string_is_eligible_and_filable(rule
 
 def test_a_charge_that_became_income_mid_run_is_already_filed_not_retried_forever(handler):
     # [A44] `income` is the one category that counts as FILED without being a taxonomy id
-    # (_is_unmapped_category). A settlement or a tap that lands it on income leaves nothing to
+    # (is_unfiled_category). A settlement or a tap that lands it on income leaves nothing to
     # retry. Classify it as unfiled instead and the write is refused every round while the app
     # keeps offering "Apply the rest" — an endless loop over one charge.
     # FAIL-ON-REVERT: swap `is_unfiled(current_category)` for `current_category not in taxonomy`

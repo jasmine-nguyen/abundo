@@ -177,6 +177,16 @@ class FakeMilestoneRepo:
         return self._stored
 
 
+def unreadable_milestone_repo():
+    """A milestone store whose read fails, so the poller measures against the built-in plan."""
+    return FakeMilestoneRepo(raises=RuntimeError("milestone store unreadable"))
+
+
+def resolved_plan(shared, milestone_repo, scope=None):
+    """The plan the celebration push measures against, as the poller resolves it."""
+    return shared.milestones._resolve_plan(milestone_repo, scope)[0]
+
+
 @pytest.fixture
 def recorder(shared, monkeypatch):
     """Replace shared.milestones.send_push with a recorder that returns an all-ok receipt."""

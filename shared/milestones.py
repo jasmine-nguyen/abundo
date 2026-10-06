@@ -151,7 +151,7 @@ class LiveMarkers:
 _NO_LIVE_MARKERS = LiveMarkers(frozenset(), frozenset())
 
 
-def _resolve_plan(milestone_repo=None, scope=None):
+def _resolve_plan(milestone_repo, scope=None):
     """Return (plan, authoritative, live_markers).
 
     `live_markers` (a LiveMarkers) is every marker the STORED rows still keep alive — not the same
@@ -163,11 +163,11 @@ def _resolve_plan(milestone_repo=None, scope=None):
     (WHIT-424), since we can't rebuild its exact amount. Empty for every non-authoritative case,
     where nothing is swept anyway.
 
-    `plan` is the same list resolve_plan has always returned. `authoritative` is True when the
+    `plan` is the list the celebration push measures against. `authoritative` is True when the
     store returned a genuine saved list (populated OR a real empty []) AND when the plan is UNSET
     (the user has never saved one) — both are definitive answers safe to reconcile against (WHIT-385).
-    It is False for the two fallback-to-default cases (None repo or a READ FAILURE): reconciling
-    against the built-in default in either would treat every custom marker as dead and delete it, so
+    It is False for the fallback-to-default case (a READ FAILURE): reconciling
+    against the built-in default there would treat every custom marker as dead and delete it, so
     a transient store blip would wipe the once-ever "already celebrated" record. An UNSET plan now
     resolves to an authoritative EMPTY plan (celebrate nothing) rather than the default — the user
     sets their own milestones, so a plan they never chose must not fire pushes.
@@ -175,8 +175,6 @@ def _resolve_plan(milestone_repo=None, scope=None):
     `scope` is the multi-tenant seam (WHIT-369/375): None reads the single shared tenant (the
     repository's own default), a user id later reads that user's plan. One param, threaded to the
     fired-state + reconcile too, so multi-user is a per-user loop in the poller — not a rewrite."""
-    if milestone_repo is None:
-        return list(MILESTONES), False, _NO_LIVE_MARKERS
     try:
         if scope is None:
             stored = milestone_repo.get_milestones_raw()
@@ -190,8 +188,8 @@ def _resolve_plan(milestone_repo=None, scope=None):
         # no plan to measure against — resolve to an authoritative EMPTY plan (celebrate nothing),
         # NOT the built-in default. A no-plan user must not get default-milestone pushes for a plan
         # they never chose. Authoritative + empty is safe: crossed_milestones([]) is empty and the
-        # `authoritative and plan` sweep no-ops on an empty plan. Distinct from the read-failure /
-        # None-repo fallbacks above, which still default so a real-plan user keeps their celebration
+        # `authoritative and plan` sweep no-ops on an empty plan. Distinct from the read-failure
+        # fallback above, which still defaults so a real-plan user keeps their celebration
         # through a transient blip.
         return [], True, _NO_LIVE_MARKERS
     # A corrupt whole-plan write (a non-list scalar isn't iterable) degrades to an authoritative
@@ -248,20 +246,6 @@ def _resolve_plan(milestone_repo=None, scope=None):
     return plan, True, LiveMarkers(frozenset(exact_keys), frozenset(id_prefixes))
 
 
-def resolve_plan(milestone_repo=None, scope=None) -> list:
-    """The plan the celebration push measures against: the user's SAVED milestone list when
-    they have one, else an EMPTY plan when they have never saved one (they set their own
-    milestones — a plan they never chose must not fire pushes). Falls back to the built-in default
-    MILESTONES only when the READ fails or the repo is None (WHIT-384) — a store hiccup must
-    degrade to the default, never skip a real-plan user's celebration (the balance only moves down,
-    so a dropped crossing is never re-detected). Within a genuine saved list, any row milestone_rows rejects (WHIT-394) is
-    skipped + logged with a distinct alarm token and the rest still celebrate — never a WRONG
-    default celebration in its place, and never the whole poll's push lost to the poller's
-    swallow (WHIT-387). An empty list is a genuinely empty plan — reachable only by a direct write, since the API
-    rejects an empty save. A None repo (every pre-WHIT-384 caller) also gets the default."""
-    return _resolve_plan(milestone_repo, scope)[0]
-
-
 # The payoff plan, transcribed from the Notion "IP1 Equity Milestones" db and kept in
 # lockstep with src/milestones.ts (targetBalance/label). targetDate is not needed here —
 # this trigger is balance-based, not date-based. If the plan in Notion changes, update
@@ -299,15 +283,12 @@ def usable_equity(home_value: float, balance: float, lvr: float) -> int:
     return max(0, math.floor(home_value * lvr - balance + 0.5))
 
 
-def crossed_milestones(old_balance, new_balance, plan=None) -> list:
+def crossed_milestones(old_balance, new_balance, plan) -> list:
     """The milestones the balance crossed on this poll (old > target >= new), furthest-
-    along first (lowest target). `plan` is the resolved milestone list; it defaults to the
-    built-in MILESTONES so existing 2-arg callers are unchanged. Empty when old_balance is
+    along first (lowest target). `plan` is the resolved milestone list. Empty when old_balance is
     None (the first-ever poll — the seed guard), the balance rose, or nothing was crossed."""
     if old_balance is None:
         return []
-    if plan is None:
-        plan = MILESTONES
     crossed = [m for m in plan if old_balance > m.target_balance >= new_balance]
     return sorted(crossed, key=lambda m: m.target_balance)
 
@@ -331,11 +312,11 @@ def _body(new_balance, loanfacts_repo) -> str:
     return _BODY_FULL.format(paid=_dollars(paid), equity=_dollars(equity))
 
 
-def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, device_repo, notify_repo, milestone_repo=None, scope=None) -> int:
+def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, device_repo, notify_repo, milestone_repo, scope=None) -> int:
     """Send one celebratory push when the balance crosses a payoff milestone.
 
-    Measures against the user's SAVED plan when `milestone_repo` is given and they have one,
-    else the built-in default (WHIT-384). Fires the furthest-along newly-crossed milestone and
+    Measures against the user's saved plan; falls back to the built-in default only when the read
+    fails (WHIT-384). Fires the furthest-along newly-crossed milestone and
     marks EVERY freshly-crossed one fired (so a lump-sum jump past several doesn't nag later) —
     marking REGARDLESS of send outcome, because the stored prior balance means a crossing is
     never re-detected, so "mark only on send" would lose the push forever on a transient
@@ -354,7 +335,7 @@ def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, devic
     # WHIT-385: reconcile away dead custom markers so a re-targeted or deleted milestone's old
     # marker can't accumulate forever. Runs BEFORE the "nothing crossed" short-circuit, since a
     # re-target poll usually crosses nothing. Only on an AUTHORITATIVE plan (a genuine saved list)
-    # with at least one row — never on a fallback default (None repo / unset / read failure), which
+    # with at least one row — never on a fallback default (unset / read failure), which
     # would wipe live markers on a transient blip. Only custom markers ("id:<id>:bal:<amount>" or
     # the legacy "bal:<amount>", per _is_custom_marker) are ever removed, so built-in sprint markers
     # ("0".."4") are untouched.

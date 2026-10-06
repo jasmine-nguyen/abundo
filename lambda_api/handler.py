@@ -1444,12 +1444,6 @@ def delete_rule_route(event: dict, rule_repo: RuleRepository,
     return _json_response(200, {"id": rule_id, "remaining": remaining})
 
 
-# The unfiled-category predicate now lives in the shared rule engine (WHIT-527), so the
-# count, the /breakdown bucket, the rule sweep, and the webhook all decide "unfiled" the
-# same way. Kept under the old name for the call sites that read like a handler local.
-_is_unmapped_category = is_unfiled_category
-
-
 def get_uncategorized_count(transaction_repo: TransactionRepository, category_repo: CategoryRepository) -> dict:
     """GET /transactions/uncategorized/count — how many uncategorized charges the user has
     across ALL history (WHIT-500), so the tab badge, tab-bar dot, and "All caught up" empty
@@ -1465,7 +1459,7 @@ def get_uncategorized_count(transaction_repo: TransactionRepository, category_re
     count = sum(
         1
         for transaction in transactions
-        if _is_unmapped_category(transaction.get("category"), taxonomy_ids)
+        if is_unfiled_category(transaction.get("category"), taxonomy_ids)
     )
     return _json_response(200, {"count": count})
 
@@ -1498,7 +1492,7 @@ def _fetch_uncategorized_feed_page(
         raw_page, cursor = _fetch_feed_page(repo, MAX_PAGE_SIZE, cursor)
         accumulated.extend(
             row for row in raw_page
-            if _is_unmapped_category(row.get("category"), taxonomy_ids)
+            if is_unfiled_category(row.get("category"), taxonomy_ids)
         )
         if len(accumulated) >= target or not cursor:
             break
@@ -1557,7 +1551,7 @@ def get_uncategorized_merchants(
     taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
     transactions = read_window(transaction_repo, None, None)
     body = group_unfiled_by_merchant(
-        transactions, lambda category: _is_unmapped_category(category, taxonomy_ids)
+        transactions, lambda category: is_unfiled_category(category, taxonomy_ids)
     )
     return _json_response(200, body)
 
@@ -2509,7 +2503,7 @@ def get_category_transactions(
 
         def predicate(transaction: dict) -> bool:
             return (contributes_to_budget(transaction)
-                    and _is_unmapped_category(transaction.get("category"), taxonomy_ids))
+                    and is_unfiled_category(transaction.get("category"), taxonomy_ids))
     elif range_mode:
         categories = category_repo.list_categories()
         target_ids = subtree_ids(category_id, build_category_children(categories),

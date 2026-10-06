@@ -27,7 +27,7 @@ import pytest
 # raw-row injector are shared so the row shape can't drift between the parity suites.
 from _milestone_fakes import (
     FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, notify_repo, recorder,
-    marker_reads, removed_markers, stored_markers,
+    marker_reads, removed_markers, resolved_plan, stored_markers,
 )
 from _milestone_row_fakes import _GOOD, _row, _store_raw_row
 from _terraform import filter_pattern
@@ -197,7 +197,7 @@ def test_both_read_paths_drop_the_same_corrupt_rows(shared, milestone_repo, why,
     _store_raw_row(milestone_repo, stored)
 
     client_ids = [m["id"] for m in milestone_repo.get_milestones()]
-    poller_labels = [p.label for p in shared.milestones.resolve_plan(FakeMilestoneRepo(stored))]
+    poller_labels = [p.label for p in resolved_plan(shared, FakeMilestoneRepo(stored))]
 
     assert client_ids == ["good"], f"client read kept the {why} row"
     assert poller_labels == ["Halfway"], f"poller read kept the {why} row"
@@ -214,14 +214,14 @@ def test_the_target_precision_divergence_is_pinned_not_accidental(shared, milest
     stored = [_row(id="big", targetBalance=Decimal("1e26"))]
     _store_raw_row(milestone_repo, stored)
     assert [m["id"] for m in milestone_repo.get_milestones()] == ["big"]
-    assert shared.milestones.resolve_plan(FakeMilestoneRepo(stored)) == []
+    assert resolved_plan(shared, FakeMilestoneRepo(stored)) == []
 
 
 @pytest.mark.parametrize("not_a_list", ["scalar", 42, {"m1": _GOOD}])
 def test_both_read_paths_degrade_a_non_list_plan_to_empty(shared, milestone_repo, not_a_list):
     _store_raw_row(milestone_repo, not_a_list)
     assert milestone_repo.get_milestones() == []
-    assert shared.milestones.resolve_plan(FakeMilestoneRepo(not_a_list)) == []
+    assert resolved_plan(shared, FakeMilestoneRepo(not_a_list)) == []
 
 
 # --- [D] the per-site differences that must SURVIVE unification --------------------------
@@ -237,7 +237,7 @@ def test_both_read_paths_degrade_a_non_list_plan_to_empty(shared, milestone_repo
 def test_poller_logs_the_alarm_token_at_error(shared, caplog, bad_row, why):
     # The CloudWatch metric filter (terraform/monitoring.tf) string-matches these tokens.
     with caplog.at_level(logging.ERROR, logger="milestones"):
-        assert shared.milestones.resolve_plan(FakeMilestoneRepo([bad_row])) == []
+        assert resolved_plan(shared, FakeMilestoneRepo([bad_row])) == []
     assert "MILESTONE_ROW_MALFORMED" in caplog.text, why
 
 
@@ -257,7 +257,7 @@ def test_each_path_keeps_its_own_numeric_type(shared, milestone_repo):
     stored = [_row(targetBalance=Decimal("595413.43"))]
     _store_raw_row(milestone_repo, stored)
 
-    poller_target = shared.milestones.resolve_plan(FakeMilestoneRepo(stored))[0].target_balance
+    poller_target = resolved_plan(shared, FakeMilestoneRepo(stored))[0].target_balance
     client_target = milestone_repo.get_milestones()[0]["targetBalance"]
 
     assert isinstance(poller_target, Decimal) and poller_target == Decimal("595413.43")
@@ -275,7 +275,7 @@ def test_a_null_id_passes_the_client_read_and_a_missing_id_degrades_the_poller_m
     assert milestone_repo.get_milestones() == [
         {"id": None, "label": "Old", "targetBalance": 480000.0, "targetDate": "2030-01-01"}]
 
-    plan = shared.milestones.resolve_plan(FakeMilestoneRepo([{k: v for k, v in legacy.items() if k != "id"}]))
+    plan = resolved_plan(shared, FakeMilestoneRepo([{k: v for k, v in legacy.items() if k != "id"}]))
     assert [p.key for p in plan] == ["bal:480000.00"]
 
 
@@ -288,7 +288,7 @@ def test_a_huge_target_is_skipped_not_raised_through_the_poller(shared, caplog):
     # _plan_marker -> this raises InvalidOperation instead of asserting.
     stored = [_row(id="good"), _row(id="huge", targetBalance=Decimal("1e26"))]
     with caplog.at_level(logging.ERROR, logger="milestones"):
-        plan = shared.milestones.resolve_plan(FakeMilestoneRepo(stored))
+        plan = resolved_plan(shared, FakeMilestoneRepo(stored))
     assert [p.label for p in plan] == ["Halfway"]
     assert "MILESTONE_ROW_MALFORMED" in caplog.text
 
@@ -324,7 +324,7 @@ def test_a_bad_date_row_is_invisible_on_screen_and_does_not_push(shared, milesto
     _store_raw_row(milestone_repo, stored)
 
     assert [m["id"] for m in milestone_repo.get_milestones()] == ["keep"]   # screen: gone
-    assert [p.label for p in shared.milestones.resolve_plan(FakeMilestoneRepo(stored))] == [
+    assert [p.label for p in resolved_plan(shared, FakeMilestoneRepo(stored))] == [
         "Halfway"]                                                         # poller: gone too
 
     # A poll whose balance crosses the bad row's target celebrates nothing, and records nothing.
@@ -397,7 +397,7 @@ def test_a_row_with_no_id_key_at_all_is_dropped_by_the_client_and_kept_by_the_po
     _store_raw_row(milestone_repo, [_GOOD, legacy])
 
     assert [m["id"] for m in milestone_repo.get_milestones()] == ["keep"]
-    plan = shared.milestones.resolve_plan(FakeMilestoneRepo([_GOOD, legacy]))
+    plan = resolved_plan(shared, FakeMilestoneRepo([_GOOD, legacy]))
     assert [p.key for p in plan] == ["id:keep:bal:300000.00", "bal:480000.00"]
 
 
@@ -498,7 +498,7 @@ def test_every_other_bad_date_shape_is_dropped_by_both_read_paths(
     _store_raw_row(milestone_repo, stored)
 
     assert [m["id"] for m in milestone_repo.get_milestones()] == ["good"], f"screen kept {why}"
-    assert [p.label for p in shared.milestones.resolve_plan(FakeMilestoneRepo(stored))] == [
+    assert [p.label for p in resolved_plan(shared, FakeMilestoneRepo(stored))] == [
         "Halfway"], f"poller kept {why}"
 
 
@@ -513,7 +513,7 @@ def test_a_row_with_no_target_date_key_at_all_is_dropped_by_both_read_paths(
     _store_raw_row(milestone_repo, stored)
 
     assert [m["id"] for m in milestone_repo.get_milestones()] == ["good"]
-    assert [p.label for p in shared.milestones.resolve_plan(FakeMilestoneRepo(stored))] == [
+    assert [p.label for p in resolved_plan(shared, FakeMilestoneRepo(stored))] == [
         "Halfway"]
 
 
@@ -532,7 +532,7 @@ def test_a_date_only_fromisoformat_accepts_is_now_rejected_by_both_read_paths(
     _store_raw_row(milestone_repo, stored)
 
     assert milestone_repo.get_milestones() == []
-    assert shared.milestones.resolve_plan(FakeMilestoneRepo(stored)) == []
+    assert resolved_plan(shared, FakeMilestoneRepo(stored)) == []
 
 
 # --- [E3] a bad row FIRST costs no more than a bad row LAST -----------------
@@ -549,7 +549,7 @@ def test_a_bad_date_row_costs_only_itself_wherever_it_sits(shared, recorder, pos
     b = _row(id="b", label="B", targetBalance=Decimal("300000"))
     stored = {"first": [bad, a, b], "middle": [a, bad, b], "last": [a, b, bad]}[position]
 
-    assert [p.label for p in shared.milestones.resolve_plan(FakeMilestoneRepo(stored))] == [
+    assert [p.label for p in resolved_plan(shared, FakeMilestoneRepo(stored))] == [
         "A", "B"]
 
     # ...and the survivors still celebrate: a poll past every target pushes the furthest one.
@@ -598,7 +598,7 @@ def test_the_terraform_metric_filter_matches_the_line_a_bad_date_emits(shared, c
     assert "MILESTONE_ROW_MALFORMED" in terms, f"terraform pattern changed: {pattern!r}"
 
     with caplog.at_level(logging.ERROR, logger="milestones"):
-        assert shared.milestones.resolve_plan(
+        assert resolved_plan(shared, 
             FakeMilestoneRepo([_row(targetDate="not-a-date")])) == []
     line = caplog.records[0].getMessage()
     assert "MILESTONE_ROW_MALFORMED" in line.split(), (

@@ -241,7 +241,7 @@ def test_every_row_the_save_endpoint_accepts_still_resolves_for_the_poller(
     assert put["statusCode"] == 200, put["body"]
     saved = json.loads(put["body"])
 
-    plan = poller.resolve_plan(milestone_repo)
+    plan = poller._resolve_plan(milestone_repo)[0]
     assert [p.label for p in plan] == [r["label"] for r in _SAVED_PLAN]
     assert [p.target_balance for p in plan] == [
         Decimal("1000000000"), Decimal("595413.43"), Decimal("0")]
