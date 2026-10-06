@@ -10,7 +10,7 @@ import json
 import pytest
 
 from _feed_fakes import FakeCategoryRepo, real_repos
-from _job_fakes import created_jobs, real_job_repo
+from _job_fakes import created_jobs, real_job_repo, throttled_worker
 
 _REPOSITORIES = [
     "AccountBalanceRepository", "BudgetRepository", "CategoryRepository", "DeviceRepository",
@@ -107,10 +107,6 @@ def test_each_method_and_path_reaches_its_route_function(handler, monkeypatch, m
     assert called == [expected]
 
 
-def _throttled(function_env_var, payload):
-    raise RuntimeError("throttled")
-
-
 def _chat_start(handler, job_repo):
     event = {"body": json.dumps({"messages": [{"role": "user", "text": "How much on coffee?"}]})}
     return handler.start_ai_chat_job(event, job_repo)
@@ -128,7 +124,7 @@ def _apply_rules_start(handler, job_repo):
 ])
 def test_a_job_whose_worker_cannot_start_polls_as_failed_with_its_own_error(
         handler, monkeypatch, start, poll, error_text):
-    monkeypatch.setattr(handler, "_invoke_worker", _throttled)
+    monkeypatch.setattr(handler, "_invoke_worker", throttled_worker)
     job_repo = real_job_repo()
 
     resp = start(handler, job_repo)

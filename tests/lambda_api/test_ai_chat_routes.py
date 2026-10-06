@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from _job_fakes import created_jobs, real_job_repo
+from _job_fakes import created_jobs, real_job_repo, throttled_worker
 
 
 class FakeLambdaClient:
@@ -96,9 +96,7 @@ def test_post_keeps_a_short_seeded_history_whole(handler, lambda_client):
 
 
 def test_post_returns_502_and_fails_the_job_when_the_invoke_fails(handler, lambda_client, monkeypatch):
-    def throttled(function_env_var, payload):
-        raise RuntimeError("throttled")
-    monkeypatch.setattr(handler, "_invoke_worker", throttled)
+    monkeypatch.setattr(handler, "_invoke_worker", throttled_worker)
     job_repo = real_job_repo()
     resp = _post(handler, job_repo, {"messages": [_user()]})
 
