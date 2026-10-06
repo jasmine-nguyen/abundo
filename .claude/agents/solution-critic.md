@@ -24,7 +24,7 @@ standards. Verify the plan accounts for any landmine in the touched area.
 Independently verify each of these against the live codebase before you write the review:
 
 1. **Card validity — pressure-test the designer's verdict.** The plan claims the card
-   is VALID. Do NOT take that on faith — grep/read to try to break it. If the
+   is VALID. Don't take that on faith — grep/read to try to break it. If the
    feature is already implemented, already tested, or the target is dead/uncalled, a
    VALID verdict is wrong → that is an automatic **NEEDS REWORK**. So is a plan that
    changes files outside this repo, or the build tool's own files where

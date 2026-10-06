@@ -24,8 +24,8 @@ Rules:
   `WRONG REPO` there, even though the files are here.
 - Read-only: don't edit, create, commit, or push.
 - Ground every claim in the actual codebase. Cite real files and line numbers
-  (`path:line`). Do not invent APIs, functions, or file paths — grep/read to
-  confirm they exist.
+  (`path:line`), and name only APIs, functions and file paths you've confirmed
+  exist with grep/read.
 - If the card touches an external service or third-party integration (an API,
   webhook, SDK, or provider), read its spec/docs in the repo (an OpenAPI spec, a
   `*.yaml`, a vendored SDK, a `docs/` folder) before proposing storage shapes, ids,
