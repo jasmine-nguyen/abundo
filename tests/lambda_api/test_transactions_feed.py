@@ -178,7 +178,7 @@ def test_trailing_lastevaluatedkey_quirk_terminates_without_dupes(handler):
     # Limit exactly). Page 1 fills the limit AND carries a cursor; the resumed query then
     # returns []. The feed must still terminate and not repeat the last row. Pre-canned pages,
     # because the realistic FakeTable can't reproduce this quirk.
-    key ={"account_id": SPENDING, "date": "2026-07-01", "pk": f"ACCOUNT#{SPENDING}", "sk": "TXN#s1"}
+    key = {"account_id": SPENDING, "date": "2026-07-01", "pk": f"ACCOUNT#{SPENDING}", "sk": "TXN#s1"}
     repo = _AccountPagesTransactionRepo({SPENDING: [
         ([_row(SPENDING, "2026-07-01", "s1")], key),   # page 1: a row + a (stale) cursor
         ([], None),                                    # resumed query: nothing left
