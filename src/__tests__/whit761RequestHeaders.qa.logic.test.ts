@@ -33,14 +33,8 @@ it('a DELETE with no body sends no Content-Type', async () => {
   expect(sentHeaders()).toEqual({ Authorization: 'Bearer tok' });
 });
 
-// [A3]
-it('a write with a body sends exactly Authorization and Content-Type', async () => {
-  await createCategory({ name: 'Gym', bucket: 'Lifestyle' as never, icon: 'dumbbell' });
-  expect(sentHeaders()).toEqual({ Authorization: 'Bearer tok', 'Content-Type': 'application/json' });
-});
-
-// [A4]
-it('each call reads a fresh token and calls never share headers', async () => {
+// [A3, A4]
+it('a write sends Authorization and Content-Type, each call reads a fresh token and calls never share headers', async () => {
   mockGetAuthToken.mockResolvedValueOnce('first').mockResolvedValueOnce('second');
   await createCategory({ name: 'Gym', bucket: 'Lifestyle' as never, icon: 'dumbbell' });
   await fetchCategories();

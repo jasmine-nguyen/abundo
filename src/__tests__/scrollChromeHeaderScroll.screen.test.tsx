@@ -1,9 +1,7 @@
 // WHIT-200/761 — ScrollChromeHeader's scroll→state wiring. State lives in the provider, so the
 // header reads/writes the shared stateRef via useNavBars and keeps no chrome state of its own.
-// Covers:
-//   (1) direction: down → 'hidden', a later up → 'shown' (proves it reads+writes the shared ref),
-//   (2) dedup: a continued same-direction scroll doesn't re-call setNavBars.
-// The slide distance, opacity and scrollEventThrottle are covered in
+// Covers dedup: a continued same-direction scroll doesn't re-call setNavBars. Direction, slide
+// distance, opacity and scrollEventThrottle are covered in
 // scrollChromeHeaderOwnsScroll.screen.test.tsx against the real provider.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
@@ -33,14 +31,6 @@ function renderHeader() {
     <ScrollChromeHeader title="Budgets"><Text>body</Text></ScrollChromeHeader>,
   );
 }
-
-it('scrolling down hides, then scrolling up shows — driving the shared stateRef', () => {
-  const r = renderHeader();
-  scrollTo(r, 200);
-  expect(mockSetNavBars).toHaveBeenLastCalledWith('hidden');
-  scrollTo(r, 20);
-  expect(mockSetNavBars).toHaveBeenLastCalledWith('shown');
-});
 
 it('a continued same-direction scroll does not re-call setNavBars (dedups on the shared ref)', () => {
   const r = renderHeader();

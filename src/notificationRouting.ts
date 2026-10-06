@@ -27,8 +27,7 @@ export function routeForNotificationData(data: unknown): string | null {
   if (typeof type !== 'string') return null;
   if (type === 'budget') {
     const category = (data as { category?: unknown }).category;
-    if (typeof category === 'string' && category.length > 0) return `/budget/${category}`;
-    return null;
+    return typeof category === 'string' && category ? `/budget/${category}` : null;
   }
   return NOTIF_ROUTE[type] ?? null;
 }
