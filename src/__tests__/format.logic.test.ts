@@ -109,6 +109,14 @@ describe('fmt2', () => {
     expect(fmt2(-12.5)).toBe('-$12.50');
     expect(fmt2(2500)).toBe('+$2,500.00');
   });
+
+  // [A1] Kept from the trimmed whit762 [A15]: zero is a plus, and negatives keep the thousands comma.
+  it.each([
+    [0, '+$0.00'],
+    [-1234.5, '-$1,234.50'],
+  ])('fmt2(%p) → %p', (amount, label) => {
+    expect(fmt2(amount)).toBe(label);
+  });
 });
 
 describe('fmtBalance', () => {
