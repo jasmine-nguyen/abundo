@@ -13,6 +13,7 @@ from decimal import Decimal
 
 import pytest
 from _dynamo_fakes import FakeTable
+from _pending_mirror_fakes import REISSUE_TODAY, WESTPAC_SOURCE, reissue_bank_rows
 from _terraform import allows, granted_dynamodb_actions, policy_statements
 
 _spec = importlib.util.spec_from_file_location(
@@ -21,7 +22,6 @@ _spec = importlib.util.spec_from_file_location(
 policy_qa = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(policy_qa)
 
-layer = policy_qa.layer
 repo = policy_qa.repo
 
 NON_CHARGE_ROWS = (
@@ -34,12 +34,12 @@ NON_CHARGE_ROWS = (
 
 # [A1] P0 — the plain delete path (a pending the bank dropped, no user edit) still works.
 def test_a_dropped_unedited_pending_is_still_deleted_under_the_trigger_policy(layer, repo):
-    _, mirror, _ = layer
+    _, mirror = layer
     repo._table.seed(policy_qa._row("gone", "PENDING - Coles", "-12.00", category="Unfiled"))
-    bank = policy_qa._bank("still-there")
+    bank = reissue_bank_rows("still-there")
 
     result = mirror.mirror_account(
-        repo, lambda *args: copy.deepcopy(bank), policy_qa.WESTPAC_SOURCE, policy_qa.TODAY, policy_qa._is_unfiled
+        repo, lambda *args: copy.deepcopy(bank), WESTPAC_SOURCE, REISSUE_TODAY, policy_qa._is_unfiled
     )
 
     assert result["failed"] == 0, f"the delete was refused by the trigger policy: {result}"

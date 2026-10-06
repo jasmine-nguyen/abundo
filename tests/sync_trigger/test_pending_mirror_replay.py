@@ -9,25 +9,10 @@ sync-trigger handler runs the mirror.
 """
 
 import copy
-import importlib
-import pathlib
-import sys
-from datetime import date
 from decimal import Decimal
 
-import pytest
-
-from _boto_stubs import install_import_satisfiers, use_condition_fields
-from _dynamo_fakes import FakeTable
 from _http_fakes import FakeResponse
-
-install_import_satisfiers()
-
-WESTPAC_BID = "fiskil_77"
-WESTPAC_AID = "A3AC9195-9E8D-48B8-86D0-46D130D7F64A"
-WESTPAC = "westpac-altitude-qantas-black"
-UP = "up-spending"
-TODAY = date(2026, 9, 29)
+from _pending_mirror_fakes import MIRROR_TODAY, UP, WESTPAC, WESTPAC_AID, WESTPAC_SOURCE
 
 DROPPED_IDS = {
     "bank_tx_e937046f0001",  # 28 Sep Costco -195.26 "Pending - ..." copy
@@ -91,39 +76,14 @@ def _bank_row(row):
 
 BANK_LIST = [_bank_row(row) for row in KEPT_ROWS]
 
-_SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
-_SHARED_MODULES = {path.stem for path in pathlib.Path(_SHARED_DIR).glob("*.py")} - {"ssm"}
-
-
-@pytest.fixture
-def layer():
-    """The real shared repository + pending_mirror, imported over the condition-recording
-    boto fakes so FakeTable can evaluate their queries and conditional deletes."""
-    with use_condition_fields():
-        sys.path.insert(0, _SHARED_DIR)
-        saved = {name: sys.modules.pop(name, None) for name in _SHARED_MODULES | {"pending_mirror"}}
-        try:
-            yield importlib.import_module("repository_transaction")
-        finally:
-            for name, module in saved.items():
-                sys.modules.pop(name, None)
-                if module is not None:
-                    sys.modules[name] = module
-            sys.path.remove(_SHARED_DIR)
-
-
-def test_29_sep_replay_removes_exactly_the_three_dropped_pendings(layer):
-    pending_mirror = importlib.import_module("pending_mirror")
-    repo = layer.TransactionRepository()
-    repo._table = FakeTable()
+def test_29_sep_replay_removes_exactly_the_three_dropped_pendings(repo, mirror):
     repo._table.seed(*(KEPT_ROWS + DROPPED_ROWS + UNTOUCHABLE_ROWS))
     before = copy.deepcopy(repo._table.store)
 
     def fetch(*args, **kwargs):
         return copy.deepcopy(BANK_LIST)
 
-    source = {"bid": WESTPAC_BID, "aid": WESTPAC_AID}
-    result = pending_mirror.mirror_account(repo, fetch, source, TODAY, lambda category: True)
+    result = mirror.mirror_account(repo, fetch, WESTPAC_SOURCE, MIRROR_TODAY, lambda category: True)
 
     removed = {key[1].removeprefix("TXN#") for key in set(before) - set(repo._table.store)}
     assert removed == DROPPED_IDS

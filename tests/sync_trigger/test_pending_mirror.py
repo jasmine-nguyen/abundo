@@ -6,132 +6,58 @@ the fixture's reasoning). The bank list is faked at the fetch seam, or at urlope
 
 import copy
 import importlib
-import pathlib
-import sys
 import urllib.error
 import urllib.parse
-from datetime import date
-from decimal import Decimal
 
 import pytest
 
-from _boto_stubs import install_import_satisfiers, use_condition_fields
 from _budget_endpoint_fakes import _FakeCategoryRepo
-from _dynamo_fakes import FakeTable, _client_error
+from _dynamo_fakes import _client_error
 from _http_fakes import FakeResponse, http_error
-
-install_import_satisfiers()
-
-WESTPAC_AID = "A3AC9195-9E8D-48B8-86D0-46D130D7F64A"
-UP_AID = "3zVQJ8Btz_IRmqp78VrQnQ"
-WESTPAC_SOURCE = {"bid": "fiskil_77", "aid": WESTPAC_AID}
-WESTPAC = "westpac-altitude-qantas-black"
-UP = "up-spending"
-TODAY = date(2026, 9, 29)
-
-_SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
-_SHARED_MODULES = {path.stem for path in pathlib.Path(_SHARED_DIR).glob("*.py")} - {"ssm"}
-
-
-@pytest.fixture
-def layer():
-    """(repository_transaction, pending_mirror), freshly imported over the condition-recording
-    boto fakes so FakeTable can evaluate their queries and conditional deletes."""
-    with use_condition_fields():
-        sys.path.insert(0, _SHARED_DIR)
-        saved = {name: sys.modules.pop(name, None) for name in _SHARED_MODULES | {"pending_mirror"}}
-        try:
-            yield importlib.import_module("repository_transaction"), importlib.import_module("pending_mirror")
-        finally:
-            for name, module in saved.items():
-                sys.modules.pop(name, None)
-                if module is not None:
-                    sys.modules[name] = module
-            sys.path.remove(_SHARED_DIR)
-
-
-@pytest.fixture
-def repo(layer):
-    repository_transaction, _ = layer
-    repository = repository_transaction.TransactionRepository()
-    repository._table = FakeTable()
-    return repository
-
-
-@pytest.fixture
-def mirror(layer):
-    return layer[1]
-
-
-def _row(transaction_id, day="2026-09-28", status="pending", account_id=WESTPAC, **fields):
-    return {
-        "pk": f"ACCOUNT#{account_id}",
-        "sk": f"TXN#{transaction_id}",
-        "transaction_id": transaction_id,
-        "account_id": account_id,
-        "date": day,
-        "amount": Decimal("-10.00"),
-        "description": f"SHOP {transaction_id}",
-        "status": status,
-        "category": "Unfiled",
-        **fields,
-    }
-
-
-def _bank(*ids, aid=WESTPAC_AID):
-    return [{"id": transaction_id, "accountId": aid, "pending": True, "date": "2026-09-28"}
-            for transaction_id in ids]
-
-
-def _fetch_returning(rows):
-    def fetch(*args):
-        return copy.deepcopy(rows)
-    return fetch
-
-
-def _ids(repo):
-    return {key[1].removeprefix("TXN#") for key in repo._table.store}
-
-
-def _unfiled(*taxonomy):
-    """The taxonomy check: a category is unfiled unless it's one of `taxonomy`."""
-    return lambda category: category not in taxonomy
-
-
-def _stored(repo, transaction_id):
-    return repo._table.store[(f"ACCOUNT#{WESTPAC}", f"TXN#{transaction_id}")]
-
-
-_GUZMAN = {"amount": Decimal("-23.50"), "merchant_name": "Guzman y Gomez", "description": "GUZMAN Y GOMEZ NEWTOWN"}
+from _pending_mirror_fakes import (
+    GUZMAN,
+    MIRROR_TODAY,
+    UP,
+    UP_AID,
+    WESTPAC,
+    WESTPAC_AID,
+    WESTPAC_SOURCE,
+    bank_rows,
+    fetch_returning,
+    pending_row,
+    stored,
+    stored_ids,
+    unfiled_except,
+)
 
 
 # --- mirror_account: what gets removed ---------------------------------------------------------
 
 
 def test_a_posted_row_missing_from_the_bank_list_is_not_deleted(repo, mirror):
-    repo._table.seed(_row("kept"), _row("posted_gone", status="posted"))
+    repo._table.seed(pending_row("kept"), pending_row("posted_gone", status="posted"))
 
-    result = mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _unfiled())
+    result = mirror.mirror_account(repo, fetch_returning(bank_rows("kept")), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except())
 
-    assert _ids(repo) == {"kept", "posted_gone"}
+    assert stored_ids(repo) == {"kept", "posted_gone"}
     assert result["removed"] == 0
 
 
 def test_a_pending_before_the_check_window_is_not_deleted(repo, mirror):
     # Check window starts at today - FEED_WINDOW_DAYS (7) = 22 Sep.
-    repo._table.seed(_row("kept"), _row("old", day="2026-09-21"), _row("edge", day="2026-09-22"))
+    repo._table.seed(pending_row("kept"), pending_row("old", day="2026-09-21"), pending_row("edge", day="2026-09-22"))
 
-    mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _unfiled())
+    mirror.mirror_account(repo, fetch_returning(bank_rows("kept")), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except())
 
-    assert _ids(repo) == {"kept", "old"}
+    assert stored_ids(repo) == {"kept", "old"}
 
 
 def test_a_user_edited_pending_with_no_settled_twin_is_kept_and_counted(repo, mirror):
-    repo._table.seed(_row("kept"), _row("edited", notes="dinner with Sam"))
+    repo._table.seed(pending_row("kept"), pending_row("edited", notes="dinner with Sam"))
 
-    result = mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _unfiled())
+    result = mirror.mirror_account(repo, fetch_returning(bank_rows("kept")), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except())
 
-    assert _ids(repo) == {"kept", "edited"}
+    assert stored_ids(repo) == {"kept", "edited"}
     assert result["kept"] == 1
     assert result["carried"] == 0
     assert result["removed"] == 0
@@ -139,60 +65,60 @@ def test_a_user_edited_pending_with_no_settled_twin_is_kept_and_counted(repo, mi
 
 def test_a_user_edited_pending_moves_its_edit_onto_the_settled_twin(repo, mirror):
     repo._table.seed(
-        _row("kept"),
-        _row("edited", category="groceries", notes="dinner with Sam", **_GUZMAN),
-        _row("settled", status="posted", day="2026-09-29", **_GUZMAN),
+        pending_row("kept"),
+        pending_row("edited", category="groceries", notes="dinner with Sam", **GUZMAN),
+        pending_row("settled", status="posted", day="2026-09-29", **GUZMAN),
     )
 
     result = mirror.mirror_account(
-        repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _unfiled("groceries")
+        repo, fetch_returning(bank_rows("kept")), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except("groceries")
     )
 
-    assert _ids(repo) == {"kept", "settled"}
-    assert _stored(repo, "settled")["category"] == "groceries"
-    assert _stored(repo, "settled")["notes"] == "dinner with Sam"
+    assert stored_ids(repo) == {"kept", "settled"}
+    assert stored(repo, "settled")["category"] == "groceries"
+    assert stored(repo, "settled")["notes"] == "dinner with Sam"
     assert result["carried"] == 1
     assert result["kept"] == 0
 
 
 def test_a_failed_carry_keeps_the_pending_and_leaves_the_twin_alone(repo, mirror):
     repo._table.seed(
-        _row("kept"),
-        _row("edited", notes="dinner with Sam", **_GUZMAN),
-        _row("settled", status="posted", **_GUZMAN),
+        pending_row("kept"),
+        pending_row("edited", notes="dinner with Sam", **GUZMAN),
+        pending_row("settled", status="posted", **GUZMAN),
     )
     repo._table.fail("batch_writer")
 
-    result = mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _unfiled())
+    result = mirror.mirror_account(repo, fetch_returning(bank_rows("kept")), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except())
 
-    assert _ids(repo) == {"kept", "edited", "settled"}
-    assert "notes" not in _stored(repo, "settled")
+    assert stored_ids(repo) == {"kept", "edited", "settled"}
+    assert "notes" not in stored(repo, "settled")
     assert result["failed"] == 1
     assert result["carried"] == 0
 
 
 def test_a_failed_delete_after_the_carry_is_retried_without_carrying_twice(repo, mirror):
     repo._table.seed(
-        _row("kept"),
-        _row("edited", category="groceries", notes="dinner with Sam", **_GUZMAN),
-        _row("settled", status="posted", **_GUZMAN),
+        pending_row("kept"),
+        pending_row("edited", category="groceries", notes="dinner with Sam", **GUZMAN),
+        pending_row("settled", status="posted", **GUZMAN),
     )
     repo._table.fail("delete_item")
 
     first = mirror.mirror_account(
-        repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _unfiled("groceries")
+        repo, fetch_returning(bank_rows("kept")), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except("groceries")
     )
 
     assert first["failed"] == 1
-    assert _stored(repo, "settled")["notes"] == "dinner with Sam"
-    carried_twin = dict(_stored(repo, "settled"))
+    assert stored(repo, "settled")["notes"] == "dinner with Sam"
+    carried_twin = dict(stored(repo, "settled"))
 
     repo._table.clear_failures()
     second = mirror.mirror_account(
-        repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _unfiled("groceries")
+        repo, fetch_returning(bank_rows("kept")), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except("groceries")
     )
 
-    assert _stored(repo, "settled") == carried_twin
+    assert stored(repo, "settled") == carried_twin
     assert second["failed"] == 0
     assert second["carried"] == 0
     assert second["kept"] == 1
@@ -201,134 +127,134 @@ def test_a_failed_delete_after_the_carry_is_retried_without_carrying_twice(repo,
 def test_a_settled_twin_dated_before_the_check_window_is_still_found(repo, mirror):
     # Check window starts 22 Sep; the twin settled-dated 20 Sep is inside the 3-day carry skew.
     repo._table.seed(
-        _row("kept"),
-        _row("edited", day="2026-09-22", notes="dinner with Sam", **_GUZMAN),
-        _row("settled", status="posted", day="2026-09-20", **_GUZMAN),
+        pending_row("kept"),
+        pending_row("edited", day="2026-09-22", notes="dinner with Sam", **GUZMAN),
+        pending_row("settled", status="posted", day="2026-09-20", **GUZMAN),
     )
 
-    result = mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _unfiled())
+    result = mirror.mirror_account(repo, fetch_returning(bank_rows("kept")), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except())
 
-    assert _ids(repo) == {"kept", "settled"}
-    assert _stored(repo, "settled")["notes"] == "dinner with Sam"
+    assert stored_ids(repo) == {"kept", "settled"}
+    assert stored(repo, "settled")["notes"] == "dinner with Sam"
     assert result["carried"] == 1
 
 
 def test_a_pending_in_the_extra_read_days_is_not_judged(repo, mirror):
-    repo._table.seed(_row("kept"), _row("early", day="2026-09-20"))
+    repo._table.seed(pending_row("kept"), pending_row("early", day="2026-09-20"))
 
-    result = mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _unfiled())
+    result = mirror.mirror_account(repo, fetch_returning(bank_rows("kept")), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except())
 
-    assert _ids(repo) == {"kept", "early"}
+    assert stored_ids(repo) == {"kept", "early"}
     assert result["checked"] == 1
 
 
 def test_a_settled_charge_the_user_filed_is_never_overwritten(repo, mirror):
     repo._table.seed(
-        _row("kept"),
-        _row("edited", category="groceries", notes="dinner with Sam", **_GUZMAN),
-        _row("settled", status="posted", category="dining", **_GUZMAN),
+        pending_row("kept"),
+        pending_row("edited", category="groceries", notes="dinner with Sam", **GUZMAN),
+        pending_row("settled", status="posted", category="dining", **GUZMAN),
     )
 
     result = mirror.mirror_account(
-        repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _unfiled("groceries", "dining")
+        repo, fetch_returning(bank_rows("kept")), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except("groceries", "dining")
     )
 
-    assert _ids(repo) == {"kept", "edited", "settled"}
-    assert _stored(repo, "settled")["category"] == "dining"
-    assert "notes" not in _stored(repo, "settled")
+    assert stored_ids(repo) == {"kept", "edited", "settled"}
+    assert stored(repo, "settled")["category"] == "dining"
+    assert "notes" not in stored(repo, "settled")
     assert result["kept"] == 1
 
 
 def test_two_edited_pendings_with_one_settled_twin_carry_only_once(repo, mirror):
     repo._table.seed(
-        _row("kept"),
-        _row("first", notes="dinner with Sam", **_GUZMAN),
-        _row("second", notes="lunch with Kim", **_GUZMAN),
-        _row("settled", status="posted", **_GUZMAN),
+        pending_row("kept"),
+        pending_row("first", notes="dinner with Sam", **GUZMAN),
+        pending_row("second", notes="lunch with Kim", **GUZMAN),
+        pending_row("settled", status="posted", **GUZMAN),
     )
 
-    result = mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _unfiled())
+    result = mirror.mirror_account(repo, fetch_returning(bank_rows("kept")), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except())
 
-    assert len(_ids(repo)) == 3
+    assert len(stored_ids(repo)) == 3
     assert result["carried"] == 1
     assert result["kept"] == 1
 
 
 def test_a_pending_already_settled_or_gone_is_counted_as_gone(repo, mirror):
-    repo._table.seed(_row("kept"), _row("settling"))
+    repo._table.seed(pending_row("kept"), pending_row("settling"))
     # The webhook posts the row between our read and our delete.
     repo._table.before_next_write(lambda key, table: table.store[(key["pk"], key["sk"])].update(status="posted"))
 
-    result = mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _unfiled())
+    result = mirror.mirror_account(repo, fetch_returning(bank_rows("kept")), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except())
 
-    assert _ids(repo) == {"kept", "settling"}
+    assert stored_ids(repo) == {"kept", "settling"}
     assert result["gone"] == 1
     assert result["removed"] == 0
 
 
 def test_a_failed_delete_does_not_stop_the_others(repo, mirror):
-    repo._table.seed(_row("kept"), _row("a"), _row("b"))
+    repo._table.seed(pending_row("kept"), pending_row("a"), pending_row("b"))
     repo._table.fail("delete_item", when=lambda key: key["sk"] == "TXN#a")
 
-    result = mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _unfiled())
+    result = mirror.mirror_account(repo, fetch_returning(bank_rows("kept")), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except())
 
-    assert _ids(repo) == {"kept", "a"}
+    assert stored_ids(repo) == {"kept", "a"}
     assert result["failed"] == 1
     assert result["removed"] == 1
 
 
 def test_a_pending_the_bank_lists_as_posted_is_kept(repo, mirror):
-    repo._table.seed(_row("kept"), _row("now_posted"))
-    bank = _bank("kept") + [{"id": "now_posted", "accountId": WESTPAC_AID, "pending": False}]
+    repo._table.seed(pending_row("kept"), pending_row("now_posted"))
+    bank = bank_rows("kept") + [{"id": "now_posted", "accountId": WESTPAC_AID, "pending": False}]
 
-    mirror.mirror_account(repo, _fetch_returning(bank), WESTPAC_SOURCE, TODAY, _unfiled())
+    mirror.mirror_account(repo, fetch_returning(bank), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except())
 
-    assert _ids(repo) == {"kept", "now_posted"}
+    assert stored_ids(repo) == {"kept", "now_posted"}
 
 
 # --- mirror_account: skips ---------------------------------------------------------------------
 
 
 def test_an_empty_bank_list_deletes_nothing(repo, mirror):
-    repo._table.seed(_row("a"))
+    repo._table.seed(pending_row("a"))
 
-    result = mirror.mirror_account(repo, _fetch_returning([]), WESTPAC_SOURCE, TODAY, _unfiled())
+    result = mirror.mirror_account(repo, fetch_returning([]), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except())
 
-    assert _ids(repo) == {"a"}
+    assert stored_ids(repo) == {"a"}
     assert result["skipped"] == "empty"
 
 
 def test_more_missing_than_the_cap_deletes_nothing(repo, mirror):
-    repo._table.seed(_row("kept"), *(_row(f"missing{n}") for n in range(11)))
+    repo._table.seed(pending_row("kept"), *(pending_row(f"missing{n}") for n in range(11)))
 
-    result = mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _unfiled())
+    result = mirror.mirror_account(repo, fetch_returning(bank_rows("kept")), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except())
 
-    assert len(_ids(repo)) == 12
+    assert len(stored_ids(repo)) == 12
     assert result["skipped"] == "too_many_removals"
 
 
 def test_exactly_the_cap_is_still_removed(repo, mirror):
-    repo._table.seed(_row("kept"), *(_row(f"missing{n}") for n in range(10)))
+    repo._table.seed(pending_row("kept"), *(pending_row(f"missing{n}") for n in range(10)))
 
-    result = mirror.mirror_account(repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, _unfiled())
+    result = mirror.mirror_account(repo, fetch_returning(bank_rows("kept")), WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except())
 
-    assert _ids(repo) == {"kept"}
+    assert stored_ids(repo) == {"kept"}
     assert result["removed"] == 10
 
 
 def test_a_fetch_error_propagates_and_deletes_nothing(repo, mirror):
-    repo._table.seed(_row("a"))
+    repo._table.seed(pending_row("a"))
 
     def fetch(*args):
         raise mirror.MirrorSkip("success is not true")
 
     with pytest.raises(mirror.MirrorSkip):
-        mirror.mirror_account(repo, fetch, WESTPAC_SOURCE, TODAY, _unfiled())
-    assert _ids(repo) == {"a"}
+        mirror.mirror_account(repo, fetch, WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except())
+    assert stored_ids(repo) == {"a"}
 
 
 def test_our_rows_are_read_before_the_bank_list_is_fetched(repo, mirror):
-    repo._table.seed(_row("kept"))
+    repo._table.seed(pending_row("kept"))
     calls = []
     original_query = repo._table.query
 
@@ -340,9 +266,9 @@ def test_our_rows_are_read_before_the_bank_list_is_fetched(repo, mirror):
 
     def fetch(*args):
         calls.append("fetch")
-        return _bank("kept")
+        return bank_rows("kept")
 
-    mirror.mirror_account(repo, fetch, WESTPAC_SOURCE, TODAY, _unfiled())
+    mirror.mirror_account(repo, fetch, WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except())
 
     assert calls == ["read", "fetch"]
 
@@ -352,9 +278,9 @@ def test_the_fetch_window_reaches_back_past_the_feed_window_to_tomorrow(repo, mi
 
     def fetch(*args):
         calls.append(args)
-        return _bank("x")
+        return bank_rows("x")
 
-    mirror.mirror_account(repo, fetch, WESTPAC_SOURCE, TODAY, _unfiled())
+    mirror.mirror_account(repo, fetch, WESTPAC_SOURCE, MIRROR_TODAY, unfiled_except())
 
     assert calls == [("fiskil_77", WESTPAC_AID, "2026-09-19", "2026-09-30")]
 
@@ -374,45 +300,45 @@ def _bank_by_account(westpac, up):
 
 def test_user_filed_and_rule_filed_pendings(repo, mirror):
     repo._table.seed(
-        _row("kept"),
-        _row("user_category", category="groceries"),
-        _row("rule_category", category="groceries", filed_by_rule="rule-1"),
-        _row("noted", notes="x"),
-        _row("tagged", tags=["trip"]),
-        _row("excluded", budget_excluded=True),
-        _row("raw_bank_category", category="FOOD_AND_DRINK"),
+        pending_row("kept"),
+        pending_row("user_category", category="groceries"),
+        pending_row("rule_category", category="groceries", filed_by_rule="rule-1"),
+        pending_row("noted", notes="x"),
+        pending_row("tagged", tags=["trip"]),
+        pending_row("excluded", budget_excluded=True),
+        pending_row("raw_bank_category", category="FOOD_AND_DRINK"),
     )
-    fetch = _bank_by_account(_bank("kept"), _bank("u", aid=UP_AID))
+    fetch = _bank_by_account(bank_rows("kept"), bank_rows("u", aid=UP_AID))
 
     summary = mirror.mirror_pendings(
-        "key", repo=repo, category_repo=_FakeCategoryRepo([{"id": "groceries"}]), today=TODAY, fetch=fetch
+        "key", repo=repo, category_repo=_FakeCategoryRepo([{"id": "groceries"}]), today=MIRROR_TODAY, fetch=fetch
     )
 
-    assert _ids(repo) == {"kept", "user_category", "noted", "tagged", "excluded"}
+    assert stored_ids(repo) == {"kept", "user_category", "noted", "tagged", "excluded"}
     assert summary["removed"] == 2
     assert summary["kept"] == 4
 
 
 def test_a_category_read_failure_skips_every_account(repo, mirror):
-    repo._table.seed(_row("gone"))
-    fetch = _bank_by_account(_bank("kept"), _bank("u", aid=UP_AID))
+    repo._table.seed(pending_row("gone"))
+    fetch = _bank_by_account(bank_rows("kept"), bank_rows("u", aid=UP_AID))
 
     summary = mirror.mirror_pendings(
-        "key", repo=repo, category_repo=_FakeCategoryRepo(error=RuntimeError("down")), today=TODAY, fetch=fetch
+        "key", repo=repo, category_repo=_FakeCategoryRepo(error=RuntimeError("down")), today=MIRROR_TODAY, fetch=fetch
     )
 
-    assert _ids(repo) == {"gone"}
+    assert stored_ids(repo) == {"gone"}
     assert summary["skipped"] == 2
 
 
 @pytest.mark.parametrize("failure", [http_error(429), http_error(401), RuntimeError("network")])
 def test_one_account_failing_does_not_stop_the_other(repo, mirror, failure):
-    repo._table.seed(_row("westpac_gone"), _row("up_gone", account_id=UP))
-    fetch = _bank_by_account(failure, _bank("u", aid=UP_AID))
+    repo._table.seed(pending_row("westpac_gone"), pending_row("up_gone", account_id=UP))
+    fetch = _bank_by_account(failure, bank_rows("u", aid=UP_AID))
 
-    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY, fetch=fetch)
+    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_FakeCategoryRepo(), today=MIRROR_TODAY, fetch=fetch)
 
-    assert _ids(repo) == {"westpac_gone"}
+    assert stored_ids(repo) == {"westpac_gone"}
     assert summary["accounts"][WESTPAC]["skipped"]
     assert summary["accounts"][UP]["removed"] == 1
 
@@ -422,9 +348,9 @@ def test_the_api_key_reaches_the_fetch(repo, mirror):
 
     def fetch(bid, aid, api_key, date_from, date_to):
         keys.append(api_key)
-        return _bank("x", aid=aid)
+        return bank_rows("x", aid=aid)
 
-    mirror.mirror_pendings("the-key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY, fetch=fetch)
+    mirror.mirror_pendings("the-key", repo=repo, category_repo=_FakeCategoryRepo(), today=MIRROR_TODAY, fetch=fetch)
 
     assert keys == ["the-key", "the-key"]
 
@@ -457,7 +383,7 @@ def _fetch(mirror):
 
 def test_fetch_follows_the_cursor_to_the_last_page(mirror, bank_pages):
     pages, requests = bank_pages
-    pages.extend([_page(_bank("a"), has_more=True, cursor="c1"), _page(_bank("b"))])
+    pages.extend([_page(bank_rows("a"), has_more=True, cursor="c1"), _page(bank_rows("b"))])
 
     rows = _fetch(mirror)
 
@@ -472,7 +398,7 @@ def test_fetch_follows_the_cursor_to_the_last_page(mirror, bank_pages):
 
 def test_fetch_sends_the_key_and_our_user_agent_with_a_short_timeout(mirror, bank_pages):
     pages, requests = bank_pages
-    pages.append(_page(_bank("a")))
+    pages.append(_page(bank_rows("a")))
 
     _fetch(mirror)
 
@@ -484,12 +410,12 @@ def test_fetch_sends_the_key_and_our_user_agent_with_a_short_timeout(mirror, ban
 
 
 @pytest.mark.parametrize("page", [
-    _page(_bank("a"), success=False),
+    _page(bank_rows("a"), success=False),
     {"success": True, "data": None, "meta": {}},
     _page([{"pending": True}]),
     _page([{"id": "a"}]),
-    _page(_bank("a", aid="someone-else")),
-    _page(_bank("a"), has_more=True, cursor=""),
+    _page(bank_rows("a", aid="someone-else")),
+    _page(bank_rows("a"), has_more=True, cursor=""),
 ])
 def test_fetch_rejects_a_reply_that_may_be_partial(mirror, bank_pages, page):
     pages, _ = bank_pages
@@ -501,7 +427,7 @@ def test_fetch_rejects_a_reply_that_may_be_partial(mirror, bank_pages, page):
 
 def test_fetch_gives_up_past_the_page_cap(mirror, bank_pages):
     pages, requests = bank_pages
-    pages.extend(_page(_bank(f"r{n}"), has_more=True, cursor=f"c{n}") for n in range(4))
+    pages.extend(_page(bank_rows(f"r{n}"), has_more=True, cursor=f"c{n}") for n in range(4))
 
     with pytest.raises(mirror.MirrorSkip):
         _fetch(mirror)
@@ -522,17 +448,17 @@ def test_fetch_lets_an_http_error_through(mirror, monkeypatch):
 
 
 def test_delete_if_still_pending_deletes_a_pending(repo):
-    repo._table.seed(_row("a"))
+    repo._table.seed(pending_row("a"))
 
     assert repo.delete_if_still_pending("ACCOUNT#westpac-altitude-qantas-black", "TXN#a") is True
-    assert _ids(repo) == set()
+    assert stored_ids(repo) == set()
 
 
 def test_delete_if_still_pending_leaves_a_posted_row(repo):
-    repo._table.seed(_row("a", status="posted"))
+    repo._table.seed(pending_row("a", status="posted"))
 
     assert repo.delete_if_still_pending("ACCOUNT#westpac-altitude-qantas-black", "TXN#a") is False
-    assert _ids(repo) == {"a"}
+    assert stored_ids(repo) == {"a"}
 
 
 def test_delete_if_still_pending_on_a_missing_row_is_false(repo):
@@ -540,7 +466,7 @@ def test_delete_if_still_pending_on_a_missing_row_is_false(repo):
 
 
 def test_delete_if_still_pending_leaves_no_deleted_by_you_marker(repo):
-    repo._table.seed(_row("a"))
+    repo._table.seed(pending_row("a"))
 
     repo.delete_if_still_pending("ACCOUNT#westpac-altitude-qantas-black", "TXN#a")
 
@@ -548,7 +474,7 @@ def test_delete_if_still_pending_leaves_no_deleted_by_you_marker(repo):
 
 
 def test_delete_if_still_pending_raises_other_errors(layer, repo):
-    repo._table.seed(_row("a"))
+    repo._table.seed(pending_row("a"))
     repo._table.fail("delete_item", _client_error("ProvisionedThroughputExceededException"))
     errors = importlib.import_module("repository_errors")
 
