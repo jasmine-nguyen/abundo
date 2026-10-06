@@ -9,6 +9,8 @@ Backed by the FakeTable `repo` fixture; `today` is injected for a deterministic 
 
 from datetime import date
 
+from _feed_fakes import FakeCategoryRepo
+
 # BankSync account ids that resolve via ACCOUNT_ID_MAP to two distinct internal ids.
 _ACCOUNT_A = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"  # -> anz-rewards-black-visa
 _ACCOUNT_B = "3zVQJ8Btz_IRmqp78VrQnQ"                        # -> up-spending
@@ -448,22 +450,6 @@ def test_handler_non_dict_event_stays_dry_run(lam, repo, monkeypatch):
 # No confident twin -> reap exactly as today.
 
 
-class _FakeCategoryRepo:
-    """Local read-only taxonomy stub. A shared FakeCategoryRepo lives in
-    tests/shared/_feed_fakes.py but isn't on the lambda test path, and WHIT-520 is still
-    consolidating the per-suite copies on its own branch — so the sibling suites
-    (test_rule_ingest) keep a local one and this does too, to avoid colliding with it."""
-
-    def __init__(self, category_ids, *, error=False):
-        self._categories = [{"id": cid} for cid in category_ids]
-        self._error = error
-
-    def list_categories(self):
-        if self._error:
-            raise RuntimeError("taxonomy read boom")
-        return [dict(category) for category in self._categories]
-
-
 def _norm(lam, txn_id, date_str, *, pending, amount=-5.50, account=_ACCOUNT_A,
           description="SQ *KKV INTERNATIONAL PTY", category=None):
     """A normalised row (as it sits in the store), with an optional category to mark it filed."""
@@ -476,7 +462,8 @@ def _norm(lam, txn_id, date_str, *, pending, amount=-5.50, account=_ACCOUNT_A,
 
 def _sweep_tax(lam, repo, category_ids, *, dry_run=False, error=False):
     return lam.age_out.age_out_stale_pendings(
-        repo, _FakeCategoryRepo(category_ids, error=error), today=_TODAY, dry_run=dry_run)
+        repo, FakeCategoryRepo(category_ids, error=RuntimeError("taxonomy read boom") if error else None),
+        today=_TODAY, dry_run=dry_run)
 
 
 def test_rescue_carries_filing_onto_settled_twin_then_reaps(lam, repo, caplog):

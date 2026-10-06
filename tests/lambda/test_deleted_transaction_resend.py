@@ -6,6 +6,9 @@ process_transaction with the webhook's REAL TransactionRepository over a FakeTab
 the shared repository's own delete_transaction (the one the app's DELETE route uses), inherited by
 the webhook repository.
 """
+from functools import partial
+
+from _budget_endpoint_fakes import _FakeCategoryRepo
 
 
 class _NoRules:
@@ -13,9 +16,7 @@ class _NoRules:
         return []
 
 
-class _Categories:
-    def list_categories(self):
-        return [{"id": "subscriptions"}]
+_Categories = partial(_FakeCategoryRepo, [{"id": "subscriptions"}])
 
 
 _MAPPED_ACCOUNT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"

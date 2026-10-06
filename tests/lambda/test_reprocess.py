@@ -14,6 +14,7 @@ import pytest
 # _failed_keys / _txn_rows live in tests/shared/_deadletter_fakes.py so both dead-letter
 # recovery suites share ONE definition (WHIT-494); resolved via pytest.ini's pythonpath.
 from _deadletter_fakes import _failed_keys, _txn_rows
+from _feed_fakes import FakeCategoryRepo
 
 # A real BankSync account id that resolves via ACCOUNT_ID_MAP to an internal id.
 _MAPPED_ACCOUNT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
@@ -359,14 +360,6 @@ class _FakeRuleStore:
         return [dict(r) for r in self._rules]
 
 
-class _FakeCategoryRepo:
-    def __init__(self, ids):
-        self._ids = list(ids)
-
-    def list_categories(self):
-        return [{"id": i} for i in self._ids]
-
-
 def test_reprocess_without_rule_stores_does_not_file(lam, repo):
     # Default call (no rule/category stores) is unchanged: the row recovers wearing its raw
     # category, never rule-filed. Documents the opt-in contract — filing only happens when both
@@ -390,7 +383,7 @@ def test_reprocess_with_rule_stores_files_a_recovered_row(lam, repo):
         repo,
         rule_repo=_FakeRuleStore([{"id": "r-kkv", "field": "description", "operator": "contains",
                                    "value": "KKV", "category_id": "groceries"}]),
-        category_repo=_FakeCategoryRepo(["groceries"]))
+        category_repo=FakeCategoryRepo(["groceries"]))
 
     assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0}
     assert _txn_rows(repo)["TXN#r1"]["category"] == "groceries"
@@ -413,7 +406,7 @@ def test_whit545_reprocess_threads_is_unfiled_so_a_rule_fill_survives_settlement
         repo,
         rule_repo=_FakeRuleStore([{"id": "r-kkv", "field": "description", "operator": "contains",
                                    "value": "KKV", "category_id": "groceries"}]),
-        category_repo=_FakeCategoryRepo(["groceries"]))
+        category_repo=FakeCategoryRepo(["groceries"]))
 
     assert summary["reprocessed"] == 1
     rows = _txn_rows(repo)

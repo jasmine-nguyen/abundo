@@ -10,6 +10,8 @@ from decimal import Decimal
 
 import pytest
 
+from _budget_endpoint_fakes import _FakePayCycleRepo
+
 
 class _PerAccountRepo:
     """Serves each account its own rows (filtered to the inclusive date range), so the
@@ -23,11 +25,6 @@ class _PerAccountRepo:
         self.accounts_read.append(account_id)
         rows = self._by_account.get(account_id, [])
         return [dict(t) for t in rows if start_date <= t["date"] <= end_date], None
-
-
-class _FakePayCycleRepo:
-    def get_paycycle(self):
-        return {"length": 30, "last_pay_date": "2026-07-01"}
 
 
 class _NoBudgetsRepo:

@@ -8,8 +8,11 @@ Cycle: 14 days, payday 2026-09-10, today 2026-09-20 → current cycle 2026-09-10
 
 from datetime import date
 from decimal import Decimal as D
+from functools import partial
 
 import pytest
+
+from _budget_endpoint_fakes import _FakeCategoryRepo
 
 TODAY = date(2026, 9, 20)
 PAY_CYCLE = {"length": 14, "last_pay_date": "2026-09-10"}
@@ -96,9 +99,7 @@ class _PayCycle:
         return dict(PAY_CYCLE)
 
 
-class _Categories:
-    def list_categories(self):
-        return [dict(c) for c in CATEGORIES]
+_Categories = partial(_FakeCategoryRepo, CATEGORIES)
 
 
 @pytest.fixture

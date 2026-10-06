@@ -14,6 +14,8 @@ from decimal import Decimal
 
 import pytest
 
+from _feed_fakes import FakeCategoryRepo
+
 
 class FakeRuleStore:
     """Minimal RuleRepository stand-in: list_rules over snake_case rows; optional read failure."""
@@ -28,14 +30,6 @@ class FakeRuleStore:
         if self.error:
             raise RuntimeError("rules read failed")
         return [dict(rule) for rule in self._rules]
-
-
-class FakeCategoryRepo:
-    def __init__(self, category_ids):
-        self._ids = list(category_ids)
-
-    def list_categories(self):
-        return [{"id": category_id} for category_id in self._ids]
 
 
 def _rule(value, category_id="groceries", *, field="description", operator="contains", rule_id=None):

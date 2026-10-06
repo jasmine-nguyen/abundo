@@ -16,6 +16,7 @@ from decimal import Decimal
 import pytest
 
 from _boto_stubs import install_import_satisfiers, use_condition_fields
+from _budget_endpoint_fakes import _FakeCategoryRepo
 from _dynamo_fakes import FakeTable, _client_error
 from _http_fakes import FakeResponse, http_error
 
@@ -361,17 +362,6 @@ def test_the_fetch_window_reaches_back_past_the_feed_window_to_tomorrow(repo, mi
 # --- mirror_pendings ----------------------------------------------------------------------------
 
 
-class _Categories:
-    def __init__(self, categories=(), error=None):
-        self._categories = list(categories)
-        self._error = error
-
-    def list_categories(self):
-        if self._error:
-            raise self._error
-        return list(self._categories)
-
-
 def _bank_by_account(westpac, up):
     def fetch(bid, aid, api_key, date_from, date_to):
         if aid == WESTPAC_AID:
@@ -395,7 +385,7 @@ def test_user_filed_and_rule_filed_pendings(repo, mirror):
     fetch = _bank_by_account(_bank("kept"), _bank("u", aid=UP_AID))
 
     summary = mirror.mirror_pendings(
-        "key", repo=repo, category_repo=_Categories([{"id": "groceries"}]), today=TODAY, fetch=fetch
+        "key", repo=repo, category_repo=_FakeCategoryRepo([{"id": "groceries"}]), today=TODAY, fetch=fetch
     )
 
     assert _ids(repo) == {"kept", "user_category", "noted", "tagged", "excluded"}
@@ -408,7 +398,7 @@ def test_a_category_read_failure_skips_every_account(repo, mirror):
     fetch = _bank_by_account(_bank("kept"), _bank("u", aid=UP_AID))
 
     summary = mirror.mirror_pendings(
-        "key", repo=repo, category_repo=_Categories(error=RuntimeError("down")), today=TODAY, fetch=fetch
+        "key", repo=repo, category_repo=_FakeCategoryRepo(error=RuntimeError("down")), today=TODAY, fetch=fetch
     )
 
     assert _ids(repo) == {"gone"}
@@ -420,7 +410,7 @@ def test_one_account_failing_does_not_stop_the_other(repo, mirror, failure):
     repo._table.seed(_row("westpac_gone"), _row("up_gone", account_id=UP))
     fetch = _bank_by_account(failure, _bank("u", aid=UP_AID))
 
-    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_Categories(), today=TODAY, fetch=fetch)
+    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY, fetch=fetch)
 
     assert _ids(repo) == {"westpac_gone"}
     assert summary["accounts"][WESTPAC]["skipped"]
@@ -434,7 +424,7 @@ def test_the_api_key_reaches_the_fetch(repo, mirror):
         keys.append(api_key)
         return _bank("x", aid=aid)
 
-    mirror.mirror_pendings("the-key", repo=repo, category_repo=_Categories(), today=TODAY, fetch=fetch)
+    mirror.mirror_pendings("the-key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY, fetch=fetch)
 
     assert keys == ["the-key", "the-key"]
 

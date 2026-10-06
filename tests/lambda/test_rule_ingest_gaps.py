@@ -13,6 +13,8 @@ import logging
 
 import pytest
 
+from _feed_fakes import FakeCategoryRepo
+
 
 # --- local fakes (snake_case store, list-call counting) ----------------------
 
@@ -28,16 +30,6 @@ class FakeRuleStore:
         if self.error:
             raise RuntimeError("rules read failed")
         return [dict(rule) for rule in self._rules]
-
-
-class FakeCategoryRepo:
-    def __init__(self, category_ids):
-        self._ids = list(category_ids)
-        self.list_calls = 0
-
-    def list_categories(self):
-        self.list_calls += 1
-        return [{"id": category_id} for category_id in self._ids]
 
 
 def _rule(value, category_id="groceries", *, field="description", operator="contains", rule_id=None):

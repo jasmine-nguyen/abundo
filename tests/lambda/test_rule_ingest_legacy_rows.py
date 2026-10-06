@@ -1,3 +1,4 @@
+from _feed_fakes import FakeCategoryRepo
 """WHIT-535 — the webhook rule-filing path tolerates pre-WHIT-535 stored rule rows.
 
 rule_book.rule_from_row maps a stored row to the engine shape reading only id/field/operator/
@@ -18,14 +19,6 @@ class _FakeRuleStore:
 
     def list_rules(self):
         return [dict(rule) for rule in self._rules]
-
-
-class _FakeCategoryRepo:
-    def __init__(self, ids):
-        self._ids = list(ids)
-
-    def list_categories(self):
-        return [{"id": cid} for cid in self._ids]
 
 
 def _legacy_row(value="COLES", category_id="groceries"):
@@ -50,5 +43,5 @@ def test_legacy_row_with_retired_fields_still_files(lam):
     charge = _charge(category=None)
     lam.rule_ingest.apply(
         [charge], rule_repo=_FakeRuleStore([_legacy_row("COLES")]),
-        category_repo=_FakeCategoryRepo(["groceries"]))
+        category_repo=FakeCategoryRepo(["groceries"]))
     assert charge["category"] == "groceries"

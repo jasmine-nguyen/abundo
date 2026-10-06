@@ -15,9 +15,11 @@ shared/repository.py with boto3/botocore already faked.
 import base64
 import json
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _budget_fakes import recording_budget_repo
 from _dynamo_fakes import FakeTable
 
@@ -38,7 +40,7 @@ def _put_budget_event(category="coffee", body='{"target": 58}', is_b64=False):
 def test_set_budget_success(handler):
     repo = recording_budget_repo()
 
-    resp = handler.set_budget(_put_budget_event(), repo, FakeCategoryRepo(), FakePayCycleRepo())
+    resp = handler.set_budget(_put_budget_event(), repo, _FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"id": "coffee", "target": 58}
@@ -48,7 +50,7 @@ def test_set_budget_success(handler):
 def test_set_budget_zero_accepted(handler):
     repo = recording_budget_repo()
 
-    resp = handler.set_budget(_put_budget_event(body='{"target": 0}'), repo, FakeCategoryRepo(), FakePayCycleRepo())
+    resp = handler.set_budget(_put_budget_event(body='{"target": 0}'), repo, _FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert repo.set_calls == [("coffee", Decimal("0"))]
@@ -58,7 +60,7 @@ def test_set_budget_decimal_precision(handler):
     # Decimal(str(12.34)) stores exactly, never binary-float drift.
     repo = recording_budget_repo()
 
-    resp = handler.set_budget(_put_budget_event(body='{"target": 12.34}'), repo, FakeCategoryRepo(), FakePayCycleRepo())
+    resp = handler.set_budget(_put_budget_event(body='{"target": 12.34}'), repo, _FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert repo.set_calls == [("coffee", Decimal("12.34"))]
@@ -68,7 +70,7 @@ def test_set_budget_unknown_category_accepted(handler):
     # Unknown ids are accepted (stored as an orphan the client ignores).
     repo = recording_budget_repo()
 
-    resp = handler.set_budget(_put_budget_event(category="doesnotexist"), repo, FakeCategoryRepo(), FakePayCycleRepo())
+    resp = handler.set_budget(_put_budget_event(category="doesnotexist"), repo, _FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert repo.set_calls == [("doesnotexist", Decimal("58"))]
@@ -92,7 +94,7 @@ def test_set_budget_unknown_category_accepted(handler):
 def test_set_budget_bad_target_400(handler, body):
     repo = recording_budget_repo()
 
-    resp = handler.set_budget(_put_budget_event(body=body), repo, FakeCategoryRepo(), FakePayCycleRepo())
+    resp = handler.set_budget(_put_budget_event(body=body), repo, _FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 400
     assert repo.set_calls == []
@@ -112,12 +114,12 @@ def test_the_budget_target_cap_is_pinned_and_its_boundary_holds(handler):
     )
 
     at_cap = handler.set_budget(
-        _put_budget_event(body=json.dumps({"target": cap})), recording_budget_repo(), FakeCategoryRepo(), FakePayCycleRepo())
+        _put_budget_event(body=json.dumps({"target": cap})), recording_budget_repo(), _FakeCategoryRepo(), FakePayCycleRepo())
     assert at_cap["statusCode"] == 200, "the cap itself must be accepted (the guard is strict >)"
 
     over_repo = recording_budget_repo()
     over = handler.set_budget(
-        _put_budget_event(body=json.dumps({"target": cap + 1})), over_repo, FakeCategoryRepo(), FakePayCycleRepo())
+        _put_budget_event(body=json.dumps({"target": cap + 1})), over_repo, _FakeCategoryRepo(), FakePayCycleRepo())
     assert over["statusCode"] == 400
     assert over_repo.set_calls == []
 
@@ -127,7 +129,7 @@ def test_set_budget_missing_path_param_404(handler):
     event = _put_budget_event()
     event["pathParameters"] = {}
 
-    resp = handler.set_budget(event, repo, FakeCategoryRepo(), FakePayCycleRepo())
+    resp = handler.set_budget(event, repo, _FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 404
     assert repo.set_calls == []
@@ -136,7 +138,7 @@ def test_set_budget_missing_path_param_404(handler):
 def test_set_budget_invalid_json_400(handler):
     repo = recording_budget_repo()
 
-    resp = handler.set_budget(_put_budget_event(body="not json"), repo, FakeCategoryRepo(), FakePayCycleRepo())
+    resp = handler.set_budget(_put_budget_event(body="not json"), repo, _FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 400
     assert repo.set_calls == []
@@ -146,7 +148,7 @@ def test_set_budget_base64_body(handler):
     repo = recording_budget_repo()
     encoded = base64.b64encode(b'{"target": 58}').decode()
 
-    resp = handler.set_budget(_put_budget_event(body=encoded, is_b64=True), repo, FakeCategoryRepo(), FakePayCycleRepo())
+    resp = handler.set_budget(_put_budget_event(body=encoded, is_b64=True), repo, _FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert repo.set_calls == [("coffee", Decimal("58"))]
@@ -157,7 +159,7 @@ def test_set_budget_savings_category_rejected_400(handler):
     # render it, so a stored one is an invisible phantom. Reject at write time; the budget
     # repo is never touched.
     repo = recording_budget_repo()
-    category_repo = FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Savings"}])
+    category_repo = _FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Savings"}])
 
     resp = handler.set_budget(_put_budget_event(), repo, category_repo, FakePayCycleRepo())
 
@@ -170,7 +172,7 @@ def test_set_budget_non_savings_category_accepted(handler):
     # A KNOWN non-Savings (Living/Lifestyle) category still writes — only Savings is blocked,
     # so the guard can't over-reach and break normal budgeting.
     repo = recording_budget_repo()
-    category_repo = FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Lifestyle"}])
+    category_repo = _FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Lifestyle"}])
 
     resp = handler.set_budget(_put_budget_event(), repo, category_repo, FakePayCycleRepo())
 
@@ -182,7 +184,7 @@ def test_set_budget_savings_guard_runs_after_numeric_validation(handler):
     # A malformed target 400s WITHOUT reading the taxonomy — the cheap numeric checks
     # short-circuit before the category read, even for a Savings id. Locks the ordering.
     repo = recording_budget_repo()
-    category_repo = FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Savings"}])
+    category_repo = _FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Savings"}])
 
     resp = handler.set_budget(_put_budget_event(body='{"target": -5}'), repo, category_repo, FakePayCycleRepo())
 
@@ -195,7 +197,7 @@ def test_set_budget_zero_target_savings_still_rejected(handler):
     # it — a $0 phantom on a Savings category is as un-renderable as any other. Fail-on-
     # revert: without the guard a 0 target writes (200).
     repo = recording_budget_repo()
-    category_repo = FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Savings"}])
+    category_repo = _FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Savings"}])
 
     resp = handler.set_budget(_put_budget_event(body='{"target": 0}'), repo, category_repo, FakePayCycleRepo())
 
@@ -213,7 +215,7 @@ def test_put_budget_dispatch_rejects_savings(handler, monkeypatch):
     monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
     monkeypatch.setattr(
         handler, "CategoryRepository",
-        lambda: FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Savings"}]))
+        lambda: _FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Savings"}]))
 
     resp = handler.lambda_handler(_put_budget_event(), None)
 
@@ -240,32 +242,7 @@ class FakeTransactionRepo:
         return self._queue.pop(0) if self._queue else ([], None)
 
 
-class FakePayCycleRepo:
-    """Stand-in for PayCycleRepository. Returns a fixed cycle and counts reads so a
-    test can assert the empty-budget short-circuit skips the pay-cycle read."""
-
-    def __init__(self, length=14, last_pay_date="2024-01-03"):
-        self._cycle = {"length": length, "last_pay_date": last_pay_date}
-        self.get_calls = 0
-
-    def get_paycycle(self):
-        self.get_calls += 1
-        return dict(self._cycle)
-
-
-class FakeCategoryRepo:
-    """Stand-in for CategoryRepository — serves a fixed taxonomy so list_budgets can
-    infer a target's direction (Income bucket => earn-target). Empty by default: an
-    unknown bucket falls to the spend/ceiling default, which is how every pre-WHIT-69
-    budget test expects a plain spend category to roll up."""
-
-    def __init__(self, categories=None):
-        self._categories = categories or []
-        self.list_calls = 0
-
-    def list_categories(self):
-        self.list_calls += 1
-        return [dict(c) for c in self._categories]
+FakePayCycleRepo = partial(_FakePayCycleRepo, length=14, last_pay_date="2024-01-03")
 
 
 def test_list_budgets_rollup_shape(handler):
@@ -281,7 +258,7 @@ def test_list_budgets_rollup_shape(handler):
         _transaction("coffee", -9, "posted", counts=False),  # excluded (!counts_to_budget)
     ])
 
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), FakeCategoryRepo())
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), _FakeCategoryRepo())
 
     assert result == {
         "coffee": {"available": Decimal("58"), "target": Decimal("58"), "posted": Decimal("50"), "pending": Decimal("12")},
@@ -292,7 +269,7 @@ def test_list_budgets_rollup_shape(handler):
 def test_list_budgets_no_spend_is_zero(handler):
     budget_repo = recording_budget_repo({"coffee": {"target": Decimal("58")}})
 
-    result = handler.list_budgets(budget_repo, FakeTransactionRepo(transactions=[]), FakePayCycleRepo(), FakeCategoryRepo())
+    result = handler.list_budgets(budget_repo, FakeTransactionRepo(transactions=[]), FakePayCycleRepo(), _FakeCategoryRepo())
 
     assert result == {"coffee": {"available": Decimal("58"), "target": Decimal("58"), "posted": Decimal("0"), "pending": Decimal("0")}}
 
@@ -301,7 +278,7 @@ def test_list_budgets_empty_skips_txn_scan(handler):
     budget_repo = recording_budget_repo()  # no targets
     txn_repo = FakeTransactionRepo(transactions=[_transaction("coffee", -50)])
     paycycle_repo = FakePayCycleRepo()
-    category_repo = FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Lifestyle"}])
+    category_repo = _FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Lifestyle"}])
 
     result = handler.list_budgets(budget_repo, txn_repo, paycycle_repo, category_repo)
 
@@ -319,7 +296,7 @@ def test_list_budgets_paginates(handler):
         ([_transaction("coffee", -25, "posted")], None),           # page 2, done
     ])
 
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), FakeCategoryRepo())
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), _FakeCategoryRepo())
 
     assert result["coffee"]["posted"] == Decimal("65")  # 40 + 25 summed across pages
 
@@ -340,7 +317,7 @@ def test_list_budgets_income_target_rolls_up_positive_earnings(handler):
         _transaction("salary", 500, "pending"),    # income pending    -> earned pending
         _transaction("coffee", -50, "posted"),     # spend             -> spent
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "salary", "bucket": "Income"},
         {"id": "coffee", "bucket": "Lifestyle"},
     ])
@@ -357,7 +334,7 @@ def test_list_budgets_income_target_no_earnings_is_zero(handler):
     # An income target with no income yet this cycle shows 0 earned (not omitted).
     budget_repo = recording_budget_repo({"salary": {"target": Decimal("5000")}})
     txn_repo = FakeTransactionRepo(transactions=[])
-    category_repo = FakeCategoryRepo(categories=[{"id": "salary", "bucket": "Income"}])
+    category_repo = _FakeCategoryRepo(categories=[{"id": "salary", "bucket": "Income"}])
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
@@ -372,7 +349,7 @@ def test_list_budgets_income_clawback_clamps_to_zero(handler):
         _transaction("salary", 3000, "posted"),
         _transaction("salary", -4000, "posted"),  # clawback bigger than earnings
     ])
-    category_repo = FakeCategoryRepo(categories=[{"id": "salary", "bucket": "Income"}])
+    category_repo = _FakeCategoryRepo(categories=[{"id": "salary", "bucket": "Income"}])
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
@@ -385,7 +362,7 @@ def test_list_budgets_income_id_named_income_still_counts(handler):
     # summarise_income gates on income_ids membership, not the sentinel skip.
     budget_repo = recording_budget_repo({"income": {"target": Decimal("5000")}})
     txn_repo = FakeTransactionRepo(transactions=[_transaction("income", 3000, "posted")])
-    category_repo = FakeCategoryRepo(categories=[{"id": "income", "bucket": "Income"}])
+    category_repo = _FakeCategoryRepo(categories=[{"id": "income", "bucket": "Income"}])
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
@@ -398,7 +375,7 @@ def test_list_budgets_savings_bucket_target_treated_as_spend(handler):
     # rollup stays 0 rather than showing earnings.
     budget_repo = recording_budget_repo({"nest_egg": {"target": Decimal("1000")}})
     txn_repo = FakeTransactionRepo(transactions=[_transaction("nest_egg", 800, "posted")])
-    category_repo = FakeCategoryRepo(categories=[{"id": "nest_egg", "bucket": "Savings"}])
+    category_repo = _FakeCategoryRepo(categories=[{"id": "nest_egg", "bucket": "Savings"}])
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
@@ -410,7 +387,7 @@ def test_list_budgets_orphan_income_target_defaults_to_spend(handler):
     # income -> it defaults to the spend ceiling, the existing safe behaviour.
     budget_repo = recording_budget_repo({"ghost": {"target": Decimal("5000")}})
     txn_repo = FakeTransactionRepo(transactions=[_transaction("ghost", 3000, "posted")])
-    category_repo = FakeCategoryRepo(categories=[])  # ghost not in taxonomy
+    category_repo = _FakeCategoryRepo(categories=[])  # ghost not in taxonomy
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
@@ -438,7 +415,7 @@ def test_list_budgets_parent_rolls_up_leaf_children(handler):
         _transaction("parking", -10, "pending"),
         _transaction("other", -45, "posted"),
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "parking", "bucket": "Living", "parent": "car"},
         {"id": "other", "bucket": "Living", "parent": "car"},
@@ -461,7 +438,7 @@ def test_list_budgets_untargeted_leaf_still_rolls_into_parent(handler):
         _transaction("parking", -30, "posted"),
         _transaction("other", -45, "posted"),
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "parking", "bucket": "Living", "parent": "car"},
         {"id": "other", "bucket": "Living", "parent": "car"},
@@ -480,7 +457,7 @@ def test_list_budgets_multilevel_grandchild_rolls_up(handler):
         _transaction("petrol", -60, "posted"),
         _transaction("tolls", -15, "pending"),
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "daily", "bucket": "Living", "parent": "car"},
         {"id": "petrol", "bucket": "Living", "parent": "daily"},
@@ -500,7 +477,7 @@ def test_list_budgets_income_parent_rolls_up_income_leaves(handler):
         _transaction("salary", 4000, "posted"),
         _transaction("refund", 250, "pending"),
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "income", "bucket": "Income", "parent": None},
         {"id": "salary", "bucket": "Income", "parent": "income"},
         {"id": "refund", "bucket": "Income", "parent": "income"},
@@ -520,7 +497,7 @@ def test_list_budgets_parent_and_child_both_budgeted_are_independent(handler):
         "parking": {"target": Decimal("50")},
     })
     txn_repo = FakeTransactionRepo(transactions=[_transaction("parking", -30, "posted")])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "parking", "bucket": "Living", "parent": "car"},
     ])
@@ -539,7 +516,7 @@ def test_list_budgets_flat_leaf_rolls_up_only_itself(handler):
         _transaction("coffee", -50, "posted"),
         _transaction("groceries", -30, "posted"),  # a different category, must NOT leak in
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "coffee", "bucket": "Lifestyle", "parent": None},
         {"id": "groceries", "bucket": "Living", "parent": None},
     ])
@@ -565,7 +542,7 @@ def test_list_budgets_parent_direct_spend_counts_with_children(handler):
         _transaction("car", -40, "posted"),       # tagged directly onto the parent
         _transaction("parking", -60, "posted"),
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "parking", "bucket": "Living", "parent": "car"},
     ])
@@ -584,7 +561,7 @@ def test_list_budgets_mid_level_direct_spend_counts(handler):
         _transaction("daily", -25, "posted"),     # tagged directly onto the mid-level parent
         _transaction("petrol", -60, "pending"),
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "daily", "bucket": "Living", "parent": "car"},
         {"id": "petrol", "bucket": "Living", "parent": "daily"},
@@ -603,7 +580,7 @@ def test_list_budgets_income_parent_direct_earnings_count(handler):
         _transaction("income", 500, "posted"),    # tagged directly onto the parent
         _transaction("salary", 4000, "posted"),
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "income", "bucket": "Income", "parent": None},
         {"id": "salary", "bucket": "Income", "parent": "income"},
     ])
@@ -622,7 +599,7 @@ def test_get_budgets_dispatch(handler, monkeypatch):
     monkeypatch.setattr(handler, "BudgetRepository", lambda: budget_repo)
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txn_repo)
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: FakePayCycleRepo())
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo())
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo())
 
     resp = handler.lambda_handler(
         {"rawPath": "/budgets", "requestContext": {"http": {"method": "GET"}}}, None)
@@ -641,7 +618,7 @@ def test_get_budgets_dispatch_ignores_days_param(handler, monkeypatch):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txn_repo)
     monkeypatch.setattr(handler, "PayCycleRepository",
                         lambda: FakePayCycleRepo(length=14, last_pay_date="2024-01-03"))
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo())
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo())
 
     resp = handler.lambda_handler({
         "rawPath": "/budgets",
@@ -657,7 +634,7 @@ def test_get_budgets_dispatch_ignores_days_param(handler, monkeypatch):
 def test_put_budget_dispatch(handler, monkeypatch):
     repo = recording_budget_repo()
     monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo())
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo())
 
     resp = handler.lambda_handler(_put_budget_event(), None)
 
@@ -755,7 +732,7 @@ def test_set_budget_conflict_returns_409(handler, monkeypatch):
     # dispatch wrapper maps it to 409.
     repo = _conflicting_budget_repo()
     monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo())
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo())
 
     resp = handler.lambda_handler(_put_budget_event(), None)
 
@@ -1088,7 +1065,7 @@ def test_list_budgets_window_excludes_tomorrow_includes_boundaries(handler, monk
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-17"},  # tomorrow    -> OUT
     ])
 
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), FakeCategoryRepo())
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), _FakeCategoryRepo())
 
     assert result == {"coffee": {"available": Decimal("100"), "target": Decimal("100"), "posted": Decimal("20"), "pending": Decimal("0")}}
     assert txn_repo.calls[0][2] == "2024-01-16"  # queried end bound is today, not today+1
@@ -1107,7 +1084,7 @@ def test_list_budgets_window_excludes_day_before_cycle_start(handler, monkeypatc
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start            -> IN
     ])
 
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), FakeCategoryRepo())
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), _FakeCategoryRepo())
 
     assert result == {"coffee": {"available": Decimal("100"), "target": Decimal("100"), "posted": Decimal("10"), "pending": Decimal("0")}}
     assert txn_repo.calls[0][1] == "2024-01-03"  # queried start bound is cycle_start
@@ -1125,7 +1102,7 @@ def test_list_budgets_window_excludes_pending_dated_tomorrow(handler, monkeypatc
         {**_transaction("coffee", -10, "pending"), "date": "2024-01-17"},  # tomorrow -> OUT
     ])
 
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), FakeCategoryRepo())
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), _FakeCategoryRepo())
 
     assert result == {"coffee": {"available": Decimal("100"), "target": Decimal("100"), "posted": Decimal("0"), "pending": Decimal("10")}}
 
@@ -1143,7 +1120,7 @@ def test_list_budgets_window_monthly_excludes_tomorrow(handler, monkeypatch):
         {**_transaction("coffee", -10, "posted"), "date": "2024-02-02"},  # tomorrow    -> OUT
     ])
 
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(length=30), FakeCategoryRepo())
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(length=30), _FakeCategoryRepo())
 
     assert result == {"coffee": {"available": Decimal("100"), "target": Decimal("100"), "posted": Decimal("20"), "pending": Decimal("0")}}
     assert txn_repo.calls[0][2] == "2024-02-01"  # end bound is today regardless of length
@@ -1203,7 +1180,7 @@ def test_noncounting_leaf_txn_excluded_from_parent(handler):
         _transaction("parking", -999, "posted", counts=False),  # excluded
         _transaction("other", -45, "posted", counts=True),
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "parking", "bucket": "Living", "parent": "car"},
         {"id": "other", "bucket": "Living", "parent": "car"},
@@ -1223,7 +1200,7 @@ def test_pending_posted_mix_folds_across_leaves(handler):
         _transaction("other", -45, "posted"),
         _transaction("other", -20, "pending"),
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "parking", "bucket": "Living", "parent": "car"},
         {"id": "other", "bucket": "Living", "parent": "car"},
@@ -1246,7 +1223,7 @@ def test_income_clawback_on_one_leaf_nets_into_parent(handler):
         _transaction("side", 250, "posted"),
         _transaction("side", -1000, "posted"),  # net -750 on `side`
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "income", "bucket": "Income", "parent": None},
         {"id": "salary", "bucket": "Income", "parent": "income"},
         {"id": "side", "bucket": "Income", "parent": "income"},
@@ -1268,7 +1245,7 @@ def test_no_leakage_between_parent_subtree_and_sibling_toplevel(handler):
         _transaction("parking", -30, "posted"),
         _transaction("coffee", -50, "posted"),
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "parking", "bucket": "Living", "parent": "car"},
         {"id": "coffee", "bucket": "Lifestyle", "parent": None},
@@ -1294,7 +1271,7 @@ def test_two_disjoint_parents_do_not_cross_contaminate(handler):
         _transaction("groceries", -100, "posted"),
         _transaction("dining", -40, "pending"),
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "parking", "bucket": "Living", "parent": "car"},
         {"id": "petrol", "bucket": "Living", "parent": "car"},
@@ -1318,7 +1295,7 @@ def test_five_level_chain_rolls_to_top(handler):
         _transaction("l5", -60, "posted"),
         _transaction("l5", -10, "pending"),
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "l1", "bucket": "Living", "parent": None},
         {"id": "l2", "bucket": "Living", "parent": "l1"},
         {"id": "l3", "bucket": "Living", "parent": "l2"},
@@ -1342,7 +1319,7 @@ def test_midlevel_and_ancestor_both_budgeted_double_count(handler):
         _transaction("petrol", -60, "posted"),   # under daily -> under car
         _transaction("parking", -25, "posted"),  # under car only
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "daily", "bucket": "Living", "parent": "car"},
         {"id": "petrol", "bucket": "Living", "parent": "daily"},
@@ -1366,7 +1343,7 @@ def test_corrupt_cross_bucket_income_child_excluded_from_spend_parent(handler):
         _transaction("parking", -30, "posted"),
         _transaction("bonus", 500, "posted"),
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "parking", "bucket": "Living", "parent": "car"},
         {"id": "bonus", "bucket": "Income", "parent": "car"},  # corrupt (write-guard blocks this)
@@ -1397,7 +1374,7 @@ def test_list_budgets_parent_direct_refund_reduces_whole_budget(handler):
         _transaction("parking", -60, "posted"),
         _transaction("car", 100, "posted"),      # refund straight onto the parent
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "parking", "bucket": "Living", "parent": "car"},
     ])
@@ -1419,7 +1396,7 @@ def test_list_budgets_net_positive_subtree_header_matches_signed_rows(handler):
         _transaction("fuel", 20, "posted"),        # a $20 refund on a sibling leaf
     ]
     txn_repo = FakeTransactionRepo(transactions=txns)
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "parking", "bucket": "Living", "parent": "car"},
         {"id": "fuel", "bucket": "Living", "parent": "car"},
@@ -1453,7 +1430,7 @@ def test_budget_rollup_agrees_across_screen_and_ai_paths(handler):
     screen = handler.list_budgets(
         recording_budget_repo({"car": {"target": Decimal("300")}}),
         FakeTransactionRepo(transactions=txns), FakePayCycleRepo(),
-        FakeCategoryRepo(categories=categories),
+        _FakeCategoryRepo(categories=categories),
     )["car"]
 
     children = handler.build_category_children(categories)
@@ -1474,7 +1451,7 @@ def test_list_budgets_parent_direct_mixed_posted_and_pending_no_leaf_spend(handl
         _transaction("car", -40, "posted"),
         _transaction("car", -25, "pending"),
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "parking", "bucket": "Living", "parent": "car"},   # a child exists but is unspent
     ])
@@ -1493,7 +1470,7 @@ def test_list_budgets_cross_bucket_child_excluded_by_server_guard(handler):
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("misfiled", -50, "posted"),   # Lifestyle child under a Living parent
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "misfiled", "bucket": "Lifestyle", "parent": "car"},
     ])
@@ -1516,7 +1493,7 @@ def test_list_budgets_same_bucket_grandchild_under_cross_bucket_child_still_fold
         _transaction("oddball", -20, "posted"),   # Lifestyle intermediate — excluded
         _transaction("fuel", -70, "posted"),       # Living grandchild — folds into Car
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "oddball", "bucket": "Lifestyle", "parent": "car"},
         {"id": "fuel", "bucket": "Living", "parent": "oddball"},
@@ -1538,7 +1515,7 @@ def test_list_budgets_cross_bucket_child_that_is_itself_budgeted_still_correct(h
         "oddball": {"target": Decimal("100")},
     })
     txn_repo = FakeTransactionRepo(transactions=[_transaction("oddball", -40, "posted")])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "oddball", "bucket": "Lifestyle", "parent": "car"},
     ])
@@ -1561,7 +1538,7 @@ def test_list_budgets_income_parent_excludes_mis_parented_spend_child(handler):
         _transaction("salary", 4000, "posted"),      # Income leaf -> earnings
         _transaction("groceries", -200, "posted"),   # spend child mis-parented under income
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "income", "bucket": "Income", "parent": None},
         {"id": "salary", "bucket": "Income", "parent": "income"},
         {"id": "groceries", "bucket": "Living", "parent": "income"},
@@ -1594,7 +1571,7 @@ def test_wh343_gap_posted_negative_pending_positive_independent_bucket_clamp(han
         _transaction("garage", -40, "pending"),     # +40 pending spend on a third sibling
     ]
     txn_repo = FakeTransactionRepo(transactions=txns)
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "parking", "bucket": "Living", "parent": "car"},
         {"id": "fuel", "bucket": "Living", "parent": "car"},
@@ -1625,7 +1602,7 @@ def test_wh343_gap_grandchild_net_negative_nets_across_deep_subtree(handler):
         _transaction("daily", -20, "posted"),      # spend tagged on the intermediate node
         _transaction("tolls", 100, "posted"),        # refund overshooting the grandchild
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "daily", "bucket": "Living", "parent": "car"},
         {"id": "petrol", "bucket": "Living", "parent": "daily"},
@@ -1648,7 +1625,7 @@ def test_wh343_gap_cross_bucket_net_negative_sibling_not_netted_into_parent(hand
         _transaction("parking", -60, "posted"),
         _transaction("stray", 90, "posted"),         # refund on a cross-bucket child
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "car", "bucket": "Living", "parent": None},
         {"id": "parking", "bucket": "Living", "parent": "car"},
         {"id": "stray", "bucket": "Lifestyle", "parent": "car"},  # WRONG bucket for car
@@ -1669,7 +1646,7 @@ def test_wh343_gap_income_whole_subtree_net_negative_floors_to_zero(handler):
         _transaction("salary", 250, "posted"),
         _transaction("side", -1000, "posted"),   # clawback > the whole subtree's earnings
     ])
-    category_repo = FakeCategoryRepo(categories=[
+    category_repo = _FakeCategoryRepo(categories=[
         {"id": "income", "bucket": "Income", "parent": None},
         {"id": "salary", "bucket": "Income", "parent": "income"},
         {"id": "side", "bucket": "Income", "parent": "income"},

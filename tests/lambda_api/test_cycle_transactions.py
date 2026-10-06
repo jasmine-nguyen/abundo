@@ -9,6 +9,8 @@ import json
 from datetime import date
 from decimal import Decimal
 
+from _budget_endpoint_fakes import _FakePayCycleRepo
+
 
 class _DateFilteringTransactionRepo:
     """Honours the inclusive [start, end] date-range read; serves the pool once so the
@@ -23,11 +25,6 @@ class _DateFilteringTransactionRepo:
             return [], None
         self._served = True
         return [dict(t) for t in self._txns if start_date <= t["date"] <= end_date], None
-
-
-class _FakePayCycleRepo:
-    def get_paycycle(self):
-        return {"length": 30, "last_pay_date": "2026-07-01"}
 
 
 class _NoBudgetsRepo:

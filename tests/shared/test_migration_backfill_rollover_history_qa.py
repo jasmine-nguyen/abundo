@@ -8,6 +8,7 @@ the budget page's list still adds up to the carryover.
 import sys
 from datetime import date
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
@@ -25,6 +26,7 @@ from test_migration_backfill_rollover_history import (
     _utilities,
     _Writes,
 )
+from _budget_endpoint_fakes import _FakeCategoryRepo
 
 _KEY = {"pk": "BUDGETS", "sk": "BUDGETS"}
 PAYDATE = "2026-01-03"  # a payday 14-day-aligned with ANCHOR
@@ -46,9 +48,7 @@ def _seed(entries, version=7):
     return table
 
 
-class _Categories:
-    def list_categories(self):
-        return CATEGORIES
+_Categories = partial(_FakeCategoryRepo, CATEGORIES)
 
 
 def _run_main(monkeypatch, table, *argv, transactions=TRANSACTIONS):

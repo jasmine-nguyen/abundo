@@ -15,9 +15,11 @@ payday grid from 2026-01-01. `current_cycle_window` is monkeypatched to a fixed 
 """
 
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _budget_fakes import recording_budget_repo
 
 CYCLE_START = "2026-08-06"
@@ -36,17 +38,7 @@ class FakeTransactionRepo:
         return self._queue.pop(0) if self._queue else ([], None)
 
 
-class FakePayCycleRepo:
-    def get_paycycle(self):
-        return {"length": LENGTH, "last_pay_date": PAYDATE}
-
-
-class FakeCategoryRepo:
-    def __init__(self, categories):
-        self._categories = categories
-
-    def list_categories(self):
-        return [dict(c) for c in self._categories]
+FakePayCycleRepo = partial(_FakePayCycleRepo, length=LENGTH, last_pay_date=PAYDATE)
 
 
 def _txn(category, amount, date, status="posted"):
@@ -57,7 +49,7 @@ def _txn(category, amount, date, status="posted"):
 def _list(handler, budget_repo, transactions=None, categories=None):
     cats = categories if categories is not None else [{"id": "cat", "bucket": "Living", "parent": None}]
     return handler.list_budgets(
-        budget_repo, FakeTransactionRepo(transactions), FakePayCycleRepo(), FakeCategoryRepo(cats))
+        budget_repo, FakeTransactionRepo(transactions), FakePayCycleRepo(), _FakeCategoryRepo(cats))
 
 
 @pytest.fixture(autouse=True)

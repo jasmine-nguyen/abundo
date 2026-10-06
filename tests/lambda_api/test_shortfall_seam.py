@@ -12,17 +12,17 @@ cases) — kept standalone so this file is independently runnable.
 import hashlib
 import json
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _insight_fakes import insight_puts, insight_repo
 
 
 # --- local fakes (mirror the sibling suite's; infra, not duplicated test cases) ----
 
-class _FakeCategoryRepo:
-    def list_categories(self):
-        return [{"id": "groceries", "name": "Groceries", "bucket": "Living"}]
+FakeCategoryRepo = partial(_FakeCategoryRepo, [{"id": "groceries", "name": "Groceries", "bucket": "Living"}])
 
 
 class _FakeBudgetRepo:
@@ -43,9 +43,7 @@ class _FakeTxnRepo:
         return self._by_window.get((start, end), []), None
 
 
-class _FakePayCycleRepo:
-    def get_paycycle(self):
-        return {"length": 14, "last_pay_date": "2024-01-03"}
+FakePayCycleRepo = partial(_FakePayCycleRepo, length=14, last_pay_date="2024-01-03")
 
 
 def _txn(category, amount, status="posted"):
@@ -72,7 +70,7 @@ _RAW_SHORTFALL = {
 # --- the whole-stack seam: a shortfall goal threads through + busts the cache -------
 
 def test_generate_threads_shortfall_goal_into_model_input_and_hash(handler, monkeypatch):
-    cycle = _FakePayCycleRepo().get_paycycle()
+    cycle = FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
     txn_repo = _FakeTxnRepo({(start, end): [_txn("groceries", -50)]})
     captured = {}
@@ -86,7 +84,7 @@ def test_generate_threads_shortfall_goal_into_model_input_and_hash(handler, monk
     event = {"body": json.dumps({"goal": dict(_RAW_SHORTFALL)})}
 
     resp = handler.generate_ai_insights(
-        _FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, _FakePayCycleRepo(), repo, event)
+        FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, FakePayCycleRepo(), repo, event)
 
     assert resp["statusCode"] == 200
     # The sanitised SHORTFALL goal reached the model, keeping its shortfall fields...
@@ -100,11 +98,11 @@ def test_generate_threads_shortfall_goal_into_model_input_and_hash(handler, monk
 def test_shortfall_goal_busts_an_otherwise_matching_spend_only_cache(handler, monkeypatch):
     # Same cycle + same spend as a cached SPEND-ONLY insight, but now with a shortfall
     # goal: the hash differs, so the stale row must NOT be served — it regenerates.
-    cycle = _FakePayCycleRepo().get_paycycle()
+    cycle = FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
     window = {(start, end): [_txn("groceries", -50)]}
     spend_only, cycle_start = handler.assemble_insight_input(
-        _FakeCategoryRepo(), _FakeBudgetRepo(), _FakeTxnRepo(dict(window)), _FakePayCycleRepo())
+        FakeCategoryRepo(), _FakeBudgetRepo(), _FakeTxnRepo(dict(window)), FakePayCycleRepo())
     repo = insight_repo(existing={
         "summary": "spend-only cached", "suggestions": [], "generated_at": "t",
         "input_hash": _hash(spend_only)}, cycle_start=cycle_start)
@@ -113,8 +111,8 @@ def test_shortfall_goal_busts_an_otherwise_matching_spend_only_cache(handler, mo
     event = {"body": json.dumps({"goal": dict(_RAW_SHORTFALL)})}
 
     resp = handler.generate_ai_insights(
-        _FakeCategoryRepo(), _FakeBudgetRepo(), _FakeTxnRepo(dict(window)),
-        _FakePayCycleRepo(), repo, event)
+        FakeCategoryRepo(), _FakeBudgetRepo(), _FakeTxnRepo(dict(window)),
+        FakePayCycleRepo(), repo, event)
 
     body = json.loads(resp["body"])
     assert body["cached"] is False

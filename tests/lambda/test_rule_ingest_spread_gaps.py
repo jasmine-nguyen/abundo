@@ -12,6 +12,7 @@ from decimal import Decimal
 import pytest
 
 from _dynamo_fakes import FakeTable
+from _feed_fakes import FakeCategoryRepo
 
 
 def _rule_store(rules):
@@ -25,14 +26,6 @@ def _rule_store(rules):
 
 def _seeded(store):
     return [rule["id"] for rule in store.list_rules() if rule.get("spread_seeded")]
-
-
-class FakeCategoryRepo:
-    def __init__(self, ids):
-        self._ids = list(ids)
-
-    def list_categories(self):
-        return [{"id": i} for i in self._ids]
 
 
 class FakeBudget:

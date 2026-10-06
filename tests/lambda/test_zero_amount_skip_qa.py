@@ -5,7 +5,9 @@ over a FakeTable, like test_zero_amount_skip.py.
 """
 
 import logging
+from functools import partial
 
+from _budget_endpoint_fakes import _FakeCategoryRepo
 from _deadletter_fakes import _failed_keys, _txn_rows
 
 
@@ -14,9 +16,7 @@ class _NoRules:
         return []
 
 
-class _Categories:
-    def list_categories(self):
-        return [{"id": "subscriptions"}]
+_Categories = partial(_FakeCategoryRepo, [{"id": "subscriptions"}])
 
 
 _MAPPED_ACCOUNT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"

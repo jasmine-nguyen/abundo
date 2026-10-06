@@ -15,9 +15,11 @@ fields that a later list_budgets read must honour.
 
 import json
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
+from _budget_endpoint_fakes import _FakePayCycleRepo
 from _category_fakes import _cat, _schema
 from _dynamo_fakes import FakeTable
 
@@ -49,9 +51,7 @@ class FakeTransactionRepo:
         return self._queue.pop(0) if self._queue else ([], None)
 
 
-class FakePayCycleRepo:
-    def get_paycycle(self):
-        return {"length": LENGTH, "last_pay_date": PAYDATE}
+FakePayCycleRepo = partial(_FakePayCycleRepo, length=LENGTH, last_pay_date=PAYDATE)
 
 
 def _category_repo(cat_id, bucket):

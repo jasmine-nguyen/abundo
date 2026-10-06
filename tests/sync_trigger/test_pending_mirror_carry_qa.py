@@ -15,6 +15,7 @@ from decimal import Decimal
 import pytest
 
 from _boto_stubs import install_import_satisfiers, use_condition_fields
+from _budget_endpoint_fakes import _FakeCategoryRepo
 from _dynamo_fakes import FakeTable
 
 install_import_satisfiers(ssm_default="test-api-key")
@@ -102,14 +103,6 @@ def _run(mirror, repo, is_unfiled=None):
     return mirror.mirror_account(
         repo, _fetch_returning(_bank("kept")), WESTPAC_SOURCE, TODAY, is_unfiled or _unfiled("groceries", "dining")
     )
-
-
-class _Categories:
-    def __init__(self, categories=()):
-        self._categories = list(categories)
-
-    def list_categories(self):
-        return list(self._categories)
 
 
 # --- each kind of edit carries -------------------------------------------------------------------
@@ -452,7 +445,7 @@ def test_mirror_pendings_carries_with_the_real_taxonomy_and_reports_it(repo, mir
 
     with caplog.at_level(logging.INFO, logger="pending_mirror"):
         summary = mirror.mirror_pendings(
-            "key", repo=repo, category_repo=_Categories([{"id": "groceries"}]), today=TODAY, fetch=fetch
+            "key", repo=repo, category_repo=_FakeCategoryRepo([{"id": "groceries"}]), today=TODAY, fetch=fetch
         )
 
     assert _ids(repo) == {"kept", "settled"}
@@ -493,7 +486,7 @@ def test_a_twin_on_another_account_is_never_used(repo, mirror):
     def fetch(bid, aid, api_key, date_from, date_to):
         return _bank("kept", aid=aid)
 
-    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_Categories(), today=TODAY, fetch=fetch)
+    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY, fetch=fetch)
 
     assert "edited" in _ids(repo)
     assert "notes" not in _stored(repo, "up_settled", account_id=UP)

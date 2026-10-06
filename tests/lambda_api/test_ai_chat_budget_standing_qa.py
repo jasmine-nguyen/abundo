@@ -7,6 +7,9 @@ Cycle: 14 days, payday 2026-09-10, today 2026-09-20 → current cycle 2026-09-10
 
 from datetime import date
 from decimal import Decimal
+from functools import partial
+
+from _budget_endpoint_fakes import _FakeCategoryRepo
 
 CATEGORIES = [{"id": "groceries", "name": "Groceries", "bucket": "Living", "parent": None, "colorSlot": 11}]
 
@@ -16,9 +19,7 @@ class _PayCycle:
         return {"length": 14, "last_pay_date": "2026-09-10"}
 
 
-class _Categories:
-    def list_categories(self):
-        return CATEGORIES
+_Categories = partial(_FakeCategoryRepo, CATEGORIES)
 
 
 class _Budgets:

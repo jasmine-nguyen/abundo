@@ -7,8 +7,10 @@ honours the date range like the real date-index query, and records every request
 
 from datetime import date
 from decimal import Decimal
+from functools import partial
 
 from _budget_alert_fakes import notify_repo
+from _budget_endpoint_fakes import _FakeCategoryRepo
 
 _TODAY = date(2026, 7, 14)
 _ACCT = "up-spending"
@@ -54,9 +56,7 @@ class _Paycycle:
         return {"last_pay_date": "2026-07-01", "length": 14}
 
 
-class _Categories:
-    def list_categories(self):
-        return _CATS
+_Categories = partial(_FakeCategoryRepo, _CATS)
 
 
 class _NoTwins:

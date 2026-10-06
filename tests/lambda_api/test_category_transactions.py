@@ -13,6 +13,8 @@ from decimal import Decimal
 
 import pytest
 
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+
 
 def _contributes(transaction):
     # Mirror of shared/spend.py contributes_to_budget (imported lazily is fragile at collect
@@ -42,22 +44,6 @@ class _DateFilteringTransactionRepo:
         self._served = True
         page = [t for t in self._txns if start_date <= t["date"] <= end_date]
         return page, None
-
-
-class _FakePayCycleRepo:
-    def __init__(self, length=30, last_pay_date="2026-07-01"):
-        self._cycle = {"length": length, "last_pay_date": last_pay_date}
-
-    def get_paycycle(self):
-        return dict(self._cycle)
-
-
-class _FakeCategoryRepo:
-    def __init__(self, categories):
-        self._categories = categories
-
-    def list_categories(self):
-        return [dict(c) for c in self._categories]
 
 
 # A parent Cafes & Coffee with a same-bucket sub-category (so a subtree bug would leak it).
@@ -297,7 +283,7 @@ def test_router_patch_category_not_captured_by_transactions_route(handler, monke
 # ======================================================================================
 # Folded from test_category_transactions_gaps.py (WHIT-462, adversarial gaps WHIT-342).
 # The identical helpers (_contributes/_DateFilteringTransactionRepo/_FakePayCycleRepo/
-# _FakeCategoryRepo/_event/_pin_today/_clamped_total) reuse this file's copies above; only
+# _FakeCategoryRepo/_event/_pin_today/_clamped_total) reuse the ones above; only
 # the account-aware _txn (=> _txn_acct), the single-entry CATS (=> CATS_SINGLE), and the
 # unique _PerAccountTransactionRepo are kept local. Test bodies otherwise verbatim.
 # ======================================================================================

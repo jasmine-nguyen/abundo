@@ -15,6 +15,7 @@ from decimal import Decimal
 import pytest
 
 from _boto_stubs import install_import_satisfiers, use_condition_fields
+from _budget_endpoint_fakes import _FakeCategoryRepo
 from _dynamo_fakes import FakeTable
 from _http_fakes import FakeResponse, http_error
 
@@ -90,14 +91,6 @@ def _ids(repo):
 
 def _nothing_filed(category):
     return True
-
-
-class _Categories:
-    def __init__(self, categories=()):
-        self._categories = list(categories)
-
-    def list_categories(self):
-        return list(self._categories)
 
 
 def _page(rows, has_more=False, cursor="", success=True):
@@ -204,7 +197,7 @@ def test_the_real_fetch_mirrors_both_accounts_with_their_own_lists(repo, mirror,
     pages[WESTPAC_AID].append(_page(_bank("w_kept", "u_gone")))
     pages[UP_AID].append(_page(_bank("u_kept", aid=UP_AID)))
 
-    summary = mirror.mirror_pendings("the-key", repo=repo, category_repo=_Categories(), today=TODAY)
+    summary = mirror.mirror_pendings("the-key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY)
 
     assert _ids(repo) == {"w_kept", "u_kept"}
     assert summary["removed"] == 2
@@ -229,7 +222,7 @@ def test_a_bad_second_page_deletes_nothing_for_that_account(repo, mirror, bank_b
     pages[WESTPAC_AID].extend([_page(_bank("a"), has_more=True, cursor="c1"), second_page])
     pages[UP_AID].append(_page(_bank("u", aid=UP_AID)))
 
-    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_Categories(), today=TODAY)
+    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY)
 
     assert _ids(repo) == {"a", "b"}
     assert summary["accounts"][WESTPAC]["skipped"]
@@ -263,7 +256,7 @@ def test_our_read_failing_skips_that_account_only(repo, mirror, bank_by_aid):
         when=lambda kwargs: ("account_id", "eq", WESTPAC) in kwargs["KeyConditionExpression"].conditions,
     )
 
-    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_Categories(), today=TODAY)
+    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY)
 
     assert _ids(repo) == {"w_gone"}
     assert summary["accounts"][WESTPAC]["skipped"]
@@ -281,7 +274,7 @@ def test_each_removal_and_the_run_summary_are_logged(repo, mirror, caplog):
         return _bank("kept", aid=aid)
 
     with caplog.at_level(logging.INFO, logger="pending_mirror"):
-        mirror.mirror_pendings("key", repo=repo, category_repo=_Categories(), today=TODAY, fetch=fetch)
+        mirror.mirror_pendings("key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY, fetch=fetch)
 
     removal = [r.getMessage() for r in caplog.records if "removed account=" in r.getMessage()]
     assert len(removal) == 1
@@ -296,7 +289,7 @@ def test_an_income_tagged_pending_is_kept(repo, mirror):
     def fetch(bid, aid, api_key, date_from, date_to):
         return _bank("kept", aid=aid)
 
-    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_Categories(), today=TODAY, fetch=fetch)
+    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY, fetch=fetch)
 
     assert _ids(repo) == {"kept", "refund"}
     assert summary["kept"] == 1
