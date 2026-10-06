@@ -157,9 +157,7 @@ export function useBreakdownQuery(cycleLen: number, cycle: number, enabled: bool
   });
 }
 
-// The Transactions tab's all-accounts feed as an infinite query: the first page is the
-// newest batch (no cursor), each "Load More" fetches the next (older) page via the prior
-// page's nextCursor, and hasNextPage goes false when the server returns nextCursor === null.
+// A cursor-paged feed as an infinite query (shared by the two transaction feeds below).
 function useCursorFeed<P extends { nextCursor?: string | null }>(
   queryKey: readonly unknown[],
   fetchPage: (cursor?: string) => Promise<P>,
@@ -174,6 +172,9 @@ function useCursorFeed<P extends { nextCursor?: string | null }>(
   });
 }
 
+// The Transactions tab's all-accounts feed as an infinite query: the first page is the
+// newest batch (no cursor), each "Load More" fetches the next (older) page via the prior
+// page's nextCursor, and hasNextPage goes false when the server returns nextCursor === null.
 export function useTransactionsFeedQuery(enabled: boolean) {
   return useCursorFeed(transactionsKey, fetchTransactionsFeed, enabled);
 }

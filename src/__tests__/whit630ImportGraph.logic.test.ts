@@ -74,8 +74,9 @@ describe('leaf files stay leaves', () => {
     expect(directImports(src(file))).toEqual([]);
   });
 
-  it('(P1) payCycle.ts depends on the date helpers only', () => {
-    expect(directImports(src('payCycle.ts')).map((f) => path.relative(SRC, f))).toEqual(['dateutil.ts']);
+  // WHIT-762: plus api.ts for the PayCycle type (api.ts never reaches context.tsx — [A6] above).
+  it('(P1) payCycle.ts depends on the date helpers and the PayCycle type only', () => {
+    expect(directImports(src('payCycle.ts')).map((f) => path.relative(SRC, f))).toEqual(['dateutil.ts', 'api.ts']);
   });
 });
 
