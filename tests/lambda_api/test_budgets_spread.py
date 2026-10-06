@@ -20,6 +20,7 @@ import pytest
 from _budget_endpoint_fakes import _FakePayCycleRepo, _SpendCategoryRepo, _spend_cat
 from _budget_fakes import recording_budget_repo
 from _terraform import TERRAFORM_DIR
+from _transaction_range_fakes import _QueuedTransactionRepo
 
 # Same fixed grid as the rollover suite: monthly, cycle_start 2026-08-06, payday grid from
 # 2026-01-01. Anchors used below: 2026-08-06 (this cycle), 2026-07-07 (1 back),
@@ -30,14 +31,6 @@ LENGTH = 30
 PAYDATE = "2026-01-01"
 
 BILL = Decimal("1390.91")   # over 4 cycles: slices 347.73, 347.73, 347.73, 347.72
-
-
-class FakeTransactionRepo:
-    def __init__(self, transactions=None):
-        self._queue = [(list(transactions or []), None)]
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        return self._queue.pop(0) if self._queue else ([], None)
 
 
 FakePayCycleRepo = partial(_FakePayCycleRepo, length=LENGTH, last_pay_date=PAYDATE)
@@ -57,7 +50,7 @@ def _entry(spread_from, amount=BILL, cycles=4, spread_len=LENGTH, target=250):
 
 def _list(handler, budget_repo, transactions=None, categories=None):
     return handler.list_budgets(
-        budget_repo, FakeTransactionRepo(transactions), FakePayCycleRepo(), _SpendCategoryRepo(categories))
+        budget_repo, _QueuedTransactionRepo(transactions), FakePayCycleRepo(), _SpendCategoryRepo(categories))
 
 
 @pytest.fixture(autouse=True)

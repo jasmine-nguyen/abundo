@@ -10,6 +10,7 @@ from decimal import Decimal
 
 import pytest
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _transaction_range_fakes import _AccountTransactionRepo, _DateFilteringTransactionRepo
 
 TODAY = "2026-09-20"
 CYCLE_START = "2026-09-10"
@@ -310,19 +311,11 @@ def test_load_chat_data_fetches_back_to_the_lookback_floor(ai_chat, monkeypatch)
         def list_budgets(self):
             return {}
 
-    class TransactionRepo:
-        def __init__(self):
-            self.calls = []
-
-        def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
-            self.calls.append((start, end))
-            return [], None
-
-    transaction_repo = TransactionRepo()
+    transaction_repo = _DateFilteringTransactionRepo([])
     data = ai_chat.load_chat_data(
         transaction_repo, _FakeCategoryRepo(CATEGORIES), BudgetRepo(), _FakePayCycleRepo(length=14, last_pay_date="2026-09-10"))
     assert data.floor == "2025-09-01" and data.today == TODAY
-    assert transaction_repo.calls[0] == ("2025-09-01", TODAY)
+    assert transaction_repo.calls[0][1:3] == ("2025-09-01", TODAY)
 
 
 def test_load_chat_data_works_out_budgets_from_its_own_read_without_saving(ai_chat, monkeypatch):
@@ -358,15 +351,9 @@ def test_load_chat_data_works_out_budgets_from_its_own_read_without_saving(ai_ch
     stored = [row("old", "-500", "2025-10-01"), row("prior", "-60", "2026-08-30"),
               row("now", "-25", "2026-09-15")]
 
-    class TransactionRepo:
-        def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
-            if account_id != "up-spending":
-                return [], None
-            return [r for r in stored if start <= r["date"] <= end], None
-
     budget_repo = BudgetRepo()
     data = ai_chat.load_chat_data(
-        TransactionRepo(), _FakeCategoryRepo(CATEGORIES), budget_repo, _FakePayCycleRepo(length=14, last_pay_date="2026-09-10"))
+        _AccountTransactionRepo(stored), _FakeCategoryRepo(CATEGORIES), budget_repo, _FakePayCycleRepo(length=14, last_pay_date="2026-09-10"))
 
     assert data.budgets == {"groceries": {
         "target": Decimal("100"), "posted": Decimal("25"), "pending": Decimal("0"),

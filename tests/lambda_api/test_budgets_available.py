@@ -21,6 +21,7 @@ import pytest
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _budget_fakes import recording_budget_repo
+from _transaction_range_fakes import _QueuedTransactionRepo
 
 CYCLE_START = "2026-08-06"
 TODAY = "2026-08-10"
@@ -28,14 +29,6 @@ LENGTH = 30
 PAYDATE = "2026-01-01"
 
 BILL = Decimal("1390.91")   # over 4 cycles: index 0 shows the full +BILL cushion
-
-
-class FakeTransactionRepo:
-    def __init__(self, transactions=None):
-        self._queue = [(list(transactions or []), None)]
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        return self._queue.pop(0) if self._queue else ([], None)
 
 
 FakePayCycleRepo = partial(_FakePayCycleRepo, length=LENGTH, last_pay_date=PAYDATE)
@@ -49,7 +42,7 @@ def _txn(category, amount, date, status="posted"):
 def _list(handler, budget_repo, transactions=None, categories=None):
     cats = categories if categories is not None else [{"id": "cat", "bucket": "Living", "parent": None}]
     return handler.list_budgets(
-        budget_repo, FakeTransactionRepo(transactions), FakePayCycleRepo(), _FakeCategoryRepo(cats))
+        budget_repo, _QueuedTransactionRepo(transactions), FakePayCycleRepo(), _FakeCategoryRepo(cats))
 
 
 @pytest.fixture(autouse=True)

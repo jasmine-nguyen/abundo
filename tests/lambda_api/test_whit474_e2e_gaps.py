@@ -22,6 +22,7 @@ import pytest
 from _budget_endpoint_fakes import _FakePayCycleRepo
 from _category_fakes import _cat, _schema
 from _dynamo_fakes import FakeTable
+from _transaction_range_fakes import _QueuedTransactionRepo
 
 LENGTH = 30
 PAYDATE = "2026-01-01"
@@ -37,18 +38,6 @@ def _config_table(items, version=1):
     table = FakeTable()
     table.seed({"pk": "BUDGETS", "sk": "BUDGETS", "items": items, "version": Decimal(version)})
     return table
-
-
-# --- fakes for the list_budgets read path ------------------------------------
-
-
-class FakeTransactionRepo:
-    """One queued page on the first account, empty after — so each txn is summed once."""
-    def __init__(self, transactions=None):
-        self._queue = [(list(transactions or []), None)]
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        return self._queue.pop(0) if self._queue else ([], None)
 
 
 FakePayCycleRepo = partial(_FakePayCycleRepo, length=LENGTH, last_pay_date=PAYDATE)
@@ -126,7 +115,7 @@ def test_rebucket_to_income_then_back_to_spend_does_not_resurrect_the_buffer(han
     back_to_spend = handler.update_category(_event("Lifestyle"), cat_repo, budget_repo)
     assert back_to_spend["statusCode"] == 200
 
-    result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(), cat_repo)
+    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), cat_repo)
 
     row = result["sink"]
     assert row["target"] == Decimal(100)          # the target is intact
@@ -145,7 +134,7 @@ def test_cleared_entry_serialises_through_list_budgets_with_no_leftover_rollover
 
     handler.update_category(_event("Income"), cat_repo, budget_repo)
     handler.update_category(_event("Lifestyle"), cat_repo, budget_repo)
-    result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(), cat_repo)
+    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), cat_repo)
 
     wire = json.loads(handler._json_response(200, result)["body"])
     assert wire["sink"] == {"available": 100, "target": 100, "posted": 0, "pending": 0}
@@ -176,7 +165,7 @@ def test_swallowed_clear_leaves_a_recoverable_stale_anchor_not_corruption(handle
 
     # The known consequence: back to spend, the surviving anchor re-folds the empty cycles.
     handler.update_category(_event("Lifestyle"), cat_repo, budget_repo)
-    result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(), cat_repo)
+    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), cat_repo)
     assert result["sink"]["carryover"] > Decimal(0)        # the buffer resurrects (documented gap)
 
 

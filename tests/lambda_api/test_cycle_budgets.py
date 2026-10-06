@@ -14,24 +14,10 @@ import pytest
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _budget_fakes import recording_budget_repo
+from _transaction_range_fakes import _DateFilteringTransactionRepo
 
 LENGTH = 30
 PAYDATE = "2026-07-01"
-
-
-class _DateFilteringTransactionRepo:
-    """Honours the inclusive [start, end] read; serves the pool once so the per-account loop
-    in read_window sees each transaction a single time."""
-
-    def __init__(self, transactions):
-        self._txns = list(transactions)
-        self._served = False
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        if self._served:
-            return [], None
-        self._served = True
-        return [dict(t) for t in self._txns if start_date <= t["date"] <= end_date], None
 
 
 CATEGORIES = [

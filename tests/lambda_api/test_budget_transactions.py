@@ -15,13 +15,13 @@ import pytest
 
 # Repo fakes + row/event builders, shared with the folded WHIT-362 gap tests (tests/shared).
 from _budget_endpoint_fakes import (
-    _DateFilteringTransactionRepo,
     _FakeBudgetRepo,
     _FakeCategoryRepo,
     _FakePayCycleRepo,
     _event,
     _txn,
 )
+from _transaction_range_fakes import _DateFilteringTransactionRepo
 
 
 # A parent Cafes-&-Coffee budget with a sub-category (both same bucket, so the sub

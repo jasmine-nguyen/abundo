@@ -11,7 +11,8 @@ from decimal import Decimal
 
 import pytest
 
-from _budget_endpoint_fakes import _DateFilteringTransactionRepo, _FakeCategoryRepo, _FakePayCycleRepo, _txn
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo, _txn
+from _transaction_range_fakes import _DateFilteringTransactionRepo
 from _budget_fakes import recording_budget_repo, stored_budgets
 
 # Monthly cycle: current cycle starts 2026-08-06, today 2026-08-10. Settle lag 10 days →

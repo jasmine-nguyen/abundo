@@ -13,38 +13,7 @@ from functools import partial
 import pytest
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
-
-
-class FakeTransactionRepo:
-    """Serves a single page of `transactions` per account then empties, so the
-    per-account loop in read_window sums each txn once."""
-
-    def __init__(self, transactions=None):
-        self._queue = [(list(transactions or []), None)]
-        self.calls = []
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        self.calls.append((account_id, start_date, end_date, limit, cursor))
-        return self._queue.pop(0) if self._queue else ([], None)
-
-
-class _DateFilteringTransactionRepo:
-    """Honours the date bounds the way DynamoDB `between` does — inclusive on both
-    ends over YYYY-MM-DD strings — so a window test can prove which dates are pulled
-    in. Serves the pool once total (then empties)."""
-
-    def __init__(self, transactions):
-        self._txns = list(transactions)
-        self._served = False
-        self.calls = []
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        self.calls.append((account_id, start_date, end_date, limit, cursor))
-        if self._served:
-            return [], None
-        self._served = True
-        page = [t for t in self._txns if start_date <= t["date"] <= end_date]
-        return page, None
+from _transaction_range_fakes import _DateFilteringTransactionRepo, _QueuedTransactionRepo
 
 
 FakePayCycleRepo = partial(_FakePayCycleRepo, length=14, last_pay_date="2024-01-03")
@@ -65,7 +34,7 @@ def _transaction(category, amount, status="posted", counts=True):
 
 def test_breakdown_splits_posted_and_pending_per_category(handler):
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle"), _category("groceries", "Living")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("coffee", -50, "posted"),
         _transaction("coffee", -12, "pending"),
         _transaction("groceries", -30, "posted"),
@@ -83,7 +52,7 @@ def test_breakdown_splits_posted_and_pending_per_category(handler):
 def test_breakdown_no_uncategorized_key_when_clean(handler):
     # Every spend txn maps to a spend-bucket category -> no __uncategorized__ row.
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = FakeTransactionRepo([_transaction("coffee", -10, "posted")])
+    txns = _QueuedTransactionRepo([_transaction("coffee", -10, "posted")])
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
@@ -99,7 +68,7 @@ def test_breakdown_raw_bank_enum_folds_into_uncategorized(handler):
     # the taxonomy). It counts to budget, so it must land in __uncategorized__, not
     # be silently dropped.
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("coffee", -50, "posted"),
         _transaction("MEDICAL", -20, "posted"),
         _transaction("ENTERTAINMENT", -5, "pending"),
@@ -113,7 +82,7 @@ def test_breakdown_raw_bank_enum_folds_into_uncategorized(handler):
 
 def test_breakdown_null_category_folds_into_uncategorized(handler):
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("coffee", -10, "posted"),
         _transaction(None, -15, "posted"),
     ])
@@ -127,7 +96,7 @@ def test_breakdown_deleted_category_spend_folds_into_uncategorized(handler):
     # A txn points at an id no longer in the taxonomy (category was deleted). Its
     # spend folds into Uncategorized rather than vanishing.
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("coffee", -10, "posted"),
         _transaction("oldcat", -25, "posted"),
     ])
@@ -150,7 +119,7 @@ def test_breakdown_excludes_income_and_savings_buckets(handler):
         _category("salary", "Income"),
         _category("mortgage", "Savings"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("coffee", -40, "posted"),
         _transaction("salary", -100, "posted"),    # Income bucket -> excluded
         _transaction("mortgage", -200, "posted"),  # Savings bucket -> excluded
@@ -168,7 +137,7 @@ def test_breakdown_excludes_income_and_savings_buckets(handler):
 def test_breakdown_net_refund_spend_category_clamps_to_zero(handler):
     # Refunds exceed charges -> the per-category bucket clamps at 0 (never negative).
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("coffee", -30, "posted"),
         _transaction("coffee", 50, "posted"),  # refund (positive amount)
     ])
@@ -181,7 +150,7 @@ def test_breakdown_net_refund_spend_category_clamps_to_zero(handler):
 def test_breakdown_net_refund_uncategorized_is_omitted(handler):
     # A net-refund Uncategorized bucket clamps to 0 -> no __uncategorized__ key.
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("coffee", -10, "posted"),
         _transaction("MEDICAL", -30, "posted"),
         _transaction("MEDICAL", 50, "posted"),  # refund > charge
@@ -219,7 +188,7 @@ def test_breakdown_no_spend_still_emits_empty_rollup(handler):
     # empty nodes. Fail-on-revert of the always-emit branch: dropping it makes this {}.
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
 
-    result = handler.list_category_breakdown(cats, FakeTransactionRepo([]), FakePayCycleRepo())
+    result = handler.list_category_breakdown(cats, _QueuedTransactionRepo([]), FakePayCycleRepo())
 
     assert result == {"__rollup__": {"nodes": {}}}
 
@@ -236,7 +205,7 @@ def test_breakdown_earned_sums_all_income_categories(handler):
         _category("salary", "Income"),
         _category("dividends", "Income"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("coffee", -40, "posted"),
         _transaction("salary", 2500, "posted"),
         _transaction("salary", 300, "pending"),
@@ -253,7 +222,7 @@ def test_breakdown_earned_sums_all_income_categories(handler):
 def test_breakdown_no_earned_key_when_no_income(handler):
     # Spend but no income -> no __earned__ key (response is what it always was).
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = FakeTransactionRepo([_transaction("coffee", -10, "posted")])
+    txns = _QueuedTransactionRepo([_transaction("coffee", -10, "posted")])
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
@@ -264,7 +233,7 @@ def test_breakdown_earned_net_reversal_clamps_and_omits_key(handler):
     # A clawback bigger than the earnings drives the aggregate <= 0 -> clamp to 0,
     # so no __earned__ key (never a negative earned bar).
     cats = _FakeCategoryRepo([_category("salary", "Income")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("salary", 100, "posted"),
         _transaction("salary", -250, "posted"),  # clawback/reversal
     ])
@@ -277,7 +246,7 @@ def test_breakdown_earned_net_reversal_clamps_and_omits_key(handler):
 def test_breakdown_earned_excludes_excluded_and_uncounted_income(handler):
     # budget_excluded / counts_to_budget=False income does not count, mirroring spend.
     cats = _FakeCategoryRepo([_category("salary", "Income")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("salary", 1000, "posted"),
         {**_transaction("salary", 500, "posted"), "budget_excluded": True},
         _transaction("salary", 400, "posted", counts=False),
@@ -316,7 +285,7 @@ def test_breakdown_income_sources_split_per_category(handler):
         _category("salary", "Income"),
         _category("dividends", "Income"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("coffee", -40, "posted"),
         _transaction("salary", 2500, "posted"),
         _transaction("salary", 300, "pending"),
@@ -341,7 +310,7 @@ def test_breakdown_income_sources_split_per_category(handler):
 def test_breakdown_no_income_key_when_no_income(handler):
     # No income -> no __income__ key (response byte-identical to a pre-WHIT-366 server; old-client safe).
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = FakeTransactionRepo([_transaction("coffee", -10, "posted")])
+    txns = _QueuedTransactionRepo([_transaction("coffee", -10, "posted")])
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
@@ -357,7 +326,7 @@ def test_breakdown_reversed_source_survives_signed_and_reconciles(handler):
         _category("salary", "Income"),
         _category("bonus", "Income"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("salary", 2000, "posted"),
         _transaction("bonus", 100, "posted"),
         _transaction("bonus", -250, "posted"),  # clawback > bonus -> bonus nets -150, KEPT signed
@@ -384,7 +353,7 @@ def test_breakdown_income_sign_split_leaves_a_client_residual_for_the_plug(handl
     # So the source net (100) is LESS than __earned__ (300) by the clamped-away settled reversal —
     # the client closes that 200 gap with one "adjustment" plug so the rows still sum to 300.
     cats = _FakeCategoryRepo([_category("salary", "Income")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("salary", 100, "posted"),
         _transaction("salary", -200, "posted"),  # settled bucket nets -100
         _transaction("salary", 300, "pending"),
@@ -403,7 +372,7 @@ def test_breakdown_all_reversed_emits_no_income_and_no_earned(handler):
     # An all-reversed cycle nets <= 0 -> __earned__ absent. __income__ must ALSO be absent (gated on
     # __earned__), so the client never shows a lone negative row under a $0 headline.
     cats = _FakeCategoryRepo([_category("salary", "Income")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("salary", 100, "posted"),
         _transaction("salary", -300, "posted"),  # aggregate nets -200
     ])
@@ -422,7 +391,7 @@ def test_breakdown_income_gated_on_earned_across_multiple_nonzero_sources(handle
     # locks this gate; this case additionally proves a POSITIVE source present alongside a
     # net-negative one still can't force emission once the aggregate is <= 0.)
     cats = _FakeCategoryRepo([_category("salary", "Income"), _category("bonus", "Income")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("salary", 500, "posted"),
         _transaction("bonus", -600, "posted"),  # each source non-zero; aggregate nets -100
     ])
@@ -440,7 +409,7 @@ def test_breakdown_net_zero_income_source_dropped(handler):
         _category("salary", "Income"),
         _category("bonus", "Income"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("salary", 2000, "posted"),
         _transaction("bonus", 200, "posted"),
         _transaction("bonus", -200, "posted"),  # nets exactly 0 -> dropped
@@ -471,7 +440,7 @@ def test_breakdown_earned_coexists_with_spend_and_uncategorized(handler):
     # One response can carry spend rows, __uncategorized__, AND __earned__ — none leaks
     # into another. Income never appears as a spend/uncategorized row and vice-versa.
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle"), _category("salary", "Income")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("coffee", -40, "posted"),
         _transaction("MEDICAL", -20, "posted"),  # raw enum -> uncategorized
         _transaction("salary", 2500, "posted"),  # income -> earned
@@ -489,7 +458,7 @@ def test_breakdown_earned_coexists_with_spend_and_uncategorized(handler):
 
 def test_get_breakdown_dispatches_and_runs_real_body(handler, monkeypatch):
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = FakeTransactionRepo([_transaction("coffee", -42, "posted")])
+    txns = _QueuedTransactionRepo([_transaction("coffee", -42, "posted")])
     monkeypatch.setattr(handler, "CategoryRepository", lambda: cats)
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
     monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
@@ -510,7 +479,7 @@ def test_breakdown_ignores_non_budget_counting_spend(handler):
     # category row NOR fold into Uncategorized — whether its category is a real
     # spend id or a raw enum. Guards the counts_to_budget gate in BOTH summarisers.
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("coffee", -10, "posted"),                 # in
         _transaction("coffee", -99, "posted", counts=False),   # excluded spend cat
         _transaction("MEDICAL", -77, "posted", counts=False),  # excluded raw enum
@@ -526,7 +495,7 @@ def test_breakdown_uncategorized_ignores_unknown_status(handler):
     # summarise_uncategorized only buckets known posted/pending statuses; an
     # unexpected status (e.g. "cancelled") must not be silently counted as posted.
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("MEDICAL", -20, "posted"),
         _transaction("MEDICAL", -50, "cancelled"),   # unknown status -> dropped
         _transaction("MEDICAL", -5, "pending"),
@@ -541,7 +510,7 @@ def test_breakdown_only_uncategorized_bucket(handler):
     # Taxonomy exists but nothing landed in a spend category this cycle — the whole
     # response is just the Uncategorized bucket, no phantom spend-category keys.
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction(None, -12, "posted"),
         _transaction("MEDICAL", -8, "pending"),
     ])
@@ -556,7 +525,7 @@ def test_breakdown_fractional_amounts_survive_decimal_encoder(handler, monkeypat
     # amounts must serialise as JSON numbers with their cents intact, not be dropped
     # or stringified. (Binary-exact values chosen so the assert is deterministic.)
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("coffee", -12.50, "posted"),
         _transaction("coffee", -0.25, "posted"),
         _transaction("coffee", -0.50, "pending"),
@@ -677,7 +646,7 @@ def test_breakdown_positive_amount_in_spend_category_is_not_earned(handler):
     # Guards against a "positive amount == income" shortcut leaking spend-cat credits into
     # the earned bar.
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = FakeTransactionRepo([_transaction("coffee", 500, "posted")])
+    txns = _QueuedTransactionRepo([_transaction("coffee", 500, "posted")])
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
@@ -688,7 +657,7 @@ def test_breakdown_renamed_income_category_still_earned_by_bucket(handler):
     # [A17] A user-renamed Income category (custom name, non-"income" id) still counts — the
     # gate is bucket == Income over the id set, not the name or the raw "income" sentinel.
     cats = _FakeCategoryRepo([_category("side_hustle", "Income", name="Etsy shop")])
-    txns = FakeTransactionRepo([_transaction("side_hustle", 640, "posted")])
+    txns = _QueuedTransactionRepo([_transaction("side_hustle", 640, "posted")])
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
@@ -701,7 +670,7 @@ def test_get_breakdown_dispatches_and_serialises_earned_as_json_numbers(handler,
     # dropped or stringified — the client reads posted + pending off this. The existing
     # dispatch test carries no income, so this is the only end-to-end check of __earned__.
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle"), _category("salary", "Income")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("coffee", -12.50, "posted"),
         _transaction("salary", 2500.25, "posted"),
         _transaction("salary", 300.50, "pending"),
@@ -724,7 +693,7 @@ def test_get_breakdown_dispatches_and_serialises_income_sources_as_json_numbers(
     # WHIT-366: the __income__ per-source Decimals (incl. cents) must serialise as JSON numbers
     # through DecimalEncoder — the drill screen reads posted + pending off each source.
     cats = _FakeCategoryRepo([_category("salary", "Income"), _category("dividends", "Income")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("salary", 2500.25, "posted"),
         _transaction("salary", 300.50, "pending"),
         _transaction("dividends", 75.10, "posted"),
@@ -774,7 +743,7 @@ def test_breakdown_rollup_nets_refunded_sub_and_leaves_flat_keys_untouched(handl
         _child("petrol", "Living", "car"),
         _child("tolls", "Living", "car"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("petrol", -60, "posted"),
         _transaction("tolls", -50, "posted"),
         _transaction("tolls", 80, "posted"),       # refund bigger than tolls' own spend
@@ -796,7 +765,7 @@ def test_breakdown_rollup_clamps_posted_and_pending_independently(handler):
         _category("car", "Living"),
         _child("petrol", "Living", "car"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("petrol", -10, "posted"),
         _transaction("petrol", 20, "posted"),       # posted nets to -10
         _transaction("petrol", -50, "pending"),      # pending +50
@@ -813,7 +782,7 @@ def test_breakdown_flat_taxonomy_emits_empty_rollup(handler):
     # key being present (not absent) is the point: "no __rollup__" now means ONLY "old
     # server", which lets the client's fallback be a pure rollout shim (deletable in 5b).
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle"), _category("groceries", "Living")])
-    txns = FakeTransactionRepo([_transaction("coffee", -50), _transaction("groceries", -30)])
+    txns = _QueuedTransactionRepo([_transaction("coffee", -50), _transaction("groceries", -30)])
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
@@ -828,7 +797,7 @@ def test_breakdown_rollup_omits_parent_whose_subtree_nets_to_zero(handler):
         _category("car", "Living"),
         _child("petrol", "Living", "car"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("petrol", -40, "posted"),
         _transaction("petrol", 40, "posted"),        # net 0
     ])
@@ -855,10 +824,10 @@ def test_breakdown_rollup_parent_total_equals_list_budgets(handler):
     ]
 
     breakdown = handler.list_category_breakdown(
-        _FakeCategoryRepo(cats), FakeTransactionRepo(txns), FakePayCycleRepo())
+        _FakeCategoryRepo(cats), _QueuedTransactionRepo(txns), FakePayCycleRepo())
     budgets = handler.list_budgets(
         _FakeBudgetRepo({"car": {"target": Decimal("300")}}),
-        FakeTransactionRepo(txns), FakePayCycleRepo(), _FakeCategoryRepo(cats))
+        _QueuedTransactionRepo(txns), FakePayCycleRepo(), _FakeCategoryRepo(cats))
 
     assert breakdown["__rollup__"]["nodes"]["car"] == {
         "posted": budgets["car"]["posted"], "pending": budgets["car"]["pending"]}
@@ -892,10 +861,10 @@ def test_breakdown_rollup_nets_grandchild_refund_two_levels_into_top_parent(hand
     ]
 
     result = handler.list_category_breakdown(
-        _FakeCategoryRepo(cats), FakeTransactionRepo(txns), FakePayCycleRepo())
+        _FakeCategoryRepo(cats), _QueuedTransactionRepo(txns), FakePayCycleRepo())
     budgets = handler.list_budgets(
         _FakeBudgetRepo({"car": {"target": Decimal("300")}}),
-        FakeTransactionRepo(txns), FakePayCycleRepo(), _FakeCategoryRepo(cats))
+        _QueuedTransactionRepo(txns), FakePayCycleRepo(), _FakeCategoryRepo(cats))
 
     assert result["__rollup__"]["nodes"]["car"] == {"posted": Decimal("30"), "pending": Decimal("0")}
     assert "travel" not in result["__rollup__"]["nodes"]           # mid-subtree nets < 0
@@ -921,10 +890,10 @@ def test_breakdown_rollup_excludes_cross_bucket_child_mis_parented_under_spend_p
     ]
 
     result = handler.list_category_breakdown(
-        _FakeCategoryRepo(cats), FakeTransactionRepo(txns), FakePayCycleRepo())
+        _FakeCategoryRepo(cats), _QueuedTransactionRepo(txns), FakePayCycleRepo())
     budgets = handler.list_budgets(
         _FakeBudgetRepo({"shop": {"target": Decimal("300")}}),
-        FakeTransactionRepo(txns), FakePayCycleRepo(), _FakeCategoryRepo(cats))
+        _QueuedTransactionRepo(txns), FakePayCycleRepo(), _FakeCategoryRepo(cats))
 
     assert result["__rollup__"]["nodes"]["shop"] == {"posted": Decimal("40"), "pending": Decimal("0")}
     assert result["__rollup__"]["nodes"]["shop"] == {
@@ -950,7 +919,7 @@ def test_breakdown_rollup_keeps_same_bucket_grandchild_under_cross_bucket_interm
     ]
 
     result = handler.list_category_breakdown(
-        _FakeCategoryRepo(cats), FakeTransactionRepo(txns), FakePayCycleRepo())
+        _FakeCategoryRepo(cats), _QueuedTransactionRepo(txns), FakePayCycleRepo())
     nodes = result["__rollup__"]["nodes"]
 
     assert nodes["living_top"] == {"posted": Decimal("30"), "pending": Decimal("0")}      # grandchild kept
@@ -966,7 +935,7 @@ def test_breakdown_rollup_parent_node_includes_parents_own_direct_spend(handler)
         _category("car", "Living"),
         _child("petrol", "Living", "car"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("car", -25, "posted"),      # tagged directly on the PARENT
         _transaction("petrol", -60, "posted"),
     ])
@@ -989,7 +958,7 @@ def test_breakdown_rollup_gives_each_nested_parent_its_own_node(handler):
         _child("tolls", "Living", "travel"),
         _child("petrol", "Living", "car"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("petrol", -60, "posted"),
         _transaction("tolls", -20, "posted"),
         _transaction("travel", -5, "posted"),    # direct on the mid-parent
@@ -1012,7 +981,7 @@ def test_breakdown_rollup_never_contains_uncategorized_or_earned(handler):
         _child("petrol", "Living", "car"),
         _category("salary", "Income"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("petrol", -60, "posted"),
         _transaction("MEDICAL", -20, "posted"),   # raw bank enum -> __uncategorized__
         _transaction("salary", 2000, "posted"),    # income -> __earned__
@@ -1063,7 +1032,7 @@ def test_breakdown_rollup_excludes_income_and_savings_parents(handler):
         _category("save", "Savings"),
         _child("emergency", "Savings", "save"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("petrol", -60, "posted"),
         _transaction("bonus", 2000, "posted"),     # income
         _transaction("emergency", -500, "posted"),  # savings movement
@@ -1087,7 +1056,7 @@ def test_get_breakdown_dispatches_and_serialises_rollup_as_nested_json_numbers(h
         _child("petrol", "Living", "car"),
         _child("tolls", "Living", "car"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("petrol", -60.00, "posted"),
         _transaction("tolls", -12.50, "posted"),   # petrol 60 + tolls 12.50 = 72.50 ...
         _transaction("tolls", 25.00, "posted"),      # ... minus a 25 refund -> net 47.50
@@ -1124,7 +1093,7 @@ def test_breakdown_rollup_refunds_single_level_reconciles_to_node(handler):
         _child("petrol", "Living", "car"),
         _child("tolls", "Living", "car"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("petrol", -60, "posted"),
         _transaction("tolls", -50, "posted"),
         _transaction("tolls", 80, "posted"),       # refund > tolls' own spend
@@ -1150,7 +1119,7 @@ def test_breakdown_rollup_refunds_name_collapsed_mid_parent_not_the_leaf(handler
         _child("tolls", "Living", "travel"),
         _child("petrol", "Living", "car"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("petrol", -60, "posted"),
         _transaction("tolls", -50, "posted"),
         _transaction("tolls", 80, "posted"),
@@ -1171,7 +1140,7 @@ def test_breakdown_rollup_refund_on_parents_own_direct_spend(handler):
         _category("car", "Living"),
         _child("petrol", "Living", "car"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("car", -30, "posted"),
         _transaction("car", 50, "posted"),         # net -20 on the parent's own id
         _transaction("petrol", -60, "posted"),
@@ -1191,7 +1160,7 @@ def test_breakdown_rollup_no_refunds_key_when_no_refund(handler):
         _child("petrol", "Living", "car"),
         _child("tolls", "Living", "car"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("petrol", -60, "posted"),
         _transaction("tolls", -20, "posted"),
     ])
@@ -1214,7 +1183,7 @@ def test_breakdown_rollup_no_refund_line_for_a_still_shown_member(handler):
         _child("petrol", "Living", "car"),
         _child("tolls", "Living", "car"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("petrol", -60, "posted"),
         _transaction("tolls", 50, "posted"),        # a settled refund on tolls
         _transaction("tolls", -30, "pending"),        # a new pending charge on tolls
@@ -1239,7 +1208,7 @@ def test_income_source_keeps_signed_posted_when_pending_positive(handler):
     # the sign-split case whose client-side residual the "adjustment" plug fills.
     # Fail-on-revert: revert summarise_income to clamp=True and posted floors to 0 -> {0,300}.
     cats = _FakeCategoryRepo([_category("salary", "Income")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("salary", 100, "posted"),
         _transaction("salary", -200, "posted"),   # settled clawback > the settled pay -> posted nets -100
         _transaction("salary", 300, "pending"),    # a new pending pay run
@@ -1257,7 +1226,7 @@ def test_income_source_kept_signed_even_when_net_negative(handler):
     # __earned__/__income__ are emitted. Fail-on-revert: revert to clamp=True + the `> 0` filter and
     # "clawed" floors to {0,0} and is dropped.
     cats = _FakeCategoryRepo([_category("salary", "Income"), _category("clawed", "Income")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("salary", 2000, "posted"),
         _transaction("clawed", 100, "posted"),
         _transaction("clawed", -400, "posted"),    # posted nets -300
@@ -1281,7 +1250,7 @@ def test_income_source_keeps_signed_negative_pending_earned_clamps_that_bucket(h
     # pending reversal — the residual the client's "adjustment" plug fills in the pending direction.
     # Fail-on-revert: revert summarise_income to clamp=True and pending floors to 0 -> {2000, 0}.
     cats = _FakeCategoryRepo([_category("salary", "Income")])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("salary", 2000, "posted"),
         _transaction("salary", -100, "pending"),  # a pending clawback -> pending nets -100
     ])
@@ -1306,7 +1275,7 @@ def test_income_multiple_reversed_sources_all_survive_and_reconcile(handler):
         _category("bonus_a", "Income"),
         _category("bonus_b", "Income"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("salary", 2000, "posted"),
         _transaction("bonus_a", 40, "posted"),
         _transaction("bonus_a", -140, "posted"),  # nets -100
@@ -1345,7 +1314,7 @@ def test_rollup_posted_surplus_with_pending_refund_cannot_reconcile(handler):
         _child("petrol", "Living", "car"),
         _child("tolls", "Living", "car"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("petrol", -100, "posted"),   # +100 posted spend
         _transaction("tolls", 30, "pending"),      # -30 pending refund (positive amount)
     ])
@@ -1376,7 +1345,7 @@ def test_rollup_grandchild_refund_attaches_to_positive_mid_parent_not_top(handle
         _child("travel", "Living", "car"),
         _child("tolls", "Living", "travel"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("petrol", -60, "posted"),
         _transaction("travel", -50, "posted"),   # travel's own direct spend
         _transaction("tolls", 30, "posted"),      # -30 refund two levels down
@@ -1403,7 +1372,7 @@ def test_rollup_refunded_subparent_reported_by_child_id_with_whole_subtree_net(h
         _child("shoes", "Living", "shopping"),
         _child("clothes", "Living", "shopping"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("petrol", -200, "posted"),
         _transaction("shoes", -40, "posted"),
         _transaction("clothes", 120, "posted"),   # -120 refund
@@ -1430,7 +1399,7 @@ def test_rollup_income_and_savings_never_in_nodes_or_refunds(handler):
         _category("vault", "Savings"),
         _child("vault_sub", "Savings", "vault"),
     ])
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _transaction("petrol", -60, "posted"),
         _transaction("tolls", 30, "posted"),        # -30 spend refund
         _transaction("salary", 2000, "posted"),      # income (earned)

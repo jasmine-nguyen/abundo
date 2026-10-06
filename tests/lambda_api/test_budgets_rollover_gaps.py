@@ -22,22 +22,10 @@ import json
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _budget_fakes import recording_budget_repo
+from _transaction_range_fakes import _QueuedTransactionRepo
 
 LENGTH = 30
 PAYDATE = "2026-01-01"
-
-
-# --- fakes (module-local, mirroring the sibling suites' pattern) --------------
-
-
-class FakeTransactionRepo:
-    """Serves the queued page once (ignores the date range — the handler slices by date)."""
-
-    def __init__(self, transactions=None):
-        self._queue = [(list(transactions or []), None)]
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        return self._queue.pop(0) if self._queue else ([], None)
 
 
 FakePayCycleRepo = partial(_FakePayCycleRepo, length=LENGTH, last_pay_date=PAYDATE)
@@ -76,7 +64,7 @@ def test_a_cycle_ending_exactly_on_the_lag_cutoff_is_not_sealed(handler, monkeyp
     # revert: relaxing `<` to `<=` would seal it here and populate settle_calls.
     _pin_window(handler, monkeypatch, "2026-08-06", "2026-08-15")
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-07-07")})
-    result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(),
+    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(),
                                   _FakeCategoryRepo([_spend_cat()]))
 
     assert result["sink"]["carryover"] == Decimal(100)   # live leftover, shown
@@ -89,7 +77,7 @@ def test_a_cycle_ending_one_day_before_the_cutoff_seals(handler, monkeypatch):
     # anchor to the next cycle start (2026-08-06). Pins that the boundary is exactly one day wide.
     _pin_window(handler, monkeypatch, "2026-08-06", "2026-08-16")
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-07-07")})
-    result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(),
+    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(),
                                   _FakeCategoryRepo([_spend_cat()]))
 
     assert result["sink"]["carryover"] == Decimal(100)
@@ -108,7 +96,7 @@ def test_a_parents_sealed_leftover_folds_child_spend_across_the_subtree(handler,
     budget_repo = recording_budget_repo({"food": _entry(100, carryover=Decimal(0), carryover_from="2026-06-07")})
     cats = _FakeCategoryRepo([_spend_cat("food"), _spend_cat("dining", parent="food")])
     # dining spend lands in the sealed cycle [2026-06-07, 2026-07-06]; the live cycle is empty.
-    txns = FakeTransactionRepo([_txn("dining", -30, "2026-06-20")])
+    txns = _QueuedTransactionRepo([_txn("dining", -30, "2026-06-20")])
     result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), cats)
 
     assert result["food"]["carryover"] == Decimal(170)   # sealed 70 + live 100
@@ -127,7 +115,7 @@ def test_a_refund_in_a_sealed_cycle_cannot_push_leftover_above_target(handler, m
     _pin_window(handler, monkeypatch, "2026-08-06", "2026-08-10")   # cutoff 2026-07-31
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-06-07")})
     # +50 amount with the default spend sign is a refund (negative contribution) in the sealed cycle.
-    txns = FakeTransactionRepo([_txn("sink", 50, "2026-06-20")])
+    txns = _QueuedTransactionRepo([_txn("sink", 50, "2026-06-20")])
     result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), _FakeCategoryRepo([_spend_cat()]))
 
     assert result["sink"]["carryover"] == Decimal(200)   # sealed 100 (capped) + live 100, NOT 250
@@ -148,7 +136,7 @@ def test_a_transaction_dated_exactly_on_cycle_start_is_current_not_sealed(handle
     # A spend in a PAST sealed cycle (25) + a spend dated exactly cycle_start (40). Only the
     # cycle_start one is this cycle's posted spend; the past one belongs to the sealed cycle,
     # so it must NOT inflate `posted`. Without the current-cycle slice, posted would read 65.
-    txns = FakeTransactionRepo([
+    txns = _QueuedTransactionRepo([
         _txn("sink", -25, "2026-06-20"),   # sealed cycle [2026-06-07, 2026-07-06]
         _txn("sink", -40, "2026-08-06"),   # exactly cycle_start -> current
     ])
