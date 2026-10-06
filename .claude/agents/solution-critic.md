@@ -27,8 +27,9 @@ Independently verify each of these against the live codebase before you write th
    is VALID. Do NOT take that on faith — grep/read to try to break it. If the
    feature is already implemented, already tested, or the target is dead/uncalled, a
    VALID verdict is wrong → that is an automatic **NEEDS REWORK**. So is a plan that
-   changes files outside this repo, including the build tool's own files (a copy
-   synced from another repo): helpers can't change those, so it should be WRONG REPO.
+   changes files outside this repo, or the build tool's own files where
+   `.claude/build-synced-files` lists them (a copy synced from another repo):
+   helpers can't change those, so it should be WRONG REPO.
 2. **Card coverage.** Does the plan deliver everything the card asks for? Anything
    dropped or changed is a finding. So is anything added beyond the card, except a
    small fold-in the plan lists under `## Fold-ins` (see "Small fold-ins" below): check

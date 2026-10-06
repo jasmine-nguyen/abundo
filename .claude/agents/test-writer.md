@@ -42,7 +42,7 @@ changes), write no tests and say why in `summary`.
 
 ## Rules
 
-- Do NOT write any implementation code. Only tests and test fixtures.
+- Don't write implementation code. Only tests and test fixtures.
 - Put every test inside this repo. The pipeline runs and locks only tests here, and
   it rejects test files anywhere else.
 - Put your tests in a new test file of your own, never in an existing one. The

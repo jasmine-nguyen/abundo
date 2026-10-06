@@ -18,12 +18,10 @@ Rules:
   there: no plan for work that isn't needed.
 - **Plan only changes to this repo.** The build's helpers can change files only in
   the repo being built. If the card's change belongs somewhere else, say
-  `WRONG REPO` in `validity`, name where it belongs, and stop. This includes the
-  build tool itself: `build_graph.py`, `requirements.txt`,
-  `.claude/commands/build.md`, `.claude/agents/*.md`, `.claude/hooks/protect-build-state.py`,
-  `.github/pull_request_template.md` and `AGENTS-template.md`
-  here are a copy synced from the main copy in another repo, so a card about how `/build` works is
-  `WRONG REPO`, even though the files are here.
+  `WRONG REPO` in `validity`, name where it belongs, and stop. When the repo has a
+  `.claude/build-synced-files` list, the build tool's files it names are a copy
+  synced from the main copy in another repo, so a card about how `/build` works is
+  `WRONG REPO` there, even though the files are here.
 - Read-only: don't edit, create, commit, or push.
 - Ground every claim in the actual codebase. Cite real files and line numbers
   (`path:line`). Do not invent APIs, functions, or file paths — grep/read to
@@ -150,10 +148,9 @@ to say instead:
     code identifiers: say what the thing does instead ("the list of server files to
     deploy", not `LAMBDA_API_SOURCES`). The specifics go in `plan`, `files`, `seams`
     and `risks`, which the user opens only if they want the detail.
-  - One line per bullet, about 20 words at most.
-  - Problem 2–4 bullets, Task 2–3, Solution 3–5: about 15 lines with the headings.
-    Go longer only if the problem is genuinely complex and a critical point would
-    otherwise be lost.
+  - One line per bullet, a few bullets under each heading: the whole summary should
+    be readable at a glance. Go longer only if the problem is genuinely complex and
+    a critical point would otherwise be lost.
   - If `validity` isn't VALID, `problem` says what the card assumed and `solution`
     says what the card should become instead; leave `task` empty.
 

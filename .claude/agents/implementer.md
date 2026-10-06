@@ -46,7 +46,7 @@ that fails, so running it yourself only doubles the wait.
 - **Check the project context** (appended below) for known landmines, coding
   standards and the glossary before writing code. If a landmine applies to the area
   you're changing, handle it — don't discover it after.
-- Write clean, idiomatic code that matches the existing codebase's conventions.
+- Match the existing codebase's conventions.
 - Read files before changing them, and grep for usages before renaming or changing
   signatures.
 - Don't commit, stage, stash or switch branches: the pipeline commits once its
