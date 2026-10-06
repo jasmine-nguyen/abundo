@@ -24,7 +24,7 @@ import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMo
 
 const mockShowToast = jest.fn<(m: string) => void>();
 
-const mockCategories = [{ ...GROCERIES_RECORD, color: '#7FD49B', recent: 0 }];
+const mockCategories = [{ ...GROCERIES_RECORD, color: '#7FD49B' }];
 
 // ../context — PARTIALLY mocked (real selectors, stubbed useAppContext for TransactionRow +
 // retryLoad) so ../queries' real imports still resolve; the screen renders under a real

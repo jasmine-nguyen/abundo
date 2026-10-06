@@ -117,7 +117,7 @@ describe('Insights server-seeded slots (WHIT-415)', () => {
     groceries: 'Groceries', transport: 'Transport',
   };
   const CATS = Object.entries(SEED).map(([id, colorSlot]) => ({
-    id, name: NAMES[id] ?? id, icon: 'tag', bucket: 'Living', recent: 0, parent: null, colorSlot,
+    id, name: NAMES[id] ?? id, icon: 'tag', bucket: 'Living', parent: null, colorSlot,
   }));
   const seedSpend = (spend: Record<string, { posted: number; pending: number }>) =>
     seedInsights(server, { breakdown: breakdownWire({ spend }), categories: CATS });
@@ -284,7 +284,7 @@ describe('Insights slot rows (WHIT-402)', () => {
       const INCOME_CATS = [
         // NOT C.good ('#2ac3de'): the EarnedVsSpent card legitimately paints a C.good bar, so an
         // old-colour fixture equal to it could never be asserted absent.
-        { id: 'salary', name: 'Salary', icon: 'briefcase', color: '#123456', bucket: 'Income', recent: 0, parent: null },
+        { id: 'salary', name: 'Salary', icon: 'briefcase', color: '#123456', bucket: 'Income', parent: null },
       ];
       seedInsights(server, {
         breakdown: breakdownWire({ earned: 3000, income: { salary: posted(3000) } }),

@@ -36,8 +36,8 @@ const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
 // A parent (Food) with a spending child (Coffee) AND its own direct spend → categoryBreakdown
 // emits a "Directly in Food" synthetic row. Plus the Uncategorized bucket.
 const CATS = [
-  { id: 'food', name: 'Food', bucket: 'Essentials', icon: 'cart', color: '#7FD49B', recent: 0 },
-  { id: 'coffee', name: 'Coffee', bucket: 'Essentials', icon: 'coffee', color: '#E8A87C', recent: 0, parent: 'food' },
+  { id: 'food', name: 'Food', bucket: 'Essentials', icon: 'cart', color: '#7FD49B' },
+  { id: 'coffee', name: 'Coffee', bucket: 'Essentials', icon: 'coffee', color: '#E8A87C', parent: 'food' },
 ];
 const BREAKDOWN = {
   food: { posted: 30, pending: 0 },

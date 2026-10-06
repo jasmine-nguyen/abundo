@@ -19,7 +19,7 @@ const COFFEE_BUDGET_TX = '/budgets/coffee/transactions';
 const COFFEE_TX = '/categories/coffee/transactions';
 const SALARY_TX = '/categories/salary/transactions';
 
-const CATS = [{ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
+const CATS = [{ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C' }];
 
 beforeEach(() => {
   resetAuth();
@@ -160,7 +160,7 @@ describe('useCategoryCycleTransactionsQuery (WHIT-342)', () => {
 // empty/error/retry derivation of that flag from a real cache. Own consts (a DIFFERENT CATS/ROWS) +
 // beforeEach block-scoped so they don't perturb the survivor's coffee fixture above.
 describe('useCategoryTransactionsScreenData (WHIT-374)', () => {
-  const CATS = [{ id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase', color: '#2ac3de', recent: 0 }];
+  const CATS = [{ id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase', color: '#2ac3de' }];
   const ROWS = [{ transaction_id: 'salary-c0' }];
 
   beforeEach(() => {

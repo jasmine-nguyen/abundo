@@ -14,8 +14,8 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 const server = installFakeServer();
 
-const CAR = { id: 'car', name: 'Car', bucket: 'Living', icon: 'car', color: '#8AB4F8', recent: 0, parent: null };
-const PARKING = { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8AB4F8', recent: 0, parent: 'car' };
+const CAR = { id: 'car', name: 'Car', bucket: 'Living', icon: 'car', color: '#8AB4F8', parent: null };
+const PARKING = { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8AB4F8', parent: 'car' };
 
 beforeEach(() => resetRouter());
 

@@ -33,8 +33,7 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { COFFEE } from './support/categories';
 
 const SPEND = COFFEE;
-const INCOME = { id: 'salary', name: 'Salary', icon: 'briefcase', color: '#7fd49b', bucket: 'Income', recent: 0 };
-const PICK_INCOME = { ...INCOME, recent: 4000 };
+const INCOME = { id: 'salary', name: 'Salary', icon: 'briefcase', color: '#7fd49b', bucket: 'Income' };
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -114,54 +113,23 @@ it('wraps the form in a keyboard-inset, tap-persisting scroll so Save stays reac
 });
 
 // ===== WHIT-169 (folded from budgetEditIncome.screen.test.tsx) =====
-// edit.tsx must GATE the spend UI for an income category, and a Savings deep-link lands on a
-// "can't budget" state. SPEND and INCOME reuse the module-scope consts (the pick blocks below use
-// PICK_INCOME, a different recent). replace is the shared routerSpies.replace here
-// (inert: these render-only tests never press Save).
+// A Savings deep-link to edit.tsx lands on a "can't budget" state (the income/spend screens are
+// covered in budgetNoDummyNumbers.screen.test.tsx).
 describe('budgetEditIncome (folded)', () => {
-  describe('BudgetEdit — income framing is wired into the screen (WHIT-169)', () => {
-    it('income category: prompt shown, recommend button + "Recommended:" line absent, earning history, dashed stats', async () => {
-      setParams({ categoryId: 'salary' });
-      seedServer([INCOME]);
-      await renderWithQueries(<BudgetEdit />);
-
-      expect(screen.getByText('Set your income floor')).toBeTruthy();     // recPrompt (else-branch)
-      expect(screen.queryByText(/^Recommended:/)).toBeNull();             // no spend recommendation line
-      expect(screen.queryByText('Use my average spend')).toBeNull();      // recommend button gated OFF
-      expect(screen.queryByText('Use my average income')).toBeNull();     // ...and no income-CTA button either
-      expect(screen.getByText('View earning history')).toBeTruthy();      // historyToggleLabel
-      expect(screen.getAllByText('—')).toHaveLength(2);                   // Last + 6-cycle stats both dashed, never "$0"
-    });
-
-    it('spend category (control): recommendation line + button + spending history all present', async () => {
-      setParams({ categoryId: 'coffee' });
-      seedServer([SPEND]);
-      await renderWithQueries(<BudgetEdit />);
-
-      expect(screen.getByText('Recommended: $52')).toBeTruthy();          // real spend recommendation
-      expect(screen.getByText('Use my average spend')).toBeTruthy();      // recommend button present
-      expect(screen.getByText('View spending history')).toBeTruthy();     // spend history label
-      expect(screen.queryByText('Set your income floor')).toBeNull();     // no income prompt
-      expect(screen.queryByText('View earning history')).toBeNull();
-    });
-  });
-
   describe('BudgetEdit — a Savings category lands on a "can\'t budget" state (WHIT-202)', () => {
     it('Savings category: shows the explanatory note, none of the amount/history/save UI', async () => {
       // A deep-link to /budget/edit on a Savings category must NOT show an amount field whose
       // save is doomed to a 400 — it shows a coherent "can't budget" note instead. Fail-on-
-      // revert: removing the early-return falls through to the full spend screen (history +
-      // stats reappear, note gone).
-      const SAVINGS = { id: 'nest_egg', name: 'Nest Egg', icon: 'piggy', color: '#8fd4c0', bucket: 'Savings', recent: 0 };
+      // revert: removing the early-return falls through to the full spend screen (the
+      // "<PERIOD> BUDGET" amount label reappears, note gone).
+      const SAVINGS = { id: 'nest_egg', name: 'Nest Egg', icon: 'piggy', color: '#8fd4c0', bucket: 'Savings' };
       setParams({ categoryId: 'nest_egg' });
       seedServer([SAVINGS]);
       await renderWithQueries(<BudgetEdit />);
 
       expect(screen.getByText('Nest Egg')).toBeTruthy();                              // category header still shown
       expect(screen.getByText(/Savings categories can't be budgeted/)).toBeTruthy();  // the note
-      expect(screen.queryByText('View spending history')).toBeNull();                 // no spend UI...
-      expect(screen.queryByText('6-cycle average')).toBeNull();                       // ...no stats/amount field
-      expect(screen.queryByText('View earning history')).toBeNull();
+      expect(screen.queryByText(/BUDGET$/)).toBeNull();                                // no amount field
     });
   });
 });
@@ -271,14 +239,14 @@ describe('budgetEditRollover (folded)', () => {
 
 // ===== WHIT-69 (folded from budgetPickIncome.screen.test.tsx) =====
 // app/budget/pick.tsx lists Income categories in "Add a budget" while hiding already-budgeted ones.
-// Renders BudgetPick (imported at module scope). SPEND and PICK_INCOME (recent 4000, unlike the edit
-// blocks' INCOME) reuse the outer consts; SIDE is block-scoped.
+// Renders BudgetPick (imported at module scope). SPEND and INCOME reuse the outer consts; SIDE is
+// block-scoped. The income row's earn-target tag is covered in budgetNoDummyNumbers.screen.test.tsx.
 describe('budgetPickIncome (folded)', () => {
-  const SIDE = { id: 'side_gig', name: 'Side Gig', icon: 'briefcase', color: '#7fd49b', bucket: 'Income', recent: 300 };
+  const SIDE = { id: 'side_gig', name: 'Side Gig', icon: 'briefcase', color: '#7fd49b', bucket: 'Income' };
 
   describe('BudgetPick — income is pickable (WHIT-69)', () => {
     it('lists an Income category alongside spend categories', async () => {
-      seedServer([PICK_INCOME, SPEND]);
+      seedServer([INCOME, SPEND]);
       await renderWithQueries(<BudgetPick />);
       expect(screen.getByText('Salary')).toBeTruthy();          // was filtered out pre-WHIT-69
       expect(screen.getByText('Cafes & Coffee')).toBeTruthy();  // control: spend still listed
@@ -286,34 +254,23 @@ describe('budgetPickIncome (folded)', () => {
 
     it('still hides an income category that already has a budget', async () => {
       // A rollup needs a target above 0, or the budgets read drops it.
-      seedServer([PICK_INCOME, SIDE], { salary: { target: 1, posted: 0, pending: 0 } });
+      seedServer([INCOME, SIDE], { salary: { target: 1, posted: 0, pending: 0 } });
       await renderWithQueries(<BudgetPick />);
       expect(screen.queryByText('Salary')).toBeNull();          // already budgeted → excluded
       expect(screen.getByText('Side Gig')).toBeTruthy();        // not budgeted → still pickable
-    });
-
-    // WHIT-169: an income row must NOT show its spend `recent` (4000) as an average —
-    // it shows an "earn-target" tag instead. A spend row still shows its avg.
-    it('shows "earn-target" for income rows, not a spend average, while spend rows keep theirs', async () => {
-      seedServer([PICK_INCOME, SPEND]);
-      await renderWithQueries(<BudgetPick />);
-      expect(screen.getByText('earn-target')).toBeTruthy();     // income row's right side
-      expect(screen.queryByText('$4,000')).toBeNull();          // income spend-avg suppressed
-      expect(screen.getByText('$52')).toBeTruthy();             // spend control row keeps its avg
-      expect(screen.getByText('avg / fortnight')).toBeTruthy(); // ...and its label
     });
   });
 });
 
 // ===== WHIT-201 (folded from budgetPickSavings.screen.test.tsx) =====
 // Savings categories are NOT budgetable — pick.tsx excludes them (Income stays pickable). SPEND
-// and PICK_INCOME (recent 4000) reuse the outer consts; SAVINGS is block-scoped.
+// and INCOME reuse the outer consts; SAVINGS is block-scoped.
 describe('budgetPickSavings (folded)', () => {
-  const SAVINGS = { id: 'nest_egg', name: 'Nest Egg', icon: 'home', color: '#C7A8F0', bucket: 'Savings', recent: 0 };
+  const SAVINGS = { id: 'nest_egg', name: 'Nest Egg', icon: 'home', color: '#C7A8F0', bucket: 'Savings' };
 
   describe('BudgetPick — Savings is not budgetable (WHIT-201)', () => {
     it('hides a Savings category while still listing spend and income categories', async () => {
-      seedServer([SAVINGS, PICK_INCOME, SPEND]);
+      seedServer([SAVINGS, INCOME, SPEND]);
       await renderWithQueries(<BudgetPick />);
       expect(screen.queryByText('Nest Egg')).toBeNull();        // Savings excluded
       expect(screen.getByText('Salary')).toBeTruthy();          // Income still pickable (WHIT-69)

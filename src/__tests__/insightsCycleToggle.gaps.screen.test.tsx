@@ -24,7 +24,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 const server = installFakeServer();
 useTestQueryClient();
 
-const CATS = [{ ...COFFEE, recent: 0 }];
+const CATS = [{ ...COFFEE }];
 const BREAKDOWN = { coffee: { posted: 40, pending: 10 } };
 
 beforeEach(() => {

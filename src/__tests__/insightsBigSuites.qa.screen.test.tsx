@@ -21,7 +21,7 @@ const server = installFakeServer();
 useTestQueryClient();
 
 const posted = (n: number) => ({ posted: n, pending: 0 });
-const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', bucket: 'Lifestyle', recent: 0 }];
+const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', bucket: 'Lifestyle' }];
 const breakdownReads = () => server.sentUnder('GET', '/breakdown').length;
 
 beforeEach(() => {

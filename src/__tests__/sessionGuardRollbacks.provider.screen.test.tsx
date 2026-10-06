@@ -29,7 +29,7 @@ function signOut() {
 
 // ----- module-level helpers hoisted from the folded gaps files -----
 // From sessionGuardRollbacksGaps: a category factory and a two-microtask flush.
-const cat = (id: string, name: string) => ({ id, name, bucket: 'Living', icon: 'tag', color: '#fff', recent: 0 });
+const cat = (id: string, name: string) => ({ id, name, bucket: 'Living', icon: 'tag', color: '#fff' });
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 // From categorySilentContractGaps: the 50-sub-category cap message, a reusable form, and the silent opt.
 const CAP = 'a category can have at most 50 sub-categories';
@@ -133,7 +133,7 @@ describe('WHIT-271 — a writer settling after sign-out re-seats nothing and sho
   });
 
   it('saveBudget SUCCESS after sign-out shows no toast (the leak: old category name + dollar figure)', async () => {
-    queryClient.setQueryData(['categories'], [{ id: 'c1', name: 'Groceries', bucket: 'Living', icon: 'tag', color: '#fff', recent: 0 }]);
+    queryClient.setQueryData(['categories'], [{ id: 'c1', name: 'Groceries', bucket: 'Living', icon: 'tag', color: '#fff' }]);
     const held = server.hold('/budgets/c1');
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
@@ -148,7 +148,7 @@ describe('WHIT-271 — a writer settling after sign-out re-seats nothing and sho
 
   it('applyCategory failure after sign-out shows no toast', async () => {
     seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: null, counts_to_budget: true, description: 'X' }]);
-    queryClient.setQueryData(['categories'], [{ id: 'c1', name: 'Groceries', bucket: 'Living', icon: 'tag', color: '#fff', recent: 0 }]);
+    queryClient.setQueryData(['categories'], [{ id: 'c1', name: 'Groceries', bucket: 'Living', icon: 'tag', color: '#fff' }]);
     const held = server.hold('/transactions/t1');
     server.once('PATCH', '/transactions/t1', 'dropped');
     const { result } = renderHook(() => useAppContext(), { wrapper });
@@ -166,7 +166,7 @@ describe('WHIT-271 — a writer settling after sign-out re-seats nothing and sho
   // after sign-out, so the edit SCREENS (which toast + router.back() on a truthy return) don't
   // fire into the next session. These lock the return value, not just the writer's own toast.
   it('saveBudget SUCCESS after sign-out returns false (so budget/edit does not navigate)', async () => {
-    queryClient.setQueryData(['categories'], [{ id: 'c1', name: 'Groceries', bucket: 'Living', icon: 'tag', color: '#fff', recent: 0 }]);
+    queryClient.setQueryData(['categories'], [{ id: 'c1', name: 'Groceries', bucket: 'Living', icon: 'tag', color: '#fff' }]);
     const held = server.hold('/budgets/c1');
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
@@ -179,7 +179,7 @@ describe('WHIT-271 — a writer settling after sign-out re-seats nothing and sho
   });
 
   it('saveCategory SUCCESS after sign-out returns false (so category/edit does not toast + navigate)', async () => {
-    queryClient.setQueryData(['categories'], [{ id: 'c1', name: 'Old', bucket: 'Living', icon: 'tag', color: '#fff', recent: 0 }]);
+    queryClient.setQueryData(['categories'], [{ id: 'c1', name: 'Old', bucket: 'Living', icon: 'tag', color: '#fff' }]);
     const held = server.hold('/categories/c1');
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
@@ -192,7 +192,7 @@ describe('WHIT-271 — a writer settling after sign-out re-seats nothing and sho
   });
 
   it('createCategoryInline SUCCESS after sign-out returns null (so callers do not act on it)', async () => {
-    queryClient.setQueryData(['categories'], [{ id: 'c1', name: 'Old', bucket: 'Living', icon: 'tag', color: '#fff', recent: 0 }]);
+    queryClient.setQueryData(['categories'], [{ id: 'c1', name: 'Old', bucket: 'Living', icon: 'tag', color: '#fff' }]);
     const held = server.hold('/categories');
     server.once('POST', '/categories', { body: { id: 'c2', name: 'New', bucket: 'Living' } });
     const { result } = renderHook(() => useAppContext(), { wrapper });

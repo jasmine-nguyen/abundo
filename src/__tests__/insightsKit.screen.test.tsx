@@ -31,8 +31,8 @@ describe('the Insights tab drawn over the fake server with the shared kit', () =
         income: { salary: { posted: 3000, pending: 0 } },
       }),
       categories: [
-        { ...GROCERIES_RECORD, recent: 0, colorSlot: 1 },
-        { id: 'salary', name: 'Salary', icon: 'briefcase', bucket: 'Income', recent: 0, colorSlot: 2 },
+        { ...GROCERIES_RECORD, colorSlot: 1 },
+        { id: 'salary', name: 'Salary', icon: 'briefcase', bucket: 'Income', colorSlot: 2 },
       ],
     });
 

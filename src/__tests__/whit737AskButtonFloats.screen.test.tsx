@@ -38,7 +38,7 @@ const TABS: [string, () => void, React.ReactElement, string][] = [
   ['Accounts', () => server.seed('/transactions/feed', { transactions: [LIST_ROW], nextCursor: null }), <Accounts />, 'ANZ'],
   ['Insights', () => {
     server.seed('/breakdown', { coffee: { posted: 40, pending: 0 } });
-    server.seed('/categories', [{ ...COFFEE, recent: 0 }]);
+    server.seed('/categories', [{ ...COFFEE }]);
     server.seed('/paycycle', PAY_CYCLE);
   }, <Insights />, 'Cafes & Coffee'],
   ['Goals', () => seedGoalsHub(server, {

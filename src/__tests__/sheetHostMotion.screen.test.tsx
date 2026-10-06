@@ -254,8 +254,8 @@ describe('SheetHost keyboard avoidance (WHIT-294)', () => {
 // backdrop closes; taps on the list select a row and never leak to a close) — the "Close"
 // backdrop is what the old wrapping structure lacked, so its absence is the fail-on-revert.
 describe('SheetHost scroll-host backdrop (WHIT-288)', () => {
-  const CAT_A = { ...GROCERIES, recent: 0 };
-  const CAT_B = { id: 'coffee', name: 'Coffee', icon: 'coffee', color: '#e0af68', bucket: 'Lifestyle', recent: 0 };
+  const CAT_A = { ...GROCERIES };
+  const CAT_B = { id: 'coffee', name: 'Coffee', icon: 'coffee', color: '#e0af68', bucket: 'Lifestyle' };
 
   const fns = {
     chooseCategory: jest.fn(), createCategoryInline: jest.fn(), setSheet: jest.fn(),
@@ -332,8 +332,8 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
 
   function openNewRule() {
     server.seed('/categories', [
-      { ...GROCERIES, recent: 0 },
-      { ...SUBSCRIPTIONS, recent: 0 },
+      { ...GROCERIES },
+      { ...SUBSCRIPTIONS },
     ]);
     server.seed('/rules', []);
     // no ruleId → key `addrule:new`, no editing prefill

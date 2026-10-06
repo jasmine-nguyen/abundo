@@ -18,8 +18,8 @@ const server = installFakeServer();
 useTestQueryClient();
 
 const CATS = [
-  { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', bucket: 'Lifestyle', recent: 0 },
-  { id: 'salary', name: 'Salary', icon: 'briefcase', bucket: 'Income', recent: 0, colorSlot: 2 },
+  { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', bucket: 'Lifestyle' },
+  { id: 'salary', name: 'Salary', icon: 'briefcase', bucket: 'Income', colorSlot: 2 },
 ];
 
 beforeEach(() => {
@@ -56,7 +56,7 @@ describe('Earning tab drops a zero-net source', () => {
         earned: 3000,
         income: { salary: { posted: 3000, pending: 0 }, bonus: { posted: 200, pending: -200 } },
       }),
-      categories: [...CATS, { id: 'bonus', name: 'Bonus', icon: 'gift', bucket: 'Income', recent: 0 }],
+      categories: [...CATS, { id: 'bonus', name: 'Bonus', icon: 'gift', bucket: 'Income' }],
     });
     await renderInsights();
     fireEvent.press(screen.getByTestId('insights-side-earning'));

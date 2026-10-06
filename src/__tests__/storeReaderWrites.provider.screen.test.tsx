@@ -24,8 +24,8 @@ import { invalidatedKeys } from './support/queryClient';
 const server = installFakeServer();
 const categoryReads = () => server.sent('GET', '/categories');
 
-const CAT: Category = { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 };
-const OTHER: Category = { id: 'rent', name: 'Rent', bucket: 'Living', icon: 'home', color: '#8AB4F8', recent: 0 };
+const CAT: Category = { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C' };
+const OTHER: Category = { id: 'rent', name: 'Rent', bucket: 'Living', icon: 'home', color: '#8AB4F8' };
 // The ['budgets', cycleLen] cache holds the RAW queryFn shape — a Record keyed by category
 // id (useBudgetsQuery maps it to Budget[] via `select`, which getQueryData does NOT apply).
 // Seeding the select-OUTPUT array shape here would let deleteCategory's `.filter`-on-a-Record
@@ -125,7 +125,7 @@ it('deleteCategory drops the id from EVERY budget window, skips windows lacking 
 // queryClient the writers write to. It mounts through QueryClientProvider(client=singleton) and
 // needs the eager reads answered, so its divergent wrapper + beforeEach are scoped here.
 describe('WHIT-203 live observers (QueryClientProvider + real reader hooks)', () => {
-  const NEW: Category = { id: 'new', name: 'New', bucket: 'Living', icon: 'home', color: '#fff', recent: 0 };
+  const NEW: Category = { id: 'new', name: 'New', bucket: 'Living', icon: 'home', color: '#fff' };
 
   beforeEach(() => {
     queryClient.clear();

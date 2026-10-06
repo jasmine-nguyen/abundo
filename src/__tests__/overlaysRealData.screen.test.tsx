@@ -445,8 +445,8 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
 
   const RULE_INPUT = 'e.g. NETFLIX';
   const CATS = [
-    { ...GROCERIES, recent: 0 },
-    { ...SUBSCRIPTIONS, recent: 0 },
+    { ...GROCERIES },
+    { ...SUBSCRIPTIONS },
   ];
 
   // A category pill's label goes white (#fff) when selected, C.textMid otherwise
@@ -680,7 +680,7 @@ describe('WHIT-283 GAP — the restored form RE-SELECTS bucket / icon / parent a
     seedTransactions(T1);
     // One same-bucket (Lifestyle == the form's initialBucket) category, so the inline form's parent
     // picker offers it — required for the parent round-trip.
-    server.seed('/categories', [{ id: 'coffee', name: 'Coffee', icon: 'coffee', bucket: 'Lifestyle', recent: 0, parent: null }]);
+    server.seed('/categories', [{ id: 'coffee', name: 'Coffee', icon: 'coffee', bucket: 'Lifestyle', parent: null }]);
     queryClient.clear();
   });
 
@@ -852,8 +852,8 @@ describe('WHIT-538 — Back from the add-rule preview restores the form draft', 
 
   const RULE_INPUT = 'e.g. NETFLIX';
   const CATS = [
-    { ...GROCERIES, recent: 0 },
-    { ...SUBSCRIPTIONS, recent: 0 },
+    { ...GROCERIES },
+    { ...SUBSCRIPTIONS },
   ];
   const previewReport = {
     dryRun: true, rulesConsidered: 1, unfiled: 5, matched: 5, conflicted: 0, conflictedSamples: [],

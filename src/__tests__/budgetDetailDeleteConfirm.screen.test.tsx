@@ -32,7 +32,7 @@ beforeEach(() => {
   resetAuth();
   mockDeleteBudget.mockClear();
   mockDeleteBudget.mockResolvedValue(true);
-  server.seed('/categories', [{ ...COFFEE, recent: 0 }]);
+  server.seed('/categories', [{ ...COFFEE }]);
   server.seed('/budgets', { coffee: { target: 100, posted: 40, pending: 10 } });
   server.seed('/budgets/coffee/transactions', []);
   server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01', days_left: 12 });

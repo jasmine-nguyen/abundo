@@ -8,7 +8,6 @@ export interface Category {
   icon: string;
   color: string;
   bucket: Bucket;
-  recent: number;
   // Id of the parent this category rolls up into; null (or absent) means
   // top-level. Optional so existing category literals stay valid; toCategory
   // always normalises it to a value.

@@ -24,8 +24,8 @@ const server = installFakeServer();
 useTestQueryClient();
 
 const CATS = [
-  { ...GROCERIES_RECORD, recent: 0 },
-  { id: 'salary', name: 'Salary', icon: 'briefcase', bucket: 'Income', recent: 0, colorSlot: 2 },
+  { ...GROCERIES_RECORD },
+  { id: 'salary', name: 'Salary', icon: 'briefcase', bucket: 'Income', colorSlot: 2 },
 ];
 
 // Walk the tree for a View filled with `bg`.
