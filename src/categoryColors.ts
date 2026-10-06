@@ -10,9 +10,8 @@ import { categoryColorHash } from './chartColors';
 export const BUCKET_COLOR: Record<Bucket, string> = {
   Living: '#7aa2f7', Lifestyle: '#bb9af7', Income: C.good, Savings: '#73daca',
 };
-// Warm/cool-alternating so consecutively-created categories never land on two neighbouring cool
-// hues (the old order clustered cyan/teal/sky). PALETTE[0] stays '#ff9e64' — the fallback default.
-export const PALETTE = ['#ff9e64', '#7aa2f7', '#f7768e', '#73daca', '#e0af68', '#bb9af7', '#ff75a0', '#2ac3de', '#9ece6a', '#b4a5f7'];
+// The colour for a category with no id.
+export const DEFAULT_COLOR = '#ff9e64';
 
 // Category colours (WHIT-320). A category's display colour is a deterministic function of its id,
 // so it's stable across cycles and identical everywhere (pie slice, legend row, budgets, txns).
@@ -36,8 +35,8 @@ export const CATEGORY_SIBLINGS = [
 ];
 
 // The display colour for a category id: a built-in's fixed base, else a deterministic darker
-// sibling. Null/blank id falls back to the palette default.
+// sibling. Null/blank id falls back to the default colour.
 export function colorForCategory(id: string | null | undefined): string {
-  if (!id) return PALETTE[0];
+  if (!id) return DEFAULT_COLOR;
   return CATEGORY_BASE[id] ?? CATEGORY_SIBLINGS[categoryColorHash(id) % CATEGORY_SIBLINGS.length];
 }

@@ -60,12 +60,6 @@ export function needsBackground(report: Pick<ApplyRulesResult, 'matched'>): bool
   return report.matched > APPLY_RULES_MAX_WRITES;
 }
 
-// Only the "add rule" run is started from the Rules screen, so only it shows its minted rule
-// straight away with its NEW badge (and skips the rules refetch that would reset the badge).
-export function prependsRule(target: FilingTarget): boolean {
-  return target.kind === 'newRule';
-}
-
 function runRules(dryRun: boolean, rule: InlineRule | undefined): Promise<ApplyRulesResult> {
   // The plain sweep sends no rule argument at all, not an explicit undefined.
   if (!rule) return applyRulesToUncategorized(dryRun);
@@ -133,10 +127,11 @@ export function useFilingRun({ sessionEpoch, runSave, prependMintedRule, sheetOp
 
   useEffect(() => () => poller.current?.stop(), []);
 
-  // After a run: patch nothing further, just bring the server-derived reads back in line. A new
-  // rule's minted rule is shown straight away, so its refresh leaves the rules list alone.
+  // After a run: patch nothing further, just bring the server-derived reads back in line. Only
+  // the "add rule" run is started from the Rules screen, so only it shows its minted rule straight
+  // away with its NEW badge, and its refresh leaves the rules list alone so the badge survives.
   const reconcileRules = useCallback((target: FilingTarget, createdRule: CreatedRule | null | undefined) => {
-    if (createdRule && prependsRule(target)) {
+    if (createdRule && target.kind === 'newRule') {
       prependMintedRule(createdRule);
       refreshAfter('rulesApplied', { skipRules: true });
       return;

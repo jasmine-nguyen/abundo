@@ -8,7 +8,7 @@ import { useGoalsScreenData } from '../../src/queries';
 import { useCheckpointCelebration } from '../../src/hooks/useCheckpointCelebration';
 import { celebrationSteps } from '../../src/checkpointCelebration';
 import { sortCheckpointsForDirection } from '../../src/checkpoints';
-import { formatDayMonthYear, parseISODate } from '../../src/dateutil';
+import { formatDayMonthYear, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from '../../src/dateutil';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/components/ui';
 import { SettingsButton } from '../../src/components/SettingsButton';
@@ -21,10 +21,7 @@ import { GoalProgress, GoalHead } from '../../src/components/GoalProgress';
 const STALE_DAYS = 30;
 function balanceIsStale(manualAsOf: string | null | undefined): boolean {
   if (!manualAsOf) return false;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const days = Math.floor((today.getTime() - parseISODate(manualAsOf).getTime()) / 86_400_000);
-  return days > STALE_DAYS;
+  return wholeDaysBetween(isoToUtcDayMs(manualAsOf), dateToUtcDayMs(new Date())) > STALE_DAYS;
 }
 
 // WHIT-233: the Goals hub — the tab formerly showing only the mortgage. Lists the user's

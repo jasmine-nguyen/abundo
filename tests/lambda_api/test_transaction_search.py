@@ -46,12 +46,10 @@ def _body(response):
 @pytest.mark.parametrize("case", _FIXTURE["cases"], ids=lambda case: case["name"])
 def test_matcher_reproduces_every_shared_parity_case(transaction_search, case):
     category_names = {category["id"]: category["name"] for category in _FIXTURE["categories"]}
-    expected = case["match"] and (case.get("via") != "notesTags" or _FIXTURE["includeNotesAndTags"])
-    assert transaction_search.transaction_matches_search(case["txn"], case["query"], category_names) is expected
+    assert transaction_search.transaction_matches_search(case["txn"], case["query"], category_names) is case["match"]
 
 
 def test_server_settings_match_the_shared_fixture(transaction_search):
-    assert transaction_search.SEARCH_NOTES_AND_TAGS is _FIXTURE["includeNotesAndTags"]
     assert transaction_search.SEARCH_QUERY_MAX_LEN == _FIXTURE["queryMaxLength"]
 
 

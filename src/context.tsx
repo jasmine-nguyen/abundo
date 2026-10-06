@@ -5,7 +5,7 @@ import { formatDayMonth, formatMonthYear, formatWeekdayShort, isoToUtcDayMs, dat
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, deleteTransaction as apiDeleteTransaction, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup, type PayCycle } from './api';
 import * as Crypto from 'expo-crypto';
 import type { QueryKey } from '@tanstack/react-query';
-import { usableEquity as computeUsableEquity, milestoneTime } from './milestones';
+import { usableEquity as computeUsableEquity } from './milestones';
 import { reinsertBefore } from './reinsert';
 import { RULE_FIELD_OPERATORS } from './ruleVocabulary';
 
@@ -1270,17 +1270,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // toast/return is gated on the session epoch (WHIT-271) so a mid-save sign-out never toasts
   // into or navigates the next user's session.
   const writeSpread = useCallback(
-    (categoryId: string, send: () => Promise<unknown>, savedVerb: 'set' | 'removed', failVerb: 'set' | 'remove'): Promise<boolean> => {
+    (categoryId: string, action: 'set' | 'remove', send: () => Promise<unknown>): Promise<boolean> => {
       const c = cachedCategory(categoryId);
       return runSave({
         send,
         onSaved: () => {
           queryClient.invalidateQueries({ queryKey: budgetsKey });
-          if (c) showToast(`Bill spread ${savedVerb} for ${c.name}.`);
+          if (c) showToast(`Bill spread ${action === 'set' ? 'set' : 'removed'} for ${c.name}.`);
           return true;
         },
         onFailed: () => {
-          showToast(`Could not ${failVerb} the bill spread. Please try again.`);
+          showToast(`Could not ${action} the bill spread. Please try again.`);
           return false;
         },
         whenSignedOut: false,
@@ -1292,14 +1292,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const saveSpread = useCallback(
     async (categoryId: string, amount: number, cycles: number): Promise<boolean> => {
       if (amount <= 0 || cycles < SPREAD_MIN_CYCLES || cycles > SPREAD_MAX_CYCLES) return false;
-      return writeSpread(categoryId, () => apiSetSpread(categoryId, amount, cycles), 'set', 'set');
+      return writeSpread(categoryId, 'set', () => apiSetSpread(categoryId, amount, cycles));
     },
     [writeSpread],
   );
 
   // Idempotent server-side (200 with no plan).
   const removeSpread = useCallback(
-    (categoryId: string): Promise<boolean> => writeSpread(categoryId, () => apiDeleteSpread(categoryId), 'removed', 'remove'),
+    (categoryId: string): Promise<boolean> => writeSpread(categoryId, 'remove', () => apiDeleteSpread(categoryId)),
     [writeSpread],
   );
 
@@ -1683,29 +1683,16 @@ export function useAppContext(): AppContext {
 // balance should RISE to target) and paydown (debt, balance should FALL to target, usually
 // 0). No formatting, no fetch, no render: the fetch layer (WHIT-233) resolves the balance
 // and feeds this; the screen (WHIT-234) formats the numbers.
-export type BalanceGoalDirection = 'grow' | 'paydown';
 export type BalanceGoalStatus = 'ahead' | 'on_track' | 'behind';
 
 // The subset of the WHIT-231 server goal record this selector reads. `account_id` present
 // => a SYNCED source (current balance is the live signed `balance` input); otherwise
 // `manual_balance` present => a MANUAL source (and is itself the current balance). For a
 // paydown goal `baseline` doubles as the starting balance the % is measured down from.
-export interface BalanceGoal {
-  direction: BalanceGoalDirection;
-  target_amount: number;          // >= 0; grow guarantees > 0 server-side
-  target_date: string;            // ISO YYYY-MM-DD
-  baseline?: number | null;       // optional "count from £X"
-  account_id?: string | null;     // present => synced source
-  manual_balance?: number | null; // present => manual source (and the current balance)
-  manual_as_of?: string | null;
-  // WHIT-252: the immutable start (date + balance when the goal began). Server-stamped; the
-  // deferred ahead/behind card reads these to draw expected pace. `status` stays null until then.
-  start_date?: string | null;
-  start_balance?: number | null;
-  // WHIT-478: the checkpoint ladder (absolute amounts). Only the amount is needed to count how
-  // many the current balance has passed; the labels/ids belong to the editor, not this selector.
+// Only checkpoint amounts are read (to count how many the current balance has passed).
+export type BalanceGoal = Omit<GoalRecord, 'id' | 'name' | 'icon' | 'checkpoints'> & {
   checkpoints?: { amount: number }[] | null;
-}
+};
 
 export interface BalanceGoalInput {
   goal: BalanceGoal;
@@ -1776,7 +1763,7 @@ const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 //  grow    -> savings amount; an overdrawn synced account (−50) clamps to 0, never abs.
 //  paydown -> amount OWED as a positive: synced owed = max(0, −value) (loan stored negative);
 //             a manual debt is entered positive so owed = max(0, value). A credit clamps to 0.
-function normaliseBalance(value: number, direction: BalanceGoalDirection, synced: boolean): number {
+function normaliseBalance(value: number, direction: GoalRecord['direction'], synced: boolean): number {
   return direction === 'grow' ? Math.max(0, value) : Math.max(0, synced ? -value : value);
 }
 
@@ -2740,19 +2727,17 @@ export function countUncategorized(s: TransactionListInput) {
 // Whether a transaction matches the Transactions-tab search box. Matches the text the user
 // SEES on the row — the merchant label + raw description + the category label (Uncategorized /
 // Income / the category name) — plus the amount, so "coffee", "eating out" and "42" all work,
-// plus the user's own notes and tags when SEARCH_NOTES_AND_TAGS is on.
+// plus the user's own notes and tags.
 // Case-insensitive substring; `$` and `,` are stripped from the query so "$42" / "1,234" match.
 // An empty query matches everything (the list is unfiltered). Pure over { category }.
 // WHIT-576: the server runs the same match over ALL history (lambda_api/transaction_search.py);
 // tests/fixtures/transaction_search_parity.json and a crosslang drift test keep the two in step.
-export const SEARCH_NOTES_AND_TAGS = true;
 export const SEARCH_QUERY_MAX_LEN = 100;
 export function transactionMatchesSearch(s: Pick<TransactionListInput, 'category'>, t: Transaction, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (q === '') return true;
   const categoryLabel = t.category === 'income' ? 'Income' : isUncategorized(s, t) ? 'Uncategorized' : (s.category(t.category)?.name ?? '');
-  const parts = [merchantLabel(t), t.description || '', categoryLabel, Math.abs(t.amount || 0).toFixed(2)];
-  if (SEARCH_NOTES_AND_TAGS) parts.push(t.notes ?? '', (t.tags ?? []).join(' '));
+  const parts = [merchantLabel(t), t.description || '', categoryLabel, Math.abs(t.amount || 0).toFixed(2), t.notes ?? '', (t.tags ?? []).join(' ')];
   const haystack = parts.join(' ').toLowerCase();
   return haystack.includes(q) || haystack.includes(q.replace(/[$,]/g, ''));
 }
@@ -3371,11 +3356,11 @@ export interface MilestoneView {
 function expectedBalanceAt(t: number, plan: readonly { targetBalance: number; targetDate: string }[]): number {
   const first = plan[0];
   const last = plan[plan.length - 1];
-  if (t <= milestoneTime(first)) return first.targetBalance;
-  if (t >= milestoneTime(last)) return last.targetBalance;
+  if (t <= isoToUtcDayMs(first.targetDate)) return first.targetBalance;
+  if (t >= isoToUtcDayMs(last.targetDate)) return last.targetBalance;
   for (let i = 1; i < plan.length; i++) {
     const a = plan[i - 1], b = plan[i];
-    const ta = milestoneTime(a), tb = milestoneTime(b);
+    const ta = isoToUtcDayMs(a.targetDate), tb = isoToUtcDayMs(b.targetDate);
     if (t < tb) {
       return a.targetBalance + (b.targetBalance - a.targetBalance) * ((t - ta) / (tb - ta));
     }

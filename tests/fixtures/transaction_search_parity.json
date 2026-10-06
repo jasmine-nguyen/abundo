@@ -1,6 +1,5 @@
 {
   "_comment": "WHIT-576 parity: the app's transactionMatchesSearch (src/context.tsx) and the server's transaction_matches_search (lambda_api/transaction_search.py) must agree on every case. Loaded by src/__tests__/transactionSearchParity.logic.test.ts and tests/lambda_api/test_transaction_search.py.",
-  "includeNotesAndTags": true,
   "queryMaxLength": 100,
   "categories": [
     { "id": "groceries", "name": "Groceries" },
@@ -33,8 +32,8 @@
     { "name": "whitespace-only query matches everything", "txn": { "merchant_name": "A", "description": "A", "amount": -1, "category": null }, "query": "   ", "match": true },
     { "name": "ampersand in description", "txn": { "merchant_name": "", "description": "B&W CAFE", "amount": -4, "category": null }, "query": "b&w", "match": true },
     { "name": "percent in description", "txn": { "merchant_name": "", "description": "50% OFF SALE", "amount": -4, "category": null }, "query": "50%", "match": true },
-    { "name": "notes", "via": "notesTags", "txn": { "merchant_name": "Osko", "description": "OSKO 99", "amount": -20, "category": null, "notes": "Steven's birthday" }, "query": "birthday", "match": true },
-    { "name": "tags", "via": "notesTags", "txn": { "merchant_name": "Osko", "description": "OSKO 99", "amount": -20, "category": null, "tags": ["reimburse", "work"] }, "query": "reimburse", "match": true },
+    { "name": "notes", "txn": { "merchant_name": "Osko", "description": "OSKO 99", "amount": -20, "category": null, "notes": "Steven's birthday" }, "query": "birthday", "match": true },
+    { "name": "tags", "txn": { "merchant_name": "Osko", "description": "OSKO 99", "amount": -20, "category": null, "tags": ["reimburse", "work"] }, "query": "reimburse", "match": true },
     { "name": "notes and tags miss", "txn": { "merchant_name": "Osko", "description": "OSKO 99", "amount": -20, "category": null, "notes": "dinner", "tags": ["work"] }, "query": "holiday", "match": false },
     { "name": "accented upper-case merchant, lower-case query", "txn": { "merchant_name": "CAFÉ ÉCLAIR", "description": "x", "amount": -4, "category": null }, "query": "café éclair", "match": true },
     { "name": "sharp s in the merchant matches a typed sharp s", "txn": { "merchant_name": "Straße Deli", "description": "x", "amount": -4, "category": null }, "query": "STRAßE", "match": true },

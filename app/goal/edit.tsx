@@ -14,9 +14,9 @@ import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 import { toISODate } from '../../src/dateutil';
 import { parseAmount, numText } from '../../src/numutil';
 import { sortCheckpointsForDirection, checkpointsError, checkpointOutOfBoundsRows, CHECKPOINT_MAX_COUNT } from '../../src/checkpoints';
-import type { GoalWriteBody, GoalCheckpoint, GoalCheckpointInput } from '../../src/api';
+import type { GoalWriteBody, GoalCheckpoint, GoalCheckpointInput, GoalRecord } from '../../src/api';
 
-type Direction = 'grow' | 'paydown';
+type Direction = GoalRecord['direction'];
 type Source = 'synced' | 'manual';
 
 // A checkpoint row while editing: the amount is raw input text (parsed on save), like the goal's

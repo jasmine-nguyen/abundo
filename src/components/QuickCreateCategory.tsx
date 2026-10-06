@@ -19,12 +19,10 @@ export interface CategoryDraft { name: string; bucket: Bucket; icon: string; par
 //
 // - `lockBucket`     hide the bucket picker (a new sub inherits its parent's bucket).
 // - `parentPicker`   show a same-bucket parent picker (the sheet lets you nest the new one).
-// - `fixedParent`    the parent to stamp on the draft when there's no picker (a new sub).
 export function QuickCreateCategory({
   initialBucket,
   lockBucket = false,
   parentPicker = false,
-  fixedParent = null,
   categories = [],
   submitLabel,
   onSubmit,
@@ -36,7 +34,6 @@ export function QuickCreateCategory({
   initialBucket: Bucket;
   lockBucket?: boolean;
   parentPicker?: boolean;
-  fixedParent?: string | null;
   categories?: Category[];
   submitLabel: string;
   onSubmit: (draft: CategoryDraft) => void;
@@ -54,7 +51,7 @@ export function QuickCreateCategory({
   const [name, setName] = useState(() => draft?.name ?? '');
   const [bucket, setBucket] = useState<Bucket>(() => draft?.bucket ?? initialBucket);
   const [icon, setIcon] = useState(() => draft?.icon ?? 'coffee');
-  const [parent, setParent] = useState<string | null>(() => (draft ? draft.parent ?? null : fixedParent));
+  const [parent, setParent] = useState<string | null>(() => draft?.parent ?? null);
 
   // A picked parent must stay same-bucket: if the bucket changes under it, drop to top-level.
   useEffect(() => {
@@ -66,8 +63,8 @@ export function QuickCreateCategory({
   // field handlers, so no stale closure). No-op when `writeDraft` is omitted (category-edit).
   // Persists the RAW name so the field round-trips exactly across a lock; submit keeps its .trim().
   useEffect(() => {
-    writeDraft?.({ name, bucket, icon, parent: parentPicker ? parent : fixedParent });
-  }, [name, bucket, icon, parent, parentPicker, fixedParent, writeDraft]);
+    writeDraft?.({ name, bucket, icon, parent: parentPicker ? parent : null });
+  }, [name, bucket, icon, parent, parentPicker, writeDraft]);
 
   // WHIT-241: a synchronous latch so a same-frame double-tap of the submit button can't emit
   // `onSubmit` twice (which, for the create-and-file / add-sub hosts, would create the category
@@ -77,7 +74,7 @@ export function QuickCreateCategory({
   const canSave = name.trim().length > 0 && !busy;
   const submit = () => {
     if (!canSave) return;
-    const draft = { name: name.trim(), bucket, icon, parent: parentPicker ? parent : fixedParent };
+    const draft = { name: name.trim(), bucket, icon, parent: parentPicker ? parent : null };
     runSubmit(() => onSubmit(draft));
   };
 

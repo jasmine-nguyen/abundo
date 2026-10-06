@@ -114,19 +114,22 @@ async function request(spec: RequestSpec, errors: ErrorHandling): Promise<any> {
   const timeoutMs = spec.timeoutMs ?? REQUEST_TIMEOUT_MS;
   const idToken = await getAuthToken();
   if (!idToken) throw new Error("Not signed in");
-  const headers: Record<string, string> = { Authorization: `Bearer ${idToken}` };
-  const init: RequestInit = { headers };
-  if (spec.method) init.method = spec.method;
-  if (spec.body !== undefined) {
-    headers["Content-Type"] = "application/json";
-    init.body = JSON.stringify(spec.body);
-  }
+  const hasBody = spec.body !== undefined;
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${idToken}`,
+    ...(hasBody && { "Content-Type": "application/json" }),
+  };
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
-    response = await fetch(`${API_BASE}${spec.path}`, { ...init, signal: controller.signal });
+    response = await fetch(`${API_BASE}${spec.path}`, {
+      headers,
+      signal: controller.signal,
+      ...(spec.method && { method: spec.method }),
+      ...(hasBody && { body: JSON.stringify(spec.body) }),
+    });
   } finally {
     clearTimeout(timer);
   }
@@ -1011,7 +1014,7 @@ export interface GoalRecord {
 interface GoalWriteCommon {
   name: string;
   icon: string;
-  direction: "grow" | "paydown";
+  direction: GoalRecord["direction"];
   target_amount: number;
   target_date: string;
   baseline?: number | null;

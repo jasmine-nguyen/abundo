@@ -12,7 +12,7 @@ import { Header } from '../src/components/Header';
 
 // WHIT-495: Settings is no longer a bottom-bar tab — it's reached from the header gear on every
 // tab and opens as a root-stack pushed screen. It sits OUTSIDE NavBarsProvider, so it uses the
-// shared <Header showBack/> + a plain ScrollView (the milestone/mortgage/loan detail pattern)
+// shared <Header /> + a plain ScrollView (the milestone/mortgage/loan detail pattern)
 // rather than the tab's ScrollChromeHeader. Route stays /settings so deep links resolve. The
 // screen body is otherwise unchanged.
 

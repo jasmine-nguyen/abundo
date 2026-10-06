@@ -4,13 +4,13 @@
 // shared by app/goal/edit.tsx and its tests. Kept in sync with the server constants by the
 // twin-guard tests/lambda_api/test_goal_checkpoint_cap_sync.py.
 
-import type { GoalCheckpointInput } from './api';
+import type { GoalCheckpointInput, GoalRecord } from './api';
 
 export const CHECKPOINT_MAX_COUNT = 20;
 export const CHECKPOINT_LABEL_MAX_LEN = 100;
 export const CHECKPOINT_AMOUNT_MAX = 1_000_000_000;
 
-type Direction = 'grow' | 'paydown';
+type Direction = GoalRecord['direction'];
 
 // A goal's checkpoints climb toward a savings target and fall toward a debt target, so a ladder is
 // sorted by amount: ascending for grow, descending for paydown. Stable + non-mutating; the server
