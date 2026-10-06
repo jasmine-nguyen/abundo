@@ -2,7 +2,7 @@
 // (no Content-Type); a write with a body sends both. The token is read before every call.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 
-jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
+jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule());
 
 import { getAuthToken } from '../auth';
 import { fetchCategories, deleteCategory, createCategory } from '../api';

@@ -11,7 +11,7 @@ import { join } from 'path';
 import { createCategory, generateAiInsights } from '../api';
 import { COFFEE_SHORT } from './support/categories';
 
-jest.mock('../auth', () => ({ getAuthToken: jest.fn(async () => 'test-token') }));
+jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('test-token'));
 
 const input = { name: 'Coffee', bucket: 'Lifestyle' as const, icon: 'coffee' };
 

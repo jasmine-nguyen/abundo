@@ -17,6 +17,7 @@
 // telling subscribers (re-announce later with setAuthStatus(getAuthStatus())). The guarded variant
 // — skip the broadcast when the status is unchanged (sessionEpochAccessor / session-epoch suites)
 // — is deliberately NOT covered here; those suites keep their inlined block.
+import { jest } from '@jest/globals';
 import type { AuthStatus } from '../../auth';
 
 const TEST_TOKEN = 'test-id-token';
@@ -65,4 +66,11 @@ export function authMockModule() {
     typeof import('../../auth'),
     'getStatus' | 'subscribe' | 'getAuthToken'
   >;
+}
+
+// The object for jest.mock('../auth', ...) in the server-call suites that only need the sign-in
+// pass: a fresh getAuthToken spy per call, handing out `token` (undefined when none is given).
+// Suites can still reconfigure it per test (mockResolvedValueOnce etc.).
+export function authTokenSpyModule(token?: string) {
+  return { getAuthToken: jest.fn<() => Promise<string | undefined>>(async () => token) };
 }

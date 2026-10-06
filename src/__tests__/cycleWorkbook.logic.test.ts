@@ -4,7 +4,7 @@
 // from the card's column spec (same rules as WHIT-700's CSV).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
-jest.mock('../auth', () => ({ getAuthToken: jest.fn(async () => 'test-token') }));
+jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('test-token'));
 
 const fileInstances: { args: unknown[]; created: unknown[]; written: unknown[]; uri: string }[] = [];
 jest.mock('expo-file-system', () => ({

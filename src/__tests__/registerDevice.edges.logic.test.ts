@@ -8,7 +8,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { registerDevice } from '../api';
 
 // WHIT-162: registerDevice authenticates with the Cognito ID token; mock a session.
-jest.mock('../auth', () => ({ getAuthToken: jest.fn(async () => 'test-token') }));
+jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('test-token'));
 
 const API = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
 

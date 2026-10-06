@@ -4,7 +4,7 @@
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { fetchTransactionsSearch } from '../api';
 
-jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
+jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule());
 import { getAuthToken } from '../auth';
 
 const mockGetAuthToken = getAuthToken as jest.MockedFunction<typeof getAuthToken>;

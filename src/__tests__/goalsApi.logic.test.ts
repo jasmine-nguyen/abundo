@@ -7,7 +7,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { fetchGoals, saveGoal, deleteGoal } from '../api';
 import type { GoalWriteBody } from '../api';
 
-jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
+jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule());
 import { getAuthToken } from '../auth';
 
 const mockGetAuthToken = getAuthToken as jest.MockedFunction<typeof getAuthToken>;

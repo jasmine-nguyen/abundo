@@ -11,7 +11,7 @@ import { applyRulesToUncategorized } from '../api';
 import type { ApplyRulesResult } from '../api';
 import { ApiError } from '../apiError';
 
-jest.mock('../auth', () => ({ getAuthToken: jest.fn(async () => 'test-token') }));
+jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('test-token'));
 
 const FULL_BODY: ApplyRulesResult = {
   dryRun: false,

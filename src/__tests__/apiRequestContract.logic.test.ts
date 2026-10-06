@@ -3,7 +3,7 @@
 // `request()` or to one endpoint's declaration can't quietly move them.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 
-jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
+jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule());
 
 import { getAuthToken } from '../auth';
 import * as api from '../api';

@@ -7,7 +7,7 @@
 // detection, silently retrying a dead session.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
-jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
+jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule());
 
 import { getAuthToken } from '../auth';
 import { createCategory, updateCategory, deleteCategory, ApiError } from '../api';
