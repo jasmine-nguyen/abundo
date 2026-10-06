@@ -15,10 +15,10 @@ _REPLY = {"success": True, "data": {"id": "job-1"}}
 
 
 @pytest.mark.parametrize(
-    ("method", "data"),
-    [("GET", None), ("POST", b"")],
+    ("kwargs", "method", "data"),
+    [({}, "GET", None), ({"method": "POST", "data": b""}, "POST", b"")],
 )
-def test_banksync_request_sends_key_agent_method_body_and_returns_parsed_json(shared, monkeypatch, method, data):
+def test_banksync_request_sends_key_agent_method_body_and_returns_parsed_json(shared, monkeypatch, kwargs, method, data):
     captured = {}
 
     def fake_urlopen(req, timeout=None):
@@ -33,8 +33,7 @@ def test_banksync_request_sends_key_agent_method_body_and_returns_parsed_json(sh
         "the-key",
         user_agent="abundo-transaction-trigger",
         timeout=12,
-        method=method,
-        data=data,
+        **kwargs,
     )
 
     req = captured["req"]
