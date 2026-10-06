@@ -402,3 +402,19 @@ def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, devic
     for milestone in fresh:  # mark regardless of send outcome (see docstring)
         notify_repo.mark_milestone_fired(milestone.key, scope)
     return 1
+
+
+def notify_homeloan_milestone(old_amount, new_amount, *, loanfacts_repo, device_repo, notify_repo, milestone_repo) -> int:
+    """notify_milestone_crossing for the home loan's SIGNED stored amounts (WHIT-792).
+
+    The ACCTBAL row keeps the mortgage negative; milestones measure the positive amount still
+    owed. `old_amount` is None on the first-ever reading (the seed guard). Shared by the daily
+    poller and the pull-to-refresh, so whichever sees the change first celebrates it."""
+    old_balance = None
+    if old_amount is not None:
+        old_balance = abs(old_amount)
+    return notify_milestone_crossing(
+        old_balance, abs(new_amount),
+        loanfacts_repo=loanfacts_repo, device_repo=device_repo,
+        notify_repo=notify_repo, milestone_repo=milestone_repo,
+    )

@@ -12,14 +12,6 @@ from _http_fakes import FakeResponse
 from _terraform import MONITORING_TF, TERRAFORM_DIR, filter_pattern, tf_attr, tf_block
 
 
-class _FakeHomeLoanRepo:
-    def get_balance(self, account_id):
-        return None
-
-    def upsert_balance(self, account_id, balance, as_of, currency):
-        pass
-
-
 class _FakeAccountRepo:
     def __init__(self, list_raises=False):
         self.list_raises = list_raises
@@ -54,7 +46,6 @@ def _payloads(spending_amount=96270.59):
 def _stub(handler, monkeypatch, caplog, *, payloads=None, account_repo=None, urlopen=None):
     payloads = payloads or _payloads()
     monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: _FakeHomeLoanRepo())
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: account_repo or _FakeAccountRepo())
 
     def default_urlopen(req, timeout=None):
@@ -88,12 +79,12 @@ def test_heartbeat_still_logged_when_goal_checkpoint_and_feed_stall_checks_fail(
     assert len(_heartbeats(caplog)) == 1
 
 
-# [A3] (P0) the repayment-miss backstops failing inside the home-loan poll must not suppress it.
+# [A3] (P0) the home-loan checks (repayment-miss backstops, milestone) failing must not suppress it.
 def test_heartbeat_still_logged_when_repayment_miss_checks_fail(handler, monkeypatch, caplog):
     _stub(handler, monkeypatch, caplog)
     monkeypatch.setattr(handler, "check_ingested_repayment_without_push", _raise)
     monkeypatch.setattr(handler, "check_repayment_landed_but_no_push", _raise)
-    monkeypatch.setattr(handler, "notify_milestone_crossing", _raise)
+    monkeypatch.setattr(handler, "notify_homeloan_milestone", _raise)
 
     handler.lambda_handler({}, None)
 
@@ -108,32 +99,6 @@ def test_heartbeat_still_logged_when_prior_balance_read_fails(handler, monkeypat
 
     assert result["accounts_stored"] == len(handler.BALANCE_SOURCES)
     assert len(_heartbeats(caplog)) == 1
-
-
-# [A5] (P0) home loan stored but EVERY account read fails (BankSync balance-side outage) → no heartbeat.
-def test_no_heartbeat_when_every_account_read_fails_but_home_loan_stored(handler, monkeypatch, caplog):
-    _stub(handler, monkeypatch, caplog)
-    # The home-loan normaliser wraps the shared one, so pin it to a good reading first.
-    monkeypatch.setattr(handler, "normalise_balance", lambda payload: {
-        "balance": 596642.43, "as_of": "2026-09-28T00:00:00.000Z", "currency": "AUD",
-    })
-    monkeypatch.setattr(handler, "normalise_account_balance", _raise)
-
-    result = handler.lambda_handler({}, None)
-
-    assert result == {"homeloan_stored": True, "accounts_stored": 0}
-    assert _heartbeats(caplog) == []
-
-
-# [A6] (P0) the home-loan payload is bad (not a repo failure) while every account stores → no heartbeat.
-def test_no_heartbeat_when_home_loan_payload_is_rejected(handler, monkeypatch, caplog):
-    _stub(handler, monkeypatch, caplog)
-    monkeypatch.setattr(handler, "normalise_balance", _raise)
-
-    result = handler.lambda_handler({}, None)
-
-    assert result == {"homeloan_stored": False, "accounts_stored": len(handler.BALANCE_SOURCES)}
-    assert _heartbeats(caplog) == []
 
 
 # [A7] (P1) BankSync answers success:false for one account (outage shape, not an exception) → no heartbeat.

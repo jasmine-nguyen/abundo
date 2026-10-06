@@ -81,7 +81,6 @@ from repository import (
     DeviceRepository,
     DuplicateCategoryError,
     GoalsRepository,
-    HomeLoanBalanceRepository,
     InsightRepository,
     JobRepository,
     InvalidCategoryParentError,
@@ -130,7 +129,7 @@ from merchant_groups import (
 )
 from filing_habits import suggest_rules_from_filing_habits
 from transaction_search import SEARCH_QUERY_MAX_LEN, search_transactions
-from milestones import mint_migration_markers
+from milestones import mint_migration_markers, notify_homeloan_milestone
 from rule_engine import (
     is_unfiled_category, existing_at_least_as_specific, rule_matches,
     rule_id_for)
@@ -334,7 +333,7 @@ def lambda_handler(event, context):
             return get_ai_chat_job(event, JobRepository())
 
         if path == HOMELOAN_PATH and method == "GET":
-            return _json_response(200, get_homeloan(HomeLoanBalanceRepository()))
+            return _json_response(200, get_homeloan(AccountBalanceRepository()))
 
         if path == ACCOUNT_BALANCES_PATH and method == "GET":
             return _json_response(200, get_account_balances(AccountBalanceRepository()))
@@ -2941,21 +2940,21 @@ def generate_ai_insights(
     })
 
 
-def get_homeloan(repo: HomeLoanBalanceRepository) -> dict:
+def get_homeloan(repo: AccountBalanceRepository) -> dict:
     """GET /homeloan — the latest live mortgage balance (WHIT-8).
 
-    Returns {"balance": <number>, "as_of": <iso>, "currency": <str>} from the row
-    the balance poller stores. Before the first poll lands there is no row, so we
-    return a null sentinel {"balance": None, ...} (still 200) rather than 404 —
-    the client's refreshHomeLoan then simply skips the overwrite and keeps its
-    placeholder, no error handling required. The JSON response renders `balance` as a
-    JSON number.
+    Returns {"balance": <number>, "as_of": <iso>, "currency": <str>} from the home loan's
+    account-balance row (WHIT-792). That row is SIGNED (a mortgage is negative), so `balance`
+    is its abs — the amount still owed. Before the first poll lands there is no row, so we
+    return a null sentinel {"balance": None, ...} (still 200) rather than 404 — the client's
+    refreshHomeLoan then simply skips the overwrite and keeps its placeholder.
     """
-    stored = repo.get_balance(HOMELOAN_ACCOUNT_ID)
-    if stored is None:
+    rows = repo.list_balances([HOMELOAN_ACCOUNT_ID])
+    if not rows:
         return {"balance": None, "as_of": None, "currency": None}
+    stored = rows[0]
     return {
-        "balance": stored["balance"],
+        "balance": abs(stored["amount"]),
         "as_of": stored["as_of"],
         "currency": stored["currency"],
     }
@@ -3021,6 +3020,12 @@ def refresh_account_balances(repo: AccountBalanceRepository) -> dict:
     if not fresh:
         return _json_response(502, {"error": "could not refresh balances"})
 
+    new_homeloan = next(
+        (balance["amount"] for aid, balance in fresh if ACCOUNT_ID_MAP[aid] == HOMELOAN_ACCOUNT_ID), None)
+    old_homeloan = None
+    if new_homeloan is not None:
+        old_homeloan = _stored_homeloan_amount(repo)
+
     for aid, balance in fresh:
         repo.upsert_balance(
             ACCOUNT_ID_MAP[aid],
@@ -3030,7 +3035,32 @@ def refresh_account_balances(repo: AccountBalanceRepository) -> dict:
             balance["as_of"],
             balance["account_type"],
         )
+
+    # WHIT-792: this rewrites the row the daily poll compares against, so a milestone crossed
+    # since the last reading is celebrated here — otherwise the poll would see no change.
+    if new_homeloan is not None:
+        try:
+            notify_homeloan_milestone(
+                old_homeloan, new_homeloan,
+                loanfacts_repo=LoanFactsRepository(), device_repo=DeviceRepository(),
+                notify_repo=NotifyRepository(), milestone_repo=MilestoneRepository(),
+            )
+        except Exception as e:
+            logger.error("milestone push on refresh failed (balances still stored): %s", e)
     return _json_response(200, repo.list_balances(sorted(set(ACCOUNT_ID_MAP.values()))))
+
+
+def _stored_homeloan_amount(repo: AccountBalanceRepository):
+    """The home loan's stored SIGNED amount before a refresh overwrites it, or None (no row yet,
+    or a read hiccup — a missed celebration, never a wrong one)."""
+    try:
+        rows = repo.list_balances([HOMELOAN_ACCOUNT_ID])
+    except Exception as e:
+        logger.warning("prior home-loan balance read failed, skipping milestone check: %s", e)
+        return None
+    if not rows:
+        return None
+    return rows[0]["amount"]
 
 
 _REPAYMENT_NULL = {"amount": None, "date": None, "principal": None, "interest": None}

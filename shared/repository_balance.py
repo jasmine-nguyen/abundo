@@ -1,13 +1,11 @@
-"""Home-loan balance storage: the latest live mortgage balance polled from
-BankSync (getBalance), kept as a single DynamoDB item, overwritten in place on
-every poll (WHIT-8).
+"""Balance storage: the latest live balance per account polled from BankSync
+(getBalance, pk="ACCTBAL#<account_id>"), the on-demand refresh throttle marker, and the
+bank-feed stall watch rows (pk="FEEDWATCH#<account_id>").
 
-Deliberately keyed under its OWN partition (pk="BALANCE#<account_id>") rather
-than the transaction partition (pk="ACCOUNT#<account_id>"): the balance is a
-standalone latest-value row, and keeping it out of ACCOUNT# means the
-pending-transaction scans never sweep it up. It also carries NO `account_id`/
-`date` attributes, so it never leaks into the `date-index` GSI that the windowed
-transaction feed queries. One writer (the poller), so no version guard is needed.
+Each lives under its OWN partition rather than the transaction partition
+(pk="ACCOUNT#<account_id>"), so the pending-transaction scans never sweep them up, and
+carries NO `account_id`/`date` attributes, so it never leaks into the `date-index` GSI
+that the windowed transaction feed queries.
 """
 
 from decimal import Decimal
@@ -16,10 +14,6 @@ from typing import Optional
 from botocore.exceptions import ClientError
 
 from repository_base import RepositoryBase, handle_database_error
-
-
-def _balance_key(account_id: str) -> dict:
-    return {"pk": f"BALANCE#{account_id}", "sk": "BALANCE"}
 
 
 def _account_balance_key(account_id: str) -> dict:
@@ -34,65 +28,16 @@ def _refresh_marker_key() -> dict:
     return {"pk": "ACCTBAL#REFRESH", "sk": "MARKER"}
 
 
-class HomeLoanBalanceRepository(RepositoryBase):
-    """Stores the latest home-loan balance as a single DynamoDB item.
-
-    The item at pk="BALANCE#<account_id>", sk="BALANCE" holds the current
-    `balance` (a positive Decimal — the outstanding principal), the `as_of`
-    timestamp BankSync reported it, and the `currency`. `upsert_balance`
-    overwrites the whole item each poll; `get_balance` returns it (or None before
-    the first poll has landed).
-    """
-
-    def upsert_balance(
-        self, account_id: str, balance: Decimal, as_of: str, currency: str
-    ) -> None:
-        """Overwrite the stored balance for `account_id`.
-
-        A plain put_item (no condition) — the poller is the single writer and each
-        run replaces the row wholesale with the freshest reading. Intentionally
-        writes no `account_id`/`date` attributes so the item stays out of the
-        date-index GSI.
-        """
-        try:
-            self._get_table().put_item(
-                Item={
-                    **_balance_key(account_id),
-                    "balance": balance,
-                    "as_of": as_of,
-                    "currency": currency,
-                }
-            )
-        except ClientError as e:
-            handle_database_error(e, "upsert home-loan balance")
-
-    def get_balance(self, account_id: str) -> Optional[dict]:
-        """Return {"balance": Decimal, "as_of": str, "currency": str} or None if
-        no balance has been stored yet (before the first successful poll)."""
-        try:
-            item = self._get_table().get_item(Key=_balance_key(account_id)).get("Item")
-        except ClientError as e:
-            handle_database_error(e, "read home-loan balance")
-        if item is None:
-            return None
-        return {
-            "balance": item["balance"],
-            "as_of": item["as_of"],
-            "currency": item["currency"],
-        }
-
-
 class AccountBalanceRepository(RepositoryBase):
     """Latest live balance per linked account — one DynamoDB item each (WHIT-212).
 
-    The Accounts tab shows a balance per account. Unlike HomeLoanBalanceRepository —
-    which stores the mortgage's ABS outstanding principal for the Goal screen — this keeps
-    the SIGNED balance BankSync reports (spending positive; a loan or credit-card balance
-    negative) plus the account's available balance, currency, and type, so the app can
-    render each card exactly as the bank sees it. Stored under its OWN partition
-    (pk="ACCTBAL#<account_id>"), distinct from both BALANCE#<id> (the loan row) and
-    ACCOUNT#<id> (transactions), and carries no `account_id`/`date` attribute so it never
-    leaks into the date-index GSI. One writer (the poller), so no version guard is needed.
+    The Accounts tab shows a balance per account. This keeps the SIGNED balance BankSync
+    reports (spending positive; a loan or credit-card balance negative) plus the account's
+    available balance, currency, and type, so the app can render each card exactly as the
+    bank sees it. The Goal screen's `/homeloan` serves abs(amount) of the home loan's row.
+    Stored under its OWN partition (pk="ACCTBAL#<account_id>"), distinct from ACCOUNT#<id>
+    (transactions), and carries no `account_id`/`date` attribute so it never leaks into the
+    date-index GSI. Plain puts (the poller and the on-demand refresh), no version guard.
     """
 
     def upsert_balance(

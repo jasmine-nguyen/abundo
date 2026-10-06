@@ -3,7 +3,7 @@
 Covers the handler's ONE job: wire the real repos into notify_behind_goals and report the
 count, best-effort (never raise). notify_behind_goals is monkeypatched to capture the wiring
 + drive the failure path. The wiring assertion locks the SIGNED balance source
-(AccountBalanceRepository, not the ABS HomeLoanBalanceRepository — the critic's MAJOR fix).
+(AccountBalanceRepository).
 """
 
 import logging
@@ -27,7 +27,7 @@ def test_wires_the_repos_and_returns_the_count(handler, monkeypatch):
     assert type(captured["paycycle_repo"]).__name__ == "PayCycleRepository"
     assert type(captured["device_repo"]).__name__ == "DeviceRepository"
     assert type(captured["notify_repo"]).__name__ == "NotifyRepository"
-    # SIGNED source — NOT HomeLoanBalanceRepository (which stores the ABS principal).
+    # SIGNED source.
     assert type(captured["balance_repo"]).__name__ == "AccountBalanceRepository"
 
 

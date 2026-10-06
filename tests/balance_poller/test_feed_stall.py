@@ -277,8 +277,8 @@ def test_one_accounts_failure_does_not_stop_the_others(wired, handler):
 
 def test_lambda_handler_swallows_a_feed_stall_failure(handler, monkeypatch):
     monkeypatch.setattr(handler, "get_api_key", lambda: "k")
-    monkeypatch.setattr(handler, "_poll_homeloan", lambda api_key: True)
-    monkeypatch.setattr(handler, "_poll_account_balances", lambda api_key: (1, []))
+    monkeypatch.setattr(handler, "_check_homeloan", lambda deltas: None)
+    monkeypatch.setattr(handler, "_poll_account_balances", lambda api_key: (1, [_delta("up-homeloan", "-1")]))
     monkeypatch.setattr(handler, "_check_goal_checkpoints", lambda deltas: None)
 
     def boom(deltas, now):
@@ -353,7 +353,7 @@ def test_lambda_handler_runs_the_stall_check_on_this_polls_deltas(handler, monke
     # Even when the goal-checkpoint step before it blows up.
     deltas = [_delta(WESTPAC, "-3232.56")]
     monkeypatch.setattr(handler, "get_api_key", lambda: "k")
-    monkeypatch.setattr(handler, "_poll_homeloan", lambda api_key: True)
+    monkeypatch.setattr(handler, "_check_homeloan", lambda d: None)
     monkeypatch.setattr(handler, "_poll_account_balances", lambda api_key: (1, deltas))
 
     def goal_boom(d):

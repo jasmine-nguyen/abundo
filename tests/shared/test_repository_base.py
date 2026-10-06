@@ -5,9 +5,8 @@ import importlib
 
 from _dynamo_fakes import FakeTable
 
-# (module, class) for all 16 database classes.
+# (module, class) for all 15 database classes.
 _REPOSITORY_CLASSES = [
-    ("repository_balance", "HomeLoanBalanceRepository"),
     ("repository_balance", "AccountBalanceRepository"),
     ("repository_balance", "FeedWatchRepository"),
     ("repository_budget", "BudgetRepository"),

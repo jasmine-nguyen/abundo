@@ -19,7 +19,7 @@ from repository_category import CategoryRepository
 from repository_budget import BudgetRepository
 from repository_goals import GoalsRepository
 from repository_paycycle import PayCycleRepository
-from repository_balance import AccountBalanceRepository, FeedWatchRepository, HomeLoanBalanceRepository
+from repository_balance import AccountBalanceRepository, FeedWatchRepository
 from repository_loanfacts import LoanFactsRepository
 from repository_milestone import MilestoneRepository
 from repository_device import DeviceRepository
@@ -35,7 +35,6 @@ __all__ = [
     "BudgetRepository",
     "GoalsRepository",
     "PayCycleRepository",
-    "HomeLoanBalanceRepository",
     "AccountBalanceRepository",
     "FeedWatchRepository",
     "LoanFactsRepository",

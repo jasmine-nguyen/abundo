@@ -199,14 +199,6 @@ def job_repo(shared):
 
 
 @pytest.fixture
-def balance_repo(shared):
-    """A shared HomeLoanBalanceRepository backed by an in-memory FakeTable."""
-    r = shared.balance.HomeLoanBalanceRepository()
-    r._table = FakeTable()
-    return r
-
-
-@pytest.fixture
 def account_balance_repo(shared):
     """A shared AccountBalanceRepository backed by an in-memory FakeTable."""
     r = shared.balance.AccountBalanceRepository()
