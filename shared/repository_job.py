@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from constants import JOB_TTL_SECONDS
-from repository_base import RepositoryBase, db_errors
+from repository_base import RepositoryBase, db_errors, update_expression
 
 logger = logging.getLogger(__name__)
 
@@ -100,16 +100,12 @@ class JobRepository(RepositoryBase):
         })
 
     def _set_fields(self, job_id: str, fields: dict) -> None:
-        """UpdateItem SET for the given attributes plus updated_at. Every name goes through an
-        alias because several (``status``, ``error``) are DynamoDB reserved words."""
-        fields = {**fields, "updated_at": _now()}
-        names = {f"#n{i}": name for i, name in enumerate(fields)}
-        values = {f":v{i}": value for i, value in enumerate(fields.values())}
-        assignments = [f"#n{i} = :v{i}" for i in range(len(fields))]
+        """UpdateItem SET for the given attributes plus updated_at."""
+        expression, names, values = update_expression({**fields, "updated_at": _now()})
         with db_errors("update job"):
             self._get_table().update_item(
                 Key={"pk": _PK, "sk": _sk(job_id)},
-                UpdateExpression="SET " + ", ".join(assignments),
+                UpdateExpression=expression,
                 ExpressionAttributeNames=names,
                 ExpressionAttributeValues=values,
             )

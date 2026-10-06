@@ -13,7 +13,7 @@ import logging
 import os
 from contextlib import contextmanager
 from decimal import Decimal
-from typing import Any, Callable, Iterator, NoReturn, Optional
+from typing import Any, Callable, Iterable, Iterator, NoReturn, Optional
 
 import boto3
 from botocore.exceptions import ClientError
@@ -41,6 +41,28 @@ def db_errors(action: str) -> Iterator[None]:
         yield
     except ClientError as e:
         handle_database_error(e, action)
+
+
+def update_expression(sets: dict, removes: Iterable[str] = ()) -> tuple[str, dict, dict]:
+    """Builds a 'SET these, REMOVE those' UpdateExpression with its #f{i}/:v{i} aliases.
+
+    Declares only the aliases the expression uses (DynamoDB rejects unused ones). Returns ""
+    when sets and removes are both empty, so callers must not send that.
+    """
+    names, values, set_clauses, remove_clauses = {}, {}, [], []
+    for index, (field, value) in enumerate(sets.items()):
+        names[f"#f{index}"] = field
+        values[f":v{index}"] = value
+        set_clauses.append(f"#f{index} = :v{index}")
+    for index, field in enumerate(removes, start=len(sets)):
+        names[f"#f{index}"] = field
+        remove_clauses.append(f"#f{index}")
+    parts = []
+    if set_clauses:
+        parts.append("SET " + ", ".join(set_clauses))
+    if remove_clauses:
+        parts.append("REMOVE " + ", ".join(remove_clauses))
+    return " ".join(parts), names, values
 
 
 def set_map_entry(entry_id: str, value: Any) -> dict:

@@ -4,7 +4,7 @@ from typing import Any, Callable, Optional
 import reconcile
 from models import Transaction
 from constants import PENDING_STATUS, POSTED_STATUS
-from repository_base import db_errors, handle_database_error
+from repository_base import db_errors, handle_database_error, update_expression
 from repository_transaction import (
     TransactionRepository as _SharedTransactionRepository,
     _build_pk,
@@ -169,17 +169,10 @@ class TransactionRepository(_SharedTransactionRepository):
         if not updates:
             return True
 
-        names: dict[str, str] = {}
-        values: dict[str, Any] = {}
-        set_clauses: list[str] = []
-        for index, (field, value) in enumerate(updates.items()):
-            names[f"#b{index}"] = field
-            values[f":b{index}"] = value
-            set_clauses.append(f"#b{index} = :b{index}")
-
+        expression, names, values = update_expression(updates)
         update_kwargs: dict[str, Any] = {
             "Key": {"pk": pk, "sk": sk},
-            "UpdateExpression": "SET " + ", ".join(set_clauses),
+            "UpdateExpression": expression,
             "ExpressionAttributeNames": names,
             "ExpressionAttributeValues": values,
             "ConditionExpression": "attribute_exists(pk)",

@@ -18,7 +18,7 @@ from constants import (
     PENDING_STATUS,
 )
 from models import Transaction
-from repository_base import RepositoryBase, db_errors, handle_database_error, logger
+from repository_base import RepositoryBase, db_errors, handle_database_error, logger, update_expression
 
 # Sentinel for update_transaction_fields: distinguishes "field not in this request"
 # (leave it untouched) from "clear this field" (None/""/[]). A plain None can't do
@@ -223,27 +223,16 @@ class TransactionRepository(RepositoryBase):
         """Write a carried edit onto a still-pending row (WHIT-678): its category, notes, tags,
         exclusion, rule stamp and budget flag. Never recreates the row. Returns False when the
         row is gone or has since posted."""
-        names = {"#s": "status"}
-        values: dict[str, Any] = {":pending": PENDING_STATUS}
-        set_clauses = []
-        for index, field in enumerate(
-            ("category", "notes", "tags", "budget_excluded", "filed_by_rule", "counts_to_budget")
-        ):
-            if carried.get(field) is None:
-                continue
-            names[f"#f{index}"] = field
-            values[f":v{index}"] = carried[field]
-            set_clauses.append(f"#f{index} = :v{index}")
-        update_expression = "SET " + ", ".join(set_clauses)
-        if carried.get("filed_by_rule") is None:
-            names["#p"] = "filed_by_rule"
-            update_expression += " REMOVE #p"
+        fields = ("category", "notes", "tags", "budget_excluded", "filed_by_rule", "counts_to_budget")
+        sets = {field: carried[field] for field in fields if carried.get(field) is not None}
+        removes = ["filed_by_rule"] if carried.get("filed_by_rule") is None else []
+        expression, names, values = update_expression(sets, removes)
         try:
             self._get_table().update_item(
                 Key={"pk": pk, "sk": sk},
-                UpdateExpression=update_expression,
-                ExpressionAttributeNames=names,
-                ExpressionAttributeValues=values,
+                UpdateExpression=expression,
+                ExpressionAttributeNames={**names, "#s": "status"},
+                ExpressionAttributeValues={**values, ":pending": PENDING_STATUS},
                 ConditionExpression="attribute_exists(pk) AND #s = :pending",
             )
             return True
@@ -330,12 +319,12 @@ class TransactionRepository(RepositoryBase):
             names["#b"] = "budget_excluded"
             values[":bexcl"] = True
             assignments.append("#b = :bexcl")
-        update_expression = "SET " + ", ".join(assignments)
+        expression = "SET " + ", ".join(assignments)
 
         try:
             self._get_table().update_item(
                 Key={"pk": pk, "sk": sk},
-                UpdateExpression=update_expression,
+                UpdateExpression=expression,
                 ExpressionAttributeNames=names,
                 ExpressionAttributeValues=values,
                 ConditionExpression=condition,
@@ -433,59 +422,44 @@ class TransactionRepository(RepositoryBase):
         can't silently un-file a charge through this REMOVE branch. Rows are sparse and
         sanitise_transaction keeps falsy-non-None, so storing ""/[]/False would read
         back as an empty value. One UpdateItem can legally mix SET and REMOVE
-        clauses. Fields are aliased (a single #f/#v scheme) because 'category' is a
-        reserved word; aliasing all four keeps the builder uniform. Conditional on
+        clauses. update_expression aliases every field ('category' is a reserved
+        word). Conditional on
         the row still existing (attribute_exists(pk)): a row deleted between the key
         lookup and here yields False (a 404 for the caller), not a 500.
         """
-        names: dict[str, str] = {}
-        values: dict[str, Any] = {}
-        set_clauses: list[str] = []
-        remove_clauses: list[str] = []
-
-        for index, (field, provided) in enumerate(
-            (
-                ("category", category),
-                ("notes", notes),
-                ("tags", tags),
-                ("budget_excluded", budget_excluded),
-            )
+        sets: dict[str, Any] = {}
+        removes: list[str] = []
+        for field, provided in (
+            ("category", category),
+            ("notes", notes),
+            ("tags", tags),
+            ("budget_excluded", budget_excluded),
         ):
             if provided is _UNSET:
                 continue
             if field == "category" and not provided:
                 raise ValueError("category is set-only; a falsy value cannot clear it")
-            name_alias = f"#f{index}"
-            names[name_alias] = field
             if provided:
-                value_alias = f":v{index}"
-                values[value_alias] = provided
-                set_clauses.append(f"{name_alias} = {value_alias}")
+                sets[field] = provided
             else:
-                remove_clauses.append(name_alias)
+                removes.append(field)
 
         # Filing by hand clears the rule stamp (WHIT-536): whenever the category is SET
         # (it is set-only — a clear is refused above), REMOVE filed_by_rule. A notes/tags/
         # budget-only edit leaves category _UNSET, so the stamp survives. REMOVE of an absent
         # stamp is a no-op.
         if category is not _UNSET:
-            names["#p"] = "filed_by_rule"
-            remove_clauses.append("#p")
+            removes.append("filed_by_rule")
 
         # No field supplied (all _UNSET) — nothing to write. Return without issuing a
         # malformed empty-expression UpdateItem.
-        if not set_clauses and not remove_clauses:
+        if not sets and not removes:
             return True
 
-        expression_parts: list[str] = []
-        if set_clauses:
-            expression_parts.append("SET " + ", ".join(set_clauses))
-        if remove_clauses:
-            expression_parts.append("REMOVE " + ", ".join(remove_clauses))
-
+        expression, names, values = update_expression(sets, removes)
         update_kwargs: dict[str, Any] = {
             "Key": {"pk": pk, "sk": sk},
-            "UpdateExpression": " ".join(expression_parts),
+            "UpdateExpression": expression,
             "ExpressionAttributeNames": names,
             "ConditionExpression": "attribute_exists(pk)",
         }
