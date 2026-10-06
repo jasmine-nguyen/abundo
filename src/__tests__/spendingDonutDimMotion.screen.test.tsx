@@ -1,5 +1,5 @@
 // WHIT-425 (QA gap) — [A61][A62], the ANIMATED branch. Every one of the thirteen donut screen
-// suites mocks useReduceMotion to `true`, so the per-colour fade has only ever been observed on the
+// suites mocks useReduceMotion to `true`, so the fade has only ever been observed on the
 // instant `v.setValue(target)` path (SpendingDonut.tsx:189). On a real phone, reduce-motion is OFF
 // by default and the fade arrives through Animated.spring instead — a different line, a different
 // clamp, and the one the on-device check will actually see.
@@ -12,7 +12,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react-native';
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => false }));
 
 import { SpendingDonut, type DonutSlice } from '../components/SpendingDonut';
-import { opacityOf, ancestorProp, sl, DIM_BLUE, DIM_GREEN } from './support/donut';
+import { opacityOf, ancestorProp, sl, DIM_CATEGORY } from './support/donut';
 
 const slice = (id: string, color: string, value: number): DonutSlice => ({ id, name: id, color, value });
 
@@ -47,13 +47,13 @@ describe('SpendingDonut — the fade lands on the derived value with motion ON (
       act(() => { jest.advanceTimersByTime(16); });
       frames.push(opacityOf('green')!);
     }
-    expect(Math.min(...frames)).toBeCloseTo(DIM_GREEN, 3);  // never dips BELOW its contrast floor
+    expect(Math.min(...frames)).toBeCloseTo(DIM_CATEGORY, 3); // never dips BELOW its fade
     expect(Math.max(...frames)).toBeLessThanOrEqual(1);
     // ...and it really did animate rather than jumping — some frame sits strictly between.
-    expect(frames.some((f) => f > DIM_GREEN + 0.05 && f < 0.95)).toBe(true);
+    expect(frames.some((f) => f > DIM_CATEGORY + 0.05 && f < 0.95)).toBe(true);
 
     settle();
-    expect(opacityOf('green')).toBeCloseTo(DIM_GREEN, 3);  // its own floor, reached by spring
+    expect(opacityOf('green')).toBeCloseTo(DIM_CATEGORY, 3); // its fade, reached by spring
     expect(opacityOf('blue')).toBeCloseTo(1);
     expect(ancestorProp('donut-band-blue', 'scale')).toBeGreaterThan(1);
 
@@ -65,11 +65,10 @@ describe('SpendingDonut — the fade lands on the derived value with motion ON (
 
   // [A62] The frame-one guard, on the branch that has one. A wedge appearing while a selection is
   // held is BORN at its target (SpendingDonut.tsx:174) rather than springing up from 0 — that is
-  // what stops a new category flashing full-bright for a frame. With the fade now derived, "its
-  // target" means ITS OWN colour's floor, so a birth value taken from a shared constant (or from
-  // the wrong slice) would show up here and nowhere else. No timers needed: the assertion is the
+  // what stops a new category flashing full-bright for a frame. A birth value taken from the
+  // wrong target would show up here and nowhere else. No timers needed: the assertion is the
   // value before the spring has had a chance to run.
-  it('[A62] a wedge entering mid-selection is BORN at its own colour\'s floor, pre-spring', () => {
+  it('[A62] a wedge entering mid-selection is BORN at its fade, pre-spring', () => {
     const { rerender } = render(<SpendingDonut slices={[sl('a', 75), sl('b', 25)]} />);
     settle();
     fireEvent.press(screen.getByTestId('donut-slice-a'));
@@ -80,12 +79,12 @@ describe('SpendingDonut — the fade lands on the derived value with motion ON (
       sl('a', 75), sl('b', 25), slice('newGreen', '#7FD49B', 40), slice('newBlue', '#7aa2f7', 35),
     ]} />);
 
-    expect(opacityOf('newGreen')).toBeCloseTo(DIM_GREEN);  // NOT a shared constant...
-    expect(opacityOf('newBlue')).toBeCloseTo(DIM_BLUE);    // ...the two differ by their hue
+    expect(opacityOf('newGreen')).toBeCloseTo(DIM_CATEGORY); // both land on the category fade
+    expect(opacityOf('newBlue')).toBeCloseTo(DIM_CATEGORY);
     expect(opacityOf('a')).toBeCloseTo(1);                 // the held selection still leads
 
     settle();  // and the spring does not move them off it
-    expect(opacityOf('newGreen')).toBeCloseTo(DIM_GREEN, 3);
-    expect(opacityOf('newBlue')).toBeCloseTo(DIM_BLUE, 3);
+    expect(opacityOf('newGreen')).toBeCloseTo(DIM_CATEGORY, 3);
+    expect(opacityOf('newBlue')).toBeCloseTo(DIM_CATEGORY, 3);
   });
 });

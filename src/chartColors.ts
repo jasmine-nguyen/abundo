@@ -32,6 +32,13 @@ export const OTHER_COLOR = '#6b74a0';
 // first consumer, so it comes back.)
 export const CHART_BG = '#16161e';
 
+// How far an unselected donut wedge fades when another is tapped. Set by hand for the closed wedge
+// palette (CATEGORY_COLORS, OTHER_COLOR, C.purple) so each faded wedge still clears WCAG 1.4.11's
+// 3:1 against CHART_BG. The darker grey needs a lighter fade. Guarded by wedgeFixedFade.logic.test.ts.
+export const WEDGE_DIM = 0.55;
+export const WEDGE_DIM_OTHER = 0.85;
+export const wedgeDim = (color: string) => (color === OTHER_COLOR ? WEDGE_DIM_OTHER : WEDGE_DIM);
+
 
 // Slot → ramp position. A stored `colorSlot` is NOT a ramp index: the server hands out the LOWEST
 // FREE slot, so two categories created back-to-back get 5 and 6 — adjacent hues that read as the
