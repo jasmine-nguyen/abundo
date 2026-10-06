@@ -4,6 +4,8 @@
 // saves directly, unchanged.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, fireEvent } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
+import { C } from '../theme';
 import type { AppContext } from '../context';
 
 let mockState: AppContext;
@@ -68,6 +70,16 @@ it('warns (does not save) when a multi rule overlaps an existing rule filing els
   expect(screen.getByTestId('rule-overlap')).toBeTruthy();
   expect(screen.getByText(/files as Groceries/)).toBeTruthy();
   expect(fns.saveManualRule).not.toHaveBeenCalled();
+});
+
+it('"Save anyway" is the filled button and "Cancel" the outlined one', async () => {
+  await openNew([colesGroceries]);
+  buildColesUnder40();
+  fireEvent.press(screen.getByText('Add rule'));
+  const save = StyleSheet.flatten(screen.getByTestId('rule-overlap-save').props.style);
+  const cancel = StyleSheet.flatten(screen.getByTestId('rule-overlap-cancel').props.style);
+  expect(save.backgroundColor).toBe(C.accent);
+  expect(cancel.backgroundColor).toBe('transparent');
 });
 
 it('"Save anyway" saves the rule despite the overlap', async () => {

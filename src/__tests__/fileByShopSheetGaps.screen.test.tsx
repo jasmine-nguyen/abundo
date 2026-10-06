@@ -14,7 +14,9 @@
 //   - [A28] the list's error card (background refetch failed) and its ungrouped "one-offs" copy
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, fireEvent, act } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
 import type { AppContext } from '../context';
+import { C } from '../theme';
 import type { FilingResult, FilingTarget, FilingWhen } from '../context';
 import { APPLY_RULES_MAX_WRITES } from '../context';
 import type { ApplyRulesResult, UncategorizedMerchantGroup, UncategorizedMerchants } from '../api';
@@ -298,5 +300,26 @@ describe('the shop list — background states', () => {
     expect(await screen.findByText(/nothing left to file by shop/)).toBeTruthy();
     expect(screen.queryByTestId('file-by-shop-one-offs')).toBeNull();
     expect(screen.getByTestId('file-by-shop-close')).toBeTruthy();
+  });
+});
+
+// WHIT-760 — the list's end buttons are the shared SheetButton; "Done" picks its look from
+// whether one-offs remain. Fail-on-revert: flip or drop `primary={oneOffCount === 0}` and one fails.
+describe('the shop list — end button looks', () => {
+  const bg = (testID: string) => StyleSheet.flatten(screen.getByTestId(testID).props.style).backgroundColor;
+
+  it('[A2] with one-offs left, "Select to file" is filled and "Done" is outlined', async () => {
+    server.seed(MERCHANTS, merchants([], { unfiled: 3, ungrouped: { count: 3, samples: ['ONE OFF'] } }));
+    await mountList();
+    await screen.findByTestId('file-by-shop-one-offs');
+    expect(bg('file-by-shop-one-offs')).toBe(C.accent);
+    expect(bg('file-by-shop-close')).toBe('transparent');
+  });
+
+  it('[A3] with nothing left, "Done" is the filled button', async () => {
+    server.seed(MERCHANTS, merchants([], { unfiled: 0, ungrouped: { count: 0, samples: [] } }));
+    await mountList();
+    await screen.findByText(/nothing left to file by shop/);
+    expect(bg('file-by-shop-close')).toBe(C.accent);
   });
 });

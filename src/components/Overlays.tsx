@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Animated, GestureResponderEvent, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Animated, GestureResponderEvent, KeyboardAvoidingView, Platform, ActivityIndicator, StyleProp, ViewStyle } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
@@ -360,9 +360,7 @@ function ConfirmSheet() {
         </View>
         <Text style={styles.confirmTitle}>File as {c.name}</Text>
         <Text style={styles.confirmSub}>Re-file {count} {noun} under {c.name}.</Text>
-        <Pressable onPress={() => s.applyCategoryToMany(txIds, categoryId)} style={[styles.btn, styles.btnPrimary]}>
-          <Text style={styles.btnPrimaryText}>File {count} {noun}</Text>
-        </Pressable>
+        <SheetButton primary label={`File ${count} ${noun}`} onPress={() => s.applyCategoryToMany(txIds, categoryId)} />
       </View>
     );
   }
@@ -385,15 +383,11 @@ function ConfirmSheet() {
       <Text style={styles.confirmSub}>
         Apply to just '{merchantLabel(tx)}', or set a rule so every charge from this merchant files itself?
       </Text>
-      <Pressable onPress={() => s.applyCategory('all')} style={[styles.btn, styles.btnPrimary]}>
-        {/* Fixed label (not the interpolated merchant): the merchant is already named
-            in the sub-text above, and a raw/long descriptor made this button ugly and
-            wrap. Pairs with "Just this one" below. */}
-        <Text style={styles.btnPrimaryText}>All from this merchant</Text>
-      </Pressable>
-      <Pressable onPress={() => s.applyCategory('one')} style={[styles.btn, styles.btnGhost]}>
-        <Text style={styles.btnGhostText}>Just this one</Text>
-      </Pressable>
+      {/* Fixed label (not the interpolated merchant): the merchant is already named
+          in the sub-text above, and a raw/long descriptor made this button ugly and
+          wrap. Pairs with "Just this one" below. */}
+      <SheetButton primary label="All from this merchant" onPress={() => s.applyCategory('all')} />
+      <SheetButton label="Just this one" onPress={() => s.applyCategory('one')} />
     </View>
   );
 }
@@ -600,12 +594,8 @@ function AddRuleSheet() {
         <View style={styles.ruleConflict} testID="rule-overlap">
           <Text style={styles.ruleConflictText}>This can clash with a rule that files as {overlapName}. Charges matching both may stay unfiled.</Text>
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-            <Pressable testID="rule-overlap-save" onPress={saveMultiAnyway} style={[styles.btn, { flex: 1, backgroundColor: C.accent }]}>
-              <Text style={[styles.btnPrimaryText, { color: C.accentInk }]}>Save anyway</Text>
-            </Pressable>
-            <Pressable testID="rule-overlap-cancel" onPress={() => setConflict(null)} style={[styles.btn, styles.btnGhost, { flex: 1 }]}>
-              <Text style={styles.btnGhostText}>Cancel</Text>
-            </Pressable>
+            <SheetButton primary testID="rule-overlap-save" label="Save anyway" onPress={saveMultiAnyway} style={{ flex: 1 }} />
+            <SheetButton testID="rule-overlap-cancel" label="Cancel" onPress={() => setConflict(null)} style={{ flex: 1 }} />
           </View>
         </View>
       );
@@ -614,9 +604,7 @@ function AddRuleSheet() {
       return (
         <View style={styles.ruleConflict} testID="rule-conflict">
           <Text style={styles.ruleConflictText}>Another rule already matches “{primaryValue}”. Edit or delete that rule instead.</Text>
-          <Pressable testID="rule-conflict-ok" onPress={() => setConflict(null)} style={[styles.btn, styles.btnGhost, { marginTop: 12 }]}>
-            <Text style={styles.btnGhostText}>OK</Text>
-          </Pressable>
+          <SheetButton testID="rule-conflict-ok" label="OK" onPress={() => setConflict(null)} style={{ marginTop: 12 }} />
         </View>
       );
     }
@@ -624,9 +612,7 @@ function AddRuleSheet() {
       return (
         <View style={styles.ruleConflict} testID="rule-conflict">
           <Text style={styles.ruleConflictText}>You already have a rule for “{primaryValue}”.</Text>
-          <Pressable testID="rule-conflict-ok" onPress={() => s.setSheet(null)} style={[styles.btn, styles.btnGhost, { marginTop: 12 }]}>
-            <Text style={styles.btnGhostText}>OK</Text>
-          </Pressable>
+          <SheetButton testID="rule-conflict-ok" label="OK" onPress={() => s.setSheet(null)} style={{ marginTop: 12 }} />
         </View>
       );
     }
@@ -634,12 +620,8 @@ function AddRuleSheet() {
       <View style={styles.ruleConflict} testID="rule-conflict">
         <Text style={styles.ruleConflictText}>“{primaryValue}” already files as {existingName}.</Text>
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-          <Pressable testID="rule-conflict-replace" onPress={replace} style={[styles.btn, { flex: 1, backgroundColor: C.accent }]}>
-            <Text style={[styles.btnPrimaryText, { color: C.accentInk }]}>Replace</Text>
-          </Pressable>
-          <Pressable testID="rule-conflict-cancel" onPress={() => setConflict(null)} style={[styles.btn, styles.btnGhost, { flex: 1 }]}>
-            <Text style={styles.btnGhostText}>Cancel</Text>
-          </Pressable>
+          <SheetButton primary testID="rule-conflict-replace" label="Replace" onPress={replace} style={{ flex: 1 }} />
+          <SheetButton testID="rule-conflict-cancel" label="Cancel" onPress={() => setConflict(null)} style={{ flex: 1 }} />
         </View>
       </View>
     );
@@ -736,9 +718,7 @@ function AddRuleSheet() {
           </View>
         ))}
       </ScrollView>
-      <Pressable testID="rule-add-condition" onPress={addCondition} style={[styles.btn, styles.btnGhost, { marginTop: 10 }]}>
-        <Text style={styles.btnGhostText}>+ Add condition</Text>
-      </Pressable>
+      <SheetButton testID="rule-add-condition" label="+ Add condition" onPress={addCondition} style={{ marginTop: 10 }} />
       {conditions.length > 1 && (
         <>
           <Text style={[styles.fieldLabel, { marginTop: 14 }]}>MATCH</Text>
@@ -865,9 +845,7 @@ function PayCycleSheet() {
         />
       )}
 
-      <Pressable onPress={() => s.setSheet(null)} style={[styles.btn, styles.btnPrimary, { marginTop: 16 }]}>
-        <Text style={styles.btnPrimaryText}>Done</Text>
-      </Pressable>
+      <SheetButton primary label="Done" onPress={() => s.setSheet(null)} style={{ marginTop: 16 }} />
     </View>
   );
 }
@@ -1099,10 +1077,8 @@ function ApplyRulesSheet() {
       <View>
         <Text style={styles.confirmTitle}>Couldn't read your rules</Text>
         <Text style={styles.confirmSub}>Nothing has been changed. Please try again.</Text>
-        <Pressable testID="apply-rules-retry" onPress={() => previewGuarded(runPreview)} style={[styles.btn, styles.btnPrimary]}>
-          <Text style={styles.btnPrimaryText}>Try again</Text>
-        </Pressable>
-        <ApplyRulesCancel label="Cancel" onPress={() => setSheet(null)} />
+        <SheetButton primary testID="apply-rules-retry" label="Try again" onPress={() => previewGuarded(runPreview)} />
+        <SheetButton testID="apply-rules-cancel" label="Cancel" onPress={() => setSheet(null)} />
       </View>
     );
   }
@@ -1117,7 +1093,7 @@ function ApplyRulesSheet() {
         <Text style={styles.confirmSub}>
           Some charges may already have been filed. Your unfiled list and count have been refreshed — open this again to see what's left.
         </Text>
-        <ApplyRulesCancel label="Close" onPress={() => setSheet(null)} />
+        <SheetButton testID="apply-rules-cancel" label="Close" onPress={() => setSheet(null)} />
       </View>
     );
   }
@@ -1134,7 +1110,7 @@ function ApplyRulesSheet() {
         <Text style={styles.confirmSub}>
           Rules come from filing a charge and choosing "All from this merchant". Make one, then come back and it can sweep the rest of your history.
         </Text>
-        <ApplyRulesCancel label="Close" onPress={() => setSheet(null)} />
+        <SheetButton testID="apply-rules-cancel" label="Close" onPress={() => setSheet(null)} />
       </View>
     );
   }
@@ -1152,7 +1128,7 @@ function ApplyRulesSheet() {
           {filedTotal.current > 0 ? `Filed ${filedTotal.current} ${chargeNoun(filedTotal.current)} in total. ` : ''}
           The last {stillToGo} wouldn't save, and trying again didn't help. Give it a while, or file them by hand.
         </Text>
-        <ApplyRulesCancel label="Close" onPress={() => setSheet(null)} />
+        <SheetButton testID="apply-rules-cancel" label="Close" onPress={() => setSheet(null)} />
       </View>
     );
   }
@@ -1188,10 +1164,8 @@ function ApplyRulesSheet() {
             ? ` You'd already filed ${alreadyFiled} ${chargeNoun(alreadyFiled)} yourself.`
             : ''}
         </Text>
-        <Pressable testID="apply-rules-continue" onPress={onApply} style={[styles.btn, styles.btnPrimary]}>
-          <Text style={styles.btnPrimaryText}>Apply the rest</Text>
-        </Pressable>
-        <ApplyRulesCancel label="Done for now" onPress={() => setSheet(null)} />
+        <SheetButton primary testID="apply-rules-continue" label="Apply the rest" onPress={onApply} />
+        <SheetButton testID="apply-rules-cancel" label="Done for now" onPress={() => setSheet(null)} />
       </View>
     );
   }
@@ -1207,7 +1181,7 @@ function ApplyRulesSheet() {
         <Text style={styles.confirmTitle}>Nothing to file automatically</Text>
         <Text style={styles.confirmSub}>{nothingToFileReason(report, applicable)}</Text>
         <ApplyRulesDetail report={report} category={category} />
-        <ApplyRulesCancel label="Close" onPress={() => setSheet(null)} />
+        <SheetButton testID="apply-rules-cancel" label="Close" onPress={() => setSheet(null)} />
       </View>
     );
   }
@@ -1225,19 +1199,13 @@ function ApplyRulesSheet() {
           one-round instant file is demoted; at or under the cap, one instant file is all it takes. */}
       {capped ? (
         <>
-          <Pressable testID="apply-rules-apply-all" onPress={() => onStartSweep(report.matched)} style={[styles.btn, styles.btnPrimary]}>
-            <Text style={styles.btnPrimaryText}>Apply to all history</Text>
-          </Pressable>
-          <Pressable testID="apply-rules-apply" onPress={onApply} style={[styles.btn, styles.btnGhost]}>
-            <Text style={styles.btnGhostText}>File up to {APPLY_RULES_MAX_WRITES} now</Text>
-          </Pressable>
+          <SheetButton primary testID="apply-rules-apply-all" label="Apply to all history" onPress={() => onStartSweep(report.matched)} />
+          <SheetButton testID="apply-rules-apply" label={`File up to ${APPLY_RULES_MAX_WRITES} now`} onPress={onApply} />
         </>
       ) : (
-        <Pressable testID="apply-rules-apply" onPress={onApply} style={[styles.btn, styles.btnPrimary]}>
-          <Text style={styles.btnPrimaryText}>File {report.matched} {chargeNoun(report.matched)}</Text>
-        </Pressable>
+        <SheetButton primary testID="apply-rules-apply" label={`File ${report.matched} ${chargeNoun(report.matched)}`} onPress={onApply} />
       )}
-      <ApplyRulesCancel label="Cancel" onPress={() => setSheet(null)} />
+      <SheetButton testID="apply-rules-cancel" label="Cancel" onPress={() => setSheet(null)} />
     </View>
   );
 }
@@ -1288,11 +1256,9 @@ function ApplyRulesJobView({ job, stalled, onRetry, onClose }: { job: ApplyRules
           </View>
         )}
         {stalled && (
-          <Pressable testID="apply-rules-job-stalled-retry" onPress={onRetry} style={[styles.btn, styles.btnPrimary]}>
-            <Text style={styles.btnPrimaryText}>Try again</Text>
-          </Pressable>
+          <SheetButton primary testID="apply-rules-job-stalled-retry" label="Try again" onPress={onRetry} />
         )}
-        <ApplyRulesCancel label="Leave running" onPress={onClose} />
+        <SheetButton testID="apply-rules-cancel" label="Leave running" onPress={onClose} />
       </View>
     );
   }
@@ -1311,7 +1277,7 @@ function ApplyRulesJobView({ job, stalled, onRetry, onClose }: { job: ApplyRules
             ? `Your rules had nothing new to file across your history.${already}`
             : `Your rules have been applied across all your history.${already}`}
         </Text>
-        <ApplyRulesCancel label="Done" onPress={onClose} />
+        <SheetButton testID="apply-rules-cancel" label="Done" onPress={onClose} />
       </View>
     );
   }
@@ -1326,10 +1292,8 @@ function ApplyRulesJobView({ job, stalled, onRetry, onClose }: { job: ApplyRules
           : 'Something interrupted the run. '}
         Some charges may already have been filed, and your lists have been refreshed — try again to file the rest.
       </Text>
-      <Pressable testID="apply-rules-job-retry" onPress={onRetry} style={[styles.btn, styles.btnPrimary]}>
-        <Text style={styles.btnPrimaryText}>Try again</Text>
-      </Pressable>
-      <ApplyRulesCancel label="Close" onPress={onClose} />
+      <SheetButton primary testID="apply-rules-job-retry" label="Try again" onPress={onRetry} />
+      <SheetButton testID="apply-rules-cancel" label="Close" onPress={onClose} />
     </View>
   );
 }
@@ -1371,9 +1335,7 @@ function FileByShopListSheet() {
       <View>
         <Text style={styles.confirmTitle}>Couldn't load your shops</Text>
         <Text style={styles.confirmSub}>Nothing has been changed. Please pull down to refresh and try again.</Text>
-        <Pressable testID="file-by-shop-close" onPress={() => s.setSheet(null)} style={[styles.btn, styles.btnGhost]}>
-          <Text style={styles.btnGhostText}>Close</Text>
-        </Pressable>
+        <SheetButton testID="file-by-shop-close" label="Close" onPress={() => s.setSheet(null)} />
       </View>
     );
   }
@@ -1394,21 +1356,14 @@ function FileByShopListSheet() {
             : 'Nice work — nothing left to file by shop.'}
         </Text>
         {oneOffCount > 0 && (
-          <Pressable
+          <SheetButton
+            primary
             testID="file-by-shop-one-offs"
+            label="Select to file"
             onPress={() => { s.requestUncategorizedSelect(); s.setSheet(null); }}
-            style={[styles.btn, styles.btnPrimary]}
-          >
-            <Text style={styles.btnPrimaryText}>Select to file</Text>
-          </Pressable>
+          />
         )}
-        <Pressable
-          testID="file-by-shop-close"
-          onPress={() => s.setSheet(null)}
-          style={[styles.btn, oneOffCount > 0 ? styles.btnGhost : styles.btnPrimary]}
-        >
-          <Text style={oneOffCount > 0 ? styles.btnGhostText : styles.btnPrimaryText}>Done</Text>
-        </Pressable>
+        <SheetButton primary={oneOffCount === 0} testID="file-by-shop-close" label="Done" onPress={() => s.setSheet(null)} />
       </View>
     );
   }
@@ -1676,9 +1631,7 @@ function FileByShopConfirmSheet() {
               <Text style={styles.confirmSub}>
                 You already have a rule filing {group.merchant || 'this shop'} somewhere else — edit it in Rules to change where these go. Nothing has been changed.
               </Text>
-              <Pressable testID="file-by-shop-confirm-close" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
-                <Text style={styles.btnGhostText}>Back to shops</Text>
-              </Pressable>
+              <SheetButton testID="file-by-shop-confirm-close" label="Back to shops" onPress={() => setSheet({ mode: 'fileByShopList' })} />
             </View>
           );
         }
@@ -1687,12 +1640,8 @@ function FileByShopConfirmSheet() {
             <View>
               <Text style={styles.confirmTitle}>Couldn't check this shop</Text>
               <Text style={styles.confirmSub}>Nothing has been changed. Please try again.</Text>
-              <Pressable testID="file-by-shop-confirm-retry" onPress={retry} style={[styles.btn, styles.btnPrimary]}>
-                <Text style={styles.btnPrimaryText}>Try again</Text>
-              </Pressable>
-              <Pressable testID="file-by-shop-confirm-cancel" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
-                <Text style={styles.btnGhostText}>Back to shops</Text>
-              </Pressable>
+              <SheetButton primary testID="file-by-shop-confirm-retry" label="Try again" onPress={retry} />
+              <SheetButton testID="file-by-shop-confirm-cancel" label="Back to shops" onPress={() => setSheet({ mode: 'fileByShopList' })} />
             </View>
           );
         }
@@ -1703,9 +1652,7 @@ function FileByShopConfirmSheet() {
               <Text style={styles.confirmSub}>
                 Some charges may already have been filed. Your unfiled list has been refreshed — open this again to see what's left.
               </Text>
-              <Pressable testID="file-by-shop-confirm-close" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
-                <Text style={styles.btnGhostText}>Back to shops</Text>
-              </Pressable>
+              <SheetButton testID="file-by-shop-confirm-close" label="Back to shops" onPress={() => setSheet({ mode: 'fileByShopList' })} />
             </View>
           );
         }
@@ -1721,9 +1668,7 @@ function FileByShopConfirmSheet() {
               <Text style={styles.confirmSub}>
                 These charges from {group.merchant || 'this shop'} were filed already. Pick another shop.
               </Text>
-              <Pressable testID="file-by-shop-confirm-close" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnPrimary]}>
-                <Text style={styles.btnPrimaryText}>Back to shops</Text>
-              </Pressable>
+              <SheetButton primary testID="file-by-shop-confirm-close" label="Back to shops" onPress={() => setSheet({ mode: 'fileByShopList' })} />
             </View>
           );
         }
@@ -1757,21 +1702,13 @@ function FileByShopConfirmSheet() {
             )}
             {capped ? (
               <>
-                <Pressable testID="file-by-shop-confirm-apply-all" onPress={() => onApplyAll(report.matched)} style={[styles.btn, styles.btnPrimary]}>
-                  <Text style={styles.btnPrimaryText}>Apply to all history</Text>
-                </Pressable>
-                <Pressable testID="file-by-shop-confirm-apply" onPress={onCommit} style={[styles.btn, styles.btnGhost]}>
-                  <Text style={styles.btnGhostText}>File up to {APPLY_RULES_MAX_WRITES} now</Text>
-                </Pressable>
+                <SheetButton primary testID="file-by-shop-confirm-apply-all" label="Apply to all history" onPress={() => onApplyAll(report.matched)} />
+                <SheetButton testID="file-by-shop-confirm-apply" label={`File up to ${APPLY_RULES_MAX_WRITES} now`} onPress={onCommit} />
               </>
             ) : (
-              <Pressable testID="file-by-shop-confirm-apply" onPress={onCommit} style={[styles.btn, styles.btnPrimary]}>
-                <Text style={styles.btnPrimaryText}>File {report.matched} {chargeNoun(report.matched)}</Text>
-              </Pressable>
+              <SheetButton primary testID="file-by-shop-confirm-apply" label={`File ${report.matched} ${chargeNoun(report.matched)}`} onPress={onCommit} />
             )}
-            <Pressable testID="file-by-shop-confirm-cancel" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
-              <Text style={styles.btnGhostText}>Back to shops</Text>
-            </Pressable>
+            <SheetButton testID="file-by-shop-confirm-cancel" label="Back to shops" onPress={() => setSheet({ mode: 'fileByShopList' })} />
           </View>
         );
       }}
@@ -1871,9 +1808,7 @@ function AddRuleConfirmSheet() {
               <Text style={styles.confirmSub}>
                 A rule already files “{pattern}” somewhere else — edit it in Rules to change where these go. Nothing has been changed.
               </Text>
-              <Pressable testID="add-rule-confirm-close" onPress={() => setSheet(null)} style={[styles.btn, styles.btnPrimary]}>
-                <Text style={styles.btnPrimaryText}>Done</Text>
-              </Pressable>
+              <SheetButton primary testID="add-rule-confirm-close" label="Done" onPress={() => setSheet(null)} />
             </View>
           );
         }
@@ -1882,12 +1817,8 @@ function AddRuleConfirmSheet() {
             <View>
               <Text style={styles.confirmTitle}>Couldn't check this rule</Text>
               <Text style={styles.confirmSub}>Nothing has been changed. Try again, or just save the rule for future charges.</Text>
-              <Pressable testID="add-rule-confirm-retry" onPress={retry} style={[styles.btn, styles.btnPrimary]}>
-                <Text style={styles.btnPrimaryText}>Try again</Text>
-              </Pressable>
-              <Pressable testID="add-rule-confirm-rule-only" onPress={onRuleOnly} style={[styles.btn, styles.btnGhost]}>
-                <Text style={styles.btnGhostText}>Add rule only</Text>
-              </Pressable>
+              <SheetButton primary testID="add-rule-confirm-retry" label="Try again" onPress={retry} />
+              <SheetButton testID="add-rule-confirm-rule-only" label="Add rule only" onPress={onRuleOnly} />
             </View>
           );
         }
@@ -1898,9 +1829,7 @@ function AddRuleConfirmSheet() {
               <Text style={styles.confirmSub}>
                 Some charges may already have been filed. Your lists have been refreshed — open Rules to see whether the rule was added.
               </Text>
-              <Pressable testID="add-rule-confirm-close" onPress={() => setSheet(null)} style={[styles.btn, styles.btnPrimary]}>
-                <Text style={styles.btnPrimaryText}>Done</Text>
-              </Pressable>
+              <SheetButton primary testID="add-rule-confirm-close" label="Done" onPress={() => setSheet(null)} />
             </View>
           );
         }
@@ -1918,12 +1847,8 @@ function AddRuleConfirmSheet() {
               <Text style={styles.confirmSub}>
                 “{pattern}” doesn't match any of your unfiled charges. The rule will still file matching future charges as {chosen.name}.
               </Text>
-              <Pressable testID="add-rule-confirm-rule-only" onPress={onRuleOnly} style={[styles.btn, styles.btnPrimary]}>
-                <Text style={styles.btnPrimaryText}>Add rule</Text>
-              </Pressable>
-              <Pressable testID="add-rule-confirm-back" onPress={goBack} style={[styles.btn, styles.btnGhost]}>
-                <Text style={styles.btnGhostText}>Back</Text>
-              </Pressable>
+              <SheetButton primary testID="add-rule-confirm-rule-only" label="Add rule" onPress={onRuleOnly} />
+              <SheetButton testID="add-rule-confirm-back" label="Back" onPress={goBack} />
             </View>
           );
         }
@@ -1953,24 +1878,14 @@ function AddRuleConfirmSheet() {
             )}
             {capped ? (
               <>
-                <Pressable testID="add-rule-confirm-file-all" onPress={() => onApplyAll(report.matched)} style={[styles.btn, styles.btnPrimary]}>
-                  <Text style={styles.btnPrimaryText}>Add rule + file all history</Text>
-                </Pressable>
-                <Pressable testID="add-rule-confirm-file" onPress={onCommit} style={[styles.btn, styles.btnGhost]}>
-                  <Text style={styles.btnGhostText}>Add rule + file up to {APPLY_RULES_MAX_WRITES}</Text>
-                </Pressable>
+                <SheetButton primary testID="add-rule-confirm-file-all" label="Add rule + file all history" onPress={() => onApplyAll(report.matched)} />
+                <SheetButton testID="add-rule-confirm-file" label={`Add rule + file up to ${APPLY_RULES_MAX_WRITES}`} onPress={onCommit} />
               </>
             ) : (
-              <Pressable testID="add-rule-confirm-file" onPress={onCommit} style={[styles.btn, styles.btnPrimary]}>
-                <Text style={styles.btnPrimaryText}>Add rule + file {report.matched} {chargeNoun(report.matched)}</Text>
-              </Pressable>
+              <SheetButton primary testID="add-rule-confirm-file" label={`Add rule + file ${report.matched} ${chargeNoun(report.matched)}`} onPress={onCommit} />
             )}
-            <Pressable testID="add-rule-confirm-rule-only" onPress={onRuleOnly} style={[styles.btn, styles.btnGhost]}>
-              <Text style={styles.btnGhostText}>Add rule only</Text>
-            </Pressable>
-            <Pressable testID="add-rule-confirm-back" onPress={goBack} style={[styles.btn, styles.btnGhost]}>
-              <Text style={styles.btnGhostText}>Back</Text>
-            </Pressable>
+            <SheetButton testID="add-rule-confirm-rule-only" label="Add rule only" onPress={onRuleOnly} />
+            <SheetButton testID="add-rule-confirm-back" label="Back" onPress={goBack} />
           </View>
         );
       }}
@@ -2009,11 +1924,16 @@ function applyRulesDoneMessage(filed: number): string {
   return `Filed ${filed} ${chargeNoun(filed)} with your rules.`;
 }
 
-/** Cancel/Close writes nothing — the preview that opened this sheet was a dry run. */
-function ApplyRulesCancel({ label, onPress }: { label: string; onPress: () => void }) {
+function SheetButton({ label, onPress, testID, primary = false, style }: {
+  label: string;
+  onPress: () => void;
+  testID?: string;
+  primary?: boolean;
+  style?: StyleProp<ViewStyle>;
+}) {
   return (
-    <Pressable testID="apply-rules-cancel" onPress={onPress} style={[styles.btn, styles.btnGhost]}>
-      <Text style={styles.btnGhostText}>{label}</Text>
+    <Pressable testID={testID} onPress={onPress} style={[styles.btn, primary ? styles.btnPrimary : styles.btnGhost, style]}>
+      <Text style={primary ? styles.btnPrimaryText : styles.btnGhostText}>{label}</Text>
     </Pressable>
   );
 }
