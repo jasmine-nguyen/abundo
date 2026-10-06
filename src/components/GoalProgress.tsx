@@ -1,18 +1,11 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { C, FONT, fmt, tint } from '../theme';
-import { MONTHS } from '../dateutil';
+import { formatMonthYear } from '../dateutil';
 import type { BalanceGoalStatus, BalanceGoalView } from '../context';
 import type { GoalRecord } from '../api';
 import { Icon } from '../icons';
 import { Bar } from './ui';
-
-// "2026-08-15" -> "Aug 2026". Parsed by hand (no Date) so the label can't shift across a
-// timezone boundary. Falls back to the raw ISO if it's somehow unparseable.
-function byLabel(iso: string): string {
-  const [y, m] = iso.split('-').map(Number);
-  return MONTHS[m - 1] ? `${MONTHS[m - 1]} ${y}` : iso;
-}
 
 // WHIT-749: a goal's head row — icon chip, name, "Saving toward $Y · by Mon YYYY" and the
 // headline % (only when there's a bar to back it). Shared by the Goals-tab card and the goal page.
@@ -24,7 +17,7 @@ export function GoalHead({ goal, view }: { goal: GoalRecord; view: BalanceGoalVi
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={styles.name} numberOfLines={1}>{goal.name}</Text>
         <Text style={styles.sub}>
-          {goal.direction === 'grow' ? 'Saving toward' : 'Paying down'} {fmt(goal.target_amount)} · by {byLabel(goal.target_date)}
+          {goal.direction === 'grow' ? 'Saving toward' : 'Paying down'} {fmt(goal.target_amount)} · by {formatMonthYear(goal.target_date)}
         </Text>
       </View>
       {pct != null && <Text style={styles.pct}>{pct}%</Text>}

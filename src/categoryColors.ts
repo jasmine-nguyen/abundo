@@ -5,6 +5,7 @@
 // src/chartColors.ts.)
 import { C } from './theme';
 import type { Bucket } from './types';
+import { categoryColorHash } from './chartColors';
 
 export const BUCKET_COLOR: Record<Bucket, string> = {
   Living: '#7aa2f7', Lifestyle: '#bb9af7', Income: C.good, Savings: '#73daca',
@@ -33,13 +34,6 @@ export const CATEGORY_SIBLINGS = [
   '#d17d4a', '#7da64f', '#bc3349', '#5f81cb', '#d15980', '#977aca', '#b68c4d',
   '#56b0a3', '#5fa7d0', '#a484ca', '#039db5', '#7e61b1', '#9083ca',
 ];
-
-// A small stable string hash (djb2), so a non-seed category's sibling is deterministic from its id.
-function categoryColorHash(id: string): number {
-  let h = 5381;
-  for (let i = 0; i < id.length; i++) h = ((h << 5) + h + id.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
 
 // The display colour for a category id: a built-in's fixed base, else a deterministic darker
 // sibling. Null/blank id falls back to the palette default.
