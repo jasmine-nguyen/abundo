@@ -3,7 +3,6 @@
 // constants + an injected `today`, so no provider/network is needed.
 import { describe, it, expect } from '@jest/globals';
 import { milestoneView } from '../context';
-import { isoToUtcDayMs } from '../dateutil';
 import {
   MILESTONES,
   usableEquity,
@@ -23,11 +22,8 @@ import { makeState, EMPTY_LOAN_FACTS } from './factory';
 const onDate = (iso: string) => new Date(`${iso}T00:00:00Z`);
 
 describe('MILESTONES constants', () => {
-  it('are strictly ordered: increasing dates, decreasing balances', () => {
-    for (let i = 1; i < MILESTONES.length; i++) {
-      expect(isoToUtcDayMs(MILESTONES[i].targetDate)).toBeGreaterThan(isoToUtcDayMs(MILESTONES[i - 1].targetDate));
-      expect(MILESTONES[i].targetBalance).toBeLessThan(MILESTONES[i - 1].targetBalance);
-    }
+  it('are a valid plan: increasing dates, decreasing balances', () => {
+    expect(milestonesOrderingError(MILESTONES)).toBeNull();
   });
 
   it('match the Notion usable-equity figures', () => {
