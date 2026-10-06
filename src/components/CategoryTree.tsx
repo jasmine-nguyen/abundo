@@ -4,7 +4,7 @@ import { C, FONT, tint } from '../theme';
 import { Icon, Glyph } from '../icons';
 import { categoryTreeRows } from '../context';
 import type { Category } from '../types';
-import { toggleIn } from '../setutil';
+import { toggleIn, visibleTreeRows } from '../setutil';
 
 // WHIT-273 / WHIT-796: the foldable parent→child category list both category pickers share.
 // Empty `collapsed` = everything expanded, so a picker opens fully revealed (you're here to find a
@@ -15,16 +15,7 @@ export function CategoryTree({ categories, onPick, testIDs }: {
   testIDs: { pick?: string; name?: string; togglePrefix: string };
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  // A row shows only when its whole parent chain is expanded; rows arrive depth-first (parent
-  // before child) so this single pass is enough.
-  const treeRows = categoryTreeRows(categories);
-  const visibleIds = new Set<string>();
-  for (const row of treeRows) {
-    if (row.parentId === null || (visibleIds.has(row.parentId) && !collapsed.has(row.parentId))) {
-      visibleIds.add(row.category.id);
-    }
-  }
-  const visibleRows = treeRows.filter((row) => visibleIds.has(row.category.id));
+  const visibleRows = visibleTreeRows(categoryTreeRows(categories), (row) => row.category.id, (id) => !collapsed.has(id));
 
   return (
     <>

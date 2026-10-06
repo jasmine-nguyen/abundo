@@ -91,7 +91,7 @@ export default function Login() {
     if (busy) return;
     setError(null);
     setNotice(null);
-    const res = await attempt('google', () => signInWithGoogle());
+    const res = await attempt('google', signInWithGoogle);
     if (!res) return;
     if (res.ok) {
       go();

@@ -15,7 +15,7 @@ import { SpendingDonut } from '../../src/components/SpendingDonut';
 import { EarnedVsSpent } from '../../src/components/EarnedVsSpent';
 import { SegmentedControl } from '../../src/components/SegmentedControl';
 import { chartCategoryColor } from '../../src/chartColors';
-import { toggleIn } from '../../src/setutil';
+import { toggleIn, visibleTreeRows } from '../../src/setutil';
 
 export default function Insights() {
   const s = useAppContext(); // the AI-insights slice (aiInsights / generate / refresh) stays on the store
@@ -54,11 +54,7 @@ export default function Insights() {
   // is seen before its children). Replace the Set on toggle so the screen redraws.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const toggle = useCallback((id: string) => setExpanded((prev) => toggleIn(prev, id)), []);
-  const shown = new Set<string>();
-  for (const r of rows) {
-    if (r.parentId === null || (shown.has(r.parentId) && expanded.has(r.parentId))) shown.add(r.id);
-  }
-  const visibleRows = rows.filter((r) => shown.has(r.id));
+  const visibleRows = visibleTreeRows(rows, (r) => r.id, (id) => expanded.has(id));
   const topLevelRows = rows.filter((r) => r.depth === 0 && !r.isRefund);  // refund lines are never top-level (WHIT-349)
   const topLevelCount = topLevelRows.length;  // hero "N categories"
   // Donut slices: one per top-level category (its combined spend), painted in its own colour
