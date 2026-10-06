@@ -13,11 +13,12 @@ from _pending_mirror_fakes import (
     CETTIRE_OLD,
     MYKI_NEW,
     MYKI_OLD,
+    REISSUE_TODAY,
     RUSH_NEW,
     RUSH_OLD,
     WESTPAC,
     reissue_bank_rows,
-    run_reissue,
+    run_mirror,
     stored,
     stored_ids,
     unfiled_except,
@@ -34,7 +35,7 @@ def test_a_reissued_pending_takes_the_users_edit_and_the_stale_copy_is_removed(r
         row("new_rush", RUSH_NEW, "-192.00", category="shopping", filed_by_rule="rule-1"),
     )
 
-    result = run_reissue(mirror, repo, reissue_bank_rows("new_cettire", "new_rush"), _is_unfiled)
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_cettire", "new_rush"), _is_unfiled, REISSUE_TODAY)
 
     assert stored_ids(repo) == {"new_cettire", "new_rush"}
     cettire = stored(repo, "new_cettire")
@@ -58,7 +59,7 @@ def test_a_stale_copy_identical_to_the_reissued_pending_is_removed(repo, mirror,
         row("new_gogi", "PENDING - Gogi Matcha", "-84.50", category="eatingout"),
     )
 
-    result = run_reissue(mirror, repo, reissue_bank_rows("new_myki", "new_gogi"), _is_unfiled)
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_myki", "new_gogi"), _is_unfiled, REISSUE_TODAY)
 
     assert stored_ids(repo) == {"new_myki", "new_gogi"}
     assert stored(repo, "new_myki")["category"] == "transport"
@@ -74,7 +75,7 @@ def test_clashing_hand_filed_categories_keep_both_copies(repo, mirror, row):
         row("new_cettire", CETTIRE_NEW, "-260.36", category="clothing"),
     )
 
-    result = run_reissue(mirror, repo, reissue_bank_rows("new_cettire"), _is_unfiled)
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_cettire"), _is_unfiled, REISSUE_TODAY)
 
     assert stored_ids(repo) == {"old_cettire", "new_cettire"}
     assert stored(repo, "old_cettire")["category"] == "shopping"
@@ -91,7 +92,7 @@ def test_two_possible_replacements_and_no_exact_copy_keep_the_edited_pending(rep
         row("new_rush_b", RUSH_NEW, "-192.00", day="2026-09-29"),
     )
 
-    result = run_reissue(mirror, repo, reissue_bank_rows("new_rush_a", "new_rush_b"), _is_unfiled)
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_rush_a", "new_rush_b"), _is_unfiled, REISSUE_TODAY)
 
     assert stored_ids(repo) == {"old_rush", "new_rush_a", "new_rush_b"}
     assert "notes" not in stored(repo, "new_rush_a")
@@ -109,7 +110,7 @@ def test_a_replacement_too_far_apart_or_for_another_amount_keeps_the_edited_pend
         row("new_cettire", CETTIRE_NEW, new_amount, day=new_day),
     )
 
-    result = run_reissue(mirror, repo, reissue_bank_rows("new_cettire"), _is_unfiled)
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_cettire"), _is_unfiled, REISSUE_TODAY)
 
     assert stored_ids(repo) == {"old_cettire", "new_cettire"}
     assert "notes" not in stored(repo, "new_cettire")
@@ -124,7 +125,7 @@ def test_a_settled_twin_wins_over_a_live_pending_copy(repo, mirror, row):
     )
     bank = reissue_bank_rows("other_rush") + reissue_bank_rows("settled_rush", pending=False)
 
-    result = run_reissue(mirror, repo, bank, _is_unfiled)
+    result = run_mirror(mirror, repo, bank, _is_unfiled, REISSUE_TODAY)
 
     assert stored_ids(repo) == {"settled_rush", "other_rush"}
     settled = stored(repo, "settled_rush")
@@ -145,7 +146,7 @@ def test_a_replacement_deleted_mid_run_is_never_resurrected(repo, mirror, row):
     def delete_replacement():
         del repo._table.store[(f"ACCOUNT#{WESTPAC}", "TXN#new_cettire")]
 
-    result = run_reissue(mirror, repo, reissue_bank_rows("new_cettire"), _is_unfiled, before_return=delete_replacement)
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_cettire"), _is_unfiled, REISSUE_TODAY, before_return=delete_replacement)
 
     assert stored_ids(repo) == {"old_cettire"}
     assert stored(repo, "old_cettire")["notes"] == "The North Face Jacket"

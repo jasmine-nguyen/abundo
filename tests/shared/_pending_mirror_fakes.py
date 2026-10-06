@@ -75,7 +75,5 @@ def unfiled_except(*taxonomy):
     return lambda category: category not in taxonomy
 
 
-def run_reissue(mirror, repo, bank, is_unfiled, before_return=None):
-    return mirror.mirror_account(
-        repo, fetch_returning(bank, before_return), WESTPAC_SOURCE, REISSUE_TODAY, is_unfiled
-    )
+def run_mirror(mirror, repo, bank, is_unfiled, today=MIRROR_TODAY, before_return=None):
+    return mirror.mirror_account(repo, fetch_returning(bank, before_return), WESTPAC_SOURCE, today, is_unfiled)

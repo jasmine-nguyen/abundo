@@ -36,7 +36,7 @@ import pytest
 
 from _boto_stubs import install_import_satisfiers, use_condition_fields
 from _dynamo_fakes import FakeTable
-from _pending_mirror_fakes import WESTPAC
+from _pending_mirror_fakes import pending_row
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -91,17 +91,6 @@ def row(layer):
     clean_merchant = importlib.import_module("merchant").clean_merchant
 
     def make(transaction_id, description, amount, day="2026-09-30", status="pending", **fields):
-        return {
-            "pk": f"ACCOUNT#{WESTPAC}",
-            "sk": f"TXN#{transaction_id}",
-            "transaction_id": transaction_id,
-            "account_id": WESTPAC,
-            "date": day,
-            "amount": Decimal(amount),
-            "description": description,
-            "merchant_name": clean_merchant(description, ""),
-            "status": status,
-            "category": "Unfiled",
-            **fields,
-        }
+        fields = {"merchant_name": clean_merchant(description, ""), **fields}
+        return pending_row(transaction_id, day, status, amount=Decimal(amount), description=description, **fields)
     return make

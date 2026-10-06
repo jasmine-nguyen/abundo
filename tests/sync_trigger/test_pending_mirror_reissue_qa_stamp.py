@@ -4,10 +4,11 @@ test_pending_mirror_reissue_qa_fix.py (the REAL shared repo over FakeTable)."""
 from _pending_mirror_fakes import (
     GOGI_NEW,
     GOGI_OLD,
+    REISSUE_TODAY,
     RUSH_NEW,
     RUSH_OLD,
     reissue_bank_rows,
-    run_reissue,
+    run_mirror,
     stored,
     stored_ids,
     unfiled_except,
@@ -37,7 +38,7 @@ def test_a_noted_hand_filing_clears_the_rule_stamp_on_a_same_category_reissue(re
         row("new_rush", RUSH_NEW, "-192.00", category="shopping", filed_by_rule="rule-1"),
     )
 
-    result = run_reissue(mirror, repo, reissue_bank_rows("new_rush"), _is_unfiled)
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_rush"), _is_unfiled, REISSUE_TODAY)
 
     assert stored_ids(repo) == {"new_rush"}
     new = stored(repo, "new_rush")
@@ -54,7 +55,7 @@ def test_a_copy_with_the_same_rule_stamp_and_note_is_just_removed(repo, mirror, 
         row("new_rush", RUSH_NEW, "-192.00", category="shopping", filed_by_rule="rule-1", notes="Backpack"),
     )
 
-    result = run_reissue(mirror, repo, reissue_bank_rows("new_rush"), _is_unfiled)
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_rush"), _is_unfiled, REISSUE_TODAY)
 
     assert stored_ids(repo) == {"new_rush"}
     assert stored(repo, "new_rush")["filed_by_rule"] == "rule-1"

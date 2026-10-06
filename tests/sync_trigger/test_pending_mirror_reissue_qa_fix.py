@@ -5,10 +5,11 @@ as test_pending_mirror_reissue_qa.py (the REAL shared repo over FakeTable)."""
 from _pending_mirror_fakes import (
     GOGI_NEW,
     GOGI_OLD,
+    REISSUE_TODAY,
     RUSH_NEW,
     RUSH_OLD,
     reissue_bank_rows,
-    run_reissue,
+    run_mirror,
     stored,
     stored_ids,
     unfiled_except,
@@ -26,7 +27,7 @@ def test_a_hand_filed_category_stays_user_owned_when_the_reissue_is_rule_filed_t
         row("new_gogi", GOGI_NEW, "-84.50", category="eatingout", filed_by_rule="rule-1"),
     )
 
-    run_reissue(mirror, repo, reissue_bank_rows("new_gogi"), _is_unfiled)
+    run_mirror(mirror, repo, reissue_bank_rows("new_gogi"), _is_unfiled, REISSUE_TODAY)
 
     assert stored_ids(repo) == {"new_gogi"}
     assert stored(repo, "new_gogi")["category"] == "eatingout"
@@ -41,7 +42,7 @@ def test_a_note_moves_onto_a_reissue_hand_filed_the_same(repo, mirror, row):
         row("new_rush", RUSH_NEW, "-192.00", category="shopping"),
     )
 
-    result = run_reissue(mirror, repo, reissue_bank_rows("new_rush"), _is_unfiled)
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_rush"), _is_unfiled, REISSUE_TODAY)
 
     assert stored_ids(repo) == {"new_rush"}
     new = stored(repo, "new_rush")
@@ -58,7 +59,7 @@ def test_a_rule_filed_note_moves_onto_an_unfiled_reissue_with_its_stamp(repo, mi
         row("new_rush", RUSH_NEW, "-192.00"),
     )
 
-    result = run_reissue(mirror, repo, reissue_bank_rows("new_rush"), _is_unfiled)
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_rush"), _is_unfiled, REISSUE_TODAY)
 
     assert stored_ids(repo) == {"new_rush"}
     new = stored(repo, "new_rush")
@@ -75,7 +76,7 @@ def test_two_rule_filed_reissues_are_ambiguous_and_nothing_moves(repo, mirror, r
         row("new_b", RUSH_NEW, "-192.00", day="2026-09-29", category="shopping", filed_by_rule="rule-1"),
     )
 
-    result = run_reissue(mirror, repo, reissue_bank_rows("new_a", "new_b"), _is_unfiled)
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_a", "new_b"), _is_unfiled, REISSUE_TODAY)
 
     assert stored_ids(repo) == {"old_rush", "new_a", "new_b"}
     assert "notes" not in stored(repo, "new_a")
@@ -91,7 +92,7 @@ def test_a_reissue_filed_by_another_rule_differently_is_left_alone(repo, mirror,
         row("new_rush", RUSH_NEW, "-192.00", category="clothing", filed_by_rule="rule-2"),
     )
 
-    result = run_reissue(mirror, repo, reissue_bank_rows("new_rush"), _is_unfiled)
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_rush"), _is_unfiled, REISSUE_TODAY)
 
     assert stored_ids(repo) == {"old_rush", "new_rush"}
     new = stored(repo, "new_rush")

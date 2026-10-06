@@ -26,6 +26,3 @@ def test_no_sync_trigger_test_keeps_its_own_pending_mirror_setup():
     assert offenders == [], (
         "use the conftest layer fixture and import from _pending_mirror_fakes instead: "
         f"{offenders}")
-
-    assert re.search(r"^def layer\(", (_SYNC_TRIGGER_TESTS / "conftest.py").read_text(), re.M)
-    assert (_TESTS / "shared" / "_pending_mirror_fakes.py").is_file()

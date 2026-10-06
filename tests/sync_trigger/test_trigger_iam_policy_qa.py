@@ -14,11 +14,12 @@ from _dynamo_fakes import FakeTable, _client_error
 from _pending_mirror_fakes import (
     CETTIRE_NEW,
     CETTIRE_OLD,
+    REISSUE_TODAY,
     RUSH_NEW,
     RUSH_OLD,
     WESTPAC,
     reissue_bank_rows,
-    run_reissue,
+    run_mirror,
     unfiled_except,
 )
 from _terraform import DYNAMODB_VERB_TO_ACTION, allows, granted_dynamodb_actions, leading_keys, policy_statements
@@ -92,7 +93,7 @@ def test_the_rush_and_cettire_doubles_are_removed_with_notes_kept_under_the_trig
     _seed_rush_and_cettire(repo, importlib.import_module("merchant"))
     bank = reissue_bank_rows("new_cettire", "new_rush")
 
-    result = run_reissue(mirror, repo, bank, _is_unfiled)
+    result = run_mirror(mirror, repo, bank, _is_unfiled, REISSUE_TODAY)
 
     assert result["failed"] == 0, f"a call was refused by the trigger policy (AccessDenied): {result}"
     assert result["carried"] == 2

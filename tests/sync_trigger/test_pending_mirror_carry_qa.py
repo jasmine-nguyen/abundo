@@ -15,24 +15,17 @@ from _pending_mirror_fakes import (
     MIRROR_TODAY,
     UP,
     WESTPAC,
-    WESTPAC_SOURCE,
     bank_rows,
-    fetch_returning,
     pending_row,
+    run_mirror,
     stored,
     stored_ids,
+    unfiled_except,
 )
 
 
-def _unfiled(*taxonomy):
-    return lambda category: category != "income" and category not in taxonomy
-
-
 def _run(mirror, repo, is_unfiled=None):
-    return mirror.mirror_account(
-        repo, fetch_returning(bank_rows("kept")), WESTPAC_SOURCE, MIRROR_TODAY,
-        is_unfiled or _unfiled("groceries", "dining"),
-    )
+    return run_mirror(mirror, repo, bank_rows("kept"), is_unfiled or unfiled_except("income", "groceries", "dining"))
 
 
 # --- each kind of edit carries -------------------------------------------------------------------
@@ -100,7 +93,7 @@ def test_the_carried_twin_budget_flag_follows_the_carried_category(repo, mirror)
         pending_row("settled", status="posted", counts_to_budget=True, **GUZMAN),
     )
 
-    _run(mirror, repo, _unfiled("TRANSFER_OUT"))
+    _run(mirror, repo, unfiled_except("income", "TRANSFER_OUT"))
 
     assert stored(repo, "settled")["category"] == "TRANSFER_OUT"
     assert stored(repo, "settled")["counts_to_budget"] is False

@@ -9,12 +9,10 @@ test_pending_mirror.py.
 
 from _pending_mirror_fakes import (
     GUZMAN,
-    MIRROR_TODAY,
     WESTPAC_AID,
-    WESTPAC_SOURCE,
     bank_rows,
-    fetch_returning,
     pending_row,
+    run_mirror,
     stored,
     stored_ids,
     unfiled_except,
@@ -34,7 +32,7 @@ def test_an_edited_pending_the_bank_dropped_moves_its_edit_onto_the_settled_char
     )
     bank = bank_rows("listed") + [{"id": "settled", "accountId": WESTPAC_AID, "pending": False}]
 
-    result = mirror.mirror_account(repo, fetch_returning(bank), WESTPAC_SOURCE, MIRROR_TODAY, _is_unfiled)
+    result = run_mirror(mirror, repo, bank, _is_unfiled)
 
     assert stored_ids(repo) == {"listed", "settled", "waiting"}
     settled = stored(repo, "settled")
@@ -57,7 +55,7 @@ def test_a_second_pending_never_overwrites_the_note_an_earlier_run_carried(repo,
     )
     bank = [{"id": "settled", "accountId": WESTPAC_AID, "pending": False}]
 
-    first_run = mirror.mirror_account(repo, fetch_returning(bank), WESTPAC_SOURCE, MIRROR_TODAY, _is_unfiled)
+    first_run = run_mirror(mirror, repo, bank, _is_unfiled)
 
     assert first_run["carried"] == 1
     assert stored(repo, "settled")["notes"] == "dinner with Sam"
@@ -65,7 +63,7 @@ def test_a_second_pending_never_overwrites_the_note_an_earlier_run_carried(repo,
     # A later pending at the same shop, same amount, turns up and then drops off the bank's list.
     repo._table.seed(pending_row("second", day="2026-09-28", notes="lunch with Jo", **GUZMAN))
 
-    second_run = mirror.mirror_account(repo, fetch_returning(bank), WESTPAC_SOURCE, MIRROR_TODAY, _is_unfiled)
+    second_run = run_mirror(mirror, repo, bank, _is_unfiled)
 
     assert stored(repo, "settled")["notes"] == "dinner with Sam"
     assert "second" in stored_ids(repo)
