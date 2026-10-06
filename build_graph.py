@@ -3145,7 +3145,7 @@ def running_pid(thread: str) -> int | None:
     if not pid or pid == os.getpid() or not alive(pid):
         return None
     # A pid file left by a killed build may name a process that later got the same number.
-    code, command = run(["ps", "-o", "command=", "-p", str(pid)])
+    code, command = run(["ps", "-ww", "-o", "command=", "-p", str(pid)])
     return pid if code == 0 and "build_graph" in command else None
 
 
