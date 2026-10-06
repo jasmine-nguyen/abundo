@@ -35,6 +35,18 @@ def alarm_names(text):
     return re.findall(r'^resource "aws_cloudwatch_metric_alarm" "([^"]+)"', text, re.M)
 
 
+def app_route_keys():
+    """WHIT-791: every "VERB /path" route key in apigateway.tf's app_route_keys list."""
+    source = (TERRAFORM_DIR / "apigateway.tf").read_text()
+    block = source.split("app_route_keys = toset([", 1)[1].split("])", 1)[0]
+    return set(re.findall(r'"([A-Z]+ /[^"]*)"', block))
+
+
+def exact_route_keys(handler):
+    """WHIT-791: the API handler's exact-path route table as "VERB /path" keys."""
+    return {f"{method} {path}" for method, path in handler._EXACT_ROUTES}
+
+
 # boto3 Table method -> the IAM action it needs (WHIT-678: shared by the per-role DynamoDB guards).
 DYNAMODB_VERB_TO_ACTION = {
     "get_item": "GetItem",
