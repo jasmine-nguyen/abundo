@@ -124,7 +124,8 @@ describe('budget route builder — valid ids round-trip verbatim (WHIT-322)', ()
 
   it('[A35] a non-ascii id passes through unchanged (no lossy transform)', () => {
     expect(routeForNotificationData({ type: 'budget', category: 'café' })).toBe('/budget/café');
-  });});
+  });
+});
 
 describe('budget route builder — DOCUMENTS CURRENT (unencoded) behaviour, see QA critique (WHIT-322)', () => {
   // These lock what the code does TODAY so an intentional fix (encodeURIComponent / trim)

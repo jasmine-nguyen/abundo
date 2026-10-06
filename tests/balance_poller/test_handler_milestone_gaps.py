@@ -103,8 +103,7 @@ def test_poller_call_binds_to_the_real_detector_signature(handler, monkeypatch):
                         lambda *args, **kwargs: calls.append((args, kwargs)) or 0)
 
     assert handler._poll_homeloan("key") is True
-    assert len(calls) == 1
-    args, kwargs = calls[0]
+    [(args, kwargs)] = calls
     bound = real_signature.bind(*args, **kwargs)
     assert bound.arguments["old_balance"] == Decimal("600000")
     assert isinstance(bound.arguments["milestone_repo"], handler.MilestoneRepository)
