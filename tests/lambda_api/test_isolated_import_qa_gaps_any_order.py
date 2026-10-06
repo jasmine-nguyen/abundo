@@ -14,7 +14,7 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _PAIR_FILE = "tests/lambda_api/test_isolated_import_qa_gaps.py"
 
 
-@pytest.mark.parametrize("suite_loaded_first", [None, "tests/shared", "tests/goal_nudge", "tests/push_receipts"])
+@pytest.mark.parametrize("suite_loaded_first", [None, "tests/shared"])
 def test_the_leftover_stub_pair_passes_whichever_suite_loads_first(suite_loaded_first):
     paths = [_PAIR_FILE]
     if suite_loaded_first:

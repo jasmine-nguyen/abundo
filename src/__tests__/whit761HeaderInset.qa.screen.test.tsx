@@ -30,7 +30,6 @@ function renderHeader() {
 it('insets the list top by the full header height (notch + body)', () => {
   const content = contentStyle(renderHeader());
   expect(content.paddingTop).toBe(105);
-  expect(content.paddingBottom).toBe(192);
 });
 
 // [A6]

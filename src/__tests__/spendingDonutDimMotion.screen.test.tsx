@@ -12,7 +12,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react-native';
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => false }));
 
 import { SpendingDonut } from '../components/SpendingDonut';
-import { opacityOf, ancestorProp, sl, slice, DIM_CATEGORY, settleSpring as settle } from './support/donut';
+import { opacityOf, ancestorProp, sl, slice, DIM_CATEGORY, settle } from './support/donut';
 
 describe('SpendingDonut — the fade lands on the derived value with motion ON (WHIT-425)', () => {
   beforeEach(() => { jest.useFakeTimers(); });

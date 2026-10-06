@@ -9,8 +9,6 @@ seam lands different scopes at different keys.
 from decimal import Decimal
 import pytest
 
-from _milestone_fakes import resolved_plan
-
 _PLAN = [
     {"id": "a", "label": "Kickoff", "targetBalance": Decimal("544000"), "targetDate": "2026-06-18"},
     {"id": "b", "label": "Halfway", "targetBalance": Decimal("295000"), "targetDate": "2027-12-18"},
@@ -182,7 +180,7 @@ def test_poller_resolve_skips_a_partial_row_not_raises(shared, milestone_repo):
     # back to the default (which would send a wrong default celebration for corrupt data).
     partial = {"id": "bad", "label": "no balance", "targetDate": "2030-01-01"}  # no targetBalance
     _store_raw_row(milestone_repo, [partial])
-    assert resolved_plan(shared, milestone_repo) == []
+    assert shared.milestones._resolve_plan(milestone_repo)[0] == []
 
 
 _COMPLETE2 = {"id": "m2", "label": "Target", "targetBalance": Decimal("55000"),
@@ -230,4 +228,4 @@ def test_poller_resolve_degrades_non_list_milestones_to_empty(shared, milestone_
     # the plan read's isinstance guard degrades it to an empty plan rather than raising into the
     # poller's swallow. Still never the default (no wrong default celebration for corrupt data).
     _store_raw_row(milestone_repo, {"m1": _COMPLETE})
-    assert resolved_plan(shared, milestone_repo) == []
+    assert shared.milestones._resolve_plan(milestone_repo)[0] == []

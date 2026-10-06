@@ -12,6 +12,7 @@ gaps pin the wiring around that hook:
     fired-state route to the shared owner via the None default.
 """
 
+import inspect
 from decimal import Decimal
 
 
@@ -89,19 +90,23 @@ def test_poll_threads_a_milestone_repository_into_the_detector(handler, monkeypa
     assert seen.get("milestone_repo") is sentinel
 
 
-def test_poll_milestone_repo_is_a_real_MilestoneRepository_instance(handler, monkeypatch):
-    # Guard against the kwarg being wired to the wrong constructor: confirm the object threaded
-    # through is an instance of the poller's imported MilestoneRepository class.
+def test_poller_call_binds_to_the_real_detector_signature(handler, monkeypatch):
+    # [WHIT-764] The other poller tests swap the detector for a catch-all lambda, so a call missing a
+    # required keyword (or passing one the detector doesn't take) would still pass them. Bind the
+    # captured call against the REAL signature, and confirm the repo is the poller's own class.
+    real_signature = inspect.signature(handler.notify_milestone_crossing)
     fake = _FakeRepo(prior={"balance": Decimal("600000"), "as_of": "x", "currency": "AUD"})
     monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: fake)
     monkeypatch.setattr(handler, "fetch_balance", lambda *a, **k: _OK_PAYLOAD)
-
-    seen = {}
+    calls = []
     monkeypatch.setattr(handler, "notify_milestone_crossing",
-                        lambda old, new, **kw: seen.update(kw) or 1)
+                        lambda *args, **kwargs: calls.append((args, kwargs)) or 0)
 
     assert handler._poll_homeloan("key") is True
-    assert isinstance(seen.get("milestone_repo"), handler.MilestoneRepository)
+    [(args, kwargs)] = calls
+    bound = real_signature.bind(*args, **kwargs)
+    assert bound.arguments["old_balance"] == Decimal("600000")
+    assert isinstance(bound.arguments["milestone_repo"], handler.MilestoneRepository)
 
 
 # WHIT-369 — the poller stays single-tenant: it pins no scope (None default → shared owner).
