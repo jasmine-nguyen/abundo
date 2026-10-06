@@ -7,16 +7,25 @@ Resolved by pytest.ini's `pythonpath = tests/shared`. The shared layer is import
 ``balance_repo``, so inside a ``handler``-style fixture it comes from the freshly loaded copy.
 """
 
+from decimal import Decimal
+
 from _dynamo_fakes import FakeTable
 
 _MARKER_PK = "ACCTBAL#REFRESH"
 _BALANCE_PREFIX = "ACCTBAL#"
 
 
-def balance_repo(rows=(), last=None):
+def homeloan_row(amount, as_of="2026-10-05T00:00:00Z"):
+    """A stored up-homeloan balance (list_balances-shaped) owing the signed ``amount``."""
+    return {"account_id": "up-homeloan", "amount": Decimal(amount), "available_balance": Decimal("0"),
+            "currency": "AUD", "as_of": as_of, "account_type": "mortgage"}
+
+
+def balance_repo(rows=(), last=None, upsert_fails=False):
     """The real AccountBalanceRepository holding ``rows`` (list_balances-shaped dicts, stored
     through the real upsert_balance) and, when ``last`` is given, a refresh marker at that epoch.
-    The put log is cleared after that setup, so ``balance_writes`` shows only the code under test."""
+    The put log is cleared after that setup, so ``balance_writes`` shows only the code under test.
+    ``upsert_fails`` makes every later write raise (DynamoDB down); the attempt is still logged."""
     from repository import AccountBalanceRepository
 
     repo = AccountBalanceRepository()
@@ -27,6 +36,8 @@ def balance_repo(rows=(), last=None):
     if last is not None:
         repo.set_last_refresh_at(last)
     repo._table.put_calls.clear()
+    if upsert_fails:
+        repo._table.fail("put_item")
     return repo
 
 

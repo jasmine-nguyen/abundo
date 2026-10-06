@@ -1,52 +1,27 @@
 """Adversarial GAP tests for the balance poller (lambda_balance_poller/handler.py).
 
-The implementer's test_handler.py locks the negative-amount abs, the missing-field
-guards, the request shape, and the http-error / failure-payload isolation. These
-add the edges it doesn't:
+The implementer's test_handler.py locks the signed amount, the missing-field guards, the
+request shape, and the http-error / failure-payload isolation. These add the edges it doesn't:
 
-    normalise_balance :
-        - POSITIVE amount (what if BankSync ever flips the mortgage sign) -> abs
-          keeps it positive (documents a potential silent wrong-sign assumption)
+    normalise_account_balance :
         - amount == 0 (a paid-off loan) is a VALID reading, stored as 0
         - amount given as a STRING (JSON-number-as-text) parses via Decimal(str())
         - empty-string currency ("" is falsy) falls back to AUD
-        - empty-string date raises BalanceError (falsy `as_of` guard)
-    lambda_handler (the breadth of `except Exception`) :
-        - a repository upsert that RAISES is swallowed (stored:False, no re-raise)
-        - a garbage non-numeric amount (BalanceError) is still swallowed by the
-          same broad guard -> stored:False, no upsert
+        - empty-string date / a garbage amount raise BalanceError
+    lambda_handler (the breadth of the per-account `except Exception`) :
+        - a repository upsert that RAISES is swallowed (home loan not stored, no re-raise)
+        - a garbage non-numeric amount is swallowed the same way -> no upsert
 
 No network / no AWS: urlopen is monkeypatched and the repository is a fake.
 """
 
+import sys
 from decimal import Decimal
 
 import pytest
 
+from _balance_fakes import balance_repo, upserted
 from _http_fakes import FakeResponse
-
-
-class _FakeRepo:
-    def __init__(self, raise_on_upsert=False, prior=None):
-        self.calls = []
-        self._raise = raise_on_upsert
-        self.prior = prior
-
-    def get_balance(self, account_id):
-        return self.prior
-
-    def upsert_balance(self, account_id, balance, as_of, currency):
-        self.calls.append((account_id, balance, as_of, currency))
-        if self._raise:
-            raise RuntimeError("dynamo down")
-
-
-class _FakeAccountRepo:
-    """No-op AccountBalanceRepository stand-in — these tests isolate the home-loan
-    path, so the account poll is stubbed out to keep the handler's return deterministic."""
-
-    def upsert_balance(self, *a, **k):
-        pass
 
 
 def _mortgage(amount, **over):
@@ -55,79 +30,62 @@ def _mortgage(amount, **over):
     return {"success": True, "data": data}
 
 
-# --- normalise_balance sign / type edges -------------------------------------
+# --- normalise_account_balance edges -----------------------------------------
 
 
-def test_normalise_positive_amount_stays_positive(handler):
-    # If BankSync ever returned the mortgage as a positive number, abs() is a no-op
-    # and we store it positive — the wrong-sign case is silently indistinguishable.
-    out = handler.normalise_balance(_mortgage(596642.43))
-    assert out["balance"] == Decimal("596642.43")
+@pytest.mark.parametrize(
+    ("payload", "field", "expected"),
+    [
+        (_mortgage(0), "amount", Decimal("0")),
+        (_mortgage("-596642.43"), "amount", Decimal("-596642.43")),
+        (_mortgage(-400000, currency=""), "currency", "AUD"),
+    ],
+    ids=["zero-is-a-paid-off-balance", "string-amount-parses", "empty-currency-defaults-to-aud"],
+)
+def test_normalise_accepts_edge_readings(handler, payload, field, expected):
+    assert handler.normalise_account_balance(payload)[field] == expected
 
 
-def test_normalise_zero_amount_is_a_valid_paid_off_balance(handler):
-    out = handler.normalise_balance(_mortgage(0))
-    assert out["balance"] == Decimal("0")
-
-
-def test_normalise_amount_as_string_parses(handler):
-    out = handler.normalise_balance(_mortgage("-596642.43"))
-    assert out["balance"] == Decimal("596642.43")
-
-
-def test_normalise_empty_currency_defaults_to_aud(handler):
-    out = handler.normalise_balance(_mortgage(-400000, currency=""))
-    assert out["currency"] == "AUD"
-
-
-def test_normalise_empty_date_raises(handler):
-    with pytest.raises(handler.BalanceError):
-        handler.normalise_balance(_mortgage(-400000, date=""))
-
-
-def test_normalise_garbage_amount_raises_balance_error(handler):
-    # A non-numeric amount is bad input like any other guard — normalise_balance
-    # surfaces it as its own BalanceError (not a raw decimal.InvalidOperation).
-    with pytest.raises(handler.BalanceError):
-        handler.normalise_balance(_mortgage("not-a-number"))
+@pytest.mark.parametrize(
+    "payload",
+    [_mortgage(-400000, date=""), _mortgage("not-a-number")],
+    ids=["empty-date", "garbage-amount"],
+)
+def test_normalise_rejects_bad_readings_with_balance_error(handler, payload):
+    with pytest.raises(sys.modules["balance_fetch"].BalanceError):
+        handler.normalise_account_balance(payload)
 
 
 # --- lambda_handler: the breadth of `except Exception` -----------------------
 
 
+def _run(handler, monkeypatch, repo, payload):
+    monkeypatch.setattr(handler, "get_api_key", lambda: "k")
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
+    monkeypatch.setattr(handler, "_check_homeloan", lambda deltas: None)
+    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: FakeResponse(payload))
+    return handler.lambda_handler({}, None)
+
+
 def test_lambda_handler_stores_a_zero_balance_on_a_paid_off_loan(handler, monkeypatch):
     # Contrast with the "never writes a zero" failure comment: a REAL 0 reading is
     # written; only failure paths avoid zeroing.
-    repo = _FakeRepo()
-    monkeypatch.setattr(handler, "get_api_key", lambda: "k")
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: repo)
-    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: _FakeAccountRepo())
-    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: FakeResponse(_mortgage(0)))
-
-    assert handler.lambda_handler({}, None)["homeloan_stored"] is True
-    assert repo.calls[0][1] == Decimal("0")
+    repo = balance_repo()
+    _run(handler, monkeypatch, repo, _mortgage(0))
+    assert upserted(repo)["up-homeloan"] == Decimal("0")
 
 
 def test_lambda_handler_swallows_a_repository_upsert_failure(handler, monkeypatch):
     # The DynamoDB write itself failing must not raise out of the poller.
-    repo = _FakeRepo(raise_on_upsert=True)
-    monkeypatch.setattr(handler, "get_api_key", lambda: "k")
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: repo)
-    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: _FakeAccountRepo())
-    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: FakeResponse(_mortgage(-400000)))
-
-    assert handler.lambda_handler({}, None)["homeloan_stored"] is False
-    assert len(repo.calls) == 1  # attempted once, then swallowed
+    repo = balance_repo(upsert_fails=True)
+    result = _run(handler, monkeypatch, repo, _mortgage(-400000))
+    assert result == {"accounts_stored": 0}
+    assert upserted(repo)["up-homeloan"] == Decimal("-400000")  # attempted, then swallowed
 
 
 def test_lambda_handler_swallows_a_garbage_amount_without_writing(handler, monkeypatch):
-    # A malformed amount (now a BalanceError) is isolated by the failure handling —
+    # A malformed amount (a BalanceError) is isolated by the failure handling —
     # no upsert, no raise, last-good row untouched.
-    repo = _FakeRepo()
-    monkeypatch.setattr(handler, "get_api_key", lambda: "k")
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: repo)
-    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: _FakeAccountRepo())
-    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: FakeResponse(_mortgage("not-a-number")))
-
-    assert handler.lambda_handler({}, None)["homeloan_stored"] is False
-    assert repo.calls == []
+    repo = balance_repo()
+    _run(handler, monkeypatch, repo, _mortgage("not-a-number"))
+    assert upserted(repo) == {}

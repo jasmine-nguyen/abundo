@@ -58,19 +58,18 @@ RULE | RULE#r1                        USER#<owner_id> | RULE#r1
 | 9 | `JOB` \| `JOB#<id>` | `U` \| `JOB#<id>` | `repository_job.py` |
 | 10 | `INSIGHT` \| `<cycle_start>` | `U` \| `INSIGHT#<cycle_start>` | `repository_insight.py` |
 | 11 | `MILESTONES` \| `<scope>` | `U` \| `MILESTONES` | `repository_milestone.py` |
-| 12 | `BALANCE#<a>` \| `BALANCE` | `U` \| `BALANCE#<a>` | `repository_balance.py` |
-| 13 | `ACCTBAL#<a>` \| `BALANCE` | `U` \| `ACCTBAL#<a>` | `repository_balance.py` |
-| 14 | `ACCTBAL#REFRESH` \| `MARKER` | `U` \| `ACCTBAL#REFRESH` | `repository_balance.py` |
-| 15 | `FEEDWATCH#<a>` \| `MARKER` | `U` \| `FEEDWATCH#<a>` | `repository_balance.py` |
-| 16 | `NOTIFY#<last_pay>#<len>` \| `FIRED` | `U` \| `NOTIFY#<last_pay>#<len>` | `repository_notify.py` |
-| 17 | `NOTIFY#REPAYMENT` \| `FIRED` | `U` \| `NOTIFY#REPAYMENT` | `repository_notify.py` |
-| 18 | `NOTIFY#MILESTONE` \| `FIRED` or `<scope>` | `U` \| `NOTIFY#MILESTONE` | `repository_notify.py` |
-| 19 | `NOTIFY#GOALCHECKPOINT` \| `FIRED` or `<scope>` | `U` \| `NOTIFY#GOALCHECKPOINT` | `repository_notify.py`, `goal_nudge.py` (its markers live in this row's fired set) |
-| 20 | `NOTIFY#REPAYPUSH` \| `FIRED` | `U` \| `NOTIFY#REPAYPUSH` | `repository_notify.py` |
+| 12 | `ACCTBAL#<a>` \| `BALANCE` | `U` \| `ACCTBAL#<a>` | `repository_balance.py` |
+| 13 | `ACCTBAL#REFRESH` \| `MARKER` | `U` \| `ACCTBAL#REFRESH` | `repository_balance.py` |
+| 14 | `FEEDWATCH#<a>` \| `MARKER` | `U` \| `FEEDWATCH#<a>` | `repository_balance.py` |
+| 15 | `NOTIFY#<last_pay>#<len>` \| `FIRED` | `U` \| `NOTIFY#<last_pay>#<len>` | `repository_notify.py` |
+| 16 | `NOTIFY#REPAYMENT` \| `FIRED` | `U` \| `NOTIFY#REPAYMENT` | `repository_notify.py` |
+| 17 | `NOTIFY#MILESTONE` \| `FIRED` or `<scope>` | `U` \| `NOTIFY#MILESTONE` | `repository_notify.py` |
+| 18 | `NOTIFY#GOALCHECKPOINT` \| `FIRED` or `<scope>` | `U` \| `NOTIFY#GOALCHECKPOINT` | `repository_notify.py`, `goal_nudge.py` (its markers live in this row's fired set) |
+| 19 | `NOTIFY#REPAYPUSH` \| `FIRED` | `U` \| `NOTIFY#REPAYPUSH` | `repository_notify.py` |
 
 - The `SHARED` / `FIRED` / `None` scope in the sort key goes away. The owner is now in `pk`, so a scope adds nothing. This also removes the `"SHARED"` ↔ `None` bridge in `lambda_api/handler.py` (`_notify_scope`).
 - `U | ACCOUNT#<a>#TXN#<t>` lets one query read one account's transactions (`begins_with ACCOUNT#<a>#TXN#`) or all of the user's transactions (`begins_with ACCOUNT#`).
-- Rows 12–15: `<a>` is the generated account id, never a name.
+- Rows 12–14: `<a>` is the generated account id, never a name.
 - Row 8 is the one exception to "owner is the whole `pk`": rules sit in a second per-user partition `USER#<owner_id>#RULES`. That keeps the API's delete permission limited to rules (section 3).
 
 ### New per-user row: the accounts list
@@ -80,7 +79,7 @@ RULE | RULE#r1                        USER#<owner_id> | RULE#r1
 | `U` \| `ACCTINFO#<gen id>` | `name`, `bank`, `kind` (e.g. `homeloan`, `spending`, `credit`), `banksync_account_id`, `banksync_bank_id`, `banksync_feed_id`, `up_account_id` (Up's own UUID, if the account is at Up), `feed_stall_watch` (bool) |
 
 - Sort-key prefix is `ACCTINFO#`, not `ACCOUNT#`. Otherwise "list my accounts" (`begins_with ACCOUNT#`) would also return every transaction.
-- This row replaces the name-based constants: `ACCOUNT_ID_MAP`, `HOMELOAN_ACCOUNT_ID` (→ `kind = homeloan`), `SYNC_FEED_IDS`, `BALANCE_SOURCES`, `HOMELOAN_BALANCE_SOURCE`, `FEED_STALL_ACCOUNT_IDS` (→ `feed_stall_watch`), and the Up webhook's `UP_HOMELOAN_ACCOUNT_ID`.
+- This row replaces the name-based constants: `ACCOUNT_ID_MAP`, `HOMELOAN_ACCOUNT_ID` (→ `kind = homeloan`), `SYNC_FEED_IDS`, `BALANCE_SOURCES`, `FEED_STALL_ACCOUNT_IDS` (→ `feed_stall_watch`), and the Up webhook's `UP_HOMELOAN_ACCOUNT_ID`.
 - Generated account ids: `acc_` + 16 hex chars from a random UUID. Never derived from the bank or the name.
 
 ### App-wide rows (no owner in `pk`)
@@ -89,9 +88,9 @@ These are looked up before the owner is known, or they are an ops queue across a
 
 | # | Old `pk` \| `sk` | New `pk` \| `sk` | Owner link |
 |---|---|---|---|
-| 21 | `FAILED` \| `<sk>` | unchanged | `owner` attribute when known. A row dead-lettered because the bank account is unknown has no owner. Already expires via `expires_at`. |
-| 22 | `EVENT#<envelope>` \| `EVENT` | unchanged | No owner, no personal data (only the envelope id). **New:** written with `expires_at` = now + 30 days. |
-| 23 | `PUSHRECEIPT#PENDING` \| `<receipt_id>` | unchanged | `owner` attribute. |
+| 20 | `FAILED` \| `<sk>` | unchanged | `owner` attribute when known. A row dead-lettered because the bank account is unknown has no owner. Already expires via `expires_at`. |
+| 21 | `EVENT#<envelope>` \| `EVENT` | unchanged | No owner, no personal data (only the envelope id). **New:** written with `expires_at` = now + 30 days. |
+| 22 | `PUSHRECEIPT#PENDING` \| `<receipt_id>` | unchanged | `owner` attribute. |
 | new | — | `BANKACCT#<provider>#<provider_account_id>` \| `BANKACCT` | `{owner, account_id}`. `provider` is `banksync` or `up`. |
 | new | — | `USERS` \| `USER#<owner_id>` | The registry scheduled jobs loop over. `{created_at}`. |
 
@@ -214,7 +213,7 @@ Steps:
 1. Generate the 4 account ids once and save them to a mapping file, so a re-run reuses them.
 2. Check that the accounts-list card already wrote the 4 `ACCTINFO#` rows (from `ACCOUNT_ID_MAP`, `BALANCE_SOURCES`, `SYNC_FEED_IDS`, `UP_HOMELOAN_ACCOUNT_ID`, `FEED_STALL_ACCOUNT_IDS`), their `BANKACCT#banksync#…` / `BANKACCT#up#…` rows, and `USERS | USER#<Jas owner_id>`. Stop if any is missing.
 3. Rules: `RULE | RULE#<id>` → `U#RULES | RULE#<id>`.
-4. Copy every row in patterns 1–20 to its new key. Transactions: rewrite `account_id` to the new id, and set `owner_txn` / `owner_account`. Re-key the `ACCTINFO#<name>` rows to `ACCTINFO#<gen id>` and point the `BANKACCT#` rows at the new ids (the accounts-list card created them with the old name ids).
+4. Copy every row in patterns 1–19 to its new key. Transactions: rewrite `account_id` to the new id, and set `owner_txn` / `owner_account`. Re-key the `ACCTINFO#<name>` rows to `ACCTINFO#<gen id>` and point the `BANKACCT#` rows at the new ids (the accounts-list card created them with the old name ids).
    - Any other row that stores an account id inside its contents (goals, loan facts, markers) gets the old name swapped for the new id. The dry run lists every hit.
 5. Scopes: `MILESTONES | SHARED` → `U | MILESTONES`. `NOTIFY#MILESTONE | FIRED` and `NOTIFY#GOALCHECKPOINT | FIRED` → `U | NOTIFY#…`, **keeping the fired markers** (otherwise old milestone / goal pushes fire again).
 6. FAILED and PUSHRECEIPT rows: add `owner`. EVENT rows: add `expires_at`.

@@ -1,18 +1,19 @@
-"""Scheduled Lambda that polls the live Up home-loan balance from BankSync and
-stores it in DynamoDB (WHIT-8).
+"""Scheduled Lambda that polls every account's live balance from BankSync and
+stores it in DynamoDB (WHIT-8, WHIT-212).
 
 This is an *outbound* half of the BankSync integration (a sibling of
 ``lambda_sync_trigger/handler.py``), but where the sync trigger POSTs to kick off
-a feed sync, this one GETs the account's live balance and persists it:
+a feed sync, this one GETs each account's live balance and persists it:
 
     EventBridge Scheduler (terraform/scheduler.tf, daily)
         -> this lambda
-        -> GET https://api.banksync.io/v1/banks/{bid}/accounts/{aid}/balances
-        -> normalise (mortgage amount is negative -> abs) -> upsert one row
-           (HomeLoanBalanceRepository) that the read API serves as GET /homeloan.
+        -> GET https://api.banksync.io/v1/banks/{bid}/accounts/{aid}/balances (per BALANCE_SOURCES)
+        -> upsert one SIGNED row per account (AccountBalanceRepository). The read API serves
+           them as GET /accounts/balances, and GET /homeloan as abs(amount) of the home loan's.
 
-BankSync's `getLoan` (principalBalance) isn't supported by the fiskil:au provider
-yet, so we read `getBalance` and take abs(amount) for the mortgage account.
+The home loan is fetched once, in that loop; its milestone push and repayment-miss checks
+run off the same reading (WHIT-792). BankSync's `getLoan` (principalBalance) isn't supported
+by the fiskil:au provider yet, so the mortgage's owed amount is abs(getBalance amount).
 
 Invoked only by EventBridge Scheduler, never by API Gateway. ``constants``,
 ``ssm``, and ``repository`` are provided by the shared Lambda layer.
@@ -34,14 +35,13 @@ from constants import (
     FEED_STALL_DAYS,
     FEED_STALL_LOOKBACK_DAYS,
     HOMELOAN_ACCOUNT_ID,
-    HOMELOAN_BALANCE_SOURCE,
     HOMELOAN_BALANCE_TIMEOUT_SECONDS,
     MAX_PAGE_SIZE,
     MIN_REPAYMENT_NOTIFY,
     REPAYMENT_DROP_THRESHOLD,
     REPAYMENT_MISS_LOOKBACK_DAYS,
 )
-from milestones import notify_milestone_crossing
+from milestones import notify_homeloan_milestone, owed
 from repayment_rules import is_repayment_credit
 from goal_checkpoints import notify_goal_checkpoint_crossing
 from repository import (
@@ -49,7 +49,6 @@ from repository import (
     DeviceRepository,
     FeedWatchRepository,
     GoalsRepository,
-    HomeLoanBalanceRepository,
     LoanFactsRepository,
     MilestoneRepository,
     TransactionRepository,
@@ -58,11 +57,10 @@ from repository_notify import NotifyRepository
 from repository_transaction import read_date_range_pages
 from push import send_push
 from api_key import get_api_key as _fetch_api_key
-# BalanceError + normalise_account_balance + the raw fetch now live in the shared
-# balance_fetch module (reused by the on-demand refresh API). `import urllib.request`
-# stays above so the poller tests' `handler.urllib.request.urlopen` patch still reaches
-# the shared fetch (same module singleton).
-from balance_fetch import BalanceError, normalise_account_balance, fetch_balance as _fetch_balance
+# normalise_account_balance + the raw fetch live in the shared balance_fetch module (reused
+# by the on-demand refresh API). `import urllib.request` stays above so the poller tests'
+# `handler.urllib.request.urlopen` patch still reaches the shared fetch (same module singleton).
+from balance_fetch import normalise_account_balance, fetch_balance as _fetch_balance
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -92,20 +90,6 @@ def fetch_balance(bid: str, aid: str, api_key: str) -> dict:
         timeout=HOMELOAN_BALANCE_TIMEOUT_SECONDS,
         user_agent="abundo-homeloan-request",
     )
-
-
-def normalise_balance(payload: dict) -> dict:
-    """Turn a getBalance payload into {"balance", "as_of", "currency"}.
-
-    Wraps the shared normaliser, plus a guard against pointing at a non-mortgage account.
-    The mortgage's `amount` is NEGATIVE (a liability owed), so the outstanding balance is
-    its absolute value. Raises BalanceError on any bad reading.
-    """
-    row = normalise_account_balance(payload)
-    account_type = row["account_type"]
-    if account_type is not None and account_type != "mortgage":
-        raise BalanceError(f"expected a mortgage account, got {account_type!r}")
-    return {"balance": abs(row["amount"]), "as_of": row["as_of"], "currency": row["currency"]}
 
 
 def check_repayment_landed_but_no_push(
@@ -182,57 +166,29 @@ def check_ingested_repayment_without_push(notify_repo, transaction_repo, now: in
         )
 
 
-def _poll_homeloan(api_key: str) -> bool:
-    """Poll + upsert the mortgage's ABS outstanding-principal balance (WHIT-8, Goal
-    screen). Best-effort: any failure is logged and swallowed, leaving the last-good row
-    (never zeroes it). Returns whether a fresh reading was stored this run."""
-    # WHIT-317: precise repayment-miss detector. Reads only DynamoDB (transaction store +
-    # push markers), so it runs BEFORE the balance fetch — a getBalance outage must not blind
-    # this backstop. Best-effort, isolated so a check failure can't affect the balance poll.
+def _check_homeloan(deltas: list) -> None:
+    """Run the home-loan checks off this poll's single fetch of the mortgage (WHIT-792).
+
+    The up-homeloan delta carries the stored amount before the upsert (`old`, None on the first
+    poll) and the fresh one (`new`), both signed. A failed fetch leaves no delta, so the balance
+    checks are skipped, but WHIT-317 still runs. Each check is best-effort and isolated."""
+    notify_repo = NotifyRepository()
+    # WHIT-317: precise repayment-miss detector. Reads only DynamoDB (transaction store + push
+    # markers), so a getBalance outage must not blind this backstop.
     try:
-        check_ingested_repayment_without_push(
-            NotifyRepository(), TransactionRepository(), int(time.time())
-        )
+        check_ingested_repayment_without_push(notify_repo, TransactionRepository(), int(time.time()))
     except Exception as e:
         logger.error("precise repayment-miss check failed: %s", e)
 
-    source = HOMELOAN_BALANCE_SOURCE
+    delta = next((d for d in deltas if d["account_id"] == HOMELOAN_ACCOUNT_ID), None)
+    if delta is None:
+        return
+
+    # WHIT-301: celebrate crossing a payoff milestone.
     try:
-        payload = fetch_balance(source["bid"], source["aid"], api_key)
-        normalised = normalise_balance(payload)
-        repo = HomeLoanBalanceRepository()
-        try:
-            previous = repo.get_balance(HOMELOAN_ACCOUNT_ID)  # read BEFORE the upsert
-            old_balance = previous["balance"] if previous else None
-        except Exception as e:
-            # Milestone detection is best-effort — a read hiccup must never skip the store.
-            logger.warning("pre-upsert balance read failed, skipping milestone check: %s", e)
-            old_balance = None
-        repo.upsert_balance(
-            HOMELOAN_ACCOUNT_ID,
-            normalised["balance"],
-            normalised["as_of"],
-            normalised["currency"],
-        )
-    except Exception as e:
-        logger.error("home-loan balance poll failed, keeping last-good: %s", e)
-        return False
-
-    logger.info(
-        "home-loan balance stored: %s %s (as of %s)",
-        normalised["currency"],
-        normalised["balance"],
-        normalised["as_of"],
-    )
-
-    notify_repo = NotifyRepository()
-
-    # WHIT-301: celebrate crossing a payoff milestone. Best-effort — a push failure must
-    # never flip the stored-balance result, so it's isolated in its own try/except.
-    try:
-        notify_milestone_crossing(
-            old_balance,
-            normalised["balance"],
+        notify_homeloan_milestone(
+            delta["old"],
+            delta["new"],
             loanfacts_repo=LoanFactsRepository(),
             device_repo=DeviceRepository(),
             notify_repo=notify_repo,
@@ -241,14 +197,11 @@ def _poll_homeloan(api_key: str) -> bool:
     except Exception as e:
         logger.error("milestone push failed (balance still stored): %s", e)
 
-    # WHIT-316: alarm backstop — a repayment clearly landed (balance dropped) but no push
-    # fired. Best-effort, isolated so a check failure can't flip the stored-balance result.
+    # WHIT-316: alarm backstop — a repayment clearly landed (owed amount dropped) but no push fired.
     try:
-        check_repayment_landed_but_no_push(old_balance, normalised["balance"], notify_repo)
+        check_repayment_landed_but_no_push(owed(delta["old"]), abs(delta["new"]), notify_repo)
     except Exception as e:
         logger.error("repayment-miss check failed (balance still stored): %s", e)
-
-    return True
 
 
 def _poll_account_balances(api_key: str):
@@ -443,16 +396,14 @@ def check_feed_stalls(deltas: list, now: int) -> None:
 def lambda_handler(event, context):
     """Poll the live balances and upsert them.
 
-    Two independent, best-effort concerns share one daily poll:
-      - the mortgage's ABS outstanding principal (the Goal screen's `/homeloan` row), and
-      - a SIGNED balance per account (the Accounts tab's `/accounts/balances` rows).
-    Each is isolated — a failure (transport, non-200, `success:false`, missing/malformed
-    fields) is logged and swallowed, leaves the last-good row untouched (a bad tick can't
-    zero it), and never blocks the other. A genuine 0 reading is a success and IS written.
-    The API key is fetched once and shared by both — and that fetch is itself
-    best-effort: an SSM failure (throttle, missing param, IAM) is logged and swallowed so
-    the invocation never errors out and every last-good row survives, rather than a
-    credential blip taking down the whole poll.
+    One SIGNED balance per account (the Accounts tab's `/accounts/balances` rows; the Goal
+    screen's `/homeloan` reads the home loan's). Each account is isolated — a failure
+    (transport, non-200, `success:false`, missing/malformed fields) is logged and swallowed,
+    leaves the last-good row untouched (a bad tick can't zero it), and never blocks the
+    others. A genuine 0 reading is a success and IS written. The home-loan, goal-checkpoint
+    and feed-stall checks then run off the same readings, each best-effort.
+    The API key fetch is itself best-effort: an SSM failure (throttle, missing param, IAM) is
+    logged and swallowed so the invocation never errors out and every last-good row survives.
     Only a fully clean run logs BALANCE_POLL_ALL_STORED — the heartbeat the WHIT-645
     balance-poll alarm watches; keep it in lockstep with terraform/monitoring.tf.
     """
@@ -460,9 +411,9 @@ def lambda_handler(event, context):
         api_key = get_api_key()
     except Exception as e:
         logger.error("balance poll skipped, could not fetch the BankSync API key: %s", e)
-        return {"homeloan_stored": False, "accounts_stored": 0}
-    homeloan_stored = _poll_homeloan(api_key)
+        return {"accounts_stored": 0}
     accounts_stored, deltas = _poll_account_balances(api_key)
+    _check_homeloan(deltas)
     # WHIT-479: celebrate a goal-checkpoint crossing. Best-effort — a push failure must never flip
     # the stored-balance result, so it's isolated in its own try/except.
     try:
@@ -474,6 +425,6 @@ def lambda_handler(event, context):
         check_feed_stalls(deltas, int(time.time()))
     except Exception as e:
         logger.error("feed-stall check failed (balances still stored): %s", e)
-    if homeloan_stored and accounts_stored == len(BALANCE_SOURCES):
-        logger.info("BALANCE_POLL_ALL_STORED home loan + %s account balances refreshed", accounts_stored)
-    return {"homeloan_stored": homeloan_stored, "accounts_stored": accounts_stored}
+    if accounts_stored == len(BALANCE_SOURCES):
+        logger.info("BALANCE_POLL_ALL_STORED %s account balances refreshed", accounts_stored)
+    return {"accounts_stored": accounts_stored}

@@ -1,8 +1,7 @@
 """Adversarial GAP tests for the poller's milestone hook (lambda_balance_poller/handler.py).
 
-test_handler.py already proves the detector receives (old, new) after a store, gets None on
-the first poll, and that a detector exception is swallowed with the balance still stored. These
-gaps pin the wiring around that hook:
+test_handler.py already proves the detector receives the owed (abs) old/new, gets None on the
+first poll, and that a detector exception is swallowed. These gaps pin the wiring around that hook:
 
   * [WHIT-301] the detector runs ONLY after a SUCCESSFUL upsert — a raising upsert means the
     balance write failed, so no crossing may be celebrated;
@@ -13,114 +12,52 @@ gaps pin the wiring around that hook:
 """
 
 import inspect
+import sys
 from decimal import Decimal
 
+from _balance_fakes import balance_repo, homeloan_row, upserted
+from _http_fakes import FakeResponse
 
-class _FakeRepoRaisesOnUpsert:
-    """HomeLoanBalanceRepository stand-in whose upsert blows up (DynamoDB down)."""
-
-    def __init__(self, prior):
-        self.prior = prior
-        self.calls = []
-
-    def get_balance(self, account_id):
-        return self.prior
-
-    def upsert_balance(self, *a):
-        self.calls.append(a)
-        raise RuntimeError("dynamo down")
+_HOMELOAN_DELTA = {"account_id": "up-homeloan", "old": Decimal("-600000"), "new": Decimal("-596642.43")}
 
 
-class _FakeRepo:
-    def __init__(self, prior=None):
-        self.calls = []
-        self.prior = prior
-
-    def get_balance(self, account_id):
-        return self.prior
-
-    def upsert_balance(self, account_id, balance, as_of, currency):
-        self.calls.append((account_id, balance, as_of, currency))
-
-
-_OK_PAYLOAD = {
-    "success": True,
-    "data": {
-        "date": "2026-07-04T00:24:37.614Z", "accountName": "Home loan",
-        "accountType": "mortgage", "accountId": "T6d8ppsYssBDFCwl1qEb0w",
-        "bankId": "fiskil_3", "amount": -596642.43, "currency": "AUD",
-    },
-}
+def _capture_detector(monkeypatch):
+    """Swap the real detector (behind the home-loan helper) for a recorder of each call."""
+    calls = []
+    monkeypatch.setattr(sys.modules["milestones"], "notify_milestone_crossing",
+                        lambda *args, **kwargs: calls.append((args, kwargs)) or 0)
+    return calls
 
 
 # WHIT-301 — [A25] fail-on-revert: detector is NOT called when the upsert raises (no store -> no push).
 
 def test_milestone_detector_not_called_when_upsert_fails(handler, monkeypatch):
-    repo = _FakeRepoRaisesOnUpsert(prior={"balance": Decimal("600000"), "as_of": "x", "currency": "AUD"})
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: repo)
-    monkeypatch.setattr(handler, "fetch_balance", lambda *a, **k: {
+    repo = balance_repo(rows=[homeloan_row("-600000", as_of="2026-07-03T00:00:00Z")], upsert_fails=True)
+    monkeypatch.setattr(handler, "get_api_key", lambda: "k")
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
+    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: FakeResponse({
         "success": True,
         "data": {"amount": -544000, "date": "2026-07-04T00:00:00Z", "accountType": "mortgage"},
-    })
-    called = []
-    monkeypatch.setattr(handler, "notify_milestone_crossing", lambda *a, **k: called.append((a, k)))
+    }))
+    called = _capture_detector(monkeypatch)
 
-    assert handler._poll_homeloan("key") is False   # store failed -> best-effort False
-    assert repo.calls, "upsert was attempted"
+    handler.lambda_handler({}, None)
+    assert "up-homeloan" in upserted(repo), "upsert was attempted"
     assert called == [], "the crossing detector must not run when the balance was never stored"
 
 
-# WHIT-384 — the poller threads a real MilestoneRepository into the detector (custom-plan wiring).
-
-def test_poll_threads_a_milestone_repository_into_the_detector(handler, monkeypatch):
-    fake = _FakeRepo(prior={"balance": Decimal("600000"), "as_of": "x", "currency": "AUD"})
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: fake)
-    monkeypatch.setattr(handler, "fetch_balance", lambda *a, **k: _OK_PAYLOAD)
-
-    sentinel = object()
-    monkeypatch.setattr(handler, "MilestoneRepository", lambda: sentinel)
-
-    seen = {}
-    monkeypatch.setattr(handler, "notify_milestone_crossing",
-                        lambda old, new, **kw: seen.update(kw) or 1)
-
-    assert handler._poll_homeloan("key") is True
-    # the poller constructed a MilestoneRepository and passed it as the milestone_repo kwarg —
-    # so the detector reads the saved plan, not just the built-in default.
-    assert seen.get("milestone_repo") is sentinel
-
-
 def test_poller_call_binds_to_the_real_detector_signature(handler, monkeypatch):
-    # [WHIT-764] The other poller tests swap the detector for a catch-all lambda, so a call missing a
-    # required keyword (or passing one the detector doesn't take) would still pass them. Bind the
-    # captured call against the REAL signature, and confirm the repo is the poller's own class.
-    real_signature = inspect.signature(handler.notify_milestone_crossing)
-    fake = _FakeRepo(prior={"balance": Decimal("600000"), "as_of": "x", "currency": "AUD"})
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: fake)
-    monkeypatch.setattr(handler, "fetch_balance", lambda *a, **k: _OK_PAYLOAD)
-    calls = []
-    monkeypatch.setattr(handler, "notify_milestone_crossing",
-                        lambda *args, **kwargs: calls.append((args, kwargs)) or 0)
+    # [WHIT-764] Bind the captured call against the REAL signature, so a call missing a required
+    # keyword (or passing one the detector doesn't take) fails here. [WHIT-384] The poller threads
+    # its own MilestoneRepository through, so the detector reads the saved plan. [WHIT-369] It pins
+    # no scope, so the plan and fired-state route to the single shared owner.
+    real_signature = inspect.signature(sys.modules["milestones"].notify_milestone_crossing)
+    calls = _capture_detector(monkeypatch)
 
-    assert handler._poll_homeloan("key") is True
+    handler._check_homeloan([_HOMELOAN_DELTA])
+
     [(args, kwargs)] = calls
     bound = real_signature.bind(*args, **kwargs)
     assert bound.arguments["old_balance"] == Decimal("600000")
     assert isinstance(bound.arguments["milestone_repo"], handler.MilestoneRepository)
-
-
-# WHIT-369 — the poller stays single-tenant: it pins no scope (None default → shared owner).
-
-def test_poll_leaves_scope_at_the_single_tenant_default(handler, monkeypatch):
-    # A future edit that pins the WRONG scope (or splits plan-owner from fired-owner) trips here.
-    fake = _FakeRepo(prior={"balance": Decimal("600000"), "as_of": "x", "currency": "AUD"})
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: fake)
-    monkeypatch.setattr(handler, "fetch_balance", lambda *a, **k: _OK_PAYLOAD)
-
-    seen = {}
-    monkeypatch.setattr(handler, "notify_milestone_crossing",
-                        lambda old, new, **kw: seen.update(kw) or 1)
-
-    assert handler._poll_homeloan("key") is True
-    assert seen.get("scope") is None                 # not pinned → shared default
-    assert "milestone_repo" in seen                  # still threads the saved-plan repo
+    assert "scope" not in bound.arguments

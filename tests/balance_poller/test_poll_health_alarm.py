@@ -1,7 +1,7 @@
 """WHIT-645: Jas is emailed when account balances stop refreshing, whatever the cause.
 
 The poller swallows every failure, so the alarm watches a heartbeat instead: only a fully
-clean run (home loan + every BALANCE_SOURCES account stored) logs BALANCE_POLL_ALL_STORED.
+clean run (every BALANCE_SOURCES account stored, home loan included) logs BALANCE_POLL_ALL_STORED.
 A metric filter counts that line; the alarm pages when 2 daily runs in a row have none
 (silence included) and emails again on recovery.
 """
@@ -11,14 +11,6 @@ import re
 
 from _http_fakes import FakeResponse
 from _terraform import MONITORING_TF, TERRAFORM_DIR, filter_pattern, tf_attr, tf_block
-
-
-class _FakeHomeLoanRepo:
-    def get_balance(self, account_id):
-        return None
-
-    def upsert_balance(self, account_id, balance, as_of, currency):
-        pass
 
 
 class _FakeAccountRepo:
@@ -36,7 +28,7 @@ def _payload(aid, amount, account_type, date="2026-09-28T00:00:00.000Z"):
     }}
 
 
-# Every BALANCE_SOURCES aid -> a good getBalance payload (the mortgage aid also feeds the home loan).
+# Every BALANCE_SOURCES aid -> a good getBalance payload.
 _PAYLOADS_BY_AID = {
     "3zVQJ8Btz_IRmqp78VrQnQ": _payload("3zVQJ8Btz_IRmqp78VrQnQ", 96270.59, "checking"),
     "T6d8ppsYssBDFCwl1qEb0w": _payload("T6d8ppsYssBDFCwl1qEb0w", -596642.43, "mortgage"),
@@ -49,7 +41,6 @@ _PAYLOADS_BY_AID = {
 
 def _run_poll(handler, monkeypatch, caplog, failing_aid=None):
     monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: _FakeHomeLoanRepo())
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: _FakeAccountRepo())
 
     # The account-balance read for `failing_aid` fails; every other aid returns its payload.
@@ -72,7 +63,7 @@ def test_only_a_fully_clean_balance_poll_logs_the_heartbeat_the_alarm_watches(ha
     assert pattern == "BALANCE_POLL_ALL_STORED", f"terraform pattern changed: {pattern!r}"
 
     result = _run_poll(handler, monkeypatch, caplog)
-    assert result == {"homeloan_stored": True, "accounts_stored": len(handler.BALANCE_SOURCES)}
+    assert result == {"accounts_stored": len(handler.BALANCE_SOURCES)}
     assert any(pattern in r.getMessage() for r in caplog.records), "clean run logged no heartbeat"
 
     # One account's read fails (e.g. a 404 after its ID changed) → balances are stale → no heartbeat.

@@ -180,14 +180,6 @@ PENDING_MIRROR_MAX_REMOVALS = 10
 # HTTP timeout, in seconds, for one bank-list page request.
 PENDING_MIRROR_TIMEOUT_SECONDS = 10
 
-# BankSync (bid, aid) coordinates for the home-loan account, used by the balance
-# poller to call getBalance (`GET /v1/banks/{bid}/accounts/{aid}/balances`) and
-# read the live mortgage balance (WHIT-8). `aid` is the same value that keys
-# ACCOUNT_ID_MAP -> HOMELOAN_ACCOUNT_ID; `bid` is the Fiskil bank id, which lives
-# nowhere else in the config. If Up is ever re-linked and either id rotates the
-# poller 404s, logs, and leaves the last-good balance untouched (never zeroes it).
-HOMELOAN_BALANCE_SOURCE = {"bid": "fiskil_3", "aid": "T6d8ppsYssBDFCwl1qEb0w"}
-
 # HTTP timeout, in seconds, for a single balance-poller request to BankSync.
 HOMELOAN_BALANCE_TIMEOUT_SECONDS = 30
 
@@ -195,9 +187,9 @@ HOMELOAN_BALANCE_TIMEOUT_SECONDS = 30
 # card per account with its current balance (WHIT-212). Each `aid` MUST be a key in
 # ACCOUNT_ID_MAP so the signed balance is stored under the SAME internal id the account's
 # transactions carry (that's how the app joins a balance to a card); `bid` is its Fiskil
-# bank id. The home loan appears here too — polled for its SIGNED per-account balance —
-# and, separately, via HOMELOAN_BALANCE_SOURCE above for the Goal screen's ABS
-# outstanding-principal row. Also enumerated by the API's live balance refresh.
+# bank id. The home loan is polled only here; the Goal screen's `/homeloan` reads abs(amount)
+# from its row. If Up is ever re-linked and an id rotates, that account's poll fails, logs, and
+# leaves its last-good balance untouched. Also enumerated by the API's live balance refresh.
 BALANCE_SOURCES = [
     {"bid": "fiskil_3", "aid": "3zVQJ8Btz_IRmqp78VrQnQ"},                       # up-spending
     {"bid": "fiskil_3", "aid": "T6d8ppsYssBDFCwl1qEb0w"},                       # up-homeloan
