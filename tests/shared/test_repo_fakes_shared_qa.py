@@ -129,15 +129,18 @@ def _plain_copies(relative, served):
 
 
 # [A7]
-def test_no_plain_category_or_pay_cycle_copy_is_left_in_the_budget_read_suites():
-    lambda_api = [relative for relative in _COPIES if relative.startswith("lambda_api/")]
-    lambda_api.append("lambda_api/test_budget_excluded_rollups.py")
-    others = [relative for relative in _COPIES if not relative.startswith("lambda_api/")]
+_ALSO_MIGRATED = (
+    "lambda_api/test_budget_excluded_rollups.py",
+    "lambda/test_reconcile.py",
+    "shared/test_pending_carry_qa.py",
+)
+
+
+def test_no_plain_category_or_pay_cycle_copy_is_left_in_the_migrated_suites():
     copies = []
-    for relative in lambda_api:
+    for relative in [*_COPIES, *_ALSO_MIGRATED]:
         copies += _plain_copies(relative, ({"list_categories"}, {"get_paycycle"}))
-    for relative in others:
-        copies += _plain_copies(relative, ({"list_categories"},))
     assert not copies, (
         "use _FakeCategoryRepo(...) / partial(_FakePayCycleRepo, length=..., last_pay_date=...) "
-        "from _budget_endpoint_fakes instead:\n" + "\n".join(copies))
+        "from _budget_endpoint_fakes, or FakeCategoryRepo(ids) from _feed_fakes, instead:\n"
+        + "\n".join(copies))
