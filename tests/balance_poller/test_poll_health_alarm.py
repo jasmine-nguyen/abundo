@@ -63,7 +63,7 @@ def test_only_a_fully_clean_balance_poll_logs_the_heartbeat_the_alarm_watches(ha
     assert pattern == "BALANCE_POLL_ALL_STORED", f"terraform pattern changed: {pattern!r}"
 
     result = _run_poll(handler, monkeypatch, caplog)
-    assert result == {"homeloan_stored": True, "accounts_stored": len(handler.BALANCE_SOURCES)}
+    assert result == {"accounts_stored": len(handler.BALANCE_SOURCES)}
     assert any(pattern in r.getMessage() for r in caplog.records), "clean run logged no heartbeat"
 
     # One account's read fails (e.g. a 404 after its ID changed) → balances are stale → no heartbeat.

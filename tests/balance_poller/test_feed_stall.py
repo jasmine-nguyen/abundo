@@ -286,7 +286,7 @@ def test_lambda_handler_swallows_a_feed_stall_failure(handler, monkeypatch):
 
     monkeypatch.setattr(handler, "check_feed_stalls", boom)
 
-    assert handler.lambda_handler({}, None) == {"homeloan_stored": True, "accounts_stored": 1}
+    assert handler.lambda_handler({}, None) == {"accounts_stored": 1}
 
 
 # --- Threshold, look-back and lifecycle edges ----------------------------------------------

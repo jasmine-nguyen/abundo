@@ -41,7 +41,7 @@ from constants import (
     REPAYMENT_DROP_THRESHOLD,
     REPAYMENT_MISS_LOOKBACK_DAYS,
 )
-from milestones import notify_homeloan_milestone
+from milestones import notify_homeloan_milestone, owed
 from repayment_rules import is_repayment_credit
 from goal_checkpoints import notify_goal_checkpoint_crossing
 from repository import (
@@ -198,11 +198,8 @@ def _check_homeloan(deltas: list) -> None:
         logger.error("milestone push failed (balance still stored): %s", e)
 
     # WHIT-316: alarm backstop — a repayment clearly landed (owed amount dropped) but no push fired.
-    old_balance = None
-    if delta["old"] is not None:
-        old_balance = abs(delta["old"])
     try:
-        check_repayment_landed_but_no_push(old_balance, abs(delta["new"]), notify_repo)
+        check_repayment_landed_but_no_push(owed(delta["old"]), abs(delta["new"]), notify_repo)
     except Exception as e:
         logger.error("repayment-miss check failed (balance still stored): %s", e)
 
@@ -414,13 +411,9 @@ def lambda_handler(event, context):
         api_key = get_api_key()
     except Exception as e:
         logger.error("balance poll skipped, could not fetch the BankSync API key: %s", e)
-        return {"homeloan_stored": False, "accounts_stored": 0}
+        return {"accounts_stored": 0}
     accounts_stored, deltas = _poll_account_balances(api_key)
-    homeloan_stored = any(d["account_id"] == HOMELOAN_ACCOUNT_ID for d in deltas)
-    try:
-        _check_homeloan(deltas)
-    except Exception as e:
-        logger.error("home-loan checks failed (balances still stored): %s", e)
+    _check_homeloan(deltas)
     # WHIT-479: celebrate a goal-checkpoint crossing. Best-effort — a push failure must never flip
     # the stored-balance result, so it's isolated in its own try/except.
     try:
@@ -434,4 +427,4 @@ def lambda_handler(event, context):
         logger.error("feed-stall check failed (balances still stored): %s", e)
     if accounts_stored == len(BALANCE_SOURCES):
         logger.info("BALANCE_POLL_ALL_STORED %s account balances refreshed", accounts_stored)
-    return {"homeloan_stored": homeloan_stored, "accounts_stored": accounts_stored}
+    return {"accounts_stored": accounts_stored}

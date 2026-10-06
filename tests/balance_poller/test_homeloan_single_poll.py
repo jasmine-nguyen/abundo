@@ -103,7 +103,7 @@ def test_poll_fetches_the_home_loan_once_and_runs_its_checks_on_the_owed_amount(
     assert "3357.57" in outcome["drop_alarms"][0]
     # WHIT-317 still reads the home loan's transactions (the feed-stall check reads the others).
     assert [a for a in outcome["precise_check_reads"] if a == "up-homeloan"] == ["up-homeloan"]
-    assert outcome["result"] == {"homeloan_stored": True, "accounts_stored": len(handler.BALANCE_SOURCES)}
+    assert outcome["result"] == {"accounts_stored": len(handler.BALANCE_SOURCES)}
     assert outcome["heartbeat"]
 
 
@@ -115,5 +115,5 @@ def test_a_failed_home_loan_fetch_skips_its_balance_checks_but_not_the_precise_m
     assert outcome["pushes"] == []
     assert outcome["drop_alarms"] == []
     assert [a for a in outcome["precise_check_reads"] if a == "up-homeloan"] == ["up-homeloan"]
-    assert outcome["result"] == {"homeloan_stored": False, "accounts_stored": len(handler.BALANCE_SOURCES) - 1}
+    assert outcome["result"] == {"accounts_stored": len(handler.BALANCE_SOURCES) - 1}
     assert not outcome["heartbeat"]

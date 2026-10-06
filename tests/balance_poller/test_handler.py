@@ -200,7 +200,7 @@ def test_lambda_handler_stores_homeloan_and_every_account_on_success(handler, mo
 
     result = handler.lambda_handler({}, None)
 
-    assert result == {"homeloan_stored": True, "accounts_stored": len(handler.BALANCE_SOURCES)}
+    assert result == {"accounts_stored": len(handler.BALANCE_SOURCES)}
     # The count alone can't prove every source stored — a swallowed per-account failure
     # lowers it silently. Assert the poller logged no skip at all.
     assert "account balance poll failed" not in caplog.text
@@ -226,7 +226,7 @@ def test_lambda_handler_swallows_http_error_and_keeps_last_good(handler, monkeyp
 
     # Never raises, never writes — every reader keeps serving its last-good row.
     result = handler.lambda_handler({}, None)
-    assert result == {"homeloan_stored": False, "accounts_stored": 0}
+    assert result == {"accounts_stored": 0}
     assert accounts.calls == []
 
 
@@ -238,7 +238,7 @@ def test_lambda_handler_swallows_failure_payload_without_writing(handler, monkey
     monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: FakeResponse(fail))
 
     result = handler.lambda_handler({}, None)
-    assert result == {"homeloan_stored": False, "accounts_stored": 0}
+    assert result == {"accounts_stored": 0}
     assert accounts.calls == []
 
 
@@ -255,7 +255,7 @@ def test_lambda_handler_swallows_an_api_key_fetch_failure(handler, monkeypatch):
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
 
     result = handler.lambda_handler({}, None)
-    assert result == {"homeloan_stored": False, "accounts_stored": 0}
+    assert result == {"accounts_stored": 0}
     assert accounts.calls == []
 
 
@@ -433,7 +433,7 @@ def test_lambda_handler_passes_account_deltas_to_the_goal_checkpoint_check(handl
     monkeypatch.setattr(handler, "_check_goal_checkpoints", lambda d: seen.update(deltas=d))
 
     result = handler.lambda_handler({}, None)
-    assert result == {"homeloan_stored": True, "accounts_stored": 2}
+    assert result == {"accounts_stored": 2}
     assert seen["deltas"] == deltas
 
 
@@ -446,7 +446,7 @@ def test_lambda_handler_goal_checkpoint_failure_is_swallowed(handler, monkeypatc
     monkeypatch.setattr(handler, "_check_goal_checkpoints", boom)
 
     # A push failure must not flip the stored-balance result.
-    assert handler.lambda_handler({}, None) == {"homeloan_stored": True, "accounts_stored": 2}
+    assert handler.lambda_handler({}, None) == {"accounts_stored": 2}
 
 
 # --- WHIT-482 (QA additions): batched prior-read gaps -------------------------

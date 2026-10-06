@@ -404,17 +404,21 @@ def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, devic
     return 1
 
 
+def owed(amount):
+    """The positive amount still owed from a SIGNED stored loan amount; None stays None."""
+    if amount is None:
+        return None
+    return abs(amount)
+
+
 def notify_homeloan_milestone(old_amount, new_amount, *, loanfacts_repo, device_repo, notify_repo, milestone_repo) -> int:
     """notify_milestone_crossing for the home loan's SIGNED stored amounts (WHIT-792).
 
     The ACCTBAL row keeps the mortgage negative; milestones measure the positive amount still
     owed. `old_amount` is None on the first-ever reading (the seed guard). Shared by the daily
     poller and the pull-to-refresh, so whichever sees the change first celebrates it."""
-    old_balance = None
-    if old_amount is not None:
-        old_balance = abs(old_amount)
     return notify_milestone_crossing(
-        old_balance, abs(new_amount),
+        owed(old_amount), abs(new_amount),
         loanfacts_repo=loanfacts_repo, device_repo=device_repo,
         notify_repo=notify_repo, milestone_repo=milestone_repo,
     )

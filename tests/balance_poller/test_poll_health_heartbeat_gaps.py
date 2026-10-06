@@ -19,5 +19,5 @@ def test_a_failed_api_key_fetch_logs_no_heartbeat(handler, monkeypatch, caplog):
 
     result = handler.lambda_handler({}, None)
 
-    assert result == {"homeloan_stored": False, "accounts_stored": 0}
+    assert result == {"accounts_stored": 0}
     assert not any(_HEARTBEAT in r.getMessage() for r in caplog.records)

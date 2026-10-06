@@ -41,7 +41,7 @@ def test_milestone_detector_not_called_when_upsert_fails(handler, monkeypatch):
     }))
     called = _capture_detector(monkeypatch)
 
-    assert handler.lambda_handler({}, None)["homeloan_stored"] is False
+    handler.lambda_handler({}, None)
     assert "up-homeloan" in upserted(repo), "upsert was attempted"
     assert called == [], "the crossing detector must not run when the balance was never stored"
 

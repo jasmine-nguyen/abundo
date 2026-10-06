@@ -3022,9 +3022,7 @@ def refresh_account_balances(repo: AccountBalanceRepository) -> dict:
 
     new_homeloan = next(
         (balance["amount"] for aid, balance in fresh if ACCOUNT_ID_MAP[aid] == HOMELOAN_ACCOUNT_ID), None)
-    old_homeloan = None
-    if new_homeloan is not None:
-        old_homeloan = _stored_homeloan_amount(repo)
+    old_homeloan = _stored_homeloan_amount(repo)
 
     for aid, balance in fresh:
         repo.upsert_balance(

@@ -75,7 +75,7 @@ def test_heartbeat_still_logged_when_goal_checkpoint_and_feed_stall_checks_fail(
 
     result = handler.lambda_handler({}, None)
 
-    assert result == {"homeloan_stored": True, "accounts_stored": len(handler.BALANCE_SOURCES)}
+    assert result == {"accounts_stored": len(handler.BALANCE_SOURCES)}
     assert len(_heartbeats(caplog)) == 1
 
 

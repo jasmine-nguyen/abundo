@@ -71,7 +71,7 @@ def test_lambda_handler_stores_a_zero_balance_on_a_paid_off_loan(handler, monkey
     # Contrast with the "never writes a zero" failure comment: a REAL 0 reading is
     # written; only failure paths avoid zeroing.
     repo = balance_repo()
-    assert _run(handler, monkeypatch, repo, _mortgage(0))["homeloan_stored"] is True
+    _run(handler, monkeypatch, repo, _mortgage(0))
     assert upserted(repo)["up-homeloan"] == Decimal("0")
 
 
@@ -79,7 +79,7 @@ def test_lambda_handler_swallows_a_repository_upsert_failure(handler, monkeypatc
     # The DynamoDB write itself failing must not raise out of the poller.
     repo = balance_repo(upsert_fails=True)
     result = _run(handler, monkeypatch, repo, _mortgage(-400000))
-    assert result == {"homeloan_stored": False, "accounts_stored": 0}
+    assert result == {"accounts_stored": 0}
     assert upserted(repo)["up-homeloan"] == Decimal("-400000")  # attempted, then swallowed
 
 
@@ -87,5 +87,5 @@ def test_lambda_handler_swallows_a_garbage_amount_without_writing(handler, monke
     # A malformed amount (a BalanceError) is isolated by the failure handling —
     # no upsert, no raise, last-good row untouched.
     repo = balance_repo()
-    assert _run(handler, monkeypatch, repo, _mortgage("not-a-number"))["homeloan_stored"] is False
+    _run(handler, monkeypatch, repo, _mortgage("not-a-number"))
     assert upserted(repo) == {}
