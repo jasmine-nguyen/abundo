@@ -18,7 +18,7 @@ from constants import (
     PENDING_STATUS,
 )
 from models import Transaction
-from repository_base import RepositoryBase, handle_database_error, logger
+from repository_base import RepositoryBase, db_errors, handle_database_error, logger
 
 # Sentinel for update_transaction_fields: distinguishes "field not in this request"
 # (leave it untouched) from "clear this field" (None/""/[]). A plain None can't do
@@ -113,13 +113,11 @@ class TransactionRepository(RepositoryBase):
     def _batch_put(self, items: list[dict], action: str) -> None:
         if not items:
             return
-        try:
+        with db_errors(action):
             table = self._get_table()
             with table.batch_writer() as batch:
                 for item in items:
                     batch.put_item(Item=item)
-        except ClientError as e:
-            handle_database_error(e, action)
 
     def get_transactions_by_date_range(
         self,
@@ -150,11 +148,9 @@ class TransactionRepository(RepositoryBase):
         if cursor:
             query_kwargs["ExclusiveStartKey"] = cursor
 
-        try:
+        with db_errors("read"):
             response = self._get_table().query(**query_kwargs)
             return response.get("Items", []), response.get("LastEvaluatedKey")
-        except ClientError as e:
-            handle_database_error(e, "read")
 
     def get_transaction_keys_by_id(
         self, transaction_id: str
@@ -163,7 +159,7 @@ class TransactionRepository(RepositoryBase):
         Queries the GSI to find the primary keys (pk and sk) for a given transaction_id.
         Returns a dict with {"pk": "...", "sk": "..."} if found, or None.
         """
-        try:
+        with db_errors("index query"):
             # Query the GSI instead of a table Scan
             response = self._get_table().query(
                 IndexName="transaction-id-index",
@@ -183,9 +179,6 @@ class TransactionRepository(RepositoryBase):
 
             first_match = items[0]
             return {"pk": first_match["pk"], "sk": first_match["sk"]}
-
-        except ClientError as e:
-            handle_database_error(e, "index query")
 
     def delete_transaction(self, pk: str, sk: str) -> bool:
         """Deletes a transaction the user removed, leaving a "deleted by you" marker (WHIT-654).
@@ -262,10 +255,8 @@ class TransactionRepository(RepositoryBase):
     def is_deleted(self, account_id: str, transaction_id: str) -> bool:
         """True while the user's "deleted by you" marker for this transaction hasn't expired."""
         key = {"pk": _build_deleted_pk(_build_pk(account_id)), "sk": _build_sk(transaction_id)}
-        try:
+        with db_errors("read"):
             return "Item" in self._get_table().get_item(Key=key)
-        except ClientError as e:
-            handle_database_error(e, "read")
 
     def update_transaction_category(self, pk: str, sk: str, category: str) -> bool:
         """Sets a transaction's category, leaving all other attributes intact.
@@ -357,12 +348,10 @@ class TransactionRepository(RepositoryBase):
             # consistent because the scan reads an index that cannot be — reading stale here would
             # reintroduce the very race this method exists to close.
 
-        try:
+        with db_errors("read"):
             item = self._get_table().get_item(
                 Key={"pk": pk, "sk": sk}, ConsistentRead=True
             ).get("Item")
-        except ClientError as e:
-            handle_database_error(e, "read")
         if item is None:
             return "gone", None
         return "changed", item.get("category")

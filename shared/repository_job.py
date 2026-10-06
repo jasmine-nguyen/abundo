@@ -14,10 +14,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from botocore.exceptions import ClientError
-
 from constants import JOB_TTL_SECONDS
-from repository_base import RepositoryBase, handle_database_error
+from repository_base import RepositoryBase, db_errors
 
 logger = logging.getLogger(__name__)
 
@@ -61,18 +59,14 @@ class JobRepository(RepositoryBase):
             # numeric attribute, so an isoformat here would leave the row forever (WHIT-54 pattern).
             "expires_at": int(datetime.now(timezone.utc).timestamp()) + JOB_TTL_SECONDS,
         }
-        try:
+        with db_errors("create job"):
             self._get_table().put_item(Item=item)
-        except ClientError as e:
-            handle_database_error(e, "create job")
         return item
 
     def get_job(self, job_id: str) -> Optional[dict]:
         """The job with this id, or None if there is none (an unknown/expired id)."""
-        try:
+        with db_errors("get job"):
             response = self._get_table().get_item(Key={"pk": _PK, "sk": _sk(job_id)})
-        except ClientError as e:
-            handle_database_error(e, "get job")
         return response.get("Item")
 
     def update_progress(self, job_id: str, counts: dict) -> None:
@@ -112,12 +106,10 @@ class JobRepository(RepositoryBase):
         names = {f"#n{i}": name for i, name in enumerate(fields)}
         values = {f":v{i}": value for i, value in enumerate(fields.values())}
         assignments = [f"#n{i} = :v{i}" for i in range(len(fields))]
-        try:
+        with db_errors("update job"):
             self._get_table().update_item(
                 Key={"pk": _PK, "sk": _sk(job_id)},
                 UpdateExpression="SET " + ", ".join(assignments),
                 ExpressionAttributeNames=names,
                 ExpressionAttributeValues=values,
             )
-        except ClientError as e:
-            handle_database_error(e, "update job")

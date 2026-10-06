@@ -12,9 +12,7 @@ a regenerate skip the paid call when nothing has changed since the cached run.
 
 from typing import Optional
 
-from botocore.exceptions import ClientError
-
-from repository_base import RepositoryBase, handle_database_error
+from repository_base import RepositoryBase, db_errors
 
 
 class InsightRepository(RepositoryBase):
@@ -28,12 +26,10 @@ class InsightRepository(RepositoryBase):
         Surfaces only the payload fields (pk/sk stay internal): summary,
         suggestions, generated_at, input_hash.
         """
-        try:
+        with db_errors("read insight"):
             item = self._get_table().get_item(
                 Key={"pk": "INSIGHT", "sk": cycle_start}
             ).get("Item")
-        except ClientError as e:
-            handle_database_error(e, "read insight")
         if item is None:
             return None
         return {
@@ -52,7 +48,7 @@ class InsightRepository(RepositoryBase):
         input_hash: str,
     ) -> None:
         """Overwrite the cached insight for the cycle."""
-        try:
+        with db_errors("write insight"):
             self._get_table().put_item(
                 Item={
                     "pk": "INSIGHT",
@@ -63,5 +59,3 @@ class InsightRepository(RepositoryBase):
                     "input_hash": input_hash,
                 }
             )
-        except ClientError as e:
-            handle_database_error(e, "write insight")

@@ -15,8 +15,6 @@ current_scope() change; the stored list shape carries no owner field.
 
 from typing import Optional
 
-from botocore.exceptions import ClientError
-
 from milestone_rows import (
     MalformedMilestoneRow,
     is_plan_list,
@@ -25,7 +23,7 @@ from milestone_rows import (
     row_target_float,
     row_text,
 )
-from repository_base import RepositoryBase, handle_database_error, logger
+from repository_base import RepositoryBase, db_errors, logger
 
 # The single tenant every request maps to until multi-user lands.
 _MILESTONE_SCOPE_SHARED = "SHARED"
@@ -84,10 +82,8 @@ class MilestoneRepository(RepositoryBase):
         """The shared read: the raw stored milestone list (targetBalance as Decimal), or None
         when unset. One place for the get_item + error handling so the two public accessors
         below can't drift (the WHIT-88 duplicated-read-path landmine)."""
-        try:
+        with db_errors("read milestones"):
             item = self._get_table().get_item(Key=_milestones_key(scope)).get("Item")
-        except ClientError as e:
-            handle_database_error(e, "read milestones")
         # .get so a row that exists without a "milestones" attribute (a legacy or partial
         # write) reads as unset (None) rather than KeyError-500ing — both accessors below
         # already treat None as "no plan saved" (WHIT-383).
@@ -116,8 +112,6 @@ class MilestoneRepository(RepositoryBase):
         item is replaced on every save (single writer), so a plain put_item is enough.
         """
         item = {**_milestones_key(scope), "milestones": milestones}
-        try:
+        with db_errors("set milestones"):
             self._get_table().put_item(Item=item)
-        except ClientError as e:
-            handle_database_error(e, "set milestones")
         return _to_client(milestones)

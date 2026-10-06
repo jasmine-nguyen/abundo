@@ -4,7 +4,7 @@ from typing import Any, Callable, Optional
 import reconcile
 from models import Transaction
 from constants import PENDING_STATUS, POSTED_STATUS
-from repository_base import handle_database_error
+from repository_base import db_errors, handle_database_error
 from repository_transaction import (
     TransactionRepository as _SharedTransactionRepository,
     _build_pk,
@@ -20,7 +20,7 @@ class TransactionRepository(_SharedTransactionRepository):
 
     def get_transaction(self, pk: str, sk: str, *, consistent: bool = False) -> Optional[dict[str, Any]]:
         """Retrieves a single record document. Returns None if it is missing."""
-        try:
+        with db_errors("read"):
             response = self._get_table().get_item(
                 Key={"pk": pk, "sk": sk}, ConsistentRead=consistent,
             )
@@ -28,8 +28,6 @@ class TransactionRepository(_SharedTransactionRepository):
             # existing row on every pending/posted re-send, so a miss is the common
             # first-sight case, not something to log (WHIT-329).
             return response.get("Item") or None
-        except ClientError as e:
-            handle_database_error(e, "read")
 
     def get_pending_transactions_for_account(self, account_id: str) -> list[dict]:
         """Retrieves all pending transactions of an account using the account_id.
@@ -65,10 +63,8 @@ class TransactionRepository(_SharedTransactionRepository):
         """Delete a dead-letter row after it has been successfully reprocessed
         (WHIT-55). No attribute_exists guard, so a re-run deleting an already-gone row
         is a harmless no-op (mirrors delete_pending_if_present)."""
-        try:
+        with db_errors("delete failed"):
             self._get_table().delete_item(Key={"pk": "FAILED", "sk": sk})
-        except ClientError as e:
-            handle_database_error(e, "delete failed")
 
     def insert_or_reconcile(
         self, transactions: list[Transaction], *,
@@ -200,10 +196,8 @@ class TransactionRepository(_SharedTransactionRepository):
     def delete_pending_if_present(self, pk: str, sk: str) -> None:
         """Delete a stale pending row. No attribute_exists guard, so deleting an
         already-gone row is a harmless no-op (avoids a race raising a 500)."""
-        try:
+        with db_errors("delete pending"):
             self._get_table().delete_item(Key={"pk": pk, "sk": sk})
-        except ClientError as e:
-            handle_database_error(e, "delete pending")
 
     def has_event(self, envelope_id: str) -> bool:
         """Whether this event was already fully processed (its marker exists).
@@ -212,20 +206,16 @@ class TransactionRepository(_SharedTransactionRepository):
         failed delivery leaves no marker and BankSync's retry re-processes it — a
         failed write can never drop the transaction (WHIT-83, save-then-mark).
         """
-        try:
+        with db_errors("has_event"):
             result = self._get_table().get_item(
                 Key={"pk": f"EVENT#{envelope_id}", "sk": "EVENT"}
             )
             return "Item" in result
-        except ClientError as e:
-            handle_database_error(e, "has_event")
 
     def mark_event(self, envelope_id: str) -> None:
         """Record that an event has been fully processed. Called only after the
         write succeeds; a plain, idempotent put — re-marking is harmless."""
-        try:
+        with db_errors("mark_event"):
             self._get_table().put_item(
                 Item={"pk": f"EVENT#{envelope_id}", "sk": "EVENT"}
             )
-        except ClientError as e:
-            handle_database_error(e, "mark_event")

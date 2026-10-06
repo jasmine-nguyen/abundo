@@ -16,7 +16,7 @@ from typing import Any, Optional
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
-from repository_base import RepositoryBase, handle_database_error
+from repository_base import RepositoryBase, db_errors, handle_database_error
 from repository_errors import (
     RuleClashError,
     RuleNotFoundError,
@@ -48,10 +48,8 @@ class RuleRepository(RepositoryBase):
 
     def get_rule(self, rule_id: str) -> Optional[dict]:
         """The rule with this id, or None if there is none."""
-        try:
+        with db_errors("get rule"):
             response = self._get_table().get_item(Key={"pk": _PK, "sk": f"RULE#{rule_id}"})
-        except ClientError as e:
-            handle_database_error(e, "get rule")
         return response.get("Item")
 
     def create_rule(
@@ -254,10 +252,8 @@ class RuleRepository(RepositoryBase):
         # The pk is the literal "RULE" — the SAME value the IAM DeleteItem grant pins via
         # dynamodb:LeadingKeys (terraform/iam.tf). Kept a literal at the call site (not _PK, not a
         # variable) so the IAM guard test can read that the API only ever deletes rule rows.
-        try:
+        with db_errors("delete rule"):
             self._get_table().delete_item(Key={"pk": "RULE", "sk": f"RULE#{rule_id}"})
-        except ClientError as e:
-            handle_database_error(e, "delete rule")
 
     def mark_spread_seeded(self, rule_id: str) -> None:
         """Flip a spread rule's ``spread_seeded`` marker to True — called once, after the rule has
