@@ -11,7 +11,7 @@ import type { MilestoneRecord } from '../api';
 import { SAVED_MILESTONES } from './support/milestonePlan';
 import { queryClient } from '../queryClient';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
 

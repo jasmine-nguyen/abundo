@@ -16,7 +16,7 @@ import { useGoalScreenData } from '../queries';
 import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 const server = installFakeServer();
 

@@ -12,7 +12,7 @@ import type { Transaction } from '../types';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache, seedTransactionsPages, type FeedPage } from './support/transactionsCache';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { DINING, GROCERIES } from './support/categories';
 import { invalidatedKeys } from './support/queryClient';

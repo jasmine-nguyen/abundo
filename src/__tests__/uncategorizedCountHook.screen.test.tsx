@@ -14,12 +14,8 @@ import type { QueryClient } from '@tanstack/react-query';
 import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
-let mockAuthStatus = 'authed';
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: () => () => {},
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth, setAuthStatusQuietly } from './support/authMock';
 
 import { useUncategorizedCount, uncategorizedCountKey } from '../queries';
 
@@ -28,21 +24,21 @@ const COUNT_PATH = '/transactions/uncategorized/count';
 const countRequests = () => server.sent('GET', COUNT_PATH);
 
 beforeEach(() => {
-  mockAuthStatus = 'authed';
+  resetAuth();
   server.seed(COUNT_PATH, { count: 4 });
 });
 
 // [B1] Fail-on-revert: hard-wire the query `enabled: true` (drop useIsAuthed) → the walk fires while
 // anon and this fails. A 'locked' session (token read returns undefined) must be gated too.
 it('does NOT fetch before login (enabled=false while anon)', () => {
-  mockAuthStatus = 'anon';
+  setAuthStatusQuietly('anon');
   const { result } = renderHook(() => useUncategorizedCount(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
   expect(countRequests()).toHaveLength(0);
   expect(result.current).toBeUndefined(); // pre-auth → undefined, so consumers fall back to local
 });
 
 it('does NOT fetch while the session is locked (getStatus !== "authed")', () => {
-  mockAuthStatus = 'locked';
+  setAuthStatusQuietly('locked');
   const { result } = renderHook(() => useUncategorizedCount(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
   expect(countRequests()).toHaveLength(0);
   expect(result.current).toBeUndefined(); // locked → undefined, so consumers fall back to local

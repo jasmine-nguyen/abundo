@@ -5,18 +5,24 @@
 // strand the pre-auth / never-run screen on a phantom "Couldn't load"). AuthGate unmounts
 // the tabs while unauthed, so this is a defensive unit-level lock on the conjunct.
 // Fail-on-revert: dropping `isError &&` flips categoriesError to true here.
-import { it, expect, jest } from '@jest/globals';
+import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, waitFor } from '@testing-library/react-native';
 import { makeClient, wrapper } from './support/queryClient';
 
 // Unauthed → every query in the composite is disabled and never runs.
-jest.mock('../auth', () => ({ getStatus: () => 'anon', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth, setAuthStatusQuietly } from './support/authMock';
 
 import { installFakeServer } from './support/fakeServer';
 import { useInsightsScreenData } from '../queries';
 
 const server = installFakeServer();
+
+beforeEach(() => {
+  resetAuth();
+  setAuthStatusQuietly('anon');
+});
 
 it('a DISABLED categories query (unauthed, never ran) does NOT report categoriesError', async () => {
   const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });

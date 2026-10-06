@@ -9,7 +9,7 @@ import { AppProvider, useAppContext } from '../context';
 import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { SUBS } from './support/categories';
 

@@ -13,7 +13,7 @@ import { queryClient } from '../queryClient';
 
 // Pin 'authed' so a (hypothetical, reverted) auth-reload effect would fire if it still
 // existed — making this a real fail-on-revert guard, not one masked by a signed-out gate.
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 
 const server = installFakeServer();

@@ -14,12 +14,8 @@ import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
 import { installFakeServer } from './support/fakeServer';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: () => () => {},
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth } from './support/authMock';
 
 const server = installFakeServer();
 
@@ -37,7 +33,7 @@ const txn = (id: string, over: Partial<Transaction> = {}): Transaction => ({
 });
 const budgetList = (id: string) => queryClient.getQueryData<Transaction[]>(['budgetTransactions', id]);
 
-beforeEach(() => { mockStatus = 'authed'; queryClient.clear(); });
+beforeEach(() => { resetAuth(); queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });
 
 function mount(feed: Transaction[]) {

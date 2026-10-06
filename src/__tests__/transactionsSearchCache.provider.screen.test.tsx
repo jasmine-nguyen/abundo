@@ -19,7 +19,7 @@ import type { Transaction } from '../types';
 import type { TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES } from './support/categories';
 import { invalidatedKeys } from './support/queryClient';

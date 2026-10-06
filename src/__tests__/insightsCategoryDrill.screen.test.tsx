@@ -11,7 +11,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');

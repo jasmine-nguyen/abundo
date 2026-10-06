@@ -16,12 +16,8 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
-let mockAuthStatus = 'authed';
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: () => () => {},
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth } from './support/authMock';
 
 const mockShowToast = jest.fn<(m: string) => void>();
 
@@ -57,7 +53,7 @@ const pull = async () => { await act(async () => { rc().props.onRefresh(); }); }
 const flush = async () => { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); };
 
 beforeEach(() => {
-  mockAuthStatus = 'authed';
+  resetAuth();
   server.seed(FEED, { transactions: TXNS, nextCursor: null });
   server.seed('/categories', mockCategories);
   // The live refresh echoes the stored balances unless a test queues its own reply.
