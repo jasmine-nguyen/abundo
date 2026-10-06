@@ -12,6 +12,7 @@ import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { ASK_BUTTON_BOTTOM_CLEARANCE } from '../../src/motion/useNavBarsHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
+import { EmptyState } from '../../src/components/EmptyState';
 import { SettingsButton } from '../../src/components/SettingsButton';
 import { HeaderTextButton } from '../../src/components/ui';
 
@@ -285,11 +286,13 @@ export default function Transactions() {
             genuinely-empty uncategorized case, so don't double up on it). WHIT-576: only once the
             server has searched ALL history — never while it's still looking or after it failed. */}
         {!showSpinner && !showError && searchAnswered && groups.length === 0 && !allCaughtUp && (
-          <View testID="transactions-no-results" style={styles.empty}>
-            <View style={[styles.emptyIcon, { backgroundColor: 'rgba(255,255,255,.06)' }]}><Glyph name="search" size={30} color={C.textDim} /></View>
-            <Text style={styles.emptyTitle}>No matches</Text>
-            <Text style={styles.emptySub}>No transactions match “{query}”.</Text>
-          </View>
+          <EmptyState
+            testID="transactions-no-results"
+            icon={<Glyph name="search" size={30} color={C.textDim} />}
+            iconBackground="rgba(255,255,255,.06)"
+            title="No matches"
+            sub={<>No transactions match “{query}”.</>}
+          />
         )}
 
         {/* WHIT-501: also require the tab to be genuinely empty (`groups.length === 0`). `allCaughtUp`
@@ -298,26 +301,25 @@ export default function Transactions() {
             cache (never invalidated on that path) still holds those rows. Without this gate the screen
             would show "Every transaction is categorized" ABOVE a visible list of uncategorized rows. */}
         {allCaughtUp && groups.length === 0 && !showSpinner && !showError && (
-          <View style={styles.empty}>
-            <View style={styles.emptyIcon}><Glyph name="check" size={32} color={C.good} /></View>
-            <Text style={styles.emptyTitle}>All caught up</Text>
-            <Text style={styles.emptySub}>Every transaction is categorized. New ones matching your rules file themselves automatically.</Text>
-          </View>
+          <EmptyState
+            icon={<Glyph name="check" size={32} color={C.good} />}
+            title="All caught up"
+            sub="Every transaction is categorized. New ones matching your rules file themselves automatically."
+          />
         )}
 
         {/* Paged uncategorized feed: the badge says there are unfiled charges but none are in the
             loaded pages — they're deeper in history (Load More below), or a cross-device re-tag
             left the badge briefly ahead. Explain it rather than showing a blank tab. */}
         {showUncategorizedMore && (
-          <View testID="transactions-uncategorized-more" style={styles.empty}>
-            <View style={styles.emptyIcon}><Glyph name="search" size={30} color={C.accentSoft} /></View>
-            <Text style={styles.emptyTitle}>{hasMore ? 'More to load' : 'Nothing to show yet'}</Text>
-            <Text style={styles.emptySub}>
-              {hasMore
-                ? 'Your unfiled charges are further back in history. Keep loading to see them.'
-                : 'Pull down to refresh this list.'}
-            </Text>
-          </View>
+          <EmptyState
+            testID="transactions-uncategorized-more"
+            icon={<Glyph name="search" size={30} color={C.accentSoft} />}
+            title={hasMore ? 'More to load' : 'Nothing to show yet'}
+            sub={hasMore
+              ? 'Your unfiled charges are further back in history. Keep loading to see them.'
+              : 'Pull down to refresh this list.'}
+          />
         )}
 
         {/* Load More: page older history in via the feed cursor. Hidden at end-of-history
@@ -404,11 +406,6 @@ const styles = StyleSheet.create({
   hintBold: { color: '#fff', fontWeight: '700' },
 
   groupLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, letterSpacing: 0.2, marginHorizontal: 4, marginBottom: 4 },
-
-  empty: { alignItems: 'center', paddingVertical: 64, paddingHorizontal: 30 },
-  emptyIcon: { width: 64, height: 64, borderRadius: 20, backgroundColor: tint(C.good, 0.12), alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
-  emptyTitle: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.textBright },
-  emptySub: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, marginTop: 6, textAlign: 'center', lineHeight: 20 },
 
   // Load More: same treatment as the budget-detail reveal button (app/budget/[id]), plus a
   // matched-height spinner slot so the list doesn't jump when it swaps in while a page loads.
