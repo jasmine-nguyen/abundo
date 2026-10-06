@@ -47,12 +47,12 @@ const server = installFakeServer();
 const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
 // Two top-level trees: Food → {Groceries, Restaurants} and Car → Daily → Petrol.
 const CATS = [
-  { id: 'food', name: 'Food', bucket: 'Living', icon: 'coffee', color: '#7FD49B', recent: 0, parent: null },
-  { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'coffee', color: '#7FD49B', recent: 0, parent: 'food' },
-  { id: 'restaurants', name: 'Restaurants', bucket: 'Living', icon: 'coffee', color: '#E8A87C', recent: 0, parent: 'food' },
-  { id: 'car', name: 'Car', bucket: 'Living', icon: 'coffee', color: '#6f7bf0', recent: 0, parent: null },
-  { id: 'daily', name: 'Daily', bucket: 'Living', icon: 'coffee', color: '#6f7bf0', recent: 0, parent: 'car' },
-  { id: 'petrol', name: 'Petrol', bucket: 'Living', icon: 'coffee', color: '#6f7bf0', recent: 0, parent: 'daily' },
+  { id: 'food', name: 'Food', bucket: 'Living', icon: 'coffee', color: '#7FD49B', parent: null },
+  { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'coffee', color: '#7FD49B', parent: 'food' },
+  { id: 'restaurants', name: 'Restaurants', bucket: 'Living', icon: 'coffee', color: '#E8A87C', parent: 'food' },
+  { id: 'car', name: 'Car', bucket: 'Living', icon: 'coffee', color: '#6f7bf0', parent: null },
+  { id: 'daily', name: 'Daily', bucket: 'Living', icon: 'coffee', color: '#6f7bf0', parent: 'car' },
+  { id: 'petrol', name: 'Petrol', bucket: 'Living', icon: 'coffee', color: '#6f7bf0', parent: 'daily' },
 ];
 const BREAKDOWN = {
   groceries: { posted: 80, pending: 0 },
@@ -165,7 +165,7 @@ it('[A13] a parent accessibilityState.expanded tracks open/closed', async () => 
 // Its own coffee fixtures + nested beforeEach (re-seeds ALL three fetchers) keep it isolated
 // from this file's tree fixtures.
 describe('cycle-independent hero (pay cycle pending)', () => {
-  const CATS = [{ ...COFFEE, recent: 0 }];
+  const CATS = [{ ...COFFEE }];
   const BREAKDOWN = { coffee: { posted: 40, pending: 10 } };
 
   beforeEach(() => {

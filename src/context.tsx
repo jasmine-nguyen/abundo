@@ -3016,34 +3016,16 @@ export function budgetEditInfo(s: BudgetEditInput, categoryId: string) {
   const c = s.category(categoryId);
   const existing = s.budgets.find((b) => b.id === categoryId);
   // An Income category's budget is an earn-target (a floor), not a spend ceiling
-  // (WHIT-69). `c.recent` is a SPEND average (and 0 from the server in prod), so it's
-  // meaningless as an income floor — for income we suppress the recommendation and
-  // the spend-history stats and reframe the copy as earnings (WHIT-169).
+  // (WHIT-69), so Smoothing is hidden for it.
   const isIncome = c?.bucket === 'Income';
   // Smoothing (the unified name for rollover) and a bill spread are mutually exclusive.
   // While a spread is active the Smoothing switch is shown but locked ON — a spread is itself
   // a form of smoothing (see smoothingLocked below).
   const spreadActive = !!existing?.spread;
-  const avg = c ? Math.round(c.recent) : 0;
-  const last = Math.round(avg * 0.92);
-  const rec = avg; // recommendBasis default: Recent average (spend only)
   const cn = s.cycleName();
-  const histVals = [0.7, 0.5, 0.9, 0.6, 1.0, 0.8];
-  const histLabels = ['F1', 'F2', 'F3', 'F4', 'F5', 'Now'];
-  const histBars = histVals.map((v, i) => ({ h: Math.round(14 + v * 76), label: histLabels[i], last: i === 5 }));
   return {
-    category: c, existing, avg, last, rec, isIncome,
-    // No trustworthy income-average source, so income gets no recommended number.
-    hasRecommendation: !isIncome,
-    recLabel: fmt(rec),
-    // Spend history figures are meaningless for an earn-target -> show a neutral dash.
-    lastLabel: isIncome ? '—' : fmt(last), avgLabel: isIncome ? '—' : fmt(avg),
+    category: c, existing, isIncome,
     periodLabel: cn.toUpperCase(),
-    lastWord: cn === 'Weekly' ? 'week' : cn === 'Monthly' ? 'month' : 'fortnight',
-    recommendCta: isIncome ? 'Use my average income' : 'Use my average spend',
-    recPrompt: isIncome ? 'Set your income floor' : undefined,
-    historyToggleLabel: isIncome ? 'View earning history' : 'View spending history',
-    histBars,
     title: existing ? 'Edit budget' : 'Set budget',
     saveText: existing ? 'Update budget' : 'Add budget',
     // Smoothing switch (writes the rollover flag until WHIT-551 unifies the storage).

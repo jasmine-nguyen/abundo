@@ -21,7 +21,7 @@ const server = installFakeServer();
 useTestQueryClient();
 
 const LIVING = (id: string, name: string, parent: string | null = null): Category =>
-  ({ id, name, bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent });
+  ({ id, name, bucket: 'Living', icon: 'car', color: '#8ab4f8', parent });
 
 async function drawEdit(categories: Category[]) {
   server.seed('/categories', categories);

@@ -16,7 +16,7 @@ from typing import Any, Optional
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
-from repository_base import RepositoryBase, handle_database_error
+from repository_base import RepositoryBase, db_errors, handle_database_error, update_expression
 from repository_errors import (
     RuleClashError,
     RuleNotFoundError,
@@ -48,10 +48,8 @@ class RuleRepository(RepositoryBase):
 
     def get_rule(self, rule_id: str) -> Optional[dict]:
         """The rule with this id, or None if there is none."""
-        try:
+        with db_errors("get rule"):
             response = self._get_table().get_item(Key={"pk": _PK, "sk": f"RULE#{rule_id}"})
-        except ClientError as e:
-            handle_database_error(e, "get rule")
         return response.get("Item")
 
     def create_rule(
@@ -196,47 +194,34 @@ class RuleRepository(RepositoryBase):
                          conditions: Optional[list] = None, logic: Optional[str] = None,
                          spread: bool = False, spread_amount: Optional[Any] = None,
                          spread_gap_days: Optional[int] = None, was_spread: bool = False) -> None:
-        # `value` is a DynamoDB reserved word, so every name goes through an alias. Only aliases the
-        # expression actually references are declared (DynamoDB rejects an unused ExpressionAttributeName).
-        names = {"#v": "value", "#c": "category_id", "#b": "budget_excluded", "#u": "updated_at",
-                 "#sm": "spread"}
-        values = {":v": value, ":c": category_id, ":b": budget_excluded, ":u": now, ":sm": spread}
-        assignments = ["#v = :v", "#c = :c", "#b = :b", "#u = :u", "#sm = :sm"]
-        removals: list[str] = []
+        sets: dict[str, Any] = {"value": value, "category_id": category_id,
+                                "budget_excluded": budget_excluded, "updated_at": now, "spread": spread}
+        removes: list[str] = []
         # A same-id edit keeps the rule's identity, but the shape can change: a multi-condition rule
         # re-writes its conditions (a case-/spacing-only value edit may have changed the RAW values),
         # while a rule edited down to a single flat condition must have any stale conditions/logic
         # REMOVEd — otherwise the stored shape lies to decide's multi-rule guard. (REMOVE of an
         # absent attribute is a no-op, so a plain single-rule edit is unaffected.)
-        names["#cd"], names["#lg"] = "conditions", "logic"
         if conditions:
-            values[":cd"], values[":lg"] = conditions, (logic or "all")
-            assignments += ["#cd = :cd", "#lg = :lg"]
+            sets["conditions"], sets["logic"] = conditions, (logic or "all")
         else:
-            removals += ["#cd", "#lg"]
+            removes += ["conditions", "logic"]
         # The captured-bill fields track the spread flag (WHIT-559): a spread rule carries the amount
         # + gap; a rule edited OUT of spreading sheds them. spread_seeded ("has this rule created its
         # plan yet") is (re)armed to False only when spreading is turned ON fresh — when the rule was
         # already spread, it is left untouched so a user who dismissed an auto-spread plan is not
         # re-seeded by an unrelated edit ("stay dismissed", WHIT-559).
         if spread:
-            names["#sa"], names["#sg"] = "spread_amount", "spread_gap_days"
-            values[":sa"], values[":sg"] = spread_amount, spread_gap_days
-            assignments += ["#sa = :sa", "#sg = :sg"]
+            sets["spread_amount"], sets["spread_gap_days"] = spread_amount, spread_gap_days
             if not was_spread:
-                names["#ss"] = "spread_seeded"
-                values[":ss"] = False
-                assignments.append("#ss = :ss")
+                sets["spread_seeded"] = False
         else:
-            names["#sa"], names["#sg"], names["#ss"] = "spread_amount", "spread_gap_days", "spread_seeded"
-            removals += ["#sa", "#sg", "#ss"]
-        update_expression = "SET " + ", ".join(assignments)
-        if removals:
-            update_expression += " REMOVE " + ", ".join(removals)
+            removes += ["spread_amount", "spread_gap_days", "spread_seeded"]
+        expression, names, values = update_expression(sets, removes)
         try:
             self._get_table().update_item(
                 Key={"pk": _PK, "sk": f"RULE#{rule_id}"},
-                UpdateExpression=update_expression,
+                UpdateExpression=expression,
                 ExpressionAttributeNames=names,
                 ExpressionAttributeValues=values,
                 ConditionExpression="attribute_exists(pk)",
@@ -254,10 +239,8 @@ class RuleRepository(RepositoryBase):
         # The pk is the literal "RULE" — the SAME value the IAM DeleteItem grant pins via
         # dynamodb:LeadingKeys (terraform/iam.tf). Kept a literal at the call site (not _PK, not a
         # variable) so the IAM guard test can read that the API only ever deletes rule rows.
-        try:
+        with db_errors("delete rule"):
             self._get_table().delete_item(Key={"pk": "RULE", "sk": f"RULE#{rule_id}"})
-        except ClientError as e:
-            handle_database_error(e, "delete rule")
 
     def mark_spread_seeded(self, rule_id: str) -> None:
         """Flip a spread rule's ``spread_seeded`` marker to True — called once, after the rule has

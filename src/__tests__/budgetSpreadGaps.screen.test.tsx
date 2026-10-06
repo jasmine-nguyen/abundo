@@ -13,7 +13,7 @@ import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 const mockSaveSpread = jest.fn(async (_id: string, _amount: number, _cycles: number) => true);
 const mockRemoveSpread = jest.fn(async (_id: string) => true);
 
-const INCOME = { id: 'salary', name: 'Salary', icon: 'briefcase', color: '#7CC5E8', bucket: 'Income', recent: 5000 };
+const INCOME = { id: 'salary', name: 'Salary', icon: 'briefcase', color: '#7CC5E8', bucket: 'Income' };
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');

@@ -411,7 +411,7 @@ it('saveBudget rejects a Savings-bucket category without calling the API (WHIT-2
   seed();
   queryClient.setQueryData(['categories'], [
     { ...CAT },
-    { id: 'nest_egg', name: 'Nest Egg', bucket: 'Savings', icon: 'piggy', color: '#8fd4c0', recent: 0 },
+    { id: 'nest_egg', name: 'Nest Egg', bucket: 'Savings', icon: 'piggy', color: '#8fd4c0' },
   ]);
   const result = mount();
   let ok: boolean | undefined;
@@ -476,7 +476,7 @@ it('deleteBudget returns false, restores the cache, and toasts on failure', asyn
 // --- saveCategory ------------------------------------------------------------
 
 it('saveCategory creates a new category', async () => {
-  server.once('POST', '/categories', { body: { id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#f00', recent: 0 } });
+  server.once('POST', '/categories', { body: { id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#f00' } });
   seed();
   const result = mount();
 
@@ -489,7 +489,7 @@ it('saveCategory creates a new category', async () => {
 });
 
 it('saveCategory edits an existing category in place', async () => {
-  server.once('PATCH', '/categories/groceries', { body: { id: 'groceries', name: 'Supermarket', bucket: 'Living', icon: 'cart', color: '#0f0', recent: 0 } });
+  server.once('PATCH', '/categories/groceries', { body: { id: 'groceries', name: 'Supermarket', bucket: 'Living', icon: 'cart', color: '#0f0' } });
   seed();
   const result = mount();
 
@@ -505,7 +505,7 @@ it('saveCategory threads a chosen parent through (create + edit); omitting it le
   // WHIT-221: the category-edit screen manages the parent link. When it passes `parent`
   // (an id, or null to detach) it must reach the API; when a caller omits it, the field
   // must NOT be sent (server leave-as-is) — that's what the two tests above assert.
-  server.once('POST', '/categories', { body: { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#f00', recent: 0, parent: 'car' } });
+  server.once('POST', '/categories', { body: { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#f00', parent: 'car' } });
   server.once('PATCH', '/categories/groceries', { body: DELETE_GROCERIES });
   seed();
   const result = mount();
@@ -529,7 +529,7 @@ it('saveCategory returns false + toasts on failure', async () => {
 
 // --- createCategoryInline (WHIT-237/238) -------------------------------------
 
-const GYM_ROW = { id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#f00', recent: 0, parent: null };
+const GYM_ROW = { id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#f00', parent: null };
 
 it('createCategoryInline returns the created category and mirrors it into the cache', async () => {
   server.once('POST', '/categories', { body: GYM_ROW });

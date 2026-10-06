@@ -18,10 +18,9 @@ import logging
 import time
 
 from boto3.dynamodb.conditions import Key
-from botocore.exceptions import ClientError
 
 from constants import RECEIPT_TTL_SECONDS
-from repository_base import RepositoryBase, handle_database_error
+from repository_base import RepositoryBase, db_errors
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +35,7 @@ class PushReceiptRepository(RepositoryBase):
     def put(self, receipt_id: str, token: str) -> None:
         """Stash one receipt id with the token its push went to, setting a fresh TTL.
         Re-putting the same id is harmless (same token), and the write is idempotent."""
-        try:
+        with db_errors("stash push receipt id"):
             self._get_table().put_item(
                 Item={
                     "pk": _PENDING_PK,
@@ -45,8 +44,6 @@ class PushReceiptRepository(RepositoryBase):
                     "expires_at": int(time.time()) + RECEIPT_TTL_SECONDS,
                 }
             )
-        except ClientError as e:
-            handle_database_error(e, "stash push receipt id")
 
     def list_pending(self) -> list[tuple[str, str]]:
         """Return every pending ``(receipt_id, token)`` under the shared partition.
@@ -74,7 +71,5 @@ class PushReceiptRepository(RepositoryBase):
     def delete(self, receipt_id: str) -> None:
         """Drop one pending row once the sweep has resolved it (delivered, pruned, or
         failed). A no-op if it's already gone — the sweep only deletes resolved ids."""
-        try:
+        with db_errors("delete push receipt id"):
             self._get_table().delete_item(Key={"pk": _PENDING_PK, "sk": receipt_id})
-        except ClientError as e:
-            handle_database_error(e, "delete push receipt id")

@@ -23,7 +23,7 @@ import { useBudgetsSuiteReset } from './support/budgetsSuite';
 const server = installFakeServer();
 useTestQueryClient();
 
-const SALARY = { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase', color: '#35d9a0', recent: 0 };
+const SALARY = { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase', color: '#35d9a0' };
 
 // Last paid Fri 25 Sep, so the income "next pay ~Fri" checks line up with the pinned clock.
 const seed = (categories: unknown[], budgets: Record<string, unknown>, daysLeft = 6) =>

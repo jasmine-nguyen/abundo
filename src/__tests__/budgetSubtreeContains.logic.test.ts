@@ -7,7 +7,7 @@ import type { Category } from '../types';
 
 // Minimal Category; only id/parent/bucket drive the rule.
 const cat = (id: string, parent: string | null, bucket: string): Category =>
-  ({ id, name: id, icon: 'q', color: '#fff', bucket: bucket as Category['bucket'], recent: 0, parent });
+  ({ id, name: id, icon: 'q', color: '#fff', bucket: bucket as Category['bucket'], parent });
 
 // car(Living) → parking(Living); car → odd(Lifestyle) → deep(Living); car → nest(Savings).
 // income(Lifestyle) is unrelated. loopA↔loopB is a corrupt two-node cycle (both Living).

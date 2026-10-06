@@ -24,9 +24,9 @@ const server = installFakeServer();
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const CATS: Category[] = [
-  { id: 'food', name: 'Food', bucket: 'Living', icon: 'cart', color: '#7fd49b', recent: 0, parent: null },
-  { id: 'coffee', name: 'Coffee', bucket: 'Living', icon: 'cup', color: '#7fd49b', recent: 0, parent: 'food' },
-  { id: 'insurance', name: 'Insurance', bucket: 'Living', icon: 'shield', color: '#8ab4f8', recent: 0, parent: null },
+  { id: 'food', name: 'Food', bucket: 'Living', icon: 'cart', color: '#7fd49b', parent: null },
+  { id: 'coffee', name: 'Coffee', bucket: 'Living', icon: 'cup', color: '#7fd49b', parent: 'food' },
+  { id: 'insurance', name: 'Insurance', bucket: 'Living', icon: 'shield', color: '#8ab4f8', parent: null },
 ];
 const txn = (id: string, over: Partial<Transaction> = {}): Transaction => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',

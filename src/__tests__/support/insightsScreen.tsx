@@ -18,6 +18,7 @@ import { render } from '@testing-library/react-native';
 import type { AppContext } from '../../context';
 import type { installFakeServer } from './fakeServer';
 import { renderWithQueries, WithQueries } from './renderWithQueries';
+import { realContextWith } from './contextMock';
 
 type AiSlice = Pick<AppContext, 'aiInsights' | 'aiInsightsLoading' | 'aiInsightsError' | 'refreshAiInsights' | 'generateAiInsights'>;
 type Spend = Record<string, { posted: number; pending: number }>;
@@ -40,7 +41,7 @@ export function resetAi() {
 
 // The jest.mock('../context') factory: the real module, with useAppContext reading the AI slice.
 export function contextMockModule() {
-  return { ...(jest.requireActual('../../context') as object), useAppContext: () => ai };
+  return realContextWith(() => ai);
 }
 
 // The /breakdown reply: spend rows plus the __earned__ / __income__ / __rollup__ extras.

@@ -102,7 +102,7 @@ def _category_item_event(method, cat_id="coffee",
 # --- handler-level: GET ------------------------------------------------------
 
 
-def test_list_categories_adds_recent(handler):
+def test_list_categories_returns_repo_rows(handler):
     repo = FakeCategoryRepo(categories=[
         {"id": "coffee", "name": "Cafes & Coffee", "icon": "coffee", "color": "#E8A87C", "bucket": "Lifestyle"},
     ])
@@ -111,7 +111,7 @@ def test_list_categories_adds_recent(handler):
 
     assert result == [{
         "id": "coffee", "name": "Cafes & Coffee", "icon": "coffee",
-        "color": "#E8A87C", "bucket": "Lifestyle", "recent": 0,
+        "color": "#E8A87C", "bucket": "Lifestyle",
     }]
 
 
@@ -126,7 +126,7 @@ def test_get_categories_dispatch(handler, monkeypatch):
 
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])
-    assert body[0]["id"] == "x" and body[0]["recent"] == 0
+    assert body[0]["id"] == "x" and "recent" not in body[0]
 
 
 # --- handler-level: POST -----------------------------------------------------
@@ -139,7 +139,7 @@ def test_create_success(handler):
 
     assert resp["statusCode"] == 201
     body = json.loads(resp["body"])
-    assert body["id"] == "gym" and body["bucket"] == "Lifestyle" and body["recent"] == 0
+    assert body["id"] == "gym" and body["bucket"] == "Lifestyle" and "recent" not in body
     assert repo.create_calls == [("gym", "Gym", "Lifestyle", "dumbbell")]
 
 
@@ -263,7 +263,7 @@ def test_update_success(handler):
 
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])
-    assert body["name"] == "Coffee & Cake" and body["id"] == "coffee" and body["recent"] == 0
+    assert body["name"] == "Coffee & Cake" and body["id"] == "coffee" and "recent" not in body
     assert repo.update_calls == [("coffee", "Coffee & Cake", "Living", "coffee")]
 
 

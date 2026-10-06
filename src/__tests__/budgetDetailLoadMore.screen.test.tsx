@@ -45,7 +45,7 @@ beforeEach(() => {
   resetAuth();
 });
 
-const CATS = [{ ...COFFEE_CATEGORY, recent: 0 }];
+const CATS = [{ ...COFFEE_CATEGORY }];
 const COFFEE = { target: 80, posted: 52, pending: 0 };
 
 // A 30-day cycle with the server's own countdown, so daysLeft never follows the real clock.

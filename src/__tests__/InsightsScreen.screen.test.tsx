@@ -36,8 +36,8 @@ type Spend = Record<string, { posted: number; pending: number }>;
 const posted = (n: number) => ({ posted: n, pending: 0 });
 
 const CATS = [
-  { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', bucket: 'Lifestyle', recent: 0 },
-  { ...GROCERIES_RECORD, recent: 0 },
+  { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', bucket: 'Lifestyle' },
+  { ...GROCERIES_RECORD },
 ];
 
 const READY_LOAN_FACTS = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 3667, extra: 500 };
@@ -503,9 +503,9 @@ describe('Earned/Spent card is summary-only (WHIT-373)', () => {
 
 // Car with two subs, used by the refund-line and remainder suites below.
 const CAR_CATS = [
-  { id: 'car', name: 'Car', icon: 'car', bucket: 'Living', parent: null, recent: 0 },
-  { id: 'petrol', name: 'Petrol', icon: 'car', bucket: 'Living', parent: 'car', recent: 0 },
-  { id: 'tolls', name: 'Tolls', icon: 'car', bucket: 'Living', parent: 'car', recent: 0 },
+  { id: 'car', name: 'Car', icon: 'car', bucket: 'Living', parent: null },
+  { id: 'petrol', name: 'Petrol', icon: 'car', bucket: 'Living', parent: 'car' },
+  { id: 'tolls', name: 'Tolls', icon: 'car', bucket: 'Living', parent: 'car' },
 ];
 
 // petrol 60, tolls net -30 (floored to 0), car node netted to 30 + a tolls refund line.
@@ -706,8 +706,8 @@ describe('Insights remainder/Other plug (WHIT-357/375)', () => {
 // Spending + income categories for the toggle and share-bar suites below.
 const SIDE_CATS = [
   ...CATS,
-  { id: 'salary', name: 'Salary', icon: 'briefcase', bucket: 'Income', recent: 0 },
-  { id: 'dividends', name: 'Dividends', icon: 'trend', bucket: 'Income', recent: 0 },
+  { id: 'salary', name: 'Salary', icon: 'briefcase', bucket: 'Income' },
+  { id: 'dividends', name: 'Dividends', icon: 'trend', bucket: 'Income' },
 ];
 
 function seedSides(wire: { spend?: Spend; earned?: number; income?: Spend }) {

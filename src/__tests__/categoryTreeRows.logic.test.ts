@@ -6,7 +6,7 @@ import { categoryTreeRows } from '../context';
 import type { Category } from '../types';
 
 const cat = (id: string, name: string, parent: string | null = null, bucket: Category['bucket'] = 'Lifestyle'): Category =>
-  ({ id, name, icon: 'tag', color: '#fff', bucket, recent: 0, parent });
+  ({ id, name, icon: 'tag', color: '#fff', bucket, parent });
 
 const shape = (categories: Category[]) =>
   categoryTreeRows(categories).map((r) => ({ id: r.category.id, depth: r.depth, parentId: r.parentId, hasChildren: r.hasChildren }));

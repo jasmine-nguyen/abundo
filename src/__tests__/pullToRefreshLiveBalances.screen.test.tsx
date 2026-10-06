@@ -20,7 +20,7 @@ import { resetAuth } from './support/authMock';
 
 const mockShowToast = jest.fn<(m: string) => void>();
 
-const mockCategories = [{ ...GROCERIES_RECORD, color: '#7FD49B', recent: 0 }];
+const mockCategories = [{ ...GROCERIES_RECORD, color: '#7FD49B' }];
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return {

@@ -47,7 +47,7 @@ beforeEach(() => {
 });
 
 const LIVING = (id: string, name: string, parent: string | null = null): Category =>
-  ({ id, name, bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent });
+  ({ id, name, bucket: 'Living', icon: 'car', color: '#8ab4f8', parent });
 
 const GENERIC_SAVE_FAILURE = 'Could not save category. Please try again.';
 
@@ -179,8 +179,8 @@ describe('categoryEditSubcategories', () => {
 
   it('creates the parent first, then attaches the picked child and creates the new inline child under it', async () => {
     categories = [
-      { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },
-      { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a87c', recent: 0, parent: null },
+      { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8ab4f8', parent: null },
+      { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a87c', parent: null },
     ];
     await drawEdit();
 
@@ -219,8 +219,8 @@ describe('categoryEditSubcategories', () => {
 
   it('a cross-bucket category is not offered as an attachable child', async () => {
     categories = [
-      { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },
-      { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a87c', recent: 0, parent: null },
+      { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8ab4f8', parent: null },
+      { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a87c', parent: null },
     ];
     await drawEdit();
     fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Transport');
@@ -236,8 +236,8 @@ describe('categoryEditSubcategoriesGaps', () => {
 
   it('editing an existing parent updates it then attaches the picked child', async () => {
     categories = [
-      { id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },
-      { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },
+      { id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', parent: null },
+      { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8ab4f8', parent: null },
     ];
     await drawEdit();
     fireEvent.press(screen.getByTestId('attachChild-parking'));
@@ -256,9 +256,9 @@ describe('categoryEditSubcategoriesGaps', () => {
   // attachChild-parking renders.
   it('a current child shows as Already nested and is not offered to re-attach', async () => {
     categories = [
-      { id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },
-      { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: 'transport' }, // already a child
-      { id: 'petrol', name: 'Petrol', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },         // free to attach
+      { id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', parent: null },
+      { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8ab4f8', parent: 'transport' }, // already a child
+      { id: 'petrol', name: 'Petrol', bucket: 'Living', icon: 'car', color: '#8ab4f8', parent: null },         // free to attach
     ];
     await drawEdit();
     expect(screen.getByText(/Already nested: Parking/)).toBeTruthy();
@@ -274,8 +274,8 @@ describe('categoryEditParentClear', () => {
     // coffee (Lifestyle) has a corrupt/legacy parent pointing at rent (Living) — a
     // cross-bucket link the server's same-bucket rule would never allow on write.
     categories = [
-      { ...COFFEE, recent: 0, parent: 'rent' },
-      { id: 'rent', name: 'Rent', bucket: 'Living', icon: 'home', color: '#8AB4F8', recent: 0, parent: null },
+      { ...COFFEE, parent: 'rent' },
+      { id: 'rent', name: 'Rent', bucket: 'Living', icon: 'home', color: '#8AB4F8', parent: null },
     ];
     await drawEdit();
 
@@ -288,8 +288,8 @@ describe('categoryEditParentClear', () => {
 
   it('keeps a valid same-bucket parent through a save', async () => {
     categories = [
-      { ...COFFEE, recent: 0, parent: 'treats' },
-      { id: 'treats', name: 'Treats', bucket: 'Lifestyle', icon: 'gift', color: '#F0B27A', recent: 0, parent: null },
+      { ...COFFEE, parent: 'treats' },
+      { id: 'treats', name: 'Treats', bucket: 'Lifestyle', icon: 'gift', color: '#F0B27A', parent: null },
     ];
     await drawEdit();
 
@@ -306,8 +306,8 @@ describe('categoryEditParentPick', () => {
   it('picking a parent in the shared picker stamps it onto the saved category', async () => {
     // coffee (editing) starts top-level; treats is a same-bucket, eligible parent.
     categories = [
-      { ...COFFEE, recent: 0, parent: null },
-      { id: 'treats', name: 'Treats', bucket: 'Lifestyle', icon: 'gift', color: '#F0B27A', recent: 0, parent: null },
+      { ...COFFEE, parent: null },
+      { id: 'treats', name: 'Treats', bucket: 'Lifestyle', icon: 'gift', color: '#F0B27A', parent: null },
     ];
     await drawEdit();
     // 'Treats' shows twice: as the parent-picker chip (CategoryFields, rendered first) AND as an
@@ -326,7 +326,7 @@ describe('categoryEditDelete', () => {
   beforeEach(() => {
     resetMocks({ categoryId: 'coffee' });
     categories = [
-      { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a87c', recent: 0, parent: null },
+      { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a87c', parent: null },
     ];
   });
 
@@ -625,7 +625,7 @@ describe('categoryEditChildReasonGaps', () => {
   // categories.find(parentId) misses → parentFull is false → original advice, never a bogus cap line.
   it('keeps the generic tail for a NEW category whose parent id is not in the cache yet', async () => {
     // A NEW category defaults to the Lifestyle bucket, and an attach candidate must share it.
-    const SPARE: Category = { id: 'spare', name: 'Spare', bucket: 'Lifestyle', icon: 'coffee', color: '#fff', recent: 0, parent: null };
+    const SPARE: Category = { id: 'spare', name: 'Spare', bucket: 'Lifestyle', icon: 'coffee', color: '#fff', parent: null };
     categories = [SPARE];                                    // the only attachable child
     server.once('PATCH', '/categories/spare', { status: 500 });      // the 'spare' attach fails, no reason
 

@@ -16,7 +16,7 @@ beforeEach(() => {
   resetRouter();
   server.seed('/paycycle', { length: 14, last_pay_date: '2026-07-01' });
   server.seed('/categories', [
-    { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase', color: '#35d9a0', recent: 0 },
+    { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase', color: '#35d9a0' },
     COFFEE,
   ]);
   server.seed('/budgets', {

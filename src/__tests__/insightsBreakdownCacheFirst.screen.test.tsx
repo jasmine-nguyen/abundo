@@ -26,7 +26,7 @@ import { COFFEE } from './support/categories';
 const server = installFakeServer();
 
 const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
-const CATS = [{ ...COFFEE, recent: 0 }];
+const CATS = [{ ...COFFEE }];
 // An Uncategorized-ONLY cycle — the row that survives with or without taxonomy.
 const UNCAT_ONLY = { [UNCATEGORIZED_KEY]: { posted: 25, pending: 0 } };
 

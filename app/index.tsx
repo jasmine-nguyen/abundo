@@ -1,51 +1,14 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Image } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Path, Circle } from 'react-native-svg';
 import { C, FONT, tint } from '../src/theme';
 import { signInWithPassword, signInWithGoogle, completeNewPassword, requestPasswordReset, confirmPasswordReset } from '../src/auth';
 
 // Required so a returning OAuth redirect (Google) can dismiss the auth browser and
 // resolve the pending promptAsync (a no-op on native, where promptAsync resolves).
 WebBrowser.maybeCompleteAuthSession();
-
-// Abundo tree mark (ported from assets/abundo-tree-mark.svg) — a flat oak with a
-// rounded canopy. Transparent, so it sits on the login screen's dark background.
-function Logo() {
-  return (
-    <Svg width={76} height={76} viewBox="0 0 64 64">
-      {/* branches */}
-      <Path d="M32 42 L24 32" stroke="#7a5230" strokeWidth={3.5} strokeLinecap="round" fill="none" />
-      <Path d="M32 42 L40 32" stroke="#7a5230" strokeWidth={3.5} strokeLinecap="round" fill="none" />
-      <Path d="M32 44 L32 26" stroke="#7a5230" strokeWidth={3.5} strokeLinecap="round" fill="none" />
-      {/* trunk */}
-      <Path d="M28 34 L36 34 C 36 45 37 52 40 55 C 41 56.5 42 57 43 57 L21 57 C 22 57 23 56.5 24 55 C 27 52 28 45 28 34 Z" fill="#7a5230" />
-      <Path d="M34 34 L36 34 C 36 45 37 52 40 55 C 41 56.5 42 57 43 57 L37 57 C 36 56 35 53 34.5 49 C 34 44 34 39 34 34 Z" fill="#6a4526" />
-      {/* canopy — base green */}
-      <Circle cx={32} cy={24} r={16} fill="#5cb64a" />
-      <Circle cx={19} cy={28} r={10} fill="#5cb64a" />
-      <Circle cx={45} cy={28} r={10} fill="#5cb64a" />
-      <Circle cx={24} cy={16} r={9.5} fill="#5cb64a" />
-      <Circle cx={40} cy={16} r={9.5} fill="#5cb64a" />
-      {/* canopy — shadow */}
-      <Circle cx={17} cy={31} r={6} fill="#3f8f3a" />
-      <Circle cx={47} cy={31} r={6} fill="#3f8f3a" />
-      <Circle cx={32} cy={35} r={7} fill="#3f8f3a" />
-      {/* canopy — highlight */}
-      <Circle cx={24} cy={15} r={6} fill="#86d16a" />
-      <Circle cx={37} cy={15} r={5.5} fill="#86d16a" />
-      <Circle cx={20} cy={24} r={4.5} fill="#86d16a" />
-      <Circle cx={32} cy={20} r={5} fill="#86d16a" />
-      {/* canopy — dapple */}
-      <Circle cx={22} cy={13} r={2} fill="#aee584" />
-      <Circle cx={35} cy={13} r={1.8} fill="#aee584" />
-      <Circle cx={29} cy={18} r={1.8} fill="#aee584" />
-      <Circle cx={42} cy={24} r={1.6} fill="#aee584" />
-    </Svg>
-  );
-}
 
 type Mode = 'signin' | 'newPassword' | 'forgotRequest' | 'forgotConfirm';
 
@@ -74,22 +37,26 @@ export default function Login() {
   const canSendReset = email.trim().length > 0;
   const canReset = resetCode.trim().length > 0 && newPass.length > 0 && confirmPass.length > 0;
 
+  // The auth helpers are never-throw by contract; the catch is a backstop so a stray throw can't
+  // leave the spinner stuck. `finally` clears busy BEFORE the caller navigates (no setState after unmount).
+  const attempt = async <T,>(kind: 'password' | 'google', call: () => Promise<T>): Promise<T | null> => {
+    setBusy(kind);
+    try {
+      return await call();
+    } catch {
+      setError('Something went wrong. Please try again.');
+      return null;
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const logIn = async () => {
     if (busy || !canSubmit) return;
     setError(null);
     setNotice(null);
-    setBusy('password');
-    let res: Awaited<ReturnType<typeof signInWithPassword>>;
-    try {
-      res = await signInWithPassword(email, pass);
-    } catch {
-      // signInWithPassword is never-throw by contract; belt-and-braces so a future
-      // throw path can never leave the spinner stuck forever.
-      setBusy(null);
-      setError('Something went wrong. Please try again.');
-      return;
-    }
-    setBusy(null); // clear BEFORE navigating, so we never setState after unmount
+    const res = await attempt('password', () => signInWithPassword(email, pass));
+    if (!res) return;
     if (res.ok) {
       go();
       return;
@@ -111,16 +78,8 @@ export default function Login() {
       return;
     }
     setError(null);
-    setBusy('password');
-    let res: Awaited<ReturnType<typeof completeNewPassword>>;
-    try {
-      res = await completeNewPassword(newPass);
-    } catch {
-      setBusy(null);
-      setError('Something went wrong. Please try again.');
-      return;
-    }
-    setBusy(null);
+    const res = await attempt('password', () => completeNewPassword(newPass));
+    if (!res) return;
     if (res.ok) {
       go();
       return;
@@ -132,16 +91,8 @@ export default function Login() {
     if (busy) return;
     setError(null);
     setNotice(null);
-    setBusy('google');
-    let res: Awaited<ReturnType<typeof signInWithGoogle>>;
-    try {
-      res = await signInWithGoogle();
-    } catch {
-      setBusy(null);
-      setError('Something went wrong. Please try again.');
-      return;
-    }
-    setBusy(null);
+    const res = await attempt('google', signInWithGoogle);
+    if (!res) return;
     if (res.ok) {
       go();
       return;
@@ -155,16 +106,8 @@ export default function Login() {
     if (busy || !canSendReset) return;
     setError(null);
     setNotice(null);
-    setBusy('password');
-    let res: Awaited<ReturnType<typeof requestPasswordReset>>;
-    try {
-      res = await requestPasswordReset(email);
-    } catch {
-      setBusy(null);
-      setError('Something went wrong. Please try again.');
-      return;
-    }
-    setBusy(null);
+    const res = await attempt('password', () => requestPasswordReset(email));
+    if (!res) return;
     if (res.ok) {
       setResetCode('');
       setNewPass('');
@@ -184,16 +127,8 @@ export default function Login() {
       return;
     }
     setError(null);
-    setBusy('password');
-    let res: Awaited<ReturnType<typeof confirmPasswordReset>>;
-    try {
-      res = await confirmPasswordReset(email, resetCode, newPass);
-    } catch {
-      setBusy(null);
-      setError('Something went wrong. Please try again.');
-      return;
-    }
-    setBusy(null);
+    const res = await attempt('password', () => confirmPasswordReset(email, resetCode, newPass));
+    if (!res) return;
     if (res.ok) {
       setPass('');
       setResetCode('');
@@ -378,7 +313,13 @@ export default function Login() {
       automaticallyAdjustKeyboardInsets
     >
       <View style={styles.brand}>
-        <Logo />
+        <Image
+          source={require('../assets/abundo-tree-mark.png')}
+          style={styles.logo}
+          accessibilityIgnoresInvertColors
+          importantForAccessibility="no"
+          testID="login-logo"
+        />
         <Text style={styles.wordmark}>Abundo</Text>
         <Text style={styles.tagline}>Grow what's yours.</Text>
       </View>
@@ -403,6 +344,7 @@ export default function Login() {
 const styles = StyleSheet.create({
   scroll: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 26 },
   brand: { alignItems: 'center', marginBottom: 30 },
+  logo: { width: 76, height: 76 },
   wordmark: { fontFamily: FONT.display, fontWeight: '800', fontSize: 34, color: '#fff', letterSpacing: -1, marginTop: 18 },
   tagline: { fontFamily: FONT.body, fontSize: 14, color: C.textMid, marginTop: 5 },
   formIntro: { fontFamily: FONT.body, fontSize: 14, color: C.textMid, textAlign: 'center', marginBottom: 2 },

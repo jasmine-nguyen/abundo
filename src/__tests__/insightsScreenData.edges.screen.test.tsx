@@ -25,7 +25,7 @@ import { COFFEE } from './support/categories';
 
 const server = installFakeServer();
 
-const CATS = [{ ...COFFEE, recent: 0 }];
+const CATS = [{ ...COFFEE }];
 const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
 const BREAKDOWN = { coffee: { posted: 40, pending: 10 } };
 

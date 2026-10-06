@@ -11,9 +11,7 @@ that the windowed transaction feed queries.
 from decimal import Decimal
 from typing import Optional
 
-from botocore.exceptions import ClientError
-
-from repository_base import RepositoryBase, handle_database_error
+from repository_base import RepositoryBase, db_errors
 
 
 def _account_balance_key(account_id: str) -> dict:
@@ -65,10 +63,8 @@ class AccountBalanceRepository(RepositoryBase):
             item["available_balance"] = available_balance
         if account_type is not None:
             item["account_type"] = account_type
-        try:
+        with db_errors("upsert account balance"):
             self._get_table().put_item(Item=item)
-        except ClientError as e:
-            handle_database_error(e, "upsert account balance")
 
     def list_balances(self, account_ids: list) -> list:
         """Return the stored balance for each of `account_ids` that has one.
@@ -81,10 +77,8 @@ class AccountBalanceRepository(RepositoryBase):
         """
         out = []
         for account_id in account_ids:
-            try:
+            with db_errors("read account balance"):
                 item = self._get_table().get_item(Key=_account_balance_key(account_id)).get("Item")
-            except ClientError as e:
-                handle_database_error(e, "read account balance")
             if item is None:
                 continue
             out.append({
@@ -102,22 +96,18 @@ class AccountBalanceRepository(RepositoryBase):
 
         Backs the 60s throttle on POST /accounts/balances/refresh.
         """
-        try:
+        with db_errors("read balance refresh marker"):
             item = self._get_table().get_item(Key=_refresh_marker_key()).get("Item")
-        except ClientError as e:
-            handle_database_error(e, "read balance refresh marker")
         if item is None:
             return None
         return int(item["last_fetch_at"])
 
     def set_last_refresh_at(self, now: int) -> None:
         """Record that a live refresh was attempted at epoch `now` (plain put)."""
-        try:
+        with db_errors("write balance refresh marker"):
             self._get_table().put_item(
                 Item={**_refresh_marker_key(), "last_fetch_at": now}
             )
-        except ClientError as e:
-            handle_database_error(e, "write balance refresh marker")
 
 
 def _feed_watch_key(account_id: str) -> dict:
@@ -137,10 +127,8 @@ class FeedWatchRepository(RepositoryBase):
     def get_watch(self, account_id: str) -> Optional[dict]:
         """Return {"seen_dates": {id: date}, "seen_at": int, "amount_at_seen": Decimal,
         "alerted": bool}, or None before the account's first check."""
-        try:
+        with db_errors("read feed watch"):
             item = self._get_table().get_item(Key=_feed_watch_key(account_id)).get("Item")
-        except ClientError as e:
-            handle_database_error(e, "read feed watch")
         if item is None:
             return None
         return {
@@ -154,7 +142,7 @@ class FeedWatchRepository(RepositoryBase):
         self, account_id: str, seen_dates: dict, seen_at: int, amount_at_seen: Decimal, alerted: bool
     ) -> None:
         """Overwrite the account's watch row (plain put — single writer)."""
-        try:
+        with db_errors("write feed watch"):
             self._get_table().put_item(
                 Item={
                     **_feed_watch_key(account_id),
@@ -164,5 +152,3 @@ class FeedWatchRepository(RepositoryBase):
                     "alerted": alerted,
                 }
             )
-        except ClientError as e:
-            handle_database_error(e, "write feed watch")

@@ -71,7 +71,7 @@ describe('a lasting failure on every focus-wired composite sends a bounded numbe
 
 describe('refetch / refetchStale identity (WHIT-668)', () => {
   it('Insights: stable across load, a cycle change and an error [A2]', async () => {
-    server.seed('/categories', [{ ...COFFEE, recent: 0 }]);
+    server.seed('/categories', [{ ...COFFEE }]);
     server.seed('/breakdown', { coffee: { posted: 1, pending: 0 } });
     const { result, rerender } = renderHook(({ cycle }: { cycle: number }) => useInsightsScreenData(cycle), {
       wrapper: wrapper(makeClient()), initialProps: { cycle: 0 },

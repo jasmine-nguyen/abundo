@@ -142,7 +142,7 @@ it('hides a Savings-bucket budget end-to-end and keeps it out of the hero total 
   // the budgetViews Savings skip (src/context.tsx) makes both assertions fail.
   server.seed('/categories', [
     COFFEE,
-    { id: 'nest_egg', name: 'Nest Egg', bucket: 'Savings', icon: 'home', color: '#C7A8F0', recent: 0 },
+    { id: 'nest_egg', name: 'Nest Egg', bucket: 'Savings', icon: 'home', color: '#C7A8F0' },
   ]);
   server.seed('/budgets', {
     coffee: { target: 100, posted: 40, pending: 10 },
@@ -340,8 +340,8 @@ describe('WHIT-221 parent→sub tree + de-duped hero (folded from budgetsSubcate
   // Car (parent) rolled-up spend 75 of 200; Parking (sub of Car) 30 of 50. Same bucket.
   const PAY_CYCLE = { length: 14, last_pay_date: '2026-07-01' };
   const CATS = [
-    { id: 'car', name: 'Car', bucket: 'Living', icon: 'car', color: '#7fd1b9', recent: 3, parent: null },
-    { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#7fd1b9', recent: 1, parent: 'car' },
+    { id: 'car', name: 'Car', bucket: 'Living', icon: 'car', color: '#7fd1b9', parent: null },
+    { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#7fd1b9', parent: 'car' },
   ];
   const BUDGETS = {
     car: { target: 200, posted: 75, pending: 0 },
@@ -395,7 +395,7 @@ describe('WHIT-221 parent→sub tree + de-duped hero (folded from budgetsSubcate
 // the shared module-scope expo-router mock is inert here because ../queries never imports it).
 // The shared Budgets fixtures, except a coffee category with no recent spend. =====
 describe('WHIT-72 payCycleError guard (folded from budgetsPayCycleError)', () => {
-  const CATS = [{ ...COFFEE, recent: 0 }];
+  const CATS = [{ ...COFFEE }];
 
   beforeEach(() => {
     seedBudgets(server, { categories: CATS });
@@ -522,7 +522,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
   it('sums MULTIPLE over-budget rows into one signed hero total + coherent spent line', async () => {
     server.seed('/categories', [
       COFFEE,
-      { ...GROCERIES_RECORD, color: '#7fd1b9', recent: 12 },
+      { ...GROCERIES_RECORD, color: '#7fd1b9' },
     ]);
     server.seed('/budgets', {
       coffee: { target: 100, posted: 150, pending: 0 },

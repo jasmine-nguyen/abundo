@@ -11,11 +11,11 @@ import { beforeEach, afterEach, jest } from '@jest/globals';
 import { resetRouter } from './routerMock';
 import { resetAuth } from './authMock';
 import { pinToday } from './clock';
+import { realContextWith } from './contextMock';
 
 // The real ../context, with the screen's delete/picker actions stubbed out.
 export function budgetsContextMockModule() {
-  const actual = jest.requireActual('../../context') as typeof import('../../context');
-  return { ...actual, useAppContext: () => ({ deleteBudget: jest.fn(), openPicker: jest.fn() }) };
+  return realContextWith(() => ({ deleteBudget: jest.fn(), openPicker: jest.fn() }));
 }
 
 export function useBudgetsSuiteReset({ pinClock = true } = {}) {

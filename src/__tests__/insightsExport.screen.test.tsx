@@ -20,7 +20,7 @@ const share = shareCycleExport as jest.MockedFunction<typeof shareCycleExport>;
 const server = installFakeServer();
 useTestQueryClient();
 
-const CATS = [{ ...COFFEE, recent: 0 }];
+const CATS = [{ ...COFFEE }];
 
 beforeEach(() => {
   resetAuth();

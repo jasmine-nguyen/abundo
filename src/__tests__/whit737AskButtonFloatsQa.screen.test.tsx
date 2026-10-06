@@ -51,7 +51,7 @@ it('[A2] Goals: "Add a goal" has no right-hand lane above it', async () => {
 it('[A3] Insights Earning side: income rows have no right-hand lane above them', async () => {
   seedInsights(server, {
     breakdown: breakdownWire({ spend: { coffee: { posted: 40, pending: 0 } }, income: { salary: { posted: 3000, pending: 0 } } }),
-    categories: [{ ...COFFEE, recent: 0 }, SALARY],
+    categories: [{ ...COFFEE }, SALARY],
     payCycle: PAY_CYCLE,
   });
   await renderWithApp(<Insights />);

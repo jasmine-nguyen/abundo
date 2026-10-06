@@ -13,7 +13,7 @@ import { useCategories } from '../queries';
 import { COFFEE } from './support/categories';
 
 const server = installFakeServer();
-const CATEGORIES = [{ ...COFFEE, recent: 0 }];
+const CATEGORIES = [{ ...COFFEE }];
 
 describe('useCategories reload actions', () => {
   it('refetch and refetchStale keep the same identity across a rerender, a load and an error', async () => {

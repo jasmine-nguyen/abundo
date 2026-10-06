@@ -34,7 +34,7 @@ def test_the_guard_flags_a_top_level_category_copy_but_not_a_subclass_or_an_unre
     ("shared/_feed_fakes.py", True),
     ("shared/_budget_endpoint_fakes.py", True),
     ("shared/test_feed_fakes.py", False),
-    ("shared/_migration_scripts.py", False),
+    ("shared/_terraform.py", False),
     ("lambda/_local_fakes.py", False),
     ("shared/_old/copied_fakes.py", False),
     ("lambda_api/test_ai_chat.py", False),

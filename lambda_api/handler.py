@@ -888,8 +888,7 @@ def _parse_parent(raw):
 
 
 def list_categories(repo: CategoryRepository) -> list[dict]:
-    # `recent` is client-derived (not stored); default it so the client Cat shape holds.
-    return [{**cat, "recent": 0} for cat in repo.list_categories()]
+    return repo.list_categories()
 
 
 def create_category(
@@ -940,7 +939,7 @@ def create_category(
     except InvalidCategoryParentError as e:
         return _json_response(400, {"error": str(e)})
 
-    return _json_response(201, {**created, "recent": 0})
+    return _json_response(201, created)
 
 
 def update_category(
@@ -1013,7 +1012,7 @@ def update_category(
             except (VersionConflictError, DatabaseError) as e:
                 logger.warning("%s failed for re-bucketed category %s: %s", clear.__name__, cat_id, e)
 
-    return _json_response(200, {**updated, "recent": 0})
+    return _json_response(200, updated)
 
 
 def delete_category(
