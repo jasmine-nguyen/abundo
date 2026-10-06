@@ -1,11 +1,9 @@
 """Shared server-side Anthropic Messages client (WHIT-388).
 
-The single home for the plumbing insights_ai.py and milestone_ai.py used to each
-copy: the urllib POST (custom User-Agent, since api.anthropic.com is Cloudflare-
-fronted and 403s the default urllib agent), an SSM-cached API key, the typed
-AnthropicError the handler maps to a response, and the first-{...}-span JSON
-extraction. Each caller supplies only its own system prompt, user prefix, and
-reply parser.
+The single home for the Anthropic plumbing: the urllib POST (custom User-Agent,
+since api.anthropic.com is Cloudflare-fronted and 403s the default urllib agent), an
+SSM-cached API key, and the typed AnthropicError the handler maps to a response. Each
+caller supplies its own system prompt, user prefix, reply schema and parser.
 
 Lives in lambda_api/ (not the shared layer) on purpose: the ANTHROPIC_* constants
 it reads live only in lambda_api/api_constants.py, and lambda_api is the only function
@@ -13,7 +11,6 @@ that calls Anthropic.
 """
 
 import json
-import re
 import urllib.error
 import urllib.request
 
@@ -45,10 +42,11 @@ def get_api_key() -> str:
     return _fetch_api_key(ANTHROPIC_API_KEY_PATH)
 
 
-def post(system: str, user_prefix: str, model_input: dict) -> str:
+def post(system: str, user_prefix: str, model_input: dict, schema: dict) -> str:
     """POST one system + user turn to the Messages API and return the first text block.
 
-    The user turn is `user_prefix` followed by the compact-JSON model_input. Returns
+    The user turn is `user_prefix` followed by the compact-JSON model_input. `schema` is
+    sent as structured outputs, so the API constrains the reply to that JSON shape. Returns
     the first text block's text, or "" when the envelope carries none (so a malformed
     reply degrades through the caller's parser instead of raising).
 
@@ -61,6 +59,7 @@ def post(system: str, user_prefix: str, model_input: dict) -> str:
         # Disable Sonnet's default "thinking" so it can't eat the token budget and
         # truncate the JSON reply — a single-shot answer, no reasoning needed.
         "thinking": ANTHROPIC_THINKING,
+        "output_config": {"format": {"type": "json_schema", "schema": schema}},
         "system": system,
         "messages": [
             {
@@ -130,19 +129,3 @@ def _send(body: dict, timeout: float) -> dict:
     except (ValueError, TypeError) as e:
         raise AnthropicError(None, "Anthropic key unavailable or non-JSON envelope") from e
 
-
-def extract_first_json(text: str) -> dict | None:
-    """Extract the first {...} span from the model's reply and json.loads it.
-
-    The model is asked for strict JSON but may wrap it in prose. Returns the parsed
-    object, or None on no match / invalid JSON — callers coerce None to their own
-    empty result so a chatty reply never 500s the endpoint. A matched {...} span is
-    always a JSON object, so the result is a dict whenever it isn't None.
-    """
-    match = re.search(r"\{.*\}", text or "", re.DOTALL)
-    if not match:
-        return None
-    try:
-        return json.loads(match.group(0))
-    except (ValueError, TypeError):
-        return None

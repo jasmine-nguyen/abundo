@@ -130,7 +130,7 @@ def insights_ai():
 @pytest.fixture
 def anthropic_client():
     """Import lambda_api/anthropic_client.py in isolation for direct tests of the
-    shared Anthropic client (post / extract_first_json / get_api_key)."""
+    shared Anthropic client (post / get_api_key)."""
     with _isolated_import("anthropic_client") as module:
         import api_key
 
