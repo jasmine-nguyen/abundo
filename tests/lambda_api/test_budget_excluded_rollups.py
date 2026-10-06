@@ -21,6 +21,7 @@ from decimal import Decimal
 from functools import partial
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _transaction_range_fakes import _QueuedTransactionRepo
 
 
 def _txn(category, amount, status="posted", counts=True, budget_excluded=None):
@@ -39,18 +40,6 @@ class _BudgetRepo:
         return {k: dict(v) for k, v in self._b.items()}
 
 
-class _TxnRepo:
-    """Single page of `transactions` for the FIRST account, empty after — so the
-    read_window's per-account loop sums each row once. Ignores the
-    date bounds (mirrors test_budgets.FakeTransactionRepo)."""
-
-    def __init__(self, transactions):
-        self._queue = [(list(transactions), None)]
-
-    def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
-        return self._queue.pop(0) if self._queue else ([], None)
-
-
 _PayCycleRepo = partial(_FakePayCycleRepo, length=14, last_pay_date="2024-01-03")
 
 
@@ -61,7 +50,7 @@ def test_list_budgets_drops_an_excluded_charge(handler):
     # WHIT-296 — [A-B1] two coffee charges, one marked "exclude"; only the kept one
     # feeds the bar. Without the gate the bar would read $150 posted.
     budget_repo = _BudgetRepo({"coffee": {"target": Decimal("100")}})
-    txn_repo = _TxnRepo([
+    txn_repo = _QueuedTransactionRepo([
         _txn("coffee", -50, "posted"),
         _txn("coffee", -100, "posted", budget_excluded=True),  # excluded
     ])
@@ -77,7 +66,7 @@ def test_list_budgets_excluded_pending_leaves_the_pending_bar(handler):
     # WHIT-296 — [A-B2] the override drops a PENDING charge from the pending portion of
     # the bar too (the gate is status-agnostic). Only the kept pending remains.
     budget_repo = _BudgetRepo({"coffee": {"target": Decimal("100")}})
-    txn_repo = _TxnRepo([
+    txn_repo = _QueuedTransactionRepo([
         _txn("coffee", -12, "pending"),
         _txn("coffee", -40, "pending", budget_excluded=True),  # excluded
     ])
@@ -95,7 +84,7 @@ def test_list_budgets_excluded_pending_leaves_the_pending_bar(handler):
 def test_breakdown_drops_an_excluded_categorised_charge(handler):
     # WHIT-296 — [A-K1] the excluded coffee charge leaves the coffee breakdown slice.
     cats = _FakeCategoryRepo([{"id": "coffee", "name": "Coffee", "bucket": "Lifestyle"}])
-    txns = _TxnRepo([
+    txns = _QueuedTransactionRepo([
         _txn("coffee", -50, "posted"),
         _txn("coffee", -100, "posted", budget_excluded=True),  # excluded
     ])
@@ -109,7 +98,7 @@ def test_breakdown_excluded_uncategorized_charge_does_not_inflate_the_uncategori
     # WHIT-296 — [A-K2] an excluded charge with a raw (un-mapped) category must NOT
     # land in __uncategorized__; a lone excluded charge yields no uncategorized row.
     cats = _FakeCategoryRepo([{"id": "coffee", "name": "Coffee", "bucket": "Lifestyle"}])
-    txns = _TxnRepo([_txn("MEDICAL", -20, "posted", budget_excluded=True)])
+    txns = _QueuedTransactionRepo([_txn("MEDICAL", -20, "posted", budget_excluded=True)])
 
     result = handler.list_category_breakdown(cats, txns, _PayCycleRepo())
 

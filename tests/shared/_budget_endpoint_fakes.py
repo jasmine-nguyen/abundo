@@ -7,29 +7,10 @@ categories/transactions locally.
 On the pytest path via `pythonpath = tests/shared` (pytest.ini), same as
 _goal_nudge_fakes.py. The suites that WRITE budgets use the real repository instead
 (_budget_fakes.recording_budget_repo); ``_FakeBudgetRepo`` here is a read-only stub.
+The transaction-range stand-ins live in _transaction_range_fakes.py (WHIT-767).
 """
 
 from decimal import Decimal
-
-
-class _DateFilteringTransactionRepo:
-    """Honours the date bounds like DynamoDB `between` (inclusive both ends over
-    YYYY-MM-DD strings), so a test proves the endpoint pulls the WHOLE cycle — not a
-    7-day slice. Serves the pool once (then empty) so the per-account loop counts each
-    transaction a single time."""
-
-    def __init__(self, transactions):
-        self._txns = list(transactions)
-        self._served = False
-        self.calls = []
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        self.calls.append((account_id, start_date, end_date, limit, cursor))
-        if self._served:
-            return [], None
-        self._served = True
-        page = [t for t in self._txns if start_date <= t["date"] <= end_date]
-        return page, None
 
 
 class _FakePayCycleRepo:

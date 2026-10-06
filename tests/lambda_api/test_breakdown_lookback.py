@@ -20,24 +20,7 @@ from decimal import Decimal
 from functools import partial
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
-
-
-class _DateFilteringTransactionRepo:
-    """Honours the inclusive [start, end] date bounds like DynamoDB `between`, so a
-    window test can prove exactly which dates are pulled. Serves the pool once total."""
-
-    def __init__(self, transactions):
-        self._txns = list(transactions)
-        self._served = False
-        self.calls = []
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        self.calls.append((account_id, start_date, end_date, limit, cursor))
-        if self._served:
-            return [], None
-        self._served = True
-        page = [t for t in self._txns if start_date <= t["date"] <= end_date]
-        return page, None
+from _transaction_range_fakes import _DateFilteringTransactionRepo
 
 
 FakePayCycleRepo = partial(_FakePayCycleRepo, length=14, last_pay_date="2024-01-03")

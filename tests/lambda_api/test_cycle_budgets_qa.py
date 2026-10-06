@@ -15,25 +15,10 @@ import pytest
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _budget_fakes import recording_budget_repo
+from _transaction_range_fakes import _DateFilteringTransactionRepo
 
 LENGTH = 30
 PAYDATE = "2026-07-01"
-
-
-class _RecordingTransactionRepo:
-    """Honours the inclusive [start, end] read, serves the pool once, and records each range."""
-
-    def __init__(self, transactions):
-        self._txns = list(transactions)
-        self._served = False
-        self.ranges = []
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        self.ranges.append((start_date, end_date))
-        if self._served:
-            return [], None
-        self._served = True
-        return [dict(t) for t in self._txns if start_date <= t["date"] <= end_date], None
 
 
 CATEGORIES = [
@@ -68,7 +53,7 @@ TXNS = [
 def _wire(handler, monkeypatch, budgets, txns=TXNS):
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 25))
-    repos = {"txn": _RecordingTransactionRepo(txns)}
+    repos = {"txn": _DateFilteringTransactionRepo(txns)}
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repos["txn"])
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: _FakePayCycleRepo())
     monkeypatch.setattr(handler, "BudgetRepository", lambda: recording_budget_repo(budgets))
@@ -99,7 +84,7 @@ def test_past_cycle_reads_only_its_own_window_even_with_a_rollover_budget(handle
     repos = _wire(handler, monkeypatch, {"sink": dict(ROLLOVER_SINK), "coffee": {"target": Decimal("50")}})
     body = _get(handler, {"cycle": "1"})
     assert (body["start"], body["end"]) == ("2026-06-01", "2026-06-30")
-    assert set(repos["txn"].ranges) == {("2026-06-01", "2026-06-30")}
+    assert set((c[1], c[2]) for c in repos["txn"].calls) == {("2026-06-01", "2026-06-30")}
 
 
 # [A2] (P0) this cycle with a rollover budget → the file's dates stay this cycle, even though
@@ -108,7 +93,7 @@ def test_current_cycle_dates_ignore_the_wider_rollover_read(handler, monkeypatch
     repos = _wire(handler, monkeypatch, {"sink": dict(ROLLOVER_SINK)})
     body = _get(handler)
     assert (body["start"], body["end"]) == ("2026-07-01", "2026-07-25")
-    assert min(start for start, _ in repos["txn"].ranges) < "2026-07-01"
+    assert min(c[1] for c in repos["txn"].calls) < "2026-07-01"
     assert [row["transaction_id"] for row in body["transactions"]] == ["c0-coffee"]
 
 

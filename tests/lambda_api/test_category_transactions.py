@@ -14,6 +14,7 @@ from decimal import Decimal
 import pytest
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _transaction_range_fakes import _DateFilteringTransactionRepo
 
 
 def _contributes(transaction):
@@ -26,24 +27,6 @@ def _contributes(transaction):
 
 
 # --- fakes (local; mirror test_budget_transactions.py) -----------------------
-
-
-class _DateFilteringTransactionRepo:
-    """Honours DynamoDB `between` (inclusive both ends over YYYY-MM-DD). Serves the pool
-    once so the per-account loop counts each transaction a single time."""
-
-    def __init__(self, transactions):
-        self._txns = list(transactions)
-        self._served = False
-        self.calls = []
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        self.calls.append((account_id, start_date, end_date, limit, cursor))
-        if self._served:
-            return [], None
-        self._served = True
-        page = [t for t in self._txns if start_date <= t["date"] <= end_date]
-        return page, None
 
 
 # A parent Cafes & Coffee with a same-bucket sub-category (so a subtree bug would leak it).
@@ -282,7 +265,7 @@ def test_router_patch_category_not_captured_by_transactions_route(handler, monke
 
 # ======================================================================================
 # Folded from test_category_transactions_gaps.py (WHIT-462, adversarial gaps WHIT-342).
-# The identical helpers (_contributes/_DateFilteringTransactionRepo/_FakePayCycleRepo/
+# The identical helpers (_contributes/_FakePayCycleRepo/
 # _FakeCategoryRepo/_event/_pin_today/_clamped_total) reuse the ones above; only
 # the account-aware _txn (=> _txn_acct), the single-entry CATS (=> CATS_SINGLE), and the
 # unique _PerAccountTransactionRepo are kept local. Test bodies otherwise verbatim.

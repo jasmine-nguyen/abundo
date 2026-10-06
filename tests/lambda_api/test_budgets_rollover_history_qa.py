@@ -8,7 +8,8 @@ from decimal import Decimal
 
 import pytest
 
-from _budget_endpoint_fakes import _DateFilteringTransactionRepo, _FakeCategoryRepo, _FakePayCycleRepo, _txn, pin_cycle_window
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo, _txn, pin_cycle_window
+from _transaction_range_fakes import _DateFilteringTransactionRepo
 from _budget_fakes import recording_budget_repo, stored_budgets
 
 CYCLE_START = "2026-08-06"
