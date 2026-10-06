@@ -13,20 +13,11 @@ import logging
 import time
 from decimal import Decimal
 
+from _transaction_range_fakes import _QueuedTransactionRepo
+
 MARKER = "UP_WEBHOOK_REPAYMENT_MISSED"
 _DAY = 24 * 60 * 60
 NOW = 1_800_000_000  # fixed epoch so the window is deterministic
-
-
-class _FakeTxnRepo:
-    def __init__(self, rows, cursor=None):
-        self._rows = rows
-        self._cursor = cursor
-        self.calls = []
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit):
-        self.calls.append((account_id, start_date, end_date, limit))
-        return list(self._rows), self._cursor
 
 
 class _FakeNotify:
@@ -46,7 +37,7 @@ def _row(amount, *, date="2026-07-04", type_="TRANSFER_INCOMING"):
 def _run(handler, caplog, *, rows, push_amounts=(), notify=None):
     caplog.set_level(logging.ERROR)
     notify = notify or _FakeNotify(push_amounts)
-    handler.check_ingested_repayment_without_push(notify, _FakeTxnRepo(rows), NOW)
+    handler.check_ingested_repayment_without_push(notify, _QueuedTransactionRepo(rows), NOW)
     return caplog.text
 
 
@@ -159,9 +150,9 @@ def test_empty_window_short_circuits_before_reading_pushes(handler, caplog):
 # --- window plumbing -------------------------------------------------------
 
 def test_reads_the_homeloan_account_over_the_lookback(handler):
-    repo = _FakeTxnRepo([])
+    repo = _QueuedTransactionRepo([])
     handler.check_ingested_repayment_without_push(_FakeNotify(), repo, NOW)
-    account_id, start_date, end_date, _limit = repo.calls[0]
+    account_id, start_date, end_date, _limit, _cursor = repo.calls[0]
     assert account_id == handler.HOMELOAN_ACCOUNT_ID
     assert start_date == "2027-01-08"  # NOW - 7 days, UTC (NOW = 2027-01-15)
     assert end_date == "2027-01-15"
@@ -226,10 +217,10 @@ def test_detector_requests_max_page_size_and_ignores_the_cursor(handler, caplog)
     # The detector calls get_transactions_by_date_range with MAX_PAGE_SIZE and never
     # re-queries with the returned LastEvaluatedKey. This pins the single-page behaviour
     # so a >100-row 7-day window would silently drop the oldest repayments.
-    repo = _FakeTxnRepo([_row("3573.00")], cursor={"pk": "more", "sk": "pages"})
+    repo = _QueuedTransactionRepo(pages=[([_row("3573.00")], {"pk": "more", "sk": "pages"})])
     handler.check_ingested_repayment_without_push(_FakeNotify([357300]), repo, NOW)
     assert len(repo.calls) == 1  # cursor dropped: no second page fetched
-    _account, _start, _end, limit = repo.calls[0]
+    _account, _start, _end, limit, _cursor = repo.calls[0]
     assert limit == handler.MAX_PAGE_SIZE
 
 

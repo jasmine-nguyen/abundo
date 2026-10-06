@@ -1,6 +1,6 @@
 """Tests for GET /repayment and the get_repayment handler (WHIT-115).
 
-Injects a FakeTransactionRepo returning newest-first up-homeloan rows. Covers:
+Injects a _QueuedTransactionRepo returning newest-first up-homeloan rows. Covers:
 the repayment + same-month interest split (principal = amount - |interest|),
 total-only when no interest pairs, the null sentinel when there's no repayment,
 non-repayment rows ignored, and the route's JSON shaping.
@@ -9,17 +9,7 @@ non-repayment rows ignored, and the route's JSON shaping.
 import json
 from decimal import Decimal
 
-
-class FakeTransactionRepo:
-    """Handler-level stand-in: returns the given rows (assumed newest-first)."""
-
-    def __init__(self, rows):
-        self._rows = rows
-        self.calls = []
-
-    def get_transactions_by_date_range(self, account_id, start, end, limit):
-        self.calls.append((account_id, start, end, limit))
-        return list(self._rows), None
+from _transaction_range_fakes import _QueuedTransactionRepo
 
 
 def _repayment(date, amount="1440"):
@@ -34,7 +24,7 @@ def _interest(date, amount="-232"):
 
 
 def test_pairs_same_month_interest_into_a_split(handler):
-    repo = FakeTransactionRepo([_interest("2026-07-05"), _repayment("2026-07-01")])
+    repo = _QueuedTransactionRepo([_interest("2026-07-05"), _repayment("2026-07-01")])
     out = handler.get_repayment(repo)
     assert out["amount"] == Decimal("1440")
     assert out["date"] == "2026-07-01"
@@ -44,16 +34,17 @@ def test_pairs_same_month_interest_into_a_split(handler):
     # It reads the whole up-homeloan partition, newest-first (no date bounds).
     assert repo.calls[0][0] == "up-homeloan"
     assert repo.calls[0][1] is None and repo.calls[0][2] is None
+    assert len(repo.calls) == 1
 
 
 def test_principal_plus_interest_equals_amount(handler):
-    out = handler.get_repayment(FakeTransactionRepo([_repayment("2026-07-01"), _interest("2026-07-05")]))
+    out = handler.get_repayment(_QueuedTransactionRepo([_repayment("2026-07-01"), _interest("2026-07-05")]))
     assert out["principal"] + abs(out["interest"]) == out["amount"]
 
 
 def test_total_only_when_interest_is_a_different_month(handler):
     # June interest must NOT pair with a July repayment.
-    repo = FakeTransactionRepo([_repayment("2026-07-01"), _interest("2026-06-05")])
+    repo = _QueuedTransactionRepo([_repayment("2026-07-01"), _interest("2026-06-05")])
     out = handler.get_repayment(repo)
     assert out["amount"] == Decimal("1440")
     assert out["date"] == "2026-07-01"
@@ -62,26 +53,26 @@ def test_total_only_when_interest_is_a_different_month(handler):
 
 
 def test_picks_the_newest_repayment(handler):
-    repo = FakeTransactionRepo([_repayment("2026-07-01", "1440"), _repayment("2026-06-01", "1400")])
+    repo = _QueuedTransactionRepo([_repayment("2026-07-01", "1440"), _repayment("2026-06-01", "1400")])
     out = handler.get_repayment(repo)
     assert out["date"] == "2026-07-01"   # first (newest) TRANSFER_INCOMING wins
 
 
 def test_null_sentinel_when_no_repayment(handler):
     # A lone interest leg (no incoming transfer) is not a repayment.
-    out = handler.get_repayment(FakeTransactionRepo([_interest("2026-07-05")]))
+    out = handler.get_repayment(_QueuedTransactionRepo([_interest("2026-07-05")]))
     assert out == {"amount": None, "date": None, "principal": None, "interest": None}
 
 
 def test_null_sentinel_when_no_rows(handler):
-    assert handler.get_repayment(FakeTransactionRepo([])) == {
+    assert handler.get_repayment(_QueuedTransactionRepo([])) == {
         "amount": None, "date": None, "principal": None, "interest": None,
     }
 
 
 def test_ignores_negative_incoming_transfer(handler):
     # Only a POSITIVE incoming transfer is a repayment credit.
-    repo = FakeTransactionRepo([{"type": "TRANSFER_INCOMING", "category": "TRANSFER_IN", "amount": Decimal("-5"), "date": "2026-07-01"}])
+    repo = _QueuedTransactionRepo([{"type": "TRANSFER_INCOMING", "category": "TRANSFER_IN", "amount": Decimal("-5"), "date": "2026-07-01"}])
     assert handler.get_repayment(repo)["amount"] is None
 
 
@@ -89,7 +80,7 @@ def test_returns_a_sub_ten_dollar_repayment(handler):
     # The read API has NO $10 alert floor (that's the poller's concern). A small
     # repayment must still be returned. Fail-on-revert guard: this breaks if anyone
     # bakes MIN_REPAYMENT_NOTIFY into the shared is_repayment_credit rule.
-    out = handler.get_repayment(FakeTransactionRepo([_repayment("2026-07-01", "5")]))
+    out = handler.get_repayment(_QueuedTransactionRepo([_repayment("2026-07-01", "5")]))
     assert out["amount"] == Decimal("5")
     assert out["date"] == "2026-07-01"
 
@@ -98,7 +89,7 @@ def test_returns_a_sub_ten_dollar_repayment(handler):
 
 
 def test_route_get_repayment_json_numbers(handler, monkeypatch):
-    repo = FakeTransactionRepo([_repayment("2026-07-01"), _interest("2026-07-05")])
+    repo = _QueuedTransactionRepo([_repayment("2026-07-01"), _interest("2026-07-05")])
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
     event = {"rawPath": "/repayment", "requestContext": {"http": {"method": "GET"}}}
     resp = handler.lambda_handler(event, None)
@@ -107,7 +98,7 @@ def test_route_get_repayment_json_numbers(handler, monkeypatch):
 
 
 def test_route_get_repayment_null_sentinel(handler, monkeypatch):
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: FakeTransactionRepo([]))
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: _QueuedTransactionRepo([]))
     event = {"rawPath": "/repayment", "requestContext": {"http": {"method": "GET"}}}
     resp = handler.lambda_handler(event, None)
     assert resp["statusCode"] == 200
@@ -128,7 +119,7 @@ def test_skips_a_malformed_newest_leg_and_returns_the_next_valid_repayment(handl
         {"type": "TRANSFER_INCOMING", "category": "TRANSFER_IN", "amount": None, "date": "2026-07-08"},
         _repayment("2026-07-01", "1440"),
     ]
-    out = handler.get_repayment(FakeTransactionRepo(rows))
+    out = handler.get_repayment(_QueuedTransactionRepo(rows))
     assert out["amount"] == Decimal("1440")
     assert out["date"] == "2026-07-01"
 
@@ -140,7 +131,7 @@ def test_small_repayment_with_larger_same_month_interest_is_total_only(handler):
     # negative principal). Fail-on-revert twice over: a floor in the shared rule drops
     # the $5 leg (amount would be None); dropping the `interest < amount` guard yields a
     # negative principal.
-    repo = FakeTransactionRepo([_repayment("2026-07-01", "5"), _interest("2026-07-05", "-8")])
+    repo = _QueuedTransactionRepo([_repayment("2026-07-01", "5"), _interest("2026-07-05", "-8")])
     out = handler.get_repayment(repo)
     assert out["amount"] == Decimal("5")
     assert out["date"] == "2026-07-01"
@@ -150,7 +141,7 @@ def test_skips_incidental_malformed_rows_and_still_finds_the_repayment(handler):
     # A junk row with none of type/category/amount must not crash the scan and
     # must be skipped; the real repayment + its interest still resolve.
     rows = [{"description": "weird row, no keys we read"}, _repayment("2026-07-01"), _interest("2026-07-05")]
-    out = handler.get_repayment(FakeTransactionRepo(rows))
+    out = handler.get_repayment(_QueuedTransactionRepo(rows))
     assert out["amount"] == Decimal("1440")
     assert out["principal"] == Decimal("1208")
     assert out["interest"] == Decimal("232")
@@ -160,7 +151,7 @@ def test_pairs_interest_on_category_and_month_regardless_of_type(handler):
     # The interest matcher anchors on category==BANK_FEES + same month, NOT on
     # any transaction `type` — a BANK_FEES row with no `type` still pairs.
     interest_no_type = {"category": "BANK_FEES", "amount": Decimal("-232"), "date": "2026-07-05"}
-    out = handler.get_repayment(FakeTransactionRepo([_repayment("2026-07-01"), interest_no_type]))
+    out = handler.get_repayment(_QueuedTransactionRepo([_repayment("2026-07-01"), interest_no_type]))
     assert out["interest"] == Decimal("232")
     assert out["principal"] == Decimal("1208")
 
@@ -169,7 +160,7 @@ def test_sums_all_same_month_interest_legs(handler):
     # WHIT-120: two BANK_FEES legs in the repayment's month sum into the interest
     # (not just the newest). Fail-on-revert: the old `break`-on-newest gives 300/1140.
     rows = [_interest("2026-07-20", "-300"), _interest("2026-07-05", "-232"), _repayment("2026-07-01")]
-    out = handler.get_repayment(FakeTransactionRepo(rows))
+    out = handler.get_repayment(_QueuedTransactionRepo(rows))
     assert out["interest"] == Decimal("532")     # 300 + 232, both same-month legs
     assert out["principal"] == Decimal("908")    # 1440 - 532
 
@@ -180,7 +171,7 @@ def test_three_same_month_interest_legs_all_sum(handler):
         _interest("2026-07-20", "-100"), _interest("2026-07-12", "-200"),
         _interest("2026-07-05", "-232"), _repayment("2026-07-01"),
     ]
-    out = handler.get_repayment(FakeTransactionRepo(rows))
+    out = handler.get_repayment(_QueuedTransactionRepo(rows))
     assert out["interest"] == Decimal("532")     # 100 + 200 + 232
     assert out["principal"] == Decimal("908")    # 1440 - 532
 
@@ -191,7 +182,7 @@ def test_positive_bank_fees_reversal_is_not_added_to_the_sum(handler):
     # reversal in the same month yields interest 300, not 68 or 532.
     reversal = {"category": "BANK_FEES", "amount": Decimal("232"), "date": "2026-07-12"}
     rows = [_interest("2026-07-20", "-300"), reversal, _repayment("2026-07-01")]
-    out = handler.get_repayment(FakeTransactionRepo(rows))
+    out = handler.get_repayment(_QueuedTransactionRepo(rows))
     assert out["interest"] == Decimal("300")
     assert out["principal"] == Decimal("1140")
 
@@ -203,7 +194,7 @@ def test_summed_interest_at_or_above_amount_falls_back_to_total_only(handler):
     # the summed value.
     rows = [_interest("2026-07-20", "-300"), _interest("2026-07-05", "-232"),
             _repayment("2026-07-01", "500")]
-    out = handler.get_repayment(FakeTransactionRepo(rows))
+    out = handler.get_repayment(_QueuedTransactionRepo(rows))
     assert out["interest"] is None
     assert out["principal"] is None
     assert out["amount"] == Decimal("500")
@@ -214,7 +205,7 @@ def test_adjacent_month_interest_leg_is_excluded_from_the_sum(handler):
     # July repayment even though it's the larger, newer-adjacent one.
     rows = [_interest("2026-07-05", "-232"), _interest("2026-06-30", "-300"),
             _repayment("2026-07-01")]
-    out = handler.get_repayment(FakeTransactionRepo(rows))
+    out = handler.get_repayment(_QueuedTransactionRepo(rows))
     assert out["interest"] == Decimal("232")     # only the July leg
     assert out["principal"] == Decimal("1208")   # 1440 - 232
 
@@ -224,7 +215,7 @@ def test_one_good_and_one_malformed_same_month_leg_still_sums_the_good_one(handl
     # zero the sum — the valid same-month leg still produces a real split. (plan-critic)
     malformed = {"category": "BANK_FEES", "date": "2026-07-20"}  # no amount
     rows = [malformed, _interest("2026-07-05", "-232"), _repayment("2026-07-01")]
-    out = handler.get_repayment(FakeTransactionRepo(rows))
+    out = handler.get_repayment(_QueuedTransactionRepo(rows))
     assert out["interest"] == Decimal("232")
     assert out["principal"] == Decimal("1208")
 
@@ -235,19 +226,19 @@ def test_one_good_and_one_malformed_same_month_leg_still_sums_the_good_one(handl
 def test_null_amount_on_incoming_transfer_is_skipped_not_fatal(handler):
     # amount present but None (key exists, value null) must NOT crash (None > 0).
     bad = {"type": "TRANSFER_INCOMING", "category": "TRANSFER_IN", "amount": None, "date": "2026-07-02"}
-    out = handler.get_repayment(FakeTransactionRepo([bad, _repayment("2026-07-01")]))
+    out = handler.get_repayment(_QueuedTransactionRepo([bad, _repayment("2026-07-01")]))
     assert out["amount"] == Decimal("1440")   # falls through to the valid repayment
 
 
 def test_repayment_without_a_date_is_skipped(handler):
     dateless = {"type": "TRANSFER_INCOMING", "category": "TRANSFER_IN", "amount": Decimal("1440")}
-    out = handler.get_repayment(FakeTransactionRepo([dateless]))
+    out = handler.get_repayment(_QueuedTransactionRepo([dateless]))
     assert out == {"amount": None, "date": None, "principal": None, "interest": None}
 
 
 def test_interest_row_with_no_amount_falls_back_to_total_only(handler):
     bad_interest = {"category": "BANK_FEES", "date": "2026-07-05"}   # no amount
-    out = handler.get_repayment(FakeTransactionRepo([_repayment("2026-07-01"), bad_interest]))
+    out = handler.get_repayment(_QueuedTransactionRepo([_repayment("2026-07-01"), bad_interest]))
     assert out["amount"] == Decimal("1440")
     assert out["principal"] is None and out["interest"] is None   # total-only, no crash
 
@@ -256,7 +247,7 @@ def test_string_interest_amount_is_skipped_not_summed(handler):
     # WHIT-327: a non-numeric (string) interest amount is skipped by the shared is_number
     # guard, exactly as the old local _num did — total-only, never a `str < 0` crash.
     string_interest = {"category": "BANK_FEES", "amount": "-232", "date": "2026-07-05"}
-    out = handler.get_repayment(FakeTransactionRepo([_repayment("2026-07-01"), string_interest]))
+    out = handler.get_repayment(_QueuedTransactionRepo([_repayment("2026-07-01"), string_interest]))
     assert out["amount"] == Decimal("1440")
     assert out["principal"] is None and out["interest"] is None   # skipped → total-only
 
@@ -266,7 +257,7 @@ def test_decimal_nan_interest_amount_is_skipped_not_fatal(handler):
     # InvalidOperation on `amount_leg < 0` and 500 the card — is_number now rejects
     # non-finite values, so the leg is skipped → total-only, no crash.
     nan_interest = {"category": "BANK_FEES", "amount": Decimal("NaN"), "date": "2026-07-05"}
-    out = handler.get_repayment(FakeTransactionRepo([_repayment("2026-07-01"), nan_interest]))
+    out = handler.get_repayment(_QueuedTransactionRepo([_repayment("2026-07-01"), nan_interest]))
     assert out["amount"] == Decimal("1440")
     assert out["principal"] is None and out["interest"] is None
 
@@ -277,7 +268,7 @@ def test_decimal_nan_repayment_amount_is_skipped_not_fatal(handler):
     # falls through to the next valid repayment instead of crashing.
     nan_repayment = {"type": "TRANSFER_INCOMING", "category": "TRANSFER_IN",
                      "amount": Decimal("NaN"), "date": "2026-07-02"}
-    out = handler.get_repayment(FakeTransactionRepo([nan_repayment, _repayment("2026-07-01")]))
+    out = handler.get_repayment(_QueuedTransactionRepo([nan_repayment, _repayment("2026-07-01")]))
     assert out["amount"] == Decimal("1440")   # falls through to the valid repayment
 
 
@@ -287,7 +278,7 @@ def test_decimal_nan_repayment_amount_is_skipped_not_fatal(handler):
 def test_interest_at_or_above_the_repayment_falls_back_to_total_only(handler):
     # A tiny repayment against a big same-month fee must NOT show a negative principal.
     small = _repayment("2026-07-01", "100")
-    out = handler.get_repayment(FakeTransactionRepo([small, _interest("2026-07-05", "-232")]))
+    out = handler.get_repayment(_QueuedTransactionRepo([small, _interest("2026-07-05", "-232")]))
     assert out["amount"] == Decimal("100")
     assert out["principal"] is None and out["interest"] is None
 
@@ -295,7 +286,7 @@ def test_interest_at_or_above_the_repayment_falls_back_to_total_only(handler):
 def test_positive_bank_fees_reversal_is_not_treated_as_interest(handler):
     # A positive BANK_FEES (interest refund/reversal) must not be abs()'d into a split.
     reversal = {"type": "TRANSFER_OUTGOING", "category": "BANK_FEES", "amount": Decimal("232"), "date": "2026-07-05"}
-    out = handler.get_repayment(FakeTransactionRepo([_repayment("2026-07-01"), reversal]))
+    out = handler.get_repayment(_QueuedTransactionRepo([_repayment("2026-07-01"), reversal]))
     assert out["principal"] is None and out["interest"] is None   # total-only
 
 
@@ -315,7 +306,7 @@ def test_only_chosen_repayments_month_sums(handler):
         _interest("2026-07-20", "-232"), _interest("2026-07-05", "-100"),
         _repayment("2026-06-01", "1400"), _interest("2026-06-15", "-500"),
     ]
-    out = handler.get_repayment(FakeTransactionRepo(rows))
+    out = handler.get_repayment(_QueuedTransactionRepo(rows))
     assert out["date"] == "2026-07-01"
     assert out["interest"] == Decimal("332")     # 232 + 100, July only
     assert out["principal"] == Decimal("1108")   # 1440 - 332
@@ -327,7 +318,7 @@ def test_summed_interest_exactly_equal_to_amount_total_only(handler):
     # 720 leg < 1440 and fabricates a 720/720 split, so this fails on revert.
     rows = [_interest("2026-07-06", "-720"), _interest("2026-07-05", "-720"),
             _repayment("2026-07-01", "1440")]
-    out = handler.get_repayment(FakeTransactionRepo(rows))
+    out = handler.get_repayment(_QueuedTransactionRepo(rows))
     assert out["interest"] is None
     assert out["principal"] is None
     assert out["amount"] == Decimal("1440")
@@ -340,7 +331,7 @@ def test_reversal_before_two_negatives_sums_only_negatives(handler):
     reversal = {"category": "BANK_FEES", "amount": Decimal("232"), "date": "2026-07-25"}
     rows = [reversal, _interest("2026-07-20", "-300"), _interest("2026-07-05", "-232"),
             _repayment("2026-07-01")]
-    out = handler.get_repayment(FakeTransactionRepo(rows))
+    out = handler.get_repayment(_QueuedTransactionRepo(rows))
     assert out["interest"] == Decimal("532")     # 300 + 232, reversal excluded
     assert out["principal"] == Decimal("908")
 
@@ -351,7 +342,7 @@ def test_different_category_same_month_leg_is_ignored(handler):
     other = {"type": "TRANSFER_OUTGOING", "category": "GROCERIES",
              "amount": Decimal("-500"), "date": "2026-07-05"}
     rows = [other, _interest("2026-07-06", "-232"), _repayment("2026-07-01")]
-    out = handler.get_repayment(FakeTransactionRepo(rows))
+    out = handler.get_repayment(_QueuedTransactionRepo(rows))
     assert out["interest"] == Decimal("232")     # not 732
     assert out["principal"] == Decimal("1208")
 
@@ -360,7 +351,7 @@ def test_lone_zero_amount_interest_leg_is_total_only(handler):
     # [guard] A zero-amount BANK_FEES leg is not a debit (amt < 0 is False), so it neither
     # creates a bogus 0-interest split nor trips `(interest or 0)`. Locks the `< 0` boundary.
     zero = {"category": "BANK_FEES", "amount": Decimal("0"), "date": "2026-07-05"}
-    out = handler.get_repayment(FakeTransactionRepo([zero, _repayment("2026-07-01")]))
+    out = handler.get_repayment(_QueuedTransactionRepo([zero, _repayment("2026-07-01")]))
     assert out["interest"] is None
     assert out["principal"] is None
 
@@ -369,7 +360,7 @@ def test_many_same_month_legs_all_sum(handler):
     # [fail-on-revert] Volume: twelve same-month debits all accumulate — guards against any
     # accidental cap or two-leg-only pairing. Revert (break) -> 50, fails.
     legs = [_interest(f"2026-07-{d:02d}", "-50") for d in range(2, 14)]  # 12 legs
-    out = handler.get_repayment(FakeTransactionRepo(legs + [_repayment("2026-07-01")]))
+    out = handler.get_repayment(_QueuedTransactionRepo(legs + [_repayment("2026-07-01")]))
     assert out["interest"] == Decimal("600")     # 12 * 50
     assert out["principal"] == Decimal("840")    # 1440 - 600
 
@@ -378,15 +369,14 @@ def test_route_sums_multi_leg_interest_json(handler, monkeypatch):
     # [fail-on-revert] End-to-end through lambda_handler: the /repayment route serialises a
     # SUMMED split as plain JSON numbers (default=float), and interest stays a Decimal so the
     # subtraction + encoding stay exact (not float). Revert -> 300/1140.
-    repo = FakeTransactionRepo([_interest("2026-07-20", "-300"), _interest("2026-07-05", "-232"),
-                                _repayment("2026-07-01")])
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
+    rows = [_interest("2026-07-20", "-300"), _interest("2026-07-05", "-232"), _repayment("2026-07-01")]
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: _QueuedTransactionRepo(rows))
     event = {"rawPath": "/repayment", "requestContext": {"http": {"method": "GET"}}}
     resp = handler.lambda_handler(event, None)
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {
         "amount": 1440, "date": "2026-07-01", "principal": 908, "interest": 532}
-    assert isinstance(handler.get_repayment(repo)["interest"], Decimal)  # not float
+    assert isinstance(handler.get_repayment(_QueuedTransactionRepo(rows))["interest"], Decimal)  # not float
 def test_signalling_nan_repayment_amount_is_skipped_not_fatal(handler):
     # [A_SNAN_REPAY] (P0) A stored Decimal('sNaN') repayment amount would raise
     # InvalidOperation at is_repayment_credit's `amount > 0` and 500 the card. is_number
@@ -394,7 +384,7 @@ def test_signalling_nan_repayment_amount_is_skipped_not_fatal(handler):
     # [fail-on-revert] reverting the finiteness branches makes this raise → 500.
     snan_repayment = {"type": "TRANSFER_INCOMING", "category": "TRANSFER_IN",
                       "amount": Decimal("sNaN"), "date": "2026-07-02"}
-    out = handler.get_repayment(FakeTransactionRepo([snan_repayment, _repayment("2026-07-01")]))
+    out = handler.get_repayment(_QueuedTransactionRepo([snan_repayment, _repayment("2026-07-01")]))
     assert out["amount"] == Decimal("1440")   # fell through to the valid repayment
 
 
@@ -402,6 +392,6 @@ def test_signalling_nan_interest_amount_is_skipped_not_fatal(handler):
     # [A_SNAN_INT] (P1) A Decimal('sNaN') interest leg would raise on `amount_leg < 0`
     # in the interest loop. is_number screens it → the leg is skipped → total-only, no crash.
     snan_interest = {"category": "BANK_FEES", "amount": Decimal("sNaN"), "date": "2026-07-05"}
-    out = handler.get_repayment(FakeTransactionRepo([_repayment("2026-07-01"), snan_interest]))
+    out = handler.get_repayment(_QueuedTransactionRepo([_repayment("2026-07-01"), snan_interest]))
     assert out["amount"] == Decimal("1440")
     assert out["principal"] is None and out["interest"] is None   # skipped → total-only

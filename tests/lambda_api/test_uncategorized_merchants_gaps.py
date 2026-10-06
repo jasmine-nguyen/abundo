@@ -52,6 +52,7 @@ import json
 import pytest
 
 from _feed_fakes import ANZ, SPENDING, WESTPAC, FakeCategoryRepo, real_repos, _row
+from _transaction_range_fakes import _FailingTransactionRepo
 
 
 def _txn(txn_id, merchant, description, date="2026-07-01", category=None, account_id=ANZ):
@@ -406,19 +407,12 @@ def test_a_database_failure_mid_scan_is_not_swallowed_into_all_caught_up(handler
     # [A15] FAIL-ON-REVERT. The dangerous failure mode for a read that must reconcile with the
     # badge is a silent one: swallow the error, return zero groups, and the screen says "all
     # caught up" while hundreds of charges wait. The error must reach the caller.
-    class _FailsOnSecondPage:
-        def __init__(self):
-            self.calls = 0
-
-        def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
-            self.calls += 1
-            if self.calls == 1:
-                page = [_txn("c1", "COLES", "COLES 0342 RICHMOND", "2026-07-10")]
-                return page, {"pk": f"ACCOUNT#{account_id}", "sk": "TXN#c1"}
-            raise RuntimeError("dynamodb unavailable")
+    first_page = [_txn("c1", "COLES", "COLES 0342 RICHMOND", "2026-07-10")]
+    repo = _FailingTransactionRepo(RuntimeError("dynamodb unavailable"),
+                                   pages=[(first_page, {"pk": f"ACCOUNT#{ANZ}", "sk": "TXN#c1"})])
 
     with pytest.raises(RuntimeError, match="dynamodb unavailable"):
-        handler.get_uncategorized_merchants(_FailsOnSecondPage(), FakeCategoryRepo(()))
+        handler.get_uncategorized_merchants(repo, FakeCategoryRepo(()))
 
 
 def test_a_length_changing_fold_never_lets_the_preview_disagree_with_the_rule(

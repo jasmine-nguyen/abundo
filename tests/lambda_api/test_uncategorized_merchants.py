@@ -19,6 +19,7 @@ import json
 import pytest
 
 from _feed_fakes import ANZ, SPENDING, WESTPAC, FakeCategoryRepo, date_reads, real_repos, _row
+from _transaction_range_fakes import _EndlessTransactionRepo
 
 
 def _groups(handler, repo, taxonomy=()):
@@ -477,9 +478,6 @@ def test_post_to_the_merchants_path_is_not_routed(handler, monkeypatch):
 
 
 def test_unbounded_pagination_raises(handler):
-    class _NeverEndsRepo:
-        def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
-            return [_charge(account_id, "2026-01-01", "x", "ALDI", "ALDI 771")], {"pk": "p", "sk": "s"}
-
+    endless = _EndlessTransactionRepo(page=[_charge(ANZ, "2026-01-01", "x", "ALDI", "ALDI 771")])
     with pytest.raises(RuntimeError, match="did not finish"):
-        handler.get_uncategorized_merchants(_NeverEndsRepo(), FakeCategoryRepo(set()))
+        handler.get_uncategorized_merchants(endless, FakeCategoryRepo(set()))

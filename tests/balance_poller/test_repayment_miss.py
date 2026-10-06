@@ -11,6 +11,7 @@ import time
 from decimal import Decimal
 
 from _terraform import MONITORING_TF, filter_pattern, tf_attr, tf_block
+from _transaction_range_fakes import _QueuedTransactionRepo
 
 MARKER = "UP_WEBHOOK_REPAYMENT_MISSED"
 _DAY = 24 * 60 * 60
@@ -187,11 +188,6 @@ def _raise_detector(*a, **k):
 
 # --- WHIT-655: both detectors' lines still feed the merged Up webhook alarm ---
 
-class _FakeTxnRepo:
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit):
-        return [{"type": "TRANSFER_INCOMING", "amount": Decimal("3573.00"), "date": "2026-07-04"}], None
-
-
 class _FakeNoPushes:
     def repayment_push_amounts_since(self, cutoff):
         return []
@@ -206,7 +202,7 @@ def test_both_detectors_log_a_line_the_repayment_missed_filter_matches(handler, 
     handler.check_repayment_landed_but_no_push(Decimal("600000"), Decimal("596000"), _FakeNotify(None))
     coarse = [record.getMessage() for record in caplog.records]
     caplog.clear()
-    handler.check_ingested_repayment_without_push(_FakeNoPushes(), _FakeTxnRepo(), _NOW)
+    handler.check_ingested_repayment_without_push(_FakeNoPushes(), _QueuedTransactionRepo([{"type": "TRANSFER_INCOMING", "amount": Decimal("3573.00"), "date": "2026-07-04"}]), _NOW)
     precise = [record.getMessage() for record in caplog.records]
 
     # A bare CloudWatch term matches a whole word.

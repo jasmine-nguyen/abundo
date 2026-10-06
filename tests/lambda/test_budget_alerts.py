@@ -18,7 +18,12 @@ import pytest
 from _budget_alert_fakes import claimed_meanwhile, fail_nth_write, notify_repo, released_markers
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _dynamo_fakes import _client_error
-from _transaction_range_fakes import _AccountTransactionRepo
+from _transaction_range_fakes import (
+    _AccountPagesTransactionRepo,
+    _AccountTransactionRepo,
+    _EndlessTransactionRepo,
+    _FailingTransactionRepo,
+)
 
 # Cycle: last_pay_date 2026-07-01, length 14, pinned "today" 2026-07-14 →
 # window [2026-07-01, 2026-07-14]. All test transactions are dated inside it.
@@ -502,15 +507,12 @@ def test_no_tokens_skips_everything(alerts, monkeypatch):
 
 def test_no_budgets_skips_the_window_read(alerts, monkeypatch):
     ba = alerts.budget_alerts
-
-    class ExplodingWindowRepo:
-        def get_transactions_by_date_range(self, *a, **k):
-            raise AssertionError("must not read the window when there are no budgets")
+    window_repo = _FailingTransactionRepo(AssertionError("must not read the window when there are no budgets"))
 
     ctx = ba.capture_pre_write(
         [_txn("new1", "groceries", -100, "posted")],
         device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo({}),
-        paycycle_repo=FakePaycycleRepo(), window_repo=ExplodingWindowRepo(), webhook_repo=NoTwinRepo(),
+        paycycle_repo=FakePaycycleRepo(), window_repo=window_repo, webhook_repo=NoTwinRepo(),
     )
     assert ctx is None
 
@@ -807,23 +809,6 @@ def test_budgeted_category_with_no_spend_is_not_a_crossing(alerts, monkeypatch):
 # --- windowed read: cursor pagination + the bounded backstop -----------------
 
 
-class _CursorWindowRepo:
-    """A date-range read that returns ONE row per page and follows an integer cursor
-    to completion — so a crossing is only detectable if the window read accumulates
-    every page, not just the first."""
-
-    def __init__(self, rows):
-        self._rows = rows
-
-    def get_transactions_by_date_range(self, account_id, start, end, limit=100, cursor=None):
-        mine = [r for r in self._rows if r["account_id"] == account_id]
-        i = cursor or 0
-        if i >= len(mine):
-            return ([], None)
-        nxt = i + 1
-        return ([mine[i]], (nxt if nxt < len(mine) else None))
-
-
 def test_window_read_accumulates_every_cursor_page(alerts, monkeypatch):
     ba = alerts.budget_alerts
     sent = []
@@ -834,10 +819,11 @@ def test_window_read_accumulates_every_cursor_page(alerts, monkeypatch):
     # no crossing. So a passing send proves both pages were read.
     rows = [_txn("r0", "groceries", -35, "posted"), _txn("r1", "groceries", -35, "posted")]
     new = _txn("new1", "groceries", -15, "posted")
+    window_repo = _AccountPagesTransactionRepo({_ACCT: [([rows[0]], "c1"), ([rows[1]], None)]})
     ctx = ba.capture_pre_write(
         [new], device_repo=FakeDeviceRepo(),
         budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
-        paycycle_repo=FakePaycycleRepo(), window_repo=_CursorWindowRepo(rows), webhook_repo=NoTwinRepo(),
+        paycycle_repo=FakePaycycleRepo(), window_repo=window_repo, webhook_repo=NoTwinRepo(),
     )
     assert len(ctx["before_rows"]) == 2  # both pages accumulated
     ba.fire_budget_alerts(ctx, [new], webhook_repo=NoTwinRepo(),
@@ -849,15 +835,11 @@ def test_window_read_accumulates_every_cursor_page(alerts, monkeypatch):
 def test_window_read_backstop_raises_on_a_nonterminating_cursor(alerts):
     ba = alerts.budget_alerts
 
-    class _NeverEnds:
-        def get_transactions_by_date_range(self, account_id, start, end, limit=100, cursor=None):
-            return ([], "always-more")  # a cursor that never clears
-
     with pytest.raises(RuntimeError, match="did not finish"):
         ba.capture_pre_write(
             [_txn("n", "groceries", -1, "posted")], device_repo=FakeDeviceRepo(),
             budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
-            paycycle_repo=FakePaycycleRepo(), window_repo=_NeverEnds(), webhook_repo=NoTwinRepo(),
+            paycycle_repo=FakePaycycleRepo(), window_repo=_EndlessTransactionRepo(), webhook_repo=NoTwinRepo(),
         )
 
 

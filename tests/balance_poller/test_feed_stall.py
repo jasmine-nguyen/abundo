@@ -11,27 +11,11 @@ from decimal import Decimal
 import pytest
 
 from _dynamo_fakes import FakeTable
+from _transaction_range_fakes import _EndlessTransactionRepo, _PagedStoreTransactionRepo
 
 DAY = 24 * 60 * 60
 NOW = 1_790_000_000
 WESTPAC = "westpac-altitude-qantas-black"
-
-
-class _FakeTransactionRepo:
-    """Serves rows newest-first in pages, like the date-index query."""
-
-    def __init__(self, rows_by_account, page_size=2):
-        self.rows_by_account = rows_by_account
-        self.page_size = page_size
-        self.queried = []
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit, cursor=None):
-        self.queried.append(account_id)
-        rows = [r for r in self.rows_by_account.get(account_id, []) if r["date"] >= start_date]
-        offset = cursor or 0
-        page = rows[offset:offset + self.page_size]
-        next_cursor = offset + self.page_size if offset + self.page_size < len(rows) else None
-        return page, next_cursor
 
 
 def _watch_repo(handler, watches=None):
@@ -75,9 +59,10 @@ def wired(handler, monkeypatch):
 
     monkeypatch.setattr(handler, "send_push", fake_send_push)
 
-    def wire(rows=None, watches=None, tokens=("ExponentPushToken[x]",), expo_accepts=True):
+    def wire(rows=None, watches=None, tokens=("ExponentPushToken[x]",), expo_accepts=True, transaction_repo=None):
         expo["accepts"] = expo_accepts
-        transaction_repo = _FakeTransactionRepo(rows or {})
+        if transaction_repo is None:
+            transaction_repo = _PagedStoreTransactionRepo(rows or {})
         watch_repo = _watch_repo(handler, watches)
         monkeypatch.setattr(handler, "TransactionRepository", lambda: transaction_repo)
         monkeypatch.setattr(handler, "FeedWatchRepository", lambda: watch_repo)
@@ -239,8 +224,7 @@ def test_a_push_expo_rejects_is_retried_next_poll(wired):
 
 def test_a_cursor_that_never_ends_fails_this_account_only(wired, caplog):
     handler, wire, pushes = wired
-    transaction_repo, watch_repo = wire()
-    transaction_repo.get_transactions_by_date_range = lambda *args: ([], "more")
+    _, watch_repo = wire(transaction_repo=_EndlessTransactionRepo())
 
     handler.check_feed_stalls([_delta(WESTPAC, "-1")], NOW)
 
@@ -267,7 +251,7 @@ def test_home_loan_and_unpolled_accounts_are_skipped(wired):
 
     handler.check_feed_stalls([_delta("up-homeloan", "-594224.31")], NOW)
 
-    assert transaction_repo.queried == []
+    assert transaction_repo.calls == []
     assert watch_repo._table.put_calls == []
 
 

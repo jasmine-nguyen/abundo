@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
+from _transaction_range_fakes import _EndlessTransactionRepo
 
 
 # --------------------------------------------------------------------------- #
@@ -1166,19 +1167,12 @@ def test_read_date_range_pages_follows_the_cursor_to_the_last_page(repo, shared)
 def test_read_date_range_pages_raises_loudly_at_the_page_limit(shared):
     # A cursor that never runs out must stop at max_pages with a clear error,
     # not spin until the server function times out.
-    class _EndlessRepo:
-        calls = 0
-
-        def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
-            self.calls += 1
-            return [{"transaction_id": f"t{self.calls}"}], {"next": self.calls}
-
-    endless = _EndlessRepo()
+    endless = _EndlessTransactionRepo(page=[{"transaction_id": "t1"}])
     with pytest.raises(RuntimeError, match="did not finish after 3 pages"):
         shared.repository.read_date_range_pages(
             endless, "up-spending", "2026-01-01", None, max_pages=3
         )
-    assert endless.calls == 3
+    assert len(endless.calls) == 3
 
 
 def test_read_window_merges_every_mapped_account_within_the_range(repo, shared):

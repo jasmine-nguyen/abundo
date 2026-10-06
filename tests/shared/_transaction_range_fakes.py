@@ -92,3 +92,52 @@ class _AccountPagesTransactionRepo:
             return [], None
         items, next_cursor = queue.pop(0)
         return copy.deepcopy(items), next_cursor
+
+
+class _EndlessTransactionRepo:
+    """Serves copies of the same page on every call with a cursor that never clears."""
+
+    def __init__(self, page=()):
+        self._page = list(page)
+        self.calls = []
+
+    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
+        self.calls.append((account_id, start_date, end_date, limit, cursor))
+        return [dict(row) for row in self._page], {"page": len(self.calls)}
+
+
+class _FailingTransactionRepo:
+    """Serves queued (items, cursor) pages, then raises the given error."""
+
+    def __init__(self, error, pages=()):
+        self._error = error
+        self._pages = list(pages)
+        self.calls = []
+
+    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
+        self.calls.append((account_id, start_date, end_date, limit, cursor))
+        if not self._pages:
+            raise self._error
+        return self._pages.pop(0)
+
+
+class _PagedStoreTransactionRepo:
+    """A re-readable store: copies of the account's rows from start (to end, if given),
+    two at a time, with an integer offset cursor and None on the last page."""
+
+    _PAGE_SIZE = 2
+
+    def __init__(self, rows_by_account):
+        self.rows_by_account = rows_by_account
+        self.calls = []
+
+    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
+        self.calls.append((account_id, start_date, end_date, limit, cursor))
+        rows = [row for row in self.rows_by_account.get(account_id, [])
+                if start_date <= row["date"] and (end_date is None or row["date"] <= end_date)]
+        offset = cursor or 0
+        next_offset = offset + self._PAGE_SIZE
+        page = [dict(row) for row in rows[offset:next_offset]]
+        if next_offset >= len(rows):
+            return page, None
+        return page, next_offset
