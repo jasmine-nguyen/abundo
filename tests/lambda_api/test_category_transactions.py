@@ -14,7 +14,7 @@ from decimal import Decimal
 import pytest
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
-from _transaction_range_fakes import _DateFilteringTransactionRepo
+from _transaction_range_fakes import _AccountTransactionRepo, _DateFilteringTransactionRepo
 
 
 def _contributes(transaction):
@@ -265,29 +265,11 @@ def test_router_patch_category_not_captured_by_transactions_route(handler, monke
 
 # ======================================================================================
 # Folded from test_category_transactions_gaps.py (WHIT-462, adversarial gaps WHIT-342).
-# The identical helpers (_contributes/_FakePayCycleRepo/
-# _FakeCategoryRepo/_event/_pin_today/_clamped_total) reuse the ones above; only
-# the account-aware _txn (=> _txn_acct), the single-entry CATS (=> CATS_SINGLE), and the
-# unique _PerAccountTransactionRepo are kept local. Test bodies otherwise verbatim.
+# The identical helpers (_contributes/_FakePayCycleRepo/_FakeCategoryRepo/_event/
+# _pin_today/_clamped_total) reuse the ones above; only the account-aware _txn
+# (=> _txn_acct) and the single-entry CATS (=> CATS_SINGLE) are kept local. Test bodies
+# otherwise verbatim.
 # ======================================================================================
-
-class _PerAccountTransactionRepo:
-    """Partitions the pool BY account_id (via each row's `account_id`), so the handler's
-    per-account loop is actually exercised: each account returns only its own rows. Used
-    to prove the drill MERGES rows filed on different accounts."""
-
-    def __init__(self, transactions):
-        self._by_account = {}
-        for t in transactions:
-            self._by_account.setdefault(t["account_id"], []).append(t)
-        self.calls = []
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        self.calls.append(account_id)
-        page = [t for t in self._by_account.get(account_id, [])
-                if start_date <= t["date"] <= end_date]
-        return page, None
-
 
 CATS_SINGLE = [{"id": "coffee", "bucket": "Lifestyle", "parent": None}]
 
@@ -372,14 +354,14 @@ def test_merges_same_category_rows_across_accounts_newest_first(handler, monkeyp
         _txn_acct("anz1", "coffee", -20, "2026-07-20", account_id="anz-rewards-black-visa"),
         _txn_acct("up2", "coffee", -5, "2026-07-05", account_id="up-spending"),
     ]
-    repo = _PerAccountTransactionRepo(txns)
+    repo = _AccountTransactionRepo(txns)
     resp = handler.get_category_transactions(
         _event("coffee"), repo, _FakePayCycleRepo(), _FakeCategoryRepo(CATS_SINGLE))
     rows = json.loads(resp["body"])
 
     assert [r["transaction_id"] for r in rows] == ["anz1", "up1", "up2"]  # merged, newest-first
     # every account in the map was queried (the merge really looped, not short-circuited)
-    assert "up-spending" in repo.calls and "anz-rewards-black-visa" in repo.calls
+    assert {"up-spending", "anz-rewards-black-visa"} <= {c[0] for c in repo.calls}
 
 
 def test_uncategorized_merges_across_accounts_and_still_filters(handler, monkeypatch):
@@ -392,7 +374,7 @@ def test_uncategorized_merges_across_accounts_and_still_filters(handler, monkeyp
         _txn_acct("xfer", None, -500, "2026-07-11", counts=False, account_id="up-spending"),
     ]
     resp = handler.get_category_transactions(
-        _event("__uncategorized__"), _PerAccountTransactionRepo(txns), _FakePayCycleRepo(),
+        _event("__uncategorized__"), _AccountTransactionRepo(txns), _FakePayCycleRepo(),
         _FakeCategoryRepo(CATS_SINGLE))
     rows = json.loads(resp["body"])
     assert [r["transaction_id"] for r in rows] == ["u_anz", "u_up"]

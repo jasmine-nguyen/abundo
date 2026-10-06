@@ -10,6 +10,7 @@ from functools import partial
 
 from _budget_alert_fakes import notify_repo
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _transaction_range_fakes import _AccountTransactionRepo
 
 _TODAY = date(2026, 7, 14)
 _ACCT = "up-spending"
@@ -25,15 +26,6 @@ def _txn(txn_id, category, amount, day):
         "amount": Decimal(str(amount)), "status": "posted", "date": day,
         "counts_to_budget": True, "authorized_date": day,
     }
-
-
-class _DateRangeRepo:
-    def __init__(self, rows):
-        self.rows = rows
-
-    def get_transactions_by_date_range(self, account_id, start, end, limit=100, cursor=None):
-        return [r for r in self.rows
-                if r["account_id"] == account_id and start <= r["date"] <= end], None
 
 
 class _Devices:
@@ -69,7 +61,7 @@ def _fire(lam, monkeypatch, budgets, stored, new):
         sent.append(body) or {"sent": 1, "ok": 1, "pruned": []}))
     ctx = ba.capture_pre_write(
         new, device_repo=_Devices(), budget_repo=_Budgets(budgets), paycycle_repo=_Paycycle(),
-        window_repo=_DateRangeRepo(stored), webhook_repo=_NoTwins(),
+        window_repo=_AccountTransactionRepo(stored), webhook_repo=_NoTwins(),
     )
     ba.fire_budget_alerts(ctx, new, webhook_repo=_NoTwins(), category_repo=_Categories(),
                           notify_repo=notify_repo())

@@ -10,6 +10,7 @@ from decimal import Decimal
 from functools import partial
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _transaction_range_fakes import _AccountTransactionRepo
 
 CATEGORIES = [{"id": "groceries", "name": "Groceries", "bucket": "Living", "parent": None, "colorSlot": 11}]
 
@@ -28,16 +29,6 @@ class _Budgets:
         return self.budgets
 
 
-class _DateRangeRepo:
-    def __init__(self, rows):
-        self.rows = rows
-
-    def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
-        if account_id != "up-spending":
-            return [], None
-        return [r for r in self.rows if start <= r["date"] <= end], None
-
-
 def _row(txn_id, amount, day):
     return {"transaction_id": txn_id, "account_id": "up-spending", "category": "groceries",
             "amount": Decimal(amount), "status": "posted", "counts_to_budget": True, "date": day}
@@ -46,7 +37,7 @@ def _row(txn_id, amount, day):
 def _load(ai_chat, monkeypatch, budgets, rows):
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 9, 20))
-    return ai_chat.load_chat_data(_DateRangeRepo(rows), _Categories(), _Budgets(budgets), _PayCycle())
+    return ai_chat.load_chat_data(_AccountTransactionRepo(rows), _Categories(), _Budgets(budgets), _PayCycle())
 
 
 def test_plain_budget_in_the_chat_counts_only_this_cycle(ai_chat, monkeypatch):

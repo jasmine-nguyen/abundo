@@ -17,28 +17,14 @@ _REPO_METHODS = {"list_categories", "get_paycycle", "get_transactions_by_date_ra
 # The full create/update/delete category fake, not a read-only stand-in.
 _ALLOWED = {"lambda_api/test_categories.py": {"FakeCategoryRepo"}}
 
-# Moved by WHIT-768 / WHIT-769 — delete entries as they go.
+# Moved by WHIT-769 — delete entries as they go.
 _PENDING_TRANSACTION_COPIES = {
     "balance_poller/test_feed_stall.py": {"_FakeTransactionRepo"},
     "balance_poller/test_feed_stall_read_bounds_qa.py": {"_Recorder"},
     "balance_poller/test_repayment_miss.py": {"_FakeTxnRepo"},
     "balance_poller/test_repayment_miss_precise.py": {"_FakeTxnRepo"},
-    "lambda/test_budget_alerts.py": {"FakeWindowRepo", "_CursorWindowRepo", "ExplodingWindowRepo", "_NeverEnds"},
-    "lambda/test_budget_alerts_plan_qa.py": {"_Window"},
-    "lambda/test_budget_alerts_standing_qa.py": {"_DateRangeRepo"},
-    "lambda/test_budget_alerts_window_read_qa.py": {"_DateRangeRepo"},
-    "lambda/test_reconcile_merchant_match.py": {"_FakeWindowRepo"},
-    "lambda/test_whit329_qa.py": {"_WindowRepo"},
-    "lambda_api/test_ai_chat_budget_standing_qa.py": {"_DateRangeRepo"},
-    "lambda_api/test_budget_standing_callers_qa.py": {"_DateRangeRepo"},
-    "lambda_api/test_budget_excluded_rollups.py": {"_InsightTxnRepo"},
-    "lambda_api/test_category_transactions.py": {"_PerAccountTransactionRepo"},
-    "lambda_api/test_cycle_transactions_qa.py": {"_PerAccountRepo"},
-    "lambda_api/test_handler.py": {"FakeRecentFeedRepo"},
-    "lambda_api/test_insights_ai.py": {"_FakeTxnRepo"},
-    "lambda_api/test_shortfall_seam.py": {"_FakeTxnRepo"},
+    "lambda/test_budget_alerts.py": {"_CursorWindowRepo", "ExplodingWindowRepo", "_NeverEnds"},
     "lambda_api/test_repayment.py": {"FakeTransactionRepo"},
-    "lambda_api/test_transactions_feed.py": {"_QueuedPagesRepo"},
     "lambda_api/test_uncategorized_count.py": {"_NeverEndsRepo"},
     "lambda_api/test_uncategorized_merchants.py": {"_NeverEndsRepo"},
     "lambda_api/test_uncategorized_merchants_gaps.py": {"_FailsOnSecondPage"},

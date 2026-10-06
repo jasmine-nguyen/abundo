@@ -21,6 +21,7 @@ from _http_fakes import FakeResponse, http_error
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _insight_fakes import insight_puts, insight_repo
+from _transaction_range_fakes import _WindowKeyedTransactionRepo
 
 
 # --- Anthropic client (insights_ai) -----------------------------------------
@@ -354,22 +355,6 @@ class _FakeBudgetRepo:
         return {"groceries": {"target": Decimal("300")}}
 
 
-class _FakeTxnRepo:
-    """Serves a per-window transaction list, once for the FIRST account and empty
-    for the rest (so read_window's account loop doesn't triple it)."""
-
-    def __init__(self, by_window):
-        self._by_window = by_window
-        self._first_account = None
-
-    def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
-        if self._first_account is None:
-            self._first_account = account_id
-        if account_id != self._first_account:
-            return [], None
-        return self._by_window.get((start, end), []), None
-
-
 def _txn(category, amount, status="posted"):
     return {"category": category, "amount": Decimal(str(amount)), "status": status,
             "counts_to_budget": True}
@@ -386,7 +371,7 @@ def test_assemble_input_has_spend_budgets_prior_and_no_loan_data(handler):
     prev_end = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
     prev_start = (date.fromisoformat(start) - timedelta(days=cycle["length"])).isoformat()
 
-    txn_repo = _FakeTxnRepo({
+    txn_repo = _WindowKeyedTransactionRepo({
         (start, end): [_txn("groceries", -120.50), _txn("coffee", -18, "pending")],
         (prev_start, prev_end): [_txn("coffee", -40)],
     })
@@ -464,7 +449,7 @@ def test_assemble_input_has_no_decimal_values(handler):
     # a leaked Decimal would blow up json.dumps (default=str only saves the hash path).
     cycle = FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("groceries", -50)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("groceries", -50)]})
 
     model_input, _ = handler.assemble_insight_input(
         FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, FakePayCycleRepo())
@@ -490,7 +475,7 @@ def test_assemble_prior_window_is_the_cycle_before_start(handler):
     prev_end = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
     prev_start = (date.fromisoformat(start) - timedelta(days=cycle["length"])).isoformat()
 
-    txn_repo = _FakeTxnRepo({
+    txn_repo = _WindowKeyedTransactionRepo({
         (start, end): [_txn("coffee", -5)],
         (prev_start, prev_end): [_txn("coffee", -7)],
     })
@@ -573,7 +558,7 @@ def test_extract_goal_degrades_to_none(handler, event):
 def test_assemble_includes_goal_when_provided(handler):
     cycle = FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("groceries", -50)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("groceries", -50)]})
     goal = {"payoff_mode": "ahead", "mortgage_free_date": "Nov 2042", "current_extra_monthly": 500.0}
     model_input, _ = handler.assemble_insight_input(
         FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, FakePayCycleRepo(), goal)
@@ -583,7 +568,7 @@ def test_assemble_includes_goal_when_provided(handler):
 def test_assemble_omits_goal_when_none(handler):
     cycle = FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("groceries", -50)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("groceries", -50)]})
     model_input, _ = handler.assemble_insight_input(
         FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, FakePayCycleRepo())
     assert "goal" not in model_input
@@ -592,7 +577,7 @@ def test_assemble_omits_goal_when_none(handler):
 def test_generate_threads_goal_into_model_input_and_hash(handler, monkeypatch):
     cycle = FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("groceries", -50)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("groceries", -50)]})
     captured = {}
 
     def _capture(mi):
@@ -620,7 +605,7 @@ def test_generate_goal_busts_an_otherwise_matching_spend_only_cache(handler, mon
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
     window = {(start, end): [_txn("groceries", -50)]}
     spend_only, cycle_start = handler.assemble_insight_input(
-        FakeCategoryRepo(), _FakeBudgetRepo(), _FakeTxnRepo(dict(window)), FakePayCycleRepo())
+        FakeCategoryRepo(), _FakeBudgetRepo(), _WindowKeyedTransactionRepo(dict(window)), FakePayCycleRepo())
     repo = insight_repo(existing={
         "summary": "spend-only cached", "suggestions": [], "generated_at": "t",
         "input_hash": _hash(spend_only)}, cycle_start=cycle_start)
@@ -629,7 +614,7 @@ def test_generate_goal_busts_an_otherwise_matching_spend_only_cache(handler, mon
     event = {"body": json.dumps({"goal": dict(_VALID_GOAL)})}
 
     resp = handler.generate_ai_insights(
-        FakeCategoryRepo(), _FakeBudgetRepo(), _FakeTxnRepo(dict(window)),
+        FakeCategoryRepo(), _FakeBudgetRepo(), _WindowKeyedTransactionRepo(dict(window)),
         FakePayCycleRepo(), repo, event)
 
     body = json.loads(resp["body"])
@@ -714,7 +699,7 @@ def test_generate_without_a_goal_body_stays_spend_only(handler, monkeypatch):
     # An older client POSTs no body -> no goal block, still a normal 200 generation.
     cycle = FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("groceries", -50)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("groceries", -50)]})
     captured = {}
 
     def _capture(mi):
@@ -837,7 +822,7 @@ def test_assemble_input_rolls_up_budgeted_parent(handler):
     # the summed spend + budget; the leaves keep their own detail in the flat list.
     # Fail-on-revert: without the block, model_input["budgeted_parents"] raises KeyError.
     start, end = _cur_window(handler)
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("petrol", -60), _txn("tolls", -15, "pending")]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("petrol", -60), _txn("tolls", -15, "pending")]})
     model_input, _ = handler.assemble_insight_input(
         _FakeCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
         txn_repo, FakePayCycleRepo())
@@ -852,7 +837,7 @@ def test_no_budgeted_parents_omits_block(handler):
     # A flat budget (groceries, no children) must add NO block -> byte-identical input
     # and the same cache hash, so an existing user never re-pays for an AI call.
     start, end = _cur_window(handler)
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("groceries", -50)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("groceries", -50)]})
     model_input, _ = handler.assemble_insight_input(
         FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, FakePayCycleRepo())
 
@@ -865,7 +850,7 @@ def test_parent_and_child_both_budgeted_no_double_count(handler):
     # flat categories list (with its own budget) and is rolled into Car's block total —
     # never listed twice in the flat list (Car isn't a flat row).
     start, end = _cur_window(handler)
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("parking", -30)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("parking", -30)]})
     cats = _FakeCategoryRepo([
         {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
         {"id": "parking", "name": "Parking", "bucket": "Living", "parent": "car"},
@@ -884,7 +869,7 @@ def test_income_parent_excluded_from_budgeted_parents(handler):
     # An Income-bucket parent is an earn-target, not a spend ceiling -> excluded from the
     # spend rollup block (so the block is omitted entirely here).
     start, end = _cur_window(handler)
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("salary", 4000)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("salary", 4000)]})
     cats = _FakeCategoryRepo([
         {"id": "income", "name": "Income", "bucket": "Income", "parent": None},
         {"id": "salary", "name": "Salary", "bucket": "Income", "parent": "income"},
@@ -903,7 +888,7 @@ def test_budgeted_parent_rolled_up_in_prior_cycle_too(handler):
     length = FakePayCycleRepo().get_paycycle()["length"]
     prev_end = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
     prev_start = (date.fromisoformat(start) - timedelta(days=length)).isoformat()
-    txn_repo = _FakeTxnRepo({
+    txn_repo = _WindowKeyedTransactionRepo({
         (start, end): [_txn("petrol", -60)],
         (prev_start, prev_end): [_txn("tolls", -40)],
     })
@@ -939,7 +924,7 @@ def test_budgeted_parent_rolls_up_grandchildren(handler):
     # Fail-on-revert: an immediate-children-only rollup would see Transport (no direct
     # spend) and report Car = $0.
     start, end = _cur_window(handler)
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("petrol", -60), _txn("tolls", -15, "pending")]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("petrol", -60), _txn("tolls", -15, "pending")]})
     model_input, _ = handler.assemble_insight_input(
         _FakeCategoryRepo(_GRANDCHILD_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
         txn_repo, FakePayCycleRepo())
@@ -958,7 +943,7 @@ def test_parent_and_mid_node_both_budgeted_each_row_correct(handler):
     # row is the full 75, joined to its own budget. Fail-on-revert: dropping either from
     # `budgeted_parents`, or cross-joining the wrong budget, breaks a row.
     start, end = _cur_window(handler)
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("petrol", -60), _txn("tolls", -15)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("petrol", -60), _txn("tolls", -15)]})
     budgets = _DictBudgetRepo({"car": {"target": Decimal("300")}, "transport": {"target": Decimal("100")}})
     model_input, _ = handler.assemble_insight_input(
         _FakeCategoryRepo(_GRANDCHILD_TREE), budgets, txn_repo, FakePayCycleRepo())
@@ -981,7 +966,7 @@ def test_budgeted_parent_with_zero_spend_still_emitted(handler):
         {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "car"},
         {"id": "coffee", "name": "Coffee", "bucket": "Lifestyle", "parent": None},
     ])
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("coffee", -12)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("coffee", -12)]})
     model_input, _ = handler.assemble_insight_input(
         cats, _DictBudgetRepo({"car": {"target": Decimal("300")}}), txn_repo, FakePayCycleRepo())
 
@@ -1002,7 +987,7 @@ def test_orphan_and_uncategorized_targets_do_not_enter_block(handler):
         {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "car"},
     ])
     budgets = _DictBudgetRepo({"car": {"target": Decimal("300")}, "deleted_ghost": {"target": Decimal("999")}})
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("petrol", -60), _txn("MEDICAL", -25)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("petrol", -60), _txn("MEDICAL", -25)]})
     model_input, _ = handler.assemble_insight_input(cats, budgets, txn_repo, FakePayCycleRepo())
 
     assert {row["name"] for row in model_input["budgeted_parents"]} == {"Car"}
@@ -1018,7 +1003,7 @@ def test_leaf_refund_nets_into_parent_total(handler):
     # show. Car = Petrol 60 + Tolls (50 - 80) = 30. Fail-on-revert (per-leaf clamp restored):
     # Tolls floors to 0 -> Car = 60.
     start, end = _cur_window(handler)
-    txn_repo = _FakeTxnRepo({(start, end): [
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [
         _txn("petrol", -60), _txn("tolls", -50), _txn("tolls", 80),
     ]})
     model_input, _ = handler.assemble_insight_input(
@@ -1036,7 +1021,7 @@ def test_no_parent_user_model_input_is_byte_identical_no_block(handler):
     # the feature -> no needless paid Anthropic re-run. Fail-on-revert: emitting an empty
     # [] block instead of omitting it would make the substring appear and change the hash.
     start, end = _cur_window(handler)
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("groceries", -50)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("groceries", -50)]})
     model_input, _ = handler.assemble_insight_input(
         FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, FakePayCycleRepo())
 
@@ -1053,7 +1038,7 @@ def test_budgeted_parent_direct_spend_in_rollup(handler):
     # Car (budgeted) with spend tagged directly onto `car` (40) plus leaf spend on petrol
     # (60): the block total is 100. Fail-on-revert: a leaves-only walk drops the 40.
     start, end = _cur_window(handler)
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("car", -40), _txn("petrol", -60)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("car", -40), _txn("petrol", -60)]})
     model_input, _ = handler.assemble_insight_input(
         _FakeCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
         txn_repo, FakePayCycleRepo())
@@ -1067,7 +1052,7 @@ def test_budgeted_parent_mid_node_direct_spend_in_rollup(handler):
     # the INTERMEDIATE `transport` (25) must roll into Car alongside the leaf petrol (60).
     # Fail-on-revert: a leaves-only walk drops the mid-node 25 -> Car reads 60.
     start, end = _cur_window(handler)
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("transport", -25), _txn("petrol", -60)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("transport", -25), _txn("petrol", -60)]})
     model_input, _ = handler.assemble_insight_input(
         _FakeCategoryRepo(_GRANDCHILD_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
         txn_repo, FakePayCycleRepo())
@@ -1087,7 +1072,7 @@ def test_budgeted_parent_excludes_cross_bucket_child_from_block(handler):
         {"id": "fuel", "name": "Fuel", "bucket": "Living", "parent": "car"},
         {"id": "odd", "name": "Odd", "bucket": "Lifestyle", "parent": "car"},
     ])
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("fuel", -60), _txn("odd", -25)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("fuel", -60), _txn("odd", -25)]})
     model_input, _ = handler.assemble_insight_input(
         cats, _DictBudgetRepo({"car": {"target": Decimal("300")}}), txn_repo, FakePayCycleRepo())
 
@@ -1104,7 +1089,7 @@ def test_budgeted_parent_direct_income_stays_out_of_block(handler):
         {"id": "income", "name": "Income", "bucket": "Income", "parent": None},
         {"id": "salary", "name": "Salary", "bucket": "Income", "parent": "income"},
     ])
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("income", 500), _txn("salary", 4000)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("income", 500), _txn("salary", 4000)]})
     model_input, _ = handler.assemble_insight_input(
         cats, _DictBudgetRepo({"income": {"target": Decimal("6000")}}), txn_repo, FakePayCycleRepo())
 
@@ -1119,7 +1104,7 @@ def test_budgeted_parent_direct_spend_not_duplicated_as_flat_row(handler):
     # the flat list; its direct spend is still counted in the block total. Fail-on-revert
     # (drop the exclude): a flat "Car" row reappears and this reddens.
     start, end = _cur_window(handler)
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("car", -40), _txn("petrol", -60)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("car", -40), _txn("petrol", -60)]})
     model_input, _ = handler.assemble_insight_input(
         _FakeCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
         txn_repo, FakePayCycleRepo())

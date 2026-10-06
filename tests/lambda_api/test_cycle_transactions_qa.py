@@ -12,20 +12,7 @@ from functools import partial
 import pytest
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
-
-
-class _PerAccountRepo:
-    """Serves each account its own rows (filtered to the inclusive date range), so the
-    route must merge every account read_window walks, not just the first."""
-
-    def __init__(self, by_account):
-        self._by_account = by_account
-        self.accounts_read = []
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        self.accounts_read.append(account_id)
-        rows = self._by_account.get(account_id, [])
-        return [dict(t) for t in rows if start_date <= t["date"] <= end_date], None
+from _transaction_range_fakes import _AccountTransactionRepo
 
 
 class _NoBudgetsRepo:
@@ -66,6 +53,8 @@ BY_ACCOUNT = {
     ],
 }
 
+ROWS = [t for rows in BY_ACCOUNT.values() for t in rows]
+
 
 @pytest.fixture
 def today(monkeypatch):
@@ -81,7 +70,7 @@ def _event(params=None, method="GET", path="/transactions/cycle"):
 
 
 def _call(handler, monkeypatch, event, repo=None):
-    repo = repo or _PerAccountRepo(BY_ACCOUNT)
+    repo = repo or _AccountTransactionRepo(ROWS)
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: _FakePayCycleRepo())
     monkeypatch.setattr(handler, "BudgetRepository", lambda: _NoBudgetsRepo())
@@ -91,12 +80,12 @@ def _call(handler, monkeypatch, event, repo=None):
 
 # [A1] rows from EVERY account are merged and sorted newest first across accounts.
 def test_rows_from_every_account_merge_newest_first(handler, monkeypatch, today):
-    repo = _PerAccountRepo(BY_ACCOUNT)
+    repo = _AccountTransactionRepo(ROWS)
     response = _call(handler, monkeypatch, _event(), repo)
     assert response["statusCode"] == 200
     ids = [r["transaction_id"] for r in json.loads(response["body"])["transactions"]]
     assert ids == ["westpac-c", "no-flag", "unknown-status", "card-b", "loan-interest", "spend-a"]
-    assert set(repo.accounts_read) == set(BY_ACCOUNT)
+    assert {c[0] for c in repo.calls} == set(BY_ACCOUNT)
 
 
 # [A2] the yes/no flag follows contributes_to_budget for the awkward rows: unknown status,
@@ -160,7 +149,7 @@ def test_no_budgets_skips_the_category_read(handler, monkeypatch, today, cycle):
 
 # [A5] an empty window returns 200 with an empty list, still carrying the dates.
 def test_empty_cycle_returns_dates_and_no_rows(handler, monkeypatch, today):
-    response = _call(handler, monkeypatch, _event(), _PerAccountRepo({}))
+    response = _call(handler, monkeypatch, _event(), _AccountTransactionRepo([]))
     assert response["statusCode"] == 200
     assert json.loads(response["body"]) == {"start": "2026-07-01", "end": "2026-07-25", "transactions": [], "budgets": {}}
 

@@ -31,6 +31,7 @@ from decimal import Decimal
 import pytest
 from _budget_alert_fakes import notify_repo
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _transaction_range_fakes import _AccountTransactionRepo
 
 _BANK_ACCOUNT_ID = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"  # -> anz-rewards-black-visa
 
@@ -335,14 +336,6 @@ def test_single_word_full_column_merchant_now_merges_on_the_column_gate(lam, rep
 # ===========================================================================
 
 
-class _FakeWindowRepo:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def get_transactions_by_date_range(self, account_id, start, end, limit=100, cursor=None):
-        return ([r for r in self._rows if r["account_id"] == account_id], None)
-
-
 class _FakeRepo:
     def __init__(self, value):
         self._v = value
@@ -372,7 +365,7 @@ def _run_alerts(lam, monkeypatch, *, budgets, before, normalised, webhook_repo, 
         device_repo=_FakeRepo(["ExpoPushToken[a]"]),
         budget_repo=_FakeRepo(budgets),
         paycycle_repo=_FakePayCycleRepo(length=14, last_pay_date="2026-07-15"),
-        window_repo=_FakeWindowRepo(before),
+        window_repo=_AccountTransactionRepo(before),
         webhook_repo=webhook_repo,
     )
     ba.fire_budget_alerts(ctx, normalised, webhook_repo=webhook_repo,

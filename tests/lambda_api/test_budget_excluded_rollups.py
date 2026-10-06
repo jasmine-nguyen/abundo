@@ -21,7 +21,7 @@ from decimal import Decimal
 from functools import partial
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
-from _transaction_range_fakes import _QueuedTransactionRepo
+from _transaction_range_fakes import _QueuedTransactionRepo, _WindowKeyedTransactionRepo
 
 
 def _txn(category, amount, status="posted", counts=True, budget_excluded=None):
@@ -108,22 +108,6 @@ def test_breakdown_excluded_uncategorized_charge_does_not_inflate_the_uncategori
 # --- POST /insights/ai (model input) -----------------------------------------
 
 
-class _InsightTxnRepo:
-    """Serves a per-window transaction list for the FIRST account only (empty for the
-    rest), keyed by (start, end) — mirrors test_insights_ai._FakeTxnRepo."""
-
-    def __init__(self, by_window):
-        self._by_window = by_window
-        self._first_account = None
-
-    def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
-        if self._first_account is None:
-            self._first_account = account_id
-        if account_id != self._first_account:
-            return [], None
-        return self._by_window.get((start, end), []), None
-
-
 def test_assemble_insight_input_omits_an_excluded_charge(handler):
     # WHIT-296 — [A-I1] the load-bearing insights gap: an excluded charge must NOT
     # reach the AI model input at all. Two groceries charges in the current window,
@@ -135,7 +119,7 @@ def test_assemble_insight_input_omits_an_excluded_charge(handler):
     prev_end = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
     prev_start = (date.fromisoformat(start) - timedelta(days=cycle["length"])).isoformat()
 
-    txn_repo = _InsightTxnRepo({
+    txn_repo = _WindowKeyedTransactionRepo({
         (start, end): [
             _txn("groceries", -100, "posted"),
             _txn("groceries", -500, "posted", budget_excluded=True),  # excluded
@@ -163,7 +147,7 @@ def test_assemble_insight_input_excluded_only_category_is_absent(handler):
     prev_end = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
     prev_start = (date.fromisoformat(start) - timedelta(days=cycle["length"])).isoformat()
 
-    txn_repo = _InsightTxnRepo({
+    txn_repo = _WindowKeyedTransactionRepo({
         (start, end): [_txn("coffee", -80, "posted", budget_excluded=True)],
         (prev_start, prev_end): [],
     })

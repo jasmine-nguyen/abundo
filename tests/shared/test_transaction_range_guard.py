@@ -1,16 +1,12 @@
 """WHIT-767: the guard catches transaction-range copies; the moved suites keep none."""
 
-import pathlib
-
-from test_repo_fakes_by_behaviour import _local_copies
-
-_TESTS = pathlib.Path(__file__).resolve().parents[1]
+from test_repo_fakes_by_behaviour import _TESTS, _local_copies
 
 _MOVED_FILES = {
     "lambda_api/test_breakdown.py": set(),
     "lambda_api/test_breakdown_lookback.py": set(),
     "lambda_api/test_budgets.py": set(),
-    "lambda_api/test_category_transactions.py": {"_PerAccountTransactionRepo"},
+    "lambda_api/test_category_transactions.py": set(),
     "lambda_api/test_cycle_budgets.py": set(),
     "lambda_api/test_cycle_transactions.py": set(),
     "lambda_api/test_cycle_budgets_qa.py": set(),
@@ -22,7 +18,20 @@ _MOVED_FILES = {
     "lambda_api/test_budgets_spread.py": set(),
     "lambda_api/test_budgets_spread_gaps.py": set(),
     "lambda_api/test_whit474_e2e_gaps.py": set(),
-    "lambda_api/test_budget_excluded_rollups.py": {"_InsightTxnRepo"},
+    "lambda_api/test_budget_excluded_rollups.py": set(),
+    "lambda/test_budget_alerts.py": {"_CursorWindowRepo", "ExplodingWindowRepo", "_NeverEnds"},
+    "lambda/test_budget_alerts_plan_qa.py": set(),
+    "lambda/test_budget_alerts_standing_qa.py": set(),
+    "lambda/test_budget_alerts_window_read_qa.py": set(),
+    "lambda/test_reconcile_merchant_match.py": set(),
+    "lambda/test_whit329_qa.py": set(),
+    "lambda_api/test_ai_chat_budget_standing_qa.py": set(),
+    "lambda_api/test_budget_standing_callers_qa.py": set(),
+    "lambda_api/test_cycle_transactions_qa.py": set(),
+    "lambda_api/test_insights_ai.py": set(),
+    "lambda_api/test_shortfall_seam.py": set(),
+    "lambda_api/test_handler.py": set(),
+    "lambda_api/test_transactions_feed.py": set(),
 }
 
 
