@@ -7,58 +7,31 @@
 // the defensive unsupported-challenge + synchronous-throw handling, and the un-hit
 // mapCognitoError branches. SDK / SecureStore / fetch mocked.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { REFRESH_KEY, METHOD_KEY, fakeSession, loadAuth, nowSec } from './support/authModule';
 
 const mockAuthenticateUser =
   jest.fn<(details: unknown, callbacks: Record<string, (arg?: unknown) => void>) => void>();
 const mockAuthDetails = jest.fn<(cfg: unknown) => void>();
-jest.mock('amazon-cognito-identity-js', () => ({
-  CognitoUserPool: class {},
-  AuthenticationDetails: class {
-    constructor(cfg: unknown) {
-      mockAuthDetails(cfg);
-    }
-  },
-  CognitoUser: class {
-    authenticateUser = mockAuthenticateUser;
-  },
-}));
+jest.mock('amazon-cognito-identity-js', () =>
+  require('./support/authModule').cognitoMock({ authenticateUser: mockAuthenticateUser, onAuthDetails: mockAuthDetails }),
+);
 
 const mockGetItem = jest.fn<(key: string, opts?: unknown) => Promise<string | null>>();
 const mockSetItem = jest.fn<(key: string, val: string, opts?: unknown) => Promise<void>>(async () => {});
 const mockDeleteItem = jest.fn<(key: string) => Promise<void>>(async () => {});
-jest.mock('expo-secure-store', () => ({
-  getItemAsync: (...a: unknown[]) => mockGetItem(...(a as [string, unknown])),
-  setItemAsync: (...a: unknown[]) => mockSetItem(...(a as [string, string, unknown])),
-  deleteItemAsync: (...a: unknown[]) => mockDeleteItem(...(a as [string])),
-  canUseBiometricAuthentication: () => false,
-  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
-}));
+jest.mock('expo-secure-store', () =>
+  require('./support/authModule').secureStoreMock({ getItem: mockGetItem, setItem: mockSetItem, deleteItem: mockDeleteItem }),
+);
 
 const mockRefreshAsync = jest.fn<(...a: unknown[]) => Promise<unknown>>();
-jest.mock('expo-auth-session', () => ({
-  makeRedirectUri: () => 'acme://oauthredirect',
-  ResponseType: { Code: 'code' },
-  AuthRequest: class {},
-  exchangeCodeAsync: jest.fn(),
-  refreshAsync: (...a: unknown[]) => mockRefreshAsync(...a),
-}));
+jest.mock('expo-auth-session', () =>
+  require('./support/authModule').authSessionMock({ refresh: mockRefreshAsync }),
+);
 
-const REFRESH_KEY = 'abundo.cognito.refreshToken';
-const METHOD_KEY = 'abundo.cognito.authMethod';
 const POOL_ID = 'ap-southeast-2_abc123';
-const nowSec = () => Math.floor(Date.now() / 1000);
-// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-const loadAuth = (): typeof import('../auth') => require('../auth');
 
 let mockFetch: jest.Mock<(url: string, init?: { body: string }) => Promise<{ ok: boolean; json: () => Promise<unknown> }>>;
 
-function fakeSession(idJwt: string, accessJwt: string, claims: unknown, refresh: string) {
-  return {
-    getIdToken: () => ({ getJwtToken: () => idJwt, decodePayload: () => claims }),
-    getAccessToken: () => ({ getJwtToken: () => accessJwt }),
-    getRefreshToken: () => ({ getToken: () => refresh }),
-  };
-}
 const freshClaims = () => ({ iat: nowSec(), exp: nowSec() + 3600 });
 const expiredClaims = () => ({ iat: nowSec() - 4000, exp: nowSec() - 400 });
 

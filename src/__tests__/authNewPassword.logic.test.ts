@@ -3,42 +3,24 @@
 // and clears the pending challenge; a weak password keeps the challenge alive for a
 // retry; no pending challenge → "sign in again". SDK + SecureStore mocked.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { REFRESH_KEY, fakeSession, loadAuth } from './support/authModule';
 
 const mockAuthenticateUser =
   jest.fn<(details: unknown, cb: Record<string, (arg?: unknown) => void>) => void>();
 const mockCompleteChallenge =
   jest.fn<(pw: string, attrs: unknown, cb: Record<string, (arg?: unknown) => void>) => void>();
-jest.mock('amazon-cognito-identity-js', () => ({
-  CognitoUserPool: class {},
-  AuthenticationDetails: class {},
-  CognitoUser: class {
-    authenticateUser = mockAuthenticateUser;
-    completeNewPasswordChallenge = mockCompleteChallenge;
-  },
-}));
+jest.mock('amazon-cognito-identity-js', () =>
+  require('./support/authModule').cognitoMock({
+    authenticateUser: mockAuthenticateUser,
+    completeNewPasswordChallenge: mockCompleteChallenge,
+  }),
+);
 
 const mockSetItem = jest.fn<(key: string, val: string, opts?: unknown) => Promise<void>>(async () => {});
 const mockDeleteItem = jest.fn<(key: string) => Promise<void>>(async () => {});
-jest.mock('expo-secure-store', () => ({
-  getItemAsync: jest.fn(async () => null),
-  setItemAsync: (...a: unknown[]) => mockSetItem(...(a as [string, string, unknown])),
-  deleteItemAsync: (...a: unknown[]) => mockDeleteItem(...(a as [string])),
-  canUseBiometricAuthentication: () => false,
-  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
-}));
-
-const REFRESH_KEY = 'abundo.cognito.refreshToken';
-const nowSec = () => Math.floor(Date.now() / 1000);
-// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-const loadAuth = (): typeof import('../auth') => require('../auth');
-
-function fakeSession() {
-  return {
-    getIdToken: () => ({ getJwtToken: () => 'IDTOK', decodePayload: () => ({ iat: nowSec(), exp: nowSec() + 3600 }) }),
-    getAccessToken: () => ({ getJwtToken: () => 'AC' }),
-    getRefreshToken: () => ({ getToken: () => 'REFRESHTOK' }),
-  };
-}
+jest.mock('expo-secure-store', () =>
+  require('./support/authModule').secureStoreMock({ setItem: mockSetItem, deleteItem: mockDeleteItem }),
+);
 
 // Drive signInWithPassword to the NEW_PASSWORD_REQUIRED challenge, which stashes the
 // CognitoUser for completeNewPassword.
@@ -68,7 +50,7 @@ describe('completeNewPassword', () => {
   it('sets the password against the pending challenge, seats the session, and goes authed', async () => {
     const auth = loadAuth();
     await reachChallenge(auth);
-    mockCompleteChallenge.mockImplementation((_pw, _attrs, cb) => cb.onSuccess!(fakeSession()));
+    mockCompleteChallenge.mockImplementation((_pw, _attrs, cb) => cb.onSuccess!(fakeSession('IDTOK', 'AC', undefined, 'REFRESHTOK')));
 
     await expect(auth.completeNewPassword('Str0ng#Pass')).resolves.toEqual({ ok: true });
     expect(mockCompleteChallenge).toHaveBeenCalledWith('Str0ng#Pass', {}, expect.anything());
@@ -97,7 +79,7 @@ describe('completeNewPassword', () => {
     expect(auth.getStatus()).not.toBe('authed');
 
     // Retry against the SAME challenge (not cleared) → succeeds.
-    mockCompleteChallenge.mockImplementationOnce((_pw, _attrs, cb) => cb.onSuccess!(fakeSession()));
+    mockCompleteChallenge.mockImplementationOnce((_pw, _attrs, cb) => cb.onSuccess!(fakeSession('IDTOK', 'AC', undefined, 'REFRESHTOK')));
     await expect(auth.completeNewPassword('Str0ng#Pass')).resolves.toEqual({ ok: true });
     expect(auth.getStatus()).toBe('authed');
   });
@@ -108,7 +90,7 @@ describe('completeNewPassword', () => {
     mockSetItem.mockImplementation(async (k) => {
       if (k === REFRESH_KEY) throw new Error('keychain write denied');
     });
-    mockCompleteChallenge.mockImplementation((_pw, _attrs, cb) => cb.onSuccess!(fakeSession()));
+    mockCompleteChallenge.mockImplementation((_pw, _attrs, cb) => cb.onSuccess!(fakeSession('IDTOK', 'AC', undefined, 'REFRESHTOK')));
 
     await expect(auth.completeNewPassword('Str0ng#Pass')).resolves.toEqual({
       ok: false,
@@ -122,7 +104,7 @@ describe('completeNewPassword', () => {
   it('clears the pending challenge on success (a second complete → sign in again)', async () => {
     const auth = loadAuth();
     await reachChallenge(auth);
-    mockCompleteChallenge.mockImplementation((_pw, _attrs, cb) => cb.onSuccess!(fakeSession()));
+    mockCompleteChallenge.mockImplementation((_pw, _attrs, cb) => cb.onSuccess!(fakeSession('IDTOK', 'AC', undefined, 'REFRESHTOK')));
     await auth.completeNewPassword('Str0ng#Pass');
 
     await expect(auth.completeNewPassword('Again#123')).resolves.toEqual({

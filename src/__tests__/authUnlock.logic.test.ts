@@ -4,39 +4,24 @@
 // written/read in lockstep; unlock success/cancel/invalidated; the ONE-TIME unlock
 // (no re-read on the next refresh); lock(); canBiometricLock; unlockOrRestore routing.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { REFRESH_KEY, SENTINEL_KEY, loadAuth, nowSec } from './support/authModule';
 
 const mockPromptAsync = jest.fn<() => Promise<unknown>>();
 const mockExchange = jest.fn<(...a: unknown[]) => Promise<unknown>>();
 const mockRefresh = jest.fn<(...a: unknown[]) => Promise<unknown>>();
-jest.mock('expo-auth-session', () => ({
-  makeRedirectUri: () => 'acme://oauthredirect',
-  ResponseType: { Code: 'code' },
-  AuthRequest: class {
-    codeVerifier = 'verifier';
-    promptAsync = mockPromptAsync;
-  },
-  exchangeCodeAsync: (...a: unknown[]) => mockExchange(...a),
-  refreshAsync: (...a: unknown[]) => mockRefresh(...a),
-}));
+jest.mock('expo-auth-session', () =>
+  require('./support/authModule').authSessionMock({ promptAsync: mockPromptAsync, exchange: mockExchange, refresh: mockRefresh }),
+);
 
 const mockGetItem = jest.fn<(key: string, opts?: unknown) => Promise<string | null>>();
 const mockSetItem = jest.fn<(key: string, val: string, opts?: unknown) => Promise<void>>(async () => {});
 const mockDeleteItem = jest.fn<(key: string) => Promise<void>>(async () => {});
 const mockCanUseBiometric = jest.fn<() => boolean>(() => false);
-jest.mock('expo-secure-store', () => ({
-  getItemAsync: (...a: unknown[]) => mockGetItem(...(a as [string, unknown])),
-  setItemAsync: (...a: unknown[]) => mockSetItem(...(a as [string, string, unknown])),
-  deleteItemAsync: (...a: unknown[]) => mockDeleteItem(...(a as [string])),
-  canUseBiometricAuthentication: () => mockCanUseBiometric(),
-  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
-}));
+jest.mock('expo-secure-store', () =>
+  require('./support/authModule').secureStoreMock({ getItem: mockGetItem, setItem: mockSetItem, deleteItem: mockDeleteItem, canUseBiometric: mockCanUseBiometric }),
+);
 
-const REFRESH_KEY = 'abundo.cognito.refreshToken';
-const SENTINEL_KEY = 'abundo.cognito.hasSession';
 const DOMAIN = 'https://abundo-auth.auth.ap-southeast-2.amazoncognito.com';
-const nowSec = () => Math.floor(Date.now() / 1000);
-// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-const loadAuth = (): typeof import('../auth') => require('../auth');
 
 /** getItemAsync calls made against the guarded refresh-token key. */
 function refreshReads() {

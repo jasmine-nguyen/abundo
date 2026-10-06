@@ -16,32 +16,22 @@
 //     matches THIS family, not authPasswordEdges/cognito).
 // The module-scope harness below is the SUPERSET all four share.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { REFRESH_KEY, SENTINEL_KEY, METHOD_KEY, loadAuth, nowSec } from './support/authModule';
 
 const mockPromptAsync = jest.fn<() => Promise<unknown>>();
 const mockExchange = jest.fn<(...a: unknown[]) => Promise<unknown>>();
 const mockRefresh = jest.fn<(...a: unknown[]) => Promise<unknown>>();
-jest.mock('expo-auth-session', () => ({
-  makeRedirectUri: () => 'acme://oauthredirect',
-  ResponseType: { Code: 'code' },
-  AuthRequest: class {
-    codeVerifier = 'verifier';
-    promptAsync = mockPromptAsync;
-  },
-  exchangeCodeAsync: (...a: unknown[]) => mockExchange(...a),
-  refreshAsync: (...a: unknown[]) => mockRefresh(...a),
-}));
+jest.mock('expo-auth-session', () =>
+  require('./support/authModule').authSessionMock({ promptAsync: mockPromptAsync, exchange: mockExchange, refresh: mockRefresh }),
+);
 
 const mockGetItem = jest.fn<(key: string, opts?: unknown) => Promise<string | null>>();
 const mockSetItem = jest.fn<(key: string, val: string, opts?: unknown) => Promise<void>>(async () => {});
 const mockDeleteItem = jest.fn<(key: string) => Promise<void>>(async () => {});
 const mockCanUseBiometric = jest.fn<() => boolean>(() => false);
-jest.mock('expo-secure-store', () => ({
-  getItemAsync: (...a: unknown[]) => mockGetItem(...(a as [string, unknown])),
-  setItemAsync: (...a: unknown[]) => mockSetItem(...(a as [string, string, unknown])),
-  deleteItemAsync: (...a: unknown[]) => mockDeleteItem(...(a as [string])),
-  canUseBiometricAuthentication: () => mockCanUseBiometric(),
-  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
-}));
+jest.mock('expo-secure-store', () =>
+  require('./support/authModule').secureStoreMock({ getItem: mockGetItem, setItem: mockSetItem, deleteItem: mockDeleteItem, canUseBiometric: mockCanUseBiometric }),
+);
 
 // WHIT-267: auth.ts gates the unlock-time guarded re-store on Platform.OS === 'ios'
 // (via a tolerant lazy require — see isIOS). This node-env suite must mock react-native
@@ -59,14 +49,8 @@ jest.mock('react-native', () => ({
   },
 }));
 
-const REFRESH_KEY = 'abundo.cognito.refreshToken';
-const SENTINEL_KEY = 'abundo.cognito.hasSession';
-const METHOD_KEY = 'abundo.cognito.authMethod';
 const DOMAIN = 'https://abundo-auth.auth.ap-southeast-2.amazoncognito.com';
 const POOL_ID = 'ap-southeast-2_pool123'; // WHIT-459: folded-in from authRestoreSeedGaps
-const nowSec = () => Math.floor(Date.now() / 1000);
-// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-const loadAuth = (): typeof import('../auth') => require('../auth');
 
 // WHIT-459: declared at module scope but NOT wired to globalThis.fetch in the module
 // beforeEach — only the re-homed authRestoreSeedGaps block sets globalThis.fetch/POOL_ID,

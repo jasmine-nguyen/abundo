@@ -2,42 +2,16 @@
 // identity (email always; name/picture from Google). Null when signed out or on a
 // decode error. Seats a session via signInWithPassword (mocked SDK), then reads it.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { fakeSession, loadAuth } from './support/authModule';
 
 const mockAuthenticateUser =
   jest.fn<(details: unknown, callbacks: Record<string, (arg?: unknown) => void>) => void>();
 const mockDecodePayload = jest.fn<() => Record<string, string | undefined>>();
-jest.mock('amazon-cognito-identity-js', () => ({
-  CognitoUserPool: class {},
-  AuthenticationDetails: class {},
-  CognitoUser: class {
-    authenticateUser = mockAuthenticateUser;
-  },
-  // getCurrentUser decodes the raw id token through this.
-  CognitoIdToken: class {
-    constructor(_cfg: unknown) {}
-    decodePayload = mockDecodePayload;
-  },
-}));
+jest.mock('amazon-cognito-identity-js', () =>
+  require('./support/authModule').cognitoMock({ authenticateUser: mockAuthenticateUser, decodePayload: mockDecodePayload }),
+);
 
-jest.mock('expo-secure-store', () => ({
-  getItemAsync: jest.fn(async () => null),
-  setItemAsync: jest.fn(async () => undefined),
-  deleteItemAsync: jest.fn(async () => undefined),
-  canUseBiometricAuthentication: () => false,
-  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
-}));
-
-const nowSec = () => Math.floor(Date.now() / 1000);
-// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-const loadAuth = (): typeof import('../auth') => require('../auth');
-
-function fakeSession(idJwt: string) {
-  return {
-    getIdToken: () => ({ getJwtToken: () => idJwt, decodePayload: () => ({ iat: nowSec(), exp: nowSec() + 3600 }) }),
-    getAccessToken: () => ({ getJwtToken: () => 'AC' }),
-    getRefreshToken: () => ({ getToken: () => 'R' }),
-  };
-}
+jest.mock('expo-secure-store', () => require('./support/authModule').secureStoreMock());
 
 async function signInSeat(auth: typeof import('../auth'), idJwt = 'IDTOK') {
   mockAuthenticateUser.mockImplementation((_d, cb) => cb.onSuccess!(fakeSession(idJwt)));
