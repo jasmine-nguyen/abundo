@@ -48,6 +48,7 @@ def _scanned_modules() -> list[pathlib.Path]:
     `from repository_* import ...`. repository_rule is in there (the facade exports it)."""
     names = set(re.findall(r'^from (repository_\w+) import', _FACADE.read_text(), re.MULTILINE))
     assert "repository_rule" in names, "repository.py no longer imports repository_rule"
+    names.add("repository_base")  # the shared base issues verbs on behalf of every repo
     return [_SHARED / f"{name}.py" for name in sorted(names)]
 
 

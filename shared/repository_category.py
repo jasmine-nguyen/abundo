@@ -6,10 +6,9 @@ from collections import Counter
 from decimal import Decimal
 from typing import Any, NamedTuple, Optional
 
-import boto3
 from botocore.exceptions import ClientError
 
-from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
+from repository_base import RepositoryBase, handle_database_error
 from repository_errors import (
     CategoryNotFoundError,
     DuplicateCategoryError,
@@ -710,7 +709,7 @@ def validate_category_breadth(items: dict, cat_id: str, parent_id: str) -> None:
             f"a category can have at most {_MAX_CHILDREN_PER_CATEGORY} sub-categories")
 
 
-class CategoryRepository:
+class CategoryRepository(RepositoryBase):
     """Stores the user-defined category taxonomy as a single DynamoDB config item.
 
     The item at pk=sk="CATEGORIES" holds an `items` map (id -> category) plus a
@@ -718,16 +717,6 @@ class CategoryRepository:
     and rarely written (single user), so a single-item read is the common path;
     writes are conditional and retry once on a version race.
     """
-
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self) -> Any:
-        if self._table is None:
-            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
 
     def _get_config(self) -> Optional[dict]:
         try:

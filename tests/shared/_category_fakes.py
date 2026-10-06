@@ -54,10 +54,10 @@ def stored_budgets(repo):
 
 
 def _repo_with_fake_table(handler):
-    import repository
-    repo = repository.CategoryRepository()
+    import repository_category
+    repo = repository_category.CategoryRepository()
     repo._table = FakeTable()
-    return repository, repo
+    return repository_category, repo
 
 
 def _schema():

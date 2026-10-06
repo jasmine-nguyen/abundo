@@ -13,9 +13,8 @@ passes an authenticated user id as `scope` — only this helper and the handler'
 current_scope() change; the stored list shape carries no owner field.
 """
 
-from typing import Any, Optional
+from typing import Optional
 
-import boto3
 from botocore.exceptions import ClientError
 
 from milestone_rows import (
@@ -26,7 +25,7 @@ from milestone_rows import (
     row_target_float,
     row_text,
 )
-from repository_base import REGION_NAME, TABLE_NAME, handle_database_error, logger
+from repository_base import RepositoryBase, handle_database_error, logger
 
 # The single tenant every request maps to until multi-user lands.
 _MILESTONE_SCOPE_SHARED = "SHARED"
@@ -76,20 +75,10 @@ def _to_client(milestones: list) -> list:
     return client_milestones
 
 
-class MilestoneRepository:
+class MilestoneRepository(RepositoryBase):
     """Stores the user's mortgage-milestone plan as a single config item at
     pk="MILESTONES", sk=<scope>. `get_milestones` returns the list (or None if the
     user hasn't saved one yet); `set_milestones` overwrites the whole list."""
-
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self) -> Any:
-        if self._table is None:
-            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
 
     def _read_milestones(self, scope: str) -> Optional[list]:
         """The shared read: the raw stored milestone list (targetBalance as Decimal), or None

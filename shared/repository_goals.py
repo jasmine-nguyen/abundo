@@ -4,18 +4,17 @@ pk=sk="GOALS" so goal writes never contend with the budget/category optimistic-l
 versions. Persistence only; all field validation lives in the handler."""
 
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Optional
 
-import boto3
 from botocore.exceptions import ClientError
 
-from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
+from repository_base import RepositoryBase, handle_database_error
 from repository_errors import VersionConflictError
 
 _GOALS_KEY = {"pk": "GOALS", "sk": "GOALS"}
 
 
-class GoalsRepository:
+class GoalsRepository(RepositoryBase):
     """Stores the user's goals as a single DynamoDB config item.
 
     The item at pk=sk="GOALS" holds an `items` map (goal id -> the goal object) plus a
@@ -24,16 +23,6 @@ class GoalsRepository:
     idempotent upsert of its own map key (a create and an edit are the same nested SET);
     deleting removes it. Both retry once on a version race, then raise VersionConflictError.
     """
-
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self) -> Any:
-        if self._table is None:
-            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
 
     def _get_config(self) -> Optional[dict]:
         try:

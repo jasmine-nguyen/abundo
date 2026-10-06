@@ -66,8 +66,8 @@ def _legacy_store(repo, repository, *, extra=None, drop_marker=True):
 
 
 def test_seed_slots_are_the_solved_table(handler):
-    import repository
-    slots = {cid: cat["colorSlot"] for cid, cat in repository.SEED_CATEGORIES.items()}
+    import repository_category
+    slots = {cid: cat["colorSlot"] for cid, cat in repository_category.SEED_CATEGORIES.items()}
     assert slots == SEED_SLOTS
     assert len(set(slots.values())) == 13          # distinct: no two built-ins share a colour
     assert all(0 <= s < 20 for s in slots.values())
@@ -206,8 +206,9 @@ def test_create_fails_closed_when_the_backfill_write_errors(handler):
     repository, repo = _repo_with_fake_table(handler)
     _legacy_store(repo, repository)
     repo._table.fail("update_item")
+    from repository_errors import DatabaseError
 
-    with pytest.raises(repository.DatabaseError):
+    with pytest.raises(DatabaseError):
         repo.create_category("wine", "Wine", "Lifestyle", "glass")
 
 
@@ -262,51 +263,51 @@ def test_adding_and_deleting_never_repaints_another_category(handler):
 
 
 def test_plan_is_deterministic_regardless_of_map_order(handler):
-    import repository
+    import repository_category
     items = {cid: {k: v for k, v in cat.items() if k != "colorSlot"}
-             for cid, cat in repository.SEED_CATEGORIES.items()}
+             for cid, cat in repository_category.SEED_CATEGORIES.items()}
     reordered = {cid: items[cid] for cid in reversed(list(items))}
 
     # Both request paths compute the plan independently; if they could disagree, a deferred
     # write and the response it already returned would show different colours.
-    assert repository.plan_color_slot_backfill(items) == repository.plan_color_slot_backfill(reordered)
-    assert repository.plan_color_slot_backfill(items) == SEED_SLOTS
+    assert repository_category.plan_color_slot_backfill(items) == repository_category.plan_color_slot_backfill(reordered)
+    assert repository_category.plan_color_slot_backfill(items) == SEED_SLOTS
 
 
 def test_least_held_color_slot_is_the_lowest_free_slot_below_saturation(handler):
     """While any slot is free, least-held IS lowest-free — a free slot has count 0 and always
     wins, so WHIT-404 changed nothing for a store under 20 categories."""
-    import repository
-    no_preference = repository.SlotPreference()
-    assert repository.least_held_color_slot(Counter(), no_preference) == 0
-    assert repository.least_held_color_slot(Counter({0: 1, 1: 1, 2: 1}), no_preference) == 3
-    assert repository.least_held_color_slot(Counter({0: 1, 2: 1, 3: 1}), no_preference) == 1  # delete freed 1
+    import repository_category
+    no_preference = repository_category.SlotPreference()
+    assert repository_category.least_held_color_slot(Counter(), no_preference) == 0
+    assert repository_category.least_held_color_slot(Counter({0: 1, 1: 1, 2: 1}), no_preference) == 3
+    assert repository_category.least_held_color_slot(Counter({0: 1, 2: 1, 3: 1}), no_preference) == 1  # delete freed 1
     # A deleted BUILT-IN's slot is reused immediately too — the non-seed preference decides
     # which colour to DOUBLE UP on, and that question does not exist while a slot is free.
     seeds_minus_eatingout = Counter({slot: 1 for slot in range(1, 20)})
-    assert repository.least_held_color_slot(seeds_minus_eatingout, no_preference) == 0
+    assert repository_category.least_held_color_slot(seeds_minus_eatingout, no_preference) == 0
     # Junk outside the ramp cannot make a real slot look taken, and reading a missing slot
     # must not INSERT it (a plain dict here would raise instead).
     junk = Counter({99: 5, -1: 3})
-    assert repository.least_held_color_slot(junk, no_preference) == 0
+    assert repository_category.least_held_color_slot(junk, no_preference) == 0
     assert set(junk) == {99, -1}
 
 
 def test_least_held_color_slot_spreads_repeats_instead_of_piling_on_one(handler):
     """WHIT-404: past 20 categories a duplicate is unavoidable, but it must not always be the
     SAME duplicate. Before this, every category past the 20th took slot 0."""
-    import repository
-    no_preference = repository.SlotPreference()
+    import repository_category
+    no_preference = repository_category.SlotPreference()
     full = Counter({slot: 1 for slot in range(20)})
-    assert repository.least_held_color_slot(full, no_preference) == 2       # lowest non-seed slot
+    assert repository_category.least_held_color_slot(full, no_preference) == 2       # lowest non-seed slot
     full[2] += 1
-    assert repository.least_held_color_slot(full, no_preference) == 3       # next non-seed, not 2 again
+    assert repository_category.least_held_color_slot(full, no_preference) == 3       # next non-seed, not 2 again
     # Saturated but uneven: the emptiest slot wins even though it is not the lowest. (A merely
     # FREE slot 7 would not discriminate — the old lowest-free walk answers 7 too.)
     uneven = Counter({slot: 2 for slot in range(20)})
     uneven[0] = 5
     uneven[7] = 1
-    assert repository.least_held_color_slot(uneven, no_preference) == 7
+    assert repository_category.least_held_color_slot(uneven, no_preference) == 7
 
 
 def test_least_held_color_slot_prefers_slots_no_builtin_owns(handler):
@@ -315,36 +316,36 @@ def test_least_held_color_slot_prefers_slots_no_builtin_owns(handler):
     it cannot drift if the seeds are retuned."""
     import repository
     import repository_category
-    seed_slots = {int(cat["colorSlot"]) for cat in repository.SEED_CATEGORIES.values()}
+    seed_slots = {int(cat["colorSlot"]) for cat in repository_category.SEED_CATEGORIES.values()}
     non_seed = repository_category._NON_SEED_COLOR_SLOTS
     assert non_seed == frozenset(range(20)) - seed_slots
     # slot 0 (Eating Out) and slot 2 (no built-in) both held once: the non-seed slot wins even
     # though 0 is the lower number.
     full = Counter({slot: 1 for slot in range(20)})
-    assert repository.least_held_color_slot(full, repository.SlotPreference()) == 2
+    assert repository_category.least_held_color_slot(full, repository_category.SlotPreference()) == 2
     # ...but count still dominates preference: a seed slot held ONCE beats a non-seed held twice.
     full.update({slot: 1 for slot in sorted(non_seed)})
-    assert repository.least_held_color_slot(full, repository.SlotPreference()) == 0
+    assert repository_category.least_held_color_slot(full, repository_category.SlotPreference()) == 0
 
 
 def test_least_held_color_slot_treats_reserved_as_a_hard_exclusion(handler):
     """The blocker WHIT-404's first plan shipped: an owed slot is held by NOBODY, so counting
     it as merely +1 leaves it tied with a singly-held slot and the tie-break hands it over —
     permanently stealing the colour the backfill was about to give a built-in."""
-    import repository
+    import repository_category
     # The owed slot must be a NON-SEED slot or this cannot discriminate: if it belonged to a
     # built-in, the non-seed preference would walk away from it anyway and the test would pass
     # against the weight design too. Slot 2 is free and owned by no built-in.
     counts = Counter({0: 1, 1: 1, **{slot: 1 for slot in range(3, 20)}})
-    assert repository.least_held_color_slot(
-        counts, repository.SlotPreference()) == 2                            # unexcluded: takes it
-    assert repository.least_held_color_slot(
-        counts, repository.SlotPreference(excluded=frozenset({2}))) == 3     # excluded: skips it
+    assert repository_category.least_held_color_slot(
+        counts, repository_category.SlotPreference()) == 2                            # unexcluded: takes it
+    assert repository_category.least_held_color_slot(
+        counts, repository_category.SlotPreference(excluded=frozenset({2}))) == 3     # excluded: skips it
     # Every slot owed (an unmigrated store with >20 unslotted rows): something must be taken
     # back, but it must not be a built-in's designated slot. Slot 1 is travel's and free;
     # returning it would repaint travel permanently, which is the bug this branch exists for.
-    assert repository.least_held_color_slot(
-        Counter({0: 1}), repository.SlotPreference(excluded=frozenset(range(20)))) == 2
+    assert repository_category.least_held_color_slot(
+        Counter({0: 1}), repository_category.SlotPreference(excluded=frozenset(range(20)))) == 2
 
 
 def test_slot_survives_json_encoding_as_a_number(handler):
@@ -478,10 +479,10 @@ def test_past_twenty_categories_slots_stay_in_range(handler):
 
 
 def test_plan_past_twenty_unslotted_rows_stays_in_range(handler):
-    import repository
+    import repository_category
     items = {f"c{n:02d}": _cat(f"c{n:02d}") for n in range(25)}
 
-    plan = repository.plan_color_slot_backfill(items)
+    plan = repository_category.plan_color_slot_backfill(items)
 
     assert len(plan) == 25
     assert all(0 <= s < 20 for s in plan.values())   # never an out-of-ramp index
@@ -520,12 +521,12 @@ def test_seed_slots_are_spread_across_the_colour_ramp(handler):
     every category with nothing going red. tests/shared/test_color_slot_ramp_drift.py
     guards the lengths against the server's slot range.
     """
-    import repository
+    import repository_category
     assignment_order = client_assignment_order()
     assert sorted(assignment_order) == list(range(len(assignment_order)))  # a true permutation
 
     ramp = sorted(assignment_order[cat["colorSlot"]]
-                  for cat in repository.SEED_CATEGORIES.values())
+                  for cat in repository_category.SEED_CATEGORIES.values())
     assert len(set(ramp)) == 13                          # 13 distinct colours
 
     longest = run = 1
@@ -541,7 +542,7 @@ def test_seed_slots_are_spread_across_the_colour_ramp(handler):
 # Every colour-slot test above pins an integer. Re-shuffle the seed and they all just get
 # retyped, and the INTENT is never checked — test_seed_slots_are_spread_across_the_colour_ramp
 # ("longest run == 3") was true BEFORE this card and is true AFTER it, so it did not guard the
-# fix at all. These compute the RESOLVED RAMP LAYOUT from repository.SEED_CATEGORIES and assert
+# fix at all. These compute the RESOLVED RAMP LAYOUT from repository_category.SEED_CATEGORIES and assert
 # what the card actually promised, so a future bad re-space fails loudly instead of quietly.
 # =============================================================================
 
@@ -578,8 +579,8 @@ def test_no_builtin_trio_sits_on_the_warm_end_of_the_ramp(handler):
     """THE card: Eating Out / Health / Coffee resolved to ramp 0/1/2 and, as the top three by
     spend, painted as three near-identical salmons. Asserted as the property — not as
     "coffee's slot is 9", which the next re-shuffle would simply retype."""
-    import repository
-    ramp = _seed_ramp(repository)
+    import repository_category
+    ramp = _seed_ramp(repository_category)
 
     warm_runs = [run for run in _neighbouring_runs(ramp) if min(ramp[c] for c in run) <= 5]
     assert all(len(run) <= 2 for run in warm_runs), f"warm-end run of 3+: {warm_runs}"
@@ -598,8 +599,8 @@ def test_the_neighbouring_builtin_runs_are_exactly_these(handler):
     steps in the whole ramp, tighter than the warm trio that was just removed. Same symptom,
     different hue family; out of the approved scope, so it is pinned rather than fixed.
     """
-    import repository
-    assert _neighbouring_runs(_seed_ramp(repository)) == [
+    import repository_category
+    assert _neighbouring_runs(_seed_ramp(repository_category)) == [
         ["eatingout", "health"],
         ["coffee", "utilities"],
         ["shopping", "travel"],
@@ -1310,7 +1311,7 @@ def test_color_slot_counts_counts_duplicates_and_still_dedupes_to_the_taken_set(
     # that coercion is all that stands between a corrupt row and an undefined colour on the
     # client. A set masquerading as a Counter passes every duplicate-free test in the suite,
     # then silently turns the whole least-held rule back into lowest-free.
-    import repository
+    import repository_category
     items = {
         "lo": _cat("lo", colorSlot=Decimal(0)),
         "lo2": _cat("lo2", colorSlot=Decimal(0)),        # DUPLICATE: counts 2, used still {0}
@@ -1331,13 +1332,13 @@ def test_color_slot_counts_counts_duplicates_and_still_dedupes_to_the_taken_set(
         "absent": _cat("absent"),
     }
 
-    counts = repository.color_slot_counts(items)
+    counts = repository_category.color_slot_counts(items)
 
     assert counts == Counter({0: 2, 10: 2, 19: 1})
     assert set(counts) == {0, 10, 19}
     assert 5 not in counts and counts[5] == 0 and 5 not in counts   # a read must not INSERT
     # The real consumer agrees: the planner treats exactly those three as taken.
-    plan = repository.plan_color_slot_backfill(items)
+    plan = repository_category.plan_color_slot_backfill(items)
     assert len(plan) == 12
     assert set(plan.values()).isdisjoint({0, 10, 19})
 
@@ -2069,15 +2070,15 @@ def test_an_empty_plan_still_stamps_the_marker_and_never_touches_items(handler):
 def test_a_soft_cap_is_a_hard_exclusion_on_the_common_path(handler):
     """`discouraged` keeps the common path byte-identical to the old `reserved | crowded` union:
     while an uncapped slot is available a capped one is never handed out."""
-    import repository
+    import repository_category
 
     counts = Counter({slot: 1 for slot in range(20)})
     # Slot 2 is the lowest non-seed slot, so it wins with no preference...
-    assert repository.least_held_color_slot(counts, repository.SlotPreference()) == 2
+    assert repository_category.least_held_color_slot(counts, repository_category.SlotPreference()) == 2
     # ...but capping it steps to the next non-seed slot, exactly as unioning it into `excluded`
     # would have — the cap bites on the common path.
-    capped_two = repository.SlotPreference(discouraged=frozenset({2}))
-    assert repository.least_held_color_slot(counts, capped_two) == 3
+    capped_two = repository_category.SlotPreference(discouraged=frozenset({2}))
+    assert repository_category.least_held_color_slot(counts, capped_two) == 3
 
 
 def test_a_soft_cap_survives_the_all_owed_fallback_as_a_ranking_penalty(handler):
@@ -2086,21 +2087,21 @@ def test_a_soft_cap_survives_the_all_owed_fallback_as_a_ranking_penalty(handler)
     into `reserved` lost it exactly when the store was most crowded. As `discouraged` the cap
     rides through: a capped slot ranks last among equally-held, so it is avoided when an
     alternative exists. Revert the `discouraged` term in least_held's sort key and this reddens."""
-    import repository
+    import repository_category
 
     counts = Counter({slot: 1 for slot in range(20)})
     every_slot = frozenset(range(20))
 
     # Every slot owed -> fallback. With no cap the lowest non-seed slot (2) is taken back.
-    assert repository.least_held_color_slot(
-        counts, repository.SlotPreference(excluded=every_slot)) == 2
+    assert repository_category.least_held_color_slot(
+        counts, repository_category.SlotPreference(excluded=every_slot)) == 2
     # Cap slot 2: the fallback now steps past it to the next non-seed slot (3) instead of
     # dropping the cap and handing back the crowded slot 2.
-    assert repository.least_held_color_slot(
-        counts, repository.SlotPreference(excluded=every_slot, discouraged=frozenset({2}))) == 3
+    assert repository_category.least_held_color_slot(
+        counts, repository_category.SlotPreference(excluded=every_slot, discouraged=frozenset({2}))) == 3
     # `protected` still keeps a built-in's own hue off the chopping block, unchanged by the cap.
-    slot = repository.least_held_color_slot(
-        counts, repository.SlotPreference(excluded=every_slot, protected=every_slot))
+    slot = repository_category.least_held_color_slot(
+        counts, repository_category.SlotPreference(excluded=every_slot, protected=every_slot))
     assert isinstance(slot, int) and 0 <= slot < 20
 
 
@@ -2116,7 +2117,7 @@ def test_a_create_never_displaces_a_builtin_from_its_owed_hue_over_random_stores
     read -> optional lost-race pre-backfill -> create -> drain, and assert the create never
     steals a slot the backfill owed a built-in for its OWN designated hue: each such built-in
     still ends up ON that slot. Expected owed-set comes from the exported planner, one-shot."""
-    import repository
+    import repository_category
 
     rng = random.Random(_RESERVATION_SEED)
     saw_owed_builtins = 0
@@ -2124,7 +2125,7 @@ def test_a_create_never_displaces_a_builtin_from_its_owed_hue_over_random_stores
 
     for trial in range(_RESERVATION_TRIALS):
         _, repo = _repo_with_fake_table(handler)
-        original = _random_legacy_store(repository, rng)
+        original = _random_legacy_store(repository_category, rng)
         repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES",
                                    "items": copy.deepcopy(original), "version": Decimal(1)}
 
@@ -2133,11 +2134,11 @@ def test_a_create_never_displaces_a_builtin_from_its_owed_hue_over_random_stores
         # on its own hue via a pass-2 least-held coincidence (its slot was already taken) has no
         # claim, and the create shifting the counts may re-plan it elsewhere. Read from the
         # exported planner + the exported histogram, one-shot, never re-derived by hand.
-        plan = repository.plan_color_slot_backfill(copy.deepcopy(original))
-        stored_counts = repository.color_slot_counts(original)
+        plan = repository_category.plan_color_slot_backfill(copy.deepcopy(original))
+        stored_counts = repository_category.color_slot_counts(original)
         owed_to_builtin = {
             cat_id: slot for cat_id, slot in plan.items()
-            if (repository.SEED_CATEGORIES.get(cat_id) or {}).get(_SLOT) == slot
+            if (repository_category.SEED_CATEGORIES.get(cat_id) or {}).get(_SLOT) == slot
             and stored_counts[slot] == 0
         }
         if owed_to_builtin:
@@ -2174,14 +2175,14 @@ def test_a_freed_slot_is_genuinely_reused_not_just_reusable(handler):
     a LOWER free slot getting picked, never the freed one itself. Build a settled store holding
     every slot, free ONE non-seed slot by deleting its sole holder, and assert the next create
     lands on exactly that slot — the only genuinely free one."""
-    import repository
+    import repository_category
 
     _, repo = _repo_with_fake_table(handler)
     # 13 seeds on their designated slots, plus one custom row on each of the 7 non-seed slots, so
     # all 20 slots are held exactly once. The store is already migrated (schema 2), so nothing is
     # owed and the create ranks on stored counts alone.
-    non_seed = sorted(repository.least_held_color_slot.__globals__["_NON_SEED_COLOR_SLOTS"])
-    items = {cid: dict(cat) for cid, cat in repository.SEED_CATEGORIES.items()}
+    non_seed = sorted(repository_category.least_held_color_slot.__globals__["_NON_SEED_COLOR_SLOTS"])
+    items = {cid: dict(cat) for cid, cat in repository_category.SEED_CATEGORIES.items()}
     for slot in non_seed:
         cat_id = f"custom{slot:02d}"
         items[cat_id] = {"id": cat_id, "name": cat_id, "icon": "tag", "color": "#888888",
@@ -2300,13 +2301,13 @@ def test_write_color_slots_persists_exactly_what_the_pure_builder_returns(handle
     # so what it hands DynamoDB mid-drain must equal _backfill_expression's output for the same
     # (version, plan, settled) — nothing post-processes or overrides the builder. Plan/settled
     # come from the EXPORTED stage planner, one-shot; version from the store.
-    import repository
+    import repository_category
     import repository_category as rc
     _, repo = _repo_with_fake_table(handler)
 
     # Seeds are already slotted, so a 60-row unslotted custom overlay makes the FIRST write a
     # partial chunk (plan len 60 > 50) — the interesting case where names are declared per-row.
-    items = {cid: dict(cat) for cid, cat in repository.SEED_CATEGORIES.items()}
+    items = {cid: dict(cat) for cid, cat in repository_category.SEED_CATEGORIES.items()}
     for index in range(60):
         cid = f"cat{index:04d}"
         items[cid] = {"id": cid, "name": f"Cat {index}", "icon": "tag", "color": "#888888",
@@ -2316,7 +2317,7 @@ def test_write_color_slots_persists_exactly_what_the_pure_builder_returns(handle
 
     item = repo._get_config()
     repainted = repo._is_slot_migrated(item)
-    plan, settled = repository.plan_color_slot_stage(item["items"], repainted=repainted)
+    plan, settled = repository_category.plan_color_slot_stage(item["items"], repainted=repainted)
     version = item["version"]
     expected = rc._backfill_expression(version, plan, settled=settled)
 
@@ -2334,16 +2335,16 @@ def test_write_color_slots_persists_exactly_what_the_pure_builder_returns(handle
 def test_slot_preference_fields_default_independently(handler):
     # [G5] the three levers are independent: naming one must leave the other two empty, and two
     # default-constructed preferences must be equal (no shared-mutable-default surprise).
-    import repository
-    only_disc = repository.SlotPreference(discouraged=frozenset({1}))
+    import repository_category
+    only_disc = repository_category.SlotPreference(discouraged=frozenset({1}))
     assert only_disc.discouraged == frozenset({1})
     assert only_disc.excluded == frozenset() and only_disc.protected == frozenset()
 
-    only_prot = repository.SlotPreference(protected=frozenset({2}))
+    only_prot = repository_category.SlotPreference(protected=frozenset({2}))
     assert only_prot.protected == frozenset({2})
     assert only_prot.excluded == frozenset() and only_prot.discouraged == frozenset()
 
-    assert repository.SlotPreference() == repository.SlotPreference()
+    assert repository_category.SlotPreference() == repository_category.SlotPreference()
 
 
 def test_a_free_discouraged_slot_is_never_handed_out_by_the_free_branch(handler):
@@ -2351,16 +2352,16 @@ def test_a_free_discouraged_slot_is_never_handed_out_by_the_free_branch(handler)
     # stripped from `candidates`, so a capped slot that happens to be free can never reach
     # `min(free)`. Slot 0 is free (count 0) and normally the lowest-free answer; capping it
     # steps to slot 1.
-    import repository
-    assert repository.least_held_color_slot(Counter(), repository.SlotPreference()) == 0
-    assert repository.least_held_color_slot(
-        Counter(), repository.SlotPreference(discouraged=frozenset({0}))) == 1
+    import repository_category
+    assert repository_category.least_held_color_slot(Counter(), repository_category.SlotPreference()) == 0
+    assert repository_category.least_held_color_slot(
+        Counter(), repository_category.SlotPreference(discouraged=frozenset({0}))) == 1
 
 
 def test_the_fallback_sort_key_ranks_count_over_cap_over_nonseed(handler):
     # [G7] the exact tuple order (count, discouraged, non-seed, slot) in least_held. All 20 slots
     # excluded forces the all-owed fallback, where the key actually decides.
-    import repository
+    import repository_category
     every = frozenset(range(20))
 
     # cap DOMINATES the non-seed preference: slots 0 (seed) and 2 (non-seed) tie at the lowest
@@ -2369,16 +2370,16 @@ def test_the_fallback_sort_key_ranks_count_over_cap_over_nonseed(handler):
     counts = Counter({slot: 2 for slot in range(20)})
     counts[0] = 1
     counts[2] = 1
-    assert repository.least_held_color_slot(
-        counts, repository.SlotPreference(excluded=every)) == 2
-    assert repository.least_held_color_slot(
-        counts, repository.SlotPreference(excluded=every, discouraged=frozenset({2}))) == 0
+    assert repository_category.least_held_color_slot(
+        counts, repository_category.SlotPreference(excluded=every)) == 2
+    assert repository_category.least_held_color_slot(
+        counts, repository_category.SlotPreference(excluded=every, discouraged=frozenset({2}))) == 0
 
     # count DOMINATES the cap: a discouraged slot held far less is still taken (last resort).
     lean = Counter({slot: 5 for slot in range(20)})
     lean[2] = 0
-    assert repository.least_held_color_slot(
-        lean, repository.SlotPreference(excluded=every, discouraged=frozenset({2}))) == 2
+    assert repository_category.least_held_color_slot(
+        lean, repository_category.SlotPreference(excluded=every, discouraged=frozenset({2}))) == 2
 
 
 def test_protected_and_discouraged_apply_together_in_the_fallback(handler):
@@ -2386,17 +2387,17 @@ def test_protected_and_discouraged_apply_together_in_the_fallback(handler):
     # `spare` outright, `discouraged` only penalises it. Slot 3 is the sole free slot (the natural
     # pick); protecting it forces a held slot, and capping slot 2 pushes the choice off the lowest
     # non-seed one (2) onto the next (4).
-    import repository
+    import repository_category
     every = frozenset(range(20))
     counts = Counter({slot: 5 for slot in range(20)})
     counts[3] = 0
 
     # Nothing protected/capped: the free slot 3 is taken back.
-    assert repository.least_held_color_slot(
-        counts, repository.SlotPreference(excluded=every)) == 3
+    assert repository_category.least_held_color_slot(
+        counts, repository_category.SlotPreference(excluded=every)) == 3
     # Protect 3 (removed from spare) and cap 2 (penalised): the answer is the next uncapped
     # non-seed slot, 4 — neither the protected 3 nor the discouraged 2.
-    assert repository.least_held_color_slot(counts, repository.SlotPreference(
+    assert repository_category.least_held_color_slot(counts, repository_category.SlotPreference(
         excluded=every, protected=frozenset({3}), discouraged=frozenset({2}))) == 4
 
 
@@ -2657,14 +2658,14 @@ def test_the_backfill_stage_comes_first_and_cannot_stamp_while_a_repaint_follows
     (Purity of the planners is pinned by the impl suite's
     test_the_planners_never_mutate_the_store_they_are_given, which covers plan_new_category_slot
     too — not repeated here.)"""
-    import repository
+    import repository_category
 
-    items = {cat_id: dict(cat) for cat_id, cat in repository.SEED_CATEGORIES.items()}
+    items = {cat_id: dict(cat) for cat_id, cat in repository_category.SEED_CATEGORIES.items()}
     for index in range(30):
         items[f"cat{index:04d}"] = _cat(f"cat{index:04d}", colorSlot=Decimal(0))
     items["zzunslotted"] = _cat("zzunslotted")
 
-    plan, settled = repository.plan_color_slot_stage(items, repainted=False)
+    plan, settled = repository_category.plan_color_slot_stage(items, repainted=False)
 
     assert plan == {"zzunslotted": plan["zzunslotted"]}, "the backfill stage must come first"
     assert settled is False, "a repaint still follows, so this plan cannot stamp"
@@ -2704,17 +2705,17 @@ def test_protected_only_bites_once_every_slot_is_owed(handler):
     change the answer at all, and when a caller protects everything the fallback must still
     return a slot rather than raising ValueError on min([]) — that would 500 a POST.
     Drop the `spare or range(...)` guard and the second half reddens."""
-    import repository
+    import repository_category
 
     counts = Counter({slot: 1 for slot in range(20)})
     every_slot = frozenset(range(20))
 
     # Nothing is excluded, so protected is irrelevant and the ordinary least-held answer wins.
-    assert (repository.least_held_color_slot(counts, repository.SlotPreference(protected=every_slot))
-            == repository.least_held_color_slot(counts, repository.SlotPreference()))
+    assert (repository_category.least_held_color_slot(counts, repository_category.SlotPreference(protected=every_slot))
+            == repository_category.least_held_color_slot(counts, repository_category.SlotPreference()))
     # Every slot owed AND every slot protected: defensive, but it must not raise.
-    slot = repository.least_held_color_slot(
-        counts, repository.SlotPreference(excluded=every_slot, protected=every_slot))
+    slot = repository_category.least_held_color_slot(
+        counts, repository_category.SlotPreference(excluded=every_slot, protected=every_slot))
     assert isinstance(slot, int) and 0 <= slot < 20
 
 
@@ -3137,7 +3138,7 @@ def test_plan_new_category_slot_holds_its_contract_on_stores_create_cannot_produ
         the `crowded` cap and the PROJECTED counts exist. Simulated by draining the real
         stage planner to a fixed point, so nothing here re-derives the rule.
     """
-    import repository as R
+    import repository_category as RC
     rng = random.Random(_SEED + 1)
     all_corrupt_seen = 0
 
@@ -3146,7 +3147,7 @@ def test_plan_new_category_slot_holds_its_contract_on_stores_create_cannot_produ
         mode = rng.choice(["ok", "missing", "corrupt", "pile", "mixed"])
         items = {}
         if rng.random() < 0.5:
-            items.update({c: dict(v) for c, v in R.SEED_CATEGORIES.items()})
+            items.update({c: dict(v) for c, v in RC.SEED_CATEGORIES.items()})
         for index in range(rows):
             cat_id = f"c{index:04d}"
             pick = rng.choice(["ok", "missing", "corrupt", "pile"]) if mode == "mixed" else mode
@@ -3161,13 +3162,13 @@ def test_plan_new_category_slot_holds_its_contract_on_stores_create_cannot_produ
                     ["7", Decimal("1.5"), True, Decimal(-1), Decimal(99)]))
         all_corrupt_seen += mode == "corrupt" and rows >= 20
 
-        slot = R.plan_new_category_slot(items)
+        slot = RC.plan_new_category_slot(items)
 
         assert type(slot) is int and 0 <= slot < 20, f"unusable slot {slot!r} on {len(items)} rows"
         # Drain the real stage planner to a fixed point and check the new row kept its colour.
         store = {**items, "zzznew": _cat("zzznew", colorSlot=Decimal(slot))}
         for _ in range(8):
-            plan, settled = R.plan_color_slot_stage(store, repainted=False)
+            plan, settled = RC.plan_color_slot_stage(store, repainted=False)
             store = {cid: ({**cat, _SLOT: Decimal(plan[cid])} if cid in plan else cat)
                      for cid, cat in store.items()}
             if settled:
@@ -3188,13 +3189,13 @@ def test_creating_on_a_store_whose_categories_were_all_deleted_still_gets_slot_z
     plan_new_category_slot({}). It must hand out slot 0 in a single write — not fall into
     least_held_color_slot's all-owed fallback, which is what an allowance computed from
     len(items) instead of len(items) + 1 would do (it answers 2)."""
-    import repository as R
+    import repository_category as RC
     _, repo = _repo_with_fake_table(handler)
     repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES", "items": {},
                                "version": Decimal(1),
                                "colorSlotSchema": Decimal(_schema())}
 
-    assert R.plan_new_category_slot({}) == 0
+    assert RC.plan_new_category_slot({}) == 0
 
     created = repo.create_category("gym", "Gym", "Lifestyle", "dumbbell")
 
@@ -3226,8 +3227,8 @@ def test_a_zero_row_allowance_is_reached_but_provably_inert(handler):
 
     # Reached, and inert: no movers, no plan, settled, and no category clause in the write.
     assert RC._repaint_movers({}) == []
-    assert R.plan_color_slot_repaint({}) == {}
-    assert R.plan_color_slot_stage({}, repainted=False) == ({}, True)
+    assert RC.plan_color_slot_repaint({}) == {}
+    assert RC.plan_color_slot_stage({}, repainted=False) == ({}, True)
     # The other caller can never pass 0 — it counts the row it is about to add.
     assert RC._repaint_allowance(len({}) + 1) >= 1
 
@@ -3236,7 +3237,7 @@ def test_a_zero_row_allowance_is_reached_but_provably_inert(handler):
     for rows in range(1, 61):
         items = {f"c{index:02d}": _cat(f"c{index:02d}", colorSlot=Decimal(index % 20))
                  for index in range(rows)}
-        movers = R.plan_color_slot_repaint(items)
+        movers = RC.plan_color_slot_repaint(items)
         assert movers == {}, f"a level store of {rows} rows was repainted: {movers}"
 
     # End to end: the emptied store settles in ONE marker-only write and stays silent.

@@ -10,28 +10,17 @@ writer), so a plain put_item is enough — no version guard.
 a regenerate skip the paid call when nothing has changed since the cached run.
 """
 
-from typing import Any, Optional
+from typing import Optional
 
-import boto3
 from botocore.exceptions import ClientError
 
-from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
+from repository_base import RepositoryBase, handle_database_error
 
 
-class InsightRepository:
+class InsightRepository(RepositoryBase):
     """Caches one AI-insight payload per pay cycle at pk="INSIGHT",
     sk=<cycle_start>. `get_insight` returns the stored payload (or None);
     `put_insight` overwrites the cycle's row."""
-
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self) -> Any:
-        if self._table is None:
-            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
 
     def get_insight(self, cycle_start: str) -> Optional[dict]:
         """Return the cached insight for the cycle, or None if not generated yet.

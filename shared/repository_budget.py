@@ -3,12 +3,11 @@ config item (separate from CATEGORIES so their optimistic-lock versions never
 contend)."""
 
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Optional
 
-import boto3
 from botocore.exceptions import ClientError
 
-from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
+from repository_base import RepositoryBase, handle_database_error
 from repository_errors import VersionConflictError
 
 _BUDGETS_KEY = {"pk": "BUDGETS", "sk": "BUDGETS"}
@@ -26,7 +25,7 @@ _ROLLOVER_FIELDS = (
 # rollover, and cleared on a reclassify out of spend. Kept local.
 _SPREAD_FIELDS = ("spread_amount", "spread_cycles", "spread_from", "spread_len", "spread_paydate")
 
-class BudgetRepository:
+class BudgetRepository(RepositoryBase):
     """Stores per-category budget targets as a single DynamoDB config item.
 
     The item at pk=sk="BUDGETS" holds an `items` map (category id -> entry) plus a
@@ -43,16 +42,6 @@ class BudgetRepository:
     empty. Setting a target is an idempotent upsert (set whether or not the id was
     already present), retrying once on a version race.
     """
-
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self) -> Any:
-        if self._table is None:
-            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
 
     def _get_config(self) -> Optional[dict]:
         try:

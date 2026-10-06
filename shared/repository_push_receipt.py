@@ -16,14 +16,12 @@ retains receipts ~24h) self-cleans instead of accumulating.
 
 import logging
 import time
-from typing import Any
 
-import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 from constants import RECEIPT_TTL_SECONDS
-from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
+from repository_base import RepositoryBase, handle_database_error
 
 logger = logging.getLogger(__name__)
 
@@ -32,18 +30,8 @@ logger = logging.getLogger(__name__)
 _PENDING_PK = "PUSHRECEIPT#PENDING"
 
 
-class PushReceiptRepository:
+class PushReceiptRepository(RepositoryBase):
     """Stashes ``{receipt_id -> token}`` pairs for the later Expo-receipts sweep."""
-
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self) -> Any:
-        if self._table is None:
-            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
 
     def put(self, receipt_id: str, token: str) -> None:
         """Stash one receipt id with the token its push went to, setting a fresh TTL.
@@ -68,26 +56,19 @@ class PushReceiptRepository:
         so a burst larger than one 1 MB page is still read whole; single-user volume
         realistically fits one page, but the loop is cheap and matches the sibling repos.
         """
+        items = self._paginated_query(
+            key_condition=Key("pk").eq(_PENDING_PK), action="list pending push receipts",
+        )
         pending: list[tuple[str, str]] = []
-        query_kwargs: dict[str, Any] = {"KeyConditionExpression": Key("pk").eq(_PENDING_PK)}
-        try:
-            while True:
-                response = self._get_table().query(**query_kwargs)
-                for item in response.get("Items", []):
-                    receipt_id, token = item.get("sk"), item.get("token")
-                    if not receipt_id or not token:
-                        # put() always writes both, so a row missing either is a corrupt/
-                        # foreign write. Skip it (don't KeyError) — one bad row must not
-                        # blind the whole sweep, which would leave EVERY receipt unresolved.
-                        logger.warning("skipping malformed pending receipt row: %r", item)
-                        continue
-                    pending.append((receipt_id, token))
-                cursor = response.get("LastEvaluatedKey")
-                if not cursor:
-                    break
-                query_kwargs["ExclusiveStartKey"] = cursor
-        except ClientError as e:
-            handle_database_error(e, "list pending push receipts")
+        for item in items:
+            receipt_id, token = item.get("sk"), item.get("token")
+            if not receipt_id or not token:
+                # put() always writes both, so a row missing either is a corrupt/
+                # foreign write. Skip it (don't KeyError) — one bad row must not
+                # blind the whole sweep, which would leave EVERY receipt unresolved.
+                logger.warning("skipping malformed pending receipt row: %r", item)
+                continue
+            pending.append((receipt_id, token))
         return pending
 
     def delete(self, receipt_id: str) -> None:

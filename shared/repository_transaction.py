@@ -6,7 +6,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
@@ -19,7 +18,7 @@ from constants import (
     PENDING_STATUS,
 )
 from models import Transaction
-from repository_base import REGION_NAME, TABLE_NAME, handle_database_error, logger
+from repository_base import RepositoryBase, handle_database_error, logger
 
 # Sentinel for update_transaction_fields: distinguishes "field not in this request"
 # (leave it untouched) from "clear this field" (None/""/[]). A plain None can't do
@@ -74,18 +73,7 @@ def _build_deleted_pk(account_pk: str) -> str:
     return f"DELETED#{account_pk}"
 
 
-class TransactionRepository:
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self) -> Any:
-        """Lazy-loads and buffers the connection to the physical DynamoDB table resource."""
-        if self._table is None:
-            self._dynamodb: Any = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
-
+class TransactionRepository(RepositoryBase):
     def insert_transactions(self, transactions: list[Transaction]) -> None:
         """Inserts multiple transactions efficiently using DynamoDB Batch Write."""
         if not transactions:

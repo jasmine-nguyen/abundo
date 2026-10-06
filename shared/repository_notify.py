@@ -26,13 +26,12 @@ being relevant instead of accumulating.
 """
 
 import time
-from typing import Any, Optional
+from typing import Optional
 
-import boto3
 from botocore.exceptions import ClientError
 
 from constants import NOTIFY_TTL_SECONDS
-from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
+from repository_base import RepositoryBase, handle_database_error
 
 
 def _pk(last_pay_date: str, length: int) -> str:
@@ -79,20 +78,10 @@ def _goalcheckpoint_key(scope: Optional[str] = None) -> dict:
 _REPAYMENT_PUSH_KEY = {"pk": "NOTIFY#REPAYPUSH", "sk": "FIRED"}
 
 
-class NotifyRepository:
+class NotifyRepository(RepositoryBase):
     """Per-cycle budget-alert debounce markers. `fired_markers` reads the set of
     already-sent "<catId>#<pct>" strings for a cycle; `claim_fired` adds one only if it's
     absent, `release_fired` drops one, `mark_fired` adds one unconditionally."""
-
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self) -> Any:
-        if self._table is None:
-            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
 
     def fired_markers(self, last_pay_date: str, length: int) -> set:
         """The set of "<catId>#<pct>" markers already fired this cycle ({} if none)."""
