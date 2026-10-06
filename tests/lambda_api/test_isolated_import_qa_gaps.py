@@ -7,6 +7,8 @@ built from the folders, so pin that promise by behaviour, not by reading the lis
 import pathlib
 import sys
 
+import pytest
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
@@ -36,14 +38,22 @@ def test_the_handler_fixture_sheds_every_lambda_api_module_and_the_shared_reposi
 # api_key.get_param for a stub by plain assignment (tests/lambda_api/conftest.py). Before WHIT-625
 # `api_key` was in _COLLIDING, so that stub died with the fixture; the folder-built list dropped it,
 # so the stub now outlives the test and every later lambda_api test reads the Anthropic stub key as
-# its BankSync key. FAIL-ON-REVERT of the fix: take api_key out of the shed set again.
+# its BankSync key. The ssm value is pinned by the test, not taken from a conftest default.
+# FAIL-ON-REVERT of the fix: take api_key out of the shed set again.
+
+@pytest.fixture
+def pinned_ssm_key(monkeypatch):
+    """Whichever suite's conftest loads first installs the fake ssm with its own default, so pin it here."""
+    monkeypatch.setattr(sys.modules["ssm"], "get_param", lambda path: "test-api-key")
+    return "test-api-key"
+
 
 def test_a_fixture_stubs_the_anthropic_key(anthropic_client):
     assert anthropic_client.get_api_key() == "test-anthropic-key"
 
 
-def test_a_later_handler_test_still_reads_the_ssm_key_not_the_leftover_stub(handler):
+def test_a_later_handler_test_still_reads_the_ssm_key_not_the_leftover_stub(pinned_ssm_key, handler):
     import api_key
 
     api_key._cache.clear()
-    assert handler.get_api_key() == "test-api-key"  # the lambda_api conftest's ssm default
+    assert handler.get_api_key() == pinned_ssm_key
