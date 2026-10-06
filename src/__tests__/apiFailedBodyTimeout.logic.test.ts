@@ -1,5 +1,5 @@
 // WHIT-441 — a not-OK response whose body never finishes streaming must not hang `failed()`.
-// apiFetch clears its abort timer the instant the headers resolve, so the error-body read in
+// request() clears its abort timer the instant the headers resolve, so the error-body read in
 // failed() runs unprotected; withBodyTimeout gives it its own budget. Without it, the failed-save
 // writer never settles and the Save button spins forever. `failed()` is internal, so we drive it
 // through the public write createCategory. fetch + auth mocked; fake timers advance the clock.
@@ -31,7 +31,7 @@ describe('failed() body-read timeout', () => {
       status: 400,
       serverMessage: null,
     });
-    await jest.advanceTimersByTimeAsync(0);        // flush buildHeaders + the header-resolve
+    await jest.advanceTimersByTimeAsync(0);        // flush the awaited auth token + the header-resolve
     await jest.advanceTimersByTimeAsync(15_000);   // trip the body-read timeout
     await rejects;
   }, 3000);

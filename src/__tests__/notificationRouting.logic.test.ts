@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { routeForNotificationData, NOTIF_ROUTE, NOTIF_ROUTE_BUILDERS } from '../notificationRouting';
+import { routeForNotificationData, NOTIF_ROUTE } from '../notificationRouting';
 
 describe('routeForNotificationData (WHIT-321, WHIT-322)', () => {
   it('maps a repayment notification to the mortgage screen', () => {
@@ -35,9 +35,9 @@ describe('routeForNotificationData (WHIT-321, WHIT-322)', () => {
     expect(NOTIF_ROUTE.goalcheckpoint).toBe('/goals');
   });
 
-  it('exposes a budget route builder (not a static route)', () => {
+  it('builds the budget route from the id (not a static route)', () => {
     expect(NOTIF_ROUTE.budget).toBeUndefined();
-    expect(typeof NOTIF_ROUTE_BUILDERS.budget).toBe('function');
+    expect(routeForNotificationData({ type: 'budget', category: 'groceries' })).toBe('/budget/groceries');
   });
 
   it('returns null for an unmapped type', () => {
@@ -130,10 +130,9 @@ describe('budget route builder — valid ids round-trip verbatim (WHIT-322)', ()
     expect(routeForNotificationData({ type: 'budget', category: 'café' })).toBe('/budget/café');
   });
 
-  it('[A36] the builder wins over the static map for the same type', () => {
-    // Direct-call the builder to prove routeForNotificationData delegates to it, not NOTIF_ROUTE.
-    expect(NOTIF_ROUTE_BUILDERS.budget({ category: 'groceries' })).toBe('/budget/groceries');
-    expect(NOTIF_ROUTE_BUILDERS.budget({})).toBeNull();
+  it('[A36] a budget push is routed by its id, never through the static map', () => {
+    expect(routeForNotificationData({ type: 'budget', category: 'groceries' })).toBe('/budget/groceries');
+    expect(routeForNotificationData({ type: 'budget' })).toBeNull();
   });
 });
 

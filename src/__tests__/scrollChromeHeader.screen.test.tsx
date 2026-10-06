@@ -6,29 +6,19 @@
 //   2. contentContainerStyle FLATTENS over the shared geometry — a screen's extra style (Budgets'
 //      {flexGrow:1}) merges IN while the shared paddingTop/Bottom/Horizontal survive.
 // Fail-on-revert: drop the `right ?? <slot>` default → slot counts flip; stop merging the screen
-// style (or drop contentPadding) → the flatten asserts flip. SENTINEL clearance (999, not 120) so
-// "shared inset survives" is a real guard, not a literal.
-import { it, expect, jest } from '@jest/globals';
+// style (or drop the shared padding) → the flatten asserts flip. The screen style sets no
+// paddingBottom of its own, so the shared clearance surviving is a real guard.
+// Renders with the global zero safe-area insets and the NavBars default context.
+import { it, expect } from '@jest/globals';
 import React from 'react';
 import { View, ScrollView, Text, StyleSheet } from 'react-native';
 import { render } from '@testing-library/react-native';
-
-jest.mock('../motion/useNavBarsHeader', () => ({
-  HEADER_BODY_HEIGHT: 58,
-  TAB_BAR_CLEARANCE: 999,
-  floatingHeaderStyle: {},
-  useNavBarsHeader: () => ({
-    onScroll: jest.fn(),
-    scrollEventThrottle: 16,
-    headerStyle: {},
-    headerHeight: 58,
-    headerPaddingTop: 6,
-    statusBarHeight: 0,
-    contentPadding: { paddingTop: 58, paddingBottom: 999 },
-  }),
-}));
-
-import { ScrollChromeHeader } from '../motion/ScrollChromeHeader';
+import {
+  ScrollChromeHeader,
+  HEADER_BODY_HEIGHT,
+  TAB_BAR_CLEARANCE,
+  ASK_BUTTON_BOTTOM_CLEARANCE,
+} from '../motion/ScrollChromeHeader';
 
 type Rendered = ReturnType<typeof render>;
 
@@ -73,8 +63,8 @@ it('flattens a screen contentContainerStyle over the shared insets (Budgets flex
   );
   const cc = contentStyle(r);
   expect(cc.flexGrow).toBe(1);         // the screen's centering style merged in
-  expect(cc.paddingBottom).toBe(999);  // shared clearance survives the merge
-  expect(cc.paddingTop).toBe(58);      // shared top inset survives
+  expect(cc.paddingBottom).toBe(TAB_BAR_CLEARANCE + ASK_BUTTON_BOTTOM_CLEARANCE); // shared clearance survives the merge
+  expect(cc.paddingTop).toBe(HEADER_BODY_HEIGHT); // shared top inset survives (zero safe-area inset)
   expect(cc.paddingHorizontal).toBe(18);
 });
 

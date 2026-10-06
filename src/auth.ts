@@ -219,9 +219,7 @@ function clearSession(): void {
 export function canBiometricLock(): boolean {
   if (process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED !== "true") return false;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const SecureStore = require("expo-secure-store");
-    return SecureStore.canUseBiometricAuthentication() === true;
+    return secureStore().canUseBiometricAuthentication() === true;
   } catch {
     return false;
   }
@@ -233,12 +231,10 @@ export function canBiometricLock(): boolean {
 // biometrics is never locked out.
 function secureOpts(): Record<string, unknown> {
   if (!canBiometricLock()) return {};
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const SecureStore = require("expo-secure-store");
   return {
     requireAuthentication: true,
     authenticationPrompt: "Unlock Abundo",
-    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    keychainAccessible: secureStore().WHEN_UNLOCKED_THIS_DEVICE_ONLY,
   };
 }
 
@@ -615,7 +611,7 @@ export async function confirmPasswordReset(
  * accepts — its `aud` is the app client id; access tokens carry `client_id`, not
  * `aud`, and would be rejected). Returns the cached id token when fresh; otherwise
  * refreshes once from the stored refresh token (single-flight). `undefined` when
- * there is no session or the refresh fails — the caller (src/api.ts authHeaders)
+ * there is no session or the refresh fails — the caller (src/api.ts request())
  * then throws "Not signed in" (there is no static-secret fallback since WHIT-162).
  */
 export async function getAuthToken(): Promise<string | undefined> {
@@ -826,9 +822,7 @@ export async function signOut(): Promise<void> {
  */
 export async function hasStoredSession(): Promise<boolean> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const SecureStore = require("expo-secure-store");
-    return (await SecureStore.getItemAsync(SESSION_SENTINEL_KEY)) === "1";
+    return (await secureStore().getItemAsync(SESSION_SENTINEL_KEY)) === "1";
   } catch {
     return false;
   }
@@ -1001,9 +995,13 @@ export async function unlockOrRestore(): Promise<void> {
 
 // --- SecureStore wrappers (lazy require; web/simulator throw is swallowed) --------
 
-async function setRefreshToken(value: string): Promise<void> {
+function secureStore() {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const SecureStore = require("expo-secure-store");
+  return require("expo-secure-store");
+}
+
+async function setRefreshToken(value: string): Promise<void> {
+  const store = secureStore();
   const opts = secureOpts();
   // WHIT-170: on iOS, UPDATING an existing requireAuthentication item re-prompts Face
   // ID (per expo-secure-store). When the item is guarded, delete first so the write
@@ -1012,15 +1010,13 @@ async function setRefreshToken(value: string): Promise<void> {
   // refresh, and a second time inside unlock(). Deletion never prompts; on a fresh
   // install the delete is a harmless no-op. Unguarded writes don't prompt — skip it.
   if (opts.requireAuthentication) {
-    await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+    await store.deleteItemAsync(REFRESH_TOKEN_KEY);
   }
-  await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, value, opts);
+  await store.setItemAsync(REFRESH_TOKEN_KEY, value, opts);
 }
 
 async function getRefreshToken(): Promise<string | null> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const SecureStore = require("expo-secure-store");
-  return SecureStore.getItemAsync(REFRESH_TOKEN_KEY, secureOpts());
+  return secureStore().getItemAsync(REFRESH_TOKEN_KEY, secureOpts());
 }
 
 // WHIT-270: re-store the refresh token UNGUARDED, so a token left GUARDED by a WHIT-267
@@ -1033,10 +1029,9 @@ async function getRefreshToken(): Promise<string | null> {
 async function resaveUnguarded(refreshToken: string): Promise<void> {
   if (!isIOS() || canBiometricLock()) return;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const SecureStore = require("expo-secure-store");
-    await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
-    await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken, {});
+    const store = secureStore();
+    await store.deleteItemAsync(REFRESH_TOKEN_KEY);
+    await store.setItemAsync(REFRESH_TOKEN_KEY, refreshToken, {});
   } catch {
     // Best-effort: this launch already holds the token in memory, so it proceeds regardless.
     // If the delete failed the old guarded item survives (next launch prompts once more, then
@@ -1055,42 +1050,33 @@ async function resaveUnguarded(refreshToken: string): Promise<void> {
 // try/catch (mirrors getRefreshToken): a throw propagates into migrateUnguardedSession's
 // try → clearStoredSession → return false.
 async function getUnguardedRefreshToken(): Promise<string | null> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const SecureStore = require("expo-secure-store");
-  return SecureStore.getItemAsync(REFRESH_TOKEN_KEY, {});
+  return secureStore().getItemAsync(REFRESH_TOKEN_KEY, {});
 }
 
 async function setSessionSentinel(): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const SecureStore = require("expo-secure-store");
   // Unguarded: the whole point is to read it without a biometric prompt.
-  await SecureStore.setItemAsync(SESSION_SENTINEL_KEY, "1");
+  await secureStore().setItemAsync(SESSION_SENTINEL_KEY, "1");
 }
 
 // WHIT-178: record/read which surface minted the session, so the refresh path can
 // match it. Unguarded (not secret); a missing value reads as null → OAuth path.
 async function setAuthMethod(method: "srp" | "oauth"): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const SecureStore = require("expo-secure-store");
-  await SecureStore.setItemAsync(AUTH_METHOD_KEY, method);
+  await secureStore().setItemAsync(AUTH_METHOD_KEY, method);
 }
 
 async function getAuthMethod(): Promise<string | null> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const SecureStore = require("expo-secure-store");
-    return await SecureStore.getItemAsync(AUTH_METHOD_KEY);
+    return await secureStore().getItemAsync(AUTH_METHOD_KEY);
   } catch {
     return null; // unreadable → default to the OAuth refresh path
   }
 }
 
 async function clearStoredSession(): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const SecureStore = require("expo-secure-store");
-  await SecureStore.deleteItemAsync(SESSION_SENTINEL_KEY);
-  await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
-  await SecureStore.deleteItemAsync(AUTH_METHOD_KEY);
+  const store = secureStore();
+  await store.deleteItemAsync(SESSION_SENTINEL_KEY);
+  await store.deleteItemAsync(REFRESH_TOKEN_KEY);
+  await store.deleteItemAsync(AUTH_METHOD_KEY);
 }
 
 // --- gate decision (pure — the fail-on-revert-testable core of the auth gate) -----

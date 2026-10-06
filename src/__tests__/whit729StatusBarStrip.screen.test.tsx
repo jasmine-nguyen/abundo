@@ -1,7 +1,7 @@
 // WHIT-729 — when scrolling hides the header, the area behind the status bar (clock, Dynamic
 // Island, battery) must keep a solid C.bg backing. The shared ScrollChromeHeader renders a fixed
 // strip exactly insets.top tall that is NOT inside the animated (sliding) header, so it never
-// hides. Uses the real useNavBarsHeader geometry with a sentinel inset of 47.
+// hides. Uses the real ScrollChromeHeader geometry with a sentinel inset of 47.
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { View, Text, Animated, StyleSheet } from 'react-native';

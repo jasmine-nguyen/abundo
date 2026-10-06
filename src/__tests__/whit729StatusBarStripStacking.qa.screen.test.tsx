@@ -9,8 +9,7 @@ import { C } from '../theme';
 
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 47, bottom: 34, left: 0, right: 0 }) }));
 
-import { ScrollChromeHeader } from '../motion/ScrollChromeHeader';
-import { floatingHeaderStyle } from '../motion/useNavBarsHeader';
+import { ScrollChromeHeader, floatingHeaderStyle } from '../motion/ScrollChromeHeader';
 
 type Flat = { height?: number; backgroundColor?: string; zIndex?: number; position?: string; top?: number };
 

@@ -9,33 +9,6 @@ export { ApiError } from "./apiError";
 const API_BASE = "https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com";
 
 /**
- * Build the Authorization header from the Cognito ID token (WHIT-162). Every app
- * route is now guarded by the API Gateway JWT authorizer, so the token is the
- * user's Cognito ID token (`getAuthToken`), not the old baked-in static secret —
- * which has been retired. Throws "Not signed in" when there is no session, so a
- * pre-login fetch fails loudly (the caller catches it) rather than sending an
- * empty Bearer and getting a confusing 401 on every call. The auth gate
- * (src/AuthGate.tsx) forces login before the app is usable, and src/context.tsx
- * reloads once auth lands, so this throw is only hit transiently before sign-in.
- */
-async function authHeaders(): Promise<Record<string, string>> {
-  const idToken = await getAuthToken();
-  if (!idToken) throw new Error("Not signed in");
-  return { Authorization: `Bearer ${idToken}` };
-}
-
-/**
- * The single async choke point for request headers: merge any per-call headers
- * (e.g. Content-Type) with the auth header. Routing EVERY call site through this
- * one `await` is what makes the async cutover safe — a spread of a Promise
- * (`...authHeaders()` once it returns a Promise) would silently drop the auth
- * header, so no call site is allowed to build headers by hand.
- */
-async function buildHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
-  return { ...(extra ?? {}), ...(await authHeaders()) };
-}
-
-/**
  * How long a single API request may run before it's aborted and treated as a failed
  * read. Without this a dead socket leaves `fetch` pending forever — the screen's query
  * never settles, so `isLoading` stays true and the "—" + Retry affordance never appears
@@ -84,19 +57,6 @@ const APPLY_RULES_JOB_POLL_TIMEOUT_MS = 6_000;
 const AI_CHAT_JOB_POLL_TIMEOUT_MS = 6_000;
 
 /**
- * Read a SUCCESS response's JSON body under the same stall timeout `failed()` gives the error body.
- * apiFetch's abort timer only bounds the HEADERS (cleared the instant they resolve), so a 2xx whose
- * body never finishes streaming would hang the read — and the query/writer behind it — leaving the
- * Save button spinning forever (WHIT-448, the success-path twin of WHIT-441). Defaults to the 15s
- * read budget; the long-running paid generation passes AI_GENERATE_TIMEOUT_MS. Return type is
- * inferred Promise<any>, exactly like the bare response.json() it replaces, so every typed return
- * stays assignable with no call-site change.
- */
-function readJson(response: Response, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<any> {
-  return withBodyTimeout(response.json(), timeoutMs);
-}
-
-/**
  * Build the rejection for a not-OK response, carrying the server's stated reason (WHIT-437).
  *
  * TOTAL BY CONSTRUCTION: it RETURNS an error, it never throws one. An HTML gateway 403/502, an
@@ -107,7 +67,7 @@ function readJson(response: Response, timeoutMs: number = REQUEST_TIMEOUT_MS): P
  * The error-body read runs under withBodyTimeout so a stalled body can't hang the failed-save
  * writer (WHIT-441).
  */
-async function failed(response: Response, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<ApiError> {
+async function failed(response: Response, timeoutMs: number): Promise<ApiError> {
   let serverMessage: string | null = null;
   try {
     const body = await withBodyTimeout(response.json(), timeoutMs);
@@ -118,24 +78,6 @@ async function failed(response: Response, timeoutMs: number = REQUEST_TIMEOUT_MS
     // is the right answer, and keeps failed() TOTAL (it returns an ApiError, never throws).
   }
   return new ApiError(response.status, serverMessage);
-}
-
-/**
- * The single fetch choke point: every API call runs through here so it inherits a request
- * timeout. An AbortController fires after `timeoutMs` (a cleared timer rather than
- * `AbortSignal.timeout`, which isn't guaranteed on the RN runtime), turning a hung request
- * into a rejected read the query layer surfaces as an error. Per-call `init`
- * (method/body/headers) is preserved; only the abort signal is injected. `timeoutMs` defaults
- * to the fast-read budget — slow endpoints (the AI generation) pass a larger one.
- */
-async function apiFetch(input: string, init?: RequestInit, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(input, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 /**
@@ -157,26 +99,44 @@ interface RequestSpec {
 
 /**
  * The one request step every endpoint runs: auth headers → fetch → not-OK guard → JSON read.
- * A read sends no `method`; only a request with a body gets `Content-Type`. The same time
- * limit bounds the headers and the body read.
+ * A read sends no `method`; only a request with a body gets `Content-Type`.
+ *
+ * - Auth (WHIT-162): every route is behind the API Gateway JWT authorizer, so the header carries
+ *   the Cognito ID token. No session → "Not signed in", so a pre-login call fails loudly instead
+ *   of sending an empty Bearer and getting a confusing 401. The token is awaited before the
+ *   headers are built — never spread a Promise into them.
+ * - Timeout (WHIT-198): an AbortController on a cleared timer (`AbortSignal.timeout` isn't
+ *   guaranteed on the RN runtime) turns a hung request into a rejected read. It only bounds the
+ *   headers, so the body read gets the same limit via withBodyTimeout — a stalled body would
+ *   otherwise hang the query or writer behind it (WHIT-441 error body, WHIT-448 success body).
  */
 async function request(spec: RequestSpec, errors: ErrorHandling): Promise<any> {
   const timeoutMs = spec.timeoutMs ?? REQUEST_TIMEOUT_MS;
-  const init: RequestInit = {};
+  const idToken = await getAuthToken();
+  if (!idToken) throw new Error("Not signed in");
+  const headers: Record<string, string> = { Authorization: `Bearer ${idToken}` };
+  const init: RequestInit = { headers };
   if (spec.method) init.method = spec.method;
-  if (spec.body === undefined) {
-    init.headers = await buildHeaders();
-  } else {
-    init.headers = await buildHeaders({ "Content-Type": "application/json" });
+  if (spec.body !== undefined) {
+    headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(spec.body);
   }
-  const response = await apiFetch(`${API_BASE}${spec.path}`, init, timeoutMs);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${spec.path}`, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+
   if (response.ok == false) {
     if (errors === "withReason") throw await failed(response, timeoutMs);
     if (errors === "statusOnly") throw new ApiError(response.status, null);
     throw new Error(`API error: ${response.status}`);
   }
-  return readJson(response, timeoutMs);
+  return withBodyTimeout(response.json(), timeoutMs);
 }
 
 type Send = (spec: RequestSpec) => Promise<any>;

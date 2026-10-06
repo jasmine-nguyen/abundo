@@ -113,23 +113,19 @@ describe('pollJob', () => {
     expect(dropCheck).toHaveBeenCalledTimes(2);
 
     // Time limit, measured from the given start → timeout, checked before calling the server.
-    let clock = 10_000;
     const slow = callbacks();
-    const slowCheck = jest.fn(async () => {
-      clock += 2_000;
-      return { status: 'running' } as Job;
-    });
+    const slowCheck = jest.fn(async () => ({ status: 'running' }) as Job);
     pollJob<Job>({
       jobId: 'j', check: slowCheck, isRunning,
-      delayMs: DELAY, maxNetErrors: 5, maxWaitMs: 5_000, now: () => clock, startedAt: 9_000, ...slow,
+      delayMs: DELAY, maxNetErrors: 5, maxWaitMs: 5_000, startedAt: Date.now() - 2_000, ...slow,
     });
-    await jest.advanceTimersByTimeAsync(DELAY); // clock 10k → 12k (3k elapsed)
-    await jest.advanceTimersByTimeAsync(DELAY); // 3k elapsed at check → runs, clock → 14k
+    await jest.advanceTimersByTimeAsync(DELAY); // 3k elapsed at check → runs
+    await jest.advanceTimersByTimeAsync(DELAY); // 4k elapsed → runs
     expect(slowCheck).toHaveBeenCalledTimes(2);
     expect(slow.onFail).not.toHaveBeenCalled();
-    await jest.advanceTimersByTimeAsync(DELAY); // 5k elapsed, not past the limit → runs, clock → 16k
+    await jest.advanceTimersByTimeAsync(DELAY); // 5k elapsed, not past the limit → runs
     expect(slowCheck).toHaveBeenCalledTimes(3);
-    await jest.advanceTimersByTimeAsync(DELAY); // 7k elapsed → gives up without calling
+    await jest.advanceTimersByTimeAsync(DELAY); // 6k elapsed → gives up without calling
     expect(slowCheck).toHaveBeenCalledTimes(3);
     expect(slow.onFail).toHaveBeenCalledTimes(1);
     expect(slow.onFail).toHaveBeenCalledWith('timeout');
