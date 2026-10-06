@@ -17,6 +17,8 @@ from decimal import Decimal
 # _failed_keys / _txn_rows live in tests/shared/_deadletter_fakes.py so both dead-letter
 # recovery suites share ONE definition (WHIT-494); resolved via pytest.ini's pythonpath.
 from _deadletter_fakes import _failed_keys, _txn_rows
+from _feed_fakes import FakeCategoryRepo
+from _rule_ingest_fakes import reprocess_failed
 
 _WESTPAC_AID = "A3AC9195-9E8D-48B8-86D0-46D130D7F64A"
 
@@ -68,7 +70,7 @@ def test_recovery_sweep_replays_the_duplicated_backlog_into_exactly_two_rows(lam
     _dead_letter_the_real_backlog(repo)
     assert len(_failed_keys(repo)) == 4
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 4, "skipped": 0, "errors": 0, "dropped_zero": 0}
     assert _failed_keys(repo) == []                       # backlog fully drained
@@ -83,7 +85,7 @@ def test_recovered_rows_keep_the_signed_amount_not_the_positive_debit(lam, repo)
     # it would flip the Accounts-tab colour and subtract from, instead of adding to,
     # budget spend. Assert the stored signed values and the budget flags together.
     _dead_letter_the_real_backlog(repo)
-    lam.reprocess.reprocess_failed(repo)
+    reprocess_failed(lam.reprocess, repo)
 
     stored = _txn_rows(repo)
     massage = stored[f"TXN#{_MASSAGE_ID}"]
@@ -113,13 +115,14 @@ def test_age_out_reaps_a_stale_ghost_on_the_westpac_account(lam, repo):
     # from ACCOUNT_ID_MAP itself, so it can no longer tell whether the WESTPAC account is
     # in the sweep. This asserts the BEHAVIOUR: a 21-day-old pending sitting on the new
     # account is actually reaped. today is injected, so no ambient clock.
-    ghost = lam.banksync.BankSyncClient.normalise({
+    ghost = lam.banksync.normalise({
         **_MASSAGE_RAW, "id": "westpac_ghost", "pending": True,
         "date": "2026-06-10", "authorizedDate": "2026-06-10",
     })
     repo.insert_transactions([ghost])
 
-    summary = lam.age_out.age_out_stale_pendings(repo, today=date(2026, 7, 1), dry_run=False)
+    summary = lam.age_out.age_out_stale_pendings(repo, FakeCategoryRepo([]), today=date(2026, 7, 1),
+                                                dry_run=False)
 
     assert summary["stale"] == 1 and summary["reaped"] == 1 and summary["failed"] == 0
     assert "TXN#westpac_ghost" not in _txn_rows(repo)
@@ -136,7 +139,7 @@ def test_massage_charge_is_bucketed_by_its_swipe_day_not_its_booking_day(lam):
     # and it is invisible until a cycle boundary falls between the two dates.
     import spend
 
-    txn = lam.banksync.BankSyncClient.normalise(_MASSAGE_RAW)
+    txn = lam.banksync.normalise(_MASSAGE_RAW)
     assert txn["date"] == "2026-09-02" and txn["authorized_date"] == "2026-09-02"
 
     start_2nd, end = spend.current_cycle_window("2026-08-19", 14, today=date(2026, 9, 5))
@@ -155,8 +158,8 @@ def test_westpac_charge_counts_to_the_budget_while_the_home_loan_twin_does_not(l
     # (UnknownAccountError) or widening the home-loan exclusion both redden this.
     import spend
 
-    card = lam.banksync.BankSyncClient.normalise({**_MASSAGE_RAW, "category": "health"})
-    loan = lam.banksync.BankSyncClient.normalise({
+    card = lam.banksync.normalise({**_MASSAGE_RAW, "category": "health"})
+    loan = lam.banksync.normalise({
         **_MASSAGE_RAW, "id": "loan_row", "category": "health",
         "accountId": "T6d8ppsYssBDFCwl1qEb0w", "accountName": "Up Homeloan",
     })

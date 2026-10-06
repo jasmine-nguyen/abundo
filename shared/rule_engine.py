@@ -407,7 +407,7 @@ def plan_rule_application(rules: list[dict], transactions: list[dict], is_unfile
             continue
         # Carry the winning rule's id so the caller can stamp filed_by_rule (WHIT-536). When
         # rules agree they share the one category, so the first match is the authoritative
-        # id — the same choice rule_ingest.file_charge makes on the webhook side.
+        # id — the same choice the webhook's rule filing makes.
         rule_id = applicable[matched_indices[0]].get("id")
         matched.append((transaction, resolved, rule_id))
         by_category[resolved] = by_category.get(resolved, 0) + 1

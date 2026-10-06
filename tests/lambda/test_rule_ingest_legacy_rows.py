@@ -1,4 +1,5 @@
 from _feed_fakes import FakeCategoryRepo
+from _rule_ingest_fakes import apply_rules
 """WHIT-535 — the webhook rule-filing path tolerates pre-WHIT-535 stored rule rows.
 
 rule_book.rule_from_row maps a stored row to the engine shape reading only id/field/operator/
@@ -41,7 +42,6 @@ def test_legacy_row_with_retired_fields_still_files(lam):
     # (The conditionCount guard itself is pinned directly in
     # tests/shared/test_rule_engine_conditioncount_removed.py.)
     charge = _charge(category=None)
-    lam.rule_ingest.apply(
-        [charge], rule_repo=_FakeRuleStore([_legacy_row("COLES")]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=_FakeRuleStore([_legacy_row("COLES")]),
         category_repo=FakeCategoryRepo(["groceries"]))
     assert charge["category"] == "groceries"

@@ -1,6 +1,6 @@
 """Tests for the stale-pending age-out sweep (WHIT-79, lambda/age_out.py).
 
-`age_out_stale_pendings(repo, today, dry_run)` deletes any pending whose bank `date`
+`age_out_stale_pendings(repo, category_repo, today, dry_run)` deletes any pending whose bank `date`
 is strictly older than PENDING_AGE_OUT_DAYS (10) before `today` — a ghost that never
 got a matching posted (reversed pre-auth / unbalanced count). Window-only: a pending
 still in the store is unreconciled, so age alone decides. Dry-run writes nothing.
@@ -40,7 +40,7 @@ def _raw_row(txn_id, date_str, pending=True, amount=-5.50, account=_ACCOUNT_A):
 
 def _store(lam, repo, *raw_rows):
     """Normalise + store each raw row directly (mimics a row already in DynamoDB)."""
-    repo.insert_transactions([lam.banksync.BankSyncClient.normalise(r) for r in raw_rows])
+    repo.insert_transactions([lam.banksync.normalise(r) for r in raw_rows])
 
 
 def _rows(repo):
@@ -50,7 +50,7 @@ def _rows(repo):
 
 
 def _sweep(lam, repo, dry_run=False):
-    return lam.age_out.age_out_stale_pendings(repo, today=_TODAY, dry_run=dry_run)
+    return _sweep_tax(lam, repo, [], dry_run=dry_run)
 
 
 # --- core: reap the stale, keep the young -----------------------------------
@@ -457,7 +457,7 @@ def _norm(lam, txn_id, date_str, *, pending, amount=-5.50, account=_ACCOUNT_A,
     raw["description"] = description
     raw["merchantName"] = description
     raw["category"] = category
-    return lam.banksync.BankSyncClient.normalise(raw)
+    return lam.banksync.normalise(raw)
 
 
 def _sweep_tax(lam, repo, category_ids, *, dry_run=False, error=False):
@@ -697,20 +697,6 @@ def test_taxonomy_read_failure_reaps_as_today(lam, repo):
     assert "filed_pending" not in _rows(repo)           # reaped as today
     assert summary["reaped"] == 1 and summary["rescued"] == 0
     assert _rows(repo)["settled_twin"].get("category") is None  # no rescue attempted
-
-
-def test_no_category_repo_reaps_as_before(lam, repo):
-    # The optional category_repo keeps every existing caller unchanged: with none passed, a
-    # filed pending is reaped with no rescue (the pre-WHIT-511 behaviour).
-    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="groceries")
-    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, category=None)
-    repo.insert_transactions([filed, twin])
-
-    summary = lam.age_out.age_out_stale_pendings(repo, today=_TODAY, dry_run=False)
-
-    assert "filed_pending" not in _rows(repo)
-    assert summary["rescued"] == 0
-    assert _rows(repo)["settled_twin"].get("category") is None
 
 
 def test_wrong_carry_onto_coincidental_same_chain_charge(lam, repo):

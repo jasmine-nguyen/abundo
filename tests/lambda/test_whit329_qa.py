@@ -5,7 +5,7 @@ The 4 implementer tests in test_reconcile.py already lock the reconcile-side car
 via the REAL repo. These cover the gaps:
   * the budget-alert PREVIEW mirror (lambda/budget_alerts._simulate_after) — driven
     with the REAL webhook repo so its pending rows feed the production reconcile planner
-    (the NoTwinRepo stub in test_budget_alerts.py has none, so it can't prove it);
+    (test_budget_alerts.py's empty pending pool has none, so it can't prove it);
   * the out-of-order posted-then-pending same-id edge (pinned behaviour);
   * the reprocess dead-letter caller driving the pending branch.
 
@@ -19,6 +19,7 @@ import pytest
 from _budget_alert_fakes import notify_repo
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _transaction_range_fakes import _AccountTransactionRepo
+from _rule_ingest_fakes import reprocess_failed
 
 _BANK_ACCT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"  # -> "anz-rewards-black-visa"
 _TODAY = date(2026, 7, 14)   # cycle [2026-07-01, 2026-07-14] with payday 07-01, len 14
@@ -44,7 +45,7 @@ def _bank(txn_id, amount, *, pending, category, date="2026-07-10",
 
 
 def _norm(lam, **kw):
-    return lam.banksync.BankSyncClient.normalise(_bank(**kw))
+    return lam.banksync.normalise(_bank(**kw))
 
 
 def _acc(txn):
@@ -82,10 +83,10 @@ def _run_alerts(alerts, monkeypatch, *, budgets, before, normalised, webhook_rep
     catlist = [{"id": c[0], "name": c[1], "bucket": c[2]} for c in cats]
     ctx = ba.capture_pre_write(
         normalised, device_repo=_DeviceRepo(), budget_repo=_BudgetRepo(budgets),
-        paycycle_repo=_FakePayCycleRepo(length=14, last_pay_date="2026-07-01"), window_repo=_AccountTransactionRepo(before), webhook_repo=webhook_repo,
+        paycycle_repo=_FakePayCycleRepo(length=14, last_pay_date="2026-07-01"),
+            webhook_repo=_AccountTransactionRepo(before, pending_repo=webhook_repo),
     )
-    ba.fire_budget_alerts(ctx, normalised, webhook_repo=webhook_repo,
-                       category_repo=_FakeCategoryRepo(catlist), notify_repo=notify)
+    ba.fire_budget_alerts(ctx, normalised, category_repo=_FakeCategoryRepo(catlist), notify_repo=notify)
     return sent, notify
 
 
@@ -94,7 +95,7 @@ def _run_alerts(alerts, monkeypatch, *, budgets, before, normalised, webhook_rep
 # _simulate_after's pending branch now carries the user's category from the
 # in-memory snapshot; these prove the preview counts spend under the USER's
 # category, not the bank's raw one. Driven with the REAL repo so its stored
-# rows feed the production reconcile planner (NoTwinRepo's stub has none).
+# rows feed the production reconcile planner (an empty pending pool has none).
 # ===========================================================================
 
 
@@ -179,7 +180,7 @@ def test_reprocess_pending_dead_letter_preserves_user_category_on_stored_pending
     repo.insert_transactions([stored])
     repo.save_failed_transactions([_bank("P", -40.00, pending=True, category="FOOD_AND_DRINK")])
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0}
     row = repo._table.store[(_acc(stored), "TXN#P")]

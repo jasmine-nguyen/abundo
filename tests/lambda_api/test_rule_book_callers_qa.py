@@ -8,7 +8,7 @@ can't see:
   * [A3] the worker's plain sweep carries the winning rule's "keep out of budget" action.
   * [A4]/[A5] the worker's inline "file this shop" run: narrowed to the one minted rule, stamped
     with its id, and no reconcile pass (so an orphan stamp is left for the plain sweep).
-  * [A6] reprocess's `file_charge(charge, load_rules(...))` shape still files, stamps and excludes.
+  * [A6] reprocess's per-row `book.file_charges` shape still files, stamps and excludes.
 """
 
 import json

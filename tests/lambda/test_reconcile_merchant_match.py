@@ -56,7 +56,7 @@ def _bank_row(txn_id, amount, authorized_date="2026-07-22", pending=True,
 
 
 def _norm(lam, **kw):
-    return lam.banksync.BankSyncClient.normalise(_bank_row(**kw))
+    return lam.banksync.normalise(_bank_row(**kw))
 
 
 def _seed(repo, lam, **kw):
@@ -365,11 +365,9 @@ def _run_alerts(lam, monkeypatch, *, budgets, before, normalised, webhook_repo, 
         device_repo=_FakeRepo(["ExpoPushToken[a]"]),
         budget_repo=_FakeRepo(budgets),
         paycycle_repo=_FakePayCycleRepo(length=14, last_pay_date="2026-07-15"),
-        window_repo=_AccountTransactionRepo(before),
-        webhook_repo=webhook_repo,
+        webhook_repo=_AccountTransactionRepo(before, pending_repo=webhook_repo),
     )
-    ba.fire_budget_alerts(ctx, normalised, webhook_repo=webhook_repo,
-                       category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries",
+    ba.fire_budget_alerts(ctx, normalised, category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries",
                                                          "bucket": "Needs"}]),
                        notify_repo=notify)
     return sent, notify

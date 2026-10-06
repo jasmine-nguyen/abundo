@@ -20,7 +20,7 @@ def _bank_row(txn_id, amount, authorized_date="2026-06-29", pending=True, date="
 
 
 def _norm(lam, txn_id, amount, **kw):
-    return lam.banksync.BankSyncClient.normalise(_bank_row(txn_id, Decimal(amount), **kw))
+    return lam.banksync.normalise(_bank_row(txn_id, Decimal(amount), **kw))
 
 
 def _rows_by_id(store):

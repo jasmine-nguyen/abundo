@@ -9,6 +9,7 @@ from _deadletter_fakes import _failed_keys, _txn_rows
 from functools import partial
 
 from _budget_endpoint_fakes import _FakeCategoryRepo
+from _rule_ingest_fakes import reprocess_failed
 
 
 class _NoRules:
@@ -88,7 +89,7 @@ def test_a_dead_lettered_zero_dollar_row_is_cleared_not_stored(lam, repo):
     ])
     assert len(_failed_keys(repo)) == 2
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 1}
     stored = _txn_rows(repo)

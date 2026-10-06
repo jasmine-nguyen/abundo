@@ -47,11 +47,6 @@ _Paycycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-07-01")
 _Categories = partial(_FakeCategoryRepo, _CATS)
 
 
-class _NoTwins:
-    def get_pending_transactions_for_account(self, account):
-        return []
-
-
 def _fire(lam, monkeypatch, budgets, stored, new):
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: _TODAY)
@@ -61,9 +56,9 @@ def _fire(lam, monkeypatch, budgets, stored, new):
         sent.append(body) or {"sent": 1, "ok": 1, "pruned": []}))
     ctx = ba.capture_pre_write(
         new, device_repo=_Devices(), budget_repo=_Budgets(budgets), paycycle_repo=_Paycycle(),
-        window_repo=_AccountTransactionRepo(stored), webhook_repo=_NoTwins(),
+        webhook_repo=_AccountTransactionRepo(stored),
     )
-    ba.fire_budget_alerts(ctx, new, webhook_repo=_NoTwins(), category_repo=_Categories(),
+    ba.fire_budget_alerts(ctx, new, category_repo=_Categories(),
                           notify_repo=notify_repo())
     return sent
 

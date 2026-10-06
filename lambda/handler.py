@@ -3,19 +3,14 @@
 import base64
 import logging
 
-from banksync import BankSyncClient, UnknownAccountError
+from banksync import UnknownAccountError, normalise
 from models import Transaction
 from webhook_repository import TransactionRepository
 from api_key import get_api_key
 from standardwebhooks.webhooks import Webhook
 
-# Budget-threshold alerts (WHIT-22). The shared layer provides the detection + the
-# repos it reads; the windowed spend read uses the SHARED TransactionRepository
-# (`repository_transaction`, a different module from the webhook's local
-# `webhook_repository`) because only it has get_transactions_by_date_range.
 import budget_alerts
 import rule_ingest
-from repository_transaction import TransactionRepository as WindowRepo
 from repository_budget import BudgetRepository
 from repository_category import CategoryRepository
 from repository_device import DeviceRepository
@@ -113,7 +108,7 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
     # this a data-less delivery 500s and BankSync retries it forever (WHIT-302 cutover).
     for row in payload.get("data", []):
         try:
-            normalised_transactions.append(BankSyncClient.normalise(row))
+            normalised_transactions.append(normalise(row))
         except (UnknownAccountError, KeyError):
             unmapped_transactions.append(row)
 
@@ -165,7 +160,6 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
             device_repo=DeviceRepository(),
             budget_repo=BudgetRepository(),
             paycycle_repo=PayCycleRepository(),
-            window_repo=WindowRepo(),
             webhook_repo=repo,
         )
     except Exception:
@@ -183,7 +177,6 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
         try:
             budget_alerts.fire_budget_alerts(
                 alert_ctx, normalised_transactions,
-                webhook_repo=repo,
                 category_repo=CategoryRepository(),
                 notify_repo=NotifyRepository(),
             )

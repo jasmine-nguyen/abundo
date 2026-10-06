@@ -136,7 +136,6 @@ def shared():
         import goal_checkpoints
         import milestone_rows
         import milestones
-        import repayment_alerts
         import repayment_rules
         import repository_rule
         import repository_job
@@ -153,7 +152,7 @@ def shared():
             notify=repository_notify, spend=spend,
             goal_pace=goal_pace, goal_nudge=goal_nudge, goal_checkpoints=goal_checkpoints,
             milestones=milestones, milestone_rows=milestone_rows,
-            repayment_alerts=repayment_alerts, repayment_rules=repayment_rules,
+            repayment_rules=repayment_rules,
         )
         try:
             yield ns

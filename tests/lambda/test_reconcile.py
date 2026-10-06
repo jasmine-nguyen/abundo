@@ -4,7 +4,7 @@
 Real data drives the scenarios: on settlement BankSync issues a NEW id with
 `pendingTransactionId: null` (e.g. pending b726e693 → posted 14e463, both
 authorizedDate 2026-06-29, -5.50), so a blind insert would leave a duplicate and
-lose the user's category. These tests build rows through `BankSyncClient.normalise`
+lose the user's category. These tests build rows through `banksync.normalise`
 so the stored shapes match production, and inject a FakeTable via `repo._table`.
 """
 
@@ -38,7 +38,7 @@ def _bank_row(txn_id, amount, authorized_date="2026-06-29", pending=True,
 
 
 def _norm(lam, **kw):
-    return lam.banksync.BankSyncClient.normalise(_bank_row(**kw))
+    return lam.banksync.normalise(_bank_row(**kw))
 
 
 def _seed_pending(repo, lam, **kw):
@@ -974,7 +974,7 @@ def test_two_pass_is_scoped_per_account(lam, repo):
                         pending=pending, category=category)
         row["accountId"] = _ACCT2
         row["accountName"] = "Up Spending"
-        return lam.banksync.BankSyncClient.normalise(row)
+        return lam.banksync.normalise(row)
 
     _seed_pending(repo, lam, txn_id="X1", amount=Decimal("-5.50"),
                   authorized_date="2026-06-29", pending=True, category="coffee")
@@ -1624,7 +1624,7 @@ def _skew_posted_on_up(lam, **kw):
                        "merchant_name": _SKEW_POST_MERCHANT, **kw})
     row["accountId"] = _UP_ACCOUNT_ID
     row["accountName"] = "Up Spending"
-    return lam.banksync.BankSyncClient.normalise(row)
+    return lam.banksync.normalise(row)
 
 
 def _seed_pending_on_up(repo, lam, **kw):
@@ -1634,7 +1634,7 @@ def _seed_pending_on_up(repo, lam, **kw):
                        "description": _SKEW_PEND_DESC, "merchant_name": "", **kw})
     row["accountId"] = _UP_ACCOUNT_ID
     row["accountName"] = "Up Spending"
-    txn = lam.banksync.BankSyncClient.normalise(row)
+    txn = lam.banksync.normalise(row)
     repo.insert_transactions([txn])
     return txn
 
@@ -3054,7 +3054,6 @@ def test_whit545_handler_threads_is_unfiled_end_to_end(lam, repo, monkeypatch):
     monkeypatch.setattr(h, "DeviceRepository", lambda: _QANoTokensDevice())
     monkeypatch.setattr(h, "BudgetRepository", lambda: None)
     monkeypatch.setattr(h, "PayCycleRepository", lambda: None)
-    monkeypatch.setattr(h, "WindowRepo", lambda: None)
     monkeypatch.setattr(h, "NotifyRepository", lambda: None)
 
     _seed_pending(repo, lam, txn_id="P", amount=Decimal("-5.50"), authorized_date="2026-06-29",

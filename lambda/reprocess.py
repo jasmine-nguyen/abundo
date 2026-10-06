@@ -15,16 +15,17 @@ Trigger: invoke the reprocess Lambda manually (AWS console Test button, or
 import json
 import logging
 
-from banksync import BankSyncClient
+from banksync import normalise
 from webhook_repository import TransactionRepository
 import rule_ingest
 from repository_rule import RuleRepository
 from repository_category import CategoryRepository
+from spend import counts_to_budget
 
 logger = logging.getLogger(__name__)
 
 
-def reprocess_failed(repo, *, rule_repo=None, category_repo=None) -> dict:
+def reprocess_failed(repo, *, rule_repo, category_repo) -> dict:
     """Re-drive every dead-lettered row and return a summary of what happened:
     ``{"reprocessed": n, "skipped": n, "errors": n, "dropped_zero": n}``. A $0.00 row is never
     stored (WHIT-705): its dead-letter is cleared and counted under ``dropped_zero``.
@@ -33,17 +34,13 @@ def reprocess_failed(repo, *, rule_repo=None, category_repo=None) -> dict:
     it can't halt recovery for the rows behind it. A row is deleted ONLY after its
     insert durably succeeds, so nothing is lost if the sweep is interrupted.
 
-    When ``rule_repo`` and ``category_repo`` are both supplied, a re-driven charge is filed by
-    the user's rules (WHIT-530), the same as a fresh webhook delivery. The rules + taxonomy are
-    read ONCE for the whole sweep, not per row. Omitting them (the default) skips rule filing, so
-    any existing caller is unchanged.
+    A re-driven charge is filed by the user's rules (WHIT-530), the same as a fresh webhook
+    delivery. The rules + taxonomy are read ONCE for the whole sweep, not per row.
     """
     rows = repo.get_failed_transactions()
     summary = {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0}
 
-    book = None
-    if rule_repo is not None and category_repo is not None:
-        book = rule_ingest.load_rules(rule_repo, category_repo)
+    book = rule_ingest.load_rules(rule_repo, category_repo)
     is_unfiled = None
     if book is not None:
         is_unfiled = book.is_unfiled
@@ -63,7 +60,7 @@ def reprocess_failed(repo, *, rule_repo=None, category_repo=None) -> dict:
         # decimal.InvalidOperation), leave the row for a later run. Catch broadly:
         # no single poison row may abort the whole sweep.
         try:
-            txn = BankSyncClient.normalise(raw_txn)
+            txn = normalise(raw_txn)
         except Exception:
             logger.warning("FAILED row %s still cannot be normalised; leaving in place", row.get("sk"))
             summary["skipped"] += 1
@@ -80,9 +77,9 @@ def reprocess_failed(repo, *, rule_repo=None, category_repo=None) -> dict:
                 summary["errors"] += 1
             continue
 
-        # File it by the user's rules before inserting, if the stores were supplied (WHIT-530).
+        # File it by the user's rules before inserting, unless they couldn't be read (WHIT-530).
         if book is not None:
-            rule_ingest.file_charge(txn, book)
+            book.file_charges([txn], None, counts_to_budget=counts_to_budget)
 
         # Insert, THEN delete the dead-letter — the delete only ever follows a durable
         # insert. A DB error here leaves the row untouched to retry next run.

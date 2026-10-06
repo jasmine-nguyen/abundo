@@ -42,11 +42,23 @@ class _QueuedTransactionRepo:
         return self._pages.pop(0)
 
 
-class _AccountTransactionRepo:
+class _PendingPool:
+    """Serves ``pending_repo``'s pending pool for an account, or none."""
+
+    pending_repo = None
+
+    def get_pending_transactions_for_account(self, account_id):
+        if self.pending_repo is None:
+            return []
+        return self.pending_repo.get_pending_transactions_for_account(account_id)
+
+
+class _AccountTransactionRepo(_PendingPool):
     """Serves copies of the rows on the asked account whose date is inside the bounds."""
 
-    def __init__(self, rows):
+    def __init__(self, rows, pending_repo=None):
         self._rows = list(rows)
+        self.pending_repo = pending_repo
         self.calls = []
 
     def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
@@ -74,7 +86,7 @@ class _WindowKeyedTransactionRepo:
         return [dict(t) for t in self._by_window.get((start_date, end_date), [])], None
 
 
-class _AccountPagesTransactionRepo:
+class _AccountPagesTransactionRepo(_PendingPool):
     """Serves each account's queued (items, cursor) pages in order, then ([], None).
 
     Pages are deep copies: callers edit rows in place (pop pk/sk), which must not
