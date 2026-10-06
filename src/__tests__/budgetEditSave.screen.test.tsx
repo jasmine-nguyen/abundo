@@ -30,10 +30,9 @@ import BudgetPick from '../../app/budget/pick';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
-import { COFFEE } from './support/categories';
+import { COFFEE, SALARY } from './support/categories';
 
 const SPEND = COFFEE;
-const INCOME = { id: 'salary', name: 'Salary', icon: 'briefcase', color: '#7fd49b', bucket: 'Income' };
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -136,7 +135,7 @@ describe('budgetEditIncome (folded)', () => {
 
 // ===== budget-rollover (folded from budgetEditRollover.screen.test.tsx) =====
 // edit.tsx must WIRE the rollover Switch. mockSaveBudget and routerSpies.replace are the shared
-// spies; SPEND and INCOME reuse the outer consts. Own beforeEach re-clears the writer.
+// spies; SPEND and SALARY reuse the outer consts. Own beforeEach re-clears the writer.
 describe('budgetEditRollover (folded)', () => {
   beforeEach(() => { mockSaveBudget.mockClear(); });
 
@@ -168,7 +167,7 @@ describe('budgetEditRollover (folded)', () => {
 
   it('income category: no rollover toggle, and Save passes rollover=undefined (spend-only)', async () => {
     setParams({ categoryId: 'salary' });
-    seedServer([INCOME]);
+    seedServer([SALARY]);
     const { UNSAFE_queryAllByType } = await renderWithQueries(<BudgetEdit />);
 
     expect(screen.queryByText('Smoothing')).toBeNull();                 // toggle hidden for Income
@@ -239,14 +238,14 @@ describe('budgetEditRollover (folded)', () => {
 
 // ===== WHIT-69 (folded from budgetPickIncome.screen.test.tsx) =====
 // app/budget/pick.tsx lists Income categories in "Add a budget" while hiding already-budgeted ones.
-// Renders BudgetPick (imported at module scope). SPEND and INCOME reuse the outer consts; SIDE is
+// Renders BudgetPick (imported at module scope). SPEND and SALARY reuse the outer consts; SIDE is
 // block-scoped. The income row's earn-target tag is covered in budgetNoDummyNumbers.screen.test.tsx.
 describe('budgetPickIncome (folded)', () => {
   const SIDE = { id: 'side_gig', name: 'Side Gig', icon: 'briefcase', color: '#7fd49b', bucket: 'Income' };
 
   describe('BudgetPick — income is pickable (WHIT-69)', () => {
     it('lists an Income category alongside spend categories', async () => {
-      seedServer([INCOME, SPEND]);
+      seedServer([SALARY, SPEND]);
       await renderWithQueries(<BudgetPick />);
       expect(screen.getByText('Salary')).toBeTruthy();          // was filtered out pre-WHIT-69
       expect(screen.getByText('Cafes & Coffee')).toBeTruthy();  // control: spend still listed
@@ -254,7 +253,7 @@ describe('budgetPickIncome (folded)', () => {
 
     it('still hides an income category that already has a budget', async () => {
       // A rollup needs a target above 0, or the budgets read drops it.
-      seedServer([INCOME, SIDE], { salary: { target: 1, posted: 0, pending: 0 } });
+      seedServer([SALARY, SIDE], { salary: { target: 1, posted: 0, pending: 0 } });
       await renderWithQueries(<BudgetPick />);
       expect(screen.queryByText('Salary')).toBeNull();          // already budgeted → excluded
       expect(screen.getByText('Side Gig')).toBeTruthy();        // not budgeted → still pickable
@@ -264,13 +263,13 @@ describe('budgetPickIncome (folded)', () => {
 
 // ===== WHIT-201 (folded from budgetPickSavings.screen.test.tsx) =====
 // Savings categories are NOT budgetable — pick.tsx excludes them (Income stays pickable). SPEND
-// and INCOME reuse the outer consts; SAVINGS is block-scoped.
+// and SALARY reuse the outer consts; SAVINGS is block-scoped.
 describe('budgetPickSavings (folded)', () => {
   const SAVINGS = { id: 'nest_egg', name: 'Nest Egg', icon: 'home', color: '#C7A8F0', bucket: 'Savings' };
 
   describe('BudgetPick — Savings is not budgetable (WHIT-201)', () => {
     it('hides a Savings category while still listing spend and income categories', async () => {
-      seedServer([SAVINGS, INCOME, SPEND]);
+      seedServer([SAVINGS, SALARY, SPEND]);
       await renderWithQueries(<BudgetPick />);
       expect(screen.queryByText('Nest Egg')).toBeNull();        // Savings excluded
       expect(screen.getByText('Salary')).toBeTruthy();          // Income still pickable (WHIT-69)
