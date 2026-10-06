@@ -176,6 +176,19 @@ it('shows the empty state when nothing matches this category/cycle', async () =>
   expect(screen.queryByTestId('category-total')).toBeNull();
 });
 
+// [A2] WHIT-772 QA: the shared empty block keeps the sub copy, and it still names "dates" for a
+// deep-linked range and "cycle" for the cycle view.
+it.each([
+  [{ cycle: '0' }, 'Nothing in this category for the selected cycle.'],
+  [{ from: '2026-06-12', to: '2026-09-11' }, 'Nothing in this category for the selected dates.'],
+])('the empty state sub names the period (%j)', async (params, sub) => {
+  setParams({ id: 'coffee', ...params });
+  server.seed(COFFEE_ROWS, []);
+  await renderWithQueries(<CategoryDetail />);
+  expect(screen.getByText('No transactions')).toBeTruthy();
+  expect(screen.getByText(sub)).toBeTruthy();
+});
+
 it('a hard read failure with nothing cached shows the inline error + an accessible Retry', async () => {
   server.fail(COFFEE_ROWS, 500);
   await renderWithQueries(<CategoryDetail />);
