@@ -1,5 +1,3 @@
-from _feed_fakes import FakeCategoryRepo
-from _rule_ingest_fakes import apply_rules
 """WHIT-535 — the webhook rule-filing path tolerates pre-WHIT-535 stored rule rows.
 
 rule_book.rule_from_row maps a stored row to the engine shape reading only id/field/operator/
@@ -11,15 +9,8 @@ migration" claim on the webhook side too.
 Driven through the webhook `lam` fixture (tests/lambda/conftest.py), like test_rule_ingest.py.
 """
 
-
-class _FakeRuleStore:
-    """Minimal RuleRepository stand-in over snake_case rows (preserves every seeded key)."""
-
-    def __init__(self, rules):
-        self._rules = [dict(rule) for rule in rules]
-
-    def list_rules(self):
-        return [dict(rule) for rule in self._rules]
+from _feed_fakes import FakeCategoryRepo
+from _rule_ingest_fakes import FakeRuleStore, apply_rules
 
 
 def _legacy_row(value="COLES", category_id="groceries"):
@@ -42,6 +33,6 @@ def test_legacy_row_with_retired_fields_still_files(lam):
     # (The conditionCount guard itself is pinned directly in
     # tests/shared/test_rule_engine_conditioncount_removed.py.)
     charge = _charge(category=None)
-    apply_rules(lam.rule_ingest, [charge], rule_repo=_FakeRuleStore([_legacy_row("COLES")]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([_legacy_row("COLES")]),
         category_repo=FakeCategoryRepo(["groceries"]))
     assert charge["category"] == "groceries"

@@ -12,23 +12,7 @@ not export DatabaseError.
 import pytest
 
 from _feed_fakes import FakeCategoryRepo
-from _rule_ingest_fakes import apply_rules
-
-
-# --- local fakes (snake_case store, list-call counting) ----------------------
-
-
-class FakeRuleStore:
-    def __init__(self, rules=(), *, error=False):
-        self._rules = [dict(rule) for rule in rules]
-        self.error = error
-        self.list_calls = 0
-
-    def list_rules(self):
-        self.list_calls += 1
-        if self.error:
-            raise RuntimeError("rules read failed")
-        return [dict(rule) for rule in self._rules]
+from _rule_ingest_fakes import FakeRuleStore, apply_rules
 
 
 def _rule(value, category_id="groceries", *, field="description", operator="contains", rule_id=None):

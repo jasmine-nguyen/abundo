@@ -15,7 +15,7 @@ import pytest
 # recovery suites share ONE definition (WHIT-494); resolved via pytest.ini's pythonpath.
 from _deadletter_fakes import _failed_keys, _txn_rows
 from _feed_fakes import FakeCategoryRepo
-from _rule_ingest_fakes import reprocess_failed
+from _rule_ingest_fakes import FakeRuleStore, reprocess_failed
 
 # A real BankSync account id that resolves via ACCOUNT_ID_MAP to an internal id.
 _MAPPED_ACCOUNT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
@@ -350,15 +350,7 @@ def test_lambda_handler_serialises_the_real_summary(lam, repo, monkeypatch):
     assert _failed_keys(repo) == []
 
 
-# --- WHIT-530: rule filing on re-drive (opt-in via injected stores) ----------
-
-
-class _FakeRuleStore:
-    def __init__(self, rules=()):
-        self._rules = [dict(r) for r in rules]
-
-    def list_rules(self):
-        return [dict(r) for r in self._rules]
+# --- WHIT-530: rule filing on re-drive ---------------------------------------
 
 
 def test_reprocess_with_rule_stores_files_a_recovered_row(lam, repo):
@@ -369,7 +361,7 @@ def test_reprocess_with_rule_stores_files_a_recovered_row(lam, repo):
 
     summary = lam.reprocess.reprocess_failed(
         repo,
-        rule_repo=_FakeRuleStore([{"id": "r-kkv", "field": "description", "operator": "contains",
+        rule_repo=FakeRuleStore([{"id": "r-kkv", "field": "description", "operator": "contains",
                                    "value": "KKV", "category_id": "groceries"}]),
         category_repo=FakeCategoryRepo(["groceries"]))
 
@@ -392,7 +384,7 @@ def test_whit545_reprocess_threads_is_unfiled_so_a_rule_fill_survives_settlement
 
     summary = lam.reprocess.reprocess_failed(
         repo,
-        rule_repo=_FakeRuleStore([{"id": "r-kkv", "field": "description", "operator": "contains",
+        rule_repo=FakeRuleStore([{"id": "r-kkv", "field": "description", "operator": "contains",
                                    "value": "KKV", "category_id": "groceries"}]),
         category_repo=FakeCategoryRepo(["groceries"]))
 
