@@ -24,7 +24,7 @@ change.
 
 1. **Load context so you don't re-report known things.**
    - Read AGENTS.md "Known landmines" and the latest **Build Note** Session Log.
-   - Note what's already ticketed (e.g. the `WHIT-88` repository dedup). Don't file these
+   - Note what's already ticketed on the Board. Don't file these
      as new discoveries — reference them only if the sweep turns up a _new_ angle on them.
 2. **Find or create the folder.** Search Notion for a page named **"Project Review"**
    under "Budget Tracker App" (page id `388ca73e-1d24-810f-8728-e82dc4dc8a86`). If it
