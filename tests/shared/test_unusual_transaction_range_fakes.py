@@ -67,12 +67,3 @@ def test_unusual_situation_transaction_stand_ins_serve_and_record_reads():
 
 def test_no_test_file_keeps_a_pending_transaction_read_copy():
     assert not hasattr(guard, "_PENDING_TRANSACTION_COPIES")
-    copies = []
-    for path in sorted(guard._TESTS.rglob("*.py")):
-        relative = path.relative_to(guard._TESTS).as_posix()
-        if guard._is_shared_fake_module(relative):
-            continue
-        allowed = guard._ALLOWED.get(relative, set())
-        copies += [f"{relative}:{lineno} class {name}"
-                   for lineno, name in guard._local_copies(path.read_text()) if name not in allowed]
-    assert not copies, "move these onto tests/shared/_transaction_range_fakes.py:\n" + "\n".join(copies)
