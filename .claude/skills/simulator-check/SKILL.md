@@ -20,8 +20,8 @@ install it in an unattended run.
 
 ## Preflight
 
-Stop at the first failure and leave the check manual, saying why. Never install
-tools, or build or install the app.
+Stop at the first failure you may not fix below and leave the check manual,
+saying why. Never install tools, or build or install the app.
 
 1. AXe is installed: `command -v axe`.
 2. Exactly one simulator is booted: `xcrun simctl list devices booted`. Use its UDID.
@@ -37,7 +37,11 @@ tools, or build or install the app.
    - No native change: `git diff --name-only $(git merge-base HEAD origin/main) HEAD`
      lists no file under `ios/` and no change to `app.json`, `package.json`
      native deps or `Podfile*`. Otherwise the installed app is old, so stop.
-   - Metro is running: `lsof -ti tcp:8081`.
+   - Metro is running: `lsof -ti tcp:8081`. Not running?
+     - Interactive session: start it from your own folder in the background
+       (the project's `start` script, e.g. `npm start`), wait until
+       `lsof -ti tcp:8081` answers, and tell the user.
+     - Unattended (the build's QA): stop.
    - Find Metro's folder: `lsof -a -d cwd -p <pid>`.
    - `git -C <that folder> rev-parse HEAD` equals your own `git rev-parse HEAD`.
    - `git -C <that folder> status --porcelain` shows no app-code edits.
@@ -47,7 +51,9 @@ tools, or build or install the app.
 
 ## Don't disrupt the user
 
-- Interactive session: ask before driving a simulator the user may be using.
+- Interactive session: ask before driving a simulator or Metro that was already
+  running, since the user may be using it, and never stop their Metro. One you
+  booted or started yourself needs no asking.
 - Unattended (the build's QA): only when the preflight passes, and say in your
   output that you used the simulator.
 
