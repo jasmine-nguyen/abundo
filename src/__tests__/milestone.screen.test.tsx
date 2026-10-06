@@ -6,7 +6,8 @@
 // read only the editor's writers off it). expo-router's useRouter is mocked to capture navigation.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
+import { render, screen, fireEvent, act, within } from '@testing-library/react-native';
 import { EMPTY_LOAN_FACTS, LOAN_FACTS } from './factory';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settle } from './support/renderWithQueries';
@@ -15,6 +16,8 @@ import { seedGoal } from './support/goalsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import type { MilestoneRecord } from '../api';
+import { MoneyField } from '../components/MoneyField';
+import { C } from '../theme';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -494,6 +497,52 @@ describe('WHIT-377 milestone editor', () => {
     it('a mid-list arrow is enabled (the disable is boundary-specific, not blanket)', async () => {
       await renderWithQueries(<MilestoneEdit />);
       expect(screen.getByTestId('milestone-up-1')).not.toBeDisabled();
+    });
+  });
+
+  // WHIT-774: the TARGET BALANCE box is the shared MoneyField, tagged milestone-balance-N.
+  describe('target balance box', () => {
+    it("each row's balance box is the shared money box, tagged per row, and keeps the darker background", async () => {
+      await renderWithQueries(<MilestoneEdit />);
+      const fields = screen.UNSAFE_getAllByType(MoneyField);
+      expect(fields).toHaveLength(SAVED.length);
+      const input = within(fields[0]).getByTestId('milestone-balance-0');
+      expect(input.props.value).toBe('300000');
+      // Sign-off option A: the box stays C.bg so it contrasts with the C.card row card.
+      let box = input.parent;
+      while (box && !StyleSheet.flatten(box.props.style)?.backgroundColor) box = box.parent;
+      expect(StyleSheet.flatten(box?.props.style).backgroundColor).toBe(C.bg);
+    });
+
+    it('user can type a new target balance and save it', async () => {
+      await renderWithQueries(<MilestoneEdit />);
+      fireEvent.changeText(screen.getByTestId('milestone-balance-0'), '600000');
+      await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
+      expect(mockSaveMilestones).toHaveBeenCalledTimes(1);
+      const sent = mockSaveMilestones.mock.calls[0][0];
+      expect(sent.map((m) => m.targetBalance)).toEqual([600000, 200000, 100000]);
+    });
+
+    // [A4] the per-row tag follows the row index, so editing the LAST row changes only that row.
+    it('typing into the last row only changes that row, and the label keeps the screen label style', async () => {
+      await renderWithQueries(<MilestoneEdit />);
+      expect(StyleSheet.flatten(screen.getAllByText('TARGET BALANCE')[2].props.style).marginTop).toBe(14);
+      fireEvent.changeText(screen.getByTestId('milestone-balance-2'), '50000');
+      expect(screen.getByTestId('milestone-balance-0').props.value).toBe('300000');
+      await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
+      const sent = mockSaveMilestones.mock.calls[0][0];
+      expect(sent.map((m) => m.targetBalance)).toEqual([300000, 200000, 50000]);
+    });
+
+    // [A5] after a delete the tags renumber with the rows, and a new row's box starts empty.
+    it('deleting a row renumbers the balance boxes; an added row gets an empty box at the end', async () => {
+      await renderWithQueries(<MilestoneEdit />);
+      fireEvent.press(screen.getByTestId('milestone-delete-0'));
+      expect(screen.getByTestId('milestone-balance-0').props.value).toBe('200000');
+      expect(screen.getByTestId('milestone-balance-1').props.value).toBe('100000');
+      expect(screen.queryByTestId('milestone-balance-2')).toBeNull();
+      fireEvent.press(screen.getByTestId('milestone-add'));
+      expect(screen.getByTestId('milestone-balance-2').props.value).toBe('');
     });
   });
 });

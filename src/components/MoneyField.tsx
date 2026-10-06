@@ -3,17 +3,19 @@ import { View, Text, TextInput, StyleSheet, StyleProp, TextStyle, ViewStyle } fr
 import { C, FONT } from '../theme';
 
 export function MoneyField({
-  label, labelStyle, hint, placeholder, value, onChangeText, prefix, suffix, style,
+  label, labelStyle, hint, placeholder, value, onChangeText, prefix, suffix, style, boxStyle, testID,
 }: {
   label: string; labelStyle?: StyleProp<TextStyle>; hint?: string; placeholder: string; value: string;
   onChangeText: (t: string) => void; prefix?: string; suffix?: string; style?: StyleProp<ViewStyle>;
+  boxStyle?: StyleProp<ViewStyle>; testID?: string;
 }) {
   return (
     <View style={style}>
       <Text style={labelStyle}>{label}</Text>
-      <View style={styles.inputRow}>
+      <View style={[styles.inputRow, boxStyle]}>
         {prefix ? <Text style={styles.affix}>{prefix}</Text> : null}
         <TextInput
+          testID={testID}
           style={styles.input}
           value={value}
           onChangeText={onChangeText}

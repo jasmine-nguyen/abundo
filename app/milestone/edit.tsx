@@ -8,6 +8,7 @@ import { useAppContext } from '../../src/context';
 import { useMilestonesQuery, useIsAuthed } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { NativeDateField } from '../../src/components/NativeDateField';
+import { MoneyField } from '../../src/components/MoneyField';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 import { parseAmount, numText } from '../../src/numutil';
 import { MILESTONES, milestonesOrderingError, milestoneOutOfOrderRows } from '../../src/milestones';
@@ -166,20 +167,16 @@ export default function MilestoneEdit() {
               placeholderTextColor={C.placeholder}
             />
 
-            <Text style={styles.label}>TARGET BALANCE</Text>
-            <View style={styles.inputRow}>
-              <Text style={styles.affix}>$</Text>
-              <TextInput
-                testID={`milestone-balance-${index}`}
-                style={styles.rowInput}
-                value={row.balanceText}
-                onChangeText={(balanceText) => updateRow(row.id, { balanceText })}
-                placeholder="e.g. 295000"
-                placeholderTextColor={C.placeholder}
-                keyboardType="decimal-pad"
-                inputMode="decimal"
-              />
-            </View>
+            <MoneyField
+              label="TARGET BALANCE"
+              labelStyle={styles.label}
+              prefix="$"
+              placeholder="e.g. 295000"
+              value={row.balanceText}
+              onChangeText={(balanceText) => updateRow(row.id, { balanceText })}
+              testID={`milestone-balance-${index}`}
+              boxStyle={styles.moneyBox}
+            />
 
             <Text style={styles.label}>TARGET DATE</Text>
             <NativeDateField
@@ -270,9 +267,7 @@ const styles = StyleSheet.create({
 
   label: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 14, marginBottom: 8, marginHorizontal: 2 },
   input: { fontFamily: FONT.body, fontSize: 16, color: C.text, backgroundColor: C.bg, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, paddingHorizontal: 14, height: 50 },
-  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.bg, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, paddingHorizontal: 14, height: 50 },
-  rowInput: { flex: 1, fontFamily: FONT.body, fontSize: 16, color: C.text, height: '100%', textAlignVertical: 'center' },
-  affix: { fontFamily: FONT.body, fontSize: 16, fontWeight: '600', color: C.textDim },
+  moneyBox: { backgroundColor: C.bg },
   warn: { fontFamily: FONT.body, fontSize: 12, color: C.warn, marginTop: 10, lineHeight: 16 },
 
   addBtn: { marginTop: 14, paddingVertical: 14, borderRadius: 14, borderWidth: 1, borderColor: C.hairline, borderStyle: 'dashed', alignItems: 'center' },
