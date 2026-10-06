@@ -29,6 +29,7 @@ jest.mock('../auth', () => ({
   getAuthToken: async () => 'test-id-token',
 }));
 import { installFakeServer } from './support/fakeServer';
+import { invalidatedKeys } from './support/queryClient';
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
 
@@ -75,7 +76,7 @@ it('starts a job, shows it running, and polls to success — refreshing caches o
   await tick();
   expect(r.current.applyRulesJob?.status).toBe('succeeded');
   // Success reconciles the caches (the count/badge/feed this feature is about).
-  const keys = invalidate.mock.calls.slice(before).map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
+  const keys = invalidatedKeys(invalidate).slice(before);
   expect(keys).toEqual(expect.arrayContaining(['uncategorizedCount', 'categories', 'uncategorizedMerchants']));
 });
 

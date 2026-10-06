@@ -10,6 +10,7 @@ import { AppProvider, useAppContext } from '../context';
 import type { LoanFacts } from '../context';
 import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';
+import { invalidatedKeys } from './support/queryClient';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 
@@ -46,7 +47,7 @@ it('saveLoanFacts writes the cache + invalidates ONLY loanFacts', async () => {
   expect(ok).toBe(true);
   expect(server.sent('PUT', '/loanfacts').map((request) => request.body)).toEqual([FACTS]);
   expect(cachedFacts()).toEqual(FACTS); // query cache optimistic write
-  const keys = invalidateSpy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
+  const keys = invalidatedKeys(invalidateSpy);
   expect(keys).toContain('loanFacts');
   expect(keys).not.toContain('homeLoan'); // balance doesn't depend on facts
   expect(keys).not.toContain('repayment');

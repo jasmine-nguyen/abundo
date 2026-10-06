@@ -2,7 +2,7 @@
 // sample when one of its one-line `{ key: value, ... }` literals has exactly the sample's keys and values.
 
 // Every one-line `{ key: value, ... }` on the line, read as a plain object (string, number or null values only).
-export function inlineObjects(line: string): Record<string, unknown>[] {
+function inlineObjects(line: string): Record<string, unknown>[] {
   return (line.match(/\{[^{}]*\}/g) ?? []).map((literal) => {
     const record: Record<string, unknown> = {};
     for (const [, key, value] of literal.matchAll(/(\w+): ('[^']*'|null|-?\d+)/g)) {

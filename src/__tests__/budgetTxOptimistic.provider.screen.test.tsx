@@ -20,6 +20,7 @@ import { seedTransactionsCache, readTransactionsCache } from './support/transact
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
 import { GROCERIES } from './support/categories';
+import { invalidatedKeys } from './support/queryClient';
 
 // Live auth store (superset). The static-'authed' siblings never touch mockStatus, so it stays
 // 'authed' for them; the two sign-out siblings mutate it via mockSetStatus to drive sign-out.
@@ -124,7 +125,7 @@ it('re-include does NOT optimistically add a row to the cached budget list', asy
   // No phantom insert...
   expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([]);
   // ...but the invalidate still fires so a refetch adds it back with the right window/sort.
-  const keys = spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
+  const keys = invalidatedKeys(spy);
   expect(keys).toContain('budgetTransactions');
   spy.mockRestore();
 });
@@ -237,11 +238,6 @@ describe('budgetTxInvalidation (folded)', () => {
     account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
     ...over,
   });
-
-  // The [0] element of every invalidateQueries call — the top-level query key.
-  function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
-    return spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
-  }
 
   beforeEach(() => { queryClient.clear(); });
   afterEach(() => { queryClient.clear(); jest.restoreAllMocks(); }); // clear the singleton + restore spies (config has clearMocks, not restoreMocks)

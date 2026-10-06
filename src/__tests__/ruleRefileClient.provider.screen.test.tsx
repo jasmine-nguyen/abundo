@@ -15,6 +15,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES } from './support/categories';
+import { invalidatedKeys } from './support/queryClient';
 
 const server = installFakeServer();
 
@@ -22,9 +23,6 @@ const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{c
 
 const RULE: Rule = { id: 'r1', pattern: 'COLES', categoryId: 'groceries', isNew: false, field: 'description', operator: 'contains' };
 
-function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
-  return spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
-}
 function rulesCache() {
   return queryClient.getQueryData<Rule[]>(['rules']) ?? [];
 }

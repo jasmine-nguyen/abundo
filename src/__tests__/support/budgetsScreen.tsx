@@ -74,7 +74,7 @@ export function heroTotals() {
 }
 
 // WHIT-730 follow-up: a node's effective left/right padding.
-export function sidePaddingOf(node: ReactTestInstance) {
+function sidePaddingOf(node: ReactTestInstance) {
   const style = StyleSheet.flatten(node.props.style) ?? {};
   return {
     left: style.paddingLeft ?? style.paddingHorizontal ?? style.padding,

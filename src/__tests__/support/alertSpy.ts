@@ -2,7 +2,7 @@
 import { jest, beforeEach, afterEach } from '@jest/globals';
 import { Alert } from 'react-native';
 
-export type AlertButton = { text?: string; style?: string; onPress?: () => void | Promise<void> };
+type AlertButton = { text?: string; style?: string; onPress?: () => void | Promise<void> };
 
 /** Fake Alert.alert for every test in the enclosing scope; restored after each test. */
 export function spyOnAlert() {

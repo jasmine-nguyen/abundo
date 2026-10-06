@@ -15,6 +15,7 @@ jest.mock('../auth', () => ({
   getAuthToken: async () => 'test-id-token',
 }));
 import { installFakeServer } from './support/fakeServer';
+import { invalidatedKeys } from './support/queryClient';
 
 const server = installFakeServer();
 
@@ -116,7 +117,7 @@ it('success refreshes the totals and the scoped lists, never the paged feeds (no
   const result = mount();
   await act(async () => { await result.current.deleteTransaction('dup'); });
 
-  const refreshed = invalidate.mock.calls.map((call) => (call[0] as { queryKey: string[] }).queryKey[0]);
+  const refreshed = invalidatedKeys(invalidate);
   expect(refreshed).toEqual(expect.arrayContaining(['budgets', 'breakdown', 'budgetTransactions', 'categoryTransactions', 'uncategorizedCount']));
   expect(refreshed).not.toContain('transactions');
   expect(refreshed).not.toContain('uncategorizedFeed');
@@ -131,7 +132,7 @@ it('a failed delete refreshes nothing', async () => {
   const result = mount();
   await act(async () => { await result.current.deleteTransaction('dup'); });
 
-  const refreshed = invalidate.mock.calls.map((call) => (call[0] as { queryKey: string[] }).queryKey[0]);
+  const refreshed = invalidatedKeys(invalidate);
   expect(refreshed).not.toContain('budgets');
   invalidate.mockRestore();
 });

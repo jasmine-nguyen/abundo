@@ -9,6 +9,7 @@ import type { ChatReply } from '../api';
 import { installFakeServer } from './support/fakeServer';
 import { resetAuth } from './support/authMock';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { flush } from './support/queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -32,10 +33,6 @@ let chat: ChatContextValue;
 function Probe() {
   chat = useChat();
   return null;
-}
-
-async function flush() {
-  await act(async () => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); });
 }
 
 async function mountOpen() {

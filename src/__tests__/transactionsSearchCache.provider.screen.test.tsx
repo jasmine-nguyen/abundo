@@ -22,6 +22,7 @@ import { queryClient } from '../queryClient';
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES } from './support/categories';
+import { invalidatedKeys } from './support/queryClient';
 
 const server = installFakeServer();
 
@@ -42,10 +43,6 @@ function seedSearch(transactions: Transaction[]) {
 function searchRow(id = 'deep1'): Transaction | undefined {
   return queryClient.getQueryData<TransactionSearchResult>(SEARCH_KEY)?.transactions.find((t) => t.transaction_id === id);
 }
-function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
-  return spy.mock.calls.map((call: unknown[]) => (call[0] as { queryKey: string[] }).queryKey[0]);
-}
-
 beforeEach(() => {
   queryClient.clear();
   queryClient.setQueryData(['categories'], [{ ...CAT }]);

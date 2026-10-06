@@ -9,16 +9,12 @@ jest.mock('../../auth', () => require('./authMock').authMockModule());
 import * as api from '../../api';
 import { ApiError } from '../../apiError';
 import { resetAuth } from './authMock';
-import { installFakeServer } from './fakeServer';
+import { installFakeServer, drainMicrotasks } from './fakeServer';
 import { ESSENTIAL_GROCERIES } from './categories';
 
 const originalFetch = global.fetch;
 
 const GYM = { name: 'Gym', bucket: 'Lifestyle' as const, icon: 'dumbbell' };
-
-async function flush(): Promise<void> {
-  for (let i = 0; i < 20; i++) await Promise.resolve();
-}
 
 beforeEach(() => resetAuth());
 
@@ -49,13 +45,13 @@ describe('WHIT-637 QA fake server', () => {
     server.hold('/categories');
     let settled = false;
     api.fetchCategories().then(() => { settled = true; }, () => { settled = true; });
-    await flush();
+    await drainMicrotasks();
     expect(settled).toBe(false);
   });
   it('[A3b] the next test is not held', async () => {
     let settled = false;
     const read = api.fetchCategories().then(() => { settled = true; });
-    await flush();
+    await drainMicrotasks();
     expect(settled).toBe(true);
     await read;
   });
@@ -145,7 +141,7 @@ describe('WHIT-637 QA fake server', () => {
     const read = api.fetchCategories().then(() => { outcome = 'resolved'; }, () => { outcome = 'rejected'; });
 
     await jest.advanceTimersByTimeAsync(15_000);
-    await flush();
+    await drainMicrotasks();
     const seen = outcome;
     held.release();
     await read;

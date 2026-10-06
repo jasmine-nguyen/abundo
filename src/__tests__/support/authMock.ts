@@ -60,11 +60,3 @@ export function authMockModule() {
     'getStatus' | 'subscribe' | 'getAuthToken'
   >;
 }
-
-// A live useIsAuthed for a suite that mocks ../queries inline, wired to the same store — mirrors
-// queries.ts: useSyncExternalStore(subscribe, () => getStatus() === 'authed'). require('react')
-// stays inside the body so it is safe under jest.mock hoisting.
-export function useIsAuthedMock(): boolean {
-  const React = require('react');
-  return React.useSyncExternalStore(subscribeAuth, () => status === 'authed');
-}

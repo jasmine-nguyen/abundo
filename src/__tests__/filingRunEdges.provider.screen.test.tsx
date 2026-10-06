@@ -24,6 +24,7 @@ jest.mock('../auth', () => ({
   getAuthToken: async () => 'test-id-token',
 }));
 import { installFakeServer } from './support/fakeServer';
+import { invalidatedKeys } from './support/queryClient';
 
 const server = installFakeServer();
 const APPLY_RULES = '/transactions/uncategorized/apply-rules';
@@ -55,9 +56,6 @@ const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
   createdAt: 't0', updatedAt: 't0', completedAt: null, ...over,
 });
 
-function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
-  return spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
-}
 function mount() { return renderHook(() => useAppContext(), { wrapper }); }
 function seedRules() { queryClient.setQueryData<Rule[]>(['rules'], [EXISTING_RULE]); }
 function rules() { return queryClient.getQueryData<Rule[]>(['rules']) ?? []; }

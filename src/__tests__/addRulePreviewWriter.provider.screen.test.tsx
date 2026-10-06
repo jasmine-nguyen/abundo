@@ -31,6 +31,7 @@ jest.mock('../auth', () => ({
   getAuthToken: async () => 'test-id-token',
 }));
 import { installFakeServer } from './support/fakeServer';
+import { invalidatedKeys } from './support/queryClient';
 
 const server = installFakeServer();
 const APPLY_RULES = '/transactions/uncategorized/apply-rules';
@@ -53,9 +54,6 @@ const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
   ...over,
 });
 
-function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
-  return spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
-}
 function rowsIn(key: 'transactions'): Transaction[] {
   const data = queryClient.getQueryData<{ pages: { transactions: Transaction[] }[] }>([key]);
   return data ? data.pages.flatMap((p) => p.transactions) : [];

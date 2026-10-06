@@ -15,6 +15,7 @@ import { seedTransactionsCache, readTransactionsCache, seedTransactionsPages, ty
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
 import { DINING, GROCERIES } from './support/categories';
+import { invalidatedKeys } from './support/queryClient';
 
 const server = installFakeServer();
 const ruleMints = () => server.sent('POST', '/rules');
@@ -62,9 +63,9 @@ it('applyCategory(one) writes the tx cache AND invalidates budgets/breakdown but
   await act(async () => { await result.current.applyCategory('one'); });
 
   expect(cachedCategory('t1')).toBe('groceries'); // query cache write
-  const invalidatedKeys = invalidateSpy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
-  expect(invalidatedKeys).toEqual(expect.arrayContaining(['budgets', 'breakdown'])); // WHIT-193 closure
-  expect(invalidatedKeys).not.toContain('transactions'); // the feed is patched, never invalidated (no page storm)
+  const keys = invalidatedKeys(invalidateSpy);
+  expect(keys).toEqual(expect.arrayContaining(['budgets', 'breakdown'])); // WHIT-193 closure
+  expect(keys).not.toContain('transactions'); // the feed is patched, never invalidated (no page storm)
   invalidateSpy.mockRestore();
 });
 
@@ -87,9 +88,9 @@ it('applyCategory(all) writes every same-merchant charge into the cache + invali
 
   expect(cachedCategory('t1')).toBe('groceries');
   expect(cachedCategory('t2')).toBe('groceries'); // the whole same-merchant sweep hit the cache
-  const invalidatedKeys = invalidateSpy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
-  expect(invalidatedKeys).toEqual(expect.arrayContaining(['budgets', 'breakdown']));
-  expect(invalidatedKeys).not.toContain('transactions'); // feed patched, not invalidated
+  const keys = invalidatedKeys(invalidateSpy);
+  expect(keys).toEqual(expect.arrayContaining(['budgets', 'breakdown']));
+  expect(keys).not.toContain('transactions'); // feed patched, not invalidated
   invalidateSpy.mockRestore();
 });
 
@@ -292,7 +293,7 @@ it('applyCategoryToMany re-files exactly the ids in the set, in one batch, + inv
   expect(cachedCategory('t1')).toBe('groceries');
   expect(cachedCategory('t3')).toBe('groceries');
   expect(cachedCategory('t2')).toBeNull(); // not in the set → untouched
-  const keys = invalidateSpy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
+  const keys = invalidatedKeys(invalidateSpy);
   expect(keys).toEqual(expect.arrayContaining(['budgets', 'breakdown']));
   expect(keys).not.toContain('transactions'); // feed patched, not invalidated
   invalidateSpy.mockRestore();

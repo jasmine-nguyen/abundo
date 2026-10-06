@@ -5,13 +5,9 @@ jest.mock('../../auth', () => require('./authMock').authMockModule());
 
 import * as api from '../../api';
 import { resetAuth } from './authMock';
-import { installFakeServer } from './fakeServer';
+import { installFakeServer, drainMicrotasks } from './fakeServer';
 
 const PLAN = [{ id: 'c', label: 'Client-minted', target: 1 }] as never;
-
-async function flush(): Promise<void> {
-  for (let i = 0; i < 20; i++) await Promise.resolve();
-}
 
 beforeEach(() => resetAuth());
 
@@ -24,7 +20,7 @@ describe('WHIT-659 QA — held.fail', () => {
     const held = server.hold('/goals/g1');
     const save = api.saveGoal('g1', { target: 200 } as never).then(() => 'resolved', (e: unknown) => e);
     const remove = api.deleteGoal('g1').then(() => 'resolved', (e: unknown) => e);
-    await flush();
+    await drainMicrotasks();
 
     held.fail('DELETE', { status: 500 });
 
@@ -37,7 +33,7 @@ describe('WHIT-659 QA — held.fail', () => {
     const held = server.hold('/milestones');
     const first = api.setMilestones(PLAN).then(() => 'resolved', (e: unknown) => e);
     const second = api.setMilestones(PLAN).then(() => 'resolved', (e: unknown) => e);
-    await flush();
+    await drainMicrotasks();
     expect(server.sent('PUT', '/milestones')).toHaveLength(2);
 
     held.fail('PUT');

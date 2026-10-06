@@ -12,6 +12,7 @@ import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
+import { invalidatedKeys } from './support/queryClient';
 
 const server = installFakeServer();
 
@@ -42,7 +43,7 @@ it('saveMilestones writes the cache + invalidates ONLY milestones', async () => 
   expect(ok).toBe(true);
   expect(server.requests()).toContainEqual({ method: 'PUT', path: '/milestones', body: { milestones: PLAN } });
   expect(cached()).toEqual(PLAN); // optimistic write
-  const keys = invalidateSpy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
+  const keys = invalidatedKeys(invalidateSpy);
   expect(keys).toContain('milestones');
   expect(keys).not.toContain('homeLoan');   // the balance read must not be disturbed
   expect(keys).not.toContain('loanFacts');

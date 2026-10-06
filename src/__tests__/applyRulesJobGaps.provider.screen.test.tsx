@@ -24,6 +24,7 @@ jest.mock('../auth', () => ({
 }));
 import type { CreatedRule, UncategorizedMerchantGroup } from '../api';
 import { installFakeServer } from './support/fakeServer';
+import { invalidatedKeys } from './support/queryClient';
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
 
@@ -154,7 +155,7 @@ it('[G4] add-rule success prepends the minted rule (NEW badge) and skips the rul
   const rules = queryClient.getQueryData(['rules']) as Array<{ id: string; isNew: boolean }>;
   expect(rules).toHaveLength(1);
   expect(rules[0]).toMatchObject({ id: 'r-new', isNew: true });
-  const keys = invalidate.mock.calls.slice(before).map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
+  const keys = invalidatedKeys(invalidate).slice(before);
   expect(keys).not.toContain('rules'); // skipRules — a refetch would reset the NEW badge
 });
 
@@ -170,6 +171,6 @@ it('[G4] file-this-shop success does NOT prepend and DOES refresh the rules list
   await tick();
 
   expect(queryClient.getQueryData(['rules'])).toEqual([]); // no optimistic prepend
-  const keys = invalidate.mock.calls.slice(before).map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
+  const keys = invalidatedKeys(invalidate).slice(before);
   expect(keys).toContain('rules'); // refreshed normally
 });

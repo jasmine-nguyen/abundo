@@ -23,6 +23,7 @@ import { queryClient } from '../queryClient';
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES } from './support/categories';
+import { invalidatedKeys } from './support/queryClient';
 
 const server = installFakeServer();
 
@@ -44,10 +45,6 @@ function readUncategorizedFeed(): Transaction[] {
   const data = queryClient.getQueryData<{ pages: { transactions: Transaction[] }[] }>(['uncategorizedFeed']);
   return data ? data.pages.flatMap((p) => p.transactions) : [];
 }
-function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
-  return spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
-}
-
 beforeEach(() => {
   queryClient.clear();
   queryClient.setQueryData(['categories'], [{ ...CAT }]);
