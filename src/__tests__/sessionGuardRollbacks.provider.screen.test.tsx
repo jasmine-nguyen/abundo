@@ -7,19 +7,8 @@ import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (s: typeof mockStatus) => {
-  mockStatus = s;
-  mockListeners.forEach((l) => l());
-};
-const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mockListeners.delete(l); };
-
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (l: () => void) => mockSubscribe(l),
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, resetAuth } from './support/authMock';
 
 import { AppProvider, useAppContext } from '../context';
 import type { Bucket } from '../types';
@@ -35,7 +24,7 @@ const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{c
 // Sign out in PRODUCTION order: clearSession() wipes the cache, THEN broadcasts anon (which the
 // context's subscription turns into the epoch bump). Matches [A10]:175.
 function signOut() {
-  act(() => { queryClient.clear(); mockSetStatus('anon'); });
+  act(() => { queryClient.clear(); setAuthStatus('anon'); });
 }
 
 // ----- module-level helpers hoisted from the folded gaps files -----
@@ -48,8 +37,7 @@ const FORM = { name: 'Gym', bucket: 'Lifestyle' as Bucket, icon: 'dumbbell' };
 const SILENT = { silent: true };
 
 beforeEach(() => {
-  mockStatus = 'authed';
-  mockListeners.clear();
+  resetAuth();
   queryClient.clear();
 });
 afterEach(() => {
@@ -86,7 +74,7 @@ describe('WHIT-271 — a writer settling after sign-out re-seats nothing and sho
     act(() => { result.current.setPayCycleLength(30); });
     signOut();
     // A NEW account signs in and loads its own cycle BEFORE the stale failure lands.
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('authed'));
     queryClient.setQueryData(['payCycle'], { length: 7, last_pay_date: '2026-07-10' });
     await act(async () => { held.release(); await settle(); });
 
@@ -229,7 +217,7 @@ describe('WHIT-271 — a writer settling after sign-out re-seats nothing and sho
     let pending!: Promise<void>;
     act(() => { pending = result.current.deleteRule('rA'); });
     signOut();
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('authed'));
     queryClient.setQueryData(['rules'], [{ id: 'rB', pattern: 'WOOLIES', categoryId: 'cB', isNew: false }]);
     await act(async () => { held.release(); await pending; });
 

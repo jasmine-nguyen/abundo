@@ -12,13 +12,8 @@ import type { UncategorizedMerchantGroup } from '../api';
 import { ApiError } from '../apiError';
 import { queryClient } from '../queryClient';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 
 const server = installFakeServer();
@@ -43,7 +38,7 @@ const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
 
 function mount() { return renderHook(() => useAppContext(), { wrapper }).result; }
 
-beforeEach(() => { queryClient.clear(); jest.useFakeTimers(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); jest.useFakeTimers(); resetAuth(); });
 afterEach(() => { jest.useRealTimers(); queryClient.clear(); });
 
 it('sends a shop run over 300 charges to a background job and says so', async () => {

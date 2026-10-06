@@ -17,22 +17,10 @@ import type { Transaction } from '../types';
 import { installFakeServer } from './support/fakeServer';
 
 // ../auth — mutable status (superset: supports the screen-render auth-flip test). INERT for the
-// renderHook describes: their beforeEach re-seeds 'authed' and no test calls setAuth, so the
+// renderHook describes: their beforeEach re-seeds 'authed' and no test calls setAuthStatus, so the
 // listener Set never fires — behaviourally identical to a static `() => 'authed'` stub.
-let mockAuthStatus = 'authed';
-const mockAuthListeners = new Set<() => void>();
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: (l: () => void) => {
-    mockAuthListeners.add(l);
-    return () => mockAuthListeners.delete(l);
-  },
-  getAuthToken: async () => 'test-id-token',
-}));
-function setAuth(next: string) {
-  mockAuthStatus = next;
-  mockAuthListeners.forEach((l) => l());
-}
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 
 const mockShowToast = jest.fn<(m: string) => void>();
 
@@ -77,8 +65,7 @@ const TXNS = [{
 
 describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
   beforeEach(() => {
-    mockAuthStatus = 'authed';
-    mockAuthListeners.clear();
+    resetAuth();
     server.seed(FEED, { transactions: TXNS, nextCursor: null });
     server.seed('/categories', mockCategories);
   });
@@ -223,8 +210,7 @@ describe('the Transactions tab feed composite — pagination + refresh', () => {
   const page = (transactions: Transaction[], nextCursor: string | null) => ({ body: { transactions, nextCursor } });
 
   beforeEach(() => {
-    mockAuthStatus = 'authed';
-    mockAuthListeners.clear();
+    resetAuth();
   });
 
   it('loads the newest page first, then Load More appends the next (older) page', async () => {
@@ -297,8 +283,7 @@ describe('the Uncategorized tab feed composite — server-side paged uncategoriz
   const page = (transactions: Transaction[], nextCursor: string | null) => ({ body: { transactions, nextCursor } });
 
   beforeEach(() => {
-    mockAuthStatus = 'authed';
-    mockAuthListeners.clear();
+    resetAuth();
     server.seed(FEED, { transactions: [], nextCursor: null });
   });
 
@@ -373,8 +358,7 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
   }
 
   beforeEach(() => {
-    mockAuthStatus = 'authed';
-    mockAuthListeners.clear();
+    resetAuth();
     server.seed(FEED, { transactions: TXNS, nextCursor: null });
     server.seed('/categories', mockCategories);
   });
@@ -430,12 +414,12 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
   });
 
   it('does not fetch before login, then fires on auth flip to authed', async () => {
-    mockAuthStatus = 'anon';
+    setAuthStatusQuietly('anon');
     renderTransactions();
     expect(feedReads()).toHaveLength(0);
 
     await act(async () => {
-      setAuth('authed');
+      setAuthStatus('authed');
     });
     expect(await screen.findByText('-$42.00')).toBeTruthy();
     expect(feedReads().length).toBeGreaterThan(0);
@@ -483,8 +467,7 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
 // spinner/error/Retry must mirror the feed + taxonomy exactly as before.
 describe('useTransactionDetailScreenData (WHIT-614)', () => {
   beforeEach(() => {
-    mockAuthStatus = 'authed';
-    mockAuthListeners.clear();
+    resetAuth();
     server.seed(FEED, { transactions: TXNS, nextCursor: null });
     server.seed('/categories', mockCategories);
   });

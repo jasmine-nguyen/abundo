@@ -8,7 +8,7 @@
 // budgetTxRefileSignOut) merged in below as block-scoped child describes, each keeping its own
 // fixtures byte-for-byte. Shared harness (imports, the fake server, wrapper, signOut,
 // module beforeEach/afterEach) hoisted once. The ../auth mock is reconciled to the LIVE-store
-// SUPERSET so the sign-out siblings can flip mockStatus; every other describe simply stays 'authed'.
+// SUPERSET so the sign-out siblings can flip the status; every other describe simply stays 'authed'.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
@@ -22,18 +22,10 @@ import { refreshInAct } from './support/renderWithQueries';
 import { GROCERIES } from './support/categories';
 import { invalidatedKeys } from './support/queryClient';
 
-// Live auth store (superset). The static-'authed' siblings never touch mockStatus, so it stays
-// 'authed' for them; the two sign-out siblings mutate it via mockSetStatus to drive sign-out.
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (s: typeof mockStatus) => { mockStatus = s; mockListeners.forEach((l) => l()); };
-const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mockListeners.delete(l); };
-
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (l: () => void) => mockSubscribe(l),
-  getAuthToken: async () => 'test-id-token',
-}));
+// Live auth store (superset). The static-'authed' siblings never touch the status, so it stays
+// 'authed' for them; the two sign-out siblings flip it via setAuthStatus to drive sign-out.
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, resetAuth } from './support/authMock';
 
 const server = installFakeServer();
 
@@ -41,7 +33,7 @@ const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{c
 
 const sentBodies = (path: string) => server.sent('PATCH', path).map((request) => request.body);
 
-function signOut() { act(() => { queryClient.clear(); mockSetStatus('anon'); }); }
+function signOut() { act(() => { queryClient.clear(); setAuthStatus('anon'); }); }
 
 const CAT = GROCERIES;
 const txn = (over: Partial<Transaction> = {}): Transaction => ({
@@ -52,7 +44,7 @@ const txn = (over: Partial<Transaction> = {}): Transaction => ({
 });
 
 beforeEach(() => {
-  mockStatus = 'authed'; mockListeners.clear();
+  resetAuth();
   queryClient.clear();
 });
 afterEach(() => { queryClient.clear(); }); // clear the singleton's gcTime timers

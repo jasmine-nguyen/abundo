@@ -20,17 +20,8 @@ import type { Transaction } from '../types';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (status: typeof mockStatus) => {
-  mockStatus = status;
-  mockListeners.forEach((listener) => listener());
-};
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 
 const SWEEP: FilingTarget = { kind: 'sweep' };
@@ -63,7 +54,7 @@ function rowsIn(key: 'transactions' | 'uncategorizedFeed'): Transaction[] {
 
 const mount = () => renderHook(() => useAppContext(), { wrapper }).result;
 
-beforeEach(() => { queryClient.clear(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); resetAuth(); });
 afterEach(() => { queryClient.clear(); });
 
 // --- a refresh landing mid-run ------------------------------------------------
@@ -166,7 +157,7 @@ it('does not refresh the caches when a FAILING write lands after a sign-out', as
   let returned: FilingResult | null = null;
   await act(async () => {
     const inFlight = result.current.fileCharges(SWEEP, { now: true });
-    mockSetStatus('anon');                            // sign-out bumps the session epoch
+    setAuthStatus('anon');                            // sign-out bumps the session epoch
     pending.release();                                // the write then fails with a 401
     returned = await inFlight;
   });

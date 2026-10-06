@@ -23,17 +23,8 @@ import { seedTransactionsCache, seedTransactionsPages } from './support/transact
 
 // A live miniature auth store (the sessionGuardRollbacks harness), so the tests below can end the
 // session or lock the app mid-run and see the provider react for real.
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (status: typeof mockStatus) => {
-  mockStatus = status;
-  mockListeners.forEach((listener) => listener());
-};
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
 
@@ -70,7 +61,7 @@ function mount() {
   return result;
 }
 
-beforeEach(() => { queryClient.clear(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); resetAuth(); });
 afterEach(() => { queryClient.clear(); });
 
 // --- the successful write -----------------------------------------------------
@@ -252,7 +243,7 @@ it('bails without writing when the user signs out mid-write', async () => {
   let returned: FilingResult | null = null;
   await act(async () => {
     const inFlight = result.current.fileCharges(SWEEP, { now: true });
-    mockSetStatus('anon');                                   // sign-out bumps the session epoch
+    setAuthStatus('anon');                                   // sign-out bumps the session epoch
     seedTransactionsCache(queryClient, [txn()]);             // the next session's data
     pending.release();
     returned = await inFlight;
@@ -270,7 +261,7 @@ it('bails without painting when the preview settles after a sign-out', async () 
   let returned: FilingResult | null = null;
   await act(async () => {
     const inFlight = result.current.previewFiling(SWEEP);
-    mockSetStatus('anon');
+    setAuthStatus('anon');
     pending.release();
     returned = await inFlight;
   });
@@ -286,7 +277,7 @@ it('closes the apply-rules sheet on a Face ID lock', () => {
   const result = mount();
   act(() => { result.current.setSheet({ mode: 'applyRules' }); });
 
-  act(() => { mockSetStatus('locked'); });
+  act(() => { setAuthStatus('locked'); });
 
   expect(result.current.sheet).toBeNull();
 });
@@ -296,12 +287,12 @@ it('closes the apply-rules sheet on a Face ID lock', () => {
 it('leaves other sheets alone on a lock, and every sheet alone on an authed re-broadcast', () => {
   const result = mount();
   act(() => { result.current.setSheet({ mode: 'addrule' }); });
-  act(() => { mockSetStatus('locked'); });
+  act(() => { setAuthStatus('locked'); });
   expect(result.current.sheet).toEqual({ mode: 'addrule' });
 
-  mockStatus = 'authed';
+  setAuthStatusQuietly('authed');
   act(() => { result.current.setSheet({ mode: 'applyRules' }); });
-  act(() => { mockSetStatus('authed') });
+  act(() => { setAuthStatus('authed') });
   expect(result.current.sheet).toEqual({ mode: 'applyRules' });
 });
 

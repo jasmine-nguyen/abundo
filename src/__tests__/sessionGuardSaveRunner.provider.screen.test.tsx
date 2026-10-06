@@ -7,19 +7,8 @@ import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (s: typeof mockStatus) => {
-  mockStatus = s;
-  mockListeners.forEach((l) => l());
-};
-const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mockListeners.delete(l); };
-
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (l: () => void) => mockSubscribe(l),
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, resetAuth } from './support/authMock';
 
 import { AppProvider, useAppContext } from '../context';
 import { queryClient } from '../queryClient';
@@ -32,14 +21,13 @@ const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{c
 
 // Production order: clearSession() wipes the cache, THEN broadcasts anon (the epoch bump).
 function signOut() {
-  act(() => { queryClient.clear(); mockSetStatus('anon'); });
+  act(() => { queryClient.clear(); setAuthStatus('anon'); });
 }
 
 const cat = (id: string, name: string) => ({ id, name, bucket: 'Living', icon: 'tag', color: '#fff', recent: 0 });
 
 beforeEach(() => {
-  mockStatus = 'authed';
-  mockListeners.clear();
+  resetAuth();
   queryClient.clear();
 });
 afterEach(() => {
@@ -57,7 +45,7 @@ describe('WHIT-638 — a save failing after sign-out cannot undo into the NEXT a
     act(() => { pending = result.current.applyTransactionEdit('t1', { notes: 'new' }); });
     signOut();
     // The next account signs in and loads its own charges before the stale failure lands.
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('authed'));
     seedTransactionsCache(queryClient, [{ transaction_id: 't1', notes: 'next account', category: null, counts_to_budget: true, description: 'X' }]);
     await act(async () => { held.release(); await pending; });
 
@@ -78,7 +66,7 @@ describe('WHIT-638 — a save failing after sign-out cannot undo into the NEXT a
     let pending!: Promise<void>;
     act(() => { pending = result.current.applyCategoryToMany(['t1', 't2'], 'c1'); });
     signOut();
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('authed'));
     seedTransactionsCache(queryClient, [
       { transaction_id: 't1', category: 'fresh', counts_to_budget: true, description: 'X' },
       { transaction_id: 't2', category: 'fresh', counts_to_budget: true, description: 'Y' },

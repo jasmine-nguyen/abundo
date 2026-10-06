@@ -10,13 +10,8 @@ import { AppProvider, useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
 import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';
 import { queryClient } from '../queryClient';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { CHAT_ERROR_TEXT, CHAT_MAX_WAIT_MS, CHAT_POLL_DELAY_MS, ChatProvider, useChat } from '../chat/ChatContext';
 const SWEEP: FilingTarget = { kind: 'sweep' };
@@ -47,7 +42,7 @@ async function tick(times = 1) {
 }
 
 beforeEach(async () => {
-  queryClient.clear(); jest.useFakeTimers(); mockStatus = 'authed'; mockListeners.clear();
+  queryClient.clear(); jest.useFakeTimers(); resetAuth();
   await AsyncStorage.clear();
 });
 afterEach(() => { jest.useRealTimers(); queryClient.clear(); });

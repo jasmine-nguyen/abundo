@@ -21,19 +21,10 @@ import { formatDayMonthYear, toISODate } from '../dateutil';
 import { BUCKET_COLOR } from '../categoryColors';
 import { C } from '../theme';
 
-// Live miniature auth store; the jest.mock factories close over the mock-prefixed vars. A test drives
-// login status via mockSetStatus (broadcasts on change) or mockRebroadcast (re-notify, no change).
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (s: typeof mockStatus) => { mockStatus = s; mockListeners.forEach((l) => l()); };
-const mockRebroadcast = () => mockListeners.forEach((l) => l());
-const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mockListeners.delete(l); };
-
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (l: () => void) => mockSubscribe(l),
-  getAuthToken: async () => 'test-id-token',
-}));
+// Live auth store (support/authMock). A test drives login status via setAuthStatus (broadcasts),
+// setAuthStatus(getAuthStatus()) (re-notify, no change) or setAuthStatusQuietly (no broadcast).
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { getAuthStatus, setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 
 import { AppProvider, useAppContext } from '../context';
 import { Overlays } from '../components/Overlays';
@@ -80,8 +71,7 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
   const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
   beforeEach(() => {
-    mockStatus = 'authed';
-    mockListeners.clear();
+    resetAuth();
     queryClient.clear();
   });
 
@@ -100,7 +90,7 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
     expect(result.current.toast).toBe('Transaction filed: $123.45');
     expect(result.current.aiInsights).not.toBeNull();
 
-    act(() => mockSetStatus('anon'));
+    act(() => setAuthStatus('anon'));
 
     expect(result.current.sheet).toBeNull();
     expect(result.current.toast).toBeNull();
@@ -118,8 +108,8 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
       pending = result.current.generateAiInsights(null);
     });
     await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(1));
-    act(() => mockSetStatus('anon')); // the session dies while the request is in flight
-    act(() => mockSetStatus('authed')); // …and a NEW session signs in before it settles
+    act(() => setAuthStatus('anon')); // the session dies while the request is in flight
+    act(() => setAuthStatus('authed')); // …and a NEW session signs in before it settles
     await act(async () => {
       held.release();
       await pending;
@@ -140,8 +130,8 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
     let pendingA!: Promise<void>;
     act(() => { pendingA = result.current.generateAiInsights(null); }); // A in flight (epoch 0)
     await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(1));
-    act(() => mockSetStatus('anon'));   // sign out → epoch bumps, loading reset
-    act(() => mockSetStatus('authed')); // a NEW session signs in
+    act(() => setAuthStatus('anon'));   // sign out → epoch bumps, loading reset
+    act(() => setAuthStatus('authed')); // a NEW session signs in
     const heldB = server.hold('/insights/ai');
     act(() => { void result.current.generateAiInsights(null); }); // B in flight → loading true
     await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(2));
@@ -167,7 +157,7 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
       pending = result.current.generateAiInsights(null);
     });
     await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(1));
-    act(() => mockSetStatus('locked')); // backgrounded → Face ID seal, SAME session
+    act(() => setAuthStatus('locked')); // backgrounded → Face ID seal, SAME session
     await act(async () => {
       held.release();
       await pending;
@@ -199,7 +189,7 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
     act(() => ctx.showToast('Balance: $9,999'));
     expect(screen.getByText('Balance: $9,999')).toBeTruthy();
 
-    act(() => mockSetStatus('locked')); // Face ID resume seal
+    act(() => setAuthStatus('locked')); // Face ID resume seal
     // Hidden from the tree — nothing money-related can sit over the lock screen…
     expect(screen.queryByText('Balance: $9,999')).toBeNull();
     // …but the context-held toast value is NOT cleared on a lock (only on 'anon'), so it
@@ -207,7 +197,7 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
     // loses it; preserving that across a lock is WHIT-266, not this card.)
     expect(ctx.toast).toBe('Balance: $9,999');
 
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('authed'));
     expect(screen.getByText('Balance: $9,999')).toBeTruthy(); // reappears intact
   });
 
@@ -223,7 +213,7 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
     );
 
     act(() => ctx.showToast('Balance: $9,999'));
-    act(() => mockSetStatus('anon'));
+    act(() => setAuthStatus('anon'));
 
     expect(screen.queryByText('Balance: $9,999')).toBeNull(); // hidden by the gate
     expect(ctx.toast).toBeNull(); // and hard-cleared by the anon subscription
@@ -251,8 +241,7 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
   }
 
   beforeEach(() => {
-    mockStatus = 'authed';
-    mockListeners.clear();
+    resetAuth();
     queryClient.clear();
   });
 
@@ -272,8 +261,8 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
     let pending!: Promise<void>;
     act(() => { pending = result.current.refreshAiInsights(); });
     await waitFor(() => expect(server.sent('GET', '/insights/ai')).toHaveLength(2));
-    act(() => mockSetStatus('anon')); // sign-out mid-flight (anon subscription clears state)
-    act(() => mockSetStatus('authed')); // …and a NEW session signs in before it settles
+    act(() => setAuthStatus('anon')); // sign-out mid-flight (anon subscription clears state)
+    act(() => setAuthStatus('authed')); // …and a NEW session signs in before it settles
     await act(async () => {
       held.release();
       await pending;
@@ -291,15 +280,15 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
     act(() => result.current.showToast('Balance: $9,999'));
     act(() => result.current.setSheet({ mode: 'paycycle' } as never));
 
-    act(() => mockSetStatus('locked')); // Face ID resume seal — state must SURVIVE
+    act(() => setAuthStatus('locked')); // Face ID resume seal — state must SURVIVE
     expect(result.current.toast).toBe('Balance: $9,999');
     expect(result.current.sheet).not.toBeNull();
 
-    act(() => mockSetStatus('anon')); // unlock() found the key invalidated → clearSession
+    act(() => setAuthStatus('anon')); // unlock() found the key invalidated → clearSession
     expect(result.current.toast).toBeNull();
     expect(result.current.sheet).toBeNull();
 
-    act(() => mockRebroadcast()); // a second broadcast while already anon
+    act(() => setAuthStatus(getAuthStatus())); // a second broadcast while already anon
     expect(result.current.toast).toBeNull(); // still clear, nothing thrown
     expect(result.current.sheet).toBeNull();
   });
@@ -307,7 +296,7 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
   // WHIT-268 — [A9] cold start: while status is 'loading' (before the first auth resolve)
   // the overlay layer is hidden — but NOT cleared (loading is not a sign-out).
   it("during the cold-start 'loading' status the overlay layer is hidden, and its state survives to authed", () => {
-    mockStatus = 'loading';
+    setAuthStatusQuietly('loading');
     let ctx!: ReturnType<typeof useAppContext>;
     render(
       <WithQueries>
@@ -322,7 +311,7 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
     expect(screen.queryByText('Balance: $1,234')).toBeNull(); // hidden pre-auth
     expect(ctx.toast).toBe('Balance: $1,234'); // not cleared — loading isn't anon
 
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('authed'));
     expect(screen.getByText('Balance: $1,234')).toBeTruthy(); // renders once authed
   });
 
@@ -341,7 +330,7 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
     await waitFor(() => expect(server.sent('POST', '/rules')).toHaveLength(1));
 
     // Sign-out, in production order: clearSession() clears the cache BEFORE broadcasting anon.
-    act(() => { queryClient.clear(); mockSetStatus('anon'); });
+    act(() => { queryClient.clear(); setAuthStatus('anon'); });
     await act(async () => {
       held.release();
       await pending;
@@ -374,8 +363,7 @@ describe('WHIT-277 — pop-up sheet drafts survive a Face ID lock', () => {
   const RULE_INPUT = 'e.g. NETFLIX';
 
   beforeEach(() => {
-    mockStatus = 'authed';
-    mockListeners.clear();
+    resetAuth();
     server.seed('/goals', [{ id: 'g1', name: 'Emergency fund', icon: 'star', direction: 'save', target_amount: 1000, target_date: null, baseline: null, manual_balance: null }]);
     queryClient.clear();
   });
@@ -387,12 +375,12 @@ describe('WHIT-277 — pop-up sheet drafts survive a Face ID lock', () => {
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY');
 
     // Lock: the whole overlay layer unmounts (WHIT-268 privacy shield) — the input is gone.
-    act(() => mockSetStatus('locked'));
+    act(() => setAuthStatus('locked'));
     expect(screen.queryByPlaceholderText(RULE_INPUT)).toBeNull();
     expect(screen.queryByText('New rule')).toBeNull();
 
     // Unlock: the sheet remounts and restores the stashed text.
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('authed'));
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY');
   });
 
@@ -402,10 +390,10 @@ describe('WHIT-277 — pop-up sheet drafts survive a Face ID lock', () => {
     fireEvent.changeText(screen.getByTestId('goal-balance-input'), '2500');
     expect(screen.getByTestId('goal-balance-input').props.value).toBe('2500');
 
-    act(() => mockSetStatus('locked'));
+    act(() => setAuthStatus('locked'));
     expect(screen.queryByTestId('goal-balance-input')).toBeNull();
 
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('authed'));
     expect(screen.getByTestId('goal-balance-input').props.value).toBe('2500');
   });
 
@@ -414,8 +402,8 @@ describe('WHIT-277 — pop-up sheet drafts survive a Face ID lock', () => {
     act(() => ctx.setSheet({ mode: 'addrule' }));
     fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
 
-    act(() => mockSetStatus('anon')); // sign-out: hard-clears drafts + the sheet descriptor
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('anon')); // sign-out: hard-clears drafts + the sheet descriptor
+    act(() => setAuthStatus('authed'));
     act(() => ctx.setSheet({ mode: 'addrule' }));
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('');
   });
@@ -470,8 +458,7 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
   }
 
   beforeEach(() => {
-    mockStatus = 'authed';
-    mockListeners.clear();
+    resetAuth();
     server.seed('/categories', CATS);
     server.seed('/rules', [{ id: 'e1', value: 'NETFLIX', categoryId: 'subs' }]);
     server.seed('/goals', [{ id: 'g1', name: 'Emergency fund', icon: 'star', direction: 'save', target_amount: 1000, target_date: null, baseline: null, manual_balance: null }]);
@@ -486,10 +473,10 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
     expect(pillColor('Groceries')).toBe('#fff');
     expect(pillColor('Subscriptions')).not.toBe('#fff');
 
-    act(() => mockSetStatus('locked'));
+    act(() => setAuthStatus('locked'));
     expect(screen.queryByText('Groceries')).toBeNull(); // whole sheet unmounted
 
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('authed'));
     // Both halves come back: the typed pattern AND the chosen category pill.
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY');
     expect(pillColor('Groceries')).toBe('#fff');
@@ -508,10 +495,10 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
     expect(pickedLabel).not.toBe(todayLabel); // guard: the test only means something if they differ
     expect(screen.getByText(pickedLabel)).toBeTruthy();
 
-    act(() => mockSetStatus('locked'));
+    act(() => setAuthStatus('locked'));
     expect(screen.queryByText(pickedLabel)).toBeNull();
 
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('authed'));
     // The picked date survives — it did NOT snap back to today's default.
     expect(screen.getByText(pickedLabel)).toBeTruthy();
     expect(screen.queryByText(todayLabel)).toBeNull();
@@ -523,8 +510,8 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
     expect(screen.getByDisplayValue('NETFLIX')).toBeTruthy(); // prefilled from the rule
     fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'NETFLIXX');
 
-    act(() => mockSetStatus('locked'));
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('locked'));
+    act(() => setAuthStatus('authed'));
 
     // The EDITED text is restored — not the original 'NETFLIX' prefill fallback.
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('NETFLIXX');
@@ -554,7 +541,7 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
     fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9999');
     expect(screen.getByDisplayValue('9999')).toBeTruthy();
 
-    act(() => mockSetStatus('locked'));
+    act(() => setAuthStatus('locked'));
     // The privacy shield must hide the whole sheet even though the draft (9999) is stashed in the
     // provider — nothing money-related may sit over the Face ID lock.
     expect(screen.queryByTestId('goal-balance-input')).toBeNull();
@@ -562,7 +549,7 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
     expect(screen.queryByText('Emergency fund — set the current balance and the date it was true.')).toBeNull();
 
     // …and it all comes back intact on unlock (proves it was HIDDEN, not cleared).
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('authed'));
     expect(screen.getByDisplayValue('9999')).toBeTruthy();
   });
 });
@@ -583,8 +570,7 @@ describe('WHIT-283 — picker inline-create draft survives a Face ID lock', () =
   const NAME_INPUT = 'Category name';
 
   beforeEach(() => {
-    mockStatus = 'authed';
-    mockListeners.clear();
+    resetAuth();
     seedTransactions(T1);
     queryClient.clear();
   });
@@ -601,11 +587,11 @@ describe('WHIT-283 — picker inline-create draft survives a Face ID lock', () =
     expect(screen.getByPlaceholderText(NAME_INPUT).props.value).toBe('Gym');
 
     // Lock: the whole overlay layer unmounts (WHIT-268 shield) — the form is gone.
-    act(() => mockSetStatus('locked'));
+    act(() => setAuthStatus('locked'));
     expect(screen.queryByPlaceholderText(NAME_INPUT)).toBeNull();
 
     // Unlock: the picker reopens straight into the create form with the name restored.
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('authed'));
     expect(screen.getByPlaceholderText(NAME_INPUT).props.value).toBe('Gym');
     expect(screen.getByText('New category')).toBeTruthy();       // the form title
     expect(screen.queryByTestId('pickerNewCategory')).toBeNull(); // NOT back on the list
@@ -627,7 +613,7 @@ describe('WHIT-283 — picker inline-create draft survives a Face ID lock', () =
     openCreateForm();
     fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), 'SecretCat');
 
-    act(() => mockSetStatus('locked'));
+    act(() => setAuthStatus('locked'));
     expect(screen.queryByPlaceholderText(NAME_INPUT)).toBeNull();
     expect(screen.queryByDisplayValue('SecretCat')).toBeNull();
     expect(screen.queryByText('New category')).toBeNull();
@@ -651,8 +637,8 @@ describe('WHIT-283 — picker inline-create draft survives a Face ID lock', () =
     openCreateForm();
     fireEvent.changeText(screen.getByPlaceholderText(NAME_INPUT), 'Gym');
 
-    act(() => mockSetStatus('anon'));  // sign-out hard-clears drafts + the sheet
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('anon'));  // sign-out hard-clears drafts + the sheet
+    act(() => setAuthStatus('authed'));
     openCreateForm();
     expect(screen.getByPlaceholderText(NAME_INPUT).props.value).toBe('');
   });
@@ -690,8 +676,7 @@ describe('WHIT-283 GAP — the restored form RE-SELECTS bucket / icon / parent a
   }
 
   beforeEach(() => {
-    mockStatus = 'authed';
-    mockListeners.clear();
+    resetAuth();
     seedTransactions(T1);
     // One same-bucket (Lifestyle == the form's initialBucket) category, so the inline form's parent
     // picker offers it — required for the parent round-trip.
@@ -712,8 +697,8 @@ describe('WHIT-283 GAP — the restored form RE-SELECTS bucket / icon / parent a
     fireEvent.press(screen.getByText('Living'));       // a non-default bucket (default is Lifestyle)
     fireEvent.press(screen.getByTestId('icon-cart'));  // a non-default icon (default is coffee)
 
-    act(() => mockSetStatus('locked'));  // overlay layer unmounts (WHIT-268 shield)
-    act(() => mockSetStatus('authed'));  // restored mount
+    act(() => setAuthStatus('locked'));  // overlay layer unmounts (WHIT-268 shield)
+    act(() => setAuthStatus('authed'));  // restored mount
 
     // The reopened form must SHOW the choices selected: the bucket label paints in its bucket colour
     // and the icon tile borders in the accent ONLY when selected.
@@ -738,8 +723,8 @@ describe('WHIT-283 GAP — the restored form RE-SELECTS bucket / icon / parent a
     fireEvent.press(screen.getByText('Coffee'));       // the same-bucket parent (initialBucket Lifestyle)
     expect(ctx.readSheetDraft('pickercat:t1')).toMatchObject({ parent: 'coffee' });
 
-    act(() => mockSetStatus('locked'));
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('locked'));
+    act(() => setAuthStatus('authed'));
 
     // Reopened: the 'Coffee' parent chip reads selected (painted in the category's colour) and the
     // 'None' chip does not.
@@ -771,8 +756,7 @@ describe('WHIT-437 — categorise sheet quick-create reason', () => {
   const CAP = 'a category can have at most 50 sub-categories';
 
   beforeEach(() => {
-    mockStatus = 'authed';
-    mockListeners.clear();
+    resetAuth();
     seedTransactions(T1);
     queryClient.clear();
   });
@@ -879,8 +863,7 @@ describe('WHIT-538 — Back from the add-rule preview restores the form draft', 
   };
 
   beforeEach(() => {
-    mockStatus = 'authed';
-    mockListeners.clear();
+    resetAuth();
     server.seed('/categories', CATS);
     server.seed('/rules', []);
     queryClient.clear();

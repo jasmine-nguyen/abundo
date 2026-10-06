@@ -11,20 +11,8 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
-let mockAuthStatus = 'authed';
-const mockAuthListeners = new Set<() => void>();
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: (l: () => void) => {
-    mockAuthListeners.add(l);
-    return () => mockAuthListeners.delete(l);
-  },
-  getAuthToken: async () => 'test-id-token',
-}));
-function setAuth(next: string) {
-  mockAuthStatus = next;
-  mockAuthListeners.forEach((l) => l());
-}
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 
 import { useGoalScreenData } from '../queries';
 
@@ -35,8 +23,7 @@ const REPAYMENT = { amount: 1500, date: '2026-07-01', principal: 1268, interest:
 const READY_FACTS = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
 
 beforeEach(() => {
-  mockAuthStatus = 'authed';
-  mockAuthListeners.clear();
+  resetAuth();
   server.seed('/homeloan', HOME_LOAN);
   server.seed('/repayment', REPAYMENT);
   server.seed('/loanfacts', READY_FACTS);
@@ -55,13 +42,13 @@ it('assembles the balance (as_of→asOf), repayment, and loan facts from the thr
 });
 
 it('does not fetch before login, then fires on the auth flip to authed', async () => {
-  mockAuthStatus = 'anon';
+  setAuthStatusQuietly('anon');
   const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
   expect(server.sent('GET', '/homeloan')).toHaveLength(0);
   expect(server.sent('GET', '/repayment')).toHaveLength(0);
   expect(server.sent('GET', '/loanfacts')).toHaveLength(0);
 
-  await act(async () => { setAuth('authed'); });
+  await act(async () => { setAuthStatus('authed'); });
   await waitFor(() => expect(result.current.homeLoan.balance).toBe(596642.43));
   expect(server.sent('GET', '/homeloan')).toHaveLength(1);
 });

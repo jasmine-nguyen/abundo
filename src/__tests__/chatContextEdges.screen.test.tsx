@@ -9,13 +9,8 @@ import type { ChatJob } from '../api';
 import { installFakeServer } from './support/fakeServer';
 import { flush } from './support/queryClient';
 
-let mockAuthStatus = 'authed';
-const mockAuthListeners = new Set<() => void>();
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: (listener: () => void) => { mockAuthListeners.add(listener); return () => mockAuthListeners.delete(listener); },
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, resetAuth } from './support/authMock';
 
 import { CHAT_ERROR_TEXT, CHAT_MAX_NET_ERRORS, CHAT_POLL_DELAY_MS, ChatProvider, useChat } from '../chat/ChatContext';
 import type { ChatContextValue } from '../chat/ChatContext';
@@ -50,8 +45,7 @@ async function mount() {
 
 beforeEach(async () => {
   jest.useFakeTimers();
-  mockAuthStatus = 'authed';
-  mockAuthListeners.clear();
+  resetAuth();
   await AsyncStorage.clear();
 });
 
@@ -82,8 +76,7 @@ describe('late answers never land in the wrong thread', () => {
     act(() => chat.send('Hi'));
     await flush();
 
-    mockAuthStatus = 'anon';
-    act(() => mockAuthListeners.forEach((listener) => listener()));
+    act(() => setAuthStatus('anon'));
     await act(async () => { start.release(); });
     await tick();
     await tick();

@@ -11,17 +11,8 @@ import { AppProvider, useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
 import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';
 import { queryClient } from '../queryClient';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (status: typeof mockStatus) => {
-  mockStatus = status;
-  mockListeners.forEach((listener) => listener());
-};
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 import type { CreatedRule, UncategorizedMerchantGroup } from '../api';
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
@@ -55,7 +46,7 @@ async function tick(times = 1) {
   }
 }
 
-beforeEach(() => { queryClient.clear(); jest.useFakeTimers(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); jest.useFakeTimers(); resetAuth(); });
 afterEach(() => { jest.useRealTimers(); queryClient.clear(); });
 
 // [G1] no overlap: one GET per delay even when a GET outlasts the delay (a held reply that never
@@ -101,14 +92,14 @@ it('[G3] a Face-ID lock stops polling, drops the job, and releases the lock', as
   await tick();
   const before = polls();
 
-  await act(async () => { mockSetStatus('locked'); });
+  await act(async () => { setAuthStatus('locked'); });
   expect(r.current.applyRulesJob).toBeNull();              // job view dropped
 
   await tick(3);
   expect(polls()).toBe(before);                            // poll stopped
 
   // The lock was released (not just the timer) — a new sweep is accepted, not turned away.
-  mockStatus = 'authed';
+  setAuthStatusQuietly('authed');
   let started: unknown;
   await act(async () => { started = await r.current.fileCharges(SWEEP, BIG_RUN); });
   expect(started).toEqual({ status: 'background' });
@@ -125,7 +116,7 @@ it('[G5] a lock while the start POST is in flight discards the start and keeps t
   const r = mount().result;
   let started: Promise<unknown>;
   await act(async () => { started = r.current.fileCharges(SWEEP, BIG_RUN); });   // POST now pending
-  await act(async () => { mockSetStatus('locked'); });                      // lock clears active + job
+  await act(async () => { setAuthStatus('locked'); });                      // lock clears active + job
   await act(async () => { held.release(); await started; });
 
   expect(r.current.applyRulesJob).toBeNull();               // the cleared job is NOT resurrected
@@ -133,7 +124,7 @@ it('[G5] a lock while the start POST is in flight discards the start and keeps t
   expect(polls()).toBe(0);                                  // no poll loop was armed
 
   // The lock was left consistent — after unlock a fresh sweep is accepted (latch not stuck true).
-  mockStatus = 'authed';
+  setAuthStatusQuietly('authed');
   let again: unknown;
   await act(async () => { again = await r.current.fileCharges(SWEEP, BIG_RUN); });
   expect(again).toEqual({ status: 'background' });

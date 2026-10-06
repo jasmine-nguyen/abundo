@@ -9,19 +9,8 @@ import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (s: typeof mockStatus) => {
-  mockStatus = s;
-  mockListeners.forEach((l) => l());
-};
-const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mockListeners.delete(l); };
-
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (l: () => void) => mockSubscribe(l),
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, resetAuth } from './support/authMock';
 
 import { AppProvider, useAppContext } from '../context';
 import { queryClient } from '../queryClient';
@@ -32,14 +21,13 @@ const server = installFakeServer();
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 function signOut() {
-  act(() => { queryClient.clear(); mockSetStatus('anon'); });
+  act(() => { queryClient.clear(); setAuthStatus('anon'); });
 }
 
 const cat = (id: string, name: string) => ({ id, name, bucket: 'Living', icon: 'tag', color: '#fff', recent: 0 });
 
 beforeEach(() => {
-  mockStatus = 'authed';
-  mockListeners.clear();
+  resetAuth();
   queryClient.clear();
 });
 afterEach(() => {
@@ -58,7 +46,7 @@ describe('WHIT-271 round-2 — createCategoryInline cannot append the old catego
     act(() => { pending = result.current.createCategoryInline({ name: 'New', bucket: 'Living' as never, icon: 'tag' }); });
     signOut();
     // Account B signs in and loads its OWN categories BEFORE the stale create lands.
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('authed'));
     queryClient.setQueryData(['categories'], [cat('cB', 'Account B only')]);
 
     let returned!: unknown;

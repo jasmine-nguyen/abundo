@@ -11,20 +11,8 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
-let mockAuthStatus = 'authed';
-const mockAuthListeners = new Set<() => void>();
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: (l: () => void) => {
-    mockAuthListeners.add(l);
-    return () => mockAuthListeners.delete(l);
-  },
-  getAuthToken: async () => 'test-id-token',
-}));
-function setAuth(next: string) {
-  mockAuthStatus = next;
-  mockAuthListeners.forEach((l) => l());
-}
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 
 import { useGoalsScreenData, homeLoanKey } from '../queries';
 
@@ -42,8 +30,7 @@ const HOME_LOAN = { balance: 596642.43, as_of: '2026-07-04T00:24:37.614Z', curre
 const READY_FACTS = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
 
 beforeEach(() => {
-  mockAuthStatus = 'authed';
-  mockAuthListeners.clear();
+  resetAuth();
   server.seed('/goals', GOALS);
   server.seed('/paycycle', PAY_CYCLE);
   server.seed('/accounts/balances', BALANCES);
@@ -75,13 +62,13 @@ it('balanceFor returns the live SIGNED amount by account id, null for unknown/un
 });
 
 it('does not fetch before login, then fires every read on the auth flip', async () => {
-  mockAuthStatus = 'anon';
+  setAuthStatusQuietly('anon');
   const { result } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });
   expect(server.sent('GET', '/goals')).toHaveLength(0);
   expect(server.sent('GET', '/paycycle')).toHaveLength(0);
   expect(server.sent('GET', '/accounts/balances')).toHaveLength(0);
 
-  await act(async () => { setAuth('authed'); });
+  await act(async () => { setAuthStatus('authed'); });
   await waitFor(() => expect(result.current.goals).toEqual(GOALS));
   expect(server.sent('GET', '/goals')).toHaveLength(1);
   expect(server.sent('GET', '/accounts/balances')).toHaveLength(1);
@@ -173,8 +160,7 @@ describe('useGoalsScreenData — adversarial edges (WHIT-233)', () => {
   ];
 
   beforeEach(() => {
-    mockAuthStatus = 'authed';
-    mockAuthListeners.clear();
+    resetAuth();
     server.seed('/goals', GOALS);
     server.seed('/paycycle', PAY_CYCLE);
     server.seed('/accounts/balances', BALANCES);
@@ -234,7 +220,7 @@ describe('useGoalsScreenData — adversarial edges (WHIT-233)', () => {
   // [S4] while cold (not authed → no data), `goals` is the SAME frozen EMPTY_GOALS across redraws,
   // so a [goals]-keyed memo/effect doesn't re-fire every render (the documented WHIT-244 trap).
   it('goals keeps a stable empty-array identity while cold (EMPTY_GOALS)', async () => {
-    mockAuthStatus = 'anon';
+    setAuthStatusQuietly('anon');
     const { result, rerender } = renderHook(() => useGoalsScreenData(), { wrapper: wrapper(makeClient()) });
     const first = result.current.goals;
     expect(first).toEqual([]);

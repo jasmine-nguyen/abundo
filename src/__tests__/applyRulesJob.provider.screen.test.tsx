@@ -17,17 +17,8 @@ import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';
 import type { UncategorizedMerchantGroup } from '../api';
 import { queryClient } from '../queryClient';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (status: typeof mockStatus) => {
-  mockStatus = status;
-  mockListeners.forEach((listener) => listener());
-};
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
 const SWEEP: FilingTarget = { kind: 'sweep' };
@@ -57,7 +48,7 @@ async function tick(times = 1) {
   }
 }
 
-beforeEach(() => { queryClient.clear(); jest.useFakeTimers(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); jest.useFakeTimers(); resetAuth(); });
 afterEach(() => { jest.useRealTimers(); queryClient.clear(); });
 
 it('starts a job, shows it running, and polls to success — refreshing caches once', async () => {
@@ -197,7 +188,7 @@ it('stops polling on sign-out and never reads status into the next session', asy
   await tick();
   const callsBefore = server.sent('GET', JOB_PATH).length;
 
-  await act(async () => { mockSetStatus('anon'); });
+  await act(async () => { setAuthStatus('anon'); });
   expect(r.current.applyRulesJob).toBeNull();
 
   await tick(3);

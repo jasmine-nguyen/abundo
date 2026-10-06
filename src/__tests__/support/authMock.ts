@@ -13,9 +13,10 @@
 // The jest.mock factory uses require() (not the import) so it survives hoisting; every path
 // resolves to this one module instance, so setAuthStatus() and the real useIsAuthed share state.
 //
-// NOTE: setAuthStatus broadcasts UNCONDITIONALLY. The guarded variant — skip the broadcast when
-// the status is unchanged (sessionEpochAccessor / session-epoch suites) — is deliberately NOT
-// covered here; those suites keep their inlined block.
+// NOTE: setAuthStatus broadcasts UNCONDITIONALLY; setAuthStatusQuietly changes the status without
+// telling subscribers (re-announce later with setAuthStatus(getAuthStatus())). The guarded variant
+// — skip the broadcast when the status is unchanged (sessionEpochAccessor / session-epoch suites)
+// — is deliberately NOT covered here; those suites keep their inlined block.
 import type { AuthStatus } from '../../auth';
 
 const TEST_TOKEN = 'test-id-token';
@@ -35,6 +36,11 @@ export const subscribeAuth = (listener: () => void): (() => void) => {
 export const setAuthStatus = (next: AuthStatus): void => {
   status = next;
   listeners.forEach((listener) => listener());
+};
+
+// Change the login status without notifying subscribers; the screen only sees it on its next read.
+export const setAuthStatusQuietly = (next: AuthStatus): void => {
+  status = next;
 };
 
 // The ID token the real api.ts request step asks for (WHIT-637). undefined → "Not signed in".

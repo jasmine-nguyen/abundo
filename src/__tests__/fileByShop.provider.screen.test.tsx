@@ -24,14 +24,8 @@ import { ApiError } from '../apiError';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (status: typeof mockStatus) => { mockStatus = status; mockListeners.forEach((l) => l()); };
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
 
@@ -67,7 +61,7 @@ function rowsIn(key: 'transactions'): Transaction[] {
 }
 function mount() { return renderHook(() => useAppContext(), { wrapper }).result; }
 
-beforeEach(() => { queryClient.clear(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); resetAuth(); });
 afterEach(() => { queryClient.clear(); });
 
 // --- fileByShop: the write ----------------------------------------------------
@@ -224,7 +218,7 @@ it('bails without painting when a file settles after sign-out', async () => {
   let outcome: FilingResult | null = null;
   await act(async () => {
     const inFlight = result.current.fileCharges({ kind: 'shop', group: GROUP, categoryId: 'groceries' }, { now: true });
-    mockSetStatus('anon');
+    setAuthStatus('anon');
     seedTransactionsCache(queryClient, [txn()]);
     pending.release();
     outcome = await inFlight;
