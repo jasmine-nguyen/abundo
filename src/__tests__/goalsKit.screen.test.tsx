@@ -11,7 +11,7 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { resetAuth } from './support/authMock';
 import { resetRouter } from './support/routerMock';
 import { seedGoal } from './support/goalsScreen';
-import type { MilestoneRecord } from '../api';
+import { SAVED_MILESTONES } from './support/milestonePlan';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => {
@@ -28,12 +28,6 @@ beforeEach(() => {
   resetRouter();
 });
 
-const SAVED_PLAN: MilestoneRecord[] = [
-  { id: 'a', label: 'Start', targetBalance: 300000, targetDate: '2026-01-01' },
-  { id: 'b', label: 'Midway', targetBalance: 200000, targetDate: '2027-01-01' },
-  { id: 'c', label: 'Payoff', targetBalance: 100000, targetDate: '2028-01-01' },
-];
-
 function MortgageScreen() {
   const Mortgage = require('../../app/mortgage').default;
   return <Mortgage />;
@@ -44,7 +38,7 @@ describe('the mortgage screen drawn over the fake server with the shared Goals k
     seedGoal(server, {
       loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null, payoffGoalDate: null },
       homeLoan: { balance: 250000, asOf: '2026-07-04T00:24:37.614Z' },
-      milestones: SAVED_PLAN,
+      milestones: SAVED_MILESTONES,
     });
 
     await renderWithQueries(<MortgageScreen />);

@@ -11,6 +11,7 @@ import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
+import { SAVED_MILESTONES } from './support/milestonePlan';
 
 let mockAuthStatus = 'authed';
 const mockAuthListeners = new Set<() => void>();
@@ -110,11 +111,6 @@ it('refetchStale refetches all three reads exactly once when they are stale', as
 // flows through unchanged. Reuses the module wrapper + HOME_LOAN/REPAYMENT/READY_FACTS + the module
 // beforeEach (which now seeds /milestones → []).
 describe('goalScreenData — milestones secondary query (WHIT-367)', () => {
-  const SAVED_PLAN = [
-    { id: 'a', label: 'Start',  targetBalance: 300000, targetDate: '2026-01-01' },
-    { id: 'b', label: 'Midway', targetBalance: 200000, targetDate: '2027-01-01' },
-  ];
-
   it('a milestones read FAILURE does not flip isError/isLoading and falls back to []', async () => {
     server.fail('/milestones', 500);
     const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
@@ -143,10 +139,10 @@ describe('goalScreenData — milestones secondary query (WHIT-367)', () => {
   });
 
   it('a real saved milestone list flows through the composite unchanged', async () => {
-    server.seed('/milestones', SAVED_PLAN);
+    server.seed('/milestones', SAVED_MILESTONES);
     const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
-    await waitFor(() => expect(result.current.milestones).toHaveLength(2));
-    expect(result.current.milestones).toEqual(SAVED_PLAN);
+    await waitFor(() => expect(result.current.milestones).toHaveLength(SAVED_MILESTONES.length));
+    expect(result.current.milestones).toEqual(SAVED_MILESTONES);
     expect(result.current.isError).toBe(false);
   });
 });

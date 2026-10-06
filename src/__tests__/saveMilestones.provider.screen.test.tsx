@@ -8,6 +8,7 @@ import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 import type { MilestoneRecord } from '../api';
+import { SAVED_MILESTONES } from './support/milestonePlan';
 import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
@@ -18,10 +19,6 @@ const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
-const PLAN: MilestoneRecord[] = [
-  { id: 'a', label: 'Start',  targetBalance: 300000, targetDate: '2026-01-01' },
-  { id: 'b', label: 'Payoff', targetBalance: 100000, targetDate: '2028-01-01' },
-];
 const cached = () => queryClient.getQueryData<MilestoneRecord[]>(['milestones']);
 
 beforeEach(() => { queryClient.clear(); });
@@ -38,11 +35,11 @@ it('saveMilestones writes the cache + invalidates ONLY milestones', async () => 
   const invalidateSpy = jest.spyOn(queryClient, 'invalidateQueries');
 
   let ok: boolean | undefined;
-  await act(async () => { ok = await result.current.saveMilestones(PLAN); });
+  await act(async () => { ok = await result.current.saveMilestones(SAVED_MILESTONES); });
 
   expect(ok).toBe(true);
-  expect(server.requests()).toContainEqual({ method: 'PUT', path: '/milestones', body: { milestones: PLAN } });
-  expect(cached()).toEqual(PLAN); // optimistic write
+  expect(server.requests()).toContainEqual({ method: 'PUT', path: '/milestones', body: { milestones: SAVED_MILESTONES } });
+  expect(cached()).toEqual(SAVED_MILESTONES); // optimistic write
   const keys = invalidatedKeys(invalidateSpy);
   expect(keys).toContain('milestones');
   expect(keys).not.toContain('homeLoan');   // the balance read must not be disturbed
@@ -59,12 +56,12 @@ it('rolls the cache back to the prior plan on a save failure', async () => {
   let midLength: number | undefined;
   let ok: boolean | undefined;
   await act(async () => {
-    const p = result.current.saveMilestones(PLAN);
-    midLength = cached()?.length; // optimistic → 2
+    const p = result.current.saveMilestones(SAVED_MILESTONES);
+    midLength = cached()?.length; // optimistic → the full plan
     ok = await p;
   });
 
   expect(ok).toBe(false);
-  expect(midLength).toBe(2);        // <-- fails if the optimistic write is removed
+  expect(midLength).toBe(SAVED_MILESTONES.length); // <-- fails if the optimistic write is removed
   expect(cached()).toEqual([]);     // rolled back to the pre-save (empty) plan
 });

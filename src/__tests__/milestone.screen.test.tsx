@@ -15,21 +15,15 @@ import { resetAuth } from './support/authMock';
 import { seedGoal } from './support/goalsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
-import type { MilestoneRecord } from '../api';
+import { saveMilestonesSpy, showToastSpy, milestoneLabelAt } from './support/milestoneEditor';
+import { SAVED_MILESTONES } from './support/milestonePlan';
 import { MoneyField } from '../components/MoneyField';
 import { C } from '../theme';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-// The Milestone/Mortgage screens don't read useAppContext (the real selectors still run
-// via requireActual). The folded editor (milestoneEdit) DOES read saveMilestones/showToast
-// off it, so the stub returns the superset object — inert for the screens that ignore it.
-const mockSaveMilestones = jest.fn(async (_next: MilestoneRecord[]) => true);
-const mockShowToast = jest.fn();
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ saveMilestones: mockSaveMilestones, showToast: mockShowToast }) };
-});
+// The Milestone/Mortgage screens ignore this stub; the folded editor reads saveMilestones/showToast off it.
+jest.mock('../context', () => require('./support/milestoneEditor').milestoneEditorContextMockModule());
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
@@ -264,17 +258,10 @@ it('The mortgage screen shows a graceful empty state when there is no repayment 
 
 // ===== WHIT-367 (folded from milestoneReadpath.screen.test.tsx) =====
 // The milestone read path: the screen renders the user's SAVED plan when one exists, the
-// built-in default when it doesn't. SAVED_PLAN is block-scoped here since it's used only by
-// these two cases.
+// built-in default when it doesn't.
 describe('WHIT-367 milestone read path', () => {
-  const SAVED_PLAN: MilestoneRecord[] = [
-    { id: 'a', label: 'Start',  targetBalance: 300000, targetDate: '2026-01-01' },
-    { id: 'b', label: 'Midway', targetBalance: 200000, targetDate: '2027-01-01' },
-    { id: 'c', label: 'Payoff', targetBalance: 100000, targetDate: '2028-01-01' },
-  ];
-
   it('renders the saved milestone plan when one exists', async () => {
-    seedGoal(server, { milestones: SAVED_PLAN, homeLoan: { balance: 250000, asOf: null } });
+    seedGoal(server, { milestones: SAVED_MILESTONES, homeLoan: { balance: 250000, asOf: null } });
     await renderWithQueries(<Milestone />);
     // The user's own rows — label + step number derived from position.
     expect(screen.getByText('Sprint 0 · Start')).toBeTruthy();
@@ -335,34 +322,25 @@ it('a known (last-good) balance WINS over a refetch error — shows the balance,
 // ===== WHIT-377 (folded from milestoneEdit.screen.test.tsx) =====
 // The milestone editor screen. It reads the saved plan from the fake server's /milestones; the
 // shared ../context mock supplies saveMilestones/showToast, and expo-router's back is
-// routerSpies.back. The editor-only fixtures (SAVED, labelAt, its own beforeEach seeding the
-// saved plan) are block-scoped here.
+// routerSpies.back. Its own beforeEach seeds the saved plan.
 describe('WHIT-377 milestone editor', () => {
-  const SAVED: MilestoneRecord[] = [
-    { id: 'a', label: 'Start',  targetBalance: 300000, targetDate: '2026-01-01' },
-    { id: 'b', label: 'Midway', targetBalance: 200000, targetDate: '2027-01-01' },
-    { id: 'c', label: 'Payoff', targetBalance: 100000, targetDate: '2028-01-01' },
-  ];
-
-  const labelAt = (i: number) => screen.getByTestId(`milestone-label-${i}`).props.value;
-
   beforeEach(() => {
-    mockSaveMilestones.mockClear();
-    mockShowToast.mockClear();
-    server.seed('/milestones', SAVED);
+    saveMilestonesSpy.mockClear();
+    showToastSpy.mockClear();
+    server.seed('/milestones', SAVED_MILESTONES);
   });
 
   it('hydrates the rows from the saved plan', async () => {
     await renderWithQueries(<MilestoneEdit />);
-    expect(labelAt(0)).toBe('Start');
-    expect(labelAt(1)).toBe('Midway');
-    expect(labelAt(2)).toBe('Payoff');
+    expect(milestoneLabelAt(0)).toBe('Start');
+    expect(milestoneLabelAt(1)).toBe('Midway');
+    expect(milestoneLabelAt(2)).toBe('Payoff');
   });
 
   it('a resolved new user starts with one blank row + a "Use a suggested plan" button', async () => {
     server.seed('/milestones', []);   // resolved, no saved plan
     await renderWithQueries(<MilestoneEdit />);
-    expect(labelAt(0)).toBe('');
+    expect(milestoneLabelAt(0)).toBe('');
     expect(screen.queryByTestId('milestone-label-1')).toBeNull();       // exactly one blank row
     expect(screen.getByTestId('milestone-use-template')).toBeTruthy();  // the opt-in template button
   });
@@ -372,8 +350,8 @@ describe('WHIT-377 milestone editor', () => {
     await renderWithQueries(<MilestoneEdit />);
     fireEvent.press(screen.getByTestId('milestone-use-template'));
     // The 5-sprint suggested plan is now in the form, editable (fail-on-revert: a blank seed only).
-    expect(labelAt(0)).toBe('Kickoff');
-    expect(labelAt(4)).toBe('Target');
+    expect(milestoneLabelAt(0)).toBe('Kickoff');
+    expect(milestoneLabelAt(4)).toBe('Target');
   });
 
   it('a user with a saved plan is NOT offered the suggested-plan button (no accidental wipe)', async () => {
@@ -391,13 +369,13 @@ describe('WHIT-377 milestone editor', () => {
   it('delete removes a row', async () => {
     await renderWithQueries(<MilestoneEdit />);
     fireEvent.press(screen.getByTestId('milestone-delete-1')); // remove 'Midway'
-    expect(labelAt(0)).toBe('Start');
-    expect(labelAt(1)).toBe('Payoff');
+    expect(milestoneLabelAt(0)).toBe('Start');
+    expect(milestoneLabelAt(1)).toBe('Payoff');
     expect(screen.queryByTestId('milestone-label-2')).toBeNull();
   });
 
   it('hides Delete on the last remaining row (an empty plan is not savable)', async () => {
-    server.seed('/milestones', [SAVED[0]]);
+    server.seed('/milestones', [SAVED_MILESTONES[0]]);
     await renderWithQueries(<MilestoneEdit />);
     expect(screen.queryByTestId('milestone-delete-0')).toBeNull();
   });
@@ -410,14 +388,14 @@ describe('WHIT-377 milestone editor', () => {
     server.fail('/milestones', 500);
     await renderWithQueries(<MilestoneEdit />);
     await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
-    expect(mockSaveMilestones).not.toHaveBeenCalled();
+    expect(saveMilestonesSpy).not.toHaveBeenCalled();
   });
 
   it('the down arrow swaps a row with its neighbour', async () => {
     await renderWithQueries(<MilestoneEdit />);
     fireEvent.press(screen.getByTestId('milestone-down-0')); // Start ↓ past Midway
-    expect(labelAt(0)).toBe('Midway');
-    expect(labelAt(1)).toBe('Start');
+    expect(milestoneLabelAt(0)).toBe('Midway');
+    expect(milestoneLabelAt(1)).toBe('Start');
   });
 
   it('blocks save on an invalid order — toasts, flags the row inline, and does NOT call the writer', async () => {
@@ -427,16 +405,16 @@ describe('WHIT-377 milestone editor', () => {
     fireEvent.press(screen.getByTestId('milestone-down-0'));
     expect(screen.getByText(/out of order/i)).toBeTruthy(); // live inline warning
     fireEvent.press(screen.getByTestId('milestone-save'));
-    expect(mockShowToast).toHaveBeenCalledWith(expect.stringMatching(/lower balance and a later date/i));
-    expect(mockSaveMilestones).not.toHaveBeenCalled();
+    expect(showToastSpy).toHaveBeenCalledWith(expect.stringMatching(/lower balance and a later date/i));
+    expect(saveMilestonesSpy).not.toHaveBeenCalled();
   });
 
   it('a valid save hands the full plan to saveMilestones and navigates back', async () => {
     await renderWithQueries(<MilestoneEdit />);
     // Flush the in-flight guard's async action.
     await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
-    expect(mockSaveMilestones).toHaveBeenCalledTimes(1);
-    const sent = mockSaveMilestones.mock.calls[0][0];
+    expect(saveMilestonesSpy).toHaveBeenCalledTimes(1);
+    const sent = saveMilestonesSpy.mock.calls[0][0];
     expect(sent.map((m) => m.label)).toEqual(['Start', 'Midway', 'Payoff']);
     expect(sent.map((m) => m.targetBalance)).toEqual([300000, 200000, 100000]);
     expect(routerSpies.back).toHaveBeenCalled();
@@ -450,32 +428,32 @@ describe('WHIT-377 milestone editor', () => {
       drawHeld(<MilestoneEdit />);
 
       // One blank row — NOT the old hardcoded default plan (removed).
-      expect(labelAt(0)).toBe('');
+      expect(milestoneLabelAt(0)).toBe('');
       expect(screen.queryByTestId('milestone-label-1')).toBeNull();  // exactly one row
 
       // Save is blocked while unloaded: pressing it must NOT write a plan.
       await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
-      expect(mockSaveMilestones).not.toHaveBeenCalled();
+      expect(saveMilestonesSpy).not.toHaveBeenCalled();
       await releaseAndSettle(held);
     });
 
     it('when the real saved plan resolves: the seeded latch re-seeds the rows AND unblocks save', async () => {
       const held = server.hold('/milestones');
       drawHeld(<MilestoneEdit />);
-      expect(labelAt(0)).toBe(''); // one blank row first (no hardcoded default)
+      expect(milestoneLabelAt(0)).toBe(''); // one blank row first (no hardcoded default)
 
       // The read resolves with the user's actual plan.
       await releaseAndSettle(held);
 
       // Re-seeded to the real plan (not left on the default).
-      expect(labelAt(0)).toBe('Start');
-      expect(labelAt(1)).toBe('Midway');
-      expect(labelAt(2)).toBe('Payoff');
+      expect(milestoneLabelAt(0)).toBe('Start');
+      expect(milestoneLabelAt(1)).toBe('Midway');
+      expect(milestoneLabelAt(2)).toBe('Payoff');
 
       // And save now goes through (a valid plan) — the block lifted with the load.
       await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
-      expect(mockSaveMilestones).toHaveBeenCalledTimes(1);
-      expect(mockSaveMilestones.mock.calls[0][0].map((m) => m.label)).toEqual(['Start', 'Midway', 'Payoff']);
+      expect(saveMilestonesSpy).toHaveBeenCalledTimes(1);
+      expect(saveMilestonesSpy.mock.calls[0][0].map((m) => m.label)).toEqual(['Start', 'Midway', 'Payoff']);
     });
   });
 
@@ -505,7 +483,7 @@ describe('WHIT-377 milestone editor', () => {
     it("each row's balance box is the shared money box, tagged per row, and keeps the darker background", async () => {
       await renderWithQueries(<MilestoneEdit />);
       const fields = screen.UNSAFE_getAllByType(MoneyField);
-      expect(fields).toHaveLength(SAVED.length);
+      expect(fields).toHaveLength(SAVED_MILESTONES.length);
       const input = within(fields[0]).getByTestId('milestone-balance-0');
       expect(input.props.value).toBe('300000');
       // Sign-off option A: the box stays C.bg so it contrasts with the C.card row card.
@@ -518,8 +496,8 @@ describe('WHIT-377 milestone editor', () => {
       await renderWithQueries(<MilestoneEdit />);
       fireEvent.changeText(screen.getByTestId('milestone-balance-0'), '600000');
       await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
-      expect(mockSaveMilestones).toHaveBeenCalledTimes(1);
-      const sent = mockSaveMilestones.mock.calls[0][0];
+      expect(saveMilestonesSpy).toHaveBeenCalledTimes(1);
+      const sent = saveMilestonesSpy.mock.calls[0][0];
       expect(sent.map((m) => m.targetBalance)).toEqual([600000, 200000, 100000]);
     });
 
@@ -530,7 +508,7 @@ describe('WHIT-377 milestone editor', () => {
       fireEvent.changeText(screen.getByTestId('milestone-balance-2'), '50000');
       expect(screen.getByTestId('milestone-balance-0').props.value).toBe('300000');
       await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
-      const sent = mockSaveMilestones.mock.calls[0][0];
+      const sent = saveMilestonesSpy.mock.calls[0][0];
       expect(sent.map((m) => m.targetBalance)).toEqual([300000, 200000, 50000]);
     });
 
@@ -569,13 +547,11 @@ describe('WHIT-459 empty-milestones gaps', () => {
   });
 });
 
-// Editor gaps: same module-level mocks; a minimal labelAt + a beforeEach that clears the
+// Editor gaps: same module-level mocks; a beforeEach that clears the
 // writer spy; the top-level resetRouter clears nav (the WHIT-377 describe's beforeEach is out of scope here).
 describe('WHIT-459 suggested-plan gaps (editor)', () => {
-  const labelAt = (i: number) => screen.getByTestId(`milestone-label-${i}`).props.value;
-
   beforeEach(() => {
-    mockSaveMilestones.mockClear();
+    saveMilestonesSpy.mockClear();
   });
 
   // Loading the suggested plan then SAVING must persist the template rows end-to-end through
@@ -585,10 +561,10 @@ describe('WHIT-459 suggested-plan gaps (editor)', () => {
     server.seed('/milestones', []);
     await renderWithQueries(<MilestoneEdit />);
     fireEvent.press(screen.getByTestId('milestone-use-template'));
-    expect(labelAt(0)).toBe('Kickoff');
+    expect(milestoneLabelAt(0)).toBe('Kickoff');
     await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
-    expect(mockSaveMilestones).toHaveBeenCalledTimes(1);
-    const sent = mockSaveMilestones.mock.calls[0][0];
+    expect(saveMilestonesSpy).toHaveBeenCalledTimes(1);
+    const sent = saveMilestonesSpy.mock.calls[0][0];
     expect(sent.map((m: { label: string }) => m.label)).toEqual(['Kickoff', 'Quarter way', 'Halfway', 'Three-quarters', 'Target']);
     expect(sent.map((m: { targetBalance: number }) => m.targetBalance)).toEqual([544000, 420000, 295000, 170000, 55000]);
     await Promise.resolve();
@@ -610,11 +586,9 @@ describe('WHIT-459 suggested-plan gaps (editor)', () => {
 });
 
 describe('WHIT-459 blank-seed save guard (editor)', () => {
-  const labelAt = (i: number) => screen.getByTestId(`milestone-label-${i}`).props.value;
-
   beforeEach(() => {
-    mockSaveMilestones.mockClear();
-    mockShowToast.mockClear();
+    saveMilestonesSpy.mockClear();
+    showToastSpy.mockClear();
   });
 
   // A resolved new user (saved === []) opens on ONE BLANK row. Tapping Save WITHOUT filling it must
@@ -624,9 +598,9 @@ describe('WHIT-459 blank-seed save guard (editor)', () => {
   it('a new user tapping Save on the blank seed row is blocked (toast, no write)', async () => {
     server.seed('/milestones', []);
     await renderWithQueries(<MilestoneEdit />);
-    expect(labelAt(0)).toBe('');                                   // opens blank, not a default plan
+    expect(milestoneLabelAt(0)).toBe('');                                   // opens blank, not a default plan
     await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
-    expect(mockSaveMilestones).not.toHaveBeenCalled();
-    expect(mockShowToast).toHaveBeenCalledWith(expect.stringMatching(/name|target|date/i));
+    expect(saveMilestonesSpy).not.toHaveBeenCalled();
+    expect(showToastSpy).toHaveBeenCalledWith(expect.stringMatching(/name|target|date/i));
   });
 });

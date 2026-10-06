@@ -15,7 +15,7 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { resetAuth } from './support/authMock';
 import { seedGoal } from './support/goalsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
-import type { MilestoneRecord } from '../api';
+import { SAVED_MILESTONES } from './support/milestonePlan';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => {
@@ -57,16 +57,10 @@ it('shows the live balance owing in the hero when facts are unset', async () => 
 // implementer only screen-tested milestone.tsx. This locks the mortgage screen's Sprint summary to
 // the SEEDED saved list: reverting mortgage.tsx to `milestoneView({ loanFacts, homeLoan })`
 // (dropping `milestones`) falls back to the default 5-sprint plan and turns these red.
-const SAVED_PLAN: MilestoneRecord[] = [
-  { id: 'a', label: 'Start',  targetBalance: 300000, targetDate: '2026-01-01' },
-  { id: 'b', label: 'Midway', targetBalance: 200000, targetDate: '2027-01-01' },
-  { id: 'c', label: 'Payoff', targetBalance: 100000, targetDate: '2028-01-01' },
-];
-
 it('mortgage Sprint summary reflects the saved plan (count + next target), not the default', async () => {
   // 250k clears only 'Start' (300k) of the 3 saved rows → "1 of 3", next 'Midway' (200k).
   // The default 5-sprint plan at this balance would read "3 of 5" / "under $170,000".
-  seedGoal(server, { milestones: SAVED_PLAN, homeLoan: { balance: 250000, asOf: '2026-07-04T00:24:37.614Z' } });
+  seedGoal(server, { milestones: SAVED_MILESTONES, homeLoan: { balance: 250000, asOf: '2026-07-04T00:24:37.614Z' } });
   await renderWithQueries(<Mortgage />);
   expect(screen.getByText('1 of 3 sprints reached')).toBeTruthy();
   expect(screen.getByText('Next: under $200,000')).toBeTruthy();

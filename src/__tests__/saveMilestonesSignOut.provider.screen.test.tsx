@@ -25,6 +25,7 @@ jest.mock('../auth', () => ({
 import { AppProvider, useAppContext } from '../context';
 import { queryClient } from '../queryClient';
 import type { MilestoneRecord } from '../api';
+import { SAVED_MILESTONES } from './support/milestonePlan';
 import { installFakeServer } from './support/fakeServer';
 
 const server = installFakeServer();
@@ -35,15 +36,9 @@ const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{c
 // turns into the epoch bump). Matches sessionGuardRollbacks.signOut.
 function signOut() { act(() => { queryClient.clear(); mockSetStatus('anon'); }); }
 
-const PREV: MilestoneRecord[] = [
-  { id: 'a', label: 'Start',  targetBalance: 300000, targetDate: '2026-01-01' },
-  { id: 'b', label: 'Payoff', targetBalance: 100000, targetDate: '2028-01-01' },
-];
-const NEXT: MilestoneRecord[] = [
-  { id: 'a', label: 'Start',  targetBalance: 300000, targetDate: '2026-01-01' },
-  { id: 'b', label: 'Middle', targetBalance: 200000, targetDate: '2027-01-01' },
-  { id: 'c', label: 'Payoff', targetBalance: 100000, targetDate: '2028-01-01' },
-];
+// The saved plan's first two rows (ids a, b); the save adds the client-minted 'c'.
+const PREV = SAVED_MILESTONES.slice(0, 2);
+const NEXT = SAVED_MILESTONES;
 const cached = () => queryClient.getQueryData<MilestoneRecord[]>(['milestones']);
 
 beforeEach(() => { mockStatus = 'authed'; mockListeners.clear(); queryClient.clear(); });
