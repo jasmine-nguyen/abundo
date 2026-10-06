@@ -159,252 +159,6 @@ def get_api_key() -> str:
     return _fetch_api_key(BANKSYNC_API_KEY_PATH)
 
 
-def lambda_handler(event, context):
-    path = event.get("rawPath", "")
-    method = event.get("requestContext", {}).get("http", {}).get("method", "")
-
-    # A config-item write that loses the optimistic-lock race past its retry budget
-    # is a conflict, not a server fault — map it to 409 for every route in one place.
-    try:
-        if path == TRANSACTION_PATH and method == "GET":
-            repo = TransactionRepository()
-            return _json_response(200, get_recent_transactions(repo))
-
-        # The all-accounts feed, paged back through full history (Load More). An EXACT
-        # path, disjoint from "/transactions" and the PATCH "/transactions/{id}" item
-        # route (a GET, so the startswith-PATCH branch never matches it). Returns
-        # {transactions, nextCursor}, so its own branch.
-        if path == TRANSACTIONS_FEED_PATH and method == "GET":
-            return get_transactions_feed(event, TransactionRepository())
-
-        # Full-history uncategorized count (WHIT-500). An EXACT path — disjoint from
-        # "/transactions", "/transactions/feed", and the PATCH "/transactions/{id}" item
-        # route (a GET, so the startswith-PATCH branch never matches it).
-        if path == UNCATEGORIZED_COUNT_PATH and method == "GET":
-            return get_uncategorized_count(TransactionRepository(), CategoryRepository())
-
-        # The uncategorized-only feed, paged back through full history (Load More). An EXACT
-        # path — disjoint from "/transactions", "/transactions/feed",
-        # "/transactions/uncategorized/count", and the PATCH "/transactions/{id}" item route
-        # (a GET, so the startswith-PATCH branch never matches it).
-        if path == UNCATEGORIZED_FEED_PATH and method == "GET":
-            return get_uncategorized_feed(event, TransactionRepository(), CategoryRepository())
-
-        # The unfiled charges grouped by merchant (WHIT-515). An EXACT path, disjoint from the
-        # other two GET uncategorized routes; the PATCH "/transactions/{id}" branch is
-        # method-gated and never sees it.
-        if path == UNCATEGORIZED_MERCHANTS_PATH and method == "GET":
-            return get_uncategorized_merchants(TransactionRepository(), CategoryRepository())
-
-        # Rules suggested from the user's hand-filing habits (WHIT-542) — the FILED-by-hand mirror
-        # of the merchants route. An EXACT path, disjoint from the uncategorized GET routes; the
-        # PATCH "/transactions/{id}" branch is method-gated and never sees it.
-        if path == FILING_SUGGESTIONS_PATH and method == "GET":
-            return get_filing_suggestions(
-                TransactionRepository(), CategoryRepository(), RuleRepository())
-
-        # Transactions-tab search over ALL history (WHIT-576). An EXACT path, disjoint from the
-        # other GET transaction routes; the PATCH "/transactions/{id}" branch is method-gated.
-        if path == TRANSACTIONS_SEARCH_PATH and method == "GET":
-            return get_transactions_search(event, TransactionRepository(), CategoryRepository())
-
-        # Every transaction and budget in one pay cycle, for the Insights export (WHIT-700,
-        # WHIT-703). An EXACT path, disjoint from the other GET transaction routes.
-        if path == TRANSACTIONS_CYCLE_PATH and method == "GET":
-            return get_cycle_transactions(
-                event, TransactionRepository(), PayCycleRepository(), BudgetRepository(),
-                CategoryRepository())
-
-        # Apply the user's BankSync rules to charges ALREADY stored (BankSync only applies them
-        # to incoming charges — WHIT-502). POST-only, and it PREVIEWS unless the body says
-        # {"dryRun": false}. An EXACT path, so it can't collide with the two GET uncategorized
-        # routes; the PATCH "/transactions/{id}" branch is method-gated and never sees a POST.
-        if path == UNCATEGORIZED_APPLY_RULES_PATH and method == "POST":
-            return apply_rules_to_uncategorized(
-                event, TransactionRepository(), CategoryRepository(), RuleRepository(),
-                BudgetRepository(), PayCycleRepository())
-
-        # Async apply-rules job (WHIT-537): start a background sweep with no 300/15s cap. POST
-        # starts a job (returns its id, 202); the {id} GET reports progress. The POST path is an
-        # EXACT match, disjoint from the sync apply-rules POST above; the GET uses startswith on
-        # ".../jobs/" (the id is a path parameter) and is method-gated, so it can't collide with
-        # the PATCH "/transactions/{id}" item route below.
-        if path == UNCATEGORIZED_APPLY_RULES_JOBS_PATH and method == "POST":
-            return start_apply_rules_job(
-                event, CategoryRepository(), RuleRepository(), JobRepository())
-
-        if (path.startswith(f"{UNCATEGORIZED_APPLY_RULES_JOBS_PATH}/")
-                and method == "GET"):
-            return get_apply_rules_job(event, JobRepository())
-
-        # Collection route (batch) BEFORE the item route. "/transactions" does not
-        # start with "/transactions/", so the two are disjoint regardless of order.
-        if path == TRANSACTION_PATH and method == "PATCH":
-            return patch_transactions_batch(event, TransactionRepository())
-
-        if path.startswith(f"{TRANSACTION_PATH}/") and method == "PATCH":
-            return patch_transaction(event, TransactionRepository())
-
-        if path.startswith(f"{TRANSACTION_PATH}/") and method == "DELETE":
-            return delete_transaction(event, TransactionRepository())
-
-        if path == CATEGORY_PATH and method == "GET":
-            return _json_response(200, list_categories(CategoryRepository()))
-
-        if path == CATEGORY_PATH and method == "POST":
-            return create_category(event, CategoryRepository(), BudgetRepository())
-
-        # The transactions behind one /breakdown row (whole cycle, exact category or the
-        # uncategorized bucket), so the drill-in list reconciles with the Insights card.
-        if (path.startswith(f"{CATEGORY_PATH}/") and path.endswith("/transactions")
-                and method == "GET"):
-            return get_category_transactions(
-                event, TransactionRepository(), PayCycleRepository(),
-                CategoryRepository())
-
-        if path.startswith(f"{CATEGORY_PATH}/") and method == "PATCH":
-            return update_category(event, CategoryRepository(), BudgetRepository())
-
-        if path.startswith(f"{CATEGORY_PATH}/") and method == "DELETE":
-            return delete_category(event, CategoryRepository(), BudgetRepository())
-
-        if path == BUDGET_PATH and method == "GET":
-            # Window is derived server-side from the stored pay cycle; a stale
-            # client's ?days= is simply not read (ignored, never a 400).
-            return _json_response(
-                200,
-                list_budgets(
-                    BudgetRepository(), TransactionRepository(), PayCycleRepository(),
-                    CategoryRepository()))
-
-        # The transactions behind one budget's total (the whole cycle + subtree),
-        # so the budget-detail list reconciles with the header. An EXACT "/transactions"
-        # suffix on a budget id, so it can't collide with the PUT/DELETE item routes.
-        if (path.startswith(f"{BUDGET_PATH}/") and path.endswith("/transactions")
-                and method == "GET"):
-            return get_budget_transactions(
-                event, TransactionRepository(), PayCycleRepository(),
-                CategoryRepository())
-
-        # A bill spread on one budget (WHIT-504). MUST sit above the generic item PUT/DELETE
-        # below, which would otherwise swallow "/budgets/{id}/spread" as a target write.
-        if _is_budget_spread_path(path) and method == "PUT":
-            return set_spread(event, BudgetRepository(), CategoryRepository(), PayCycleRepository())
-
-        if _is_budget_spread_path(path) and method == "DELETE":
-            return delete_spread(event, BudgetRepository())
-
-        if path.startswith(f"{BUDGET_PATH}/") and method == "PUT":
-            return set_budget(event, BudgetRepository(), CategoryRepository(), PayCycleRepository())
-
-        if path.startswith(f"{BUDGET_PATH}/") and method == "DELETE":
-            return delete_budget(event, BudgetRepository())
-
-        if path == BREAKDOWN_PATH and method == "GET":
-            # Spend by category (window derived server-side from the stored pay cycle,
-            # like /budgets). Optional ?cycle= looks back: 0 = current (default), n =
-            # the nth prior cycle (WHIT-68), bounded by BREAKDOWN_MAX_LOOKBACK.
-            cycle, cycle_error = _parse_breakdown_cycle(event)
-            if cycle_error is not None:
-                return cycle_error
-            return _json_response(
-                200,
-                list_category_breakdown(
-                    CategoryRepository(), TransactionRepository(), PayCycleRepository(),
-                    cycle=cycle))
-
-        # AI spending insights (WHIT-104). GET reads the per-cycle cache (never
-        # pays); POST generates (the paid Anthropic call). Both are authorizer-gated
-        # at the API Gateway route, like every mutating route.
-        if path == INSIGHTS_AI_PATH and method == "GET":
-            return _json_response(200, get_ai_insights(
-                InsightRepository(), PayCycleRepository()))
-
-        if path == INSIGHTS_AI_PATH and method == "POST":
-            return generate_ai_insights(
-                CategoryRepository(), BudgetRepository(), TransactionRepository(),
-                PayCycleRepository(), InsightRepository(), event)
-
-        # Ask Abundo chat (card 609). POST starts a background chat job (202 + jobId); the {id} GET
-        # is polled for the tool status and the answer. Same job pattern as apply-rules above.
-        if path == AI_CHAT_PATH and method == "POST":
-            return start_ai_chat_job(event, JobRepository())
-
-        if path.startswith(f"{AI_CHAT_JOBS_PATH}/") and method == "GET":
-            return get_ai_chat_job(event, JobRepository())
-
-        if path == HOMELOAN_PATH and method == "GET":
-            return _json_response(200, get_homeloan(HomeLoanBalanceRepository()))
-
-        if path == ACCOUNT_BALANCES_PATH and method == "GET":
-            return _json_response(200, get_account_balances(AccountBalanceRepository()))
-
-        if path == ACCOUNT_BALANCES_REFRESH_PATH and method == "POST":
-            return refresh_account_balances(AccountBalanceRepository())
-
-        if path == REPAYMENT_PATH and method == "GET":
-            return _json_response(200, get_repayment(TransactionRepository()))
-
-        if path == LOANFACTS_PATH and method == "GET":
-            return _json_response(200, get_loanfacts(LoanFactsRepository()))
-
-        if path == LOANFACTS_PATH and method == "PUT":
-            return set_loanfacts(event, LoanFactsRepository())
-
-        # Milestones (user-owned mortgage-paydown plan, WHIT-375). GET returns the saved
-        # list (empty until saved); PUT replaces the whole list. Inert until the client
-        # tickets consume it.
-        if path == MILESTONES_PATH and method == "GET":
-            return _json_response(200, get_milestones(event, MilestoneRepository()))
-
-        if path == MILESTONES_PATH and method == "PUT":
-            return set_milestones(event, MilestoneRepository(), NotifyRepository())
-
-        if path == PAYCYCLE_PATH and method == "GET":
-            return _json_response(200, get_paycycle_view(PayCycleRepository()))
-
-        if path == PAYCYCLE_PATH and method == "PUT":
-            return set_paycycle(event, PayCycleRepository())
-
-        # Goals (savings/paydown balance targets, WHIT-231). CRUD over the goals
-        # config item; collection route first, then the item routes ("/goals" does
-        # not startswith "/goals/", so the two are disjoint). Inside this try, so a
-        # repo VersionConflictError becomes the shared 409 below.
-        if path == GOALS_PATH and method == "GET":
-            return _json_response(200, list_goals(GoalsRepository()))
-
-        if path.startswith(f"{GOALS_PATH}/") and method == "PUT":
-            return upsert_goal(event, GoalsRepository(), AccountBalanceRepository())
-
-        if path.startswith(f"{GOALS_PATH}/") and method == "DELETE":
-            return delete_goal(event, GoalsRepository())
-
-        # Rules backed by our own store (WHIT-529). Collection routes first; "/rules" does not
-        # startswith "/rules/", so the exact and item routes are disjoint. Inside this try, so a
-        # repo VersionConflictError becomes the shared 409 below.
-        if path == RULES_PATH and method == "GET":
-            return list_rules_route(RuleRepository())
-
-        if path == RULES_PATH and method == "POST":
-            return create_rule_route(
-                event, RuleRepository(), CategoryRepository(), TransactionRepository())
-
-        if path.startswith(f"{RULES_PATH}/") and method == "PUT":
-            return update_rule_route(
-                event, RuleRepository(), CategoryRepository(), TransactionRepository())
-
-        if path.startswith(f"{RULES_PATH}/") and method == "DELETE":
-            return delete_rule_route(event, RuleRepository(), TransactionRepository())
-
-        # Device push-token registration (it controls who receives the user's notifications).
-        if path == DEVICES_PATH and method == "POST":
-            return register_device(event, DeviceRepository())
-
-        return _json_response(404, {"error": "Not found"})
-    except VersionConflictError:
-        return _json_response(409, {"error": "write conflict, please retry"})
-
-
 def _is_budget_spread_path(path: str) -> bool:
     """Exactly "/budgets/{id}/spread" — three segments — and nothing else. A suffix check
     alone would also match "/budgets/spread", i.e. the item route for a category whose id
@@ -412,6 +166,156 @@ def _is_budget_spread_path(path: str) -> bool:
     /transactions suffix has no such hole only because it is GET-only, with no generic
     GET item route beneath it."""
     return path.startswith(f"{BUDGET_PATH}/") and path.endswith("/spread") and path.count("/") == 3
+
+
+def _under(prefix: str):
+    return lambda path: path.startswith(f"{prefix}/")
+
+
+def _under_with_transactions(prefix: str):
+    return lambda path: path.startswith(f"{prefix}/") and path.endswith("/transactions")
+
+
+def _breakdown_route(event):
+    # Spend by category (window derived server-side from the stored pay cycle, like
+    # /budgets). Optional ?cycle= looks back: 0 = current (default), n = the nth prior
+    # cycle (WHIT-68), bounded by BREAKDOWN_MAX_LOOKBACK.
+    cycle, cycle_error = _parse_breakdown_cycle(event)
+    if cycle_error is not None:
+        return cycle_error
+    return _json_response(
+        200,
+        list_category_breakdown(
+            CategoryRepository(), TransactionRepository(), PayCycleRepository(), cycle=cycle))
+
+
+# Each value is a lambda so route functions and repositories resolve at call time (tests
+# monkeypatch both on this module).
+_EXACT_ROUTES = {
+    ("GET", TRANSACTION_PATH): lambda event: _json_response(
+        200, get_recent_transactions(TransactionRepository())),
+    ("PATCH", TRANSACTION_PATH): lambda event: patch_transactions_batch(
+        event, TransactionRepository()),
+    ("GET", TRANSACTIONS_FEED_PATH): lambda event: get_transactions_feed(
+        event, TransactionRepository()),
+    ("GET", UNCATEGORIZED_COUNT_PATH): lambda event: get_uncategorized_count(
+        TransactionRepository(), CategoryRepository()),
+    ("GET", UNCATEGORIZED_FEED_PATH): lambda event: get_uncategorized_feed(
+        event, TransactionRepository(), CategoryRepository()),
+    ("GET", UNCATEGORIZED_MERCHANTS_PATH): lambda event: get_uncategorized_merchants(
+        TransactionRepository(), CategoryRepository()),
+    ("GET", FILING_SUGGESTIONS_PATH): lambda event: get_filing_suggestions(
+        TransactionRepository(), CategoryRepository(), RuleRepository()),
+    ("GET", TRANSACTIONS_SEARCH_PATH): lambda event: get_transactions_search(
+        event, TransactionRepository(), CategoryRepository()),
+    ("GET", TRANSACTIONS_CYCLE_PATH): lambda event: get_cycle_transactions(
+        event, TransactionRepository(), PayCycleRepository(), BudgetRepository(),
+        CategoryRepository()),
+    # Previews unless the body says {"dryRun": false} (WHIT-502).
+    ("POST", UNCATEGORIZED_APPLY_RULES_PATH): lambda event: apply_rules_to_uncategorized(
+        event, TransactionRepository(), CategoryRepository(), RuleRepository(),
+        BudgetRepository(), PayCycleRepository()),
+    # Async apply-rules job (WHIT-537): 202 + jobId; the {id} GET reports progress.
+    ("POST", UNCATEGORIZED_APPLY_RULES_JOBS_PATH): lambda event: start_apply_rules_job(
+        event, CategoryRepository(), RuleRepository(), JobRepository()),
+    ("GET", CATEGORY_PATH): lambda event: _json_response(
+        200, list_categories(CategoryRepository())),
+    ("POST", CATEGORY_PATH): lambda event: create_category(
+        event, CategoryRepository(), BudgetRepository()),
+    # Window is derived server-side from the stored pay cycle; a stale client's ?days= is
+    # simply not read (ignored, never a 400).
+    ("GET", BUDGET_PATH): lambda event: _json_response(
+        200, list_budgets(
+            BudgetRepository(), TransactionRepository(), PayCycleRepository(),
+            CategoryRepository())),
+    ("GET", BREAKDOWN_PATH): lambda event: _breakdown_route(event),
+    # GET reads the per-cycle cache (never pays); POST generates (the paid Anthropic call).
+    ("GET", INSIGHTS_AI_PATH): lambda event: _json_response(
+        200, get_ai_insights(InsightRepository(), PayCycleRepository())),
+    ("POST", INSIGHTS_AI_PATH): lambda event: generate_ai_insights(
+        CategoryRepository(), BudgetRepository(), TransactionRepository(),
+        PayCycleRepository(), InsightRepository(), event),
+    # Ask Abundo chat (card 609): 202 + jobId; the {id} GET is polled for the answer.
+    ("POST", AI_CHAT_PATH): lambda event: start_ai_chat_job(event, JobRepository()),
+    ("GET", HOMELOAN_PATH): lambda event: _json_response(
+        200, get_homeloan(HomeLoanBalanceRepository())),
+    ("GET", ACCOUNT_BALANCES_PATH): lambda event: _json_response(
+        200, get_account_balances(AccountBalanceRepository())),
+    ("POST", ACCOUNT_BALANCES_REFRESH_PATH): lambda event: refresh_account_balances(
+        AccountBalanceRepository()),
+    ("GET", REPAYMENT_PATH): lambda event: _json_response(
+        200, get_repayment(TransactionRepository())),
+    ("GET", LOANFACTS_PATH): lambda event: _json_response(
+        200, get_loanfacts(LoanFactsRepository())),
+    ("PUT", LOANFACTS_PATH): lambda event: set_loanfacts(event, LoanFactsRepository()),
+    ("GET", MILESTONES_PATH): lambda event: _json_response(
+        200, get_milestones(event, MilestoneRepository())),
+    ("PUT", MILESTONES_PATH): lambda event: set_milestones(
+        event, MilestoneRepository(), NotifyRepository()),
+    ("GET", PAYCYCLE_PATH): lambda event: _json_response(
+        200, get_paycycle_view(PayCycleRepository())),
+    ("PUT", PAYCYCLE_PATH): lambda event: set_paycycle(event, PayCycleRepository()),
+    ("GET", GOALS_PATH): lambda event: _json_response(200, list_goals(GoalsRepository())),
+    ("GET", RULES_PATH): lambda event: list_rules_route(RuleRepository()),
+    ("POST", RULES_PATH): lambda event: create_rule_route(
+        event, RuleRepository(), CategoryRepository(), TransactionRepository()),
+    # Device push-token registration (it controls who receives the user's notifications).
+    ("POST", DEVICES_PATH): lambda event: register_device(event, DeviceRepository()),
+}
+
+# (method, matches(path), handle(event)); the first match wins.
+_PREFIX_ROUTES = [
+    ("GET", _under(UNCATEGORIZED_APPLY_RULES_JOBS_PATH), lambda event: get_apply_rules_job(
+        event, JobRepository())),
+    ("PATCH", _under(TRANSACTION_PATH), lambda event: patch_transaction(
+        event, TransactionRepository())),
+    ("DELETE", _under(TRANSACTION_PATH), lambda event: delete_transaction(
+        event, TransactionRepository())),
+    # The transactions behind one /breakdown row, so the drill-in reconciles with Insights.
+    ("GET", _under_with_transactions(CATEGORY_PATH), lambda event: get_category_transactions(
+        event, TransactionRepository(), PayCycleRepository(), CategoryRepository())),
+    ("PATCH", _under(CATEGORY_PATH), lambda event: update_category(
+        event, CategoryRepository(), BudgetRepository())),
+    ("DELETE", _under(CATEGORY_PATH), lambda event: delete_category(
+        event, CategoryRepository(), BudgetRepository())),
+    # The transactions behind one budget's total, so the detail list reconciles with the header.
+    ("GET", _under_with_transactions(BUDGET_PATH), lambda event: get_budget_transactions(
+        event, TransactionRepository(), PayCycleRepository(), CategoryRepository())),
+    # A bill spread on one budget (WHIT-504). MUST sit above the budget item PUT/DELETE,
+    # which would otherwise swallow "/budgets/{id}/spread" as a target write.
+    ("PUT", _is_budget_spread_path, lambda event: set_spread(
+        event, BudgetRepository(), CategoryRepository(), PayCycleRepository())),
+    ("DELETE", _is_budget_spread_path, lambda event: delete_spread(event, BudgetRepository())),
+    ("PUT", _under(BUDGET_PATH), lambda event: set_budget(
+        event, BudgetRepository(), CategoryRepository(), PayCycleRepository())),
+    ("DELETE", _under(BUDGET_PATH), lambda event: delete_budget(event, BudgetRepository())),
+    ("GET", _under(AI_CHAT_JOBS_PATH), lambda event: get_ai_chat_job(event, JobRepository())),
+    ("PUT", _under(GOALS_PATH), lambda event: upsert_goal(
+        event, GoalsRepository(), AccountBalanceRepository())),
+    ("DELETE", _under(GOALS_PATH), lambda event: delete_goal(event, GoalsRepository())),
+    ("PUT", _under(RULES_PATH), lambda event: update_rule_route(
+        event, RuleRepository(), CategoryRepository(), TransactionRepository())),
+    ("DELETE", _under(RULES_PATH), lambda event: delete_rule_route(
+        event, RuleRepository(), TransactionRepository())),
+]
+
+
+def lambda_handler(event, context):
+    path = event.get("rawPath", "")
+    method = event.get("requestContext", {}).get("http", {}).get("method", "")
+
+    # A config-item write that loses the optimistic-lock race past its retry budget
+    # is a conflict, not a server fault — map it to 409 for every route in one place.
+    try:
+        route = _EXACT_ROUTES.get((method, path))
+        if route is not None:
+            return route(event)
+        for route_method, matches, handle in _PREFIX_ROUTES:
+            if method == route_method and matches(path):
+                return handle(event)
+        return _json_response(404, {"error": "Not found"})
+    except VersionConflictError:
+        return _json_response(409, {"error": "write conflict, please retry"})
 
 
 def _json_response(status_code: int, body: dict | list) -> dict:
@@ -714,11 +618,7 @@ def get_recent_transactions(repo: TransactionRepository) -> list[dict]:
     # to exhaustion — the feed must not silently truncate at one page/account.
     all_recent_transactions = read_window(repo, start_date, end_date)
 
-    # remove pk and sk before returning to api, and ensure sparse fields default to None
-    for txn in all_recent_transactions:
-        txn.pop("pk", None)
-        txn.pop("sk", None)
-        txn.setdefault("category", None)
+    _shape_feed_rows(all_recent_transactions)
 
     # sort all transactions by date, newest first
     sorted_all_recent_transactions = sorted(
@@ -756,7 +656,7 @@ def _parse_feed_page_params(event: dict) -> tuple[int, dict, dict | None]:
 
 def _shape_feed_rows(page: list[dict]) -> None:
     """Strip the DynamoDB storage keys and default sparse fields on each feed row, in place —
-    the shared row shaping both feed routes apply. The resume keys were already built from the raw
+    the shared row shaping every feed route applies. The paged feeds' resume keys were already built from the raw
     rows inside _fetch_feed_page, so popping pk/sk here does not disturb the cursor."""
     for txn in page:
         txn.pop("pk", None)
@@ -1904,12 +1804,44 @@ def _invoke_worker(function_env_var: str, payload: dict) -> None:
     )
 
 
-def _invoke_apply_rules_worker(payload: dict) -> None:
-    _invoke_worker("APPLY_RULES_WORKER_FUNCTION", payload)
+def _start_job(
+    job_repo: JobRepository, kind: str, function_env_var: str, payload: dict, error_text: str,
+) -> dict:
+    """Create a running job row, async-invoke its worker, and return 202 with the job id."""
+    job_id = uuid.uuid4().hex
+    try:
+        job_repo.create_job(job_id, kind=kind)
+    except DatabaseError:
+        return _json_response(500, {"error": error_text})
+    try:
+        _invoke_worker(function_env_var, {"jobId": job_id, **payload})
+    except Exception as e:
+        # The worker couldn't be dispatched (permission/throttle). Mark the job failed so a poll
+        # reports it honestly rather than leaving it stuck "running" until its TTL.
+        logger.error("could not invoke %s worker for job %s: %s", kind, job_id, e)
+        try:
+            job_repo.finish_job(job_id, STATUS_FAILED, {}, error=error_text)
+        except DatabaseError:
+            pass
+        return _json_response(502, {"error": error_text})
+    return _json_response(202, {"jobId": job_id, "status": STATUS_RUNNING})
 
 
-def _invoke_ai_chat_worker(payload: dict) -> None:
-    _invoke_worker("AI_CHAT_WORKER_FUNCTION", payload)
+def _read_job(
+    event: dict, job_repo: JobRepository, kind: str | None, noun: str,
+) -> tuple[dict | None, dict | None]:
+    """The job named by the path id, as (job, None), or (None, error response): 404 for a missing,
+    unknown or expired id (or, when `kind` is given, a job of another kind), 500 on a read error."""
+    job_id = (event.get("pathParameters") or {}).get("id")
+    if not job_id:
+        return None, _json_response(404, {"error": f"no such {noun}"})
+    try:
+        job = job_repo.get_job(job_id)
+    except DatabaseError:
+        return None, _json_response(500, {"error": f"could not read the {noun}"})
+    if job is None or (kind is not None and job.get("kind") != kind):
+        return None, _json_response(404, {"error": f"no such {noun}"})
+    return job, None
 
 
 def _job_to_client(job: dict) -> dict:
@@ -1970,42 +1902,19 @@ def start_apply_rules_job(
         if clash is not None:
             return _rule_clash_response(clash)
 
-    job_id = uuid.uuid4().hex
-    try:
-        job_repo.create_job(job_id)
-    except DatabaseError:
-        return _json_response(500, {"error": "could not start the job"})
-
-    payload: dict = {"jobId": job_id}
+    payload: dict = {}
     if inline_rule is not None:
         payload["rule"] = inline_rule
-    try:
-        _invoke_apply_rules_worker(payload)
-    except Exception as e:
-        # The worker couldn't be dispatched (permission/throttle). Mark the job failed so a poll
-        # reports it honestly rather than leaving it stuck "running" until its TTL.
-        logger.error("could not invoke apply-rules worker for job %s: %s", job_id, e)
-        try:
-            job_repo.finish_job(job_id, STATUS_FAILED, {}, error="could not start the job")
-        except DatabaseError:
-            pass
-        return _json_response(502, {"error": "could not start the job"})
-
-    return _json_response(202, {"jobId": job_id, "status": STATUS_RUNNING})
+    return _start_job(
+        job_repo, "apply_rules", "APPLY_RULES_WORKER_FUNCTION", payload, "could not start the job")
 
 
 def get_apply_rules_job(event: dict, job_repo: JobRepository) -> dict:
     """GET /transactions/uncategorized/apply-rules/jobs/{id} — the current state of a job, so the
     app can poll it to completion. 404 for an unknown or expired id."""
-    job_id = (event.get("pathParameters") or {}).get("id")
-    if not job_id:
-        return _json_response(404, {"error": "no such job"})
-    try:
-        job = job_repo.get_job(job_id)
-    except DatabaseError:
-        return _json_response(500, {"error": "could not read the job"})
-    if job is None:
-        return _json_response(404, {"error": "no such job"})
+    job, error = _read_job(event, job_repo, None, "job")
+    if error is not None:
+        return error
     return _json_response(200, _job_to_client(job))
 
 
@@ -2046,35 +1955,17 @@ def start_ai_chat_job(event: dict, job_repo: JobRepository) -> dict:
     if error is not None:
         return error
 
-    job_id = uuid.uuid4().hex
-    try:
-        job_repo.create_job(job_id, kind="ai_chat")
-    except DatabaseError:
-        return _json_response(500, {"error": "could not start the chat"})
-    try:
-        _invoke_ai_chat_worker({"jobId": job_id, "messages": messages})
-    except Exception as e:
-        logger.error("could not invoke chat worker for job %s: %s", job_id, e)
-        try:
-            job_repo.finish_chat_job(job_id, STATUS_FAILED, error="could not start the chat")
-        except DatabaseError:
-            pass
-        return _json_response(502, {"error": "could not start the chat"})
-    return _json_response(202, {"jobId": job_id, "status": STATUS_RUNNING})
+    return _start_job(
+        job_repo, "ai_chat", "AI_CHAT_WORKER_FUNCTION", {"messages": messages},
+        "could not start the chat")
 
 
 def get_ai_chat_job(event: dict, job_repo: JobRepository) -> dict:
     """GET /ai/chat/jobs/{id} — the chat job's status, current tool status line, and (once
     succeeded) the reply. 404 for an unknown or expired id, or a job that isn't a chat."""
-    job_id = (event.get("pathParameters") or {}).get("id")
-    if not job_id:
-        return _json_response(404, {"error": "no such chat"})
-    try:
-        job = job_repo.get_job(job_id)
-    except DatabaseError:
-        return _json_response(500, {"error": "could not read the chat"})
-    if job is None or job.get("kind") != "ai_chat":
-        return _json_response(404, {"error": "no such chat"})
+    job, error = _read_job(event, job_repo, "ai_chat", "chat")
+    if error is not None:
+        return error
     reply = job.get("reply")
     return _json_response(200, {
         "jobId": job.get("id"),
@@ -2098,14 +1989,6 @@ def _cycle_window_for_lookback(paycycle_repo: PayCycleRepository, cycle: int) ->
     return cycle_start, cycle_end
 
 
-def _cycle_window_for(paycycle_repo: PayCycleRepository) -> tuple[str, str]:
-    """The current pay-cycle [start, today] window — the single window source shared by
-    the /budgets rollup and the budget-detail transaction list, so the list can never
-    scope to a different window than the total.
-    """
-    return _cycle_window_for_lookback(paycycle_repo, 0)
-
-
 def _windowed_rows(transactions: list[dict], predicate: Callable[[dict], bool]) -> list[dict]:
     """Filter windowed transactions by `predicate`, strip the storage keys, and sort
     newest-first — shared by the cycle-scoped drill-ins and the cycle export.
@@ -2116,16 +1999,6 @@ def _windowed_rows(transactions: list[dict], predicate: Callable[[dict], bool]) 
         transaction.pop("sk", None)
     rows.sort(key=lambda transaction: transaction["date"], reverse=True)
     return rows
-
-
-def _windowed_rows_response(transactions: list[dict], predicate: Callable[[dict], bool]) -> dict:
-    """_windowed_rows wrapped as a 200 array — the shared tail of the cycle-scoped
-    drill-in endpoints (/budgets/{category}/transactions and
-    /categories/{id}/transactions). Each endpoint supplies only its predicate; the
-    window + fetch differ (budget = current cycle, category = ?cycle= look-back), so
-    those stay in the callers.
-    """
-    return _json_response(200, _windowed_rows(transactions, predicate))
 
 
 def get_paycycle_view(paycycle_repo: PayCycleRepository) -> dict:
@@ -2249,7 +2122,7 @@ def get_budget_transactions(
     posted+pending total: every contributing transaction in the current pay cycle,
     across the category's whole subtree, newest first.
 
-    Built from the SAME window (_cycle_window_for), subtree (subtree_ids) and
+    Built from the SAME window (_cycle_window_for_lookback(..., 0)), subtree (subtree_ids) and
     contribution rule (contributes_to_budget) as list_budgets, so the rows sum to the
     budget header. This replaces the client's old rolling 7-day feed slice, which
     under-counted any cycle longer than the feed window and dropped sub-category spend
@@ -2260,7 +2133,7 @@ def get_budget_transactions(
     if not category_id:
         return _json_response(404, {"error": "budget not found"})
 
-    start, end = _cycle_window_for(paycycle_repo)
+    start, end = _cycle_window_for_lookback(paycycle_repo, 0)
     transactions = read_window(transaction_repo, start, end)
 
     categories = category_repo.list_categories()
@@ -2268,11 +2141,11 @@ def get_budget_transactions(
     children = build_category_children(categories)
     target_ids = subtree_ids(category_id, children, bucket_by_id)
 
-    return _windowed_rows_response(
+    return _json_response(200, _windowed_rows(
         transactions,
         lambda transaction: transaction.get("category") in target_ids
         and contributes_to_budget(transaction),
-    )
+    ))
 
 
 def _parse_breakdown_cycle(event: dict) -> tuple[int, dict | None]:
@@ -2513,7 +2386,7 @@ def get_category_transactions(
         def predicate(transaction: dict) -> bool:
             return transaction.get("category") == category_id
 
-    return _windowed_rows_response(transactions, predicate)
+    return _json_response(200, _windowed_rows(transactions, predicate))
 
 
 def get_cycle_transactions(
@@ -2735,22 +2608,14 @@ def _extract_goal(event) -> dict | None:
     """Pull + sanitise the optional home-loan goal from a POST body (WHIT-134).
 
     Never raises, never 400s: an absent/empty/non-JSON body — or one with no valid
-    "goal" — yields None (spend-only). This is deliberately NOT _parse_json_body,
-    which 400s an empty body; older app versions POST with no body at all and must
-    keep working.
+    "goal" — yields None (spend-only). An empty or missing body short-circuits to None
+    before _parse_json_body, and its 400 is turned into None, so older app versions that
+    POST with no body at all keep working.
     """
-    if not event:
+    if not event or not event.get("body"):
         return None
-    raw_body = event.get("body") or ""
-    if not raw_body:
-        return None
-    try:
-        if event.get("isBase64Encoded"):
-            raw_body = base64.b64decode(raw_body).decode("utf-8")
-        body = json.loads(raw_body)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(body, dict):
+    body, error = _parse_json_body(event)
+    if error is not None:
         return None
     return _sanitise_goal(body.get("goal"))
 
@@ -3252,7 +3117,7 @@ def set_milestones(event: dict, repo: MilestoneRepository, notify_repo: NotifyRe
             return _json_response(400, {"error": "targetBalance must be a number between 0 and the cap"})
 
         target_date = m.get("targetDate")
-        if not _valid_iso_date(target_date):
+        if not valid_iso_date(target_date):
             return _json_response(400, {"error": "targetDate must be a real ISO YYYY-MM-DD date"})
 
         raw_id = m.get("id")
@@ -3508,12 +3373,6 @@ _GOAL_CHECKPOINT_MAX_COUNT = 20
 _GOAL_CHECKPOINT_LABEL_MAX_LEN = 100
 
 
-# The one shared ISO YYYY-MM-DD rule (WHIT-418), now also the milestone READ bar so the two
-# can't drift. Kept under the old name so every caller and the e2e tests' handler._valid_iso_date
-# reference are unchanged.
-_valid_iso_date = valid_iso_date
-
-
 def _validate_goal_checkpoints(raw, direction: str, target_amount: Decimal):
     """Validate a goal's optional `checkpoints` ladder (WHIT-476).
 
@@ -3614,7 +3473,7 @@ def _validate_goal_body(event: dict):
         return None, _json_response(400, {"error": "target_amount must be > 0 for a savings goal"})
 
     target_date = body.get("target_date")
-    if not _valid_iso_date(target_date):
+    if not valid_iso_date(target_date):
         return None, _json_response(400, {"error": "target_date must be a real ISO YYYY-MM-DD date"})
 
     goal = {
@@ -3649,7 +3508,7 @@ def _validate_goal_body(event: dict):
         if not _finite_number(manual_balance, low=0, high=_GOAL_AMOUNT_MAX):
             return None, _json_response(
                 400, {"error": f"manual_balance must be a number between 0 and {_GOAL_AMOUNT_MAX}"})
-        if not _valid_iso_date(manual_as_of):
+        if not valid_iso_date(manual_as_of):
             return None, _json_response(400, {"error": "manual_as_of must be a real ISO YYYY-MM-DD date"})
         goal["manual_balance"] = Decimal(str(manual_balance))
         goal["manual_as_of"] = manual_as_of

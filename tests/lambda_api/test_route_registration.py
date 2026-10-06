@@ -5,26 +5,17 @@ perfect, and the app still gets a 404 from the gateway. Nothing caught that unti
 WHIT-506 added GET /transactions/uncategorized/feed to the handler and not to
 `local.app_route_keys`, so the new Uncategorized tab would have 404'd on deploy.
 
-This walks the handler's exact-match dispatch lines (`path == SOME_PATH and method == "VERB"`),
-resolves each constant to its value, and asserts the matching "VERB /path" route key exists in
-terraform/apigateway.tf. Pattern routes (`path.startswith(...)`) are skipped — their terraform
-keys carry `{id}` placeholders this can't derive.
+This reads the handler's exact-match route table (`_EXACT_ROUTES`, keyed (method, path)) and
+asserts the matching "VERB /path" route key exists in terraform/apigateway.tf. Prefix routes are
+skipped — their terraform keys carry `{id}` placeholders this can't derive.
 """
 
-import pathlib
 import re
 
 from _terraform import TERRAFORM_DIR
 
-_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_HANDLER = _REPO_ROOT / "lambda_api" / "handler.py"
-_CONSTANTS = _REPO_ROOT / "lambda_api" / "api_constants.py"
 _APIGATEWAY = TERRAFORM_DIR / "apigateway.tf"
 
-# `if path == NAME and method == "VERB":` — the exact-match dispatch shape.
-_DISPATCH = re.compile(r'path == ([A-Z][A-Z0-9_]*) and method == "([A-Z]+)"')
-# `NAME = "/some/path"` in api_constants.py.
-_PATH_CONSTANT = re.compile(r'^([A-Z][A-Z0-9_]*)\s*=\s*"(/[^"]*)"', re.MULTILINE)
 # One quoted route key inside the app_route_keys list.
 _ROUTE_KEY = re.compile(r'"([A-Z]+ /[^"]*)"')
 
@@ -35,21 +26,14 @@ def _terraform_route_keys() -> set[str]:
     return set(_ROUTE_KEY.findall(block))
 
 
-def _handler_exact_routes() -> set[str]:
-    path_values = dict(_PATH_CONSTANT.findall(_CONSTANTS.read_text()))
-    routes = set()
-    for constant, method in _DISPATCH.findall(_HANDLER.read_text()):
-        # A dispatch on a constant that isn't a literal path (none today) would be a silent
-        # miss, so fail loudly rather than skipping it.
-        assert constant in path_values, f"{constant} is dispatched on but has no path value"
-        routes.add(f"{method} {path_values[constant]}")
-    return routes
+def _handler_exact_routes(handler) -> set[str]:
+    return {f"{method} {path}" for method, path in handler._EXACT_ROUTES}
 
 
-def test_the_scan_finds_real_routes_on_both_sides():
-    # Guards a vacuous pass: if either regex stops matching, the comparison below is empty
+def test_the_scan_finds_real_routes_on_both_sides(handler):
+    # Guards a vacuous pass: if either side comes back empty, the comparison below is empty
     # and would "pass" while checking nothing.
-    handler_routes = _handler_exact_routes()
+    handler_routes = _handler_exact_routes(handler)
     terraform_routes = _terraform_route_keys()
     assert len(handler_routes) > 5
     assert len(terraform_routes) > 20
@@ -57,8 +41,8 @@ def test_the_scan_finds_real_routes_on_both_sides():
     assert "GET /transactions/feed" in terraform_routes
 
 
-def test_every_exact_handler_route_is_registered_in_api_gateway():
-    missing = sorted(_handler_exact_routes() - _terraform_route_keys())
+def test_every_exact_handler_route_is_registered_in_api_gateway(handler):
+    missing = sorted(_handler_exact_routes(handler) - _terraform_route_keys())
     assert missing == [], (
         "these routes are answered by lambda_api/handler.py but not declared in "
         f"terraform/apigateway.tf, so they 404 at the gateway once deployed: {missing}"

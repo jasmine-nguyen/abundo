@@ -2,7 +2,7 @@
 transactions behind a budget's total, so the budget-detail list reconciles with the
 header instead of the old rolling 7-day feed.
 
-The endpoint MUST derive its rows from the SAME window (_cycle_window_for) + subtree
+The endpoint MUST derive its rows from the SAME window (_cycle_window_for_lookback(..., 0)) + subtree
 (subtree_ids) + contribution rule (contributes_to_budget) as list_budgets, so the
 headline test proves sum(list rows) == /budgets total for the same id + data.
 """
