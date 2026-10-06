@@ -109,7 +109,7 @@ export default function Settings() {
         {!setupLoading && setupHasError ? (
           <View testID="settings-setup-error" style={styles.setupError}>
             <Text style={styles.setupErrorText}>Couldn't load these.</Text>
-            <RetryButton onPress={retrySetup} label="Retry loading your setup" testID="settings-setup-retry" style={styles.retryBtn} textStyle={styles.retryText} />
+            <RetryButton onPress={retrySetup} label="Retry loading your setup" testID="settings-setup-retry" />
           </View>
         ) : null}
 
@@ -163,10 +163,7 @@ const styles = StyleSheet.create({
 
   version: { textAlign: 'center', fontFamily: FONT.body, fontSize: 12, color: C.textFaintest, marginBottom: 6 },
 
-  // WHIT-198: inline "couldn't load these" affordance under the SETUP group. Reuses the
-  // Budgets retry tokens (retryBtn/retryText) so the retry looks identical app-wide.
+  // WHIT-198: inline "couldn't load these" affordance under the SETUP group.
   setupError: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, marginTop: -10, marginBottom: 18 },
   setupErrorText: { fontFamily: FONT.body, fontSize: 14, color: C.textMid, textAlign: 'center' },
-  retryBtn: { paddingVertical: 11, paddingHorizontal: 24, borderRadius: 12, backgroundColor: tint(C.accentAlt, 0.16) },
-  retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
 });

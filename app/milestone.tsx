@@ -197,7 +197,7 @@ const styles = StyleSheet.create({
   waiting: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14 },
   waitingText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.heroInk },
   retryBtn: { backgroundColor: C.heroInkWash, borderRadius: 9, paddingVertical: 6, paddingHorizontal: 14 },
-  retryText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.heroInk },
+  retryText: { fontSize: 13, color: C.heroInk },
 
   nextCard: { backgroundColor: tint(C.accentAlt, 0.1), borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), borderRadius: 18, padding: 16, marginBottom: 12 },
   nextEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.accentSofter },

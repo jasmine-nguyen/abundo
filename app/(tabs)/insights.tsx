@@ -1,12 +1,13 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { C, FONT, fmt, tint, breakdownLineStyle } from '../../src/theme';
 import { Icon } from '../../src/icons';
 import { useAppContext, categoryBreakdown, incomeBreakdown } from '../../src/context';
 import { useInsightsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { RetryButton, HeroGradientFill } from '../../src/components/ui';
+import { HeroGradientFill } from '../../src/components/ui';
+import { ListStates } from '../../src/components/ListStates';
 import { SettingsButton } from '../../src/components/SettingsButton';
 import { ExportButton } from '../../src/components/ExportButton';
 import { AiCoachCard } from '../../src/components/AiCoachCard';
@@ -132,17 +133,10 @@ export default function Insights() {
             "LAST PAY CYCLE" hero. Self-contained (reads the AI slice + goal itself). */}
         {cycle === 0 && <AiCoachCard />}
 
-        {showSpinner && (
-          <View testID="insights-loading" style={styles.rowsState}>
-            <ActivityIndicator color={C.accent} />
-          </View>
-        )}
-        {showError && (
-          <View testID="insights-error" style={styles.rowsState}>
-            <Text style={styles.empty}>Couldn't load your spending.</Text>
-            <RetryButton onPress={refetch} label="Retry loading your insights" testID="insights-retry" style={styles.retryBtn} textStyle={styles.retryText} />
-          </View>
-        )}
+        <ListStates
+          showSpinner={showSpinner} showError={showError} idPrefix="insights"
+          errorText="Couldn't load your spending." retryLabel="Retry loading your insights" onRetry={refetch}
+        />
         {/* Pie/donut of where the cycle's money went — one wedge per top-level category, in
             its own colour, sized by share of the total. The rows below are its legend. */}
         {!showSpinner && !showError && rows.length > 0 && (
@@ -321,7 +315,4 @@ const styles = StyleSheet.create({
 
   barsCaption: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, textAlign: 'center', marginTop: -6, marginBottom: 16 },
   empty: { fontFamily: FONT.body, fontSize: 14, color: C.textDim, textAlign: 'center', paddingVertical: 40 },
-  rowsState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 40, gap: 14 },
-  retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: tint(C.accentAlt, 0.16) },
-  retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
 });

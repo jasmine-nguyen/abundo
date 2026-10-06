@@ -196,7 +196,7 @@ export default function Budgets() {
         <View testID="budgets-error" style={styles.centered}>
           <Text style={styles.errorText}>Couldn't load your budgets.</Text>
           <Text style={styles.errorText}>{loadFailureReason(error)}</Text>
-          <RetryButton onPress={refetch} label="Retry loading your budgets" testID="budgets-retry" style={styles.retryBtn} textStyle={styles.retryText} />
+          <RetryButton onPress={refetch} label="Retry loading your budgets" testID="budgets-retry" />
         </View>
       ) : (
       <>
@@ -299,6 +299,4 @@ const styles = StyleSheet.create({
 
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40, gap: 16 },
   errorText: { fontFamily: FONT.body, fontSize: 15, color: C.textMid, textAlign: 'center' },
-  retryBtn: { paddingVertical: 11, paddingHorizontal: 24, borderRadius: 12, backgroundColor: tint(C.accentAlt, 0.16) },
-  retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
 });
