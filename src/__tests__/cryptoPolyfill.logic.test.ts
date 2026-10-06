@@ -3,6 +3,7 @@
 // missing, and leave a working one alone. expo-crypto is a native module (system boundary),
 // so it's mocked here with a known function to compare against.
 import { describe, it, expect, jest, afterEach } from '@jest/globals';
+import { setGlobalCrypto, restoreGlobalCrypto } from './support/globalCrypto';
 
 const mockGetRandomValues = jest.fn(<T>(array: T) => array);
 
@@ -11,25 +12,13 @@ jest.mock('expo-crypto', () => ({
   randomUUID: () => 'test-uuid',
 }));
 
-const originalCryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
-
-function setGlobalCrypto(value: unknown) {
-  Object.defineProperty(globalThis, 'crypto', { value, configurable: true, writable: true });
-}
-
 function importPolyfill() {
   jest.isolateModules(() => {
     require('../cryptoPolyfill');
   });
 }
 
-afterEach(() => {
-  if (originalCryptoDescriptor) {
-    Object.defineProperty(globalThis, 'crypto', originalCryptoDescriptor);
-    return;
-  }
-  delete (globalThis as { crypto?: unknown }).crypto;
-});
+afterEach(restoreGlobalCrypto);
 
 describe('cryptoPolyfill', () => {
   it('gives a missing global crypto the expo-crypto getRandomValues', () => {
