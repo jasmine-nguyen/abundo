@@ -7,9 +7,9 @@
 // scrollChromeHeaderOwnsScroll.screen.test.tsx against the real provider.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { Animated, ScrollView, Text } from 'react-native';
-import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
-import { render, act } from '@testing-library/react-native';
+import { Animated, Text } from 'react-native';
+import { render } from '@testing-library/react-native';
+import { scrollTo } from './support/scrollChromeHeader';
 
 // The mocked context exposes the SAME single stateRef the provider owns; setNavBars must
 // write it, so the header's dedup/direction logic runs against the shared source of truth.
@@ -34,23 +34,18 @@ function renderHeader() {
   );
 }
 
-function scroll(r: ReturnType<typeof render>, y: number) {
-  const event = { nativeEvent: { contentOffset: { y } } } as unknown as NativeSyntheticEvent<NativeScrollEvent>;
-  act(() => r.UNSAFE_getAllByType(ScrollView)[0].props.onScroll(event));
-}
-
 it('scrolling down hides, then scrolling up shows — driving the shared stateRef', () => {
   const r = renderHeader();
-  scroll(r, 200);
+  scrollTo(r, 200);
   expect(mockSetNavBars).toHaveBeenLastCalledWith('hidden');
-  scroll(r, 20);
+  scrollTo(r, 20);
   expect(mockSetNavBars).toHaveBeenLastCalledWith('shown');
 });
 
 it('a continued same-direction scroll does not re-call setNavBars (dedups on the shared ref)', () => {
   const r = renderHeader();
-  scroll(r, 200);   // shown → hidden (1 call, ref now 'hidden')
-  scroll(r, 400);   // still down, already hidden → no new call
+  scrollTo(r, 200);   // shown → hidden (1 call, ref now 'hidden')
+  scrollTo(r, 400);   // still down, already hidden → no new call
   expect(mockSetNavBars).toHaveBeenCalledTimes(1);
   expect(mockSetNavBars).toHaveBeenLastCalledWith('hidden');
 });

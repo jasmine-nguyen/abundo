@@ -11,8 +11,9 @@
 // Renders with the global zero safe-area insets and the NavBars default context.
 import { it, expect } from '@jest/globals';
 import React from 'react';
-import { View, ScrollView, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { render } from '@testing-library/react-native';
+import { contentStyle } from './support/scrollChromeHeader';
 import {
   ScrollChromeHeader,
   HEADER_BODY_HEIGHT,
@@ -28,12 +29,6 @@ function slotCount(root: Rendered) {
     .UNSAFE_getAllByType(View)
     .filter((v) => (StyleSheet.flatten(v.props.style) as { width?: number } | undefined)?.width === 40)
     .length;
-}
-function contentStyle(root: Rendered) {
-  const sv = root.UNSAFE_getAllByType(ScrollView)[0];
-  return StyleSheet.flatten(sv.props.contentContainerStyle) as {
-    flexGrow?: number; paddingTop?: number; paddingBottom?: number; paddingHorizontal?: number;
-  };
 }
 
 it('renders a screen-supplied `right` action, leaving only the left default spacer', () => {
