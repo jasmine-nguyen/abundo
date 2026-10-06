@@ -125,7 +125,7 @@ def test_rebucket_to_income_then_back_to_spend_does_not_resurrect_the_buffer(han
 
 def test_cleared_entry_serialises_through_list_budgets_with_no_leftover_rollover_keys(handler):
     # WHIT-474 — [A2] Decimal/JSON edge: after the real clear, the row must render cleanly
-    # through the API's DecimalEncoder with NO stray rollover/carryover keys — the wire shape
+    # through the API's JSON dump with NO stray rollover/carryover keys — the wire shape
     # is byte-identical to a budget that never had rollover. FAIL-ON-REVERT: skip the clear and
     # the serialised row carries "rollover"/"carryover".
     table = _config_table(items={"sink": _rollover_entry()})

@@ -32,6 +32,16 @@ class _RecordingReceiptRepo:
         self.put_calls.append((receipt_id, token))
 
 
+def _stub_ssm_token(push, monkeypatch, read):
+    """Stand in for the shared SSM read, checking push asks for the Expo token's path."""
+
+    def get_api_key(path):
+        assert path == push.EXPO_ACCESS_TOKEN_PATH
+        return read(path)
+
+    monkeypatch.setattr(push, "get_api_key", get_api_key)
+
+
 def _tickets(*statuses):
     """Build an Expo response body from a list of "ok" / "dnr" ticket statuses."""
     data = []
@@ -320,8 +330,7 @@ def test_no_auth_header_when_access_token_is_empty(shared, monkeypatch):
 
 def test_access_token_read_from_ssm_when_not_passed(shared, monkeypatch):
     push = shared.push
-    monkeypatch.setattr(push, "_access_token", None, raising=False)
-    monkeypatch.setattr(push, "get_param", lambda path: "ssm-token")
+    _stub_ssm_token(push, monkeypatch, lambda path: "ssm-token")
     captured = {}
 
     def fake_urlopen(req, timeout=None):
@@ -335,12 +344,11 @@ def test_access_token_read_from_ssm_when_not_passed(shared, monkeypatch):
 
 def test_unreadable_ssm_token_does_not_crash_the_send(shared, monkeypatch):
     push = shared.push
-    monkeypatch.setattr(push, "_access_token", None, raising=False)
 
     def boom(path):
         raise RuntimeError("ssm down")
 
-    monkeypatch.setattr(push, "get_param", boom)
+    _stub_ssm_token(push, monkeypatch, boom)
     captured = {}
 
     def fake_urlopen(req, timeout=None):
@@ -477,8 +485,7 @@ def test_get_receipts_absent_data_and_top_level_errors_yield_empty(shared, monke
 
 def test_get_receipts_reads_token_from_ssm_when_not_passed(shared, monkeypatch):
     push = shared.push
-    monkeypatch.setattr(push, "_access_token", None, raising=False)
-    monkeypatch.setattr(push, "get_param", lambda path: "ssm-token")
+    _stub_ssm_token(push, monkeypatch, lambda path: "ssm-token")
     captured = {}
 
     def fake_urlopen(req, timeout=None):

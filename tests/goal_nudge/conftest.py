@@ -29,7 +29,7 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _NUDGE_DIR = str(_REPO_ROOT / "lambda_goal_nudge")
 _SHARED_DIR = str(_REPO_ROOT / "shared")
 _COLLIDING = (
-    "handler", "constants", "models", "encoders", "repository", "repository_base",
+    "handler", "constants", "models", "repository", "repository_base",
     "repository_transaction", "repository_category", "repository_budget",
     "repository_paycycle", "repository_balance", "repository_goals", "repository_device",
     "repository_notify", "repository_errors", "repository_insight", "repository_loanfacts",

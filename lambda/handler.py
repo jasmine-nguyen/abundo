@@ -6,7 +6,7 @@ import logging
 from banksync import BankSyncClient, UnknownAccountError
 from models import Transaction
 from webhook_repository import TransactionRepository
-from ssm import get_param
+from api_key import get_api_key
 from standardwebhooks.webhooks import Webhook
 
 # Budget-threshold alerts (WHIT-22). The shared layer provides the detection + the
@@ -30,18 +30,13 @@ logger.setLevel(logging.INFO)
 
 BANKSYNC_WEBHOOK_SECRET_PATH = "/abundo/banksync-webhook-secret"
 
-_webhook_signing_secret = None
-
 # Plain fields of a summary delivery that are safe and useful to log (WHIT-606).
 SUMMARY_LOG_FIELDS = ("type", "status", "error", "message", "timestamp")
 SUMMARY_FIELD_MAX_CHARS = 200
 
 
 def get_webhook_signing_secret() -> str:
-    global _webhook_signing_secret
-    if _webhook_signing_secret is None:
-        _webhook_signing_secret = get_param(BANKSYNC_WEBHOOK_SECRET_PATH)
-    return _webhook_signing_secret
+    return get_api_key(BANKSYNC_WEBHOOK_SECRET_PATH)
 
 
 def verify_and_parse(event) -> dict:

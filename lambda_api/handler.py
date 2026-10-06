@@ -137,7 +137,6 @@ from rule_engine import (
 from recurring_bills import detect_recurring_bills
 from repository_notify import NotifyRepository
 from goal_checkpoints import notify_goal_checkpoint_crossing
-from encoders import DecimalEncoder
 import base64
 import boto3
 import hashlib
@@ -419,7 +418,7 @@ def _json_response(status_code: int, body: dict | list) -> dict:
     return {
         "statusCode": status_code,
         "headers": {"Content-Type": "application/json"},
-        "body": json.dumps(body, cls=DecimalEncoder),
+        "body": json.dumps(body, default=float),
     }
 
 
@@ -2193,7 +2192,7 @@ def list_budgets(
     window's transactions (nothing stored), so a pending->posted settlement or an
     amount change is reflected on the next call with no bookkeeping. Every budgeted
     id appears; a category with no activity this window is posted/pending 0.
-    DecimalEncoder renders all three as JSON numbers. Empty {} before any target is
+    The JSON response renders all three as JSON numbers. Empty {} before any target is
     set — and the pay-cycle read, category read AND the transaction scan are all skipped.
 
     A budget on an Income-bucket category is an earn-target (floor, over-is-good,
@@ -2949,7 +2948,7 @@ def get_homeloan(repo: HomeLoanBalanceRepository) -> dict:
     the balance poller stores. Before the first poll lands there is no row, so we
     return a null sentinel {"balance": None, ...} (still 200) rather than 404 —
     the client's refreshHomeLoan then simply skips the overwrite and keeps its
-    placeholder, no error handling required. DecimalEncoder renders `balance` as a
+    placeholder, no error handling required. The JSON response renders `balance` as a
     JSON number.
     """
     stored = repo.get_balance(HOMELOAN_ACCOUNT_ID)
@@ -2968,7 +2967,7 @@ def get_account_balances(repo: AccountBalanceRepository) -> list:
     Returns a list of {account_id, amount, available_balance, currency, as_of,
     account_type} for the app's known accounts (ACCOUNT_ID_MAP's internal ids) that have a
     stored balance. `amount` is SIGNED (spending positive; loan/credit-card negative) and
-    DecimalEncoder renders it — and `available_balance` — as JSON numbers. Accounts not yet
+    The JSON response renders it — and `available_balance` — as JSON numbers. Accounts not yet
     polled are simply absent (the app shows a placeholder), and before ANY poll this is an
     empty list — a 200, never a 404, so the client needs no special-casing.
     """
@@ -3047,7 +3046,7 @@ def get_repayment(repo: TransactionRepository) -> dict:
     principal = amount - |summed interest| (WHIT-120: a month can post more than one
     interest leg). When no interest pairs, principal/interest are null (total only —
     never a fabricated split). Null sentinel when there is no repayment on record.
-    DecimalEncoder renders the Decimals as numbers.
+    The JSON response renders the Decimals as numbers.
     """
     # One page (MAX_PAGE_SIZE) of the sparse mortgage account spans many months.
     rows, _cursor = repo.get_transactions_by_date_range(
@@ -3099,7 +3098,7 @@ def get_loanfacts(repo: LoanFactsRepository) -> dict:
 
     Returns the six fields as numbers once saved, or an all-null sentinel while
     unset (still 200) so the client can show a friendly "set this up" state and
-    the app never displays a value the user didn't enter. DecimalEncoder renders
+    the app never displays a value the user didn't enter. The JSON response renders
     the stored Decimals as JSON numbers.
     """
     stored = repo.get_loanfacts()

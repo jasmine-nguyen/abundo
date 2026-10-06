@@ -3,7 +3,7 @@
 
 Handler-level tests inject a FakeHomeLoanRepo directly. The route test drives
 `lambda_handler` with the repo class monkeypatched, proving the dispatch wiring
-and the DecimalEncoder JSON shaping (Decimal balance -> JSON number).
+and the JSON shaping (Decimal balance -> JSON number).
 """
 
 import json
@@ -59,7 +59,7 @@ def test_route_get_homeloan_serves_balance_as_json_number(handler, monkeypatch):
 
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])
-    # DecimalEncoder renders the Decimal balance as a JSON number.
+    # The JSON response renders the Decimal balance as a JSON number.
     assert body == {"balance": 596642.43, "as_of": "2026-07-04T00:24:37.614Z", "currency": "AUD"}
 
 

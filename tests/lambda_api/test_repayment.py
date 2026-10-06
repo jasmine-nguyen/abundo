@@ -3,7 +3,7 @@
 Injects a FakeTransactionRepo returning newest-first up-homeloan rows. Covers:
 the repayment + same-month interest split (principal = amount - |interest|),
 total-only when no interest pairs, the null sentinel when there's no repayment,
-non-repayment rows ignored, and the route's DecimalEncoder JSON shaping.
+non-repayment rows ignored, and the route's JSON shaping.
 """
 
 import json
@@ -376,7 +376,7 @@ def test_many_same_month_legs_all_sum(handler):
 
 def test_route_sums_multi_leg_interest_json(handler, monkeypatch):
     # [fail-on-revert] End-to-end through lambda_handler: the /repayment route serialises a
-    # SUMMED split as plain JSON numbers (DecimalEncoder), and interest stays a Decimal so the
+    # SUMMED split as plain JSON numbers (default=float), and interest stays a Decimal so the
     # subtraction + encoding stay exact (not float). Revert -> 300/1140.
     repo = FakeTransactionRepo([_interest("2026-07-20", "-300"), _interest("2026-07-05", "-232"),
                                 _repayment("2026-07-01")])

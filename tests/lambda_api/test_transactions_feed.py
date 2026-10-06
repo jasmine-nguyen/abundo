@@ -561,7 +561,7 @@ def test_large_resume_map_with_unknown_accounts_is_tolerated(handler):
 # --- [G8] Decimal amounts serialise through the feed ------------------------------
 
 def test_decimal_amounts_serialise_through_feed_no_500(handler):
-    # DynamoDB hands numbers back as Decimal. The feed reuses DecimalEncoder; a raw
+    # DynamoDB hands numbers back as Decimal. The feed reuses the JSON response's default=float; a raw
     # json.dumps of a Decimal would raise (a 500). Assert a real JSON number comes out.
     rows = {SPENDING: [
         _row(SPENDING, "2026-07-02", "s2", amount=Decimal("-12.34"), balance=Decimal("100")),

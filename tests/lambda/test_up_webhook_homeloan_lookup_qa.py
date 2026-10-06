@@ -64,7 +64,7 @@ def _markers(caplog, marker):
 
 @pytest.fixture(autouse=True)
 def _no_real_ssm(lam, monkeypatch):
-    monkeypatch.setattr(lam.up_webhook, "get_param", lambda path: "fake-secret")
+    monkeypatch.setattr(lam.api_key, "get_param", lambda path: "fake-secret")
 
 
 @pytest.fixture
@@ -93,7 +93,7 @@ def handler(lam, monkeypatch):
     and the accounts list from `accounts` (dict or Exception)."""
     up = lam.up_webhook
     monkeypatch.setattr(up, "get_signing_secret", lambda: MOCK_SECRET)
-    monkeypatch.setattr(up, "_personal_access_token", "up-token")
+    lam.api_key._cache[up.UP_PERSONAL_ACCESS_TOKEN_PATH] = "up-token"
     notify = up.NotifyRepository()
     notify._table = FakeTable()
     monkeypatch.setattr(up, "NotifyRepository", lambda: notify)
@@ -169,14 +169,14 @@ def test_network_failures_fall_back_logged_and_unsaved(lookup, caplog, error):
 # [A5]
 def test_lookup_401_does_not_clear_the_cached_token(lam, monkeypatch):
     up = lam.up_webhook
-    monkeypatch.setattr(up, "_personal_access_token", "cached-token")
+    lam.api_key._cache[up.UP_PERSONAL_ACCESS_TOKEN_PATH] = "cached-token"
 
     def fake_urlopen(request, timeout=None):
         raise http_error(401, url=UP_API_URL)
 
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
     assert up.get_homeloan_account_id() == OLD_HOMELOAN_ID
-    assert up._personal_access_token == "cached-token"
+    assert lam.api_key._cache[up.UP_PERSONAL_ACCESS_TOKEN_PATH] == "cached-token"
 
 
 # [A6]

@@ -2,7 +2,7 @@
 
 ``lambda/`` owns only the webhook-specific ``handler`` / ``webhook_repository`` /
 ``banksync`` (and imports ``ssm`` / ``standardwebhooks``); ``constants`` /
-``models`` / ``encoders`` come from the shared layer (``shared/``), exactly as the
+``models`` / ``api_key`` come from the shared layer (``shared/``), exactly as the
 deployed webhook resolves them (its function code shadows the attached layer). The
 ``lam`` fixture therefore pins ``lambda/`` in front of ``shared/`` on ``sys.path``
 — so ``lambda/``'s own copies win and the folded modules fall through to
@@ -61,9 +61,9 @@ _LAMBDA_DIR = str(_REPO_ROOT / "lambda")
 _SHARED_DIR = str(_REPO_ROOT / "shared")
 # Bare module names whose imports must resolve fresh per test: lambda/'s own copies
 # (handler / webhook_repository / banksync) plus the folded modules now provided by shared/
-# (constants / models / encoders). Shed so a sibling suite's cached copy can't win —
+# (constants / models / api_key). Shed so a sibling suite's cached copy can't win —
 # including the shared facade `repository` another suite may have cached.
-_REIMPORT = ("handler", "up_webhook", "constants", "models", "repository", "webhook_repository", "reconcile", "banksync", "encoders", "merchant", "reprocess", "age_out",
+_REIMPORT = ("handler", "up_webhook", "constants", "models", "repository", "webhook_repository", "reconcile", "banksync", "api_key", "merchant", "reprocess", "age_out",
              "budget_alerts", "repayment_alerts", "spend", "budget_standing", "push", "repository_base", "repository_transaction", "repository_budget",
              "repository_category", "repository_device", "repository_notify", "repository_paycycle", "rule_engine",
              "rule_ingest", "repository_rule", "pending_carry")
@@ -86,11 +86,12 @@ def lam():
             while d in sys.path:
                 sys.path.remove(d)
         # shared/ first, then lambda/ on top: lambda/ wins for its own modules, and the
-        # folded ones (constants / models / encoders) fall through to shared/.
+        # folded ones (constants / models / api_key) fall through to shared/.
         sys.path.insert(0, _SHARED_DIR)
         sys.path.insert(0, _LAMBDA_DIR)
         saved_real = {name: sys.modules.pop(name, None) for name in _REIMPORT}
 
+        import api_key
         import banksync
         import handler
         import up_webhook
@@ -110,6 +111,8 @@ def lam():
             age_out=age_out,
             budget_alerts=budget_alerts, repayment_alerts=repayment_alerts,
             up_webhook=up_webhook, rule_ingest=rule_ingest,
+            # Fresh per test, so its SSM cache starts empty: seed `_cache` or stub `get_param` here.
+            api_key=api_key,
         )
         try:
             yield ns

@@ -243,7 +243,7 @@ def test_other_methods_on_the_spread_path_are_404_not_routed_to_a_budget_handler
 
 def test_get_budgets_serialises_the_spread_object_as_json_numbers(handler, monkeypatch):
     # Through lambda_handler: Decimal amount/adjustment render as JSON numbers
-    # (DecimalEncoder), and cycles/index stay JSON integers (not 4.0 / 1.0).
+    # (default=float), and cycles/index stay JSON integers (not 4.0 / 1.0).
     repo = recording_budget_repo({"insurance": _entry(spread_from="2026-07-07")})
     _wire(handler, monkeypatch, repo)
 

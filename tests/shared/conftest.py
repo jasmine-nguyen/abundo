@@ -1,7 +1,7 @@
 """Test bootstrap for the ``shared/`` layer suite.
 
 ``shared/`` holds the flat top-level modules that the deployed Lambda layer
-provides: ``constants`` / ``models`` / ``encoders`` / ``repository_base`` /
+provides: ``constants`` / ``models`` / ``repository_base`` /
 ``repository_transaction`` (and the other repository_* files). Their bare module
 names collide with the ``lambda`` / ``lambda_api`` / ``sync_trigger`` suites, so —
 mirroring ``tests/lambda/conftest.py`` — the fixtures below pin ``shared/`` to the
@@ -118,7 +118,6 @@ def shared():
         sys.path.insert(0, _SHARED_DIR)
         saved_real = {name: sys.modules.pop(name, None) for name in _REIMPORT}
 
-        import encoders
         import balance_fetch
         import repository_transaction
         import repository_balance
@@ -144,7 +143,7 @@ def shared():
         import rule_spreading
 
         ns = types.SimpleNamespace(
-            encoders=encoders, repository=repository_transaction,
+            repository=repository_transaction,
             rule=repository_rule, job=repository_job, rule_spreading=rule_spreading,
             balance_fetch=balance_fetch,
             balance=repository_balance, loanfacts=repository_loanfacts,

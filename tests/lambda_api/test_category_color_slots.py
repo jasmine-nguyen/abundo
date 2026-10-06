@@ -350,12 +350,11 @@ def test_least_held_color_slot_treats_reserved_as_a_hard_exclusion(handler):
 def test_slot_survives_json_encoding_as_a_number(handler):
     """DynamoDB hands back Decimal; the client reads JSON. Pin the seam between the slices."""
     import repository
-    from encoders import DecimalEncoder
     _, repo = _repo_with_fake_table(handler)
     repo.list_categories()
     created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
 
-    decoded = json.loads(json.dumps(created, cls=DecimalEncoder))
+    decoded = json.loads(json.dumps(created, default=float))
 
     assert decoded["colorSlot"] == 2
     # `type is int`, not isinstance: bool passes isinstance(int), and a Decimal would encode

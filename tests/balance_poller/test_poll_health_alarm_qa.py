@@ -113,6 +113,10 @@ def test_heartbeat_still_logged_when_prior_balance_read_fails(handler, monkeypat
 # [A5] (P0) home loan stored but EVERY account read fails (BankSync balance-side outage) → no heartbeat.
 def test_no_heartbeat_when_every_account_read_fails_but_home_loan_stored(handler, monkeypatch, caplog):
     _stub(handler, monkeypatch, caplog)
+    # The home-loan normaliser wraps the shared one, so pin it to a good reading first.
+    monkeypatch.setattr(handler, "normalise_balance", lambda payload: {
+        "balance": 596642.43, "as_of": "2026-09-28T00:00:00.000Z", "currency": "AUD",
+    })
     monkeypatch.setattr(handler, "normalise_account_balance", _raise)
 
     result = handler.lambda_handler({}, None)

@@ -15,21 +15,35 @@ class BalanceError(Exception):
     so a caller keeps this account's last-good row instead of storing garbage."""
 
 
-def fetch_balance(bid: str, aid: str, api_key: str, *, base_url: str, timeout: float, user_agent: str) -> dict:
-    """GET /v1/banks/{bid}/accounts/{aid}/balances -> the parsed JSON payload."""
-    url = f"{base_url}/v1/banks/{bid}/accounts/{aid}/balances"
+def banksync_request(
+    url: str,
+    api_key: str,
+    *,
+    user_agent: str,
+    timeout: float,
+    method: str = "GET",
+    data: bytes | None = None,
+) -> dict:
+    """Send one BankSync request and return the parsed JSON reply. HTTP errors propagate."""
     req = urllib.request.Request(
         url,
+        data=data,
         headers={
             "X-API-Key": api_key,
             # BankSync sits behind Cloudflare, which blocks the default
             # "Python-urllib" User-Agent with a 403 (error 1010). Send our own.
             "User-Agent": user_agent,
         },
-        method="GET",
+        method=method,
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())
+
+
+def fetch_balance(bid: str, aid: str, api_key: str, *, base_url: str, timeout: float, user_agent: str) -> dict:
+    """GET /v1/banks/{bid}/accounts/{aid}/balances -> the parsed JSON payload."""
+    url = f"{base_url}/v1/banks/{bid}/accounts/{aid}/balances"
+    return banksync_request(url, api_key, user_agent=user_agent, timeout=timeout)
 
 
 def normalise_account_balance(payload: dict) -> dict:

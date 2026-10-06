@@ -184,24 +184,11 @@ def test_repayment_skip_reason_boundary_is_inclusive(skip_up):
     assert skip_up.repayment_skip_reason(_up_transaction(cents=1000)) is None
 
 
-def test_get_signing_secret_caches(lam, monkeypatch):
+def test_up_secrets_read_their_own_ssm_paths(lam, monkeypatch):
     up = lam.up_webhook
-    monkeypatch.setattr(up, "_signing_secret", None)
-    calls = []
-    monkeypatch.setattr(up, "get_param", lambda path: calls.append(path) or "secret-value")
-    assert up.get_signing_secret() == "secret-value"
-    assert up.get_signing_secret() == "secret-value"  # cached: get_param not called again
-    assert calls == [up.UP_WEBHOOK_SIGNING_SECRET_PATH]
-
-
-def test_get_personal_access_token_caches(lam, monkeypatch):
-    up = lam.up_webhook
-    monkeypatch.setattr(up, "_personal_access_token", None)
-    calls = []
-    monkeypatch.setattr(up, "get_param", lambda path: calls.append(path) or "pat-value")
-    assert up.get_personal_access_token() == "pat-value"
-    assert up.get_personal_access_token() == "pat-value"  # cached
-    assert calls == [up.UP_PERSONAL_ACCESS_TOKEN_PATH]
+    monkeypatch.setattr(lam.api_key, "get_param", lambda path: f"value-of-{path}")
+    assert up.get_signing_secret() == f"value-of-{up.UP_WEBHOOK_SIGNING_SECRET_PATH}"
+    assert up.get_personal_access_token() == f"value-of-{up.UP_PERSONAL_ACCESS_TOKEN_PATH}"
 
 
 def test_fetch_transaction_calls_up_with_bearer_token(lam, monkeypatch):
@@ -247,7 +234,7 @@ def fetch_wired(lam, monkeypatch, request):
     wired = request.getfixturevalue("wired")
     wired.real_homeloan_lookup = real_homeloan_lookup
     monkeypatch.setattr(wired.up, "fetch_transaction", real_fetch)
-    monkeypatch.setattr(wired.up, "_personal_access_token", "old-pat-value")
+    lam.api_key._cache[lam.up_webhook.UP_PERSONAL_ACCESS_TOKEN_PATH] = "old-pat-value"
     return wired
 
 
@@ -264,26 +251,27 @@ def test_up_401_logs_token_rejected_marker_and_returns_500(fetch_wired, monkeypa
 
 
 @pytest.mark.parametrize("code", [401, 403])
-def test_token_rejected_clears_cached_token(fetch_wired, monkeypatch, code):
+def test_token_rejected_clears_cached_token(fetch_wired, lam, monkeypatch, code):
     up = fetch_wired.up
     monkeypatch.setattr(up.urllib.request, "urlopen", _urlopen_raising(http_error(code, url=UP_API_URL)))
     calls = []
-    monkeypatch.setattr(up, "get_param", lambda path: calls.append(path) or "new")
+    monkeypatch.setattr(lam.api_key, "get_param", lambda path: calls.append(path) or "new")
     up.lambda_handler(_event(_webhook_payload()), None)
-    assert up._personal_access_token is None
+    assert up.UP_PERSONAL_ACCESS_TOKEN_PATH not in lam.api_key._cache
     assert up.get_personal_access_token() == "new"
     assert calls == [up.UP_PERSONAL_ACCESS_TOKEN_PATH]
 
 
 @pytest.mark.parametrize("code", [404, 500])
-def test_up_non_auth_error_logs_fetch_failed_not_token_rejected(fetch_wired, monkeypatch, caplog, code):
+def test_up_non_auth_error_logs_fetch_failed_not_token_rejected(fetch_wired, lam, monkeypatch, caplog, code):
     up = fetch_wired.up
     monkeypatch.setattr(up.urllib.request, "urlopen", _urlopen_raising(http_error(code, url=UP_API_URL)))
     caplog.set_level(logging.INFO)
     assert up.lambda_handler(_event(_webhook_payload()), None) == up.ERROR_RESPONSE
     assert _marker_records(caplog, "UP_WEBHOOK_FETCH_FAILED", logging.ERROR)
     assert not _marker_records(caplog, "UP_WEBHOOK_TOKEN_REJECTED")
-    assert up._personal_access_token == "old-pat-value"  # a non-auth error keeps the cached token
+    # a non-auth error keeps the cached token
+    assert lam.api_key._cache[up.UP_PERSONAL_ACCESS_TOKEN_PATH] == "old-pat-value"
 
 
 @pytest.mark.parametrize("error", [urllib.error.URLError("timed out"), TimeoutError()])
@@ -639,10 +627,10 @@ def test_already_notified_wins_over_no_device_tokens(wired, monkeypatch, caplog)
 
 # [A2] End-to-end token recovery on a warm container: delivery 1 is rejected with the
 # cached (revoked) token; Jas replaces it in SSM; Up's retry must send the NEW token and push.
-def test_replaced_token_is_used_on_next_delivery(fetch_wired, monkeypatch):
+def test_replaced_token_is_used_on_next_delivery(fetch_wired, lam, monkeypatch):
     up = fetch_wired.up
     ssm = {"value": "old-pat-value"}
-    monkeypatch.setattr(up, "get_param", lambda path: ssm["value"])
+    monkeypatch.setattr(lam.api_key, "get_param", lambda path: ssm["value"])
     seen = []
 
     def fake_urlopen(request, timeout=None):

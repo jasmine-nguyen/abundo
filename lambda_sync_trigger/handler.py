@@ -21,10 +21,9 @@ webhook signature to verify here. ``constants`` and ``ssm`` are provided by the
 shared lambda layer.
 """
 
-import json
 import logging
 import urllib.error
-import urllib.request
+import urllib.request  # noqa: F401 — test seam: tests patch `urllib.request.urlopen` here
 
 from constants import (
     BANKSYNC_API_KEY_PATH,
@@ -33,6 +32,7 @@ from constants import (
     SYNC_TIMEOUT_SECONDS,
 )
 from api_key import forget_api_key, get_api_key as _fetch_api_key
+from balance_fetch import banksync_request
 import pending_mirror
 
 logger = logging.getLogger(__name__)
@@ -52,21 +52,17 @@ def trigger_sync(feed_id: str, api_key: str) -> None:
     backfills/recovery only, not the scheduled cadence.
     """
     url = f"{BANKSYNC_BASE_URL}/v1/feeds/{feed_id}/sync"
-    req = urllib.request.Request(
-        url,
-        data=b"",  # empty body -> incremental sync; also forces a clean POST
-        headers={
-            "X-API-Key": api_key,
-            # BankSync sits behind Cloudflare, which blocks the default
-            # "Python-urllib" User-Agent with a 403 (error 1010). Send our own.
-            "User-Agent": "abundo-transaction-trigger",
-        },
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=SYNC_TIMEOUT_SECONDS) as resp:
-            body = json.loads(resp.read())
-            logger.info("feed %s: sync job %s created", feed_id, body["data"]["id"])
+        # empty body -> incremental sync; also forces a clean POST
+        body = banksync_request(
+            url,
+            api_key,
+            user_agent="abundo-transaction-trigger",
+            timeout=SYNC_TIMEOUT_SECONDS,
+            method="POST",
+            data=b"",
+        )
+        logger.info("feed %s: sync job %s created", feed_id, body["data"]["id"])
     except urllib.error.HTTPError as e:
         # 409 = a sync is already running for this feed. Harmless on a schedule;
         # skip this tick rather than force-cancelling the in-flight job.
