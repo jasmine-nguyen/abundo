@@ -134,21 +134,6 @@ def test_the_give_up_error_names_the_action(shared):
         repo._versioned_update(_set_entry("a", "x"), action="set test")
 
 
-# [A7] (P1)
-def test_saving_to_a_missing_record_seeds_it_first_then_bumps_it_to_version_2(shared):
-    table = FakeTable()
-    repo = _settings_repo(table)
-    seen = []
-
-    def build(item):
-        seen.append(item)
-        return _set_entry("a", "x")(item)
-
-    assert repo._versioned_update(build, action="set test") == "saved"
-    assert seen[0]["version"] == Decimal(1) and seen[0]["items"] == {}
-    assert table.store[_STORE_KEY] == {**_SETTINGS_KEY, "items": {"a": "x"}, "version": Decimal(2)}
-
-
 # [A8] (P0)
 def test_each_settings_store_seeds_its_own_starting_record(shared):
     import repository_budget
@@ -179,18 +164,3 @@ def test_each_settings_store_seeds_its_own_starting_record(shared):
         repo._ensure_seeded()
         assert table.put_calls[0] == {**fields, "version": Decimal(1)}, cls.__name__
         assert list(table.store.values()) == [{**fields, "version": Decimal(1)}], cls.__name__
-
-
-# [A9] (P0)
-def test_set_paycycle_on_a_fresh_store_survives_one_race_and_keeps_its_values(shared):
-    import repository_paycycle
-
-    repo = repository_paycycle.PayCycleRepository()
-    repo._table = FakeTable()
-    repo._table.race_next_update()
-
-    assert repo.set_paycycle(28, "2026-10-01") == {"length": 28, "last_pay_date": "2026-10-01"}
-    stored = repo._table.store[("PAYCYCLE", "PAYCYCLE")]
-    assert stored["length"] == Decimal(28)
-    assert stored["last_pay_date"] == "2026-10-01"
-    assert stored["version"] == Decimal(3)

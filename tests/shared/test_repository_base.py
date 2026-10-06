@@ -35,7 +35,7 @@ def test_every_database_class_builds_on_the_shared_base(shared):
         assert "__init__" not in vars(cls), f"{class_name} still has its own __init__"
         assert "_get_table" not in vars(cls), f"{class_name} still has its own _get_table"
         repo = cls()
-        assert repo._table is None and repo._dynamodb is None, class_name
+        assert repo._table is None, class_name
 
 
 def test_paginated_query_reads_every_page_and_sends_no_filter_when_none_given(shared):

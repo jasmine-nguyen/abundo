@@ -51,14 +51,12 @@ class RepositoryBase:
     _config_label: str = ""
 
     def __init__(self) -> None:
-        self._dynamodb = None
         self._table = None
 
     def _get_table(self) -> Any:
         """Lazy-loads and buffers the connection to the physical DynamoDB table resource."""
         if self._table is None:
-            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
+            self._table = boto3.resource("dynamodb", region_name=REGION_NAME).Table(TABLE_NAME)
         return self._table
 
     def _paginated_query(self, *, key_condition, filter_expression=None, action: str = "read") -> list[dict]:
@@ -71,19 +69,16 @@ class RepositoryBase:
         """
         try:
             items: list[dict] = []
-            start_key = None
+            kwargs = {"KeyConditionExpression": key_condition}
+            if filter_expression is not None:
+                kwargs["FilterExpression"] = filter_expression
             while True:
-                kwargs = {"KeyConditionExpression": key_condition}
-                if filter_expression is not None:
-                    kwargs["FilterExpression"] = filter_expression
-                if start_key is not None:
-                    kwargs["ExclusiveStartKey"] = start_key
                 response = self._get_table().query(**kwargs)
                 items.extend(response.get("Items", []))
                 start_key = response.get("LastEvaluatedKey")
                 if not start_key:
-                    break
-            return items
+                    return items
+                kwargs["ExclusiveStartKey"] = start_key
         except ClientError as e:
             handle_database_error(e, action)
 
