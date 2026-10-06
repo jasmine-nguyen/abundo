@@ -92,23 +92,6 @@ duplicate. When you file a card the board assigns a number to, put that number i
 the title. Icons: 🧪 test · 🚀 feature · 🐞 bug · 🏗️ tech debt · 🔬 spike ·
 🗑️ no-longer-needed.
 
-# Known landmines
-
-Recurring traps — check these before changing the touched area:
-
-- **Each constant has one home** — API-only → `lambda_api/api_constants.py`; everything
-  else → `shared/constants.py`; never both. Guarded by `test_no_shared_name_shadowing.py`.
-- **The webhook repository subclasses the shared one** — `lambda/webhook_repository.py`'s
-  `TransactionRepository` extends `shared/repository_transaction.py` and imports
-  `handle_database_error` from `shared/repository_base.py` (WHIT-454 removed the old
-  duplicated copies). CRUD/error code lives in one place; only the webhook-only
-  reconcile pipeline is local. Don't reintroduce a local copy of an inherited method —
-  override only to change behaviour.
-- **`get_api_key()` lives once in `shared/api_key.py`** (WHIT-454), cached by SSM path
-  so two callers in one process (lambda_api reads the BankSync AND Anthropic keys)
-  never collide. Each lambda keeps a one-line wrapper passing its own path — don't
-  re-copy the SSM fetch.
-
 # Project context
 
 ## Board
@@ -144,6 +127,29 @@ iOS app? Agents check screens in the Simulator with the `simulator-check` skill
 The build's QA only drives the Simulator when Metro is running from the build's
 own checkout; otherwise screen checks stay manual.
 
+## Glossary
+
+Domain terms agents must use in names, tests and plans.
+
+- **Pay cycle** (`payCycle` / `pay_cycle`) — the budget period: `length` days (7 → Weekly,
+  14 → Fortnightly, else Monthly) anchored on `last_pay_date`. _Avoid_: period, month, billing cycle
+- **Bucket** — a category's top-level group: `Living`, `Lifestyle`, `Income` or `Savings`.
+  (In `merchant_groups.py` "bucket" just means a local group of charges by merchant.) _Avoid_: type, group
+- **Target** — the amount budgeted for a category each pay cycle. _Avoid_: limit, allowance
+- **Budgeted parent** — a parent category with its own target; its spend is rolled up over its
+  whole subtree, itself included. _Avoid_: group budget, umbrella
+- **Pending / posted** — a transaction's `status`: authorised but not yet settled by the bank
+  vs settled. Both count to spend. _Avoid_: cleared, processing
+- **Settlement** — a posted row replacing its pending twin; it inherits the user's fields
+  (category, notes, tags, `budget_excluded`) and the swipe date. _Avoid_: clearing, merge
+- **Rollover / carryover** — rollover is the per-category option; carryover is the sealed balance
+  of past cycles' leftover (target − spend) it accumulates. _Avoid_: surplus, bank
+- **Spread** — a bill spread: a one-off `amount` added to this cycle's spendable, taken back in
+  equal slices over the next `cycles` cycles. A category has rollover or a spread, never both.
+  _Avoid_: instalment, split
+- **Excluded from budget** (`budget_excluded`) — a user flag that keeps a transaction out of
+  budget spend. _Avoid_: ignored, hidden
+
 ## Known landmines
 
 Check these before changing the touched area:
@@ -153,11 +159,13 @@ Check these before changing the touched area:
 - **The webhook repository subclasses the shared one** —
   `lambda/webhook_repository.py`'s `TransactionRepository` extends
   `shared/repository_transaction.py` and imports `handle_database_error` from
-  `shared/repository_base.py`. CRUD/error code lives in one place; don't
-  reintroduce a local copy of an inherited method — override only to change
-  behaviour.
-- **`get_api_key()` lives once in `shared/api_key.py`**, cached by SSM path. Each
-  lambda keeps a one-line wrapper passing its own path — don't re-copy the SSM fetch.
+  `shared/repository_base.py` (WHIT-454 removed the old duplicated copies).
+  CRUD/error code lives in one place; only the webhook-only reconcile pipeline is
+  local. Don't reintroduce a local copy of an inherited method — override only to
+  change behaviour.
+- **`get_api_key()` lives once in `shared/api_key.py`** (WHIT-454), cached by SSM path
+  so two callers in one process (lambda_api reads the BankSync AND Anthropic keys)
+  never collide. Each lambda keeps a one-line wrapper passing its own path — don't re-copy the SSM fetch.
 - **The chat's time limits are a chain** (WHIT-609, WHIT-612) — the `ai_chat_worker` timeout in
   `terraform/lambda.tf` < the app's `CHAT_MAX_WAIT_MS` (`src/chat/ChatContext.tsx`). Inside the
   worker, `run_chat` shares its remaining time across the model calls, keeping
