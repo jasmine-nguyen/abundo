@@ -12,7 +12,7 @@ import copy
 from decimal import Decimal
 
 from _http_fakes import FakeResponse
-from _pending_mirror_fakes import MIRROR_TODAY, UP, WESTPAC, WESTPAC_AID, WESTPAC_SOURCE
+from _pending_mirror_fakes import MIRROR_TODAY, UP, WESTPAC, WESTPAC_AID, WESTPAC_SOURCE, fetch_returning
 
 DROPPED_IDS = {
     "bank_tx_e937046f0001",  # 28 Sep Costco -195.26 "Pending - ..." copy
@@ -76,14 +76,12 @@ def _bank_row(row):
 
 BANK_LIST = [_bank_row(row) for row in KEPT_ROWS]
 
+
 def test_29_sep_replay_removes_exactly_the_three_dropped_pendings(repo, mirror):
     repo._table.seed(*(KEPT_ROWS + DROPPED_ROWS + UNTOUCHABLE_ROWS))
     before = copy.deepcopy(repo._table.store)
 
-    def fetch(*args, **kwargs):
-        return copy.deepcopy(BANK_LIST)
-
-    result = mirror.mirror_account(repo, fetch, WESTPAC_SOURCE, MIRROR_TODAY, lambda category: True)
+    result = mirror.mirror_account(repo, fetch_returning(BANK_LIST), WESTPAC_SOURCE, MIRROR_TODAY, lambda category: True)
 
     removed = {key[1].removeprefix("TXN#") for key in set(before) - set(repo._table.store)}
     assert removed == DROPPED_IDS

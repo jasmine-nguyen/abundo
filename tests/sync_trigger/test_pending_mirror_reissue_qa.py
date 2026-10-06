@@ -6,6 +6,8 @@ import copy
 from _pending_mirror_fakes import (
     CETTIRE_NEW,
     CETTIRE_OLD,
+    MYKI_NEW,
+    MYKI_OLD,
     RUSH_NEW,
     RUSH_OLD,
     WESTPAC,
@@ -181,8 +183,8 @@ def test_a_failed_carry_write_keeps_the_stale_copy(repo, mirror, row):
 # [A10] (P1) Delete of the stale copy fails after an identical match → counted failed, no crash.
 def test_a_failed_delete_of_an_identical_copy_is_counted_failed(repo, mirror, row):
     repo._table.seed(
-        row("old_myki", "Pending - myki", "-1.00", category="transport"),
-        row("new_myki", "PENDING - myki", "-1.00", category="transport"),
+        row("old_myki", MYKI_OLD, "-1.00", category="transport"),
+        row("new_myki", MYKI_NEW, "-1.00", category="transport"),
     )
     repo._table.fail("delete_item")
 
@@ -212,8 +214,8 @@ def test_a_second_run_after_the_carry_changes_nothing(repo, mirror, row):
 # [A12] (P0) Two genuine identical pendings (two $1 myki taps) BOTH still listed are untouched.
 def test_two_genuine_identical_pendings_both_listed_are_untouched(repo, mirror, row):
     repo._table.seed(
-        row("tap_1", "PENDING - myki", "-1.00", category="transport"),
-        row("tap_2", "PENDING - myki", "-1.00", category="transport"),
+        row("tap_1", MYKI_NEW, "-1.00", category="transport"),
+        row("tap_2", MYKI_NEW, "-1.00", category="transport"),
     )
 
     result = run_reissue(mirror, repo, reissue_bank_rows("tap_1", "tap_2"), _is_unfiled)

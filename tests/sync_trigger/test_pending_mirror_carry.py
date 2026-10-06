@@ -7,9 +7,8 @@ Runs the REAL shared TransactionRepository over the in-memory FakeTable, like
 test_pending_mirror.py.
 """
 
-from decimal import Decimal
-
 from _pending_mirror_fakes import (
+    GUZMAN,
     MIRROR_TODAY,
     WESTPAC_AID,
     WESTPAC_SOURCE,
@@ -25,16 +24,11 @@ _is_unfiled = unfiled_except("groceries")
 
 
 def test_an_edited_pending_the_bank_dropped_moves_its_edit_onto_the_settled_charge(repo, mirror):
-    guzman = {
-        "amount": Decimal("-23.50"),
-        "merchant_name": "Guzman y Gomez",
-        "description": "GUZMAN Y GOMEZ NEWTOWN",
-    }
     repo._table.seed(
         pending_row("listed"),
         # The user filed and noted this pending; the bank has since settled it as "settled".
-        pending_row("edited", day="2026-09-27", category="groceries", notes="dinner with Sam", **guzman),
-        pending_row("settled", status="posted", **guzman),
+        pending_row("edited", day="2026-09-27", category="groceries", notes="dinner with Sam", **GUZMAN),
+        pending_row("settled", status="posted", **GUZMAN),
         # Edited too, but its settled charge hasn't arrived yet.
         pending_row("waiting", notes="gift for Mum"),
     )
@@ -57,14 +51,9 @@ def test_an_edited_pending_the_bank_dropped_moves_its_edit_onto_the_settled_char
 def test_a_second_pending_never_overwrites_the_note_an_earlier_run_carried(repo, mirror):
     # WHIT-666: each run re-reads the settled charges, so the in-run "claimed twin" guard does not
     # protect a note carried by an earlier run.
-    guzman = {
-        "amount": Decimal("-23.50"),
-        "merchant_name": "Guzman y Gomez",
-        "description": "GUZMAN Y GOMEZ NEWTOWN",
-    }
     repo._table.seed(
-        pending_row("first", day="2026-09-27", notes="dinner with Sam", **guzman),
-        pending_row("settled", status="posted", **guzman),
+        pending_row("first", day="2026-09-27", notes="dinner with Sam", **GUZMAN),
+        pending_row("settled", status="posted", **GUZMAN),
     )
     bank = [{"id": "settled", "accountId": WESTPAC_AID, "pending": False}]
 
@@ -74,7 +63,7 @@ def test_a_second_pending_never_overwrites_the_note_an_earlier_run_carried(repo,
     assert stored(repo, "settled")["notes"] == "dinner with Sam"
 
     # A later pending at the same shop, same amount, turns up and then drops off the bank's list.
-    repo._table.seed(pending_row("second", day="2026-09-28", notes="lunch with Jo", **guzman))
+    repo._table.seed(pending_row("second", day="2026-09-28", notes="lunch with Jo", **GUZMAN))
 
     second_run = mirror.mirror_account(repo, fetch_returning(bank), WESTPAC_SOURCE, MIRROR_TODAY, _is_unfiled)
 

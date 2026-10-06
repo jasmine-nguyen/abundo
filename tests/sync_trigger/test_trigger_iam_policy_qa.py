@@ -6,13 +6,21 @@ incident (Cettire + SP RUSHFASTERAU) through a FakeTable that refuses, with Acce
 call the trigger policy in terraform/iam.tf would refuse, including the LeadingKeys scope.
 """
 
-import copy
 import importlib
 from decimal import Decimal
 
 import pytest
 from _dynamo_fakes import FakeTable, _client_error
-from _pending_mirror_fakes import REISSUE_TODAY, WESTPAC, WESTPAC_SOURCE, reissue_bank_rows
+from _pending_mirror_fakes import (
+    CETTIRE_NEW,
+    CETTIRE_OLD,
+    RUSH_NEW,
+    RUSH_OLD,
+    WESTPAC,
+    reissue_bank_rows,
+    run_reissue,
+    unfiled_except,
+)
 from _terraform import DYNAMODB_VERB_TO_ACTION, allows, granted_dynamodb_actions, leading_keys, policy_statements
 
 POLICY = "transaction_trigger_dynamodb"
@@ -63,17 +71,15 @@ def _row(transaction_id, description, amount, day="2026-09-30", **fields):
     }
 
 
-def _is_unfiled(category):
-    return category not in ("shopping", "clothing")
+_is_unfiled = unfiled_except("shopping", "clothing")
 
 
 def _seed_rush_and_cettire(repo, merchant):
     rows = [
-        _row("old_cettire", "Pending - Cettire          ", "-260.36", category="shopping", notes="The North Face Jacket"),
-        _row("new_cettire", "PENDING - Cettire           ", "-260.36", category="shopping", filed_by_rule="rule-1"),
-        _row("old_rush", "Pending - SP RUSHFASTERAU", "-192.00", day="2026-09-29", category="shopping",
-             notes="Patagonia Backpack"),
-        _row("new_rush", "PENDING - SP RUSHFASTERAU", "-192.00", category="shopping", filed_by_rule="rule-1"),
+        _row("old_cettire", CETTIRE_OLD, "-260.36", category="shopping", notes="The North Face Jacket"),
+        _row("new_cettire", CETTIRE_NEW, "-260.36", category="shopping", filed_by_rule="rule-1"),
+        _row("old_rush", RUSH_OLD, "-192.00", day="2026-09-29", category="shopping", notes="Patagonia Backpack"),
+        _row("new_rush", RUSH_NEW, "-192.00", category="shopping", filed_by_rule="rule-1"),
     ]
     for row in rows:
         row["merchant_name"] = merchant.clean_merchant(row["description"], "")
@@ -86,9 +92,7 @@ def test_the_rush_and_cettire_doubles_are_removed_with_notes_kept_under_the_trig
     _seed_rush_and_cettire(repo, importlib.import_module("merchant"))
     bank = reissue_bank_rows("new_cettire", "new_rush")
 
-    result = mirror.mirror_account(
-        repo, lambda *args: copy.deepcopy(bank), WESTPAC_SOURCE, REISSUE_TODAY, _is_unfiled
-    )
+    result = run_reissue(mirror, repo, bank, _is_unfiled)
 
     assert result["failed"] == 0, f"a call was refused by the trigger policy (AccessDenied): {result}"
     assert result["carried"] == 2

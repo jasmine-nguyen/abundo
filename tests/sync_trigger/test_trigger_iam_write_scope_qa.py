@@ -4,7 +4,6 @@ Reuses the WHIT-678 policy enforcer (test_trigger_iam_policy_qa.py): a FakeTable
 AccessDenied to any call terraform/iam.tf's transaction_trigger_dynamodb would refuse.
 """
 
-import copy
 import importlib
 import importlib.util
 import pathlib
@@ -13,7 +12,7 @@ from decimal import Decimal
 
 import pytest
 from _dynamo_fakes import FakeTable
-from _pending_mirror_fakes import REISSUE_TODAY, WESTPAC_SOURCE, reissue_bank_rows
+from _pending_mirror_fakes import reissue_bank_rows, run_reissue
 from _terraform import allows, granted_dynamodb_actions, policy_statements
 
 _spec = importlib.util.spec_from_file_location(
@@ -38,9 +37,7 @@ def test_a_dropped_unedited_pending_is_still_deleted_under_the_trigger_policy(la
     repo._table.seed(policy_qa._row("gone", "PENDING - Coles", "-12.00", category="Unfiled"))
     bank = reissue_bank_rows("still-there")
 
-    result = mirror.mirror_account(
-        repo, lambda *args: copy.deepcopy(bank), WESTPAC_SOURCE, REISSUE_TODAY, policy_qa._is_unfiled
-    )
+    result = run_reissue(mirror, repo, bank, policy_qa._is_unfiled)
 
     assert result["failed"] == 0, f"the delete was refused by the trigger policy: {result}"
     assert result["removed"] == 1
