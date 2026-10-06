@@ -84,7 +84,8 @@ describe('the 8 mortgage and milestone tests use the real screen data code', () 
       if (!/installFakeServer\(\)/.test(text)) found.push(`${file}: no installFakeServer()`);
       if (!/useTestQueryClient\(\)/.test(text)) found.push(`${file}: no useTestQueryClient()`);
       if (!AUTH_MOCK_MODULE.test(text)) found.push(`${file}: does not use the shared authMockModule()`);
-      if (allowed.includes(`'${file}'`)) found.push(`${file}: still on the noQueriesMock ALLOWED list`);      return found;
+      if (allowed.includes(`'${file}'`)) found.push(`${file}: still on the noQueriesMock ALLOWED list`);
+      return found;
     });
 
     expect(problems).toEqual([]);
