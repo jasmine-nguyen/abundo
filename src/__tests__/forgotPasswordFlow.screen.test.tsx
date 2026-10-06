@@ -102,3 +102,28 @@ it('Back to sign in returns to the sign-in form', async () => {
   fireEvent.press(api.getByTestId('forgot-back'));
   await waitFor(() => expect(api.getByTestId('signin-form')).toBeTruthy());
 });
+
+// [A2] WHIT-796: a thrown reset call (send OR confirm) hits the shared attempt() backstop:
+// generic error, busy cleared (the button is pressable again), and the form stays put.
+it.each([
+  ['send', 'forgot-request-form', 'forgot-send'],
+  ['confirm', 'forgot-confirm-form', 'forgot-submit'],
+])('a thrown %s shows the generic error and frees the button', async (step, form, button) => {
+  const api = render(<Login />);
+  if (step === 'send') {
+    fireEvent.press(api.getByTestId('login-forgot'));
+    fireEvent.changeText(api.getByTestId('forgot-email'), 'me@x.com');
+    mockRequestReset.mockRejectedValueOnce(new Error('boom'));
+  } else {
+    await reachConfirm(api);
+    mockConfirmReset.mockRejectedValueOnce(new Error('boom'));
+    fireEvent.changeText(api.getByTestId('forgot-code'), '123456');
+    fireEvent.changeText(api.getByTestId('forgot-new'), 'Str0ng#Pass');
+    fireEvent.changeText(api.getByTestId('forgot-confirm-pass'), 'Str0ng#Pass');
+  }
+  fireEvent.press(api.getByTestId(button));
+  expect(await api.findByText('Something went wrong. Please try again.')).toBeTruthy();
+  expect(api.getByTestId(form)).toBeTruthy();
+  expect(api.getByTestId(button).props.accessibilityState?.disabled).toBeFalsy();
+  expect(routerSpies.replace).not.toHaveBeenCalled();
+});

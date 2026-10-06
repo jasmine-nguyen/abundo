@@ -14,6 +14,7 @@ import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { EmptyState } from '../../src/components/EmptyState';
 import { SettingsButton } from '../../src/components/SettingsButton';
 import { HeaderTextButton } from '../../src/components/ui';
+import { toggleIn } from '../../src/setutil';
 
 type Tab = 'all' | 'uncategorized';
 
@@ -48,11 +49,7 @@ export default function Transactions() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const exitSelection = useCallback(() => { setSelectionMode(false); setSelected(new Set()); }, []);
-  const toggleSelect = useCallback((id: string) => setSelected((prev) => {
-    const next = new Set(prev);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  }), []);
+  const toggleSelect = useCallback((id: string) => setSelected((prev) => toggleIn(prev, id)), []);
   // Switching between All and Uncategorized leaves selection mode, so a selection never
   // straddles a filter the user can no longer see.
   const changeTab = useCallback((t: Tab) => { setTab(t); exitSelection(); }, [exitSelection]);
