@@ -65,9 +65,9 @@ const loanReads = () => server.sent('GET', LOAN_FACTS).length;
 // transient 5xx, and shows "…" (never a misleading "0") while first-loading.
 describe('WHIT-191a — Settings server rows on the real query layer', () => {
   const CATS = [
-    { id: 'a', name: 'A', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 },
-    { id: 'b', name: 'B', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 },
-    { id: 'c', name: 'C', bucket: 'Living', icon: 'home', color: '#8AB4F8', recent: 0 },
+    { id: 'a', name: 'A', bucket: 'Living', icon: 'cart', color: '#7FD49B' },
+    { id: 'b', name: 'B', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C' },
+    { id: 'c', name: 'C', bucket: 'Living', icon: 'home', color: '#8AB4F8' },
   ];
   const READY_FACTS = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
   const EMPTY_FACTS = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
@@ -151,8 +151,8 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
   const ONE_RULE = [{ id: 'r1', field: 'description', operator: 'contains', value: 'X', categoryId: 'c' }];
 
   const CATS = [
-    { id: 'a', name: 'A', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 },
-    { id: 'b', name: 'B', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 },
+    { id: 'a', name: 'A', bucket: 'Living', icon: 'cart', color: '#7FD49B' },
+    { id: 'b', name: 'B', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C' },
   ];
   const READY_FACTS = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
 
@@ -359,8 +359,8 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
   }
 
   const CATS = [
-    { id: 'a', name: 'A', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 },
-    { id: 'b', name: 'B', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 },
+    { id: 'a', name: 'A', bucket: 'Living', icon: 'cart', color: '#7FD49B' },
+    { id: 'b', name: 'B', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C' },
   ];
   const READY_FACTS = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
 

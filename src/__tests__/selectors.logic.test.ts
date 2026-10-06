@@ -6,15 +6,12 @@ import { budgetEditInfo, goalView } from '../context';
 import { makeState, cat, budget, EMPTY_LOAN_FACTS, LOAN_FACTS } from './factory';
 
 describe('budgetEditInfo', () => {
-  it('is in "set" mode with no existing budget, deriving avg from category.recent', () => {
-    const s = makeState({ categories: [cat({ id: 'coffee', recent: 52 })], budgets: [] });
+  it('is in "set" mode with no existing budget', () => {
+    const s = makeState({ categories: [cat({ id: 'coffee' })], budgets: [] });
     const info = budgetEditInfo(s, 'coffee');
     expect(info.existing).toBeUndefined();
     expect(info.title).toBe('Set budget');
     expect(info.saveText).toBe('Add budget');
-    expect(info.avg).toBe(52);
-    expect(info.rec).toBe(52);            // recommendation = recent average
-    expect(info.histBars).toHaveLength(6);
   });
 
   it('is in "edit" mode when a budget already exists', () => {
@@ -28,33 +25,14 @@ describe('budgetEditInfo', () => {
     expect(info.saveText).toBe('Update budget');
   });
 
-  it('reflects the pay-cycle word (fortnight for length 14)', () => {
-    const s = makeState({ categories: [cat()], cycleLen: 14 });
-    expect(budgetEditInfo(s, 'coffee').lastWord).toBe('fortnight');
-  });
-
-  it('frames a spend category as spend (recommendation on, spend history)', () => {
-    const info = budgetEditInfo(makeState({ categories: [cat()] }), 'coffee');
-    expect(info.isIncome).toBe(false);
-    expect(info.hasRecommendation).toBe(true);
-    expect(info.recommendCta).toBe('Use my average spend');
-    expect(info.historyToggleLabel).toBe('View spending history');
-    expect(info.avgLabel).toBe('$52');            // real spend figure shown
-    expect(info.recPrompt).toBeUndefined();
-  });
-
-  it('frames an Income category as an earn-target: no recommendation, earnings copy, dashed stats (WHIT-169)', () => {
-    // recent 4000 is a SPEND average — it must NOT be surfaced as an income floor.
-    const s = makeState({ categories: [cat({ id: 'salary', bucket: 'Income', recent: 4000 })], budgets: [] });
-    const info = budgetEditInfo(s, 'salary');
-    expect(info.isIncome).toBe(true);
-    expect(info.hasRecommendation).toBe(false);   // no trustworthy income basis
-    expect(info.recPrompt).toBe('Set your income floor');
-    expect(info.historyToggleLabel).toBe('View earning history');
-    expect(info.recommendCta).toBe('Use my average income');
-    expect(info.lastLabel).toBe('—');             // spend history dashed, not $ shown
-    expect(info.avgLabel).toBe('—');
-    expect(info.avgLabel).not.toBe('$4,000');     // the spend number is never presented as income
+  it('frames Income as an earn-target (no Smoothing) and spend as spend (WHIT-169)', () => {
+    const s = makeState({ categories: [cat(), cat({ id: 'salary', bucket: 'Income' })], budgets: [] });
+    const spend = budgetEditInfo(s, 'coffee');
+    const income = budgetEditInfo(s, 'salary');
+    expect(spend.isIncome).toBe(false);
+    expect(spend.smoothingShown).toBe(true);
+    expect(income.isIncome).toBe(true);
+    expect(income.smoothingShown).toBe(false);
   });
 });
 

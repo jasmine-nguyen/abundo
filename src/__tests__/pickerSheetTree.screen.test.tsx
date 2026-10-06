@@ -212,7 +212,7 @@ describe('picker tree — gaps (WHIT-273)', () => {
 // ===== WHIT-238 inline-create (folded from pickerSheetInlineCreate). Own fns with a tracked
 // createCategoryInline. =====
 describe('picker inline-create (WHIT-238)', () => {
-  const NEW_CAT: Category = { id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#fff', recent: 0, parent: null };
+  const NEW_CAT: Category = { id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#fff', parent: null };
   const fns = {
     createCategoryInline: jest.fn(async (_form: unknown) => NEW_CAT as Category | null),
     chooseCategory: jest.fn(),
@@ -256,7 +256,7 @@ describe('picker inline-create (WHIT-238)', () => {
 // ===== WHIT-239 inline-create parent nesting (folded from pickerSheetParentPick). NEW_CAT nests
 // under 'coffee'. =====
 describe('picker inline-create parent nesting (WHIT-239)', () => {
-  const NEW_CAT: Category = { id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'coffee', color: '#fff', recent: 0, parent: 'coffee' };
+  const NEW_CAT: Category = { id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'coffee', color: '#fff', parent: 'coffee' };
   const fns = {
     createCategoryInline: jest.fn(async (_form: unknown) => NEW_CAT as Category | null),
     chooseCategory: jest.fn(),
@@ -315,7 +315,7 @@ describe('picker create-form scroller', () => {
 // beforeEach installs a persistent createCategoryInline impl and its afterEach restores the
 // console.error spy — both stay INSIDE this block. =====
 describe('picker create&file throw re-enable (WHIT-249)', () => {
-  const NEW_CAT: Category = { id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#fff', recent: 0, parent: null };
+  const NEW_CAT: Category = { id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#fff', parent: null };
   const fns = {
     createCategoryInline: jest.fn(async (_form: unknown) => NEW_CAT as Category | null),
     chooseCategory: jest.fn(),

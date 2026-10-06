@@ -134,7 +134,6 @@ describe('every accentAlt surface is one of two looks', () => {
       `${join('src', 'components', 'AiCoachCard.tsx')} aiCard`,
       `${join('app', 'mortgage.tsx')} contribCard`,
       `${join('app', 'milestone.tsx')} nextCard`,
-      `${join('app', 'budget', 'edit.tsx')} recBtn`,
       `${join('app', '(tabs)', 'transactions.tsx')} hint`,
     ]));
     expect(DASHED_SURFACES.map(key)).toEqual(expect.arrayContaining([
@@ -306,7 +305,8 @@ describe('[G1] the chip blue is written once, as a token', () => {
 });
 
 // ---- [G2] every alpha still renders the exact pre-token colour -----------------------------------
-// The nine literal forms this card replaced, read off `git show HEAD~ -- app src` before the sweep.
+// The literal forms this card replaced, read off `git show HEAD~ -- app src` before the sweep
+// (.32, the history-chart bar, left with that chart in WHIT-794).
 // `.1` and `.10` are the same colour written two ways; the sweep emits `0.1` for both.
 const PRE_TOKEN_LITERALS = [
   'rgba(124,140,255,.07)',
@@ -316,7 +316,6 @@ const PRE_TOKEN_LITERALS = [
   'rgba(124,140,255,.16)',
   'rgba(124,140,255,.22)',
   'rgba(124,140,255,.25)',
-  'rgba(124,140,255,.32)',
   'rgba(124,140,255,.4)',
 ];
 
@@ -352,9 +351,8 @@ describe('[G2] the sweep was colour-preserving at every alpha', () => {
     },
   );
 
-  // Eight distinct alphas (.1 and .10 are the same colour written two ways). 0.32 has a SINGLE
-  // call site — app/budget/edit.tsx, a bar in the history chart — so if that surface is
-  // legitimately removed, delete its literal from PRE_TOKEN_LITERALS in the same commit.
+  // Seven distinct alphas (.1 and .10 are the same colour written two ways). If a shade's last
+  // surface is legitimately removed, delete its literal from PRE_TOKEN_LITERALS in the same commit.
   // This failing means a shade left the app, not that something was repainted.
   it('[G2] every pre-token shade is still in use — a missing one is a deliberate deletion, not a repaint', () => {
     expect(ALPHAS_IN_USE).toEqual([...PRE_TOKEN_BY_ALPHA.keys()].sort((a, b) => a - b));
@@ -470,9 +468,8 @@ const BASELINE: Record<string, number> = {
   'app/settings.tsx': 5,
   'app/(tabs)/transactions.tsx': 8,
   'app/budget/[id].tsx': 4,
-  'app/budget/edit.tsx': 4,
+  'app/budget/edit.tsx': 3,
   'app/budget/spread.tsx': 6,
-  'app/budget/pick.tsx': 3,
   'app/category/edit.tsx': 4,
   'app/goal/edit.tsx': 4,
   'app/index.tsx': 8,

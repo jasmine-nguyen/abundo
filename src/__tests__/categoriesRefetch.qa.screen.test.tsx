@@ -13,7 +13,7 @@ import { useCategories } from '../queries';
 import { COFFEE } from './support/categories';
 
 const server = installFakeServer();
-const CATEGORIES = [{ ...COFFEE, recent: 0 }];
+const CATEGORIES = [{ ...COFFEE }];
 
 describe('useCategories reload actions still act (WHIT-669 QA)', () => {
   // [A1]

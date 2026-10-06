@@ -6,7 +6,7 @@ import type { Category } from '../types';
 import type { Rule } from '../model';
 
 const cat = (id: string, name: string): Category =>
-  ({ id, name, icon: 'tag', color: '#fff', bucket: 'Lifestyle', recent: 0 });
+  ({ id, name, icon: 'tag', color: '#fff', bucket: 'Lifestyle' });
 
 const rule = (id: string, pattern: string, categoryId: string): Rule =>
   ({ id, pattern, categoryId, isNew: false });

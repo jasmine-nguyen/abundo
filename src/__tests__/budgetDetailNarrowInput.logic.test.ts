@@ -78,8 +78,6 @@ describe('budgetEditInfo — narrow BudgetEditInput', () => {
     const info = budgetEditInfo(input, 'coffee');
     expect(info.category?.id).toBe('coffee');
     expect(info.periodLabel).toBe('MONTHLY');
-    expect(info.lastWord).toBe('month');
-    expect(info.hasRecommendation).toBe(true);
     expect(info.title).toBe('Set budget');
   });
 
@@ -91,7 +89,7 @@ describe('budgetEditInfo — narrow BudgetEditInput', () => {
     };
     const info = budgetEditInfo(cold, 'missing');
     expect(info.category).toBeUndefined();
-    expect(info.hasRecommendation).toBe(true);   // isIncome=false when c is undefined
+    expect(info.isIncome).toBe(false);
     expect(info.existing).toBeUndefined();
     expect(info.title).toBe('Set budget');
   });

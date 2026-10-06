@@ -54,8 +54,7 @@ export function loanFactsReady(f: LoanFacts): f is LoanFactsInput {
 /**
  * Map a raw category object from the categories API into the client-side
  * `Category` shape, defaulting any missing field so downstream budget math never
- * sees `undefined`/`NaN`. The server always returns `recent: 0`, and `icon`
- * falls back to a key that is guaranteed to exist in the icon map (`coffee`)
+ * sees `undefined`/`NaN`. `icon` falls back to a key that is guaranteed to exist in the icon map (`coffee`)
  * rather than the server's own default, so the chip always renders a glyph.
  *
  * @param raw - A single category record as returned by the categories API.
@@ -68,7 +67,6 @@ export function toCategory(raw: any): Category {
     bucket: raw.bucket,
     icon: raw.icon ?? 'coffee',
     color: colorForCategory(raw.id),
-    recent: typeof raw.recent === 'number' ? raw.recent : 0,
     parent: raw.parent ?? null,
     // The Insights chart's permanent colour. Absent or unusable → undefined, so the chart falls
     // back to the id-derived colour. NOT `raw.colorSlot || undefined` (that drops slot 0, a real

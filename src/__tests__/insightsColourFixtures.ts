@@ -13,15 +13,15 @@
 
 // The flat Spending fixture (insightsChartPalette.screen.test.tsx). No sub-categories.
 export const PALETTE_CATS = [
-  { id: 'shopping', name: 'Shopping', icon: 'bag', color: '#73daca', bucket: 'Lifestyle', recent: 0, colorSlot: 2 },
-  { id: 'eatingout', name: 'Eating Out', icon: 'food', color: '#e5495f', bucket: 'Lifestyle', recent: 0, colorSlot: 0 },
+  { id: 'shopping', name: 'Shopping', icon: 'bag', color: '#73daca', bucket: 'Lifestyle', colorSlot: 2 },
+  { id: 'eatingout', name: 'Eating Out', icon: 'food', color: '#e5495f', bucket: 'Lifestyle', colorSlot: 0 },
 ] as const;
 
 // The nested fixture (insightsSlotRows.screen.test.tsx): shopping with two children, so the
 // synthetic "Directly in X" and refund rows can be checked. Slots 2/5/9 all resolve to distinct
 // hues, so no row assertion can pass by coincidence.
 export const SLOT_ROWS_CATS = [
-  { id: 'shopping', name: 'Shopping', icon: 'bag', color: '#111111', bucket: 'Lifestyle', recent: 0, parent: null, colorSlot: 2 },
-  { id: 'shoes', name: 'Shoes', icon: 'bag', color: '#222222', bucket: 'Lifestyle', recent: 0, parent: 'shopping', colorSlot: 5 },
-  { id: 'clothes', name: 'Clothes', icon: 'bag', color: '#333333', bucket: 'Lifestyle', recent: 0, parent: 'shopping', colorSlot: 9 },
+  { id: 'shopping', name: 'Shopping', icon: 'bag', color: '#111111', bucket: 'Lifestyle', parent: null, colorSlot: 2 },
+  { id: 'shoes', name: 'Shoes', icon: 'bag', color: '#222222', bucket: 'Lifestyle', parent: 'shopping', colorSlot: 5 },
+  { id: 'clothes', name: 'Clothes', icon: 'bag', color: '#333333', bucket: 'Lifestyle', parent: 'shopping', colorSlot: 9 },
 ] as const;

@@ -41,26 +41,26 @@ describe('selectBudgets', () => {
 });
 
 describe('selectCategories', () => {
-  it('maps raw categories and defaults a missing icon/recent; colour comes from the id', () => {
+  it('maps raw categories and defaults a missing icon; colour comes from the id', () => {
     const out = selectCategories([
-      { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
-      { id: 'x', name: 'X', bucket: 'Living' }, // missing icon/color/recent
+      { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C' },
+      { id: 'x', name: 'X', bucket: 'Living' }, // missing icon/color
     ]);
     // WHIT-320: the display colour is a function of the id, not the server hex — coffee's built-in
     // base is #ff9e64 (the server's legacy '#E8A87C' is ignored).
-    expect(out[0]).toEqual({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#ff9e64', recent: 52, parent: null });
+    expect(out[0]).toEqual({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#ff9e64', parent: null });
     expect(out[1].icon).toBe('coffee'); // guaranteed-present fallback glyph
-    expect(out[1].recent).toBe(0); // default so budget math never sees undefined
+    expect(out[1]).not.toHaveProperty('recent');
     expect(typeof out[1].color).toBe('string'); // id-derived sibling colour
     expect(out[1].parent).toBeNull(); // absent parent normalised to null (top-level)
   });
 
   it('gives each built-in id its fixed Tokyo Night hue, spread across the wheel', () => {
     const out = selectCategories([
-      { ...GROCERIES_RECORD, color: '#7FD49B', recent: 0 },
-      { id: 'shopping', name: 'Shopping', bucket: 'Lifestyle', icon: 'bag', color: '#6FD0C9', recent: 0 },
-      { id: 'fitness', name: 'Fitness', bucket: 'Lifestyle', icon: 'dumbbell', color: '#8FD46B', recent: 0 },
-      { id: 'travel', name: 'Travel', bucket: 'Lifestyle', icon: 'plane', color: '#6FB6D0', recent: 0 },
+      { ...GROCERIES_RECORD, color: '#7FD49B' },
+      { id: 'shopping', name: 'Shopping', bucket: 'Lifestyle', icon: 'bag', color: '#6FD0C9' },
+      { id: 'fitness', name: 'Fitness', bucket: 'Lifestyle', icon: 'dumbbell', color: '#8FD46B' },
+      { id: 'travel', name: 'Travel', bucket: 'Lifestyle', icon: 'plane', color: '#6FB6D0' },
     ]);
     // Each built-in id maps to its own base hue: green → teal → sky → cyan, no two alike.
     expect(out[0].color).toBe('#9ece6a'); // groceries → green
@@ -72,8 +72,8 @@ describe('selectCategories', () => {
   it('gives a non-built-in id a deterministic sibling colour, ignoring the server hex', () => {
     // WHIT-320: a user-created category isn't in CATEGORY_BASE, so it gets a darker sibling keyed
     // off its id — stable across reads and independent of whatever colour the server stored.
-    const first = selectCategories([{ id: 'wine-club', name: 'Wine', bucket: 'Living', icon: 'cart', color: '#2ac3de', recent: 0 }]);
-    const again = selectCategories([{ id: 'wine-club', name: 'Wine', bucket: 'Living', icon: 'cart', color: '#ffffff', recent: 0 }]);
+    const first = selectCategories([{ id: 'wine-club', name: 'Wine', bucket: 'Living', icon: 'cart', color: '#2ac3de' }]);
+    const again = selectCategories([{ id: 'wine-club', name: 'Wine', bucket: 'Living', icon: 'cart', color: '#ffffff' }]);
     expect(first[0].color).not.toBe('#2ac3de');       // not the passed-in hex
     expect(first[0].color).toBe(again[0].color);       // same id → same colour regardless of hex
     expect(first[0].color).toMatch(/^#[0-9a-f]{6}$/);  // a real hex token
@@ -81,7 +81,7 @@ describe('selectCategories', () => {
 
   it('carries a category parent link through unchanged', () => {
     const out = selectCategories([
-      { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8AB4F8', recent: 0, parent: 'transport' },
+      { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8AB4F8', parent: 'transport' },
     ]);
     expect(out[0].parent).toBe('transport');
   });

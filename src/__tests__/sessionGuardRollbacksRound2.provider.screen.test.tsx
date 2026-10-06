@@ -24,7 +24,7 @@ function signOut() {
   act(() => { queryClient.clear(); setAuthStatus('anon'); });
 }
 
-const cat = (id: string, name: string) => ({ id, name, bucket: 'Living', icon: 'tag', color: '#fff', recent: 0 });
+const cat = (id: string, name: string) => ({ id, name, bucket: 'Living', icon: 'tag', color: '#fff' });
 
 beforeEach(() => {
   resetAuth();

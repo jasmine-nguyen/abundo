@@ -14,7 +14,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const server = installFakeServer();
-const GROCERIES = { ...GROCERIES_RECORD, color: '#7fd1b9', recent: 12 };
+const GROCERIES = { ...GROCERIES_RECORD, color: '#7fd1b9' };
 
 beforeEach(() => {
   seedBudgets(server, { payCycle: { length: 30, last_pay_date: '2026-07-01', days_left: 4 } });

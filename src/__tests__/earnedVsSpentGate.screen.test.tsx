@@ -17,7 +17,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 const server = installFakeServer();
 useTestQueryClient();
 
-const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', bucket: 'Lifestyle', recent: 0 }];
+const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', bucket: 'Lifestyle' }];
 
 beforeEach(() => {
   resetAuth();

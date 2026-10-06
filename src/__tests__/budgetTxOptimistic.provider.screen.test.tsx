@@ -321,10 +321,10 @@ describe('budgetTxRefileOptimistic (folded)', () => {
   // budgets. A charge on `coffee` sits in food's budget list; re-filing it to `transport` re-files
   // it OUT of food's subtree (should drop), while re-filing to `coffee`/`food` stays in (should keep).
   const CATS: Category[] = [
-    { id: 'food', name: 'Food', bucket: 'Living', icon: 'cart', color: '#7fd49b', recent: 0, parent: null },
-    { id: 'coffee', name: 'Coffee', bucket: 'Living', icon: 'cup', color: '#7fd49b', recent: 0, parent: 'food' },
-    { id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },
-    { id: 'shopping', name: 'Shopping', bucket: 'Living', icon: 'bag', color: '#f0b27a', recent: 0, parent: null },
+    { id: 'food', name: 'Food', bucket: 'Living', icon: 'cart', color: '#7fd49b', parent: null },
+    { id: 'coffee', name: 'Coffee', bucket: 'Living', icon: 'cup', color: '#7fd49b', parent: 'food' },
+    { id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', parent: null },
+    { id: 'shopping', name: 'Shopping', bucket: 'Living', icon: 'bag', color: '#f0b27a', parent: null },
   ];
 
   const txn = (id: string, over: Partial<Transaction> = {}): Transaction => ({
@@ -608,12 +608,12 @@ describe('budgetTxRefileParentSubtree (folded)', () => {
   // shopping(Living) are unrelated top-level budgets. A charge on `coffee` sits under BOTH the
   // grandparent `food` and the parent `dining`. `snacks` is under food but NOT under dining.
   const CATS: Category[] = [
-    { id: 'food', name: 'Food', bucket: 'Living', icon: 'cart', color: '#7fd49b', recent: 0, parent: null },
-    { id: 'dining', name: 'Dining', bucket: 'Living', icon: 'plate', color: '#7fd49b', recent: 0, parent: 'food' },
-    { id: 'coffee', name: 'Coffee', bucket: 'Living', icon: 'cup', color: '#7fd49b', recent: 0, parent: 'dining' },
-    { id: 'snacks', name: 'Snacks', bucket: 'Living', icon: 'candy', color: '#7fd49b', recent: 0, parent: 'food' },
-    { id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },
-    { id: 'shopping', name: 'Shopping', bucket: 'Living', icon: 'bag', color: '#f0b27a', recent: 0, parent: null },
+    { id: 'food', name: 'Food', bucket: 'Living', icon: 'cart', color: '#7fd49b', parent: null },
+    { id: 'dining', name: 'Dining', bucket: 'Living', icon: 'plate', color: '#7fd49b', parent: 'food' },
+    { id: 'coffee', name: 'Coffee', bucket: 'Living', icon: 'cup', color: '#7fd49b', parent: 'dining' },
+    { id: 'snacks', name: 'Snacks', bucket: 'Living', icon: 'candy', color: '#7fd49b', parent: 'food' },
+    { id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', parent: null },
+    { id: 'shopping', name: 'Shopping', bucket: 'Living', icon: 'bag', color: '#f0b27a', parent: null },
   ];
 
   const txn = (id: string, over: Partial<Transaction> = {}): Transaction => ({
@@ -728,9 +728,9 @@ describe('WHIT-348 re-file budget-list rollback settling after sign-out', () => 
   // food(Living) → coffee(Living); transport(Living) is outside food. A coffee charge sits in food's
   // budget list; re-filing to transport re-files it OUT of food (optimistic drop).
   const CATS: Category[] = [
-    { id: 'food', name: 'Food', bucket: 'Living', icon: 'cart', color: '#7fd49b', recent: 0, parent: null },
-    { id: 'coffee', name: 'Coffee', bucket: 'Living', icon: 'cup', color: '#7fd49b', recent: 0, parent: 'food' },
-    { id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },
+    { id: 'food', name: 'Food', bucket: 'Living', icon: 'cart', color: '#7fd49b', parent: null },
+    { id: 'coffee', name: 'Coffee', bucket: 'Living', icon: 'cup', color: '#7fd49b', parent: 'food' },
+    { id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', parent: null },
   ];
 
   const txn = (over: Partial<Transaction> = {}): Transaction => ({

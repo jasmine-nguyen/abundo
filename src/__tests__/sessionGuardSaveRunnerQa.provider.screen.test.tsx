@@ -27,7 +27,7 @@ function signInNextAccount() {
   act(() => setAuthStatus('authed'));
 }
 
-const cat = (id: string, name: string) => ({ id, name, bucket: 'Living', icon: 'tag', color: '#fff', recent: 0 });
+const cat = (id: string, name: string) => ({ id, name, bucket: 'Living', icon: 'tag', color: '#fff' });
 const updated = (...ids: string[]) => ({ results: ids.map((id) => ({ id, status: 'updated' })) });
 
 function rulesCache() {
