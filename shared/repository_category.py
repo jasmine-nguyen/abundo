@@ -13,7 +13,6 @@ from repository_errors import (
     CategoryNotFoundError,
     DuplicateCategoryError,
     InvalidCategoryParentError,
-    VersionConflictError,
 )
 
 # Category taxonomy data lives here, not in constants.py, on purpose: this module
@@ -718,31 +717,20 @@ class CategoryRepository(RepositoryBase):
     writes are conditional and retry once on a version race.
     """
 
-    def _get_config(self) -> Optional[dict]:
-        try:
-            return self._get_table().get_item(Key=_CATEGORIES_KEY).get("Item")
-        except ClientError as e:
-            handle_database_error(e, "read categories")
+    _config_key = _CATEGORIES_KEY
+    _config_label = "categories"
 
-    def _ensure_seeded(self) -> None:
-        """Idempotently write the seed taxonomy if the config item is absent.
+    def _seed_fields(self) -> dict:
+        """The seed taxonomy. Deterministic, so a lost seeding race wrote exactly the same
+        13 categories. The slot marker rides the seed write, so a brand-new store is born
+        migrated and never performs a backfill update."""
+        return {"items": dict(SEED_CATEGORIES),
+                _COLOR_SLOT_SCHEMA_FIELD: Decimal(_COLOR_SLOT_SCHEMA)}
 
-        A lost race (another caller seeded first) raises ConditionalCheckFailed
-        and is a no-op success: the seed content is deterministic, so the winner
-        wrote exactly the same 13 categories.
-        """
-        try:
-            self._get_table().put_item(
-                # The slot marker rides the seed write, so a brand-new store is born
-                # migrated and never performs a backfill update.
-                Item={**_CATEGORIES_KEY, "items": dict(SEED_CATEGORIES), "version": Decimal(1),
-                      _COLOR_SLOT_SCHEMA_FIELD: Decimal(_COLOR_SLOT_SCHEMA)},
-                ConditionExpression="attribute_not_exists(pk)",
-            )
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                return
-            handle_database_error(e, "seed categories")
+    def _raise_if_gone(self, cat_id: str) -> None:
+        """After a lost race: id deleted under us (404) vs a concurrent version bump (retry)."""
+        if cat_id not in self._get_config()["items"]:
+            raise CategoryNotFoundError(cat_id)
 
     def _is_slot_migrated(self, item: dict) -> bool:
         """Has this store already been stamped? A corrupt marker reads as 'no', which just
@@ -865,56 +853,44 @@ class CategoryRepository(RepositoryBase):
         pre_plan, pre_settled = plan_color_slot_stage(pre["items"], repainted=pre_repainted)
         if pre_plan or not pre_repainted:
             self._write_color_slots(pre["version"], pre_plan, strict=True, settled=pre_settled)
-        for _attempt in range(2):
-            item = self._get_config()
+        def build(item):
             items = item["items"]
-            version = item["version"]
             if cat_id in items:
                 raise DuplicateCategoryError(cat_id)
             if parent is not None:
                 validate_category_parent(items, cat_id, parent, bucket)
                 validate_category_depth(items, cat_id, parent)
-                # Inside the retry loop, which re-reads `items`, so two racing creates can't
+                # Re-run on every attempt against a fresh read, so two racing creates can't
                 # both slip past the cap: the loser's conditional write fails and it
                 # re-validates against the winner's state.
                 validate_category_breadth(items, cat_id, parent)
 
             # Count taken AFTER seeding, so a new category never reuses a seed's index.
             color = CATEGORY_PALETTE[len(items) % len(CATEGORY_PALETTE)]
-            # Computed INSIDE the loop from the freshly-read items (same as `color` above): on
+            # Computed per attempt from the freshly-read items (same as `color` above): on
             # a retry we re-read, so two concurrent creates can never be handed the same slot.
             slot = plan_new_category_slot(items)
             new_cat = {"id": cat_id, "name": name, "icon": icon, "color": color,
                        "bucket": bucket, "parent": parent,
                        _COLOR_SLOT_FIELD: Decimal(slot)}
-            try:
-                self._get_table().update_item(
-                    Key=_CATEGORIES_KEY,
-                    # Nested SET adds ONE map key — never rewrites the whole items map.
-                    UpdateExpression="SET #items.#id = :cat, #v = :next",
-                    ConditionExpression=(
-                        "attribute_exists(pk) AND #v = :expected "
-                        "AND attribute_not_exists(#items.#id)"
-                    ),
-                    ExpressionAttributeNames={"#items": "items", "#id": cat_id, "#v": "version"},
-                    ExpressionAttributeValues={
-                        ":cat": new_cat,
-                        ":expected": version,
-                        ":next": version + Decimal(1),
-                    },
-                )
-                # Store a Decimal (DynamoDB's number type) but RETURN a plain int, so the
-                # POST body carries `2` like the GET does — not the `2.0` a Decimal encodes to.
-                return {**new_cat, _COLOR_SLOT_FIELD: slot}
-            except ClientError as e:
-                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                    handle_database_error(e, "create category")
-                # Disambiguate: duplicate id (409) vs a concurrent version bump (retry).
-                latest = self._get_config()
-                if cat_id in latest["items"]:
-                    raise DuplicateCategoryError(cat_id)
-                # id still free — the version moved under us; loop retries once.
-        raise VersionConflictError("create_category: exhausted retries under write contention")
+            update = {
+                # Nested SET adds ONE map key — never rewrites the whole items map.
+                "expression": "SET #items.#id = :cat, #v = :next",
+                "condition": "attribute_not_exists(#items.#id)",
+                "names": {"#items": "items", "#id": cat_id},
+                "values": {":cat": new_cat},
+            }
+            # Store a Decimal (DynamoDB's number type) but RETURN a plain int, so the
+            # POST body carries `2` like the GET does — not the `2.0` a Decimal encodes to.
+            return update, {**new_cat, _COLOR_SLOT_FIELD: slot}
+
+        def raise_if_duplicate():
+            # Disambiguate: duplicate id (409) vs a concurrent version bump (retry).
+            if cat_id in self._get_config()["items"]:
+                raise DuplicateCategoryError(cat_id)
+
+        return self._versioned_update(
+            build, action="create category", seed=False, on_conflict=raise_if_duplicate)
 
     def update_category(
         self, cat_id: str, name: str, bucket: str, icon: str, parent: Any = _PARENT_UNSET
@@ -932,11 +908,8 @@ class CategoryRepository(RepositoryBase):
         has children, since that would break the same-bucket rule for its subs.
         """
         changing_parent = parent is not _PARENT_UNSET
-        self._ensure_seeded()
-        for _attempt in range(2):
-            item = self._get_config()
+        def build(item):
             items = item["items"]
-            version = item["version"]
             if cat_id not in items:
                 raise CategoryNotFoundError(cat_id)
             bucket_changing = bucket != items[cat_id].get("bucket")
@@ -956,17 +929,9 @@ class CategoryRepository(RepositoryBase):
                 raise InvalidCategoryParentError(
                     f"cannot change the bucket of '{cat_id}' while it has sub-categories")
 
-            names = {
-                "#items": "items", "#id": cat_id, "#name": "name",
-                "#bucket": "bucket", "#icon": "icon", "#v": "version",
-            }
-            values = {
-                ":name": name,
-                ":bucket": bucket,
-                ":icon": icon,
-                ":expected": version,
-                ":next": version + Decimal(1),
-            }
+            names = {"#items": "items", "#id": cat_id, "#name": "name",
+                     "#bucket": "bucket", "#icon": "icon"}
+            values = {":name": name, ":bucket": bucket, ":icon": icon}
             set_clause = (
                 "#items.#id.#name = :name, #items.#id.#bucket = :bucket, "
                 "#items.#id.#icon = :icon, #v = :next"
@@ -975,38 +940,24 @@ class CategoryRepository(RepositoryBase):
                 names["#parent"] = "parent"
                 values[":parent"] = parent
                 set_clause += ", #items.#id.#parent = :parent"
-            try:
-                self._get_table().update_item(
-                    Key=_CATEGORIES_KEY,
-                    UpdateExpression="SET " + set_clause,
-                    ConditionExpression=(
-                        "attribute_exists(pk) AND #v = :expected "
-                        "AND attribute_exists(#items.#id)"
-                    ),
-                    ExpressionAttributeNames=names,
-                    ExpressionAttributeValues=values,
-                )
-                # Build the response from the pre-read item so id/color survive;
-                # reflect the resolved parent (new one if changed, else stored).
-                resolved_parent = parent if changing_parent else items[cat_id].get("parent")
-                # Same planner and the same _previewed_slot the read path uses, so PATCH can
-                # never echo a colour GET disagrees with. Plain int, so the body carries `2`
-                # like GET does rather than the `2.0` a Decimal encodes to. Pure: no extra
-                # read, no extra write — `item`/`items` are already in hand.
-                pending, _ = plan_color_slot_stage(
-                    items, repainted=self._is_slot_migrated(item))
-                return {**items[cat_id], "name": name, "bucket": bucket,
-                        "icon": icon, "parent": resolved_parent,
-                        _COLOR_SLOT_FIELD: _previewed_slot(pending, cat_id, items[cat_id])}
-            except ClientError as e:
-                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                    handle_database_error(e, "update category")
-                # Disambiguate: id deleted under us (404) vs a concurrent version bump (retry).
-                latest = self._get_config()
-                if cat_id not in latest["items"]:
-                    raise CategoryNotFoundError(cat_id)
-                # id still present — the version moved under us; loop retries once.
-        raise VersionConflictError("update_category: exhausted retries under write contention")
+            update = {"expression": "SET " + set_clause,
+                      "condition": "attribute_exists(#items.#id)",
+                      "names": names, "values": values}
+            # Build the response from the pre-read item so id/color survive;
+            # reflect the resolved parent (new one if changed, else stored).
+            resolved_parent = parent if changing_parent else items[cat_id].get("parent")
+            # Same planner and the same _previewed_slot the read path uses, so PATCH can
+            # never echo a colour GET disagrees with. Plain int, so the body carries `2`
+            # like GET does rather than the `2.0` a Decimal encodes to. Pure: no extra
+            # read, no extra write — `item`/`items` are already in hand.
+            pending, _ = plan_color_slot_stage(items, repainted=self._is_slot_migrated(item))
+            result = {**items[cat_id], "name": name, "bucket": bucket,
+                      "icon": icon, "parent": resolved_parent,
+                      _COLOR_SLOT_FIELD: _previewed_slot(pending, cat_id, items[cat_id])}
+            return update, result
+
+        return self._versioned_update(
+            build, action="update category", on_conflict=lambda: self._raise_if_gone(cat_id))
 
     def delete_category(self, cat_id: str) -> str:
         """Hard-delete a category (REMOVE its map key). No server-side cascade for
@@ -1021,17 +972,14 @@ class CategoryRepository(RepositoryBase):
         mechanism. Data written before that cap can still be over-wide, and is refused with a
         400 rather than left to fail as an uncaught 500 (WHIT-426).
         """
-        self._ensure_seeded()
-        for _attempt in range(2):
-            item = self._get_config()
+        def build(item):
             items = item["items"]
-            version = item["version"]
             if cat_id not in items:
                 raise CategoryNotFoundError(cat_id)
 
             child_ids = [cid for cid, child in items.items() if child.get("parent") == cat_id]
-            names = {"#items": "items", "#id": cat_id, "#v": "version"}
-            values = {":expected": version, ":next": version + Decimal(1)}
+            names = {"#items": "items", "#id": cat_id}
+            values = {}
             set_clause = "#v = :next"
             if child_ids:
                 # Detach each child to top-level (parent -> None) alongside the delete.
@@ -1053,23 +1001,9 @@ class CategoryRepository(RepositoryBase):
                 raise InvalidCategoryParentError(
                     f"'{cat_id}' has {len(child_ids)} sub-categories — too many to detach in "
                     f"one write; move some out from under it first")
-            try:
-                self._get_table().update_item(
-                    Key=_CATEGORIES_KEY,
-                    UpdateExpression=expression,
-                    ConditionExpression=(
-                        "attribute_exists(pk) AND #v = :expected "
-                        "AND attribute_exists(#items.#id)"
-                    ),
-                    ExpressionAttributeNames=names,
-                    ExpressionAttributeValues=values,
-                )
-                return cat_id
-            except ClientError as e:
-                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                    handle_database_error(e, "delete category")
-                latest = self._get_config()
-                if cat_id not in latest["items"]:
-                    raise CategoryNotFoundError(cat_id)
-                # id still present — the version moved under us; loop retries once.
-        raise VersionConflictError("delete_category: exhausted retries under write contention")
+            update = {"expression": expression, "condition": "attribute_exists(#items.#id)",
+                      "names": names, "values": values}
+            return update, cat_id
+
+        return self._versioned_update(
+            build, action="delete category", on_conflict=lambda: self._raise_if_gone(cat_id))

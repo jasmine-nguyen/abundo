@@ -684,7 +684,7 @@ def test_repo_create_raises_under_sustained_contention(handler):
     try:
         repo.create_category("gym", "Gym", "Lifestyle", "dumbbell")
         assert False, "expected VersionConflictError under sustained contention"
-    except repository.VersionConflictError:
+    except handler.VersionConflictError:
         pass
 
 

@@ -2,13 +2,9 @@
 DynamoDB config item (one settings object, replaced whole under the version guard)."""
 
 from decimal import Decimal
-from typing import Optional
-
-from botocore.exceptions import ClientError
 
 from constants import DEFAULT_PAYCYCLE
-from repository_base import RepositoryBase, handle_database_error
-from repository_errors import VersionConflictError
+from repository_base import RepositoryBase
 
 _PAYCYCLE_KEY = {"pk": "PAYCYCLE", "sk": "PAYCYCLE"}
 
@@ -24,33 +20,15 @@ class PayCycleRepository(RepositoryBase):
     install reads a valid cycle before the user has set one.
     """
 
-    def _get_config(self) -> Optional[dict]:
-        try:
-            return self._get_table().get_item(Key=_PAYCYCLE_KEY).get("Item")
-        except ClientError as e:
-            handle_database_error(e, "read pay cycle")
+    _config_key = _PAYCYCLE_KEY
+    _config_label = "pay cycle"
 
-    def _ensure_seeded(self) -> None:
-        """Idempotently write the seed pay cycle if the config item is absent.
-
-        A lost race (another caller seeded first) raises ConditionalCheckFailed
-        and is a no-op success: the seed is the same deterministic DEFAULT_PAYCYCLE
-        either way.
-        """
-        try:
-            self._get_table().put_item(
-                Item={
-                    **_PAYCYCLE_KEY,
-                    "length": Decimal(DEFAULT_PAYCYCLE["length"]),
-                    "last_pay_date": DEFAULT_PAYCYCLE["last_pay_date"],
-                    "version": Decimal(1),
-                },
-                ConditionExpression="attribute_not_exists(pk)",
-            )
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                return
-            handle_database_error(e, "seed pay cycle")
+    def _seed_fields(self) -> dict:
+        """Seed to the deterministic DEFAULT_PAYCYCLE, so a lost seeding race is harmless."""
+        return {
+            "length": Decimal(DEFAULT_PAYCYCLE["length"]),
+            "last_pay_date": DEFAULT_PAYCYCLE["last_pay_date"],
+        }
 
     def get_paycycle(self) -> dict:
         """Return the stored {"length": int, "last_pay_date": str}, seeding the default on
@@ -71,30 +49,12 @@ class PayCycleRepository(RepositoryBase):
         is the handler's job; this just persists. Raises VersionConflictError if it
         can't converge within the retry budget.
         """
-        self._ensure_seeded()
-        for _attempt in range(2):
-            item = self._get_config()
-            version = item["version"]
-            try:
-                self._get_table().update_item(
-                    Key=_PAYCYCLE_KEY,
-                    UpdateExpression="SET #length = :length, #last_pay_date = :last_pay_date, #v = :next",
-                    ConditionExpression="attribute_exists(pk) AND #v = :expected",
-                    ExpressionAttributeNames={
-                        "#length": "length",
-                        "#last_pay_date": "last_pay_date",
-                        "#v": "version",
-                    },
-                    ExpressionAttributeValues={
-                        ":length": Decimal(length),
-                        ":last_pay_date": last_pay_date,
-                        ":expected": version,
-                        ":next": version + Decimal(1),
-                    },
-                )
-                return {"length": length, "last_pay_date": last_pay_date}
-            except ClientError as e:
-                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                    handle_database_error(e, "set pay cycle")
-                # The version moved under us; loop retries once.
-        raise VersionConflictError("set_paycycle: exhausted retries under write contention")
+        def build(item):
+            update = {
+                "expression": "SET #length = :length, #last_pay_date = :last_pay_date, #v = :next",
+                "names": {"#length": "length", "#last_pay_date": "last_pay_date"},
+                "values": {":length": Decimal(length), ":last_pay_date": last_pay_date},
+            }
+            return update, {"length": length, "last_pay_date": last_pay_date}
+
+        return self._versioned_update(build, action="set pay cycle")
