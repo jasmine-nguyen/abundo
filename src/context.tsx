@@ -1270,17 +1270,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // toast/return is gated on the session epoch (WHIT-271) so a mid-save sign-out never toasts
   // into or navigates the next user's session.
   const writeSpread = useCallback(
-    (categoryId: string, send: () => Promise<unknown>, savedToast: (name: string) => string, failToast: string): Promise<boolean> => {
+    (categoryId: string, send: () => Promise<unknown>, savedVerb: 'set' | 'removed', failVerb: 'set' | 'remove'): Promise<boolean> => {
       const c = cachedCategory(categoryId);
       return runSave({
         send,
         onSaved: () => {
           queryClient.invalidateQueries({ queryKey: budgetsKey });
-          if (c) showToast(savedToast(c.name));
+          if (c) showToast(`Bill spread ${savedVerb} for ${c.name}.`);
           return true;
         },
         onFailed: () => {
-          showToast(failToast);
+          showToast(`Could not ${failVerb} the bill spread. Please try again.`);
           return false;
         },
         whenSignedOut: false,
@@ -1292,16 +1292,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const saveSpread = useCallback(
     async (categoryId: string, amount: number, cycles: number): Promise<boolean> => {
       if (amount <= 0 || cycles < SPREAD_MIN_CYCLES || cycles > SPREAD_MAX_CYCLES) return false;
-      return writeSpread(categoryId, () => apiSetSpread(categoryId, amount, cycles),
-        (name) => `Bill spread set for ${name}.`, 'Could not set the bill spread. Please try again.');
+      return writeSpread(categoryId, () => apiSetSpread(categoryId, amount, cycles), 'set', 'set');
     },
     [writeSpread],
   );
 
   // Idempotent server-side (200 with no plan).
   const removeSpread = useCallback(
-    (categoryId: string): Promise<boolean> => writeSpread(categoryId, () => apiDeleteSpread(categoryId),
-      (name) => `Bill spread removed for ${name}.`, 'Could not remove the bill spread. Please try again.'),
+    (categoryId: string): Promise<boolean> => writeSpread(categoryId, () => apiDeleteSpread(categoryId), 'removed', 'remove'),
     [writeSpread],
   );
 

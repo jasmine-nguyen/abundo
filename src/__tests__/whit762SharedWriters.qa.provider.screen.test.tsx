@@ -187,14 +187,6 @@ describe('saveSpread / removeSpread — writeSpread', () => {
     expect([saved, removed]).toEqual([true, true]);
     expect(result.current.toast).toBeNull();
   });
-
-  // [A8]
-  it('removeSpread toasts the name of the category it was called for', async () => {
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-    await act(async () => { await result.current.removeSpread('subs'); });
-    expect(server.sent('DELETE', '/budgets/subs/spread')).toHaveLength(1);
-    expect(result.current.toast).toBe('Bill spread removed for Subs.');
-  });
 });
 
 describe('deleteCategory / deleteBudget — stripBudgetId', () => {

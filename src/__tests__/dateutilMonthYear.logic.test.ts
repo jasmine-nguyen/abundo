@@ -17,5 +17,12 @@ describe('formatMonthYear', () => {
   it('passes an unparseable date through unchanged', () => {
     expect(formatMonthYear('not-a-date')).toBe('not-a-date');
     expect(formatMonthYear('2030-13-01')).toBe('2030-13-01');
+    expect(formatMonthYear('2026-00-10')).toBe('2026-00-10');
+    expect(formatMonthYear('')).toBe('');
+  });
+
+  it('labels a year-month without a day, or with a time on the end', () => {
+    expect(formatMonthYear('2027-03')).toBe('Mar 2027');
+    expect(formatMonthYear('2027-03-18T09:00:00Z')).toBe('Mar 2027');
   });
 });

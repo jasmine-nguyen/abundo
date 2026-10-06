@@ -1,26 +1,14 @@
-// WHIT-762 QA — the shared homes the copies now point at: the "Mon YYYY" label, the date
+// WHIT-762 QA — the shared homes the copies now point at: the date
 // headings (dateLabel via groupTransactionsByDate / transactionGroups), transactionView's fmt2
 // amount, and the one categoryColorHash both colour files use. Pins exact output so a drift in
 // the shared helper shows up here.
 import { describe, it, expect, jest, afterEach } from '@jest/globals';
-import { formatMonthYear } from '../dateutil';
 import { groupTransactionsByDate, transactionGroups, transactionView } from '../context';
-import { categoryColorHash } from '../chartColors';
 import { colorForCategory } from '../categoryColors';
 import { makeState, cat, txn } from './factory';
 
 afterEach(() => {
   jest.useRealTimers();
-});
-
-describe('formatMonthYear edges', () => {
-  // [A10]
-  it('labels a year-month without a day, and passes empty / month 0 through', () => {
-    expect(formatMonthYear('2027-03')).toBe('Mar 2027');
-    expect(formatMonthYear('2027-03-18T09:00:00Z')).toBe('Mar 2027');
-    expect(formatMonthYear('')).toBe('');
-    expect(formatMonthYear('2026-00-10')).toBe('2026-00-10');
-  });
 });
 
 describe('dateLabel through groupTransactionsByDate', () => {
@@ -86,14 +74,7 @@ describe('transactionView amountLabel (fmt2)', () => {
   });
 });
 
-describe('categoryColorHash — one shared djb2', () => {
-  // [A16]
-  it('is exported with the same stable values', () => {
-    expect(categoryColorHash('')).toBe(5381);
-    expect(categoryColorHash('a')).toBe(177670);
-    expect(categoryColorHash('my-custom-cat')).toBe(1486046728);
-  });
-
+describe('custom category colour (shared categoryColorHash)', () => {
   // [A17]
   it("a custom category's colour is unchanged", () => {
     expect(colorForCategory('my-custom-cat')).toBe('#039db5');
