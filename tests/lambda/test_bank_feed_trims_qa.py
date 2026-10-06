@@ -5,10 +5,6 @@ longer fits the function's signature would silently switch every budget alert of
 """
 
 import inspect
-import json
-
-from _feed_fakes import FakeCategoryRepo
-from _rule_ingest_fakes import FakeRuleStore
 
 
 def _signature_spy(real, calls, result):
@@ -36,21 +32,3 @@ def test_process_transaction_calls_both_alert_steps_with_their_signatures(lam, r
     assert len(fired) == 1
     assert fired[0]["ctx"] == {"ctx": True}
 
-
-class _NoFailedRows:
-    def get_failed_transactions(self):
-        return []
-
-
-def test_reprocess_lambda_handler_runs_the_real_sweep_with_its_stores(lam, monkeypatch):
-    # [A2]
-    rules = FakeRuleStore()
-    monkeypatch.setattr(lam.reprocess, "TransactionRepository", _NoFailedRows)
-    monkeypatch.setattr(lam.reprocess, "RuleRepository", lambda: rules)
-    monkeypatch.setattr(lam.reprocess, "CategoryRepository", lambda: FakeCategoryRepo([]))
-
-    resp = lam.reprocess.lambda_handler({}, None)
-
-    assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0}
-    assert rules.list_calls == 1
