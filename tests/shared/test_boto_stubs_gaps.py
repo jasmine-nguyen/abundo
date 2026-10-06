@@ -71,22 +71,15 @@ def test_use_condition_fields_nests_without_losing_the_outer_restore():
 
 # --- install_import_satisfiers(): idempotent, first-writer-wins ---------------------------------
 
-def test_install_import_satisfiers_does_not_clobber_an_installed_ssm():
+def test_install_import_satisfiers_does_not_clobber_an_installed_ssm(monkeypatch):
     # The `if "ssm" not in sys.modules` guard is load-bearing: a 2nd suite's install must leave the
     # first suite's ssm (which tests may have monkeypatched) untouched.
-    saved = sys.modules.get("ssm")
     sentinel = types.ModuleType("ssm")
     sentinel.get_param = lambda parameter_name: "SENTINEL-FIRST-WRITER"
-    sys.modules["ssm"] = sentinel
-    try:
-        install_import_satisfiers()
-        assert sys.modules["ssm"] is sentinel
-        assert sys.modules["ssm"].get_param("/x") == "SENTINEL-FIRST-WRITER"
-    finally:
-        if saved is not None:
-            sys.modules["ssm"] = saved
-        else:
-            sys.modules.pop("ssm", None)
+    monkeypatch.setitem(sys.modules, "ssm", sentinel)
+    install_import_satisfiers()
+    assert sys.modules["ssm"] is sentinel
+    assert sys.modules["ssm"].get_param("/x") == "SENTINEL-FIRST-WRITER"
 
 
 def test_install_import_satisfiers_is_stable_for_boto3_and_env():

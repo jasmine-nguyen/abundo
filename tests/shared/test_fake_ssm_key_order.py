@@ -20,27 +20,21 @@ _SUITES_WITH_FAKE_SSM = (
 )
 
 
-def test_fresh_install_returns_the_shared_key_and_never_replaces_an_existing_ssm():
-    saved = sys.modules.pop("ssm", None)
-    try:
-        _boto_stubs.install_import_satisfiers()
-        installed = sys.modules["ssm"]
-        assert _boto_stubs.FAKE_SSM_KEY == "test-api-key"
-        assert installed.get_param("/any/path") == "test-api-key"
+def test_fresh_install_returns_the_shared_key_and_never_replaces_an_existing_ssm(monkeypatch):
+    monkeypatch.delitem(sys.modules, "ssm", raising=False)
+    _boto_stubs.install_import_satisfiers()
+    installed = sys.modules["ssm"]
+    assert _boto_stubs.FAKE_SSM_KEY == "test-api-key"
+    assert installed.get_param("/any/path") == "test-api-key"
 
-        _boto_stubs.install_import_satisfiers()
-        assert sys.modules["ssm"] is installed
+    _boto_stubs.install_import_satisfiers()
+    assert sys.modules["ssm"] is installed
 
-        existing = types.ModuleType("ssm")
-        existing.get_param = lambda parameter_name: "already-installed"
-        sys.modules["ssm"] = existing
-        _boto_stubs.install_import_satisfiers()
-        assert sys.modules["ssm"] is existing
-    finally:
-        if saved is not None:
-            sys.modules["ssm"] = saved
-        else:
-            sys.modules.pop("ssm", None)
+    existing = types.ModuleType("ssm")
+    existing.get_param = lambda parameter_name: "already-installed"
+    monkeypatch.setitem(sys.modules, "ssm", existing)
+    _boto_stubs.install_import_satisfiers()
+    assert sys.modules["ssm"] is existing
 
 
 _PROBE = """
