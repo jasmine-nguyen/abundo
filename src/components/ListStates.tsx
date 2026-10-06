@@ -5,10 +5,11 @@ import { RetryButton } from './ui';
 import { loadFailureReason, readFailureIsOffline } from '../apiError';
 import { formatTimeOfDay } from '../dateutil';
 
-// WHIT-489: the shared cold-load spinner + error/retry blocks for the list tabs (Transactions,
-// Accounts). Spinner and error are mutually exclusive there (the screen computes `showSpinner`
-// as `!showError && …`), and the screen interleaves its own sections around this, so this
-// renders only the two state blocks and no children. testIDs and copy are per-screen.
+// WHIT-489: the shared cold-load spinner + error/retry blocks for Transactions, Accounts,
+// Insights and (via DetailStates, WHIT-771) the by-id detail screens. The two blocks are
+// independent: each renders on its own flag, so both can show stacked. Screens interleave their
+// own sections around this, so it renders only the two state blocks and no children. testIDs
+// and copy are per-screen.
 //
 // WHIT-713: the optional `error` adds an offline-vs-server reason line under the error copy.
 // This file also holds the shared quiet "Couldn't refresh · showing 9:40am" line (StaleDataLine),
