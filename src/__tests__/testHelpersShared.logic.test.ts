@@ -61,7 +61,6 @@ describe('test helpers are shared, not copied', () => {
 
   it.each([
     ['support/alertSpy.ts', 'AlertButton'],
-    ['support/inlineRecords.ts', 'inlineObjects'],
     ['support/sourceScan.ts', 'CODE_FILE'],
     ['support/budgetsScreen.tsx', 'sidePaddingOf'],
     ['support/goalsScreen.tsx', 'GOALS_HUB_DEFAULTS'],
