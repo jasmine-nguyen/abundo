@@ -4,7 +4,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
 import { Icon, Glyph } from '../icons';
-import { useAppContext, merchantLabel, categoryTreeRows, ruleConflict, ruleOverlap, categoryLabel, accountSummaries, accountNameFromId, APPLY_RULES_MAX_WRITES } from '../context';
+import { useAppContext, merchantLabel,ruleConflict, ruleOverlap, categoryLabel, accountSummaries, accountNameFromId, APPLY_RULES_MAX_WRITES } from '../context';
 import type { RuleConflict, ApplyRulesResult, ApplyRulesJob, FilingResult, FilingTarget } from '../context';
 import type { Category } from '../types';
 import type { RuleWrite } from '../model';
@@ -23,6 +23,7 @@ import { useNativeDate } from './NativeDateField';
 import { parseAmount, numText } from '../numutil';
 import { QuickCreateCategory, CategoryDraft } from './QuickCreateCategory';
 import { useSheetDraft } from '../hooks/useSheetDraft';
+import { CategoryTree, pickStyles } from './CategoryTree';
 
 export function Overlays() {
   // WHIT-268: unmount the whole overlay layer while not authed. This is the privacy
@@ -205,15 +206,6 @@ function PickerSheet() {
   // WHIT-283: `creating` restores from the draft so unlock reopens INTO the form, not the list.
   const [creating, setCreating] = useSheetDraft<boolean>(creatingKey, (draft) => draft === true);
   const [submitting, setSubmitting] = useState(false);
-  // WHIT-273: which parents are folded away. Empty = everything expanded, so the picker opens
-  // fully revealed (you're here to find a category fast). A `collapsed` Set (vs Insights'
-  // `expanded`) gives that expanded-by-default without pre-seeding every parent id.
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const toggle = useCallback((id: string) => setCollapsed((prev) => {
-    const next = new Set(prev);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  }), []);
   // WHIT-283: hand the shared QuickCreateCategory stable read/write callbacks for its own fields.
   // All ref writes → zero re-render. Cleared on close/sign-out by the provider (WHIT-277), so this
   // only ever preserves across a lock. (`creating` persists via useSheetDraft above.)
@@ -225,17 +217,6 @@ function PickerSheet() {
   // Header label: a single charge shows its merchant + amount; a multi-select shows the count.
   const count = manyIds?.length ?? 0;
   const headerLabel = isMany ? `${count} ${count === 1 ? 'transaction' : 'transactions'}` : merchantLabel(tx!);
-  // WHIT-273: render as a parent→child tree (siblings A–Z within each group, so a newly-created
-  // category isn't stranded — WHIT-158). A row shows only when its whole parent chain is expanded;
-  // rows arrive depth-first (parent before child) so this single pass is enough.
-  const treeRows = categoryTreeRows(cats);
-  const visibleIds = new Set<string>();
-  for (const row of treeRows) {
-    if (row.parentId === null || (visibleIds.has(row.parentId) && !collapsed.has(row.parentId))) {
-      visibleIds.add(row.category.id);
-    }
-  }
-  const visibleRows = treeRows.filter((row) => visibleIds.has(row.category.id));
 
   // Create the category, then file THIS transaction into it. `chooseCategory` advances the
   // sheet (still mode 'picker') to the confirm step, which reads the new category from the
@@ -297,43 +278,15 @@ function PickerSheet() {
       {!isMany && <Text style={styles.sheetAmount}>{fmt2(tx!.amount)}</Text>}
       <ScrollView style={{ maxHeight: 340, marginTop: 12 }}>
         {/* WHIT-238: make a category on the spot rather than round-tripping to Settings. */}
-        <Pressable testID="pickerNewCategory" onPress={() => setCreating(true)} style={styles.pickRow}>
-          <View style={[styles.pickChip, { backgroundColor: tint(C.accentAlt, 0.14) }]}>
+        <Pressable testID="pickerNewCategory" onPress={() => setCreating(true)} style={pickStyles.pickRow}>
+          <View style={[pickStyles.pickChip, { backgroundColor: tint(C.accentAlt, 0.14) }]}>
             <Glyph name="plus" size={18} color={C.accent} />
           </View>
-          <Text style={[styles.pickName, { color: C.accentSofter }]}>New category</Text>
+          <Text style={[pickStyles.pickName, { color: C.accentSofter }]}>New category</Text>
         </Pressable>
-        {visibleRows.map(({ category: c, depth, hasChildren }) => {
-          const isCollapsed = collapsed.has(c.id);
-          return (
-            // Two sibling tap targets, never nested: the name (chip + label) selects the
-            // category; the chevron folds its subs. Keeping them separate means a fold tap
-            // can't also file the transaction. The chevron shows only on parents (a childless
-            // row has nothing to fold), so a chevron always means "tap to expand/collapse".
-            <View
-              key={c.id}
-              style={[styles.pickRow, depth > 0 && { marginLeft: depth * 18, borderLeftWidth: 2, borderLeftColor: c.color, paddingLeft: 11 }]}
-            >
-              <Pressable onPress={() => s.chooseCategory(c.id)} style={styles.pickNameHit}>
-                <View style={[styles.pickChip, { backgroundColor: tint(c.color, 0.15) }]}>
-                  <Icon name={c.icon} size={19} color={c.color} />
-                </View>
-                <Text testID="pickerCatName" style={styles.pickName}>{c.name}</Text>
-              </Pressable>
-              {hasChildren && (
-                <Pressable
-                  testID={`pickerCatToggle-${c.id}`}
-                  onPress={() => toggle(c.id)}
-                  accessibilityRole="button"
-                  accessibilityState={{ expanded: !isCollapsed }}
-                  style={styles.pickToggle}
-                >
-                  <Glyph name={isCollapsed ? 'chevron' : 'chevronDown'} size={16} color={C.textFaint} />
-                </Pressable>
-              )}
-            </View>
-          );
-        })}
+        {/* WHIT-273: a parent→child tree (siblings A–Z within each group, so a newly-created
+            category isn't stranded — WHIT-158). */}
+        <CategoryTree categories={cats} onPick={s.chooseCategory} testIDs={{ name: 'pickerCatName', togglePrefix: 'pickerCatToggle-' }} />
       </ScrollView>
     </View>
   );
@@ -1313,13 +1266,6 @@ function FileByShopListSheet() {
   const { categories: cats, category } = useCategories();
   // Which shop the user tapped: null → the shop list, set → the category tree for that shop.
   const [selectedGroup, setSelectedGroup] = useState<UncategorizedMerchantGroup | null>(null);
-  // Folded parents in the category tree (same expand-by-default model as PickerSheet).
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const toggle = useCallback((id: string) => setCollapsed((prev) => {
-    const next = new Set(prev);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  }), []);
 
   if (isLoading && !merchants) {
     return (
@@ -1370,14 +1316,6 @@ function FileByShopListSheet() {
 
   // A shop is chosen: pick the category to file it (and every future charge from it) under.
   if (selectedGroup) {
-    const treeRows = categoryTreeRows(cats);
-    const visibleIds = new Set<string>();
-    for (const row of treeRows) {
-      if (row.parentId === null || (visibleIds.has(row.parentId) && !collapsed.has(row.parentId))) {
-        visibleIds.add(row.category.id);
-      }
-    }
-    const visibleRows = treeRows.filter((row) => visibleIds.has(row.category.id));
     return (
       <View>
         <Pressable testID="file-by-shop-back" onPress={() => setSelectedGroup(null)} hitSlop={8} style={styles.sheetBack}>
@@ -1389,37 +1327,11 @@ function FileByShopListSheet() {
           {selectedGroup.count} unfiled {chargeNoun(selectedGroup.count)} — and every future charge from here.
         </Text>
         <ScrollView style={{ maxHeight: 340, marginTop: 12 }}>
-          {visibleRows.map(({ category: c, depth, hasChildren }) => {
-            const isCollapsed = collapsed.has(c.id);
-            return (
-              <View
-                key={c.id}
-                style={[styles.pickRow, depth > 0 && { marginLeft: depth * 18, borderLeftWidth: 2, borderLeftColor: c.color, paddingLeft: 11 }]}
-              >
-                <Pressable
-                  testID="file-by-shop-cat"
-                  onPress={() => s.setSheet({ mode: 'fileByShopConfirm', group: selectedGroup, categoryId: c.id })}
-                  style={styles.pickNameHit}
-                >
-                  <View style={[styles.pickChip, { backgroundColor: tint(c.color, 0.15) }]}>
-                    <Icon name={c.icon} size={19} color={c.color} />
-                  </View>
-                  <Text style={styles.pickName}>{c.name}</Text>
-                </Pressable>
-                {hasChildren && (
-                  <Pressable
-                    testID={`file-by-shop-cat-toggle-${c.id}`}
-                    onPress={() => toggle(c.id)}
-                    accessibilityRole="button"
-                    accessibilityState={{ expanded: !isCollapsed }}
-                    style={styles.pickToggle}
-                  >
-                    <Glyph name={isCollapsed ? 'chevron' : 'chevronDown'} size={16} color={C.textFaint} />
-                  </Pressable>
-                )}
-              </View>
-            );
-          })}
+          <CategoryTree
+            categories={cats}
+            onPick={(id) => s.setSheet({ mode: 'fileByShopConfirm', group: selectedGroup, categoryId: id })}
+            testIDs={{ pick: 'file-by-shop-cat', togglePrefix: 'file-by-shop-cat-toggle-' }}
+          />
         </ScrollView>
       </View>
     );
@@ -1442,7 +1354,7 @@ function FileByShopListSheet() {
                 key={`suggestion:${suggestion.rulePattern}`}
                 testID="filing-suggestion"
                 onPress={() => s.setSheet({ mode: 'addRuleConfirm', pattern: suggestion.rulePattern, categoryId: suggestion.categoryId, budgetExcluded: false })}
-                style={styles.pickRow}
+                style={pickStyles.pickRow}
               >
                 <View style={styles.fileByShopGroupText}>
                   <Text style={styles.applyRulesRuleText} numberOfLines={1}>{suggestion.merchant}</Text>
@@ -1467,7 +1379,7 @@ function FileByShopListSheet() {
             key={group.rulePattern}
             testID="file-by-shop-group"
             onPress={() => setSelectedGroup(group)}
-            style={styles.pickRow}
+            style={pickStyles.pickRow}
           >
             <View style={styles.fileByShopGroupText}>
               <Text style={styles.applyRulesRuleText} numberOfLines={1}>{group.merchant || group.rulePattern}</Text>
@@ -2029,11 +1941,6 @@ const styles = StyleSheet.create({
   createScroll: { flexShrink: 1 },
   createScrollContent: { paddingTop: 14 },
   sheetAmount: { fontFamily: FONT.display, fontSize: 22, fontWeight: '800', color: C.textBright, marginTop: 2, letterSpacing: -0.5 },
-  pickRow: { flexDirection: 'row', alignItems: 'center', gap: 13, paddingVertical: 11 },
-  pickNameHit: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 13 },
-  pickToggle: { padding: 6 },
-  pickChip: { width: 38, height: 38, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  pickName: { flex: 1, fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
   confirmChip: { width: 52, height: 52, borderRadius: 15, alignSelf: 'center', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
   confirmTitle: { fontFamily: FONT.display, fontSize: 19, fontWeight: '700', color: C.text, textAlign: 'center' },
   confirmSub: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, textAlign: 'center', lineHeight: 20, marginTop: 8 },

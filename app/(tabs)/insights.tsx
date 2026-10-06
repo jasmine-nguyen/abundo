@@ -15,6 +15,7 @@ import { SpendingDonut } from '../../src/components/SpendingDonut';
 import { EarnedVsSpent } from '../../src/components/EarnedVsSpent';
 import { SegmentedControl } from '../../src/components/SegmentedControl';
 import { chartCategoryColor } from '../../src/chartColors';
+import { toggleIn } from '../../src/setutil';
 
 export default function Insights() {
   const s = useAppContext(); // the AI-insights slice (aiInsights / generate / refresh) stays on the store
@@ -52,11 +53,7 @@ export default function Insights() {
   // shows only when its whole parent chain is expanded (rows come depth-first, so a parent
   // is seen before its children). Replace the Set on toggle so the screen redraws.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const toggle = useCallback((id: string) => setExpanded((prev) => {
-    const next = new Set(prev);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  }), []);
+  const toggle = useCallback((id: string) => setExpanded((prev) => toggleIn(prev, id)), []);
   const shown = new Set<string>();
   for (const r of rows) {
     if (r.parentId === null || (shown.has(r.parentId) && expanded.has(r.parentId))) shown.add(r.id);
