@@ -1,6 +1,9 @@
 """WHIT-633 QA — reprocess and apply() now hold the RuleBook directly (no tuple, no splat)."""
 
+from functools import partial
+
 from _deadletter_fakes import _failed_keys, _txn_rows
+from _feed_fakes import FakeCategoryRepo
 
 _MAPPED_ACCOUNT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
 
@@ -26,9 +29,7 @@ class _RuleStore:
                  "value": "KKV", "category_id": "groceries"}]
 
 
-class _Cats:
-    def list_categories(self):
-        return [{"id": "groceries"}]
+_Cats = partial(FakeCategoryRepo, category_ids=["groceries"])
 
 
 def test_reprocess_with_an_unreadable_rule_book_still_recovers_every_row_unfiled(lam, repo):

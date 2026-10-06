@@ -17,6 +17,7 @@ from decimal import Decimal
 
 import pytest
 from _budget_alert_fakes import notify_repo
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 
 _BANK_ACCT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"  # -> "anz-rewards-black-visa"
 _TODAY = date(2026, 7, 14)   # cycle [2026-07-01, 2026-07-14] with payday 07-01, len 14
@@ -72,22 +73,9 @@ class _BudgetRepo:
         return self._b
 
 
-class _PaycycleRepo:
-    def get_paycycle(self):
-        return {"last_pay_date": "2026-07-01", "length": 14}
-
-
 class _DeviceRepo:
     def list_tokens(self):
         return ["ExpoPushToken[a]"]
-
-
-class _CategoryRepo:
-    def __init__(self, cats):
-        self._c = cats
-
-    def list_categories(self):
-        return self._c
 
 
 def _run_alerts(alerts, monkeypatch, *, budgets, before, normalised, webhook_repo,
@@ -101,10 +89,10 @@ def _run_alerts(alerts, monkeypatch, *, budgets, before, normalised, webhook_rep
     catlist = [{"id": c[0], "name": c[1], "bucket": c[2]} for c in cats]
     ctx = ba.capture_pre_write(
         normalised, device_repo=_DeviceRepo(), budget_repo=_BudgetRepo(budgets),
-        paycycle_repo=_PaycycleRepo(), window_repo=_WindowRepo(before), webhook_repo=webhook_repo,
+        paycycle_repo=_FakePayCycleRepo(length=14, last_pay_date="2026-07-01"), window_repo=_WindowRepo(before), webhook_repo=webhook_repo,
     )
     ba.fire_budget_alerts(ctx, normalised, webhook_repo=webhook_repo,
-                       category_repo=_CategoryRepo(catlist), notify_repo=notify)
+                       category_repo=_FakeCategoryRepo(catlist), notify_repo=notify)
     return sent, notify
 
 

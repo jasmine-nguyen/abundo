@@ -30,6 +30,7 @@ from decimal import Decimal
 
 import pytest
 from _budget_alert_fakes import notify_repo
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 
 _BANK_ACCOUNT_ID = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"  # -> anz-rewards-black-visa
 
@@ -352,12 +353,6 @@ class _FakeRepo:
     def list_tokens(self):
         return list(self._v)
 
-    def list_categories(self):
-        return self._v
-
-    def get_paycycle(self):
-        return dict(self._v)
-
 
 def _run_alerts(lam, monkeypatch, *, budgets, before, normalised, webhook_repo, notify=None):
     """Drive capture_pre_write + fire_budget_alerts with the REAL webhook repository, so
@@ -376,13 +371,13 @@ def _run_alerts(lam, monkeypatch, *, budgets, before, normalised, webhook_repo, 
         normalised,
         device_repo=_FakeRepo(["ExpoPushToken[a]"]),
         budget_repo=_FakeRepo(budgets),
-        paycycle_repo=_FakeRepo({"last_pay_date": "2026-07-15", "length": 14}),
+        paycycle_repo=_FakePayCycleRepo(length=14, last_pay_date="2026-07-15"),
         window_repo=_FakeWindowRepo(before),
         webhook_repo=webhook_repo,
     )
     ba.fire_budget_alerts(ctx, normalised, webhook_repo=webhook_repo,
-                       category_repo=_FakeRepo([{"id": "groceries", "name": "Groceries",
-                                                 "bucket": "Needs"}]),
+                       category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries",
+                                                         "bucket": "Needs"}]),
                        notify_repo=notify)
     return sent, notify
 

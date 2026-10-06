@@ -9,6 +9,7 @@ import json
 from decimal import Decimal
 
 import pytest
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 
 TODAY = "2026-09-20"
 CYCLE_START = "2026-09-10"
@@ -305,14 +306,6 @@ def test_load_chat_data_fetches_back_to_the_lookback_floor(ai_chat, monkeypatch)
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: __import__("datetime").date(2026, 9, 20))
 
-    class PayCycleRepo:
-        def get_paycycle(self):
-            return {"length": 14, "last_pay_date": "2026-09-10"}
-
-    class CategoryRepo:
-        def list_categories(self):
-            return CATEGORIES
-
     class BudgetRepo:
         def list_budgets(self):
             return {}
@@ -326,7 +319,8 @@ def test_load_chat_data_fetches_back_to_the_lookback_floor(ai_chat, monkeypatch)
             return [], None
 
     transaction_repo = TransactionRepo()
-    data = ai_chat.load_chat_data(transaction_repo, CategoryRepo(), BudgetRepo(), PayCycleRepo())
+    data = ai_chat.load_chat_data(
+        transaction_repo, _FakeCategoryRepo(CATEGORIES), BudgetRepo(), _FakePayCycleRepo(length=14, last_pay_date="2026-09-10"))
     assert data.floor == "2025-09-01" and data.today == TODAY
     assert transaction_repo.calls[0] == ("2025-09-01", TODAY)
 
@@ -336,14 +330,6 @@ def test_load_chat_data_works_out_budgets_from_its_own_read_without_saving(ai_ch
     # transaction read, and never writes the settlements — only GET /budgets saves those.
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: __import__("datetime").date(2026, 9, 20))
-
-    class PayCycleRepo:
-        def get_paycycle(self):
-            return {"length": 14, "last_pay_date": "2026-09-10"}
-
-    class CategoryRepo:
-        def list_categories(self):
-            return CATEGORIES
 
     class BudgetRepo:
         def __init__(self):
@@ -379,7 +365,8 @@ def test_load_chat_data_works_out_budgets_from_its_own_read_without_saving(ai_ch
             return [r for r in stored if start <= r["date"] <= end], None
 
     budget_repo = BudgetRepo()
-    data = ai_chat.load_chat_data(TransactionRepo(), CategoryRepo(), budget_repo, PayCycleRepo())
+    data = ai_chat.load_chat_data(
+        TransactionRepo(), _FakeCategoryRepo(CATEGORIES), budget_repo, _FakePayCycleRepo(length=14, last_pay_date="2026-09-10"))
 
     assert data.budgets == {"groceries": {
         "target": Decimal("100"), "posted": Decimal("25"), "pending": Decimal("0"),

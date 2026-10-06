@@ -7,8 +7,6 @@ the real TransactionRepository, RuleRepository and JobRepository over FakeTables
 the "no cap", progress, failure, and idempotency behaviours are exercised for real.
 """
 
-import pytest
-
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row
 from _job_fakes import progress_writes, real_job_repo
 
@@ -72,7 +70,9 @@ def test_worker_marks_the_job_failed_when_a_read_raises(apply_rules_worker, monk
     _, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: []}, rules=[_rule("COLES")])
     # A DB fault reading the taxonomy: the worker must end the job "failed" (with the error), not
     # leave it stuck "running" until its TTL.
-    monkeypatch.setattr(worker, "CategoryRepository", _RaisingCategoryRepo)
+    from repository import DatabaseError
+    monkeypatch.setattr(worker, "CategoryRepository",
+                        lambda: FakeCategoryRepo([], error=DatabaseError("db down")))
 
     result = worker.lambda_handler({"jobId": "job1"})
 
@@ -141,11 +141,3 @@ def test_worker_succeeds_with_no_rules(apply_rules_worker, monkeypatch):
     result = worker.lambda_handler({"jobId": "job1"})
     assert result["status"] == "succeeded"
     assert job_repo.get_job("job1")["matched"] == 0 and job_repo.get_job("job1")["filed"] == 0
-
-
-class _RaisingCategoryRepo:
-    """A taxonomy repo whose read raises the same DatabaseError the worker catches."""
-
-    def list_categories(self):
-        from repository import DatabaseError
-        raise DatabaseError("db down")

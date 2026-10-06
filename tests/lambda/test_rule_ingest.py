@@ -10,9 +10,6 @@ DatabaseError).
 """
 
 import logging
-from decimal import Decimal
-
-import pytest
 
 from _feed_fakes import FakeCategoryRepo
 

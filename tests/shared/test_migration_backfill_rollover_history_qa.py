@@ -12,7 +12,7 @@ from functools import partial
 
 import pytest
 
-from _dynamo_fakes import FakeTable, _client_error
+from _dynamo_fakes import FakeTable
 from _migration_scripts import load_migration_script, use_fake_table
 from _rollover_fakes import charge, cycle_record
 from test_budget_standing import budget_standing  # noqa: F401 — the fixture

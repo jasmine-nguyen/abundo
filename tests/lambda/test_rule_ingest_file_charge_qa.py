@@ -4,6 +4,10 @@ load_rules returns the RuleBook (WHIT-633). The reprocess suite files one charge
 the rest of what the per-row path must still do (stamp, keep-out-of-budget, disagreement, deleted-category skip).
 """
 
+from functools import partial
+
+from _feed_fakes import FakeCategoryRepo
+
 
 class _Store:
     def __init__(self, rules):
@@ -13,9 +17,7 @@ class _Store:
         return [dict(rule) for rule in self._rules]
 
 
-class _Cats:
-    def list_categories(self):
-        return [{"id": "groceries"}, {"id": "petrol"}]
+_Cats = partial(FakeCategoryRepo, category_ids=["groceries", "petrol"])
 
 
 def _rule(value, category_id="groceries", **extra):

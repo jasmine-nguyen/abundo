@@ -13,7 +13,7 @@ from decimal import Decimal
 
 import pytest
 
-from _budget_endpoint_fakes import _FakePayCycleRepo
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _budget_fakes import recording_budget_repo
 
 LENGTH = 30
@@ -68,17 +68,11 @@ TXNS = [
 def _wire(handler, monkeypatch, budgets, txns=TXNS):
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 25))
-    repos = {"txn": _RecordingTransactionRepo(txns), "category_calls": 0}
-
-    class _CategoryRepo:
-        def list_categories(self):
-            repos["category_calls"] += 1
-            return [dict(c) for c in CATEGORIES]
-
+    repos = {"txn": _RecordingTransactionRepo(txns)}
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repos["txn"])
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: _FakePayCycleRepo())
     monkeypatch.setattr(handler, "BudgetRepository", lambda: recording_budget_repo(budgets))
-    monkeypatch.setattr(handler, "CategoryRepository", _CategoryRepo)
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo(CATEGORIES))
     return repos
 
 

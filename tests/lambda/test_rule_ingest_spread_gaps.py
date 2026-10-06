@@ -10,8 +10,6 @@ the stand-in table, like test_rule_ingest_spread.py."""
 from decimal import Decimal
 from functools import partial
 
-import pytest
-
 from _budget_endpoint_fakes import _FakePayCycleRepo
 from _dynamo_fakes import FakeTable
 from _feed_fakes import FakeCategoryRepo

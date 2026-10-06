@@ -2,7 +2,7 @@
 
   * every alias over the shared pay-cycle fake is keyword-built and keeps its old defaults;
   * the spread suites' shared default taxonomy and the fail-on-purpose error behave like the copies;
-  * no plain copy (a class that only serves list_categories / get_paycycle) is left behind.
+  * no copy is left behind: guarded, under any name, by test_repo_fakes_by_behaviour.py (WHIT-766).
 """
 
 import ast
@@ -12,7 +12,6 @@ import pytest
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo, _SpendCategoryRepo, _spend_cat
 from _feed_fakes import FakeCategoryRepo
-from test_repo_fakes_shared import _COPIES
 
 _TESTS = pathlib.Path(__file__).resolve().parents[1]
 
@@ -115,32 +114,3 @@ def test_a_failing_taxonomy_fails_on_every_read_and_still_counts_it(make):
 def test_without_an_error_the_category_fakes_serve_their_taxonomy():
     assert _FakeCategoryRepo([{"id": "groceries"}], error=None).list_categories() == [{"id": "groceries"}]
     assert FakeCategoryRepo(["groceries"], error=None).list_categories() == [{"id": "groceries"}]
-
-
-def _plain_copies(relative, served):
-    copies = []
-    for node in ast.parse((_TESTS / relative).read_text()).body:
-        if not isinstance(node, ast.ClassDef) or node.bases:
-            continue
-        methods = {item.name for item in node.body if isinstance(item, ast.FunctionDef)}
-        if methods - {"__init__"} in served:
-            copies.append(f"{relative}:{node.lineno} class {node.name}")
-    return copies
-
-
-# [A7]
-_ALSO_MIGRATED = (
-    "lambda_api/test_budget_excluded_rollups.py",
-    "lambda/test_reconcile.py",
-    "shared/test_pending_carry_qa.py",
-)
-
-
-def test_no_plain_category_or_pay_cycle_copy_is_left_in_the_migrated_suites():
-    copies = []
-    for relative in [*_COPIES, *_ALSO_MIGRATED]:
-        copies += _plain_copies(relative, ({"list_categories"}, {"get_paycycle"}))
-    assert not copies, (
-        "use _FakeCategoryRepo(...) / partial(_FakePayCycleRepo, length=..., last_pay_date=...) "
-        "from _budget_endpoint_fakes, or FakeCategoryRepo(ids) from _feed_fakes, instead:\n"
-        + "\n".join(copies))

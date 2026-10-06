@@ -20,8 +20,6 @@ from functools import partial
 
 import json
 
-import pytest
-
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _budget_fakes import recording_budget_repo
 

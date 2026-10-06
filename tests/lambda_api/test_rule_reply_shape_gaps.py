@@ -14,9 +14,11 @@ a reply site) and the reply tests redden.
 
 import json
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
+from _budget_endpoint_fakes import _FakePayCycleRepo
 from _feed_fakes import SPENDING, FakeCategoryRepo, Repos, _row
 from _job_fakes import created_jobs, real_job_repo
 
@@ -204,13 +206,7 @@ class _Budget:
         return {"id": "plan"}
 
 
-class _Paycycle:
-    def __init__(self):
-        self.reads = 0
-
-    def get_paycycle(self):
-        self.reads += 1
-        return {"length": 14, "last_pay_date": "2026-01-07"}
+_Paycycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-01-07")
 
 
 def test_worker_does_not_reseed_a_rule_already_seeded_in_the_store(apply_rules_worker, monkeypatch):
@@ -233,5 +229,5 @@ def test_worker_does_not_reseed_a_rule_already_seeded_in_the_store(apply_rules_w
 
     assert result["status"] == "succeeded"
     assert job_repo.get_job("job1")["filed"] == 2          # the rule still files
-    assert budget.calls == [] and paycycle.reads == 0   # ...but never re-seeds
+    assert budget.calls == [] and paycycle.get_calls == 0   # ...but never re-seeds
     assert _seed_marks(store.table) == 1                # only the setup's mark — never re-marked

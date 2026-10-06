@@ -5,7 +5,9 @@ budget + pay-cycle repo record the seed."""
 
 import json
 from decimal import Decimal
+from functools import partial
 
+from _budget_endpoint_fakes import _FakePayCycleRepo
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row
 
 
@@ -38,13 +40,7 @@ class FakeBudget:
         return self._result
 
 
-class FakePaycycle:
-    def __init__(self):
-        self.reads = 0
-
-    def get_paycycle(self):
-        self.reads += 1
-        return {"length": 14, "last_pay_date": "2026-01-07"}
+FakePaycycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-01-07")
 
 
 def _call(handler, rows, rules, *, budget=None, paycycle=None, already_seeded=False,
@@ -80,7 +76,7 @@ def test_a_spread_rule_matching_many_charges_seeds_once(handler):
     _call(handler, [_origin("t1", "2026-07-01"), _origin("t2", "2026-07-02"),
                     _origin("t3", "2026-07-03")],
           [_spread_rule()], budget=budget, paycycle=paycycle)
-    assert len(budget.calls) == 1 and paycycle.reads == 1
+    assert len(budget.calls) == 1 and paycycle.get_calls == 1
 
 
 def test_a_no_op_create_does_not_mark_the_rule(handler):
@@ -93,11 +89,11 @@ def test_a_no_op_create_does_not_mark_the_rule(handler):
 def test_a_non_spread_rule_never_touches_budget(handler):
     budget, paycycle = FakeBudget(), FakePaycycle()
     _call(handler, [_origin("t1")], [_spread_rule(spread=False)], budget=budget, paycycle=paycycle)
-    assert budget.calls == [] and paycycle.reads == 0
+    assert budget.calls == [] and paycycle.get_calls == 0
 
 
 def test_an_already_seeded_rule_does_not_reseed(handler):
     budget, paycycle = FakeBudget(), FakePaycycle()
     _call(handler, [_origin("t1")], [_spread_rule()], budget=budget, paycycle=paycycle,
           already_seeded=True)
-    assert budget.calls == [] and paycycle.reads == 0
+    assert budget.calls == [] and paycycle.get_calls == 0
