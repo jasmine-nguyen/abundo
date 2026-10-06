@@ -38,13 +38,7 @@ import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMo
 
 // Real selectors (loanFactsReady) + composite deps; stub only the store-backed client-state rows.
 // `rules` and `cycleName` here are vestigial — the screen reads them from the query hooks, not context.
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({ rules: [{ id: 'r1' }], cycleName: () => 'Fortnightly', setSheet: jest.fn() }),
-  };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ rules: [{ id: 'r1' }], cycleName: () => 'Fortnightly', setSheet: jest.fn() })));
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 

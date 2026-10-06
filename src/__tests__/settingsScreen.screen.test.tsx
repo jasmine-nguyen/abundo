@@ -22,10 +22,7 @@ jest.mock('../auth', () => ({
 }));
 
 // The screen reads only setSheet off context; the selectors stay real.
-jest.mock('../context', () => ({
-  ...(jest.requireActual('../context') as object),
-  useAppContext: () => ({ setSheet: jest.fn() }),
-}));
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ setSheet: jest.fn() })));
 
 import Settings from '../../app/settings';
 
