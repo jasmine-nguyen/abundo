@@ -6,7 +6,7 @@
 // SRP session refreshes via InitiateAuth (fetch), NOT the OAuth /oauth2/token path.
 //
 // NOTE: two of WHIT-178's risks — the real SRP↔refresh-surface compatibility and the
-// react-native-get-random-values polyfill — cannot be exercised here (SDK + fetch are
+// expo-crypto getRandomValues polyfill — cannot be exercised here (SDK + fetch are
 // mocked, polyfill lives in the app entry). Those are on-device manual gates.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 
