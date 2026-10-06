@@ -13,11 +13,9 @@ import { SpendingDonut, reduceSlices, type DonutSlice } from '../components/Spen
 import { CHART_BG, OTHER_COLOR } from '../chartColors';
 import { C } from '../theme';
 import {
-  sl, paintedBands, bandPath, arcExtentDeg, dividerGapPx, dividerGapDeg,
+  sl, slice, paintedBands, bandPath, arcExtentDeg, dividerGapPx, dividerGapDeg,
   arcPoints, ancestorProp, paintedOrder, opacityOf, DIM_CATEGORY,
 } from './support/donut';
-
-const slice = (id: string, color: string, value: number): DonutSlice => ({ id, name: id, color, value });
 
 const THREE: DonutSlice[] = [sl('a', 50), sl('b', 30), sl('c', 20)];
 

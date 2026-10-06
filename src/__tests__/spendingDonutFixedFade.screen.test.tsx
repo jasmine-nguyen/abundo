@@ -7,10 +7,8 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
-import { SpendingDonut, type DonutSlice } from '../components/SpendingDonut';
-import { opacityOf } from './support/donut';
-
-const slice = (id: string, color: string, value: number): DonutSlice => ({ id, name: id, color, value });
+import { SpendingDonut } from '../components/SpendingDonut';
+import { opacityOf, slice } from './support/donut';
 
 describe('SpendingDonut — unselected slices fade to one fixed value per kind', () => {
   it('user taps a slice: category peers of any colour fade to 0.55, the folded Other to 0.85, and tapping again restores all', () => {

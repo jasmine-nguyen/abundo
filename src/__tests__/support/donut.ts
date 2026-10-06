@@ -19,6 +19,9 @@ export const opacityOf = (id: string): number | undefined => ancestorProp(`donut
 // Minimal slice factory — the id doubles as the display name.
 export const sl = (id: string, value: number): DonutSlice => ({ id, name: id, color: '#7aa2f7', value });
 
+// Same, with a chosen colour.
+export const slice = (id: string, color: string, value: number): DonutSlice => ({ id, name: id, color, value });
+
 // What a dimmed wedge fades to (WHIT-759). Written as LITERALS on purpose: importing the shipped
 // constants would make every assertion a tautology against the code it pins.
 export const DIM_CATEGORY = 0.55; // every category colour

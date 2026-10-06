@@ -10,9 +10,7 @@ jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
 import { SpendingDonut, activeSelection, type DonutSlice } from '../components/SpendingDonut';
 import { OTHER_COLOR } from '../chartColors';
-import { opacityOf, ancestorProp, sl, DIM_CATEGORY, DIM_OTHER } from './support/donut';
-
-const slice = (id: string, color: string, value: number): DonutSlice => ({ id, name: id, color, value });
+import { opacityOf, ancestorProp, sl, slice, DIM_CATEGORY, DIM_OTHER } from './support/donut';
 
 const TWO: DonutSlice[] = [
   { id: 'g', name: 'Groceries', color: '#7FD49B', value: 75 },

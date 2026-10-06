@@ -11,10 +11,8 @@ import { render, screen, fireEvent, act } from '@testing-library/react-native';
 // module-scoped and every sibling suite needs the opposite value.
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => false }));
 
-import { SpendingDonut, type DonutSlice } from '../components/SpendingDonut';
-import { opacityOf, ancestorProp, sl, DIM_CATEGORY } from './support/donut';
-
-const slice = (id: string, color: string, value: number): DonutSlice => ({ id, name: id, color, value });
+import { SpendingDonut } from '../components/SpendingDonut';
+import { opacityOf, ancestorProp, sl, slice, DIM_CATEGORY } from './support/donut';
 
 // Drive the JS-driven spring (useNativeDriver: false) to rest. Fake timers, never a real sleep:
 // react-native's requestAnimationFrame polyfill is a setTimeout, so advancing the clock advances
