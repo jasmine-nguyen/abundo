@@ -1,11 +1,5 @@
-// WHIT-776 — shared stand-in for ../context in the milestone editor suites: the editor reads
-// saveMilestones/showToast off useAppContext; the rest of ../context stays real. Usage:
-//
+// WHIT-776 — shared ../context stand-in for the milestone editor suites. Usage:
 //   jest.mock('../context', () => require('./support/milestoneEditor').milestoneEditorContextMockModule());
-//   import { saveMilestonesSpy, showToastSpy, milestoneLabelAt } from './support/milestoneEditor';
-//
-// The jest.mock factory uses require() (not the import) so it survives hoisting; both resolve to
-// this one module instance, so the spies and the mock are the same functions.
 import { jest } from '@jest/globals';
 import { screen } from '@testing-library/react-native';
 import type { MilestoneRecord } from '../../api';

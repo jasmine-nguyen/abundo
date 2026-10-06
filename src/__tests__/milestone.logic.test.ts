@@ -378,10 +378,6 @@ function isoForIndex(i: number): string {
 // number is derived from list position.
 // (onDate is reused from the survivor above — identical value; the sibling's own duplicate is dropped.)
 
-// SAVED_MILESTONES (support/milestonePlan) is a custom saved plan, deliberately different from the
-// built-in default so the read path is observable: three steps, still strictly paid-down
-// (decreasing balance, later dates). No `sprint` field — that's the whole point of MilestoneRecord.
-
 describe('milestoneView — reads the saved plan (WHIT-367)', () => {
   it('drives rows/next/progress off the injected saved list, not the default', () => {
     const v = milestoneView(makeState({ milestones: SAVED_MILESTONES, homeLoan: { balance: 250000, asOf: null } }));
