@@ -2,7 +2,7 @@
 // bars" = the app's chrome: the top header + the bottom tab bar, which hide together on
 // scroll. No React, no react-native imports, so it runs in the fast `logic` jest project
 // and is the fail-on-revert gate for scroll-to-hide. The impure parts (the shared
-// Animated.Value, the scroll wiring) live in NavBarsContext / useScrollNavBars.
+// Animated.Value, the scroll wiring) live in NavBarsContext / ScrollChromeHeader.
 
 export type NavBarsState = 'shown' | 'hidden';
 

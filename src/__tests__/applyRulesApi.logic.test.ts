@@ -122,7 +122,7 @@ describe('applyRulesToUncategorized 30s budget', () => {
   beforeEach(() => { jest.useFakeTimers(); });
   afterEach(() => { jest.useRealTimers(); });
 
-  // BODY read budget. Fail-on-revert: drop APPLY_RULES_TIMEOUT_MS from its readJson call and the
+  // BODY read budget. Fail-on-revert: drop APPLY_RULES_TIMEOUT_MS from its request and the
   // body falls back to the 15s default, so "still pending at 15s" reddens.
   it('gives the body read the 30s budget, not the 15s default', async () => {
     (globalThis as unknown as { fetch: unknown }).fetch = jest.fn(async () => ({
@@ -135,7 +135,7 @@ describe('applyRulesToUncategorized 30s budget', () => {
     let settled = false;
     pending.then(() => { settled = true; }, () => { settled = true; });
 
-    await jest.advanceTimersByTimeAsync(0);        // flush buildHeaders + the header-resolve
+    await jest.advanceTimersByTimeAsync(0);        // flush the awaited auth token + the header-resolve
     await jest.advanceTimersByTimeAsync(15_000);   // past the DEFAULT budget...
     expect(settled).toBe(false);                   // ...still waiting on the 30s budget
 
@@ -144,7 +144,7 @@ describe('applyRulesToUncategorized 30s budget', () => {
     await rejects;
   }, 3000);
 
-  // REQUEST (headers) budget. Fail-on-revert: drop the arg from apiFetch and the request aborts at
+  // REQUEST (headers) budget. Fail-on-revert: drop the arg from request()'s timed fetch and the request aborts at
   // 15s, mid-write, leaving the user with an unknown outcome on a run that was going to succeed.
   it('gives the request the 30s budget before aborting, not the 15s default', async () => {
     (globalThis as unknown as { fetch: unknown }).fetch = jest.fn((_url: string, init?: RequestInit) =>
@@ -156,12 +156,12 @@ describe('applyRulesToUncategorized 30s budget', () => {
     let settled = false;
     pending.then(() => { settled = true; }, () => { settled = true; });
 
-    await jest.advanceTimersByTimeAsync(0);        // flush buildHeaders
+    await jest.advanceTimersByTimeAsync(0);        // flush the awaited auth token
     await jest.advanceTimersByTimeAsync(15_000);   // past the DEFAULT budget...
     expect(settled).toBe(false);                   // ...the request is still in flight (30s budget)
 
     const rejects = expect(pending).rejects.toThrow();
-    await jest.advanceTimersByTimeAsync(15_000);   // now past 30s → apiFetch aborts the request
+    await jest.advanceTimersByTimeAsync(15_000);   // now past 30s → request() aborts the request
     await rejects;
   }, 3000);
 });

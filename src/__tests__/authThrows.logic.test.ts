@@ -1,4 +1,4 @@
-// WHIT-162 — getAuthToken THROWS (not just returns undefined). authHeaders awaits
+// WHIT-162 — getAuthToken THROWS (not just returns undefined). request() awaits
 // it, so the rejection must propagate out of the fetcher and fetch must NOT be
 // called (no empty-Bearer request). The implementer's apiCoreAuth suite only
 // covers the resolves-undefined path; this locks the throw path. '../auth' + fetch

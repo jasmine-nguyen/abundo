@@ -1,5 +1,5 @@
 // WHIT-160/162 — the BARE-HEADER DELETE call sites (deleteCategory / deleteRule)
-// must also flow through buildHeaders so they carry the Cognito ID token and throw
+// must also flow through request() so they carry the Cognito ID token and throw
 // (never send an empty Bearer) when there's no session. authHeaders.logic.test.ts
 // proves the GET + the two spread POST sites; these two DELETEs pass NO extra
 // headers, so they're the separately-worth-locking bare sites.

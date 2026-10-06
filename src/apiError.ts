@@ -59,7 +59,7 @@ export function writeFailureMessage(error: unknown, fallback: string): string {
   return endSentence(reason[0].toUpperCase() + reason.slice(1));
 }
 
-// WHIT-713: only a lost connection (fetch's TypeError) or apiFetch's own timeout (AbortError)
+// WHIT-713: only a lost connection (fetch's TypeError) or request()'s own timeout (AbortError)
 // looks offline. A server status, a sign-in problem or an unreadable body does not.
 export function readFailureIsOffline(error: unknown): boolean {
   if (error instanceof TypeError) return true;

@@ -17,17 +17,8 @@ import { routerSpies, resetRouter } from './support/routerMock';
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
-// Real ScrollChromeHeader, but stub its geometry hook so it renders without a NavBarsProvider.
-// The header still renders left → title → right in JSX order.
-jest.mock('../motion/useNavBarsHeader', () => ({
-  HEADER_BODY_HEIGHT: 58,
-  TAB_BAR_CLEARANCE: 120,
-  floatingHeaderStyle: {},
-  useNavBarsHeader: () => ({
-    onScroll: jest.fn(), scrollEventThrottle: 16, headerStyle: {},
-    headerHeight: 58, headerPaddingTop: 6, statusBarHeight: 0, contentPadding: { paddingTop: 58, paddingBottom: 120 },
-  }),
-}));
+// Real ScrollChromeHeader, rendered on the NavBars default context (no provider) with zero
+// safe-area insets. The header renders left → title → right in JSX order.
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());

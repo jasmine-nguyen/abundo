@@ -179,7 +179,7 @@ describe('endSentence', () => {
 describe('readFailureIsOffline / loadFailureReason edges', () => {
   it("[A17] React Native's fetch abort (whatwg-fetch's DOMException polyfill: an Error-prototype object named AbortError) looks offline", () => {
     // RN has no native DOMException, so whatwg-fetch builds one on Error.prototype — this is what
-    // apiFetch's timeout rejects with on a device.
+    // request()'s timeout rejects with on a device.
     function PolyfillDOMException(this: { message: string; name: string }, message: string, name: string) {
       this.message = message;
       this.name = name;

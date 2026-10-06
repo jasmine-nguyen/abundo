@@ -15,7 +15,7 @@ import { seedBudgetsTab, budgetDetailFor } from './support/budgetsTab';
 import { showTwoRows } from './support/budgetsScreen';
 import { SALARY } from './support/categories';
 import { hostParent, sharedHost, styleOf, textOf } from './support/layout';
-import { HEADER_BODY_HEIGHT } from '../motion/useNavBarsHeader';
+import { HEADER_BODY_HEIGHT } from '../motion/ScrollChromeHeader';
 
 let mockLarge = true;
 jest.mock('../hooks/useLargeText', () =>

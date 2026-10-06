@@ -1,6 +1,6 @@
 // WHIT-198 (folded tech-debt) — the shared api fetch layer now aborts a request after
 // REQUEST_TIMEOUT_MS so a dead socket becomes a failed read (→ the screen's "—" + Retry)
-// instead of hanging forever. apiFetch is internal, so we drive it through a public reader
+// instead of hanging forever. request() is internal, so we drive it through a public reader
 // (fetchCategories). fetch + auth mocked; fake timers advance the clock deterministically.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { fetchCategories, generateAiInsights } from '../api';
@@ -47,7 +47,7 @@ describe('request timeout', () => {
   // an ERROR. A 500 resolves the fetch (ok:false) and then fetchCategories throws — the finally
   // must still clearTimeout so the controller is never aborted late. Capture the injected signal
   // and prove it stays un-aborted even after we advance well past the 15s deadline.
-  // Fail-on-revert: drop `clearTimeout(timer)` in api.ts#apiFetch → the timer fires at 15s and
+  // Fail-on-revert: drop `clearTimeout(timer)` in api.ts#request → the timer fires at 15s and
   // aborts the already-settled controller → signal.aborted flips true → this fails.
   it('a non-timeout error (500) clears the timer — no leaked late abort of a settled request', async () => {
     const fetchMock = jest.fn(async () => ({ ok: false, status: 500, json: async () => ({}) }));
@@ -76,7 +76,7 @@ describe('request timeout', () => {
 
     const pending = generateAiInsights();
     const rejects = expect(pending).rejects.toThrow(); // attach the catch before advancing time
-    await jest.advanceTimersByTimeAsync(0); // flush the awaited buildHeaders → fetch is now called
+    await jest.advanceTimersByTimeAsync(0); // flush the awaited auth token → fetch is now called
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
 
     await jest.advanceTimersByTimeAsync(15_000);

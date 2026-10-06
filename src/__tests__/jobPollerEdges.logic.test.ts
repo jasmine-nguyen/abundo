@@ -95,31 +95,36 @@ describe('pollJob edges', () => {
   });
 
   it('[A6] the time limit counts from when polling starts by default, and exactly-at-limit still checks', async () => {
-    let clock = 50_000;
+    // Fake timers move Date.now with each advance, so the first check lands exactly delayMs after start.
+    const atLimit = callbacks();
+    const atLimitCheck = jest.fn(() => Promise.resolve<Job>({ status: 'running' }));
+    const atLimitHandle = pollJob<Job>({
+      jobId: 'j', check: atLimitCheck, isRunning, delayMs: 3_000, maxNetErrors: 5, maxWaitMs: 3_000, ...atLimit,
+    });
+    await jest.advanceTimersByTimeAsync(3_000); // exactly at the limit → not past it
+    expect(atLimitCheck).toHaveBeenCalledTimes(1);
+    expect(atLimit.onFail).not.toHaveBeenCalled();
+    atLimitHandle.stop();
+
     const cb = callbacks();
     const check = jest.fn(() => Promise.resolve<Job>({ status: 'running' }));
     pollJob<Job>({
-      jobId: 'j', check, isRunning, delayMs: DELAY, maxNetErrors: 5, maxWaitMs: 3_000, now: () => clock, ...cb,
+      jobId: 'j', check, isRunning, delayMs: 3_001, maxNetErrors: 5, maxWaitMs: 3_000, ...cb,
     });
-    clock = 53_000; // exactly at the limit → not past it
-    await jest.advanceTimersByTimeAsync(DELAY);
-    expect(check).toHaveBeenCalledTimes(1);
-    expect(cb.onFail).not.toHaveBeenCalled();
-    clock = 53_001; // one ms past → gives up before calling the server
-    await jest.advanceTimersByTimeAsync(DELAY);
-    expect(check).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(3_001); // one ms past → gives up before calling the server
+    expect(check).not.toHaveBeenCalled();
     expect(cb.onFail).toHaveBeenCalledWith('timeout');
     await jest.advanceTimersByTimeAsync(DELAY * 10);
-    expect(check).toHaveBeenCalledTimes(1);
+    expect(check).not.toHaveBeenCalled();
     expect(cb.onFail).toHaveBeenCalledTimes(1);
   });
 
   it('[A7] without maxWaitMs there is no time limit', async () => {
-    let clock = 0;
+    const LONG = 10_000_000;
     const cb = callbacks();
-    const check = jest.fn(() => { clock += 10_000_000; return Promise.resolve<Job>({ status: 'running' }); });
-    pollJob<Job>({ jobId: 'j', check, isRunning, delayMs: DELAY, maxNetErrors: 5, now: () => clock, ...cb });
-    await jest.advanceTimersByTimeAsync(DELAY * 5);
+    const check = jest.fn(() => Promise.resolve<Job>({ status: 'running' }));
+    pollJob<Job>({ jobId: 'j', check, isRunning, delayMs: LONG, maxNetErrors: 5, ...cb });
+    await jest.advanceTimersByTimeAsync(LONG * 5);
     expect(check).toHaveBeenCalledTimes(5);
     expect(cb.onFail).not.toHaveBeenCalled();
   });

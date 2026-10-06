@@ -11,7 +11,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { TabBar } from '../../app/(tabs)/_layout';
 import { ChatProvider } from '../chat/ChatContext';
-import { ASK_BUTTON_BOTTOM_CLEARANCE } from '../motion/useNavBarsHeader';
+import { ASK_BUTTON_BOTTOM_CLEARANCE } from '../motion/ScrollChromeHeader';
 import { installFakeServer } from './support/fakeServer';
 import { tabBarProps } from './support/tabBar';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';

@@ -5,7 +5,7 @@
 import { QueryClient } from '@tanstack/react-query';
 
 // Errors that mean "this session can't make authed reads" — retrying them just
-// hammers a signed-out / locked / expired session. `authHeaders()` throws
+// hammers a signed-out / locked / expired session. `request()` throws
 // "Not signed in" (src/api.ts) before a session exists, and the API Gateway JWT
 // authorizer answers a bad/expired token with 401/403. The `enabled` auth gate on
 // each query already stops the first case; this is belt-and-braces for a token that

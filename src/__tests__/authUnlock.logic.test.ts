@@ -239,6 +239,20 @@ describe('canBiometricLock', () => {
     mockCanUseBiometric.mockReturnValue(true);
     expect(loadAuth().canBiometricLock()).toBe(true);
   });
+  // [A9] WHIT-761: the shared secureStore() getter keeps the read inside the swallow-the-throw try.
+  it('false when the secure store throws (web/simulator)', () => {
+    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
+    mockCanUseBiometric.mockImplementation(() => { throw new Error('no keychain'); });
+    expect(loadAuth().canBiometricLock()).toBe(false);
+  });
+});
+
+// [A10] WHIT-761: an unreadable keychain reads as "no stored session", never a throw.
+describe('hasStoredSession', () => {
+  it('false when the sentinel read rejects', async () => {
+    mockGetItem.mockRejectedValue(new Error('no keychain'));
+    await expect(loadAuth().hasStoredSession()).resolves.toBe(false);
+  });
 });
 
 describe('locked-state guards', () => {

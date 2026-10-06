@@ -1,5 +1,5 @@
 // WHIT-162 — src/api.ts header logic, now Cognito-only (the static secret is
-// retired). authHeaders sends the Cognito ID token; it throws "Not signed in" when
+// retired). request() sends the Cognito ID token; it throws "Not signed in" when
 // there is no session (no static fallback). Also guards the async-header refactor:
 // spread call sites must still send BOTH Authorization and Content-Type (a spread
 // of a Promise would drop the auth header). '../auth' is mocked so getAuthToken is

@@ -11,7 +11,6 @@ export type PollJobOptions<J> = {
   delayMs: number;
   maxNetErrors: number;
   maxWaitMs?: number;
-  now?: () => number;
   startedAt?: number;
   initialNetErrors?: number;
   onProgress: (job: J) => void;
@@ -24,8 +23,7 @@ export type PollHandle = { stop: () => void; netErrors: () => number };
 // A 404 means the job is gone; other throws are dropped connections, retried up to maxNetErrors
 // in a row. stop() (or a callback calling it) cuts off an in-flight check: its answer is ignored.
 export function pollJob<J>(options: PollJobOptions<J>): PollHandle {
-  const now = options.now ?? (() => Date.now());
-  const startedAt = options.startedAt ?? now();
+  const startedAt = options.startedAt ?? Date.now();
   let netErrors = options.initialNetErrors ?? 0;
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -49,7 +47,7 @@ export function pollJob<J>(options: PollJobOptions<J>): PollHandle {
   async function tick() {
     timer = undefined;
     if (stopped) return;
-    if (options.maxWaitMs !== undefined && now() - startedAt > options.maxWaitMs) {
+    if (options.maxWaitMs !== undefined && Date.now() - startedAt > options.maxWaitMs) {
       fail('timeout');
       return;
     }

@@ -8,8 +8,7 @@ import { transactionGroups, transactionMatchesSearch, countUncategorized, unionB
 import { useTransactionsScreenData, useUncategorizedCount, useUncategorizedMerchants } from '../../src/queries';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { useDebouncedValue } from '../../src/hooks/useDebouncedValue';
-import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { ASK_BUTTON_BOTTOM_CLEARANCE } from '../../src/motion/useNavBarsHeader';
+import { ScrollChromeHeader, ASK_BUTTON_BOTTOM_CLEARANCE } from '../../src/motion/ScrollChromeHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { EmptyState } from '../../src/components/EmptyState';
