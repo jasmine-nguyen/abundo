@@ -5,8 +5,6 @@ so the spread_seeded mark is the real one; a fake budget + pay-cycle repo record
 from decimal import Decimal
 from functools import partial
 
-import pytest
-
 from _budget_endpoint_fakes import _FakePayCycleRepo
 from _dynamo_fakes import FakeTable
 from _feed_fakes import FakeCategoryRepo

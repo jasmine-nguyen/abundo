@@ -8,6 +8,7 @@ routes, so swapping any one call site back to a single-page read (or an unbounde
 import json
 
 import pytest
+from _budget_endpoint_fakes import _FakeCategoryRepo
 
 
 class _EndlessRepo:
@@ -34,11 +35,6 @@ class _TwoPagesPerAccountRepo:
         return [row], None
 
 
-class _CategoryRepo:
-    def list_categories(self):
-        return []
-
-
 class _RuleRepo:
     def list_rules(self):
         return []
@@ -48,10 +44,10 @@ def _routes(handler):
     # Every route whose only transaction read is the windowed one.
     return {
         "recent": lambda repo: handler.get_recent_transactions(repo),
-        "uncategorized_count": lambda repo: handler.get_uncategorized_count(repo, _CategoryRepo()),
-        "uncategorized_merchants": lambda repo: handler.get_uncategorized_merchants(repo, _CategoryRepo()),
+        "uncategorized_count": lambda repo: handler.get_uncategorized_count(repo, _FakeCategoryRepo()),
+        "uncategorized_merchants": lambda repo: handler.get_uncategorized_merchants(repo, _FakeCategoryRepo()),
         "filing_suggestions": lambda repo: handler.get_filing_suggestions(
-            repo, _CategoryRepo(), _RuleRepo()),
+            repo, _FakeCategoryRepo(), _RuleRepo()),
     }
 
 
@@ -74,7 +70,7 @@ def test_the_uncategorized_count_sums_every_page_of_every_account(handler):
     accounts = list(handler.ACCOUNT_ID_MAP.values())
     assert len(accounts) > 1
 
-    response = handler.get_uncategorized_count(_TwoPagesPerAccountRepo(), _CategoryRepo())
+    response = handler.get_uncategorized_count(_TwoPagesPerAccountRepo(), _FakeCategoryRepo())
 
     assert json.loads(response["body"]) == {"count": 2 * len(accounts)}
 

@@ -9,8 +9,6 @@ Local fakes only (webhook-suite convention): `repository` is lambda/webhook_repo
 not export DatabaseError.
 """
 
-import logging
-
 import pytest
 
 from _feed_fakes import FakeCategoryRepo

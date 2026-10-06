@@ -7,6 +7,7 @@ cycle 0 = [2026-07-01, 2026-07-25], cycle 1 = [2026-06-01, 2026-06-30].
 import json
 from datetime import date
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
@@ -149,12 +150,9 @@ def test_bad_cycle_values_are_rejected(handler, monkeypatch, today, bad):
 # WHIT-703: with no budgets set, `budgets` is {} and the categories are never read.
 @pytest.mark.parametrize("cycle", [None, {"cycle": "1"}])
 def test_no_budgets_skips_the_category_read(handler, monkeypatch, today, cycle):
-    class _UnreadCategoryRepo:
-        def list_categories(self):
-            raise AssertionError("categories read with no budgets")
-
     _call(handler, monkeypatch, _event())
-    monkeypatch.setattr(handler, "CategoryRepository", _UnreadCategoryRepo)
+    monkeypatch.setattr(handler, "CategoryRepository",
+                        partial(_FakeCategoryRepo, error=AssertionError("categories read with no budgets")))
     response = handler.lambda_handler(_event(cycle), None)
     assert response["statusCode"] == 200
     assert json.loads(response["body"])["budgets"] == {}

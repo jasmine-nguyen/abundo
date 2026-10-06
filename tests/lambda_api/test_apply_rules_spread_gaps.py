@@ -12,7 +12,9 @@ FakeBudget/FakePaycycle record the seed and the real JobRepository (_job_fakes) 
 
 import json
 from decimal import Decimal
+from functools import partial
 
+from _budget_endpoint_fakes import _FakePayCycleRepo
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
 from _job_fakes import real_job_repo
 
@@ -52,13 +54,7 @@ class FakeBudget:
         return self._result
 
 
-class FakePaycycle:
-    def __init__(self):
-        self.reads = 0
-
-    def get_paycycle(self):
-        self.reads += 1
-        return {"length": 14, "last_pay_date": "2026-01-07"}
+FakePaycycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-01-07")
 
 
 def _origin(txn_id, date="2026-07-01", **extra):
@@ -86,7 +82,7 @@ def test_a_prior_seed_marked_in_the_store_blocks_the_sweep(handler):
     rule_repo.mark_spread_seeded(rule["id"])   # the webhook already seeded on a prior delivery
     budget, paycycle = FakeBudget(), FakePaycycle()
     _sweep(handler, repo, rule_repo, budget=budget, paycycle=paycycle)
-    assert budget.calls == [] and paycycle.reads == 0
+    assert budget.calls == [] and paycycle.get_calls == 0
     assert _seed_marks(table) == 1                      # no second mark
 
 
@@ -102,7 +98,7 @@ def test_two_sweeps_over_the_same_store_seed_once(handler):
     table.seed(_origin("t2"))
     b2, p2 = FakeBudget(), FakePaycycle()
     _sweep(handler, repo, rule_repo, budget=b2, paycycle=p2)
-    assert b2.calls == [] and p2.reads == 0             # second run does not re-seed
+    assert b2.calls == [] and p2.get_calls == 0             # second run does not re-seed
 
 
 # --- the seed fires even when the charge write no-ops (the plan is about the bill) ----------------
@@ -167,7 +163,7 @@ def test_a_spread_rule_matching_nothing_reads_no_paycycle(handler):
         {SPENDING: [_origin("t1")]}, rules=[_spread_rule(value="NOMATCH")])
     budget, paycycle = FakeBudget(), FakePaycycle()
     _sweep(handler, repo, rule_repo, budget=budget, paycycle=paycycle)
-    assert budget.calls == [] and paycycle.reads == 0
+    assert budget.calls == [] and paycycle.get_calls == 0
 
 
 # --- regression: a budget_excluded (non-spread) winning rule still files + excludes ----------------
@@ -182,7 +178,7 @@ def test_a_budget_excluded_non_spread_rule_still_files_and_excludes(handler):
     _sweep(handler, repo, rule_repo, budget=budget, paycycle=paycycle)
     row = stored(table, "t1")
     assert row["category"] == "insurance" and row.get("budget_excluded") is True
-    assert budget.calls == [] and paycycle.reads == 0 and _seed_marks(table) == 0
+    assert budget.calls == [] and paycycle.get_calls == 0 and _seed_marks(table) == 0
 
 
 # --- the async worker route (impl suite tested only the sync route) -------------------------------
@@ -215,7 +211,7 @@ def test_worker_seeds_a_spread_rules_plan_once_and_marks_it(apply_rules_worker, 
     result = worker.lambda_handler({"jobId": "job1"})
 
     assert result["status"] == "succeeded"
-    assert len(budget.calls) == 1 and paycycle.reads == 1
+    assert len(budget.calls) == 1 and paycycle.get_calls == 1
     assert _seeded(rule_repo) is True and _seed_marks(table) == 1
     assert job_repo.get_job("job1")["filed"] == 3
 
@@ -229,4 +225,4 @@ def test_worker_with_a_non_spread_rule_touches_no_budget(apply_rules_worker, mon
         rules=[_spread_rule(spread=False)], budget=budget, paycycle=paycycle)
 
     worker.lambda_handler({"jobId": "job1"})
-    assert budget.calls == [] and paycycle.reads == 0 and _seed_marks(table) == 0
+    assert budget.calls == [] and paycycle.get_calls == 0 and _seed_marks(table) == 0

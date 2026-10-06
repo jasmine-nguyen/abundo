@@ -12,6 +12,7 @@ import pathlib
 
 import pytest
 
+from _budget_endpoint_fakes import _FakeCategoryRepo
 from _feed_fakes import ANZ, SPENDING, HOMELOAN, WESTPAC, date_reads, real_repos, _row
 
 _FIXTURE = json.loads(
@@ -19,18 +20,7 @@ _FIXTURE = json.loads(
 )
 
 
-class _NamedCategoryRepo:
-    """Taxonomy stub WITH names — search matches on the category's name, which FakeCategoryRepo
-    (ids only) doesn't carry."""
-
-    def __init__(self, categories):
-        self._categories = categories
-
-    def list_categories(self):
-        return [dict(category) for category in self._categories]
-
-
-_CATEGORIES = _NamedCategoryRepo(_FIXTURE["categories"])
+_CATEGORIES = _FakeCategoryRepo(_FIXTURE["categories"])
 
 
 def _search_event(params):

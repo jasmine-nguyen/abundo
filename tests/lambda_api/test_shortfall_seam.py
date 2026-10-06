@@ -14,8 +14,6 @@ import json
 from decimal import Decimal
 from functools import partial
 
-import pytest
-
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _insight_fakes import insight_puts, insight_repo
 

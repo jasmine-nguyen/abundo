@@ -8,16 +8,8 @@ calls get_transactions_search directly):
 
 import pytest
 
+from _budget_endpoint_fakes import _FakeCategoryRepo
 from _feed_fakes import ANZ, date_reads, real_repos, _row
-
-
-class _NamedCategoryRepo:
-    def __init__(self):
-        self.calls = 0
-
-    def list_categories(self):
-        self.calls += 1
-        return [{"id": "groceries", "name": "Groceries"}]
 
 
 def _event(params, method="GET"):
@@ -32,7 +24,7 @@ def _event(params, method="GET"):
 def routed(handler, monkeypatch):
     """lambda_handler wired to fakes, so the REAL get_transactions_search runs behind the router."""
     table, repo, _ = real_repos({ANZ: [_row(ANZ, "2026-07-10", "a1", description="STEVEN", amount=-1)]})
-    categories = _NamedCategoryRepo()
+    categories = _FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}])
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: categories)
     return handler, table, categories

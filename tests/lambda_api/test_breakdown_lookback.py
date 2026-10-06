@@ -19,8 +19,6 @@ from datetime import date
 from decimal import Decimal
 from functools import partial
 
-import pytest
-
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 
 

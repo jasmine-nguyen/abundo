@@ -3,7 +3,10 @@
 No more `(book, is_unfiled)` tuple and no unused placeholder argument on file_charge.
 """
 
+from functools import partial
+
 import pytest
+from _feed_fakes import FakeCategoryRepo
 
 
 class _Store:
@@ -14,9 +17,7 @@ class _Store:
         return [dict(rule) for rule in self._rules]
 
 
-class _Cats:
-    def list_categories(self):
-        return [{"id": "groceries"}, {"id": "petrol"}]
+_Cats = partial(FakeCategoryRepo, category_ids=["groceries", "petrol"])
 
 
 def _coles_rule():
