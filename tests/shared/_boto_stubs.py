@@ -8,8 +8,8 @@ import chain. This module holds the single copy (WHIT-466).
 
 Two entry points, for the two things suites actually need:
 
-- ``install_import_satisfiers(ssm_default=...)`` — the full bundle the handler
-  suites use at module load: env vars + fake ``boto3``/``botocore`` + fake ``ssm``.
+- ``install_import_satisfiers()`` — the full bundle the handler suites use at
+  module load: env vars + fake ``boto3``/``botocore`` + fake ``ssm``.
   Handler tests replace the repository wholesale, so the fakes are import-only.
 - ``use_condition_fields()`` — a context manager for the ``shared`` / ``lambda``
   repository suites, which DO query. It swaps ``boto3``'s ``Key``/``Attr`` for the
@@ -19,13 +19,18 @@ Two entry points, for the two things suites actually need:
 Both share one fake ``boto3``/``botocore`` builder, so every suite sees the same
 shape regardless of which one collects first. Each install is idempotent — it
 guards on the module already being in ``sys.modules`` — so the first suite to run
-wins and the rest no-op, exactly as the per-suite copies did.
+installs them and the rest no-op. Every suite installs the same fakes, so run order
+doesn't change what any test sees.
 """
 
 import os
 import sys
 import types
 from contextlib import contextmanager
+
+# One key for every suite: only the first install takes effect, so a per-suite value
+# would make the key depend on which test folder loads first (WHIT-775).
+FAKE_SSM_KEY = "test-api-key"
 
 
 class _Predicate:
@@ -101,17 +106,16 @@ def _install_fake_boto3_botocore():
         sys.modules.update({"botocore": botocore, "botocore.exceptions": exceptions})
 
 
-def install_import_satisfiers(ssm_default: str = "test-key"):
+def install_import_satisfiers():
     """Set the env vars and register the fake boto3/botocore/ssm a handler suite
-    needs before importing its ``handler.py``. ``ssm_default`` is the value the fake
-    ``ssm.get_param`` returns; each suite keeps its own so intent stays readable,
-    though tests that care about the key monkeypatch it directly."""
+    needs before importing its ``handler.py``. The fake ``ssm.get_param`` returns
+    ``FAKE_SSM_KEY``; tests that care about the key monkeypatch it directly."""
     os.environ.setdefault("AWS_REGION", "ap-southeast-2")
     os.environ.setdefault("TABLE_NAME", "test-table")
     _install_fake_boto3_botocore()
     if "ssm" not in sys.modules:
         ssm = types.ModuleType("ssm")
-        ssm.get_param = lambda parameter_name: ssm_default
+        ssm.get_param = lambda parameter_name: FAKE_SSM_KEY
         sys.modules["ssm"] = ssm
 
 

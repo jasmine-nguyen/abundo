@@ -9,6 +9,8 @@ import sys
 
 import pytest
 
+from _boto_stubs import FAKE_SSM_KEY
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
@@ -38,14 +40,14 @@ def test_the_handler_fixture_sheds_every_lambda_api_module_and_the_shared_reposi
 # api_key.get_param for a stub by plain assignment (tests/lambda_api/conftest.py). Before WHIT-625
 # `api_key` was in _COLLIDING, so that stub died with the fixture; the folder-built list dropped it,
 # so the stub now outlives the test and every later lambda_api test reads the Anthropic stub key as
-# its BankSync key. The ssm value is pinned by the test, not taken from a conftest default.
+# its BankSync key. The ssm value is pinned here so the test states the key it expects.
 # FAIL-ON-REVERT of the fix: take api_key out of the shed set again.
 
 @pytest.fixture
 def pinned_ssm_key(monkeypatch):
-    """Whichever suite's conftest loads first installs the fake ssm with its own default, so pin it here."""
-    monkeypatch.setattr(sys.modules["ssm"], "get_param", lambda path: "test-api-key")
-    return "test-api-key"
+    """Pin the BankSync key the handler should read, so a leftover stub can't pass for it."""
+    monkeypatch.setattr(sys.modules["ssm"], "get_param", lambda path: FAKE_SSM_KEY)
+    return FAKE_SSM_KEY
 
 
 def test_a_fixture_stubs_the_anthropic_key(anthropic_client):

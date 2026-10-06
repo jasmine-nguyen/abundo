@@ -23,7 +23,7 @@ from _boto_stubs import install_import_satisfiers
 # Env vars + fake boto3/botocore/ssm the handler import chain needs (push does
 # `from ssm import get_param` at load). Handler tests monkeypatch the repositories
 # and get_access_token, so the fakes are import-satisfiers only.
-install_import_satisfiers(ssm_default="test-token")
+install_import_satisfiers()
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _SWEEP_DIR = str(_REPO_ROOT / "lambda_push_receipts")

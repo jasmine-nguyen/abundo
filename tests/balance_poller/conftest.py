@@ -26,7 +26,7 @@ from _boto_stubs import install_import_satisfiers
 # monkeypatch the repository, so the fakes are import-satisfiers only. The key fetch
 # now lives in shared/api_key.py (WHIT-454); tests that need a key stub monkeypatch
 # handler.get_api_key directly.
-install_import_satisfiers(ssm_default="test-api-key")
+install_import_satisfiers()
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _POLLER_DIR = str(_REPO_ROOT / "lambda_balance_poller")

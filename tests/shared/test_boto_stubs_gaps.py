@@ -8,8 +8,8 @@ exercises directly:
     from poisoning a sibling suite that expects the import-only ``object`` sentinel; no other test
     asserts it restores (the repo suites pass whether or not it does, since they run inside it).
   * ``install_import_satisfiers()`` idempotency — "first suite wins, the rest no-op" is
-    load-bearing (two suites collect in one process); nothing else pins that a 2nd call with a
-    different ``ssm_default`` doesn't clobber an already-installed ssm.
+    load-bearing (two suites collect in one process); nothing else pins that a 2nd call
+    doesn't clobber an already-installed (possibly monkeypatched) ssm.
   * ``_Field`` / ``_Predicate`` query semantics — the fake query engine the ``shared``/``lambda``
     repo suites lean on; its boundaries (``between`` inclusive, ``.get(name, "")`` default) are
     exactly the kind of thing a "tidy" could silently shift.
@@ -71,22 +71,15 @@ def test_use_condition_fields_nests_without_losing_the_outer_restore():
 
 # --- install_import_satisfiers(): idempotent, first-writer-wins ---------------------------------
 
-def test_install_import_satisfiers_does_not_clobber_an_installed_ssm():
-    # The `if "ssm" not in sys.modules` guard is load-bearing: a 2nd suite's install with a different
-    # default must leave the first suite's ssm (which tests may have monkeypatched) untouched.
-    saved = sys.modules.get("ssm")
+def test_install_import_satisfiers_does_not_clobber_an_installed_ssm(monkeypatch):
+    # The `if "ssm" not in sys.modules` guard is load-bearing: a 2nd suite's install must leave the
+    # first suite's ssm (which tests may have monkeypatched) untouched.
     sentinel = types.ModuleType("ssm")
     sentinel.get_param = lambda parameter_name: "SENTINEL-FIRST-WRITER"
-    sys.modules["ssm"] = sentinel
-    try:
-        install_import_satisfiers(ssm_default="DIFFERENT-would-clobber")
-        assert sys.modules["ssm"] is sentinel
-        assert sys.modules["ssm"].get_param("/x") == "SENTINEL-FIRST-WRITER"
-    finally:
-        if saved is not None:
-            sys.modules["ssm"] = saved
-        else:
-            sys.modules.pop("ssm", None)
+    monkeypatch.setitem(sys.modules, "ssm", sentinel)
+    install_import_satisfiers()
+    assert sys.modules["ssm"] is sentinel
+    assert sys.modules["ssm"].get_param("/x") == "SENTINEL-FIRST-WRITER"
 
 
 def test_install_import_satisfiers_is_stable_for_boto3_and_env():
