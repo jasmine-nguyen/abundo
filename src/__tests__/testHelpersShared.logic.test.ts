@@ -21,7 +21,7 @@ const ACT_FLUSH_BODY = new RegExp(
 );
 // A named helper wrapping the 20-tick loop — not a one-off inline act(...) loop in a test body.
 const TICK_FLUSH_BODY = new RegExp(
-  'function \\w+\\([^)]*\\)[^{]*\\{\\s*' + escape('for (let i = 0; i < 20; i++) ' + 'await Promise.resolve();'),
+  '(function \\w+\\([^)]*\\)[^{]*|const \\w+\\s*=\\s*async\\s*\\([^)]*\\)[^{]*=>\\s*)\\{\\s*' + escape('for (let i = 0; i < 20; i++) ' + 'await Promise.resolve();'),
 );
 
 function offenders(pattern: RegExp, home: string): string[] {

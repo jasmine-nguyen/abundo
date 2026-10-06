@@ -239,7 +239,6 @@ describe('budgetTxInvalidation (folded)', () => {
     ...over,
   });
 
-  // The [0] element of every invalidateQueries call — the top-level query key.
   beforeEach(() => { queryClient.clear(); });
   afterEach(() => { queryClient.clear(); jest.restoreAllMocks(); }); // clear the singleton + restore spies (config has clearMocks, not restoreMocks)
 
