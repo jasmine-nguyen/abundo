@@ -8,6 +8,7 @@ import { milestoneView } from '../src/context';
 import { useGoalScreenData } from '../src/queries';
 import { Bar, RetryButton, HeroGradientFill } from '../src/components/ui';
 import { Header } from '../src/components/Header';
+import { EquityCard, EquityBody, AddLoanDetailsPrompt } from '../src/components/EquityCard';
 import { MONTHS } from '../src/dateutil';
 
 // "2027-03-18" -> "Mar 2027". Parsed by hand (no Date) so the label can't shift
@@ -150,31 +151,19 @@ export default function Milestone() {
         )}
 
         {/* usable equity from the home — real once the value is set, else a prompt */}
-        <View style={[styles.card, { marginBottom: 6 }]}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11, marginBottom: 13 }}>
-            <View style={styles.ipChip}><Glyph name="building" size={22} color={C.purple} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowTitle}>Equity for your next place</Text>
-              <Text style={styles.rowSub}>Usable equity from your current home</Text>
-            </View>
-          </View>
+        <EquityCard>
           {v.equityKnown ? (
             <>
               <View style={styles.equityHead}>
                 <Text style={styles.equityBig}>{v.usableEquityLabel}</Text>
                 <Text style={styles.equityHint}>at {fmt(v.propertyValue!)} value · {Math.round((loanFacts.lvr ?? 0) * 100)}% LVR</Text>
               </View>
-              <Text style={styles.ipBody}>Usable equity = your LVR × your home's value, minus what you still owe. Kill more principal, unlock more deposit. 📈</Text>
+              <EquityBody>Usable equity = your LVR × your home's value, minus what you still owe. Kill more principal, unlock more deposit. 📈</EquityBody>
             </>
           ) : (
-            <>
-              <Text style={styles.ipBody}>Add your home's value to see how much equity you could unlock toward your next place.</Text>
-              <Pressable onPress={() => router.push('/loan')} style={styles.equityCta}>
-                <Text style={styles.equityCtaText}>Add loan details →</Text>
-              </Pressable>
-            </>
+            <AddLoanDetailsPrompt />
           )}
-        </View>
+        </EquityCard>
       </ScrollView>
     </View>
   );
@@ -219,11 +208,7 @@ const styles = StyleSheet.create({
   addPlanBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: C.accent, borderRadius: 12, paddingVertical: 12 },
   addPlanText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentInk },
 
-  ipChip: { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(201,179,245,.16)', alignItems: 'center', justifyContent: 'center' },
   equityHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
   equityBig: { fontFamily: FONT.display, fontSize: 22, fontWeight: '800', color: '#d9c9f7', letterSpacing: -0.6 },
   equityHint: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim },
-  ipBody: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, lineHeight: 18, marginTop: 11 },
-  equityCta: { alignSelf: 'flex-start', backgroundColor: 'rgba(201,179,245,.16)', borderRadius: 11, paddingVertical: 9, paddingHorizontal: 14, marginTop: 12 },
-  equityCtaText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.purple },
 });

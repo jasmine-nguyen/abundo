@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { C, FONT, fmtCompact } from '../src/theme';
@@ -8,6 +8,7 @@ import { EMPTY_LOAN_FACTS } from '../src/model';
 import { useLoanFactsQuery, useIsAuthed } from '../src/queries';
 import { Header } from '../src/components/Header';
 import { NativeDateField } from '../src/components/NativeDateField';
+import { MoneyField } from '../src/components/MoneyField';
 import { parseAmount, numText } from '../src/numutil';
 import { LOANFACTS_FIELD_MAX } from '../src/loanLimits';
 import type { LoanFactsInput } from '../src/api';
@@ -99,12 +100,12 @@ export default function Loan() {
           Add your loan facts so Abundo can show real progress and equity. We only ask for what the bank feed can't tell us.
         </Text>
 
-        <Field label="Original loan amount" hint="What you first borrowed" placeholder="e.g. 600000" prefix="$" value={original} onChangeText={setOriginal} />
-        <Field label="Property value" hint="What it's worth today" placeholder="e.g. 770000" prefix="$" value={homeValue} onChangeText={setHomeValue} />
-        <Field label="Loan-to-value ratio" hint="How much the bank lends against it — usually 80" placeholder="e.g. 80" suffix="%" value={lvr} onChangeText={setLvr} />
-        <Field label="Interest rate" hint="Your current rate" placeholder="e.g. 5.74" suffix="%" value={ratePct} onChangeText={setRatePct} />
-        <Field label="Scheduled repayment" hint="Your minimum, per month" placeholder="e.g. 3667" prefix="$" value={baseRepay} onChangeText={setBaseRepay} />
-        <Field label="Extra repayment" hint="Optional top-up per month" placeholder="e.g. 500" prefix="$" value={extra} onChangeText={setExtra} />
+        <MoneyField label="Original loan amount" hint="What you first borrowed" placeholder="e.g. 600000" prefix="$" value={original} onChangeText={setOriginal} {...loanLook} />
+        <MoneyField label="Property value" hint="What it's worth today" placeholder="e.g. 770000" prefix="$" value={homeValue} onChangeText={setHomeValue} {...loanLook} />
+        <MoneyField label="Loan-to-value ratio" hint="How much the bank lends against it — usually 80" placeholder="e.g. 80" suffix="%" value={lvr} onChangeText={setLvr} {...loanLook} />
+        <MoneyField label="Interest rate" hint="Your current rate" placeholder="e.g. 5.74" suffix="%" value={ratePct} onChangeText={setRatePct} {...loanLook} />
+        <MoneyField label="Scheduled repayment" hint="Your minimum, per month" placeholder="e.g. 3667" prefix="$" value={baseRepay} onChangeText={setBaseRepay} {...loanLook} />
+        <MoneyField label="Extra repayment" hint="Optional top-up per month" placeholder="e.g. 500" prefix="$" value={extra} onChangeText={setExtra} {...loanLook} />
 
         <View style={styles.field}>
           <Text style={styles.label}>Target payoff date</Text>
@@ -118,7 +119,7 @@ export default function Loan() {
           <Text style={styles.hint}>Optional — how we work out the repayment needed if the loan won't clear at your current rate.</Text>
         </View>
 
-        <Field label="Deposit needed for your next place" hint="Optional — sets the target the equity card tracks toward." placeholder="e.g. 120000" prefix="$" value={depositTarget} onChangeText={setDepositTarget} />
+        <MoneyField label="Deposit needed for your next place" hint="Optional — sets the target the equity card tracks toward." placeholder="e.g. 120000" prefix="$" value={depositTarget} onChangeText={setDepositTarget} {...loanLook} />
 
         <Pressable onPress={onSave} disabled={saving} style={[styles.save, saving && { opacity: 0.6 }]}>
           <Text style={styles.saveText}>{saving ? 'Saving…' : 'Save loan details'}</Text>
@@ -128,41 +129,13 @@ export default function Loan() {
   );
 }
 
-function Field({
-  label, hint, placeholder, value, onChangeText, prefix, suffix,
-}: {
-  label: string; hint: string; placeholder: string; value: string;
-  onChangeText: (t: string) => void; prefix?: string; suffix?: string;
-}) {
-  return (
-    <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
-      <View style={styles.inputRow}>
-        {prefix ? <Text style={styles.affix}>{prefix}</Text> : null}
-        <TextInput
-          style={styles.input}
-          value={value}
-          onChangeText={onChangeText}
-          placeholder={placeholder}
-          placeholderTextColor={C.placeholder}
-          keyboardType="decimal-pad"
-          inputMode="decimal"
-        />
-        {suffix ? <Text style={styles.affix}>{suffix}</Text> : null}
-      </View>
-      <Text style={styles.hint}>{hint}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   intro: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, lineHeight: 20, marginBottom: 18 },
   field: { marginBottom: 16 },
   label: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '700', color: C.textBright, marginBottom: 7 },
-  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, paddingHorizontal: 14, height: 50 },
-  affix: { fontFamily: FONT.body, fontSize: 16, fontWeight: '600', color: C.textDim },
-  input: { flex: 1, fontFamily: FONT.body, fontSize: 16, color: C.text, height: '100%', textAlignVertical: 'center' },
   hint: { fontFamily: FONT.body, fontSize: 11.5, color: C.textFaint, marginTop: 5 },
   save: { marginTop: 8, paddingVertical: 15, borderRadius: 14, backgroundColor: C.accent, alignItems: 'center' },
   saveText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.accentInk },
 });
+
+const loanLook = { labelStyle: styles.label, style: styles.field };

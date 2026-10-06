@@ -9,6 +9,7 @@ import { useAppContext, accountSummaries, accountNameFromId } from '../../src/co
 import { useGoalsQuery, useRecentTransactionsScreenData, useIsAuthed } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { NativeDateField } from '../../src/components/NativeDateField';
+import { MoneyField } from '../../src/components/MoneyField';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 import { toISODate } from '../../src/dateutil';
 import { parseAmount, numText } from '../../src/numutil';
@@ -298,14 +299,16 @@ export default function GoalEdit() {
 
         {source === 'manual' && (
           <>
-            <AmountField label="STARTING BALANCE" placeholder="e.g. 2500" value={manualBalance} onChangeText={setManualBalance} />
+            <MoneyField label="STARTING BALANCE" labelStyle={styles.label} prefix="$" placeholder="e.g. 2500" value={manualBalance} onChangeText={setManualBalance} />
             <Text style={styles.label}>AS OF</Text>
             <NativeDateField value={manualAsOf} onChange={(iso) => setManualAsOf(iso ?? todayISO)} maximumDate={today} />
           </>
         )}
 
-        <AmountField
+        <MoneyField
           label="TARGET AMOUNT"
+          labelStyle={styles.label}
+          prefix="$"
           placeholder={grow ? 'e.g. 10000' : 'e.g. 0'}
           value={targetAmount}
           onChangeText={setTargetAmount}
@@ -380,8 +383,10 @@ export default function GoalEdit() {
         <Text style={styles.label}>TARGET DATE</Text>
         <NativeDateField value={targetDate} onChange={setTargetDate} minimumDate={tomorrowOf(today)} placeholder="Pick a date" />
 
-        <AmountField
+        <MoneyField
           label={grow ? 'COUNT FROM (OPTIONAL)' : 'STARTING AMOUNT OWED (OPTIONAL)'}
+          labelStyle={styles.label}
+          prefix="$"
           placeholder="e.g. 500"
           value={baseline}
           onChangeText={setBaseline}
@@ -429,33 +434,9 @@ function Segment({ label, selected, onPress, testID }: { label: string; selected
   );
 }
 
-function AmountField({ label, placeholder, value, onChangeText, hint }: {
-  label: string; placeholder: string; value: string; onChangeText: (t: string) => void; hint?: string;
-}) {
-  return (
-    <View>
-      <Text style={styles.label}>{label}</Text>
-      <View style={styles.inputRow}>
-        <Text style={styles.affix}>$</Text>
-        <TextInput
-          style={styles.rowInput}
-          value={value}
-          onChangeText={onChangeText}
-          placeholder={placeholder}
-          placeholderTextColor={C.placeholder}
-          keyboardType="decimal-pad"
-          inputMode="decimal"
-        />
-      </View>
-      {hint ? <Text style={styles.hint}>{hint}</Text> : null}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   label: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 18, marginBottom: 8, marginHorizontal: 2 },
   input: { fontFamily: FONT.body, fontSize: 16, color: C.text, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, paddingHorizontal: 14, height: 50 },
-  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, paddingHorizontal: 14, height: 50 },
   rowInput: { flex: 1, fontFamily: FONT.body, fontSize: 16, color: C.text, height: '100%', textAlignVertical: 'center' },
   affix: { fontFamily: FONT.body, fontSize: 16, fontWeight: '600', color: C.textDim },
   hint: { fontFamily: FONT.body, fontSize: 11.5, color: C.textFaint, marginTop: 5 },
