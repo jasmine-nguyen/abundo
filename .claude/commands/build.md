@@ -228,6 +228,21 @@ the card number for card builds) and check where it is:
    for, e.g. "WHIT-42: the plan is ready for your sign-off". Do the same when
    the build ends (PR opened, failed or stopped).
 
+   **Plan review in the browser.** At a PLAN FOR REVIEW, when `plannotator` is
+   installed (`command -v plannotator`; never in a cloud session), offer the plan
+   in the browser before any question box:
+   1. Write the block, as printed, to `.build/cards/<thread>-plan-review.md`.
+   2. Run, in the background, `plannotator annotate .build/cards/<thread>-plan-review.md
+      .build/<thread>/plan.md --gate --json`. It opens the summary and the full plan
+      in a browser tab and waits until the user is done there. Tell the user in one
+      line that the plan is open in their browser.
+   3. It prints one JSON line. By its `decision`:
+      - `annotated` — resume with `rework: <its feedback>`, the feedback as given.
+      - `approved` — with no decisions in the block, resume with `go`. With
+        decisions, ask them in the question box as below; the plan is already
+        approved, so pick Approve for them once they answer.
+      - `dismissed`, or the command fails — go on as if it weren't installed.
+
    - **PLAN FOR REVIEW** — without the mod, before any question, show the summary in your
      message exactly as printed, formatted as Markdown (section titles in
      bold, lines as bullets): the header line, Problem, Task and Solution,
