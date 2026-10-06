@@ -21,10 +21,7 @@ import type { LoanFacts } from '../api';
 import type { HomeLoanState } from '../model';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({}) };
-});
+jest.mock('../context', () => require('./support/contextMock').emptyContextMockModule());
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 

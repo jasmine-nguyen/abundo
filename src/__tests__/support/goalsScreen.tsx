@@ -13,6 +13,7 @@
 // (Not a *.test file, so the jest testMatch never runs it as a suite.)
 import { jest } from '@jest/globals';
 import type { installFakeServer } from './fakeServer';
+import { realContextWith } from './contextMock';
 import type { GoalRecord, LoanFacts, MilestoneRecord, PayCycle, Repayment } from '../../api';
 import type { HomeLoanState } from '../../model';
 import { DEFAULT_MILESTONES, EMPTY_LOAN_FACTS, LOAN_FACTS, NO_REPAYMENT } from '../factory';
@@ -83,6 +84,5 @@ export function seedHubWith(server: FakeServer, over: GoalsHubSeed = {}) {
 // The Goals screens call useAppContext only for openGoalBalance; the rest of ../context stays real
 // (balanceGoalView etc.). Pass a getter, not the fn: jest.mock factories run before the suite's consts.
 export function goalsContextMockModule(openGoalBalance: () => unknown = () => jest.fn()) {
-  const actual = jest.requireActual('../../context') as typeof import('../../context');
-  return { ...actual, useAppContext: () => ({ openGoalBalance: openGoalBalance() }) };
+  return realContextWith(() => ({ openGoalBalance: openGoalBalance() }));
 }

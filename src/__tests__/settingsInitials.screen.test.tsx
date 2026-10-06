@@ -8,7 +8,7 @@ import { describe, it, expect, jest } from '@jest/globals';
 // ones so the module loads in the test env (we only exercise the pure initialsFrom).
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 jest.mock('../../src/auth', () => ({ signOut: jest.fn(), getCurrentUser: () => null }));
-jest.mock('../../src/context', () => ({ loanFactsReady: () => false, useAppContext: () => ({}) }));
+jest.mock('../context', () => require('./support/contextMock').emptyContextMockModule());
 
 import { initialsFrom } from '../../app/settings';
 
