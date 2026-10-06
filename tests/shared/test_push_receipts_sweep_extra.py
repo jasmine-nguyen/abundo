@@ -9,19 +9,7 @@ No network: push.urllib.request.urlopen is monkeypatched.
 
 import json
 
-
-class _FakeResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
+from _http_fakes import FakeResponse
 
 
 # WHIT-139 — [A20] a chunk with both `data` and a top-level `errors` array keeps the data
@@ -32,7 +20,7 @@ def test_get_receipts_data_alongside_errors_still_returns_data(shared, monkeypat
     body = {"data": {"rcpt-a": {"status": "ok"}},
             "errors": [{"code": "SOME_WARNING"}]}
     monkeypatch.setattr(push.urllib.request, "urlopen",
-                        lambda req, timeout=None: _FakeResponse(body))
+                        lambda req, timeout=None: FakeResponse(body))
     out = push.get_receipts(["rcpt-a"], access_token="k")
     assert out == {"rcpt-a": {"status": "ok"}}   # data survived despite errors present
 
@@ -46,9 +34,9 @@ def test_get_receipts_later_chunk_overwrites_duplicate_key(shared, monkeypatch):
     def fake_urlopen(req, timeout=None):
         ids = json.loads(req.data)["ids"]
         if ids == ["a"]:
-            return _FakeResponse({"data": {"a": {"status": "ok"},
+            return FakeResponse({"data": {"a": {"status": "ok"},
                                            "dup": {"status": "ok"}}})
-        return _FakeResponse({"data": {"b": {"status": "ok"},
+        return FakeResponse({"data": {"b": {"status": "ok"},
                                        "dup": {"status": "error"}}})
 
     monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
@@ -65,7 +53,7 @@ def test_get_receipts_empty_token_sends_no_auth_header(shared, monkeypatch):
 
     def fake_urlopen(req, timeout=None):
         captured["auth"] = req.get_header("Authorization")
-        return _FakeResponse({"data": {"a": {"status": "ok"}}})
+        return FakeResponse({"data": {"a": {"status": "ok"}}})
 
     monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
     out = push.get_receipts(["a"], access_token="")

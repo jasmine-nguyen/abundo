@@ -13,6 +13,7 @@ from decimal import Decimal
 
 import pytest
 
+from _budget_endpoint_fakes import _FakePayCycleRepo
 from _budget_fakes import recording_budget_repo
 
 LENGTH = 30
@@ -33,11 +34,6 @@ class _RecordingTransactionRepo:
             return [], None
         self._served = True
         return [dict(t) for t in self._txns if start_date <= t["date"] <= end_date], None
-
-
-class _FakePayCycleRepo:
-    def get_paycycle(self):
-        return {"length": LENGTH, "last_pay_date": PAYDATE}
 
 
 CATEGORIES = [

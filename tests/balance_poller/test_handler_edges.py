@@ -19,24 +19,11 @@ add the edges it doesn't:
 No network / no AWS: urlopen is monkeypatched and the repository is a fake.
 """
 
-import json
 from decimal import Decimal
 
 import pytest
 
-
-class _FakeResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
+from _http_fakes import FakeResponse
 
 
 class _FakeRepo:
@@ -115,7 +102,7 @@ def test_lambda_handler_stores_a_zero_balance_on_a_paid_off_loan(handler, monkey
     monkeypatch.setattr(handler, "get_api_key", lambda: "k")
     monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: repo)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: _FakeAccountRepo())
-    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: _FakeResponse(_mortgage(0)))
+    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: FakeResponse(_mortgage(0)))
 
     assert handler.lambda_handler({}, None)["homeloan_stored"] is True
     assert repo.calls[0][1] == Decimal("0")
@@ -127,7 +114,7 @@ def test_lambda_handler_swallows_a_repository_upsert_failure(handler, monkeypatc
     monkeypatch.setattr(handler, "get_api_key", lambda: "k")
     monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: repo)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: _FakeAccountRepo())
-    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: _FakeResponse(_mortgage(-400000)))
+    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: FakeResponse(_mortgage(-400000)))
 
     assert handler.lambda_handler({}, None)["homeloan_stored"] is False
     assert len(repo.calls) == 1  # attempted once, then swallowed
@@ -140,7 +127,7 @@ def test_lambda_handler_swallows_a_garbage_amount_without_writing(handler, monke
     monkeypatch.setattr(handler, "get_api_key", lambda: "k")
     monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: repo)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: _FakeAccountRepo())
-    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: _FakeResponse(_mortgage("not-a-number")))
+    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: FakeResponse(_mortgage("not-a-number")))
 
     assert handler.lambda_handler({}, None)["homeloan_stored"] is False
     assert repo.calls == []

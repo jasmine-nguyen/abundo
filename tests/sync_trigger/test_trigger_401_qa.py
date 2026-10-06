@@ -6,34 +6,15 @@ Terraform side: the alarm watches the same function the hourly schedule invokes,
 and pages the real alerts topic with a runbook that names both known causes.
 """
 
-import io
 import re
 import urllib.error
 
 import handler
 import pytest
+from _http_fakes import FakeResponse, http_error
 from _terraform import MONITORING_TF, TERRAFORM_DIR, tf_attr, tf_block
 
-
-class _FakeResponse:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return b'{"data": {"id": "job-1"}}'
-
-
-def _http_error(code):
-    return urllib.error.HTTPError(
-        url="https://api.banksync.io/v1/feeds/x/sync",
-        code=code,
-        msg="boom",
-        hdrs=None,
-        fp=io.BytesIO(b""),
-    )
+_JOB = {"data": {"id": "job-1"}}
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +50,7 @@ def _urlopen_raising(error):
 # [A1]
 def test_401_on_every_feed_fails_the_run_and_drops_the_cached_key(monkeypatch, ssm_reads):
     import api_key
-    monkeypatch.setattr(handler.urllib.request, "urlopen", _urlopen_raising(_http_error(401)))
+    monkeypatch.setattr(handler.urllib.request, "urlopen", _urlopen_raising(http_error(401)))
 
     with pytest.raises(RuntimeError) as raised:
         handler.lambda_handler({}, None)
@@ -82,7 +63,7 @@ def test_401_on_every_feed_fails_the_run_and_drops_the_cached_key(monkeypatch, s
 # [A2]
 @pytest.mark.parametrize("code", [403, 404, 500, 503])
 def test_non_401_http_failure_fails_the_run_but_keeps_the_key(monkeypatch, ssm_reads, code):
-    monkeypatch.setattr(handler.urllib.request, "urlopen", _urlopen_raising(_http_error(code)))
+    monkeypatch.setattr(handler.urllib.request, "urlopen", _urlopen_raising(http_error(code)))
 
     with pytest.raises(RuntimeError):
         handler.lambda_handler({}, None)
@@ -107,7 +88,7 @@ def test_network_failure_fails_the_run_but_keeps_the_key(monkeypatch, ssm_reads)
 
 # [A4]
 def test_409_already_running_is_not_a_failure_and_keeps_the_key(monkeypatch, ssm_reads):
-    monkeypatch.setattr(handler.urllib.request, "urlopen", _urlopen_raising(_http_error(409)))
+    monkeypatch.setattr(handler.urllib.request, "urlopen", _urlopen_raising(http_error(409)))
 
     handler.lambda_handler({}, None)
     handler.lambda_handler({}, None)
@@ -125,8 +106,8 @@ def test_401_on_one_feed_still_triggers_the_others_and_drops_the_key(monkeypatch
         feed_id = req.full_url.split("/feeds/")[1].split("/")[0]
         attempted.append(feed_id)
         if feed_id == rejected_feed:
-            raise _http_error(401)
-        return _FakeResponse()
+            raise http_error(401)
+        return FakeResponse(_JOB)
 
     monkeypatch.setattr(handler.urllib.request, "urlopen", fake_urlopen)
 
@@ -142,7 +123,7 @@ def test_401_on_one_feed_still_triggers_the_others_and_drops_the_key(monkeypatch
 def test_401_only_drops_the_banksync_key_not_other_cached_keys(monkeypatch, ssm_reads):
     import api_key
     api_key.get_api_key("/abundo/anthropic-api-key")
-    monkeypatch.setattr(handler.urllib.request, "urlopen", _urlopen_raising(_http_error(401)))
+    monkeypatch.setattr(handler.urllib.request, "urlopen", _urlopen_raising(http_error(401)))
 
     with pytest.raises(RuntimeError):
         handler.lambda_handler({}, None)
@@ -152,11 +133,11 @@ def test_401_only_drops_the_banksync_key_not_other_cached_keys(monkeypatch, ssm_
 
 # [A7]
 def test_after_a_401_run_the_next_run_reads_ssm_again(monkeypatch, ssm_reads):
-    monkeypatch.setattr(handler.urllib.request, "urlopen", _urlopen_raising(_http_error(401)))
+    monkeypatch.setattr(handler.urllib.request, "urlopen", _urlopen_raising(http_error(401)))
     with pytest.raises(RuntimeError):
         handler.lambda_handler({}, None)
 
-    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: _FakeResponse())
+    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: FakeResponse(_JOB))
     handler.lambda_handler({}, None)
 
     assert ssm_reads == [handler.BANKSYNC_API_KEY_PATH, handler.BANKSYNC_API_KEY_PATH]

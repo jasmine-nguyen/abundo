@@ -8,10 +8,13 @@ budget_excluded (non-spread) regression with the spread wiring live. The real Ru
 the stand-in table, like test_rule_ingest_spread.py."""
 
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
+from _budget_endpoint_fakes import _FakePayCycleRepo
 from _dynamo_fakes import FakeTable
+from _feed_fakes import FakeCategoryRepo
 
 
 def _rule_store(rules):
@@ -27,14 +30,6 @@ def _seeded(store):
     return [rule["id"] for rule in store.list_rules() if rule.get("spread_seeded")]
 
 
-class FakeCategoryRepo:
-    def __init__(self, ids):
-        self._ids = list(ids)
-
-    def list_categories(self):
-        return [{"id": i} for i in self._ids]
-
-
 class FakeBudget:
     def __init__(self, result={"id": "x"}):
         self._result = result
@@ -45,13 +40,7 @@ class FakeBudget:
         return self._result
 
 
-class FakePaycycle:
-    def __init__(self):
-        self.reads = 0
-
-    def get_paycycle(self):
-        self.reads += 1
-        return {"length": 14, "last_pay_date": "2026-01-07"}
+FakePaycycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-01-07")
 
 
 def _charge(txn_id, description="ORIGIN ENERGY BILL", **extra):
@@ -83,7 +72,7 @@ def test_two_deliveries_over_the_same_store_seed_once(lam):
     assert len(b1.calls) == 1 and _seeded(store) == ["r-origin"]
 
     b2, p2 = _apply(lam, store, [_charge("t2")])
-    assert b2.calls == [] and p2.reads == 0            # delivery 2 does not re-seed
+    assert b2.calls == [] and p2.get_calls == 0            # delivery 2 does not re-seed
 
 
 def test_a_multi_condition_spread_rule_still_seeds(lam):
@@ -105,7 +94,7 @@ def test_a_spread_rule_matching_nothing_reads_no_paycycle(lam):
     charge = _charge("t1")
     budget, paycycle = _apply(lam, store, [charge])
     assert charge["category"] is None
-    assert budget.calls == [] and paycycle.reads == 0 and _seeded(store) == []
+    assert budget.calls == [] and paycycle.get_calls == 0 and _seeded(store) == []
 
 
 def test_a_budget_excluded_non_spread_rule_still_files_and_excludes(lam):
@@ -115,4 +104,4 @@ def test_a_budget_excluded_non_spread_rule_still_files_and_excludes(lam):
     charge = _charge("t1")
     budget, paycycle = _apply(lam, store, [charge])
     assert charge["category"] == "insurance" and charge["budget_excluded"] is True
-    assert budget.calls == [] and paycycle.reads == 0 and _seeded(store) == []
+    assert budget.calls == [] and paycycle.get_calls == 0 and _seeded(store) == []

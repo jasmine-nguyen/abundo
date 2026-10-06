@@ -6,8 +6,6 @@ the fixture's reasoning). The bank list is faked at the fetch seam, or at urlope
 
 import copy
 import importlib
-import io
-import json
 import pathlib
 import sys
 import urllib.error
@@ -18,7 +16,9 @@ from decimal import Decimal
 import pytest
 
 from _boto_stubs import install_import_satisfiers, use_condition_fields
+from _budget_endpoint_fakes import _FakeCategoryRepo
 from _dynamo_fakes import FakeTable, _client_error
+from _http_fakes import FakeResponse, http_error
 
 install_import_satisfiers(ssm_default="test-api-key")
 
@@ -362,17 +362,6 @@ def test_the_fetch_window_reaches_back_past_the_feed_window_to_tomorrow(repo, mi
 # --- mirror_pendings ----------------------------------------------------------------------------
 
 
-class _Categories:
-    def __init__(self, categories=(), error=None):
-        self._categories = list(categories)
-        self._error = error
-
-    def list_categories(self):
-        if self._error:
-            raise self._error
-        return list(self._categories)
-
-
 def _bank_by_account(westpac, up):
     def fetch(bid, aid, api_key, date_from, date_to):
         if aid == WESTPAC_AID:
@@ -381,10 +370,6 @@ def _bank_by_account(westpac, up):
             return copy.deepcopy(westpac)
         return copy.deepcopy(up)
     return fetch
-
-
-def _http_error(code):
-    return urllib.error.HTTPError("https://api.banksync.io/x", code, "boom", None, io.BytesIO(b""))
 
 
 def test_user_filed_and_rule_filed_pendings(repo, mirror):
@@ -400,7 +385,7 @@ def test_user_filed_and_rule_filed_pendings(repo, mirror):
     fetch = _bank_by_account(_bank("kept"), _bank("u", aid=UP_AID))
 
     summary = mirror.mirror_pendings(
-        "key", repo=repo, category_repo=_Categories([{"id": "groceries"}]), today=TODAY, fetch=fetch
+        "key", repo=repo, category_repo=_FakeCategoryRepo([{"id": "groceries"}]), today=TODAY, fetch=fetch
     )
 
     assert _ids(repo) == {"kept", "user_category", "noted", "tagged", "excluded"}
@@ -413,19 +398,19 @@ def test_a_category_read_failure_skips_every_account(repo, mirror):
     fetch = _bank_by_account(_bank("kept"), _bank("u", aid=UP_AID))
 
     summary = mirror.mirror_pendings(
-        "key", repo=repo, category_repo=_Categories(error=RuntimeError("down")), today=TODAY, fetch=fetch
+        "key", repo=repo, category_repo=_FakeCategoryRepo(error=RuntimeError("down")), today=TODAY, fetch=fetch
     )
 
     assert _ids(repo) == {"gone"}
     assert summary["skipped"] == 2
 
 
-@pytest.mark.parametrize("failure", [_http_error(429), _http_error(401), RuntimeError("network")])
+@pytest.mark.parametrize("failure", [http_error(429), http_error(401), RuntimeError("network")])
 def test_one_account_failing_does_not_stop_the_other(repo, mirror, failure):
     repo._table.seed(_row("westpac_gone"), _row("up_gone", account_id=UP))
     fetch = _bank_by_account(failure, _bank("u", aid=UP_AID))
 
-    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_Categories(), today=TODAY, fetch=fetch)
+    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY, fetch=fetch)
 
     assert _ids(repo) == {"westpac_gone"}
     assert summary["accounts"][WESTPAC]["skipped"]
@@ -439,26 +424,12 @@ def test_the_api_key_reaches_the_fetch(repo, mirror):
         keys.append(api_key)
         return _bank("x", aid=aid)
 
-    mirror.mirror_pendings("the-key", repo=repo, category_repo=_Categories(), today=TODAY, fetch=fetch)
+    mirror.mirror_pendings("the-key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY, fetch=fetch)
 
     assert keys == ["the-key", "the-key"]
 
 
 # --- fetch_bank_transactions -------------------------------------------------------------------
-
-
-class _FakeResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
 
 
 def _page(rows, has_more=False, cursor="", success=True):
@@ -474,7 +445,7 @@ def bank_pages(mirror, monkeypatch):
 
     def urlopen(req, timeout=None):
         requests.append((req, timeout))
-        return _FakeResponse(pages.pop(0))
+        return FakeResponse(pages.pop(0))
 
     monkeypatch.setattr(mirror.urllib.request, "urlopen", urlopen)
     return pages, requests
@@ -539,7 +510,7 @@ def test_fetch_gives_up_past_the_page_cap(mirror, bank_pages):
 
 def test_fetch_lets_an_http_error_through(mirror, monkeypatch):
     def urlopen(req, timeout=None):
-        raise _http_error(429)
+        raise http_error(429)
 
     monkeypatch.setattr(mirror.urllib.request, "urlopen", urlopen)
 

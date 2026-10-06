@@ -13,9 +13,11 @@ tests/shared/test_spend_spread.py; here we pin the endpoint behaviour on top of 
 
 import json
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
+from _budget_endpoint_fakes import _FakePayCycleRepo, _SpendCategoryRepo, _spend_cat
 from _budget_fakes import recording_budget_repo
 from _terraform import TERRAFORM_DIR
 
@@ -38,24 +40,7 @@ class FakeTransactionRepo:
         return self._queue.pop(0) if self._queue else ([], None)
 
 
-class FakePayCycleRepo:
-    def __init__(self, length=LENGTH, last_pay_date=PAYDATE):
-        self._cycle = {"length": length, "last_pay_date": last_pay_date}
-
-    def get_paycycle(self):
-        return dict(self._cycle)
-
-
-class FakeCategoryRepo:
-    def __init__(self, categories=None):
-        self._categories = categories if categories is not None else _spend_cat()
-
-    def list_categories(self):
-        return [dict(c) for c in self._categories]
-
-
-def _spend_cat(cat_id="insurance", bucket="Living"):
-    return [{"id": cat_id, "bucket": bucket, "parent": None}]
+FakePayCycleRepo = partial(_FakePayCycleRepo, length=LENGTH, last_pay_date=PAYDATE)
 
 
 def _txn(category, amount, date, status="posted"):
@@ -72,7 +57,7 @@ def _entry(spread_from, amount=BILL, cycles=4, spread_len=LENGTH, target=250):
 
 def _list(handler, budget_repo, transactions=None, categories=None):
     return handler.list_budgets(
-        budget_repo, FakeTransactionRepo(transactions), FakePayCycleRepo(), FakeCategoryRepo(categories))
+        budget_repo, FakeTransactionRepo(transactions), FakePayCycleRepo(), _SpendCategoryRepo(categories))
 
 
 @pytest.fixture(autouse=True)
@@ -347,7 +332,7 @@ def _budgeted(**extra):
 def test_set_spread_records_the_plan_anchored_to_the_current_cycle(handler):
     repo = _budgeted()
 
-    resp = handler.set_spread(_put_spread_event(), repo, FakeCategoryRepo(), FakePayCycleRepo())
+    resp = handler.set_spread(_put_spread_event(), repo, _SpendCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"id": "insurance", "amount": 1390.91, "cycles": 4}
@@ -360,7 +345,7 @@ def test_set_spread_quantises_the_amount_to_cents(handler):
     repo = _budgeted()
 
     handler.set_spread(_put_spread_event(body='{"amount": 33.333, "cycles": 3}'), repo,
-                       FakeCategoryRepo(), FakePayCycleRepo())
+                       _SpendCategoryRepo(), FakePayCycleRepo())
 
     stored_amount = repo.set_spread_calls[0][1]
     assert stored_amount == Decimal("33.33")
@@ -386,7 +371,7 @@ def test_set_spread_quantises_the_amount_to_cents(handler):
 def test_set_spread_rejects_a_bad_body_400(handler, body):
     repo = _budgeted()
 
-    resp = handler.set_spread(_put_spread_event(body=body), repo, FakeCategoryRepo(), FakePayCycleRepo())
+    resp = handler.set_spread(_put_spread_event(body=body), repo, _SpendCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 400
     assert repo.set_spread_calls == []
@@ -398,7 +383,7 @@ def test_set_spread_accepts_the_cycle_bounds_inclusive(handler, bound):
     repo = _budgeted()
 
     resp = handler.set_spread(_put_spread_event(body=f'{{"amount": 100, "cycles": {cycles}}}'),
-                              repo, FakeCategoryRepo(), FakePayCycleRepo())
+                              repo, _SpendCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert repo.set_spread_calls[0][2] == cycles
@@ -408,7 +393,7 @@ def test_set_spread_accepts_the_cycle_bounds_inclusive(handler, bound):
 def test_set_spread_rejects_a_non_spend_category_400(handler, bucket):
     repo = _budgeted()
 
-    resp = handler.set_spread(_put_spread_event(), repo, FakeCategoryRepo(_spend_cat(bucket=bucket)),
+    resp = handler.set_spread(_put_spread_event(), repo, _SpendCategoryRepo(_spend_cat(bucket=bucket)),
                               FakePayCycleRepo())
 
     assert resp["statusCode"] == 400
@@ -419,7 +404,7 @@ def test_set_spread_requires_a_budget_target_first(handler):
     # The spread adjusts a target's cycle spendable; with no target there is nothing to adjust.
     repo = recording_budget_repo({})
 
-    resp = handler.set_spread(_put_spread_event(), repo, FakeCategoryRepo(), FakePayCycleRepo())
+    resp = handler.set_spread(_put_spread_event(), repo, _SpendCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 400
     assert "budget" in json.loads(resp["body"])["error"]
@@ -431,7 +416,7 @@ def test_set_spread_is_rejected_while_rollover_is_on(handler):
     # one overspend twice. FAIL-ON-REVERT for the guard.
     repo = _budgeted(rollover=True)
 
-    resp = handler.set_spread(_put_spread_event(), repo, FakeCategoryRepo(), FakePayCycleRepo())
+    resp = handler.set_spread(_put_spread_event(), repo, _SpendCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 400
     assert "rollover" in json.loads(resp["body"])["error"]
@@ -450,7 +435,7 @@ def test_turning_rollover_on_is_rejected_while_a_spread_is_active(handler):
         "isBase64Encoded": False,
     }
 
-    resp = handler.set_budget(event, repo, FakeCategoryRepo(), FakePayCycleRepo())
+    resp = handler.set_budget(event, repo, _SpendCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 400
     assert "spread" in json.loads(resp["body"])["error"]
@@ -469,7 +454,7 @@ def test_a_plain_target_edit_is_still_allowed_while_a_spread_is_active(handler):
         "isBase64Encoded": False,
     }
 
-    resp = handler.set_budget(event, repo, FakeCategoryRepo(), FakePayCycleRepo())
+    resp = handler.set_budget(event, repo, _SpendCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert repo.set_calls == [("insurance", Decimal(300))]
@@ -478,7 +463,7 @@ def test_a_plain_target_edit_is_still_allowed_while_a_spread_is_active(handler):
 def test_set_spread_missing_path_param_404(handler):
     repo = _budgeted()
 
-    resp = handler.set_spread({"pathParameters": {}, "body": "{}"}, repo, FakeCategoryRepo(), FakePayCycleRepo())
+    resp = handler.set_spread({"pathParameters": {}, "body": "{}"}, repo, _SpendCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 404
     assert repo.set_spread_calls == []
@@ -520,7 +505,7 @@ def test_put_spread_routes_to_set_spread_not_set_budget(handler, monkeypatch):
     # `PUT /budgets/{id}` would swallow this and try to parse a `target`.
     repo = _budgeted()
     monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo())
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: _SpendCategoryRepo())
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: FakePayCycleRepo())
 
     resp = handler.lambda_handler(_put_spread_event(), None)
@@ -548,7 +533,7 @@ def test_a_category_whose_id_is_literally_spread_still_reaches_the_item_routes(h
     # exact-three-segment guard.
     repo = recording_budget_repo({"spread": {"target": Decimal(50)}})
     monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(_spend_cat("spread")))
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: _SpendCategoryRepo(_spend_cat("spread")))
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: FakePayCycleRepo())
 
     put = handler.lambda_handler({

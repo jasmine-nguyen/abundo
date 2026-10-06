@@ -10,7 +10,6 @@ sync-trigger handler runs the mirror.
 
 import copy
 import importlib
-import json
 import pathlib
 import sys
 from datetime import date
@@ -20,6 +19,7 @@ import pytest
 
 from _boto_stubs import install_import_satisfiers, use_condition_fields
 from _dynamo_fakes import FakeTable
+from _http_fakes import FakeResponse
 
 install_import_satisfiers(ssm_default="test-api-key")
 
@@ -133,20 +133,6 @@ def test_29_sep_replay_removes_exactly_the_three_dropped_pendings(layer):
     assert result["skipped"] is None
 
 
-class _FakeResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
-
-
 def test_scheduled_sync_trigger_runs_the_pending_mirror(monkeypatch):
     import handler
 
@@ -154,7 +140,7 @@ def test_scheduled_sync_trigger_runs_the_pending_mirror(monkeypatch):
     monkeypatch.setattr(
         handler.urllib.request,
         "urlopen",
-        lambda req, timeout=None: _FakeResponse({"data": {"id": "job-1"}}),
+        lambda req, timeout=None: FakeResponse({"data": {"id": "job-1"}}),
     )
     calls = []
     monkeypatch.setattr(

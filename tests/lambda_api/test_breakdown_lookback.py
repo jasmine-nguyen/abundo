@@ -17,8 +17,11 @@ pattern as test_breakdown.py.
 
 from datetime import date
 from decimal import Decimal
+from functools import partial
 
 import pytest
+
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 
 
 class _DateFilteringTransactionRepo:
@@ -39,20 +42,7 @@ class _DateFilteringTransactionRepo:
         return page, None
 
 
-class FakeCategoryRepo:
-    def __init__(self, categories=None):
-        self._categories = categories or []
-
-    def list_categories(self):
-        return [dict(c) for c in self._categories]
-
-
-class FakePayCycleRepo:
-    def __init__(self, length=14, last_pay_date="2024-01-03"):
-        self._cycle = {"length": length, "last_pay_date": last_pay_date}
-
-    def get_paycycle(self):
-        return dict(self._cycle)
+FakePayCycleRepo = partial(_FakePayCycleRepo, length=14, last_pay_date="2024-01-03")
 
 
 def _category(cat_id, bucket, name=None):
@@ -77,7 +67,7 @@ def test_breakdown_cycle_2_reads_the_second_prior_window_end_to_end(handler, mon
     # which the implementer's cycle=1-only endpoint test can't catch (n vs 1 collapse).
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
-    cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
+    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _DateFilteringTransactionRepo([
         _dated("coffee", -1, "2024-01-10"),   # current  -> OUT
         _dated("coffee", -2, "2024-01-01"),   # cycle=1  -> OUT
@@ -99,7 +89,7 @@ def test_breakdown_cap_boundary_cycle_12_is_served_not_rejected(handler, monkeyp
     # window is far in the past -> empty {}, and 200 with {} is the correct answer.
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
-    cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
+    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _DateFilteringTransactionRepo([_dated("coffee", -20, "2024-01-10")])
     monkeypatch.setattr(handler, "CategoryRepository", lambda: cats)
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
@@ -129,7 +119,7 @@ def test_breakdown_uncategorized_bucket_appears_in_a_past_cycle(handler, monkeyp
     # the same enum dated in the current window is excluded from the cycle=1 answer.
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
-    cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
+    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _DateFilteringTransactionRepo([
         _dated("coffee", -10, "2023-12-25"),      # prior window, spend cat -> IN
         _dated("MEDICAL", -8, "2023-12-26"),      # prior window, raw enum  -> IN (uncategorized)
@@ -148,7 +138,7 @@ def test_breakdown_prior_window_weekly_length_7_end_to_end(handler, monkeypatch)
     # cadence's prior window (helper is unit-tested for 7, but not through list_category_breakdown).
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
-    cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
+    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _DateFilteringTransactionRepo([
         _dated("coffee", -5, "2024-01-10"),   # prior week   -> IN
         _dated("coffee", -50, "2024-01-15"),  # current week -> OUT
@@ -168,7 +158,7 @@ def test_breakdown_prior_window_monthly_length_30_end_to_end(handler, monkeypatc
     # so cycle=1 window is [2023-12-02, 2023-12-31]. End-to-end guard for the 30-day cadence.
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
-    cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
+    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _DateFilteringTransactionRepo([
         _dated("coffee", -11, "2023-12-15"),  # prior month    -> IN
         _dated("coffee", -50, "2024-01-05"),  # current month  -> OUT

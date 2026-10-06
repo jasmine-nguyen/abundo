@@ -9,6 +9,8 @@ from decimal import Decimal
 
 import pytest
 
+from _http_fakes import FakeResponse
+
 
 _OK_PAYLOAD = {
     "success": True,
@@ -17,21 +19,6 @@ _OK_PAYLOAD = {
         "date": "2026-07-04T00:24:37.614Z", "accountType": "mortgage",
     },
 }
-
-
-class _FakeResponse:
-    def __init__(self, payload):
-        self._payload = payload
-
-    def read(self):
-        import json
-        return json.dumps(self._payload).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
 
 
 # --- fetch_balance (parameterized) -------------------------------------------
@@ -43,7 +30,7 @@ def test_fetch_balance_builds_request_from_params(shared, monkeypatch):
     def fake_urlopen(req, timeout=None):
         captured["req"] = req
         captured["timeout"] = timeout
-        return _FakeResponse(_OK_PAYLOAD)
+        return FakeResponse(_OK_PAYLOAD)
 
     monkeypatch.setattr(shared.balance_fetch.urllib.request, "urlopen", fake_urlopen)
 

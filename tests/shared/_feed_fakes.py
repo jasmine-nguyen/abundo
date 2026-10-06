@@ -145,8 +145,13 @@ class FakeCategoryRepo:
     (`("groceries","petrol")` vs `()`), so one shared default would silently mean two things —
     callers state their taxonomy explicitly instead."""
 
-    def __init__(self, category_ids):
+    def __init__(self, category_ids, error=None):
         self._categories = [{"id": category_id} for category_id in category_ids]
+        self._error = error
+        self.list_calls = 0
 
     def list_categories(self):
+        self.list_calls += 1
+        if self._error:
+            raise self._error
         return [dict(category) for category in self._categories]

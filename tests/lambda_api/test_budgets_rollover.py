@@ -13,9 +13,11 @@ math is deterministic (the real one reads the wall clock). The pure stepping hel
 
 import pathlib
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _budget_fakes import recording_budget_repo
 from _lambda_api_constants import constants_namespace
 
@@ -40,20 +42,7 @@ class FakeTransactionRepo:
         return self._queue.pop(0) if self._queue else ([], None)
 
 
-class FakePayCycleRepo:
-    def __init__(self, length=LENGTH, last_pay_date=PAYDATE):
-        self._cycle = {"length": length, "last_pay_date": last_pay_date}
-
-    def get_paycycle(self):
-        return dict(self._cycle)
-
-
-class FakeCategoryRepo:
-    def __init__(self, categories):
-        self._categories = categories
-
-    def list_categories(self):
-        return [dict(c) for c in self._categories]
+FakePayCycleRepo = partial(_FakePayCycleRepo, length=LENGTH, last_pay_date=PAYDATE)
 
 
 def _txn(category, amount, date, status="posted", counts=True):
@@ -89,7 +78,7 @@ def test_empty_cycles_accumulate_into_the_buffer_and_seal_the_settled_ones(handl
     # older than the 10-day lag -> sealed (200); the most recent completed cycle is still live
     # (+100). Displayed carryover = 300; the seal advances the anchor past the two sealed cycles.
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-08")})
-    result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(), FakeCategoryRepo(_spend_cat()))
+    result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat()))
 
     assert result["sink"]["rollover"] is True
     assert result["sink"]["carryover"] == Decimal(300)
@@ -104,7 +93,7 @@ def test_sinking_fund_covers_the_bill_when_it_lands(handler):
     # the client's remaining (target + carryover - spent) is a calm +100, not "over".
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-08")})
     txns = FakeTransactionRepo([_txn("sink", -300, "2026-08-08")])  # current cycle
-    result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), FakeCategoryRepo(_spend_cat()))
+    result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat()))
 
     assert result["sink"]["posted"] == Decimal(300)
     assert result["sink"]["carryover"] == Decimal(300)
@@ -119,7 +108,7 @@ def test_overspend_in_the_live_cycle_carries_as_a_negative_buffer_without_sealin
     # live as a -50 buffer. Nothing seals, so the anchor doesn't move and no settle is written.
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-07-07")})
     txns = FakeTransactionRepo([_txn("sink", -150, "2026-07-20")])  # in the completed (unsealed) cycle
-    result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), FakeCategoryRepo(_spend_cat()))
+    result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat()))
 
     assert result["sink"]["carryover"] == Decimal(-50)
     # The widened fetch is sliced back to the current cycle for posted/pending: the prior-cycle
@@ -139,7 +128,7 @@ def test_a_pay_cycle_length_change_freezes_the_buffer_and_re_anchors(handler):
         "target": Decimal(100), "rollover": True, "carryover": Decimal(40),
         "carryover_from": "2026-05-08", "carryover_len": Decimal(14), "carryover_paydate": PAYDATE,
     }})
-    result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(), FakeCategoryRepo(_spend_cat()))
+    result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat()))
 
     assert result["sink"]["carryover"] == Decimal(40)   # frozen, not re-folded
     assert budget_repo.settle_calls == [("sink", Decimal(40), CYCLE_START, LENGTH, PAYDATE)]
@@ -154,7 +143,7 @@ def test_rollover_flag_on_a_re_bucketed_income_category_is_ignored(handler):
     # nothing is sealed — earnings must never fold into a spend buffer.
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-08")})
     result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(),
-                                  FakeCategoryRepo(_spend_cat(bucket="Income")))
+                                  _FakeCategoryRepo(_spend_cat(bucket="Income")))
 
     assert "rollover" not in result["sink"]
     assert "carryover" not in result["sink"]
@@ -166,7 +155,7 @@ def test_a_non_rollover_budget_is_byte_identical_to_before(handler):
     # and the fetch is not widened (settlement never runs).
     budget_repo = recording_budget_repo({"food": {"target": Decimal(250)}})
     txns = FakeTransactionRepo([_txn("food", -40, "2026-08-08")])
-    result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), FakeCategoryRepo(_spend_cat("food")))
+    result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("food")))
 
     assert result == {"food": {"available": Decimal(250), "target": Decimal(250), "posted": Decimal(40), "pending": Decimal(0)}}
     assert budget_repo.settle_calls == []
@@ -180,7 +169,7 @@ def test_a_failed_settle_write_never_500s_the_read(handler):
     # still computed and returned (it just re-seals on the next read).
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-08")})
     budget_repo._table.fail("update_item")
-    result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(), FakeCategoryRepo(_spend_cat()))
+    result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat()))
 
     assert result["sink"]["carryover"] == Decimal(300)   # displayed regardless of the write
     assert budget_repo.settle_calls != []                # it did attempt the write
@@ -192,7 +181,7 @@ def test_settlement_is_bounded_by_the_max_lookback_cap(handler):
     # for the cold-start bound: without the cap this would read 2000.
     old_anchor = "2025-01-09"  # ~20 monthly cycles before 2026-08-06
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from=old_anchor)})
-    result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(), FakeCategoryRepo(_spend_cat()))
+    result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat()))
 
     assert result["sink"]["carryover"] == Decimal(1200)
 

@@ -12,6 +12,7 @@ from decimal import Decimal
 
 import pytest
 
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _budget_fakes import recording_budget_repo
 
 LENGTH = 30
@@ -31,20 +32,6 @@ class _DateFilteringTransactionRepo:
             return [], None
         self._served = True
         return [dict(t) for t in self._txns if start_date <= t["date"] <= end_date], None
-
-
-class _FakePayCycleRepo:
-    def get_paycycle(self):
-        return {"length": LENGTH, "last_pay_date": PAYDATE}
-
-
-class _FakeCategoryRepo:
-    def __init__(self):
-        self.calls = 0
-
-    def list_categories(self):
-        self.calls += 1
-        return [dict(c) for c in CATEGORIES]
 
 
 CATEGORIES = [
@@ -121,7 +108,7 @@ def wired(handler, monkeypatch):
         return repo
 
     def category_repo():
-        repo = _FakeCategoryRepo()
+        repo = _FakeCategoryRepo(CATEGORIES)
         made["category"].append(repo)
         return repo
 

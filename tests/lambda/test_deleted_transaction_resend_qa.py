@@ -2,6 +2,9 @@
 
 REAL process_transaction over the webhook's REAL TransactionRepository and a FakeTable.
 """
+from functools import partial
+
+from _budget_endpoint_fakes import _FakeCategoryRepo
 
 _MAPPED_ACCOUNT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
 _ACCOUNT_PK = "ACCOUNT#anz-rewards-black-visa"
@@ -12,9 +15,7 @@ class _NoRules:
         return []
 
 
-class _Categories:
-    def list_categories(self):
-        return [{"id": "subscriptions"}]
+_Categories = partial(_FakeCategoryRepo, [{"id": "subscriptions"}])
 
 
 def _raw(txn_id, *, pending, pending_id=None, account=_MAPPED_ACCOUNT):

@@ -10,6 +10,8 @@ from decimal import Decimal
 
 import pytest
 
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+
 
 class _PerAccountRepo:
     """Serves each account its own rows (filtered to the inclusive date range), so the
@@ -25,19 +27,9 @@ class _PerAccountRepo:
         return [dict(t) for t in rows if start_date <= t["date"] <= end_date], None
 
 
-class _FakePayCycleRepo:
-    def get_paycycle(self):
-        return {"length": 30, "last_pay_date": "2026-07-01"}
-
-
 class _NoBudgetsRepo:
     def list_budgets(self):
         return {}
-
-
-class _NoCategoriesRepo:
-    def list_categories(self):
-        return []
 
 
 def _txn(txn_id, date_, amount, account, **extra):
@@ -92,7 +84,7 @@ def _call(handler, monkeypatch, event, repo=None):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: _FakePayCycleRepo())
     monkeypatch.setattr(handler, "BudgetRepository", lambda: _NoBudgetsRepo())
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: _NoCategoriesRepo())
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo())
     return handler.lambda_handler(event, None)
 
 

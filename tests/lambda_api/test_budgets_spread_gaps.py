@@ -11,9 +11,11 @@ a PUT -> PUT -> GET sequence reads back what the earlier handlers really stored.
 import base64
 import json
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
+from _budget_endpoint_fakes import _FakePayCycleRepo, _SpendCategoryRepo, _spend_cat
 from _budget_fakes import recording_budget_repo, stored_budgets
 from _dynamo_fakes import _client_error
 
@@ -24,7 +26,6 @@ PAYDATE = "2026-01-01"
 BILL = Decimal("1390.91")   # over 4 cycles: 347.73, 347.73, 347.73, 347.72
 
 
-
 class FakeTransactionRepo:
     def __init__(self, transactions=None):
         self._queue = [(list(transactions or []), None)]
@@ -33,27 +34,18 @@ class FakeTransactionRepo:
         return self._queue.pop(0) if self._queue else ([], None)
 
 
-class FakePayCycleRepo:
-    def get_paycycle(self):
-        return {"length": LENGTH, "last_pay_date": PAYDATE}
+FakePayCycleRepo = partial(_FakePayCycleRepo, length=LENGTH, last_pay_date=PAYDATE)
 
 
-class FakeCategoryRepo:
+class FakeCategoryRepo(_SpendCategoryRepo):
     def __init__(self, categories=None):
-        self._categories = categories if categories is not None else _spend_cat()
+        super().__init__(categories)
         self.update_calls = []
-
-    def list_categories(self):
-        return [dict(c) for c in self._categories]
 
     def update_category(self, cat_id, name, bucket, icon, parent=None):
         # Only the re-bucket guard test reaches this (update_category handler).
         self.update_calls.append((cat_id, name, bucket, icon))
         return {"id": cat_id, "name": name, "bucket": bucket, "icon": icon, "parent": None}
-
-
-def _spend_cat(cat_id="insurance", bucket="Living", parent=None):
-    return [{"id": cat_id, "bucket": bucket, "parent": parent}]
 
 
 def _txn(category, amount, date):

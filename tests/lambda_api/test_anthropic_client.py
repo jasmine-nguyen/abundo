@@ -7,13 +7,13 @@ monkeypatched — no network, no AWS. The `anthropic_client` fixture imports the
 module in isolation and pins a fake key.
 """
 
-import io
 import json
 import urllib.error
 
 import pytest
 
-from _anthropic_fakes import FakeResponse, messages_payload
+from _anthropic_fakes import messages_payload
+from _http_fakes import FakeResponse, http_error
 
 
 # --- post: request shape + success -------------------------------------------
@@ -77,7 +77,7 @@ def test_post_returns_empty_string_when_no_text_block(anthropic_client, monkeypa
 
 def test_post_http_error_raises_with_status(anthropic_client, monkeypatch):
     def boom(req, timeout=None):
-        raise urllib.error.HTTPError("u", 429, "rate", None, io.BytesIO(b""))
+        raise http_error(429)
 
     monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", boom)
     with pytest.raises(anthropic_client.AnthropicError) as ei:
@@ -308,7 +308,7 @@ def test_post_messages_sends_tools_and_returns_the_whole_reply(anthropic_client,
 
 def test_post_messages_maps_http_errors_like_post(anthropic_client, monkeypatch):
     def boom(req, timeout=None):
-        raise urllib.error.HTTPError("u", 529, "overloaded", None, io.BytesIO(b""))
+        raise http_error(529)
     monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", boom)
     with pytest.raises(anthropic_client.AnthropicError) as err:
         anthropic_client.post_messages("s", [], [], {"type": "any"}, 10, 5)

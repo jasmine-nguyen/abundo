@@ -6,8 +6,10 @@ really comes from the widened read. Cycle: 14 days, payday 2026-07-01, today 202
 
 from datetime import date
 from decimal import Decimal
+from functools import partial
 
 from _budget_alert_fakes import notify_repo
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 
 _TODAY = date(2026, 7, 14)
 _ACCT = "up-spending"
@@ -47,14 +49,10 @@ class _Budgets:
         return self.budgets
 
 
-class _Paycycle:
-    def get_paycycle(self):
-        return {"last_pay_date": "2026-07-01", "length": 14}
+_Paycycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-07-01")
 
 
-class _Categories:
-    def list_categories(self):
-        return _CATS
+_Categories = partial(_FakeCategoryRepo, _CATS)
 
 
 class _NoTwins:

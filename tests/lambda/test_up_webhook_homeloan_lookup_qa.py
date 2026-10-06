@@ -15,26 +15,13 @@ import urllib.parse
 import pytest
 
 from _dynamo_fakes import FakeTable
+from _http_fakes import UP_API_URL, FakeResponse, http_error
 
 MOCK_SECRET = "mock-secret"
 OLD_HOMELOAN_ID = "fbef6cbc-09b3-4b6f-826c-6a178707a178"
 NEW_HOMELOAN_ID = "9f9f9f9f-renumbered-loan"
 SIGNATURE_KEY = "x-up-authenticity-signature"
 ACCOUNTS_MARKER = "/accounts"
-
-
-class _FakeHTTPResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode("utf-8")
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
 
 
 class _FakeDevice:
@@ -75,10 +62,6 @@ def _markers(caplog, marker):
     return [r for r in caplog.records if marker in r.getMessage().split()]
 
 
-def _http_error(code):
-    return urllib.error.HTTPError("https://api.up.com.au/x", code, "nope", {}, None)
-
-
 @pytest.fixture(autouse=True)
 def _no_real_ssm(lam, monkeypatch):
     monkeypatch.setattr(lam.up_webhook, "get_param", lambda path: "fake-secret")
@@ -98,7 +81,7 @@ def lookup(lam, monkeypatch):
         response = state.script.pop(0)
         if isinstance(response, Exception):
             raise response
-        return _FakeHTTPResponse(response)
+        return FakeResponse(response)
 
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
     return state
@@ -125,12 +108,12 @@ def handler(lam, monkeypatch):
     def fake_urlopen(request, timeout=None):
         url = request.full_url
         if "/transactions/" in url:
-            return _FakeHTTPResponse({"data": state.transactions[url.rsplit("/", 1)[-1]]})
+            return FakeResponse({"data": state.transactions[url.rsplit("/", 1)[-1]]})
         assert ACCOUNTS_MARKER in url
         state.account_calls += 1
         if isinstance(state.accounts, Exception):
             raise state.accounts
-        return _FakeHTTPResponse(state.accounts)
+        return FakeResponse(state.accounts)
 
     monkeypatch.setattr(up, "send_push", fake_send_push)
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
@@ -166,7 +149,8 @@ def test_entries_of_other_types_are_ignored_even_if_up_ignores_the_filter(lookup
 
 
 # [A4]
-@pytest.mark.parametrize("error", [_http_error(500), _http_error(429), _http_error(401),
+@pytest.mark.parametrize("error", [http_error(500, url=UP_API_URL), http_error(429, url=UP_API_URL),
+                                   http_error(401, url=UP_API_URL),
                                    urllib.error.URLError("refused"), TimeoutError(),
                                    socket.timeout("timed out")],
                          ids=["500", "429", "401", "urlerror", "timeout", "socket_timeout"])
@@ -188,7 +172,7 @@ def test_lookup_401_does_not_clear_the_cached_token(lam, monkeypatch):
     monkeypatch.setattr(up, "_personal_access_token", "cached-token")
 
     def fake_urlopen(request, timeout=None):
-        raise _http_error(401)
+        raise http_error(401, url=UP_API_URL)
 
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
     assert up.get_homeloan_account_id() == OLD_HOMELOAN_ID
@@ -213,7 +197,7 @@ def test_non_json_body_falls_back(lam, monkeypatch, caplog):
     up = lam.up_webhook
     monkeypatch.setattr(up, "get_personal_access_token", lambda: "up-token")
 
-    class _Html(_FakeHTTPResponse):
+    class _Html(FakeResponse):
         def read(self):
             return b"<html>maintenance</html>"
 
@@ -308,7 +292,7 @@ def test_sub_floor_and_interest_on_renumbered_loan_send_nothing_and_skip_lookup(
 
 # [A15]
 def test_lookup_failure_on_a_non_loan_account_skips_without_500(handler, caplog):
-    handler.accounts = _http_error(503)
+    handler.accounts = http_error(503, url=UP_API_URL)
     handler.transactions = {"t": _transaction("t", "spending")}
     up = handler.up
     caplog.set_level(logging.INFO)

@@ -5,12 +5,9 @@ over FakeTable, the same way test_pending_mirror.py does.
 
 import copy
 import importlib
-import io
-import json
 import logging
 import pathlib
 import sys
-import urllib.error
 import urllib.parse
 from datetime import date
 from decimal import Decimal
@@ -18,7 +15,9 @@ from decimal import Decimal
 import pytest
 
 from _boto_stubs import install_import_satisfiers, use_condition_fields
+from _budget_endpoint_fakes import _FakeCategoryRepo
 from _dynamo_fakes import FakeTable
+from _http_fakes import FakeResponse, http_error
 
 install_import_satisfiers(ssm_default="test-api-key")
 
@@ -94,35 +93,9 @@ def _nothing_filed(category):
     return True
 
 
-class _Categories:
-    def __init__(self, categories=()):
-        self._categories = list(categories)
-
-    def list_categories(self):
-        return list(self._categories)
-
-
-class _FakeResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
-
-
 def _page(rows, has_more=False, cursor="", success=True):
     return {"success": success, "data": rows,
             "meta": {"count": len(rows), "cursor": cursor, "hasMore": has_more}}
-
-
-def _http_error(code):
-    return urllib.error.HTTPError("https://api.banksync.io/x", code, "boom", None, io.BytesIO(b""))
 
 
 # --- window edges ------------------------------------------------------------------------------
@@ -210,7 +183,7 @@ def bank_by_aid(mirror, monkeypatch):
         reply = pages[aid].pop(0)
         if isinstance(reply, Exception):
             raise reply
-        return _FakeResponse(reply)
+        return FakeResponse(reply)
 
     monkeypatch.setattr(mirror.urllib.request, "urlopen", urlopen)
     return pages, requests
@@ -224,7 +197,7 @@ def test_the_real_fetch_mirrors_both_accounts_with_their_own_lists(repo, mirror,
     pages[WESTPAC_AID].append(_page(_bank("w_kept", "u_gone")))
     pages[UP_AID].append(_page(_bank("u_kept", aid=UP_AID)))
 
-    summary = mirror.mirror_pendings("the-key", repo=repo, category_repo=_Categories(), today=TODAY)
+    summary = mirror.mirror_pendings("the-key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY)
 
     assert _ids(repo) == {"w_kept", "u_kept"}
     assert summary["removed"] == 2
@@ -240,7 +213,7 @@ def test_the_real_fetch_mirrors_both_accounts_with_their_own_lists(repo, mirror,
         assert req.get_header("X-api-key") == "the-key"
 
 
-@pytest.mark.parametrize("second_page", [_page(_bank("b"), success=False), _http_error(429)])
+@pytest.mark.parametrize("second_page", [_page(_bank("b"), success=False), http_error(429)])
 def test_a_bad_second_page_deletes_nothing_for_that_account(repo, mirror, bank_by_aid, second_page):
     # [A7] Page 1 is fine and says there's more; page 2 fails. The partial page-1 list must
     # never be used to delete (it lacks "b"). Up still runs.
@@ -249,7 +222,7 @@ def test_a_bad_second_page_deletes_nothing_for_that_account(repo, mirror, bank_b
     pages[WESTPAC_AID].extend([_page(_bank("a"), has_more=True, cursor="c1"), second_page])
     pages[UP_AID].append(_page(_bank("u", aid=UP_AID)))
 
-    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_Categories(), today=TODAY)
+    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY)
 
     assert _ids(repo) == {"a", "b"}
     assert summary["accounts"][WESTPAC]["skipped"]
@@ -283,7 +256,7 @@ def test_our_read_failing_skips_that_account_only(repo, mirror, bank_by_aid):
         when=lambda kwargs: ("account_id", "eq", WESTPAC) in kwargs["KeyConditionExpression"].conditions,
     )
 
-    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_Categories(), today=TODAY)
+    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY)
 
     assert _ids(repo) == {"w_gone"}
     assert summary["accounts"][WESTPAC]["skipped"]
@@ -301,7 +274,7 @@ def test_each_removal_and_the_run_summary_are_logged(repo, mirror, caplog):
         return _bank("kept", aid=aid)
 
     with caplog.at_level(logging.INFO, logger="pending_mirror"):
-        mirror.mirror_pendings("key", repo=repo, category_repo=_Categories(), today=TODAY, fetch=fetch)
+        mirror.mirror_pendings("key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY, fetch=fetch)
 
     removal = [r.getMessage() for r in caplog.records if "removed account=" in r.getMessage()]
     assert len(removal) == 1
@@ -316,7 +289,7 @@ def test_an_income_tagged_pending_is_kept(repo, mirror):
     def fetch(bid, aid, api_key, date_from, date_to):
         return _bank("kept", aid=aid)
 
-    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_Categories(), today=TODAY, fetch=fetch)
+    summary = mirror.mirror_pendings("key", repo=repo, category_repo=_FakeCategoryRepo(), today=TODAY, fetch=fetch)
 
     assert _ids(repo) == {"kept", "refund"}
     assert summary["kept"] == 1
@@ -334,7 +307,7 @@ def test_the_mirror_still_runs_when_every_feed_fails(monkeypatch):
     monkeypatch.setattr(handler, "forget_api_key", lambda path: None)
 
     def urlopen(req, timeout=None):
-        raise _http_error(500)
+        raise http_error(500)
 
     monkeypatch.setattr(handler.urllib.request, "urlopen", urlopen)
     calls = []

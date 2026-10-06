@@ -9,15 +9,17 @@ Two layers, both without network/AWS:
 """
 
 import hashlib
-import io
 import json
 import urllib.error
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
-from _anthropic_fakes import FakeResponse, text_payload
+from _anthropic_fakes import text_payload
+from _http_fakes import FakeResponse, http_error
 
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _insight_fakes import insight_puts, insight_repo
 
 
@@ -108,7 +110,7 @@ def test_generate_suggestions_http_error_raises_with_status(insights_ai, monkeyp
     import anthropic_client as ac
 
     def boom(req, timeout=None):
-        raise urllib.error.HTTPError("u", 429, "rate", None, io.BytesIO(b""))
+        raise http_error(429)
 
     monkeypatch.setattr(ac.urllib.request, "urlopen", boom)
 
@@ -150,12 +152,9 @@ def test_generate_suggestions_ssm_failure_degrades_to_anthropic_error(insights_a
 
 # --- handler endpoints -------------------------------------------------------
 
-
-class _FakePayCycleRepo:
-    def get_paycycle(self):
-        # A far-past payday + fortnightly length -> current_cycle_window yields a
-        # deterministic cycle_start on any run.
-        return {"length": 14, "last_pay_date": "2024-01-03"}
+# A far-past payday + fortnightly length -> current_cycle_window yields a
+# deterministic cycle_start on any run.
+FakePayCycleRepo = partial(_FakePayCycleRepo, length=14, last_pay_date="2024-01-03")
 
 
 def _hash(model_input):
@@ -325,17 +324,17 @@ def test_generate_partial_result_still_caches(handler, monkeypatch, result):
 
 
 def test_get_ai_insights_returns_cached(handler):
-    cycle = _FakePayCycleRepo().get_paycycle()
+    cycle = FakePayCycleRepo().get_paycycle()
     cycle_start, _ = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
     repo = insight_repo(existing={
         "summary": "hi", "suggestions": ["a"], "generated_at": "t", "input_hash": "h"},
         cycle_start=cycle_start)
-    out = handler.get_ai_insights(repo, _FakePayCycleRepo())
+    out = handler.get_ai_insights(repo, FakePayCycleRepo())
     assert out["cached"] is True and out["summary"] == "hi" and out["suggestions"] == ["a"]
 
 
 def test_get_ai_insights_null_sentinel_when_absent(handler):
-    out = handler.get_ai_insights(insight_repo(existing=None), _FakePayCycleRepo())
+    out = handler.get_ai_insights(insight_repo(existing=None), FakePayCycleRepo())
     assert out["summary"] is None and out["suggestions"] == [] and out["cached"] is False
     assert out["cycle_start"]  # a real cycle key is still returned
 
@@ -343,13 +342,11 @@ def test_get_ai_insights_null_sentinel_when_absent(handler):
 # --- assemble_insight_input --------------------------------------------------
 
 
-class _FakeCategoryRepo:
-    def list_categories(self):
-        return [
-            {"id": "groceries", "name": "Groceries", "bucket": "Living"},
-            {"id": "coffee", "name": "Coffee", "bucket": "Lifestyle"},
-            {"id": "salary", "name": "Salary", "bucket": "Income"},
-        ]
+FakeCategoryRepo = partial(_FakeCategoryRepo, [
+    {"id": "groceries", "name": "Groceries", "bucket": "Living"},
+    {"id": "coffee", "name": "Coffee", "bucket": "Lifestyle"},
+    {"id": "salary", "name": "Salary", "bucket": "Income"},
+])
 
 
 class _FakeBudgetRepo:
@@ -383,7 +380,7 @@ def test_assemble_input_has_spend_budgets_prior_and_no_loan_data(handler):
     # 14 days before cycle_start. current_cycle_window gives cycle_start=today's
     # aligned payday; use the paycycle fake's fixed cycle. We compute the windows the
     # same way the code does by driving through the real current_cycle_window.
-    cycle = _FakePayCycleRepo().get_paycycle()
+    cycle = FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
     from datetime import date, timedelta
     prev_end = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
@@ -395,7 +392,7 @@ def test_assemble_input_has_spend_budgets_prior_and_no_loan_data(handler):
     })
 
     model_input, cycle_start = handler.assemble_insight_input(
-        _FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, _FakePayCycleRepo())
+        FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, FakePayCycleRepo())
 
     assert cycle_start == start
     names = {row["name"]: row for row in model_input["categories"]}
@@ -409,15 +406,12 @@ def test_assemble_input_has_spend_budgets_prior_and_no_loan_data(handler):
     assert "loan" not in blob and "balance" not in blob and "mortgage" not in blob
 
 
-class _DupNameCategoryRepo:
-    """Two spend categories that SHARE a display name but differ by id + budget —
-    the case a name-join would collapse."""
-
-    def list_categories(self):
-        return [
-            {"id": "coffee_a", "name": "Coffee", "bucket": "Lifestyle"},
-            {"id": "coffee_b", "name": "Coffee", "bucket": "Lifestyle"},
-        ]
+# Two spend categories that SHARE a display name but differ by id + budget —
+# the case a name-join would collapse.
+_DupNameCategoryRepo = partial(_FakeCategoryRepo, [
+    {"id": "coffee_a", "name": "Coffee", "bucket": "Lifestyle"},
+    {"id": "coffee_b", "name": "Coffee", "bucket": "Lifestyle"},
+])
 
 
 class _DupNameBudgetRepo:
@@ -468,12 +462,12 @@ def test_window_category_spend_ties_break_on_id_for_stable_hash(handler):
 def test_assemble_input_has_no_decimal_values(handler):
     # Everything handed to json.dumps for the model + the hash must be plain floats;
     # a leaked Decimal would blow up json.dumps (default=str only saves the hash path).
-    cycle = _FakePayCycleRepo().get_paycycle()
+    cycle = FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
     txn_repo = _FakeTxnRepo({(start, end): [_txn("groceries", -50)]})
 
     model_input, _ = handler.assemble_insight_input(
-        _FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, _FakePayCycleRepo())
+        FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, FakePayCycleRepo())
 
     def assert_no_decimal(node):
         assert not isinstance(node, Decimal)
@@ -490,7 +484,7 @@ def test_assemble_input_has_no_decimal_values(handler):
 
 def test_assemble_prior_window_is_the_cycle_before_start(handler):
     # The prior window must be [start-length, start-1] — contiguous, non-overlapping.
-    cycle = _FakePayCycleRepo().get_paycycle()
+    cycle = FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
     from datetime import date, timedelta
     prev_end = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
@@ -501,7 +495,7 @@ def test_assemble_prior_window_is_the_cycle_before_start(handler):
         (prev_start, prev_end): [_txn("coffee", -7)],
     })
     model_input, _ = handler.assemble_insight_input(
-        _FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, _FakePayCycleRepo())
+        FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, FakePayCycleRepo())
 
     prior = model_input["prior_cycles"][0]
     assert prior["start"] == prev_start and prior["end"] == prev_end
@@ -577,26 +571,26 @@ def test_extract_goal_degrades_to_none(handler, event):
 
 
 def test_assemble_includes_goal_when_provided(handler):
-    cycle = _FakePayCycleRepo().get_paycycle()
+    cycle = FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
     txn_repo = _FakeTxnRepo({(start, end): [_txn("groceries", -50)]})
     goal = {"payoff_mode": "ahead", "mortgage_free_date": "Nov 2042", "current_extra_monthly": 500.0}
     model_input, _ = handler.assemble_insight_input(
-        _FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, _FakePayCycleRepo(), goal)
+        FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, FakePayCycleRepo(), goal)
     assert model_input["goal"] == goal
 
 
 def test_assemble_omits_goal_when_none(handler):
-    cycle = _FakePayCycleRepo().get_paycycle()
+    cycle = FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
     txn_repo = _FakeTxnRepo({(start, end): [_txn("groceries", -50)]})
     model_input, _ = handler.assemble_insight_input(
-        _FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, _FakePayCycleRepo())
+        FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, FakePayCycleRepo())
     assert "goal" not in model_input
 
 
 def test_generate_threads_goal_into_model_input_and_hash(handler, monkeypatch):
-    cycle = _FakePayCycleRepo().get_paycycle()
+    cycle = FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
     txn_repo = _FakeTxnRepo({(start, end): [_txn("groceries", -50)]})
     captured = {}
@@ -610,7 +604,7 @@ def test_generate_threads_goal_into_model_input_and_hash(handler, monkeypatch):
     event = {"body": json.dumps({"goal": dict(_VALID_GOAL)})}
 
     resp = handler.generate_ai_insights(
-        _FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, _FakePayCycleRepo(), repo, event)
+        FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, FakePayCycleRepo(), repo, event)
 
     assert resp["statusCode"] == 200
     # The sanitised goal reached the model...
@@ -622,11 +616,11 @@ def test_generate_threads_goal_into_model_input_and_hash(handler, monkeypatch):
 def test_generate_goal_busts_an_otherwise_matching_spend_only_cache(handler, monkeypatch):
     # The core claim: a goal changes the hash, so a cached SPEND-ONLY insight (same
     # cycle, same spend) must NOT be served — it regenerates with the goal.
-    cycle = _FakePayCycleRepo().get_paycycle()
+    cycle = FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
     window = {(start, end): [_txn("groceries", -50)]}
     spend_only, cycle_start = handler.assemble_insight_input(
-        _FakeCategoryRepo(), _FakeBudgetRepo(), _FakeTxnRepo(dict(window)), _FakePayCycleRepo())
+        FakeCategoryRepo(), _FakeBudgetRepo(), _FakeTxnRepo(dict(window)), FakePayCycleRepo())
     repo = insight_repo(existing={
         "summary": "spend-only cached", "suggestions": [], "generated_at": "t",
         "input_hash": _hash(spend_only)}, cycle_start=cycle_start)
@@ -635,8 +629,8 @@ def test_generate_goal_busts_an_otherwise_matching_spend_only_cache(handler, mon
     event = {"body": json.dumps({"goal": dict(_VALID_GOAL)})}
 
     resp = handler.generate_ai_insights(
-        _FakeCategoryRepo(), _FakeBudgetRepo(), _FakeTxnRepo(dict(window)),
-        _FakePayCycleRepo(), repo, event)
+        FakeCategoryRepo(), _FakeBudgetRepo(), _FakeTxnRepo(dict(window)),
+        FakePayCycleRepo(), repo, event)
 
     body = json.loads(resp["body"])
     assert body["cached"] is False
@@ -718,7 +712,7 @@ def test_system_prompt_covers_both_goal_shapes(insights_ai):
 
 def test_generate_without_a_goal_body_stays_spend_only(handler, monkeypatch):
     # An older client POSTs no body -> no goal block, still a normal 200 generation.
-    cycle = _FakePayCycleRepo().get_paycycle()
+    cycle = FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
     txn_repo = _FakeTxnRepo({(start, end): [_txn("groceries", -50)]})
     captured = {}
@@ -731,7 +725,7 @@ def test_generate_without_a_goal_body_stays_spend_only(handler, monkeypatch):
     repo = insight_repo(existing=None)
 
     resp = handler.generate_ai_insights(
-        _FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, _FakePayCycleRepo(), repo, {"body": ""})
+        FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, FakePayCycleRepo(), repo, {"body": ""})
 
     assert resp["statusCode"] == 200
     assert "goal" not in captured["mi"]
@@ -825,14 +819,6 @@ _CAR_TREE = [
 ]
 
 
-class _ListCategoryRepo:
-    def __init__(self, cats):
-        self._c = cats
-
-    def list_categories(self):
-        return [dict(c) for c in self._c]
-
-
 class _DictBudgetRepo:
     def __init__(self, budgets):
         self._b = budgets
@@ -842,7 +828,7 @@ class _DictBudgetRepo:
 
 
 def _cur_window(handler):
-    cycle = _FakePayCycleRepo().get_paycycle()
+    cycle = FakePayCycleRepo().get_paycycle()
     return handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
 
 
@@ -853,8 +839,8 @@ def test_assemble_input_rolls_up_budgeted_parent(handler):
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [_txn("petrol", -60), _txn("tolls", -15, "pending")]})
     model_input, _ = handler.assemble_insight_input(
-        _ListCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
-        txn_repo, _FakePayCycleRepo())
+        _FakeCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        txn_repo, FakePayCycleRepo())
 
     bp = {row["name"]: row for row in model_input["budgeted_parents"]}
     assert bp["Car"] == {"name": "Car", "posted": 60.0, "pending": 15.0, "budget": 300.0}
@@ -868,7 +854,7 @@ def test_no_budgeted_parents_omits_block(handler):
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [_txn("groceries", -50)]})
     model_input, _ = handler.assemble_insight_input(
-        _FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, _FakePayCycleRepo())
+        FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, FakePayCycleRepo())
 
     assert "budgeted_parents" not in model_input
     assert all("budgeted_parents" not in p for p in model_input["prior_cycles"])
@@ -880,12 +866,12 @@ def test_parent_and_child_both_budgeted_no_double_count(handler):
     # never listed twice in the flat list (Car isn't a flat row).
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [_txn("parking", -30)]})
-    cats = _ListCategoryRepo([
+    cats = _FakeCategoryRepo([
         {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
         {"id": "parking", "name": "Parking", "bucket": "Living", "parent": "car"},
     ])
     budgets = _DictBudgetRepo({"car": {"target": Decimal("300")}, "parking": {"target": Decimal("50")}})
-    model_input, _ = handler.assemble_insight_input(cats, budgets, txn_repo, _FakePayCycleRepo())
+    model_input, _ = handler.assemble_insight_input(cats, budgets, txn_repo, FakePayCycleRepo())
 
     parking_rows = [r for r in model_input["categories"] if r["name"] == "Parking"]
     assert len(parking_rows) == 1 and parking_rows[0]["posted"] == 30.0 and parking_rows[0]["budget"] == 50.0
@@ -899,12 +885,12 @@ def test_income_parent_excluded_from_budgeted_parents(handler):
     # spend rollup block (so the block is omitted entirely here).
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [_txn("salary", 4000)]})
-    cats = _ListCategoryRepo([
+    cats = _FakeCategoryRepo([
         {"id": "income", "name": "Income", "bucket": "Income", "parent": None},
         {"id": "salary", "name": "Salary", "bucket": "Income", "parent": "income"},
     ])
     model_input, _ = handler.assemble_insight_input(
-        cats, _DictBudgetRepo({"income": {"target": Decimal("6000")}}), txn_repo, _FakePayCycleRepo())
+        cats, _DictBudgetRepo({"income": {"target": Decimal("6000")}}), txn_repo, FakePayCycleRepo())
 
     assert "budgeted_parents" not in model_input
 
@@ -914,7 +900,7 @@ def test_budgeted_parent_rolled_up_in_prior_cycle_too(handler):
     # can compare a parent's current vs prior at the same aggregation.
     from datetime import date, timedelta
     start, end = _cur_window(handler)
-    length = _FakePayCycleRepo().get_paycycle()["length"]
+    length = FakePayCycleRepo().get_paycycle()["length"]
     prev_end = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
     prev_start = (date.fromisoformat(start) - timedelta(days=length)).isoformat()
     txn_repo = _FakeTxnRepo({
@@ -922,8 +908,8 @@ def test_budgeted_parent_rolled_up_in_prior_cycle_too(handler):
         (prev_start, prev_end): [_txn("tolls", -40)],
     })
     model_input, _ = handler.assemble_insight_input(
-        _ListCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
-        txn_repo, _FakePayCycleRepo())
+        _FakeCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        txn_repo, FakePayCycleRepo())
 
     prior_bp = {row["name"]: row for row in model_input["prior_cycles"][0]["budgeted_parents"]}
     assert prior_bp["Car"]["posted"] == 40.0
@@ -955,8 +941,8 @@ def test_budgeted_parent_rolls_up_grandchildren(handler):
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [_txn("petrol", -60), _txn("tolls", -15, "pending")]})
     model_input, _ = handler.assemble_insight_input(
-        _ListCategoryRepo(_GRANDCHILD_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
-        txn_repo, _FakePayCycleRepo())
+        _FakeCategoryRepo(_GRANDCHILD_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        txn_repo, FakePayCycleRepo())
 
     bp = {row["name"]: row for row in model_input["budgeted_parents"]}
     assert bp["Car"] == {"name": "Car", "posted": 60.0, "pending": 15.0, "budget": 300.0}
@@ -975,7 +961,7 @@ def test_parent_and_mid_node_both_budgeted_each_row_correct(handler):
     txn_repo = _FakeTxnRepo({(start, end): [_txn("petrol", -60), _txn("tolls", -15)]})
     budgets = _DictBudgetRepo({"car": {"target": Decimal("300")}, "transport": {"target": Decimal("100")}})
     model_input, _ = handler.assemble_insight_input(
-        _ListCategoryRepo(_GRANDCHILD_TREE), budgets, txn_repo, _FakePayCycleRepo())
+        _FakeCategoryRepo(_GRANDCHILD_TREE), budgets, txn_repo, FakePayCycleRepo())
 
     bp = {row["name"]: row for row in model_input["budgeted_parents"]}
     assert bp["Car"] == {"name": "Car", "posted": 75.0, "pending": 0.0, "budget": 300.0}
@@ -990,14 +976,14 @@ def test_budgeted_parent_with_zero_spend_still_emitted(handler):
     # rolled-up spend, even at $0). All spend this cycle is on an unrelated flat category.
     # Fail-on-revert: a "skip parents with no spend" optimisation would drop the Car row.
     start, end = _cur_window(handler)
-    cats = _ListCategoryRepo([
+    cats = _FakeCategoryRepo([
         {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
         {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "car"},
         {"id": "coffee", "name": "Coffee", "bucket": "Lifestyle", "parent": None},
     ])
     txn_repo = _FakeTxnRepo({(start, end): [_txn("coffee", -12)]})
     model_input, _ = handler.assemble_insight_input(
-        cats, _DictBudgetRepo({"car": {"target": Decimal("300")}}), txn_repo, _FakePayCycleRepo())
+        cats, _DictBudgetRepo({"car": {"target": Decimal("300")}}), txn_repo, FakePayCycleRepo())
 
     bp = {row["name"]: row for row in model_input["budgeted_parents"]}
     assert bp["Car"] == {"name": "Car", "posted": 0.0, "pending": 0.0, "budget": 300.0}
@@ -1011,13 +997,13 @@ def test_orphan_and_uncategorized_targets_do_not_enter_block(handler):
     # (Car) is emitted; the orphan is filtered by the `cid in children` gate and the
     # uncategorized spend is routed to model_input["uncategorized"], never the block.
     start, end = _cur_window(handler)
-    cats = _ListCategoryRepo([
+    cats = _FakeCategoryRepo([
         {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
         {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "car"},
     ])
     budgets = _DictBudgetRepo({"car": {"target": Decimal("300")}, "deleted_ghost": {"target": Decimal("999")}})
     txn_repo = _FakeTxnRepo({(start, end): [_txn("petrol", -60), _txn("MEDICAL", -25)]})
-    model_input, _ = handler.assemble_insight_input(cats, budgets, txn_repo, _FakePayCycleRepo())
+    model_input, _ = handler.assemble_insight_input(cats, budgets, txn_repo, FakePayCycleRepo())
 
     assert {row["name"] for row in model_input["budgeted_parents"]} == {"Car"}
     assert "deleted_ghost" not in {row["name"] for row in model_input["budgeted_parents"]}
@@ -1036,8 +1022,8 @@ def test_leaf_refund_nets_into_parent_total(handler):
         _txn("petrol", -60), _txn("tolls", -50), _txn("tolls", 80),
     ]})
     model_input, _ = handler.assemble_insight_input(
-        _ListCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
-        txn_repo, _FakePayCycleRepo())
+        _FakeCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        txn_repo, FakePayCycleRepo())
 
     bp = {row["name"]: row for row in model_input["budgeted_parents"]}
     assert bp["Car"]["posted"] == 30.0
@@ -1052,7 +1038,7 @@ def test_no_parent_user_model_input_is_byte_identical_no_block(handler):
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [_txn("groceries", -50)]})
     model_input, _ = handler.assemble_insight_input(
-        _FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, _FakePayCycleRepo())
+        FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, FakePayCycleRepo())
 
     serialized = json.dumps(model_input, sort_keys=True, default=str)  # exact bytes prod hashes
     assert "budgeted_parents" not in serialized
@@ -1069,8 +1055,8 @@ def test_budgeted_parent_direct_spend_in_rollup(handler):
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [_txn("car", -40), _txn("petrol", -60)]})
     model_input, _ = handler.assemble_insight_input(
-        _ListCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
-        txn_repo, _FakePayCycleRepo())
+        _FakeCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        txn_repo, FakePayCycleRepo())
 
     bp = {row["name"]: row for row in model_input["budgeted_parents"]}
     assert bp["Car"] == {"name": "Car", "posted": 100.0, "pending": 0.0, "budget": 300.0}
@@ -1083,8 +1069,8 @@ def test_budgeted_parent_mid_node_direct_spend_in_rollup(handler):
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [_txn("transport", -25), _txn("petrol", -60)]})
     model_input, _ = handler.assemble_insight_input(
-        _ListCategoryRepo(_GRANDCHILD_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
-        txn_repo, _FakePayCycleRepo())
+        _FakeCategoryRepo(_GRANDCHILD_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        txn_repo, FakePayCycleRepo())
 
     bp = {row["name"]: row for row in model_input["budgeted_parents"]}
     assert bp["Car"] == {"name": "Car", "posted": 85.0, "pending": 0.0, "budget": 300.0}
@@ -1096,14 +1082,14 @@ def test_budgeted_parent_excludes_cross_bucket_child_from_block(handler):
     # Car's subtree. Car's block = its Living leaf only (60), never 60 + 25. Fail-on-revert
     # (drop bucket_by_id): the cross-bucket child folds in -> 85.
     start, end = _cur_window(handler)
-    cats = _ListCategoryRepo([
+    cats = _FakeCategoryRepo([
         {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
         {"id": "fuel", "name": "Fuel", "bucket": "Living", "parent": "car"},
         {"id": "odd", "name": "Odd", "bucket": "Lifestyle", "parent": "car"},
     ])
     txn_repo = _FakeTxnRepo({(start, end): [_txn("fuel", -60), _txn("odd", -25)]})
     model_input, _ = handler.assemble_insight_input(
-        cats, _DictBudgetRepo({"car": {"target": Decimal("300")}}), txn_repo, _FakePayCycleRepo())
+        cats, _DictBudgetRepo({"car": {"target": Decimal("300")}}), txn_repo, FakePayCycleRepo())
 
     bp = {row["name"]: row for row in model_input["budgeted_parents"]}
     assert bp["Car"]["posted"] == 60.0  # only the same-bucket leaf; the Lifestyle child excluded
@@ -1114,13 +1100,13 @@ def test_budgeted_parent_direct_income_stays_out_of_block(handler):
     # onto it, it must NOT enter the SPEND-only budgeted_parents block (the gate is
     # SPEND_BUCKETS). Fail-on-revert here guards the bucket gate, not the rollup helper.
     start, end = _cur_window(handler)
-    cats = _ListCategoryRepo([
+    cats = _FakeCategoryRepo([
         {"id": "income", "name": "Income", "bucket": "Income", "parent": None},
         {"id": "salary", "name": "Salary", "bucket": "Income", "parent": "income"},
     ])
     txn_repo = _FakeTxnRepo({(start, end): [_txn("income", 500), _txn("salary", 4000)]})
     model_input, _ = handler.assemble_insight_input(
-        cats, _DictBudgetRepo({"income": {"target": Decimal("6000")}}), txn_repo, _FakePayCycleRepo())
+        cats, _DictBudgetRepo({"income": {"target": Decimal("6000")}}), txn_repo, FakePayCycleRepo())
 
     assert "budgeted_parents" not in model_input
 
@@ -1135,8 +1121,8 @@ def test_budgeted_parent_direct_spend_not_duplicated_as_flat_row(handler):
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [_txn("car", -40), _txn("petrol", -60)]})
     model_input, _ = handler.assemble_insight_input(
-        _ListCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
-        txn_repo, _FakePayCycleRepo())
+        _FakeCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        txn_repo, FakePayCycleRepo())
 
     flat = {row["name"]: row for row in model_input["categories"]}
     # The parent is NOT a flat row; only its leaf is. It lives once, in the block.
