@@ -59,10 +59,9 @@ def wired(handler, monkeypatch):
 
     monkeypatch.setattr(handler, "send_push", fake_send_push)
 
-    def wire(rows=None, watches=None, tokens=("ExponentPushToken[x]",), expo_accepts=True, transaction_repo=None):
+    def wire(rows=None, watches=None, tokens=("ExponentPushToken[x]",), expo_accepts=True):
         expo["accepts"] = expo_accepts
-        if transaction_repo is None:
-            transaction_repo = _PagedStoreTransactionRepo(rows or {})
+        transaction_repo = _PagedStoreTransactionRepo(rows or {})
         watch_repo = _watch_repo(handler, watches)
         monkeypatch.setattr(handler, "TransactionRepository", lambda: transaction_repo)
         monkeypatch.setattr(handler, "FeedWatchRepository", lambda: watch_repo)
@@ -222,9 +221,10 @@ def test_a_push_expo_rejects_is_retried_next_poll(wired):
     assert watch_repo.get_watch(WESTPAC)["alerted"] is False
 
 
-def test_a_cursor_that_never_ends_fails_this_account_only(wired, caplog):
+def test_a_cursor_that_never_ends_fails_this_account_only(wired, monkeypatch, caplog):
     handler, wire, pushes = wired
-    _, watch_repo = wire(transaction_repo=_EndlessTransactionRepo())
+    _, watch_repo = wire()
+    monkeypatch.setattr(handler, "TransactionRepository", _EndlessTransactionRepo)
 
     handler.check_feed_stalls([_delta(WESTPAC, "-1")], NOW)
 

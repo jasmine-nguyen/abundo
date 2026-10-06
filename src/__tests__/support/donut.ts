@@ -7,7 +7,7 @@ import type { DonutSlice } from '../../components/SpendingDonut';
 // Drive the JS-driven spring (useNativeDriver: false) to rest. Fake timers, never a real sleep:
 // react-native's requestAnimationFrame polyfill is a setTimeout, so advancing the clock advances
 // the animation deterministically.
-export const settleSpring = () => act(() => { jest.advanceTimersByTime(4000); });
+export const settle =() => act(() => { jest.advanceTimersByTime(4000); });
 
 // The emphasis animation lives on the AnimatedG wrapping each testID'd shape, resolved to a plain
 // number under the jest SVG stub (which renders svg elements as Views). Walk up from the shape to

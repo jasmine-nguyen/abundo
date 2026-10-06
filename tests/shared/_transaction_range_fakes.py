@@ -106,24 +106,23 @@ class _EndlessTransactionRepo:
         return [dict(row) for row in self._page], {"page": len(self.calls)}
 
 
-class _FailingTransactionRepo:
+class _FailingTransactionRepo(_QueuedTransactionRepo):
     """Serves queued (items, cursor) pages, then raises the given error."""
 
     def __init__(self, error, pages=()):
+        super().__init__(pages=pages)
         self._error = error
-        self._pages = list(pages)
-        self.calls = []
 
     def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        self.calls.append((account_id, start_date, end_date, limit, cursor))
         if not self._pages:
+            self.calls.append((account_id, start_date, end_date, limit, cursor))
             raise self._error
-        return self._pages.pop(0)
+        return super().get_transactions_by_date_range(account_id, start_date, end_date, limit, cursor)
 
 
 class _PagedStoreTransactionRepo:
-    """A re-readable store: copies of the account's rows from start (to end, if given),
-    two at a time, with an integer offset cursor and None on the last page."""
+    """A re-readable store: copies of the account's rows from start, two at a time,
+    with an integer offset cursor and None on the last page."""
 
     _PAGE_SIZE = 2
 
@@ -134,7 +133,7 @@ class _PagedStoreTransactionRepo:
     def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
         self.calls.append((account_id, start_date, end_date, limit, cursor))
         rows = [row for row in self.rows_by_account.get(account_id, [])
-                if start_date <= row["date"] and (end_date is None or row["date"] <= end_date)]
+                if start_date <= row["date"]]
         offset = cursor or 0
         next_offset = offset + self._PAGE_SIZE
         page = [dict(row) for row in rows[offset:next_offset]]

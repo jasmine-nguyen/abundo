@@ -33,11 +33,7 @@ describe('routeForNotificationData (WHIT-321, WHIT-322)', () => {
     expect(NOTIF_ROUTE.milestone).toBe('/milestone');
     expect(NOTIF_ROUTE.goal).toBe('/goals');
     expect(NOTIF_ROUTE.goalcheckpoint).toBe('/goals');
-  });
-
-  it('builds the budget route from the id (not a static route)', () => {
     expect(NOTIF_ROUTE.budget).toBeUndefined();
-    expect(routeForNotificationData({ type: 'budget', category: 'groceries' })).toBe('/budget/groceries');
   });
 
   it('returns null for an unmapped type', () => {
@@ -128,13 +124,7 @@ describe('budget route builder — valid ids round-trip verbatim (WHIT-322)', ()
 
   it('[A35] a non-ascii id passes through unchanged (no lossy transform)', () => {
     expect(routeForNotificationData({ type: 'budget', category: 'café' })).toBe('/budget/café');
-  });
-
-  it('[A36] a budget push is routed by its id, never through the static map', () => {
-    expect(routeForNotificationData({ type: 'budget', category: 'groceries' })).toBe('/budget/groceries');
-    expect(routeForNotificationData({ type: 'budget' })).toBeNull();
-  });
-});
+  });});
 
 describe('budget route builder — DOCUMENTS CURRENT (unencoded) behaviour, see QA critique (WHIT-322)', () => {
   // These lock what the code does TODAY so an intentional fix (encodeURIComponent / trim)

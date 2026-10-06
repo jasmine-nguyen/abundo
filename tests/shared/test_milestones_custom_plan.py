@@ -17,7 +17,7 @@ import pytest
 # subclasses the imported notify_repo.
 from _milestone_fakes import (
     FACTS, FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, notify_repo, _row, recorder,
-    marker_reads, removed_markers, resolved_plan, stored_markers, unreadable_milestone_repo,
+    marker_reads, removed_markers, stored_markers, unreadable_milestone_repo,
 )
 from _milestone_row_fakes import _GOOD, _KEEP_MARKER, _row as _row_kw
 
@@ -30,7 +30,7 @@ def _notify(shared, *, old, new, milestone_repo=None, stored=None, facts=FACTS,
     # `notify` supplies one you assert on. `facts=None` for the empty-loanfacts (live) cases.
     # Returns (sent, notify).
     notify = notify if notify is not None else notify_repo(fired)
-    repo = milestone_repo if milestone_repo is not None else unreadable_milestone_repo()
+    repo = milestone_repo or unreadable_milestone_repo()
     if stored is not None:
         repo = FakeMilestoneRepo(stored)
     sent = shared.milestones.notify_milestone_crossing(
@@ -57,19 +57,19 @@ def _sweep(shared, stored, fired):
 def test_resolve_plan_unset_is_an_empty_plan(shared):
     # The user sets their own milestones now — an UNSET plan resolves to EMPTY (celebrate nothing),
     # NOT the built-in default. (A READ FAILURE still defaults — see the test below.)
-    assert resolved_plan(shared, FakeMilestoneRepo(stored=None)) == []
+    assert shared.milestones._resolve_plan(FakeMilestoneRepo(stored=None))[0] == []
 
 
 def test_resolve_plan_read_failure_falls_back_to_the_default(shared):
     # Any read error must degrade to the built-in default, never propagate (which the poller's
     # outer except would turn into a silently-skipped celebration).
-    plan = resolved_plan(shared, FakeMilestoneRepo(raises=RuntimeError("dynamo down")))
+    plan = shared.milestones._resolve_plan(FakeMilestoneRepo(raises=RuntimeError("dynamo down")))[0]
     assert plan == list(shared.milestones.MILESTONES)
 
 
 def test_resolve_plan_maps_a_saved_plan_to_namespaced_decimal_rows(shared):
     stored = [_row("My House", "480000")]
-    plan = resolved_plan(shared, FakeMilestoneRepo(stored=stored))
+    plan = shared.milestones._resolve_plan(FakeMilestoneRepo(stored=stored))[0]
     assert len(plan) == 1
     assert plan[0].label == "My House"
     assert plan[0].target_balance == Decimal("480000")
@@ -185,7 +185,7 @@ def test_legacy_row_without_id_falls_back_to_amount_marker(shared, recorder):
 
 def test_cent_exact_custom_boundary(shared):
     # The raw-Decimal path preserves cents: crossing 295000.01 counts; 295000.02 does not.
-    plan = resolved_plan(shared, FakeMilestoneRepo(stored=[_row("Halfway", "295000.01")]))
+    plan = shared.milestones._resolve_plan(FakeMilestoneRepo(stored=[_row("Halfway", "295000.01")]))[0]
     assert [m.target_balance for m in shared.milestones.crossed_milestones(Decimal("296000"), Decimal("295000.01"), plan)] == [Decimal("295000.01")]
     assert shared.milestones.crossed_milestones(Decimal("296000"), Decimal("295000.02"), plan) == []
 
@@ -339,8 +339,8 @@ def test_lump_sum_across_custom_plan_furthest_first_one_push_all_marked(shared, 
 
 
 def test_custom_crossed_list_is_sorted_furthest_first(shared):
-    plan = resolved_plan(shared, FakeMilestoneRepo(stored=[
-        _row("Deposit", "480000"), _row("Halfway", "300000"), _row("Nearly", "120000")]))
+    plan = shared.milestones._resolve_plan(FakeMilestoneRepo(stored=[
+        _row("Deposit", "480000"), _row("Halfway", "300000"), _row("Nearly", "120000")]))[0]
     crossed = shared.milestones.crossed_milestones(Decimal("500000"), Decimal("100000"), plan)
     # Decimal targets, ascending — furthest paid-down first. (No int/Decimal mix: a plan is all
     # PlanMilestone or all Milestone, never mixed, so the sort key is homogeneous.)
@@ -379,8 +379,8 @@ def test_custom_target_equal_to_default_does_not_collide_with_stale_sprint_marke
 def test_resolve_plan_unset_and_empty_list_both_resolve_empty(shared):
     # Both an empty stored LIST and an UNSET (None) plan now resolve to [] — a user with no
     # milestones celebrates nothing either way. (A READ FAILURE still defaults; see above.)
-    assert resolved_plan(shared, FakeMilestoneRepo(stored=[])) == []
-    assert resolved_plan(shared, FakeMilestoneRepo(stored=None)) == []
+    assert shared.milestones._resolve_plan(FakeMilestoneRepo(stored=[]))[0] == []
+    assert shared.milestones._resolve_plan(FakeMilestoneRepo(stored=None))[0] == []
 
 
 def test_empty_plan_never_celebrates_even_on_a_huge_paydown(shared, recorder):
@@ -400,12 +400,12 @@ def test_malformed_row_missing_label_is_skipped_not_raised(shared):
     # A row missing "label" no longer raises out of the plan read — it is skipped (WHIT-387).
     # A lone bad row leaves an empty plan; it does NOT fall back to the default.
     bad = FakeMilestoneRepo(stored=[{"id": "x", "targetBalance": Decimal("480000"), "targetDate": "2027-01-01"}])
-    assert resolved_plan(shared, bad) == []
+    assert shared.milestones._resolve_plan(bad)[0] == []
 
 
 def test_malformed_row_missing_target_balance_is_skipped_not_raised(shared):
     bad = FakeMilestoneRepo(stored=[{"id": "x", "label": "Broken", "targetDate": "2027-01-01"}])
-    assert resolved_plan(shared, bad) == []
+    assert shared.milestones._resolve_plan(bad)[0] == []
 
 
 def test_bad_row_among_good_ones_is_skipped_and_the_rest_celebrate(shared, recorder):
@@ -418,7 +418,7 @@ def test_bad_row_among_good_ones_is_skipped_and_the_rest_celebrate(shared, recor
         {"id": "bad", "label": "Broken", "targetDate": "2027-01-01"},   # no targetBalance
         _row("Nearly", "120000", id="c"),
     ])
-    plan = resolved_plan(shared, repo)
+    plan = shared.milestones._resolve_plan(repo)[0]
     assert [m.label for m in plan] == ["Deposit", "Nearly"]     # bad row dropped, order kept
     sent, notify = _notify(shared, old="500000", new="100000", milestone_repo=repo)
     assert sent == 1
@@ -430,7 +430,7 @@ def test_bad_row_logs_a_distinct_alarm_line(shared, caplog):
     # The skip must be VISIBLE (the CloudWatch alarm watches this token), not a silent drop.
     bad = FakeMilestoneRepo(stored=[{"id": "x", "label": "Broken", "targetDate": "2027-01-01"}])
     with caplog.at_level(logging.ERROR, logger="milestones"):
-        resolved_plan(shared, bad)
+        shared.milestones._resolve_plan(bad)[0]
     assert any("MILESTONE_ROW_MALFORMED" in r.message and r.levelno == logging.ERROR
                for r in caplog.records)
 
@@ -471,7 +471,7 @@ def test_non_list_stored_plan_is_empty_not_raised(shared, caplog):
     # A corrupt whole-plan write stored as a non-iterable scalar (not merely a bad row) must
     # degrade to an empty plan via the isinstance guard, not raise, and log the plan-level token.
     with caplog.at_level(logging.ERROR, logger="milestones"):
-        assert resolved_plan(shared, FakeMilestoneRepo(stored=5)) == []
+        assert shared.milestones._resolve_plan(FakeMilestoneRepo(stored=5))[0] == []
     assert any("MILESTONE_PLAN_MALFORMED" in r.message for r in caplog.records)
 
 
@@ -500,7 +500,7 @@ def test_corrupt_target_type_is_skipped_and_logged(shared, caplog, bad_target, b
     bad = FakeMilestoneRepo(stored=[{"id": "x", "label": "Broken", "targetBalance": bad_target,
                                      "targetDate": "2027-01-01"}])
     with caplog.at_level(logging.ERROR, logger="milestones"):
-        assert resolved_plan(shared, bad) == []
+        assert shared.milestones._resolve_plan(bad)[0] == []
     assert any("MILESTONE_ROW_MALFORMED" in r.message and r.levelno == logging.ERROR
                for r in caplog.records)
 
@@ -513,7 +513,7 @@ def test_non_numeric_target_among_good_ones_celebrates_the_rest(shared, recorder
         {"id": "bad", "label": "Junk", "targetBalance": "not-a-number", "targetDate": "2027-01-01"},
         _row("Nearly", "120000", id="c"),
     ])
-    plan = resolved_plan(shared, repo)
+    plan = shared.milestones._resolve_plan(repo)[0]
     assert [m.label for m in plan] == ["Deposit", "Nearly"]
     sent, notify = _notify(shared, old="500000", new="100000", milestone_repo=repo)
     assert sent == 1
@@ -547,7 +547,7 @@ def test_multiple_survivors_keep_stored_order_around_bad_rows(shared):
         _row("Second", "120000", id="c"),
         "garbage",                                             # TypeError
     ])
-    plan = resolved_plan(shared, repo)
+    plan = shared.milestones._resolve_plan(repo)[0]
     assert [(m.label, m.target_balance) for m in plan] == [
         ("First", Decimal("480000")), ("Second", Decimal("120000"))]
 
@@ -562,7 +562,7 @@ def test_malformed_row_under_scope_is_skipped_and_scope_is_threaded(shared, capl
         {"id": "bad", "label": "Junk", "targetBalance": "nope", "targetDate": "2027-01-01"},
     ]})
     with caplog.at_level(logging.ERROR, logger="milestones"):
-        plan = resolved_plan(shared, repo, scope="user-x")
+        plan = shared.milestones._resolve_plan(repo, "user-x")[0]
     assert [m.label for m in plan] == ["Keep"]
     assert repo.scopes_read == ["user-x"]                       # read the tenant's plan, not default
     assert any("MILESTONE_ROW_MALFORMED" in r.message for r in caplog.records)
@@ -621,7 +621,7 @@ def test_nan_target_is_skipped_like_any_other_corrupt_target(shared, recorder):
         {"id": "nan", "label": "Broken", "targetBalance": Decimal("NaN"), "targetDate": "2027-01-01"},
         _row("Nearly", "120000", id="c"),
     ])
-    plan = resolved_plan(shared, repo)
+    plan = shared.milestones._resolve_plan(repo)[0]
     assert [m.label for m in plan] == ["Deposit", "Nearly"]
     sent, notify = _notify(shared, old="500000", new="100000", milestone_repo=repo)
     assert sent == 1
@@ -644,7 +644,7 @@ def test_string_target_does_not_drop_the_whole_poll(shared, recorder):
         _row("Nearly", "100000", id="c"),
     ])
     # Currently raises TypeError here (Decimal > str), OUTSIDE the guarded loop:
-    plan = resolved_plan(shared, repo)
+    plan = shared.milestones._resolve_plan(repo)[0]
     shared.milestones.crossed_milestones(Decimal("500000"), Decimal("90000"), plan)
     sent, notify = _notify(shared, old="500000", new="90000", milestone_repo=repo)
     assert sent == 1                                                   # celebration not swallowed
@@ -876,8 +876,8 @@ def test_a_hostile_target_behind_a_bad_date_cannot_escape_the_per_row_guard(
     hostile = {"id": "x", "label": "Hostile", "targetBalance": target,
                "targetDate": "not-a-date"}
 
-    assert [p.label for p in resolved_plan(shared, 
-        FakeMilestoneRepo([hostile, _GOOD]))] == ["Halfway"], why
+    assert [p.label for p in shared.milestones._resolve_plan(
+        FakeMilestoneRepo([hostile, _GOOD]))[0]] == ["Halfway"], why
 
     sent, notify = _notify(shared, facts=None, old="310000", new="290000", stored=[hostile, _GOOD])
     assert sent == 1, why

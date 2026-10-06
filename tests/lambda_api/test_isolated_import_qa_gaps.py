@@ -47,15 +47,15 @@ def test_the_handler_fixture_sheds_every_lambda_api_module_and_the_shared_reposi
 def pinned_ssm_key(monkeypatch):
     """Pin the BankSync key the handler should read, so a leftover stub can't pass for it."""
     monkeypatch.setattr(sys.modules["ssm"], "get_param", lambda path: FAKE_SSM_KEY)
-    return FAKE_SSM_KEY
 
 
 def test_a_fixture_stubs_the_anthropic_key(anthropic_client):
     assert anthropic_client.get_api_key() == "test-anthropic-key"
 
 
-def test_a_later_handler_test_still_reads_the_ssm_key_not_the_leftover_stub(pinned_ssm_key, handler):
+@pytest.mark.usefixtures("pinned_ssm_key")
+def test_a_later_handler_test_still_reads_the_ssm_key_not_the_leftover_stub(handler):
     import api_key
 
     api_key._cache.clear()
-    assert handler.get_api_key() == pinned_ssm_key
+    assert handler.get_api_key() == FAKE_SSM_KEY
