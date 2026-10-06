@@ -12,10 +12,7 @@ import { seedGoal } from './support/goalsScreen';
 import { SAVED_MILESTONES } from './support/milestonePlan';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as object;
-  return { ...actual, useAppContext: () => ({}) };
-});
+jest.mock('../context', () => require('./support/contextMock').emptyContextMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const server = installFakeServer();

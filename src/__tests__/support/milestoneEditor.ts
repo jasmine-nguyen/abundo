@@ -3,6 +3,7 @@
 import { jest } from '@jest/globals';
 import { screen } from '@testing-library/react-native';
 import type { MilestoneRecord } from '../../api';
+import { realContextWith } from './contextMock';
 
 export const saveMilestonesSpy = jest.fn(async (_rows: MilestoneRecord[]) => true);
 export const showToastSpy = jest.fn();
@@ -11,6 +12,5 @@ export const showToastSpy = jest.fn();
 export const milestoneLabelAt = (i: number) => screen.getByTestId(`milestone-label-${i}`).props.value;
 
 export function milestoneEditorContextMockModule() {
-  const actual = jest.requireActual('../../context') as typeof import('../../context');
-  return { ...actual, useAppContext: () => ({ saveMilestones: saveMilestonesSpy, showToast: showToastSpy }) };
+  return realContextWith(() => ({ saveMilestones: saveMilestonesSpy, showToast: showToastSpy }));
 }
