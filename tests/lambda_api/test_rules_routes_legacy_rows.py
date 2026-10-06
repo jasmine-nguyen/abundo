@@ -13,8 +13,9 @@ round trip over a legacy row.
 """
 
 import json
+from functools import partial
 
-from _feed_fakes import FakeCategoryRepo, Repos
+from _feed_fakes import Repos, inject_rule_routes
 
 
 _CLIENT_KEYS = {"id", "field", "operator", "value", "categoryId", "budgetExcluded",
@@ -37,11 +38,7 @@ def _event(method, path):
     return {"rawPath": path, "requestContext": {"http": {"method": method}}}
 
 
-def _inject(handler, monkeypatch, store):
-    """Point the handler at the real repositories over the store's one FakeTable."""
-    monkeypatch.setattr(handler, "RuleRepository", lambda: store.rule_repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(("groceries",)))
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: store.transaction_repo)
+_inject = partial(inject_rule_routes, categories=("groceries",))
 
 
 def test_get_rules_maps_a_legacy_row_to_the_clean_shape(handler, monkeypatch):

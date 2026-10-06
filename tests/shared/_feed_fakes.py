@@ -3,7 +3,8 @@
 ``real_repos`` builds the REAL TransactionRepository and RuleRepository over one FakeTable
 (WHIT-625), so the database rules — the "only if unchanged" write, the rule stamp, rule ids and
 dedup — run as production wrote them, not as a hand-written fake copied them. ``_row`` builds a
-stored transaction row; ``FakeCategoryRepo`` is a read-only taxonomy stub.
+stored transaction row; ``FakeCategoryRepo`` is a read-only taxonomy stub; ``inject_rule_routes``
+points a handler's rule, category and transaction repositories at a ``Repos`` store.
 
 Resolved by pytest.ini's `pythonpath = tests/shared`. Nothing from the shared layer is imported at
 module scope: ``real_repos`` imports ``repository`` lazily, so inside a ``handler``-style fixture it
@@ -155,3 +156,12 @@ class FakeCategoryRepo:
         if self._error:
             raise self._error
         return [dict(category) for category in self._categories]
+
+
+def inject_rule_routes(handler, monkeypatch, store, categories, transactions=None):
+    """Point the handler at the real repositories over the store's one FakeTable."""
+    for rows in (transactions or {}).values():
+        store.table.seed(*rows)
+    monkeypatch.setattr(handler, "RuleRepository", lambda: store.rule_repo)
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(categories))
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: store.transaction_repo)

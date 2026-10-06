@@ -11,7 +11,7 @@ from decimal import Decimal
 
 import pytest
 
-from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo, _txn
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo, _txn, pin_cycle_window
 from _transaction_range_fakes import _DateFilteringTransactionRepo
 from _budget_fakes import recording_budget_repo, stored_budgets
 
@@ -28,10 +28,7 @@ PAYDATE = "2026-01-01"
 
 @pytest.fixture(autouse=True)
 def _fixed_window(handler, monkeypatch):
-    import budget_standing
-    for module in (handler, budget_standing):
-        monkeypatch.setattr(module, "current_cycle_window",
-                            lambda last_pay_date, length, today=None: (CYCLE_START, TODAY))
+    pin_cycle_window(handler, monkeypatch, CYCLE_START, TODAY)
 
 
 def test_rollover_row_lists_the_cycles_behind_its_carryover_and_saves_the_sealed_ones(handler):
