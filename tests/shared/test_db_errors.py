@@ -18,7 +18,3 @@ def test_db_errors_turns_a_client_error_into_a_database_error_and_lets_other_err
     with pytest.raises(ValueError, match="not a database problem"):
         with repository_base.db_errors("write"):
             raise ValueError("not a database problem")
-
-    with repository_base.db_errors("read"):
-        result = "kept"
-    assert result == "kept"

@@ -49,19 +49,13 @@ def update_expression(sets: dict, removes: Iterable[str] = ()) -> tuple[str, dic
     Declares only the aliases the expression uses (DynamoDB rejects unused ones). Returns ""
     when sets and removes are both empty, so callers must not send that.
     """
-    names, values, set_clauses, remove_clauses = {}, {}, [], []
-    for index, (field, value) in enumerate(sets.items()):
-        names[f"#f{index}"] = field
-        values[f":v{index}"] = value
-        set_clauses.append(f"#f{index} = :v{index}")
-    for index, field in enumerate(removes, start=len(sets)):
-        names[f"#f{index}"] = field
-        remove_clauses.append(f"#f{index}")
+    names = {f"#f{index}": field for index, field in enumerate([*sets, *removes])}
+    values = {f":v{index}": value for index, value in enumerate(sets.values())}
     parts = []
-    if set_clauses:
-        parts.append("SET " + ", ".join(set_clauses))
-    if remove_clauses:
-        parts.append("REMOVE " + ", ".join(remove_clauses))
+    if sets:
+        parts.append("SET " + ", ".join(f"#f{index} = :v{index}" for index in range(len(sets))))
+    if len(names) > len(sets):
+        parts.append("REMOVE " + ", ".join(f"#f{index}" for index in range(len(sets), len(names))))
     return " ".join(parts), names, values
 
 

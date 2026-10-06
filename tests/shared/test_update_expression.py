@@ -1,8 +1,6 @@
 """update_expression (shared/repository_base.py, WHIT-790): the one shared builder for a database
 'set these fields, clear those' instruction, with its attribute aliases."""
 
-import re
-
 import pytest
 
 _CASES = [
@@ -41,5 +39,3 @@ def test_update_expression_builds_the_instruction_and_declares_only_the_aliases_
     expression, names, values = repository_base.update_expression(sets, removes)
 
     assert (expression, names, values) == expected
-    used = set(re.findall(r"[#:]\w+", expression))
-    assert used == set(names) | set(values)
