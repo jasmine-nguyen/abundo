@@ -1,9 +1,10 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
-import { C, tint, fmt, fmtExact, fmtSignedExact, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
+import { C, tint, fmt, fmt2, fmtExact, fmtSignedExact, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
 import { writeFailureMessage, ApiError } from './apiError';
-import { MONTHS, formatDayMonth, formatWeekdayShort, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, deleteTransaction as apiDeleteTransaction, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup } from './api';
+import { formatDayMonth, formatMonthYear, formatWeekdayShort, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, toISODate } from './dateutil';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, deleteTransaction as apiDeleteTransaction, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup, type PayCycle } from './api';
 import * as Crypto from 'expo-crypto';
+import type { QueryKey } from '@tanstack/react-query';
 import { usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
 import { RULE_FIELD_OPERATORS } from './ruleVocabulary';
@@ -445,14 +446,8 @@ function addMonths(from: Date, months: number): Date {
   return d;
 }
 
-// A month-year label ("Aug 2045") for the payoff projection — matches the
-// granularity the hero shows (nobody expects day-precision 20 years out).
-function monthYear(d: Date): string {
-  return `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
-}
-
 // Whole calendar months from `from` to an ISO "YYYY-MM-DD" target, at month
-// granularity to match monthYear (WHIT-126). Returns null on an unparseable date,
+// granularity to match formatMonthYear (WHIT-126). Returns null on an unparseable date,
 // and can be ≤ 0 for a past/current month — callers treat that as "no valid goal".
 function monthsUntil(from: Date, isoDate: string): number | null {
   const parts = isoDate.split('-').map(Number);
@@ -462,15 +457,10 @@ function monthsUntil(from: Date, isoDate: string): number | null {
 }
 
 function dateLabel(isoDate: string): string {
-  const [y, m, d] = isoDate.split('-').map(Number);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const date = new Date(y, m - 1, d);
-  const diffDays = Math.round((today.getTime() - date.getTime()) / 86400000);
+  const diffDays = wholeDaysBetween(isoToUtcDayMs(isoDate), dateToUtcDayMs(new Date()));
   if (diffDays === 0) return 'Today';
   if (diffDays === 1) return 'Yesterday';
-  const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  return `${DAY[date.getDay()]} ${d} ${MONTHS[m - 1]}`;
+  return `${formatWeekdayShort(isoDate)} ${formatDayMonth(isoDate)}`;
 }
 
 // Group transactions under date headings ("Today", "Tue 21 Jul"), preserving the input
@@ -591,6 +581,38 @@ function ruleWriteErrorMessage(error: unknown, fallback: string, spread: boolean
   if (spread && error instanceof ApiError && error.status === 422) return "We couldn't find a recurring bill matching this rule";
   if (spread && error instanceof ApiError && error.status === 409) return 'This category already has a spread rule';
   return fallback;
+}
+
+// A category from the ['categories'] cache the screens read (undefined on a cold cache).
+function cachedCategory(id: string): Category | undefined {
+  return queryClient.getQueryData<Category[]>(categoriesKey)?.find((c) => c.id === id);
+}
+
+// Drop a category id's KEY from every ['budgets'] Record snapshot (the raw queryFn output, not
+// the select'd Budget[]). The caller keeps the snapshots to restore on failure.
+function stripBudgetId(snapshots: [QueryKey, Record<string, BudgetRollup> | undefined][], id: string) {
+  snapshots.forEach(([key, data]) => {
+    if (!data || !(id in data)) return;
+    const { [id]: _removed, ...rest } = data;
+    queryClient.setQueryData<Record<string, BudgetRollup>>(key, rest);
+  });
+}
+
+// WHIT-563: the shared pieces of a rule create/edit. A multi-condition rule has no single pattern —
+// its stored value is the first condition's value (what the server derives too). `fields` is the
+// optimistic row's rule fields; `body` is the API body.
+function ruleFields(pattern: string, categoryId: string, budgetExcluded: boolean, spread: boolean, write?: RuleWrite) {
+  const shared = { categoryId, budgetExcluded, spread };
+  if (!write) {
+    const value = pattern.trim();
+    return { value, fields: { pattern: value, ...shared }, body: { value, ...shared } };
+  }
+  const [first] = write.conditions;
+  return {
+    value: first.value,
+    fields: { pattern: first.value, ...shared, field: first.field, operator: first.operator, conditions: write.conditions, logic: write.logic },
+    body: { conditions: write.conditions, logic: write.logic, ...shared },
+  };
 }
 
 const Ctx = createContext<AppContext | null>(null);
@@ -752,8 +774,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // reset the sibling field (e.g. a Monthly user's length). The pay-cycle sheet warms
   // this cache on open, so a cold write is a belt-and-braces guard, not the norm.
   const persistPayCycle = useCallback(
-    async (mutate: (prev: { length: number; last_pay_date: string }) => { length: number; last_pay_date: string }) => {
-      const prev = queryClient.getQueryData<{ length: number; last_pay_date: string }>(payCycleKey);
+    async (mutate: (prev: PayCycle) => PayCycle) => {
+      const prev = queryClient.getQueryData<PayCycle>(payCycleKey);
       if (!prev) return;
       const next = mutate(prev);
       // Drop any stale server days_left from the optimistic write — the new length/payday
@@ -1202,7 +1224,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // a KEY (a target>0 rollup is a real budget row, matching selectBudgets' own filter).
       // Treating it as an array here would throw `.some is not a function` on the Record.
       // (WHIT-72 flattened the key to ['budgets']; the prefix match still finds it.)
-      const c = queryClient.getQueryData<Category[]>(categoriesKey)?.find((x) => x.id === categoryId);
+      const c = cachedCategory(categoryId);
       // WHIT-202: a Savings-bucket category can't carry a target — the screens skip it
       // (budgetViews/budgetDetail), so a saved one is an invisible, un-editable phantom.
       // Short-circuit before the doomed round-trip; the server rejects it too (belt +
@@ -1241,24 +1263,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [showToast, runSave],
   );
 
-  // WHIT-505: spread a one-off bill over the coming cycles. Non-optimistic — invalidates
-  // ['budgets'] here so the plan reconciles from the server rollup (self-contained, matching
-  // removeSpread below; the caller just navigates). The category name (for the toast) comes
-  // from the ['categories'] cache; every post-await toast/return is gated on the session epoch
-  // (WHIT-271) so a mid-save sign-out never toasts into or navigates the next user's session.
-  const saveSpread = useCallback(
-    async (categoryId: string, amount: number, cycles: number): Promise<boolean> => {
-      if (amount <= 0 || cycles < SPREAD_MIN_CYCLES || cycles > SPREAD_MAX_CYCLES) return false;
-      const c = queryClient.getQueryData<Category[]>(categoriesKey)?.find((x) => x.id === categoryId);
+  // WHIT-505: set or remove a category's bill spread. Non-optimistic — invalidates ['budgets']
+  // here so the plan reconciles from the server rollup (the caller just navigates). The writer
+  // touches the query cache, never screen state, so a popped screen can't setState-after-unmount.
+  // The category name (for the toast) comes from the ['categories'] cache; every post-await
+  // toast/return is gated on the session epoch (WHIT-271) so a mid-save sign-out never toasts
+  // into or navigates the next user's session.
+  const writeSpread = useCallback(
+    (categoryId: string, send: () => Promise<unknown>, savedVerb: 'set' | 'removed', failVerb: 'set' | 'remove'): Promise<boolean> => {
+      const c = cachedCategory(categoryId);
       return runSave({
-        send: () => apiSetSpread(categoryId, amount, cycles),
+        send,
         onSaved: () => {
           queryClient.invalidateQueries({ queryKey: budgetsKey });
-          if (c) showToast(`Bill spread set for ${c.name}.`);
+          if (c) showToast(`Bill spread ${savedVerb} for ${c.name}.`);
           return true;
         },
         onFailed: () => {
-          showToast('Could not set the bill spread. Please try again.');
+          showToast(`Could not ${failVerb} the bill spread. Please try again.`);
           return false;
         },
         whenSignedOut: false,
@@ -1267,27 +1289,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [showToast, runSave],
   );
 
-  // WHIT-505: remove a category's bill spread. Non-optimistic (invalidate + refetch), matching
-  // saveSpread beside it — the writer touches the query cache, never screen state, so a popped
-  // screen can't setState-after-unmount. Idempotent server-side (200 with no plan).
-  const removeSpread = useCallback(
-    async (categoryId: string): Promise<boolean> => {
-      const c = queryClient.getQueryData<Category[]>(categoriesKey)?.find((x) => x.id === categoryId);
-      return runSave({
-        send: () => apiDeleteSpread(categoryId),
-        onSaved: () => {
-          queryClient.invalidateQueries({ queryKey: budgetsKey });
-          if (c) showToast(`Bill spread removed for ${c.name}.`);
-          return true;
-        },
-        onFailed: () => {
-          showToast('Could not remove the bill spread. Please try again.');
-          return false;
-        },
-        whenSignedOut: false,
-      });
+  const saveSpread = useCallback(
+    async (categoryId: string, amount: number, cycles: number): Promise<boolean> => {
+      if (amount <= 0 || cycles < SPREAD_MIN_CYCLES || cycles > SPREAD_MAX_CYCLES) return false;
+      return writeSpread(categoryId, () => apiSetSpread(categoryId, amount, cycles), 'set', 'set');
     },
-    [showToast, runSave],
+    [writeSpread],
+  );
+
+  // Idempotent server-side (200 with no plan).
+  const removeSpread = useCallback(
+    (categoryId: string): Promise<boolean> => writeSpread(categoryId, () => apiDeleteSpread(categoryId), 'removed', 'remove'),
+    [writeSpread],
   );
 
   // WHIT-203: remove a category's budget target (the Budget detail screen's Delete). The
@@ -1298,18 +1311,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // with the server rollup.
   const deleteBudget = useCallback(
     async (categoryId: string): Promise<boolean> => {
-      const c = queryClient.getQueryData<Category[]>(categoriesKey)?.find((x) => x.id === categoryId);
+      const c = cachedCategory(categoryId);
       // WHIT-271: runSave skips the restore after sign-out, so stale rollups never reach the
       // cleared cache, and no toast reaches the next session.
       return runSave({
         apply: () => {
           // Snapshot every ['budgets'] entry so a failure can restore exactly what was there.
           const snapshots = queryClient.getQueriesData<Record<string, BudgetRollup>>({ queryKey: budgetsKey });
-          snapshots.forEach(([key, data]) => {
-            if (!data || !(categoryId in data)) return;
-            const { [categoryId]: _removed, ...rest } = data;
-            queryClient.setQueryData<Record<string, BudgetRollup>>(key, rest);
-          });
+          stripBudgetId(snapshots, categoryId);
           return () => snapshots.forEach(([key, data]) => queryClient.setQueryData(key, data));
         },
         send: () => apiDeleteBudget(categoryId),
@@ -1385,7 +1394,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return runSave({
         send: () => updateCategory(editId, input),
         onSaved: (updated) => {
-          const previousName = queryClient.getQueryData<Category[]>(categoriesKey)?.find((c) => c.id === editId)?.name;
+          const previousName = cachedCategory(editId)?.name;
           queryClient.setQueryData<Category[]>(categoriesKey, (prev) => (prev ? prev.map((c) => (c.id === editId ? toCategory(updated) : c)) : prev));
           // WHIT-203: the setQueryData shows the change instantly on the migrated screens /
           // pickers; the invalidate then reconciles with the server.
@@ -1427,11 +1436,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           .map((t) => t.transaction_id),
       );
       queryClient.setQueryData<Category[]>(categoriesKey, (prev) => prev?.filter((c) => c.id !== id));
-      budgetSnapshots.forEach(([key, data]) => {
-        if (!data || !(id in data)) return;
-        const { [id]: _removed, ...rest } = data;
-        queryClient.setQueryData<Record<string, BudgetRollup>>(key, rest);
-      });
+      stripBudgetId(budgetSnapshots, id);
       patchRules((prev) => prev.filter((r) => r.categoryId !== id));
       patchAllCopies((t) => (t.category === id ? { ...t, category: null } : t));
       return () => {
@@ -1494,18 +1499,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // real id — or remove it and warn on failure. Value is sent as typed (trimmed,
   // not upper-cased) so both rule-creation paths POST a consistent `value`.
   const saveManualRule = useCallback(async (pattern: string, categoryId: string, budgetExcluded = false, write?: RuleWrite, spread = false) => {
-    // WHIT-563: a multi-condition rule has no single pattern — its stored value is the first
-    // condition's value (what the server derives too), so both paths key the optimistic row + toast
-    // off `value`.
-    const value = write ? write.conditions[0].value : pattern.trim();
+    const { value, fields, body } = ruleFields(pattern, categoryId, budgetExcluded, spread, write);
     if (!value || !categoryId) return;
     // WHIT-192: the toast copy needs the category name — sourced from the ['categories']
     // query cache the screens read, not a store useState.
-    const c = queryClient.getQueryData<Category[]>(categoriesKey)?.find((x) => x.id === categoryId);
+    const c = cachedCategory(categoryId);
     const tempRuleId = 'tmp-' + Date.now();
-    const optimistic: Rule = write
-      ? { id: tempRuleId, pattern: value, categoryId, isNew: true, budgetExcluded, spread, field: write.conditions[0].field, operator: write.conditions[0].operator, conditions: write.conditions, logic: write.logic }
-      : { id: tempRuleId, pattern: value, categoryId, isNew: true, budgetExcluded, spread };
+    const optimistic: Rule = { id: tempRuleId, isNew: true, ...fields };
     // WHIT-502: a new rule only files FUTURE charges (the webhook applies rules as charges land); no stored
     // charge changes category here, so ['uncategorizedCount'] is intentionally NOT invalidated. Any later
     // bank-side re-tag arrives via the webhook, already covered by the count's staleTime + pull-to-refresh.
@@ -1519,7 +1519,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (c) showToast(write ? `Rule added — files as ${c.name}.` : `Rule added — ${value} files as ${c.name}.`);
         return () => patchRules((prev) => prev.filter((r) => r.id !== tempRuleId));
       },
-      send: () => createRule(write ? { conditions: write.conditions, logic: write.logic, categoryId, budgetExcluded, spread } : { value, categoryId, budgetExcluded, spread }),
+      send: () => createRule(body),
       onSaved: (created) => {
         // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
         // false for the load path, where rules genuinely aren't new).
@@ -1538,7 +1538,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // failure. The rule's field/operator are preserved (passed through) so a
   // non-default rule isn't silently reset to description/contains.
   const updateRule = useCallback(async (id: string, pattern: string, categoryId: string, budgetExcluded = false, write?: RuleWrite, spread = false) => {
-    const value = write ? write.conditions[0].value : pattern.trim();
+    const { value, fields, body } = ruleFields(pattern, categoryId, budgetExcluded, spread, write);
     if (!value || !categoryId) return;
     // WHIT-192: source the `before` snapshot (for rollback) + the category name from the
     // query caches the screens read, not store useStates.
@@ -1547,10 +1547,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // WHIT-563: carry conditions/logic on a multi edit; explicitly null them on a classic edit so an
     // edit that reduces a multi rule to one condition doesn't leave stale rows on the optimistic copy
     // (the server settle replaces the row wholesale, but the interim must be consistent too).
-    const patch = write
-      ? { pattern: value, categoryId, budgetExcluded, spread, field: write.conditions[0].field, operator: write.conditions[0].operator, conditions: write.conditions, logic: write.logic }
-      : { pattern: value, categoryId, budgetExcluded, spread, conditions: null, logic: null };
-    const c = queryClient.getQueryData<Category[]>(categoriesKey)?.find((x) => x.id === categoryId);
+    const patch = write ? fields : { ...fields, conditions: null, logic: null };
+    const c = cachedCategory(categoryId);
     // WHIT-540: editing a rule now RE-FILES the stored charges it already touched (the server moves
     // them to the new target, or clears the ones the edit no longer matches), so the server-derived
     // reads DO move — refresh the count, feed, budgets and merchant groups. `skipRules` leaves the
@@ -1562,9 +1560,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (c) showToast(write ? `Rule updated — files as ${c.name}.` : `Rule updated — ${value} files as ${c.name}.`);
         return () => patchRules((prev) => prev.map((r) => (r.id === id ? before : r)));
       },
-      send: () => apiUpdateRule(id, write
-        ? { conditions: write.conditions, logic: write.logic, categoryId, budgetExcluded, spread }
-        : { value, categoryId, field: before.field, operator: before.operator, budgetExcluded, spread }),
+      send: () => apiUpdateRule(id, write ? body : { ...body, field: before.field, operator: before.operator }),
       onSaved: (saved) => {
         patchRules((prev) => prev.map((r) => (r.id === id ? { ...toRule(saved), isNew: r.isNew } : r)));
         refreshAfterApplyRules({ skipRules: true });
@@ -1716,7 +1712,7 @@ export interface BalanceGoalInput {
   // Live SIGNED balance for a SYNCED goal (AccountBalance.amount: spending +, loan/credit −);
   // null = not yet polled. Ignored for a manual goal (its balance is on the record).
   balance: number | null;
-  payCycle: { length: number; last_pay_date: string };
+  payCycle: PayCycle;
 }
 
 export interface BalanceGoalView {
@@ -1758,7 +1754,7 @@ export interface BalanceGoalView {
 // today < pay + n*len <= target is floor(dTarget/len) − floor(dToday/len); floor handles a
 // last_pay_date in the future (n<0).
 export function paydaysUntil(
-  payCycle: { length: number; last_pay_date: string },
+  payCycle: PayCycle,
   targetISO: string,
   today?: Date,
 ): number {
@@ -2700,9 +2696,8 @@ export { contributesToBudget, paidInOneGo };
 export function transactionView(s: Pick<TransactionListInput, 'category'>, t: Transaction): TransactionView {
   const uncategorized = isUncategorized(s, t);
   const isIncome = t.category === 'income';
-  const amtStr = (t.amount < 0 ? '-' : '+') + '$' + Math.abs(t.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const base = {
-    id: t.transaction_id, merchant: merchantLabel(t), amountLabel: amtStr,
+    id: t.transaction_id, merchant: merchantLabel(t), amountLabel: fmt2(t.amount),
     amountColor: t.amount > 0 ? C.good : C.textBright,
     isPending: t.status === 'pending',
   };
@@ -2733,14 +2728,7 @@ export function transactionGroups(s: TransactionListInput, tab: 'all' | 'uncateg
   // WHIT-330: the Uncategorized tab lists every unmapped charge, transfers included, so it
   // matches the badge and the row's "Uncategorized" label. Budget math still drops transfers.
   const tabFilter = (t: Transaction) => (tab === 'uncategorized' ? isUncategorized(s, t) : true);
-  const seen = new Map<string, Transaction[]>();
-  const order: string[] = [];
-  for (const t of s.transactions.filter(tabFilter)) {
-    const label = dateLabel(t.date);
-    if (!seen.has(label)) { seen.set(label, []); order.push(label); }
-    seen.get(label)!.push(t);
-  }
-  return order.map((label) => ({ label, items: seen.get(label)! }));
+  return groupTransactionsByDate(s.transactions.filter(tabFilter));
 }
 
 export function countUncategorized(s: TransactionListInput) {
@@ -3229,7 +3217,6 @@ export function paydownView(s: GoalViewInput, today?: Date): PaydownView {
       // the goal is unrealistically close, so fall back to the hint/static copy.
       if (requiredRepay !== null && requiredRepay <= MAX_SHORTFALL_REPAYMENT) {
         const requiredExtra = requiredRepay - currentRepay;
-        const [goalYear, goalMonth] = goalDate.split('-').map(Number);
         // WHIT-215: below the cap the figure is honest but can still be absurd (e.g. 20× the
         // current repayment). Flag it so the screen nudges a later date ALONGSIDE the figure.
         // Guard currentRepay > 0 so a $0 repayment can't make every figure "too aggressive".
@@ -3237,7 +3224,7 @@ export function paydownView(s: GoalViewInput, today?: Date): PaydownView {
           ...base, mode: 'none',
           requiredRepay, requiredExtra,
           requiredRepayLabel: fmt(requiredRepay), requiredExtraLabel: fmt(requiredExtra),
-          goalDateLabel: monthYear(new Date(goalYear, goalMonth - 1, 1)),
+          goalDateLabel: formatMonthYear(goalDate),
           goalTooAggressive: currentRepay > 0 && requiredRepay > AGGRESSIVE_REPAY_MULTIPLE * currentRepay,
         };
       }
@@ -3249,7 +3236,7 @@ export function paydownView(s: GoalViewInput, today?: Date): PaydownView {
     return { ...base, mode: 'none' };                         // no goal date / past date → plain "won't pay off"
   }
 
-  const freedomLabel = monthYear(addMonths(today ?? new Date(), Math.ceil(withExtra.periods)));
+  const freedomLabel = formatMonthYear(toISODate(addMonths(today ?? new Date(), Math.ceil(withExtra.periods))));
 
   // "X early" + "interest dodged" compare against the scheduled-only baseline.
   // When the baseline itself never clears, the extra is what makes the loan

@@ -1,7 +1,7 @@
 // Budget selectors: elapsedFrac, budgetViews (the list bars + pace copy) and
 // budgetDetail (the single-category screen). These drive every number and colour
 // on the budgets screens, so they're the highest-value regression lock.
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
 import { budgetViews, budgetDetail, groupTransactionsByDate } from '../context';
 import { elapsedFrac } from '../payCycle';
 import type { Budget } from '../model';
@@ -351,6 +351,21 @@ describe('groupTransactionsByDate', () => {
 
   it('returns an empty array for no transactions', () => {
     expect(groupTransactionsByDate([])).toEqual([]);
+  });
+
+  // Melbourne's clocks went forward on Sun 4 Oct 2026 (a 23-hour day); the labels must not slip.
+  it('labels Today / Yesterday / weekday across a daylight-saving change', () => {
+    jest.useFakeTimers({ now: new Date(2026, 9, 5, 0, 30) });
+    try {
+      const groups = groupTransactionsByDate([
+        txn({ transaction_id: 'a', date: '2026-10-05' }),
+        txn({ transaction_id: 'b', date: '2026-10-04' }),
+        txn({ transaction_id: 'c', date: '2026-10-03' }),
+      ]);
+      expect(groups.map((g) => g.label)).toEqual(['Today', 'Yesterday', 'Sat 3 Oct']);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 

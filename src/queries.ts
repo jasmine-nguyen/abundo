@@ -34,24 +34,24 @@ export function useIsAuthed(): boolean {
 export { categoriesKey, payCycleKey, budgetsKey, budgetTransactionsKey, categoryTransactionsKey, breakdownKey, transactionsKey, uncategorizedFeedKey, transactionsRecentKey, transactionsSearchKey, uncategorizedCountKey, uncategorizedMerchantsKey, filingSuggestionsKey, loanFactsKey, homeLoanKey, repaymentKey, accountBalancesKey, rulesKey, goalsKey, milestonesKey } from './queryKeys';
 
 // --- pure selectors over the raw API payloads (unit-tested in the logic project) ---
+// Fail LOUDLY on a malformed list payload (a wrapped or changed shape): the query rejects → the
+// screen shows its error card instead of a cryptic "raw.map is not a function" later.
+// Array.isArray also rejects null/undefined. A genuinely empty list is `[]`, which passes.
+function expectArray<T>(raw: unknown, name: string, path: string): T[] {
+  if (!Array.isArray(raw)) throw new Error(`${name}: expected an array from ${path}, got ${typeof raw}`);
+  return raw as T[];
+}
+
+// On a first load a malformed /categories also surfaces WHIT-194's categoriesError.
 export function selectCategories(raw: unknown[]): Category[] {
-  // Fail LOUDLY on a malformed /categories payload (a wrapped or changed shape), mirroring
-  // selectRules — the query rejects → the screen shows its error card (and, on a first load,
-  // WHIT-194's categoriesError) instead of a cryptic "raw.map is not a function". Array.isArray
-  // also rejects null/undefined. A genuine empty taxonomy is `[]`, which passes.
-  if (!Array.isArray(raw)) throw new Error(`selectCategories: expected an array from /categories, got ${typeof raw}`);
-  return raw.map(toCategory);
+  return expectArray(raw, 'selectCategories', '/categories').map(toCategory);
 }
 // WHIT-195: map the server rules into the client Rule shape (value→pattern,
 // isNew:false for loaded rules). Reuses the same toRule the store uses, so the cache and
 // the store's optimistic double-write agree field-for-field.
+// A malformed /rules rejects rather than silently rendering "0 rules" over data the user has.
 export function selectRules(raw: RuleRecord[]): Rule[] {
-  // Fail LOUDLY on a malformed /rules payload (a wrapped or changed shape) — the
-  // query rejects → the Rules screen shows its error card + Retry — rather than a cryptic
-  // "raw.map is not a function" or silently rendering "0 rules" over data the user has.
-  // Array.isArray also rejects null/undefined.
-  if (!Array.isArray(raw)) throw new Error(`selectRules: expected an array from /rules, got ${typeof raw}`);
-  return raw.map(toRule);
+  return expectArray<RuleRecord>(raw, 'selectRules', '/rules').map(toRule);
 }
 export function selectBudgets(rollups: Record<string, BudgetRollup>): Budget[] {
   return Object.entries(rollups)
@@ -59,21 +59,14 @@ export function selectBudgets(rollups: Record<string, BudgetRollup>): Budget[] {
     .map(([id, rollup]) => toBudget(id, rollup));
 }
 // WHIT-233: the /goals payload is already the client GoalRecord shape (the server owns no
-// mapping), so this is a passthrough that only FAILS LOUDLY on a malformed shape — mirroring
-// selectCategories/selectRules. A non-array (a wrapped or changed payload) rejects the query
-// → the hub shows its error card, instead of a cryptic "goals.map is not a function" later. A
-// genuinely empty backlog is `[]`, which passes.
+// mapping), so this is a passthrough that only fails loudly on a malformed shape.
 export function selectGoals(raw: unknown): GoalRecord[] {
-  if (!Array.isArray(raw)) throw new Error(`selectGoals: expected an array from /goals, got ${typeof raw}`);
-  return raw as GoalRecord[];
+  return expectArray(raw, 'selectGoals', '/goals');
 }
-// WHIT-367: the /milestones payload is already the client MilestoneRecord shape (a passthrough),
-// so this only FAILS LOUDLY on a malformed shape — mirroring selectGoals. A non-array rejects the
-// query → the screen keeps its built-in default plan instead of a cryptic "milestones.map is not a
-// function". A genuinely empty (unset) plan is `[]`, which passes.
+// WHIT-367: the /milestones payload is already the client MilestoneRecord shape (a passthrough).
+// A malformed one rejects the query → the screen keeps its built-in default plan.
 export function selectMilestones(raw: unknown): MilestoneRecord[] {
-  if (!Array.isArray(raw)) throw new Error(`selectMilestones: expected an array from /milestones, got ${typeof raw}`);
-  return raw as MilestoneRecord[];
+  return expectArray(raw, 'selectMilestones', '/milestones');
 }
 
 // Server default, mirrored from AppProvider's seed (src/context.tsx) — used for the
@@ -164,17 +157,26 @@ export function useBreakdownQuery(cycleLen: number, cycle: number, enabled: bool
   });
 }
 
-// The Transactions tab's all-accounts feed as an infinite query: the first page is the
-// newest batch (no cursor), each "Load More" fetches the next (older) page via the prior
-// page's nextCursor, and hasNextPage goes false when the server returns nextCursor === null.
-export function useTransactionsFeedQuery(enabled: boolean) {
+// A cursor-paged feed as an infinite query (shared by the two transaction feeds below).
+function useCursorFeed<P extends { nextCursor?: string | null }>(
+  queryKey: readonly unknown[],
+  fetchPage: (cursor?: string) => Promise<P>,
+  enabled: boolean,
+) {
   return useInfiniteQuery({
-    queryKey: transactionsKey,
-    queryFn: ({ pageParam }) => fetchTransactionsFeed(pageParam),
+    queryKey,
+    queryFn: ({ pageParam }) => fetchPage(pageParam),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     enabled,
   });
+}
+
+// The Transactions tab's all-accounts feed as an infinite query: the first page is the
+// newest batch (no cursor), each "Load More" fetches the next (older) page via the prior
+// page's nextCursor, and hasNextPage goes false when the server returns nextCursor === null.
+export function useTransactionsFeedQuery(enabled: boolean) {
+  return useCursorFeed(transactionsKey, fetchTransactionsFeed, enabled);
 }
 
 // The bounded "recent" list (server rolling window) behind the dot, account detail, and the
@@ -209,13 +211,7 @@ export function useTransactionsSearchQuery(tab: 'all' | 'uncategorized', query: 
 // true while nextCursor is non-null — a page can come back sparse (or empty) with more history
 // behind it, so "Load More" keeps working until the server exhausts history.
 export function useUncategorizedFeedQuery(enabled: boolean) {
-  return useInfiniteQuery({
-    queryKey: uncategorizedFeedKey,
-    queryFn: ({ pageParam }) => fetchUncategorizedFeed(pageParam),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (last) => last.nextCursor ?? undefined,
-    enabled,
-  });
+  return useCursorFeed(uncategorizedFeedKey, fetchUncategorizedFeed, enabled);
 }
 
 /** Resolve a tapped transaction by id across every list cache it might live in — the

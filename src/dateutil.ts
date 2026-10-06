@@ -26,6 +26,15 @@ export function formatDayMonthYear(iso: string): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
+// An ISO "YYYY-MM-DD" -> a "Jun 2026" label. Hand-parsed (no Date), so no timezone can shift the
+// month. Passes an unparseable ISO through unchanged.
+export function formatMonthYear(iso: string): string {
+  const [year, month] = iso.split('-');
+  const label = MONTHS[Number(month) - 1];
+  if (!label) return iso;
+  return `${label} ${year}`;
+}
+
 // An ISO "YYYY-MM-DD" -> a "20 Jun" label (no year), in local time. Same round-trip as
 // formatDayMonthYear; drop the year for a compact within-cycle label. Empty string on an
 // empty/unparseable ISO, so a caller never renders "NaN undefined".

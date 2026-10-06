@@ -86,8 +86,8 @@ export const BUILTIN_CATEGORY_INDEX: Record<string, number> = {
 
 // Stable djb2 hash → a ramp slot for an UNKNOWN (user-created) id. Two custom ids can collide (rare,
 // and unknowable at build time — acceptable); we hash across the full ramp so custom categories stay
-// as distinct from each other as possible.
-function categoryColorHash(id: string): number {
+// as distinct from each other as possible. Also picks categoryColors' darker sibling.
+export function categoryColorHash(id: string): number {
   let h = 5381;
   for (let i = 0; i < id.length; i++) h = ((h << 5) + h + id.charCodeAt(i)) | 0;
   return Math.abs(h);

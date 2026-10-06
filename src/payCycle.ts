@@ -1,6 +1,7 @@
 // WHIT-630: the pay-cycle clock, moved out of context.tsx so queries.ts and the screens can read
 // it without importing the store.
 import { isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, utcDayMsToISO, MS_PER_DAY } from './dateutil';
+import type { PayCycle } from './api';
 
 // The pay-cycle length -> its human name. Pure + exported so the provider and the
 // tests share one source of truth (rather than each reimplementing the mapping).
@@ -15,7 +16,7 @@ export function cycleName(length: number): 'Weekly' | 'Fortnightly' | 'Monthly' 
 // nextPayday returns a future first payday as is). A NaN pay (unparseable last_pay_date)
 // propagates through the pieces exactly as dateutil's primitives define — the callers guard it.
 function currentCycleAnchor(
-  payCycle: { length: number; last_pay_date: string },
+  payCycle: PayCycle,
   today?: Date,
 ): { pay: number; todayMs: number; elapsedDays: number; cyclesElapsed: number; startMs: number } {
   const length = payCycle.length;
@@ -34,7 +35,7 @@ function currentCycleAnchor(
 // (a fresh cycle just began). Pure: the same (payCycle, today) always give the
 // same result.
 export function cycleClock(
-  payCycle: { length: number; last_pay_date: string },
+  payCycle: PayCycle,
   today?: Date,
 ): { cycleLen: number; daysLeft: number } {
   const length = payCycle.length;
@@ -48,7 +49,7 @@ export function cycleClock(
 // clock. Before the first payday, that first payday itself (however far ahead). Empty string for an
 // unparseable date (pay is NaN → utcDayMsToISO returns ''), so the screen hides the line.
 export function nextPayday(
-  payCycle: { length: number; last_pay_date: string },
+  payCycle: PayCycle,
   today?: Date,
 ): string {
   const { pay, todayMs, startMs } = currentCycleAnchor(payCycle, today);
@@ -60,7 +61,7 @@ export function nextPayday(
 // no UTC/Melbourne drift on the countdown — WHIT-341), falling back to the client cycleClock
 // only for an older server / cold cache where the field is absent.
 export function cycleClockView(
-  payCycle: { length: number; last_pay_date: string; days_left?: number },
+  payCycle: PayCycle,
 ): { cycleLen: number; daysLeft: number } {
   // Clamp to [0, length] like cycleClock does — the server path bypasses cycleClock's own
   // clamp, so a corrupt/older cache value can't drive elapsedFrac out of [0,1] (negative bars).

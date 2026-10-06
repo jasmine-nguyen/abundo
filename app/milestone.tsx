@@ -9,14 +9,7 @@ import { useGoalScreenData } from '../src/queries';
 import { Bar, RetryButton, HeroGradientFill } from '../src/components/ui';
 import { Header } from '../src/components/Header';
 import { EquityCard, EquityBody, AddLoanDetailsPrompt } from '../src/components/EquityCard';
-import { MONTHS } from '../src/dateutil';
-
-// "2027-03-18" -> "Mar 2027". Parsed by hand (no Date) so the label can't shift
-// across a timezone boundary.
-function monthYear(iso: string): string {
-  const [y, m] = iso.split('-').map(Number);
-  return `${MONTHS[m - 1]} ${y}`;
-}
+import { formatMonthYear } from '../src/dateutil';
 
 export default function Milestone() {
   const insets = useSafeAreaInsets();
@@ -67,7 +60,7 @@ export default function Milestone() {
               {v.asOf && (
                 <View style={styles.syncPill}>
                   <View style={styles.syncDot} />
-                  <Text style={styles.syncText}>Live · Up Home Loan · {monthYear(v.asOf.slice(0, 10))}</Text>
+                  <Text style={styles.syncText}>Live · Up Home Loan · {formatMonthYear(v.asOf.slice(0, 10))}</Text>
                 </View>
               )}
             </>
@@ -93,7 +86,7 @@ export default function Milestone() {
               <Text style={styles.nextTo}>{v.amountToNextLabel} to go</Text>
             </View>
             <Text style={styles.nextBody}>
-              {v.nextMilestone.label} · by {monthYear(v.nextMilestone.targetDate)}. Every extra dollar off the principal pulls this closer. 🪓
+              {v.nextMilestone.label} · by {formatMonthYear(v.nextMilestone.targetDate)}. Every extra dollar off the principal pulls this closer. 🪓
             </Text>
           </View>
         )}
@@ -119,7 +112,7 @@ export default function Milestone() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.rowTitle}>Sprint {r.sprint} · {r.label}</Text>
-                  <Text style={styles.rowSub}>under {fmt(r.targetBalance)} · {monthYear(r.targetDate)}</Text>
+                  <Text style={styles.rowSub}>under {fmt(r.targetBalance)} · {formatMonthYear(r.targetDate)}</Text>
                 </View>
                 {/* per-sprint equity only once the property value + LVR are set */}
                 {r.targetEquity != null && (
