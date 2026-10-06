@@ -9,9 +9,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react-native';
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => false }));
 
 import { SpendingDonut } from '../components/SpendingDonut';
-import { opacityOf, sl, DIM_CATEGORY, DIM_OTHER } from './support/donut';
-
-const settle = () => act(() => { jest.advanceTimersByTime(4000); });
+import { opacityOf, sl, DIM_CATEGORY, DIM_OTHER, settleSpring as settle } from './support/donut';
 
 describe('SpendingDonut — the grey "Other" springs to its own fade', () => {
   beforeEach(() => { jest.useFakeTimers(); });

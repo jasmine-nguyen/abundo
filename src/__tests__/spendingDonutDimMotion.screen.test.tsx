@@ -12,12 +12,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react-native';
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => false }));
 
 import { SpendingDonut } from '../components/SpendingDonut';
-import { opacityOf, ancestorProp, sl, slice, DIM_CATEGORY } from './support/donut';
-
-// Drive the JS-driven spring (useNativeDriver: false) to rest. Fake timers, never a real sleep:
-// react-native's requestAnimationFrame polyfill is a setTimeout, so advancing the clock advances
-// the animation deterministically.
-const settle = () => act(() => { jest.advanceTimersByTime(4000); });
+import { opacityOf, ancestorProp, sl, slice, DIM_CATEGORY, settleSpring as settle } from './support/donut';
 
 describe('SpendingDonut — the fade lands on the derived value with motion ON (WHIT-425)', () => {
   beforeEach(() => { jest.useFakeTimers(); });

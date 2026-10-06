@@ -1,7 +1,13 @@
 // Shared helpers for the donut screen tests — extracted so a change to the rendered node shape or
 // the react-native-svg jest stub is a one-file edit, not four.
-import { screen } from '@testing-library/react-native';
+import { jest } from '@jest/globals';
+import { act, screen } from '@testing-library/react-native';
 import type { DonutSlice } from '../../components/SpendingDonut';
+
+// Drive the JS-driven spring (useNativeDriver: false) to rest. Fake timers, never a real sleep:
+// react-native's requestAnimationFrame polyfill is a setTimeout, so advancing the clock advances
+// the animation deterministically.
+export const settleSpring = () => act(() => { jest.advanceTimersByTime(4000); });
 
 // The emphasis animation lives on the AnimatedG wrapping each testID'd shape, resolved to a plain
 // number under the jest SVG stub (which renders svg elements as Views). Walk up from the shape to
