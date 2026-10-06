@@ -533,6 +533,17 @@ describe('WHIT-377 milestone editor', () => {
       const sent = mockSaveMilestones.mock.calls[0][0];
       expect(sent.map((m) => m.targetBalance)).toEqual([300000, 200000, 50000]);
     });
+
+    // [A5] after a delete the tags renumber with the rows, and a new row's box starts empty.
+    it('deleting a row renumbers the balance boxes; an added row gets an empty box at the end', async () => {
+      await renderWithQueries(<MilestoneEdit />);
+      fireEvent.press(screen.getByTestId('milestone-delete-0'));
+      expect(screen.getByTestId('milestone-balance-0').props.value).toBe('200000');
+      expect(screen.getByTestId('milestone-balance-1').props.value).toBe('100000');
+      expect(screen.queryByTestId('milestone-balance-2')).toBeNull();
+      fireEvent.press(screen.getByTestId('milestone-add'));
+      expect(screen.getByTestId('milestone-balance-2').props.value).toBe('');
+    });
   });
 });
 
