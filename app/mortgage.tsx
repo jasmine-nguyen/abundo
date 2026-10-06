@@ -9,6 +9,7 @@ import { useGoalScreenData } from '../src/queries';
 import { Bar, RetryButton, HeroGradientFill } from '../src/components/ui';
 import { PayoffSummary } from '../src/components/PayoffSummary';
 import { Header } from '../src/components/Header';
+import { EquityCard, EquityBody, EquityCta, AddLoanDetailsPrompt } from '../src/components/EquityCard';
 
 // WHIT-233: the home-loan detail screen, relocated out of the Goal tab (which is now the
 // Goals hub). It's a stack route under the root <Stack> — OUTSIDE NavBarsProvider — so it
@@ -240,15 +241,9 @@ export default function Mortgage() {
 
         {/* usable equity from the home — how much the user could unlock from their
             current home toward the deposit on their next place, once the value is set. */}
-        <View style={[styles.card, { marginBottom: 6 }]}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11, marginBottom: 13 }}>
-            <View style={styles.ipChip}><Glyph name="building" size={22} color={C.purple} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.repayTitle}>Equity for your next place</Text>
-              <Text style={styles.repaySub}>Usable equity from your current home</Text>
-            </View>
-            {g.usableEquity != null && g.depositPct != null && <View style={styles.ipPct}><Text style={styles.ipPctText}>{Math.round(g.depositPct)}%</Text></View>}
-          </View>
+        <EquityCard
+          right={g.usableEquity != null && g.depositPct != null && <View style={styles.ipPct}><Text style={styles.ipPctText}>{Math.round(g.depositPct)}%</Text></View>}
+        >
           {g.usableEquity != null ? (
             g.depositTarget != null && g.depositPct != null ? (
               // Deposit target set → real progress toward the user's own number.
@@ -258,31 +253,24 @@ export default function Mortgage() {
                   <Text style={[styles.cardTitle, { color: '#d9c9f7', fontSize: 12.5 }]}>{fmt(g.usableEquity)} unlocked</Text>
                   <Text style={styles.cardHint}>of {fmt(g.depositTarget)} needed</Text>
                 </View>
-                <Text style={styles.ipBody}>Keep chipping away — the more principal you clear, the more equity you can put toward your next place. 📈</Text>
+                <EquityBody>Keep chipping away — the more principal you clear, the more equity you can put toward your next place. 📈</EquityBody>
               </>
             ) : (
               // Equity known, but no deposit target yet — show the real figure, never a
               // fabricated denominator; nudge the user to set their target.
               <>
                 <Text style={[styles.cardTitle, { color: '#d9c9f7', fontSize: 12.5 }]}>{fmt(g.usableEquity)} unlocked</Text>
-                <Text style={styles.ipBody}>Set your deposit target and we'll track how close this gets you to your next place. 📈</Text>
-                <Pressable onPress={() => router.push('/loan')} style={styles.equityCta}>
-                  <Text style={styles.equityCtaText}>Set deposit target →</Text>
-                </Pressable>
+                <EquityBody>Set your deposit target and we'll track how close this gets you to your next place. 📈</EquityBody>
+                <EquityCta label="Set deposit target →" />
               </>
             )
           ) : g.factsReady ? (
             // Property value is set; the equity figure just needs the live balance.
-            <Text style={styles.ipBody}>Your usable equity will show once your balance loads.</Text>
+            <EquityBody>Your usable equity will show once your balance loads.</EquityBody>
           ) : (
-            <>
-              <Text style={styles.ipBody}>Add your home's value to see how much equity you could unlock toward your next place.</Text>
-              <Pressable onPress={() => router.push('/loan')} style={styles.equityCta}>
-                <Text style={styles.equityCtaText}>Add loan details →</Text>
-              </Pressable>
-            </>
+            <AddLoanDetailsPrompt />
           )}
-        </View>
+        </EquityCard>
       </ScrollView>
     </View>
   );
@@ -297,8 +285,6 @@ const styles = StyleSheet.create({
   heroSetupBody: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.heroInk2, lineHeight: 20, marginTop: 10 },
   heroSetupBtn: { alignSelf: 'flex-start', backgroundColor: C.heroInkWash, borderRadius: 11, paddingVertical: 9, paddingHorizontal: 14, marginTop: 14 },
   heroSetupBtnText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '700', color: C.heroInk },
-  equityCta: { alignSelf: 'flex-start', backgroundColor: 'rgba(201,179,245,.16)', borderRadius: 11, paddingVertical: 9, paddingHorizontal: 14, marginTop: 12 },
-  equityCtaText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.purple },
 
   miniCard: { flex: 1, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 14 },
   miniHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -331,8 +317,6 @@ const styles = StyleSheet.create({
   repayRetryBtn: { backgroundColor: tint(C.accentAlt, 0.14), borderRadius: 10, paddingVertical: 7, paddingHorizontal: 14 },
   repayRetryText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.accentSoft },
 
-  ipChip: { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(201,179,245,.16)', alignItems: 'center', justifyContent: 'center' },
   ipPct: { backgroundColor: 'rgba(201,179,245,.14)', paddingVertical: 3, paddingHorizontal: 9, borderRadius: 8 },
   ipPctText: { fontFamily: FONT.body, fontSize: 11, fontWeight: '700', color: C.purple },
-  ipBody: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, lineHeight: 18, marginTop: 11 },
 });
