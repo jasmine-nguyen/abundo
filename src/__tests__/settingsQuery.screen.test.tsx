@@ -14,7 +14,7 @@
 //                  store can't leak a status across describes.
 //   fake server  — each describe seeds /categories, /loanfacts and /rules to its own fixtures;
 //                  /paycycle answers the server default (14 days).
-//   ../context   — one stub; the screen reads only alerts/setSheet off context (rules AND cycleName
+//   ../context   — one stub; the screen reads only setSheet off context (rules AND cycleName
 //                  are read from the query hooks, so both stubbed fields are vestigial).
 //   expo-router  — the shared fake; routerSpies.replace + mockSignOut so the WHIT-198 log-out-mid-outage test can assert.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
@@ -42,7 +42,7 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return {
     ...actual,
-    useAppContext: () => ({ rules: [{ id: 'r1' }], cycleName: () => 'Fortnightly', alerts: true, toggleAlerts: jest.fn(), setSheet: jest.fn() }),
+    useAppContext: () => ({ rules: [{ id: 'r1' }], cycleName: () => 'Fortnightly', setSheet: jest.fn() }),
   };
 });
 
@@ -346,7 +346,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
 //   [A7] one row errored while the OTHER is still loading → the isLoading gate wins, rows
 //        show "…" (never a premature "—");
 //   [A8] hook-level: BOTH per-row error flags true on a 500, then BOTH false after success;
-//   [A9] the profile / Automation rules / Pay cycle / alerts / Log out rows stay rendered
+//   [A9] the profile / Automation rules / Pay cycle / Log out rows stay rendered
 //        + the Log out affordance stays usable DURING a categories outage (why there is no
 //        full-screen error card).
 describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {

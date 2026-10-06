@@ -465,7 +465,7 @@ const RAW_COLOR = new RegExp(RAW_COLOR_SOURCE, 'g');
 // Never raise one — that is the regression this exists to stop.
 const BASELINE: Record<string, number> = {
   'app/(tabs)/insights.tsx': 2,
-  'app/settings.tsx': 5,
+  'app/settings.tsx': 1,
   'app/(tabs)/transactions.tsx': 8,
   'app/budget/[id].tsx': 4,
   'app/budget/edit.tsx': 3,

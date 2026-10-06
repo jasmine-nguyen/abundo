@@ -21,10 +21,10 @@ jest.mock('../auth', () => ({
   getCurrentUser: () => mockUser,
 }));
 
-// The screen reads only alerts/setSheet off context; the selectors stay real.
+// The screen reads only setSheet off context; the selectors stay real.
 jest.mock('../context', () => ({
   ...(jest.requireActual('../context') as object),
-  useAppContext: () => ({ alerts: true, toggleAlerts: jest.fn(), setSheet: jest.fn() }),
+  useAppContext: () => ({ setSheet: jest.fn() }),
 }));
 
 import Settings from '../../app/settings';

@@ -482,12 +482,10 @@ export function groupTransactionsByDate(items: Transaction[]): { label: string; 
 // ---------------------------------------------------------------------------
 // WHIT-192: the eager server-data store is gone — every screen reads the TanStack
 // Query layer (src/queries) directly. AppContext now carries only what the query
-// layer can't: the alerts toggle, ephemeral UI (sheet/toast), the
+// layer can't: ephemeral UI (sheet/toast), the
 // write actions (which source their reads from the query cache), and the AI-insights
 // slice (still store-held pending its own migration).
 export interface AppContext {
-  // client-only UI state (not a server read)
-  alerts: boolean;
   // ephemeral ui
   sheet: Sheet; toast: string | null;
   // WHIT-544: a one-shot intent set by the "File by shop" leftover sheet so the Transactions
@@ -506,7 +504,6 @@ export interface AppContext {
   // await, so it bails on any session change (sign-out OR a different-account re-auth), not just anon.
   getSessionEpoch: () => number;
   showToast: (m: string) => void;
-  toggleAlerts: () => void;
   setPayCycleLength: (len: number) => void;
   setPayday: (last_pay_date: string) => void;
   openPicker: (txId: string) => void;
@@ -618,7 +615,6 @@ function ruleFields(pattern: string, categoryId: string, budgetExcluded: boolean
 const Ctx = createContext<AppContext | null>(null);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [alerts, setAlerts] = useState(true);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [toast, setToast] = useState<string | null>(null);
   // WHIT-544: one-shot flag bridging the "File by shop" sheet → the Uncategorized tab's
@@ -1650,16 +1646,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [showToast, runSave]);
 
   const value = useMemo<AppContext>(() => ({
-    alerts,
     sheet, toast,
     pendingUncategorizedSelect,
     setSheet, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast,
     requestUncategorizedSelect, clearUncategorizedSelect,
-    toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
     openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewFiling, fileCharges, retryApplyRulesJob, applyRulesJob, applyRulesStalled, applyTransactionEdit, deleteTransaction, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [alerts, sheet, toast, pendingUncategorizedSelect, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, requestUncategorizedSelect, clearUncategorizedSelect, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewFiling, fileCharges, retryApplyRulesJob, applyRulesJob, applyRulesStalled, applyTransactionEdit, deleteTransaction, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [sheet, toast, pendingUncategorizedSelect, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, requestUncategorizedSelect, clearUncategorizedSelect, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewFiling, fileCharges, retryApplyRulesJob, applyRulesJob, applyRulesStalled, applyTransactionEdit, deleteTransaction, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
