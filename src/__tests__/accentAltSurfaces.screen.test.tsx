@@ -73,7 +73,7 @@ describe('[G5] the selected-transaction wash (TransactionRow.tsx:88, swept from 
   });
 });
 
-describe('[G6] the shared Retry pill (DetailStates.tsx:49, swept from rgba(124,140,255,.16))', () => {
+describe('[G6] the shared Retry pill (ui.tsx RetryButton default, swept from rgba(124,140,255,.16))', () => {
   it('[G6] the error-state Retry button paints the chip blue at 16%', () => {
     render(
       <DetailStates

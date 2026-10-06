@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
-import { C, FONT, tint } from '../theme';
+import { C, FONT } from '../theme';
 import { RetryButton } from './ui';
 import { loadFailureReason, readFailureIsOffline } from '../apiError';
 import { formatTimeOfDay } from '../dateutil';
@@ -35,7 +35,7 @@ export function ListStates({
         <View testID={`${idPrefix}-error`} style={styles.rowsState}>
           <Text style={styles.stateText}>{errorText}</Text>
           {error != null && <Text style={styles.stateText}>{loadFailureReason(error)}</Text>}
-          <RetryButton onPress={onRetry} label={retryLabel} testID={`${idPrefix}-retry`} style={styles.retryBtn} textStyle={styles.retryText} />
+          <RetryButton onPress={onRetry} label={retryLabel} testID={`${idPrefix}-retry`} />
         </View>
       )}
     </>
@@ -53,7 +53,5 @@ export function StaleDataLine({ idPrefix, error, updatedAt }: { idPrefix: string
 const styles = StyleSheet.create({
   rowsState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, gap: 14 },
   stateText: { fontFamily: FONT.body, fontSize: 14.5, color: C.textMid, textAlign: 'center' },
-  retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: tint(C.accentAlt, 0.16) },
-  retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
   staleText: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '500', color: C.textDim, marginHorizontal: 4, marginBottom: 10 },
 });

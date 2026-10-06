@@ -43,16 +43,15 @@ export function HeroGradientFill() {
 // A Retry affordance for a failed-read error state. Owns the accessibility contract (button
 // role + a screen-reader label) and the "Retry" label in ONE place, so the app's several
 // error states — the Goal hero balance error, the Goal repayment error, and the milestone
-// balance error — can't drift apart on a11y (WHIT-121). Styling is per-site (hero-ink on the
-// light hero vs an accent chip on a dark card), so the caller passes the button + text styles;
-// only the a11y contract and the visible "Retry" label are shared.
+// balance error — can't drift apart on a11y (WHIT-121). WHIT-771: it also owns the default
+// accent chip look; a caller's style/textStyle is merged on top (e.g. hero-ink on the light hero).
 export function RetryButton({ onPress, label, testID, style, textStyle }: {
   onPress: () => void; label: string; testID: string;
   style?: StyleProp<ViewStyle>; textStyle?: StyleProp<TextStyle>;
 }) {
   return (
-    <Pressable onPress={onPress} style={style} accessibilityRole="button" accessibilityLabel={label} testID={testID}>
-      <Text style={textStyle}>Retry</Text>
+    <Pressable onPress={onPress} style={[styles.retryBtn, style]} accessibilityRole="button" accessibilityLabel={label} testID={testID}>
+      <Text style={[styles.retryText, textStyle]}>Retry</Text>
     </Pressable>
   );
 }
@@ -163,4 +162,6 @@ const styles = StyleSheet.create({
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginHorizontal: 4, marginBottom: 8 },
   hdrBtn: { height: 40, paddingHorizontal: 8, alignItems: 'flex-end', justifyContent: 'center' },
   hdrBtnText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentSoft },
+  retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: tint(C.accentAlt, 0.16) },
+  retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
 });
