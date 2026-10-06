@@ -16,20 +16,8 @@ import { pinToday } from './support/clock';
 import { pullControl, pullAndSettle } from './support/pull';
 
 // auth: controllable status + a real subscribe, so the "fires on login" test can flip it.
-let mockAuthStatus = 'authed';
-const mockAuthListeners = new Set<() => void>();
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: (l: () => void) => {
-    mockAuthListeners.add(l);
-    return () => mockAuthListeners.delete(l);
-  },
-  getAuthToken: async () => 'test-id-token',
-}));
-function setAuth(next: string) {
-  mockAuthStatus = next;
-  mockAuthListeners.forEach((l) => l());
-}
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
@@ -48,8 +36,7 @@ const payCycleReads = () => server.sent('GET', '/paycycle');
 const categoryReads = () => server.sent('GET', '/categories');
 
 beforeEach(() => {
-  mockAuthStatus = 'authed';
-  mockAuthListeners.clear();
+  resetAuth();
   // The shared pay cycle has length 30 (NOT the default 14), so "windowed on the real length"
   // genuinely proves budgets waited for the pay cycle rather than fetching with the default.
   seedBudgets(server);
@@ -122,7 +109,7 @@ it('a sustained failure sends a bounded number of requests (WHIT-668)', async ()
 });
 
 it('does not fetch before login, then fires the moment auth flips to authed', async () => {
-  mockAuthStatus = 'anon';
+  setAuthStatusQuietly('anon');
   renderBudgets();
   // Disabled queries never call their fetchers.
   expect(payCycleReads()).toHaveLength(0);
@@ -130,7 +117,7 @@ it('does not fetch before login, then fires the moment auth flips to authed', as
   expect(categoryReads()).toHaveLength(0);
 
   await act(async () => {
-    setAuth('authed');
+    setAuthStatus('authed');
   });
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
   expect(payCycleReads().length).toBeGreaterThan(0);
@@ -273,7 +260,7 @@ describe('auth transition mid-session', () => {
     const before = budgetReads().length;
 
     await act(async () => {
-      setAuth('locked');
+      setAuthStatus('locked');
     });
     expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
     expect(screen.queryByTestId('budgets-error')).toBeNull();

@@ -12,13 +12,8 @@ import { AppProvider, useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
 import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';
 import { queryClient } from '../queryClient';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
@@ -51,7 +46,7 @@ async function tick(times = 1) {
   }
 }
 
-beforeEach(() => { queryClient.clear(); jest.useFakeTimers(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); jest.useFakeTimers(); resetAuth(); });
 afterEach(() => { jest.useRealTimers(); queryClient.clear(); });
 
 it('raises the stall hint after N unchanged polls while the job keeps running (planning phase)', async () => {

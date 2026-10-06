@@ -11,11 +11,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient, wrapper, pause } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
-jest.mock('../auth', () => ({
-  getStatus: () => 'authed',
-  subscribe: () => () => {},
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import {
   useBudgetsScreenData, useBudgetDetailScreenData, useInsightsScreenData, useTransactionsScreenData,

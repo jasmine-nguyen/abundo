@@ -19,12 +19,8 @@ import type { Transaction } from '../types';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
 
-let mockAuthStatus = 'authed';
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: () => () => {},
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth } from './support/authMock';
 
 import { useTransactionResolver, useTransactionsSearchQuery, budgetTransactionsKey, categoryTransactionsKey, transactionsKey, transactionsRecentKey, transactionsSearchKey } from '../queries';
 
@@ -39,7 +35,7 @@ const ids = (list: Transaction[]) => list.map((t) => t.transaction_id);
 const emptyFeed = () => server.seed('/transactions/feed', { transactions: [], nextCursor: null });
 
 beforeEach(() => {
-  mockAuthStatus = 'authed';
+  resetAuth();
 });
 
 describe('[R] useTransactionResolver — cross-scoped-cache merge edges', () => {

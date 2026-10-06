@@ -5,41 +5,21 @@
 // seats an OAuth session (so it refreshes via /oauth2/token, not InitiateAuth).
 // expo-auth-session + expo-secure-store mocked.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { REFRESH_KEY, SENTINEL_KEY, METHOD_KEY, loadAuth, nowSec } from './support/authModule';
 
 const mockPromptAsync = jest.fn<() => Promise<unknown>>();
 const mockExchange = jest.fn<(...a: unknown[]) => Promise<unknown>>();
 const mockAuthRequestCfg = jest.fn<(cfg: unknown) => void>();
-jest.mock('expo-auth-session', () => ({
-  makeRedirectUri: () => 'acme://oauthredirect',
-  ResponseType: { Code: 'code' },
-  AuthRequest: class {
-    codeVerifier = 'verifier';
-    promptAsync = mockPromptAsync;
-    constructor(cfg: unknown) {
-      mockAuthRequestCfg(cfg);
-    }
-  },
-  exchangeCodeAsync: (...a: unknown[]) => mockExchange(...a),
-  refreshAsync: jest.fn(),
-}));
+jest.mock('expo-auth-session', () =>
+  require('./support/authModule').authSessionMock({ promptAsync: mockPromptAsync, exchange: mockExchange, onAuthRequest: mockAuthRequestCfg }),
+);
 
 const mockGetItem = jest.fn<(key: string, opts?: unknown) => Promise<string | null>>();
 const mockSetItem = jest.fn<(key: string, val: string, opts?: unknown) => Promise<void>>(async () => {});
 const mockDeleteItem = jest.fn<(key: string) => Promise<void>>(async () => {});
-jest.mock('expo-secure-store', () => ({
-  getItemAsync: (...a: unknown[]) => mockGetItem(...(a as [string, unknown])),
-  setItemAsync: (...a: unknown[]) => mockSetItem(...(a as [string, string, unknown])),
-  deleteItemAsync: (...a: unknown[]) => mockDeleteItem(...(a as [string])),
-  canUseBiometricAuthentication: () => false,
-  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
-}));
-
-const REFRESH_KEY = 'abundo.cognito.refreshToken';
-const SENTINEL_KEY = 'abundo.cognito.hasSession';
-const METHOD_KEY = 'abundo.cognito.authMethod';
-const nowSec = () => Math.floor(Date.now() / 1000);
-// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-const loadAuth = (): typeof import('../auth') => require('../auth');
+jest.mock('expo-secure-store', () =>
+  require('./support/authModule').secureStoreMock({ getItem: mockGetItem, setItem: mockSetItem, deleteItem: mockDeleteItem }),
+);
 
 function promptOkExchangeOk() {
   mockPromptAsync.mockResolvedValue({ type: 'success', params: { code: 'CODE' } });

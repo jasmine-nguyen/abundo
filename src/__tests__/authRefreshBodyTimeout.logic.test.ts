@@ -4,30 +4,14 @@
 // refreshViaInitiateAuth is internal, so we drive it through the public getAuthToken; the storage
 // method key routes to the SRP (fetch) refresh path. Harness mirrors authRestoreSeedGaps.logic.test.ts.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { REFRESH_KEY, METHOD_KEY, loadAuth } from './support/authModule';
 
-jest.mock('expo-auth-session', () => ({
-  makeRedirectUri: () => 'acme://oauthredirect',
-  ResponseType: { Code: 'code' },
-  AuthRequest: class { codeVerifier = 'verifier'; promptAsync = jest.fn(); },
-  exchangeCodeAsync: jest.fn(),
-  refreshAsync: jest.fn(),
-}));
+jest.mock('expo-auth-session', () => require('./support/authModule').authSessionMock());
 
 const mockGetItem = jest.fn<(key: string, opts?: unknown) => Promise<string | null>>();
-jest.mock('expo-secure-store', () => ({
-  getItemAsync: (...a: unknown[]) => mockGetItem(...(a as [string, unknown])),
-  setItemAsync: jest.fn(async () => {}),
-  deleteItemAsync: jest.fn(async () => {}),
-  canUseBiometricAuthentication: () => false,
-  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
-}));
+jest.mock('expo-secure-store', () => require('./support/authModule').secureStoreMock({ getItem: mockGetItem }));
 
 jest.mock('react-native', () => ({ Platform: { get OS() { return 'ios'; } } }));
-
-const REFRESH_KEY = 'abundo.cognito.refreshToken';
-const METHOD_KEY = 'abundo.cognito.authMethod';
-// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-const loadAuth = (): typeof import('../auth') => require('../auth');
 
 beforeEach(() => {
   jest.resetModules();

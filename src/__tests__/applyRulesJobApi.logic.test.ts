@@ -10,7 +10,7 @@ import { startApplyRulesJob, getApplyRulesJob } from '../api';
 import type { ApplyRulesJob } from '../api';
 import { ApiError } from '../apiError';
 
-jest.mock('../auth', () => ({ getAuthToken: jest.fn(async () => 'test-token') }));
+jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('test-token'));
 
 const JOB: ApplyRulesJob = {
   jobId: 'abc123', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,

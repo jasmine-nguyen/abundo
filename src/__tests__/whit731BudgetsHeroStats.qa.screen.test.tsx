@@ -7,11 +7,7 @@ import { installFakeServer } from './support/fakeServer';
 import { COFFEE } from './support/categories';
 import { seedBudgets, renderLoadedBudgets, showBudgets, heroTotals } from './support/budgetsScreen';
 
-jest.mock('../auth', () => ({
-  getStatus: () => 'authed',
-  subscribe: () => () => {},
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const server = installFakeServer();

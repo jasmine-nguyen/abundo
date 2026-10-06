@@ -8,7 +8,7 @@
 //   - WHIT-198   gaps: loan-only / ordering / fan-out      (was settingsSetupErrorGaps)
 //
 // The three sources diverged in all their mock factories; unified here to supersets that hoist once:
-//   ../auth      — the LIVE store (settingsQuery's), driven by setAuth, plus a shared mockSignOut so
+//   ../auth      — the LIVE store (settingsQuery's), driven by setAuthStatus, plus a shared mockSignOut so
 //                  the WHIT-198 log-out-mid-outage test can assert; the two static-'authed' sources
 //                  never flip, and each describe's beforeEach re-seeds 'authed' so the shared mutable
 //                  store can't leak a status across describes.
@@ -28,23 +28,13 @@ import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
 
 // Live miniature auth store (superset — only settingsQuery flips it; the gaps describes stay 'authed').
-let mockAuthStatus = 'authed';
-const mockAuthListeners = new Set<() => void>();
 const mockSignOut = jest.fn();
 jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: (l: () => void) => {
-    mockAuthListeners.add(l);
-    return () => mockAuthListeners.delete(l);
-  },
+  ...require('./support/authMock').authMockModule(),
   getCurrentUser: () => null,
   signOut: () => mockSignOut(),
-  getAuthToken: async () => 'test-id-token',
 }));
-function setAuth(next: string) {
-  mockAuthStatus = next;
-  mockAuthListeners.forEach((l) => l());
-}
+import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 
 // Real selectors (loanFactsReady) + composite deps; stub only the store-backed client-state rows.
 // `rules` and `cycleName` here are vestigial — the screen reads them from the query hooks, not context.
@@ -87,8 +77,7 @@ describe('WHIT-191a — Settings server rows on the real query layer', () => {
   }
 
   beforeEach(() => {
-    mockAuthStatus = 'authed';
-    mockAuthListeners.clear();
+    resetAuth();
     server.seed(CATEGORIES, CATS);
     server.seed(LOAN_FACTS, READY_FACTS);
     server.seed(RULES, []); // rules read — kept deterministic for the "…" count
@@ -131,12 +120,12 @@ describe('WHIT-191a — Settings server rows on the real query layer', () => {
   });
 
   it('does not fetch before login, then fires on auth flip to authed', async () => {
-    mockAuthStatus = 'anon';
+    setAuthStatusQuietly('anon');
     renderSettings();
     expect(categoryReads()).toBe(0);
     expect(loanReads()).toBe(0);
 
-    await act(async () => { setAuth('authed'); });
+    await act(async () => { setAuthStatus('authed'); });
     expect(await screen.findByText('3')).toBeTruthy();
     expect(loanReads()).toBeGreaterThan(0);
   });
@@ -168,8 +157,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
   const READY_FACTS = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
 
   beforeEach(() => {
-    mockAuthStatus = 'authed';
-    mockAuthListeners.clear();
+    resetAuth();
     server.seed(CATEGORIES, CATS);
     server.seed(LOAN_FACTS, READY_FACTS);
     server.seed(RULES, ONE_RULE);
@@ -377,8 +365,7 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
   const READY_FACTS = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
 
   beforeEach(() => {
-    mockAuthStatus = 'authed';
-    mockAuthListeners.clear();
+    resetAuth();
     server.seed(CATEGORIES, CATS);
     server.seed(LOAN_FACTS, READY_FACTS);
     // rules length 1 so the Automation-rules row shows a stable "1" during an outage.

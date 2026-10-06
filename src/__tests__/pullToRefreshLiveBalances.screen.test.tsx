@@ -15,12 +15,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { makeClient } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
-let mockAuthStatus = 'authed';
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: () => () => {},
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth } from './support/authMock';
 
 const mockShowToast = jest.fn<(m: string) => void>();
 
@@ -57,7 +53,7 @@ const pull = async () => { await act(async () => { rc().props.onRefresh(); }); }
 
 describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-212 gaps)', () => {
   beforeEach(() => {
-    mockAuthStatus = 'authed';
+    resetAuth();
     server.seed('/transactions/feed', { transactions: TXNS, nextCursor: null });
     server.seed('/categories', mockCategories);
     server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]);

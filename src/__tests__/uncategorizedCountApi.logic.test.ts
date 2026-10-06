@@ -7,7 +7,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { fetchUncategorizedCount } from '../api';
 
-jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>(async () => 'tok') }));
+jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('tok'));
 
 const fetchMock = jest.fn<() => Promise<Response>>();
 beforeEach(() => { fetchMock.mockReset(); (globalThis as unknown as { fetch: typeof fetchMock }).fetch = fetchMock; });

@@ -8,13 +8,8 @@ import type { ChatJob } from '../api';
 import { installFakeServer } from './support/fakeServer';
 import { flush } from './support/queryClient';
 
-let mockAuthStatus = 'authed';
-const mockAuthListeners = new Set<() => void>();
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: (listener: () => void) => { mockAuthListeners.add(listener); return () => mockAuthListeners.delete(listener); },
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, resetAuth } from './support/authMock';
 
 import {
   CHAT_CONSENT_KEY, CHAT_ERROR_TEXT, CHAT_MAX_NET_ERRORS, CHAT_MAX_WAIT_MS, CHAT_MESSAGE_MAX_LEN, CHAT_POLL_DELAY_MS,
@@ -52,8 +47,7 @@ async function mount() {
 
 beforeEach(async () => {
   jest.useFakeTimers();
-  mockAuthStatus = 'authed';
-  mockAuthListeners.clear();
+  resetAuth();
   await AsyncStorage.clear();
 });
 
@@ -222,8 +216,7 @@ describe('opening, new chat and sign-out', () => {
     act(() => chat.send('Hi'));
     await flush();
 
-    mockAuthStatus = 'anon';
-    act(() => mockAuthListeners.forEach((listener) => listener()));
+    act(() => setAuthStatus('anon'));
     expect(chat.messages).toEqual([]);
     expect(chat.open).toBe(false);
     expect(chat.inFlight).toBe(false);

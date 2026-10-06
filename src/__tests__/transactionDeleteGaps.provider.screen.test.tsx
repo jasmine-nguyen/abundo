@@ -9,11 +9,7 @@ import type { Transaction } from '../types';
 import { queryClient } from '../queryClient';
 import { seedTransactionsPages, readTransactionsCache } from './support/transactionsCache';
 
-jest.mock('../auth', () => ({
-  getStatus: () => 'authed',
-  subscribe: () => () => {},
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
 

@@ -4,36 +4,21 @@
 // single-flight guard is CLEARED after a failed refresh so a later call retries (no
 // wedge); signInWithGoogle where exchangeCodeAsync throws leaves nothing stored.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { REFRESH_KEY, loadAuth, nowSec } from './support/authModule';
 
 const mockPromptAsync = jest.fn<() => Promise<unknown>>();
 const mockExchange = jest.fn<(...a: unknown[]) => Promise<unknown>>();
 const mockRefresh = jest.fn<(...a: unknown[]) => Promise<unknown>>();
 
-jest.mock('expo-auth-session', () => ({
-  makeRedirectUri: () => 'acme://oauthredirect',
-  ResponseType: { Code: 'code' },
-  AuthRequest: class {
-    codeVerifier = 'test-verifier';
-    promptAsync = mockPromptAsync;
-  },
-  exchangeCodeAsync: (...a: unknown[]) => mockExchange(...a),
-  refreshAsync: (...a: unknown[]) => mockRefresh(...a),
-}));
+jest.mock('expo-auth-session', () =>
+  require('./support/authModule').authSessionMock({ promptAsync: mockPromptAsync, exchange: mockExchange, refresh: mockRefresh }),
+);
 
 const mockStore = new Map<string, string>();
-jest.mock('expo-secure-store', () => ({
-  setItemAsync: jest.fn(async (k: string, v: string) => { mockStore.set(k, v); }),
-  getItemAsync: jest.fn(async (k: string) => mockStore.get(k) ?? null),
-  deleteItemAsync: jest.fn(async (k: string) => { mockStore.delete(k); }),
-}));
+jest.mock('expo-secure-store', () => require('./support/authModule').memorySecureStoreMock(mockStore));
 jest.mock('expo-web-browser', () => ({ openAuthSessionAsync: jest.fn(async () => ({ type: 'dismiss' })) }));
 
-const REFRESH_KEY = 'abundo.cognito.refreshToken';
 const DOMAIN = 'https://abundo-auth.auth.ap-southeast-2.amazoncognito.com';
-const nowSec = () => Math.floor(Date.now() / 1000);
-
-// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-const loadAuth = (): typeof import('../auth') => require('../auth');
 
 beforeEach(() => {
   jest.resetModules();

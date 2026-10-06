@@ -10,17 +10,8 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
-let mockAuthStatus = 'authed';
-const mockAuthListeners = new Set<() => void>();
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: (l: () => void) => { mockAuthListeners.add(l); return () => mockAuthListeners.delete(l); },
-  getAuthToken: async () => 'test-id-token',
-}));
-function setAuth(next: string) {
-  mockAuthStatus = next;
-  mockAuthListeners.forEach((l) => l());
-}
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 
 import { useRulesScreenData } from '../queries';
 
@@ -30,8 +21,7 @@ const ruleRequests = () => server.sent('GET', '/rules');
 const SERVER = [{ id: 'e1', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs' }];
 
 beforeEach(() => {
-  mockAuthStatus = 'authed';
-  mockAuthListeners.clear();
+  resetAuth();
   server.seed('/rules', SERVER);
 });
 
@@ -45,11 +35,11 @@ it('loads + maps the rules from the query (value→pattern, isNew:false)', async
 });
 
 it('does not fetch before login, then fires on the auth flip to authed', async () => {
-  mockAuthStatus = 'anon';
+  setAuthStatusQuietly('anon');
   const { result } = renderHook(() => useRulesScreenData(), { wrapper: wrapper(makeClient()) });
   expect(ruleRequests()).toHaveLength(0);
 
-  await act(async () => { setAuth('authed'); });
+  await act(async () => { setAuthStatus('authed'); });
   await waitFor(() => expect(result.current.rules).toHaveLength(1));
   expect(ruleRequests().length).toBeGreaterThan(0);
 });

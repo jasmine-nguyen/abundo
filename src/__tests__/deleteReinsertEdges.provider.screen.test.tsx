@@ -12,7 +12,7 @@ import type { Rule } from '../model';
 import type { GoalRecord } from '../api';
 import { queryClient } from '../queryClient';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
 

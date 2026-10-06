@@ -10,11 +10,7 @@ import { seedBudgets, renderBudgets, renderLoadedBudgets, heroTotals } from './s
 import { COFFEE, GROCERIES_RECORD } from './support/categories';
 import { MINUS } from '../theme';
 
-jest.mock('../auth', () => ({
-  getStatus: () => 'authed',
-  subscribe: () => () => {},
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const server = installFakeServer();

@@ -17,7 +17,7 @@ import { renderHook, waitFor, act } from '@testing-library/react-native';
 import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { useInsightsScreenData } from '../queries';
 import { UNCATEGORIZED_KEY } from '../model';

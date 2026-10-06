@@ -11,14 +11,8 @@ import { runOptimisticSave, type SaveSteps } from '../optimisticSave';
 import type { UncategorizedMerchantGroup } from '../api';
 import { queryClient } from '../queryClient';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (status: typeof mockStatus) => { mockStatus = status; mockListeners.forEach((l) => l()); };
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 
 const server = installFakeServer();
@@ -38,7 +32,7 @@ function mountHook(isSameSession: () => boolean) {
   })).result;
 }
 
-beforeEach(() => { queryClient.clear(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); resetAuth(); });
 afterEach(() => { queryClient.clear(); });
 
 // [A1] (P0) The runner's session verdict beats the clash mapping for both preview and file now.
@@ -89,7 +83,7 @@ it('[A3] drops a preview clash and a file-now clash that land after sign-out', a
   let filing!: Promise<FilingResult>;
   act(() => { previewing = r.current.previewFiling(SHOP); });
   act(() => { filing = r.current.fileCharges(SHOP, { now: true }); });
-  act(() => { mockSetStatus('anon'); });
+  act(() => { setAuthStatus('anon'); });
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
   let previewResult: FilingResult | null = null;

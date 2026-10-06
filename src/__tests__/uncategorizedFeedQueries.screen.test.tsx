@@ -19,12 +19,8 @@ import type { Transaction } from '../types';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
 
-let mockAuthStatus = 'authed';
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: () => () => {},
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth } from './support/authMock';
 
 import { useTransactionsScreenData, useTransactionResolver, transactionsKey, uncategorizedFeedKey, budgetTransactionsKey, categoryTransactionsKey, transactionsRecentKey } from '../queries';
 
@@ -40,7 +36,7 @@ const tx = (id: string, over: Partial<Transaction> = {}): Transaction => ({
 const ids = (list: Transaction[]) => list.map((t) => t.transaction_id);
 
 beforeEach(() => {
-  mockAuthStatus = 'authed';
+  resetAuth();
 });
 
 // [C1] tab-switch lifecycle — one mount, tab arg changes. Switching back to 'all' must keep the

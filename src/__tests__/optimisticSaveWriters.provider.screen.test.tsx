@@ -8,19 +8,8 @@ import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import * as Crypto from 'expo-crypto';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (s: typeof mockStatus) => {
-  mockStatus = s;
-  mockListeners.forEach((l) => l());
-};
-const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mockListeners.delete(l); };
-
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (l: () => void) => mockSubscribe(l),
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, resetAuth } from './support/authMock';
 
 import { AppProvider, useAppContext } from '../context';
 import { queryClient } from '../queryClient';
@@ -32,15 +21,14 @@ const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{c
 
 // Production order: clearSession() wipes the cache, THEN broadcasts anon (the epoch bump).
 function signOut() {
-  act(() => { queryClient.clear(); mockSetStatus('anon'); });
+  act(() => { queryClient.clear(); setAuthStatus('anon'); });
 }
 
 const cat = (id: string, name: string) => ({ id, name, bucket: 'Living', icon: 'tag', color: '#fff', recent: 0 });
 const rollup = (target: number) => ({ target, spent: 0 });
 
 beforeEach(() => {
-  mockStatus = 'authed';
-  mockListeners.clear();
+  resetAuth();
   queryClient.clear();
   jest.clearAllMocks();
 });
@@ -94,7 +82,7 @@ describe('WHIT-628 — spread/budget writers settling after sign-out', () => {
     let pending!: Promise<boolean>;
     act(() => { pending = result.current.deleteBudget('c1'); });
     signOut();
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('authed'));
     queryClient.setQueryData(['budgets'], { other: rollup(7) });
     let returned!: boolean;
     await act(async () => {

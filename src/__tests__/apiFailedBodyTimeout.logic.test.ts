@@ -6,7 +6,7 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { createCategory, ApiError } from '../api';
 
-jest.mock('../auth', () => ({ getAuthToken: jest.fn(async () => 'test-token') }));
+jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('test-token'));
 
 const input = { name: 'Coffee', bucket: 'Lifestyle' as const, icon: 'coffee' };
 

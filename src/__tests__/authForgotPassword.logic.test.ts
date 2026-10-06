@@ -1,6 +1,7 @@
 // WHIT-182 — requestPasswordReset / confirmPasswordReset. Cognito emails a code, then
 // the code + a new password reset it (stateless; never seats a session). SDK mocked.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { loadAuth } from './support/authModule';
 
 const mockForgotPassword = jest.fn<(cb: Record<string, (arg?: unknown) => void>) => void>();
 const mockConfirmPassword =
@@ -16,9 +17,6 @@ jest.mock('amazon-cognito-identity-js', () => ({
     confirmPassword = mockConfirmPassword;
   },
 }));
-
-// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-const loadAuth = (): typeof import('../auth') => require('../auth');
 
 beforeEach(() => {
   jest.resetModules();

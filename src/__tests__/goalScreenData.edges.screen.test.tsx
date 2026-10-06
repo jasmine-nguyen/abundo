@@ -13,13 +13,8 @@ import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 import { SAVED_MILESTONES } from './support/milestonePlan';
 
-let mockAuthStatus = 'authed';
-const mockAuthListeners = new Set<() => void>();
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: (l: () => void) => { mockAuthListeners.add(l); return () => mockAuthListeners.delete(l); },
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth } from './support/authMock';
 
 import { useGoalScreenData } from '../queries';
 import { EMPTY_LOAN_FACTS } from '../model';
@@ -33,8 +28,7 @@ const REPAYMENT_2 = { amount: 1600, date: '2026-08-01', principal: 1300, interes
 const READY_FACTS = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
 
 beforeEach(() => {
-  mockAuthStatus = 'authed';
-  mockAuthListeners.clear();
+  resetAuth();
   server.seed('/homeloan', HOME_LOAN);
   server.seed('/repayment', REPAYMENT);
   server.seed('/loanfacts', READY_FACTS);

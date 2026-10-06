@@ -9,12 +9,8 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
-let mockAuthStatus = 'authed';
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: () => () => {},
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth, setAuthStatusQuietly } from './support/authMock';
 
 import { useCategories, usePayCycle, useBudgetDetailScreenData, useBudgetsScreenData, useCategoryCycleTransactionsQuery, useCategoryTransactionsScreenData, categoriesKey } from '../queries';
 
@@ -26,20 +22,20 @@ const SALARY_TX = '/categories/salary/transactions';
 const CATS = [{ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
 
 beforeEach(() => {
-  mockAuthStatus = 'authed';
+  resetAuth();
   server.seed('/categories', CATS);
   server.seed('/paycycle', { length: 30, last_pay_date: '2024-01-03' });
   server.seed('/budgets', { coffee: { target: 100, posted: 40, pending: 10 } });
 });
 
 it('useCategories maps the list + a null-tolerant lookup, and does not fetch before login', async () => {
-  mockAuthStatus = 'anon';
+  setAuthStatusQuietly('anon');
   const anon = renderHook(() => useCategories(), { wrapper: wrapper(makeClient()) });
   expect(server.sent('GET', '/categories')).toHaveLength(0);
   expect(anon.result.current.categories).toEqual([]);
   expect(anon.result.current.category('coffee')).toBeUndefined();
 
-  mockAuthStatus = 'authed';
+  setAuthStatusQuietly('authed');
   const { result } = renderHook(() => useCategories(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.categories).toHaveLength(1));
   expect(result.current.category('coffee')?.name).toBe('Coffee');
@@ -168,7 +164,7 @@ describe('useCategoryTransactionsScreenData (WHIT-374)', () => {
   const ROWS = [{ transaction_id: 'salary-c0' }];
 
   beforeEach(() => {
-    mockAuthStatus = 'authed';
+    resetAuth();
     server.seed('/categories', CATS);
     server.seed(SALARY_TX, ROWS);
   });

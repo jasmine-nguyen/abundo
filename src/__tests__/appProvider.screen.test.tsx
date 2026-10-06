@@ -20,7 +20,7 @@ import { DELETE_GROCERIES } from './support/deleteCategorySeed';
 
 // The writers guard the load-error banner on auth (retired), but auth still gates
 // nothing in these direct-action tests; pin 'authed' for parity with the app.
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 const server = installFakeServer();
 

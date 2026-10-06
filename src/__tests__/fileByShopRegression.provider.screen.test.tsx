@@ -17,12 +17,8 @@ import type { UncategorizedMerchantGroup } from '../api';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: () => () => {},
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
 
@@ -46,7 +42,7 @@ const GROUP: UncategorizedMerchantGroup = {
 
 function mount() { return renderHook(() => useAppContext(), { wrapper }).result; }
 
-beforeEach(() => { queryClient.clear(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); resetAuth(); });
 afterEach(() => { queryClient.clear(); });
 
 // [A30] "Apply my rules" must stay a plain sweep on the wire — no inline rule. Fail-on-revert: pass

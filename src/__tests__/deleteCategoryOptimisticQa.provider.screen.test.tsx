@@ -6,19 +6,8 @@ import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import type { InfiniteData, QueryKey } from '@tanstack/react-query';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (s: typeof mockStatus) => {
-  mockStatus = s;
-  mockListeners.forEach((l) => l());
-};
-const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mockListeners.delete(l); };
-
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (l: () => void) => mockSubscribe(l),
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, resetAuth } from './support/authMock';
 
 import { AppProvider, useAppContext } from '../context';
 import type { Transaction, Category } from '../types';
@@ -69,7 +58,7 @@ const invalidated = (key: QueryKey) => queryClient.getQueryState(key)?.isInvalid
 
 // Production order: clearSession() wipes the cache, THEN broadcasts anon (the epoch bump).
 function signOut() {
-  act(() => { queryClient.clear(); mockSetStatus('anon'); });
+  act(() => { queryClient.clear(); setAuthStatus('anon'); });
 }
 
 // The delete waits on the server until resolve() (it succeeds) or reject(reply) (it gets `reply`).
@@ -85,8 +74,7 @@ async function startDelete(result: { current: ReturnType<typeof useAppContext> }
 }
 
 beforeEach(() => {
-  mockStatus = 'authed';
-  mockListeners.clear();
+  resetAuth();
   queryClient.clear();
 });
 afterEach(() => { queryClient.clear(); });

@@ -15,14 +15,8 @@ import type { UncategorizedMerchantGroup } from '../api';
 import { ApiError } from '../apiError';
 import { queryClient } from '../queryClient';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (status: typeof mockStatus) => { mockStatus = status; mockListeners.forEach((l) => l()); };
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
 
@@ -60,7 +54,7 @@ function mount() { return renderHook(() => useAppContext(), { wrapper }); }
 function seedRules() { queryClient.setQueryData<Rule[]>(['rules'], [EXISTING_RULE]); }
 function rules() { return queryClient.getQueryData<Rule[]>(['rules']) ?? []; }
 
-beforeEach(() => { queryClient.clear(); jest.useFakeTimers(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); jest.useFakeTimers(); resetAuth(); });
 afterEach(() => { jest.useRealTimers(); queryClient.clear(); });
 
 // [A1] (P0) The plain sweep carries no inline rule, so a 409 is a plain failure on every path.
@@ -280,12 +274,12 @@ it('[A14] stops polling, clears the job and frees the lock on a Face ID lock', a
   const pollsBefore = polls();
   expect(pollsBefore).toBeGreaterThan(0);
 
-  act(() => { mockSetStatus('locked'); });
+  act(() => { setAuthStatus('locked'); });
   await act(async () => { await jest.advanceTimersByTimeAsync(20000); });
 
   expect(r.current.applyRulesJob).toBeNull();
   expect(polls()).toBe(pollsBefore);
-  act(() => { mockSetStatus('authed'); });
+  act(() => { setAuthStatus('authed'); });
   server.seed(APPLY_RULES, report());
   let after: FilingResult | null = null;
   await act(async () => { after = await r.current.fileCharges(SWEEP, { now: true }); });
@@ -304,7 +298,7 @@ it('[A15] drops a preview and a direct run that settle after sign-out', async ()
   let filing!: Promise<FilingResult>;
   act(() => { previewing = r.current.previewFiling(SHOP); });
   act(() => { filing = r.current.fileCharges(NEW_RULE, { now: true }); });
-  act(() => { mockSetStatus('anon'); });
+  act(() => { setAuthStatus('anon'); });
   seedRules();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 

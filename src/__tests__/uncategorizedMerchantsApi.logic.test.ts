@@ -10,7 +10,7 @@ import { fetchUncategorizedMerchants } from '../api';
 import { selectUncategorizedMerchants } from '../queries';
 import type { UncategorizedMerchants } from '../api';
 
-jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>(async () => 'tok') }));
+jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('tok'));
 
 const fetchMock = jest.fn<() => Promise<Response>>();
 beforeEach(() => { fetchMock.mockReset(); (globalThis as unknown as { fetch: typeof fetchMock }).fetch = fetchMock; });

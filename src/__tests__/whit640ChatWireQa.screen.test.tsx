@@ -9,7 +9,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { installFakeServer } from './support/fakeServer';
 import { flush } from './support/queryClient';
 
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { CHAT_ERROR_TEXT, CHAT_POLL_DELAY_MS, ChatProvider, useChat } from '../chat/ChatContext';
 import type { ChatContextValue } from '../chat/ChatContext';

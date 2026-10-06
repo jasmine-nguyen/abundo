@@ -13,12 +13,8 @@ import { makeClient, wrapper } from './support/queryClient';
 import { cycleClock } from '../payCycle';
 import { installFakeServer } from './support/fakeServer';
 
-let mockAuthStatus = 'authed';
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: () => () => {},
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth } from './support/authMock';
 
 import { usePayCycle, useBudgetsScreenData, useBudgetDetailScreenData, useInsightsScreenData } from '../queries';
 
@@ -33,7 +29,7 @@ const SERVER_DAYS = CLOCK_DAYS === 1 ? 2 : 1;       // a different, in-range val
 const SERVER = { ...PAY, days_left: SERVER_DAYS };
 
 beforeEach(() => {
-  mockAuthStatus = 'authed';
+  resetAuth();
   server.seed('/paycycle', SERVER);
 });
 

@@ -16,12 +16,8 @@ import { installFakeServer } from './support/fakeServer';
 
 import type { UncategorizedMerchants } from '../api';
 
-let mockAuthStatus = 'authed';
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: () => () => {},
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { resetAuth, setAuthStatusQuietly } from './support/authMock';
 
 import { useUncategorizedMerchants } from '../queries';
 
@@ -37,13 +33,13 @@ const payload: UncategorizedMerchants = {
 };
 
 beforeEach(() => {
-  mockAuthStatus = 'authed';
+  resetAuth();
   server.seed(MERCHANTS_PATH, payload);
 });
 
 // [M1] auth still required — the backlog gate is additive, not a replacement.
 it('does NOT fetch while signed out, even with enabled=true', () => {
-  mockAuthStatus = 'anon';
+  setAuthStatusQuietly('anon');
   const { result } = renderHook(() => useUncategorizedMerchants(true), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
   expect(merchantRequests()).toHaveLength(0);
   expect(result.current.merchants).toBeUndefined();

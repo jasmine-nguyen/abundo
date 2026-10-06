@@ -6,16 +6,8 @@ import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (s: typeof mockStatus) => { mockStatus = s; mockListeners.forEach((l) => l()); };
-const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mockListeners.delete(l); };
-
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (l: () => void) => mockSubscribe(l),
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, resetAuth } from './support/authMock';
 
 import { AppProvider, useAppContext } from '../context';
 import { queryClient } from '../queryClient';
@@ -27,9 +19,9 @@ const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{c
 
 // Production sign-out order: clear the cache, THEN broadcast anon (which the context subscription
 // turns into the reset). Matches saveMilestonesSignOut.signOut.
-function signOut() { act(() => { queryClient.clear(); mockSetStatus('anon'); }); }
+function signOut() { act(() => { queryClient.clear(); setAuthStatus('anon'); }); }
 
-beforeEach(() => { mockStatus = 'authed'; mockListeners.clear(); queryClient.clear(); });
+beforeEach(() => { resetAuth(); queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });
 
 describe('WHIT-544 — a pending Uncategorized-select intent is dropped on sign-out', () => {

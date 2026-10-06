@@ -16,17 +16,8 @@ import { AppProvider, useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
 import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';
 import { queryClient } from '../queryClient';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (status: typeof mockStatus) => {
-  mockStatus = status;
-  mockListeners.forEach((l) => l());
-};
-jest.mock('../auth', () => ({
-  getStatus: () => mockStatus,
-  subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
-  getAuthToken: async () => 'test-id-token',
-}));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
@@ -55,7 +46,7 @@ async function tick(times = 1) {
   }
 }
 
-beforeEach(() => { queryClient.clear(); jest.useFakeTimers(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); jest.useFakeTimers(); resetAuth(); });
 afterEach(() => { jest.useRealTimers(); queryClient.clear(); });
 
 // [G1] The stall hint's "Try again" (WHIT-565 decision: Start over) must work even though the job is
@@ -93,9 +84,9 @@ it('[G2] a fresh sweep after a lock leak does not re-trip the hint on the first 
   expect(r.current.applyRulesStalled).toBe(true);
 
   // Lock (drops job, frees lock, LEAVES stall refs) then unlock.
-  await act(async () => { mockSetStatus('locked'); });
+  await act(async () => { setAuthStatus('locked'); });
   expect(r.current.applyRulesJob).toBeNull();
-  await act(async () => { mockSetStatus('authed'); });
+  await act(async () => { setAuthStatus('authed'); });
 
   // Fresh sweep starts clean (lock effect + begin both reset the stall refs). First poll (0:0)
   // must NOT re-trip.

@@ -6,7 +6,7 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { refreshAccountBalances } from '../api';
 
-jest.mock('../auth', () => ({ getAuthToken: jest.fn(async () => 'test-token') }));
+jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('test-token'));
 
 describe('refreshAccountBalances 30s budget', () => {
   beforeEach(() => { jest.useFakeTimers(); });

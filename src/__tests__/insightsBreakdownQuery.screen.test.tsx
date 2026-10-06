@@ -15,20 +15,8 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient, pause } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
 
-let mockAuthStatus = 'authed';
-const mockAuthListeners = new Set<() => void>();
-jest.mock('../auth', () => ({
-  getStatus: () => mockAuthStatus,
-  subscribe: (l: () => void) => {
-    mockAuthListeners.add(l);
-    return () => mockAuthListeners.delete(l);
-  },
-  getAuthToken: async () => 'test-id-token',
-}));
-function setAuth(next: string) {
-  mockAuthStatus = next;
-  mockAuthListeners.forEach((l) => l());
-}
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 
 // Stub only useAppContext (the AI card); keep the real categoryBreakdown/cycleClock/
 // toCategory that ../queries and the screen import. The AI actions are single stable fns (as the
@@ -68,8 +56,7 @@ function renderInsights(client = makeClient()) {
 }
 
 beforeEach(() => {
-  mockAuthStatus = 'authed';
-  mockAuthListeners.clear();
+  resetAuth();
   mockRefreshAiInsights.mockClear();
   mockGenerateAiInsights.mockClear();
   server.seed('/breakdown', BREAKDOWN);
@@ -88,13 +75,13 @@ it('renders breakdown rows from the query, fetched in parallel with the pay cycl
 });
 
 it('does not fetch breakdown before login, then fires when auth flips to authed', async () => {
-  mockAuthStatus = 'anon';
+  setAuthStatusQuietly('anon');
   renderInsights();
   expect(server.sentUnder('GET', '/breakdown')).toHaveLength(0);
   expect(server.sent('GET', '/paycycle')).toHaveLength(0);
 
   await act(async () => {
-    setAuth('authed');
+    setAuthStatus('authed');
   });
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
   expect(server.sentUnder('GET', '/breakdown')).toHaveLength(1);
@@ -237,7 +224,7 @@ describe('auth transition mid-session on Insights', () => {
     const before = server.sentUnder('GET', '/breakdown').length;
 
     await act(async () => {
-      setAuth('locked');
+      setAuthStatus('locked');
     });
     expect(screen.getByText('Cafes & Coffee')).toBeTruthy(); // cache survives
     expect(screen.queryByTestId('insights-error')).toBeNull();

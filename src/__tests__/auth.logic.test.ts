@@ -5,6 +5,7 @@
 // silent refresh with a single-flight guard, the near-expiry skew buffer, sign-out,
 // restoreSession, and the pure gateRedirect decision.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { REFRESH_KEY, loadAuth, nowSec } from './support/authModule';
 
 const mockPromptAsync = jest.fn<() => Promise<unknown>>();
 const mockExchange = jest.fn<(...a: unknown[]) => Promise<unknown>>();
@@ -16,24 +17,19 @@ const mockAuthRequest = class {
   constructor(public config: unknown) {}
 };
 
-jest.mock('expo-auth-session', () => ({
-  makeRedirectUri: (...a: unknown[]) => mockMakeRedirect(...(a as [])),
-  ResponseType: { Code: 'code' },
-  AuthRequest: mockAuthRequest,
-  exchangeCodeAsync: (...a: unknown[]) => mockExchange(...a),
-  refreshAsync: (...a: unknown[]) => mockRefresh(...a),
-}));
+jest.mock('expo-auth-session', () =>
+  require('./support/authModule').authSessionMock({
+    exchange: mockExchange,
+    refresh: mockRefresh,
+    overrides: {
+      makeRedirectUri: (...a: unknown[]) => mockMakeRedirect(...(a as [])),
+      AuthRequest: mockAuthRequest,
+    },
+  }),
+);
 
 const mockStore = new Map<string, string>();
-jest.mock('expo-secure-store', () => ({
-  setItemAsync: jest.fn(async (k: string, v: string) => {
-    mockStore.set(k, v);
-  }),
-  getItemAsync: jest.fn(async (k: string) => mockStore.get(k) ?? null),
-  deleteItemAsync: jest.fn(async (k: string) => {
-    mockStore.delete(k);
-  }),
-}));
+jest.mock('expo-secure-store', () => require('./support/authModule').memorySecureStoreMock(mockStore));
 
 const mockOpenAuthSession = jest.fn<(url: string, redirect: string) => Promise<{ type: string }>>(
   async () => ({ type: 'dismiss' }),
@@ -42,19 +38,7 @@ jest.mock('expo-web-browser', () => ({
   openAuthSessionAsync: (...a: unknown[]) => mockOpenAuthSession(...(a as [string, string])),
 }));
 
-const REFRESH_KEY = 'abundo.cognito.refreshToken';
 const DOMAIN = 'https://abundo-auth.auth.ap-southeast-2.amazoncognito.com';
-
-function nowSec(): number {
-  return Math.floor(Date.now() / 1000);
-}
-
-// Re-require a fresh module each test so its in-memory session/status singletons
-// don't leak between cases.
-// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-function loadAuth(): typeof import('../auth') {
-  return require('../auth');
-}
 
 beforeEach(() => {
   jest.resetModules();

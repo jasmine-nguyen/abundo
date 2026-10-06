@@ -4,7 +4,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { fetchCategoryTransactions, getAiChatJob, startAiChat } from '../api';
 import { ApiError } from '../apiError';
 
-jest.mock('../auth', () => ({ getAuthToken: jest.fn(async () => 'test-token') }));
+jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('test-token'));
 
 function mockFetch(body: unknown, status = 200) {
   const mock = jest.fn(async () => ({ ok: status < 400, status, json: async () => body }));

@@ -6,39 +6,23 @@
 // failure leaves status untouched (never authed). expo-auth-session + expo-secure-store
 // mocked exactly like authGoogle.logic.test.ts.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { REFRESH_KEY, SENTINEL_KEY, loadAuth, nowSec } from './support/authModule';
 
 const mockPromptAsync = jest.fn<() => Promise<unknown>>();
 const mockExchange = jest.fn<(...a: unknown[]) => Promise<unknown>>();
-jest.mock('expo-auth-session', () => ({
-  makeRedirectUri: () => 'acme://oauthredirect',
-  ResponseType: { Code: 'code' },
-  AuthRequest: class {
-    codeVerifier = 'verifier';
-    promptAsync = mockPromptAsync;
-    constructor(_cfg: unknown) {}
-  },
-  exchangeCodeAsync: (...a: unknown[]) => mockExchange(...a),
-  refreshAsync: jest.fn(),
-}));
+jest.mock('expo-auth-session', () =>
+  require('./support/authModule').authSessionMock({ promptAsync: mockPromptAsync, exchange: mockExchange }),
+);
 
 const mockGetItem = jest.fn<(key: string, opts?: unknown) => Promise<string | null>>();
 const mockSetItem = jest.fn<(key: string, val: string, opts?: unknown) => Promise<void>>(async () => {});
 const mockDeleteItem = jest.fn<(key: string) => Promise<void>>(async () => {});
-jest.mock('expo-secure-store', () => ({
-  getItemAsync: (...a: unknown[]) => mockGetItem(...(a as [string, unknown])),
-  setItemAsync: (...a: unknown[]) => mockSetItem(...(a as [string, string, unknown])),
-  deleteItemAsync: (...a: unknown[]) => mockDeleteItem(...(a as [string])),
-  canUseBiometricAuthentication: () => false,
-  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
-}));
+jest.mock('expo-secure-store', () =>
+  require('./support/authModule').secureStoreMock({ getItem: mockGetItem, setItem: mockSetItem, deleteItem: mockDeleteItem }),
+);
 
-const REFRESH_KEY = 'abundo.cognito.refreshToken';
-const SENTINEL_KEY = 'abundo.cognito.hasSession';
 const GENERIC = "Couldn't complete Google sign-in. Please try again.";
 const NOT_CONFIGURED = "Sign-in isn't set up. Check the app configuration.";
-const nowSec = () => Math.floor(Date.now() / 1000);
-// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-const loadAuth = (): typeof import('../auth') => require('../auth');
 
 beforeEach(() => {
   jest.resetModules();

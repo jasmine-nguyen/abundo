@@ -5,7 +5,7 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { fetchCategories, generateAiInsights } from '../api';
 
-jest.mock('../auth', () => ({ getAuthToken: jest.fn(async () => 'test-token') }));
+jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('test-token'));
 
 describe('request timeout', () => {
   beforeEach(() => { jest.useFakeTimers(); });
