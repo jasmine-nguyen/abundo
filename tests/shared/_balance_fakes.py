@@ -13,10 +13,11 @@ _MARKER_PK = "ACCTBAL#REFRESH"
 _BALANCE_PREFIX = "ACCTBAL#"
 
 
-def balance_repo(rows=(), last=None):
+def balance_repo(rows=(), last=None, upsert_fails=False):
     """The real AccountBalanceRepository holding ``rows`` (list_balances-shaped dicts, stored
     through the real upsert_balance) and, when ``last`` is given, a refresh marker at that epoch.
-    The put log is cleared after that setup, so ``balance_writes`` shows only the code under test."""
+    The put log is cleared after that setup, so ``balance_writes`` shows only the code under test.
+    ``upsert_fails`` makes every later write raise (DynamoDB down); the attempt is still logged."""
     from repository import AccountBalanceRepository
 
     repo = AccountBalanceRepository()
@@ -27,6 +28,8 @@ def balance_repo(rows=(), last=None):
     if last is not None:
         repo.set_last_refresh_at(last)
     repo._table.put_calls.clear()
+    if upsert_fails:
+        repo._table.fail("put_item")
     return repo
 
 

@@ -20,23 +20,8 @@ from decimal import Decimal
 
 import pytest
 
+from _balance_fakes import balance_repo, upserted
 from _http_fakes import FakeResponse
-
-
-class _FakeAccountRepo:
-    """Recording AccountBalanceRepository stand-in with no prior rows."""
-
-    def __init__(self, raise_on_upsert=False):
-        self.calls = []
-        self._raise = raise_on_upsert
-
-    def list_balances(self, account_ids):
-        return []
-
-    def upsert_balance(self, account_id, amount, *rest):
-        self.calls.append((account_id, amount))
-        if self._raise:
-            raise RuntimeError("dynamo down")
 
 
 def _mortgage(amount, **over):
@@ -85,22 +70,22 @@ def _run(handler, monkeypatch, repo, payload):
 def test_lambda_handler_stores_a_zero_balance_on_a_paid_off_loan(handler, monkeypatch):
     # Contrast with the "never writes a zero" failure comment: a REAL 0 reading is
     # written; only failure paths avoid zeroing.
-    repo = _FakeAccountRepo()
+    repo = balance_repo()
     assert _run(handler, monkeypatch, repo, _mortgage(0))["homeloan_stored"] is True
-    assert dict(repo.calls)["up-homeloan"] == Decimal("0")
+    assert upserted(repo)["up-homeloan"] == Decimal("0")
 
 
 def test_lambda_handler_swallows_a_repository_upsert_failure(handler, monkeypatch):
     # The DynamoDB write itself failing must not raise out of the poller.
-    repo = _FakeAccountRepo(raise_on_upsert=True)
+    repo = balance_repo(upsert_fails=True)
     result = _run(handler, monkeypatch, repo, _mortgage(-400000))
     assert result == {"homeloan_stored": False, "accounts_stored": 0}
-    assert ("up-homeloan", Decimal("-400000")) in repo.calls  # attempted, then swallowed
+    assert upserted(repo)["up-homeloan"] == Decimal("-400000")  # attempted, then swallowed
 
 
 def test_lambda_handler_swallows_a_garbage_amount_without_writing(handler, monkeypatch):
     # A malformed amount (a BalanceError) is isolated by the failure handling —
     # no upsert, no raise, last-good row untouched.
-    repo = _FakeAccountRepo()
+    repo = balance_repo()
     assert _run(handler, monkeypatch, repo, _mortgage("not-a-number"))["homeloan_stored"] is False
-    assert repo.calls == []
+    assert upserted(repo) == {}

@@ -15,6 +15,7 @@ import inspect
 import sys
 from decimal import Decimal
 
+from _balance_fakes import balance_repo, upserted
 from _http_fakes import FakeResponse
 
 _HOMELOAN_DELTA = {"account_id": "up-homeloan", "old": Decimal("-600000"), "new": Decimal("-596642.43")}
@@ -28,24 +29,14 @@ def _capture_detector(monkeypatch):
     return calls
 
 
-class _FakeAccountRepoRaisesOnUpsert:
-    """AccountBalanceRepository stand-in whose upsert blows up (DynamoDB down)."""
-
-    def __init__(self):
-        self.calls = []
-
-    def list_balances(self, account_ids):
-        return [{"account_id": "up-homeloan", "amount": Decimal("-600000")}]
-
-    def upsert_balance(self, *a):
-        self.calls.append(a)
-        raise RuntimeError("dynamo down")
+_PRIOR_HOMELOAN = {"account_id": "up-homeloan", "amount": Decimal("-600000"), "available_balance": None,
+                   "currency": "AUD", "as_of": "2026-07-03T00:00:00Z", "account_type": "mortgage"}
 
 
 # WHIT-301 — [A25] fail-on-revert: detector is NOT called when the upsert raises (no store -> no push).
 
 def test_milestone_detector_not_called_when_upsert_fails(handler, monkeypatch):
-    repo = _FakeAccountRepoRaisesOnUpsert()
+    repo = balance_repo(rows=[_PRIOR_HOMELOAN], upsert_fails=True)
     monkeypatch.setattr(handler, "get_api_key", lambda: "k")
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: FakeResponse({
@@ -55,7 +46,7 @@ def test_milestone_detector_not_called_when_upsert_fails(handler, monkeypatch):
     called = _capture_detector(monkeypatch)
 
     assert handler.lambda_handler({}, None)["homeloan_stored"] is False
-    assert repo.calls, "upsert was attempted"
+    assert "up-homeloan" in upserted(repo), "upsert was attempted"
     assert called == [], "the crossing detector must not run when the balance was never stored"
 
 
