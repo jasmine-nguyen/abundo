@@ -460,14 +460,11 @@ def test_mirror_pendings_carries_with_the_real_taxonomy_and_reports_it(repo, mir
 
 def test_a_category_read_failure_reports_zero_carried_and_touches_nothing(repo, mirror):
     # [A21] The skip-everything branch still has the new key, and no carry runs.
-    class _Broken:
-        def list_categories(self):
-            raise RuntimeError("down")
-
     repo._table.seed(_row("edited", notes="x", **_GUZMAN), _row("settled", status="posted", **_GUZMAN))
 
     summary = mirror.mirror_pendings(
-        "key", repo=repo, category_repo=_Broken(), today=TODAY, fetch=lambda *args: _bank("kept", aid=args[1])
+        "key", repo=repo, category_repo=_FakeCategoryRepo(error=RuntimeError("down")), today=TODAY,
+        fetch=lambda *args: _bank("kept", aid=args[1]),
     )
 
     assert summary["carried"] == 0

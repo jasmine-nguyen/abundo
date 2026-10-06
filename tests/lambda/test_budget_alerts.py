@@ -12,10 +12,11 @@ alert is immune to the date-index GSI's eventual consistency.
 
 from datetime import date
 from decimal import Decimal
+from functools import partial
 
 import pytest
 from _budget_alert_fakes import claimed_meanwhile, fail_nth_write, notify_repo, released_markers
-from _budget_endpoint_fakes import _FakeCategoryRepo
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _dynamo_fakes import _client_error
 
 # Cycle: last_pay_date 2026-07-01, length 14, pinned "today" 2026-07-14 →
@@ -58,12 +59,7 @@ class FakeBudgetRepo:
         return self._b
 
 
-class FakePaycycleRepo:
-    def __init__(self, last="2026-07-01", length=14):
-        self._c = {"last_pay_date": last, "length": length}
-
-    def get_paycycle(self):
-        return dict(self._c)
+FakePaycycleRepo = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-07-01")
 
 
 class FakeDeviceRepo:
@@ -99,7 +95,7 @@ def _run(alerts, monkeypatch, *, budgets, before, normalised, tokens=("ExpoPushT
         normalised,
         device_repo=FakeDeviceRepo(tokens),
         budget_repo=FakeBudgetRepo(budgets),
-        paycycle_repo=FakePaycycleRepo(*paycycle),
+        paycycle_repo=FakePaycycleRepo(last_pay_date=paycycle[0], length=paycycle[1]),
         window_repo=FakeWindowRepo(before),
         webhook_repo=webhook_repo,
     )
@@ -140,7 +136,7 @@ def test_crossing_push_carries_budget_deeplink_data(alerts, monkeypatch):
         [new],
         device_repo=FakeDeviceRepo(("ExpoPushToken[a]",)),
         budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
-        paycycle_repo=FakePaycycleRepo("2026-07-01", 14),
+        paycycle_repo=FakePaycycleRepo(last_pay_date="2026-07-01", length=14),
         window_repo=FakeWindowRepo(before),
         webhook_repo=NoTwinRepo(),
     )
@@ -440,7 +436,7 @@ def test_budget_fully_pruned_ok_zero_leaves_unmarked(alerts, monkeypatch):
     new = _txn("new1", "groceries", -15, "posted")            # -> $85, crosses 80%
     ctx = ba.capture_pre_write(
         [new], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
-        paycycle_repo=FakePaycycleRepo("2026-07-01", 14),
+        paycycle_repo=FakePaycycleRepo(last_pay_date="2026-07-01", length=14),
         window_repo=FakeWindowRepo(before), webhook_repo=webhook_repo,
     )
     ba.fire_budget_alerts(ctx, [new], webhook_repo=webhook_repo,
@@ -1799,7 +1795,7 @@ def test_whit545_preview_buckets_a_settlement_under_the_landed_category(alerts, 
     before = [_txn("old", "groceries", -70, "posted")]
     ctx = ba.capture_pre_write(
         [posted], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
-        paycycle_repo=FakePaycycleRepo("2026-07-01", 14), window_repo=FakeWindowRepo(before), webhook_repo=repo)
+        paycycle_repo=FakePaycycleRepo(last_pay_date="2026-07-01", length=14), window_repo=FakeWindowRepo(before), webhook_repo=repo)
     ba.fire_budget_alerts(
         ctx, [posted], webhook_repo=repo,
         category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),

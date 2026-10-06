@@ -18,6 +18,9 @@ test_breakdown.py / test_insights_ai.py (handler fixture, no AWS).
 
 from datetime import date, timedelta
 from decimal import Decimal
+from functools import partial
+
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 
 
 def _txn(category, amount, status="posted", counts=True, budget_excluded=None):
@@ -36,14 +39,6 @@ class _BudgetRepo:
         return {k: dict(v) for k, v in self._b.items()}
 
 
-class _CategoryRepo:
-    def __init__(self, categories):
-        self._c = categories
-
-    def list_categories(self):
-        return [dict(c) for c in self._c]
-
-
 class _TxnRepo:
     """Single page of `transactions` for the FIRST account, empty after — so the
     read_window's per-account loop sums each row once. Ignores the
@@ -56,12 +51,7 @@ class _TxnRepo:
         return self._queue.pop(0) if self._queue else ([], None)
 
 
-class _PayCycleRepo:
-    def __init__(self, length=14, last_pay_date="2024-01-03"):
-        self._c = {"length": length, "last_pay_date": last_pay_date}
-
-    def get_paycycle(self):
-        return dict(self._c)
+_PayCycleRepo = partial(_FakePayCycleRepo, length=14, last_pay_date="2024-01-03")
 
 
 # --- GET /budgets ------------------------------------------------------------
@@ -77,7 +67,7 @@ def test_list_budgets_drops_an_excluded_charge(handler):
     ])
 
     result = handler.list_budgets(budget_repo, txn_repo, _PayCycleRepo(),
-                                  _CategoryRepo([{"id": "coffee", "bucket": "Lifestyle"}]))
+                                  _FakeCategoryRepo([{"id": "coffee", "bucket": "Lifestyle"}]))
 
     assert result == {"coffee": {"available": Decimal("100"), "target": Decimal("100"),
                                  "posted": Decimal("50"), "pending": Decimal("0")}}
@@ -93,7 +83,7 @@ def test_list_budgets_excluded_pending_leaves_the_pending_bar(handler):
     ])
 
     result = handler.list_budgets(budget_repo, txn_repo, _PayCycleRepo(),
-                                  _CategoryRepo([{"id": "coffee", "bucket": "Lifestyle"}]))
+                                  _FakeCategoryRepo([{"id": "coffee", "bucket": "Lifestyle"}]))
 
     assert result["coffee"]["pending"] == Decimal("12")
     assert result["coffee"]["posted"] == Decimal("0")
@@ -104,7 +94,7 @@ def test_list_budgets_excluded_pending_leaves_the_pending_bar(handler):
 
 def test_breakdown_drops_an_excluded_categorised_charge(handler):
     # WHIT-296 — [A-K1] the excluded coffee charge leaves the coffee breakdown slice.
-    cats = _CategoryRepo([{"id": "coffee", "name": "Coffee", "bucket": "Lifestyle"}])
+    cats = _FakeCategoryRepo([{"id": "coffee", "name": "Coffee", "bucket": "Lifestyle"}])
     txns = _TxnRepo([
         _txn("coffee", -50, "posted"),
         _txn("coffee", -100, "posted", budget_excluded=True),  # excluded
@@ -118,7 +108,7 @@ def test_breakdown_drops_an_excluded_categorised_charge(handler):
 def test_breakdown_excluded_uncategorized_charge_does_not_inflate_the_uncategorized_bucket(handler):
     # WHIT-296 — [A-K2] an excluded charge with a raw (un-mapped) category must NOT
     # land in __uncategorized__; a lone excluded charge yields no uncategorized row.
-    cats = _CategoryRepo([{"id": "coffee", "name": "Coffee", "bucket": "Lifestyle"}])
+    cats = _FakeCategoryRepo([{"id": "coffee", "name": "Coffee", "bucket": "Lifestyle"}])
     txns = _TxnRepo([_txn("MEDICAL", -20, "posted", budget_excluded=True)])
 
     result = handler.list_category_breakdown(cats, txns, _PayCycleRepo())
@@ -165,7 +155,7 @@ def test_assemble_insight_input_omits_an_excluded_charge(handler):
     })
 
     model_input, _ = handler.assemble_insight_input(
-        _CategoryRepo([{"id": "groceries", "name": "Groceries", "bucket": "Living"}]),
+        _FakeCategoryRepo([{"id": "groceries", "name": "Groceries", "bucket": "Living"}]),
         _BudgetRepo({"groceries": {"target": Decimal("300")}}),
         txn_repo, _PayCycleRepo())
 
@@ -190,7 +180,7 @@ def test_assemble_insight_input_excluded_only_category_is_absent(handler):
     })
 
     model_input, _ = handler.assemble_insight_input(
-        _CategoryRepo([{"id": "coffee", "name": "Coffee", "bucket": "Lifestyle"}]),
+        _FakeCategoryRepo([{"id": "coffee", "name": "Coffee", "bucket": "Lifestyle"}]),
         _BudgetRepo({}), txn_repo, _PayCycleRepo())
 
     assert model_input["categories"] == []

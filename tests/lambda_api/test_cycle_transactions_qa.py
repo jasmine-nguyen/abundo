@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import pytest
 
-from _budget_endpoint_fakes import _FakePayCycleRepo
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 
 
 class _PerAccountRepo:
@@ -30,11 +30,6 @@ class _PerAccountRepo:
 class _NoBudgetsRepo:
     def list_budgets(self):
         return {}
-
-
-class _NoCategoriesRepo:
-    def list_categories(self):
-        return []
 
 
 def _txn(txn_id, date_, amount, account, **extra):
@@ -89,7 +84,7 @@ def _call(handler, monkeypatch, event, repo=None):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: _FakePayCycleRepo())
     monkeypatch.setattr(handler, "BudgetRepository", lambda: _NoBudgetsRepo())
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: _NoCategoriesRepo())
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo())
     return handler.lambda_handler(event, None)
 
 

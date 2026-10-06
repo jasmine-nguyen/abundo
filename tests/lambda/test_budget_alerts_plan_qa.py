@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 from _budget_alert_fakes import notify_repo
-from _budget_endpoint_fakes import _FakeCategoryRepo
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BANK_ACCT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
@@ -44,9 +44,7 @@ class _Budgets:
         return _BUDGET
 
 
-class _Paycycle:
-    def get_paycycle(self):
-        return {"last_pay_date": "2026-07-01", "length": 14}
+_Paycycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-07-01")
 
 
 _Categories = partial(_FakeCategoryRepo, _CATS)

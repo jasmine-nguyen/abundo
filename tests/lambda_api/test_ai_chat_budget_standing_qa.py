@@ -9,14 +9,12 @@ from datetime import date
 from decimal import Decimal
 from functools import partial
 
-from _budget_endpoint_fakes import _FakeCategoryRepo
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 
 CATEGORIES = [{"id": "groceries", "name": "Groceries", "bucket": "Living", "parent": None, "colorSlot": 11}]
 
 
-class _PayCycle:
-    def get_paycycle(self):
-        return {"length": 14, "last_pay_date": "2026-09-10"}
+_PayCycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-09-10")
 
 
 _Categories = partial(_FakeCategoryRepo, CATEGORIES)

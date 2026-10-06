@@ -3,9 +3,11 @@ creates its category's bill-spread plan once. The real RuleRepository runs over 
 so the spread_seeded mark is the real one; a fake budget + pay-cycle repo record the seed."""
 
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
+from _budget_endpoint_fakes import _FakePayCycleRepo
 from _dynamo_fakes import FakeTable
 from _feed_fakes import FakeCategoryRepo
 
@@ -33,13 +35,7 @@ class FakeBudget:
         return self._result
 
 
-class FakePaycycle:
-    def __init__(self):
-        self.reads = 0
-
-    def get_paycycle(self):
-        self.reads += 1
-        return {"length": 14, "last_pay_date": "2026-01-07"}
+FakePaycycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-01-07")
 
 
 def _charge(txn_id, description="ORIGIN ENERGY BILL"):
@@ -77,7 +73,7 @@ def test_a_spread_rule_seeds_the_plan_and_marks_it(lam):
 def test_two_matching_charges_seed_the_plan_once(lam):
     store = _rule_store([_spread_rule()])
     budget, paycycle = _apply(lam, store, [_charge("t1"), _charge("t2")])
-    assert len(budget.calls) == 1 and paycycle.reads == 1 and _seeded(store) == ["r-origin"]
+    assert len(budget.calls) == 1 and paycycle.get_calls == 1 and _seeded(store) == ["r-origin"]
 
 
 def test_a_no_op_create_does_not_mark_the_rule(lam):
@@ -97,13 +93,13 @@ def test_a_no_op_create_does_not_mark_the_rule(lam):
 def test_a_non_spread_rule_never_touches_budget_or_paycycle(lam):
     store = _rule_store([_spread_rule(spread=False)])
     budget, paycycle = _apply(lam, store, [_charge("t1")])
-    assert budget.calls == [] and paycycle.reads == 0 and _seeded(store) == []
+    assert budget.calls == [] and paycycle.get_calls == 0 and _seeded(store) == []
 
 
 def test_an_already_seeded_rule_does_not_reseed(lam):
     store = _rule_store([_spread_rule(spread_seeded=True)])
     budget, paycycle = _apply(lam, store, [_charge("t1")])
-    assert budget.calls == [] and paycycle.reads == 0
+    assert budget.calls == [] and paycycle.get_calls == 0
 
 
 def test_reprocess_path_without_repos_files_but_does_not_spread(lam):

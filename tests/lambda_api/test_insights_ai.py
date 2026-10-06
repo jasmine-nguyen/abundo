@@ -406,15 +406,12 @@ def test_assemble_input_has_spend_budgets_prior_and_no_loan_data(handler):
     assert "loan" not in blob and "balance" not in blob and "mortgage" not in blob
 
 
-class _DupNameCategoryRepo:
-    """Two spend categories that SHARE a display name but differ by id + budget —
-    the case a name-join would collapse."""
-
-    def list_categories(self):
-        return [
-            {"id": "coffee_a", "name": "Coffee", "bucket": "Lifestyle"},
-            {"id": "coffee_b", "name": "Coffee", "bucket": "Lifestyle"},
-        ]
+# Two spend categories that SHARE a display name but differ by id + budget —
+# the case a name-join would collapse.
+_DupNameCategoryRepo = partial(_FakeCategoryRepo, [
+    {"id": "coffee_a", "name": "Coffee", "bucket": "Lifestyle"},
+    {"id": "coffee_b", "name": "Coffee", "bucket": "Lifestyle"},
+])
 
 
 class _DupNameBudgetRepo:
@@ -822,14 +819,6 @@ _CAR_TREE = [
 ]
 
 
-class _ListCategoryRepo:
-    def __init__(self, cats):
-        self._c = cats
-
-    def list_categories(self):
-        return [dict(c) for c in self._c]
-
-
 class _DictBudgetRepo:
     def __init__(self, budgets):
         self._b = budgets
@@ -850,7 +839,7 @@ def test_assemble_input_rolls_up_budgeted_parent(handler):
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [_txn("petrol", -60), _txn("tolls", -15, "pending")]})
     model_input, _ = handler.assemble_insight_input(
-        _ListCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        _FakeCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
         txn_repo, FakePayCycleRepo())
 
     bp = {row["name"]: row for row in model_input["budgeted_parents"]}
@@ -877,7 +866,7 @@ def test_parent_and_child_both_budgeted_no_double_count(handler):
     # never listed twice in the flat list (Car isn't a flat row).
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [_txn("parking", -30)]})
-    cats = _ListCategoryRepo([
+    cats = _FakeCategoryRepo([
         {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
         {"id": "parking", "name": "Parking", "bucket": "Living", "parent": "car"},
     ])
@@ -896,7 +885,7 @@ def test_income_parent_excluded_from_budgeted_parents(handler):
     # spend rollup block (so the block is omitted entirely here).
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [_txn("salary", 4000)]})
-    cats = _ListCategoryRepo([
+    cats = _FakeCategoryRepo([
         {"id": "income", "name": "Income", "bucket": "Income", "parent": None},
         {"id": "salary", "name": "Salary", "bucket": "Income", "parent": "income"},
     ])
@@ -919,7 +908,7 @@ def test_budgeted_parent_rolled_up_in_prior_cycle_too(handler):
         (prev_start, prev_end): [_txn("tolls", -40)],
     })
     model_input, _ = handler.assemble_insight_input(
-        _ListCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        _FakeCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
         txn_repo, FakePayCycleRepo())
 
     prior_bp = {row["name"]: row for row in model_input["prior_cycles"][0]["budgeted_parents"]}
@@ -952,7 +941,7 @@ def test_budgeted_parent_rolls_up_grandchildren(handler):
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [_txn("petrol", -60), _txn("tolls", -15, "pending")]})
     model_input, _ = handler.assemble_insight_input(
-        _ListCategoryRepo(_GRANDCHILD_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        _FakeCategoryRepo(_GRANDCHILD_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
         txn_repo, FakePayCycleRepo())
 
     bp = {row["name"]: row for row in model_input["budgeted_parents"]}
@@ -972,7 +961,7 @@ def test_parent_and_mid_node_both_budgeted_each_row_correct(handler):
     txn_repo = _FakeTxnRepo({(start, end): [_txn("petrol", -60), _txn("tolls", -15)]})
     budgets = _DictBudgetRepo({"car": {"target": Decimal("300")}, "transport": {"target": Decimal("100")}})
     model_input, _ = handler.assemble_insight_input(
-        _ListCategoryRepo(_GRANDCHILD_TREE), budgets, txn_repo, FakePayCycleRepo())
+        _FakeCategoryRepo(_GRANDCHILD_TREE), budgets, txn_repo, FakePayCycleRepo())
 
     bp = {row["name"]: row for row in model_input["budgeted_parents"]}
     assert bp["Car"] == {"name": "Car", "posted": 75.0, "pending": 0.0, "budget": 300.0}
@@ -987,7 +976,7 @@ def test_budgeted_parent_with_zero_spend_still_emitted(handler):
     # rolled-up spend, even at $0). All spend this cycle is on an unrelated flat category.
     # Fail-on-revert: a "skip parents with no spend" optimisation would drop the Car row.
     start, end = _cur_window(handler)
-    cats = _ListCategoryRepo([
+    cats = _FakeCategoryRepo([
         {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
         {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "car"},
         {"id": "coffee", "name": "Coffee", "bucket": "Lifestyle", "parent": None},
@@ -1008,7 +997,7 @@ def test_orphan_and_uncategorized_targets_do_not_enter_block(handler):
     # (Car) is emitted; the orphan is filtered by the `cid in children` gate and the
     # uncategorized spend is routed to model_input["uncategorized"], never the block.
     start, end = _cur_window(handler)
-    cats = _ListCategoryRepo([
+    cats = _FakeCategoryRepo([
         {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
         {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "car"},
     ])
@@ -1033,7 +1022,7 @@ def test_leaf_refund_nets_into_parent_total(handler):
         _txn("petrol", -60), _txn("tolls", -50), _txn("tolls", 80),
     ]})
     model_input, _ = handler.assemble_insight_input(
-        _ListCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        _FakeCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
         txn_repo, FakePayCycleRepo())
 
     bp = {row["name"]: row for row in model_input["budgeted_parents"]}
@@ -1066,7 +1055,7 @@ def test_budgeted_parent_direct_spend_in_rollup(handler):
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [_txn("car", -40), _txn("petrol", -60)]})
     model_input, _ = handler.assemble_insight_input(
-        _ListCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        _FakeCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
         txn_repo, FakePayCycleRepo())
 
     bp = {row["name"]: row for row in model_input["budgeted_parents"]}
@@ -1080,7 +1069,7 @@ def test_budgeted_parent_mid_node_direct_spend_in_rollup(handler):
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [_txn("transport", -25), _txn("petrol", -60)]})
     model_input, _ = handler.assemble_insight_input(
-        _ListCategoryRepo(_GRANDCHILD_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        _FakeCategoryRepo(_GRANDCHILD_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
         txn_repo, FakePayCycleRepo())
 
     bp = {row["name"]: row for row in model_input["budgeted_parents"]}
@@ -1093,7 +1082,7 @@ def test_budgeted_parent_excludes_cross_bucket_child_from_block(handler):
     # Car's subtree. Car's block = its Living leaf only (60), never 60 + 25. Fail-on-revert
     # (drop bucket_by_id): the cross-bucket child folds in -> 85.
     start, end = _cur_window(handler)
-    cats = _ListCategoryRepo([
+    cats = _FakeCategoryRepo([
         {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
         {"id": "fuel", "name": "Fuel", "bucket": "Living", "parent": "car"},
         {"id": "odd", "name": "Odd", "bucket": "Lifestyle", "parent": "car"},
@@ -1111,7 +1100,7 @@ def test_budgeted_parent_direct_income_stays_out_of_block(handler):
     # onto it, it must NOT enter the SPEND-only budgeted_parents block (the gate is
     # SPEND_BUCKETS). Fail-on-revert here guards the bucket gate, not the rollup helper.
     start, end = _cur_window(handler)
-    cats = _ListCategoryRepo([
+    cats = _FakeCategoryRepo([
         {"id": "income", "name": "Income", "bucket": "Income", "parent": None},
         {"id": "salary", "name": "Salary", "bucket": "Income", "parent": "income"},
     ])
@@ -1132,7 +1121,7 @@ def test_budgeted_parent_direct_spend_not_duplicated_as_flat_row(handler):
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [_txn("car", -40), _txn("petrol", -60)]})
     model_input, _ = handler.assemble_insight_input(
-        _ListCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        _FakeCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
         txn_repo, FakePayCycleRepo())
 
     flat = {row["name"]: row for row in model_input["categories"]}

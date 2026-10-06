@@ -12,6 +12,8 @@ from decimal import Decimal
 
 import pytest
 
+from _feed_fakes import FakeCategoryRepo
+
 # A real BankSync account id (resolves via ACCOUNT_ID_MAP to an internal id).
 _BANK_ACCOUNT_ID = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
 
@@ -2983,14 +2985,6 @@ class _QAFakeRuleStore:
         return [dict(r) for r in self._rules]
 
 
-class _QAFakeCategoryRepo:
-    def __init__(self, ids):
-        self._ids = list(ids)
-
-    def list_categories(self):
-        return [{"id": i} for i in self._ids]
-
-
 class _QANoTokensDevice:
     def list_tokens(self):
         return []
@@ -3055,7 +3049,7 @@ def test_whit545_handler_threads_is_unfiled_end_to_end(lam, repo, monkeypatch):
                         lambda: _QAFakeRuleStore([{"id": "r-kkv", "field": "description",
                                                    "operator": "contains", "value": "KKV",
                                                    "category_id": "groceries"}]))
-    monkeypatch.setattr(h, "CategoryRepository", lambda: _QAFakeCategoryRepo(["groceries"]))
+    monkeypatch.setattr(h, "CategoryRepository", lambda: FakeCategoryRepo(["groceries"]))
     # Neutralise the budget-alert side path (no device tokens -> capture returns None early).
     monkeypatch.setattr(h, "DeviceRepository", lambda: _QANoTokensDevice())
     monkeypatch.setattr(h, "BudgetRepository", lambda: None)

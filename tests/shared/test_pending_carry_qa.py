@@ -10,21 +10,12 @@ from decimal import Decimal
 
 import pytest
 
+from _feed_fakes import FakeCategoryRepo
+
 _SHARED_DIR = pathlib.Path(__file__).resolve().parents[2] / "shared"
 
 _ACCOUNT = "anz-spending"
 _SHOP = "SQ *KKV INTERNATIONAL PTY"
-
-
-class _CategoryRepo:
-    def __init__(self, category_ids, *, error=False):
-        self._category_ids = category_ids
-        self._error = error
-
-    def list_categories(self):
-        if self._error:
-            raise RuntimeError("taxonomy read boom")
-        return [{"id": category_id} for category_id in self._category_ids]
 
 
 def _row(sk, date_str, *, status, amount="-5.50", category=None, **fields):
@@ -62,7 +53,7 @@ def test_shared_carry_modules_import_with_only_the_layer_on_the_path(module):
 # [A2] (P0) load_is_unfiled uses the REAL taxonomy rule: a taxonomy id is filed, a raw bank
 # enum and None are unfiled, "income" is always filed.
 def test_load_is_unfiled_reads_the_taxonomy(pending_carry):
-    is_unfiled = pending_carry.load_is_unfiled(_CategoryRepo(["groceries"]))
+    is_unfiled = pending_carry.load_is_unfiled(FakeCategoryRepo(["groceries"]))
 
     assert is_unfiled("groceries") is False
     assert is_unfiled("FOOD_AND_DRINK") is True
@@ -74,7 +65,7 @@ def test_load_is_unfiled_reads_the_taxonomy(pending_carry):
 # (the age-out fails open, the mirror will skip). Swallowing it here would hide the outage.
 def test_load_is_unfiled_raises_when_the_taxonomy_is_unreadable(pending_carry):
     with pytest.raises(RuntimeError):
-        pending_carry.load_is_unfiled(_CategoryRepo([], error=True))
+        pending_carry.load_is_unfiled(FakeCategoryRepo([], error=RuntimeError("taxonomy read boom")))
 
 
 # [A4] (P0) the edit checks with the real taxonomy: income is a user-set category (edited +
@@ -89,7 +80,7 @@ def test_load_is_unfiled_raises_when_the_taxonomy_is_unreadable(pending_carry):
     ],
 )
 def test_edit_checks_with_the_real_taxonomy(pending_carry, fields, user_edited, filed):
-    is_unfiled = pending_carry.load_is_unfiled(_CategoryRepo(["groceries"]))
+    is_unfiled = pending_carry.load_is_unfiled(FakeCategoryRepo(["groceries"]))
     pending = _pending(**fields)
 
     assert pending_carry.is_user_edited(pending, is_unfiled) is user_edited
@@ -99,7 +90,7 @@ def test_edit_checks_with_the_real_taxonomy(pending_carry, fields, user_edited, 
 # [A5] (P0) the ±3-day window is symmetric through find_carry_twin: a twin dated 3 days
 # BEFORE the pending matches, 4 days before does not.
 def test_find_carry_twin_accepts_a_twin_three_days_earlier_but_not_four(pending_carry):
-    is_unfiled = pending_carry.load_is_unfiled(_CategoryRepo(["groceries"]))
+    is_unfiled = pending_carry.load_is_unfiled(FakeCategoryRepo(["groceries"]))
     pending = _pending(notes="gift")
     three_before = _row("posted-3", "2026-06-07", status="posted")
     four_before = _row("posted-4", "2026-06-06", status="posted")
@@ -111,7 +102,7 @@ def test_find_carry_twin_accepts_a_twin_three_days_earlier_but_not_four(pending_
 # [A6] (P1) nothing to match against, or a pending missing its date / amount → no twin, never
 # a crash.
 def test_find_carry_twin_with_no_rows_or_missing_fields_finds_nothing(pending_carry):
-    is_unfiled = pending_carry.load_is_unfiled(_CategoryRepo(["groceries"]))
+    is_unfiled = pending_carry.load_is_unfiled(FakeCategoryRepo(["groceries"]))
     twin = _row("posted-1", "2026-06-11", status="posted")
 
     assert pending_carry.find_carry_twin(_pending(notes="gift"), [], is_unfiled) is None
@@ -124,7 +115,7 @@ def test_find_carry_twin_with_no_rows_or_missing_fields_finds_nothing(pending_ca
 # [A7] (P0) the twin rule uses the posted row's category through the real taxonomy: a posted
 # row filed to "income" by the user is never overwritten.
 def test_a_user_income_twin_is_never_a_candidate(pending_carry):
-    is_unfiled = pending_carry.load_is_unfiled(_CategoryRepo(["groceries"]))
+    is_unfiled = pending_carry.load_is_unfiled(FakeCategoryRepo(["groceries"]))
     pending = _pending(category="groceries")
     income_twin = _row("posted-1", "2026-06-11", status="posted", category="income")
 
@@ -135,7 +126,7 @@ def test_a_user_income_twin_is_never_a_candidate(pending_carry):
 # replaces the twin's category, and counts_to_budget follows whatever category landed
 # (home-loan account → never counts).
 def test_carry_keeps_the_twin_category_over_a_raw_pending_category(pending_carry):
-    is_unfiled = pending_carry.load_is_unfiled(_CategoryRepo(["groceries"]))
+    is_unfiled = pending_carry.load_is_unfiled(FakeCategoryRepo(["groceries"]))
     pending = _pending(category="TRANSFER_OUT", notes="gift")
     twin = _row("posted-1", "2026-06-11", status="posted", category="FOOD_AND_DRINK",
                 filed_by_rule="rule-9")
@@ -149,7 +140,7 @@ def test_carry_keeps_the_twin_category_over_a_raw_pending_category(pending_carry
 
 
 def test_carry_recomputes_budget_flag_off_for_the_home_loan(pending_carry):
-    is_unfiled = pending_carry.load_is_unfiled(_CategoryRepo(["groceries"]))
+    is_unfiled = pending_carry.load_is_unfiled(FakeCategoryRepo(["groceries"]))
     pending = _pending(category="groceries")
     twin = _row("posted-1", "2026-06-11", status="posted", account_id="up-homeloan")
 
@@ -184,7 +175,7 @@ def test_counts_to_budget_in_shared_spend(shared, account_id, category, expected
     "cleared", [{"notes": ""}, {"tags": []}, {"budget_excluded": False}, {"notes": None, "tags": None}],
 )
 def test_a_settled_charge_with_only_cleared_edit_fields_is_still_a_twin(pending_carry, cleared):
-    is_unfiled = pending_carry.load_is_unfiled(_CategoryRepo(["groceries"]))
+    is_unfiled = pending_carry.load_is_unfiled(FakeCategoryRepo(["groceries"]))
     twin = _row("posted-1", "2026-06-11", status="posted", **cleared)
 
     assert pending_carry.find_carry_twin(_pending(notes="gift"), [twin], is_unfiled) is twin
