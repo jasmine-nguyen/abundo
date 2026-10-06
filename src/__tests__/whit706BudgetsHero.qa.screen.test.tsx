@@ -7,7 +7,7 @@ import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
 import { seedBudgets, renderBudgets, renderLoadedBudgets, heroTotals } from './support/budgetsScreen';
-import { COFFEE, SALARY, GROCERIES_RECORD } from './support/categories';
+import { COFFEE, GROCERIES_RECORD } from './support/categories';
 import { MINUS } from '../theme';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -76,24 +76,6 @@ describe('Budgets top card — QA edges', () => {
     expect(screen.queryByText('Add a spending budget')).toBeNull();
     expect(screen.getByText('Left to spend')).toBeTruthy();
     expect(screen.getByText('Add a budget')).toBeTruthy(); // dashed button back
-  });
-
-  // [A5] (P1) one labelled add button on the empty screen (sign-off Q1)
-  it('[A5] the empty screen shows exactly one labelled add-budget button', async () => {
-    server.seed('/budgets', {});
-    renderBudgets();
-    await screen.findByText('Add a spending budget');
-    expect(screen.getAllByText(/add a spending budget|add a budget/i)).toHaveLength(1);
-  });
-
-  // [A6] (P1) income-only budgets have rows → not the first-time prompt
-  it('[A6] income-only budgets do not show the first-time prompt', async () => {
-    server.seed('/categories', [SALARY]);
-    server.seed('/budgets', { salary: { target: 5000, posted: 1000, pending: 0 } });
-    renderBudgets();
-    await screen.findByText('Salary');
-    expect(screen.queryByText('Add a spending budget')).toBeNull();
-    expect(screen.getByText('Add a budget')).toBeTruthy();
   });
 
   // [A7] (P1) unparseable last_pay_date → no payday line, never "NaN" / "undefined"

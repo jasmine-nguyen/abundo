@@ -19,7 +19,7 @@ from functools import partial
 import pytest
 
 from _budget_endpoint_fakes import _FakePayCycleRepo
-from _feed_fakes import SPENDING, FakeCategoryRepo, Repos, _row
+from _feed_fakes import SPENDING, FakeCategoryRepo, Repos, _row, inject_rule_routes
 from _job_fakes import created_jobs, real_job_repo
 
 _CATEGORIES = ("groceries", "petrol", "insurance")
@@ -54,13 +54,7 @@ def _event(method, path, body=None, path_params=None):
     return event
 
 
-def _inject(handler, monkeypatch, store, transactions=None):
-    """Point the handler at the real repositories over the store's one FakeTable."""
-    for rows in (transactions or {}).values():
-        store.table.seed(*rows)
-    monkeypatch.setattr(handler, "RuleRepository", lambda: store.rule_repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(_CATEGORIES))
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: store.transaction_repo)
+_inject = partial(inject_rule_routes, categories=_CATEGORIES)
 
 
 def _origin(txn_id, date="2026-07-01"):

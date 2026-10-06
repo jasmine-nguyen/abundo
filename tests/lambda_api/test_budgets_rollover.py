@@ -17,7 +17,7 @@ from functools import partial
 
 import pytest
 
-from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo, pin_cycle_window
 from _budget_fakes import recording_budget_repo
 from _lambda_api_constants import constants_namespace
 from _transaction_range_fakes import _QueuedTransactionRepo
@@ -46,11 +46,7 @@ def _spend_cat(cat_id="sink", bucket="Lifestyle"):
 
 @pytest.fixture(autouse=True)
 def _fixed_window(handler, monkeypatch):
-    # Deterministic current cycle, independent of the wall clock.
-    import budget_standing
-    for module in (handler, budget_standing):
-        monkeypatch.setattr(module, "current_cycle_window",
-                            lambda last_pay_date, length, today=None: (CYCLE_START, TODAY))
+    pin_cycle_window(handler, monkeypatch, CYCLE_START, TODAY)
 
 
 def _entry(target, **extra):

@@ -108,6 +108,8 @@ describe('fmt2', () => {
   it('shows sign and two decimals', () => {
     expect(fmt2(-12.5)).toBe('-$12.50');
     expect(fmt2(2500)).toBe('+$2,500.00');
+    expect(fmt2(0)).toBe('+$0.00');
+    expect(fmt2(-1234.5)).toBe('-$1,234.50');
   });
 });
 

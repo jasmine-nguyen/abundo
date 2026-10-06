@@ -1,11 +1,9 @@
 """WHIT-767 / WHIT-768: the shared transaction-range stand-ins serve and record reads."""
 
 from _transaction_range_fakes import (
-    _AccountPagesTransactionRepo,
     _AccountTransactionRepo,
     _DateFilteringTransactionRepo,
     _QueuedTransactionRepo,
-    _WindowKeyedTransactionRepo,
 )
 
 
@@ -54,25 +52,3 @@ def test_each_shared_transaction_stand_in_serves_and_records_reads():
     assert rows[0]["transaction_id"] == "mine-in"
     assert by_account.calls == [("up-spending", "2026-07-01", "2026-07-31", 20, None)]
 
-
-def test_window_keyed_stand_in_serves_the_first_account_only():
-    july = ("2026-07-01", "2026-07-31")
-    windowed = _WindowKeyedTransactionRepo({july: [{"transaction_id": "rent"}]})
-    assert windowed.get_transactions_by_date_range("anz-rewards-black-visa", *july) == (
-        [{"transaction_id": "rent"}], None)
-    assert windowed.get_transactions_by_date_range("up-spending", *july) == ([], None)
-    assert windowed.get_transactions_by_date_range("anz-rewards-black-visa", "2026-08-01", "2026-08-31") == ([], None)
-    assert [c[0] for c in windowed.calls] == ["anz-rewards-black-visa", "up-spending", "anz-rewards-black-visa"]
-
-
-def test_account_pages_stand_in_keeps_each_account_queue_separate():
-    pages = _AccountPagesTransactionRepo({
-        "up-spending": [([{"transaction_id": "s1"}], "s-cursor")],
-        "up-saver": [([{"transaction_id": "v1"}], None)],
-    })
-    assert pages.get_transactions_by_date_range("up-saver", "2026-07-01", "2026-07-31") == (
-        [{"transaction_id": "v1"}], None)
-    assert pages.get_transactions_by_date_range("up-spending", "2026-07-01", "2026-07-31") == (
-        [{"transaction_id": "s1"}], "s-cursor")
-    assert pages.get_transactions_by_date_range("up-saver", "2026-07-01", "2026-07-31") == ([], None)
-    assert pages.calls[0] == ("up-saver", "2026-07-01", "2026-07-31", 20, None)

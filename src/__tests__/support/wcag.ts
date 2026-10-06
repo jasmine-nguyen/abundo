@@ -21,7 +21,7 @@ const linearize = (channel: number): number => {
   return scaled <= 0.04045 ? scaled / 12.92 : Math.pow((scaled + 0.055) / 1.055, 2.4);
 };
 
-export const relativeLuminance = (rgb: Rgb): number =>
+const relativeLuminance = (rgb: Rgb): number =>
   0.2126 * linearize(rgb[0]) + 0.7152 * linearize(rgb[1]) + 0.0722 * linearize(rgb[2]);
 
 export const contrastRatio = (a: Rgb, b: Rgb): number => {
@@ -31,7 +31,7 @@ export const contrastRatio = (a: Rgb, b: Rgb): number => {
 };
 
 // Unrounded gamma-space blend of `fg` over `bg` at `alpha` — see the header note on rounding.
-export const compositeOver = (fg: Rgb, bg: Rgb, alpha: number): Rgb => {
+const compositeOver = (fg: Rgb, bg: Rgb, alpha: number): Rgb => {
   const mix = (i: number) => alpha * fg[i] + (1 - alpha) * bg[i];
   return [mix(0), mix(1), mix(2)];
 };

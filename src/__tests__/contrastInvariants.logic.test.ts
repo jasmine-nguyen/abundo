@@ -9,7 +9,7 @@
 // Between them a future retune can't make it invisible OR make it look like a category.
 //
 // The FADED state (a wedge stepping back when another is tapped) is guarded by
-// wedgeFixedFade.logic.test.ts.
+// wedgeFadeLevel.logic.test.ts.
 //
 // Note what is deliberately NOT here. The card asked to pin OTHER_COLOR === C.textFaint, which was
 // true when it was filed. Fixing the contrast broke that equality on purpose: the wedge is a large

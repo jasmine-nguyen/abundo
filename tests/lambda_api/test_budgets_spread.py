@@ -17,7 +17,7 @@ from functools import partial
 
 import pytest
 
-from _budget_endpoint_fakes import _FakePayCycleRepo, _SpendCategoryRepo, _spend_cat
+from _budget_endpoint_fakes import _FakePayCycleRepo, _SpendCategoryRepo, _spend_cat, pin_cycle_window
 from _budget_fakes import recording_budget_repo
 from _terraform import TERRAFORM_DIR
 from _transaction_range_fakes import _QueuedTransactionRepo
@@ -55,10 +55,7 @@ def _list(handler, budget_repo, transactions=None, categories=None):
 
 @pytest.fixture(autouse=True)
 def _fixed_window(handler, monkeypatch):
-    import budget_standing
-    for module in (handler, budget_standing):
-        monkeypatch.setattr(module, "current_cycle_window",
-                            lambda last_pay_date, length, today=None: (CYCLE_START, TODAY))
+    pin_cycle_window(handler, monkeypatch, CYCLE_START, TODAY)
 
 
 # --- GET /budgets: the cushion, then the slices, then nothing ------------------
@@ -146,10 +143,7 @@ def test_a_pay_cycle_change_settles_the_outstanding_balance_over_this_cycle_then
 
     # Next cycle on the new grid: the settle plan is at index 2 of 1 -> finished, nothing
     # shown, cleared. The settle never lingers past the cycle it was owed in.
-    import budget_standing
-    for module in (handler, budget_standing):
-        monkeypatch.setattr(module, "current_cycle_window",
-                            lambda last_pay_date, length, today=None: ("2026-09-05", "2026-09-06"))
+    pin_cycle_window(handler, monkeypatch, "2026-09-05", "2026-09-06")
     third_read = _list(handler, budget_repo)
     assert "spread" not in third_read["insurance"]
     assert budget_repo.clear_spread_calls == ["insurance"]

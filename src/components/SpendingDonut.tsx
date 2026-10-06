@@ -91,7 +91,7 @@ const GAP_DEG = (DIVIDER_PX / CIRC) * 360;
 const SEL_SCALE = 1.1;
 // An un-focused wedge fades to a fixed value (wedgeDim, src/chartColors.ts). It never scales or
 // overlaps a neighbour, so it sits on the opaque CHART_BG track alone — the backdrop those values
-// are checked against for 3:1 (wedgeFixedFade.logic.test.ts).
+// are checked against for 3:1 (wedgeFadeLevel.logic.test.ts).
 // Size the (transparent) canvas from the pop so a popped wedge never reaches the edge and clips.
 // POP_OUTER is the farthest anything DRAWN OR TAPPED reaches from the centre — the wider HIT band
 // out-reaches the visible one, so budget from whichever is thicker (else a popped wedge's tap area

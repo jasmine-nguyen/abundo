@@ -2,102 +2,24 @@
 copy. Same fixtures as test_pending_mirror_reissue.py (the REAL shared repo over FakeTable)."""
 
 import copy
-import importlib
-import pathlib
-import sys
-from datetime import date
-from decimal import Decimal
 
-import pytest
+from _pending_mirror_fakes import (
+    CETTIRE_NEW,
+    CETTIRE_OLD,
+    MYKI_NEW,
+    MYKI_OLD,
+    REISSUE_TODAY,
+    RUSH_NEW,
+    RUSH_OLD,
+    WESTPAC,
+    reissue_bank_rows,
+    run_mirror,
+    stored,
+    stored_ids,
+    unfiled_except,
+)
 
-from _boto_stubs import install_import_satisfiers, use_condition_fields
-from _dynamo_fakes import FakeTable
-
-install_import_satisfiers()
-
-WESTPAC_AID = "A3AC9195-9E8D-48B8-86D0-46D130D7F64A"
-WESTPAC_SOURCE = {"bid": "fiskil_77", "aid": WESTPAC_AID}
-WESTPAC = "westpac-altitude-qantas-black"
-TODAY = date(2026, 10, 1)
-
-CETTIRE_OLD = "Pending - Cettire          "
-CETTIRE_NEW = "PENDING - Cettire           "
-RUSH_OLD = "Pending - SP RUSHFASTERAU"
-RUSH_NEW = "PENDING - SP RUSHFASTERAU"
-
-_SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
-_SHARED_MODULES = {path.stem for path in pathlib.Path(_SHARED_DIR).glob("*.py")} - {"ssm"}
-
-
-@pytest.fixture
-def layer():
-    with use_condition_fields():
-        sys.path.insert(0, _SHARED_DIR)
-        saved = {name: sys.modules.pop(name, None) for name in _SHARED_MODULES | {"pending_mirror"}}
-        try:
-            yield importlib.import_module("repository_transaction"), importlib.import_module("pending_mirror")
-        finally:
-            for name, module in saved.items():
-                sys.modules.pop(name, None)
-                if module is not None:
-                    sys.modules[name] = module
-            sys.path.remove(_SHARED_DIR)
-
-
-@pytest.fixture
-def repo(layer):
-    repository = layer[0].TransactionRepository()
-    repository._table = FakeTable()
-    return repository
-
-
-@pytest.fixture
-def mirror(layer):
-    return layer[1]
-
-
-@pytest.fixture
-def row(layer):
-    clean_merchant = importlib.import_module("merchant").clean_merchant
-
-    def make(transaction_id, description, amount, day="2026-09-30", status="pending", **fields):
-        return {
-            "pk": f"ACCOUNT#{WESTPAC}",
-            "sk": f"TXN#{transaction_id}",
-            "transaction_id": transaction_id,
-            "account_id": WESTPAC,
-            "date": day,
-            "amount": Decimal(amount),
-            "description": description,
-            "merchant_name": clean_merchant(description, ""),
-            "status": status,
-            "category": "Unfiled",
-            **fields,
-        }
-    return make
-
-
-def _bank(*ids):
-    return [{"id": transaction_id, "accountId": WESTPAC_AID, "pending": True, "date": "2026-09-30"}
-            for transaction_id in ids]
-
-
-def _ids(repo):
-    return {key[1].removeprefix("TXN#") for key in repo._table.store}
-
-
-def _stored(repo, transaction_id):
-    return repo._table.store[(f"ACCOUNT#{WESTPAC}", f"TXN#{transaction_id}")]
-
-
-def _is_unfiled(category):
-    return category not in ("shopping", "clothing", "eatingout", "transport")
-
-
-def _run(mirror, repo, bank):
-    def fetch(*args):
-        return copy.deepcopy(bank)
-    return mirror.mirror_account(repo, fetch, WESTPAC_SOURCE, TODAY, _is_unfiled)
+_is_unfiled = unfiled_except("shopping", "clothing", "eatingout", "transport")
 
 
 # [A1] (P0) Two edited stale copies, ONE live re-issue: the second must not overwrite the first's
@@ -109,15 +31,15 @@ def test_one_live_copy_takes_only_one_edit_when_two_stale_copies_compete(repo, m
         row("new_rush", RUSH_NEW, "-192.00"),
     )
 
-    result = _run(mirror, repo, _bank("new_rush"))
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_rush"), _is_unfiled, REISSUE_TODAY)
 
     assert result["carried"] == 1
     assert result["kept"] == 1
-    survivors = _ids(repo)
+    survivors = stored_ids(repo)
     assert "new_rush" in survivors
     assert len(survivors) == 2
     kept_old = (survivors - {"new_rush"}).pop()
-    assert _stored(repo, "new_rush")["notes"] != _stored(repo, kept_old)["notes"]
+    assert stored(repo, "new_rush")["notes"] != stored(repo, kept_old)["notes"]
 
 
 # [A2] (P0) The live copy settles (webhook flips it to posted) between our read and the carry:
@@ -134,10 +56,10 @@ def test_a_replacement_that_posts_mid_run_is_not_overwritten(repo, mirror, row):
             stored["status"] = "posted"
     repo._table.before_next_write(settle)
 
-    result = _run(mirror, repo, _bank("new_cettire"))
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_cettire"), _is_unfiled, REISSUE_TODAY)
 
-    assert _ids(repo) == {"old_cettire", "new_cettire"}
-    posted = _stored(repo, "new_cettire")
+    assert stored_ids(repo) == {"old_cettire", "new_cettire"}
+    posted = stored(repo, "new_cettire")
     assert posted["category"] == "clothing"
     assert posted["filed_by_rule"] == "rule-1"
     assert "notes" not in posted
@@ -154,10 +76,10 @@ def test_carry_onto_a_live_copy_moves_tags_exclusion_and_budget_flag(repo, mirro
         row("new_cettire", CETTIRE_NEW, "-260.36", counts_to_budget=False),
     )
 
-    result = _run(mirror, repo, _bank("new_cettire"))
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_cettire"), _is_unfiled, REISSUE_TODAY)
 
-    assert _ids(repo) == {"new_cettire"}
-    new = _stored(repo, "new_cettire")
+    assert stored_ids(repo) == {"new_cettire"}
+    new = stored(repo, "new_cettire")
     assert new["category"] == "shopping"
     assert new["tags"] == ["gift"]
     assert new["budget_excluded"] is True
@@ -177,10 +99,10 @@ def test_a_rule_filed_pending_with_a_note_is_merged_into_its_rule_filed_reissue(
         row("new_rush", RUSH_NEW, "-192.00", category="shopping", filed_by_rule="rule-1"),
     )
 
-    result = _run(mirror, repo, _bank("new_rush"))
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_rush"), _is_unfiled, REISSUE_TODAY)
 
-    assert _ids(repo) == {"new_rush"}
-    assert _stored(repo, "new_rush")["notes"] == "Patagonia Backpack"
+    assert stored_ids(repo) == {"new_rush"}
+    assert stored(repo, "new_rush")["notes"] == "Patagonia Backpack"
     assert result["kept"] == 0
 
 
@@ -192,9 +114,9 @@ def test_identical_copy_with_the_same_note_is_removed_without_a_write(repo, mirr
         row("new_rush", RUSH_NEW, "-192.00", category="shopping", notes="Backpack"),
     )
 
-    result = _run(mirror, repo, _bank("new_rush"))
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_rush"), _is_unfiled, REISSUE_TODAY)
 
-    assert _ids(repo) == {"new_rush"}
+    assert stored_ids(repo) == {"new_rush"}
     assert result["removed"] == 1
     assert result["carried"] == 0
     assert repo._table.update_calls == []
@@ -207,10 +129,10 @@ def test_same_category_but_clashing_notes_keeps_both(repo, mirror, row):
         row("new_rush", RUSH_NEW, "-192.00", category="shopping", notes="Gift"),
     )
 
-    result = _run(mirror, repo, _bank("new_rush"))
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_rush"), _is_unfiled, REISSUE_TODAY)
 
-    assert _ids(repo) == {"old_rush", "new_rush"}
-    assert _stored(repo, "new_rush")["notes"] == "Gift"
+    assert stored_ids(repo) == {"old_rush", "new_rush"}
+    assert stored(repo, "new_rush")["notes"] == "Gift"
     assert result["kept"] == 1
     assert result["removed"] == 0
 
@@ -223,10 +145,10 @@ def test_an_unfiled_live_copy_with_its_own_note_is_never_overwritten(repo, mirro
         row("new_rush", RUSH_NEW, "-192.00", notes="Gift"),
     )
 
-    result = _run(mirror, repo, _bank("new_rush"))
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_rush"), _is_unfiled, REISSUE_TODAY)
 
-    assert _ids(repo) == {"old_rush", "new_rush"}
-    assert _stored(repo, "new_rush")["notes"] == "Gift"
+    assert stored_ids(repo) == {"old_rush", "new_rush"}
+    assert stored(repo, "new_rush")["notes"] == "Gift"
     assert result["kept"] == 1
 
 
@@ -237,9 +159,9 @@ def test_a_different_shop_for_the_same_amount_is_not_a_copy(repo, mirror, row):
         row("other_shop", "PENDING - Cettire", "-192.00", category="shopping", notes="Backpack"),
     )
 
-    result = _run(mirror, repo, _bank("other_shop"))
+    result = run_mirror(mirror, repo, reissue_bank_rows("other_shop"), _is_unfiled, REISSUE_TODAY)
 
-    assert _ids(repo) == {"old_rush", "other_shop"}
+    assert stored_ids(repo) == {"old_rush", "other_shop"}
     assert result["kept"] == 1
 
 
@@ -251,10 +173,10 @@ def test_a_failed_carry_write_keeps_the_stale_copy(repo, mirror, row):
     )
     repo._table.fail("update_item")
 
-    result = _run(mirror, repo, _bank("new_rush"))
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_rush"), _is_unfiled, REISSUE_TODAY)
 
-    assert _ids(repo) == {"old_rush", "new_rush"}
-    assert "notes" not in _stored(repo, "new_rush")
+    assert stored_ids(repo) == {"old_rush", "new_rush"}
+    assert "notes" not in stored(repo, "new_rush")
     assert result["failed"] == 1
     assert result["carried"] == 0
 
@@ -262,14 +184,14 @@ def test_a_failed_carry_write_keeps_the_stale_copy(repo, mirror, row):
 # [A10] (P1) Delete of the stale copy fails after an identical match → counted failed, no crash.
 def test_a_failed_delete_of_an_identical_copy_is_counted_failed(repo, mirror, row):
     repo._table.seed(
-        row("old_myki", "Pending - myki", "-1.00", category="transport"),
-        row("new_myki", "PENDING - myki", "-1.00", category="transport"),
+        row("old_myki", MYKI_OLD, "-1.00", category="transport"),
+        row("new_myki", MYKI_NEW, "-1.00", category="transport"),
     )
     repo._table.fail("delete_item")
 
-    result = _run(mirror, repo, _bank("new_myki"))
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_myki"), _is_unfiled, REISSUE_TODAY)
 
-    assert _ids(repo) == {"old_myki", "new_myki"}
+    assert stored_ids(repo) == {"old_myki", "new_myki"}
     assert result["failed"] == 1
     assert result["removed"] == 0
 
@@ -280,10 +202,10 @@ def test_a_second_run_after_the_carry_changes_nothing(repo, mirror, row):
         row("old_cettire", CETTIRE_OLD, "-260.36", category="shopping", notes="Jacket"),
         row("new_cettire", CETTIRE_NEW, "-260.36", category="shopping", filed_by_rule="rule-1"),
     )
-    _run(mirror, repo, _bank("new_cettire"))
+    run_mirror(mirror, repo, reissue_bank_rows("new_cettire"), _is_unfiled, REISSUE_TODAY)
     after_first = copy.deepcopy(repo._table.store)
 
-    result = _run(mirror, repo, _bank("new_cettire"))
+    result = run_mirror(mirror, repo, reissue_bank_rows("new_cettire"), _is_unfiled, REISSUE_TODAY)
 
     assert repo._table.store == after_first
     assert result["carried"] == 0
@@ -293,13 +215,13 @@ def test_a_second_run_after_the_carry_changes_nothing(repo, mirror, row):
 # [A12] (P0) Two genuine identical pendings (two $1 myki taps) BOTH still listed are untouched.
 def test_two_genuine_identical_pendings_both_listed_are_untouched(repo, mirror, row):
     repo._table.seed(
-        row("tap_1", "PENDING - myki", "-1.00", category="transport"),
-        row("tap_2", "PENDING - myki", "-1.00", category="transport"),
+        row("tap_1", MYKI_NEW, "-1.00", category="transport"),
+        row("tap_2", MYKI_NEW, "-1.00", category="transport"),
     )
 
-    result = _run(mirror, repo, _bank("tap_1", "tap_2"))
+    result = run_mirror(mirror, repo, reissue_bank_rows("tap_1", "tap_2"), _is_unfiled, REISSUE_TODAY)
 
-    assert _ids(repo) == {"tap_1", "tap_2"}
+    assert stored_ids(repo) == {"tap_1", "tap_2"}
     assert result["removed"] == 0
     assert result["carried"] == 0
 
@@ -309,7 +231,7 @@ def test_carry_onto_pending_never_creates_a_missing_row(repo, row):
     carried = row("ghost", CETTIRE_NEW, "-260.36", category="shopping", notes="Jacket")
 
     assert repo.carry_onto_pending(carried["pk"], carried["sk"], carried) is False
-    assert _ids(repo) == set()
+    assert stored_ids(repo) == set()
 
 
 # [A14] (P1) carry_onto_pending refuses a row that has posted and leaves it unchanged.
@@ -320,4 +242,4 @@ def test_carry_onto_pending_refuses_a_posted_row(repo, row):
     carried.pop("filed_by_rule")
 
     assert repo.carry_onto_pending(posted["pk"], posted["sk"], carried) is False
-    assert _stored(repo, "settled") == posted
+    assert stored(repo, "settled") == posted

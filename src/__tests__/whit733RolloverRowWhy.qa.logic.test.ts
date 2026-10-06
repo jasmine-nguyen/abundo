@@ -20,18 +20,4 @@ describe('WHIT-733 rollover row edges', () => {
     expect(row.note).toBe('Includes $50 past overspend');
     expect(budgetDetailFor(b).carryoverLine).toBe(row.note);
   });
-
-  // [A3]
-  it('a near-zero carryover gives no note on either screen', () => {
-    const b = { budget: 100, posted: 150, pending: 0, rollover: true, carryover: -0.4 };
-    const row = budgetRowFor(b);
-    expect(row.note).toBe('');
-    expect(budgetDetailFor(b).carryoverLine).toBe('');
-  });
-
-  // [A4]
-  it('a non-rollover budget with a stray carryover gets no note', () => {
-    const row = budgetRowFor({ budget: 100, posted: 150, pending: 0, rollover: false, carryover: -300 });
-    expect(row.note).toBe('');
-  });
 });

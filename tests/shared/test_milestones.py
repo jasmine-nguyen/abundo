@@ -96,10 +96,7 @@ def _notify(shared, *, old, new, facts=FACTS, tokens=("tok",), fired=None, notif
 
 def test_single_crossing_sends_one_push_with_both_numbers(shared, recorder):
     notify = notify_repo()
-    sent = shared.milestones.notify_milestone_crossing(
-        Decimal("545000"), Decimal("544000"),
-        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]), notify_repo=notify,
-        milestone_repo=unreadable_milestone_repo())
+    sent = _notify(shared, old="545000", new="544000", notify=notify)
     assert sent == 1
     assert len(recorder) == 1
     title, body, tokens = recorder[0]
@@ -117,20 +114,13 @@ def test_crossing_push_carries_milestone_deeplink_data(shared, monkeypatch):
     monkeypatch.setattr(shared.milestones, "send_push",
                         lambda title, body, tokens, **kw: captured.append(kw.get("data")) or
                         {"sent": len(tokens), "ok": len(tokens), "pruned": []})
-    shared.milestones.notify_milestone_crossing(
-        Decimal("545000"), Decimal("544000"),
-        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]),
-        notify_repo=notify_repo(),
-        milestone_repo=unreadable_milestone_repo())
+    _notify(shared, old="545000", new="544000")
     assert captured == [{"type": "milestone"}]
 
 
 def test_lump_sum_sends_furthest_and_marks_all(shared, recorder):
     notify = notify_repo()
-    sent = shared.milestones.notify_milestone_crossing(
-        Decimal("600000"), Decimal("290000"),
-        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]), notify_repo=notify,
-        milestone_repo=unreadable_milestone_repo())
+    sent = _notify(shared, old="600000", new="290000", notify=notify)
     assert sent == 1
     assert len(recorder) == 1
     assert recorder[0][0] == "\U0001f389 Milestone reached — Halfway!"  # furthest crossed (295k)
@@ -146,11 +136,7 @@ def test_lump_sum_push_carries_milestone_deeplink_data(shared, monkeypatch):
                         lambda title, body, tokens, **kw: captured.append(kw.get("data")) or
                         {"sent": len(tokens), "ok": len(tokens), "pruned": []})
     notify = notify_repo()
-    sent = shared.milestones.notify_milestone_crossing(
-        Decimal("600000"), Decimal("290000"),
-        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]),
-        notify_repo=notify,
-        milestone_repo=unreadable_milestone_repo())
+    sent = _notify(shared, old="600000", new="290000", notify=notify)
     assert sent == 1
     assert captured == [{"type": "milestone"}]  # one push, carrying the deep-link tag
     assert stored_markers(notify) == {"0", "1", "2"}       # all crossed still marked
@@ -164,10 +150,7 @@ def test_already_fired_milestone_does_not_resend(shared, recorder):
 
 def test_no_device_short_circuits(shared, recorder):
     notify = notify_repo()
-    sent = shared.milestones.notify_milestone_crossing(
-        Decimal("545000"), Decimal("544000"),
-        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo([]), notify_repo=notify,
-        milestone_repo=unreadable_milestone_repo())
+    sent = _notify(shared, old="545000", new="544000", tokens=[], notify=notify)
     assert sent == 0
     assert recorder == []
     assert stored_markers(notify) == set()  # nothing marked when there was no one to send to
@@ -179,10 +162,7 @@ def test_expo_not_ok_still_marks_no_permanent_loss(shared, monkeypatch):
     monkeypatch.setattr(shared.milestones, "send_push",
                         lambda *a, **k: {"sent": 1, "ok": 0, "pruned": []})
     notify = notify_repo()
-    sent = shared.milestones.notify_milestone_crossing(
-        Decimal("545000"), Decimal("544000"),
-        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]), notify_repo=notify,
-        milestone_repo=unreadable_milestone_repo())
+    sent = _notify(shared, old="545000", new="544000", notify=notify)
     assert sent == 1
     assert stored_markers(notify) == {"0"}  # marked even though Expo accepted nothing
 
