@@ -1,8 +1,8 @@
 """Tests for the shared Anthropic client (WHIT-388).
 
-Direct unit tests for the plumbing extracted out of insights_ai / milestone_ai:
-the request build + headers, the error taxonomy, key caching, first-text-block
-extraction, and the first-{...}-span JSON parse. urllib.request.urlopen is
+Direct unit tests for the plumbing extracted out of insights_ai:
+the request build + headers, the error taxonomy, key caching, and first-text-block
+extraction. urllib.request.urlopen is
 monkeypatched — no network, no AWS. The `anthropic_client` fixture imports the
 module in isolation and pins a fake key.
 """
@@ -31,7 +31,7 @@ def test_post_builds_request_and_returns_first_text(anthropic_client, monkeypatc
 
     monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", fake_urlopen)
 
-    text = anthropic_client.post("SYS", "Prefix:\n", {"a": 1})
+    text = anthropic_client.post("SYS", "Prefix:\n", {"a": 1}, {})
 
     assert text == "hello"
     assert captured["url"].endswith("/v1/messages")
@@ -55,7 +55,7 @@ def test_post_returns_first_text_block_when_several(anthropic_client, monkeypatc
             {"type": "text", "text": "first"},
             {"type": "text", "text": "second"},
         ])))
-    assert anthropic_client.post("s", "p", {}) == "first"
+    assert anthropic_client.post("s", "p", {}, {}) == "first"
 
 
 def test_post_returns_empty_string_when_no_text_block(anthropic_client, monkeypatch):
@@ -64,12 +64,12 @@ def test_post_returns_empty_string_when_no_text_block(anthropic_client, monkeypa
     monkeypatch.setattr(
         anthropic_client.urllib.request, "urlopen",
         lambda req, timeout=None: FakeResponse(messages_payload([])))
-    assert anthropic_client.post("s", "p", {}) == ""
+    assert anthropic_client.post("s", "p", {}, {}) == ""
 
     monkeypatch.setattr(
         anthropic_client.urllib.request, "urlopen",
         lambda req, timeout=None: FakeResponse({"content": None}))
-    assert anthropic_client.post("s", "p", {}) == ""
+    assert anthropic_client.post("s", "p", {}, {}) == ""
 
 
 # --- post: error taxonomy ----------------------------------------------------
@@ -81,7 +81,7 @@ def test_post_http_error_raises_with_status(anthropic_client, monkeypatch):
 
     monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", boom)
     with pytest.raises(anthropic_client.AnthropicError) as ei:
-        anthropic_client.post("s", "p", {})
+        anthropic_client.post("s", "p", {}, {})
     assert ei.value.upstream_status == 429
 
 
@@ -91,7 +91,7 @@ def test_post_url_error_is_none_status(anthropic_client, monkeypatch):
 
     monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", boom)
     with pytest.raises(anthropic_client.AnthropicError) as ei:
-        anthropic_client.post("s", "p", {})
+        anthropic_client.post("s", "p", {}, {})
     assert ei.value.upstream_status is None
 
 
@@ -103,7 +103,7 @@ def test_a_timeout_waiting_for_the_reply_is_an_anthropic_error(anthropic_client,
 
     monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", slow)
     with pytest.raises(anthropic_client.AnthropicError) as ei:
-        anthropic_client.post("s", "p", {})
+        anthropic_client.post("s", "p", {}, {})
     assert ei.value.upstream_status is None
 
 
@@ -123,7 +123,7 @@ def test_post_non_json_envelope_is_none_status(anthropic_client, monkeypatch):
     monkeypatch.setattr(anthropic_client.urllib.request, "urlopen",
                         lambda req, timeout=None: _BadBody())
     with pytest.raises(anthropic_client.AnthropicError) as ei:
-        anthropic_client.post("s", "p", {})
+        anthropic_client.post("s", "p", {}, {})
     assert ei.value.upstream_status is None
 
 
@@ -139,7 +139,7 @@ def test_post_ssm_failure_degrades_to_anthropic_error(anthropic_client, monkeypa
                         lambda path: (_ for _ in ()).throw(ValueError("no such param")))
 
     with pytest.raises(anthropic_client.AnthropicError) as ei:
-        anthropic_client.post("s", "p", {})
+        anthropic_client.post("s", "p", {}, {})
     assert ei.value.upstream_status is None
 
 
@@ -157,31 +157,9 @@ def test_get_api_key_reads_the_anthropic_path(anthropic_client, monkeypatch):
     assert calls == [anthropic_client.ANTHROPIC_API_KEY_PATH]
 
 
-# --- extract_first_json ------------------------------------------------------
-
-
-def test_extract_first_json_from_prose(anthropic_client):
-    parsed = anthropic_client.extract_first_json('Sure!\n{"a": 1, "b": [2]}\nHope that helps.')
-    assert parsed == {"a": 1, "b": [2]}
-
-
-def test_extract_first_json_no_braces_is_none(anthropic_client):
-    assert anthropic_client.extract_first_json("just prose, no object here") is None
-
-
-def test_extract_first_json_empty_or_none_text_is_none(anthropic_client):
-    assert anthropic_client.extract_first_json("") is None
-    assert anthropic_client.extract_first_json(None) is None
-
-
-def test_extract_first_json_bad_json_is_none(anthropic_client):
-    # A {...} span that isn't valid JSON -> None, never a crash.
-    assert anthropic_client.extract_first_json("{not: valid, json}") is None
-
-
 # === WHIT-388 adversarial gaps (folded from test_anthropic_client_gaps.py) — request-body
-# parity (model + max_tokens), the compact-JSON comma, a text block missing "text", the greedy
-# extract_first_json span, and the shared-AnthropicError done-criterion. ====================
+# parity (model + max_tokens), the compact-JSON comma, a text block missing "text", and the
+# shared-AnthropicError done-criterion. ====================
 
 
 # --- request-body parity: model + max_tokens ---------------------------------
@@ -198,7 +176,7 @@ def test_post_body_carries_model_and_max_tokens(anthropic_client, monkeypatch):
         return FakeResponse(messages_payload([{"type": "text", "text": "ok"}]))
 
     monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", fake_urlopen)
-    anthropic_client.post("SYS", "P:\n", {"a": 1})
+    anthropic_client.post("SYS", "P:\n", {"a": 1}, {})
 
     assert captured["body"]["model"] == anthropic_client.ANTHROPIC_MODEL
     assert captured["body"]["max_tokens"] == anthropic_client.ANTHROPIC_MAX_TOKENS
@@ -218,7 +196,7 @@ def test_post_user_turn_is_compact_json_including_commas(anthropic_client, monke
         return FakeResponse(messages_payload([{"type": "text", "text": "ok"}]))
 
     monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", fake_urlopen)
-    anthropic_client.post("s", "P:\n", {"a": 1, "b": 2})
+    anthropic_client.post("s", "P:\n", {"a": 1, "b": 2}, {})
 
     assert captured["content"] == 'P:\n{"a":1,"b":2}'
     assert ", " not in captured["content"]
@@ -234,30 +212,7 @@ def test_post_text_block_without_text_key_returns_empty(anthropic_client, monkey
     monkeypatch.setattr(
         anthropic_client.urllib.request, "urlopen",
         lambda req, timeout=None: FakeResponse(messages_payload([{"type": "text"}])))
-    assert anthropic_client.post("s", "p", {}) == ""
-
-
-# --- extract_first_json: GREEDY span parity with the 3 originals -------------
-# The originals all used re.search(r"\{.*\}", text, DOTALL) — GREEDY: first "{" to the
-# LAST "}". A non-greedy "fix" (\{.*?\}) would silently change all three callers.
-
-
-def test_extract_first_json_multiple_objects_is_none(anthropic_client):
-    # [A-G4] first-{ to last-} spans BOTH objects -> invalid JSON -> None (not the first).
-    assert anthropic_client.extract_first_json('{"a":1} {"b":2}') is None
-    assert anthropic_client.extract_first_json('x {"a":1} y {"b":2} z') is None
-
-
-def test_extract_first_json_nested_object_returns_full_outer(anthropic_client):
-    # [A-G5] greedy captures the WHOLE outer object, not the inner one. A non-greedy
-    # regex would grab '{"outer": {"inner": 1}' -> invalid -> None.
-    assert anthropic_client.extract_first_json('{"outer": {"inner": 1}}') == {"outer": {"inner": 1}}
-
-
-def test_extract_first_json_array_wrapped_object_is_none(anthropic_client):
-    # [A-G6] a top-level JSON ARRAY: the span is '{"a":1},{"b":2}' (brace-to-brace,
-    # dropping the [ ]) -> invalid -> None. Parity with the originals' brace-only search.
-    assert anthropic_client.extract_first_json('[{"a":1},{"b":2}]') is None
+    assert anthropic_client.post("s", "p", {}, {}) == ""
 
 
 # --- done-criterion: one file owns AnthropicError ----------------------------

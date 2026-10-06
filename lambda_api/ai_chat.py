@@ -70,7 +70,8 @@ Every number in the card must be copied exactly from a tool result.
 says months, use calendar months (filters.months) instead.
 - "Last N cycles" or "last N months" means completed periods. Only include the current, \
 unfinished period if the user asks for it.
-- Keep answers to 1-3 sentences and bold the key figure with **double asterisks**.
+- Keep answers short enough to read at a glance in a phone chat bubble, and bold the key \
+figure with **double asterisks**.
 - Always fill `source` with the exact period used, e.g. "3 completed pay cycles · 12 Jun – 11 Sep".
 - Include a metric_bars card when the answer is a figure over time: one series point per period \
 with a short label such as "Jun" or "12 Jun".
@@ -178,11 +179,16 @@ TOOLS = [
     },
     {
         "name": "respond",
-        "description": "Give the final answer to the user.",
+        "description": (
+            "Give the final answer to the user and end the turn. Call it once, after the lookups "
+            "that produced every figure in the answer. The server drops a card whose figures "
+            "weren't returned by a tool this turn, and any action with an unknown category or "
+            "dates outside the lookback."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "text": {"type": "string"},
+                "text": {"type": "string", "description": "The chat reply. Markdown **bold** only."},
                 "card": {
                     "type": "object",
                     "properties": {
@@ -213,7 +219,13 @@ TOOLS = [
                     },
                     "required": ["type", "label", "value", "series"],
                 },
-                "source": {"type": "string"},
+                "source": {
+                    "type": "string",
+                    "description": (
+                        "The exact period the figures cover, "
+                        'e.g. "3 completed pay cycles · 12 Jun – 11 Sep".'
+                    ),
+                },
                 "actions": {
                     "type": "array",
                     "maxItems": _MAX_ACTIONS,
