@@ -1,10 +1,10 @@
-"""WHIT-766 / WHIT-767: no test file keeps its own repo stand-in, under any name.
+"""WHIT-766 / WHIT-767 / WHIT-769: no test file keeps its own repo stand-in, under any name.
 
 A copy is found by what it does (a class with no base that defines
 ``list_categories``, ``get_paycycle`` or ``get_transactions_by_date_range``), not by
 its name, so renamed copies are caught too. The shared fakes in
 ``tests/shared/_*_fakes.py`` are the one home; the transaction read's is
-``_transaction_range_fakes.py``.
+``_transaction_range_fakes.py``. Only ``_ALLOWED`` may keep its own.
 """
 
 import ast
@@ -16,22 +16,6 @@ _REPO_METHODS = {"list_categories", "get_paycycle", "get_transactions_by_date_ra
 
 # The full create/update/delete category fake, not a read-only stand-in.
 _ALLOWED = {"lambda_api/test_categories.py": {"FakeCategoryRepo"}}
-
-# Moved by WHIT-769 — delete entries as they go.
-_PENDING_TRANSACTION_COPIES = {
-    "balance_poller/test_feed_stall.py": {"_FakeTransactionRepo"},
-    "balance_poller/test_feed_stall_read_bounds_qa.py": {"_Recorder"},
-    "balance_poller/test_repayment_miss.py": {"_FakeTxnRepo"},
-    "balance_poller/test_repayment_miss_precise.py": {"_FakeTxnRepo"},
-    "lambda/test_budget_alerts.py": {"_CursorWindowRepo", "ExplodingWindowRepo", "_NeverEnds"},
-    "lambda_api/test_repayment.py": {"FakeTransactionRepo"},
-    "lambda_api/test_uncategorized_count.py": {"_NeverEndsRepo"},
-    "lambda_api/test_uncategorized_merchants.py": {"_NeverEndsRepo"},
-    "lambda_api/test_uncategorized_merchants_gaps.py": {"_FailsOnSecondPage"},
-    "lambda_api/test_windowed_read_routes_qa.py": {"_EndlessRepo", "_TwoPagesPerAccountRepo"},
-    "shared/test_read_date_range_pages_qa.py": {"_PagedRepo", "_Endless", "_Repo"},
-    "shared/test_repository_transaction.py": {"_EndlessRepo"},
-}
 
 
 def _local_copies(source):
@@ -57,13 +41,20 @@ def test_no_test_file_defines_its_own_repo_stand_in():
         "            return {}\n"
     )
     assert _local_copies(nested) == [(2, "_Renamed")]
+    nested_read = (
+        "def test_x():\n"
+        "    class _Renamed:\n"
+        "        def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):\n"
+        "            return [], None\n"
+    )
+    assert _local_copies(nested_read) == [(2, "_Renamed")]
 
     copies = []
     for path in sorted(_TESTS.rglob("*.py")):
         relative = path.relative_to(_TESTS).as_posix()
         if _is_shared_fake_module(relative):
             continue
-        allowed = _ALLOWED.get(relative, set()) | _PENDING_TRANSACTION_COPIES.get(relative, set())
+        allowed = _ALLOWED.get(relative, set())
         for lineno, name in _local_copies(path.read_text()):
             if name in allowed:
                 continue

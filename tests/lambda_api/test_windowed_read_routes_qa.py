@@ -9,30 +9,21 @@ import json
 
 import pytest
 from _budget_endpoint_fakes import _FakeCategoryRepo
+from _transaction_range_fakes import _AccountPagesTransactionRepo, _EndlessTransactionRepo
 
 
-class _EndlessRepo:
-    """A date-index cursor that never runs out."""
-
-    def __init__(self):
-        self.calls = 0
-
-    def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
-        self.calls += 1
-        return [{"transaction_id": f"t{self.calls}", "account_id": account_id, "date": "2026-07-01",
-                 "category": None, "amount": -1}], {"cur": self.calls}
-
-
-class _TwoPagesPerAccountRepo:
+def _two_pages_per_account(handler):
     """Two pages for every account: one unfiled row on each page."""
+    return _AccountPagesTransactionRepo({
+        account: [([_unfiled_row(account, f"{account}-1")], {"cur": 1}),
+                  ([_unfiled_row(account, f"{account}-2")], None)]
+        for account in handler.ACCOUNT_ID_MAP.values()
+    })
 
-    def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
-        page = 2 if cursor else 1
-        row = {"transaction_id": f"{account_id}-{page}", "account_id": account_id,
-               "date": "2026-07-01", "category": None, "amount": -1, "description": "shop"}
-        if page == 1:
-            return [row], {"cur": 1}
-        return [row], None
+
+def _unfiled_row(account_id, transaction_id):
+    return {"transaction_id": transaction_id, "account_id": account_id, "date": "2026-07-01",
+            "category": None, "amount": -1, "description": "shop"}
 
 
 class _RuleRepo:
@@ -57,12 +48,12 @@ def test_a_route_stops_at_the_page_ceiling_instead_of_hanging(handler, route):
     # [A1] a never-ending cursor -> RuntimeError at exactly DATE_RANGE_MAX_PAGES, not a hang.
     import constants
 
-    repo = _EndlessRepo()
+    repo = _EndlessTransactionRepo(page=[_unfiled_row("up-spending", "t1")])
 
     with pytest.raises(RuntimeError, match="did not finish"):
         _routes(handler)[route](repo)
 
-    assert repo.calls == constants.DATE_RANGE_MAX_PAGES
+    assert len(repo.calls) == constants.DATE_RANGE_MAX_PAGES
 
 
 def test_the_uncategorized_count_sums_every_page_of_every_account(handler):
@@ -70,7 +61,7 @@ def test_the_uncategorized_count_sums_every_page_of_every_account(handler):
     accounts = list(handler.ACCOUNT_ID_MAP.values())
     assert len(accounts) > 1
 
-    response = handler.get_uncategorized_count(_TwoPagesPerAccountRepo(), _FakeCategoryRepo())
+    response = handler.get_uncategorized_count(_two_pages_per_account(handler), _FakeCategoryRepo())
 
     assert json.loads(response["body"]) == {"count": 2 * len(accounts)}
 
@@ -79,7 +70,7 @@ def test_the_recent_feed_merges_every_page_of_every_account(handler):
     # [A3] the feed keeps rows from each account's second page, not just the first.
     accounts = list(handler.ACCOUNT_ID_MAP.values())
 
-    result = handler.get_recent_transactions(_TwoPagesPerAccountRepo())
+    result = handler.get_recent_transactions(_two_pages_per_account(handler))
 
     assert {row["transaction_id"] for row in result} == {
         f"{account}-{page}" for account in accounts for page in (1, 2)

@@ -17,6 +17,7 @@ import pytest
 from _feed_fakes import (
     ANZ, SPENDING, HOMELOAN, WESTPAC, FakeCategoryRepo, date_reads, real_repos, _row,
 )
+from _transaction_range_fakes import _EndlessTransactionRepo
 
 
 def test_counts_uncategorized_across_all_accounts(handler):
@@ -99,12 +100,9 @@ def test_route_wires_to_get_uncategorized_count(handler, monkeypatch):
 
 def test_unbounded_pagination_raises(handler):
     # A cursor that never terminates must raise (bounded read), not hang.
-    class _NeverEndsRepo:
-        def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
-            return [_row(account_id, "2026-01-01", "x", category=None)], {"pk": "p", "sk": "s"}
-
+    endless = _EndlessTransactionRepo(page=[_row(ANZ, "2026-01-01", "x", category=None)])
     with pytest.raises(RuntimeError, match="did not finish"):
-        handler.get_uncategorized_count(_NeverEndsRepo(), FakeCategoryRepo(set()))
+        handler.get_uncategorized_count(endless, FakeCategoryRepo(set()))
 
 
 # ---------------------------------------------------------------------------
@@ -235,11 +233,8 @@ def test_unbounded_pagination_propagates_through_handler(handler, monkeypatch):
     # from the page ceiling is NOT caught by lambda_handler (only VersionConflictError -> 409
     # is), so it propagates. Documents the actual behaviour: a raw Lambda 5xx, not a JSON 500.
     # If a graceful mapping is added later, this test flips and should be updated deliberately.
-    class _NeverEndsRepo:
-        def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
-            return [_row(account_id, "2026-01-01", "x", category=None)], {"pk": "p", "sk": "s"}
-
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: _NeverEndsRepo())
+    endless = _EndlessTransactionRepo(page=[_row(ANZ, "2026-01-01", "x", category=None)])
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: endless)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
 
     event = {
