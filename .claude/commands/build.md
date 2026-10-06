@@ -35,7 +35,8 @@ taking a moment to write it clearly.
   meaning. Only the wording changes.
 - If the user answers with a question ("what does this mean?"), the wording failed.
   Explain it more simply, with a concrete example, and ask again.
-- Words that slip through, and what to say instead:
+- Words that slip through, and what to say instead (if the project has its own
+  jargon → plain-words list, such as a "say instead" table, that list wins):
   endpoint → "the server address the app calls" · schema → "how the data is
   stored" · migration → "a one-off change to data already saved" · cache → "a
   saved copy" · refactor → "reorganise the code, same behaviour" · regression →
@@ -44,9 +45,9 @@ taking a moment to write it clearly.
   clashing" · null/undefined → "missing" · deploy → "release" · helper/module →
   say what it does ("the part that works out totals").
 
-`AGENTS.md` is already in your context. It contains the board data source ID,
-card prefix, default card type, card picking rules (sort field,
-blocker relation, skip patterns), and the check commands the pipeline runs.
+`AGENTS.md` is already in your context. It holds the board data source ID,
+card prefix, default card type, the check commands the pipeline runs, and any
+card picking rules (sort field, blocker relation, skip patterns) the project uses.
 
 ## Resuming a stopped build
 

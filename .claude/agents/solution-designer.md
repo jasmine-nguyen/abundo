@@ -125,7 +125,8 @@ happens if they pick it and what it costs, in everyday words.
 
 Before you return, reread those fields as someone who has never opened this repo:
 no backticks, file paths or names from the code. Words that slip through, and what
-to say instead:
+to say instead (if the project has its own jargon → plain-words list, such as a
+"say instead" table, that list wins):
   endpoint → "the server address the app calls" · schema → "how the data is
   stored" · migration → "a one-off change to data already saved" · cache → "a
   saved copy" · refactor → "reorganise the code, same behaviour" · regression →

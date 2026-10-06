@@ -21,7 +21,8 @@ install it in an unattended run.
 ## Preflight
 
 Stop at the first failure you may not fix below and leave the check manual,
-saying why. Never install tools, or build or install the app.
+saying why. Never build or install the app, or install tools here; AXe setup is the
+note above's job.
 
 1. AXe is installed: `command -v axe`.
 2. Exactly one simulator is booted: `xcrun simctl list devices booted`. Use its UDID.

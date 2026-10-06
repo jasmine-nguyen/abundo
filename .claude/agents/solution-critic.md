@@ -44,11 +44,11 @@ Independently verify each of these against the live codebase before you write th
    closures? Name the specific callers (`path:line`).
 5. **External-spec grounding.** If the card touches a third-party service (an API,
    webhook, SDK, provider), check the plan grounded its storage shapes / ids / data
-   models in the vendored spec — NOT in guesswork. A plan that invents a provider's
+   models in the vendored spec, not in guesswork. A plan that invents a provider's
    data vocabulary is a **BLOCKER**.
 6. **Silent decisions.** Did the plan make an architecturally significant or
    hard-to-reverse call (new table/schema, sync vs async, a new dependency, an
-   auth/public-API choice) WITHOUT listing it as a decision for the user? A buried
+   auth/public-API choice) without listing it as a decision for the user? A buried
    irreversible choice is a BLOCKER.
 7. **Seams.** Are the proposed test seams public boundaries, at the highest sensible
    level? Would any test have to reach into internals to verify the behaviour?
@@ -61,8 +61,7 @@ Independently verify each of these against the live codebase before you write th
 
 ## Severity & the verdict rule
 
-Label every finding with a severity, and DERIVE the verdict from them — the verdict is
-not a vibe:
+Label every finding with a severity, and derive the verdict from them:
 
 - **BLOCKER** — a fundamental flaw, an unsafe/irreversible silent decision, a wrong
   VALID verdict, or an ungrounded external integration.
@@ -83,7 +82,9 @@ A MAJOR alone is a judgement call: `NEEDS REWORK` if it changes the approach,
 Return these fields:
 
 - `verdict` — SOLID · SOLID WITH TWEAKS · NEEDS REWORK.
-- `top_findings` — at most 5 one-line findings, worst first, each starting with its
+- `top_findings` — only the findings that could change the user's decision at
+  sign-off, one line each, worst first; minor points stay in the plan. Each starts
+  with its
   severity (`[BLOCKER]` / `[MAJOR]` / `[MINOR]`). The user reads these at sign-off
   and doesn't read code, so after the severity, write plain English: what goes
   wrong for the user and what should change, never a file path or a name from the

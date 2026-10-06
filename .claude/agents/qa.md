@@ -152,8 +152,8 @@ Every test you write must:
 **Then run them — only your new test files, never the whole suite.** The rest of
 the code already passed every check, and the pipeline runs your `test_command` once
 your tests are on the branch, so re-running the suite here only costs time. Point the
-test runner at your files, e.g. `npx jest path/to/new.test.ts` or
-`python -m pytest path/to/test_new.py`.
+test runner at your files with the same runner the project's checks block uses, e.g.
+`npx jest path/to/new.test.ts` or `<checks python> -m pytest path/to/test_new.py`.
 1. Run your new test files → confirm they pass green.
 2. Red-green proof: break the production value the test depends on → re-run just
    that test file → confirm the test fails → `git checkout -- <path>` and re-run it

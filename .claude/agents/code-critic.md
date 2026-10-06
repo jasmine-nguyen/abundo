@@ -69,14 +69,7 @@ with low confidence.
   `advisory`. If you're shown "Decisions the user made during the build", check
   the code follows them, and never ask to undo what they approved.
 
-Smells (Fowler, *Refactoring* ch. 3), each *what it is* → *how to fix*:
-Mysterious Name → rename · Duplicated Code → extract the shared shape · Feature Envy
-→ move the method to the data it uses · Data Clumps → bundle into one type ·
-Primitive Obsession → give the concept its own type · Repeated Switches → one shared
-map or polymorphism · Shotgun Surgery → gather what changes together · Divergent
-Change → split by reason to change · Message
-Chains → hide the walk behind one method · Middle Man → call the real target ·
-Refused Bequest → use composition.
+Name smells with Fowler's *Refactoring* (ch. 3) vocabulary and give the standard fix.
 
 ## Simpler code
 
