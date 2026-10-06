@@ -8,6 +8,7 @@ import { useRecentTransactionsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { DetailStates } from '../../src/components/DetailStates';
+import { EmptyState } from '../../src/components/EmptyState';
 
 // WHIT-215: the per-account transaction list. Reached from the Accounts tab; the id in the
 // route is the account_id. Transactions come from the recent query — a seam that reads the
@@ -71,10 +72,7 @@ export default function AccountDetail() {
           {!detail && bal && <Text style={styles.count}>No recent transactions</Text>}
           {!detail && !bal && (
             // No transaction or balance carries this id (unknown/stale account) — settled, not loading.
-            <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>No transactions</Text>
-              <Text style={styles.emptySub}>This account has no transactions yet.</Text>
-            </View>
+            <EmptyState title="No transactions" sub="This account has no transactions yet." />
           )}
         </DetailStates>
       </ScrollView>
@@ -91,8 +89,4 @@ const styles = StyleSheet.create({
 
   count: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 16, marginHorizontal: 4 },
   groupLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, letterSpacing: 0.2, marginHorizontal: 4, marginBottom: 4 },
-
-  empty: { alignItems: 'center', paddingVertical: 64, paddingHorizontal: 30 },
-  emptyTitle: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.textBright },
-  emptySub: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, marginTop: 6, textAlign: 'center', lineHeight: 20 },
 });

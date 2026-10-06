@@ -8,6 +8,7 @@ import { useCategoryTransactionsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { DetailStates } from '../../src/components/DetailStates';
+import { EmptyState } from '../../src/components/EmptyState';
 import { formatDateRange } from '../../src/dateutil';
 import type { DateRange } from '../../src/api';
 
@@ -79,10 +80,7 @@ export default function CategoryDetail() {
             </>
           ) : (
             // No transaction in this category this cycle (or a stale deep-link) — settled, not loading.
-            <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>No transactions</Text>
-              <Text style={styles.emptySub}>Nothing in this category for the selected {range ? 'dates' : 'cycle'}.</Text>
-            </View>
+            <EmptyState title="No transactions" sub={`Nothing in this category for the selected ${range ? 'dates' : 'cycle'}.`} />
           )}
         </DetailStates>
       </ScrollView>
@@ -98,8 +96,4 @@ const styles = StyleSheet.create({
 
   count: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 16, marginHorizontal: 4 },
   groupLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, letterSpacing: 0.2, marginHorizontal: 4, marginBottom: 4 },
-
-  empty: { alignItems: 'center', paddingVertical: 64, paddingHorizontal: 30 },
-  emptyTitle: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.textBright },
-  emptySub: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, marginTop: 6, textAlign: 'center', lineHeight: 20 },
 });

@@ -8,6 +8,7 @@ import { useTransactionsScreenData } from '../../src/queries';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
+import { EmptyState } from '../../src/components/EmptyState';
 import { SettingsButton } from '../../src/components/SettingsButton';
 
 // The Accounts tab. Lifted out of the Transactions segmented control into its own bottom-bar
@@ -69,11 +70,11 @@ export default function Accounts() {
       />
 
       {!showSpinner && !showError && accounts.length === 0 && (
-        <View style={styles.empty}>
-          <View style={styles.emptyIcon}><Glyph name="wallet" size={32} color={C.accentSoft} /></View>
-          <Text style={styles.emptyTitle}>No accounts yet</Text>
-          <Text style={styles.emptySub}>Your linked accounts show up here once transactions sync.</Text>
-        </View>
+        <EmptyState
+          icon={<Glyph name="wallet" size={32} color={C.accentSoft} />}
+          title="No accounts yet"
+          sub="Your linked accounts show up here once transactions sync."
+        />
       )}
 
       {!showSpinner && !showError && accounts.length > 0 && (
@@ -114,10 +115,6 @@ const styles = StyleSheet.create({
   // Stretch the scroll content to the viewport so a short account list is still one full-screen
   // pull-to-refresh surface (same idiom as budgets/goals styles.fill).
   fill: { flexGrow: 1 },
-  empty: { alignItems: 'center', paddingVertical: 64, paddingHorizontal: 30 },
-  emptyIcon: { width: 64, height: 64, borderRadius: 20, backgroundColor: tint(C.good, 0.12), alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
-  emptyTitle: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.textBright },
-  emptySub: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, marginTop: 6, textAlign: 'center', lineHeight: 20 },
 
   acct: { flexDirection: 'row', alignItems: 'center', gap: 13, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 15, paddingHorizontal: 16, marginBottom: 10 },
   acctChip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
