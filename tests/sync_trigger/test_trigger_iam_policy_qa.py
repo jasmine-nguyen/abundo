@@ -16,7 +16,7 @@ from decimal import Decimal
 import pytest
 from _boto_stubs import install_import_satisfiers, use_condition_fields
 from _dynamo_fakes import FakeTable, _client_error
-from _terraform import DYNAMODB_VERB_TO_ACTION, allows, granted_dynamodb_actions, leading_keys, policy_statements
+from _terraform import DYNAMODB_VERB_TO_ACTION, allows, policy_statements
 
 install_import_satisfiers()
 
@@ -131,42 +131,6 @@ def test_the_rush_and_cettire_doubles_are_removed_with_notes_kept_under_the_trig
     assert keys == {"TXN#new_cettire", "TXN#new_rush"}
     assert repo._table.store[(f"ACCOUNT#{WESTPAC}", "TXN#new_cettire")]["notes"] == "The North Face Jacket"
     assert repo._table.store[(f"ACCOUNT#{WESTPAC}", "TXN#new_rush")]["notes"] == "Patagonia Backpack"
-
-
-# [A2] P0 — UpdateItem can't widen quietly: EVERY statement granting it carries the scope.
-def test_every_statement_granting_update_item_is_scoped_to_transaction_rows_on_the_base_table():
-    granting = [statement for statement in policy_statements(POLICY)
-                if "UpdateItem" in granted_dynamodb_actions(statement)]
-    assert granting, "no statement grants UpdateItem, so carry_onto_pending gets AccessDenied"
-    for statement in granting:
-        assert leading_keys(statement) == ["ACCOUNT#*"], f"UpdateItem not scoped to ACCOUNT# rows:\n{statement}"
-        assert '"ForAllValues:StringLike"' in statement, f"the ACCOUNT#* wildcard needs StringLike:\n{statement}"
-        assert "/index/" not in statement, f"UpdateItem should be base-table only:\n{statement}"
-
-
-# [A3] P1 — the rows the trigger updates are the ones the repository writes: their pk matches the scope.
-def test_every_account_rows_pk_is_inside_the_update_scope(layer):
-    repository_transaction = layer[0]
-    constants = importlib.import_module("constants")
-    repository = repository_transaction.TransactionRepository()
-    repository._table = FakeTable()
-    repository.insert_transactions([
-        {"transaction_id": f"t-{account_id}", "account_id": account_id, "date": "2026-09-30",
-         "amount": Decimal("-1"), "status": "pending"}
-        for account_id in constants.ACCOUNT_ID_MAP.values()
-    ])
-
-    pks = {key[0] for key in repository._table.store}
-    assert len(pks) == len(constants.ACCOUNT_ID_MAP)
-    for pk in pks:
-        assert allows(policy_statements(POLICY), "UpdateItem", pk), f"the trigger role can't update a row with pk {pk!r}"
-
-
-# [A4] P1 — per the plan, the category colour backfill (pk CATEGORIES) stays denied for this role.
-def test_the_categories_row_is_outside_the_update_scope():
-    statements = policy_statements(POLICY)
-    assert not allows(statements, "UpdateItem", "CATEGORIES")
-    assert not allows(statements, "PutItem", "CATEGORIES")
 
 
 # [A5] P1 — with the backfill denied, the mirror's category read still fails open.

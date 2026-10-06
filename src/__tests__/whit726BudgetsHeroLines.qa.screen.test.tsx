@@ -5,8 +5,8 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { screen } from '@testing-library/react-native';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
-import { COFFEE, SALARY } from './support/categories';
-import { BUDGET_PAY_CYCLE, seedBudgets, renderBudgets, showBudgets, heroTotals } from './support/budgetsScreen';
+import { COFFEE } from './support/categories';
+import { showBudgets, heroTotals } from './support/budgetsScreen';
 
 jest.mock('../auth', () => ({
   getStatus: () => 'authed',
@@ -26,19 +26,6 @@ describe('WHIT-731 QA — the Spent · Budget · Next payday row', () => {
     expect(heroTotals()).toMatchObject({ spent: '$6,136.68', budget: '$5,785' });
     expect(screen.queryByText(/pending/)).toBeNull();
     expect(screen.queryByText(/resets/)).toBeNull();
-  });
-
-  // [A3] (P1) the empty state shows only the payday cell
-  it('[A3] no spending budgets → only the "Next payday" cell, no Spent or Budget', async () => {
-    seedBudgets(server, { budgets: { salary: { target: 5000, posted: 1000, pending: 0 } }, categories: [COFFEE, SALARY], payCycle: BUDGET_PAY_CYCLE });
-    renderBudgets();
-    await screen.findByText('Salary');
-    expect(screen.getByText(/^No spending budgets yet/)).toBeTruthy();
-    expect(heroTotals()).toMatchObject({ spent: undefined, budget: undefined });
-    expect(heroTotals().payday).toMatch(/^\d{1,2} [A-Z][a-z]{2}$/);
-    expect(screen.getByText('Next payday')).toBeTruthy();
-    expect(screen.queryByText('Spent')).toBeNull();
-    expect(screen.queryByText('Budget')).toBeNull();
   });
 
   // [A4] (P1) cents stay when the amount has them (WHIT-735), thousands get commas

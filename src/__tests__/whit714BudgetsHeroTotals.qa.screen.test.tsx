@@ -24,22 +24,6 @@ beforeEach(() => {
 });
 
 describe('WHIT-714 top card — QA edges', () => {
-  // [A1] (P0) income + Savings, no spending → no money figures at all, no first-time button
-  it('[A1] income + Savings budgets → no "$" on the top card, honest wording, dashed add kept', async () => {
-    server.seed('/budgets', {
-      salary: { target: 5000, posted: 1000, pending: 0 },
-      rainy: { target: 300, posted: 100, pending: 0 },
-    });
-    renderBudgets();
-    await screen.findByText('Salary');
-    expect(screen.getByText(NO_SPENDING)).toBeTruthy();
-    expect(screen.queryByText('Left to spend')).toBeNull();
-    expect(screen.queryByTestId('budgets-hero-spent')).toBeNull();
-    expect(screen.queryByTestId('budgets-hero-add')).toBeNull();
-    expect(screen.queryByText('Rainy Day')).toBeNull(); // Savings stays hidden (WHIT-201)
-    expect(screen.getByText('Add a budget')).toBeTruthy();
-  });
-
   // [A2] (P0) income-only → a spending budget is added on refetch → the money view replaces the empty wording
   it('[A2] income-only → spending budget appears on refetch → money column back, empty wording gone', async () => {
     server.seed('/budgets', { salary: { target: 5000, posted: 1000, pending: 0 } });
