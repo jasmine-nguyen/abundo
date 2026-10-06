@@ -68,7 +68,7 @@ export function seedGoalsHub(
 // The Goals-tab suites' shared world: a fortnightly cycle (paydays …Jul4, Jul18, Aug1, Aug15),
 // $4,000 in up-spending, no loan facts yet, and a home loan owing $596,642.43.
 export const GOALS_HUB_CYCLE: PayCycle = { length: 14, last_pay_date: '2026-06-06' };
-export const GOALS_HUB_DEFAULTS: GoalsHubSeed = {
+const GOALS_HUB_DEFAULTS: GoalsHubSeed = {
   payCycle: GOALS_HUB_CYCLE,
   balances: { 'up-spending': 4000 },
   loanFacts: EMPTY_LOAN_FACTS,

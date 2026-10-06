@@ -22,7 +22,7 @@ function ScreensUnderneath() {
   return null;
 }
 
-export function OverlaysOverScreens() {
+function OverlaysOverScreens() {
   return (
     <>
       <ScreensUnderneath />

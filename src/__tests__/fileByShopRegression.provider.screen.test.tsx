@@ -24,6 +24,7 @@ jest.mock('../auth', () => ({
   getAuthToken: async () => 'test-id-token',
 }));
 import { installFakeServer } from './support/fakeServer';
+import { invalidatedKeys } from './support/queryClient';
 
 const server = installFakeServer();
 const APPLY_RULES = '/transactions/uncategorized/apply-rules';
@@ -43,9 +44,6 @@ const GROUP: UncategorizedMerchantGroup = {
   samples: ['COLES 1234'], firstDate: null, lastDate: null, alsoCatches: [],
 };
 
-function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
-  return spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
-}
 function mount() { return renderHook(() => useAppContext(), { wrapper }).result; }
 
 beforeEach(() => { queryClient.clear(); mockStatus = 'authed'; });

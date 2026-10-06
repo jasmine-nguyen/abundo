@@ -8,15 +8,11 @@ jest.mock('../../auth', () => require('./authMock').authMockModule());
 import * as api from '../../api';
 import { ApiError } from '../../apiError';
 import { resetAuth } from './authMock';
-import { installFakeServer } from './fakeServer';
+import { installFakeServer, drainMicrotasks } from './fakeServer';
 
 const CAP = 'You can have up to 50 categories';
 const GYM = { name: 'Gym', bucket: 'Lifestyle' as const, icon: 'dumbbell' };
 const PLAN = [{ id: 'c', label: 'Client-minted', target: 1 }] as never;
-
-async function flush(): Promise<void> {
-  for (let i = 0; i < 20; i++) await Promise.resolve();
-}
 
 beforeEach(() => resetAuth());
 
@@ -27,7 +23,7 @@ describe('WHIT-651 QA — held replies used by the sign-out suites', () => {
   it('[A1] a dropped reply queued while the request is held is the one it gets on release', async () => {
     const held = server.hold('/milestones');
     const save = api.setMilestones(PLAN).then(() => 'resolved', (e: unknown) => e);
-    await flush();
+    await drainMicrotasks();
     expect(server.sent('PUT', '/milestones')).toHaveLength(1);
 
     server.once('PUT', '/milestones', 'dropped');
@@ -43,7 +39,7 @@ describe('WHIT-651 QA — held replies used by the sign-out suites', () => {
     const held = server.hold('/categories');
     server.once('POST', '/categories', { status: 400, reason: CAP });
     const create = api.createCategory(GYM).then(() => 'resolved', (e: unknown) => e);
-    await flush();
+    await drainMicrotasks();
     held.release();
 
     const outcome = await create;
@@ -57,7 +53,7 @@ describe('WHIT-651 QA — held replies used by the sign-out suites', () => {
     let settled = 0;
     const save = api.saveGoal('g1', { target: 200 } as never).then(() => { settled += 1; });
     const remove = api.deleteGoal('g1').then(() => { settled += 1; });
-    await flush();
+    await drainMicrotasks();
     expect(settled).toBe(0);
 
     held.release();
@@ -82,7 +78,7 @@ describe('WHIT-651 QA — held replies used by the sign-out suites', () => {
   it('[A5] a held save with no queued reply resolves with the echoed plan on release, and logs its body', async () => {
     const held = server.hold('/milestones');
     const save = api.setMilestones(PLAN);
-    await flush();
+    await drainMicrotasks();
     held.release();
 
     await expect(save).resolves.toEqual(PLAN);

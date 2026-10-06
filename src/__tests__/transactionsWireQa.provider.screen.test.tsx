@@ -12,6 +12,7 @@ import { seedTransactionsCache, readTransactionsCache } from './support/transact
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
 import { DINING, GROCERIES } from './support/categories';
+import { invalidatedKeys } from './support/queryClient';
 
 const server = installFakeServer();
 
@@ -25,9 +26,6 @@ const txn = (id: string, extra: Partial<Transaction> = {}): Transaction => ({
   ...extra,
 });
 const cached = (id: string) => readTransactionsCache(queryClient).find((t) => t.transaction_id === id);
-const invalidatedKeys = (spy: ReturnType<typeof jest.spyOn>) =>
-  spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
-
 beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); jest.restoreAllMocks(); });
 

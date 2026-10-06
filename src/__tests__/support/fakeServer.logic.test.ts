@@ -9,7 +9,7 @@ import * as api from '../../api';
 import { ApiError } from '../../apiError';
 import { resetAuth, setAuthToken } from './authMock';
 import { WIRE } from './apiWire';
-import { installFakeServer } from './fakeServer';
+import { installFakeServer, drainMicrotasks } from './fakeServer';
 import { ESSENTIAL_GROCERIES } from './categories';
 
 const BASE = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
@@ -18,10 +18,6 @@ const originalFetch = global.fetch;
 const GYM = { name: 'Gym', bucket: 'Lifestyle' as const, icon: 'dumbbell' };
 
 // Let every pending promise step run (auth token → fetch → body read) without touching timers.
-async function flush(): Promise<void> {
-  for (let i = 0; i < 20; i++) await Promise.resolve();
-}
-
 beforeEach(() => resetAuth());
 
 describe('WHIT-637 fake server', () => {
@@ -70,11 +66,11 @@ describe('WHIT-637 fake server', () => {
     let settled = false;
     const save = api.createCategory(GYM).then(() => { settled = true; });
 
-    await flush();
+    await drainMicrotasks();
     expect(settled).toBe(false);
 
     held.release();
-    await flush();
+    await drainMicrotasks();
     expect(settled).toBe(true);
     await save;
   });
@@ -83,7 +79,7 @@ describe('WHIT-637 fake server', () => {
     const held = server.hold('/milestones');
     const save = api.setMilestones([]).catch((error: unknown) => error);
 
-    await flush();
+    await drainMicrotasks();
     held.fail('PUT');
 
     const dropped = await save;
@@ -98,7 +94,7 @@ describe('WHIT-637 fake server', () => {
     const held = server.hold('/categories');
     const save = api.createCategory(GYM).catch((error: unknown) => error);
 
-    await flush();
+    await drainMicrotasks();
     held.fail('POST', { status: 400, reason: 'Name is required' });
 
     const rejected = await save;

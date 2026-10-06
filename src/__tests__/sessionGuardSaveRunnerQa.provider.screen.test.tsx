@@ -24,6 +24,7 @@ import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 import { installFakeServer } from './support/fakeServer';
+import { invalidatedKeys } from './support/queryClient';
 
 const server = installFakeServer();
 
@@ -40,9 +41,6 @@ function signInNextAccount() {
 const cat = (id: string, name: string) => ({ id, name, bucket: 'Living', icon: 'tag', color: '#fff', recent: 0 });
 const updated = (...ids: string[]) => ({ results: ids.map((id) => ({ id, status: 'updated' })) });
 
-function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
-  return spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
-}
 function rulesCache() {
   return queryClient.getQueryData<Rule[]>(['rules']) ?? [];
 }

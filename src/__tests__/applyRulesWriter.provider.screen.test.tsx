@@ -35,6 +35,7 @@ jest.mock('../auth', () => ({
   getAuthToken: async () => 'test-id-token',
 }));
 import { installFakeServer } from './support/fakeServer';
+import { invalidatedKeys } from './support/queryClient';
 
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const FAILED: FilingResult = { status: 'failed', background: false };
@@ -57,10 +58,6 @@ const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
   filed: [{ id: 't1', category: 'groceries' }], vanished: [], failed: [], remaining: 0,
   ...over,
 });
-
-function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
-  return spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
-}
 
 /** Read a named list cache back as a flat list of rows. */
 function rowsIn(key: 'transactions' | 'uncategorizedFeed'): Transaction[] {

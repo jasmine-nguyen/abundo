@@ -136,7 +136,7 @@ function skipString(src: string, start: number): number {
 // src-relative pairs ("motion/foo") and every directory visited (proof the walk actually descended).
 // __tests__ is skipped at every level. Why this matters is documented on the guard itself,
 // themeLayout.logic.test.ts.
-export const CODE_FILE = /\.(t|j)sx?$/;
+const CODE_FILE = /\.(t|j)sx?$/;
 
 export function walkSrc(root: string): { shadowPairs: string[]; visited: string[] } {
   const shadowPairs: string[] = [];

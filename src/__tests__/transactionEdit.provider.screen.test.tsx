@@ -13,6 +13,7 @@ import { seedTransactionsCache, readTransactionsCache } from './support/transact
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
+import { invalidatedKeys } from './support/queryClient';
 
 const server = installFakeServer();
 
@@ -44,7 +45,7 @@ it('saves a note optimistically, calls the API with only that field, and invalid
 
   expect(cached('t1')?.notes).toBe('lunch'); // optimistic cache write
   expect(server.requests()).toContainEqual({ method: 'PATCH', path: '/transactions/t1', body: { notes: 'lunch' } });
-  const keys = invalidateSpy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
+  const keys = invalidatedKeys(invalidateSpy);
   expect(keys).not.toContain('transactions'); // the feed is patched in place, never invalidated
   expect(keys).toHaveLength(0); // a plain note edit touches no server-derived cache either
   invalidateSpy.mockRestore();

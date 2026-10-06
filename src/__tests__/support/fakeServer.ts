@@ -198,6 +198,11 @@ function untilReleasedOrAborted(held: Promise<void>, signal?: AbortSignal | null
   });
 }
 
+// Lets the fake server's async replies settle before a test checks the result.
+export async function drainMicrotasks(): Promise<void> {
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+}
+
 export function installFakeServer() {
   let store: Store = new Map();
   let failures = new Map<string, Reply>();

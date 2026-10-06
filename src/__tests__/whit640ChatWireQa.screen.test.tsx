@@ -7,6 +7,7 @@ import React from 'react';
 import { act, render } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { installFakeServer } from './support/fakeServer';
+import { flush } from './support/queryClient';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 
@@ -22,10 +23,6 @@ let chat: ChatContextValue;
 function Probe() {
   chat = useChat();
   return null;
-}
-
-async function flush() {
-  await act(async () => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); });
 }
 
 async function tick(ms = CHAT_POLL_DELAY_MS) {

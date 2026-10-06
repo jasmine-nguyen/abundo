@@ -19,6 +19,7 @@ import { seedTransactionsCache, readTransactionsCache } from './support/transact
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
+import { invalidatedKeys } from './support/queryClient';
 
 const server = installFakeServer();
 const categoryReads = () => server.sent('GET', '/categories');
@@ -56,7 +57,7 @@ it('persistPayCycle writes [payCycle] optimistically AND invalidates payCycle/bu
 
   expect(queryClient.getQueryData<{ length: number }>(['payCycle'])?.length).toBe(30);
   // WHIT-341: refetch ['payCycle'] for the server's fresh days_left, alongside budgets/breakdown.
-  const keys = invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
+  const keys = invalidatedKeys(invalidate);
   expect(keys).toEqual(expect.arrayContaining(['payCycle', 'budgets', 'breakdown']));
   invalidate.mockRestore();
 });
@@ -71,7 +72,7 @@ it('saveCategory mirrors the new category into [categories] instantly AND invali
   // The created category appears in the cache the migrated screens read (instant, no round-trip)...
   expect(queryClient.getQueryData<Category[]>(['categories'])?.map((c) => c.id)).toContain('new');
   // ...and the invalidate reconciles with the server.
-  const keys = invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
+  const keys = invalidatedKeys(invalidate);
   expect(keys).toContain('categories');
   invalidate.mockRestore();
 });
@@ -92,7 +93,7 @@ it('deleteCategory MIRRORS the cascade into the caches without invalidating (no 
   expect(queryClient.getQueryData<Record<string, BudgetRollup>>(['budgets', 14])).toEqual({});
   expect(readTransactionsCache(queryClient)[0].category).toBeNull();
   // ...via setQueryData, NOT invalidate — a refetch would resurrect them (server does no cascade).
-  const keys = invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
+  const keys = invalidatedKeys(invalidate);
   expect(keys).not.toContain('categories');
   expect(keys).not.toContain('budgets');
   expect(keys).not.toContain('transactions');

@@ -21,6 +21,7 @@ import { queryClient } from '../queryClient';
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES } from './support/categories';
+import { invalidatedKeys } from './support/queryClient';
 
 const server = installFakeServer();
 
@@ -28,10 +29,6 @@ const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{c
 
 const RULE: Rule = { id: 'r1', pattern: 'COLES', categoryId: 'groceries', isNew: false, field: 'description', operator: 'contains' };
 const RULE_RECORD = { id: 'r1', value: 'COLES', categoryId: 'groceries', field: 'description', operator: 'contains' } as const;
-
-function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
-  return spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
-}
 
 beforeEach(() => {
   queryClient.clear();

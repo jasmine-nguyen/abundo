@@ -16,6 +16,7 @@ jest.mock('../auth', () => ({
   getAuthToken: async () => 'test-id-token',
 }));
 import { installFakeServer } from './support/fakeServer';
+import { invalidatedKeys } from './support/queryClient';
 
 const server = installFakeServer();
 
@@ -59,7 +60,7 @@ it('removes the charge from the feed, search and the budget and category lists, 
   expect(ids(queryClient.getQueryData<{ transactions: Transaction[] }>(['transactionsSearch', 'claude'])?.transactions)).toEqual(['keep']);
   expect(ids(queryClient.getQueryData<Transaction[]>(['budgetTransactions', 'subscriptions']))).toEqual(['keep']);
   expect(ids(queryClient.getQueryData<Transaction[]>(['categoryTransactions', 'subscriptions']))).toEqual([]);
-  const refreshed = invalidate.mock.calls.map((call) => (call[0] as { queryKey: string[] }).queryKey[0]);
+  const refreshed = invalidatedKeys(invalidate);
   expect(refreshed).toEqual(expect.arrayContaining(['budgets', 'breakdown', 'uncategorizedCount']));
   invalidate.mockRestore();
 });

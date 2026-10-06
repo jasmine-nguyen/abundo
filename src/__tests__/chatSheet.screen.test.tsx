@@ -10,6 +10,7 @@ import { chartCategoryColor } from '../chartColors';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { flush } from './support/queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -48,10 +49,6 @@ let chat: ChatContextValue;
 function Probe() {
   chat = useChat();
   return null;
-}
-
-async function flush() {
-  await act(async () => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); });
 }
 
 async function mountOpen() {

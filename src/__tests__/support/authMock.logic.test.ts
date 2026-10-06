@@ -1,5 +1,5 @@
 // WHIT-456 (slice 2 of WHIT-451) — unit contract for support/authMock's store primitives.
-// The screen adopters (overlaysSheetDraft) already pin useIsAuthedMock reacting through a real
+// The screen adopters (overlaysSheetDraft) already pin the auth store reacting through a real
 // render; this suite pins the raw store contract they DON'T assert directly:
 //   [A5] setAuthStatus broadcasts UNCONDITIONALLY (even to a same-value transition)
 //   [A6] subscribeAuth's returned unsubscribe actually removes the listener

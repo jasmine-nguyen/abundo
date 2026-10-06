@@ -7,16 +7,12 @@ jest.mock('../../auth', () => require('./authMock').authMockModule());
 import * as api from '../../api';
 import { ApiError } from '../../apiError';
 import { resetAuth } from './authMock';
-import { installFakeServer } from './fakeServer';
+import { installFakeServer, drainMicrotasks } from './fakeServer';
 import { ESSENTIAL_GROCERIES } from './categories';
 
 const JOBS = '/transactions/uncategorized/apply-rules/jobs';
 const RUNNING = { jobId: 'job-1', status: 'running', attempted: 1 };
 const SUCCEEDED = { jobId: 'job-1', status: 'succeeded', attempted: 2 };
-
-async function flush(): Promise<void> {
-  for (let i = 0; i < 20; i++) await Promise.resolve();
-}
 
 beforeEach(() => resetAuth());
 
@@ -34,7 +30,7 @@ describe('WHIT-639 QA — once() edge cases', () => {
 
     const first = api.createCategory({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }).catch((e: unknown) => e);
     const second = api.createCategory({ name: 'Groceries', bucket: 'Living', icon: 'cart' });
-    await flush();
+    await drainMicrotasks();
     held.release();
 
     expect(await first).toMatchObject({ name: 'ApiError', status: 409, serverMessage: 'first' });
@@ -50,7 +46,7 @@ describe('WHIT-639 QA — once() edge cases', () => {
     const held = server.hold(`${JOBS}/job-1`);
 
     const timedOut = api.getApplyRulesJob('job-1').catch((e: unknown) => e);
-    await flush();
+    await drainMicrotasks();
     await jest.advanceTimersByTimeAsync(6_000);
     expect(await timedOut).toMatchObject({ name: 'AbortError' });
 

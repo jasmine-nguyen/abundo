@@ -17,6 +17,7 @@ import { seedTransactionsCache } from './support/transactionsCache';
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES } from './support/categories';
+import { invalidatedKeys } from './support/queryClient';
 
 const server = installFakeServer();
 
@@ -29,10 +30,6 @@ const txn = (over: Partial<Transaction> = {}): Transaction => ({
   account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
   ...over,
 });
-
-function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
-  return spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
-}
 
 beforeEach(() => {
   queryClient.clear();

@@ -15,6 +15,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES } from './support/categories';
+import { invalidatedKeys } from './support/queryClient';
 
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const server = installFakeServer();
@@ -49,7 +50,7 @@ it('[A10] apply-rules patches + invalidates the search result', async () => {
 
   const rows = queryClient.getQueryData<TransactionSearchResult>(SEARCH_KEY)!.transactions;
   expect(rows.map((t) => [t.transaction_id, t.category])).toEqual([['deep1', 'groceries'], ['deep3', null]]);
-  const invalidated = spy.mock.calls.map((call) => (call[0] as { queryKey: string[] }).queryKey[0]);
+  const invalidated = invalidatedKeys(spy);
   expect(invalidated).toContain('transactionsSearch');
   expect(queryClient.getQueryState(SEARCH_KEY)?.isInvalidated).toBe(true);
   spy.mockRestore();
