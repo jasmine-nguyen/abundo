@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from _budget_alert_fakes import notify_repo
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _transaction_range_fakes import _AccountTransactionRepo
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BANK_ACCT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
@@ -24,14 +25,6 @@ def alerts(lam, monkeypatch):
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 14))  # window 07-01..07-14
     return lam
-
-
-class _Window:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def get_transactions_by_date_range(self, account_id, start, end, limit=100, cursor=None):
-        return ([r for r in self._rows if r["account_id"] == account_id], None)
 
 
 class _Devices:
@@ -75,7 +68,7 @@ def _fire(alerts, monkeypatch, repo, before, batch):
                         lambda title, body, toks, data=None: sent.append(title) or {"sent": 1, "ok": 1, "pruned": []})
     notify = notify_repo()
     ctx = ba.capture_pre_write(batch, device_repo=_Devices(), budget_repo=_Budgets(),
-                               paycycle_repo=_Paycycle(), window_repo=_Window(before), webhook_repo=repo)
+                               paycycle_repo=_Paycycle(), window_repo=_AccountTransactionRepo(before), webhook_repo=repo)
     repo.insert_or_reconcile(batch)
     ba.fire_budget_alerts(ctx, batch, webhook_repo=repo, category_repo=_Categories(), notify_repo=notify)
     return sent, notify, ctx

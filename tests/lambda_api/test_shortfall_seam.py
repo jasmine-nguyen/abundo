@@ -16,6 +16,7 @@ from functools import partial
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _insight_fakes import insight_puts, insight_repo
+from _transaction_range_fakes import _WindowKeyedTransactionRepo
 
 
 # --- local fakes (mirror the sibling suite's; infra, not duplicated test cases) ----
@@ -26,19 +27,6 @@ FakeCategoryRepo = partial(_FakeCategoryRepo, [{"id": "groceries", "name": "Groc
 class _FakeBudgetRepo:
     def list_budgets(self):
         return {"groceries": {"target": Decimal("300")}}
-
-
-class _FakeTxnRepo:
-    def __init__(self, by_window):
-        self._by_window = by_window
-        self._first_account = None
-
-    def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
-        if self._first_account is None:
-            self._first_account = account_id
-        if account_id != self._first_account:
-            return [], None
-        return self._by_window.get((start, end), []), None
 
 
 FakePayCycleRepo = partial(_FakePayCycleRepo, length=14, last_pay_date="2024-01-03")
@@ -70,7 +58,7 @@ _RAW_SHORTFALL = {
 def test_generate_threads_shortfall_goal_into_model_input_and_hash(handler, monkeypatch):
     cycle = FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
-    txn_repo = _FakeTxnRepo({(start, end): [_txn("groceries", -50)]})
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [_txn("groceries", -50)]})
     captured = {}
 
     def _capture(mi):
@@ -100,7 +88,7 @@ def test_shortfall_goal_busts_an_otherwise_matching_spend_only_cache(handler, mo
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
     window = {(start, end): [_txn("groceries", -50)]}
     spend_only, cycle_start = handler.assemble_insight_input(
-        FakeCategoryRepo(), _FakeBudgetRepo(), _FakeTxnRepo(dict(window)), FakePayCycleRepo())
+        FakeCategoryRepo(), _FakeBudgetRepo(), _WindowKeyedTransactionRepo(dict(window)), FakePayCycleRepo())
     repo = insight_repo(existing={
         "summary": "spend-only cached", "suggestions": [], "generated_at": "t",
         "input_hash": _hash(spend_only)}, cycle_start=cycle_start)
@@ -109,7 +97,7 @@ def test_shortfall_goal_busts_an_otherwise_matching_spend_only_cache(handler, mo
     event = {"body": json.dumps({"goal": dict(_RAW_SHORTFALL)})}
 
     resp = handler.generate_ai_insights(
-        FakeCategoryRepo(), _FakeBudgetRepo(), _FakeTxnRepo(dict(window)),
+        FakeCategoryRepo(), _FakeBudgetRepo(), _WindowKeyedTransactionRepo(dict(window)),
         FakePayCycleRepo(), repo, event)
 
     body = json.loads(resp["body"])

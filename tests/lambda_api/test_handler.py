@@ -9,7 +9,6 @@ lambda_handler to prove the wiring (and, for the feed, that its real body runs).
 """
 
 import base64
-import copy
 import json
 from datetime import date
 from decimal import Decimal
@@ -17,9 +16,10 @@ from decimal import Decimal
 import pytest
 
 # _UNSET / FakeRepo / _patch_event live in tests/shared/_handler_patch_fakes.py so this impl
-# suite and the two PATCH gap suites share ONE definition (WHIT-445); the batch/recent-feed
-# fakes below are used only here and stay local.
+# suite and the two PATCH gap suites share ONE definition (WHIT-445); the batch fake below
+# is used only here and stays local.
 from _handler_patch_fakes import FakeRepo, _patch_event
+from _transaction_range_fakes import _AccountPagesTransactionRepo
 
 
 class FakeBatchRepo:
@@ -45,33 +45,6 @@ def _batch_event(body, is_b64=False):
         "body": body,
         "isBase64Encoded": is_b64,
     }
-
-
-class FakeRecentFeedRepo:
-    """Stand-in for TransactionRepository for get_recent_transactions.
-
-    Serves per-account queued (items, cursor) pages, mirroring the real
-    get_transactions_by_date_range(account_id, start, end, limit, cursor) ->
-    (items, LastEvaluatedKey) contract. Records every call (so window/pagination
-    assertions can inspect the args) and hands out DEEP COPIES, because the
-    function mutates rows in place (pop pk/sk, setdefault category) — sharing
-    references would let one call's edits corrupt the seed or a later page.
-    """
-
-    def __init__(self, pages_by_account=None):
-        # pages_by_account: {account_id: [(items, cursor), ...]}
-        self._pages = {a: list(p) for a, p in (pages_by_account or {}).items()}
-        self.calls = []
-
-    def get_transactions_by_date_range(
-        self, account_id, start_date, end_date, limit=20, cursor=None
-    ):
-        self.calls.append((account_id, start_date, end_date, limit, cursor))
-        queue = self._pages.get(account_id)
-        if queue:
-            items, next_cursor = queue.pop(0)
-            return copy.deepcopy(items), next_cursor
-        return [], None
 
 
 def _row(account_id, date, txn_id, **extra):
@@ -462,7 +435,7 @@ def test_recent_merges_across_all_accounts(handler):
     # One distinct row on EVERY account -> each must contribute exactly one row.
     # (A loop that skips accounts would drop one and fail this.)
     accounts = list(handler.ACCOUNT_ID_MAP.values())
-    repo = FakeRecentFeedRepo(pages_by_account={
+    repo = _AccountPagesTransactionRepo(pages_by_account={
         a: [([_row(a, f"2026-07-0{i + 1}", f"t{i}")], None)]
         for i, a in enumerate(accounts)
     })
@@ -478,7 +451,7 @@ def test_recent_sorted_newest_first_across_accounts(handler):
     # sorted -> only a real descending sort produces the expected order. Guards
     # against the sort being dropped or its reverse flag flipped.
     a, b, c = list(handler.ACCOUNT_ID_MAP.values())[:3]
-    repo = FakeRecentFeedRepo(pages_by_account={
+    repo = _AccountPagesTransactionRepo(pages_by_account={
         a: [([_row(a, "2026-07-04", "a2"), _row(a, "2026-07-01", "a1")], None)],
         b: [([_row(b, "2026-07-02", "b1")], None)],
         c: [([_row(c, "2026-07-03", "c1")], None)],
@@ -493,7 +466,7 @@ def test_recent_sorted_newest_first_across_accounts(handler):
 
 def test_recent_strips_pk_and_sk(handler):
     a = list(handler.ACCOUNT_ID_MAP.values())[0]
-    repo = FakeRecentFeedRepo(pages_by_account={a: [([_row(a, "2026-07-01", "t1")], None)]})
+    repo = _AccountPagesTransactionRepo(pages_by_account={a: [([_row(a, "2026-07-01", "t1")], None)]})
 
     result = handler.get_recent_transactions(repo)
 
@@ -505,7 +478,7 @@ def test_recent_defaults_missing_category_and_preserves_present(handler):
     # Missing category -> None; a real category is left untouched. The "present"
     # half catches a regression from setdefault to a plain `= None` assignment.
     a, b = list(handler.ACCOUNT_ID_MAP.values())[:2]
-    repo = FakeRecentFeedRepo(pages_by_account={
+    repo = _AccountPagesTransactionRepo(pages_by_account={
         a: [([_row(a, "2026-07-02", "with_cat", category="coffee")], None)],
         b: [([_row(b, "2026-07-01", "no_cat")], None)],
     })
@@ -520,7 +493,7 @@ def test_recent_paginates_all_pages_per_account(handler):
     # >1 page for an account: the feed must follow the cursor to exhaustion, not
     # stop at page 1. FAILS against the old discard-the-cursor code, passes now.
     a = list(handler.ACCOUNT_ID_MAP.values())[0]
-    repo = FakeRecentFeedRepo(pages_by_account={
+    repo = _AccountPagesTransactionRepo(pages_by_account={
         a: [
             ([_row(a, "2026-07-01", "page1")], {"pk": "x", "sk": "y"}),  # more to come
             ([_row(a, "2026-07-02", "page2")], None),                    # last page
@@ -540,7 +513,7 @@ def test_recent_window_is_feed_window_days_on_melbourne_clock(handler, monkeypat
     # recomputed expression would silently mirror.
     monkeypatch.setattr(handler, "melbourne_today", lambda: date(2026, 7, 3))
     a = list(handler.ACCOUNT_ID_MAP.values())[0]
-    repo = FakeRecentFeedRepo(pages_by_account={a: [([_row(a, "2026-07-01", "t1")], None)]})
+    repo = _AccountPagesTransactionRepo(pages_by_account={a: [([_row(a, "2026-07-01", "t1")], None)]})
 
     handler.get_recent_transactions(repo)
 
@@ -554,7 +527,7 @@ def test_recent_window_reads_the_feed_window_days_constant(handler, monkeypatch)
     monkeypatch.setattr(handler, "melbourne_today", lambda: date(2026, 7, 3))
     monkeypatch.setattr(handler, "FEED_WINDOW_DAYS", 3)
     a = list(handler.ACCOUNT_ID_MAP.values())[0]
-    repo = FakeRecentFeedRepo(pages_by_account={a: [([_row(a, "2026-07-01", "t1")], None)]})
+    repo = _AccountPagesTransactionRepo(pages_by_account={a: [([_row(a, "2026-07-01", "t1")], None)]})
 
     handler.get_recent_transactions(repo)
 
@@ -570,19 +543,19 @@ def test_recent_row_missing_date_raises_keyerror(handler):
     dateless = {
         "pk": f"ACCOUNT#{a}", "sk": "TXN#x", "transaction_id": "x", "account_id": a,
     }
-    repo = FakeRecentFeedRepo(pages_by_account={a: [([dateless], None)]})
+    repo = _AccountPagesTransactionRepo(pages_by_account={a: [([dateless], None)]})
 
     with pytest.raises(KeyError):
         handler.get_recent_transactions(repo)
 
 
 def test_recent_empty_feed_returns_empty_list(handler):
-    assert handler.get_recent_transactions(FakeRecentFeedRepo()) == []
+    assert handler.get_recent_transactions(_AccountPagesTransactionRepo()) == []
 
 
 def test_recent_one_empty_account_still_returns_the_others(handler):
     a = list(handler.ACCOUNT_ID_MAP.values())[0]  # only this account has rows
-    repo = FakeRecentFeedRepo(pages_by_account={a: [([_row(a, "2026-07-01", "t1")], None)]})
+    repo = _AccountPagesTransactionRepo(pages_by_account={a: [([_row(a, "2026-07-01", "t1")], None)]})
 
     result = handler.get_recent_transactions(repo)
 
@@ -594,7 +567,7 @@ def test_get_transactions_dispatch_runs_real_body(handler, monkeypatch):
     # through lambda_handler (NOT monkeypatched away), proving routing plus JSON
     # serialisation of Decimal amounts via DecimalEncoder.
     a = list(handler.ACCOUNT_ID_MAP.values())[0]
-    repo = FakeRecentFeedRepo(pages_by_account={
+    repo = _AccountPagesTransactionRepo(pages_by_account={
         a: [([_row(a, "2026-07-01", "t1", amount=Decimal("-12.50"), category="coffee")], None)],
     })
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
@@ -618,7 +591,7 @@ def test_recent_paginates_every_account_to_exhaustion(handler):
     # is paginated to exhaustion independently, every account's first query starts at
     # cursor=None, and the feed queries at limit=MAX_PAGE_SIZE (not the default 20).
     a, b = list(handler.ACCOUNT_ID_MAP.values())[:2]
-    repo = FakeRecentFeedRepo(pages_by_account={
+    repo = _AccountPagesTransactionRepo(pages_by_account={
         a: [
             ([_row(a, "2026-07-01", "a_p1")], {"cur": "a1"}),
             ([_row(a, "2026-07-02", "a_p2")], None),
@@ -645,7 +618,7 @@ def test_recent_empty_page_with_cursor_still_follows_to_next_page(handler):
     # rows were all filtered out). The loop must break on a falsy CURSOR, not an
     # empty page — a naive `if not page: break` would drop the row on the next page.
     a = list(handler.ACCOUNT_ID_MAP.values())[0]
-    repo = FakeRecentFeedRepo(pages_by_account={
+    repo = _AccountPagesTransactionRepo(pages_by_account={
         a: [
             ([], {"cur": "keep-going"}),
             ([_row(a, "2026-07-02", "after_empty")], None),
@@ -663,7 +636,7 @@ def test_recent_ties_on_identical_date_preserve_fetch_order(handler):
     # keep fetch order (account-map order, then page order). Catches a regression
     # that adds an unstable secondary key or reverses ties.
     a, b, c = list(handler.ACCOUNT_ID_MAP.values())[:3]
-    repo = FakeRecentFeedRepo(pages_by_account={
+    repo = _AccountPagesTransactionRepo(pages_by_account={
         a: [
             ([_row(a, "2026-07-01", "a_p1")], {"cur": "a1"}),
             ([_row(a, "2026-07-01", "a_p2")], None),
@@ -681,7 +654,7 @@ def test_recent_returns_pending_and_posted_without_filtering(handler):
     # The feed is a raw window view — it must NOT filter by status. Both a posted
     # and a pending row survive with status intact. Fails if a status filter slips in.
     a = list(handler.ACCOUNT_ID_MAP.values())[0]
-    repo = FakeRecentFeedRepo(pages_by_account={
+    repo = _AccountPagesTransactionRepo(pages_by_account={
         a: [([
             _row(a, "2026-07-02", "posted1", status="posted"),
             _row(a, "2026-07-01", "pending1", status="pending"),
@@ -699,7 +672,7 @@ def test_recent_tomorrow_dated_row_sorts_first(handler):
     # top. Fails if the descending sort's reverse flag is flipped. (Whether such a
     # row is INCLUDED is the repo's between-filter concern, tested there.)
     a = list(handler.ACCOUNT_ID_MAP.values())[0]
-    repo = FakeRecentFeedRepo(pages_by_account={
+    repo = _AccountPagesTransactionRepo(pages_by_account={
         a: [([
             _row(a, "2026-07-03", "today"),
             _row(a, "2026-07-04", "tomorrow"),

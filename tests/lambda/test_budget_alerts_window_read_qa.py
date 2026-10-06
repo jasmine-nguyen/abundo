@@ -1,8 +1,8 @@
 """WHIT-607 QA — the budget alerts' window read must widen back to the rollover history.
 
-The main suite's FakeWindowRepo ignores the requested dates, so it can't tell whether
-capture_pre_write asks for [cycle start, today] or the wider rollover window. This fake
-honours the date range like the real date-index query, and records every request.
+The shared _AccountTransactionRepo honours the date range like the real date-index query
+and records every request, so these tests can tell whether capture_pre_write asks for
+[cycle start, today] or the wider rollover window.
 """
 
 from datetime import date
@@ -11,6 +11,7 @@ from functools import partial
 
 from _budget_alert_fakes import notify_repo
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _transaction_range_fakes import _AccountTransactionRepo
 
 _TODAY = date(2026, 7, 14)
 _ACCT = "up-spending"
@@ -23,19 +24,6 @@ def _txn(txn_id, amount, day):
         "amount": Decimal(str(amount)), "status": "posted", "date": day,
         "counts_to_budget": True, "authorized_date": day,
     }
-
-
-class _DateRangeRepo:
-    def __init__(self, rows):
-        self.rows = rows
-        self.requests = []
-
-    def get_transactions_by_date_range(self, account_id, start, end, limit=100, cursor=None):
-        self.requests.append((account_id, start, end))
-        return [r for r in self.rows
-                if r["account_id"] == account_id
-                and (start is None or r["date"] >= start)
-                and (end is None or r["date"] <= end)], None
 
 
 class _Devices:
@@ -69,7 +57,7 @@ def _fire(lam, monkeypatch, budget, stored, new):
     sent = []
     monkeypatch.setattr(ba, "send_push", lambda title, body, toks, data=None: (
         sent.append(body) or {"sent": 1, "ok": 1, "pruned": []}))
-    window_repo = _DateRangeRepo(stored)
+    window_repo = _AccountTransactionRepo(stored)
     ctx = ba.capture_pre_write(
         [new], device_repo=_Devices(), budget_repo=_Budgets({"groceries": budget}),
         paycycle_repo=_Paycycle(), window_repo=window_repo, webhook_repo=_NoTwins(),
@@ -91,8 +79,8 @@ def test_rollover_alert_reads_back_to_the_first_unsealed_cycle(lam, monkeypatch)
     stored = [_txn("prior1", -60, "2026-06-20"), _txn("old", -105, "2026-07-10")]
     sent, window_repo = _fire(lam, monkeypatch, budget, stored, _txn("new1", -10, "2026-07-11"))
 
-    assert {start for _, start, _ in window_repo.requests} == {"2026-06-17"}
-    assert {end for _, _, end in window_repo.requests} == {"2026-07-14"}
+    assert {c[1] for c in window_repo.calls} == {"2026-06-17"}
+    assert {c[2] for c in window_repo.calls} == {"2026-07-14"}
     assert len(sent) == 1
     assert "80%" in sent[0]
 
@@ -105,7 +93,7 @@ def test_plain_budget_alert_reads_only_the_current_cycle(lam, monkeypatch):
     stored = [_txn("prior1", -500, "2026-06-20"), _txn("old", -70, "2026-07-10")]
     sent, window_repo = _fire(lam, monkeypatch, budget, stored, _txn("new1", -15, "2026-07-11"))
 
-    assert window_repo.requests == [
+    assert [c[:3] for c in window_repo.calls] == [
         (account_id, "2026-07-01", "2026-07-14") for account_id in constants.ACCOUNT_ID_MAP.values()
     ]
     assert len(sent) == 1

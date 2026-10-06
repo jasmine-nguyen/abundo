@@ -10,7 +10,6 @@ the no-dupe / no-gap / keep-prior-cursor behaviour that is the crux of the desig
 """
 
 import base64
-import copy
 import json
 from decimal import Decimal
 
@@ -18,6 +17,7 @@ import pytest
 
 # Resolved via pytest.ini's pythonpath (tests/shared).
 from _feed_fakes import ANZ, SPENDING, HOMELOAN, WESTPAC, date_reads, _feed_event, real_repos, _row
+from _transaction_range_fakes import _AccountPagesTransactionRepo
 
 
 def _drain_feed(handler, repo, limit=None):
@@ -173,30 +173,13 @@ def test_last_page_returns_null_cursor_and_a_follow_up_is_empty(handler):
     assert body["nextCursor"] is None
 
 
-class _QueuedPagesRepo:
-    """Serves per-account pre-canned (items, cursor) pages in order, regardless of the
-    resume key — used only to reproduce a DynamoDB quirk the realistic fake can't: a
-    LastEvaluatedKey returned even though the next page is empty."""
-
-    def __init__(self, pages_by_account):
-        self._pages = {a: list(p) for a, p in pages_by_account.items()}
-        self.calls = []
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        self.calls.append((account_id, start_date, end_date, limit, cursor))
-        queue = self._pages.get(account_id)
-        if queue:
-            items, next_cursor = queue.pop(0)
-            return copy.deepcopy(items), next_cursor
-        return [], None
-
-
 def test_trailing_lastevaluatedkey_quirk_terminates_without_dupes(handler):
     # DynamoDB may return a LastEvaluatedKey even when the next page is empty (it hit the
     # Limit exactly). Page 1 fills the limit AND carries a cursor; the resumed query then
-    # returns []. The feed must still terminate and not repeat the last row.
-    key = {"account_id": SPENDING, "date": "2026-07-01", "pk": f"ACCOUNT#{SPENDING}", "sk": "TXN#s1"}
-    repo = _QueuedPagesRepo({SPENDING: [
+    # returns []. The feed must still terminate and not repeat the last row. Pre-canned pages,
+    # because the realistic FakeTable can't reproduce this quirk.
+    key ={"account_id": SPENDING, "date": "2026-07-01", "pk": f"ACCOUNT#{SPENDING}", "sk": "TXN#s1"}
+    repo = _AccountPagesTransactionRepo({SPENDING: [
         ([_row(SPENDING, "2026-07-01", "s1")], key),   # page 1: a row + a (stale) cursor
         ([], None),                                    # resumed query: nothing left
     ]})

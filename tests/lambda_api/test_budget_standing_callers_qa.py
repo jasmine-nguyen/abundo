@@ -13,6 +13,7 @@ from functools import partial
 import pytest
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _transaction_range_fakes import _AccountTransactionRepo
 
 TODAY = date(2026, 9, 20)
 PAY_CYCLE = {"length": 14, "last_pay_date": "2026-09-10"}
@@ -64,18 +65,6 @@ ROWS = [
 ]
 
 
-class _DateRangeRepo:
-    def __init__(self, rows):
-        self.rows = rows
-        self.reads = []
-
-    def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
-        if account_id != "up-spending":
-            return [], None
-        self.reads.append((start, end))
-        return [r for r in self.rows if start <= r["date"] <= end], None
-
-
 class _Budgets:
     def __init__(self, budgets):
         self.budgets = budgets
@@ -111,8 +100,8 @@ def test_budgets_screen_and_chat_show_the_same_rows(handler, pinned_today):
     # (rollover carryover, spread cushion, parent refund netting, stale Income flag).
     import ai_chat
 
-    screen = handler.list_budgets(_Budgets(BUDGETS), _DateRangeRepo(ROWS), _PayCycle(), _Categories())
-    chat = ai_chat.load_chat_data(_DateRangeRepo(ROWS), _Categories(), _Budgets(BUDGETS), _PayCycle())
+    screen = handler.list_budgets(_Budgets(BUDGETS), _AccountTransactionRepo(ROWS), _PayCycle(), _Categories())
+    chat = ai_chat.load_chat_data(_AccountTransactionRepo(ROWS), _Categories(), _Budgets(BUDGETS), _PayCycle())
 
     assert chat.budgets == screen
     assert screen["fun"]["carryover"] == D("-10")  # +50 then -60
@@ -125,11 +114,11 @@ def test_stale_rollover_flag_on_income_widens_the_read_but_not_the_earnings(hand
     # show only this cycle's pay ($2,800, not $5,600), with no rollover keys and nothing saved
     # for it. Groceries likewise shows only this cycle ($120 + $30 pending, not + $900).
     budget_repo = _Budgets({"groceries": BUDGETS["groceries"], "salary": BUDGETS["salary"]})
-    transaction_repo = _DateRangeRepo(ROWS)
+    transaction_repo = _AccountTransactionRepo(ROWS)
 
     rows = handler.list_budgets(budget_repo, transaction_repo, _PayCycle(), _Categories())
 
-    assert transaction_repo.reads == [("2026-08-13", "2026-09-20")]
+    assert [(c[1], c[2]) for c in transaction_repo.calls if c[0] == "up-spending"] == [("2026-08-13", "2026-09-20")]
     assert rows == {
         "groceries": {"target": D("500"), "posted": D("120"), "pending": D("30"), "available": D("500")},
         "salary": {"target": D("3000"), "posted": D("2800"), "pending": D("0"), "available": D("3000")},
@@ -142,7 +131,7 @@ def test_chat_with_no_budgets_still_loads_its_transactions(handler, pinned_today
     # transaction back to its floor.
     import ai_chat
 
-    data = ai_chat.load_chat_data(_DateRangeRepo(ROWS), _Categories(), _Budgets({}), _PayCycle())
+    data = ai_chat.load_chat_data(_AccountTransactionRepo(ROWS), _Categories(), _Budgets({}), _PayCycle())
 
     assert data.budgets == {}
     assert {t["transaction_id"] for t in data.transactions} == {r["transaction_id"] for r in ROWS}
