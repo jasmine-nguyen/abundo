@@ -1059,14 +1059,8 @@ def tampered_pins(pinned: dict[str, str]) -> list[str]:
 
 def pinned_paths(state: BuildState, paths) -> list[str]:
     """The paths that name pinned (or already unlocked) test files, as the pins store them."""
-    locked = {*state.get("pinned", {}), *state.get("unpinned", [])}
+    locked = {*state.get("pinned", {}), *state.get("unpinned", {})}
     return sorted({relative for relative in map(repo_path, paths) if relative in locked})
-
-
-def unpinned_files(state: BuildState) -> dict[str, str]:
-    """Unlocked test files and the fingerprint each had when it was unlocked."""
-    unpinned = state.get("unpinned") or {}
-    return unpinned if isinstance(unpinned, dict) else dict.fromkeys(unpinned, "")
 
 
 def unpin_update(state: BuildState, files: list[str], approval: str) -> dict:
@@ -1074,7 +1068,7 @@ def unpin_update(state: BuildState, files: list[str], approval: str) -> dict:
     pinned = state.get("pinned", {})
     return {
         "pinned": {path: digest for path, digest in pinned.items() if path not in files},
-        "unpinned": {**unpinned_files(state), **{path: pinned[path] for path in files if path in pinned}},
+        "unpinned": {**state.get("unpinned", {}), **{path: pinned[path] for path in files if path in pinned}},
         "user_decisions": [
             *state.get("user_decisions", []), f"Unlocked {', '.join(files)} so the implementer could change it: {approval}"
         ],
@@ -1084,13 +1078,13 @@ def unpin_update(state: BuildState, files: list[str], approval: str) -> dict:
 def relock(state: BuildState) -> dict:
     """Pin the test files the user unlocked again, at the contents the implementer left them in.
     The user approved changing them, not deleting them, so a deleted one is put back first."""
-    unpinned = unpinned_files(state)
+    unpinned = state.get("unpinned", {})
     if not unpinned:
         return {}
     history = []
     for path, digest in unpinned.items():
-        copy = pin_copy(state, digest) if digest else None
-        if not (ROOT / path).is_file() and copy and copy.is_file():
+        copy = pin_copy(state, digest)
+        if not (ROOT / path).is_file() and copy.is_file():
             (ROOT / path).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(copy, ROOT / path)
             print(f"   ↺ Put back {path}: it was deleted while unlocked, and only changing it was approved", flush=True)
@@ -1277,11 +1271,7 @@ def parse_answers(text: str) -> dict[int, str]:
 
 
 def option_text(options: str, letter: str) -> str:
-    parts = re.split(r"\b([A-Z])\)", options)
-    for label, wording in zip(parts[1::2], parts[2::2]):
-        if label == letter:
-            return wording.strip().rstrip(",;").strip()
-    return ""
+    return next((o["label"].removeprefix(f"{letter}) ") for o in lettered(options) if o["id"] == letter), "")
 
 
 def answer_letter(answer: str) -> str:
@@ -1759,24 +1749,30 @@ async def reproducer(state: BuildState):
             "pinned": {**state.get("pinned", {}), **pin(state, out["test_files"])},
             "history": [f"✓ reproducer: red on {first_line(out['symptom'])}"],
         }
-    attempts = state.get("test_attempts", 0) + 1
     reason = rejection_reason(output, passed="it passed, so it doesn't show the bug")
     feedback = (
         f"You said `{out['command']}` fails on the bug, but the pipeline rejected it: {reason}. Output:\n"
         f"{tail(output, 1500)}"
     )
+    return rejected_tests(
+        state, "reproducer", reason, feedback, f"test rejected — {reason}",
+        f"The reproducer wrote a test for the bug, but the build rejected it: {reason}.\n\n"
+        f"Symptom it says the test catches: {out['symptom']}\n\n{feedback}",
+    )
+
+
+def rejected_tests(state: BuildState, source: str, reason: str, feedback: str, note: str, escalation: str) -> dict:
+    """Send the tests back for another try, or escalate once the tries run out."""
+    attempts = state.get("test_attempts", 0) + 1
     update = {
         "test_attempts": attempts,
         "test_feedback": feedback,
         "test_rejection": reason,
-        "history": [f"✗ reproducer: test rejected — {reason}"],
+        "history": [f"✗ {source}: {note}"],
     }
     if attempts >= MAX_TEST_ATTEMPTS:
-        update["escalation"] = (
-            f"The reproducer wrote a test for the bug, but the build rejected it: {reason}.\n\n"
-            f"Symptom it says the test catches: {out['symptom']}\n\n{feedback}"
-        )
-        update["escalation_source"] = "reproducer"
+        update["escalation"] = escalation
+        update["escalation_source"] = source
     return update
 
 
@@ -1802,38 +1798,27 @@ async def test_writer(state: BuildState):
             "pinned": {**state.get("pinned", {}), **pin(state, out["test_files"])},
             "history": [f"✓ test_writer: {len(out['test_files'])} failing test file(s) pinned"],
         }
-    attempts = state.get("test_attempts", 0) + 1
     reason = rejection_reason(output)
     feedback = (
         f"`{out['command']}` didn't fail for the right reason before any implementation exists: {reason}. "
         f"So the tests prove nothing yet. Output:\n{tail(output, 1500)}"
     )
-    update = {
-        "test_attempts": attempts,
-        "test_feedback": feedback,
-        "test_rejection": reason,
-        "history": [f"✗ test_writer: tests weren't red — {first_line(out['command'])}"],
-    }
-    if attempts >= MAX_TEST_ATTEMPTS:
-        update["escalation"] = f"The test writer couldn't produce failing acceptance tests.\n\n{feedback}"
-        update["escalation_source"] = "test_writer"
-    return update
+    return rejected_tests(
+        state, "test_writer", reason, feedback, f"tests weren't red — {first_line(out['command'])}",
+        f"The test writer couldn't produce failing acceptance tests.\n\n{feedback}",
+    )
 
 
 # --- implementation nodes ---
 
 
-def implementer_prompt(state: BuildState, feedback: str) -> str:
+def implementer_prompt(state: BuildState, news: str) -> str:
     parts = [card_block(state), slice_block(state), f"## Approved plan\n{state['plan']}"]
     if state.get("repro"):
         parts.append(f"## Bug reproduction (make this pass)\n{state['repro']}")
     if state.get("tests"):
         parts.append(f"## Failing tests already written (make these pass)\n{state['tests']}")
-    parts.append(pinned_block(state))
-    parts.append(unpinned_block(state))
-    parts.append(feedback)
-    if state.get("escalation_answer"):
-        parts.append(f"## Your escalated question, answered\n{state['escalation_answer']}")
+    parts.append(news)
     return "\n\n".join(part for part in parts if part)
 
 
@@ -1852,7 +1837,7 @@ def unpinned_block(state: BuildState) -> str:
     return (
         "## Test files you may change this round\nThe user approved changing these pinned test files. Make only "
         "the change they approved. The pipeline pins them again, at your new contents, when you finish:\n"
-        + bullets(sorted(unpinned_files(state)))
+        + bullets(sorted(state["unpinned"]))
     )
 
 
@@ -1865,7 +1850,7 @@ async def implementer(state: BuildState):
     # Continue the same session on fix rounds: it already knows the code it wrote.
     session = state.get("implementer_session", "") if resumes < MAX_SESSION_RESUMES else ""
     result, resume = await continue_agent(
-        "implementer", session, news, implementer_prompt(state, feedback), IMPLEMENTER_OUTPUT
+        "implementer", session, news, implementer_prompt(state, news), IMPLEMENTER_OUTPUT
     )
     out = result.output
     session_update = {
@@ -2035,9 +2020,7 @@ def escalation(state: BuildState):
     else:
         word, rest = split_reply(reply)
         answer = reply.strip()
-        # A build paused before options existed may have named the files "unpin" unlocks.
-        offered = state.get("unpin_request") if state.get("unpin_named") else sorted(state.get("pinned", {}))
-        files = offered if word == "unpin" and source == "implementer" else []
+        files = sorted(state.get("pinned", {})) if word == "unpin" and source == "implementer" else []
     if is_stop(reply):
         return {"escalation": "", **stopped("escalation")}
     update = {
@@ -2113,17 +2096,20 @@ def checks(state: BuildState):
         ok, output = commit_all(state, commit_message(state))
         if not ok:
             problems.append(f"git commit failed (a pre-commit hook?):\n{tail(output)}")
-    failed = bool(problems) and state.get("implementation_attempts", 0) >= MAX_IMPLEMENTATION_ROUNDS
     return {
         **relocked,
+        **out_of_rounds(state, bool(problems)),
         "checks_feedback": "\n\n".join(problems),
-        "failed": failed,
-        "outcome": "failed" if failed else "",
         "history": [
             *relocked.get("history", []),
             mark(False, f"checks: {first_line(problems[0])}") if problems else mark(True, "checks: passed, committed"),
         ],
     }
+
+
+def out_of_rounds(state: BuildState, unresolved: bool) -> dict:
+    failed = unresolved and state.get("implementation_attempts", 0) >= MAX_IMPLEMENTATION_ROUNDS
+    return {"failed": failed, "outcome": "failed" if failed else ""}
 
 
 def commit_message(state: BuildState) -> str:
@@ -2251,8 +2237,7 @@ def fix_or_ship(state: BuildState):
     if not applied:
         update["qa_test_command"] = ""
     needs_rework = any(state.get(f"{key}_verdict") == "NEEDS_REWORK" for key in REVIEW_LABELS)
-    failed = needs_rework and state.get("implementation_attempts", 0) >= MAX_IMPLEMENTATION_ROUNDS
-    return {**update, "failed": failed, "outcome": "failed" if failed else "", "history": history}
+    return {**update, **out_of_rounds(state, needs_rework), "history": history}
 
 
 def failing_qa_tests(state: BuildState) -> list[str] | None:
@@ -2284,11 +2269,9 @@ def recheck_qa_tests(state: BuildState, heading: str, where: str) -> dict | None
         problems = failing_commands(static_check_commands())
     if not problems:
         return None
-    failed = state.get("implementation_attempts", 0) >= MAX_IMPLEMENTATION_ROUNDS
     return {
+        **out_of_rounds(state, True),
         "checks_feedback": f"{heading}\n\n" + "\n\n".join(problems),
-        "failed": failed,
-        "outcome": "failed" if failed else "",
         "history": [mark(False, f"{where} — {first_line(problems[0])}")],
     }
 
@@ -2468,19 +2451,11 @@ def after_prepare_branch(state: BuildState):
     return "reproducer" if is_bug(state) else "test_writer"
 
 
-def after_reproducer(state: BuildState):
+def after_tests(state: BuildState, retry: str):
     if state.get("escalation"):
         return "escalation"
     if state.get("test_feedback"):
-        return "reproducer"
-    return "implementer"
-
-
-def after_test_writer(state: BuildState):
-    if state.get("escalation"):
-        return "escalation"
-    if state.get("test_feedback"):
-        return "test_writer"
+        return retry
     return "implementer"
 
 
@@ -2495,9 +2470,7 @@ def after_escalation(state: BuildState):
 
 
 def after_checks(state: BuildState):
-    if not state.get("checks_feedback"):
-        return REVIEWERS
-    return END if state.get("failed") else "implementer"
+    return back_to_implementer(state, REVIEWERS)
 
 
 def after_review(state: BuildState):
@@ -2555,8 +2528,8 @@ builder.add_conditional_edges("clarify", after_clarify)
 builder.add_conditional_edges("plan_critic", after_critic)
 builder.add_conditional_edges("sign_off", after_sign_off)
 builder.add_conditional_edges("prepare_branch", after_prepare_branch)
-builder.add_conditional_edges("reproducer", after_reproducer)
-builder.add_conditional_edges("test_writer", after_test_writer)
+builder.add_conditional_edges("reproducer", lambda state: after_tests(state, "reproducer"))
+builder.add_conditional_edges("test_writer", lambda state: after_tests(state, "test_writer"))
 builder.add_conditional_edges("implementer", after_implementer)
 builder.add_conditional_edges("escalation", after_escalation)
 builder.add_conditional_edges("checks", after_checks)
@@ -2725,7 +2698,7 @@ async def print_status(graph, config, thread: str, snapshot) -> int:
         print(f"Paused: waiting for your reply (--resume) to this:\n\n{snapshot.interrupts[0].value}\n")
     print(f"Next step: {', '.join(snapshot.next) or 'finished'}")
     print(f"Outcome: {values.get('outcome') or 'in progress'}")
-    plan = BUILD_DIR / thread / "plan.md"
+    plan = plan_file({"thread_id": thread})
     if plan.is_file():
         print(f"Plan: {plan.relative_to(ROOT)}")
     for key, label in [("branch", "Branch"), ("pr_url", "PR"), ("pr_error", "PR error")]:
@@ -2965,9 +2938,6 @@ async def recheck_build(graph, config, snapshot, unpin: list[str]):
     return await graph.ainvoke(None, config)
 
 
-# --- stopping a running build ---
-
-
 # --- answering a pause through the question box ---
 # At each pause, progress.json carries `ask`: the pause's questions and options, with ids. The build-pause
 # mod (mods/build-pause in the claude repo) asks them in the question box and saves the picks, by id, to
@@ -3121,6 +3091,9 @@ def changed_elsewhere(thread: str, snapshot) -> bool:
         write_text(last_save_file(thread), latest)
         return False
     return True
+
+
+# --- stopping a running build ---
 
 
 def pid_file(thread: str) -> Path:
