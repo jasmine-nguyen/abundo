@@ -123,11 +123,12 @@ class _FailingTransactionRepo:
 
 class _PagedStoreTransactionRepo:
     """A re-readable store: copies of the account's rows from start (to end, if given),
-    ``page_size`` at a time, with an integer offset cursor and None on the last page."""
+    two at a time, with an integer offset cursor and None on the last page."""
 
-    def __init__(self, rows_by_account=None, page_size=2):
-        self.rows_by_account = rows_by_account if rows_by_account is not None else {}
-        self._page_size = page_size
+    _PAGE_SIZE = 2
+
+    def __init__(self, rows_by_account):
+        self.rows_by_account = rows_by_account
         self.calls = []
 
     def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
@@ -135,7 +136,7 @@ class _PagedStoreTransactionRepo:
         rows = [row for row in self.rows_by_account.get(account_id, [])
                 if start_date <= row["date"] and (end_date is None or row["date"] <= end_date)]
         offset = cursor or 0
-        next_offset = offset + self._page_size
+        next_offset = offset + self._PAGE_SIZE
         page = [dict(row) for row in rows[offset:next_offset]]
         if next_offset >= len(rows):
             return page, None
