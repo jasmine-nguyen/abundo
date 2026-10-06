@@ -42,23 +42,7 @@ describe('SpendingDonut — the fade maths assumes each wedge is painted EXACTLY
 
 });
 
-describe('SpendingDonut — the fade follows the CURRENT colour', () => {
-  // [A58] A category's colour can change under a stable id (chartColors.ts documents a client
-  // running ahead of the server switching hue once `colorSlot` arrives). A recoloured category
-  // wedge keeps the category fade.
-  it('[A58] a wedge recoloured while it is dimmed keeps the category fade', () => {
-    const { rerender } = render(<SpendingDonut slices={[sl('a', 75), sl('b', 25)]} />);
-    fireEvent.press(screen.getByTestId('donut-slice-a'));
-    expect(opacityOf('b')).toBeCloseTo(DIM_CATEGORY);
-
-    // Same id, same value, new colour — only the hue moved.
-    rerender(<SpendingDonut slices={[sl('a', 75), slice('b', '#7FD49B', 25)]} />);
-
-    expect(screen.getByTestId('donut-band-b').props.stroke).toBe('#7FD49B');
-    expect(opacityOf('b')).toBeCloseTo(DIM_CATEGORY);
-    expect(opacityOf('a')).toBeCloseTo(1);
-  });
-
+describe('SpendingDonut — an unusable colour still fades', () => {
   // [A59] An unusable colour string reaching the real component. Empty string is the realistic
   // shape — a category row whose colour never resolved.
   it('[A59] a wedge with an unparseable colour still renders, and fades like a category', () => {

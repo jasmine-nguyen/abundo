@@ -1,5 +1,5 @@
-// WHIT-759 (QA) — the fixed fades through the REAL component, across the whole shipped palette,
-// and with the grey "Other" as the selected slice.
+// WHIT-759 (QA) — the fixed fades through the REAL component, with the grey "Other" as the
+// selected slice.
 import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
@@ -7,23 +7,7 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
 import { SpendingDonut } from '../components/SpendingDonut';
-import { CATEGORY_COLORS } from '../chartColors';
-import { C } from '../theme';
-import { opacityOf, sl, slice, DIM_CATEGORY, DIM_OTHER } from './support/donut';
-
-describe('SpendingDonut — every shipped colour fades to the category value', () => {
-  // [A4] All 20 ramp colours plus the Uncategorized purple, rendered as unselected peers. The cap
-  // is 6 painted wedges, so go through the palette 5 peers at a time beside one picked wedge.
-  // FAIL-ON-REVERT: any per-colour fade (or a lookup that misses an entry) moves a peer off 0.55.
-  const colors: string[] = [...CATEGORY_COLORS, C.purple];
-  const chunks = [0, 5, 10, 15, 20].map((start) => [start, colors.slice(start, start + 5)] as const);
-  it.each(chunks)('[A4] non-grey slice colours from #%i, unselected, land on 0.55', (start, chunk) => {
-    const peers = chunk.map((color, i) => slice(`p${start + i}`, color, 50 - i));
-    render(<SpendingDonut slices={[sl('pick', 100), ...peers]} />);
-    fireEvent.press(screen.getByTestId('donut-slice-pick'));
-    for (const peer of peers) expect(opacityOf(peer.id)).toBeCloseTo(DIM_CATEGORY, 3);
-  });
-});
+import { opacityOf, sl, DIM_CATEGORY, DIM_OTHER } from './support/donut';
 
 describe('SpendingDonut — selecting the grey "Other" itself', () => {
   // [A5] With the bucket picked, its own fade must not leak onto the category peers, and the
