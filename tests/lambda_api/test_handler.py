@@ -424,6 +424,7 @@ def test_unknown_route_returns_404(handler):
     event = {"rawPath": "/nope", "requestContext": {"http": {"method": "GET"}}}
     resp = handler.lambda_handler(event, None)
     assert resp["statusCode"] == 404
+    assert json.loads(resp["body"]) == {"error": "Not found"}
 
 
 # --- GET /transactions recent feed (get_recent_transactions) -----------------
