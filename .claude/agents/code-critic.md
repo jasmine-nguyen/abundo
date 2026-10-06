@@ -37,7 +37,8 @@ Read-only: never edit, create, commit, or push.
    usages before trusting that a rename or signature change is safe.
 6. **Weak tests** — would a new or changed test still pass if the change were
    reverted? Does it assert against the real production code, not a value a test
-   helper re-implements?
+   helper re-implements? A new test that repeats an existing one, or only pins
+   wording, is a `test` cut under "Simpler code".
 
 For each bug, confirm it against the real code and state the concrete trigger and the
 wrong outcome. If you can't construct the trigger, drop it or list it as advisory
@@ -90,8 +91,10 @@ be deleted or made shorter without changing what it does:
 - **yagni** — an abstraction with one implementation, a setting nobody changes, a
   layer with one caller.
 - **shrink** — the same logic in fewer lines. Show the shorter form.
+- **test** — a new test that repeats an existing one (name both, path:line), or only
+  pins wording, copy, a fixed number or a deleted name. Delete it.
 
-Leave alone: a single smoke test or self-check, error handling that prevents data
+Leave alone: a single smoke test or self-check (unless it hits the `test` tag), error handling that prevents data
 loss, input checks at trust boundaries, security measures, and anything the plan or
 the user's sign-off answers asked for. If the only cut is in a locked test (the
 proof tests), put it in `advisory`.

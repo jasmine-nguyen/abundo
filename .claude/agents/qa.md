@@ -36,8 +36,8 @@ A test is only worth keeping if it would fail when the production code breaks.
 
 - The diff range you're given: read it with `git diff`.
 - The tests already in that diff: the test writer wrote acceptance tests for the
-  main behaviour, and the implementer added smaller ones. Read them first — you
-  divide work with them, you don't duplicate it. The tests written before the code (the proof tests) sit in a new test file of
+  main behaviour, and the implementer added smaller ones. Read them first, and search
+  the repo's existing tests too: you divide work with them, you don't duplicate it. The tests written before the code (the proof tests) sit in a new test file of
   their own on purpose: the pipeline locks every file they're in, and locking a
   shared file would freeze its older tests. So don't report where they live. Setup
   they copy from another test file is still a finding: it belongs in a shared helper. Anything else wrong
@@ -118,8 +118,8 @@ A thorough, tickable checklist someone with no code context can follow. Split in
   replaces your previous list each round, so always return the full list,
   including checks you didn't re-run this round.
 - **Automatable** — deterministic, scriptable checks. Automate them in Part 2 to the
-  test depth your prompt gives: every one when it says thorough, only the most
-  important when it says focused.
+  test depth your prompt gives: every one not already covered by an existing test
+  when it says thorough, only the most important when it says focused.
 
 Tag each check `P0` / `P1` / `P2`. P0 = if this fails, the feature ships broken.
 Order P0 first. Give each Automatable check a short ID (`[A1]`, `[A2]`, ...) that
@@ -147,6 +147,7 @@ Every test you write must:
 - Meet the Fail-on-revert bar.
 - Reuse existing fixtures/helpers and established mock patterns.
 - Reference the checklist ID it covers (`# [A3]`).
+- Pass the "Fewest tests that prove it" rule below.
 
 **Then run them — only your new test files, never the whole suite.** The rest of
 the code already passed every check, and the pipeline runs your `test_command` once

@@ -486,11 +486,33 @@ to the card is a card.
 """
 FOLD_IN_AGENTS = {"designer", "plan_critic", "code_critic", "qa"}
 
+FEWEST_TESTS_RULE = """
+
+## Fewest tests that prove it
+
+A test earns its place only if it fails when real behaviour breaks. Before you write one, stop at
+the first step that holds:
+
+1. Does this check need to exist? Skip a test that only: pins wording, copy or a fixed number;
+   proves a deleted name is gone (if it came back, nothing would break); tests the standard
+   library, the framework, or a test helper itself.
+2. Is it already covered? Search the existing tests, not just this change, for the behaviour. If
+   one covers it, don't write another: name it (path:line) in your `summary`, if your output has one.
+3. Can one test cover several inputs? One test with a table of cases beats one test per input.
+4. Only then: the smallest new test, importing shared setup instead of copying it.
+
+The shortest set of tests that proves the card wins. "Thorough" means no behaviour left untested,
+not more tests.
+"""
+FEWEST_TESTS_AGENTS = {"test_writer", "implementer", "qa"}
+
 
 def agent_prompt(name: str) -> str:
     prompt = (ROOT / ".claude" / "agents" / AGENTS[name].prompt_file).read_text()
     if name in FOLD_IN_AGENTS:
         prompt += FOLD_IN_RULE
+    if name in FEWEST_TESTS_AGENTS:
+        prompt += FEWEST_TESTS_RULE
     return prompt
 
 
@@ -2161,7 +2183,7 @@ def qa_depth_block(state: BuildState) -> str:
     if thorough_qa(state):
         return (
             "## Test depth: thorough\nThis change is significant or hard to undo. Automate every "
-            "Automatable check, P0 first."
+            "Automatable check that no existing test already covers, P0 first."
         )
     return (
         "## Test depth: focused\nThis is a routine change. Automate the P0 checks and the P1 checks "
