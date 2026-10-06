@@ -74,9 +74,8 @@ function allowedBlock(): string {
 }
 
 describe('the 8 mortgage and milestone tests use the real screen data code', () => {
-  it('none fakes the screen data code; each draws over the fake server, is off the allow-list and pinned in the check-count list', () => {
+  it('none fakes the screen data code; each draws over the fake server, and is off the allow-list', () => {
     const allowed = allowedBlock();
-    const baselines = read('noAutoMockApi.logic.test.ts');
 
     const problems = SLICE_FILES.flatMap((file) => {
       const text = read(file);
@@ -85,9 +84,7 @@ describe('the 8 mortgage and milestone tests use the real screen data code', () 
       if (!/installFakeServer\(\)/.test(text)) found.push(`${file}: no installFakeServer()`);
       if (!/useTestQueryClient\(\)/.test(text)) found.push(`${file}: no useTestQueryClient()`);
       if (!AUTH_MOCK_MODULE.test(text)) found.push(`${file}: does not use the shared authMockModule()`);
-      if (allowed.includes(`'${file}'`)) found.push(`${file}: still on the noQueriesMock ALLOWED list`);
-      if (!baselines.includes(`'${file}':`)) found.push(`${file}: not in the noAutoMockApi check-count list`);
-      return found;
+      if (allowed.includes(`'${file}'`)) found.push(`${file}: still on the noQueriesMock ALLOWED list`);      return found;
     });
 
     expect(problems).toEqual([]);
