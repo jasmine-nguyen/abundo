@@ -13,15 +13,13 @@ import { seedGoal, seedGoalsHub } from './support/goalsScreen';
 import { resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { useGoalScreenData, useGoalsScreenData, type GoalScreenData, type GoalsScreenData } from '../queries';
-import type { GoalRecord, MilestoneRecord } from '../api';
+import type { GoalRecord } from '../api';
+import { saveMilestonesSpy, milestoneLabelAt } from './support/milestoneEditor';
+import { SAVED_MILESTONES } from './support/milestonePlan';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-const mockSaveMilestones = jest.fn(async (_rows: MilestoneRecord[]) => true);
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ saveMilestones: mockSaveMilestones, showToast: jest.fn() }) };
-});
+jest.mock('../context', () => require('./support/milestoneEditor').milestoneEditorContextMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Mortgage from '../../app/mortgage';
@@ -34,15 +32,10 @@ useTestQueryClient();
 beforeEach(() => {
   resetAuth();
   resetRouter();
-  mockSaveMilestones.mockClear();
+  saveMilestonesSpy.mockClear();
 });
 
 const AS_OF = '2026-07-04T00:24:37.614Z';
-const SAVED_PLAN: MilestoneRecord[] = [
-  { id: 'a', label: 'Start', targetBalance: 300000, targetDate: '2026-01-01' },
-  { id: 'b', label: 'Midway', targetBalance: 200000, targetDate: '2027-01-01' },
-  { id: 'c', label: 'Payoff', targetBalance: 100000, targetDate: '2028-01-01' },
-];
 
 let goal: GoalScreenData;
 function GoalProbe() {
@@ -79,7 +72,7 @@ describe('the kit matches the old makeGoalData fakes through the real screen dat
       loanFacts: { ...LOAN_FACTS, depositTarget: 100000 },
       homeLoan: { balance: 566000, asOf: AS_OF },
       repayment: { amount: 1500, date: '2026-07-01', principal: 1268, interest: 232 },
-      milestones: SAVED_PLAN,
+      milestones: SAVED_MILESTONES,
     };
     seedGoal(server, over);
     await renderWithQueries(<GoalProbe />);
@@ -237,21 +230,19 @@ describe('the mortgage and milestone screens over the fake server', () => {
 });
 
 describe('the milestone editor over the fake server', () => {
-  const labelAt = (i: number) => screen.getByTestId(`milestone-label-${i}`).props.value;
-
   // [A12] the seeded latch: once rows are filled from the saved plan, a background refetch that
   // brings a different plan must not wipe the user's edits.
   it('[A12] a background refetch after hydration does not overwrite the rows being edited', async () => {
-    server.seed('/milestones', SAVED_PLAN);
+    server.seed('/milestones', SAVED_MILESTONES);
     await renderWithQueries(<MilestoneEdit />);
-    expect(labelAt(0)).toBe('Start');
+    expect(milestoneLabelAt(0)).toBe('Start');
     fireEvent.changeText(screen.getByTestId('milestone-label-0'), 'Typed');
 
     server.seed('/milestones', [{ id: 'z', label: 'Server', targetBalance: 50000, targetDate: '2030-01-01' }]);
     await refreshInAct(() => queryClient.refetchQueries());
     expect(server.sent('GET', '/milestones')).toHaveLength(2);
-    expect(labelAt(0)).toBe('Typed');
-    expect(labelAt(1)).toBe('Midway');
+    expect(milestoneLabelAt(0)).toBe('Typed');
+    expect(milestoneLabelAt(1)).toBe('Midway');
   });
 
   // [A13] a held cold load that then FAILS keeps save blocked (no default plan written over a real one).
@@ -266,6 +257,6 @@ describe('the milestone editor over the fake server', () => {
     expect(screen.getByTestId('milestone-save')).toBeDisabled();
     fireEvent.changeText(screen.getByTestId('milestone-label-0'), 'Mine');
     await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
-    expect(mockSaveMilestones).not.toHaveBeenCalled();
+    expect(saveMilestonesSpy).not.toHaveBeenCalled();
   });
 });
