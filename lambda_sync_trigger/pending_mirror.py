@@ -9,10 +9,9 @@ deleted when that copy already holds the same edit (WHIT-678). Otherwise it's ke
 hour, with the age-out sweep as the backstop. Any doubt about the bank's reply → that account is skipped and nothing is deleted.
 """
 
-import json
 import logging
 import urllib.parse
-import urllib.request
+import urllib.request  # noqa: F401 — test seam: tests patch `urllib.request.urlopen` here
 from datetime import date, timedelta
 from typing import Any, Callable, Optional
 
@@ -29,6 +28,7 @@ from constants import (
     PENDING_STATUS,
     POSTED_STATUS,
 )
+from balance_fetch import banksync_request
 from pending_carry import (
     find_carry_twin,
     find_identical_copy,
@@ -50,19 +50,6 @@ class MirrorSkip(Exception):
     """The bank's reply can't be trusted as the full list, so the account is skipped."""
 
 
-def _get_page(url: str, api_key: str) -> dict:
-    req = urllib.request.Request(
-        url,
-        headers={
-            "X-API-Key": api_key,
-            # Cloudflare blocks the default "Python-urllib" User-Agent (see handler.trigger_sync).
-            "User-Agent": "abundo-transaction-trigger",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=PENDING_MIRROR_TIMEOUT_SECONDS) as resp:
-        return json.loads(resp.read())
-
-
 def fetch_bank_transactions(bid: str, aid: str, api_key: str, date_from: str, date_to: str) -> list[dict]:
     """Every row BankSync lists for the account between `date_from` and `date_to` (booking date),
     following `cursor` until `hasMore` is false. Raises MirrorSkip on any sign of a partial list;
@@ -71,7 +58,12 @@ def fetch_bank_transactions(bid: str, aid: str, api_key: str, date_from: str, da
     params = {"from": date_from, "to": date_to}
     rows: list[dict] = []
     for _ in range(PENDING_MIRROR_MAX_PAGES):
-        body = _get_page(f"{base_url}?{urllib.parse.urlencode(params)}", api_key)
+        body = banksync_request(
+            f"{base_url}?{urllib.parse.urlencode(params)}",
+            api_key,
+            user_agent="abundo-transaction-trigger",
+            timeout=PENDING_MIRROR_TIMEOUT_SECONDS,
+        )
         if body.get("success") is not True:
             raise MirrorSkip("success is not true")
         data = body.get("data")

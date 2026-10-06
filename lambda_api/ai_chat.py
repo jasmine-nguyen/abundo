@@ -32,7 +32,6 @@ from api_constants import (
 )
 from budget_standing import budget_standing, standing_window
 from chat_tools import TOOL_FUNCTIONS, ChatData, lookback_floor, tool_status_line
-from encoders import DecimalEncoder
 from iso_date import valid_iso_date
 from repository import (
     BudgetRepository,
@@ -396,7 +395,7 @@ def _run_tool(call: dict, data: ChatData, tool_numbers: set) -> dict:
                 "is_error": True}
     _collect_numbers(output, tool_numbers)
     return {"type": "tool_result", "tool_use_id": call["id"],
-            "content": json.dumps(output, cls=DecimalEncoder)}
+            "content": json.dumps(output, default=float)}
 
 
 def run_chat(job_id: str, messages: list[dict], data: ChatData, job_repo, seconds_left) -> dict:

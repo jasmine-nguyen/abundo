@@ -58,7 +58,6 @@ def _up_rejects_token(code):
         def urlopen(request, timeout=None):
             raise http_error(code, url=UP_API_URL)
         monkeypatch.setattr(up.urllib.request, "urlopen", urlopen)
-        monkeypatch.setattr(up, "_personal_access_token", "old-pat-value")
     return arrange
 
 

@@ -521,7 +521,7 @@ def test_breakdown_only_uncategorized_bucket(handler):
 
 
 def test_breakdown_fractional_amounts_survive_decimal_encoder(handler, monkeypatch):
-    # Through lambda_handler -> _json_response -> DecimalEncoder(float). Sub-dollar
+    # Through lambda_handler -> _json_response -> json.dumps(default=float). Sub-dollar
     # amounts must serialise as JSON numbers with their cents intact, not be dropped
     # or stringified. (Binary-exact values chosen so the assert is deterministic.)
     cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
@@ -665,7 +665,7 @@ def test_breakdown_renamed_income_category_still_earned_by_bucket(handler):
 
 
 def test_get_breakdown_dispatches_and_serialises_earned_as_json_numbers(handler, monkeypatch):
-    # [A8] Through lambda_handler -> _json_response -> DecimalEncoder: the __earned__ bucket's
+    # [A8] Through lambda_handler -> _json_response -> json.dumps(default=float): the __earned__ bucket's
     # Decimals (posted AND pending, incl. cents) must serialise as JSON numbers, not be
     # dropped or stringified — the client reads posted + pending off this. The existing
     # dispatch test carries no income, so this is the only end-to-end check of __earned__.
@@ -691,7 +691,7 @@ def test_get_breakdown_dispatches_and_serialises_earned_as_json_numbers(handler,
 
 def test_get_breakdown_dispatches_and_serialises_income_sources_as_json_numbers(handler, monkeypatch):
     # WHIT-366: the __income__ per-source Decimals (incl. cents) must serialise as JSON numbers
-    # through DecimalEncoder — the drill screen reads posted + pending off each source.
+    # through the JSON dump — the drill screen reads posted + pending off each source.
     cats = _FakeCategoryRepo([_category("salary", "Income"), _category("dividends", "Income")])
     txns = _QueuedTransactionRepo([
         _transaction("salary", 2500.25, "posted"),
@@ -1046,7 +1046,7 @@ def test_breakdown_rollup_excludes_income_and_savings_parents(handler):
 
 
 def test_get_breakdown_dispatches_and_serialises_rollup_as_nested_json_numbers(handler, monkeypatch):
-    # WHIT-349 — [A14] end-to-end through lambda_handler -> _json_response -> DecimalEncoder:
+    # WHIT-349 — [A14] end-to-end through lambda_handler -> _json_response -> json.dumps(default=float):
     # __rollup__ is one level DEEPER than __earned__ ({"nodes": {id: {posted, pending}}}),
     # so this proves the encoder recurses and the netted parent's Decimals (incl. cents)
     # reach the client as JSON numbers, not strings or dropped keys. Nets a refunded sub so

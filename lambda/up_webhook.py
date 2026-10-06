@@ -29,7 +29,7 @@ from push import send_push
 from repayment_alerts import build_repayment_push
 from repository_device import DeviceRepository
 from repository_notify import NotifyRepository
-from ssm import get_param
+from api_key import forget_api_key, get_api_key
 
 logger = logging.getLogger(__name__)
 # The Text-format runtime leaves the root logger at WARNING, so opt INFO in (matches
@@ -61,29 +61,16 @@ UNAUTHORISED_RESPONSE = {"statusCode": 401, "body": "unauthorised event"}
 ERROR_RESPONSE = {"statusCode": 500, "body": "processing failed"}
 
 
-_signing_secret = None
-
-
 def get_signing_secret() -> str:
-    global _signing_secret
-    if _signing_secret is None:
-        _signing_secret = get_param(UP_WEBHOOK_SIGNING_SECRET_PATH)
-    return _signing_secret
-
-
-_personal_access_token = None
+    return get_api_key(UP_WEBHOOK_SIGNING_SECRET_PATH)
 
 
 def get_personal_access_token() -> str:
-    global _personal_access_token
-    if _personal_access_token is None:
-        _personal_access_token = get_param(UP_PERSONAL_ACCESS_TOKEN_PATH)
-    return _personal_access_token
+    return get_api_key(UP_PERSONAL_ACCESS_TOKEN_PATH)
 
 
 def clear_personal_access_token() -> None:
-    global _personal_access_token
-    _personal_access_token = None
+    forget_api_key(UP_PERSONAL_ACCESS_TOKEN_PATH)
 
 
 def extract_raw_body(event: dict) -> bytes:

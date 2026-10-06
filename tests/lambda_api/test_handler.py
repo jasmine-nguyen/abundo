@@ -565,7 +565,7 @@ def test_recent_one_empty_account_still_returns_the_others(handler):
 def test_get_transactions_dispatch_runs_real_body(handler, monkeypatch):
     # The card's core gap: the real get_recent_transactions body runs end-to-end
     # through lambda_handler (NOT monkeypatched away), proving routing plus JSON
-    # serialisation of Decimal amounts via DecimalEncoder.
+    # serialisation of Decimal amounts via json.dumps(default=float).
     a = list(handler.ACCOUNT_ID_MAP.values())[0]
     repo = _AccountPagesTransactionRepo(pages_by_account={
         a: [([_row(a, "2026-07-01", "t1", amount=Decimal("-12.50"), category="coffee")], None)],

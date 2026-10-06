@@ -229,7 +229,7 @@ def _signed_event(data: str, *, base64_body: bool, mixed_case_headers: bool,
 def _use_real_verifier(lam, monkeypatch):
     handler = lam.handler
     monkeypatch.setattr(handler, "Webhook", _RealWebhook)
-    monkeypatch.setattr(handler, "_webhook_signing_secret", _SECRET)  # skip SSM
+    lam.api_key._cache[handler.BANKSYNC_WEBHOOK_SECRET_PATH] = _SECRET  # skip SSM
     return handler
 
 

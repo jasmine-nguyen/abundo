@@ -61,7 +61,7 @@ def _markers(caplog, marker):
 def test_repayment_on_renumbered_home_loan_still_sends_push(lam, monkeypatch, caplog):
     up = lam.up_webhook
     monkeypatch.setattr(up, "get_signing_secret", lambda: MOCK_SECRET)
-    monkeypatch.setattr(up, "_personal_access_token", "up-token")
+    lam.api_key._cache[up.UP_PERSONAL_ACCESS_TOKEN_PATH] = "up-token"
     notify = up.NotifyRepository()
     notify._table = FakeTable()
     monkeypatch.setattr(up, "NotifyRepository", lambda: notify)
@@ -140,4 +140,4 @@ def test_get_homeloan_account_id_falls_back_then_reads_up_once(lam, monkeypatch,
 
 @pytest.fixture(autouse=True)
 def _no_real_ssm(lam, monkeypatch):
-    monkeypatch.setattr(lam.up_webhook, "get_param", lambda path: "fake-secret")
+    monkeypatch.setattr(lam.api_key, "get_param", lambda path: "fake-secret")

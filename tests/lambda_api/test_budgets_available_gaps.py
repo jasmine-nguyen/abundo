@@ -9,7 +9,7 @@ happy positive cushions. These cover the edges they DON'T:
   [G3] a REANCHORED rollover (misaligned pay cycle, reanchor_by_id path) still emits available
   [G4] an income PARENT with a child subtree: available is the parent's own target, not inflated
        by the child's folded income
-  [G5] `available` survives the REAL JSON response (DecimalEncoder) as a number, not a string/dropped
+  [G5] `available` survives the REAL JSON response (default=float) as a number, not a string/dropped
 
 Same deterministic grid as the sibling suites: monthly, cycle_start 2026-08-06, payday grid
 from 2026-01-01. `current_cycle_window` is monkeypatched to a fixed window.
@@ -116,10 +116,10 @@ def test_income_parent_available_is_own_target_not_child_folded(handler):
     assert result["salary"]["posted"] == Decimal(900)
 
 
-# [G5] `available` survives the REAL JSON response as a number (DecimalEncoder -> float), not dropped.
+# [G5] `available` survives the REAL JSON response as a number (Decimal -> float), not dropped.
 def test_available_serialises_as_a_json_number_through_the_real_response(handler):
     # list_budgets returns Decimals; the real GET /budgets wraps them in handler._json_response, which
-    # dumps with DecimalEncoder. Pin that `available` reaches the wire as a NUMBER the client can read
+    # dumps with default=float. Pin that `available` reaches the wire as a NUMBER the client can read
     # with `b.available ?? ...` — not a string, and not silently dropped by the encoder.
     entry = {"target": Decimal(250), "spread_amount": BILL, "spread_cycles": Decimal(4),
              "spread_from": CYCLE_START, "spread_len": Decimal(LENGTH), "spread_paydate": PAYDATE}

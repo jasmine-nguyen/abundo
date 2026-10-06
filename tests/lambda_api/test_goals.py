@@ -883,7 +883,7 @@ def _ladder_round_trip(handler, monkeypatch, goal_id, body):
 
 def test_checkpoint_ladder_survives_the_put_get_round_trip_as_json(handler, monkeypatch):
     # [A1] The ladder is a list of nested Decimals -- the one shape nothing else on a goal
-    # has. Prove it survives store -> list_goals -> DecimalEncoder: order kept, amounts are
+    # has. Prove it survives store -> list_goals -> the JSON dump: order kept, amounts are
     # JSON NUMBERS (a Decimal that leaked as a string would fail the client's `amount: number`),
     # ids are non-empty strings, and no extra key rides along.
     saved = _ladder_round_trip(handler, monkeypatch, "hol1", _grow_body(

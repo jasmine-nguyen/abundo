@@ -22,7 +22,7 @@ import calendar
 import logging
 import time
 import urllib.request  # noqa: F401 — load-bearing test seam; see the balance_fetch import below
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Optional
 
 from constants import (
@@ -97,39 +97,15 @@ def fetch_balance(bid: str, aid: str, api_key: str) -> dict:
 def normalise_balance(payload: dict) -> dict:
     """Turn a getBalance payload into {"balance", "as_of", "currency"}.
 
-    The mortgage's `amount` is NEGATIVE (a liability owed), so the outstanding
-    balance is its absolute value. Only `amount`/`date` are treated as required;
-    `availableBalance`/`pendingBalance` are ignored (nullable/absent in practice).
-    Raises BalanceError on a failure response, a missing field, or a non-mortgage
-    account (a guard against pointing at the wrong account).
+    Wraps the shared normaliser, plus a guard against pointing at a non-mortgage account.
+    The mortgage's `amount` is NEGATIVE (a liability owed), so the outstanding balance is
+    its absolute value. Raises BalanceError on any bad reading.
     """
-    if payload.get("success") is not True:
-        raise BalanceError(f"getBalance returned failure: {payload.get('error')!r}")
-    data = payload.get("data")
-    if not isinstance(data, dict):
-        raise BalanceError("getBalance payload missing `data`")
-
-    account_type = data.get("accountType")
+    row = normalise_account_balance(payload)
+    account_type = row["account_type"]
     if account_type is not None and account_type != "mortgage":
         raise BalanceError(f"expected a mortgage account, got {account_type!r}")
-
-    # `is None` (not just missing key) so a JSON `null` amount raises a clean
-    # BalanceError rather than an opaque Decimal("None") InvalidOperation.
-    if data.get("amount") is None:
-        raise BalanceError("getBalance `data` missing `amount`")
-
-    try:
-        # abs() so the negative liability becomes a positive outstanding balance.
-        balance = abs(Decimal(str(data["amount"])))
-    except InvalidOperation as e:
-        # A non-numeric amount is bad input like any other — surface it as the
-        # module's own BalanceError, not a raw decimal exception.
-        raise BalanceError(f"getBalance `amount` is not a number: {data['amount']!r}") from e
-    as_of = data.get("date")
-    if not as_of:
-        raise BalanceError("getBalance `data` missing `date`")
-    currency = data.get("currency") or "AUD"
-    return {"balance": balance, "as_of": as_of, "currency": currency}
+    return {"balance": abs(row["amount"]), "as_of": row["as_of"], "currency": row["currency"]}
 
 
 def check_repayment_landed_but_no_push(

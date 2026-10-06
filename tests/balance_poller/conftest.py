@@ -34,7 +34,7 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 # Names that collide with the sibling suites (lambda/lambda_api/sync_trigger),
 # re-imported fresh per test so this package's copies win.
 _COLLIDING = (
-    "handler", "constants", "models", "encoders", "repository", "repository_base",
+    "handler", "constants", "models", "repository", "repository_base",
     "repository_transaction", "repository_category", "repository_budget",
     "repository_paycycle", "repository_balance", "repayment_rules", "api_key",
 )

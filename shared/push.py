@@ -16,8 +16,9 @@ import json
 import logging
 import urllib.error
 import urllib.request
+from itertools import batched
 
-from ssm import get_param
+from api_key import get_api_key
 
 # Expo Push send endpoint. send_push POSTs a batch of messages here.
 EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
@@ -38,20 +39,10 @@ EXPO_ACCESS_TOKEN_PATH = "/abundo/expo-access-token"
 
 logger = logging.getLogger(__name__)
 
-_access_token = None
-
 
 def get_access_token() -> str:
-    """Fetch + cache the Expo access token (PAT) from SSM for the container's life."""
-    global _access_token
-    if _access_token is None:
-        _access_token = get_param(EXPO_ACCESS_TOKEN_PATH)
-    return _access_token
-
-
-def _chunk(items: list, size: int):
-    for i in range(0, len(items), size):
-        yield items[i:i + size]
+    """The Expo access token (PAT), fetched + cached in shared/api_key.py, keyed by path."""
+    return get_api_key(EXPO_ACCESS_TOKEN_PATH)
 
 
 def _post_expo(url, body_obj, token) -> dict:
@@ -109,7 +100,7 @@ def get_receipts(ids, *, access_token=None) -> dict:
     token = access_token if access_token is not None else _safe_access_token()
 
     receipts: dict = {}
-    for chunk in _chunk(ids, EXPO_RECEIPTS_MAX):
+    for chunk in batched(ids, EXPO_RECEIPTS_MAX):
         try:
             receipts.update(_get_receipts_batch(chunk, token))
         except Exception:  # transport / decode / anything — best-effort, keep going
@@ -157,7 +148,7 @@ def send_push(title: str, body: str, tokens, *, data=None, access_token=None, de
     ok = 0
     pruned: list = []
     receipts: list = []  # (receipt_id, token) for each accepted push (WHIT-139)
-    for batch in _chunk(tokens, EXPO_PUSH_BATCH_MAX):
+    for batch in batched(tokens, EXPO_PUSH_BATCH_MAX):
         messages = [{"to": t, "title": title, "body": body} for t in batch]
         if data:
             for message in messages:

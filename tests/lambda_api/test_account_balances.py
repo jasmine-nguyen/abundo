@@ -3,7 +3,7 @@ its handler `get_account_balances` (WHIT-212).
 
 Handler-level tests inject a FakeAccountBalanceRepo directly. The route test drives
 `lambda_handler` with the repo class monkeypatched, proving the dispatch wiring and
-the DecimalEncoder JSON shaping (signed Decimal amounts -> JSON numbers, null kept).
+the JSON shaping (signed Decimal amounts -> JSON numbers, null kept).
 """
 
 import json
@@ -70,7 +70,7 @@ def test_route_serves_signed_balances_as_json_numbers(handler, monkeypatch):
 
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])
-    # DecimalEncoder renders the signed amounts (and available_balance) as JSON numbers.
+    # The JSON response renders the signed amounts (and available_balance) as JSON numbers.
     assert body == [
         {"account_id": "up-homeloan", "amount": -596642.43, "available_balance": 0.0,
          "currency": "AUD", "as_of": "2026-07-08T09:29:49.358Z", "account_type": "mortgage"},
