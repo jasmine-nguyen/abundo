@@ -34,8 +34,5 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "shared"))
 sys.path.insert(0, str(_REPO_ROOT / "lambda_sync_trigger"))
 
-# 2. A fake `ssm` so `from ssm import get_param` succeeds without boto3, plus the env vars and
-#    fake boto3/botocore the shared repositories (via pending_mirror, WHIT-662) read at load.
-#    Tests that care about SSM override api_key.get_param via monkeypatch (the key
-#    fetch+cache now lives in shared/api_key.py); the fake's default just keeps imports clean.
+# 2. Shared fakes (see docstring).
 install_import_satisfiers()
