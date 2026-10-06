@@ -78,6 +78,27 @@ it('pressing Add budget saves the amount once and navigates to the budgets tab',
   await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
 });
 
+// WHIT-794: the made-up numbers (an average the server always sent as $0, fixed-height history
+// bars) and the dead search box are gone from both budget screens.
+it.each(['coffee', 'salary'])('the set-budget screen for %s shows no recommendation, stats or history', async (categoryId) => {
+  setParams({ categoryId });
+  seedServer([SPEND, SALARY]);
+  await renderWithQueries(<BudgetEdit />);
+  for (const text of [/^Recommended:/, /^Use my average/, /^View (spending|earning) history$/, '6-cycle average', /^Last (week|fortnight|month)$/, 'Set your income floor']) {
+    expect(screen.queryByText(text)).toBeNull();
+  }
+  expect(screen.getByText(/ BUDGET$/)).toBeTruthy();
+});
+
+it('the add-a-budget list shows no average or search box, and keeps the earn-target tag', async () => {
+  seedServer([SPEND, SALARY]);
+  await renderWithQueries(<BudgetPick />);
+  expect(screen.getByText('earn-target')).toBeTruthy();
+  expect(screen.queryByText('avg / fortnight')).toBeNull();
+  expect(screen.queryByText('$0')).toBeNull();
+  expect(screen.queryByText('Search categories')).toBeNull();
+});
+
 // WHIT-249: an UNEXPECTED saveBudget throw used to leave the Add budget button stuck disabled
 // (the caller's setSubmitting(false) sits on the false-return branch, which a throw skips). The
 // handler now resets `submitting` in a catch (and re-throws so the guard logs). Fail-on-revert:
@@ -112,8 +133,7 @@ it('wraps the form in a keyboard-inset, tap-persisting scroll so Save stays reac
 });
 
 // ===== WHIT-169 (folded from budgetEditIncome.screen.test.tsx) =====
-// A Savings deep-link to edit.tsx lands on a "can't budget" state (the income/spend screens are
-// covered in budgetNoDummyNumbers.screen.test.tsx).
+// A Savings deep-link to edit.tsx lands on a "can't budget" state.
 describe('budgetEditIncome (folded)', () => {
   describe('BudgetEdit — a Savings category lands on a "can\'t budget" state (WHIT-202)', () => {
     it('Savings category: shows the explanatory note, none of the amount/history/save UI', async () => {
@@ -239,7 +259,7 @@ describe('budgetEditRollover (folded)', () => {
 // ===== WHIT-69 (folded from budgetPickIncome.screen.test.tsx) =====
 // app/budget/pick.tsx lists Income categories in "Add a budget" while hiding already-budgeted ones.
 // Renders BudgetPick (imported at module scope). SPEND and SALARY reuse the outer consts; SIDE is
-// block-scoped. The income row's earn-target tag is covered in budgetNoDummyNumbers.screen.test.tsx.
+// block-scoped.
 describe('budgetPickIncome (folded)', () => {
   const SIDE = { id: 'side_gig', name: 'Side Gig', icon: 'briefcase', color: '#7fd49b', bucket: 'Income' };
 

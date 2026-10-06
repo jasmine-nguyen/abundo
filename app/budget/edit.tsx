@@ -37,6 +37,12 @@ export default function BudgetEdit() {
   const runSave = useInFlightGuard();
 
   if (!info.category) return <View style={{ flex: 1 }}><Header title="Set budget" /></View>;
+  const categoryRow = (
+    <View style={styles.categoryRow}>
+      <View style={[styles.chip, { backgroundColor: tint(info.category.color, 0.15) }]}><Icon name={info.category.icon} size={30} color={info.category.color} /></View>
+      <Text style={styles.categoryName}>{info.category.name}</Text>
+    </View>
+  );
   // WHIT-202: a Savings category can't carry a budget target (the Budgets screen skips it),
   // so a deep-link to /budget/edit on one lands here rather than on an amount field whose
   // save is doomed to a server 400. Show a coherent "can't budget" state instead.
@@ -45,10 +51,7 @@ export default function BudgetEdit() {
       <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
         <Header title="Set budget" />
         <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
-          <View style={styles.categoryRow}>
-            <View style={[styles.chip, { backgroundColor: tint(info.category.color, 0.15) }]}><Icon name={info.category.icon} size={30} color={info.category.color} /></View>
-            <View><Text style={styles.categoryName}>{info.category.name}</Text></View>
-          </View>
+          {categoryRow}
           <Text style={styles.savingsNote}>Savings categories can't be budgeted — they track a goal, not a pay-cycle spend limit.</Text>
         </ScrollView>
       </View>
@@ -93,12 +96,7 @@ export default function BudgetEdit() {
         // keyboard height so it scrolls into reach (iOS), and let a tap on Save land.
         automaticallyAdjustKeyboardInsets
       >
-        <View style={styles.categoryRow}>
-          <View style={[styles.chip, { backgroundColor: tint(info.category.color, 0.15) }]}><Icon name={info.category.icon} size={30} color={info.category.color} /></View>
-          <View>
-            <Text style={styles.categoryName}>{info.category.name}</Text>
-          </View>
-        </View>
+        {categoryRow}
 
         <Text style={styles.fieldLabel}>{info.periodLabel} BUDGET</Text>
         <View style={styles.amountBox}>
