@@ -19,7 +19,7 @@ from functools import partial
 
 import pytest
 
-from _budget_endpoint_fakes import _FakePayCycleRepo
+from _budget_endpoint_fakes import _FakePayCycleRepo, pin_cycle_window
 from _category_fakes import _cat, _schema
 from _dynamo_fakes import FakeTable
 from _transaction_range_fakes import _QueuedTransactionRepo
@@ -82,10 +82,7 @@ def _rollover_entry(target=100, carryover=0, carryover_from="2026-05-08"):
 
 @pytest.fixture(autouse=True)
 def _fixed_window(handler, monkeypatch):
-    import budget_standing
-    for module in (handler, budget_standing):
-        monkeypatch.setattr(module, "current_cycle_window",
-                            lambda last_pay_date, length, today=None: (CYCLE_START, TODAY))
+    pin_cycle_window(handler, monkeypatch, CYCLE_START, TODAY)
 
 
 def _budget_repo(handler, table):

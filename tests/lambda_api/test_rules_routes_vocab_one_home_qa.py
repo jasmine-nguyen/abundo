@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from _feed_fakes import FakeCategoryRepo, Repos
+from _feed_fakes import Repos, inject_rule_routes
 
 _PAIRS = [
     ("description", "contains"), ("description", "equals"),
@@ -23,9 +23,7 @@ _VALUE = {"amount": "30", "direction": "debit"}
 
 def _post(handler, monkeypatch, body):
     store = Repos()
-    monkeypatch.setattr(handler, "RuleRepository", lambda: store.rule_repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(("transport",)))
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: store.transaction_repo)
+    inject_rule_routes(handler, monkeypatch, store, ("transport",))
     event = {"rawPath": "/rules", "requestContext": {"http": {"method": "POST"}},
              "body": json.dumps(body)}
     response = handler.lambda_handler(event, None)
