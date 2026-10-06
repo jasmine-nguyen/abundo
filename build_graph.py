@@ -319,6 +319,7 @@ CODE_CRITIC_OUTPUT = _output(
     standards_breaches=TEXTS,
     decisions_to_escalate=TEXTS,
     fold_ins=TEXTS,
+    simplifications=TEXTS,
     advisory=TEXTS,
     tech_debt=_list_of(title=TEXT, problem=TEXT, fix=TEXT),
 )
@@ -2140,7 +2141,7 @@ async def code_critic(state: BuildState):
     result = await run_agent("code_critic", review_block(state, "code"), CODE_CRITIC_OUTPUT)
     out = result.output
     bugs, breaches, decisions = out["blocking_bugs"], out["standards_breaches"], out["decisions_to_escalate"]
-    fold_ins = out["fold_ins"]
+    fold_ins, simplifications = out["fold_ins"], out["simplifications"]
     feedback = []
     if bugs:
         feedback.append(f"### Bugs\n{bullets(bugs)}")
@@ -2148,10 +2149,12 @@ async def code_critic(state: BuildState):
         feedback.append(f"### Standards breaches\n{bullets(breaches)}")
     if fold_ins:
         feedback.append(f"### Small fold-ins: bring this nearby code in line in this PR\n{bullets(fold_ins)}")
+    if simplifications:
+        feedback.append(f"### Simplify: make the change smaller\n{bullets(simplifications)}")
     rework = bool(feedback or decisions)
     summary = (
         f"code review: {len(bugs)} bug(s), {len(breaches)} standards breach(es), "
-        f"{len(fold_ins)} fold-in(s), {len(decisions)} decision(s)"
+        f"{len(fold_ins)} fold-in(s), {len(simplifications)} simplification(s), {len(decisions)} decision(s)"
     )
     return {
         "code_verdict": "NEEDS_REWORK" if rework else "APPROVED",
