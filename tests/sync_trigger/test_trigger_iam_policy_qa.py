@@ -18,7 +18,7 @@ from _boto_stubs import install_import_satisfiers, use_condition_fields
 from _dynamo_fakes import FakeTable, _client_error
 from _terraform import DYNAMODB_VERB_TO_ACTION, allows, granted_dynamodb_actions, leading_keys, policy_statements
 
-install_import_satisfiers(ssm_default="test-api-key")
+install_import_satisfiers()
 
 WESTPAC_AID = "A3AC9195-9E8D-48B8-86D0-46D130D7F64A"
 WESTPAC_SOURCE = {"bid": "fiskil_77", "aid": WESTPAC_AID}

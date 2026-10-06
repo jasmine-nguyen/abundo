@@ -18,7 +18,7 @@ from _boto_stubs import install_import_satisfiers, use_condition_fields
 from _budget_endpoint_fakes import _FakeCategoryRepo
 from _dynamo_fakes import FakeTable
 
-install_import_satisfiers(ssm_default="test-api-key")
+install_import_satisfiers()
 
 WESTPAC_AID = "A3AC9195-9E8D-48B8-86D0-46D130D7F64A"
 UP_AID = "3zVQJ8Btz_IRmqp78VrQnQ"

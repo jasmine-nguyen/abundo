@@ -30,7 +30,7 @@ from _dynamo_fakes import FakeTable, _client_error
 # shared/api_key.py's `from ssm import get_param` (and the repositories' boto imports)
 # resolve. Tests that exercise the key fetch monkeypatch api_key.get_param. The `shared`
 # fixture additionally swaps in the condition-recording Key/Attr via use_condition_fields.
-install_import_satisfiers(ssm_default="shared-fake-key")
+install_import_satisfiers()
 
 
 _SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")

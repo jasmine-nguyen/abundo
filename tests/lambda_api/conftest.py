@@ -29,7 +29,7 @@ import pytest
 from _boto_stubs import install_import_satisfiers, use_condition_fields
 
 # Env vars + fake boto3/botocore/ssm the handler import chain needs.
-install_import_satisfiers(ssm_default="test-api-key")
+install_import_satisfiers()
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _LAMBDA_API_DIR = str(_REPO_ROOT / "lambda_api")
