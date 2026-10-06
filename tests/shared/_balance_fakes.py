@@ -7,10 +7,18 @@ Resolved by pytest.ini's `pythonpath = tests/shared`. The shared layer is import
 ``balance_repo``, so inside a ``handler``-style fixture it comes from the freshly loaded copy.
 """
 
+from decimal import Decimal
+
 from _dynamo_fakes import FakeTable
 
 _MARKER_PK = "ACCTBAL#REFRESH"
 _BALANCE_PREFIX = "ACCTBAL#"
+
+
+def homeloan_row(amount, as_of="2026-10-05T00:00:00Z"):
+    """A stored up-homeloan balance (list_balances-shaped) owing the signed ``amount``."""
+    return {"account_id": "up-homeloan", "amount": Decimal(amount), "available_balance": Decimal("0"),
+            "currency": "AUD", "as_of": as_of, "account_type": "mortgage"}
 
 
 def balance_repo(rows=(), last=None, upsert_fails=False):

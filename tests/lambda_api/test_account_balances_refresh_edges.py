@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from _balance_fakes import balance_repo, balance_writes, marker_writes, upserted
+from _balance_fakes import balance_repo, balance_writes, homeloan_row, marker_writes, upserted
 
 
 # --- fakes / stubs (mirror test_account_balances.py) -------------------------
@@ -227,11 +227,6 @@ def _refresh_with_milestone_spy(handler, monkeypatch, repo, fetch, milestone_rai
     return handler.lambda_handler(_REFRESH_EVENT, None), calls
 
 
-def _homeloan_row(amount):
-    return {"account_id": "up-homeloan", "amount": Decimal(amount), "available_balance": Decimal("0"),
-            "currency": "AUD", "as_of": "2026-08-10T00:00:00Z", "account_type": "mortgage"}
-
-
 def _fetch_all(bid, aid, key, **kw):
     return _LIVE_PAYLOADS[aid]
 
@@ -243,11 +238,11 @@ def _fetch_all_but_homeloan(bid, aid, key, **kw):
 
 
 def _repo_owing(amount):
-    return lambda: balance_repo(rows=[_homeloan_row(amount)])
+    return lambda: balance_repo(rows=[homeloan_row(amount)])
 
 
 def _repo_whose_homeloan_read_fails():
-    repo = balance_repo(rows=[_homeloan_row("-600000")])
+    repo = balance_repo(rows=[homeloan_row("-600000")])
     real_list = repo.list_balances
 
     def list_balances(account_ids):
