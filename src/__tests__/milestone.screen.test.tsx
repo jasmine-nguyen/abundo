@@ -522,6 +522,17 @@ describe('WHIT-377 milestone editor', () => {
       const sent = mockSaveMilestones.mock.calls[0][0];
       expect(sent.map((m) => m.targetBalance)).toEqual([600000, 200000, 100000]);
     });
+
+    // [A4] the per-row tag follows the row index, so editing the LAST row changes only that row.
+    it('typing into the last row only changes that row, and the label keeps the screen label style', async () => {
+      await renderWithQueries(<MilestoneEdit />);
+      expect(StyleSheet.flatten(screen.getAllByText('TARGET BALANCE')[2].props.style).marginTop).toBe(14);
+      fireEvent.changeText(screen.getByTestId('milestone-balance-2'), '50000');
+      expect(screen.getByTestId('milestone-balance-0').props.value).toBe('300000');
+      await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
+      const sent = mockSaveMilestones.mock.calls[0][0];
+      expect(sent.map((m) => m.targetBalance)).toEqual([300000, 200000, 50000]);
+    });
   });
 });
 
