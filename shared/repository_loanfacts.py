@@ -12,9 +12,7 @@ put_item overwrite is enough — no version guard.
 from decimal import Decimal
 from typing import Optional
 
-from botocore.exceptions import ClientError
-
-from repository_base import RepositoryBase, handle_database_error
+from repository_base import RepositoryBase, db_errors
 
 _LOANFACTS_KEY = {"pk": "LOANFACTS", "sk": "LOANFACTS"}
 
@@ -37,10 +35,8 @@ class LoanFactsRepository(RepositoryBase):
         rows saved before it existed simply lack the attribute, so `.get` yields
         None (back-compat, no migration).
         """
-        try:
+        with db_errors("read loan facts"):
             item = self._get_table().get_item(Key=_LOANFACTS_KEY).get("Item")
-        except ClientError as e:
-            handle_database_error(e, "read loan facts")
         if item is None:
             return None
         result = {field: float(item[field]) for field in LOANFACTS_FIELDS}
@@ -81,10 +77,8 @@ class LoanFactsRepository(RepositoryBase):
             item["payoffGoalDate"] = payoffGoalDate
         if depositTarget is not None:
             item["depositTarget"] = depositTarget
-        try:
+        with db_errors("set loan facts"):
             self._get_table().put_item(Item=item)
-        except ClientError as e:
-            handle_database_error(e, "set loan facts")
         return {
             "original": float(original),
             "homeValue": float(homeValue),

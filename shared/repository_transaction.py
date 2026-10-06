@@ -18,7 +18,7 @@ from constants import (
     PENDING_STATUS,
 )
 from models import Transaction
-from repository_base import RepositoryBase, handle_database_error, logger
+from repository_base import RepositoryBase, db_errors, handle_database_error, logger, update_expression
 
 # Sentinel for update_transaction_fields: distinguishes "field not in this request"
 # (leave it untouched) from "clear this field" (None/""/[]). A plain None can't do
@@ -113,13 +113,11 @@ class TransactionRepository(RepositoryBase):
     def _batch_put(self, items: list[dict], action: str) -> None:
         if not items:
             return
-        try:
+        with db_errors(action):
             table = self._get_table()
             with table.batch_writer() as batch:
                 for item in items:
                     batch.put_item(Item=item)
-        except ClientError as e:
-            handle_database_error(e, action)
 
     def get_transactions_by_date_range(
         self,
@@ -150,11 +148,9 @@ class TransactionRepository(RepositoryBase):
         if cursor:
             query_kwargs["ExclusiveStartKey"] = cursor
 
-        try:
+        with db_errors("read"):
             response = self._get_table().query(**query_kwargs)
             return response.get("Items", []), response.get("LastEvaluatedKey")
-        except ClientError as e:
-            handle_database_error(e, "read")
 
     def get_transaction_keys_by_id(
         self, transaction_id: str
@@ -163,7 +159,7 @@ class TransactionRepository(RepositoryBase):
         Queries the GSI to find the primary keys (pk and sk) for a given transaction_id.
         Returns a dict with {"pk": "...", "sk": "..."} if found, or None.
         """
-        try:
+        with db_errors("index query"):
             # Query the GSI instead of a table Scan
             response = self._get_table().query(
                 IndexName="transaction-id-index",
@@ -183,9 +179,6 @@ class TransactionRepository(RepositoryBase):
 
             first_match = items[0]
             return {"pk": first_match["pk"], "sk": first_match["sk"]}
-
-        except ClientError as e:
-            handle_database_error(e, "index query")
 
     def delete_transaction(self, pk: str, sk: str) -> bool:
         """Deletes a transaction the user removed, leaving a "deleted by you" marker (WHIT-654).
@@ -230,27 +223,16 @@ class TransactionRepository(RepositoryBase):
         """Write a carried edit onto a still-pending row (WHIT-678): its category, notes, tags,
         exclusion, rule stamp and budget flag. Never recreates the row. Returns False when the
         row is gone or has since posted."""
-        names = {"#s": "status"}
-        values: dict[str, Any] = {":pending": PENDING_STATUS}
-        set_clauses = []
-        for index, field in enumerate(
-            ("category", "notes", "tags", "budget_excluded", "filed_by_rule", "counts_to_budget")
-        ):
-            if carried.get(field) is None:
-                continue
-            names[f"#f{index}"] = field
-            values[f":v{index}"] = carried[field]
-            set_clauses.append(f"#f{index} = :v{index}")
-        update_expression = "SET " + ", ".join(set_clauses)
-        if carried.get("filed_by_rule") is None:
-            names["#p"] = "filed_by_rule"
-            update_expression += " REMOVE #p"
+        fields = ("category", "notes", "tags", "budget_excluded", "filed_by_rule", "counts_to_budget")
+        sets = {field: carried[field] for field in fields if carried.get(field) is not None}
+        removes = ["filed_by_rule"] if carried.get("filed_by_rule") is None else []
+        expression, names, values = update_expression(sets, removes)
         try:
             self._get_table().update_item(
                 Key={"pk": pk, "sk": sk},
-                UpdateExpression=update_expression,
-                ExpressionAttributeNames=names,
-                ExpressionAttributeValues=values,
+                UpdateExpression=expression,
+                ExpressionAttributeNames={**names, "#s": "status"},
+                ExpressionAttributeValues={**values, ":pending": PENDING_STATUS},
                 ConditionExpression="attribute_exists(pk) AND #s = :pending",
             )
             return True
@@ -262,10 +244,8 @@ class TransactionRepository(RepositoryBase):
     def is_deleted(self, account_id: str, transaction_id: str) -> bool:
         """True while the user's "deleted by you" marker for this transaction hasn't expired."""
         key = {"pk": _build_deleted_pk(_build_pk(account_id)), "sk": _build_sk(transaction_id)}
-        try:
+        with db_errors("read"):
             return "Item" in self._get_table().get_item(Key=key)
-        except ClientError as e:
-            handle_database_error(e, "read")
 
     def update_transaction_category(self, pk: str, sk: str, category: str) -> bool:
         """Sets a transaction's category, leaving all other attributes intact.
@@ -339,12 +319,12 @@ class TransactionRepository(RepositoryBase):
             names["#b"] = "budget_excluded"
             values[":bexcl"] = True
             assignments.append("#b = :bexcl")
-        update_expression = "SET " + ", ".join(assignments)
+        expression = "SET " + ", ".join(assignments)
 
         try:
             self._get_table().update_item(
                 Key={"pk": pk, "sk": sk},
-                UpdateExpression=update_expression,
+                UpdateExpression=expression,
                 ExpressionAttributeNames=names,
                 ExpressionAttributeValues=values,
                 ConditionExpression=condition,
@@ -357,12 +337,10 @@ class TransactionRepository(RepositoryBase):
             # consistent because the scan reads an index that cannot be — reading stale here would
             # reintroduce the very race this method exists to close.
 
-        try:
+        with db_errors("read"):
             item = self._get_table().get_item(
                 Key={"pk": pk, "sk": sk}, ConsistentRead=True
             ).get("Item")
-        except ClientError as e:
-            handle_database_error(e, "read")
         if item is None:
             return "gone", None
         return "changed", item.get("category")
@@ -444,59 +422,44 @@ class TransactionRepository(RepositoryBase):
         can't silently un-file a charge through this REMOVE branch. Rows are sparse and
         sanitise_transaction keeps falsy-non-None, so storing ""/[]/False would read
         back as an empty value. One UpdateItem can legally mix SET and REMOVE
-        clauses. Fields are aliased (a single #f/#v scheme) because 'category' is a
-        reserved word; aliasing all four keeps the builder uniform. Conditional on
+        clauses. update_expression aliases every field ('category' is a reserved
+        word). Conditional on
         the row still existing (attribute_exists(pk)): a row deleted between the key
         lookup and here yields False (a 404 for the caller), not a 500.
         """
-        names: dict[str, str] = {}
-        values: dict[str, Any] = {}
-        set_clauses: list[str] = []
-        remove_clauses: list[str] = []
-
-        for index, (field, provided) in enumerate(
-            (
-                ("category", category),
-                ("notes", notes),
-                ("tags", tags),
-                ("budget_excluded", budget_excluded),
-            )
+        sets: dict[str, Any] = {}
+        removes: list[str] = []
+        for field, provided in (
+            ("category", category),
+            ("notes", notes),
+            ("tags", tags),
+            ("budget_excluded", budget_excluded),
         ):
             if provided is _UNSET:
                 continue
             if field == "category" and not provided:
                 raise ValueError("category is set-only; a falsy value cannot clear it")
-            name_alias = f"#f{index}"
-            names[name_alias] = field
             if provided:
-                value_alias = f":v{index}"
-                values[value_alias] = provided
-                set_clauses.append(f"{name_alias} = {value_alias}")
+                sets[field] = provided
             else:
-                remove_clauses.append(name_alias)
+                removes.append(field)
 
         # Filing by hand clears the rule stamp (WHIT-536): whenever the category is SET
         # (it is set-only — a clear is refused above), REMOVE filed_by_rule. A notes/tags/
         # budget-only edit leaves category _UNSET, so the stamp survives. REMOVE of an absent
         # stamp is a no-op.
         if category is not _UNSET:
-            names["#p"] = "filed_by_rule"
-            remove_clauses.append("#p")
+            removes.append("filed_by_rule")
 
         # No field supplied (all _UNSET) — nothing to write. Return without issuing a
         # malformed empty-expression UpdateItem.
-        if not set_clauses and not remove_clauses:
+        if not sets and not removes:
             return True
 
-        expression_parts: list[str] = []
-        if set_clauses:
-            expression_parts.append("SET " + ", ".join(set_clauses))
-        if remove_clauses:
-            expression_parts.append("REMOVE " + ", ".join(remove_clauses))
-
+        expression, names, values = update_expression(sets, removes)
         update_kwargs: dict[str, Any] = {
             "Key": {"pk": pk, "sk": sk},
-            "UpdateExpression": " ".join(expression_parts),
+            "UpdateExpression": expression,
             "ExpressionAttributeNames": names,
             "ConditionExpression": "attribute_exists(pk)",
         }
