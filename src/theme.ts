@@ -66,7 +66,6 @@ export const C = {
   badBright: '#ff8fa3',
 
   purple: '#bb9af7',
-  // The equity card's chip and button fill (WHIT-773).
   purpleWash: 'rgba(201,179,245,.16)',
 
   // Ink drawn ON a bright surface — accentInk on the accent-blue buttons, heroInk on the hero

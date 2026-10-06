@@ -4,8 +4,7 @@ import { useRouter } from 'expo-router';
 import { C, FONT } from '../theme';
 import { Glyph } from '../icons';
 
-// WHIT-773 — the "Equity for your next place" card shared by Milestone and Mortgage. The card
-// owns its heading and subheading so the two screens can't drift apart.
+// Owns its heading and subheading so Milestone and Mortgage can't drift apart.
 export function EquityCard({ right, children }: { right?: ReactNode; children: ReactNode }) {
   return (
     <View style={styles.card}>

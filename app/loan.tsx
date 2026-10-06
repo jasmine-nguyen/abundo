@@ -100,12 +100,12 @@ export default function Loan() {
           Add your loan facts so Abundo can show real progress and equity. We only ask for what the bank feed can't tell us.
         </Text>
 
-        <MoneyField label="Original loan amount" hint="What you first borrowed" placeholder="e.g. 600000" prefix="$" value={original} onChangeText={setOriginal} labelStyle={styles.label} style={styles.field} />
-        <MoneyField label="Property value" hint="What it's worth today" placeholder="e.g. 770000" prefix="$" value={homeValue} onChangeText={setHomeValue} labelStyle={styles.label} style={styles.field} />
-        <MoneyField label="Loan-to-value ratio" hint="How much the bank lends against it — usually 80" placeholder="e.g. 80" suffix="%" value={lvr} onChangeText={setLvr} labelStyle={styles.label} style={styles.field} />
-        <MoneyField label="Interest rate" hint="Your current rate" placeholder="e.g. 5.74" suffix="%" value={ratePct} onChangeText={setRatePct} labelStyle={styles.label} style={styles.field} />
-        <MoneyField label="Scheduled repayment" hint="Your minimum, per month" placeholder="e.g. 3667" prefix="$" value={baseRepay} onChangeText={setBaseRepay} labelStyle={styles.label} style={styles.field} />
-        <MoneyField label="Extra repayment" hint="Optional top-up per month" placeholder="e.g. 500" prefix="$" value={extra} onChangeText={setExtra} labelStyle={styles.label} style={styles.field} />
+        <MoneyField label="Original loan amount" hint="What you first borrowed" placeholder="e.g. 600000" prefix="$" value={original} onChangeText={setOriginal} {...loanLook} />
+        <MoneyField label="Property value" hint="What it's worth today" placeholder="e.g. 770000" prefix="$" value={homeValue} onChangeText={setHomeValue} {...loanLook} />
+        <MoneyField label="Loan-to-value ratio" hint="How much the bank lends against it — usually 80" placeholder="e.g. 80" suffix="%" value={lvr} onChangeText={setLvr} {...loanLook} />
+        <MoneyField label="Interest rate" hint="Your current rate" placeholder="e.g. 5.74" suffix="%" value={ratePct} onChangeText={setRatePct} {...loanLook} />
+        <MoneyField label="Scheduled repayment" hint="Your minimum, per month" placeholder="e.g. 3667" prefix="$" value={baseRepay} onChangeText={setBaseRepay} {...loanLook} />
+        <MoneyField label="Extra repayment" hint="Optional top-up per month" placeholder="e.g. 500" prefix="$" value={extra} onChangeText={setExtra} {...loanLook} />
 
         <View style={styles.field}>
           <Text style={styles.label}>Target payoff date</Text>
@@ -119,7 +119,7 @@ export default function Loan() {
           <Text style={styles.hint}>Optional — how we work out the repayment needed if the loan won't clear at your current rate.</Text>
         </View>
 
-        <MoneyField label="Deposit needed for your next place" hint="Optional — sets the target the equity card tracks toward." placeholder="e.g. 120000" prefix="$" value={depositTarget} onChangeText={setDepositTarget} labelStyle={styles.label} style={styles.field} />
+        <MoneyField label="Deposit needed for your next place" hint="Optional — sets the target the equity card tracks toward." placeholder="e.g. 120000" prefix="$" value={depositTarget} onChangeText={setDepositTarget} {...loanLook} />
 
         <Pressable onPress={onSave} disabled={saving} style={[styles.save, saving && { opacity: 0.6 }]}>
           <Text style={styles.saveText}>{saving ? 'Saving…' : 'Save loan details'}</Text>
@@ -137,3 +137,5 @@ const styles = StyleSheet.create({
   save: { marginTop: 8, paddingVertical: 15, borderRadius: 14, backgroundColor: C.accent, alignItems: 'center' },
   saveText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.accentInk },
 });
+
+const loanLook = { labelStyle: styles.label, style: styles.field };

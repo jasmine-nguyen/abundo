@@ -2,8 +2,6 @@ import React from 'react';
 import { View, Text, TextInput, StyleSheet, StyleProp, TextStyle, ViewStyle } from 'react-native';
 import { C, FONT } from '../theme';
 
-// WHIT-773 — the money box shared by the Loan form and the goal editor. Each screen keeps its
-// own label look via labelStyle.
 export function MoneyField({
   label, labelStyle, hint, placeholder, value, onChangeText, prefix, suffix, style,
 }: {
@@ -12,7 +10,7 @@ export function MoneyField({
 }) {
   return (
     <View style={style}>
-      <Text style={[styles.label, labelStyle]}>{label}</Text>
+      <Text style={labelStyle}>{label}</Text>
       <View style={styles.inputRow}>
         {prefix ? <Text style={styles.affix}>{prefix}</Text> : null}
         <TextInput
@@ -32,7 +30,6 @@ export function MoneyField({
 }
 
 const styles = StyleSheet.create({
-  label: { fontFamily: FONT.body },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, paddingHorizontal: 14, height: 50 },
   affix: { fontFamily: FONT.body, fontSize: 16, fontWeight: '600', color: C.textDim },
   input: { flex: 1, fontFamily: FONT.body, fontSize: 16, color: C.text, height: '100%', textAlignVertical: 'center' },

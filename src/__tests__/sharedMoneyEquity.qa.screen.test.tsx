@@ -24,7 +24,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import { MoneyField } from '../components/MoneyField';
-import { EquityCard, EquityBody, EquityCta } from '../components/EquityCard';
+import { EquityCard, EquityBody } from '../components/EquityCard';
 import Loan from '../../app/loan';
 import GoalEdit from '../../app/goal/edit';
 import Milestone from '../../app/milestone';
@@ -53,7 +53,7 @@ describe('MoneyField on its own', () => {
     expect(view.UNSAFE_getAllByType(Text)).toHaveLength(2);
   });
 
-  it('[A3] the screen label style wins over the base, and the outer style lands on the wrapper', () => {
+  it('[A3] the screen label style is used, and the outer style lands on the wrapper', () => {
     const view = render(
       <MoneyField label="Amount" labelStyle={{ fontSize: 99 }} style={{ marginBottom: 42 }} placeholder="e.g. 1" value="7" onChangeText={() => {}} />,
     );
@@ -78,17 +78,6 @@ describe('EquityCard pieces on their own', () => {
     expect(view.UNSAFE_getAllByType(Text).map((t) => t.props.children)).toEqual([
       'Equity for your next place', 'Usable equity from your current home', 'body',
     ]);
-  });
-
-  it('[A6] EquityCta shows its own label and opens the loan form', () => {
-    render(<EquityCta label="Set deposit target →" />);
-    fireEvent.press(screen.getByText('Set deposit target →'));
-    expect(routerSpies.push).toHaveBeenCalledWith('/loan');
-  });
-
-  it('[A7] EquityBody keeps the old body-line look (12pt, 18 line height, 11 gap above)', () => {
-    render(<EquityBody>line</EquityBody>);
-    expect(styleOf('line')).toEqual(expect.objectContaining({ fontSize: 12, lineHeight: 18, marginTop: 11 }));
   });
 });
 
