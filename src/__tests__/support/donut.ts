@@ -1,7 +1,13 @@
 // Shared helpers for the donut screen tests — extracted so a change to the rendered node shape or
 // the react-native-svg jest stub is a one-file edit, not four.
-import { screen } from '@testing-library/react-native';
+import { jest } from '@jest/globals';
+import { act, screen } from '@testing-library/react-native';
 import type { DonutSlice } from '../../components/SpendingDonut';
+
+// Drive the JS-driven spring (useNativeDriver: false) to rest. Fake timers, never a real sleep:
+// react-native's requestAnimationFrame polyfill is a setTimeout, so advancing the clock advances
+// the animation deterministically.
+export const settleSpring = () => act(() => { jest.advanceTimersByTime(4000); });
 
 // The emphasis animation lives on the AnimatedG wrapping each testID'd shape, resolved to a plain
 // number under the jest SVG stub (which renders svg elements as Views). Walk up from the shape to
@@ -19,12 +25,13 @@ export const opacityOf = (id: string): number | undefined => ancestorProp(`donut
 // Minimal slice factory — the id doubles as the display name.
 export const sl = (id: string, value: number): DonutSlice => ({ id, name: id, color: '#7aa2f7', value });
 
-// What a dimmed wedge fades to, per colour (WHIT-425 — the fade is derived from the wedge's own
-// colour, so there is no single value any more). Written as LITERALS on purpose: deriving them by
-// calling wedgeDimOpacity would make every assertion below a tautology against the code it pins.
-export const DIM_BLUE = 0.561;   // sl()'s #7aa2f7
-export const DIM_GREEN = 0.462;  // #7FD49B, used by the Fold + Selection fixtures
-export const DIM_OTHER = 0.825;  // OTHER_COLOR — far higher because the grey starts far darker
+// Same, with a chosen colour.
+export const slice = (id: string, color: string, value: number): DonutSlice => ({ id, name: id, color, value });
+
+// What a dimmed wedge fades to (WHIT-759). Written as LITERALS on purpose: importing the shipped
+// constants would make every assertion a tautology against the code it pins.
+export const DIM_CATEGORY = 0.55; // every category colour
+export const DIM_OTHER = 0.85;    // OTHER_COLOR — higher because the grey starts far darker
 
 // The painted wedge order as it renders. `donut-slice-<id>` sits on the TAP band, one per painted
 // wedge in painted order; the selection overlay is `donut-top` (not matched by this regex).

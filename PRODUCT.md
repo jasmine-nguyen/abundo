@@ -65,4 +65,4 @@ Success means the number on screen is right *now*, and paying down the mortgage 
 
 ## Accessibility & Inclusion
 
-Existing practice, not a stated hard requirement: screen-reader labels, sensible focus, legible contrast (`src/contrast.ts`), and motion that respects "reduce motion".
+Existing practice, not a stated hard requirement: screen-reader labels, sensible focus, legible contrast (the chart's fixed slice fades in `src/chartColors.ts`), and motion that respects "reduce motion".

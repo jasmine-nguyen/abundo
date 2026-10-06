@@ -8,12 +8,9 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
-import { SpendingDonut, WEDGE_DIM_FALLBACK, activeSelection, type DonutSlice } from '../components/SpendingDonut';
+import { SpendingDonut, activeSelection, type DonutSlice } from '../components/SpendingDonut';
 import { OTHER_COLOR } from '../chartColors';
-import { wedgeDimOpacity } from '../contrast';
-import { opacityOf, ancestorProp, sl, DIM_BLUE, DIM_GREEN, DIM_OTHER } from './support/donut';
-
-const slice = (id: string, color: string, value: number): DonutSlice => ({ id, name: id, color, value });
+import { opacityOf, ancestorProp, sl, slice, DIM_CATEGORY, DIM_OTHER } from './support/donut';
 
 const TWO: DonutSlice[] = [
   { id: 'g', name: 'Groceries', color: '#7FD49B', value: 75 },
@@ -22,10 +19,10 @@ const TWO: DonutSlice[] = [
 const ONLY_G: DonutSlice[] = [{ id: 'g', name: 'Groceries', color: '#7FD49B', value: 75 }];
 
 describe('SpendingDonut — the fade maths assumes each wedge is painted EXACTLY once', () => {
-  // [A56] The whole derivation rests on "a faded wedge sits on the opaque CHART_BG track below and
-  // nothing else" (SpendingDonut.tsx:93-95). Two stacked copies at opacity a composite to
-  // 1-(1-a)^2 -- 0.561 would land at 0.807 -- so the measured contrast would silently stop being
-  // the contrast the module computed. The overlay must therefore never carry a second painted band,
+  // [A56] The fixed fades are checked on the assumption that "a faded wedge sits on the opaque
+  // CHART_BG track below and nothing else". Two stacked copies at opacity a composite to
+  // 1-(1-a)^2 -- 0.55 would land at 0.80 -- so the real contrast would silently stop being the
+  // contrast the guard measured. The overlay must therefore never carry a second painted band,
   // and must only ever exist for the wedge whose opacity is 1.
   // FAIL-ON-REVERT: drop the `interactive ?` guard on bandTestID (SpendingDonut.tsx:267) and the
   // band count goes to 4.
@@ -39,65 +36,35 @@ describe('SpendingDonut — the fade maths assumes each wedge is painted EXACTLY
     expect(screen.getByTestId('donut-top')).toBeTruthy();            // the overlay IS drawn
     expect(ancestorProp('donut-top', 'opacity')).toBeCloseTo(1);     // ...only ever at full opacity
     expect(ancestorProp('donut-band-a', 'opacity')).toBeCloseTo(1);  // as is the base under it
-    expect(opacityOf('b')).toBeCloseTo(DIM_BLUE);                    // the faded ones are single-painted
-    expect(opacityOf('c')).toBeCloseTo(DIM_BLUE);
+    expect(opacityOf('b')).toBeCloseTo(DIM_CATEGORY);                // the faded ones are single-painted
+    expect(opacityOf('c')).toBeCloseTo(DIM_CATEGORY);
   });
 
 });
 
-describe('SpendingDonut — the fade must track the CURRENT colour, not a remembered one', () => {
-  // [A58] `anims` is keyed by id and never evicted (SpendingDonut.tsx:171). The fade, unlike the
-  // emphasis value, is a function of the COLOUR — and a category's colour really does change under
-  // a stable id: chartColors.ts:84-88 documents a client running ahead of the server falling back
-  // to an id-derived hue, then switching to the slotted one once `colorSlot` arrives.
-  // This is also the tripwire for the obvious performance fix: wedgeDimOpacity runs a 30-step
-  // bisection per wedge per redraw, and caching it BY ID (rather than by colour) would pass every
-  // other test in the suite and pin the old hue's fade forever.
-  it('[A58] a wedge recoloured while it is dimmed re-derives its fade', () => {
-    const { rerender } = render(<SpendingDonut slices={[sl('a', 75), sl('b', 25)]} />);
-    fireEvent.press(screen.getByTestId('donut-slice-a'));
-    expect(opacityOf('b')).toBeCloseTo(DIM_BLUE);   // b is #7aa2f7
-
-    // Same id, same value, new colour — only the hue moved.
-    rerender(<SpendingDonut slices={[sl('a', 75), slice('b', '#7FD49B', 25)]} />);
-
-    expect(screen.getByTestId('donut-band-b').props.stroke).toBe('#7FD49B');
-    expect(opacityOf('b')).toBeCloseTo(DIM_GREEN);  // the greener, brighter hue fades FURTHER
-    expect(DIM_GREEN).toBeLessThan(DIM_BLUE);       // ...which is the point of deriving it at all
-    expect(opacityOf('a')).toBeCloseTo(1);
-  });
-
-  // [A59] An unusable colour string reaching the REAL component, not just the pure module. [Q33]
-  // proves wedgeDimOpacity returns null; nothing proved the render substitutes the fallback and that
-  // it survives the interpolation — and the fallback is the one path where a dimmed wedge is nearly
-  // indistinguishable from the picked one (0.85 vs 1). Empty string is the realistic shape — a
-  // category row whose colour never resolved.
-  it('[A59] a wedge with an unparseable colour still renders, and lands on the fallback', () => {
+describe('SpendingDonut — an unusable colour still fades', () => {
+  // [A59] An unusable colour string reaching the real component. Empty string is the realistic
+  // shape — a category row whose colour never resolved.
+  it('[A59] a wedge with an unparseable colour still renders, and fades like a category', () => {
     render(<SpendingDonut slices={[sl('a', 60), slice('broken', '', 40)]} />);
     fireEvent.press(screen.getByTestId('donut-slice-a'));
 
-    expect(opacityOf('broken')).toBeCloseTo(WEDGE_DIM_FALLBACK);
-    expect(opacityOf('broken')).toBeLessThan(1);          // it does step back, per WEDGE_DIM_FALLBACK
-    expect(opacityOf('broken')).toBeGreaterThan(DIM_BLUE); // ...but far less than a measurable peer:
-                                                           // an unresolved colour reads closest to
-                                                           // "selected" of anything on the ring.
-    expect(wedgeDimOpacity('')).toBeNull();               // the module half: it measures nothing here
+    expect(opacityOf('broken')).toBeCloseTo(DIM_CATEGORY);
   });
 });
 
-describe('SpendingDonut — repeated selection lands exactly on the derived values', () => {
-  // [A60] Select -> deselect -> select a DIFFERENT wedge, with three different colours in play. The
-  // fade is now three different numbers instead of one shared constant, so a wedge picking up a
-  // neighbour's floor (a mixed-up index, a shared interpolation, a memo keyed on the wrong thing)
-  // is a NEW class of bug that the old flat DIM could not express. Nothing else drives the cycle
+describe('SpendingDonut — repeated selection lands exactly on the fixed values', () => {
+  // [A60] Select -> deselect -> select a DIFFERENT wedge, with categories and the grey in play. The
+  // grey has its own fade, so a wedge picking up a neighbour's fade (a mixed-up index, a shared
+  // interpolation, a memo keyed on the wrong thing) would show here. Nothing else drives the cycle
   // more than once.
-  it('[A60] each wedge returns to its OWN floor on every re-selection, never a neighbour\'s', () => {
+  it('[A60] each wedge returns to its OWN fade on every re-selection, never a neighbour\'s', () => {
     render(<SpendingDonut slices={[
       slice('blue', '#7aa2f7', 50), slice('green', '#7FD49B', 30), slice('grey', OTHER_COLOR, 20),
     ]} />);
 
     fireEvent.press(screen.getByTestId('donut-slice-blue'));
-    expect(opacityOf('green')).toBeCloseTo(DIM_GREEN);
+    expect(opacityOf('green')).toBeCloseTo(DIM_CATEGORY);
     expect(opacityOf('grey')).toBeCloseTo(DIM_OTHER);
 
     fireEvent.press(screen.getByTestId('donut-slice-blue'));   // tap again -> deselect
@@ -105,7 +72,7 @@ describe('SpendingDonut — repeated selection lands exactly on the derived valu
 
     fireEvent.press(screen.getByTestId('donut-slice-green'));  // now pick a different one
     expect(opacityOf('green')).toBeCloseTo(1);
-    expect(opacityOf('blue')).toBeCloseTo(DIM_BLUE);           // its own floor, not green's
+    expect(opacityOf('blue')).toBeCloseTo(DIM_CATEGORY);
     expect(opacityOf('grey')).toBeCloseTo(DIM_OTHER);
 
     fireEvent.press(screen.getByTestId('donut-center-reset')); // clear from the hole
@@ -113,8 +80,8 @@ describe('SpendingDonut — repeated selection lands exactly on the derived valu
 
     fireEvent.press(screen.getByTestId('donut-slice-grey'));   // and once more, third wedge
     expect(opacityOf('grey')).toBeCloseTo(1);
-    expect(opacityOf('blue')).toBeCloseTo(DIM_BLUE);
-    expect(opacityOf('green')).toBeCloseTo(DIM_GREEN);
+    expect(opacityOf('blue')).toBeCloseTo(DIM_CATEGORY);
+    expect(opacityOf('green')).toBeCloseTo(DIM_CATEGORY);
   });
 });
 
@@ -131,7 +98,7 @@ describe('SpendingDonut — selected tail slice folds into __other__ (gap)', () 
     const { rerender } = render(<SpendingDonut slices={before} />);
 
     fireEvent.press(screen.getByTestId('donut-slice-coffee'));
-    expect(opacityOf('a')).toBeCloseTo(DIM_BLUE); // a dims while Coffee is popped
+    expect(opacityOf('a')).toBeCloseTo(DIM_CATEGORY); // a dims while Coffee is popped
 
     const after: DonutSlice[] = [
       sl('a', 100), sl('b', 90), sl('c', 80), sl('d', 70), sl('e', 60), sl('f', 50),
@@ -160,7 +127,7 @@ describe('SpendingDonut — selecting __other__ then its composition changes (ga
     fireEvent.press(screen.getByTestId('donut-slice-__other__'));
     expect(screen.getByTestId('donut-center-amount').props.children).toBe('$50');
     expect(opacityOf('__other__')).toBeCloseTo(1);   // Other popped
-    expect(opacityOf('a')).toBeCloseTo(DIM_BLUE);        // siblings dimmed
+    expect(opacityOf('a')).toBeCloseTo(DIM_CATEGORY);        // siblings dimmed
 
     const seven2: DonutSlice[] = [
       sl('a', 100), sl('b', 90), sl('c', 80), sl('d', 70), sl('e', 60), sl('f', 30), sl('g', 45),
@@ -169,7 +136,7 @@ describe('SpendingDonut — selecting __other__ then its composition changes (ga
 
     expect(screen.getByTestId('donut-center-amount').props.children).toBe('$75'); // hole re-reads Other sum
     expect(opacityOf('__other__')).toBeCloseTo(1);   // still popped (selection preserved)
-    expect(opacityOf('a')).toBeCloseTo(DIM_BLUE);        // siblings still dimmed
+    expect(opacityOf('a')).toBeCloseTo(DIM_CATEGORY);        // siblings still dimmed
   });
 });
 
@@ -187,7 +154,7 @@ describe('SpendingDonut — data change that spares the selection (gap)', () => 
 
     fireEvent.press(screen.getByTestId('donut-slice-c'));
     expect(opacityOf('c')).toBeCloseTo(1);    // Coffee popped
-    expect(opacityOf('g')).toBeCloseTo(DIM_GREEN); // Groceries dimmed
+    expect(opacityOf('g')).toBeCloseTo(DIM_CATEGORY); // Groceries dimmed
 
     rerender(
       <SpendingDonut slices={[
@@ -199,7 +166,7 @@ describe('SpendingDonut — data change that spares the selection (gap)', () => 
 
     expect(screen.getByTestId('donut-center-amount').props.children).toBe('$25'); // still Coffee
     expect(opacityOf('c')).toBeCloseTo(1);    // still popped
-    expect(opacityOf('g')).toBeCloseTo(DIM_GREEN); // still dimmed
+    expect(opacityOf('g')).toBeCloseTo(DIM_CATEGORY); // still dimmed
   });
 });
 
@@ -216,15 +183,15 @@ describe('SpendingDonut — a cached wedge re-entering must re-target, not keep 
 
     fireEvent.press(screen.getByTestId('donut-slice-z')); // pop z → its cached value is +1
     expect(opacityOf('z')).toBeCloseTo(1);
-    expect(opacityOf('a')).toBeCloseTo(DIM_BLUE);
+    expect(opacityOf('a')).toBeCloseTo(DIM_CATEGORY);
 
     rerender(<SpendingDonut slices={[sl('a', 75), sl('b', 25)]} />); // z leaves; +1 stays cached
     fireEvent.press(screen.getByTestId('donut-slice-a'));            // now select a instead
     rerender(<SpendingDonut slices={[sl('a', 75), sl('b', 25), sl('z', 40)]} />); // z returns, a held
 
-    expect(opacityOf('z')).toBeCloseTo(DIM_BLUE); // re-targeted to dim, NOT the stale popped +1
+    expect(opacityOf('z')).toBeCloseTo(DIM_CATEGORY); // re-targeted to dim, NOT the stale popped +1
     expect(opacityOf('a')).toBeCloseTo(1);    // a is the live selection
-    expect(opacityOf('b')).toBeCloseTo(DIM_BLUE);
+    expect(opacityOf('b')).toBeCloseTo(DIM_CATEGORY);
   });
 
   // [A9] The over-dim guard the fix must not trip: a wedge cached DIMMED (−1) that returns while
@@ -237,7 +204,7 @@ describe('SpendingDonut — a cached wedge re-entering must re-target, not keep 
     const { rerender } = render(<SpendingDonut slices={[sl('a', 75), sl('b', 25), sl('z', 40)]} />);
 
     fireEvent.press(screen.getByTestId('donut-slice-a')); // z dims to −1, cached
-    expect(opacityOf('z')).toBeCloseTo(DIM_BLUE);
+    expect(opacityOf('z')).toBeCloseTo(DIM_CATEGORY);
 
     rerender(<SpendingDonut slices={[sl('a', 75), sl('b', 25)]} />); // z leaves; −1 stays cached
     fireEvent.press(screen.getByTestId('donut-slice-a'));            // deselect a → nothing selected
@@ -249,29 +216,29 @@ describe('SpendingDonut — a cached wedge re-entering must re-target, not keep 
   });
 
   // [A10] The synthesised '__other__' bucket appearing for the first time (tail crosses 6 → 7) while
-  // a selection is held must paint dimmed like the real peers — at ITS OWN floor, which is far
+  // a selection is held must paint dimmed like the real peers — at ITS OWN fade, which is far
   // higher than theirs because the grey starts darker. That difference is the point: a bucket born
   // at a peer's fade instead of its own would be invisible, which is the WHIT-425 bug.
   // CHARACTERIZATION w.r.t. the paintedKey dep: __other__ is FIRST-SEEN here, so emphasisOf inits it
   // at its target (−1) and reverting the dep ALONE still leaves it dimmed — this does NOT fail on
   // that revert (it fails only if the init is ALSO reverted, exactly like E1). Its value is a
   // data-path guard: the fold-created bucket is covered by the same emphasis wiring as a real id.
-  it('[A10] the __other__ bucket newly appearing while one is selected paints dimmed at its own floor', () => {
+  it('[A10] the __other__ bucket newly appearing while one is selected paints dimmed at its own fade', () => {
     const six: DonutSlice[] = [sl('a', 100), sl('b', 90), sl('c', 80), sl('d', 70), sl('e', 60), sl('f', 50)];
     const { rerender } = render(<SpendingDonut slices={six} />); // 6 painted, no __other__
     expect(screen.queryByTestId('donut-slice-__other__')).toBeNull();
 
     fireEvent.press(screen.getByTestId('donut-slice-a')); // select a → peers dim
-    expect(opacityOf('b')).toBeCloseTo(DIM_BLUE);
+    expect(opacityOf('b')).toBeCloseTo(DIM_CATEGORY);
 
     const seven: DonutSlice[] = [...six, sl('g', 10)]; // 7 positive → f,g fold into __other__
     rerender(<SpendingDonut slices={seven} />);
 
     expect(screen.getByTestId('donut-slice-__other__')).toBeTruthy();
-    expect(opacityOf('__other__')).toBeCloseTo(DIM_OTHER); // its own floor, not a peer's
-    expect(opacityOf('__other__')).toBeGreaterThan(DIM_BLUE); // the grey needs far more opacity
+    expect(opacityOf('__other__')).toBeCloseTo(DIM_OTHER); // its own fade, not a peer's
+    expect(opacityOf('__other__')).toBeGreaterThan(DIM_CATEGORY); // the grey needs far more opacity
     expect(opacityOf('a')).toBeCloseTo(1);                 // a still popped
-    expect(opacityOf('b')).toBeCloseTo(DIM_BLUE);          // untouched peer still dimmed
+    expect(opacityOf('b')).toBeCloseTo(DIM_CATEGORY);      // untouched peer still dimmed
   });
 });
 
@@ -294,19 +261,19 @@ describe('SpendingDonut — selection clears when its category leaves the data',
     const { rerender } = render(<SpendingDonut slices={TWO} />);
 
     fireEvent.press(screen.getByTestId('donut-slice-c')); // select Coffee → Groceries dims
-    expect(opacityOf('g')).toBeCloseTo(DIM_GREEN);
+    expect(opacityOf('g')).toBeCloseTo(DIM_CATEGORY);
 
     rerender(<SpendingDonut slices={ONLY_G} />); // Coffee leaves the data
     expect(opacityOf('g')).toBeCloseTo(1); // un-dimmed, not stuck
   });
 });
 
-describe('SpendingDonut — the fold bucket fades on its own floor (WHIT-425)', () => {
+describe('SpendingDonut — the fold bucket fades on its own value (WHIT-425)', () => {
   // The grey "Other" needs far more opacity than a category to reach the same visibility, because
   // it starts far darker. [A10] covers the bucket APPEARING mid-selection; this covers the ordinary
   // case — it is already on screen when you tap a category.
-  // FAIL-ON-REVERT: give every wedge one shared fade and Other lands at a category's 0.561, where
-  // it measures 1.9:1 and is the wedge WHIT-425 was filed about.
+  // FAIL-ON-REVERT: give every wedge one shared fade and Other lands at a category's 0.55, where
+  // it measures under 3:1 and is the wedge WHIT-425 was filed about.
   it('a category selection dims the real peers and the bucket, each to its own value', () => {
     const seven: DonutSlice[] = Array.from({ length: 7 }, (_, i) => ({
       id: `s${i}`, name: `s${i}`, color: '#7aa2f7', value: 100 - i * 10,
@@ -316,7 +283,7 @@ describe('SpendingDonut — the fold bucket fades on its own floor (WHIT-425)', 
 
     fireEvent.press(screen.getByTestId('donut-slice-s0'));
     expect(opacityOf('s0')).toBeCloseTo(1);                      // the picked wedge leads
-    expect(opacityOf('s1')).toBeCloseTo(DIM_BLUE);               // a real peer steps back
+    expect(opacityOf('s1')).toBeCloseTo(DIM_CATEGORY);           // a real peer steps back
     expect(opacityOf('__other__')).toBeCloseTo(DIM_OTHER);       // so does the bucket, further up
     expect(opacityOf('__other__')).toBeLessThan(1);              // it really does fade
   });

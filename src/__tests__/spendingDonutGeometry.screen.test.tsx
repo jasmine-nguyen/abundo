@@ -13,11 +13,9 @@ import { SpendingDonut, reduceSlices, type DonutSlice } from '../components/Spen
 import { CHART_BG, OTHER_COLOR } from '../chartColors';
 import { C } from '../theme';
 import {
-  sl, paintedBands, bandPath, arcExtentDeg, dividerGapPx, dividerGapDeg,
-  arcPoints, ancestorProp, paintedOrder, opacityOf, DIM_BLUE,
+  sl, slice, paintedBands, bandPath, arcExtentDeg, dividerGapPx, dividerGapDeg,
+  arcPoints, ancestorProp, paintedOrder, opacityOf, DIM_CATEGORY,
 } from './support/donut';
-
-const slice = (id: string, color: string, value: number): DonutSlice => ({ id, name: id, color, value });
 
 const THREE: DonutSlice[] = [sl('a', 50), sl('b', 30), sl('c', 20)];
 
@@ -283,7 +281,7 @@ describe('SpendingDonut — the track is under the wedges and outside the select
     expect(screen.getAllByTestId('donut-track')).toHaveLength(1);
     expect(screen.getByTestId('donut-track').props.stroke).toBe(CHART_BG);
     expect(ancestorProp('donut-track', 'opacity')).toBeUndefined();  // not inside any animated wedge group
-    expect(ancestorProp('donut-band-b', 'opacity')).toBeCloseTo(DIM_BLUE); // sanity: the helper does find one
+    expect(ancestorProp('donut-band-b', 'opacity')).toBeCloseTo(DIM_CATEGORY); // sanity: the helper does find one
   });
 });
 
@@ -461,14 +459,14 @@ describe('SpendingDonut — a data change that reorders the ring', () => {
     fireEvent.press(screen.getByTestId('donut-slice-b'));
     expect(paintedOrder()).toEqual(['a', 'b']);
     expect(screen.getByTestId('donut-center-amount').props.children).toBe('$60');
-    expect(opacityOf('a')).toBeCloseTo(DIM_BLUE);
+    expect(opacityOf('a')).toBeCloseTo(DIM_CATEGORY);
 
     rerender(<SpendingDonut slices={[sl('a', 50), sl('b', 120)]} />); // b overtakes a
 
     expect(paintedOrder()).toEqual(['b', 'a']);                                   // ring really swapped
     expect(screen.getByTestId('donut-center-amount').props.children).toBe('$120'); // still b, new total
     expect(opacityOf('b')).toBeCloseTo(1);                                        // still popped
-    expect(opacityOf('a')).toBeCloseTo(DIM_BLUE);                                      // still dimmed
+    expect(opacityOf('a')).toBeCloseTo(DIM_CATEGORY);                                      // still dimmed
   });
 
   // [Q13] The reorder must not break the divider: after the swap the wedges are still laid out
@@ -580,12 +578,12 @@ describe('SpendingDonut — a category entering mid-highlight is dimmed', () => 
   it('[E1] a brand-new category appearing while one is selected renders dimmed', () => {
     const { rerender } = render(<SpendingDonut slices={[sl('a', 75), sl('b', 25)]} />);
     fireEvent.press(screen.getByTestId('donut-slice-a')); // select a → b dims
-    expect(opacityOf('b')).toBeCloseTo(DIM_BLUE);
+    expect(opacityOf('b')).toBeCloseTo(DIM_CATEGORY);
 
     rerender(<SpendingDonut slices={[sl('a', 75), sl('b', 25), sl('z', 40)]} />); // z is new
-    expect(opacityOf('z')).toBeCloseTo(DIM_BLUE); // dimmed like its peers, not full-bright
+    expect(opacityOf('z')).toBeCloseTo(DIM_CATEGORY); // dimmed like its peers, not full-bright
     expect(opacityOf('a')).toBeCloseTo(1);    // a still popped
-    expect(opacityOf('b')).toBeCloseTo(DIM_BLUE); // b untouched
+    expect(opacityOf('b')).toBeCloseTo(DIM_CATEGORY); // b untouched
   });
 
   // [E2] The load-bearing anchor: a category that LEFT and RETURNS while a selection is held. Its
@@ -599,7 +597,7 @@ describe('SpendingDonut — a category entering mid-highlight is dimmed', () => 
     fireEvent.press(screen.getByTestId('donut-slice-a')); // now select a
     rerender(<SpendingDonut slices={[sl('a', 75), sl('b', 25), sl('z', 40)]} />); // z returns, a still selected
 
-    expect(opacityOf('z')).toBeCloseTo(DIM_BLUE); // re-targeted to dim, not the stale cached full-bright
+    expect(opacityOf('z')).toBeCloseTo(DIM_CATEGORY); // re-targeted to dim, not the stale cached full-bright
     expect(opacityOf('a')).toBeCloseTo(1);    // a still popped
   });
 

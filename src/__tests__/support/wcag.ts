@@ -1,19 +1,13 @@
 // Hand-written WCAG 2.x contrast maths, shared by the colour-contrast suites (WHIT-430 / WHIT-431).
 //
-// LOUD WARNING — this file must NEVER import from src/contrast.ts, and must stay hand-written.
-// These helpers exist to measure the shipped colours (and src/contrast.ts itself) INDEPENDENTLY;
-// importing the code under test would only prove it agrees with itself, turning the guards into
-// tautologies. That independence is the whole point of this file.
+// LOUD WARNING — this file must NEVER import from app code, and must stay hand-written. These
+// helpers exist to measure the shipped colours INDEPENDENTLY; importing the code under test would
+// only prove it agrees with itself, turning the guards into tautologies. That independence is the
+// whole point of this file.
 //
-// Two suites (otherColorToken.logic, contrastEdges.logic) each carried their own copy of this maths
-// and had already drifted — one rounded the blend to whole channels, one did not. This is the one
-// merged copy. The blend (compositeOver) is DELIBERATELY UNROUNDED: it matches what CoreGraphics /
-// Skia actually do, and what src/contrast.ts's own compositeOver documents. The old rounding lived
-// only in the copy that produced a hex STRING; working in rgb arrays here removes any need to round,
-// so the drift is settled on the renderer-faithful (unrounded) maths.
+// The blend (compositeOver) is DELIBERATELY UNROUNDED: it matches what CoreGraphics / Skia actually
+// do. Working in rgb arrays removes any need to round to whole channels.
 
-// A 3-tuple, matching src/contrast.ts's Rgb, so these helpers can also feed that module's
-// primitives in the edge suites (e.g. minOpacityForContrast) without a cast.
 export type Rgb = readonly [number, number, number];
 
 // #rrggbb → [r, g, b]. The suites only ever hand this 6-digit shipped colours.

@@ -2,16 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import Svg, { G, Circle, Path } from 'react-native-svg';
 import { C, FONT, fmt } from '../theme';
-import { CHART_BG, OTHER_COLOR } from '../chartColors';
-import { wedgeDimOpacity } from '../contrast';
+import { CHART_BG, OTHER_COLOR, wedgeDim } from '../chartColors';
 import { useReduceMotion } from '../motion/useReduceMotion';
-
-// The opacity a dimmed wedge takes when its colour cannot be measured (wedgeDimOpacity returns
-// null). A drawing decision, so it lives here at the draw site rather than in the contrast maths
-// (WHIT-430). NOT 1: a wedge that does not fade at all reads as the picked one, so this still steps
-// visibly back. Deliberately high — if we cannot measure a colour we cannot promise it is visible,
-// so err toward more opaque. No shipped colour hits this; it is the guard for a colour off the wire.
-export const WEDGE_DIM_FALLBACK = 0.85;
 
 // WHIT: a donut ("pie") chart of where the cycle's money went — one slice per top-level
 // category, sized by its share of the total, painted in that category's own colour so the
@@ -97,21 +89,9 @@ const GAP_DEG = (DIVIDER_PX / CIRC) * 360;
 // parent group (baked in once at render, never dropped); each wedge's animation carries ONLY a
 // scale about its own origin, which the parent's shift turns into a scale about the centre.
 const SEL_SCALE = 1.1;
-// How far an un-focused wedge fades back when another is picked — DERIVED per wedge, not chosen.
-//
-// A faded wedge sits on the opaque CHART_BG track below and nothing else: it never scales (the −1
-// side of SEL_SCALE outputs 1) and never overlaps a neighbour (`inset` is always positive), so its
-// backdrop is known exactly and the fade can be computed. Each wedge fades only as far as it can
-// while still clearing WCAG 1.4.11's 3:1 against that track — so a darker wedge fades less than a
-// bright one. Equal visibility, unequal fade. WHIT-425 replaced a flat 0.4 here, which left the
-// wedges at 1.65–2.46:1; the flat value had been tuned against a faint blue lift that WHIT-403
-// deleted when it repainted the track to the flat page background.
-//
-// The grey "Other" wedge fades like any other, to ~0.83. That reads as barely a fade as a NUMBER,
-// which is misleading: it starts far darker than a category colour, so 0.83 of it lands at the same
-// brightness 0.50 of a bright blue does. Every faded wedge ends up level. Exempting it instead was
-// tried and reverted — leaving it at full opacity made the one non-category wedge the second
-// brightest thing on the ring, and left tapping it with no effect on the wedge but its size.
+// An un-focused wedge fades to a fixed value (wedgeDim, src/chartColors.ts). It never scales or
+// overlaps a neighbour, so it sits on the opaque CHART_BG track alone — the backdrop those values
+// are checked against for 3:1 (wedgeFixedFade.logic.test.ts).
 // Size the (transparent) canvas from the pop so a popped wedge never reaches the edge and clips.
 // POP_OUTER is the farthest anything DRAWN OR TAPPED reaches from the centre — the wider HIT band
 // out-reaches the visible one, so budget from whichever is thicker (else a popped wedge's tap area
@@ -251,7 +231,7 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
     // origin, so this scales it in place; the static parent <G> shifts it to the box centre.
     const v = emphasisOf(s.id);
     const scale = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [1, 1, SEL_SCALE], extrapolate: 'clamp' });
-    const opacity = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [wedgeDimOpacity(s.color) ?? WEDGE_DIM_FALLBACK, 1, 1], extrapolate: 'clamp' });
+    const opacity = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [wedgeDim(s.color), 1, 1], extrapolate: 'clamp' });
 
     const isSel = s.id === activeId;
     const toggle = () => setSelectedId((cur) => (cur === s.id ? null : s.id));
