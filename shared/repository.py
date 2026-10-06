@@ -1,12 +1,10 @@
-"""Facade re-exporting the repository classes, now split one-per-file.
+"""Facade re-exporting the repository classes and error types, now split one-per-file.
 
 Import sites keep using `from repository import X` unchanged; the implementations
-live in repository_transaction / repository_category / repository_budget /
-repository_paycycle, with shared plumbing in repository_base and the exceptions in
-repository_errors.
+live in repository_<x>.py, with shared plumbing (RepositoryBase) in repository_base
+and the exceptions in repository_errors. Helpers are imported from their own module.
 """
 
-from repository_base import handle_database_error
 from repository_errors import (
     CategoryNotFoundError,
     DatabaseError,
@@ -16,23 +14,8 @@ from repository_errors import (
     RuleNotFoundError,
     VersionConflictError,
 )
-from repository_transaction import TransactionRepository, sanitise_transaction
-from repository_category import (
-    CATEGORY_PALETTE,
-    SEED_CATEGORIES,
-    CategoryRepository,
-    SlotPreference,
-    color_slot_counts,
-    color_slot_plan_order,
-    least_held_color_slot,
-    plan_color_slot_backfill,
-    plan_color_slot_repaint,
-    plan_new_category_slot,
-    plan_color_slot_stage,
-    validate_category_breadth,
-    validate_category_depth,
-    validate_category_parent,
-)
+from repository_transaction import TransactionRepository
+from repository_category import CategoryRepository
 from repository_budget import BudgetRepository
 from repository_goals import GoalsRepository
 from repository_paycycle import PayCycleRepository
@@ -66,19 +49,4 @@ __all__ = [
     "RuleNotFoundError",
     "VersionConflictError",
     "DatabaseError",
-    "SEED_CATEGORIES",
-    "CATEGORY_PALETTE",
-    "validate_category_parent",
-    "validate_category_breadth",
-    "validate_category_depth",
-    "color_slot_counts",
-    "SlotPreference",
-    "least_held_color_slot",
-    "plan_color_slot_backfill",
-    "plan_color_slot_repaint",
-    "plan_new_category_slot",
-    "plan_color_slot_stage",
-    "color_slot_plan_order",
-    "sanitise_transaction",
-    "handle_database_error",
 ]

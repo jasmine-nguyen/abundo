@@ -31,35 +31,6 @@ class TransactionRepository(_SharedTransactionRepository):
         except ClientError as e:
             handle_database_error(e, "read")
 
-    def _paginated_query(self, *, key_condition, filter_expression=None, action: str = "read") -> list[dict]:
-        """Run a query to completion, following LastEvaluatedKey and accumulating every page.
-
-        The single owner of the pagination loop the transaction readers share (WHIT-554).
-        DynamoDB caps a query at 1MB per page and applies a FilterExpression AFTER that scan,
-        per page — so reading only the first page would silently drop a matching row beyond it
-        (WHIT-82). `filter_expression` is optional: a partition read that wants every row (the
-        FAILED dead-letter partition) passes none, and it is omitted from the query entirely
-        rather than sent as None.
-        """
-        try:
-            table = self._get_table()
-            items: list[dict] = []
-            start_key = None
-            while True:
-                kwargs = {"KeyConditionExpression": key_condition}
-                if filter_expression is not None:
-                    kwargs["FilterExpression"] = filter_expression
-                if start_key is not None:
-                    kwargs["ExclusiveStartKey"] = start_key
-                response = table.query(**kwargs)
-                items.extend(response.get("Items", []))
-                start_key = response.get("LastEvaluatedKey")
-                if not start_key:
-                    break
-            return items
-        except ClientError as e:
-            handle_database_error(e, action)
-
     def get_pending_transactions_for_account(self, account_id: str) -> list[dict]:
         """Retrieves all pending transactions of an account using the account_id.
 

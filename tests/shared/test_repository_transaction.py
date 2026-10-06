@@ -56,8 +56,10 @@ def test_get_table_lazily_builds_and_caches_the_resource(shared, monkeypatch):
         calls["resource"] += 1
         return _FakeResource()
 
+    import repository_base
+
     monkeypatch.setattr(
-        shared.repository, "boto3", _types.SimpleNamespace(resource=fake_resource)
+        repository_base, "boto3", _types.SimpleNamespace(resource=fake_resource)
     )
 
     r = shared.repository.TransactionRepository()

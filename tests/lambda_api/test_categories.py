@@ -684,7 +684,7 @@ def test_repo_create_raises_under_sustained_contention(handler):
     try:
         repo.create_category("gym", "Gym", "Lifestyle", "dumbbell")
         assert False, "expected VersionConflictError under sustained contention"
-    except repository.VersionConflictError:
+    except handler.VersionConflictError:
         pass
 
 
@@ -964,22 +964,23 @@ def test_repo_delete_promotes_children_to_top_level(handler):
 def test_validate_category_parent_pure_rules(handler):
     # Direct unit tests of the pure helper, independent of DynamoDB.
     import repository
+    import repository_category
     items = {
         "a": {"id": "a", "bucket": "Living", "parent": None},
         "b": {"id": "b", "bucket": "Living", "parent": "a"},
         "inc": {"id": "inc", "bucket": "Income", "parent": None},
     }
     # Valid: same bucket, no cycle.
-    repository.validate_category_parent(items, "c", "a", "Living")
+    repository_category.validate_category_parent(items, "c", "a", "Living")
     # Cycle: making a's parent b, where b already descends from a.
     with pytest.raises(repository.InvalidCategoryParentError):
-        repository.validate_category_parent(items, "a", "b", "Living")
+        repository_category.validate_category_parent(items, "a", "b", "Living")
     # Cross-bucket.
     with pytest.raises(repository.InvalidCategoryParentError):
-        repository.validate_category_parent(items, "c", "inc", "Living")
+        repository_category.validate_category_parent(items, "c", "inc", "Living")
     # Unknown parent.
     with pytest.raises(repository.InvalidCategoryParentError):
-        repository.validate_category_parent(items, "c", "ghost", "Living")
+        repository_category.validate_category_parent(items, "c", "ghost", "Living")
 
 
 # --- handler-level: parent pass-through & validation -------------------------
@@ -1084,26 +1085,28 @@ def test_validate_parent_stored_cycle_not_touching_cat_hits_walk_guard(handler):
     # bound raise: a pre-existing corrupt cycle among ancestors that never reaches
     # cat_id, so only the loop bound stops an infinite walk.
     import repository
+    import repository_category
     items = {
         "x": {"id": "x", "bucket": "Living", "parent": "y"},
         "y": {"id": "y", "bucket": "Living", "parent": "x"},  # x<->y already a cycle
     }
     with pytest.raises(repository.InvalidCategoryParentError):
-        repository.validate_category_parent(items, "new", "x", "Living")
+        repository_category.validate_category_parent(items, "new", "x", "Living")
 
 
 def test_validate_parent_deep_chain_valid_and_deep_cycle_rejected(handler):
     # 3+ levels. A valid deep parent must walk to the root and pass; a cycle that only
     # closes three hops up must still be caught (not just the 2-level case).
     import repository
+    import repository_category
     items = {
         "a": {"id": "a", "bucket": "Living", "parent": None},
         "b": {"id": "b", "bucket": "Living", "parent": "a"},
         "c": {"id": "c", "bucket": "Living", "parent": "b"},  # a <- b <- c
     }
-    repository.validate_category_parent(items, "d", "c", "Living")  # valid deep leaf
+    repository_category.validate_category_parent(items, "d", "c", "Living")  # valid deep leaf
     with pytest.raises(repository.InvalidCategoryParentError):
-        repository.validate_category_parent(items, "a", "c", "Living")  # deep cycle
+        repository_category.validate_category_parent(items, "a", "c", "Living")  # deep cycle
 
 
 # --- WHIT-223: maximum nesting depth (5 levels, top-level = level 1) ----------
@@ -1115,16 +1118,17 @@ def test_validate_depth_allows_a_fifth_level_and_rejects_a_sixth(handler):
     # plain user-facing message. Fail-on-revert: without the depth check the second call
     # doesn't raise.
     import repository
+    import repository_category
     items = {
         "a": {"id": "a", "bucket": "Living", "parent": None},
         "b": {"id": "b", "bucket": "Living", "parent": "a"},
         "c": {"id": "c", "bucket": "Living", "parent": "b"},
         "d": {"id": "d", "bucket": "Living", "parent": "c"},
     }
-    repository.validate_category_depth(items, "e", "d")   # 4 + 1 = 5, allowed
+    repository_category.validate_category_depth(items, "e", "d")   # 4 + 1 = 5, allowed
     items["e"] = {"id": "e", "bucket": "Living", "parent": "d"}
     with pytest.raises(repository.InvalidCategoryParentError, match="5 levels"):
-        repository.validate_category_depth(items, "f", "e")   # 5 + 1 = 6, rejected
+        repository_category.validate_category_depth(items, "f", "e")   # 5 + 1 = 6, rejected
 
 
 def test_validate_depth_reparent_uses_subtree_height_not_node_count(handler):
@@ -1132,7 +1136,7 @@ def test_validate_depth_reparent_uses_subtree_height_not_node_count(handler):
     # children, so its subtree is 3 NODES but only 2 LEVELS tall. Moving x under a level-3
     # node lands its deepest leaf at 3 + 2 = 5 -> allowed. A descendant-COUNT rollup would
     # read 3 + 3 = 6 and wrongly reject a perfectly shallow tree.
-    import repository
+    import repository_category
     items = {
         "top": {"id": "top", "bucket": "Living", "parent": None},
         "mid": {"id": "mid", "bucket": "Living", "parent": "top"},
@@ -1141,7 +1145,7 @@ def test_validate_depth_reparent_uses_subtree_height_not_node_count(handler):
         "c1": {"id": "c1", "bucket": "Living", "parent": "x"},
         "c2": {"id": "c2", "bucket": "Living", "parent": "x"},        # x is 2 levels tall
     }
-    repository.validate_category_depth(items, "x", "q")   # 3 + 2 = 5, allowed (must not raise)
+    repository_category.validate_category_depth(items, "x", "q")   # 3 + 2 = 5, allowed (must not raise)
 
 
 def test_validate_depth_reparent_measures_whole_moved_subtree(handler):
@@ -1149,6 +1153,7 @@ def test_validate_depth_reparent_measures_whole_moved_subtree(handler):
     # level-3 node: 3 + 3 = 6 rejected -> proves the deepest DESCENDANT is what's bounded,
     # not just the moved node itself.
     import repository
+    import repository_category
     items = {
         "p": {"id": "p", "bucket": "Living", "parent": None},
         "q": {"id": "q", "bucket": "Living", "parent": "p"},          # level 2
@@ -1157,27 +1162,27 @@ def test_validate_depth_reparent_measures_whole_moved_subtree(handler):
         "y": {"id": "y", "bucket": "Living", "parent": "x"},
         "z": {"id": "z", "bucket": "Living", "parent": "y"},          # x is 3 levels tall
     }
-    repository.validate_category_depth(items, "x", "q")   # 2 + 3 = 5, allowed
+    repository_category.validate_category_depth(items, "x", "q")   # 2 + 3 = 5, allowed
     with pytest.raises(repository.InvalidCategoryParentError, match="5 levels"):
-        repository.validate_category_depth(items, "x", "r")   # 3 + 3 = 6, rejected
+        repository_category.validate_category_depth(items, "x", "r")   # 3 + 3 = 6, rejected
 
 
 def test_validate_depth_is_cycle_safe(handler):
     # Corrupt stored cycles must terminate both walks (fail-on-revert: dropping the
     # `visited` guard hangs). An up-cycle among the parent's ancestors and a down-cycle
     # in the moved subtree both return without looping.
-    import repository
+    import repository_category
     up_cycle = {
         "a": {"id": "a", "bucket": "Living", "parent": "b"},
         "b": {"id": "b", "bucket": "Living", "parent": "a"},   # a<->b
     }
-    repository.validate_category_depth(up_cycle, "new", "a")    # bounded depth, no hang
+    repository_category.validate_category_depth(up_cycle, "new", "a")    # bounded depth, no hang
     down_cycle = {
         "top": {"id": "top", "bucket": "Living", "parent": None},
         "x": {"id": "x", "bucket": "Living", "parent": "y"},
         "y": {"id": "y", "bucket": "Living", "parent": "x"},   # x<->y
     }
-    repository.validate_category_depth(down_cycle, "x", "top")  # bounded height, no hang
+    repository_category.validate_category_depth(down_cycle, "x", "top")  # bounded height, no hang
 
 
 def test_repo_create_at_max_depth_allowed_and_beyond_rejected(handler):
@@ -1464,6 +1469,7 @@ def test_validate_depth_terminates_on_a_long_corrupt_cycle(handler):
     # parent, so it never sees this down-cycle -> _subtree_height's `visited` guard is the only
     # thing that saves it. Fail-on-revert: dropping that guard hangs this test.
     import repository
+    import repository_category
     ring = {"top": {"id": "top", "bucket": "Living", "parent": None}}
     n = 300
     for i in range(n):
@@ -1472,7 +1478,7 @@ def test_validate_depth_terminates_on_a_long_corrupt_cycle(handler):
 
     # Moving c0 (its "subtree" is the whole 300-node ring) under top must return a decision.
     with pytest.raises(repository.InvalidCategoryParentError):  # 1 + 300 > 5
-        repository.validate_category_depth(ring, "c0", "top")
+        repository_category.validate_category_depth(ring, "c0", "top")
 
 
 # ---- WHIT-426: breadth is capped so delete's detach write always fits ----------------------
@@ -1503,19 +1509,20 @@ def _parent_with_children(repo, repository, count, parent_id="coffee"):
 
 def test_the_pure_breadth_rule(handler):
     import repository
+    import repository_category
     items = {"p": _cat("p"), "other": _cat("other")}
     items.update({f"k{n}": _cat(f"k{n}", parent="p") for n in range(_CAP - 1)})
 
     # one short of the cap -> the next child is fine
-    repository.validate_category_breadth(items, "new", "p")
+    repository_category.validate_category_breadth(items, "new", "p")
     # children of a DIFFERENT parent don't count toward this one
-    repository.validate_category_breadth(items, "new", "other")
+    repository_category.validate_category_breadth(items, "new", "other")
 
     items[f"k{_CAP - 1}"] = _cat(f"k{_CAP - 1}", parent="p")      # now exactly at the cap
     with pytest.raises(repository.InvalidCategoryParentError, match="at most 50 sub-categories"):
-        repository.validate_category_breadth(items, "new", "p")
+        repository_category.validate_category_breadth(items, "new", "p")
     # ...but re-saving a child that ALREADY sits there adds nothing, so it must still pass.
-    repository.validate_category_breadth(items, "k0", "p")
+    repository_category.validate_category_breadth(items, "k0", "p")
 
 
 def test_the_cap_plus_one_child_is_refused_at_create(handler):

@@ -11,12 +11,11 @@ transaction feed queries. One writer (the poller), so no version guard is needed
 """
 
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Optional
 
-import boto3
 from botocore.exceptions import ClientError
 
-from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
+from repository_base import RepositoryBase, handle_database_error
 
 
 def _balance_key(account_id: str) -> dict:
@@ -35,7 +34,7 @@ def _refresh_marker_key() -> dict:
     return {"pk": "ACCTBAL#REFRESH", "sk": "MARKER"}
 
 
-class HomeLoanBalanceRepository:
+class HomeLoanBalanceRepository(RepositoryBase):
     """Stores the latest home-loan balance as a single DynamoDB item.
 
     The item at pk="BALANCE#<account_id>", sk="BALANCE" holds the current
@@ -44,16 +43,6 @@ class HomeLoanBalanceRepository:
     overwrites the whole item each poll; `get_balance` returns it (or None before
     the first poll has landed).
     """
-
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self) -> Any:
-        if self._table is None:
-            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
 
     def upsert_balance(
         self, account_id: str, balance: Decimal, as_of: str, currency: str
@@ -93,7 +82,7 @@ class HomeLoanBalanceRepository:
         }
 
 
-class AccountBalanceRepository:
+class AccountBalanceRepository(RepositoryBase):
     """Latest live balance per linked account — one DynamoDB item each (WHIT-212).
 
     The Accounts tab shows a balance per account. Unlike HomeLoanBalanceRepository —
@@ -105,16 +94,6 @@ class AccountBalanceRepository:
     ACCOUNT#<id> (transactions), and carries no `account_id`/`date` attribute so it never
     leaks into the date-index GSI. One writer (the poller), so no version guard is needed.
     """
-
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self) -> Any:
-        if self._table is None:
-            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
 
     def upsert_balance(
         self,
@@ -200,7 +179,7 @@ def _feed_watch_key(account_id: str) -> dict:
     return {"pk": f"FEEDWATCH#{account_id}", "sk": "MARKER"}
 
 
-class FeedWatchRepository:
+class FeedWatchRepository(RepositoryBase):
     """The bank-feed stall watch — one row per watched account (WHIT-606).
 
     Remembers every transaction id the balance poller has seen in the look-back window (id ->
@@ -209,16 +188,6 @@ class FeedWatchRepository:
     (pk="FEEDWATCH#<account_id>") and no `account_id`/`date` attributes, so the row stays out of
     the date-index GSI the poller reads those ids from. One writer (the poller).
     """
-
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self) -> Any:
-        if self._table is None:
-            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
 
     def get_watch(self, account_id: str) -> Optional[dict]:
         """Return {"seen_dates": {id: date}, "seen_at": int, "amount_at_seen": Decimal,

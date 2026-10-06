@@ -14,11 +14,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-import boto3
 from botocore.exceptions import ClientError
 
 from constants import JOB_TTL_SECONDS
-from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
+from repository_base import RepositoryBase, handle_database_error
 
 logger = logging.getLogger(__name__)
 
@@ -44,18 +43,8 @@ def _sk(job_id: str) -> str:
     return f"JOB#{job_id}"
 
 
-class JobRepository:
+class JobRepository(RepositoryBase):
     """Reads and writes the background apply-rules job records in our own DynamoDB table."""
-
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self) -> Any:
-        if self._table is None:
-            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
 
     def create_job(self, job_id: str, kind: str = "apply_rules") -> dict:
         """Create a fresh job row in the ``running`` state with zeroed tallies. Called once, from

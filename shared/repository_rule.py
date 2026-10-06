@@ -13,11 +13,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
-from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
+from repository_base import RepositoryBase, handle_database_error
 from repository_errors import (
     RuleClashError,
     RuleNotFoundError,
@@ -37,36 +36,15 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-class RuleRepository:
+class RuleRepository(RepositoryBase):
     """Reads and writes the user's categorisation rules in our own DynamoDB table."""
-
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self) -> Any:
-        if self._table is None:
-            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
 
     def list_rules(self) -> list[dict]:
         """Every rule, read from the shared partition. Pages via ``LastEvaluatedKey`` so a
         set larger than one 1 MB page is still read whole — this is what removes the 100 cap.
         (Single-user volume realistically fits one page, but the loop matches the sibling repos
         and is what makes "unlimited rules" true rather than aspirational.)"""
-        rules: list[dict] = []
-        query_kwargs: dict[str, Any] = {"KeyConditionExpression": Key("pk").eq(_PK)}
-        try:
-            while True:
-                response = self._get_table().query(**query_kwargs)
-                rules.extend(response.get("Items", []))
-                cursor = response.get("LastEvaluatedKey")
-                if not cursor:
-                    return rules
-                query_kwargs["ExclusiveStartKey"] = cursor
-        except ClientError as e:
-            handle_database_error(e, "list rules")
+        return self._paginated_query(key_condition=Key("pk").eq(_PK), action="list rules")
 
     def get_rule(self, rule_id: str) -> Optional[dict]:
         """The rule with this id, or None if there is none."""

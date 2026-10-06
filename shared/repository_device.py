@@ -10,29 +10,16 @@ can't corrupt the set. Uses UpdateItem (not DeleteItem) throughout, matching the
 lambda_api role's grants.
 """
 
-from typing import Any
-
-import boto3
 from botocore.exceptions import ClientError
 
-from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
+from repository_base import RepositoryBase, handle_database_error
 
 _DEVICES_KEY = {"pk": "DEVICES", "sk": "DEVICES"}
 
 
-class DeviceRepository:
+class DeviceRepository(RepositoryBase):
     """Stores registered Expo push tokens as a String Set on a single config item
     at pk=sk="DEVICES"."""
-
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self) -> Any:
-        if self._table is None:
-            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
 
     def register(self, token: str) -> None:
         """Add a token to the set. Idempotent — re-adding an existing token is a

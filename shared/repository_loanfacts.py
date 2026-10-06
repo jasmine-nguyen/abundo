@@ -10,12 +10,11 @@ put_item overwrite is enough — no version guard.
 """
 
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Optional
 
-import boto3
 from botocore.exceptions import ClientError
 
-from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
+from repository_base import RepositoryBase, handle_database_error
 
 _LOANFACTS_KEY = {"pk": "LOANFACTS", "sk": "LOANFACTS"}
 
@@ -23,20 +22,10 @@ _LOANFACTS_KEY = {"pk": "LOANFACTS", "sk": "LOANFACTS"}
 LOANFACTS_FIELDS = ("original", "homeValue", "lvr", "ratePct", "baseRepay", "extra")
 
 
-class LoanFactsRepository:
+class LoanFactsRepository(RepositoryBase):
     """Stores the user's home-loan facts as a single config item at
     pk=sk="LOANFACTS". `get_loanfacts` returns the six fields (or None if the user
     hasn't saved them yet); `set_loanfacts` overwrites the whole object."""
-
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self) -> Any:
-        if self._table is None:
-            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
 
     def get_loanfacts(self) -> Optional[dict]:
         """Return {field: float, ..., "payoffGoalDate": str|None, "depositTarget": float|None} or None if unset.

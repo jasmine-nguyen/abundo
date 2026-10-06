@@ -3,13 +3,9 @@ config item (separate from CATEGORIES so their optimistic-lock versions never
 contend)."""
 
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Optional
 
-import boto3
-from botocore.exceptions import ClientError
-
-from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
-from repository_errors import VersionConflictError
+from repository_base import RepositoryBase, remove_map_entry, set_map_entry
 
 _BUDGETS_KEY = {"pk": "BUDGETS", "sk": "BUDGETS"}
 
@@ -26,7 +22,8 @@ _ROLLOVER_FIELDS = (
 # rollover, and cleared on a reclassify out of spend. Kept local.
 _SPREAD_FIELDS = ("spread_amount", "spread_cycles", "spread_from", "spread_len", "spread_paydate")
 
-class BudgetRepository:
+
+class BudgetRepository(RepositoryBase):
     """Stores per-category budget targets as a single DynamoDB config item.
 
     The item at pk=sk="BUDGETS" holds an `items` map (category id -> entry) plus a
@@ -44,35 +41,8 @@ class BudgetRepository:
     already present), retrying once on a version race.
     """
 
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self) -> Any:
-        if self._table is None:
-            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
-
-    def _get_config(self) -> Optional[dict]:
-        try:
-            return self._get_table().get_item(Key=_BUDGETS_KEY).get("Item")
-        except ClientError as e:
-            handle_database_error(e, "read budgets")
-
-    def _ensure_seeded(self) -> None:
-        """Idempotently write an empty budgets config item if absent. A lost race
-        (another caller seeded first) raises ConditionalCheckFailed and is a no-op
-        success: the seed is an empty map either way."""
-        try:
-            self._get_table().put_item(
-                Item={**_BUDGETS_KEY, "items": {}, "version": Decimal(1)},
-                ConditionExpression="attribute_not_exists(pk)",
-            )
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                return
-            handle_database_error(e, "seed budgets")
+    _config_key = _BUDGETS_KEY
+    _config_label = "budgets"
 
     def list_budgets(self) -> dict:
         """Return the stored {category id -> {"target": Decimal}} map (empty before
@@ -98,31 +68,13 @@ class BudgetRepository:
         competing writer merged in. Retries once on a version race; raises
         VersionConflictError if it can't converge.
         """
-        self._ensure_seeded()
-        for _attempt in range(2):
-            item = self._get_config()
-            version = item["version"]
+        def build(item):
             existing = {k: v for k, v in item["items"].get(cat_id, {}).items() if k not in drop}
             entry = {**existing, **fields}
-            try:
-                self._get_table().update_item(
-                    Key=_BUDGETS_KEY,
-                    # SET the whole entry for ONE map key — never rewrites the other keys.
-                    UpdateExpression="SET #items.#id = :val, #v = :next",
-                    ConditionExpression="attribute_exists(pk) AND #v = :expected",
-                    ExpressionAttributeNames={"#items": "items", "#id": cat_id, "#v": "version"},
-                    ExpressionAttributeValues={
-                        ":val": entry,
-                        ":expected": version,
-                        ":next": version + Decimal(1),
-                    },
-                )
-                return {"id": cat_id, **entry}
-            except ClientError as e:
-                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                    handle_database_error(e, "set budget")
-                # The version moved under us; loop retries once.
-        raise VersionConflictError("set_budget: exhausted retries under write contention")
+            # SET the whole entry for ONE map key — never rewrites the other keys.
+            return set_map_entry(cat_id, entry), {"id": cat_id, **entry}
+
+        return self._versioned_update(build, action="set budget")
 
     def set_budget(self, cat_id: str, target: Decimal,
                    rollover: Optional[bool] = None, anchor: Optional[dict] = None) -> dict:
@@ -188,29 +140,13 @@ class BudgetRepository:
         bumps the version in that case. When a target exists, REMOVE its map key
         under the same optimistic-lock guard as set_budget, retrying once on a race.
         """
-        for _attempt in range(2):
-            item = self._get_config()
+        def build(item):
             if item is None or cat_id not in item["items"]:
-                return  # no target for this id -> nothing to cascade
-            version = item["version"]
-            try:
-                self._get_table().update_item(
-                    Key=_BUDGETS_KEY,
-                    # REMOVE drops one map key; SET bumps the version. The config item stays.
-                    UpdateExpression="REMOVE #items.#id SET #v = :next",
-                    ConditionExpression="attribute_exists(pk) AND #v = :expected",
-                    ExpressionAttributeNames={"#items": "items", "#id": cat_id, "#v": "version"},
-                    ExpressionAttributeValues={
-                        ":expected": version,
-                        ":next": version + Decimal(1),
-                    },
-                )
-                return
-            except ClientError as e:
-                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                    handle_database_error(e, "delete budget")
-                # The version moved under us; loop re-reads and retries once.
-        raise VersionConflictError("delete_budget: exhausted retries under write contention")
+                return None  # no target for this id -> nothing to cascade
+            # REMOVE drops one map key; SET bumps the version. The config item stays.
+            return remove_map_entry(cat_id), None
+
+        self._versioned_update(build, action="delete budget", seed=False)
 
     def set_spread(self, cat_id: str, amount: Decimal, cycles: int, spread_from: str,
                    spread_len: int, spread_paydate: str) -> dict:
@@ -253,14 +189,11 @@ class BudgetRepository:
         fields in the same write (a category has rollover OR a spread, never both), mirroring
         set_spread. Raises VersionConflictError if it can't converge.
         """
-        self._ensure_seeded()
-        for _attempt in range(2):
-            item = self._get_config()
+        def build(item):
             entry = item["items"].get(cat_id)
             if (entry is None or "target" not in entry
                     or "spread_amount" in entry or entry.get("rollover")):
                 return None
-            version = item["version"]
             kept = {k: v for k, v in entry.items() if k not in _ROLLOVER_FIELDS}
             merged = {**kept,
                       "spread_amount": amount,
@@ -268,24 +201,9 @@ class BudgetRepository:
                       "spread_from": spread_from,
                       "spread_len": Decimal(spread_len),
                       "spread_paydate": spread_paydate}
-            try:
-                self._get_table().update_item(
-                    Key=_BUDGETS_KEY,
-                    UpdateExpression="SET #items.#id = :val, #v = :next",
-                    ConditionExpression="attribute_exists(pk) AND #v = :expected",
-                    ExpressionAttributeNames={"#items": "items", "#id": cat_id, "#v": "version"},
-                    ExpressionAttributeValues={
-                        ":val": merged,
-                        ":expected": version,
-                        ":next": version + Decimal(1),
-                    },
-                )
-                return {"id": cat_id, "amount": amount, "cycles": cycles}
-            except ClientError as e:
-                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                    handle_database_error(e, "set spread if absent")
-                # The version moved under us; loop re-reads and re-checks the guard.
-        raise VersionConflictError("set_spread_if_absent: exhausted retries under write contention")
+            return set_map_entry(cat_id, merged), {"id": cat_id, "amount": amount, "cycles": cycles}
+
+        return self._versioned_update(build, action="set spread if absent")
 
     def clear_rollover(self, cat_id: str) -> None:
         """Strip the rollover fields (see _ROLLOVER_FIELDS) from a category's budget entry,
@@ -316,32 +234,13 @@ class BudgetRepository:
         optimistic-lock guard as set_budget, retrying once on a race. `operation` names the
         caller in the error it raises.
         """
-        for _attempt in range(2):
-            item = self._get_config()
+        def build(item):
             if item is None or cat_id not in item["items"]:
-                return  # no budget for this id -> nothing to clear
+                return None  # no budget for this id -> nothing to clear
             entry = item["items"][cat_id]
             stripped = {k: v for k, v in entry.items() if k not in fields}
             if stripped == entry:
-                return  # none of the fields present -> no-op, don't bump the version
-            version = item["version"]
-            try:
-                self._get_table().update_item(
-                    Key=_BUDGETS_KEY,
-                    # Rewrite ONE entry; SET bumps the version. Other ids untouched.
-                    UpdateExpression="SET #items.#id = :val, #v = :next",
-                    ConditionExpression="attribute_exists(pk) AND #v = :expected",
-                    ExpressionAttributeNames={"#items": "items", "#id": cat_id, "#v": "version"},
-                    ExpressionAttributeValues={
-                        ":val": stripped,
-                        ":expected": version,
-                        ":next": version + Decimal(1),
-                    },
-                )
-                return
-            except ClientError as e:
-                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                    handle_database_error(e, operation)
-                # The version moved under us; loop re-reads and retries once.
-        raise VersionConflictError(f"{operation}: exhausted retries under write contention")
+                return None  # none of the fields present -> no-op, don't bump the version
+            return set_map_entry(cat_id, stripped), None
 
+        self._versioned_update(build, action=operation, seed=False)
