@@ -169,6 +169,8 @@ def test_route_put_loanfacts_dispatch(handler, monkeypatch):
         ({**VALID, "ratePct": 0}, "ratePct must be a number above 0 and up to 100"),              # rate too low
         ({**VALID, "ratePct": 150}, "ratePct must be a number above 0 and up to 100"),            # rate too high
         ({**VALID, "original": 2_000_000_000}, "original must be a number above 0"),                   # over ceiling
+        ({**VALID, "baseRepay": CEILING + 1}, "baseRepay must be a number above 0"),              # over ceiling
+        ({**VALID, "extra": CEILING + 1}, "extra must be a number between 0"),                     # extra over ceiling
     ],
 )
 def test_set_loanfacts_rejects_bad_fields(handler, body, needle):
