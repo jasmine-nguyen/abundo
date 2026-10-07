@@ -10,7 +10,7 @@ import pytest
 
 from _dynamo_fakes import _client_error
 from _feed_fakes import WESTPAC, Repos, _row
-from _terraform import TERRAFORM_DIR
+from _terraform import app_route_keys
 
 _DUP = "dup-pending"
 _ROW_KEY = (f"ACCOUNT#{WESTPAC}", f"TXN#{_DUP}")
@@ -120,6 +120,4 @@ def test_other_methods_on_the_item_path_do_not_delete(handler, store):
 
 # [A10]
 def test_delete_route_is_registered_in_api_gateway():
-    source = (TERRAFORM_DIR / "apigateway.tf").read_text()
-    block = source.split("app_route_keys = toset([", 1)[1].split("])", 1)[0]
-    assert '"DELETE /transactions/{id}"' in block
+    assert "DELETE /transactions/{id}" in app_route_keys()

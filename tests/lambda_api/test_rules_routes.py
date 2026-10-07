@@ -14,7 +14,7 @@ from functools import partial
 import pytest
 
 from _feed_fakes import Repos, inject_rule_routes
-from _terraform import TERRAFORM_DIR
+from _terraform import app_route_keys
 
 
 _CATEGORIES = ("groceries", "petrol")
@@ -406,6 +406,6 @@ def test_item_routes_are_declared_in_api_gateway():
     # test_route_table.py covers the exact GET/POST routes automatically, but the
     # startswith-dispatched {id} routes carry a placeholder it can't derive — pin them by hand so
     # a PUT/DELETE that works in tests can't 404 at the deployed gateway (WHIT-506's failure mode).
-    apigateway = (TERRAFORM_DIR / "apigateway.tf").read_text()
-    assert '"PUT /rules/{id}"' in apigateway
-    assert '"DELETE /rules/{id}"' in apigateway
+    routes = app_route_keys()
+    assert "PUT /rules/{id}" in routes
+    assert "DELETE /rules/{id}" in routes
