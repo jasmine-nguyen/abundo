@@ -17,7 +17,7 @@ BankSync's UI scheduler is capped at daily on our tier; calling the REST sync
 endpoint ourselves lets us pick our own cadence.
 
 Invoked only by EventBridge Scheduler, never by API Gateway, so there is no
-webhook signature to verify here. ``constants`` and ``ssm`` are provided by the
+webhook signature to verify here. ``constants`` and ``api_key`` are provided by the
 shared lambda layer.
 """
 

@@ -7,8 +7,8 @@ Covers:
     - lambda_handler    : stores on success; on ANY failure logs, returns
                           {"stored": False}, does NOT raise, does NOT upsert
 
-No network and no AWS: ``urllib.request.urlopen`` is monkeypatched, ``ssm`` is
-faked by conftest, and the repository is replaced with a recording fake.
+No network and no AWS: ``urllib.request.urlopen`` is monkeypatched, boto3's ssm
+client is faked by conftest, and the repository is replaced with a recording fake.
 """
 
 import logging

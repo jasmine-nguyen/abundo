@@ -5,8 +5,8 @@ Covers the three functions in ``lambda_sync_trigger/handler.py``:
     - trigger_sync  : the per-feed POST, incl. the 409 "already running" skip
     - lambda_handler: per-feed failure isolation + final RuntimeError
 
-No network and no AWS: ``urllib.request.urlopen`` is monkeypatched and ``ssm`` is
-faked by conftest.py. See conftest.py for why the import setup lives there.
+No network and no AWS: ``urllib.request.urlopen`` is monkeypatched and boto3's ssm
+client is faked by conftest.py. See conftest.py for why the import setup lives there.
 """
 
 import urllib.error

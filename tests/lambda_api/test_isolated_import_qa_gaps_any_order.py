@@ -1,6 +1,6 @@
 """WHIT-770: the A13 leftover-stub pair must pass alone and after any other suite's conftest.
 
-Each suite's conftest installs the shared fake `ssm` with its own default key, and the first one
+Each suite's conftest installs the shared fake boto3 ssm client with its own default key, and the first one
 loaded wins. Run the pair in a fresh pytest after each of those suites has loaded first.
 """
 
