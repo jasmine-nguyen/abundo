@@ -1,9 +1,9 @@
 import React, { useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmtExact, fmtSignedExact, tint, PRESSED } from '../../src/theme';
 import { formatDayMonth } from '../../src/dateutil';
-import { Icon, Glyph } from '../../src/icons';
+import { Icon } from '../../src/icons';
 import { budgetViews, type BudgetView } from '../../src/context';
 import { useBudgetsScreenData } from '../../src/queries';
 import { urgentFirst } from '../../src/budgetOrder';
@@ -181,9 +181,8 @@ export default function Budgets() {
       right={<HeaderIconButton icon="plus" accessibilityLabel="Add budget" onPress={() => router.push('/budget/pick')} />}
       // Always fill the viewport, so a short budget list is still a pull-to-refresh target.
       contentContainerStyle={styles.fill}
-      refreshControl={(headerHeight) => (
-        <RefreshControl refreshing={pulling && !showSpinner} onRefresh={onRefresh} tintColor={C.accent} progressViewOffset={headerHeight} />
-      )}
+      refreshing={pulling && !showSpinner}
+      onRefresh={onRefresh}
     >
       {showSpinner ? (
         <>
@@ -233,13 +232,6 @@ export default function Budgets() {
             </React.Fragment>
           );
         })}
-
-        {noRows ? null : (
-          <Pressable onPress={() => router.push('/budget/pick')} style={({ pressed }) => [styles.addBudget, pressed && PRESSED]}>
-            <Glyph name="plus" size={18} color={C.accentSoft} />
-            <Text style={styles.addBudgetText}>Add a budget</Text>
-          </Pressable>
-        )}
       </>
       )}
     </ScrollChromeHeader>
@@ -293,9 +285,6 @@ const styles = StyleSheet.create({
   noteUnderBar: { marginTop: NOTE_GAP },
   noteUnderTick: { marginTop: NOTE_GAP - TICK_BAND },
   note: { fontFamily: FONT.body, fontSize: 12, color: C.textMid },
-
-  addBudget: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(C.accentAlt, 0.4), backgroundColor: tint(C.accentAlt, 0.07), borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  addBudgetText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSoft },
 
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40, gap: 16 },
   errorText: { fontFamily: FONT.body, fontSize: 15, color: C.textMid, textAlign: 'center' },

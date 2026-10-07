@@ -9,6 +9,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import { C } from '../theme';
 import { Header } from '../components/Header';
+import { Glyph } from '../icons';
 import { BudgetBar, Bar } from '../components/ui';
 
 function colourOf(node: { props: { style?: unknown } }) {
@@ -19,6 +20,12 @@ function colourOf(node: { props: { style?: unknown } }) {
 it('the pushed-screen header title is the theme off-white', () => {
   render(<Header title="Coffee" />);
   expect(colourOf(screen.getByText('Coffee'))).toBe(C.textBright);
+});
+
+// WHIT-814: the back arrow uses the shared header button's accent, not a raw white glyph
+it('the pushed-screen back arrow uses the theme accent', () => {
+  const { UNSAFE_getByType } = render(<Header title="Coffee" />);
+  expect(UNSAFE_getByType(Glyph).props.color).toBe(C.accentSoft);
 });
 
 // [A2] one rail shade: BudgetBar's track, Bar's default track and the theme token all match

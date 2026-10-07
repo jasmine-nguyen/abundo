@@ -123,12 +123,6 @@ it('does not fetch before login, then fires the moment auth flips to authed', as
   expect(payCycleReads().length).toBeGreaterThan(0);
 });
 
-it('the add-budget button navigates to the picker', async () => {
-  await renderLoadedBudgets();
-  fireEvent.press(screen.getByText('Add a budget'));
-  expect(routerSpies.push).toHaveBeenCalledWith('/budget/pick');
-});
-
 it('the header "+" button navigates to the picker (WHIT-711)', async () => {
   await renderLoadedBudgets();
   fireEvent.press(screen.getByLabelText('Add budget'));

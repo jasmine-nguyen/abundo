@@ -12,14 +12,10 @@ import { NavBarsProvider } from '../motion/NavBarsContext';
 import { ScrollChromeHeader } from '../motion/ScrollChromeHeader';
 import { contentStyle, headerMotion, scrollTo } from './support/scrollChromeHeader';
 
-const refreshControl = jest.fn((offset: number) => (
-  <RefreshControl refreshing={false} onRefresh={() => undefined} progressViewOffset={offset} />
-));
-
 function renderHeader() {
   return render(
     <NavBarsProvider reduceMotion>
-      <ScrollChromeHeader title="Budgets" refreshControl={refreshControl}>
+      <ScrollChromeHeader title="Budgets" refreshing={false} onRefresh={() => undefined}>
         <Text>body</Text>
       </ScrollChromeHeader>
     </NavBarsProvider>,
@@ -46,7 +42,5 @@ it('a hidden header slides up by the full height including the notch', () => {
 
 // [A8]
 it('the pull-to-refresh spinner is offset by the full header height (WHIT-211)', () => {
-  refreshControl.mockClear();
-  renderHeader();
-  expect(refreshControl).toHaveBeenLastCalledWith(105);
+  expect(renderHeader().UNSAFE_getByType(RefreshControl).props.progressViewOffset).toBe(105);
 });

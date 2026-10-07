@@ -75,7 +75,7 @@ describe('Budgets top card — QA edges', () => {
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
     expect(screen.queryByText('Add a spending budget')).toBeNull();
     expect(screen.getByText('Left to spend')).toBeTruthy();
-    expect(screen.getByText('Add a budget')).toBeTruthy(); // dashed button back
+    expect(screen.queryByText('Add a budget')).toBeNull(); // WHIT-814: no dashed row; the header "+" adds
   });
 
   // [A7] (P1) unparseable last_pay_date → no payday line, never "NaN" / "undefined"

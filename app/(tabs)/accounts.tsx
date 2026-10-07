@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { RefreshControl, View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { C, FONT, tint, fmtBalance, ACCOUNT_ACCENTS, PRESSED } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
@@ -45,18 +45,12 @@ export default function Accounts() {
       // target. Without this the content is shorter than the screen and the pull never catches
       // on a short account list (the tall Transactions list never hit this).
       contentContainerStyle={styles.fill}
-      refreshControl={(headerHeight) => (
-        <RefreshControl
-          // Show the pull spinner for a user pull unless the cold-load spinner owns the screen
-          // (WHIT-363: never double-spin). `!showSpinner` — not `transactions.length > 0` — so a
-          // pull on the settled "No accounts yet" empty state still shows feedback, now that the
-          // fill makes that short state pullable.
-          refreshing={pulling && !showSpinner}
-          onRefresh={onRefresh}
-          tintColor={C.accent}
-          progressViewOffset={headerHeight}
-        />
-      )}
+      // Show the pull spinner for a user pull unless the cold-load spinner owns the screen
+      // (WHIT-363: never double-spin). `!showSpinner` — not `transactions.length > 0` — so a
+      // pull on the settled "No accounts yet" empty state still shows feedback, now that the
+      // fill makes that short state pullable.
+      refreshing={pulling && !showSpinner}
+      onRefresh={onRefresh}
     >
       {!showError && <StaleDataLine idPrefix="accounts" error={refreshError} updatedAt={updatedAt} />}
       <ListStates

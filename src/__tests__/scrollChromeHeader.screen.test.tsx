@@ -1,8 +1,8 @@
 // WHIT-199 GAP — the shared ScrollChromeHeader wrapper contract the 5 migrated screens depend on
 // but no existing test locks directly:
 //   1. a screen's `right`/`left` action renders; with neither, both default 40px spacers exist so
-//      the title stays centred (Transactions search / Budgets add rely on this — the in-content
-//      "Add a budget" test does NOT cover the header button).
+//      the title stays centred (Transactions search / Budgets add rely on this — the Budgets
+//      screen tests cover pressing its header button, not this slot contract).
 //   2. contentContainerStyle FLATTENS over the shared geometry — a screen's extra style (Budgets'
 //      {flexGrow:1}) merges IN while the shared paddingTop/Bottom/Horizontal survive.
 // Fail-on-revert: drop the `right ?? <slot>` default → slot counts flip; stop merging the screen

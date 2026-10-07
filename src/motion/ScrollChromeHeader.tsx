@@ -7,7 +7,7 @@
 // the provider's stateRef (read here, written via setNavBars), which also honours
 // reduce-motion. `prevY` is per-ScrollView scroll geometry, not chrome state.
 import React, { useCallback, useRef } from 'react';
-import { View, Text, Animated, ScrollView, StyleSheet, StyleProp, ViewStyle, RefreshControlProps } from 'react-native';
+import { View, Text, Animated, ScrollView, StyleSheet, StyleProp, ViewStyle, RefreshControl } from 'react-native';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../theme';
@@ -45,15 +45,15 @@ export const SCREEN_PADDING = 18;
 const TITLE_MAX_SCALE = 1.5;
 
 export function ScrollChromeHeader({
-  title, left, right, refreshControl, contentContainerStyle, keyboardShouldPersistTaps, children,
+  title, left, right, refreshing, onRefresh, contentContainerStyle, keyboardShouldPersistTaps, children,
 }: {
   title: string;
   left?: React.ReactNode;
   right?: React.ReactNode;
-  // A render-prop so the screen keeps full control of its RefreshControl while the wrapper
-  // supplies headerHeight — the RefreshControl MUST offset its spinner by it (progressViewOffset),
-  // or the spinner draws behind the opaque floating header at y≈0 (WHIT-211).
-  refreshControl?: (headerHeight: number) => React.ReactElement<RefreshControlProps>;
+  // Given onRefresh, the wrapper builds the pull-to-refresh spinner, offset by headerHeight so it
+  // doesn't draw behind the opaque floating header at y≈0 (WHIT-211). No onRefresh → no spinner.
+  refreshing?: boolean;
+  onRefresh?: () => void;
   contentContainerStyle?: StyleProp<ViewStyle>;
   // Forwarded to the ScrollView — a screen with a search field passes 'handled' so a tap on a
   // result lands instead of only dismissing the keyboard. Omitted → RN's default (unchanged).
@@ -103,7 +103,9 @@ export function ScrollChromeHeader({
         ])}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps={keyboardShouldPersistTaps}
-        refreshControl={refreshControl?.(headerHeight)}
+        refreshControl={onRefresh && (
+          <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} tintColor={C.accent} progressViewOffset={headerHeight} />
+        )}
       >
         {children}
       </ScrollView>

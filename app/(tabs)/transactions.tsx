@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { RefreshControl, View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { C, FONT, tint, PRESSED } from '../../src/theme';
@@ -122,9 +122,8 @@ export default function Transactions() {
   const { pulling, onRefresh } = usePullToRefresh(refetchList, refreshLiveBalances, showToast);
 
   // Scroll-to-hide chrome + the floating header now live in the shared ScrollChromeHeader
-  // wrapper (WHIT-199). The RefreshControl is a render-prop so this screen keeps its own
-  // refreshing/onRefresh state while the wrapper hands back headerHeight for the spinner
-  // offset (WHIT-211 — otherwise the spinner draws behind the opaque floating header).
+  // wrapper (WHIT-199). This screen passes its own refreshing/onRefresh; the wrapper builds the
+  // spinner and offsets it below the header (WHIT-211 — otherwise it draws behind the header).
   // WHIT-291: a "Select" button enters selection mode; it becomes "Cancel" while selecting.
   const headerRight = selectionMode ? (
     <HeaderTextButton label="Cancel" onPress={exitSelection} />
@@ -140,21 +139,15 @@ export default function Transactions() {
       right={headerRight}
       contentContainerStyle={selectionMode ? styles.contentWithBar : undefined}
       keyboardShouldPersistTaps="handled"
-      refreshControl={(headerHeight) => (
-        <RefreshControl
-          // WHIT-363: the pull spinner shows only for a user pull (`pulling`), cleared when that
-          // pull's fetch ends — so the silent on-focus/background refetch never raises it. The
-          // `length > 0` guard stops a pull during the cold-load window from double-spinning with
-          // the inline loading spinner (showSpinner), which owns the empty first-load state.
-          // `showUncategorizedMore` is the ONE empty-list state that invites a pull ("pull down to
-          // refresh"), so let the spinner show there too — otherwise the instruction gives no feedback.
-          // (It requires !showSpinner, so it can never re-introduce the cold-load double-spin.)
-          refreshing={pulling && (listSource.length > 0 || showUncategorizedMore)}
-          onRefresh={onRefresh}
-          tintColor={C.accent}
-          progressViewOffset={headerHeight}
-        />
-      )}
+      // WHIT-363: the pull spinner shows only for a user pull (`pulling`), cleared when that
+      // pull's fetch ends — so the silent on-focus/background refetch never raises it. The
+      // `length > 0` guard stops a pull during the cold-load window from double-spinning with
+      // the inline loading spinner (showSpinner), which owns the empty first-load state.
+      // `showUncategorizedMore` is the ONE empty-list state that invites a pull ("pull down to
+      // refresh"), so let the spinner show there too — otherwise the instruction gives no feedback.
+      // (It requires !showSpinner, so it can never re-introduce the cold-load double-spin.)
+      refreshing={pulling && (listSource.length > 0 || showUncategorizedMore)}
+      onRefresh={onRefresh}
     >
         {/* segmented control */}
         <View style={styles.seg}>

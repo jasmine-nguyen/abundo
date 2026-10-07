@@ -36,13 +36,9 @@ it('[A1] Transactions: Load More has no right-hand lane above it', async () => {
   expect(rightOnlyGaps(await screen.findByTestId('transactions-load-more'))).toEqual([]);
 });
 
-// [A2] (P1) Goals: "Add a goal" runs full width.
+// [A2] (P1) Goals: "Add a goal" runs full width. It shows only with no goals (WHIT-814).
 it('[A2] Goals: "Add a goal" has no right-hand lane above it', async () => {
-  seedGoalsHub(server, {
-    goals: [{ id: 'g1', name: 'Emergency fund', icon: 'wallet', direction: 'grow', target_amount: 10000, target_date: '2026-12-15', account_id: 'up-spending' }],
-    payCycle: PAY_CYCLE,
-    balances: { 'up-spending': 4000 },
-  });
+  seedGoalsHub(server, { goals: [], payCycle: PAY_CYCLE });
   await renderWithApp(<Goals />);
   expect(rightOnlyGaps(await screen.findByTestId('add-goal-cta'))).toEqual([]);
 });
