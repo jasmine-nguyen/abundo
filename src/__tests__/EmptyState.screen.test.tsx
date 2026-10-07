@@ -11,8 +11,8 @@ import { styleOf } from './support/layout';
 function tileStyle() {
   let node = screen.getByTestId('empty-icon').parent;
   while (node && !styleOf(node).backgroundColor) node = node.parent;
-  expect(node).toBeTruthy();
-  return styleOf(node!);
+  if (!node) throw new Error('no tinted tile above the icon');
+  return styleOf(node);
 }
 
 it('shows the title and sub with the testID, and no icon tile when no icon is given', () => {

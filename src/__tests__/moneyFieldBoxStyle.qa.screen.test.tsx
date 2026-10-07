@@ -9,8 +9,8 @@ import { styleOf } from './support/layout';
 
 const boxStyleOf = (placeholder: string) => {
   const box = screen.getByPlaceholderText(placeholder).parent?.parent;
-  expect(box).toBeTruthy();
-  return styleOf(box!);
+  if (!box) throw new Error('no box around the input');
+  return styleOf(box);
 };
 
 describe('MoneyField boxStyle + testID', () => {

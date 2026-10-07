@@ -26,8 +26,8 @@ function expectViewBoxStretch(element: React.ReactElement, borderRadius: number 
   expect(svg?.props.preserveAspectRatio).toBe('none');
 
   const wrapper = nodes.find((node) => node.props.pointerEvents === 'none');
-  expect(wrapper).toBeTruthy();
-  const wrapperStyle = styleOf(wrapper!);
+  if (!wrapper) throw new Error('no clipping wrapper');
+  const wrapperStyle = styleOf(wrapper);
   expect(wrapperStyle.overflow).toBe('hidden');
   expect(wrapperStyle.borderRadius).toBe(borderRadius);
 }
