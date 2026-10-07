@@ -24,6 +24,9 @@ const REAL_LADDER: GoalCheckpoint[] = [
   { id: 'r2', label: 'Second', amount: 7500 },
 ];
 const realView = view(goal({ checkpoints: REAL_LADDER }), 5000);
+// WHIT-817: ladders saved out of order (older goals, or written straight to the server).
+const PAYDOWN_SAVED_OUT_OF_ORDER = [PAYDOWN_LADDER[2], PAYDOWN_LADDER[0], PAYDOWN_LADDER[1]];
+const GROW_SAVED_OUT_OF_ORDER = [GROW_LADDER[2], GROW_LADDER[0], GROW_LADDER[1]];
 
 const CASES: {
   name: string; checkpoints: GoalCheckpoint[]; direction: GoalRecord['direction']; view: View;
@@ -68,6 +71,20 @@ const CASES: {
     checkpoints: REAL_LADDER, direction: 'grow', view: realView,
     rows: [{ id: 'r1', reached: true, toGo: null }, { id: 'r2', reached: false, toGo: 2500 }],
     next: 'r2', allReached: false,
+  },
+  {
+    name: 'paydown saved out of order: next is the closest unreached',
+    checkpoints: PAYDOWN_SAVED_OUT_OF_ORDER, direction: 'paydown',
+    view: view(goal({ direction: 'paydown', target_amount: 0, checkpoints: PAYDOWN_SAVED_OUT_OF_ORDER }), -12000),
+    rows: [{ id: 'm15', reached: true, toGo: null }, { id: 'm10', reached: false, toGo: 2000 }, { id: 'm5', reached: false, toGo: 7000 }],
+    next: 'm10', allReached: false,
+  },
+  {
+    name: 'grow saved out of order: reached marks follow their milestone',
+    checkpoints: GROW_SAVED_OUT_OF_ORDER, direction: 'grow',
+    view: { currentAmount: 3000, checkpointReached: [false, true, false] },
+    rows: [{ id: 'c1', reached: true, toGo: null }, { id: 'c2', reached: false, toGo: 2000 }, { id: 'c3', reached: false, toGo: 4500 }],
+    next: 'c2', allReached: false,
   },
 ];
 
