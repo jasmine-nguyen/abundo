@@ -5,14 +5,9 @@ over a FakeTable, like test_zero_amount_skip.py.
 """
 
 import logging
-from functools import partial
 
-from _budget_endpoint_fakes import _FakeCategoryRepo
 from _deadletter_fakes import _failed_keys, _txn_rows
-from _rule_ingest_fakes import FakeRuleStore, reprocess_failed
-
-
-_Categories = partial(_FakeCategoryRepo, [{"id": "subscriptions"}])
+from _rule_ingest_fakes import FakeRuleStore, SubscriptionCategories, reprocess_failed
 
 
 _MAPPED_ACCOUNT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
@@ -28,7 +23,7 @@ def _raw(txn_id, *, amount, description="FOREIGN FEE AUD 5.10", pending=False):
 
 def _wire(handler, monkeypatch):
     monkeypatch.setattr(handler, "RuleRepository", FakeRuleStore)
-    monkeypatch.setattr(handler, "CategoryRepository", _Categories)
+    monkeypatch.setattr(handler, "CategoryRepository", SubscriptionCategories)
     monkeypatch.setattr(handler.budget_alerts, "capture_pre_write", lambda *a, **k: None)
 
 
@@ -120,7 +115,7 @@ def test_reprocess_never_files_a_zero_row_by_rules(lam, repo, monkeypatch):
 
     monkeypatch.setattr(book_class, "file_charges", recording_file_charges)
 
-    summary = lam.reprocess.reprocess_failed(repo, rule_repo=FakeRuleStore(), category_repo=_Categories())
+    summary = lam.reprocess.reprocess_failed(repo, rule_repo=FakeRuleStore(), category_repo=SubscriptionCategories())
 
     assert filed == ["charge"]
     assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 1}

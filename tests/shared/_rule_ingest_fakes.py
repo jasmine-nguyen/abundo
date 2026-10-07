@@ -6,7 +6,7 @@ pay-cycle stores (WHIT-793). On the pytest path via ``pythonpath = tests/shared`
 
 from functools import partial
 
-from _budget_endpoint_fakes import _FakePayCycleRepo
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _category_fakes import budget_repo
 from _feed_fakes import FakeCategoryRepo
 
@@ -28,6 +28,15 @@ class FakeRuleStore:
 
 KKV_RULE = {"id": "r-kkv", "field": "description", "operator": "contains",
             "value": "KKV", "category_id": "groceries"}
+
+SubscriptionCategories = partial(_FakeCategoryRepo, [{"id": "subscriptions"}])
+
+
+def multi_condition_rule(conditions, logic="all", category_id="transport", rule_id="m1"):
+    first = conditions[0]
+    return {"id": rule_id, "field": first["field"], "operator": first["operator"],
+            "value": first["value"], "category_id": category_id,
+            "conditions": conditions, "logic": logic}
 
 FakePaycycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-01-07")
 

@@ -6,13 +6,8 @@ process_transaction with the webhook's REAL TransactionRepository over a FakeTab
 the shared repository's own delete_transaction (the one the app's DELETE route uses), inherited by
 the webhook repository.
 """
-from functools import partial
 
-from _budget_endpoint_fakes import _FakeCategoryRepo
-from _rule_ingest_fakes import FakeRuleStore
-
-
-_Categories = partial(_FakeCategoryRepo, [{"id": "subscriptions"}])
+from _rule_ingest_fakes import FakeRuleStore, SubscriptionCategories
 
 
 _MAPPED_ACCOUNT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
@@ -34,7 +29,7 @@ def _stored_charge(repo, txn_id):
 def test_a_deleted_charge_resent_by_the_bank_is_not_saved_again(lam, repo, monkeypatch):
     handler = lam.handler
     monkeypatch.setattr(handler, "RuleRepository", FakeRuleStore)
-    monkeypatch.setattr(handler, "CategoryRepository", _Categories)
+    monkeypatch.setattr(handler, "CategoryRepository", SubscriptionCategories)
 
     seen_by_rules = []
     real_apply = handler.rule_ingest.apply
