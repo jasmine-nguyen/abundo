@@ -9,8 +9,8 @@
 // identity) doesn't re-run the effect; a real balance change gives it a new identity and re-runs it.
 //
 // WHIT-811: bursts queue up — the banner shows the head, and `onDone` (called by the overlay when
-// its banner ends) moves on to the next. An old count-style saved copy (a number per goal) is
-// dropped on load, so those goals are seeded silently.
+// its banner ends) moves on to the next. An old count-style saved copy (a number per goal) has
+// no steps to compare, so the diff seeds those goals silently and overwrites them.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CHECKPOINT_SNAPSHOT_KEY, diffCheckpointReached, GoalSteps, StepSnapshot } from '../checkpointCelebration';
@@ -28,10 +28,7 @@ function parseSnapshot(raw: string | null): StepSnapshot {
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return {};
-    return Object.fromEntries(
-      Object.entries(parsed).filter(([, steps]) => steps !== null && typeof steps === 'object'),
-    ) as StepSnapshot;
+    return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
     return {};
   }

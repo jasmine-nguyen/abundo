@@ -15,10 +15,7 @@ type Direction = GoalRecord['direction'];
 // A goal's checkpoints climb toward a savings target and fall toward a debt target, so a ladder is
 // sorted by amount: ascending for grow, descending for paydown. Stable + non-mutating; the server
 // rejects an out-of-order list, so the editor always sends the sorted order.
-export function sortCheckpointsForDirection(
-  checkpoints: GoalCheckpointInput[],
-  direction: Direction,
-): GoalCheckpointInput[] {
+export function sortCheckpointsForDirection<T extends GoalCheckpointInput>(checkpoints: T[], direction: Direction): T[] {
   const sign = direction === 'grow' ? 1 : -1;
   return [...checkpoints].sort((a, b) => sign * (a.amount - b.amount));
 }
