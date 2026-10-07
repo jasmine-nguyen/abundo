@@ -386,6 +386,16 @@ it('flags a balance 31 days old (just over the boundary)', async () => {
   expect(within(screen.getByTestId('goal-card-g31')).getByText('Haven’t updated in a while')).toBeTruthy();
 });
 
+// [A1] WHIT-797: the stale age counts whole UTC days, so the Melbourne spring-forward (4 Oct 2026,
+// a 23-hour day) between the as-of date and today can't shave a day off. 31 calendar days must
+// still flag; a local-midnight subtraction floors 30.96 days to 30 and wrongly drops the tag.
+it('flags a balance 31 days old across the daylight-saving spring-forward', async () => {
+  pinToday(new Date(2026, 9, 5)); // Mon 5 Oct 2026, the day after clocks go forward
+  seedHub({ goals: [{ ...PAYDOWN, id: 'gdst', manual_as_of: '2026-09-04' }] });
+  await renderWithQueries(<Goals />);
+  expect(within(screen.getByTestId('goal-card-gdst')).getByText('Haven’t updated in a while')).toBeTruthy();
+});
+
 // [A16] a manual goal with NO as-of date shows "Balance not set" (never a crash / blank / "as of
 // undefined") and is not flagged stale. balanceIsStale(null) short-circuits to false.
 it('a manual goal with a null as-of shows "Balance not set" and no stale tag', async () => {

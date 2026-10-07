@@ -1,5 +1,5 @@
 // WHIT-253: the shared UTC whole-day helpers behind cycleClock / paydaysUntil /
-// milestoneTime. Runs under TZ=Australia/Melbourne (see the test script) so the
+// the milestone schedule. Runs under TZ=Australia/Melbourne (see the test script) so the
 // local-vs-UTC component reads and the daylight-saving-immunity are genuinely
 // exercised — Melbourne is UTC+10/+11, so a local midnight is the *previous* day
 // in UTC, which is exactly what would break a getUTC* slip.
@@ -7,7 +7,7 @@ import { describe, it, expect } from '@jest/globals';
 import { isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, utcDayMsToISO, formatDayMonth, formatDateRange } from '../dateutil';
 import { paydaysUntil, milestoneView } from '../context';
 import { cycleClock } from '../payCycle';
-import { milestoneTime, MILESTONES } from '../milestones';
+import { MILESTONES } from '../milestones';
 import { makeState } from './factory';
 
 describe('isoToUtcDayMs', () => {
@@ -102,7 +102,7 @@ describe('wholeDaysBetween', () => {
 // WHIT-253 adversarial gaps — the extracted UTC helpers and their four call sites on inputs the
 // other suites miss: dateToUtcDayMs ON both Melbourne DST transition days; cycleClock across the
 // AUTUMN fall-back (WHIT-9 covers spring only); paydaysUntil across the SPRING forward (WHIT-232
-// [A26] covers autumn only); milestoneView/milestoneTime fed a LOCAL-midnight Date whose UTC day
+// [A26] covers autumn only); milestoneView fed a LOCAL-midnight Date whose UTC day
 // differs from its local day. All hand-computed in Melbourne local time.
 const day = (y: number, m: number, d: number) => new Date(y, m - 1, d); // LOCAL calendar midnight
 
@@ -166,19 +166,4 @@ describe('milestoneView — schedule with a local-midnight `today` on an anchor'
   // the Sprint-0 target (context.tsx:2041), so a getUTC* day-slip still returns 544000
   // — a Sprint-0 test can't fail-on-revert. Sprint 1 sits between anchors where the
   // curve interpolates, so the assertion above is the load-bearing local-read guard.
-});
-
-describe('milestoneTime — object form, string form and the raw helper agree', () => {
-  it('object {targetDate} == bare string == isoToUtcDayMs, on a DST-boundary date', () => {
-    const iso = '2026-10-04'; // spring-forward day, a value the milestone table never uses
-    expect(milestoneTime({ targetDate: iso })).toBe(isoToUtcDayMs(iso));
-    expect(milestoneTime(iso)).toBe(isoToUtcDayMs(iso));
-    expect(milestoneTime({ targetDate: iso })).toBe(milestoneTime(iso));
-  });
-
-  it('every MILESTONES anchor via the object form equals the raw helper on its ISO', () => {
-    for (const m of MILESTONES) {
-      expect(milestoneTime(m)).toBe(isoToUtcDayMs(m.targetDate));
-    }
-  });
 });

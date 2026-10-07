@@ -1,6 +1,6 @@
 // WHIT-233 — the mortgage screen relocated out of the Goal tab to its own stack route
 // (app/mortgage). This locks the RELOCATION-specific behaviour: it renders standalone WITHOUT
-// a NavBarsProvider (proving it uses the <Header showBack /> + plain ScrollView detail pattern,
+// a NavBarsProvider (proving it uses the <Header /> + plain ScrollView detail pattern,
 // not the tab's ScrollChromeHeader, which would throw here), and its header reads "The mortgage".
 // The mortgage CONTENT (payoff cards, repayment, equity, milestone link) is covered by the
 // suites repointed to this screen (goals.paydown / repayment.* / milestone / goalErrorStates).

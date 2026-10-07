@@ -10,7 +10,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { toCategory } from '../model';
 import {
-  colorForCategory, CATEGORY_BASE, CATEGORY_SIBLINGS, PALETTE,
+  colorForCategory, CATEGORY_BASE, CATEGORY_SIBLINGS, DEFAULT_COLOR,
 } from '../categoryColors';
 import { COFFEE_RECORD } from './support/categories';
 
@@ -101,10 +101,10 @@ describe('colorForCategory — overflow (user-created) categories get a sibling'
     expect(distinct.size).toBeGreaterThan(1);
   });
 
-  it('a blank/null/undefined id falls back to the palette default', () => {
-    expect(colorForCategory('')).toBe(PALETTE[0]);
-    expect(colorForCategory(null)).toBe(PALETTE[0]);
-    expect(colorForCategory(undefined)).toBe(PALETTE[0]);
+  it('a blank/null/undefined id falls back to the default colour', () => {
+    expect(colorForCategory('')).toBe(DEFAULT_COLOR);
+    expect(colorForCategory(null)).toBe(DEFAULT_COLOR);
+    expect(colorForCategory(undefined)).toBe(DEFAULT_COLOR);
   });
 });
 

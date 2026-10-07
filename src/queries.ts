@@ -37,21 +37,21 @@ export { categoriesKey, payCycleKey, budgetsKey, budgetTransactionsKey, category
 // Fail LOUDLY on a malformed list payload (a wrapped or changed shape): the query rejects → the
 // screen shows its error card instead of a cryptic "raw.map is not a function" later.
 // Array.isArray also rejects null/undefined. A genuinely empty list is `[]`, which passes.
-function expectArray<T>(raw: unknown, name: string, path: string): T[] {
-  if (!Array.isArray(raw)) throw new Error(`${name}: expected an array from ${path}, got ${typeof raw}`);
+function expectArray<T>(raw: unknown, path: string): T[] {
+  if (!Array.isArray(raw)) throw new Error(`expected an array from ${path}, got ${typeof raw}`);
   return raw as T[];
 }
 
 // On a first load a malformed /categories also surfaces WHIT-194's categoriesError.
 export function selectCategories(raw: unknown[]): Category[] {
-  return expectArray(raw, 'selectCategories', '/categories').map(toCategory);
+  return expectArray(raw, '/categories').map(toCategory);
 }
 // WHIT-195: map the server rules into the client Rule shape (value→pattern,
 // isNew:false for loaded rules). Reuses the same toRule the store uses, so the cache and
 // the store's optimistic double-write agree field-for-field.
 // A malformed /rules rejects rather than silently rendering "0 rules" over data the user has.
 export function selectRules(raw: RuleRecord[]): Rule[] {
-  return expectArray<RuleRecord>(raw, 'selectRules', '/rules').map(toRule);
+  return expectArray<RuleRecord>(raw, '/rules').map(toRule);
 }
 export function selectBudgets(rollups: Record<string, BudgetRollup>): Budget[] {
   return Object.entries(rollups)
@@ -61,12 +61,12 @@ export function selectBudgets(rollups: Record<string, BudgetRollup>): Budget[] {
 // WHIT-233: the /goals payload is already the client GoalRecord shape (the server owns no
 // mapping), so this is a passthrough that only fails loudly on a malformed shape.
 export function selectGoals(raw: unknown): GoalRecord[] {
-  return expectArray(raw, 'selectGoals', '/goals');
+  return expectArray(raw, '/goals');
 }
 // WHIT-367: the /milestones payload is already the client MilestoneRecord shape (a passthrough).
 // A malformed one rejects the query → the screen keeps its built-in default plan.
 export function selectMilestones(raw: unknown): MilestoneRecord[] {
-  return expectArray(raw, 'selectMilestones', '/milestones');
+  return expectArray(raw, '/milestones');
 }
 
 // Server default, mirrored from AppProvider's seed (src/context.tsx) — used for the

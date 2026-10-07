@@ -4,7 +4,7 @@
 // new rule), which rule goes to the server and whether a run is small enough to file now or must
 // go to a background job. These are the rules no sheet may compute for itself any more.
 import { describe, it, expect } from '@jest/globals';
-import { ruleFor, needsBackground, prependsRule, APPLY_RULES_MAX_WRITES } from '../filingRun';
+import { ruleFor, needsBackground, APPLY_RULES_MAX_WRITES } from '../filingRun';
 import type { FilingTarget } from '../filingRun';
 import type { ApplyRulesResult, UncategorizedMerchantGroup } from '../api';
 
@@ -42,13 +42,5 @@ describe('needsBackground: now or background job', () => {
   it('files 300 matched charges now and sends 301 to a background job', () => {
     expect(needsBackground(report(300))).toBe(false);
     expect(needsBackground(report(301))).toBe(true);
-  });
-});
-
-describe('prependsRule: only a new rule shows up with its NEW badge', () => {
-  it('is true only for a new rule', () => {
-    expect(prependsRule({ kind: 'newRule', pattern: 'coles', categoryId: 'groceries', budgetExcluded: false })).toBe(true);
-    expect(prependsRule({ kind: 'shop', group: GROUP, categoryId: 'groceries' })).toBe(false);
-    expect(prependsRule({ kind: 'sweep' })).toBe(false);
   });
 });

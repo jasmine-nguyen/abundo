@@ -76,8 +76,8 @@ export function formatDateRange(fromIso: string, toIso: string, now: Date = new 
 // --- UTC whole-day math (WHIT-253) -----------------------------------------
 // DISTINCT from the LOCAL helpers above: these count days on a fixed UTC clock,
 // where every day is exactly 24h, so a daylight-saving change can't shift a day
-// boundary. Shared by cycleClock, paydaysUntil, the milestone schedule, and
-// milestoneTime so the parse + round behaviour lives in one place. No NaN guard
+// boundary. Shared by cycleClock, paydaysUntil and the milestone schedule so
+// the parse + round behaviour lives in one place. No NaN guard
 // inside — callers decide what an unparseable date means (paydaysUntil returns
 // 0; cycleClock lets NaN propagate).
 export const MS_PER_DAY = 86400000;
@@ -94,10 +94,7 @@ export function isoToUtcDayMs(iso: string): number {
 // caller fed an unparseable date renders nothing rather than "NaN-NaN-NaN".
 export function utcDayMsToISO(ms: number): string {
   if (Number.isNaN(ms)) return '';
-  const d = new Date(ms);
-  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${d.getUTCFullYear()}-${month}-${day}`;
+  return new Date(ms).toISOString().slice(0, 10);
 }
 
 // A Date -> the UTC-midnight timestamp of its LOCAL calendar day (the device's

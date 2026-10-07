@@ -5,8 +5,7 @@ history showed "No matches" while "Load More" was still on screen. The handler n
 history once and this module decides which rows match.
 
 It is the server twin of the app's transactionMatchesSearch (src/context.tsx): the same text is
-searched (merchant label, description, category label, amount, and notes + tags when
-SEARCH_NOTES_AND_TAGS is on), so a row the app would keep is a row the server returns. The shared
+searched (merchant label, description, category label, amount, notes and tags), so a row the app would keep is a row the server returns. The shared
 truth table tests/fixtures/transaction_search_parity.json and a crosslang drift test hold the two
 in step.
 
@@ -23,9 +22,6 @@ CLEAN_NAME = {
     "UNIFLEXREMEDIALMASSAGE": "Uniflex Massage",
     "SQ *KKV INTERNATIONAL": "KKV International",
 }
-
-# Whether the user's own notes and tags are searched too. Must equal the app's switch.
-SEARCH_NOTES_AND_TAGS = True
 
 # Most matches one search returns, newest first. More than this sets `truncated`.
 SEARCH_RESULT_LIMIT = 300
@@ -58,10 +54,9 @@ def transaction_matches_search(transaction: dict, query: str, category_names: di
         transaction.get("description") or "",
         _category_label(transaction.get("category"), category_names),
         f"{abs(float(transaction.get('amount') or 0)):.2f}",
+        transaction.get("notes") or "",
+        " ".join(transaction.get("tags") or []),
     ]
-    if SEARCH_NOTES_AND_TAGS:
-        parts.append(transaction.get("notes") or "")
-        parts.append(" ".join(transaction.get("tags") or []))
     haystack = " ".join(parts).lower()
     return normalised_query in haystack or normalised_query.replace("$", "").replace(",", "") in haystack
 

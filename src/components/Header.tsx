@@ -5,10 +5,9 @@ import { C, FONT } from '../theme';
 import { Glyph } from '../icons';
 
 export function Header({
-  title, showBack = true, right,
+  title, right,
 }: {
   title: string;
-  showBack?: boolean;
   right?: React.ReactNode;
 }) {
   const router = useRouter();
@@ -16,11 +15,9 @@ export function Header({
     <View style={styles.wrap}>
       <View style={styles.row}>
         <View style={styles.side}>
-          {showBack && (
-            <Pressable onPress={() => router.back()} style={styles.iconBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel="Back">
-              <Glyph name="back" size={22} color="#fff" />
-            </Pressable>
-          )}
+          <Pressable onPress={() => router.back()} style={styles.iconBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel="Back">
+            <Glyph name="back" size={22} color="#fff" />
+          </Pressable>
         </View>
         <Text style={styles.title} numberOfLines={1}>{title}</Text>
         <View style={[styles.side, { alignItems: 'flex-end' }]}>{right}</View>

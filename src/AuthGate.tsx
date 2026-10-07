@@ -10,7 +10,7 @@
 // 'locked' state on launch and on resume-from-background, showing a lock screen
 // until the biometric-guarded keychain read (the Face ID prompt) succeeds. Face ID
 // stays OPT-IN (the flag); login itself is not optional.
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useSyncExternalStore } from "react";
 import { View, Text, Pressable, StyleSheet, AppState, Keyboard, Image } from "react-native";
 import { Redirect, useSegments, useRootNavigationState } from "expo-router";
 import { C, FONT } from "./theme";
@@ -37,9 +37,8 @@ export const RELOCK_GRACE_MS = 10 * 60 * 1000;
 
 /** Subscribe to auth status, run the launch unlock/restore, and re-lock on resume. */
 function useAuthSession(): AuthStatus {
-  const [current, setCurrent] = useState<AuthStatus>(getStatus());
+  const current = useSyncExternalStore(subscribe, getStatus);
   useEffect(() => {
-    const unsubscribe = subscribe(() => setCurrent(getStatus()));
     // WHIT-162: login is mandatory (the static secret is retired), so the launch
     // path is unconditional — biometric-unlock a stored session if biometrics are
     // active (checked inside unlockOrRestore/canBiometricLock), else a normal restore.
@@ -79,10 +78,7 @@ function useAuthSession(): AuthStatus {
       previousState = nextState;
     });
 
-    return () => {
-      unsubscribe();
-      appStateSubscription.remove();
-    };
+    return () => appStateSubscription.remove();
   }, []);
   return current;
 }

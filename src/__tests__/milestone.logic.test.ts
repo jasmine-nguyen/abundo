@@ -5,9 +5,6 @@ import { describe, it, expect } from '@jest/globals';
 import { milestoneView } from '../context';
 import {
   MILESTONES,
-  PROPERTY_VALUE,
-  HOME_LOAN_LVR,
-  milestoneTime,
   usableEquity,
   milestonesOrderingError,
   milestoneOutOfOrderRows,
@@ -25,18 +22,14 @@ import { makeState, EMPTY_LOAN_FACTS } from './factory';
 const onDate = (iso: string) => new Date(`${iso}T00:00:00Z`);
 
 describe('MILESTONES constants', () => {
-  it('are strictly ordered: increasing dates, decreasing balances', () => {
-    for (let i = 1; i < MILESTONES.length; i++) {
-      expect(milestoneTime(MILESTONES[i])).toBeGreaterThan(milestoneTime(MILESTONES[i - 1]));
-      expect(MILESTONES[i].targetBalance).toBeLessThan(MILESTONES[i - 1].targetBalance);
-    }
+  it('are a valid plan: increasing dates, decreasing balances', () => {
+    expect(milestonesOrderingError(MILESTONES)).toBeNull();
   });
 
-  it('match the Notion usable-equity figures (property value + LVR pin)', () => {
+  it('match the Notion usable-equity figures', () => {
     // Sprint 0: 770000 * 0.8 - 544000 = 72000; Sprint 4: -> 561000.
-    expect(usableEquity(PROPERTY_VALUE, 544000)).toBe(72000);
-    expect(usableEquity(PROPERTY_VALUE, 55000)).toBe(561000);
-    expect(HOME_LOAN_LVR).toBe(0.8);
+    expect(usableEquity(770000, 544000, 0.8)).toBe(72000);
+    expect(usableEquity(770000, 55000, 0.8)).toBe(561000);
   });
 });
 

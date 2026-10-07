@@ -14,7 +14,7 @@ import { EquityCard, EquityBody, EquityCta, AddLoanDetailsPrompt } from '../src/
 // WHIT-233: the home-loan detail screen, relocated out of the Goal tab (which is now the
 // Goals hub). It's a stack route under the root <Stack> — OUTSIDE NavBarsProvider — so it
 // can't use the tab's ScrollChromeHeader (that needs the provider); it uses the shared
-// <Header showBack /> + a plain ScrollView, the same detail-screen pattern as milestone.tsx /
+// <Header /> + a plain ScrollView, the same detail-screen pattern as milestone.tsx /
 // loan.tsx. The content + the useGoalScreenData reads are otherwise unchanged.
 export default function Mortgage() {
   const router = useRouter();

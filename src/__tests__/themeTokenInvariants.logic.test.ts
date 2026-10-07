@@ -453,7 +453,7 @@ describe('the ink tokens still match the background hex they were copied from (t
 // src/theme.ts, src/categoryColors.ts and src/chartColors.ts are pure palettes — colour is their
 // JOB, so a literal there is the source of truth, not a copy of one.
 //
-// src/categoryColors.ts holds the app-wide category palette (BUCKET_COLOR / PALETTE / CATEGORY_BASE
+// src/categoryColors.ts holds the app-wide category palette (BUCKET_COLOR / DEFAULT_COLOR / CATEGORY_BASE
 // / CATEGORY_SIBLINGS), moved out of src/context.tsx by WHIT-422. That move ended context.tsx's
 // wholesale exemption: it is now scanned like any other file, at an honest baseline of its residual
 // UI colours (the seven copies of '#cfd2ff' folded into C.textInfo at the same time).
