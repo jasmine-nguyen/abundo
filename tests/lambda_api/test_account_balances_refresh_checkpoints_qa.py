@@ -4,14 +4,13 @@ independent — neither one's failure, nor a missing home-loan reading, stops th
 Only the bank fetch, DynamoDB (FakeTable), time and the push send are stubbed.
 """
 
-from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
 from _balance_fakes import (
     CHECKPOINT_GOAL, CHECKPOINT_PUSH_TITLE, REFRESH_EVENT, BrokenGoalsRepo, balance_repo, fetch_all,
-    fetch_all_but_homeloan, milestone_spy, stub_bank, stub_refresh_side_effects,
+    fetch_all_but_homeloan, milestone_spy, spending_row, stub_bank, stub_refresh_side_effects,
 )
 from _milestone_fakes import FakeGoalsRepo, goal_checkpoint_repo
 
@@ -32,9 +31,7 @@ from _milestone_fakes import FakeGoalsRepo, goal_checkpoint_repo
 def test_refresh_runs_milestone_and_goal_checks_independently(
     handler, monkeypatch, fetch, milestone_raises, goals, expected_milestone_calls, expected_pushes
 ):
-    accounts = balance_repo(rows=[{"account_id": "up-spending", "amount": Decimal("90000"),
-                                   "available_balance": Decimal("90000"), "currency": "AUD",
-                                   "as_of": "2026-10-05T00:00:00Z", "account_type": "checking"}])
+    accounts = balance_repo(rows=[spending_row("90000")])
     milestone_calls = []
     pushes = []
     stub_bank(handler, monkeypatch, fetch)

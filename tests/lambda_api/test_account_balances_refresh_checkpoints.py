@@ -12,16 +12,11 @@ from types import SimpleNamespace
 import pytest
 
 from _balance_fakes import (
-    CHECKPOINT_GOAL, CHECKPOINT_PUSH_TITLE, LIVE_PAYLOADS, REFRESH_EVENT, BrokenGoalsRepo, balance_repo, stub_bank,
-    stub_refresh_side_effects,
+    CHECKPOINT_GOAL, CHECKPOINT_PUSH_TITLE, LIVE_PAYLOADS, REFRESH_EVENT, BrokenGoalsRepo, balance_repo,
+    spending_row, stub_bank, stub_refresh_side_effects,
 )
 from _dynamo_fakes import FakeTable
 from _milestone_fakes import goal_checkpoint_repo
-
-
-def _spending_row(amount):
-    return {"account_id": "up-spending", "amount": Decimal(amount), "available_balance": Decimal(amount),
-            "currency": "AUD", "as_of": "2026-10-05T00:00:00Z", "account_type": "checking"}
 
 
 def _goals_repo(handler):
@@ -46,7 +41,7 @@ def _goals_repo(handler):
 def test_refresh_celebrates_a_goal_checkpoint_crossing_once(
     handler, monkeypatch, stored_spending, last_refresh_at, refresh_times, expected_pushes
 ):
-    accounts = balance_repo(rows=[_spending_row(stored_spending)], last=last_refresh_at)
+    accounts = balance_repo(rows=[spending_row(stored_spending)], last=last_refresh_at)
     goals = _goals_repo(handler)
     pushes = []
     bank_calls = []
@@ -65,7 +60,7 @@ def test_refresh_celebrates_a_goal_checkpoint_crossing_once(
 
 
 def test_refresh_survives_a_failing_goal_read(handler, monkeypatch):
-    accounts = balance_repo(rows=[_spending_row("90000")])
+    accounts = balance_repo(rows=[spending_row("90000")])
 
     pushes = []
     stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: LIVE_PAYLOADS[aid])
@@ -76,8 +71,7 @@ def test_refresh_survives_a_failing_goal_read(handler, monkeypatch):
     response = handler.lambda_handler(REFRESH_EVENT, None)
 
     assert response["statusCode"] == 200
-    stored = {row["account_id"]: row["amount"] for row in accounts.list_balances(
-        sorted(set(handler.ACCOUNT_ID_MAP.values())))}
+    stored = {row["account_id"]: row["amount"] for row in handler.get_account_balances(accounts)}
     assert stored["up-spending"] == Decimal("96270.59")
     assert len(stored) == 4
     assert pushes == []

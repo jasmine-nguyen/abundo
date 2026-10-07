@@ -74,6 +74,12 @@ def milestone_spy(calls, raises=False):
     return spy
 
 
+def spending_row(amount):
+    """A stored up-spending balance (list_balances-shaped) of ``amount``."""
+    return {"account_id": "up-spending", "amount": Decimal(amount), "available_balance": Decimal(amount),
+            "currency": "AUD", "as_of": "2026-10-05T00:00:00Z", "account_type": "checking"}
+
+
 def homeloan_row(amount, as_of="2026-10-05T00:00:00Z"):
     """A stored up-homeloan balance (list_balances-shaped) owing the signed ``amount``."""
     return {"account_id": "up-homeloan", "amount": Decimal(amount), "available_balance": Decimal("0"),

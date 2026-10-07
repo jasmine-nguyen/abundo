@@ -2856,7 +2856,7 @@ def refresh_account_balances(repo: AccountBalanceRepository) -> dict:
     now = int(time.time())
     last = repo.get_last_refresh_at()
     if last is not None and now - last < REFRESH_THROTTLE_SECONDS:
-        return _json_response(200, repo.list_balances(sorted(set(ACCOUNT_ID_MAP.values()))))
+        return _json_response(200, get_account_balances(repo))
 
     api_key = get_api_key()
     fresh = []
@@ -2907,14 +2907,14 @@ def refresh_account_balances(repo: AccountBalanceRepository) -> dict:
             deltas, goals_repo=GoalsRepository(), device_repo=DeviceRepository(), notify_repo=NotifyRepository())
     except Exception as e:
         logger.error("goal checkpoint push on refresh failed (balances still stored): %s", e)
-    return _json_response(200, repo.list_balances(sorted(set(ACCOUNT_ID_MAP.values()))))
+    return _json_response(200, get_account_balances(repo))
 
 
 def _stored_amounts(repo: AccountBalanceRepository) -> dict:
     """Each account's stored SIGNED amount before a refresh overwrites it (account_id -> amount).
     Empty on a read hiccup — a missed celebration, never a wrong one."""
     try:
-        rows = repo.list_balances(sorted(set(ACCOUNT_ID_MAP.values())))
+        rows = get_account_balances(repo)
     except Exception as e:
         logger.warning("prior balance read failed, skipping milestone and goal checks: %s", e)
         return {}
