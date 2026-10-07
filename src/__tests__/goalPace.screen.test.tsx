@@ -61,7 +61,7 @@ describe('goal card pace pill + dollars (WHIT-748)', () => {
     // The existing footer stays.
     const card = within(screen.getByTestId('goal-card-plain'));
     expect(card.getByText('40%')).toBeTruthy();
-    expect(card.getByText('$2,000 / payday')).toBeTruthy();
+    expect(card.getByText('Set aside $2,000 each payday')).toBeTruthy();
     expect(card.getByText('3 paydays left')).toBeTruthy();
   });
 });

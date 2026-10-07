@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter, useFocusEffect, useIsFocused } from 'expo-router';
-import { C, FONT, fmt, tint } from '../../src/theme';
+import { C, FONT, fmt, tint, PRESSED } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { balanceGoalView, goalView, milestoneView, useAppContext } from '../../src/context';
 import { useGoalsScreenData } from '../../src/queries';
@@ -79,7 +79,7 @@ export default function Goals() {
     const mortgageCount = {
       id: 'mortgage',
       reached: plan.hasBalance && plan.hasPlan ? plan.clearedCount : null,
-      labels: plan.rows.map((row) => `The mortgage · down to ${fmt(row.targetBalance)}`),
+      labels: plan.rows.map((row) => `Home loan · down to ${fmt(row.targetBalance)}`),
     };
     return [...goalCounts, mortgageCount];
   }, [goalViews, loanFacts, homeLoan, milestones]);
@@ -122,14 +122,14 @@ export default function Goals() {
           <Pressable
             testID="mortgage-link"
             onPress={() => router.push('/mortgage')}
-            style={mortgageRich ? styles.mortgageCardRich : styles.mortgageCardPlain}
+            style={({ pressed }) => [mortgageRich ? styles.mortgageCardRich : styles.mortgageCardPlain, pressed && PRESSED]}
           >
             <HeroGradientFill />
             {mortgageRich ? (
               <>
                 <View style={styles.mortgageRichHead}>
                   <View style={styles.mortgageChip}><Glyph name="building" size={22} color={C.heroInk} /></View>
-                  <Text style={[styles.mortgageTitle, { flex: 1 }]}>The mortgage</Text>
+                  <Text style={[styles.mortgageTitle, { flex: 1 }]}>Home loan</Text>
                   <Glyph name="chevron" size={16} color={C.heroInkSoft} />
                 </View>
                 <PayoffSummary
@@ -146,7 +146,10 @@ export default function Goals() {
                 {/* WHIT-488: the /mortgage detail hero tile copied over — eyebrow + big balance,
                     minus the set-up body + button. The taller tile spreads the gradient (no band). */}
                 <View style={styles.mortgageBlob} />
-                <Text style={styles.mortgageEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
+                <View style={styles.mortgageEyebrowRow}>
+                  <Text style={styles.mortgageEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
+                  <Glyph name="chevron" size={16} color={C.heroInkSoft} />
+                </View>
                 {homeLoan.balance != null ? (
                   <Text testID="mortgage-owing" style={[styles.mortgageBig, { marginTop: 6 }]}>
                     {fmt(homeLoan.balance)}
@@ -164,7 +167,7 @@ export default function Goals() {
             // WHIT-295: no "No goals yet" card — the mortgage above IS a goal. Just a short additive
             // invite to track more alongside it.
             <Text testID="goals-empty-hint" style={styles.emptyHint}>
-              The mortgage is your first goal. Add a savings target or another debt to pay down, and we'll show how far you've come and how much to set aside each payday.
+              Your home loan is your first goal. Add a savings target or another debt to pay down, and we'll show how far you've come and how much to set aside each payday.
             </Text>
           ) : (
             goalViews.map(({ goal, view: v }) => {
@@ -178,9 +181,9 @@ export default function Goals() {
                   key={goal.id}
                   testID={`goal-card-${goal.id}`}
                   onPress={() => router.push(`/goal/${encodeURIComponent(goal.id)}`)}
-                  style={styles.goalCard}
+                  style={({ pressed }) => [styles.goalCard, pressed && PRESSED]}
                 >
-                  <GoalHead goal={goal} view={v} />
+                  <GoalHead goal={goal} view={v} chevron />
                   <GoalProgress goal={goal} view={v} onPastDue={editGoal} />
 
                   {manual && (
@@ -231,6 +234,7 @@ const styles = StyleSheet.create({
   // gradient spreads smoothly instead of banding). Eyebrow + blob + big figure copied 1:1 from it.
   mortgageCardPlain: { position: 'relative', overflow: 'hidden', backgroundColor: C.accent, borderRadius: 26, padding: 22, paddingBottom: 20, marginBottom: 20 },
   mortgageBlob: { position: 'absolute', right: -26, top: -26, width: 140, height: 140, borderRadius: 70, backgroundColor: C.heroBlobFill },
+  mortgageEyebrowRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   mortgageEyebrow: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.heroInkSoft, letterSpacing: 0.3 },
   mortgageBig: { fontFamily: FONT.display, fontSize: 48, fontWeight: '800', color: C.heroInk, lineHeight: 48, letterSpacing: -2 },
   mortgageFallback: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.heroInk2, marginTop: 14 },

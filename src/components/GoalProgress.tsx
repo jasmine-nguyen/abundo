@@ -4,12 +4,13 @@ import { C, FONT, fmt, tint } from '../theme';
 import { formatMonthYear } from '../dateutil';
 import type { BalanceGoalStatus, BalanceGoalView } from '../context';
 import type { GoalRecord } from '../api';
-import { Icon } from '../icons';
+import { Icon, Glyph } from '../icons';
+import { sortCheckpointsForDirection } from '../checkpoints';
 import { Bar } from './ui';
 
 // WHIT-749: a goal's head row — icon chip, name, "Saving toward $Y · by Mon YYYY" and the
 // headline % (only when there's a bar to back it). Shared by the Goals-tab card and the goal page.
-export function GoalHead({ goal, view }: { goal: GoalRecord; view: BalanceGoalView }) {
+export function GoalHead({ goal, view, chevron }: { goal: GoalRecord; view: BalanceGoalView; chevron?: boolean }) {
   const pct = view.progress != null ? Math.round(view.progress * 100) : null;
   return (
     <View style={styles.head}>
@@ -21,6 +22,7 @@ export function GoalHead({ goal, view }: { goal: GoalRecord; view: BalanceGoalVi
         </Text>
       </View>
       {pct != null && <Text style={styles.pct}>{pct}%</Text>}
+      {chevron && <Glyph name="chevron" size={16} color={C.textDim} />}
     </View>
   );
 }
@@ -43,9 +45,18 @@ function amountLabel(goal: GoalRecord, view: BalanceGoalView): string | null {
 
 function footLeft(view: BalanceGoalView): string {
   if (view.pacePerPayday == null) return 'Waiting on your balance';
-  if (view.paydaysLeft > 0) return `${fmt(view.pacePerPayday)} / payday`;
+  if (view.paydaysLeft > 0) return `Set aside ${fmt(view.pacePerPayday)} each payday`;
   // 0 paydays left → pacePerPayday is already the whole remainder.
   return `${fmt(view.pacePerPayday)} to go`;
+}
+
+// The closest milestone not yet reached, in the goal's direction; null once all are reached.
+// Only call once view.checkpointReached is known.
+function nextMilestoneLabel(goal: GoalRecord, view: BalanceGoalView): string | null {
+  const unreached = (goal.checkpoints ?? []).filter((_, i) => !view.checkpointReached![i]);
+  const next = sortCheckpointsForDirection(unreached, goal.direction)[0];
+  if (!next) return null;
+  return next.label;
 }
 
 function footRight(view: BalanceGoalView): string | null {
@@ -62,6 +73,8 @@ export function GoalProgress({ goal, view, onPastDue }: { goal: GoalRecord; view
   // A met goal past its date has nothing to nudge about — it falls through to the normal foot.
   const nudge = view.pastDue && (view.pacePerPayday == null || view.pacePerPayday > 0);
   const right = footRight(view);
+  const showMilestones = view.checkpointMarkers.length > 0 && view.checkpointsReached != null;
+  const nextMilestone = showMilestones ? nextMilestoneLabel(goal, view) : null;
 
   return (
     <>
@@ -91,9 +104,9 @@ export function GoalProgress({ goal, view, onPastDue }: { goal: GoalRecord; view
 
       {/* WHIT-486: the count travels with the dots — both show only when the bar has a scale to
           place them on (markers non-empty), so it's never "N reached" + no dots. */}
-      {view.checkpointMarkers.length > 0 && view.checkpointsReached != null && (
+      {showMilestones && (
         <Text testID={`goal-checkpoints-${goal.id}`} style={styles.checkpoints}>
-          {view.checkpointsReached} of {view.checkpointsTotal} milestone{view.checkpointsTotal === 1 ? '' : 's'} reached
+          {nextMilestone == null ? 'All milestones reached' : `Next: ${nextMilestone}`}
         </Text>
       )}
 
@@ -103,11 +116,11 @@ export function GoalProgress({ goal, view, onPastDue }: { goal: GoalRecord; view
         </View>
       ) : nudge ? (
         <Pressable testID={`goal-pastdue-${goal.id}`} onPress={onPastDue} hitSlop={8} style={styles.foot}>
-          <Text style={styles.footL}>Past your date — pick a new one?</Text>
+          <Text style={styles.footLink}>Past your date — pick a new one?</Text>
         </Pressable>
       ) : (
         <View style={styles.foot}>
-          <Text style={styles.footL}>{footLeft(view)}</Text>
+          <Text style={styles.footText}>{footLeft(view)}</Text>
           {right && <Text style={styles.footR}>{right}</Text>}
         </View>
       )}
@@ -127,7 +140,8 @@ const styles = StyleSheet.create({
   pacePillText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600' },
   checkpoints: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim, marginTop: 8 },
   foot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 11 },
-  footL: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.accentSoft },
+  footText: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.text },
+  footLink: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.accentSoft },
   footR: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim },
   reached: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.good },
 });

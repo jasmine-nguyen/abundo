@@ -79,7 +79,7 @@ describe('Goals celebrations that stick (WHIT-747)', () => {
     const label = await screen.findByTestId('checkpoint-celebration-label');
     expect(label).toHaveTextContent(/Holiday · goal reached/i);
     expect(screen.getByTestId('goal-reached-g1')).toHaveTextContent('Goal reached');
-    expect(screen.queryByText(/\/ payday/)).toBeNull();
+    expect(screen.queryByText(/each payday/)).toBeNull();
   });
 
   it('celebrates a mortgage milestone cleared since the last saved copy', async () => {
@@ -94,6 +94,6 @@ describe('Goals celebrations that stick (WHIT-747)', () => {
     await renderWithQueries(<Goals />);
 
     const label = await screen.findByTestId('checkpoint-celebration-label');
-    expect(label).toHaveTextContent(/The mortgage · down to \$600,000/);
+    expect(label).toHaveTextContent(/Home loan · down to \$600,000/);
   });
 });

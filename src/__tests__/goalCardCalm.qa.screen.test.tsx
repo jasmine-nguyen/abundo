@@ -51,11 +51,11 @@ describe('goal card foot edges (WHIT-749 QA)', () => {
   });
 
   // [A10] P0 — a paydown past its date nudges and never shows the whole owed remainder as a pace.
-  it('[A10] a paydown past its date shows the nudge, not "$7,000 to go" or "/ payday"', async () => {
+  it('[A10] a paydown past its date shows the nudge, not "$7,000 to go" or "each payday"', async () => {
     await render([paydown('pd', { target_date: '2026-06-01' })]);
     expect(card('pd').getByText('Past your date — pick a new one?')).toBeTruthy();
     expect(card('pd').queryByText('$7,000 to go')).toBeNull();
-    expect(card('pd').queryByText(/\/ payday/)).toBeNull();
+    expect(card('pd').queryByText(/each payday/)).toBeNull();
     expect(card('pd').getByText('$9,000 owed of $2,000 target')).toBeTruthy();
   });
 
@@ -68,9 +68,9 @@ describe('goal card foot edges (WHIT-749 QA)', () => {
   });
 
   // [A12] P1 — target date = the next payday (Jul 18) counts that payday: "1 payday left" + per-payday.
-  it('[A12] a goal due on the next payday keeps "$X / payday" + "1 payday left"', async () => {
+  it('[A12] a goal due on the next payday keeps "Set aside $X each payday" + "1 payday left"', async () => {
     await render([growGoal('next', { target_date: '2026-07-18' })], { 'acct-next': 4000 });
-    expect(card('next').getByText('$6,000 / payday')).toBeTruthy();
+    expect(card('next').getByText('Set aside $6,000 each payday')).toBeTruthy();
     expect(card('next').getByText('1 payday left')).toBeTruthy();
     expect(card('next').queryByText('before your next payday')).toBeNull();
   });

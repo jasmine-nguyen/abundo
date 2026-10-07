@@ -107,13 +107,13 @@ describe('Goals celebrations that stick: edges (WHIT-747 QA)', () => {
     seedHub([CAR], { 'up-car': 0 });
     await renderWithQueries(<Goals />);
     expect(screen.getByTestId('goal-reached-g3')).toHaveTextContent('Goal reached');
-    expect(screen.queryByText(/\/ payday/)).toBeNull();
+    expect(screen.queryByText(/each payday/)).toBeNull();
   });
 
   it('[A5] a goal below its target keeps the pace line and no "Goal reached"', async () => {
     await renderWithQueries(<Goals />); // $4,000 of $10,000
     expect(screen.queryByTestId('goal-reached-g1')).toBeNull();
-    expect(screen.getByText(/\/ payday/)).toBeTruthy();
+    expect(screen.getByText(/each payday/)).toBeTruthy();
   });
 
   it('[A6] a goal whose balance is unknown reads "Waiting on your balance", never "Goal reached"', async () => {
@@ -170,7 +170,7 @@ describe('Goals celebrations that stick: edges (WHIT-747 QA)', () => {
     expect(await saved()).toEqual({ g1: 1, mortgage: 0 });
 
     await refreshInAct(() => held.release());
-    expect(await screen.findByTestId('checkpoint-celebration-label')).toHaveTextContent(/The mortgage · down to \$600,000/);
+    expect(await screen.findByTestId('checkpoint-celebration-label')).toHaveTextContent(/Home loan · down to \$600,000/);
     expect(await saved()).toEqual({ g1: 1, mortgage: 1 });
   });
 });

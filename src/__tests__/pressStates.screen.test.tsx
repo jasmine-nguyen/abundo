@@ -6,9 +6,9 @@
 // so it can never enter the pressed/dim state.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { render } from '@testing-library/react-native';
 import { makeState, cat, txn } from './factory';
+import { pressedStyle } from './support/pressedStyle';
 import type { Category } from '../types';
 import { PRESSED } from '../theme';
 
@@ -35,16 +35,13 @@ function pressable(root: { findAll: (p: (n: Node) => boolean) => Node[] }): Node
   expect(hits.length).toBe(1);
   return hits[0];
 }
-function flat(node: Node, pressed: boolean) {
-  return StyleSheet.flatten((node.props.style as (x: { pressed: boolean }) => unknown)({ pressed })) as { opacity?: number; transform?: unknown };
-}
 
 it('a tappable row takes the shared pressed style on press and is solid at rest', () => {
   const { UNSAFE_root } = render(<TransactionRow t={txn({ transaction_id: 'tx9', category: null })} category={mockState.category} />);
   const row = pressable(UNSAFE_root as unknown as { findAll: (p: (n: Node) => boolean) => Node[] });
   expect(row.props.disabled).toBeFalsy();          // tappable → can enter pressed state
-  expect(flat(row, false).opacity).toBeUndefined(); // at rest: no dim
-  const pressed = flat(row, true);
+  expect(pressedStyle(row, false).opacity).toBeUndefined(); // at rest: no dim
+  const pressed = pressedStyle(row, true);
   expect(pressed.opacity).toBe(PRESSED.opacity);     // pressed: dim
   expect(pressed.transform).toEqual(PRESSED.transform); // pressed: shrink
 });

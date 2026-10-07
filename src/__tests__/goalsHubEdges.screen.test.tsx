@@ -55,7 +55,7 @@ describe('goal-card progress edges', () => {
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('goal-card-nb'));
     expect(card.queryByText(/%$/)).toBeNull();                // progress null -> no headline %
-    expect(card.getByText('$3,000 / payday')).toBeTruthy();   // 9000 owed / 3 paydays
+    expect(card.getByText('Set aside $3,000 each payday')).toBeTruthy();   // 9000 owed / 3 paydays
     expect(card.queryByText('Waiting on your balance')).toBeNull();
   });
 
