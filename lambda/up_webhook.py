@@ -59,14 +59,6 @@ OK_RESPONSE = {"statusCode": 200, "body": "ok"}
 UNAUTHORISED_RESPONSE = {"statusCode": 401, "body": "unauthorised event"}
 ERROR_RESPONSE = {"statusCode": 500, "body": "processing failed"}
 
-# Repayment push copy (WHIT-15). The credit is the GROSS repayment, of which only the
-# principal comes off the balance, so the copy says "put $X toward the mortgage", never
-# "knocked $X off". {amount} = whole dollars with thousands separators.
-REPAYMENT_PUSH_TITLE = "Nice one! Another chunk down"
-REPAYMENT_PUSH_BODY = ("You just put ${amount} toward the mortgage. "
-                       "You're crushing it — keep building! \U0001f4aa")
-
-
 def get_signing_secret() -> str:
     return get_api_key(UP_WEBHOOK_SIGNING_SECRET_PATH)
 
@@ -76,9 +68,12 @@ def get_personal_access_token() -> str:
 
 
 def build_repayment_push(amount: Decimal) -> tuple[str, str]:
-    """The (title, body) for a home-loan repayment push. `amount` renders as whole
-    dollars with thousands separators, e.g. Decimal('3667.50') -> '$3,668'."""
-    return REPAYMENT_PUSH_TITLE, REPAYMENT_PUSH_BODY.format(amount=f"{amount:,.0f}")
+    """The (title, body) for a home-loan repayment push (WHIT-15). `amount` renders as whole
+    dollars with thousands separators, e.g. Decimal('3667.50') -> '$3,668'. The credit is the
+    GROSS repayment, of which only the principal comes off the balance, so the copy says
+    "put $X toward the mortgage", never "knocked $X off"."""
+    return ("Nice one! Another chunk down",
+            f"You just put ${amount:,.0f} toward the mortgage. You're crushing it — keep building! \U0001f4aa")
 
 
 def extract_raw_body(event: dict) -> bytes:

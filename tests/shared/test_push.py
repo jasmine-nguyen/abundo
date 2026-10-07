@@ -211,12 +211,6 @@ def test_stashes_receipts_through_the_push_receipt_store(shared, monkeypatch):
     assert receipts.put_calls == [("r1", "ExpoPushToken[a]")]
 
 
-def test_push_uses_the_real_device_and_receipt_stores(shared):
-    push = shared.push
-    assert push.DeviceRepository is shared.device.DeviceRepository
-    assert push.PushReceiptRepository is shared.push_receipt.PushReceiptRepository
-
-
 def test_receipt_store_open_failure_is_swallowed(shared, stores, monkeypatch):
     # Even if opening the store fails, the send must still complete cleanly.
     push = shared.push

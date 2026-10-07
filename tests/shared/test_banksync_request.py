@@ -3,7 +3,7 @@
 `banksync_request` is the single place that sends a request to BankSync: the API key
 header, our own User-Agent (Cloudflare blocks urllib's default), the timeout, and the
 JSON parse of the reply. The balance fetch, sync trigger and pending mirror all go
-through it. The method is covered by test_banksync_request_infers_method.py.
+through it. The sync trigger's POST is covered in tests/sync_trigger/test_handler.py.
 """
 
 from _http_fakes import FakeResponse
