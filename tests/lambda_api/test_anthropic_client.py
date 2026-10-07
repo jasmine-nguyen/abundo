@@ -7,12 +7,11 @@ monkeypatched — no network, no AWS. The `anthropic_client` fixture imports the
 module in isolation and pins a fake key.
 """
 
-import json
 import urllib.error
 
 import pytest
 
-from _anthropic_fakes import messages_payload
+from _anthropic_fakes import capture_urlopen, messages_payload
 from _http_fakes import FakeResponse, http_error
 
 
@@ -20,16 +19,8 @@ from _http_fakes import FakeResponse, http_error
 
 
 def test_post_builds_request_and_returns_first_text(anthropic_client, monkeypatch):
-    captured = {}
-
-    def fake_urlopen(req, timeout=None):
-        captured["url"] = req.full_url
-        captured["headers"] = req.headers
-        captured["body"] = json.loads(req.data.decode())
-        captured["timeout"] = timeout
-        return FakeResponse(messages_payload([{"type": "text", "text": "hello"}]))
-
-    monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", fake_urlopen)
+    captured = capture_urlopen(anthropic_client, monkeypatch,
+                               messages_payload([{"type": "text", "text": "hello"}]))
 
     text = anthropic_client.post("SYS", "Prefix:\n", {"a": 1}, {})
 
@@ -42,8 +33,8 @@ def test_post_builds_request_and_returns_first_text(anthropic_client, monkeypatc
     # System prompt + prefix + compact-JSON model_input reach the model.
     assert captured["body"]["system"] == "SYS"
     assert captured["body"]["messages"][0]["content"] == 'Prefix:\n{"a":1}'
-    # Thinking disabled so a single-shot JSON reply can't be truncated by reasoning.
-    assert captured["body"]["thinking"] == {"type": "disabled"}
+    assert captured["body"]["thinking"] == {"type": "between_tools"}
+    assert captured["headers"]["Anthropic-beta"] == "server-side-fallback-2026-07-01"
     assert captured["timeout"] == anthropic_client.ANTHROPIC_TIMEOUT_SECONDS
 
 
@@ -169,13 +160,7 @@ def test_get_api_key_reads_the_anthropic_path(anthropic_client, monkeypatch):
 
 
 def test_post_body_carries_model_and_max_tokens(anthropic_client, monkeypatch):
-    captured = {}
-
-    def fake_urlopen(req, timeout=None):
-        captured["body"] = json.loads(req.data.decode())
-        return FakeResponse(messages_payload([{"type": "text", "text": "ok"}]))
-
-    monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", fake_urlopen)
+    captured = capture_urlopen(anthropic_client, monkeypatch, messages_payload([{"type": "text", "text": "ok"}]))
     anthropic_client.post("SYS", "P:\n", {"a": 1}, {})
 
     assert captured["body"]["model"] == anthropic_client.ANTHROPIC_MODEL
@@ -189,18 +174,13 @@ def test_post_body_carries_model_and_max_tokens(anthropic_client, monkeypatch):
 
 
 def test_post_user_turn_is_compact_json_including_commas(anthropic_client, monkeypatch):
-    captured = {}
-
-    def fake_urlopen(req, timeout=None):
-        captured["content"] = json.loads(req.data.decode())["messages"][0]["content"]
-        return FakeResponse(messages_payload([{"type": "text", "text": "ok"}]))
-
-    monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", fake_urlopen)
+    captured = capture_urlopen(anthropic_client, monkeypatch, messages_payload([{"type": "text", "text": "ok"}]))
     anthropic_client.post("s", "P:\n", {"a": 1, "b": 2}, {})
 
-    assert captured["content"] == 'P:\n{"a":1,"b":2}'
-    assert ", " not in captured["content"]
-    assert ": " not in captured["content"].split("\n", 1)[1]  # ignore the prefix's own ":\n"
+    content = captured["body"]["messages"][0]["content"]
+    assert content == 'P:\n{"a":1,"b":2}'
+    assert ", " not in content
+    assert ": " not in content.split("\n", 1)[1]  # ignore the prefix's own ":\n"
 
 
 # --- post: a text block missing the "text" key -------------------------------
@@ -234,29 +214,20 @@ def test_handler_shares_the_shared_anthropic_error(handler):
 
 
 def test_post_messages_sends_tools_and_returns_the_whole_reply(anthropic_client, monkeypatch):
-    captured = {}
     envelope = {"content": [{"type": "tool_use", "id": "c1", "name": "respond", "input": {"text": "hi"}}],
                 "stop_reason": "tool_use"}
-
-    def fake_urlopen(req, timeout=None):
-        captured["body"] = json.loads(req.data.decode())
-        captured["timeout"] = timeout
-        captured["headers"] = req.headers
-        return FakeResponse(envelope)
-
-    monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", fake_urlopen)
+    captured = capture_urlopen(anthropic_client, monkeypatch, envelope)
     tools = [{"name": "respond", "input_schema": {"type": "object"}}]
     messages = [{"role": "user", "content": "q"}]
 
-    reply = anthropic_client.post_messages("SYS", messages, tools, {"type": "any"}, 1500, 60)
+    reply = anthropic_client.post_messages("SYS", messages, tools, 1500, 60)
 
     assert reply == envelope
     assert captured["body"]["messages"] == messages
     assert captured["body"]["tools"] == tools
-    assert captured["body"]["tool_choice"] == {"type": "any"}
+    assert captured["body"]["tool_choice"] == {"type": "auto"}
     assert captured["body"]["max_tokens"] == 1500
-    # A forced tool_choice isn't accepted with thinking on, so it must stay disabled.
-    assert captured["body"]["thinking"] == {"type": "disabled"}
+    assert captured["body"]["thinking"] == {"type": "between_tools"}
     assert captured["timeout"] == 60
     assert captured["headers"]["User-agent"] == "abundo-app-api"
 
@@ -266,5 +237,5 @@ def test_post_messages_maps_http_errors_like_post(anthropic_client, monkeypatch)
         raise http_error(529)
     monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", boom)
     with pytest.raises(anthropic_client.AnthropicError) as err:
-        anthropic_client.post_messages("s", [], [], {"type": "any"}, 10, 5)
+        anthropic_client.post_messages("s", [], [], 10, 5)
     assert err.value.upstream_status == 529

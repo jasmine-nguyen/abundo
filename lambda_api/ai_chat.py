@@ -59,31 +59,27 @@ _CENT = Decimal("0.01")
 # The API needs the first message to come from the user. A thread opened from the insights card
 # starts with the card's summary as an assistant turn, so this goes in front of it.
 _SEED_INTRO = "Here's the spending summary the app showed me."
+_FINAL_ROUND_NUDGE = "No more lookups: call respond now with what you have."
 
-_SYSTEM_PROMPT = """You are Abundo's spending assistant. Answer questions about the user's own \
-transactions, budgets, categories and pay cycles. Today is {today} in Melbourne. Amounts are in \
-Australian dollars.
+_SYSTEM_PROMPT = """You are Abundo's spending assistant for the user's own transactions, budgets, \
+categories and pay cycles. Today is {today} in Melbourne; amounts are AUD.
 
-- Always get figures from the tools; never calculate totals or averages yourself when a tool can. \
-Every number in the card must be copied exactly from a tool result.
-- Pay cycles are the primary time unit: say "per cycle" and use filters.pay_cycles. If the user \
-says months, use calendar months (filters.months) instead.
-- "Last N cycles" or "last N months" means completed periods. Only include the current, \
-unfinished period if the user asks for it.
-- Keep answers short enough to read at a glance in a phone chat bubble, and bold the key \
-figure with **double asterisks**.
-- Always fill `source` with the exact period used, e.g. "3 completed pay cycles · 12 Jun – 11 Sep".
-- Include a metric_bars card when the answer is a figure over time: one series point per period \
-with a short label such as "Jun" or "12 Jun".
+- Take every figure from the tools, copied exactly; don't calculate what a tool can.
+- Pay cycles are the default unit ("per cycle", filters.pay_cycles). If the user says months, \
+use filters.months.
+- "Last N cycles/months" means completed periods; add the current one only if asked.
+- Keep answers short for a phone chat bubble; bold the key figure with **double asterisks**.
+- Always set `source` to the exact period, e.g. "3 completed pay cycles · 12 Jun – 11 Sep".
+- For a figure over time, add a metric_bars card: one series point per period, short labels \
+like "Jun" or "12 Jun".
 - Set card.delta.vs to "budget" when budget_line is set, or "previous" when the last bar is the \
 value. The server works out the amount.
-- Offer at most 2 actions. A deeplink opens one category's transactions over the exact dates \
-you used.
-- For a fuzzy grouping with no category (e.g. "date nights"), list the transactions and group \
-them yourself; say it's an estimate and name the merchants you counted.
-- You can look back {cycles} pay cycles or {months} months at most. If the data can't answer \
-the question, say so plainly and suggest a question it can answer.
-- Don't give investment, tax or credit advice. Don't mention tools or internal ids.
+- At most 2 actions. A deeplink opens one category's transactions over the exact dates you used.
+- For a fuzzy grouping with no category (e.g. "date nights"), list transactions and group them \
+yourself; call it an estimate and name the merchants counted.
+- You can look back at most {cycles} pay cycles or {months} months. If the data can't answer, \
+say so plainly and suggest a question it can.
+- No investment, tax or credit advice. Don't mention tools or internal ids.
 - Always finish by calling `respond`."""
 
 _PERIOD_SPEC = {
@@ -99,10 +95,9 @@ TOOLS = [
     {
         "name": "query_transactions",
         "description": (
-            "Filter the user's transactions and compute one metric on the server. Amounts are "
-            "positive. Refunds reduce spend. A category includes its subcategories. avg over "
-            "pay_cycles or months returns one row per period (zero periods included) plus the "
-            "average."
+            "Filter the user's transactions and compute one metric. Amounts are positive; refunds "
+            "reduce spend; a category includes its subcategories. avg over pay_cycles or months "
+            "returns one row per period (zero periods included) plus the average."
         ),
         "input_schema": {
             "type": "object",
@@ -149,7 +144,11 @@ TOOLS = [
     },
     {
         "name": "get_budgets",
-        "description": "Each budget's limit, spend and what's left, for the current or a past pay cycle.",
+        "description": (
+            "Each budget's limit (target), spent and remaining for the current or a past pay "
+            "cycle. Current: remaining includes carryover. Past: limit is today's target. A "
+            "parent's spent covers its whole subtree. earn_target rows are Income (spent = earned)."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -166,7 +165,10 @@ TOOLS = [
     },
     {
         "name": "get_pay_cycles",
-        "description": "The last N completed pay cycles plus the current one, with start and end dates.",
+        "description": (
+            "The last last_n (default 6) completed pay cycles plus the current one, oldest first: "
+            "start, end, is_current."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {"last_n": {"type": "integer", "minimum": 1, "maximum": 12}},
@@ -174,16 +176,18 @@ TOOLS = [
     },
     {
         "name": "get_categories",
-        "description": "The user's categories: id, name, bucket, parent and colour.",
+        "description": (
+            "The user's categories: id, name, bucket, parent, color_slot, is_builtin. Use ids in "
+            "query_transactions filters.category_ids."
+        ),
         "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "respond",
         "description": (
-            "Give the final answer to the user and end the turn. Call it once, after the lookups "
-            "that produced every figure in the answer. The server drops a card whose figures "
-            "weren't returned by a tool this turn, and any action with an unknown category or "
-            "dates outside the lookback."
+            "The final answer; ends the turn. Call it once, after the lookups that produced every "
+            "figure. The server drops a card whose figures no tool returned this turn, and any "
+            "action with an unknown category or dates outside the lookback."
         ),
         "input_schema": {
             "type": "object",
@@ -411,8 +415,9 @@ def _run_tool(call: dict, data: ChatData, tool_numbers: set) -> dict:
 
 
 def run_chat(job_id: str, messages: list[dict], data: ChatData, job_repo, seconds_left) -> dict:
-    """The tool loop. Rounds 1..N-1 must call some tool; the last round must call `respond`, so a
-    runaway loop ends with an answer (or a failure) rather than hanging.
+    """The tool loop. The model picks its own tools; on the last round a system turn tells it to
+    call `respond` now, so a runaway loop ends with an answer (or a failure) rather than hanging.
+    A refusal or a reply with no tool call fails the run.
 
     `seconds_left()` reads the worker's remaining time. Each model call gets that minus a margin
     (capped per call); with too little left the run fails before paying for another call."""
@@ -420,17 +425,17 @@ def run_chat(job_id: str, messages: list[dict], data: ChatData, job_repo, second
     model_messages = to_model_messages(messages)
     tool_numbers: set = set()
     for round_number in range(1, CHAT_MAX_TOOL_ROUNDS + 1):
-        if round_number == CHAT_MAX_TOOL_ROUNDS:
-            tool_choice = {"type": "tool", "name": "respond"}
-        else:
-            tool_choice = {"type": "any"}
         budget = seconds_left() - CHAT_DEADLINE_MARGIN_SECONDS
         if budget < CHAT_MIN_CALL_SECONDS:
             raise ChatError(f"out of time before round {round_number}")
+        if round_number == CHAT_MAX_TOOL_ROUNDS:
+            model_messages.append({"role": "system", "content": _FINAL_ROUND_NUDGE})
         if os.environ.get(_DEBUG_LOG_ENV) == "1":
             logger.info("chat debug request: %s", json.dumps({"system": system, "messages": model_messages}))
-        reply = post_messages(system, model_messages, TOOLS, tool_choice,
-                              ANTHROPIC_CHAT_MAX_TOKENS, min(ANTHROPIC_CHAT_TIMEOUT_SECONDS, budget))
+        reply = post_messages(system, model_messages, TOOLS, ANTHROPIC_CHAT_MAX_TOKENS,
+                              min(ANTHROPIC_CHAT_TIMEOUT_SECONDS, budget))
+        if reply.get("stop_reason") == "refusal":
+            raise ChatError("model refused")
         calls = [block for block in reply.get("content") or [] if block.get("type") == "tool_use"]
         logger.info("chat job %s round %d tools %s", job_id, round_number,
                     [call["name"] for call in calls])

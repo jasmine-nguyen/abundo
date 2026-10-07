@@ -7,6 +7,8 @@ Every assertion is against the real exported production code.
 from decimal import Decimal
 
 import pytest
+from _anthropic_fakes import ScriptedModel, tool_reply, tool_use_block
+from _job_fakes import FakeChatJobRepo
 
 TODAY = "2026-09-20"
 CYCLE_START = "2026-09-10"
@@ -45,30 +47,6 @@ def _card(**overrides):
 def _delta(ai_chat, card):
     out = ai_chat.validate_reply({"text": "ok", "card": card}, _data(), TOOL_NUMBERS)
     return out["card"].get("delta")
-
-
-class FakeJobRepo:
-    def set_tool_status(self, job_id, text):
-        pass
-
-    def finish_chat_job(self, job_id, status, reply_json=None, error=None):
-        pass
-
-
-class ScriptedModel:
-    def __init__(self, replies):
-        self._replies = list(replies)
-
-    def __call__(self, system, messages, tools, tool_choice, max_tokens, timeout):
-        return self._replies.pop(0)
-
-
-def _tool_use(name, tool_input, call_id):
-    return {"type": "tool_use", "id": call_id, "name": name, "input": tool_input}
-
-
-def _reply(block):
-    return {"content": [block], "stop_reason": "tool_use"}
 
 
 # --- what the AI is asked to send ------------------------------------------------------------
@@ -183,12 +161,12 @@ def test_run_chat_carries_the_servers_vs_previous_figure(ai_chat, monkeypatch): 
                             {"label": "27 Aug", "value": 33.34}]},
     }
     monkeypatch.setattr(ai_chat, "post_messages", ScriptedModel([
-        _reply(_tool_use("query_transactions", AVG_QUERY, "c1")),
-        _reply(_tool_use("respond", answer, "c2")),
+        tool_reply(tool_use_block("query_transactions", AVG_QUERY, "c1")),
+        tool_reply(tool_use_block("respond", answer, "c2")),
     ]))
 
     reply = ai_chat.run_chat("job1", [{"role": "user", "text": "Eating out last cycle?"}],
-                             _data(), FakeJobRepo(), lambda: 200)
+                             _data(), FakeChatJobRepo(), lambda: 200)
 
     assert reply["card"]["value"] == 33.34
     assert reply["card"]["delta"] == {"amount": 33.34, "vs": "previous"}

@@ -87,18 +87,17 @@ ANTHROPIC_API_KEY_PATH = "/abundo/anthropic-api-key"
 ANTHROPIC_BASE_URL = "https://api.anthropic.com"
 ANTHROPIC_MESSAGES_PATH = "/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
-# Sonnet 5: on a real side-by-side against Haiku (same numbers, same prompt) it gave
-# sharper, more consistent tips — spotted cross-category patterns Haiku missed and
-# stayed inside the "don't invent figures" guardrail that Haiku occasionally broke.
-# Opus 4.8 above it added cost with no visible quality gain, so Sonnet is the pick.
-ANTHROPIC_MODEL = "claude-sonnet-5"
+# Sonnet 5.5: Jas's pick (WHIT-807) — same price as Sonnet 5, newer model.
+ANTHROPIC_MODEL = "claude-sonnet-5-5"
 ANTHROPIC_MAX_TOKENS = 700
-# Sonnet 5 runs internal "thinking" (extra reasoning before answering) by DEFAULT when
-# the request omits it — and with our 700-token cap it can spend that budget thinking
-# and truncate the JSON reply mid-answer. This task needs no reasoning, so disable it:
-# the call stays a fast, single-shot answer within the token cap (mirrors Haiku, which
-# never thought). Sent as the request's "thinking" field in insights_ai.py.
-ANTHROPIC_THINKING = {"type": "disabled"}
+# Sonnet 5.5's no-thinking setting (no other field allowed); progress notes come back as
+# `thinking` blocks, which the chat loop passes back unchanged.
+ANTHROPIC_THINKING = {"type": "between_tools"}
+# Low effort keeps each answer single-shot, inside the 700-token tips cap.
+ANTHROPIC_EFFORT = "low"
+# Server-side refusal fallback: the beta header plus the body's "fallbacks" field.
+ANTHROPIC_BETA = "server-side-fallback-2026-07-01"
+ANTHROPIC_FALLBACKS = "default"
 # api.anthropic.com sits behind Cloudflare, which 403s the default urllib
 # User-Agent — the UA is load-bearing (same lesson as the BankSync client).
 ANTHROPIC_USER_AGENT = "abundo-app-api"
@@ -120,7 +119,7 @@ ANTHROPIC_CHAT_TIMEOUT_SECONDS = 60
 CHAT_DEADLINE_MARGIN_SECONDS = 10
 # With less call time than this left, the worker fails rather than start another model call.
 CHAT_MIN_CALL_SECONDS = 10
-# Tool rounds per user message; the last round forces the answer, so a loop fails fast.
+# Tool rounds per user message; the last round tells the model to answer now, so a loop fails fast.
 CHAT_MAX_TOOL_ROUNDS = 6
 # Only the most recent messages are sent to the model as context.
 CHAT_MAX_MESSAGES = 20

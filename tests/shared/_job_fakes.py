@@ -35,13 +35,40 @@ def created_jobs(repo):
     return [(item["id"], item["kind"]) for item in repo._table.put_calls if item["pk"] == _PK]
 
 
+def _job_updates(repo):
+    """The fields each job update_item set, in order."""
+    return [{name: values[":v" + alias[len("#n"):]] for alias, name in names.items()}
+            for _expression, names, values in repo._table.update_calls]
+
+
 def progress_writes(repo):
     """The tallies of each update_progress write, in order (finish and tool-status writes skipped)."""
     writes = []
-    for _expression, names, values in repo._table.update_calls:
-        fields = {name: values[":v" + alias[len("#n"):]] for alias, name in names.items()}
+    for fields in _job_updates(repo):
         if "status" in fields or "toolStatus" in fields:
             continue
         del fields["updated_at"]
         writes.append(fields)
     return writes
+
+
+class FakeChatJobRepo:
+    """For the run_chat suites (WHIT-807): the REAL JobRepository over a FakeTable (any attribute
+    is the real repository's), plus what the chat worker wrote, read back from the table:
+    ``statuses`` (each tool status line) and ``finished`` (each finish_chat_job write)."""
+
+    def __init__(self):
+        self._repo = real_job_repo()
+
+    def __getattr__(self, name):
+        return getattr(self._repo, name)
+
+    @property
+    def statuses(self):
+        return [fields["toolStatus"] for fields in _job_updates(self._repo) if "toolStatus" in fields]
+
+    @property
+    def finished(self):
+        return [{"status": fields["status"], "reply": fields["reply"], "error": fields["error"]}
+                for fields in _job_updates(self._repo) if "reply" in fields]
+

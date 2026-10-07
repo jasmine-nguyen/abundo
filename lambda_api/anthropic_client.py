@@ -11,12 +11,16 @@ that calls Anthropic.
 """
 
 import json
+import logging
 import urllib.error
 import urllib.request
 
 from api_constants import (
     ANTHROPIC_API_KEY_PATH,
     ANTHROPIC_BASE_URL,
+    ANTHROPIC_BETA,
+    ANTHROPIC_EFFORT,
+    ANTHROPIC_FALLBACKS,
     ANTHROPIC_MAX_TOKENS,
     ANTHROPIC_MESSAGES_PATH,
     ANTHROPIC_MODEL,
@@ -26,6 +30,9 @@ from api_constants import (
     ANTHROPIC_VERSION,
 )
 from api_key import get_api_key as _fetch_api_key
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 class AnthropicError(Exception):
@@ -47,56 +54,53 @@ def post(system: str, user_prefix: str, model_input: dict, schema: dict) -> str:
 
     The user turn is `user_prefix` followed by the compact-JSON model_input. `schema` is
     sent as structured outputs, so the API constrains the reply to that JSON shape. Returns
-    the first text block's text, or "" when the envelope carries none (so a malformed
-    reply degrades through the caller's parser instead of raising).
+    the first text block's text, or "" when the model refused or the envelope carries none
+    (so a malformed reply degrades through the caller's parser instead of raising).
 
     Raises AnthropicError on any non-2xx (carrying the upstream status) or transport
     failure (status None).
     """
-    body = {
-        "model": ANTHROPIC_MODEL,
-        "max_tokens": ANTHROPIC_MAX_TOKENS,
-        # Disable Sonnet's default "thinking" so it can't eat the token budget and
-        # truncate the JSON reply — a single-shot answer, no reasoning needed.
-        "thinking": ANTHROPIC_THINKING,
-        "output_config": {"format": {"type": "json_schema", "schema": schema}},
-        "system": system,
-        "messages": [
-            {
-                "role": "user",
-                "content": user_prefix + json.dumps(model_input, separators=(",", ":")),
-            }
-        ],
+    user_turn = {
+        "role": "user",
+        "content": user_prefix + json.dumps(model_input, separators=(",", ":")),
     }
+    body = _body(system, [user_turn], ANTHROPIC_MAX_TOKENS)
+    body["output_config"]["format"] = {"type": "json_schema", "schema": schema}
     payload = _send(body, ANTHROPIC_TIMEOUT_SECONDS)
+    if payload.get("stop_reason") == "refusal":
+        return ""
 
-    # Messages API: {"content": [{"type": "text", "text": "..."}], ...}. Pull the
-    # first text block; anything unexpected degrades via the caller's parser.
-    content = payload.get("content") or []
-    for block in content:
+    for block in payload.get("content") or []:
         if isinstance(block, dict) and block.get("type") == "text":
             return block.get("text", "")
     return ""
 
 
-def post_messages(system: str, messages: list, tools: list, tool_choice: dict,
-                  max_tokens: int, timeout: float) -> dict:
+def post_messages(system: str, messages: list, tools: list, max_tokens: int, timeout: float) -> dict:
     """POST a multi-turn, tool-calling request and return the whole reply envelope
     (`content` blocks + `stop_reason`), for the chat worker's tool loop.
 
-    Thinking stays disabled: a forced `tool_choice` ("any" or a named tool) is not
-    accepted with thinking on. Raises AnthropicError exactly as `post` does.
+    The model picks its own tool (`auto`). With `between_tools` thinking the reply may hold
+    `thinking` blocks, which the caller passes back unchanged. Raises AnthropicError exactly
+    as `post` does.
     """
-    body = {
+    body = _body(system, messages, max_tokens)
+    body["tools"] = tools
+    body["tool_choice"] = {"type": "auto"}
+    return _send(body, timeout)
+
+
+def _body(system: str, messages: list, max_tokens: int) -> dict:
+    """The fields every Messages request shares."""
+    return {
         "model": ANTHROPIC_MODEL,
         "max_tokens": max_tokens,
         "thinking": ANTHROPIC_THINKING,
+        "output_config": {"effort": ANTHROPIC_EFFORT},
+        "fallbacks": ANTHROPIC_FALLBACKS,
         "system": system,
         "messages": messages,
-        "tools": tools,
-        "tool_choice": tool_choice,
     }
-    return _send(body, timeout)
 
 
 def _send(body: dict, timeout: float) -> dict:
@@ -111,13 +115,14 @@ def _send(body: dict, timeout: float) -> dict:
             headers={
                 "x-api-key": get_api_key(),
                 "anthropic-version": ANTHROPIC_VERSION,
+                "anthropic-beta": ANTHROPIC_BETA,
                 "content-type": "application/json",
                 "User-Agent": ANTHROPIC_USER_AGENT,
             },
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read())
+            payload = json.loads(resp.read())
     except urllib.error.HTTPError as e:
         raise AnthropicError(e.code, f"Anthropic messages -> {e.code}") from e
     except urllib.error.URLError as e:
@@ -128,4 +133,7 @@ def _send(body: dict, timeout: float) -> dict:
         raise AnthropicError(None, "Anthropic timed out or dropped the connection") from e
     except (ValueError, TypeError) as e:
         raise AnthropicError(None, "Anthropic key unavailable or non-JSON envelope") from e
-
+    usage = payload.get("usage") or {}
+    logger.info("anthropic usage model=%s input=%s output=%s", payload.get("model"),
+                usage.get("input_tokens"), usage.get("output_tokens"))
+    return payload

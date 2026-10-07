@@ -8,21 +8,13 @@ import re
 
 import pytest
 
-from _anthropic_fakes import messages_payload, text_payload
-from _http_fakes import FakeResponse
+from _anthropic_fakes import capture_urlopen, messages_payload, text_payload
 from _insight_fakes import insight_puts, insight_repo
 
 
 def _fake_reply(monkeypatch, envelope):
     import anthropic_client as ac
-    captured = {}
-
-    def fake_urlopen(req, timeout=None):
-        captured["body"] = json.loads(req.data.decode())
-        return FakeResponse(envelope)
-
-    monkeypatch.setattr(ac.urllib.request, "urlopen", fake_urlopen)
-    return captured
+    return capture_urlopen(ac, monkeypatch, envelope)
 
 
 def _assert_strict_object(schema):
@@ -128,33 +120,24 @@ def test_system_prompt_keeps_every_rule(insights_ai, rule):
     assert rule in insights_ai._SYSTEM_PROMPT
 
 
-# [A9] (P1) the chat's tool-calling request is untouched: no output_config rides along.
-def test_post_messages_sends_no_output_config(anthropic_client, monkeypatch):
-    captured = {}
+# [A9] (P1) the chat's tool-calling request gets low effort but no output format.
+def test_post_messages_sends_effort_but_no_output_format(anthropic_client, monkeypatch):
+    captured = capture_urlopen(anthropic_client, monkeypatch, {"content": [], "stop_reason": "tool_use"})
+    anthropic_client.post_messages("s", [{"role": "user", "content": "q"}], [], 10, 5)
 
-    def fake_urlopen(req, timeout=None):
-        captured["body"] = json.loads(req.data.decode())
-        return FakeResponse({"content": [], "stop_reason": "tool_use"})
-
-    monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", fake_urlopen)
-    anthropic_client.post_messages("s", [{"role": "user", "content": "q"}], [], {"type": "any"}, 10, 5)
-
-    assert "output_config" not in captured["body"]
+    assert captured["body"]["output_config"] == {"effort": "low"}
+    assert captured["body"]["tool_choice"] == {"type": "auto"}
 
 
 # [A10] (P2) post sends the schema it was given verbatim (not a module default).
 def test_post_forwards_each_callers_schema(anthropic_client, monkeypatch):
-    bodies = []
-
-    def fake_urlopen(req, timeout=None):
-        bodies.append(json.loads(req.data.decode()))
-        return FakeResponse(text_payload("{}"))
-
-    monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", fake_urlopen)
+    captured = capture_urlopen(anthropic_client, monkeypatch, text_payload("{}"))
     first = {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
     second = {"type": "object", "properties": {"n": {"type": "integer"}},
               "required": ["n"], "additionalProperties": False}
-    anthropic_client.post("s", "p", {}, first)
-    anthropic_client.post("s", "p", {}, second)
+    schemas = []
+    for schema in (first, second):
+        anthropic_client.post("s", "p", {}, schema)
+        schemas.append(captured["body"]["output_config"]["format"]["schema"])
 
-    assert [b["output_config"]["format"]["schema"] for b in bodies] == [first, second]
+    assert schemas == [first, second]

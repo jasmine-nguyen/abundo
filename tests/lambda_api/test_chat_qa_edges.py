@@ -9,6 +9,8 @@ import json
 from decimal import Decimal
 
 import pytest
+from _anthropic_fakes import ScriptedModel, tool_reply, tool_use_block
+from _job_fakes import FakeChatJobRepo
 
 CATEGORIES = [
     {"id": "eatingout", "name": "Eating Out", "bucket": "Lifestyle", "parent": None, "colorSlot": 0},
@@ -301,80 +303,58 @@ def test_a_deeplink_outside_the_drill_in_bounds_is_dropped(ai_chat, date_from, d
 # --- the tool loop ---------------------------------------------------------------------------
 
 
-class _JobRepo:
-    def __init__(self):
-        self.statuses = []
-
-    def set_tool_status(self, job_id, text):
-        self.statuses.append(text)
-
-
-def _scripted(replies, requests):
-    replies = list(replies)
-
-    def post(system, messages, tools, tool_choice, max_tokens, timeout):
-        requests.append(json.loads(json.dumps(messages)))
-        return replies.pop(0)
-    return post
-
-
 def _plenty_of_time():
     return 200
 
 
-def _tool(name, tool_input, call_id="c1"):
-    return {"content": [{"type": "tool_use", "id": call_id, "name": name, "input": tool_input}],
-            "stop_reason": "tool_use"}
-
-
 def test_an_unknown_tool_name_goes_back_as_is_error_and_the_loop_continues(ai_chat, monkeypatch):  # [A16]
-    requests = []
-    monkeypatch.setattr(ai_chat, "post_messages", _scripted([
-        _tool("delete_everything", {}),
-        _tool("respond", {"text": "Sorry, I can't do that."}, "c2"),
-    ], requests))
-    job_repo = _JobRepo()
+    model = ScriptedModel([
+        tool_reply(tool_use_block("delete_everything", {})),
+        tool_reply(tool_use_block("respond", {"text": "Sorry, I can't do that."}, "c2")),
+    ])
+    monkeypatch.setattr(ai_chat, "post_messages", model)
+    job_repo = FakeChatJobRepo()
     reply = ai_chat.run_chat("job", [{"role": "user", "text": "hi"}], _chat_data(), job_repo, _plenty_of_time)
     assert reply == {"text": "Sorry, I can't do that."}
-    result = requests[1][-1]["content"][0]
+    result = model.requests[1]["messages"][-1]["content"][0]
     assert result["is_error"] is True and result["tool_use_id"] == "c1"
     assert job_repo.statuses == ["Working on it…"]
 
 
 def test_a_bad_status_line_argument_still_runs_the_tool(ai_chat, monkeypatch):  # [A16]
     # last_n "three" breaks the status line AND the tool; the job must not crash on either.
-    requests = []
-    monkeypatch.setattr(ai_chat, "post_messages", _scripted([
-        _tool("query_transactions", {"filters": {"months": {"last_n": "three"}}, "metric": "sum"}),
-        _tool("respond", {"text": "ok"}, "c2"),
-    ], requests))
-    job_repo = _JobRepo()
+    model = ScriptedModel([
+        tool_reply(tool_use_block("query_transactions", {"filters": {"months": {"last_n": "three"}}, "metric": "sum"})),
+        tool_reply(tool_use_block("respond", {"text": "ok"}, "c2")),
+    ])
+    monkeypatch.setattr(ai_chat, "post_messages", model)
+    job_repo = FakeChatJobRepo()
     ai_chat.run_chat("job", [{"role": "user", "text": "hi"}], _chat_data(), job_repo, _plenty_of_time)
     assert job_repo.statuses == ["Working on it…"]
-    assert requests[1][-1]["content"][0]["is_error"] is True
+    assert model.requests[1]["messages"][-1]["content"][0]["is_error"] is True
 
 
 def test_a_plain_text_reply_with_no_tool_call_fails_the_job(ai_chat, monkeypatch):  # [A16]
-    monkeypatch.setattr(ai_chat, "post_messages", _scripted([
-        {"content": [{"type": "text", "text": "Here you go"}], "stop_reason": "end_turn"}], []))
+    monkeypatch.setattr(ai_chat, "post_messages", ScriptedModel([
+        tool_reply({"type": "text", "text": "Here you go"}, stop_reason="end_turn")]))
     with pytest.raises(ai_chat.ChatError):
-        ai_chat.run_chat("job", [{"role": "user", "text": "hi"}], _chat_data(), _JobRepo(), _plenty_of_time)
+        ai_chat.run_chat("job", [{"role": "user", "text": "hi"}], _chat_data(), FakeChatJobRepo(), _plenty_of_time)
 
 
 def test_numbers_from_a_previous_message_do_not_validate_this_card(ai_chat, monkeypatch):  # [A17]
     # Each message is its own run: a figure the tools returned for the LAST question can't be
     # reused to pass off a card for this one.
     data = _chat_data([_txn("m", "eatingout", -42, "2026-09-12")])
-    monkeypatch.setattr(ai_chat, "post_messages", _scripted([
-        _tool("query_transactions", {"filters": {"category_ids": ["eatingout"]}, "metric": "sum"}),
-        _tool("respond", {"text": "a", "card": _card(value=42)}, "c2"),
-    ], []))
-    first = ai_chat.run_chat("job1", [{"role": "user", "text": "q1"}], data, _JobRepo(), _plenty_of_time)
+    monkeypatch.setattr(ai_chat, "post_messages", ScriptedModel([
+        tool_reply(tool_use_block("query_transactions", {"filters": {"category_ids": ["eatingout"]}, "metric": "sum"})),
+        tool_reply(tool_use_block("respond", {"text": "a", "card": _card(value=42)}, "c2")),
+    ]))
+    first = ai_chat.run_chat("job1", [{"role": "user", "text": "q1"}], data, FakeChatJobRepo(), _plenty_of_time)
     assert first["card"]["value"] == 42.0
 
-    monkeypatch.setattr(ai_chat, "post_messages", _scripted([
-        _tool("respond", {"text": "b", "card": _card(value=42)})], []))
-    second = ai_chat.run_chat("job2", [{"role": "user", "text": "q2"}], data, _JobRepo(), _plenty_of_time)
+    monkeypatch.setattr(ai_chat, "post_messages", ScriptedModel([
+        tool_reply(tool_use_block("respond", {"text": "b", "card": _card(value=42)}))]))
+    second = ai_chat.run_chat("job2", [{"role": "user", "text": "q2"}], data, FakeChatJobRepo(), _plenty_of_time)
     assert "card" not in second
 
 
