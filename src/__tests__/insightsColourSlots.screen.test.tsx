@@ -56,8 +56,7 @@ describe('Insights chart palette (WHIT-402/432)', () => {
     if (!node || typeof node !== 'object') return false;
     if (Array.isArray(node)) return node.some((n) => hasFillColor(n, hex));
     const n = node as { props: { style?: unknown }; children?: unknown[] };
-    const flat = styleOf(n);
-    if (flat.backgroundColor === hex) return true;
+    if (styleOf(n).backgroundColor === hex) return true;
     return Array.isArray(n.children) && n.children.some((c) => hasFillColor(c, hex));
   }
 

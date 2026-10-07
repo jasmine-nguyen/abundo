@@ -33,8 +33,7 @@ function hasFillColor(node: unknown, bg: string): boolean {
   if (!node || typeof node !== 'object') return false;
   if (Array.isArray(node)) return node.some((n) => hasFillColor(n, bg));
   const n = node as { props: { style?: unknown }; children?: unknown[] };
-  const flat = styleOf(n);
-  if (flat.backgroundColor === bg) return true;
+  if (styleOf(n).backgroundColor === bg) return true;
   return Array.isArray(n.children) && n.children.some((c) => hasFillColor(c, bg));
 }
 
