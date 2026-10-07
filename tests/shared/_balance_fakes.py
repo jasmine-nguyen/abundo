@@ -10,10 +10,28 @@ Resolved by pytest.ini's `pythonpath = tests/shared`. The shared layer is import
 from decimal import Decimal
 
 from _dynamo_fakes import FakeTable
-from _milestone_fakes import FakeGoalsRepo
+from _milestone_fakes import FakeDeviceRepo, FakeGoalsRepo, FakeLoanFactsRepo, FakeMilestoneRepo
 
 _MARKER_PK = "ACCTBAL#REFRESH"
 _BALANCE_PREFIX = "ACCTBAL#"
+
+
+REFRESH_EVENT = {"rawPath": "/accounts/balances/refresh", "requestContext": {"http": {"method": "POST"}}}
+
+
+def ok_payload(amount, account_type):
+    """A successful BankSync getBalance payload."""
+    return {"success": True, "data": {"amount": amount, "date": "2026-10-06T00:00:00Z",
+                                      "currency": "AUD", "accountType": account_type}}
+
+
+# BankSync getBalance payloads keyed by the source `aid` a refresh fans out over.
+LIVE_PAYLOADS = {
+    "3zVQJ8Btz_IRmqp78VrQnQ": ok_payload("96270.59", "checking"),                       # up-spending
+    "T6d8ppsYssBDFCwl1qEb0w": ok_payload("-596642.43", "mortgage"),                     # up-homeloan
+    "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": ok_payload("-6492.26", "unknown"),   # anz
+    "A3AC9195-9E8D-48B8-86D0-46D130D7F64A": ok_payload("-230", "unknown"),              # westpac
+}
 
 
 def homeloan_row(amount, as_of="2026-10-05T00:00:00Z"):
@@ -48,6 +66,23 @@ def stub_bank(handler, monkeypatch, fetch):
     monkeypatch.setattr(handler, "get_api_key", lambda: "test-key")
     monkeypatch.setattr(handler, "fetch_balance", fetch)
     monkeypatch.setattr(handler, "GoalsRepository", lambda: FakeGoalsRepo())
+
+
+def stub_refresh_side_effects(handler, monkeypatch, *, accounts, goals, notify, pushes):
+    """Patch the stores a refresh writes and checks: ``accounts`` balances, ``goals`` and the
+    ``notify`` marker store as given; canned loan facts, one device and no milestones. Each
+    goal-checkpoint push title is appended to ``pushes``. Call after ``stub_bank``, which
+    resets the goal store to empty."""
+    import sys
+
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
+    monkeypatch.setattr(handler, "GoalsRepository", lambda: goals)
+    monkeypatch.setattr(handler, "NotifyRepository", lambda: notify)
+    monkeypatch.setattr(handler, "LoanFactsRepository", lambda: FakeLoanFactsRepo())
+    monkeypatch.setattr(handler, "DeviceRepository", lambda: FakeDeviceRepo())
+    monkeypatch.setattr(handler, "MilestoneRepository", lambda: FakeMilestoneRepo(stored=[]))
+    monkeypatch.setattr(sys.modules["goal_checkpoints"], "send_push",
+                        lambda title, body, tokens, **kw: pushes.append(title))
 
 
 def balance_writes(repo):

@@ -6,32 +6,16 @@ old == new and the push is lost for good. Only the bank fetch, DynamoDB (FakeTab
 push send are stubbed; the goal store is the real GoalsRepository over a FakeTable.
 """
 
-import sys
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
-from _balance_fakes import balance_repo
+from _balance_fakes import LIVE_PAYLOADS, REFRESH_EVENT, balance_repo, stub_bank, stub_refresh_side_effects
 from _dynamo_fakes import FakeTable
-from _milestone_fakes import FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, goal_checkpoint_repo
+from _milestone_fakes import goal_checkpoint_repo
 
-_REFRESH_EVENT = {"rawPath": "/accounts/balances/refresh",
-                  "requestContext": {"http": {"method": "POST"}}}
 _PUSH_TITLE = "\U0001f389 Checkpoint reached — Halfway!"
-
-
-def _ok_payload(amount, account_type):
-    return {"success": True, "data": {"amount": amount, "date": "2026-10-06T00:00:00Z",
-                                      "currency": "AUD", "accountType": account_type}}
-
-
-_LIVE_PAYLOADS = {
-    "3zVQJ8Btz_IRmqp78VrQnQ": _ok_payload("96270.59", "checking"),                       # up-spending
-    "T6d8ppsYssBDFCwl1qEb0w": _ok_payload("-596642.43", "mortgage"),                     # up-homeloan
-    "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": _ok_payload("-6492.26", "unknown"),   # anz
-    "A3AC9195-9E8D-48B8-86D0-46D130D7F64A": _ok_payload("-230", "unknown"),              # westpac
-}
 
 _GOAL = {"direction": "grow", "name": "Holiday", "account_id": "up-spending",
          "target_amount": Decimal("120000"),
@@ -67,25 +51,16 @@ def test_refresh_celebrates_a_goal_checkpoint_crossing_once(
 ):
     accounts = balance_repo(rows=[_spending_row(stored_spending)], last=last_refresh_at)
     goals = _goals_repo(handler)
-    notify = goal_checkpoint_repo()
     pushes = []
-    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
-    monkeypatch.setattr(handler, "GoalsRepository", lambda: goals)
-    monkeypatch.setattr(handler, "NotifyRepository", lambda: notify)
-    monkeypatch.setattr(handler, "LoanFactsRepository", lambda: FakeLoanFactsRepo())
-    monkeypatch.setattr(handler, "DeviceRepository", lambda: FakeDeviceRepo())
-    monkeypatch.setattr(handler, "MilestoneRepository", lambda: FakeMilestoneRepo(stored=[]))
-    monkeypatch.setattr(sys.modules["goal_checkpoints"], "send_push",
-                        lambda title, body, tokens, **kw: pushes.append(title))
-    monkeypatch.setattr(handler, "get_api_key", lambda: "test-key")
     bank_calls = []
-    monkeypatch.setattr(handler, "fetch_balance",
-                        lambda bid, aid, key, **kw: bank_calls.append(aid) or _LIVE_PAYLOADS[aid])
+    stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: bank_calls.append(aid) or LIVE_PAYLOADS[aid])
+    stub_refresh_side_effects(handler, monkeypatch, accounts=accounts, goals=goals,
+                              notify=goal_checkpoint_repo(), pushes=pushes)
 
     assert 20_000 - 10_000 >= handler.REFRESH_THROTTLE_SECONDS
     for now in refresh_times:
         monkeypatch.setattr(handler, "time", SimpleNamespace(time=lambda now=now: now))
-        assert handler.lambda_handler(_REFRESH_EVENT, None)["statusCode"] == 200
+        assert handler.lambda_handler(REFRESH_EVENT, None)["statusCode"] == 200
 
     assert pushes == expected_pushes
     if last_refresh_at is not None:
@@ -100,19 +75,12 @@ def test_refresh_survives_a_failing_goal_read(handler, monkeypatch):
             raise RuntimeError("goals store unreadable")
 
     pushes = []
-    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
-    monkeypatch.setattr(handler, "GoalsRepository", _BrokenGoals)
-    monkeypatch.setattr(handler, "NotifyRepository", lambda: goal_checkpoint_repo())
-    monkeypatch.setattr(handler, "LoanFactsRepository", lambda: FakeLoanFactsRepo())
-    monkeypatch.setattr(handler, "DeviceRepository", lambda: FakeDeviceRepo())
-    monkeypatch.setattr(handler, "MilestoneRepository", lambda: FakeMilestoneRepo(stored=[]))
-    monkeypatch.setattr(sys.modules["goal_checkpoints"], "send_push",
-                        lambda title, body, tokens, **kw: pushes.append(title))
-    monkeypatch.setattr(handler, "get_api_key", lambda: "test-key")
-    monkeypatch.setattr(handler, "fetch_balance", lambda bid, aid, key, **kw: _LIVE_PAYLOADS[aid])
+    stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: LIVE_PAYLOADS[aid])
+    stub_refresh_side_effects(handler, monkeypatch, accounts=accounts, goals=_BrokenGoals(),
+                              notify=goal_checkpoint_repo(), pushes=pushes)
     monkeypatch.setattr(handler, "time", SimpleNamespace(time=lambda: 10_000))
 
-    response = handler.lambda_handler(_REFRESH_EVENT, None)
+    response = handler.lambda_handler(REFRESH_EVENT, None)
 
     assert response["statusCode"] == 200
     stored = {row["account_id"]: row["amount"] for row in accounts.list_balances(

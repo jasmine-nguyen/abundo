@@ -13,27 +13,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from _balance_fakes import balance_repo, balance_writes, homeloan_row, marker_writes, stub_bank, upserted
+from _balance_fakes import (
+    LIVE_PAYLOADS, REFRESH_EVENT, balance_repo, balance_writes, homeloan_row, marker_writes, stub_bank, upserted,
+)
 
 
-# --- fakes / stubs (mirror test_account_balances.py) -------------------------
-
-
-def _ok_payload(amount, account_type="checking"):
-    return {"success": True, "data": {"amount": amount, "date": "2026-08-11T00:00:00Z",
-                                      "currency": "AUD", "accountType": account_type}}
-
-
-_LIVE_PAYLOADS = {
-    "3zVQJ8Btz_IRmqp78VrQnQ": _ok_payload("96270.59", "checking"),                       # up-spending
-    "T6d8ppsYssBDFCwl1qEb0w": _ok_payload("-596642.43", "mortgage"),                     # up-homeloan
-    "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": _ok_payload("-6492.26", "unknown"),   # anz
-    "A3AC9195-9E8D-48B8-86D0-46D130D7F64A": _ok_payload("-230", "unknown"),              # westpac
-}
-_ALL_AIDS = set(_LIVE_PAYLOADS)
-
-_REFRESH_EVENT = {"rawPath": "/accounts/balances/refresh",
-                  "requestContext": {"http": {"method": "POST"}}}
+_ALL_AIDS = set(LIVE_PAYLOADS)
 
 
 def _freeze_time(handler, monkeypatch, now):
@@ -51,9 +36,9 @@ def test_refresh_at_exactly_throttle_window_does_a_live_fetch(handler, monkeypat
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000 + window)  # exactly `window` seconds later
     calls = []
-    stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: (calls.append(aid), _LIVE_PAYLOADS[aid])[1])
+    stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: (calls.append(aid), LIVE_PAYLOADS[aid])[1])
 
-    resp = handler.lambda_handler(_REFRESH_EVENT, None)
+    resp = handler.lambda_handler(REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
     assert set(calls) == _ALL_AIDS       # it fetched — not throttled
@@ -69,7 +54,7 @@ def test_refresh_one_second_inside_window_is_throttled(handler, monkeypatch):
     _freeze_time(handler, monkeypatch, 1000 + window - 1)
     stub_bank(handler, monkeypatch, lambda *a, **k: pytest.fail("must not fetch while throttled"))
 
-    resp = handler.lambda_handler(_REFRESH_EVENT, None)
+    resp = handler.lambda_handler(REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
     assert marker_writes(repo) == []          # throttled: marker untouched
@@ -87,9 +72,9 @@ def test_fan_out_fetches_all_configured_sources(handler, monkeypatch):
     _freeze_time(handler, monkeypatch, 1000)
     fetched = []
     stub_bank(handler, monkeypatch,
-               lambda bid, aid, key, **kw: (fetched.append((bid, aid)), _LIVE_PAYLOADS[aid])[1])
+               lambda bid, aid, key, **kw: (fetched.append((bid, aid)), LIVE_PAYLOADS[aid])[1])
 
-    resp = handler.lambda_handler(_REFRESH_EVENT, None)
+    resp = handler.lambda_handler(REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
     expected = {(s["bid"], s["aid"]) for s in handler.BALANCE_SOURCES}
@@ -112,7 +97,7 @@ def test_db_error_reading_marker_propagates(handler, monkeypatch):
     stub_bank(handler, monkeypatch, lambda *a, **k: pytest.fail("must not fetch after a repo failure"))
 
     with pytest.raises(handler.DatabaseError):
-        handler.lambda_handler(_REFRESH_EVENT, None)
+        handler.lambda_handler(REFRESH_EVENT, None)
 
 
 # --- marker armed BEFORE the upserts (ordering) ------------------------------
@@ -125,9 +110,9 @@ def test_marker_is_armed_before_any_upsert(handler, monkeypatch):
     repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
-    stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: _LIVE_PAYLOADS[aid])
+    stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: LIVE_PAYLOADS[aid])
 
-    handler.lambda_handler(_REFRESH_EVENT, None)
+    handler.lambda_handler(REFRESH_EVENT, None)
 
     kinds = [e[0] for e in balance_writes(repo)]
     assert kinds[0] == "set"                       # marker first
@@ -148,11 +133,11 @@ def test_timeout_worker_is_treated_as_a_failed_account(handler, monkeypatch):
     def fetch(bid, aid, key, **kw):
         if aid == "T6d8ppsYssBDFCwl1qEb0w":
             raise TimeoutError("read timed out")
-        return _LIVE_PAYLOADS[aid]
+        return LIVE_PAYLOADS[aid]
 
     stub_bank(handler, monkeypatch, fetch)
 
-    resp = handler.lambda_handler(_REFRESH_EVENT, None)
+    resp = handler.lambda_handler(REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
     assert set(upserted(repo)) == {"up-spending", "anz-rewards-black-visa",
@@ -168,7 +153,7 @@ def test_all_timeout_returns_502(handler, monkeypatch):
     stub_bank(handler, monkeypatch,
                lambda *a, **k: (_ for _ in ()).throw(TimeoutError("timed out")))
 
-    resp = handler.lambda_handler(_REFRESH_EVENT, None)
+    resp = handler.lambda_handler(REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 502
     assert upserted(repo) == {}
@@ -190,11 +175,11 @@ def test_non_dict_payload_is_a_per_account_failure_not_a_total_crash(handler, mo
     def fetch(bid, aid, key, **kw):
         if aid == "T6d8ppsYssBDFCwl1qEb0w":
             return []        # malformed: a JSON array, not the expected object
-        return _LIVE_PAYLOADS[aid]
+        return LIVE_PAYLOADS[aid]
 
     stub_bank(handler, monkeypatch, fetch)
 
-    resp = handler.lambda_handler(_REFRESH_EVENT, None)
+    resp = handler.lambda_handler(REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
     assert set(upserted(repo)) == {"up-spending", "anz-rewards-black-visa",
@@ -219,17 +204,17 @@ def _refresh_with_milestone_spy(handler, monkeypatch, repo, fetch, milestone_rai
         return 0
 
     monkeypatch.setattr(handler, "notify_homeloan_milestone", spy)
-    return handler.lambda_handler(_REFRESH_EVENT, None), calls
+    return handler.lambda_handler(REFRESH_EVENT, None), calls
 
 
 def _fetch_all(bid, aid, key, **kw):
-    return _LIVE_PAYLOADS[aid]
+    return LIVE_PAYLOADS[aid]
 
 
 def _fetch_all_but_homeloan(bid, aid, key, **kw):
     if aid == "T6d8ppsYssBDFCwl1qEb0w":
         return {"success": False}
-    return _LIVE_PAYLOADS[aid]
+    return LIVE_PAYLOADS[aid]
 
 
 def _repo_owing(amount):

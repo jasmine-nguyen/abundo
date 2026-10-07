@@ -12,25 +12,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from _balance_fakes import balance_repo, stub_bank
+from _balance_fakes import LIVE_PAYLOADS, REFRESH_EVENT, balance_repo, stub_bank
 from _milestone_fakes import FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, notify_repo, _row
 
-_REFRESH_EVENT = {"rawPath": "/accounts/balances/refresh",
-                  "requestContext": {"http": {"method": "POST"}}}
 _PUSH_TITLE = "\U0001f389 Milestone reached — Under 598k!"
-
-
-def _ok_payload(amount, account_type):
-    return {"success": True, "data": {"amount": amount, "date": "2026-10-06T00:00:00Z",
-                                      "currency": "AUD", "accountType": account_type}}
-
-
-_LIVE_PAYLOADS = {
-    "3zVQJ8Btz_IRmqp78VrQnQ": _ok_payload("96270.59", "checking"),                       # up-spending
-    "T6d8ppsYssBDFCwl1qEb0w": _ok_payload("-596642.43", "mortgage"),                     # up-homeloan
-    "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": _ok_payload("-6492.26", "unknown"),   # anz
-    "A3AC9195-9E8D-48B8-86D0-46D130D7F64A": _ok_payload("-230", "unknown"),              # westpac
-}
 
 
 def _homeloan_row(amount):
@@ -65,11 +50,11 @@ def test_refresh_celebrates_a_home_loan_milestone_crossing_once(
     monkeypatch.setattr(sys.modules["milestones"], "send_push",
                         lambda title, body, tokens, **kw: pushes.append(title)
                         or {"sent": len(tokens), "ok": len(tokens), "pruned": []})
-    stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: _LIVE_PAYLOADS[aid])
+    stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: LIVE_PAYLOADS[aid])
 
     assert 20_000 - 10_000 >= handler.REFRESH_THROTTLE_SECONDS
     for now in refresh_times:
         monkeypatch.setattr(handler, "time", SimpleNamespace(time=lambda now=now: now))
-        assert handler.lambda_handler(_REFRESH_EVENT, None)["statusCode"] == 200
+        assert handler.lambda_handler(REFRESH_EVENT, None)["statusCode"] == 200
 
     assert pushes == expected_pushes
