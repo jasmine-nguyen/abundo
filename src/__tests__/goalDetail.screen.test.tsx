@@ -60,7 +60,7 @@ describe('goal page', () => {
     expect(screen.getByText('50%')).toBeTruthy();
     expect(screen.getByText('$5,000 of $10,000')).toBeTruthy();
     expect(within(screen.getByTestId('goal-pace-ef 1')).getByText('On pace')).toBeTruthy();
-    expect(screen.getByText('$1,667 / payday')).toBeTruthy();
+    expect(screen.getByText('Set aside $1,667 each payday')).toBeTruthy();
     expect(screen.getByText('3 paydays left')).toBeTruthy();
 
     const first = within(screen.getByTestId('goal-milestone-c1'));

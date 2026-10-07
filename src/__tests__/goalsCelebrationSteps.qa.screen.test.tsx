@@ -80,6 +80,6 @@ describe('Goals celebration steps (WHIT-811 QA)', () => {
     server.seed('/milestones', [SECOND]); // "Second" is now first in the list
     seedCelebrationHub(server,[], {}, 490000);
     await refresh();
-    expect(await label()).toHaveTextContent(/^The mortgage · Second reached/);
+    expect(await label()).toHaveTextContent(/^Home loan · Second reached/);
   });
 });

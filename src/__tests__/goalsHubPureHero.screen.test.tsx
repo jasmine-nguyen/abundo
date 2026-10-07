@@ -1,11 +1,11 @@
 // WHIT-488 — the Goals-hub PLAIN mortgage card is now a PURE copy of the /mortgage hero tile:
 // an "YOUR HOME LOAN · BALANCE OWING" eyebrow + a big 48px balance (or a fallback line), with the
-// old header row (building chip + "The mortgage" title + chevron) and the "owing" suffix DROPPED.
+// old header row (building chip + title) and the "owing" suffix DROPPED. (WHIT-813 puts a chevron back beside the eyebrow.)
 // These are the adversarial GAPS the goalsHub / goalsHubOwing / Overpaid / Edges suites leave open:
 //  [H1] the eyebrow renders in the NO-balance plain state (not just the balance state);
 //  [H2] the eyebrow renders in the ERROR plain state;
-//  [H3] the plain card no longer renders the "The mortgage" header text (regression: a revert leaves it);
-//  [H4] the RICH card STILL renders "The mortgage" AND does NOT show the eyebrow (blob/eyebrow must not leak into rich);
+//  [H3] the plain card no longer renders the "Home loan" header text (regression: a revert leaves it);
+//  [H4] the RICH card STILL renders "Home loan" AND does NOT show the eyebrow (blob/eyebrow must not leak into rich);
 //  [H6] case-sensitivity contract: the uppercase eyebrow "…OWING" must NOT satisfy a lowercase /owing/
 //       absent-assertion (what Edges [A25] + goalsHub rich rely on), and vice-versa.
 // Same independent harness as the sibling goalsHub suites (passthrough header, injected
@@ -75,35 +75,35 @@ describe('WHIT-488 pure-hero plain mortgage card — eyebrow in every plain stat
 });
 
 describe('WHIT-488 pure-hero plain mortgage card — old header dropped', () => {
-  // [H3] the pure-hero decision drops the chip/title/chevron header. The strongest machine-visible
-  // signal is the "The mortgage" TITLE text: the plain card must NOT render it (the rich card owns
+  // [H3] the pure-hero decision drops the chip/title header. The strongest machine-visible
+  // signal is the "Home loan" TITLE text: the plain card must NOT render it (the rich card owns
   // that title). No sibling suite asserts its ABSENCE in the plain state — reverting to the WHIT-487
-  // header row (which re-adds "The mortgage" to the plain card) reddens this.
-  it('[H3] the plain balance card does NOT render the "The mortgage" title', async () => {
+  // header row (which re-adds "Home loan" to the plain card) reddens this.
+  it('[H3] the plain balance card does NOT render the "Home loan" title', async () => {
     await renderWithQueries(<Goals />); // default = plain, balance present
     const card = within(screen.getByTestId('mortgage-link'));
     expect(card.getByTestId('mortgage-owing')).toBeTruthy(); // confirm we're on the plain branch
-    expect(card.queryByText('The mortgage')).toBeNull();
+    expect(card.queryByText('Home loan')).toBeNull();
   });
 
-  it('[H3b] the plain NO-balance card also does NOT render the "The mortgage" title', async () => {
+  it('[H3b] the plain NO-balance card also does NOT render the "Home loan" title', async () => {
     seedHub({ homeLoan: { balance: null, asOf: null } });
     await renderWithQueries(<Goals />);
-    expect(within(screen.getByTestId('mortgage-link')).queryByText('The mortgage')).toBeNull();
+    expect(within(screen.getByTestId('mortgage-link')).queryByText('Home loan')).toBeNull();
   });
 });
 
 describe('WHIT-488 rich card untouched — keeps its header, no eyebrow leak', () => {
-  // [H4] the RICH branch is meant to be untouched: it KEEPS the "The mortgage" header title, and the
+  // [H4] the RICH branch is meant to be untouched: it KEEPS the "Home loan" header title, and the
   // plain-card eyebrow/blob must NOT leak into it. No existing rich test asserts either the header's
   // presence or the eyebrow's absence — a refactor that dropped the rich header, or that hoisted the
   // eyebrow above the branch (so it shows on BOTH), would pass every current test but reddens here.
-  it('[H4] the rich card keeps "The mortgage" and shows neither the eyebrow nor the plain testID', async () => {
+  it('[H4] the rich card keeps "Home loan" and shows neither the eyebrow nor the plain testID', async () => {
     seedHub({ loanFacts: READY_FACTS });
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('mortgage-link'));
     expect(card.getByText('PAID DOWN SO FAR')).toBeTruthy(); // on the rich branch
-    expect(card.getByText('The mortgage')).toBeTruthy();      // rich header retained
+    expect(card.getByText('Home loan')).toBeTruthy();      // rich header retained
     expect(card.queryByText(EYEBROW)).toBeNull();             // plain eyebrow must not leak
     expect(card.queryByTestId('mortgage-owing')).toBeNull();  // plain headline must not leak
   });

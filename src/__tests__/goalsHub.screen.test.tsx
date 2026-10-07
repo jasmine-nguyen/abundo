@@ -82,7 +82,7 @@ describe('goal cards (real balanceGoalView)', () => {
     expect(screen.getByText('Saving toward $10,000 · by Aug 2026')).toBeTruthy();
     const card = within(screen.getByTestId('goal-card-g1'));
     expect(card.getByText('40%')).toBeTruthy();
-    expect(card.getByText('$2,000 / payday')).toBeTruthy();
+    expect(card.getByText('Set aside $2,000 each payday')).toBeTruthy();
     expect(card.getByText('3 paydays left')).toBeTruthy();
   });
 
@@ -91,7 +91,7 @@ describe('goal cards (real balanceGoalView)', () => {
     const card = within(screen.getByTestId('goal-card-g2'));
     expect(screen.getByText('Paying down $0 · by Aug 2026')).toBeTruthy();
     expect(card.getByText('40%')).toBeTruthy();
-    expect(card.getByText('$4,000 / payday')).toBeTruthy();
+    expect(card.getByText('Set aside $4,000 each payday')).toBeTruthy();
   });
 
   it('a synced goal with no live balance yet shows no % and a waiting label, not a crash', async () => {
@@ -111,14 +111,14 @@ describe('goal cards (real balanceGoalView)', () => {
     expect(within(screen.getByTestId('goal-card-g9')).getByText('25%')).toBeTruthy(); // 2,500 of 10,000
   });
 
-  // WHIT-478: the "N of M reached" checkpoint line.
-  it('shows "N of M reached" for a goal with checkpoints (grow, balance 4000)', async () => {
+  // WHIT-478 / WHIT-813: the checkpoint line names the next unreached step.
+  it('shows "Next: <label>" for a goal with checkpoints (grow, balance 4000)', async () => {
     // GROW balance 4000; rungs 2000/4000/6000/8000 → 2000 and 4000 reached.
     const withLadder = { ...GROW, checkpoints: [{ id: 'a', label: 'A', amount: 2000 }, { id: 'b', label: 'B', amount: 4000 }, { id: 'c', label: 'C', amount: 6000 }, { id: 'd', label: 'D', amount: 8000 }] };
     seedHub({ goals: [withLadder] });
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('goal-card-g1'));
-    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('2 of 4 milestones reached');
+    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('Next: C');
   });
 
   it('a goal with no checkpoints renders NO checkpoint line (unchanged from today)', async () => {
@@ -126,7 +126,7 @@ describe('goal cards (real balanceGoalView)', () => {
     expect(screen.queryByTestId('goal-checkpoints-g1')).toBeNull();
     expect(screen.queryByTestId('goal-checkpoints-g2')).toBeNull();
     // and the existing card content is untouched
-    expect(within(screen.getByTestId('goal-card-g1')).getByText('$2,000 / payday')).toBeTruthy();
+    expect(within(screen.getByTestId('goal-card-g1')).getByText('Set aside $2,000 each payday')).toBeTruthy();
   });
 
   it('hides the checkpoint line for a synced goal whose balance is not polled yet', async () => {
@@ -139,26 +139,26 @@ describe('goal cards (real balanceGoalView)', () => {
   });
 
   // WHIT-478 QA gaps: the "0 of N" and "N of N" ends, and coexistence with the Update-balance row.
-  it('shows "0 of N reached" when the balance has passed no rungs yet', async () => {
+  it('shows the first rung as next when the balance has passed no rungs yet', async () => {
     const g = { ...GROW, checkpoints: [{ id: 'a', label: 'A', amount: 5000 }, { id: 'b', label: 'B', amount: 8000 }] };
     seedHub({ goals: [g] }); // balance 4000, both rungs above → 0 reached
     await renderWithQueries(<Goals />);
-    expect(within(screen.getByTestId('goal-card-g1')).getByTestId('goal-checkpoints-g1')).toHaveTextContent('0 of 2 milestones reached');
+    expect(within(screen.getByTestId('goal-card-g1')).getByTestId('goal-checkpoints-g1')).toHaveTextContent('Next: A');
   });
 
-  it('shows "N of N reached" when every rung is passed', async () => {
+  it('shows "All milestones reached" when every rung is passed', async () => {
     const g = { ...GROW, checkpoints: [{ id: 'a', label: 'A', amount: 2000 }, { id: 'b', label: 'B', amount: 3000 }] };
-    seedHub({ goals: [g] }); // balance 4000, both below → 2 of 2
+    seedHub({ goals: [g] }); // balance 4000, both below → all reached
     await renderWithQueries(<Goals />);
-    expect(within(screen.getByTestId('goal-card-g1')).getByTestId('goal-checkpoints-g1')).toHaveTextContent('2 of 2 milestones reached');
+    expect(within(screen.getByTestId('goal-card-g1')).getByTestId('goal-checkpoints-g1')).toHaveTextContent('All milestones reached');
   });
 
-  it('a manual paydown shows the reached-count AND keeps the "Update balance" row', async () => {
+  it('a manual paydown shows the next milestone AND keeps the "Update balance" row', async () => {
     const g = { ...PAYDOWN, checkpoints: [{ id: 'a', label: 'A', amount: 15000 }, { id: 'b', label: 'B', amount: 10000 }] };
-    seedHub({ goals: [g] }); // owed 12000 → ≤15000 reached, ≤10000 not → 1 of 2
+    seedHub({ goals: [g] }); // owed 12000 → ≤15000 reached, ≤10000 not → next is B
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('goal-card-g2'));
-    expect(card.getByTestId('goal-checkpoints-g2')).toHaveTextContent('1 of 2 milestones reached');
+    expect(card.getByTestId('goal-checkpoints-g2')).toHaveTextContent('Next: B');
     expect(card.getByTestId('goal-balance-g2')).toBeTruthy();
     expect(card.getByText('Update balance')).toBeTruthy();
   });
@@ -171,7 +171,7 @@ describe('goal cards (real balanceGoalView)', () => {
     const card = within(screen.getByTestId('goal-card-g1'));
     expect(card.getAllByTestId('bar-dot-reached')).toHaveLength(2);       // filled dots
     expect(card.getAllByTestId('bar-dot')).toHaveLength(2);               // hollow dots
-    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('2 of 4 milestones reached'); // agrees
+    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('Next: C'); // agrees
   });
 
   it('renders no dots for a goal with no checkpoints', async () => {
@@ -509,7 +509,7 @@ describe('goal cards — checkpoint dots, QA gaps (WHIT-486)', () => {
     const card = within(screen.getByTestId('goal-card-g1'));
     expect(card.getAllByTestId('bar-dot-reached')).toHaveLength(1);
     expect(card.getAllByTestId('bar-dot')).toHaveLength(2);
-    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('1 of 3 milestones reached');
+    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('Next: b');
   });
 
   it('[A-gap5] headline % stays ROUNDED after the raw-fill change (bar is raw, the number is not)', async () => {
@@ -532,7 +532,7 @@ describe('goal cards — checkpoint dots, QA gaps (WHIT-486)', () => {
     const card = within(screen.getByTestId('goal-card-g1'));
     expect(card.getAllByTestId('bar-dot')).toHaveLength(1);
     expect(card.queryAllByTestId('bar-dot-reached')).toHaveLength(0);
-    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('0 of 1 milestone reached');
+    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('Next: a');
   });
 
   it('[A-gap7] degenerate goal (target==baseline → no bar scale) with a ladder: no dots AND no count', async () => {

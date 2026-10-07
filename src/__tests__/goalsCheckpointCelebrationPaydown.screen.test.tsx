@@ -84,7 +84,7 @@ describe('checkpoint celebration for a paydown goal + array-identity churn (WHIT
     // [A-P2] a paydown balance going the WRONG way (owed increases, reached drops) must be silent.
     await renderWithQueries(<Goals />);                  // owe 6000 → reached 1
     await moveOwed(9000);                                 // owe more: now above the 8000 rung → reached 0
-    expect(within(screen.getByTestId('goal-card-d1')).getByText('$818 / payday')).toBeTruthy(); // 9,000 over 11 paydays
+    expect(within(screen.getByTestId('goal-card-d1')).getByText('Set aside $818 each payday')).toBeTruthy(); // 9,000 over 11 paydays
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
   });
 
@@ -96,7 +96,7 @@ describe('checkpoint celebration for a paydown goal + array-identity churn (WHIT
     await renderWithQueries(<Goals />);                  // owe 6000 → reached 1, seeded
     await moveOwed(6000, { 'up-saver': 1500 });           // new balances list, identical owed amount
     expect(server.sent('GET', '/accounts/balances')).toHaveLength(2);
-    expect(within(screen.getByTestId('goal-card-d1')).getByText('$545 / payday')).toBeTruthy(); // 6,000 over 11 paydays
+    expect(within(screen.getByTestId('goal-card-d1')).getByText('Set aside $545 each payday')).toBeTruthy(); // 6,000 over 11 paydays
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
   });
 });

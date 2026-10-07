@@ -103,12 +103,12 @@ describe('goal page progress', () => {
     expect(screen.queryByTestId('goal-pastdue-card')).toBeNull();
   });
 
-  // [A6] date ahead but before the next payday (Jul 18): calm "to go" wording, no "/ payday".
+  // [A6] date ahead but before the next payday (Jul 18): calm "to go" wording, no "each payday".
   it('a date before the next payday reads "$X to go · before your next payday"', async () => {
     await openPage([{ ...CARD, target_date: '2026-07-15' }], 'card');
     expect(screen.getByText('$9,000 to go')).toBeTruthy();
     expect(screen.getByText('before your next payday')).toBeTruthy();
-    expect(screen.queryByText(/\/ payday/)).toBeNull();
+    expect(screen.queryByText(/each payday/)).toBeNull();
     expect(screen.queryByTestId('goal-pastdue-card')).toBeNull();
   });
 });

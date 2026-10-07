@@ -35,7 +35,7 @@ export default function Mortgage() {
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-      <Header title="The mortgage" />
+      <Header title="Home loan" />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }} showsVerticalScrollIndicator={false}>
         {/* hero — real payoff progress once loan facts are set, else a set-up prompt
             that still shows the one thing we genuinely know: the live balance. */}

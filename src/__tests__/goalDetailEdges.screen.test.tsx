@@ -67,7 +67,7 @@ describe('goal page edges', () => {
     setParams({ id: 'late' });
     await renderWithQueries(<GoalDetail />);
     expect(screen.getByText('Past your date — pick a new one?')).toBeTruthy();
-    expect(screen.queryByText(/\/ payday/)).toBeNull();
+    expect(screen.queryByText(/each payday/)).toBeNull();
     fireEvent.press(screen.getByTestId('goal-pastdue-late'));
     expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit?id=late');
   });
