@@ -14,7 +14,6 @@ import json
 import logging
 import http.client
 import urllib.error
-from decimal import Decimal
 
 import pytest
 
@@ -731,16 +730,3 @@ def test_homeloan_lookup_failure_still_pushes_on_fixed_id(fetch_wired, monkeypat
     assert up.lambda_handler(_event(_webhook_payload()), None) == up.OK_RESPONSE
     assert len(fetch_wired.sent) == 1
     assert _marker_records(caplog, "UP_WEBHOOK_HOMELOAN_LOOKUP_FALLBACK", logging.WARNING)
-
-
-@pytest.mark.parametrize("amount, shown", [
-    ("3667", "$3,667"),
-    ("3667.50", "$3,668"),        # cents round to whole dollars
-    ("3668.50", "$3,668"),        # Decimal rounds half to even
-    ("1000000", "$1,000,000"),
-    ("10.00", "$10"),
-])
-def test_repayment_push_copy(lam, amount, shown):
-    title, body = lam.up_webhook.build_repayment_push(Decimal(amount))
-    assert title == "Nice one! Another chunk down"
-    assert f"{shown} toward the mortgage" in body

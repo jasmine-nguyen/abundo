@@ -163,12 +163,8 @@ def _is_budget_spread_path(path: str) -> bool:
     return path.startswith(f"{BUDGET_PATH}/") and path.endswith("/spread") and path.count("/") == 3
 
 
-def _under(prefix: str):
-    return lambda path: path.startswith(f"{prefix}/")
-
-
-def _under_with_transactions(prefix: str):
-    return lambda path: path.startswith(f"{prefix}/") and path.endswith("/transactions")
+def _under(prefix: str, suffix: str = ""):
+    return lambda path: path.startswith(f"{prefix}/") and path.endswith(suffix)
 
 
 def _breakdown_route(event):
@@ -214,7 +210,7 @@ _EXACT_ROUTES = {
     ("POST", UNCATEGORIZED_APPLY_RULES_JOBS_PATH): lambda event: start_apply_rules_job(
         event, CategoryRepository(), RuleRepository(), JobRepository()),
     ("GET", CATEGORY_PATH): lambda event: _json_response(
-        200, list_categories(CategoryRepository())),
+        200, CategoryRepository().list_categories()),
     ("POST", CATEGORY_PATH): lambda event: create_category(
         event, CategoryRepository(), BudgetRepository()),
     # Window is derived server-side from the stored pay cycle; a stale client's ?days= is
@@ -267,14 +263,14 @@ _PREFIX_ROUTES = [
     ("DELETE", _under(TRANSACTION_PATH), lambda event: delete_transaction(
         event, TransactionRepository())),
     # The transactions behind one /breakdown row, so the drill-in reconciles with Insights.
-    ("GET", _under_with_transactions(CATEGORY_PATH), lambda event: get_category_transactions(
+    ("GET", _under(CATEGORY_PATH, "/transactions"), lambda event: get_category_transactions(
         event, TransactionRepository(), PayCycleRepository(), CategoryRepository())),
     ("PATCH", _under(CATEGORY_PATH), lambda event: update_category(
         event, CategoryRepository(), BudgetRepository())),
     ("DELETE", _under(CATEGORY_PATH), lambda event: delete_category(
         event, CategoryRepository(), BudgetRepository())),
     # The transactions behind one budget's total, so the detail list reconciles with the header.
-    ("GET", _under_with_transactions(BUDGET_PATH), lambda event: get_budget_transactions(
+    ("GET", _under(BUDGET_PATH, "/transactions"), lambda event: get_budget_transactions(
         event, TransactionRepository(), PayCycleRepository(), CategoryRepository())),
     # A bill spread on one budget (WHIT-504). MUST sit above the budget item PUT/DELETE,
     # which would otherwise swallow "/budgets/{id}/spread" as a target write.
@@ -781,10 +777,6 @@ def _parse_parent(raw):
     if not isinstance(raw, str) or not raw.strip():
         return None, _json_response(400, {"error": "invalid parent"})
     return raw.strip(), None
-
-
-def list_categories(repo: CategoryRepository) -> list[dict]:
-    return repo.list_categories()
 
 
 def create_category(
@@ -1894,11 +1886,9 @@ def start_apply_rules_job(
         if clash is not None:
             return _rule_clash_response(clash)
 
-    payload: dict = {}
-    if inline_rule is not None:
-        payload["rule"] = inline_rule
     return _start_job(
-        job_repo, "apply_rules", "APPLY_RULES_WORKER_FUNCTION", payload, "could not start the job")
+        job_repo, "apply_rules", "APPLY_RULES_WORKER_FUNCTION",
+        {"rule": inline_rule} if inline_rule is not None else {}, "could not start the job")
 
 
 def get_apply_rules_job(event: dict, job_repo: JobRepository) -> dict:
@@ -3044,12 +3034,9 @@ def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
     # cleared); when present it must be a finite number > 0 within the dollar ceiling.
     deposit_target = body.get("depositTarget")
     if deposit_target is not None:
-        if not _finite_number(deposit_target, low=-math.inf):
-            return _json_response(400, {"error": "depositTarget must be a number"})
-        if deposit_target <= 0:
-            return _json_response(400, {"error": "depositTarget must be > 0"})
-        if deposit_target > LOANFACTS_FIELD_MAX:
-            return _json_response(400, {"error": "depositTarget too large"})
+        if not _finite_number(deposit_target, high=LOANFACTS_FIELD_MAX) or deposit_target == 0:
+            return _json_response(
+                400, {"error": f"depositTarget must be a number above 0 and up to {LOANFACTS_FIELD_MAX}"})
 
     saved = repo.set_loanfacts(
         **{k: Decimal(str(v)) for k, v in values.items()},
@@ -3224,12 +3211,8 @@ def set_budget(
         return error
 
     target = body.get("target")
-    if not _finite_number(target, low=-math.inf):
-        return _json_response(400, {"error": "target must be a number"})
-    if target < 0:
-        return _json_response(400, {"error": "target must be >= 0"})
-    if target > _BUDGET_TARGET_MAX:
-        return _json_response(400, {"error": "target too large"})
+    if not _finite_number(target, high=_BUDGET_TARGET_MAX):
+        return _json_response(400, {"error": f"target must be a number between 0 and {_BUDGET_TARGET_MAX}"})
 
     rollover = body.get("rollover")
     if rollover is not None and not isinstance(rollover, bool):

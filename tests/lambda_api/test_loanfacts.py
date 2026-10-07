@@ -234,19 +234,19 @@ def test_set_loanfacts_accepts_deposit_target_at_the_ceiling(handler):
 
 
 @pytest.mark.parametrize(
-    "bad, needle",
+    "bad",
     [
-        (True, "number"),          # bool is rejected before the numeric check
-        (0, "> 0"),                # zero is not a real target
-        (-100, "> 0"),             # negative
-        (CEILING + 1, "too large"),
+        True,          # bool is rejected before the numeric check
+        0,             # zero is not a real target
+        -100,          # negative
+        CEILING + 1,
     ],
 )
-def test_set_loanfacts_rejects_a_bad_deposit_target(handler, bad, needle):
+def test_set_loanfacts_rejects_a_bad_deposit_target(handler, bad):
     repo = FakeLoanFactsRepo_edges()
     resp = handler.set_loanfacts(_put_event({**VALID, "depositTarget": bad}), repo)
     assert resp["statusCode"] == 400
-    assert needle in json.loads(resp["body"])["error"]
+    assert "depositTarget must be a number" in json.loads(resp["body"])["error"]
     assert repo.set_calls == []   # nothing persisted on a rejected write
 
 
@@ -258,7 +258,8 @@ def test_set_loanfacts_rejects_non_finite_deposit_target(handler):
     repo = FakeLoanFactsRepo_edges()
     resp = handler.set_loanfacts(_put_event(body), repo)
     assert resp["statusCode"] == 400
-    assert json.loads(resp["body"])["error"] == "depositTarget must be a number"
+    assert json.loads(resp["body"])["error"] == (
+        f"depositTarget must be a number above 0 and up to {CEILING}")
     assert repo.set_calls == []
 
 

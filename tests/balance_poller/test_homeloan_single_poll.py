@@ -12,35 +12,17 @@ from decimal import Decimal
 
 import pytest
 
-from _balance_fakes import balance_repo, upserted
+from _balance_fakes import HOMELOAN_AID, LIVE_PAYLOADS, balance_repo, homeloan_row, upserted
 from _http_fakes import FakeResponse, http_error
 from _milestone_fakes import FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, notify_repo, _row
 from _transaction_range_fakes import _QueuedTransactionRepo
 
-_HOMELOAN_AID = "T6d8ppsYssBDFCwl1qEb0w"
 _HEARTBEAT = "BALANCE_POLL_ALL_STORED"
 _DROP_ALARM = "UP_WEBHOOK_REPAYMENT_MISSED mortgage balance dropped"
 
-
-def _payload(amount, account_type):
-    return {"success": True, "data": {
-        "date": "2026-10-06T00:00:00.000Z", "amount": amount, "availableBalance": 0,
-        "currency": "AUD", "accountType": account_type,
-    }}
-
-
-_PAYLOADS_BY_AID = {
-    "3zVQJ8Btz_IRmqp78VrQnQ": _payload(96270.59, "checking"),                        # up-spending
-    _HOMELOAN_AID: _payload(-596642.43, "mortgage"),                                 # up-homeloan
-    "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": _payload(-6492.26, "unknown"),    # anz
-    "A3AC9195-9E8D-48B8-86D0-46D130D7F64A": _payload(-230, "unknown"),               # westpac
-}
-
 # Last poll stored the home loan at -600000 (owed 600,000). Today's reading owes 596,642.43:
 # a 3,357.57 drop (over the 3,000 alarm threshold) that crosses the 598,000 milestone.
-_PRIOR_HOMELOAN = {"account_id": "up-homeloan", "amount": Decimal("-600000"),
-                   "available_balance": Decimal("0"), "currency": "AUD",
-                   "as_of": "2026-10-05T00:00:00.000Z", "account_type": "mortgage"}
+_PRIOR_HOMELOAN = homeloan_row("-600000", as_of="2026-10-05T00:00:00.000Z")
 
 
 @pytest.fixture
@@ -68,11 +50,11 @@ def poll(handler, monkeypatch, caplog):
 
     def run(failing_aids=()):
         def urlopen(req, timeout=None):
-            aid = next(a for a in _PAYLOADS_BY_AID if a in req.full_url)
+            aid = next(a for a in LIVE_PAYLOADS if a in req.full_url)
             fetched.append(aid)
             if aid in failing_aids:
                 raise http_error(503)
-            return FakeResponse(_PAYLOADS_BY_AID[aid])
+            return FakeResponse(LIVE_PAYLOADS[aid])
 
         monkeypatch.setattr(handler.urllib.request, "urlopen", urlopen)
         result = handler.lambda_handler({}, None)
@@ -108,7 +90,7 @@ def test_poll_fetches_the_home_loan_once_and_runs_its_checks_on_the_owed_amount(
 
 
 def test_a_failed_home_loan_fetch_skips_its_balance_checks_but_not_the_precise_miss_check(handler, poll):
-    outcome = poll(failing_aids={_HOMELOAN_AID})
+    outcome = poll(failing_aids={HOMELOAN_AID})
 
     assert sorted(outcome["fetched"]) == sorted(source["aid"] for source in handler.BALANCE_SOURCES)
     assert "up-homeloan" not in outcome["stored"]

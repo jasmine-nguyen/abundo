@@ -108,7 +108,7 @@ def test_reconcile_does_not_spend_the_cap_on_charges_already_on_target(
     assert plan["matched"] == []
 
     book.sweep(repo, transactions, plan, run_reconcile=True,
-               limit=rule_book.WriteLimit(max_writes=1, time_budget=60, started=time.monotonic(), clock=time.monotonic))
+               limit=rule_book.WriteLimit(max_writes=1, time_budget=60, started=time.monotonic()))
 
     assert "filed_by_rule" not in repo._table.store[orphan]
     assert "category" not in repo._table.store[orphan]
@@ -124,7 +124,7 @@ def test_refile_touched_only_touches_the_old_rules_own_charges(rule_book, rule_r
                          date="2026-08-01")
     theirs = _store_charge(repo, "t2", "UBER", category="transport", filed_by_rule=kept["id"],
                            date="2026-09-05")
-    one_write = rule_book.WriteLimit(max_writes=1, time_budget=60, started=time.monotonic(), clock=time.monotonic)
+    one_write = rule_book.WriteLimit(max_writes=1, time_budget=60, started=time.monotonic())
 
     remaining = rule_book.RuleBook.refile_touched(deleted["id"], None, repo, one_write)
 
