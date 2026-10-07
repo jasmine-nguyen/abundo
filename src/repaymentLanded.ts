@@ -29,13 +29,7 @@ export function isRepaymentNew(seen: string | null, repayment: Repayment, today:
   return wholeDaysBetween(isoToUtcDayMs(repayment.date!), dateToUtcDayMs(today)) <= FIRST_SEEN_WINDOW_DAYS;
 }
 
-export interface RepaymentLandedView {
-  headline: string;
-  detail: string | null;
-  milestoneLine: string | null;
-}
-
-export function repaymentLandedView(repayment: Repayment, m: MilestoneView): RepaymentLandedView {
+export function repaymentLandedView(repayment: Repayment, m: MilestoneView) {
   const amount = repayment.amount ?? 0;
   const split = repayment.principal != null && repayment.interest != null;
   const headline = repayment.principal != null

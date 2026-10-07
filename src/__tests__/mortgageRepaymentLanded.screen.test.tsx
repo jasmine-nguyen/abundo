@@ -14,7 +14,7 @@ import { seedGoal } from './support/goalsScreen';
 import { resetRouter } from './support/routerMock';
 import { pinToday } from './support/clock';
 import { SAVED_MILESTONES } from './support/milestonePlan';
-import { savedRepaymentNote, repaymentSeenEarlier } from './support/repaymentNote';
+import { savedRepaymentNote, repaymentSeenEarlier } from './support/celebrationSnapshot';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());

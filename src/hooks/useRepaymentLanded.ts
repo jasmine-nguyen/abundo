@@ -10,19 +10,15 @@ import { useSavedNote } from './useSavedNote';
 
 export function useRepaymentLanded(repayment: Repayment, ready: boolean) {
   const { loaded, note, save } = useSavedNote(REPAYMENT_SEEN_KEY);
-  const [justLanded, setJustLanded] = useState(false);
   const [celebrationKey, setCelebrationKey] = useState(0);
 
   useEffect(() => {
     if (!loaded || !ready) return;
     const saved = note.current;
     if (!shouldSaveRepaymentNote(saved, repayment)) return;
-    if (isRepaymentNew(saved, repayment, new Date())) {
-      setJustLanded(true);
-      setCelebrationKey((k) => k + 1);
-    }
+    if (isRepaymentNew(saved, repayment, new Date())) setCelebrationKey((k) => k + 1);
     save(repaymentNote(repayment)!);
   }, [repayment, loaded, ready]);
 
-  return { justLanded, celebrationKey };
+  return { justLanded: celebrationKey > 0, celebrationKey };
 }
