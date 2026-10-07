@@ -7,7 +7,7 @@ import { balanceGoalView, goalView, milestoneView, useAppContext } from '../../s
 import { useGoalsScreenData } from '../../src/queries';
 import { useCheckpointCelebration } from '../../src/hooks/useCheckpointCelebration';
 import { GoalSteps, stepKey } from '../../src/checkpointCelebration';
-import { sortCheckpointsForDirection } from '../../src/checkpoints';
+import { checkpointProgress } from '../../src/checkpoints';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/components/ui';
 import { SettingsButton } from '../../src/components/SettingsButton';
@@ -59,15 +59,13 @@ export default function Goals() {
   const celebrationGoals = useMemo((): GoalSteps[] => {
     const goalSteps = goalViews.map(({ goal, view }): GoalSteps => {
       if (view.targetReached === null) return { id: goal.id, steps: null };
-      const checkpoints = goal.checkpoints ?? [];
-      const checkpointSteps = sortCheckpointsForDirection(checkpoints, goal.direction).map((cp) => {
-        const i = checkpoints.indexOf(cp);
-        return {
+      const checkpointSteps = checkpointProgress(goal.checkpoints ?? [], goal.direction, view).rows.map(
+        ({ checkpoint: cp, reached }) => ({
           key: stepKey(cp.id, cp.amount),
-          reached: view.checkpointReached?.[i] ?? false,
+          reached: reached ?? false,
           label: `${goal.name} · ${cp.label} reached`,
-        };
-      });
+        }),
+      );
       const targetStep = {
         key: stepKey('target', goal.target_amount),
         reached: view.targetReached,
