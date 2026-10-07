@@ -8,6 +8,7 @@ Resolved by pytest.ini's `pythonpath = tests/shared`. The shared layer is import
 """
 
 from decimal import Decimal
+from types import SimpleNamespace
 
 from _dynamo_fakes import FakeTable
 from _milestone_fakes import FakeDeviceRepo, FakeGoalsRepo, FakeLoanFactsRepo, FakeMilestoneRepo
@@ -112,6 +113,11 @@ def stub_bank(handler, monkeypatch, fetch):
     monkeypatch.setattr(handler, "get_api_key", lambda: "test-key")
     monkeypatch.setattr(handler, "fetch_balance", fetch)
     monkeypatch.setattr(handler, "GoalsRepository", lambda: FakeGoalsRepo())
+
+
+def freeze_time(handler, monkeypatch, now):
+    """Pin the handler's clock (time.time()) at epoch ``now``."""
+    monkeypatch.setattr(handler, "time", SimpleNamespace(time=lambda: now))
 
 
 def stub_refresh_side_effects(handler, monkeypatch, *, accounts, goals, notify, pushes):

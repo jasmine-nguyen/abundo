@@ -8,11 +8,12 @@ the JSON shaping (signed Decimal amounts -> JSON numbers, null kept).
 
 import json
 from decimal import Decimal
-from types import SimpleNamespace
 
 import pytest
 
-from _balance_fakes import LIVE_PAYLOADS, REFRESH_EVENT, balance_repo, marker_writes, stub_bank, upserted
+from _balance_fakes import (
+    LIVE_PAYLOADS, REFRESH_EVENT, balance_repo, fetch_all, freeze_time, marker_writes, stub_bank, upserted,
+)
 
 
 class FakeAccountBalanceRepo:
@@ -90,16 +91,12 @@ def test_route_empty_list_before_any_poll(handler, monkeypatch):
 # --- POST /accounts/balances/refresh (on-demand live refresh) ----------------
 
 
-def _freeze_time(handler, monkeypatch, now):
-    monkeypatch.setattr(handler, "time", SimpleNamespace(time=lambda: now))
-
-
 def test_refresh_throttled_returns_stored_without_bank_call(handler, monkeypatch):
     rows = [{"account_id": "up-spending", "amount": Decimal("96270.59"),
              "available_balance": None, "currency": "AUD", "as_of": "d", "account_type": "checking"}]
     repo = balance_repo(rows=rows, last=970)  # 30s ago at now=1000 -> within the 60s window
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
-    _freeze_time(handler, monkeypatch, 1000)
+    freeze_time(handler, monkeypatch, 1000)
     calls = []
     stub_bank(handler, monkeypatch, lambda *a, **k: calls.append(1))
 
@@ -120,8 +117,8 @@ def test_refresh_live_fetches_upserts_and_arms_marker(handler, monkeypatch):
              "account_type": "checking"}]
     repo = balance_repo(rows=rows, last=None)  # never refreshed -> live
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
-    _freeze_time(handler, monkeypatch, 1000)
-    stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: LIVE_PAYLOADS[aid])
+    freeze_time(handler, monkeypatch, 1000)
+    stub_bank(handler, monkeypatch, fetch_all)
 
     resp = handler.lambda_handler(REFRESH_EVENT, None)
 
@@ -139,7 +136,7 @@ def test_refresh_live_fetches_upserts_and_arms_marker(handler, monkeypatch):
 def test_refresh_partial_failure_upserts_successes_and_returns_200(handler, monkeypatch):
     repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
-    _freeze_time(handler, monkeypatch, 1000)
+    freeze_time(handler, monkeypatch, 1000)
 
     def fetch(bid, aid, key, **kw):
         if aid == "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0":  # anz account down
@@ -159,7 +156,7 @@ def test_refresh_partial_failure_upserts_successes_and_returns_200(handler, monk
 def test_refresh_all_failed_returns_502_without_leaking_details(handler, monkeypatch):
     repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
-    _freeze_time(handler, monkeypatch, 1000)
+    freeze_time(handler, monkeypatch, 1000)
     stub_bank(handler, monkeypatch, lambda *a, **k: (_ for _ in ()).throw(OSError("secret-key leaked?")))
 
     resp = handler.lambda_handler(REFRESH_EVENT, None)
@@ -175,7 +172,7 @@ def test_refresh_normalise_failure_counts_as_a_failed_account(handler, monkeypat
     # but the other accounts still refresh -> 200.
     repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
-    _freeze_time(handler, monkeypatch, 1000)
+    freeze_time(handler, monkeypatch, 1000)
 
     def fetch(bid, aid, key, **kw):
         if aid == "T6d8ppsYssBDFCwl1qEb0w":  # homeloan reports a failure payload
@@ -195,7 +192,7 @@ def test_refresh_accepts_post_with_no_body(handler, monkeypatch):
     # The route takes no request body — a bodyless POST must not 400.
     repo = balance_repo(rows=[], last=990)  # throttled path, keeps it bank-free
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
-    _freeze_time(handler, monkeypatch, 1000)
+    freeze_time(handler, monkeypatch, 1000)
     stub_bank(handler, monkeypatch, lambda *a, **k: pytest.fail("should not fetch while throttled"))
 
     resp = handler.lambda_handler(REFRESH_EVENT, None)  # no "body" key at all
