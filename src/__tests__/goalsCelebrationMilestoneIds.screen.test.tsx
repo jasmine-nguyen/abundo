@@ -16,10 +16,9 @@ import { refreshInAct, renderWithQueries, useTestQueryClient } from './support/r
 import { resetAuth } from './support/authMock';
 import { resetRouter } from './support/routerMock';
 import { pinToday } from './support/clock';
-import { seedGoalsHub } from './support/goalsScreen';
-import { EMPTY_LOAN_FACTS } from './factory';
+import { seedCelebrationHub } from './support/goalsScreen';
+import { savedCelebrationSnapshot, savedFromEarlierLaunch } from './support/celebrationSnapshot';
 import { queryClient } from '../queryClient';
-import { CHECKPOINT_SNAPSHOT_KEY } from '../checkpointCelebration';
 import type { GoalRecord } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
@@ -34,7 +33,6 @@ jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
 import Goals from '../../app/(tabs)/goals';
 
-const PAY_CYCLE = { length: 14, last_pay_date: '2026-06-06' };
 const FLIGHTS = { id: 'a', label: 'Flights booked', amount: 2000 };
 const HOTEL = { id: 'b', label: 'Hotel paid', amount: 5000 };
 const HOLIDAY: GoalRecord = {
@@ -50,12 +48,8 @@ const BIKE: GoalRecord = {
 const server = installFakeServer();
 useTestQueryClient();
 
-function seedHub(goals: GoalRecord[], balances: Record<string, number>, homeLoanBalance: number | null = null) {
-  seedGoalsHub(server, {
-    goals, payCycle: PAY_CYCLE, balances,
-    loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: homeLoanBalance, asOf: '2026-07-04T00:00:00Z' },
-  });
-}
+const seedHub = (goals: GoalRecord[], balances: Record<string, number>, homeLoanBalance: number | null = null) =>
+  seedCelebrationHub(server, goals, balances, homeLoanBalance);
 
 const refresh = () => refreshInAct(() => queryClient.invalidateQueries());
 const banner = () => screen.queryByTestId('checkpoint-celebration');
@@ -115,13 +109,13 @@ describe('Goals celebrations remember which milestones were reached (WHIT-811)',
   }, 10000);
 
   it('an old count-style saved copy switches over silently (all currently reached counts as seen)', async () => {
-    await AsyncStorage.setItem(CHECKPOINT_SNAPSHOT_KEY, JSON.stringify({ g1: 1 }));
+    await savedFromEarlierLaunch({ g1: 1 });
     seedHub([HOLIDAY], { 'up-spending': 6000 }); // both milestones reached now
     await renderWithQueries(<Goals />);
     await refresh();
 
     expect(banner()).toBeNull();
-    const saved = JSON.parse((await AsyncStorage.getItem(CHECKPOINT_SNAPSHOT_KEY)) ?? 'null');
+    const saved = await savedCelebrationSnapshot();
     expect(typeof saved.g1).toBe('object');
   });
 });

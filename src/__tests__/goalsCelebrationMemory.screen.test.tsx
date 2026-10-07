@@ -12,9 +12,8 @@ import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
-import { seedGoalsHub } from './support/goalsScreen';
-import { EMPTY_LOAN_FACTS } from './factory';
-import { CHECKPOINT_SNAPSHOT_KEY, StepSnapshot } from '../checkpointCelebration';
+import { seedCelebrationHub } from './support/goalsScreen';
+import { savedFromEarlierLaunch } from './support/celebrationSnapshot';
 import { holidaySaved, mortgageSaved } from './support/celebrationSteps';
 import type { GoalRecord, MilestoneRecord } from '../api';
 
@@ -30,7 +29,6 @@ jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
 import Goals from '../../app/(tabs)/goals';
 
-const PAY_CYCLE = { length: 14, last_pay_date: '2026-06-06' };
 // A savings goal with two checkpoints ($2,000 and $5,000) and a $10,000 target.
 const GOAL: GoalRecord = {
   id: 'g1', name: 'Holiday', icon: 'wallet', direction: 'grow',
@@ -41,17 +39,8 @@ const GOAL: GoalRecord = {
 const server = installFakeServer();
 useTestQueryClient();
 
-function seedHub(balance: number, homeLoanBalance: number | null = null) {
-  seedGoalsHub(server, {
-    goals: [GOAL], payCycle: PAY_CYCLE, balances: { 'up-spending': balance },
-    loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: homeLoanBalance, asOf: '2026-07-04T00:00:00Z' },
-  });
-}
-
-// What an earlier launch of the app saved: goal id → each step it showed, and whether it was reached.
-async function savedFromEarlierLaunch(snapshot: StepSnapshot) {
-  await AsyncStorage.setItem(CHECKPOINT_SNAPSHOT_KEY, JSON.stringify(snapshot));
-}
+const seedHub = (balance: number, homeLoanBalance: number | null = null) =>
+  seedCelebrationHub(server, [GOAL], { 'up-spending': balance }, homeLoanBalance);
 
 beforeEach(async () => {
   await AsyncStorage.clear();

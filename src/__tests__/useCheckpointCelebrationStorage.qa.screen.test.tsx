@@ -7,11 +7,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCheckpointCelebration } from '../hooks/useCheckpointCelebration';
 import { CHECKPOINT_SNAPSHOT_KEY, GoalSteps } from '../checkpointCelebration';
 import { goalSteps, stepSnapshot } from './support/celebrationSteps';
+import { savedCelebrationSnapshot as saved } from './support/celebrationSnapshot';
 
 const holiday = (reached: boolean[] | null): GoalSteps[] => [goalSteps('g1', reached)];
 const ONE_REACHED = stepSnapshot({ g1: [true, false] });
 const BOTH_REACHED = stepSnapshot({ g1: [true, true] });
-const saved = async () => JSON.parse((await AsyncStorage.getItem(CHECKPOINT_SNAPSHOT_KEY)) ?? 'null');
 
 function renderReady(initial: GoalSteps[]) {
   return renderHook(({ c }: { c: GoalSteps[] }) => useCheckpointCelebration(c, true), { initialProps: { c: initial } });

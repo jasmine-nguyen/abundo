@@ -13,10 +13,9 @@ import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries } from
 import { resetAuth } from './support/authMock';
 import { resetRouter, setFocused } from './support/routerMock';
 import { pinToday } from './support/clock';
-import { seedGoalsHub } from './support/goalsScreen';
-import { EMPTY_LOAN_FACTS } from './factory';
+import { seedCelebrationHub } from './support/goalsScreen';
+import { savedCelebrationSnapshot, savedFromEarlierLaunch } from './support/celebrationSnapshot';
 import { queryClient } from '../queryClient';
-import { CHECKPOINT_SNAPSHOT_KEY, StepSnapshot } from '../checkpointCelebration';
 import { holidaySaved, mortgageSaved } from './support/celebrationSteps';
 import type { GoalRecord, MilestoneRecord } from '../api';
 
@@ -32,7 +31,6 @@ jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
 import Goals from '../../app/(tabs)/goals';
 
-const PAY_CYCLE = { length: 14, last_pay_date: '2026-06-06' };
 // Two checkpoints ($2,000, $5,000) and a $10,000 target → up to 3 steps.
 const HOLIDAY: GoalRecord = {
   id: 'g1', name: 'Holiday', icon: 'wallet', direction: 'grow',
@@ -55,17 +53,11 @@ const MILESTONES: MilestoneRecord[] = [
 const server = installFakeServer();
 useTestQueryClient();
 
-function seedHub(goals: GoalRecord[], balances: Record<string, number>, homeLoanBalance: number | null = 596642.43) {
-  seedGoalsHub(server, {
-    goals, payCycle: PAY_CYCLE, balances,
-    loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: homeLoanBalance, asOf: '2026-07-04T00:00:00Z' },
-  });
-}
+const seedHub = (goals: GoalRecord[], balances: Record<string, number>, homeLoanBalance: number | null = 596642.43) =>
+  seedCelebrationHub(server, goals, balances, homeLoanBalance);
 
-const saved = async () => JSON.parse((await AsyncStorage.getItem(CHECKPOINT_SNAPSHOT_KEY)) ?? 'null');
+const saved = savedCelebrationSnapshot;
 const HOLIDAY_AT_4000 = holidaySaved(true, false, false); // past $2,000 only
-const savedFromEarlierLaunch = (snapshot: StepSnapshot) =>
-  AsyncStorage.setItem(CHECKPOINT_SNAPSHOT_KEY, JSON.stringify(snapshot));
 
 beforeEach(async () => {
   await AsyncStorage.clear();
