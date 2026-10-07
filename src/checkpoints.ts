@@ -83,17 +83,18 @@ export interface CheckpointProgressRow {
   toGo: number | null;
 }
 
-// WHIT-812: per checkpoint, reached or how much is left, plus the next one to reach. Indexes
-// view.checkpointReached by the same stored order balanceGoalView maps over (never re-sorted), so
-// a row's reached mark always matches the bar. toGo rounds up so a sub-dollar gap never reads "$0".
+// WHIT-812 / WHIT-817: per checkpoint, reached or how much is left, plus the next one to reach.
+// Rows come back in climb order (sortCheckpointsForDirection), so `next` is the closest unreached
+// one even for a ladder saved out of order. `reached` is looked up by the checkpoint's STORED index,
+// because balanceGoalView maps over stored order. toGo rounds up so a sub-dollar gap never reads "$0".
 export function checkpointProgress(
   checkpoints: GoalCheckpoint[],
   direction: Direction,
   view: Pick<BalanceGoalView, 'currentAmount' | 'checkpointReached'>,
 ): { rows: CheckpointProgressRow[]; next: CheckpointProgressRow | null; allReached: boolean } {
   const current = view.currentAmount;
-  const rows = checkpoints.map((checkpoint, i) => {
-    const reached = view.checkpointReached?.[i] ?? null;
+  const rows = sortCheckpointsForDirection(checkpoints, direction).map((checkpoint) => {
+    const reached = view.checkpointReached?.[checkpoints.indexOf(checkpoint)] ?? null;
     if (current == null || reached) return { checkpoint, reached, toGo: null };
     const gap = direction === 'grow' ? checkpoint.amount - current : current - checkpoint.amount;
     return { checkpoint, reached, toGo: Math.ceil(gap) };
