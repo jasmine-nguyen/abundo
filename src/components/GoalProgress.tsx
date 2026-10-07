@@ -54,9 +54,7 @@ function footLeft(view: BalanceGoalView): string {
 // Only call once view.checkpointReached is known.
 function nextMilestoneLabel(goal: GoalRecord, view: BalanceGoalView): string | null {
   const unreached = (goal.checkpoints ?? []).filter((_, i) => !view.checkpointReached![i]);
-  const next = sortCheckpointsForDirection(unreached, goal.direction)[0];
-  if (!next) return null;
-  return next.label;
+  return sortCheckpointsForDirection(unreached, goal.direction)[0]?.label ?? null;
 }
 
 function footRight(view: BalanceGoalView): string | null {

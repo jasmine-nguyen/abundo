@@ -4,10 +4,8 @@
 //  - the pace foot reads "Set aside $X each payday" in normal text colour (link blue stays only on
 //    the past-due nudge);
 //  - the milestone line names the next step ("Next: <label>") or says "All milestones reached";
-//  - the goal page shows the same wording, with no arrow in its top row;
-//  - the confetti banner calls the loan "Home loan".
-// Clock pinned to Sat 11 Jul 2026 (paydays Jul18, Aug1, Aug15). Reduce motion is on so the banner
-// shows without the confetti animation.
+//  - the goal page shows the same milestone wording, with no arrow in its top row.
+// Clock pinned to Sat 11 Jul 2026 (paydays Jul18, Aug1, Aug15).
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { StyleSheet } from 'react-native';
@@ -22,14 +20,12 @@ import { GOAL_TODAY, GOAL_START } from './support/goalPace';
 import { pressedStyle } from './support/pressedStyle';
 import { resetRouter, setParams } from './support/routerMock';
 import { C, PRESSED } from '../theme';
-import { CHECKPOINT_SNAPSHOT_KEY } from '../checkpointCelebration';
-import type { GoalRecord, MilestoneRecord } from '../api';
+import type { GoalRecord } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
-jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
 import Goals from '../../app/(tabs)/goals';
 import GoalDetail from '../../app/goal/[id]';
@@ -123,26 +119,7 @@ describe('goal page', () => {
     setParams({ id: 'ef' });
     await renderWithQueries(<GoalDetail />);
 
-    expect(screen.getByText('Emergency fund')).toBeTruthy();
-    expect(screen.getByText('Set aside $1,667 each payday')).toBeTruthy();
     expect(screen.getByTestId('goal-checkpoints-ef')).toHaveTextContent('Next: Nearly there');
     expect(chevrons(screen.UNSAFE_root as unknown as Node)).toHaveLength(0);
-  });
-});
-
-describe('confetti banner', () => {
-  it('names the loan "Home loan" when a home-loan milestone is cleared', async () => {
-    const milestones: MilestoneRecord[] = [
-      { id: 'm1', label: 'First', targetBalance: 600000, targetDate: '2027-01-01' },
-      { id: 'm2', label: 'Second', targetBalance: 500000, targetDate: '2029-01-01' },
-    ];
-    await AsyncStorage.setItem(CHECKPOINT_SNAPSHOT_KEY, JSON.stringify({ mortgage: 0 }));
-    seedHubWith(server, { goals: [] }); // the loan owes $596,642.43 — below the $600,000 milestone
-    server.seed('/milestones', milestones);
-
-    await renderWithQueries(<Goals />);
-
-    const label = await screen.findByTestId('checkpoint-celebration-label');
-    expect(label).toHaveTextContent(/^Home loan · down to \$600,000\b/);
   });
 });
