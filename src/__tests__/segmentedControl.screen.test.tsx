@@ -21,7 +21,6 @@ const STR_OPTIONS = [
   { value: 'earning' as const, label: 'Earning', testID: 'seg-earning', activeTint: 'rgba(4,5,6,.16)', activeTextColor: '#2ac3de' },
 ];
 
-
 describe('SegmentedControl', () => {
   it('renders every option by label and testID', () => {
     render(<SegmentedControl value={0} onChange={jest.fn()} options={NUM_OPTIONS} />);
