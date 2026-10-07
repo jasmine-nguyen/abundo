@@ -25,8 +25,8 @@ it('renders a fixed status-bar strip (insets.top tall, C.bg) outside the sliding
     <ScrollChromeHeader title="Budgets"><Text>body</Text></ScrollChromeHeader>,
   );
   const strips = (r.UNSAFE_getAllByType(View) as unknown as Node[]).filter((v) => {
-    const s = styleOf(v) as { height?: number; backgroundColor?: string } | undefined;
-    return s?.height === 47 && s?.backgroundColor === C.bg;
+    const s = styleOf(v) as { height?: number; backgroundColor?: string };
+    return s.height === 47 && s.backgroundColor === C.bg;
   });
   expect(strips.length).toBeGreaterThan(0);
   expect(strips.some((s) => !insideAnimatedView(s))).toBe(true);

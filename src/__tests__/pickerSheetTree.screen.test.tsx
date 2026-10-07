@@ -128,7 +128,7 @@ describe('picker tree — gaps (WHIT-273)', () => {
     let node: any = screen.getByText(name);
     while (node) {
       const flat = styleOf(node) as any;
-      if (flat && flat.paddingVertical === 11) return flat;
+      if (flat.paddingVertical === 11) return flat;
       node = node.parent;
     }
     throw new Error(`row not found for "${name}"`);
