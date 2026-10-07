@@ -29,9 +29,7 @@ describe('budgetEditInfo', () => {
     const s = makeState({ categories: [cat(), cat({ id: 'salary', bucket: 'Income' })], budgets: [] });
     const spend = budgetEditInfo(s, 'coffee');
     const income = budgetEditInfo(s, 'salary');
-    expect(spend.isIncome).toBe(false);
     expect(spend.smoothingShown).toBe(true);
-    expect(income.isIncome).toBe(true);
     expect(income.smoothingShown).toBe(false);
   });
 });

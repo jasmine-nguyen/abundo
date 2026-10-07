@@ -1,121 +1,75 @@
-// WHIT-481 — the pure checkpoint-celebration diff. Locks every "don't burst when we shouldn't"
-// guard: hydrate/first-load seeds silently, a genuine tick-up bursts, unchanged/plain-redraw is
-// quiet, a null (unknown balance) never seeds but keeps a prior count so a later higher balance
-// still bursts, a drop re-arms, and a deleted goal falls out.
+// WHIT-481 / WHIT-811 — the pure checkpoint-celebration diff, keyed by WHICH steps were reached.
+// Locks: first look seeds silently, a known step newly reached bursts (once per goal, naming the
+// highest), a step not in the last look never bursts, an unknown balance keeps the last look, a
+// drop re-arms, and deleted steps/goals fall out.
 import { describe, it, expect } from '@jest/globals';
-import { celebrationSteps, diffCheckpointReached, ReachedSnapshot } from '../checkpointCelebration';
-
-describe('celebrationSteps (WHIT-747: the target is the final step)', () => {
-  it('counts the checkpoints reached, plus one once the target is met', () => {
-    expect(celebrationSteps({ checkpointsReached: 1, targetReached: false })).toBe(1);
-    expect(celebrationSteps({ checkpointsReached: 2, targetReached: true })).toBe(3);
-  });
-
-  it('gives a goal with no checkpoints a single step: the target', () => {
-    expect(celebrationSteps({ checkpointsReached: null, targetReached: false })).toBe(0);
-    expect(celebrationSteps({ checkpointsReached: null, targetReached: true })).toBe(1);
-  });
-
-  it('is null while the balance is unknown', () => {
-    expect(celebrationSteps({ checkpointsReached: null, targetReached: null })).toBeNull();
-  });
-});
+import { diffCheckpointReached } from '../checkpointCelebration';
+import { goalSteps, stepSnapshot } from './support/celebrationSteps';
 
 describe('diffCheckpointReached', () => {
-  it('seeds every goal on the first diff and bursts nothing (hydrate guard)', () => {
-    const current = [
-      { id: 'g1', reached: 0 },
-      { id: 'g2', reached: 2 }, // already past two rungs when the screen opens
-    ];
-    const { bursts, next } = diffCheckpointReached({}, current);
+  it('seeds every goal on the first look and bursts nothing', () => {
+    const { bursts, next } = diffCheckpointReached({}, [goalSteps('g1', [false]), goalSteps('g2', [true, true])]);
     expect(bursts).toEqual([]);
-    expect(next).toEqual({ g1: 0, g2: 2 });
+    expect(next).toEqual(stepSnapshot({ g1: [false], g2: [true, true] }));
   });
 
-  it('bursts when a count ticks up by one', () => {
-    const { bursts, next } = diffCheckpointReached({ g1: 1 }, [{ id: 'g1', reached: 2 }]);
-    expect(bursts).toEqual([{ goalId: 'g1', newlyReached: 1, reached: 2 }]);
-    expect(next).toEqual({ g1: 2 });
+  it('bursts with the step label when a known step is newly reached, and is quiet on a redraw', () => {
+    const prev = stepSnapshot({ g1: [true, false] });
+    const crossed = diffCheckpointReached(prev, [goalSteps('g1', [true, true])]);
+    expect(crossed.bursts).toEqual([{ goalId: 'g1', label: 'g1 step 1' }]);
+    expect(crossed.next).toEqual(stepSnapshot({ g1: [true, true] }));
+
+    expect(diffCheckpointReached(crossed.next, [goalSteps('g1', [true, true])]).bursts).toEqual([]);
   });
 
-  it('bursts once with the full jump when several rungs cross at once', () => {
-    const { bursts } = diffCheckpointReached({ g1: 0 }, [{ id: 'g1', reached: 3 }]);
-    expect(bursts).toEqual([{ goalId: 'g1', newlyReached: 3, reached: 3 }]);
+  it.each([
+    ['a step added below the balance', { 'a@5000': false }, [['a@5000', false], ['c@3000', true]]],
+    ['a step moved below the balance', { 'a@5000': false }, [['a@3000', true]]],
+    ['a target lowered below the balance', { 'target@10000': false }, [['target@3000', true]]],
+  ] as const)('never bursts for a step not in the last look: %s', (_, prevSteps, currentSteps) => {
+    const steps = currentSteps.map(([key, reached]) => ({ key, reached, label: key }));
+    expect(diffCheckpointReached({ g1: prevSteps }, [{ id: 'g1', steps }]).bursts).toEqual([]);
   });
 
-  it('is quiet when the count is unchanged (a plain redraw)', () => {
-    const { bursts, next } = diffCheckpointReached({ g1: 2 }, [{ id: 'g1', reached: 2 }]);
-    expect(bursts).toEqual([]);
-    expect(next).toEqual({ g1: 2 });
+  it('still bursts when a reached step is deleted and the next one is crossed', () => {
+    const prev = { g1: { 'a@2000': true, 'b@5000': false } };
+    const steps = [{ key: 'b@5000', reached: true, label: 'Hotel paid' }];
+    expect(diffCheckpointReached(prev, [{ id: 'g1', steps }]).bursts).toEqual([{ goalId: 'g1', label: 'Hotel paid' }]);
   });
 
-  it('never seeds and never bursts a goal whose balance is unknown', () => {
-    const { bursts, next } = diffCheckpointReached({}, [{ id: 'g1', reached: null }]);
-    expect(bursts).toEqual([]);
-    expect(next).toEqual({}); // stays unseen
-  });
-
-  it('seeds silently (no burst) the first time an unknown goal resolves to a number', () => {
-    // Tick 1: unknown → unseen. Tick 2: resolves to 2 (already past rungs) → seed, no burst.
-    const first = diffCheckpointReached({}, [{ id: 'g1', reached: null }]);
-    const second = diffCheckpointReached(first.next, [{ id: 'g1', reached: 2 }]);
-    expect(second.bursts).toEqual([]);
-    expect(second.next).toEqual({ g1: 2 });
-  });
-
-  it('keeps a prior count through an unknown tick so a later higher balance still bursts', () => {
-    // seeded at 3 → balance goes unknown → returns at 5: must burst newlyReached 2.
-    const seeded = { g1: 3 };
-    const gone = diffCheckpointReached(seeded, [{ id: 'g1', reached: null }]);
-    expect(gone.bursts).toEqual([]);
-    expect(gone.next).toEqual({ g1: 3 }); // carried forward, not dropped
-    const back = diffCheckpointReached(gone.next, [{ id: 'g1', reached: 5 }]);
-    expect(back.bursts).toEqual([{ goalId: 'g1', newlyReached: 2, reached: 5 }]);
-  });
-
-  it('does not burst when an unknown tick returns at the same count', () => {
-    const gone = diffCheckpointReached({ g1: 3 }, [{ id: 'g1', reached: null }]);
-    const back = diffCheckpointReached(gone.next, [{ id: 'g1', reached: 3 }]);
-    expect(back.bursts).toEqual([]);
-  });
-
-  it('re-arms after a drop: a count that fell below a rung bursts again when re-crossed', () => {
-    const dropped = diffCheckpointReached({ g1: 2 }, [{ id: 'g1', reached: 1 }]); // fell back
-    expect(dropped.bursts).toEqual([]);
-    expect(dropped.next).toEqual({ g1: 1 });
-    const recrossed = diffCheckpointReached(dropped.next, [{ id: 'g1', reached: 2 }]);
-    expect(recrossed.bursts).toEqual([{ goalId: 'g1', newlyReached: 1, reached: 2 }]);
-  });
-
-  it('bursts once off the ticked-up goal even when another goal is seen for the first time', () => {
-    // g1 seeded and ticking up; g2 brand-new in the same refresh → one burst, off g1 only.
-    const { bursts, next } = diffCheckpointReached({ g1: 1 }, [
-      { id: 'g1', reached: 2 },
-      { id: 'g2', reached: 3 }, // never seen → seed silently
-    ]);
-    expect(bursts).toEqual([{ goalId: 'g1', newlyReached: 1, reached: 2 }]);
-    expect(next).toEqual({ g1: 2, g2: 3 });
-  });
-
-  it('reports a burst per goal when two goals genuinely tick up together', () => {
-    const { bursts } = diffCheckpointReached({ g1: 0, g2: 1 }, [
-      { id: 'g1', reached: 1 },
-      { id: 'g2', reached: 2 },
+  it('bursts once per goal naming the highest step, in goal order, skipping goals seen for the first time', () => {
+    const prev = stepSnapshot({ g1: [false, false, false], g2: [false] });
+    const { bursts } = diffCheckpointReached(prev, [
+      goalSteps('g1', [true, true, false]),
+      goalSteps('g2', [true]),
+      goalSteps('g3', [true]),
     ]);
     expect(bursts).toEqual([
-      { goalId: 'g1', newlyReached: 1, reached: 1 },
-      { goalId: 'g2', newlyReached: 1, reached: 2 },
+      { goalId: 'g1', label: 'g1 step 1' },
+      { goalId: 'g2', label: 'g2 step 0' },
     ]);
   });
 
-  it('drops a deleted goal from the snapshot; a re-added same id re-seeds without a burst', () => {
-    const afterDelete = diffCheckpointReached({ g1: 2, g2: 1 }, [{ id: 'g1', reached: 2 }]);
-    expect(afterDelete.next).toEqual({ g1: 2 }); // g2 fell out
-    const readded = diffCheckpointReached(afterDelete.next, [
-      { id: 'g1', reached: 2 },
-      { id: 'g2', reached: 4 }, // same id back, already past rungs → seed, no burst
-    ]);
-    expect(readded.bursts).toEqual([]);
-    expect(readded.next).toEqual({ g1: 2, g2: 4 });
+  it('keeps the last look through an unknown balance, and never seeds an unseen goal from one', () => {
+    const prev = stepSnapshot({ g1: [false] });
+    const gone = diffCheckpointReached(prev, [goalSteps('g1', null), goalSteps('g2', null)]);
+    expect(gone.bursts).toEqual([]);
+    expect(gone.next).toEqual(prev);
+
+    const back = diffCheckpointReached(gone.next, [goalSteps('g1', [true])]);
+    expect(back.bursts).toEqual([{ goalId: 'g1', label: 'g1 step 0' }]);
+  });
+
+  it('re-arms after a drop: a step that fell back bursts again when re-crossed', () => {
+    const dropped = diffCheckpointReached(stepSnapshot({ g1: [true] }), [goalSteps('g1', [false])]);
+    expect(dropped.bursts).toEqual([]);
+    const recrossed = diffCheckpointReached(dropped.next, [goalSteps('g1', [true])]);
+    expect(recrossed.bursts).toEqual([{ goalId: 'g1', label: 'g1 step 0' }]);
+  });
+
+  it('drops a deleted goal; a re-added same id re-seeds without a burst', () => {
+    const afterDelete = diffCheckpointReached(stepSnapshot({ g1: [true], g2: [false] }), [goalSteps('g1', [true])]);
+    expect(afterDelete.next).toEqual(stepSnapshot({ g1: [true] }));
+    expect(diffCheckpointReached(afterDelete.next, [goalSteps('g1', [true]), goalSteps('g2', [true])]).bursts).toEqual([]);
   });
 });

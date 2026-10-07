@@ -81,6 +81,8 @@ describe('goal page milestones', () => {
     await openPage([goal], 'g');
     expect(screen.getByText('Flights')).toBeTruthy();
     expect(reached('c1')).toBeNull();
+    expect(screen.queryByTestId('goal-milestone-togo-c1')).toBeNull();
+    expect(screen.queryByTestId('goal-detail-next')).toBeNull();
     expect(screen.getByText('Waiting on your balance')).toBeTruthy();
   });
 });
@@ -112,16 +114,18 @@ describe('goal page progress', () => {
 });
 
 describe('goal page follows the cache', () => {
-  // [A7] cold load: header only while goals are in flight, then the goal fills in.
-  it('shows the goal once a slow goals read lands', async () => {
+  // [A7] cold load: a spinner (not "Goal not found") while goals are in flight, then the goal fills in.
+  it('shows a spinner, then the goal once a slow goals read lands', async () => {
     seedHubWith(server, { goals: [CARD] });
     const held = server.hold('/goals');
     setParams({ id: 'card' });
     render(<WithQueries><GoalDetail /></WithQueries>);
-    expect(screen.getByText('Goal')).toBeTruthy();
+    expect(screen.getByTestId('goal-detail-loading')).toBeTruthy();
+    expect(screen.queryByTestId('goal-detail-missing')).toBeNull();
     expect(screen.queryByText('Credit card')).toBeNull();
     await act(async () => { held.release(); });
     await waitFor(() => expect(screen.getByText('Credit card')).toBeTruthy());
+    expect(screen.queryByTestId('goal-detail-loading')).toBeNull();
     expect(screen.getByTestId('goal-detail-edit')).toBeTruthy();
   });
 
@@ -133,12 +137,86 @@ describe('goal page follows the cache', () => {
     expect(screen.getByText('Visa card')).toBeTruthy();
   });
 
-  // [A9] the goal removed from the cache (deleted) → header-only, no stale Edit to a dead id.
-  it('drops to header-only when the goal leaves the cache', async () => {
+  // [A9] the goal removed from the cache (deleted) → "Goal not found", no stale Edit to a dead id.
+  it('shows "Goal not found" when the goal leaves the cache', async () => {
     await openPage([CARD], 'card');
     await refreshInAct(() => queryClient.setQueryData<GoalRecord[]>(goalsKey, []));
+    expect(screen.getByTestId('goal-detail-missing')).toBeTruthy();
     expect(screen.queryByText('Credit card')).toBeNull();
     expect(screen.queryByTestId('goal-detail-edit')).toBeNull();
+  });
+});
+
+// WHIT-812 — the Next line on a pay-down ladder in climb order (descending owed).
+const CARD_CLIMB: GoalRecord = {
+  ...CARD,
+  checkpoints: [
+    { id: 'm15', label: 'Under fifteen', amount: 15000 },
+    { id: 'm10', label: 'Under ten', amount: 10000 },
+    { id: 'm5', label: 'Under five', amount: 5000 },
+  ],
+};
+const HOLIDAY = growGoal('g1', { name: 'Holiday' });
+
+describe('goal page Next line', () => {
+  // [N1] pay-down: the next un-ticked milestone and what's still owed above it.
+  // [N2] every milestone reached → "All milestones reached".
+  // [N3] no milestones → no Next line at all.
+  it.each([
+    { name: 'pay-down mid-ladder', goal: CARD_CLIMB, next: 'Next: Under five · $4,000 to go' },
+    { name: 'pay-down every milestone reached', goal: { ...CARD_CLIMB, manual_balance: 4999.5 }, next: 'All milestones reached' },
+    { name: 'no milestones', goal: { ...CARD_CLIMB, checkpoints: [] }, next: null },
+  ])('$name', async ({ goal, next }) => {
+    await openPage([goal], 'card');
+    if (next == null) {
+      expect(screen.queryByTestId('goal-detail-next')).toBeNull();
+      return;
+    }
+    expect(screen.getByTestId('goal-detail-next')).toHaveTextContent(next);
+  });
+});
+
+describe('goal page load gate', () => {
+  // [N4] a goals read failing first time is an error + Retry — never "Goal not found".
+  it('a failed first goals read shows an error, not "Goal not found"; Retry then shows the goal', async () => {
+    seedHubWith(server, { goals: [HOLIDAY] });
+    server.once('GET', '/goals', { status: 500 });
+    setParams({ id: 'g1' });
+    await renderWithQueries(<GoalDetail />);
+    expect(screen.getByTestId('goal-detail-error')).toBeTruthy();
+    expect(screen.queryByTestId('goal-detail-missing')).toBeNull();
+    expect(screen.queryByTestId('goal-detail-edit')).toBeNull();
+
+    await act(async () => { fireEvent.press(screen.getByTestId('goal-detail-retry')); });
+    await waitFor(() => expect(screen.getByText('Holiday')).toBeTruthy());
+    expect(screen.queryByTestId('goal-detail-error')).toBeNull();
+  });
+
+  // [N5] goals landed but the pay cycle is still in flight → spinner, never a default-cycle pace.
+  it('a held pay cycle shows the spinner, not a default-cycle pace, until it lands', async () => {
+    seedHubWith(server, { goals: [HOLIDAY] });
+    const held = server.hold('/paycycle');
+    setParams({ id: 'g1' });
+    render(<WithQueries><GoalDetail /></WithQueries>);
+    await waitFor(() => expect(queryClient.getQueryData(goalsKey)).toBeTruthy());
+    expect(screen.getByTestId('goal-detail-loading')).toBeTruthy();
+    expect(screen.queryByText('Holiday')).toBeNull();
+    expect(screen.queryByTestId('goal-detail-edit')).toBeNull();
+    await act(async () => { held.release(); });
+    await waitFor(() => expect(screen.getByText('Holiday')).toBeTruthy());
+    expect(screen.queryByTestId('goal-detail-loading')).toBeNull();
+  });
+
+  // [N6] a background refresh that fails over a loaded goal keeps the goal up, no error block.
+  it('a failed background refresh keeps the loaded goal on screen', async () => {
+    await openPage([HOLIDAY], 'g1');
+    server.fail('/goals', 500);
+    server.fail('/paycycle', 500);
+    await refreshInAct(() => queryClient.refetchQueries());
+    await waitFor(() => expect(queryClient.getQueryState(goalsKey)?.status).toBe('error'));
+    expect(screen.getByText('Holiday')).toBeTruthy();
+    expect(screen.getByTestId('goal-detail-edit')).toBeTruthy();
+    expect(screen.queryByTestId('goal-detail-error')).toBeNull();
   });
 });
 

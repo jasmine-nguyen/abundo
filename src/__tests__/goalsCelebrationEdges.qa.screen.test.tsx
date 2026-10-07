@@ -13,10 +13,10 @@ import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries } from
 import { resetAuth } from './support/authMock';
 import { resetRouter, setFocused } from './support/routerMock';
 import { pinToday } from './support/clock';
-import { seedGoalsHub } from './support/goalsScreen';
-import { EMPTY_LOAN_FACTS } from './factory';
+import { seedCelebrationHub } from './support/goalsScreen';
+import { savedCelebrationSnapshot as saved, savedFromEarlierLaunch } from './support/celebrationSnapshot';
 import { queryClient } from '../queryClient';
-import { CHECKPOINT_SNAPSHOT_KEY } from '../checkpointCelebration';
+import { holidaySaved, mortgageSaved } from './support/celebrationSteps';
 import type { GoalRecord, MilestoneRecord } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
@@ -31,7 +31,6 @@ jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
 import Goals from '../../app/(tabs)/goals';
 
-const PAY_CYCLE = { length: 14, last_pay_date: '2026-06-06' };
 // Two checkpoints ($2,000, $5,000) and a $10,000 target → up to 3 steps.
 const HOLIDAY: GoalRecord = {
   id: 'g1', name: 'Holiday', icon: 'wallet', direction: 'grow',
@@ -54,16 +53,10 @@ const MILESTONES: MilestoneRecord[] = [
 const server = installFakeServer();
 useTestQueryClient();
 
-function seedHub(goals: GoalRecord[], balances: Record<string, number>, homeLoanBalance: number | null = 596642.43) {
-  seedGoalsHub(server, {
-    goals, payCycle: PAY_CYCLE, balances,
-    loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: homeLoanBalance, asOf: '2026-07-04T00:00:00Z' },
-  });
-}
+const seedHub = (goals: GoalRecord[], balances: Record<string, number>, homeLoanBalance: number | null = 596642.43) =>
+  seedCelebrationHub(server, goals, balances, homeLoanBalance);
 
-const saved = async () => JSON.parse((await AsyncStorage.getItem(CHECKPOINT_SNAPSHOT_KEY)) ?? 'null');
-const savedFromEarlierLaunch = (snapshot: Record<string, number>) =>
-  AsyncStorage.setItem(CHECKPOINT_SNAPSHOT_KEY, JSON.stringify(snapshot));
+const HOLIDAY_AT_4000 = holidaySaved(true, false, false); // past $2,000 only
 
 beforeEach(async () => {
   await AsyncStorage.clear();
@@ -80,7 +73,7 @@ describe('Goals celebrations that stick: edges (WHIT-747 QA)', () => {
     await renderWithQueries(<Goals />);
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
     expect(screen.getByTestId('goal-reached-g1')).toHaveTextContent('Goal reached');
-    expect(await saved()).toEqual({ g1: 3 });
+    expect(await saved()).toEqual({ g1: holidaySaved(true, true, true) });
   });
 
   it('[A2] remembers across a full relaunch: a crossing made while the app was closed celebrates on the next open', async () => {
@@ -89,13 +82,13 @@ describe('Goals celebrations that stick: edges (WHIT-747 QA)', () => {
     queryClient.clear();                                     // the app is closed: nothing in memory survives
     seedHub([HOLIDAY], { 'up-spending': 6000 });             // the bank syncs past $5,000 meanwhile
     await renderWithQueries(<Goals />);
-    expect(await screen.findByTestId('checkpoint-celebration-label')).toHaveTextContent(/Holiday · \$5,000 reached/);
+    expect(await screen.findByTestId('checkpoint-celebration-label')).toHaveTextContent(/Holiday · B reached/);
   });
 
   it('[A3] a goal with NO checkpoints celebrates reaching its target (sign-off Q2)', async () => {
     seedHub([BIKE], { 'up-bike': 400 });
     await renderWithQueries(<Goals />);
-    expect(await saved()).toEqual({ g2: 0 });
+    expect(await saved()).toEqual({ g2: { 'target@1000': false } });
 
     seedHub([BIKE], { 'up-bike': 1000 });
     await refreshInAct(() => queryClient.invalidateQueries());
@@ -124,53 +117,53 @@ describe('Goals celebrations that stick: edges (WHIT-747 QA)', () => {
   });
 
   it('[A7] a failed milestones read keeps the saved mortgage count, so recovering never fires a false celebration', async () => {
-    await savedFromEarlierLaunch({ g1: 1, mortgage: 1 });
+    await savedFromEarlierLaunch({ g1: HOLIDAY_AT_4000, mortgage: mortgageSaved(true, false) });
     server.fail('/milestones', 500);
     await renderWithQueries(<Goals />);
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
-    expect(await saved()).toEqual({ g1: 1, mortgage: 1 });
+    expect(await saved()).toEqual({ g1: HOLIDAY_AT_4000, mortgage: mortgageSaved(true, false) });
   });
 
   it('[A8] an unknown home-loan balance keeps the saved mortgage count', async () => {
-    await savedFromEarlierLaunch({ g1: 1, mortgage: 1 });
+    await savedFromEarlierLaunch({ g1: HOLIDAY_AT_4000, mortgage: mortgageSaved(true, false) });
     server.seed('/milestones', MILESTONES);
     seedHub([HOLIDAY], { 'up-spending': 4000 }, null);
     await renderWithQueries(<Goals />);
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
-    expect(await saved()).toEqual({ g1: 1, mortgage: 1 });
+    expect(await saved()).toEqual({ g1: HOLIDAY_AT_4000, mortgage: mortgageSaved(true, false) });
   });
 
   it('[A9] opening the app on another tab neither celebrates nor overwrites the saved copy until Goals is in view', async () => {
-    await savedFromEarlierLaunch({ g1: 1 });
+    await savedFromEarlierLaunch({ g1: HOLIDAY_AT_4000 });
     seedHub([HOLIDAY], { 'up-spending': 6000 });
     setFocused(false);
     const view = await renderWithQueries(<Goals />);
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
-    expect(await saved()).toEqual({ g1: 1 });
+    expect(await saved()).toEqual({ g1: HOLIDAY_AT_4000 });
 
     setFocused(true);
     await act(async () => { view.rerender(<WithQueries><Goals /></WithQueries>); });
-    expect(await screen.findByTestId('checkpoint-celebration-label')).toHaveTextContent(/Holiday · \$5,000 reached/);
+    expect(await screen.findByTestId('checkpoint-celebration-label')).toHaveTextContent(/Holiday · B reached/);
   });
 
   it('[A10] the mortgage seeds silently on a fresh install and is saved under "mortgage"', async () => {
     server.seed('/milestones', MILESTONES);
     await renderWithQueries(<Goals />);
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
-    expect(await saved()).toEqual({ g1: 1, mortgage: 1 });
+    expect(await saved()).toEqual({ g1: HOLIDAY_AT_4000, mortgage: mortgageSaved(true, false) });
   });
 
   it('[A11] a slow milestones read holds the comparison, then celebrates the cleared mortgage milestone', async () => {
-    await savedFromEarlierLaunch({ g1: 1, mortgage: 0 });
+    await savedFromEarlierLaunch({ g1: HOLIDAY_AT_4000, mortgage: mortgageSaved(false, false) });
     server.seed('/milestones', MILESTONES);
     const held = server.hold('/milestones');
     render(<WithQueries><Goals /></WithQueries>);
     await screen.findByText('Holiday');               // the goals are on screen; the milestones still loading
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
-    expect(await saved()).toEqual({ g1: 1, mortgage: 0 });
+    expect(await saved()).toEqual({ g1: HOLIDAY_AT_4000, mortgage: mortgageSaved(false, false) });
 
     await refreshInAct(() => held.release());
-    expect(await screen.findByTestId('checkpoint-celebration-label')).toHaveTextContent(/Home loan · down to \$600,000/);
-    expect(await saved()).toEqual({ g1: 1, mortgage: 1 });
+    expect(await screen.findByTestId('checkpoint-celebration-label')).toHaveTextContent(/Home loan · First reached/);
+    expect(await saved()).toEqual({ g1: HOLIDAY_AT_4000, mortgage: mortgageSaved(true, false) });
   });
 });

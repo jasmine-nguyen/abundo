@@ -67,15 +67,6 @@ def get_personal_access_token() -> str:
     return get_api_key(UP_PERSONAL_ACCESS_TOKEN_PATH)
 
 
-def build_repayment_push(amount: Decimal) -> tuple[str, str]:
-    """The (title, body) for a home-loan repayment push (WHIT-15). `amount` renders as whole
-    dollars with thousands separators, e.g. Decimal('3667.50') -> '$3,668'. The credit is the
-    GROSS repayment, of which only the principal comes off the balance, so the copy says
-    "put $X toward the mortgage", never "knocked $X off"."""
-    return ("Nice one! Another chunk down",
-            f"You just put ${amount:,.0f} toward the mortgage. You're crushing it — keep building! \U0001f4aa")
-
-
 def extract_raw_body(event: dict) -> bytes:
     """The exact bytes Up signed — base64-decoded when API Gateway flagged the body
     as binary, otherwise the UTF-8 body. The signature is over these raw bytes, so
@@ -195,7 +186,9 @@ def notify(transaction: dict) -> None:
         return
 
     amount = Decimal(value_in_base_units) / 100
-    title, body = build_repayment_push(amount)
+    # The credit is the GROSS repayment (only the principal comes off), so "toward", never "off".
+    title = "Nice one! Another chunk down"
+    body = f"You just put ${amount:,.0f} toward the mortgage. You're crushing it — keep building! \U0001f4aa"
     # data lets the app deep-link a tap straight to the mortgage screen (WHIT-321). The
     # app owns the type->route map, so we send the domain type, not a route string.
     if send_push(title, body, tokens, data={"type": "repayment"})["ok"] > 0:

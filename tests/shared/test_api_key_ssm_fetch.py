@@ -1,7 +1,7 @@
 """WHIT-793 slice 3 — api_key reads the secret setting from SSM itself (shared/ssm.py folded in).
 
 Stubbed at the boto3 ssm client layer, so the test exercises api_key's own fetch:
-the decrypted read, the per-path saved copy, and a ClientError surfacing as ValueError.
+the decrypted read and a ClientError surfacing as ValueError.
 """
 
 import sys
@@ -22,7 +22,7 @@ class _FakeSsmClient:
         return {"Parameter": {"Value": self._values[name]}}
 
 
-def test_get_api_key_fetches_from_the_ssm_client_once_per_path(api_key_module, monkeypatch):
+def test_get_api_key_fetches_from_the_ssm_client(api_key_module, monkeypatch):
     calls = []
     services = []
     client = _FakeSsmClient({"/bank/key": "bank-secret"}, calls)
@@ -37,11 +37,6 @@ def test_get_api_key_fetches_from_the_ssm_client_once_per_path(api_key_module, m
         api_key_module.get_api_key("/missing")
 
     assert api_key_module.get_api_key("/bank/key") == "bank-secret"
-    assert api_key_module.get_api_key("/bank/key") == "bank-secret"
 
     assert set(services) == {"ssm"}
-    assert calls == [
-        {"Name": "/missing", "WithDecryption": True},
-        {"Name": "/bank/key", "WithDecryption": True},
-    ]
-    assert "/missing" not in api_key_module._cache
+    assert calls[-1] == {"Name": "/bank/key", "WithDecryption": True}

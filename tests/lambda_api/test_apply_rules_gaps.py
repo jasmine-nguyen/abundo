@@ -589,4 +589,4 @@ def test_a_row_that_changed_into_a_raw_label_is_retried_against_the_NEW_value(ha
     assert stored(table, "t2")["category"] == "groceries"
     # The expected value is the label the scan saw THIS time, not the None the first scan saw.
     _, _, values = table.update_calls[-1]
-    assert (values[":category"], values[":expected"]) == ("groceries", "TRANSFER_OUT")
+    assert (values[":v0"], values[":expected"]) == ("groceries", "TRANSFER_OUT")

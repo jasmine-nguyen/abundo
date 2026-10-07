@@ -79,7 +79,7 @@ describe('goal cards (real balanceGoalView)', () => {
   it('renders a grow goal: 40% there, $2,000/payday, 3 paydays left', async () => {
     await renderWithQueries(<Goals />);
     expect(screen.getByText('Emergency fund')).toBeTruthy();
-    expect(screen.getByText('Saving toward $10,000 · by Aug 2026')).toBeTruthy();
+    expect(screen.getByText('Saving toward $10,000 · by Aug 2026')).toBeTruthy();
     const card = within(screen.getByTestId('goal-card-g1'));
     expect(card.getByText('40%')).toBeTruthy();
     expect(card.getByText('Set aside $2,000 each payday')).toBeTruthy();
@@ -89,7 +89,7 @@ describe('goal cards (real balanceGoalView)', () => {
   it('renders a paydown goal: 40% paid off, $4,000/payday', async () => {
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('goal-card-g2'));
-    expect(screen.getByText('Paying down $0 · by Aug 2026')).toBeTruthy();
+    expect(screen.getByText('Paying down $0 · by Aug 2026')).toBeTruthy();
     expect(card.getByText('40%')).toBeTruthy();
     expect(card.getByText('Set aside $4,000 each payday')).toBeTruthy();
   });

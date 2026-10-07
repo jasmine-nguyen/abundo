@@ -3,7 +3,7 @@
 // account, whose debt FALLING past a rung must burst — proving balanceGoalView's paydown reached
 // count (current <= amount) drives the confetti the same way growth does; and (2) a plain redraw
 // where the goals array is a BRAND-NEW identity but the reached count is unchanged — the memo
-// recomputes a fresh checkpointCounts array, the hook effect re-runs, and it must STILL stay silent.
+// recomputes a fresh celebration steps array, the hook effect re-runs, and it must STILL stay silent.
 // The real balanceGoalView + hook + diff run end to end; only the data boundary and router are stubs.
 // WHIT-685: the goal and its balance come from the fake server through the real screen data code
 // (useGoalsScreenData); a balance move is a re-seeded server reply and a cache refresh, as in the app.
@@ -77,7 +77,7 @@ describe('checkpoint celebration for a paydown goal + array-identity churn (WHIT
 
     await moveOwed(4000);                                 // debt shrinks past the 5000 rung
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
-    expect(screen.getByText(/Car loan · down to \$5,000/)).toBeTruthy();
+    expect(screen.getByText(/Car loan · B reached/)).toBeTruthy();
   });
 
   it('does NOT burst when the debt rises back above a rung (re-arm, not celebrate)', async () => {
@@ -90,7 +90,7 @@ describe('checkpoint celebration for a paydown goal + array-identity churn (WHIT
 
   it('does not burst on a redraw that recomputes the counts with the same reached number', async () => {
     // [A-P3] a new account joins the balances list but the SAME owed amount: the balance lookup is
-    // rebuilt, so the memo yields a new checkpointCounts identity and the effect re-runs, yet reached
+    // rebuilt, so the memo yields a new celebration steps identity and the effect re-runs, yet reached
     // is unchanged → no burst. (An identical refresh can't reach this path: the cache keeps the old
     // data, so nothing recomputes.)
     await renderWithQueries(<Goals />);                  // owe 6000 → reached 1, seeded

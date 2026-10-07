@@ -231,8 +231,11 @@ _ALL_IDS = {"up-spending", "up-homeloan", "anz-rewards-black-visa", "westpac-alt
         (_repo_owing("-600000"), fetch_all_but_homeloan, False, [], _ALL_IDS - {"up-homeloan"}),
         # [A4] The milestone push blows up: the refresh still answers 200 with balances stored.
         (_repo_owing("-600000"), fetch_all, True, [(Decimal("-600000"), _NEW_HOMELOAN)], _ALL_IDS),
+        # A repayment seen first by a refresh reaches the milestone check with old and new owed.
+        (_repo_owing("-600000"), fetch_all, False, [(Decimal("-600000"), _NEW_HOMELOAN)], _ALL_IDS),
     ],
-    ids=["prior-read-fails", "first-ever-reading", "homeloan-fetch-fails", "milestone-push-raises"],
+    ids=["prior-read-fails", "first-ever-reading", "homeloan-fetch-fails", "milestone-push-raises",
+         "crossing-reaches-milestone-check"],
 )
 def test_refresh_home_loan_milestone_check_never_breaks_the_refresh(
     handler, monkeypatch, make_repo, fetch, milestone_raises, expected_calls, expected_stored

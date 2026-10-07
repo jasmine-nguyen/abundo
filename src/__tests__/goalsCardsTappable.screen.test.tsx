@@ -115,7 +115,8 @@ describe('goal page', () => {
     setParams({ id: 'ef' });
     await renderWithQueries(<GoalDetail />);
 
-    expect(screen.getByTestId('goal-checkpoints-ef')).toHaveTextContent('Next: Nearly there');
+    expect(screen.getByTestId('goal-detail-next')).toHaveTextContent(/^Next: Nearly there · /); // WHIT-812: the page's own fuller line
+    expect(screen.queryByTestId('goal-checkpoints-ef')).toBeNull();
     expect(chevrons(screen.UNSAFE_root as unknown as Node)).toHaveLength(0);
   });
 });

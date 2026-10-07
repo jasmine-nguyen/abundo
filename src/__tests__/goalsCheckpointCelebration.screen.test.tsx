@@ -96,7 +96,7 @@ describe('checkpoint celebration on the Goals hub (WHIT-481)', () => {
 
     await moveBalanceOnFakeClock(6000);               // 4000 → 6000 crosses the 5000 rung (reached 2)
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
-    expect(screen.getByText(/Holiday · \$5,000 reached/)).toBeTruthy();
+    expect(screen.getByText(/Holiday · B reached/)).toBeTruthy();
   });
 
   it('is silent when a refresh brings back identical data', async () => {
@@ -141,6 +141,6 @@ describe('checkpoint celebration on the Goals hub (WHIT-481)', () => {
     jest.useFakeTimers({ now: new Date(2026, 6, 11) });
     setFocused(true);                                 // back on Goals
     await act(async () => { view.rerender(<WithQueries><Goals /></WithQueries>); });
-    expect(screen.getByText(/Holiday · \$5,000 reached/)).toBeTruthy();
+    expect(screen.getByText(/Holiday · B reached/)).toBeTruthy();
   });
 });

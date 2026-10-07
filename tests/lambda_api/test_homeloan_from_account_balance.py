@@ -6,16 +6,13 @@ poll. The real AccountBalanceRepository runs over a FakeTable.
 """
 
 import json
-from decimal import Decimal
 
 import pytest
 
-from _balance_fakes import balance_repo
+from _balance_fakes import balance_repo, homeloan_row, spending_row
 
-_HOMELOAN_ROW = {"account_id": "up-homeloan", "amount": Decimal("-596642.43"), "available_balance": Decimal("0"),
-                 "currency": "AUD", "as_of": "2026-10-06T00:24:37.614Z", "account_type": "mortgage"}
-_SPENDING_ROW = {"account_id": "up-spending", "amount": Decimal("96270.59"), "available_balance": Decimal("96270.59"),
-                 "currency": "AUD", "as_of": "2026-10-06T00:24:37.614Z", "account_type": "checking"}
+_HOMELOAN_ROW = homeloan_row("-596642.43", as_of="2026-10-06T00:24:37.614Z")
+_SPENDING_ROW = spending_row("96270.59")
 
 
 @pytest.mark.parametrize(
