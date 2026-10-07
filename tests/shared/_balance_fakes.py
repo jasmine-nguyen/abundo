@@ -34,6 +34,46 @@ LIVE_PAYLOADS = {
 }
 
 
+HOMELOAN_AID = "T6d8ppsYssBDFCwl1qEb0w"
+
+
+def fetch_all(bid, aid, key, **kw):
+    """A bank fetch where every account succeeds with its LIVE_PAYLOADS reading."""
+    return LIVE_PAYLOADS[aid]
+
+
+def fetch_all_but_homeloan(bid, aid, key, **kw):
+    """A bank fetch where only the home loan fails."""
+    if aid == HOMELOAN_AID:
+        return {"success": False}
+    return LIVE_PAYLOADS[aid]
+
+
+# A synced grow goal on up-spending whose "Halfway" checkpoint sits at 95,000.
+CHECKPOINT_GOAL = {"direction": "grow", "name": "Holiday", "account_id": "up-spending",
+                   "target_amount": Decimal("120000"),
+                   "checkpoints": [{"id": "cp1", "label": "Halfway", "amount": Decimal("95000")}]}
+CHECKPOINT_PUSH_TITLE = "\U0001f389 Checkpoint reached — Halfway!"
+
+
+class BrokenGoalsRepo:
+    """A goal store whose read fails."""
+
+    def list_goals(self):
+        raise RuntimeError("goals store unreadable")
+
+
+def milestone_spy(calls, raises=False):
+    """A stand-in for notify_homeloan_milestone that records each (old, new) in ``calls`` and,
+    when ``raises``, then fails."""
+    def spy(old, new, **repos):
+        calls.append((old, new))
+        if raises:
+            raise RuntimeError("milestone push down")
+        return 0
+    return spy
+
+
 def homeloan_row(amount, as_of="2026-10-05T00:00:00Z"):
     """A stored up-homeloan balance (list_balances-shaped) owing the signed ``amount``."""
     return {"account_id": "up-homeloan", "amount": Decimal(amount), "available_balance": Decimal("0"),

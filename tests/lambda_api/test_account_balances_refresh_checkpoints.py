@@ -11,15 +11,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from _balance_fakes import LIVE_PAYLOADS, REFRESH_EVENT, balance_repo, stub_bank, stub_refresh_side_effects
+from _balance_fakes import (
+    CHECKPOINT_GOAL, CHECKPOINT_PUSH_TITLE, LIVE_PAYLOADS, REFRESH_EVENT, BrokenGoalsRepo, balance_repo, stub_bank,
+    stub_refresh_side_effects,
+)
 from _dynamo_fakes import FakeTable
 from _milestone_fakes import goal_checkpoint_repo
-
-_PUSH_TITLE = "\U0001f389 Checkpoint reached — Halfway!"
-
-_GOAL = {"direction": "grow", "name": "Holiday", "account_id": "up-spending",
-         "target_amount": Decimal("120000"),
-         "checkpoints": [{"id": "cp1", "label": "Halfway", "amount": Decimal("95000")}]}
 
 
 def _spending_row(amount):
@@ -30,7 +27,7 @@ def _spending_row(amount):
 def _goals_repo(handler):
     repo = handler.GoalsRepository()
     repo._table = FakeTable()
-    repo.upsert_goal("g1", dict(_GOAL))
+    repo.upsert_goal("g1", dict(CHECKPOINT_GOAL))
     return repo
 
 
@@ -38,7 +35,7 @@ def _goals_repo(handler):
     ("stored_spending", "last_refresh_at", "refresh_times", "expected_pushes"),
     [
         # 90,000 -> 96,270.59 crosses the 95,000 checkpoint: one push; a later refresh adds none.
-        ("90000", None, (10_000, 20_000), [_PUSH_TITLE]),
+        ("90000", None, (10_000, 20_000), [CHECKPOINT_PUSH_TITLE]),
         # 96,000 -> 96,270.59 crosses nothing.
         ("96000", None, (10_000,), []),
         # Throttled: no bank call, no push.
@@ -70,13 +67,9 @@ def test_refresh_celebrates_a_goal_checkpoint_crossing_once(
 def test_refresh_survives_a_failing_goal_read(handler, monkeypatch):
     accounts = balance_repo(rows=[_spending_row("90000")])
 
-    class _BrokenGoals:
-        def list_goals(self):
-            raise RuntimeError("goals store unreadable")
-
     pushes = []
     stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: LIVE_PAYLOADS[aid])
-    stub_refresh_side_effects(handler, monkeypatch, accounts=accounts, goals=_BrokenGoals(),
+    stub_refresh_side_effects(handler, monkeypatch, accounts=accounts, goals=BrokenGoalsRepo(),
                               notify=goal_checkpoint_repo(), pushes=pushes)
     monkeypatch.setattr(handler, "time", SimpleNamespace(time=lambda: 10_000))
 

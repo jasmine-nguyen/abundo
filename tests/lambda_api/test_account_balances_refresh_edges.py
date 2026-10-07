@@ -14,7 +14,8 @@ from types import SimpleNamespace
 import pytest
 
 from _balance_fakes import (
-    LIVE_PAYLOADS, REFRESH_EVENT, balance_repo, balance_writes, homeloan_row, marker_writes, stub_bank, upserted,
+    LIVE_PAYLOADS, REFRESH_EVENT, balance_repo, balance_writes, fetch_all, fetch_all_but_homeloan, homeloan_row,
+    marker_writes, milestone_spy, stub_bank, upserted,
 )
 
 
@@ -196,25 +197,8 @@ def _refresh_with_milestone_spy(handler, monkeypatch, repo, fetch, milestone_rai
     _freeze_time(handler, monkeypatch, 1000)
     stub_bank(handler, monkeypatch, fetch)
     calls = []
-
-    def spy(old, new, **repos):
-        calls.append((old, new))
-        if milestone_raises:
-            raise RuntimeError("expo down")
-        return 0
-
-    monkeypatch.setattr(handler, "notify_homeloan_milestone", spy)
+    monkeypatch.setattr(handler, "notify_homeloan_milestone", milestone_spy(calls, milestone_raises))
     return handler.lambda_handler(REFRESH_EVENT, None), calls
-
-
-def _fetch_all(bid, aid, key, **kw):
-    return LIVE_PAYLOADS[aid]
-
-
-def _fetch_all_but_homeloan(bid, aid, key, **kw):
-    if aid == "T6d8ppsYssBDFCwl1qEb0w":
-        return {"success": False}
-    return LIVE_PAYLOADS[aid]
 
 
 def _repo_owing(amount):
@@ -245,13 +229,13 @@ _ALL_IDS = {"up-spending", "up-homeloan", "anz-rewards-black-visa", "westpac-alt
     ("make_repo", "fetch", "milestone_raises", "expected_calls", "expected_stored"),
     [
         # [A1] The prior balance read fails: still 200, every balance stored, old passed as None.
-        (_repo_whose_prior_read_fails, _fetch_all, False, [(None, _NEW_HOMELOAN)], _ALL_IDS),
+        (_repo_whose_prior_read_fails, fetch_all, False, [(None, _NEW_HOMELOAN)], _ALL_IDS),
         # [A2] First-ever reading (no stored home-loan row): old is None (the seed guard).
-        (lambda: balance_repo(rows=[]), _fetch_all, False, [(None, _NEW_HOMELOAN)], _ALL_IDS),
+        (lambda: balance_repo(rows=[]), fetch_all, False, [(None, _NEW_HOMELOAN)], _ALL_IDS),
         # [A3] The home-loan fetch fails: the others store, the milestone check never runs.
-        (_repo_owing("-600000"), _fetch_all_but_homeloan, False, [], _ALL_IDS - {"up-homeloan"}),
+        (_repo_owing("-600000"), fetch_all_but_homeloan, False, [], _ALL_IDS - {"up-homeloan"}),
         # [A4] The milestone push blows up: the refresh still answers 200 with balances stored.
-        (_repo_owing("-600000"), _fetch_all, True, [(Decimal("-600000"), _NEW_HOMELOAN)], _ALL_IDS),
+        (_repo_owing("-600000"), fetch_all, True, [(Decimal("-600000"), _NEW_HOMELOAN)], _ALL_IDS),
     ],
     ids=["prior-read-fails", "first-ever-reading", "homeloan-fetch-fails", "milestone-push-raises"],
 )
