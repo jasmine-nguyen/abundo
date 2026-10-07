@@ -140,7 +140,7 @@ describe('shareCycleExport', () => {
   const cats = [cat({ id: 'food', name: 'Food', parent: null }), cat({ name: 'Coffee', parent: 'food' })];
   const transactions = [row({ category: 'coffee', amount: -4.5 })];
 
-  // [A21] fetch → file named after the window in the cache dir, overwritten → workbook bytes
+  // [A21] fetch → file named after the window in the cache dir, overwritten → workbook contents
   // written → share menu opened on that file as an Excel file.
   it('writes the cycle workbook to a named cache file and shares it', async () => {
     const data = { start: '2026-06-01', end: '2026-06-30', transactions };
@@ -151,8 +151,10 @@ describe('shareCycleExport', () => {
     expect(fileInstances).toHaveLength(1);
     const [file] = fileInstances;
     expect(file.args).toEqual([Paths.cache, cycleFileName('2026-06-01', '2026-06-30')]);
-    expect(file.written).toEqual([buildCycleWorkbook(data, lookup(cats), false)]);
-    const sheet = strFromU8(unzipSync(file.written[0] as Uint8Array)['xl/worksheets/sheet1.xml']);
+    expect(file.written).toHaveLength(1);
+    const written = unzipSync(file.written[0] as Uint8Array);
+    expect(written).toEqual(unzipSync(buildCycleWorkbook(data, lookup(cats), false)));
+    const sheet = strFromU8(written['xl/worksheets/sheet1.xml']);
     expect(sheet).toContain('<v>-4.5</v>');
     expect(sheet).toContain('>Coffee<');
     expect(shareAsync.mock.calls[0][1]).toMatchObject({
