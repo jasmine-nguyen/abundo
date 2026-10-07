@@ -132,6 +132,7 @@ class BuildState(TypedDict):
     # review
     code_verdict: NotRequired[str]
     code_feedback: NotRequired[str]
+    code_summary: NotRequired[str]
     code_decisions: NotRequired[list[str]]
     advisory: Annotated[list[str], merge_unique]
     tech_debt: Annotated[list[dict], merge_unique]
@@ -629,7 +630,7 @@ def running_message(name: str, state: BuildState) -> str | None:
         "test_writer": "Writing the tests that define done",
         "implementer": f"Implementer is {verb} the code (round {round_number})",
         "checks": "Running typecheck and tests",
-        "code_critic": "Code review: hunting for bugs and checking your standards",
+        "code_critic": "Code review: hunting for bugs, checking your standards and what to cut",
         "qa": None if qa_passed_last_round(state) else "QA: checking it does what the card asked, then testing the edge cases",
         "ship": "Opening the PR (after running QA's new tests and the typecheck, if it added any)",
     }
@@ -655,7 +656,9 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
         if name == "qa" and qa_passed_last_round(state):
             return "✅ QA passed last round, not re-run (its tests ran in the checks)"
         if update[f"{key}_verdict"] == "APPROVED":
-            return f"✅ {label} passed"
+            return f"✅ {label} passed" + (", nothing to cut" if key == "code" else "")
+        if key == "code":
+            return f"❌ {label}: {update['code_summary']}"
         return f"❌ {label}: {plural(finding_count(review_findings(update, key)), 'thing')} to fix"
     if name == "designer":
         if update["clarify_questions"]:
@@ -2145,32 +2148,33 @@ def commit_message(state: BuildState) -> str:
 # --- review nodes (read-only, run in parallel) ---
 
 
+# (output field, heading in the fix round, word in the progress line)
+CODE_FINDINGS = [
+    ("blocking_bugs", "Bugs", "bug"),
+    ("standards_breaches", "Standards breaches", "standards issue"),
+    ("fold_ins", "Small fold-ins: bring this nearby code in line in this PR", "fold-in"),
+    ("simplifications", "Simplify: make the change smaller", "cut"),
+]
+
+
 async def code_critic(state: BuildState):
     result = await run_agent("code_critic", review_block(state, "code"), CODE_CRITIC_OUTPUT)
     out = result.output
-    bugs, breaches, decisions = out["blocking_bugs"], out["standards_breaches"], out["decisions_to_escalate"]
-    fold_ins, simplifications = out["fold_ins"], out["simplifications"]
-    feedback = []
-    if bugs:
-        feedback.append(f"### Bugs\n{bullets(bugs)}")
-    if breaches:
-        feedback.append(f"### Standards breaches\n{bullets(breaches)}")
-    if fold_ins:
-        feedback.append(f"### Small fold-ins: bring this nearby code in line in this PR\n{bullets(fold_ins)}")
-    if simplifications:
-        feedback.append(f"### Simplify: make the change smaller\n{bullets(simplifications)}")
-    rework = bool(feedback or decisions)
-    summary = (
-        f"code review: {len(bugs)} bug(s), {len(breaches)} standards breach(es), "
-        f"{len(fold_ins)} fold-in(s), {len(simplifications)} simplification(s), {len(decisions)} decision(s)"
-    )
+    found = [(heading, word, out[field]) for field, heading, word in CODE_FINDINGS if out[field]]
+    decisions = out["decisions_to_escalate"]
+    rework = bool(found or decisions)
+    parts = [", ".join(plural(len(items), word) for _, word, items in found) + " to fix"] if found else []
+    if decisions:
+        parts.append(f"{plural(len(decisions), 'decision')} for you")
+    summary = " · ".join(parts)
     return {
         "code_verdict": "NEEDS_REWORK" if rework else "APPROVED",
-        "code_feedback": "\n\n".join(feedback),
+        "code_feedback": "\n\n".join(f"### {heading}\n{bullets(items)}" for heading, _, items in found),
         "code_decisions": decisions,
+        "code_summary": summary,
         "advisory": out["advisory"],
         "tech_debt": out["tech_debt"],
-        "history": [mark(not rework, summary if rework else "code review: approved")],
+        "history": [mark(not rework, f"code review: {summary or 'approved, nothing to cut'}")],
     }
 
 

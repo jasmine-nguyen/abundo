@@ -49,8 +49,8 @@ that fails, so running it yourself only doubles the wait.
 - Match the existing codebase's conventions.
 - Read files before changing them, and grep for usages before renaming or changing
   signatures.
-- Don't commit, stage, stash or switch branches: the pipeline commits once its
-  checks pass. `git checkout -- <file>` to undo your own edit is fine.
+- Leave git to the pipeline: it commits once its checks pass. To undo your own
+  edit, use `git checkout -- <file>`.
 
 ## Escalate instead of guessing
 
