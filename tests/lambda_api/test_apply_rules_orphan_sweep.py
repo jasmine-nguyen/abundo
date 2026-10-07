@@ -17,6 +17,7 @@ NOT in the store.
 import json
 
 from _feed_fakes import SPENDING, FakeCategoryRepo, charge_writes, real_repos, _row, stored
+from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 _CATEGORIES = frozenset({"groceries", "petrol"})
@@ -29,7 +30,8 @@ def _rule(value, category_id="groceries", field="description", operator="contain
 def _apply(handler, repo, rule_repo, body, categories=_CATEGORIES):
     event = {"rawPath": "/transactions/uncategorized/apply-rules",
              "requestContext": {"http": {"method": "POST"}}, "body": json.dumps(body)}
-    resp = handler.apply_rules_to_uncategorized(
+    resp = apply_rules_to_uncategorized(
+        handler,
         event, repo, FakeCategoryRepo(categories), rule_repo)
     return resp, json.loads(resp["body"])
 

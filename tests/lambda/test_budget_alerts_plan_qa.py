@@ -46,7 +46,7 @@ _Categories = partial(_FakeCategoryRepo, _CATS)
 def _norm_real(alerts, *, txn_id, amount, pending, category, date="2026-07-10",
                authorized_date="2026-07-10", merchant_name="SQ *KKV INTERNATIONAL PTY",
                description="SQ *KKV INTERNATIONAL PTY"):
-    return alerts.banksync.BankSyncClient.normalise({
+    return alerts.banksync.normalise({
         "id": txn_id, "date": date, "authorizedDate": authorized_date,
         "description": description, "merchantName": merchant_name,
         "amount": amount, "accountId": _BANK_ACCT, "accountName": "ANZ Rewards Black Visa",
@@ -68,9 +68,10 @@ def _fire(alerts, monkeypatch, repo, before, batch):
                         lambda title, body, toks, data=None: sent.append(title) or {"sent": 1, "ok": 1, "pruned": []})
     notify = notify_repo()
     ctx = ba.capture_pre_write(batch, device_repo=_Devices(), budget_repo=_Budgets(),
-                               paycycle_repo=_Paycycle(), window_repo=_AccountTransactionRepo(before), webhook_repo=repo)
+                               paycycle_repo=_Paycycle(),
+                                   webhook_repo=_AccountTransactionRepo(before, pending_repo=repo))
     repo.insert_or_reconcile(batch)
-    ba.fire_budget_alerts(ctx, batch, webhook_repo=repo, category_repo=_Categories(), notify_repo=notify)
+    ba.fire_budget_alerts(ctx, batch, category_repo=_Categories(), notify_repo=notify)
     return sent, notify, ctx
 
 

@@ -9,10 +9,12 @@ the handler over the real repositories, so a loosened comparison can't hide behi
 import json
 
 from _feed_fakes import SPENDING, FakeCategoryRepo, _row, on_write, real_repos, set_category, stored
+from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 def _sweep(handler, repo, rule_repo):
-    resp = handler.apply_rules_to_uncategorized(
+    resp = apply_rules_to_uncategorized(
+        handler,
         {"rawPath": "/transactions/uncategorized/apply-rules",
          "requestContext": {"http": {"method": "POST"}},
          "body": json.dumps({"dryRun": False})},

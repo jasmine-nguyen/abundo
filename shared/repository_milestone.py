@@ -98,12 +98,12 @@ class MilestoneRepository(RepositoryBase):
         raw = self._read_milestones(scope)
         return None if raw is None else _to_client(raw)
 
-    def get_milestones_raw(self, scope: str = _MILESTONE_SCOPE_SHARED) -> Optional[list]:
+    def get_milestones_raw(self, scope: Optional[str] = None) -> Optional[list]:
         """Return the stored milestone list with targetBalance as the raw Decimal (not
-        floated like get_milestones), or None if unset. The balance poller compares each
+        floated like get_milestones), or None if unset. A None scope is the shared tenant. The balance poller compares each
         target against the Decimal balance exact-to-the-cent, so it must skip _to_client's
         float() cast, which would fuzz a custom cent boundary (WHIT-384)."""
-        return self._read_milestones(scope)
+        return self._read_milestones(_MILESTONE_SCOPE_SHARED if scope is None else scope)
 
     def set_milestones(self, milestones: list, scope: str = _MILESTONE_SCOPE_SHARED) -> list:
         """Overwrite the whole milestone list and return it (normalised to floats).

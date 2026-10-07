@@ -45,11 +45,6 @@ _Paycycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-07-01")
 _Categories = partial(_FakeCategoryRepo, _CATS)
 
 
-class _NoTwins:
-    def get_pending_transactions_for_account(self, account):
-        return []
-
-
 def _fire(lam, monkeypatch, budget, stored, new):
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: _TODAY)
@@ -57,14 +52,14 @@ def _fire(lam, monkeypatch, budget, stored, new):
     sent = []
     monkeypatch.setattr(ba, "send_push", lambda title, body, toks, data=None: (
         sent.append(body) or {"sent": 1, "ok": 1, "pruned": []}))
-    window_repo = _AccountTransactionRepo(stored)
+    store = _AccountTransactionRepo(stored)
     ctx = ba.capture_pre_write(
         [new], device_repo=_Devices(), budget_repo=_Budgets({"groceries": budget}),
-        paycycle_repo=_Paycycle(), window_repo=window_repo, webhook_repo=_NoTwins(),
+        paycycle_repo=_Paycycle(), webhook_repo=store,
     )
-    ba.fire_budget_alerts(ctx, [new], webhook_repo=_NoTwins(), category_repo=_Categories(),
+    ba.fire_budget_alerts(ctx, [new], category_repo=_Categories(),
                           notify_repo=notify_repo())
-    return sent, window_repo
+    return sent, store
 
 
 def test_rollover_alert_reads_back_to_the_first_unsealed_cycle(lam, monkeypatch):
@@ -77,10 +72,10 @@ def test_rollover_alert_reads_back_to_the_first_unsealed_cycle(lam, monkeypatch)
         "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
     }
     stored = [_txn("prior1", -60, "2026-06-20"), _txn("old", -105, "2026-07-10")]
-    sent, window_repo = _fire(lam, monkeypatch, budget, stored, _txn("new1", -10, "2026-07-11"))
+    sent, store = _fire(lam, monkeypatch, budget, stored, _txn("new1", -10, "2026-07-11"))
 
-    assert {c[1] for c in window_repo.calls} == {"2026-06-17"}
-    assert {c[2] for c in window_repo.calls} == {"2026-07-14"}
+    assert {c[1] for c in store.calls} == {"2026-06-17"}
+    assert {c[2] for c in store.calls} == {"2026-07-14"}
     assert len(sent) == 1
     assert "80%" in sent[0]
 
@@ -91,9 +86,9 @@ def test_plain_budget_alert_reads_only_the_current_cycle(lam, monkeypatch):
 
     budget = {"target": Decimal("100")}
     stored = [_txn("prior1", -500, "2026-06-20"), _txn("old", -70, "2026-07-10")]
-    sent, window_repo = _fire(lam, monkeypatch, budget, stored, _txn("new1", -15, "2026-07-11"))
+    sent, store = _fire(lam, monkeypatch, budget, stored, _txn("new1", -15, "2026-07-11"))
 
-    assert [c[:3] for c in window_repo.calls] == [
+    assert [c[:3] for c in store.calls] == [
         (account_id, "2026-07-01", "2026-07-14") for account_id in constants.ACCOUNT_ID_MAP.values()
     ]
     assert len(sent) == 1

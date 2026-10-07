@@ -12,7 +12,7 @@ import pytest
 from _boto_stubs import use_condition_fields
 
 _SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
-_REIMPORT = tuple(sorted({path.stem for path in pathlib.Path(_SHARED_DIR).glob("*.py")} - {"ssm"}))
+_REIMPORT = tuple(sorted(path.stem for path in pathlib.Path(_SHARED_DIR).glob("*.py")))
 
 _ACCOUNT = "anz-spending"
 _SHOP = "SQ *KKV INTERNATIONAL PTY"

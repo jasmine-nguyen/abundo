@@ -2,7 +2,7 @@
 
 Like the lambda_api suite, importing ``lambda_balance_poller/handler.py`` in a
 test is non-trivial: it imports ``repository`` (which at load reads
-``AWS_REGION``/``TABLE_NAME`` and imports ``boto3``/``botocore``) and ``ssm``
+``AWS_REGION``/``TABLE_NAME`` and imports ``boto3``/``botocore``) and ``api_key``
 (which imports ``boto3``). None of that AWS wiring is needed to unit-test the
 normaliser / request shape / failure isolation, so we set the env vars and
 register lightweight fakes before the first import. Handler tests replace the
@@ -22,7 +22,7 @@ import pytest
 
 from _boto_stubs import install_import_satisfiers
 
-# Env vars + fake boto3/botocore/ssm the handler import chain needs. Handler tests
+# Env vars + fake boto3/botocore the handler import chain needs. Handler tests
 # monkeypatch the repository, so the fakes are import-satisfiers only. The key fetch
 # now lives in shared/api_key.py (WHIT-454); tests that need a key stub monkeypatch
 # handler.get_api_key directly.

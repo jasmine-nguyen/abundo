@@ -12,21 +12,7 @@ DatabaseError).
 import logging
 
 from _feed_fakes import FakeCategoryRepo
-
-
-class FakeRuleStore:
-    """Minimal RuleRepository stand-in: list_rules over snake_case rows; optional read failure."""
-
-    def __init__(self, rules=(), *, error=False):
-        self._rules = [dict(rule) for rule in rules]
-        self.error = error
-        self.list_calls = 0
-
-    def list_rules(self):
-        self.list_calls += 1
-        if self.error:
-            raise RuntimeError("rules read failed")
-        return [dict(rule) for rule in self._rules]
+from _rule_ingest_fakes import FakeRuleStore, apply_rules
 
 
 def _rule(value, category_id="groceries", *, field="description", operator="contains", rule_id=None):
@@ -48,8 +34,8 @@ def _charge(txn_id="t1", description="COLES 123 RICHMOND", category=None,
 def test_empty_store_is_a_noop(lam):
     charge = _charge(category=None)
     before = dict(charge)
-    rows, _ = lam.rule_ingest.apply(
-        [charge], rule_repo=FakeRuleStore([]), category_repo=FakeCategoryRepo(["groceries"]))
+    rows, _ = apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([]),
+        category_repo=FakeCategoryRepo(["groceries"]))
     assert rows[0] == before                 # returned untouched
     assert charge["category"] is None       # nothing filed
 
@@ -58,7 +44,7 @@ def test_empty_batch_reads_nothing(lam):
     # A data-less delivery (summary event) must not pay for the rules/taxonomy reads.
     # FAIL-ON-REVERT: drop the `if not rows` guard and list_rules is called once.
     store = FakeRuleStore([_rule("COLES", "groceries")])
-    rows, is_unfiled = lam.rule_ingest.apply([], rule_repo=store, category_repo=FakeCategoryRepo(["groceries"]))
+    rows, is_unfiled = apply_rules(lam.rule_ingest, [], rule_repo=store, category_repo=FakeCategoryRepo(["groceries"]))
     assert rows == []
     assert is_unfiled is None                 # data-less delivery reads no taxonomy -> no carry gate
     assert store.list_calls == 0
@@ -66,8 +52,7 @@ def test_empty_batch_reads_nothing(lam):
 
 def test_one_matching_rule_files_the_charge(lam):
     charge = _charge(description="COLES 55", category=None)
-    lam.rule_ingest.apply(
-        [charge], rule_repo=FakeRuleStore([_rule("COLES", "groceries")]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([_rule("COLES", "groceries")]),
         category_repo=FakeCategoryRepo(["groceries"]))
     assert charge["category"] == "groceries"
 
@@ -75,8 +60,7 @@ def test_one_matching_rule_files_the_charge(lam):
 def test_filing_stamps_the_winning_rule_id(lam):
     # WHIT-536: a rule-filed charge remembers which rule filed it.
     charge = _charge(description="COLES 55", category=None)
-    lam.rule_ingest.apply(
-        [charge], rule_repo=FakeRuleStore([_rule("COLES", "groceries", rule_id="rule-9")]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([_rule("COLES", "groceries", rule_id="rule-9")]),
         category_repo=FakeCategoryRepo(["groceries"]))
     assert charge["category"] == "groceries"
     assert charge["filed_by_rule"] == "rule-9"     # FAIL-ON-REVERT: stamp line removed -> absent
@@ -85,8 +69,7 @@ def test_filing_stamps_the_winning_rule_id(lam):
 def test_an_unfiled_charge_gets_no_stamp(lam):
     # No rule matches → not filed → nothing to explain, so no stamp is written.
     charge = _charge(description="WOOLIES", category=None)
-    lam.rule_ingest.apply(
-        [charge], rule_repo=FakeRuleStore([_rule("COLES", "groceries")]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([_rule("COLES", "groceries")]),
         category_repo=FakeCategoryRepo(["groceries"]))
     assert "filed_by_rule" not in charge
 
@@ -95,8 +78,7 @@ def test_filing_recomputes_counts_to_budget(lam):
     # A rule that files into a NON-budget category must flip counts_to_budget off. The charge
     # starts counting (True); after filing to TRANSFER_OUT it must not count.
     charge = _charge(description="PAYID TO MUM", category=None, counts_to_budget=True)
-    lam.rule_ingest.apply(
-        [charge], rule_repo=FakeRuleStore([_rule("PAYID", "TRANSFER_OUT")]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([_rule("PAYID", "TRANSFER_OUT")]),
         category_repo=FakeCategoryRepo(["TRANSFER_OUT"]))
     assert charge["category"] == "TRANSFER_OUT"
     assert charge["counts_to_budget"] is False        # FAIL-ON-REVERT: recompute line removed -> True
@@ -108,8 +90,8 @@ def test_nested_disagreeing_rules_file_to_the_more_specific_rule(lam):
     charge = _charge(description="COLES EXPRESS", category=None)
     rules = [_rule("COLES", "groceries", rule_id="r-groceries"),
              _rule("COLES EXPRESS", "petrol", rule_id="r-petrol")]
-    lam.rule_ingest.apply(
-        [charge], rule_repo=FakeRuleStore(rules), category_repo=FakeCategoryRepo(["groceries", "petrol"]))
+    apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore(rules),
+        category_repo=FakeCategoryRepo(["groceries", "petrol"]))
     assert charge["category"] == "petrol"
     assert charge["filed_by_rule"] == "r-petrol"      # stamped with the WINNING (specific) rule
 
@@ -121,8 +103,8 @@ def test_non_nested_disagreeing_rules_leave_the_charge_unfiled_and_log_both(lam,
     rules = [_rule("COLES", "groceries", rule_id="r-groceries"),
              _rule("RICHMOND", "petrol", rule_id="r-petrol")]
     with caplog.at_level(logging.INFO):
-        lam.rule_ingest.apply(
-            [charge], rule_repo=FakeRuleStore(rules), category_repo=FakeCategoryRepo(["groceries", "petrol"]))
+        apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore(rules),
+            category_repo=FakeCategoryRepo(["groceries", "petrol"]))
     assert charge["category"] is None
     assert "r-groceries" in caplog.text and "r-petrol" in caplog.text
 
@@ -132,8 +114,7 @@ def test_rule_to_a_deleted_category_is_skipped(lam):
     # is left unfiled rather than filed to a dangling id. FAIL-ON-REVERT: without the skip filter,
     # decide would file it to "ghost".
     charge = _charge(description="COLES", category=None)
-    lam.rule_ingest.apply(
-        [charge], rule_repo=FakeRuleStore([_rule("COLES", "ghost-category")]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([_rule("COLES", "ghost-category")]),
         category_repo=FakeCategoryRepo(["groceries"]))
     assert charge["category"] is None
 
@@ -141,8 +122,8 @@ def test_rule_to_a_deleted_category_is_skipped(lam):
 def test_rules_read_failure_leaves_the_charge_unfiled_and_logs(lam, caplog):
     charge = _charge(description="COLES", category=None)
     with caplog.at_level(logging.ERROR):
-        rows, is_unfiled = lam.rule_ingest.apply(
-            [charge], rule_repo=FakeRuleStore(error=True), category_repo=FakeCategoryRepo(["groceries"]))
+        rows, is_unfiled = apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore(error=True),
+            category_repo=FakeCategoryRepo(["groceries"]))
     assert rows[0]["category"] is None                 # best-effort: charge still lands, unfiled
     assert is_unfiled is None                          # read failed: no gate for the carry
     assert "could not read rules" in caplog.text      # FAIL-ON-REVERT: no try/except -> raises
@@ -151,8 +132,7 @@ def test_rules_read_failure_leaves_the_charge_unfiled_and_logs(lam, caplog):
 def test_an_already_filed_charge_is_left_alone(lam):
     # The charge already carries a live category; a matching rule must not re-file it.
     charge = _charge(description="COLES", category="eating-out")
-    lam.rule_ingest.apply(
-        [charge], rule_repo=FakeRuleStore([_rule("COLES", "groceries")]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([_rule("COLES", "groceries")]),
         category_repo=FakeCategoryRepo(["groceries", "eating-out"]))
     assert charge["category"] == "eating-out"
 
@@ -160,8 +140,7 @@ def test_an_already_filed_charge_is_left_alone(lam):
 def test_only_the_matching_charge_in_a_batch_is_filed(lam):
     hit = _charge(txn_id="t1", description="COLES 1", category=None)
     miss = _charge(txn_id="t2", description="ALDI 2", category=None)
-    lam.rule_ingest.apply(
-        [hit, miss], rule_repo=FakeRuleStore([_rule("COLES", "groceries")]),
+    apply_rules(lam.rule_ingest, [hit, miss], rule_repo=FakeRuleStore([_rule("COLES", "groceries")]),
         category_repo=FakeCategoryRepo(["groceries"]))
     assert hit["category"] == "groceries"
     assert miss["category"] is None
@@ -211,7 +190,7 @@ def test_process_transaction_resend_keeps_the_users_stored_category(lam, repo, m
     handler = _wire(lam, monkeypatch, [_rule("COLES", "groceries")], ["groceries", "eating-out"])
     # Seed the stored pending with the user's choice. Build it via normalise so its account key
     # matches what the re-send will normalise to, then override the category to the hand-filed one.
-    seed = lam.banksync.BankSyncClient.normalise(_raw("t9", description="COLES 123", pending=True))
+    seed = lam.banksync.normalise(_raw("t9", description="COLES 123", pending=True))
     seed["category"] = "eating-out"
     seed["counts_to_budget"] = True
     repo.insert_or_reconcile([seed])

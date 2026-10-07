@@ -8,13 +8,14 @@ can't see:
   * [A3] the worker's plain sweep carries the winning rule's "keep out of budget" action.
   * [A4]/[A5] the worker's inline "file this shop" run: narrowed to the one minted rule, stamped
     with its id, and no reconcile pass (so an orphan stamp is left for the plain sweep).
-  * [A6] reprocess's `file_charge(charge, load_rules(...))` shape still files, stamps and excludes.
+  * [A6] reprocess's per-row `book.file_charges` shape still files, stamps and excludes.
 """
 
 import json
 
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
 from _job_fakes import real_job_repo
+from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 _CATEGORIES = frozenset({"groceries", "petrol"})
@@ -54,7 +55,8 @@ def test_apply_route_time_budget_reads_the_handlers_clock(handler, monkeypatch):
     event = {"rawPath": "/transactions/uncategorized/apply-rules",
              "requestContext": {"http": {"method": "POST"}}, "body": json.dumps({"dryRun": False})}
 
-    resp = handler.apply_rules_to_uncategorized(
+    resp = apply_rules_to_uncategorized(
+        handler,
         event, repo, FakeCategoryRepo(_CATEGORIES), rule_repo)
     body = json.loads(resp["body"])
 

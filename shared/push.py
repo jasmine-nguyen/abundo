@@ -19,6 +19,8 @@ import urllib.request
 from itertools import batched
 
 from api_key import get_api_key
+from repository_device import DeviceRepository
+from repository_push_receipt import PushReceiptRepository
 
 # Expo Push send endpoint. send_push POSTs a batch of messages here.
 EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
@@ -91,7 +93,7 @@ def get_receipts(ids, *, access_token=None) -> dict:
     chunks. An id Expo hasn't resolved yet is simply absent from the result (the sweep
     leaves that row for a later poll). A per-chunk transport/decode error is logged and
     skipped, so one bad chunk can't lose the ids in the others. ``access_token`` overrides
-    the SSM read (pass "" to poll unauthenticated); it mirrors ``send_push``'s auth.
+    the SSM read (pass "" to poll unauthenticated).
     """
     ids = [i for i in (ids or []) if i]
     if not ids:
@@ -109,8 +111,7 @@ def get_receipts(ids, *, access_token=None) -> dict:
     return receipts
 
 
-def send_push(title: str, body: str, tokens, *, data=None, access_token=None, device_repo=None,
-              receipt_repo=None) -> dict:
+def send_push(title: str, body: str, tokens, *, data=None) -> dict:
     """Send {title, body} to every token via Expo Push. Best-effort: never raises.
 
     ``data`` (optional) is attached to every message as Expo's custom ``data`` payload —
@@ -119,13 +120,11 @@ def send_push(title: str, body: str, tokens, *, data=None, access_token=None, de
     none sends a byte-identical message to before.
 
     Batches into EXPO_PUSH_BATCH_MAX per request, prunes tokens Expo flags as
-    ``DeviceNotRegistered`` (via ``device_repo``, or the real DeviceRepository when
-    omitted), and returns a summary ``{sent, ok, pruned}``. ``access_token``
-    overrides the SSM read (pass "" to send unauthenticated); ``device_repo`` /
-    ``receipt_repo`` are injectable for tests. Tokens are de-duplicated, empties dropped.
+    ``DeviceNotRegistered`` from the DeviceRepository, and returns a summary
+    ``{sent, ok, pruned}``. Tokens are de-duplicated, empties dropped.
 
-    Each ACCEPTED push returns a receipt id, which is stashed with its token via
-    ``receipt_repo`` (or the real PushReceiptRepository when omitted) so a later sweep
+    Each ACCEPTED push returns a receipt id, which is stashed with its token in the
+    PushReceiptRepository so a later sweep
     can poll Expo's receipts for the true delivery outcome (WHIT-139) — see ``ok`` below.
     Stashing is best-effort: a store failure never breaks the send.
 
@@ -143,7 +142,7 @@ def send_push(title: str, body: str, tokens, *, data=None, access_token=None, de
     if not tokens:
         return {"sent": 0, "ok": 0, "pruned": []}
 
-    token = access_token if access_token is not None else _safe_access_token()
+    token = _safe_access_token()
 
     ok = 0
     pruned: list = []
@@ -173,9 +172,9 @@ def send_push(title: str, body: str, tokens, *, data=None, access_token=None, de
                 pruned.append(tok)
 
     for tok in pruned:
-        _safe_prune(tok, device_repo)
+        _safe_prune(tok)
     if receipts:
-        _safe_store_receipts(receipts, receipt_repo)
+        _safe_store_receipts(receipts)
 
     return {"sent": len(tokens), "ok": ok, "pruned": pruned}
 
@@ -190,26 +189,19 @@ def _safe_access_token():
         return None
 
 
-def _safe_prune(token: str, device_repo) -> None:
+def _safe_prune(token: str) -> None:
     try:
-        (device_repo or _default_repo()).remove(token)
+        DeviceRepository().remove(token)
     except Exception:
         logger.exception("could not prune dead push token")
 
 
-def _default_repo():
-    # Imported lazily so send_push has no hard import dependency on the store when
-    # a caller injects its own device_repo (and tests never touch DynamoDB).
-    from repository_device import DeviceRepository
-    return DeviceRepository()
-
-
-def _safe_store_receipts(receipts, receipt_repo) -> None:
+def _safe_store_receipts(receipts) -> None:
     """Stash (receipt_id, token) pairs so a later receipts sweep (WHIT-139) can poll
     Expo for each push's delivery outcome. Best-effort — a store failure (or an
     unreadable store) must never break the send; the ids self-expire via TTL anyway."""
     try:
-        repo = receipt_repo or _default_receipt_repo()
+        repo = PushReceiptRepository()
     except Exception:
         logger.exception("could not open the push-receipt store")
         return
@@ -218,10 +210,3 @@ def _safe_store_receipts(receipts, receipt_repo) -> None:
             repo.put(receipt_id, token)
         except Exception:
             logger.exception("could not stash push receipt id")
-
-
-def _default_receipt_repo():
-    # Lazy import, like _default_repo: keeps send_push free of a hard store dependency
-    # when a caller injects its own receipt_repo (and tests never touch DynamoDB).
-    from repository_push_receipt import PushReceiptRepository
-    return PushReceiptRepository()

@@ -11,6 +11,7 @@ that minted it; a NEW id comes from the response body.
 import json
 
 from _feed_fakes import ANZ, SPENDING, FakeCategoryRepo, fail_writes, real_repos, _row, stored
+from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 _CATEGORIES = frozenset({"groceries", "petrol"})
@@ -57,7 +58,8 @@ def _delete(handler, rule_repo, txn_repo, event):
 def _apply(handler, repo, rule_repo, body, categories=_CATEGORIES):
     event = {"rawPath": "/transactions/uncategorized/apply-rules",
              "requestContext": {"http": {"method": "POST"}}, "body": json.dumps(body)}
-    resp = handler.apply_rules_to_uncategorized(
+    resp = apply_rules_to_uncategorized(
+        handler,
         event, repo, FakeCategoryRepo(categories), rule_repo)
     return resp, json.loads(resp["body"])
 

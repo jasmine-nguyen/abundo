@@ -4,6 +4,7 @@ the `lam` fixture so rule_ingest -> rule_book.rule_from_row -> rule_engine resol
 from decimal import Decimal
 
 from _feed_fakes import FakeCategoryRepo
+from _rule_ingest_fakes import apply_rules
 
 
 class _Store:
@@ -33,14 +34,14 @@ _UNDER_30 = [{"field": "merchant", "operator": "contains", "value": "uber"},
 
 def test_webhook_files_a_charge_when_all_conditions_hold(lam):
     charge = _charge(amount=Decimal("-25.00"))
-    lam.rule_ingest.apply([charge], rule_repo=_Store([_multi_row(_UNDER_30)]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=_Store([_multi_row(_UNDER_30)]),
                           category_repo=FakeCategoryRepo(["transport"]))
     assert charge["category"] == "transport"
 
 
 def test_webhook_leaves_unfiled_when_an_and_condition_fails(lam):
     charge = _charge(amount=Decimal("-40.00"))   # merchant matches, amount does not
-    lam.rule_ingest.apply([charge], rule_repo=_Store([_multi_row(_UNDER_30)]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=_Store([_multi_row(_UNDER_30)]),
                           category_repo=FakeCategoryRepo(["transport"]))
     assert charge["category"] is None
 
@@ -52,6 +53,6 @@ def test_webhook_any_logic_files_on_a_single_matching_condition(lam):
     # merchant matches the raw description (WHIT-561 follow-up), so equals compares to it; a
     # non-matching merchant_name also pins that the source is the description, not merchant_name.
     charge = _charge(description="UBER", merchant_name="LYFT", amount=Decimal("-25.00"))
-    lam.rule_ingest.apply([charge], rule_repo=_Store([any_rule]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=_Store([any_rule]),
                           category_repo=FakeCategoryRepo(["transport"]))
     assert charge["category"] == "transport"

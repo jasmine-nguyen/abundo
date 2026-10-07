@@ -62,3 +62,15 @@ def upserted(repo):
     """{account_id: amount} of every balance the code stored."""
     return {item["pk"][len(_BALANCE_PREFIX):]: item["amount"]
             for item in repo._table.put_calls if item["pk"] != _MARKER_PK}
+
+
+def feed_watch_repo(handler, watches=None):
+    """The REAL FeedWatchRepository (from ``handler``'s loaded copy) over a FakeTable, with
+    ``watches`` ({account_id: put_watch kwargs}) already stored through the real put_watch. The put
+    log is cleared after that setup, so ``put_calls`` shows only the code under test."""
+    watch_repo = handler.FeedWatchRepository()
+    watch_repo._table = FakeTable()
+    for account_id, watch in (watches or {}).items():
+        watch_repo.put_watch(account_id, **watch)
+    watch_repo._table.put_calls.clear()
+    return watch_repo

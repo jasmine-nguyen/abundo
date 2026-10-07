@@ -193,7 +193,7 @@ def with_carried_category(
         else:
             carried.pop("filed_by_rule", None)
     # WHIT-545: on a settlement-style carry, recompute the budget flag so it always
-    # matches the category that landed (as file_charge does on first filing).
+    # matches the category that landed (as the webhook's rule filing does on first filing).
     if is_unfiled is not None:
         carried["counts_to_budget"] = counts_to_budget(
             carried.get("account_id"), carried.get("category")

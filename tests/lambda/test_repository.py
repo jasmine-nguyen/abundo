@@ -34,7 +34,7 @@ def test_double_processing_same_posted_is_idempotent(repo, lam):
     # the same event twice. Prove that's harmless for the transaction row: writing the
     # same normalised POSTED transaction twice leaves exactly ONE row (overwrite by
     # id), never a duplicate.
-    normalise = lam.banksync.BankSyncClient.normalise
+    normalise = lam.banksync.normalise
     row = {
         "id": "txn_1", "date": "2026-06-29", "authorizedDate": "2026-06-29",
         "description": "COLES", "merchantName": "COLES", "amount": "-12.00",

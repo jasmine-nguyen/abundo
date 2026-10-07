@@ -24,7 +24,7 @@ def _bank_row(txn_id, amount, pending, category, authorized_date="2026-06-29"):
 
 
 def _norm(lam, **kw):
-    return lam.banksync.BankSyncClient.normalise(_bank_row(**kw))
+    return lam.banksync.normalise(_bank_row(**kw))
 
 
 def _acc(txn):

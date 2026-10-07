@@ -62,7 +62,7 @@ _COPY = {
 }
 
 
-def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, window_repo, webhook_repo):
+def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, webhook_repo):
     """Snapshot (BEFORE the write) everything `fire_budget_alerts` needs. Returns a
     context dict, or None to skip alerting. Short-circuits cheapest-first: no
     registered device tokens → done; no budget targets → done."""
@@ -79,7 +79,7 @@ def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, wi
     # One read, widened back to the oldest rollover cycle. The wide rows are kept as
     # `rollover_txns`; `before_rows` stays current-cycle-only so this cycle's spend is never
     # inflated by prior-cycle transactions.
-    all_rows = read_window(window_repo, window.fetch_start, end)
+    all_rows = read_window(webhook_repo, window.fetch_start, end)
     before_rows = (all_rows if window.fetch_start == start
                    else transactions_in_window(all_rows, start, end))
 
@@ -114,7 +114,7 @@ def _simulate_after(ctx, normalised, is_unfiled=None) -> list[dict]:
     return [r for r in rows.values() if start <= (r.get("date") or "") <= end]
 
 
-def fire_budget_alerts(ctx, normalised, *, webhook_repo, category_repo, notify_repo) -> None:
+def fire_budget_alerts(ctx, normalised, *, category_repo, notify_repo) -> None:
     """Given the pre-write context and the just-written batch, push for every budgeted
     category whose combined spend has reached a threshold not yet fired this cycle."""
     if ctx is None:

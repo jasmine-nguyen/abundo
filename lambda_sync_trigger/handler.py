@@ -17,7 +17,7 @@ BankSync's UI scheduler is capped at daily on our tier; calling the REST sync
 endpoint ourselves lets us pick our own cadence.
 
 Invoked only by EventBridge Scheduler, never by API Gateway, so there is no
-webhook signature to verify here. ``constants`` and ``ssm`` are provided by the
+webhook signature to verify here. ``constants`` and ``api_key`` are provided by the
 shared lambda layer.
 """
 
@@ -53,13 +53,12 @@ def trigger_sync(feed_id: str, api_key: str) -> None:
     """
     url = f"{BANKSYNC_BASE_URL}/v1/feeds/{feed_id}/sync"
     try:
-        # empty body -> incremental sync; also forces a clean POST
+        # empty body -> incremental sync; a body (even empty) makes it a POST
         body = banksync_request(
             url,
             api_key,
             user_agent="abundo-transaction-trigger",
             timeout=SYNC_TIMEOUT_SECONDS,
-            method="POST",
             data=b"",
         )
         logger.info("feed %s: sync job %s created", feed_id, body["data"]["id"])

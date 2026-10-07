@@ -51,8 +51,6 @@ def _load_is_unfiled(category_repo):
     category-store outage never blocks the ghost cleanup (fail-open, mirroring
     rule_ingest.load_rules). A bank charge carries a raw category that isn't in the taxonomy,
     so only this test — not category-presence — tells a real filing from the bank default."""
-    if category_repo is None:
-        return None
     try:
         return load_is_unfiled(category_repo)
     except Exception:
@@ -164,16 +162,15 @@ def age_out_account(repo, account_id: str, cutoff: str, dry_run: bool, is_unfile
     return summary
 
 
-def age_out_stale_pendings(repo, category_repo=None, today: date | None = None, dry_run: bool = True) -> dict:
+def age_out_stale_pendings(repo, category_repo, today: date | None = None, dry_run: bool = True) -> dict:
     """Sweep every account for stale pendings. Returns a summary dict.
 
     `today` is injectable for deterministic tests; defaults to the app's Melbourne
     "today" (shared spend.melbourne_today) — the one clock the rest of the app uses,
     matching the schedule's own Australia/Melbourne timezone.
 
-    `category_repo` is optional: when given, the taxonomy is read once and a filed pending's
-    filing is rescued onto its settled twin before the reap (WHIT-511). Omitted (or an
-    unreadable taxonomy) reaps exactly as before — so every existing caller/test is unchanged."""
+    The taxonomy is read once from `category_repo` and a filed pending's filing is rescued onto
+    its settled twin before the reap (WHIT-511). An unreadable taxonomy reaps without rescue."""
     today = today or melbourne_today()
     cutoff = _cutoff_date(today)
     is_unfiled = _load_is_unfiled(category_repo)

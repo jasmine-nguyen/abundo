@@ -1,4 +1,4 @@
-"""WHIT-623 slice 3 QA — reprocess's per-row shape `file_charge(charge, load_rules(...))`.
+"""WHIT-623 slice 3 QA — reprocess's per-row shape: `load_rules(...)`, then `book.file_charges([charge], ...)`.
 
 load_rules returns the RuleBook (WHIT-633). The reprocess suite files one charge this way; these pin
 the rest of what the per-row path must still do (stamp, keep-out-of-budget, disagreement, deleted-category skip).
@@ -32,12 +32,12 @@ def _charge(txn_id="t1", description="COLES 123 RICHMOND"):
 
 def _file(lam, charge, rules):
     book = lam.rule_ingest.load_rules(_Store(rules), _Cats())
-    lam.rule_ingest.file_charge(charge, book)
+    book.file_charges([charge], None, counts_to_budget=lam.rule_ingest.counts_to_budget)
     return book
 
 
 def test_per_row_filing_stamps_and_keeps_an_excluded_charge_out_of_the_budget(lam):
-    # [A6] FAIL-ON-REVERT: make file_charge a no-op (or drop the book) and nothing is filed.
+    # [A6] FAIL-ON-REVERT: make file_charges a no-op (or drop the book) and nothing is filed.
     charge = _charge()
     book = _file(lam, charge, [_rule("COLES", budget_excluded=True)])
 

@@ -25,7 +25,7 @@ becomes visible, which is the point of this card.
 Best-effort throughout (mirrors the balance poller): every outcome is isolated in its own
 try/except and ``lambda_handler`` never raises, so one bad receipt — or a whole failed
 poll — can't break the rest or error the invocation. ``push``, ``repository_push_receipt``,
-``repository_device`` (and ``ssm`` beneath them) are provided by the shared layer.
+``repository_device`` (and ``api_key`` beneath them) are provided by the shared layer.
 
 Invoked only by EventBridge Scheduler, never by API Gateway.
 """

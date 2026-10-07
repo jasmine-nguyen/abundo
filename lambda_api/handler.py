@@ -121,7 +121,7 @@ from spend import (
 from anthropic_client import AnthropicError
 from chat_tools import lookback_floor
 from insights_ai import generate_suggestions
-from iso_date import ISO_DATE_RE, valid_iso_date
+from iso_date import valid_iso_date
 from merchant_groups import (
     MIN_RULE_VALUE_ALPHANUMERICS,
     group_unfiled_by_merchant,
@@ -1661,8 +1661,7 @@ def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanish
 
 def apply_rules_to_uncategorized(
     event: dict, transaction_repo: TransactionRepository, category_repo: CategoryRepository,
-    rule_repo: RuleRepository, budget_repo: BudgetRepository | None = None,
-    paycycle_repo: PayCycleRepository | None = None,
+    rule_repo: RuleRepository, budget_repo: BudgetRepository, paycycle_repo: PayCycleRepository,
 ) -> dict:
     """POST /transactions/uncategorized/apply-rules — file charges already stored that a rule
     covers, across ALL history.
@@ -1753,9 +1752,7 @@ def apply_rules_to_uncategorized(
             return _json_response(500, {"error": "could not save your rule"})
         created_rule = rule_reply(rule_from_row(row))
 
-    seeder = None
-    if budget_repo is not None and paycycle_repo is not None:
-        seeder = SpreadSeeder(budget_repo, paycycle_repo, rule_repo)
+    seeder = SpreadSeeder(budget_repo, paycycle_repo, rule_repo)
     filed, vanished, failed, already_filed, matched_remaining = book.sweep(
         transaction_repo, transactions, plan,
         limit=_apply_rules_limit(started),
@@ -3013,11 +3010,8 @@ def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
     values = {}
     for field in _LOANFACTS_FIELDS:
         v = body.get(field)
-        # bool is an int subclass, so reject it before the numeric check.
-        if isinstance(v, bool) or not isinstance(v, (int, float)):
+        if not _finite_number(v, low=-math.inf):
             return _json_response(400, {"error": f"{field} must be a number"})
-        if not math.isfinite(v):
-            return _json_response(400, {"error": f"{field} must be a finite number"})
         values[field] = v
 
     # extra is an optional top-up (>= 0); every other amount must be positive.
@@ -3036,25 +3030,17 @@ def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
         return _json_response(400, {"error": "ratePct must be between 0 and 100"})
 
     # Optional target payoff date (WHIT-126): absent/None is fine (unset or cleared); when present
-    # it must be a real ISO YYYY-MM-DD calendar date. Shape and calendar are checked separately so
-    # the 400 says WHICH is wrong; the shape regex is the one shared source (ISO_DATE_RE, WHIT-418).
+    # it must be a real ISO YYYY-MM-DD calendar date.
     goal_date = body.get("payoffGoalDate")
-    if goal_date is not None:
-        if not isinstance(goal_date, str) or not ISO_DATE_RE.match(goal_date):
-            return _json_response(400, {"error": "payoffGoalDate must be an ISO YYYY-MM-DD date"})
-        try:
-            date.fromisoformat(goal_date)
-        except ValueError:
-            return _json_response(400, {"error": "payoffGoalDate must be a real calendar date"})
+    if goal_date is not None and not valid_iso_date(goal_date):
+        return _json_response(400, {"error": "payoffGoalDate must be a real calendar date (YYYY-MM-DD)"})
 
     # Optional next-place deposit target (WHIT-378): absent/None is fine (unset or
     # cleared); when present it must be a finite number > 0 within the dollar ceiling.
     deposit_target = body.get("depositTarget")
     if deposit_target is not None:
-        if isinstance(deposit_target, bool) or not isinstance(deposit_target, (int, float)):
+        if not _finite_number(deposit_target, low=-math.inf):
             return _json_response(400, {"error": "depositTarget must be a number"})
-        if not math.isfinite(deposit_target):
-            return _json_response(400, {"error": "depositTarget must be a finite number"})
         if deposit_target <= 0:
             return _json_response(400, {"error": "depositTarget must be > 0"})
         if deposit_target > LOANFACTS_FIELD_MAX:
@@ -3233,12 +3219,8 @@ def set_budget(
         return error
 
     target = body.get("target")
-    # bool is an int subclass, so reject it explicitly before the numeric check.
-    if isinstance(target, bool) or not isinstance(target, (int, float)):
+    if not _finite_number(target, low=-math.inf):
         return _json_response(400, {"error": "target must be a number"})
-    # json.loads accepts NaN/Infinity by default; DynamoDB rejects them at write.
-    if not math.isfinite(target):
-        return _json_response(400, {"error": "target must be a finite number"})
     if target < 0:
         return _json_response(400, {"error": "target must be >= 0"})
     if target > _BUDGET_TARGET_MAX:
@@ -3324,11 +3306,8 @@ def set_spread(
         return error
 
     amount = body.get("amount")
-    # bool is an int subclass, so reject it explicitly before the numeric check.
-    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+    if not _finite_number(amount, low=-math.inf):
         return _json_response(400, {"error": "amount must be a number"})
-    if not math.isfinite(amount):
-        return _json_response(400, {"error": "amount must be a finite number"})
     # Cap the raw float first (set_budget's order): quantising a huge value like 1e27 would
     # raise InvalidOperation (past the 28-digit Decimal context) and 500 instead of 400.
     if amount > _BUDGET_TARGET_MAX:

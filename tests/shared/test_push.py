@@ -1,13 +1,17 @@
 """Tests for the Expo Push sender (shared/push.py).
 
-No network: ``push.urllib.request.urlopen`` is monkeypatched with a fake response,
-and a recording fake stands in for DeviceRepository. Locks the request shape, the
-ticket→token pruning, batching over 100, the never-raises swallow, and the auth
-header (present only with an access token; read from SSM when not passed).
+No network: ``push.urllib.request.urlopen`` is monkeypatched with a fake response, and
+the ``stores`` fixture swaps push's SSM read and its DeviceRepository /
+PushReceiptRepository for recording fakes. Locks the request shape, the ticket→token
+pruning, batching over 100, the never-raises swallow, and the auth header (present only
+with an access token, read from SSM).
 """
 
 import json
+import types
 import urllib.error
+
+import pytest
 
 from _http_fakes import FakeResponse, http_error
 
@@ -42,6 +46,18 @@ def _stub_ssm_token(push, monkeypatch, read):
     monkeypatch.setattr(push, "get_api_key", get_api_key)
 
 
+@pytest.fixture
+def stores(shared, monkeypatch):
+    """Token "k" from SSM, and recording fakes behind push's device + receipt stores."""
+    push = shared.push
+    devices = _RecordingRepo()
+    receipts = _RecordingReceiptRepo()
+    _stub_ssm_token(push, monkeypatch, lambda path: "k")
+    monkeypatch.setattr(push, "DeviceRepository", lambda: devices)
+    monkeypatch.setattr(push, "PushReceiptRepository", lambda: receipts)
+    return types.SimpleNamespace(devices=devices, receipts=receipts)
+
+
 def _tickets(*statuses):
     """Build an Expo response body from a list of "ok" / "dnr" ticket statuses."""
     data = []
@@ -54,27 +70,28 @@ def _tickets(*statuses):
     return {"data": data}
 
 
-def test_empty_tokens_is_a_noop_and_makes_no_request(shared, monkeypatch):
+def test_empty_tokens_is_a_noop_and_makes_no_request(shared, stores, monkeypatch):
     push = shared.push
     calls = []
     monkeypatch.setattr(push.urllib.request, "urlopen", lambda *a, **k: calls.append(1))
-    out = push.send_push("T", "B", [], access_token="k")
+    out = push.send_push("T", "B", [])
     assert out == {"sent": 0, "ok": 0, "pruned": []}
     assert calls == []   # never touched the network
 
 
-def test_none_tokens_is_a_noop_and_never_raises(shared, monkeypatch):
+def test_none_tokens_is_a_noop_and_never_raises(shared, stores, monkeypatch):
     # The "never raises" contract must hold even for a None token list.
     push = shared.push
     calls = []
     monkeypatch.setattr(push.urllib.request, "urlopen", lambda *a, **k: calls.append(1))
-    out = push.send_push("T", "B", None, access_token="k")
+    out = push.send_push("T", "B", None)
     assert out == {"sent": 0, "ok": 0, "pruned": []}
     assert calls == []
 
 
-def test_builds_the_expo_request_and_counts_ok(shared, monkeypatch):
+def test_builds_the_expo_request_and_counts_ok(shared, stores, monkeypatch):
     push = shared.push
+    _stub_ssm_token(push, monkeypatch, lambda path: "secret")
     captured = {}
 
     def fake_urlopen(req, timeout=None):
@@ -89,7 +106,6 @@ def test_builds_the_expo_request_and_counts_ok(shared, monkeypatch):
     out = push.send_push(
         "Heads up", "Coffee at 80%",
         ["ExpoPushToken[a]", "ExpoPushToken[b]"],
-        access_token="secret", device_repo=_RecordingRepo(),
     )
     assert captured["url"] == push.EXPO_PUSH_URL
     assert captured["method"] == "POST"
@@ -103,7 +119,7 @@ def test_builds_the_expo_request_and_counts_ok(shared, monkeypatch):
     assert out["pruned"] == []
 
 
-def test_data_payload_is_attached_to_every_message(shared, monkeypatch):
+def test_data_payload_is_attached_to_every_message(shared, stores, monkeypatch):
     # WHIT-321: an optional `data` rides on every message (deep-links a tap to a screen).
     # The no-data case above is the backward-compat guard: callers that pass none are
     # unchanged; this one proves the key appears on each message when passed.
@@ -118,46 +134,40 @@ def test_data_payload_is_attached_to_every_message(shared, monkeypatch):
     push.send_push(
         "Nice one", "$3,573 toward the mortgage",
         ["ExpoPushToken[a]", "ExpoPushToken[b]"],
-        data={"type": "repayment"}, access_token="k", device_repo=_RecordingRepo(),
+        data={"type": "repayment"},
     )
     assert [m.get("data") for m in captured["body"]] == [
         {"type": "repayment"}, {"type": "repayment"}
     ]
 
 
-def test_prunes_device_not_registered_tokens(shared, monkeypatch):
+def test_prunes_device_not_registered_tokens(shared, stores, monkeypatch):
     push = shared.push
-    repo = _RecordingRepo()
     monkeypatch.setattr(push.urllib.request, "urlopen",
                         lambda req, timeout=None: FakeResponse(_tickets("ok", "dnr")))
-    out = push.send_push("T", "B", ["ExpoPushToken[good]", "ExpoPushToken[dead]"],
-                         access_token="k", device_repo=repo)
+    out = push.send_push("T", "B", ["ExpoPushToken[good]", "ExpoPushToken[dead]"])
     assert out["ok"] == 1
     assert out["pruned"] == ["ExpoPushToken[dead]"]
-    assert repo.removed == ["ExpoPushToken[dead]"]
+    assert stores.devices.removed == ["ExpoPushToken[dead]"]
 
 
-def test_stashes_receipt_ids_for_accepted_pushes(shared, monkeypatch):
+def test_stashes_receipt_ids_for_accepted_pushes(shared, stores, monkeypatch):
     # WHIT-139: each accepted push returns a receipt id; stash it with the token it
     # went to so a later sweep can poll Expo for the true delivery outcome.
     push = shared.push
-    receipt_repo = _RecordingReceiptRepo()
     body = {"data": [{"status": "ok", "id": "rcpt-a"}, {"status": "ok", "id": "rcpt-b"}]}
     monkeypatch.setattr(push.urllib.request, "urlopen",
                         lambda req, timeout=None: FakeResponse(body))
-    out = push.send_push("T", "B", ["ExpoPushToken[a]", "ExpoPushToken[b]"],
-                         access_token="k", device_repo=_RecordingRepo(),
-                         receipt_repo=receipt_repo)
+    out = push.send_push("T", "B", ["ExpoPushToken[a]", "ExpoPushToken[b]"])
     assert out["ok"] == 2
-    assert receipt_repo.put_calls == [("rcpt-a", "ExpoPushToken[a]"),
-                                      ("rcpt-b", "ExpoPushToken[b]")]
+    assert stores.receipts.put_calls == [("rcpt-a", "ExpoPushToken[a]"),
+                                         ("rcpt-b", "ExpoPushToken[b]")]
 
 
-def test_does_not_stash_receipts_for_dead_or_id_less_tickets(shared, monkeypatch):
+def test_does_not_stash_receipts_for_dead_or_id_less_tickets(shared, stores, monkeypatch):
     # Only ACCEPTED tickets carrying a receipt id are stashed — a pruned (dead) token
     # and an ok ticket with no id both contribute nothing.
     push = shared.push
-    receipt_repo = _RecordingReceiptRepo()
     body = {"data": [
         {"status": "ok", "id": "rcpt-live"},                              # stored
         {"status": "error", "details": {"error": "DeviceNotRegistered"}},  # pruned, not stored
@@ -166,13 +176,12 @@ def test_does_not_stash_receipts_for_dead_or_id_less_tickets(shared, monkeypatch
     monkeypatch.setattr(push.urllib.request, "urlopen",
                         lambda req, timeout=None: FakeResponse(body))
     out = push.send_push(
-        "T", "B", ["ExpoPushToken[live]", "ExpoPushToken[dead]", "ExpoPushToken[noid]"],
-        access_token="k", device_repo=_RecordingRepo(), receipt_repo=receipt_repo)
+        "T", "B", ["ExpoPushToken[live]", "ExpoPushToken[dead]", "ExpoPushToken[noid]"])
     assert out["pruned"] == ["ExpoPushToken[dead]"]
-    assert receipt_repo.put_calls == [("rcpt-live", "ExpoPushToken[live]")]
+    assert stores.receipts.put_calls == [("rcpt-live", "ExpoPushToken[live]")]
 
 
-def test_receipt_store_failure_is_swallowed(shared, monkeypatch):
+def test_receipt_store_failure_is_swallowed(shared, stores, monkeypatch):
     # A failing receipt store must never break the send (best-effort, never raises).
     push = shared.push
 
@@ -180,60 +189,55 @@ def test_receipt_store_failure_is_swallowed(shared, monkeypatch):
         def put(self, receipt_id, token):
             raise RuntimeError("dynamo down")
 
+    monkeypatch.setattr(push, "PushReceiptRepository", _BoomReceiptRepo)
     monkeypatch.setattr(
         push.urllib.request, "urlopen",
         lambda req, timeout=None: FakeResponse({"data": [{"status": "ok", "id": "r"}]}))
-    out = push.send_push("T", "B", ["ExpoPushToken[a]"], access_token="k",
-                         device_repo=_RecordingRepo(), receipt_repo=_BoomReceiptRepo())
+    out = push.send_push("T", "B", ["ExpoPushToken[a]"])
     assert out == {"sent": 1, "ok": 1, "pruned": []}
 
 
-def test_uses_the_default_receipt_repo_when_none_injected(shared, monkeypatch):
-    # Production callers (budget/repayment alerts) call send_push WITHOUT a receipt_repo,
-    # so the default PushReceiptRepository is the real capture path — lock that it's used.
+def test_stashes_receipts_through_the_push_receipt_store(shared, monkeypatch):
+    # Production callers pass no store, so the module's PushReceiptRepository is the real
+    # capture path — lock that it's the one used.
     push = shared.push
-    default = _RecordingReceiptRepo()
-    monkeypatch.setattr(push, "_default_receipt_repo", lambda: default)
+    receipts = _RecordingReceiptRepo()
+    _stub_ssm_token(push, monkeypatch, lambda path: "k")
+    monkeypatch.setattr(push, "PushReceiptRepository", lambda: receipts)
     monkeypatch.setattr(
         push.urllib.request, "urlopen",
         lambda req, timeout=None: FakeResponse({"data": [{"status": "ok", "id": "r1"}]}))
-    push.send_push("T", "B", ["ExpoPushToken[a]"], access_token="k", device_repo=_RecordingRepo())
-    assert default.put_calls == [("r1", "ExpoPushToken[a]")]
+    push.send_push("T", "B", ["ExpoPushToken[a]"])
+    assert receipts.put_calls == [("r1", "ExpoPushToken[a]")]
 
 
-def test_default_receipt_repo_is_the_push_receipt_store(shared):
-    push = shared.push
-    assert isinstance(push._default_receipt_repo(), shared.push_receipt.PushReceiptRepository)
-
-
-def test_receipt_store_open_failure_is_swallowed(shared, monkeypatch):
+def test_receipt_store_open_failure_is_swallowed(shared, stores, monkeypatch):
     # Even if opening the store fails, the send must still complete cleanly.
     push = shared.push
 
     def boom():
         raise RuntimeError("no store")
 
-    monkeypatch.setattr(push, "_default_receipt_repo", boom)
+    monkeypatch.setattr(push, "PushReceiptRepository", boom)
     monkeypatch.setattr(
         push.urllib.request, "urlopen",
         lambda req, timeout=None: FakeResponse({"data": [{"status": "ok", "id": "r"}]}))
-    out = push.send_push("T", "B", ["ExpoPushToken[a]"], access_token="k", device_repo=_RecordingRepo())
+    out = push.send_push("T", "B", ["ExpoPushToken[a]"])
     assert out == {"sent": 1, "ok": 1, "pruned": []}
 
 
-def test_transport_error_is_swallowed(shared, monkeypatch):
+def test_transport_error_is_swallowed(shared, stores, monkeypatch):
     push = shared.push
 
     def boom(req, timeout=None):
         raise urllib.error.URLError("down")
 
     monkeypatch.setattr(push.urllib.request, "urlopen", boom)
-    out = push.send_push("T", "B", ["ExpoPushToken[a]"], access_token="k",
-                         device_repo=_RecordingRepo())
+    out = push.send_push("T", "B", ["ExpoPushToken[a]"])
     assert out == {"sent": 1, "ok": 0, "pruned": []}   # never raised
 
 
-def test_malformed_response_is_swallowed(shared, monkeypatch):
+def test_malformed_response_is_swallowed(shared, stores, monkeypatch):
     push = shared.push
 
     class _Bad:
@@ -242,7 +246,7 @@ def test_malformed_response_is_swallowed(shared, monkeypatch):
         def read(self): return b"not json"
 
     monkeypatch.setattr(push.urllib.request, "urlopen", lambda req, timeout=None: _Bad())
-    out = push.send_push("T", "B", ["ExpoPushToken[a]"], access_token="k")
+    out = push.send_push("T", "B", ["ExpoPushToken[a]"])
     assert out["ok"] == 0 and out["pruned"] == []
 
 
@@ -295,7 +299,7 @@ def test_post_expo_builds_the_shared_request_shape(shared, monkeypatch):
     assert out == {"data": {"ok": True}}
 
 
-def test_batches_over_100_and_prunes_in_the_second_batch(shared, monkeypatch):
+def test_batches_over_100_and_prunes_in_the_second_batch(shared, stores, monkeypatch):
     push = shared.push
     sizes = []
 
@@ -307,16 +311,16 @@ def test_batches_over_100_and_prunes_in_the_second_batch(shared, monkeypatch):
 
     monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
     tokens = [f"ExpoPushToken[{i}]" for i in range(150)]
-    repo = _RecordingRepo()
-    out = push.send_push("T", "B", tokens, access_token="k", device_repo=repo)
+    out = push.send_push("T", "B", tokens)
     assert sizes == [100, 50]   # 100-per-request batching
     # ticket↔token zipping holds per batch: the last of each batch is pruned.
     assert out["pruned"] == ["ExpoPushToken[99]", "ExpoPushToken[149]"]
-    assert repo.removed == ["ExpoPushToken[99]", "ExpoPushToken[149]"]
+    assert stores.devices.removed == ["ExpoPushToken[99]", "ExpoPushToken[149]"]
 
 
-def test_no_auth_header_when_access_token_is_empty(shared, monkeypatch):
+def test_no_auth_header_when_access_token_is_empty(shared, stores, monkeypatch):
     push = shared.push
+    _stub_ssm_token(push, monkeypatch, lambda path: "")
     captured = {}
 
     def fake_urlopen(req, timeout=None):
@@ -324,11 +328,11 @@ def test_no_auth_header_when_access_token_is_empty(shared, monkeypatch):
         return FakeResponse(_tickets("ok"))
 
     monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
-    push.send_push("T", "B", ["ExpoPushToken[a]"], access_token="", device_repo=_RecordingRepo())
+    push.send_push("T", "B", ["ExpoPushToken[a]"])
     assert captured["auth"] is None
 
 
-def test_access_token_read_from_ssm_when_not_passed(shared, monkeypatch):
+def test_access_token_read_from_ssm(shared, stores, monkeypatch):
     push = shared.push
     _stub_ssm_token(push, monkeypatch, lambda path: "ssm-token")
     captured = {}
@@ -338,11 +342,11 @@ def test_access_token_read_from_ssm_when_not_passed(shared, monkeypatch):
         return FakeResponse(_tickets("ok"))
 
     monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
-    push.send_push("T", "B", ["ExpoPushToken[a]"], device_repo=_RecordingRepo())
+    push.send_push("T", "B", ["ExpoPushToken[a]"])
     assert captured["auth"] == "Bearer ssm-token"
 
 
-def test_unreadable_ssm_token_does_not_crash_the_send(shared, monkeypatch):
+def test_unreadable_ssm_token_does_not_crash_the_send(shared, stores, monkeypatch):
     push = shared.push
 
     def boom(path):
@@ -356,37 +360,38 @@ def test_unreadable_ssm_token_does_not_crash_the_send(shared, monkeypatch):
         return FakeResponse(_tickets("ok"))
 
     monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
-    out = push.send_push("T", "B", ["ExpoPushToken[a]"], device_repo=_RecordingRepo())
+    out = push.send_push("T", "B", ["ExpoPushToken[a]"])
     assert captured["auth"] is None      # fell back to no header, didn't raise
     assert out["ok"] == 1
 
 
-def test_prune_uses_default_repo_when_none_injected(shared, monkeypatch):
+def test_prune_goes_through_the_device_store(shared, monkeypatch):
     push = shared.push
     repo = _RecordingRepo()
-    monkeypatch.setattr(push, "_default_repo", lambda: repo)
+    _stub_ssm_token(push, monkeypatch, lambda path: "k")
+    monkeypatch.setattr(push, "DeviceRepository", lambda: repo)
     monkeypatch.setattr(push.urllib.request, "urlopen",
                         lambda req, timeout=None: FakeResponse(_tickets("dnr")))
-    push.send_push("T", "B", ["ExpoPushToken[dead]"], access_token="k")
+    push.send_push("T", "B", ["ExpoPushToken[dead]"])
     assert repo.removed == ["ExpoPushToken[dead]"]
 
 
-def test_prune_failure_is_swallowed(shared, monkeypatch):
+def test_prune_failure_is_swallowed(shared, stores, monkeypatch):
     push = shared.push
 
     class _AngryRepo:
         def remove(self, token):
             raise RuntimeError("db down")
 
+    monkeypatch.setattr(push, "DeviceRepository", _AngryRepo)
     monkeypatch.setattr(push.urllib.request, "urlopen",
                         lambda req, timeout=None: FakeResponse(_tickets("dnr")))
-    out = push.send_push("T", "B", ["ExpoPushToken[dead]"], access_token="k",
-                         device_repo=_AngryRepo())
+    out = push.send_push("T", "B", ["ExpoPushToken[dead]"])
     # prune raised internally but send_push still returns cleanly
     assert out["pruned"] == ["ExpoPushToken[dead]"]
 
 
-def test_duplicate_and_empty_tokens_are_dropped(shared, monkeypatch):
+def test_duplicate_and_empty_tokens_are_dropped(shared, stores, monkeypatch):
     push = shared.push
     captured = {}
 
@@ -395,8 +400,7 @@ def test_duplicate_and_empty_tokens_are_dropped(shared, monkeypatch):
         return FakeResponse(_tickets("ok"))
 
     monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
-    out = push.send_push("T", "B", ["ExpoPushToken[a]", "ExpoPushToken[a]", "", None],
-                         access_token="k", device_repo=_RecordingRepo())
+    out = push.send_push("T", "B", ["ExpoPushToken[a]", "ExpoPushToken[a]", "", None])
     assert [m["to"] for m in captured["body"]] == ["ExpoPushToken[a]"]
     assert out["sent"] == 1
 
@@ -519,7 +523,7 @@ def test_get_receipts_surfaces_request_level_errors_as_a_warning(shared, monkeyp
 # --- folded from test_push_data_edges.py (WHIT-463) ---
 
 
-def test_data_is_attached_to_every_message_across_multiple_batches(shared, monkeypatch):
+def test_data_is_attached_to_every_message_across_multiple_batches(shared, stores, monkeypatch):
     push = shared.push
     bodies = []
 
@@ -535,7 +539,7 @@ def test_data_is_attached_to_every_message_across_multiple_batches(shared, monke
     tokens = [f"ExpoPushToken[{i}]" for i in range(n)]
     push.send_push(
         "Nice one", "$3,573 toward the mortgage", tokens,
-        data={"type": "repayment"}, access_token="k", device_repo=_RecordingRepo(),
+        data={"type": "repayment"},
     )
 
     assert len(bodies) >= 2  # actually chunked
@@ -544,7 +548,7 @@ def test_data_is_attached_to_every_message_across_multiple_batches(shared, monke
     assert all(m.get("data") == {"type": "repayment"} for m in every_message)
 
 
-def test_falsy_empty_data_is_omitted_entirely(shared, monkeypatch):
+def test_falsy_empty_data_is_omitted_entirely(shared, stores, monkeypatch):
     push = shared.push
     captured = {}
 
@@ -553,10 +557,7 @@ def test_falsy_empty_data_is_omitted_entirely(shared, monkeypatch):
         return FakeResponse(_tickets("ok"))
 
     monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
-    push.send_push(
-        "Title", "Body", ["ExpoPushToken[a]"],
-        data={}, access_token="k", device_repo=_RecordingRepo(),
-    )
+    push.send_push("Title", "Body", ["ExpoPushToken[a]"], data={})
     # {} is falsy → no `data` key at all (byte-identical to the pre-WHIT-321 message).
     assert "data" not in captured["body"][0]
     assert captured["body"][0] == {"to": "ExpoPushToken[a]", "title": "Title", "body": "Body"}
@@ -574,84 +575,77 @@ def _tok(n):
     return [f"ExpoPushToken[{i}]" for i in range(n)]
 
 
-def test_more_tickets_than_messages_does_not_over_count_or_mis_prune(shared, monkeypatch):
+def test_more_tickets_than_messages_does_not_over_count_or_mis_prune(shared, stores, monkeypatch):
     # Expo returns 2 tickets for a single message; zip truncates to the batch,
     # so the extra DNR ticket must NOT prune a token that wasn't sent.
     push = shared.push
-    repo = _RecordingRepo()
     extra = [{"status": "ok", "id": "r"},
              {"status": "error", "details": {"error": "DeviceNotRegistered"}}]
     monkeypatch.setattr(push.urllib.request, "urlopen",
                         lambda req, timeout=None: _resp(extra))
-    out = push.send_push("T", "B", ["ExpoPushToken[0]"], access_token="k", device_repo=repo)
+    out = push.send_push("T", "B", ["ExpoPushToken[0]"])
     assert out == {"sent": 1, "ok": 1, "pruned": []}
-    assert repo.removed == []
+    assert stores.devices.removed == []
 
 
-def test_fewer_tickets_than_messages_counts_only_what_returned(shared, monkeypatch):
+def test_fewer_tickets_than_messages_counts_only_what_returned(shared, stores, monkeypatch):
     # Partial response: 2 tokens sent, 1 ticket back. zip truncates, no crash,
     # only the returned ticket is counted; the un-ticketed token isn't pruned.
     push = shared.push
-    repo = _RecordingRepo()
     monkeypatch.setattr(push.urllib.request, "urlopen",
                         lambda req, timeout=None: _resp([{"status": "ok", "id": "r"}]))
-    out = push.send_push("T", "B", _tok(2), access_token="k", device_repo=repo)
+    out = push.send_push("T", "B", _tok(2))
     assert out == {"sent": 2, "ok": 1, "pruned": []}
-    assert repo.removed == []
+    assert stores.devices.removed == []
 
 
-def test_data_not_a_list_is_swallowed(shared, monkeypatch):
+def test_data_not_a_list_is_swallowed(shared, stores, monkeypatch):
     # A dict where a list is expected is truthy, so `data or []` keeps it; zip then
     # iterates its keys (strings), the isinstance guard skips them, nothing crashes.
     push = shared.push
-    repo = _RecordingRepo()
     monkeypatch.setattr(push.urllib.request, "urlopen",
                         lambda req, timeout=None: _resp({"weird": "shape"}))
-    out = push.send_push("T", "B", ["ExpoPushToken[0]"], access_token="k", device_repo=repo)
+    out = push.send_push("T", "B", ["ExpoPushToken[0]"])
     assert out == {"sent": 1, "ok": 0, "pruned": []}
-    assert repo.removed == []
+    assert stores.devices.removed == []
 
 
-def test_non_dict_tickets_are_skipped(shared, monkeypatch):
+def test_non_dict_tickets_are_skipped(shared, stores, monkeypatch):
     # Bare string / None tickets must not raise on .get(); isinstance guard skips them.
     push = shared.push
-    repo = _RecordingRepo()
     monkeypatch.setattr(push.urllib.request, "urlopen",
                         lambda req, timeout=None: _resp([None, "oops"]))
-    out = push.send_push("T", "B", _tok(2), access_token="k", device_repo=repo)
+    out = push.send_push("T", "B", _tok(2))
     assert out == {"sent": 2, "ok": 0, "pruned": []}
-    assert repo.removed == []
+    assert stores.devices.removed == []
 
 
-def test_error_ticket_other_than_DNR_is_not_pruned(shared, monkeypatch):
+def test_error_ticket_other_than_DNR_is_not_pruned(shared, stores, monkeypatch):
     # Only DeviceNotRegistered prunes. A live token that hit MessageRateExceeded /
     # MessageTooBig must be KEPT, or a transient error would delete a good device.
     push = shared.push
-    repo = _RecordingRepo()
     for err in ("MessageRateExceeded", "MessageTooBig", "InvalidCredentials"):
-        repo.removed.clear()
         monkeypatch.setattr(
             push.urllib.request, "urlopen",
             lambda req, timeout=None, e=err: _resp([{"status": "error", "details": {"error": e}}]),
         )
-        out = push.send_push("T", "B", ["ExpoPushToken[live]"], access_token="k", device_repo=repo)
+        out = push.send_push("T", "B", ["ExpoPushToken[live]"])
         assert out == {"sent": 1, "ok": 0, "pruned": []}, err
-        assert repo.removed == [], err
+        assert stores.devices.removed == [], err
 
 
-def test_error_ticket_with_no_details_is_not_pruned(shared, monkeypatch):
+def test_error_ticket_with_no_details_is_not_pruned(shared, stores, monkeypatch):
     # status:"error" but no details dict — (details or {}).get(...) must yield None,
     # not raise, and must not prune.
     push = shared.push
-    repo = _RecordingRepo()
     monkeypatch.setattr(push.urllib.request, "urlopen",
                         lambda req, timeout=None: _resp([{"status": "error", "message": "boom"}]))
-    out = push.send_push("T", "B", ["ExpoPushToken[live]"], access_token="k", device_repo=repo)
+    out = push.send_push("T", "B", ["ExpoPushToken[live]"])
     assert out == {"sent": 1, "ok": 0, "pruned": []}
-    assert repo.removed == []
+    assert stores.devices.removed == []
 
 
-def test_http_error_is_swallowed(shared, monkeypatch):
+def test_http_error_is_swallowed(shared, stores, monkeypatch):
     # test_push.py covers URLError; HTTPError is the 4xx/5xx case and must also
     # be swallowed (best-effort), leaving the send clean.
     push = shared.push
@@ -660,12 +654,11 @@ def test_http_error_is_swallowed(shared, monkeypatch):
         raise http_error(500, url=push.EXPO_PUSH_URL)
 
     monkeypatch.setattr(push.urllib.request, "urlopen", boom)
-    out = push.send_push("T", "B", ["ExpoPushToken[a]"], access_token="k",
-                         device_repo=_RecordingRepo())
+    out = push.send_push("T", "B", ["ExpoPushToken[a]"])
     assert out == {"sent": 1, "ok": 0, "pruned": []}
 
 
-def test_first_batch_failure_does_not_stop_later_batches(shared, monkeypatch):
+def test_first_batch_failure_does_not_stop_later_batches(shared, stores, monkeypatch):
     # 150 tokens -> 2 batches. The FIRST request raises; the second must still be
     # sent and counted (the continue keeps the loop going).
     push = shared.push
@@ -679,7 +672,7 @@ def test_first_batch_failure_does_not_stop_later_batches(shared, monkeypatch):
         return _resp([{"status": "ok", "id": "r"} for _ in msgs])
 
     monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
-    out = push.send_push("T", "B", _tok(150), access_token="k", device_repo=_RecordingRepo())
+    out = push.send_push("T", "B", _tok(150))
     assert calls["n"] == 2                       # both batches attempted
     assert out == {"sent": 150, "ok": 50, "pruned": []}  # only the 2nd batch's 50 landed
 
@@ -687,13 +680,12 @@ def test_first_batch_failure_does_not_stop_later_batches(shared, monkeypatch):
 # --- folded from test_push_receipt_capture_edge.py (WHIT-463) ---
 
 
-def test_receipt_capture_correlates_across_two_batches(shared, monkeypatch):
+def test_receipt_capture_correlates_across_two_batches(shared, stores, monkeypatch):
     # WHIT-139 [A20]: 150 tokens -> batches of 100 + 50. Each batch's ok tickets carry
     # an id derived from the token they were sent to; the last token of EACH batch is
     # DeviceNotRegistered. Proves batch-2 receipt ids map to batch-2 tokens (not batch-1),
     # i.e. the zip is re-scoped per batch and captures the right (id, token) pairs.
     push = shared.push
-    receipt_repo = _RecordingReceiptRepo()
 
     def fake_urlopen(req, timeout=None):
         msgs = json.loads(req.data)
@@ -706,23 +698,21 @@ def test_receipt_capture_correlates_across_two_batches(shared, monkeypatch):
         return FakeResponse({"data": data})
 
     monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
-    out = push.send_push("T", "B", _tok(150), access_token="k",
-                         device_repo=_RecordingRepo(), receipt_repo=receipt_repo)
+    out = push.send_push("T", "B", _tok(150))
 
     # token 99 (last of batch 1) and 149 (last of batch 2) are pruned, not stashed.
     assert out["pruned"] == ["ExpoPushToken[99]", "ExpoPushToken[149]"]
     expected = [(f"r-ExpoPushToken[{i}]", f"ExpoPushToken[{i}]")
                 for i in range(150) if i not in (99, 149)]
-    assert receipt_repo.put_calls == expected
+    assert stores.receipts.put_calls == expected
     assert out["ok"] == 148
 
 
-def test_dropped_batch_stashes_only_the_surviving_batch(shared, monkeypatch):
+def test_dropped_batch_stashes_only_the_surviving_batch(shared, stores, monkeypatch):
     # WHIT-139 [A21]: the FIRST batch's request raises (transport error); the second
     # succeeds. Only the second batch's receipts must be stashed — no batch-1 ids leak
     # in, no misalignment, no crash.
     push = shared.push
-    receipt_repo = _RecordingReceiptRepo()
     calls = {"n": 0}
 
     def fake_urlopen(req, timeout=None):
@@ -733,17 +723,16 @@ def test_dropped_batch_stashes_only_the_surviving_batch(shared, monkeypatch):
         return FakeResponse({"data": [{"status": "ok", "id": f"r-{m['to']}"} for m in msgs]})
 
     monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
-    out = push.send_push("T", "B", _tok(150), access_token="k",
-                         device_repo=_RecordingRepo(), receipt_repo=receipt_repo)
+    out = push.send_push("T", "B", _tok(150))
 
     assert calls["n"] == 2
     assert out == {"sent": 150, "ok": 50, "pruned": []}
     # Only tokens 100..149 (batch 2) were stashed; none of batch 1 (0..99).
-    assert receipt_repo.put_calls == [(f"r-ExpoPushToken[{i}]", f"ExpoPushToken[{i}]")
-                                      for i in range(100, 150)]
+    assert stores.receipts.put_calls == [(f"r-ExpoPushToken[{i}]", f"ExpoPushToken[{i}]")
+                                         for i in range(100, 150)]
 
 
-def test_one_raising_put_does_not_drop_the_other_puts(shared, monkeypatch):
+def test_one_raising_put_does_not_drop_the_other_puts(shared, stores, monkeypatch):
     # WHIT-139 [A22]: the store fails on the 2nd of 3 receipts. The per-item swallow must
     # still ATTEMPT the 1st and 3rd (one bad row can't sink its neighbours), and the send
     # returns cleanly.
@@ -759,13 +748,13 @@ def test_one_raising_put_does_not_drop_the_other_puts(shared, monkeypatch):
                 raise RuntimeError("transient dynamo blip")
 
     repo = _FlakyReceiptRepo()
+    monkeypatch.setattr(push, "PushReceiptRepository", lambda: repo)
     body = {"data": [{"status": "ok", "id": "r0"},
                      {"status": "ok", "id": "r1"},
                      {"status": "ok", "id": "r2"}]}
     monkeypatch.setattr(push.urllib.request, "urlopen",
                         lambda req, timeout=None: FakeResponse(body))
-    out = push.send_push("T", "B", _tok(3), access_token="k",
-                         device_repo=_RecordingRepo(), receipt_repo=repo)
+    out = push.send_push("T", "B", _tok(3))
 
     assert out == {"sent": 3, "ok": 3, "pruned": []}
     # All three were attempted despite the middle one raising.
@@ -774,11 +763,10 @@ def test_one_raising_put_does_not_drop_the_other_puts(shared, monkeypatch):
                              ("r2", "ExpoPushToken[2]")]
 
 
-def test_empty_or_none_receipt_id_is_not_stashed(shared, monkeypatch):
+def test_empty_or_none_receipt_id_is_not_stashed(shared, stores, monkeypatch):
     # WHIT-139 [A23]: an ok ticket whose id is "" or None is falsy — the guard must skip
     # it (no blank sk stashed), while a real id alongside is still captured.
     push = shared.push
-    receipt_repo = _RecordingReceiptRepo()
     body = {"data": [
         {"status": "ok", "id": ""},        # empty string → skipped
         {"status": "ok", "id": None},      # explicit None → skipped
@@ -786,8 +774,7 @@ def test_empty_or_none_receipt_id_is_not_stashed(shared, monkeypatch):
     ]}
     monkeypatch.setattr(push.urllib.request, "urlopen",
                         lambda req, timeout=None: FakeResponse(body))
-    out = push.send_push("T", "B", _tok(3), access_token="k",
-                         device_repo=_RecordingRepo(), receipt_repo=receipt_repo)
+    out = push.send_push("T", "B", _tok(3))
 
     assert out["ok"] == 3  # all three ACCEPTED; ok counts acceptance, not capture
-    assert receipt_repo.put_calls == [("r-real", "ExpoPushToken[2]")]
+    assert stores.receipts.put_calls == [("r-real", "ExpoPushToken[2]")]

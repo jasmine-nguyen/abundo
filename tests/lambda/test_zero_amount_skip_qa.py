@@ -9,6 +9,7 @@ from functools import partial
 
 from _budget_endpoint_fakes import _FakeCategoryRepo
 from _deadletter_fakes import _failed_keys, _txn_rows
+from _rule_ingest_fakes import reprocess_failed
 
 
 class _NoRules:
@@ -115,13 +116,14 @@ def test_reprocess_never_files_a_zero_row_by_rules(lam, repo, monkeypatch):
         _raw("charge", amount=-175.11, description="ANTHROPIC"),
     ])
     filed = []
-    real_file_charge = lam.reprocess.rule_ingest.file_charge
+    book_class = lam.rule_ingest.RuleBook
+    real_file_charges = book_class.file_charges
 
-    def recording_file_charge(txn, book):
-        filed.append(txn["transaction_id"])
-        return real_file_charge(txn, book)
+    def recording_file_charges(book, charges, *args, **kwargs):
+        filed.extend(charge["transaction_id"] for charge in charges)
+        return real_file_charges(book, charges, *args, **kwargs)
 
-    monkeypatch.setattr(lam.reprocess.rule_ingest, "file_charge", recording_file_charge)
+    monkeypatch.setattr(book_class, "file_charges", recording_file_charges)
 
     summary = lam.reprocess.reprocess_failed(repo, rule_repo=_NoRules(), category_repo=_Categories())
 
@@ -137,7 +139,7 @@ def test_reprocess_never_passes_a_zero_row_to_the_write(lam, repo, monkeypatch):
     monkeypatch.setattr(repo, "insert_or_reconcile",
                         lambda transactions, **kwargs: written.extend(transactions))
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert written == []
     assert summary["dropped_zero"] == 1
@@ -154,7 +156,7 @@ def test_a_failed_clear_of_a_zero_dead_letter_is_an_error_and_leaves_it_for_next
                    if "fee-zero" in repo._table.store[(pk, sk)]["raw"])
     repo._table.fail("delete_item", when=lambda key: key["sk"] == zero_sk)
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 1, "skipped": 0, "errors": 1, "dropped_zero": 0}
     assert ("FAILED", zero_sk) in repo._table.store
@@ -162,7 +164,7 @@ def test_a_failed_clear_of_a_zero_dead_letter_is_an_error_and_leaves_it_for_next
     assert "TXN#charge" in _txn_rows(repo)
 
     repo._table.clear_failures()
-    again = lam.reprocess.reprocess_failed(repo)
+    again = reprocess_failed(lam.reprocess, repo)
 
     assert again == {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 1}
     assert _failed_keys(repo) == []

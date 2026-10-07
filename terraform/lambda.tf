@@ -18,7 +18,7 @@ resource "null_resource" "prepare_lambda_deps" {
 # Webhook lambda source: only its webhook-specific modules (handler.py,
 # webhook_repository.py, reconcile.py with the settlement planner, budget_alerts.py,
 # banksync.py). constants.py,
-# models.py, and ssm.py come from the shared layer attached below —
+# models.py, and api_key.py come from the shared layer attached below —
 # same single-source pattern as the api/sync/authorizer lambdas (WHIT-88).
 data "archive_file" "lambda_zip" {
   depends_on  = [null_resource.prepare_lambda_deps]
@@ -61,14 +61,14 @@ data "archive_file" "lambda_api_zip" {
 }
 
 # Transaction-trigger lambda source. Contains handler.py and pending_mirror.py (WHIT-662);
-# constants.py, ssm.py and the repositories come from the shared layer.
+# constants.py, api_key.py and the repositories come from the shared layer.
 data "archive_file" "sync_trigger_zip" {
   type        = "zip"
   source_dir  = "${path.module}/../lambda_sync_trigger"
   output_path = "${path.module}/artifacts/sync_trigger.zip"
 }
 
-# Balance-poller lambda source. Contains only handler.py; constants.py, ssm.py,
+# Balance-poller lambda source. Contains only handler.py; constants.py, api_key.py,
 # and repository.py come from the shared layer.
 data "archive_file" "balance_poller_zip" {
   type        = "zip"
@@ -77,7 +77,7 @@ data "archive_file" "balance_poller_zip" {
 }
 
 # Push-receipts sweep lambda source (WHIT-139). Contains only handler.py; push.py,
-# repository_push_receipt.py, repository_device.py, ssm.py come from the shared layer.
+# repository_push_receipt.py, repository_device.py, api_key.py come from the shared layer.
 data "archive_file" "push_receipts_zip" {
   type        = "zip"
   source_dir  = "${path.module}/../lambda_push_receipts"
@@ -337,7 +337,7 @@ resource "aws_lambda_function" "transaction_trigger" {
 
 # Triggered daily by EventBridge Scheduler (see scheduler.tf) to poll the live Up
 # home-loan balance from BankSync (getBalance) and store it (WHIT-8). Needs the
-# shared layer (constants.py/ssm.py/repository.py) AND DynamoDB PutItem +
+# shared layer (constants.py/api_key.py/repository.py) AND DynamoDB PutItem +
 # TABLE_NAME (the transaction trigger only reads and deletes, for its pending mirror).
 # The timeout scales with the account count: BALANCE_SOURCES is fetched serially at up
 # to HOMELOAN_BALANCE_TIMEOUT_SECONDS (30) each, so at 60s two slow bank calls exhausted
@@ -370,7 +370,7 @@ resource "aws_lambda_function" "balance_poller" {
 # getReceipts for the true delivery outcome of each accepted push, prune dead tokens,
 # and log a PUSH_DELIVERY_FAILED line (drives the delivery-failure alarm) on a hard
 # failure (WHIT-139). Needs the shared layer (push.py/repository_push_receipt.py/
-# repository_device.py/ssm.py) AND DynamoDB Query/Delete/Update + TABLE_NAME.
+# repository_device.py/api_key.py) AND DynamoDB Query/Delete/Update + TABLE_NAME.
 resource "aws_lambda_function" "push_receipts" {
   function_name    = "${var.project_name}-push-receipts"
   role             = aws_iam_role.push_receipts_exec.arn

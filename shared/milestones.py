@@ -172,14 +172,11 @@ def _resolve_plan(milestone_repo, scope=None):
     resolves to an authoritative EMPTY plan (celebrate nothing) rather than the default — the user
     sets their own milestones, so a plan they never chose must not fire pushes.
 
-    `scope` is the multi-tenant seam (WHIT-369/375): None reads the single shared tenant (the
-    repository's own default), a user id later reads that user's plan. One param, threaded to the
-    fired-state + reconcile too, so multi-user is a per-user loop in the poller — not a rewrite."""
+    `scope` is the multi-tenant seam (WHIT-369/375): None reads the single shared tenant, a
+    user id later reads that user's plan. One param, threaded to the fired-state + reconcile
+    too, so multi-user is a per-user loop in the poller — not a rewrite."""
     try:
-        if scope is None:
-            stored = milestone_repo.get_milestones_raw()
-        else:
-            stored = milestone_repo.get_milestones_raw(scope)
+        stored = milestone_repo.get_milestones_raw(scope)
     except Exception as e:
         logger.warning("milestones read failed, using the default plan: %s", e)
         return list(MILESTONES), False, _NO_LIVE_MARKERS

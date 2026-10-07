@@ -10,23 +10,12 @@ from decimal import Decimal
 
 import pytest
 
-from _dynamo_fakes import FakeTable
+from _balance_fakes import feed_watch_repo
 from _transaction_range_fakes import _EndlessTransactionRepo, _PagedStoreTransactionRepo
 
 DAY = 24 * 60 * 60
 NOW = 1_790_000_000
 WESTPAC = "westpac-altitude-qantas-black"
-
-
-def _watch_repo(handler, watches=None):
-    """The REAL FeedWatchRepository over a FakeTable, with ``watches`` already stored through the
-    real put_watch. The put log is cleared after that setup, so ``put_calls`` shows only the poller."""
-    watch_repo = handler.FeedWatchRepository()
-    watch_repo._table = FakeTable()
-    for account_id, watch in (watches or {}).items():
-        watch_repo.put_watch(account_id, **watch)
-    watch_repo._table.put_calls.clear()
-    return watch_repo
 
 
 class _FakeDeviceRepo:
@@ -62,7 +51,7 @@ def wired(handler, monkeypatch):
     def wire(rows=None, watches=None, tokens=("ExponentPushToken[x]",), expo_accepts=True):
         expo["accepts"] = expo_accepts
         transaction_repo = _PagedStoreTransactionRepo(rows or {})
-        watch_repo = _watch_repo(handler, watches)
+        watch_repo = feed_watch_repo(handler, watches)
         monkeypatch.setattr(handler, "TransactionRepository", lambda: transaction_repo)
         monkeypatch.setattr(handler, "FeedWatchRepository", lambda: watch_repo)
         monkeypatch.setattr(handler, "DeviceRepository", lambda: _FakeDeviceRepo(tokens))

@@ -68,6 +68,7 @@ def test_scope_isolates_rows(milestone_repo):
     # scope still reads None. Proves per-user isolation lives in the sort key.
     milestone_repo.set_milestones(_PLAN, scope="user-x")
     assert milestone_repo.get_milestones() is None                       # default SHARED scope
+    assert milestone_repo.get_milestones_raw(None) is None               # None reads SHARED too
     assert [m["id"] for m in milestone_repo.get_milestones(scope="user-x")] == ["a", "b", "c"]
     assert len(milestone_repo._table.store) == 1
 

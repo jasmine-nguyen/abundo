@@ -14,6 +14,7 @@ from repository_errors import (
     DuplicateCategoryError,
     InvalidCategoryParentError,
 )
+from spend import build_category_children
 
 # Category taxonomy data lives here, not in constants.py, on purpose: this module
 # ships in the Lambda layer, and a `from constants import ...` here binds to the
@@ -640,11 +641,7 @@ def _subtree_height(items: dict, root_id: str) -> int:
     category), otherwise 1 + the tallest child subtree. Uses max over children (NOT a
     descendant count), so a wide-but-shallow subtree stays shallow. Cycle-safe via
     `visited`; a child is any category whose `parent` is that node."""
-    children: dict[str, list[str]] = {}
-    for cat in items.values():
-        parent = cat.get("parent")
-        if parent is not None:
-            children.setdefault(parent, []).append(cat["id"])
+    children = build_category_children(list(items.values()))
 
     def height(node_id: str, visited: set[str]) -> int:
         if node_id in visited:

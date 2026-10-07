@@ -28,7 +28,7 @@ import pytest
 
 from _boto_stubs import install_import_satisfiers, use_condition_fields
 
-# Env vars + fake boto3/botocore/ssm the handler import chain needs.
+# Env vars + fake boto3/botocore the handler import chain needs.
 install_import_satisfiers()
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]

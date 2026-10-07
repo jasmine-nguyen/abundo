@@ -21,10 +21,10 @@ def banksync_request(
     *,
     user_agent: str,
     timeout: float,
-    method: str = "GET",
     data: bytes | None = None,
 ) -> dict:
-    """Send one BankSync request and return the parsed JSON reply. HTTP errors propagate."""
+    """Send one BankSync request (POST when ``data`` is given, else GET) and return the
+    parsed JSON reply. HTTP errors propagate."""
     req = urllib.request.Request(
         url,
         data=data,
@@ -34,7 +34,6 @@ def banksync_request(
             # "Python-urllib" User-Agent with a 403 (error 1010). Send our own.
             "User-Agent": user_agent,
         },
-        method=method,
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())

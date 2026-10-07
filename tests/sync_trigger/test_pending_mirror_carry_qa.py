@@ -363,7 +363,7 @@ def test_mirror_pendings_carries_with_the_real_taxonomy_and_reports_it(repo, mir
         pending_row("settled", status="posted", **GUZMAN),
     )
 
-    def fetch(bid, aid, api_key, date_from, date_to):
+    def fetch(api_key, bid, aid, date_from, date_to):
         return bank_rows("kept", aid=aid)
 
     with caplog.at_level(logging.INFO, logger="pending_mirror"):
@@ -387,7 +387,7 @@ def test_a_category_read_failure_reports_zero_carried_and_touches_nothing(repo, 
 
     summary = mirror.mirror_pendings(
         "key", repo=repo, category_repo=_FakeCategoryRepo(error=RuntimeError("down")), today=MIRROR_TODAY,
-        fetch=lambda *args: bank_rows("kept", aid=args[1]),
+        fetch=lambda *args: bank_rows("kept", aid=args[2]),
     )
 
     assert summary["carried"] == 0
@@ -403,7 +403,7 @@ def test_a_twin_on_another_account_is_never_used(repo, mirror):
         pending_row("up_settled", status="posted", account_id=UP, **GUZMAN),
     )
 
-    def fetch(bid, aid, api_key, date_from, date_to):
+    def fetch(api_key, bid, aid, date_from, date_to):
         return bank_rows("kept", aid=aid)
 
     summary = mirror.mirror_pendings("key", repo=repo, category_repo=_FakeCategoryRepo(), today=MIRROR_TODAY, fetch=fetch)

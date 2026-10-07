@@ -15,6 +15,7 @@ import pytest
 # recovery suites share ONE definition (WHIT-494); resolved via pytest.ini's pythonpath.
 from _deadletter_fakes import _failed_keys, _txn_rows
 from _feed_fakes import FakeCategoryRepo
+from _rule_ingest_fakes import FakeRuleStore, reprocess_failed
 
 # A real BankSync account id that resolves via ACCOUNT_ID_MAP to an internal id.
 _MAPPED_ACCOUNT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
@@ -51,7 +52,7 @@ def test_reprocess_recovers_and_deletes_the_failed_row(lam, repo):
     repo.save_failed_transactions([_raw_row(txn_id="r1")])
     assert len(_failed_keys(repo)) == 1
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0}
     # The transaction is now stored under its ACCOUNT#/TXN# keys...
@@ -73,7 +74,7 @@ def test_reprocess_recovers_a_row_missing_its_category(lam, repo):
     del raw["category"]
     repo.save_failed_transactions([raw])
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0}
     assert any(k[1] == "TXN#nocat" for k in _txn_keys(repo))
@@ -89,7 +90,7 @@ def test_reprocess_recovers_a_pending_row_missing_its_category(lam, repo):
     del raw["category"]
     repo.save_failed_transactions([raw])
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0}
     stored = _txn_rows(repo)
@@ -104,7 +105,7 @@ def test_still_unmapped_account_is_skipped_and_survives(lam, repo):
     # accountId not in ACCOUNT_ID_MAP -> normalise raises UnknownAccountError -> skip.
     repo.save_failed_transactions([_raw_row(account_id="not-a-real-account")])
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 0, "skipped": 1, "errors": 0, "dropped_zero": 0}
     assert len(_failed_keys(repo)) == 1          # survives for a later run
@@ -115,7 +116,7 @@ def test_malformed_raw_json_is_skipped_not_deleted(lam, repo):
     # A FAILED row whose `raw` isn't valid JSON can never be recovered -> skip, keep.
     repo._table.store[("FAILED", "bad-json")] = {"pk": "FAILED", "sk": "bad-json", "raw": "{not json"}
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 0, "skipped": 1, "errors": 0, "dropped_zero": 0}
     assert ("FAILED", "bad-json") in repo._table.store
@@ -128,7 +129,7 @@ def test_poison_raw_bad_amount_is_skipped_not_a_crash(lam, repo):
     # is only reached now, on re-normalise.
     repo.save_failed_transactions([_raw_row(amount=None)])
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 0, "skipped": 1, "errors": 0, "dropped_zero": 0}
     assert len(_failed_keys(repo)) == 1
@@ -140,7 +141,7 @@ def test_raw_that_parses_to_non_dict_is_skipped(lam, repo):
     # TypeError -> broad catch skips it, sweep continues.
     repo._table.store[("FAILED", "not-a-dict")] = {"pk": "FAILED", "sk": "not-a-dict", "raw": json.dumps("hello")}
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 0, "skipped": 1, "errors": 0, "dropped_zero": 0}
     assert ("FAILED", "not-a-dict") in repo._table.store
@@ -150,7 +151,7 @@ def test_raw_that_parses_to_non_dict_is_skipped(lam, repo):
 
 
 def test_empty_failed_partition_is_a_noop(lam, repo):
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
     assert summary == {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0}
     assert repo._table.store == {}
 
@@ -162,7 +163,7 @@ def test_reprocess_reads_across_pages(lam, repo):
         repo.save_failed_transactions([_raw_row(txn_id=f"r{i}")])
     repo._table.page_size = 2
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 3, "skipped": 0, "errors": 0, "dropped_zero": 0}
     assert _failed_keys(repo) == []
@@ -172,8 +173,8 @@ def test_reprocess_reads_across_pages(lam, repo):
 def test_reprocess_is_idempotent_on_rerun(lam, repo):
     repo.save_failed_transactions([_raw_row(txn_id="r1")])
 
-    first = lam.reprocess.reprocess_failed(repo)
-    second = lam.reprocess.reprocess_failed(repo)
+    first = reprocess_failed(lam.reprocess, repo)
+    second = reprocess_failed(lam.reprocess, repo)
 
     assert first == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0}
     assert second == {"reprocessed": 0, "skipped": 0, "errors": 0, "dropped_zero": 0}   # nothing left to do
@@ -189,7 +190,7 @@ def test_mixed_batch_only_recoverable_row_is_deleted(lam, repo):
     repo.save_failed_transactions([_raw_row(account_id="nope")])                 # still unmapped
     repo._table.store[("FAILED", "junk")] = {"pk": "FAILED", "sk": "junk", "raw": "{"}  # malformed
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 1, "skipped": 2, "errors": 0, "dropped_zero": 0}
     # counters account for every scanned row
@@ -211,7 +212,7 @@ def test_insert_failure_leaves_failed_row_and_counts_error(lam, repo, monkeypatc
 
     monkeypatch.setattr(repo, "insert_or_reconcile", boom)
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 0, "skipped": 0, "errors": 1, "dropped_zero": 0}
     assert len(_failed_keys(repo)) == 1                 # NOT deleted
@@ -248,11 +249,11 @@ def test_pending_dead_letter_resurrects_a_duplicate_alongside_existing_posted(la
     # insert_or_reconcile inserts AS-IS (pending rows never reconcile against an
     # already-stored posted), so a duplicate pending is resurrected and the dead-letter
     # IS deleted. Pin the ACTUAL behaviour so any change to it is deliberate.
-    posted = lam.banksync.BankSyncClient.normalise(_raw_row(txn_id="posted1", pending=False, amount=-5.50))
+    posted = lam.banksync.normalise(_raw_row(txn_id="posted1", pending=False, amount=-5.50))
     repo.insert_transactions([posted])
     repo.save_failed_transactions([_raw_row(txn_id="pend1", pending=True, amount=-5.50)])
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0}
     stored = _txn_rows(repo)
@@ -265,13 +266,13 @@ def test_reprocess_does_not_clobber_user_category_on_stored_posted_twin(lam, rep
     # Money-safety: the posted txn is already stored with a user-picked category; its
     # FAILED row (same id) carries the bank's raw category. Re-driving must carry the
     # user's category onto the re-insert, not overwrite it.
-    stored_posted = lam.banksync.BankSyncClient.normalise(
+    stored_posted = lam.banksync.normalise(
         _raw_row(txn_id="p1", pending=False, category="GENERAL_MERCHANDISE"))
     stored_posted["category"] = "USER_PICKED"
     repo.insert_transactions([stored_posted])
     repo.save_failed_transactions([_raw_row(txn_id="p1", pending=False, category="FOOD_AND_DRINK")])
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0}
     rows = [v for k, v in _txn_rows(repo).items() if k == "TXN#p1"]
@@ -290,7 +291,7 @@ def test_get_failed_transactions_error_propagates(lam, repo, monkeypatch):
     monkeypatch.setattr(repo, "get_failed_transactions", boom)
 
     with pytest.raises(RuntimeError, match="dynamo query failed"):
-        lam.reprocess.reprocess_failed(repo)
+        reprocess_failed(lam.reprocess, repo)
 
 
 def test_delete_failure_after_insert_counts_error_and_rerun_is_safe(lam, repo, monkeypatch):
@@ -303,14 +304,14 @@ def test_delete_failure_after_insert_counts_error_and_rerun_is_safe(lam, repo, m
         raise RuntimeError("delete threw")
 
     monkeypatch.setattr(repo, "delete_failed_transaction", boom)
-    first = lam.reprocess.reprocess_failed(repo)
+    first = reprocess_failed(lam.reprocess, repo)
 
     assert first == {"reprocessed": 0, "skipped": 0, "errors": 1, "dropped_zero": 0}
     assert any(k == "TXN#r1" for k in _txn_rows(repo))  # insert DID land
     assert len(_failed_keys(repo)) == 1                          # dead-letter NOT deleted
 
     monkeypatch.undo()
-    second = lam.reprocess.reprocess_failed(repo)
+    second = reprocess_failed(lam.reprocess, repo)
 
     assert second == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0}
     assert len([k for k in _txn_rows(repo) if k == "TXN#r1"]) == 1
@@ -327,7 +328,7 @@ def test_multi_page_backlog_with_mixed_outcomes(lam, repo):
     repo.save_failed_transactions([_raw_row(txn_id="ok1")])
     repo._table.page_size = 2
 
-    summary = lam.reprocess.reprocess_failed(repo)
+    summary = reprocess_failed(lam.reprocess, repo)
 
     assert summary == {"reprocessed": 2, "skipped": 3, "errors": 0, "dropped_zero": 0}
     assert summary["reprocessed"] + summary["skipped"] + summary["errors"] == 5
@@ -349,39 +350,18 @@ def test_lambda_handler_serialises_the_real_summary(lam, repo, monkeypatch):
     assert _failed_keys(repo) == []
 
 
-# --- WHIT-530: rule filing on re-drive (opt-in via injected stores) ----------
-
-
-class _FakeRuleStore:
-    def __init__(self, rules=()):
-        self._rules = [dict(r) for r in rules]
-
-    def list_rules(self):
-        return [dict(r) for r in self._rules]
-
-
-def test_reprocess_without_rule_stores_does_not_file(lam, repo):
-    # Default call (no rule/category stores) is unchanged: the row recovers wearing its raw
-    # category, never rule-filed. Documents the opt-in contract — filing only happens when both
-    # stores are supplied (the genuine fail-on-revert for filing lives in the with-stores test
-    # below, where dropping the file_charge call flips the category back to the raw one).
-    repo.save_failed_transactions([_raw_row(txn_id="r1", category="FOOD_AND_DRINK")])
-
-    summary = lam.reprocess.reprocess_failed(repo)
-
-    assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0, "dropped_zero": 0}
-    assert _txn_rows(repo)["TXN#r1"]["category"] == "FOOD_AND_DRINK"
+# --- WHIT-530: rule filing on re-drive ---------------------------------------
 
 
 def test_reprocess_with_rule_stores_files_a_recovered_row(lam, repo):
-    # With stores injected, a re-driven charge is filed by the user's rules before insert. The
-    # raw description "SQ *KKV INTERNATIONAL PTY" contains "KKV". FAIL-ON-REVERT: drop the
-    # file_charge call and the category stays the raw FOOD_AND_DRINK.
+    # A re-driven charge is filed by the user's rules before insert. The raw description
+    # "SQ *KKV INTERNATIONAL PTY" contains "KKV". FAIL-ON-REVERT: drop the filing call and the
+    # category stays the raw FOOD_AND_DRINK.
     repo.save_failed_transactions([_raw_row(txn_id="r1", category="FOOD_AND_DRINK")])
 
     summary = lam.reprocess.reprocess_failed(
         repo,
-        rule_repo=_FakeRuleStore([{"id": "r-kkv", "field": "description", "operator": "contains",
+        rule_repo=FakeRuleStore([{"id": "r-kkv", "field": "description", "operator": "contains",
                                    "value": "KKV", "category_id": "groceries"}]),
         category_repo=FakeCategoryRepo(["groceries"]))
 
@@ -396,7 +376,7 @@ def test_whit545_reprocess_threads_is_unfiled_so_a_rule_fill_survives_settlement
     # settles onto a pending twin holding the bank's raw enum. reprocess must pass the book's
     # is_unfiled into insert_or_reconcile so the raw enum can't clobber the rule-fill.
     # FAIL-ON-REVERT: change reprocess.py to is_unfiled=None and the twin's raw enum wins.
-    pending = lam.banksync.BankSyncClient.normalise(
+    pending = lam.banksync.normalise(
         _raw_row(txn_id="PEND", amount=-5.50, pending=True, category="FOOD_AND_DRINK"))
     repo.insert_transactions([pending])
     repo.save_failed_transactions([_raw_row(txn_id="POST", amount=-5.50, pending=False,
@@ -404,7 +384,7 @@ def test_whit545_reprocess_threads_is_unfiled_so_a_rule_fill_survives_settlement
 
     summary = lam.reprocess.reprocess_failed(
         repo,
-        rule_repo=_FakeRuleStore([{"id": "r-kkv", "field": "description", "operator": "contains",
+        rule_repo=FakeRuleStore([{"id": "r-kkv", "field": "description", "operator": "contains",
                                    "value": "KKV", "category_id": "groceries"}]),
         category_repo=FakeCategoryRepo(["groceries"]))
 

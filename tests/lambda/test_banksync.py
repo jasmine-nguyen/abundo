@@ -19,7 +19,7 @@ def _row(**over):
 
 
 def _normalise(lam, **over):
-    return lam.banksync.BankSyncClient.normalise(_row(**over))
+    return lam.banksync.normalise(_row(**over))
 
 
 def test_normal_purchase_counts_to_budget(lam):
@@ -148,7 +148,7 @@ def test_missing_category_key_normalises_and_counts(lam):
     # row["category"] reads, so reverting only one of them still reddens this.
     row = _row()
     del row["category"]
-    txn = lam.banksync.BankSyncClient.normalise(row)
+    txn = lam.banksync.normalise(row)
     assert txn["category"] is None
     assert txn["counts_to_budget"] is True
 
@@ -158,7 +158,7 @@ def test_missing_category_on_home_loan_account_is_excluded(lam):
     # excluded from budget, so the None default can't smuggle home-loan movement in.
     row = _row(accountId=HOMELOAN_BANKSYNC_ID, accountName="Home loan", amount="-2525.82")
     del row["category"]
-    txn = lam.banksync.BankSyncClient.normalise(row)
+    txn = lam.banksync.normalise(row)
     assert txn["account_id"] == "up-homeloan"
     assert txn["counts_to_budget"] is False
 
@@ -223,7 +223,7 @@ def test_missing_authorized_date_falls_back_to_booking_date(lam):
     # (the budget window, the date-index GSI and the age-out sweep all rely on that).
     row = _row(date="2026-06-18")
     del row["authorizedDate"]
-    txn = lam.banksync.BankSyncClient.normalise(row)
+    txn = lam.banksync.normalise(row)
     assert txn["authorized_date"] == ""
     assert txn["date"] == "2026-06-18"
 
@@ -246,7 +246,7 @@ def test_booking_datetime_is_truncated_on_fallback(lam):
     # No authorizedDate → `date` falls back to the booking date, still time-sliced.
     row = _row(date="2026-01-16T10:00:00Z")
     del row["authorizedDate"]
-    txn = lam.banksync.BankSyncClient.normalise(row)
+    txn = lam.banksync.normalise(row)
     assert txn["date"] == "2026-01-16"
     assert txn["authorized_date"] == ""
 
@@ -337,7 +337,7 @@ def test_missing_category_logs_a_warning_naming_the_id(lam, caplog):
     row = _row(id="bank_tx_nocat")
     del row["category"]
     with caplog.at_level("WARNING"):
-        lam.banksync.BankSyncClient.normalise(row)
+        lam.banksync.normalise(row)
     msgs = [r.getMessage() for r in caplog.records]
     assert any("carried no category" in m for m in msgs)
     assert any("bank_tx_nocat" in m for m in msgs)   # the offending row is identified
@@ -367,7 +367,7 @@ def test_missing_category_row_normalises_every_other_field(lam):
     row = _row(id="bank_tx_full", description=raw, merchantName="", pending=True,
                amount="-88.40", date="2026-06-18", authorizedDate="2026-06-17")
     del row["category"]
-    txn = lam.banksync.BankSyncClient.normalise(row)
+    txn = lam.banksync.normalise(row)
     assert txn["category"] is None
     assert txn["counts_to_budget"] is True
     assert txn["status"] == "pending"                # row["pending"] path intact

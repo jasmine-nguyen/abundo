@@ -1,7 +1,7 @@
 """Shared AWS import-satisfiers for the server test suites.
 
 Importing a Lambda's ``handler.py`` (or the shared ``repository_*`` modules) in a
-unit test pulls in ``boto3`` / ``botocore`` / ``ssm`` and reads ``AWS_REGION`` /
+unit test pulls in ``boto3`` / ``botocore`` and reads ``AWS_REGION`` /
 ``TABLE_NAME`` at load — none of which is needed to unit-test the logic. Every
 suite used to carry its own byte-identical copy of the fakes that satisfy that
 import chain. This module holds the single copy (WHIT-466).
@@ -9,7 +9,8 @@ import chain. This module holds the single copy (WHIT-466).
 Two entry points, for the two things suites actually need:
 
 - ``install_import_satisfiers()`` — the full bundle the handler suites use at
-  module load: env vars + fake ``boto3``/``botocore`` + fake ``ssm``.
+  module load: env vars + fake ``boto3``/``botocore``. The fake ``boto3.client("ssm")``
+  answers every secret-setting read with ``FAKE_SSM_KEY``.
   Handler tests replace the repository wholesale, so the fakes are import-only.
 - ``use_condition_fields()`` — a context manager for the ``shared`` / ``lambda``
   repository suites, which DO query. It swaps ``boto3``'s ``Key``/``Attr`` for the
@@ -31,6 +32,13 @@ from contextlib import contextmanager
 # One key for every suite: only the first install takes effect, so a per-suite value
 # would make the key depend on which test folder loads first (WHIT-775).
 FAKE_SSM_KEY = "test-api-key"
+
+
+class FakeSsmClient:
+    """Fake ``boto3.client("ssm")``: every parameter read returns ``FAKE_SSM_KEY``."""
+
+    def get_parameter(self, **kwargs):
+        return {"Parameter": {"Value": FAKE_SSM_KEY}}
 
 
 class _Predicate:
@@ -83,6 +91,7 @@ def _install_fake_boto3_botocore():
     if "boto3" not in sys.modules:
         boto3 = types.ModuleType("boto3")
         boto3.resource = lambda *a, **k: None  # never called: repo._table is injected
+        boto3.client = lambda *a, **k: FakeSsmClient()
         conditions = types.ModuleType("boto3.dynamodb.conditions")
         conditions.Key = object
         conditions.Attr = object
@@ -107,16 +116,12 @@ def _install_fake_boto3_botocore():
 
 
 def install_import_satisfiers():
-    """Set the env vars and register the fake boto3/botocore/ssm a handler suite
-    needs before importing its ``handler.py``. The fake ``ssm.get_param`` returns
-    ``FAKE_SSM_KEY``; tests that care about the key monkeypatch it directly."""
+    """Set the env vars and register the fake boto3/botocore a handler suite needs
+    before importing its ``handler.py``. The fake ssm client returns ``FAKE_SSM_KEY``;
+    tests that care about the key monkeypatch ``api_key.get_param`` directly."""
     os.environ.setdefault("AWS_REGION", "ap-southeast-2")
     os.environ.setdefault("TABLE_NAME", "test-table")
     _install_fake_boto3_botocore()
-    if "ssm" not in sys.modules:
-        ssm = types.ModuleType("ssm")
-        ssm.get_param = lambda parameter_name: FAKE_SSM_KEY
-        sys.modules["ssm"] = ssm
 
 
 @contextmanager

@@ -5,8 +5,8 @@ Covers the three functions in ``lambda_sync_trigger/handler.py``:
     - trigger_sync  : the per-feed POST, incl. the 409 "already running" skip
     - lambda_handler: per-feed failure isolation + final RuntimeError
 
-No network and no AWS: ``urllib.request.urlopen`` is monkeypatched and ``ssm`` is
-faked by conftest.py. See conftest.py for why the import setup lives there.
+No network and no AWS: ``urllib.request.urlopen`` is monkeypatched and boto3's ssm
+client is faked by conftest.py. See conftest.py for why the import setup lives there.
 """
 
 import urllib.error
@@ -71,7 +71,7 @@ def test_trigger_sync_happy_path_builds_correct_request(monkeypatch):
     handler.trigger_sync("feed-1", "the-key")
 
     req = captured["req"]
-    assert req.method == "POST"
+    assert req.get_method() == "POST"
     assert req.full_url == "https://api.banksync.io/v1/feeds/feed-1/sync"
     assert req.data == b""  # empty body => incremental sync
     # urllib title-cases header keys, so "X-API-Key" is stored as "X-api-key".

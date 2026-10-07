@@ -1,8 +1,8 @@
 """Test bootstrap for the push-receipts sweep Lambda suite (WHIT-139).
 
 ``lambda_push_receipts/handler.py`` imports ``push``, ``repository_push_receipt`` and
-``repository_device`` from the shared layer; ``push`` does ``from ssm import get_param``
-at load, and the repositories read ``AWS_REGION``/``TABLE_NAME`` and import
+``repository_device`` from the shared layer; ``push`` imports ``api_key`` (which
+imports ``boto3``) at load, and the repositories read ``AWS_REGION``/``TABLE_NAME`` and import
 ``boto3``/``botocore``. None of that AWS wiring is needed to unit-test the sweep logic —
 the handler tests monkeypatch ``handler.PushReceiptRepository`` /
 ``handler.DeviceRepository`` / ``handler.get_receipts`` / ``handler.get_access_token``,
@@ -20,8 +20,8 @@ import pytest
 
 from _boto_stubs import install_import_satisfiers
 
-# Env vars + fake boto3/botocore/ssm the handler import chain needs (push does
-# `from ssm import get_param` at load). Handler tests monkeypatch the repositories
+# Env vars + fake boto3/botocore the handler import chain needs (push imports
+# api_key, which imports boto3). Handler tests monkeypatch the repositories
 # and get_access_token, so the fakes are import-satisfiers only.
 install_import_satisfiers()
 

@@ -50,10 +50,10 @@ def rule_reply(rule: dict) -> dict:
 class WriteLimit:
     """How much writing one run may do: at most `max_writes` attempts, and no new write once
     `time_budget` seconds have passed since `started`, read off `clock` (the same clock `started`
-    came from; `time.monotonic` when omitted). `WriteLimit.none()` is uncapped (the worker)."""
+    came from). `WriteLimit.none()` is uncapped (the worker)."""
 
     def __init__(self, max_writes: int | None, time_budget: float | None, started: float | None,
-                 clock: Callable[[], float] | None = None):
+                 clock: Callable[[], float]):
         self.max_writes = max_writes
         self.time_budget = time_budget
         self.started = started
@@ -61,7 +61,7 @@ class WriteLimit:
 
     @classmethod
     def none(cls) -> "WriteLimit":
-        return cls(None, None, None)
+        return cls(None, None, None, time.monotonic)
 
     def reached(self, attempted: int) -> bool:
         if self.max_writes is not None and attempted >= self.max_writes:
@@ -70,8 +70,7 @@ class WriteLimit:
         # starve a run into zero progress.
         if self.time_budget is None or not attempted:
             return False
-        clock = self.clock or time.monotonic
-        return clock() - self.started >= self.time_budget
+        return self.clock() - self.started >= self.time_budget
 
 
 class RuleBook:

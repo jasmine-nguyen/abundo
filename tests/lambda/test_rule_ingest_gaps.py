@@ -12,22 +12,7 @@ not export DatabaseError.
 import pytest
 
 from _feed_fakes import FakeCategoryRepo
-
-
-# --- local fakes (snake_case store, list-call counting) ----------------------
-
-
-class FakeRuleStore:
-    def __init__(self, rules=(), *, error=False):
-        self._rules = [dict(rule) for rule in rules]
-        self.error = error
-        self.list_calls = 0
-
-    def list_rules(self):
-        self.list_calls += 1
-        if self.error:
-            raise RuntimeError("rules read failed")
-        return [dict(rule) for rule in self._rules]
+from _rule_ingest_fakes import FakeRuleStore, apply_rules
 
 
 def _rule(value, category_id="groceries", *, field="description", operator="contains", rule_id=None):
@@ -49,8 +34,7 @@ def test_non_taxonomy_raw_category_is_filed(lam):
     # taxonomy is unfiled, so a matching description rule must file it. FAIL-ON-REVERT: if
     # is_unfiled treated any truthy category as filed, the raw enum would survive.
     charge = _charge(description="COLES 9", category="FOOD_AND_DRINK")
-    lam.rule_ingest.apply(
-        [charge], rule_repo=FakeRuleStore([_rule("COLES", "groceries")]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([_rule("COLES", "groceries")]),
         category_repo=FakeCategoryRepo(["groceries"]))
     assert charge["category"] == "groceries"
 
@@ -64,8 +48,7 @@ def test_category_equals_rule_files(lam):
     hit = _charge(txn_id="hit", description="anything", category="FOOD_AND_DRINK")
     miss = _charge(txn_id="miss", description="anything", category="GENERAL_MERCHANDISE")
     rule = _rule("FOOD_AND_DRINK", "groceries", field="category", operator="equals")
-    lam.rule_ingest.apply(
-        [hit, miss], rule_repo=FakeRuleStore([rule]),
+    apply_rules(lam.rule_ingest, [hit, miss], rule_repo=FakeRuleStore([rule]),
         category_repo=FakeCategoryRepo(["groceries"]))
     assert hit["category"] == "groceries"
     assert miss["category"] == "GENERAL_MERCHANDISE"
@@ -78,8 +61,7 @@ def test_income_charge_is_left_alone(lam):
     # [A3] is_unfiled_category treats "income" as filed. A charge already "income" must not be
     # re-filed by a matching rule. FAIL-ON-REVERT: if income were treated as unfiled, it files.
     charge = _charge(description="COLES", category="income")
-    lam.rule_ingest.apply(
-        [charge], rule_repo=FakeRuleStore([_rule("COLES", "groceries")]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([_rule("COLES", "groceries")]),
         category_repo=FakeCategoryRepo(["groceries"]))
     assert charge["category"] == "income"
 
@@ -89,8 +71,7 @@ def test_rule_filing_to_income_is_applied(lam):
     # it. counts_to_budget leaves income counting. FAIL-ON-REVERT: if _skip_reason dropped
     # income-targeted rules as "category no longer exists", the charge stays unfiled.
     charge = _charge(description="SALARY ACME", category=None)
-    lam.rule_ingest.apply(
-        [charge], rule_repo=FakeRuleStore([_rule("SALARY", "income")]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([_rule("SALARY", "income")]),
         category_repo=FakeCategoryRepo(["groceries"]))       # taxonomy has NO "income"
     assert charge["category"] == "income"
     assert charge["counts_to_budget"] is True
@@ -111,8 +92,7 @@ def test_mixed_batch_each_charge_resolved_independently(lam):
     rules = [_rule("ALDI", "groceries", rule_id="r-aldi"),
              _rule("COLES", "groceries", rule_id="r-coles"),
              _rule("RICHMOND", "coffee", rule_id="r-richmond")]
-    lam.rule_ingest.apply(
-        [filed, conflict, prefiled, nomatch],
+    apply_rules(lam.rule_ingest, [filed, conflict, prefiled, nomatch],
         rule_repo=FakeRuleStore(rules),
         category_repo=FakeCategoryRepo(["groceries", "coffee", "eating-out"]))
     assert filed["category"] == "groceries"
@@ -129,8 +109,7 @@ def test_short_rule_value_below_write_floor_still_matches(lam):
     # A short imported rule ("KKV", 3 alphanumerics) still files at ingest. Pins parity with the
     # "Apply my rules" sweep; a revert adding a floor here would leave this unfiled.
     charge = _charge(description="SQ *KKV INTERNATIONAL PTY", category=None)
-    lam.rule_ingest.apply(
-        [charge], rule_repo=FakeRuleStore([_rule("KKV", "groceries")]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([_rule("KKV", "groceries")]),
         category_repo=FakeCategoryRepo(["groceries"]))
     assert charge["category"] == "groceries"
 
@@ -145,8 +124,7 @@ def test_charge_missing_account_id_raises_when_filing(lam):
     # .get(), this would not raise.
     charge = {"transaction_id": "t1", "description": "COLES", "category": None}
     with pytest.raises(KeyError):
-        lam.rule_ingest.apply(
-            [charge], rule_repo=FakeRuleStore([_rule("COLES", "groceries")]),
+        apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([_rule("COLES", "groceries")]),
             category_repo=FakeCategoryRepo(["groceries"]))
 
 

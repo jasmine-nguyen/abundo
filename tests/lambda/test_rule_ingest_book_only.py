@@ -1,11 +1,7 @@
-"""WHIT-633 — load_rules hands back the rule book itself, and file_charge takes just (charge, book).
-
-No more `(book, is_unfiled)` tuple and no unused placeholder argument on file_charge.
-"""
+"""WHIT-633 — load_rules hands back the rule book itself, not a `(book, is_unfiled)` tuple."""
 
 from functools import partial
 
-import pytest
 from _feed_fakes import FakeCategoryRepo
 
 
@@ -37,15 +33,8 @@ def test_load_rules_returns_the_rule_book_that_files_a_charge(lam):
     assert book.is_unfiled("NOT_A_CATEGORY") is True and book.is_unfiled("groceries") is False
 
     charge = _charge()
-    lam.rule_ingest.file_charge(charge, book)
+    book.file_charges([charge], None, counts_to_budget=lam.rule_ingest.counts_to_budget)
 
     assert charge["category"] == "groceries"
     assert charge["filed_by_rule"] == "rule-coles"
     assert charge["budget_excluded"] is True
-
-
-def test_file_charge_has_no_placeholder_argument(lam):
-    book = lam.rule_ingest.RuleBook.load(_Store([_coles_rule()]), _Cats())
-
-    with pytest.raises(TypeError):
-        lam.rule_ingest.file_charge(_charge(), book, book.is_unfiled)

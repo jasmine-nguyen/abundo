@@ -22,28 +22,23 @@ from constants import (
     SPREAD_MIN_CYCLES, SPREAD_MAX_CYCLES,
 )
 
-_MELBOURNE = None  # ZoneInfo("Australia/Melbourne"), built lazily on first use.
-
-
 def melbourne_today() -> date:
     """Today's date in the user's timezone (Australia/Melbourne), so the budget
     window resets at LOCAL midnight on payday, not UTC midnight.
 
-    Built lazily and cached. If the tzdata package is ever missing from the layer,
-    ZoneInfo raises here (only the budget path, not at module import). We catch that
+    If the tzdata package is ever missing from the layer, ZoneInfo raises here (only
+    the budget path, not at module import). We catch that
     and FAIL SAFE to UTC: /budgets keeps working with a reset that's off by at most
     a day at the UTC/Melbourne seam, rather than 500ing the whole budget path. Melbourne
     observes DST (+10/+11) so a fixed offset isn't a substitute for the tz database
     — UTC is only the degraded fallback, and the WARN makes the packaging gap loud.
     """
-    global _MELBOURNE
-    if _MELBOURNE is None:
-        try:
-            _MELBOURNE = ZoneInfo("Australia/Melbourne")
-        except ZoneInfoNotFoundError:
-            print("WARN: tzdata unavailable in layer; budget window falling back to UTC today")
-            return datetime.now(timezone.utc).date()
-    return datetime.now(_MELBOURNE).date()
+    try:
+        melbourne = ZoneInfo("Australia/Melbourne")
+    except ZoneInfoNotFoundError:
+        print("WARN: tzdata unavailable in layer; budget window falling back to UTC today")
+        return datetime.now(timezone.utc).date()
+    return datetime.now(melbourne).date()
 
 
 def current_cycle_window(last_pay_date: str, length: int, today: date | None = None) -> tuple[str, str]:
@@ -175,8 +170,7 @@ def spread_adjustment(amount: Decimal, cycles: int, index: int) -> Decimal:
     return Decimal(-slice_cents) / 100
 
 
-# ── Unified "Smoothing" engine (WHIT-547, slice 1 of the WHIT-546 epic) ──────────────
-# `unified_available`: the smoothed spendable identity used by budget_standing.
+# `unified_available`: the smoothed spendable identity used by budget_standing (WHIT-547).
 
 
 def unified_available(budget: Decimal, buffer: Decimal, payback: Decimal) -> Decimal:

@@ -38,13 +38,8 @@ def load_rules(rule_repo, category_repo):
     return book
 
 
-def file_charge(charge: dict, book: RuleBook, *, seeder=None) -> None:
-    """File one charge in place by `book` (see RuleBook.file_charges)."""
-    book.file_charges([charge], seeder, counts_to_budget=counts_to_budget)
-
-
 def apply(rows: list, *, rule_repo, category_repo,
-          budget_repo=None, paycycle_repo=None) -> tuple[list, Optional[Callable]]:
+          budget_repo, paycycle_repo) -> tuple[list, Optional[Callable]]:
     """File each unfiled charge in `rows` by the user's rules, in place, and return
     `(rows, is_unfiled)`.
 
@@ -53,9 +48,8 @@ def apply(rows: list, *, rule_repo, category_repo,
     read — a data-less delivery or a read failure — in which case the caller leaves the carry
     unchanged.
 
-    When `budget_repo` + `paycycle_repo` are supplied (the live webhook does; reprocess does not),
-    a spread rule filing a matching charge auto-creates the category's spread plan (WHIT-559),
-    seeded once per delivery via a shared SpreadSeeder. Omit them to skip spreading.
+    A spread rule filing a matching charge auto-creates the category's spread plan (WHIT-559),
+    seeded once per delivery via a shared SpreadSeeder.
 
     Reads the rules + taxonomy once for the whole batch. A read failure leaves every charge
     unfiled (still lands, logged). An empty rule store is a no-op — the rows are returned
@@ -65,8 +59,6 @@ def apply(rows: list, *, rule_repo, category_repo,
     book = load_rules(rule_repo, category_repo)
     if book is None:
         return rows, None
-    seeder = None
-    if budget_repo is not None and paycycle_repo is not None:
-        seeder = SpreadSeeder(budget_repo, paycycle_repo, rule_repo)
+    seeder = SpreadSeeder(budget_repo, paycycle_repo, rule_repo)
     book.file_charges(rows, seeder, counts_to_budget=counts_to_budget)
     return rows, book.is_unfiled

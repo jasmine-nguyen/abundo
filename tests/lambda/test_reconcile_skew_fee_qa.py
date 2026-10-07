@@ -19,7 +19,7 @@ def _txn(lam, *, txn_id, amount, authorized_date, pending, category="GENERAL_SER
          account_id=_WESTPAC_ACCOUNT_ID, description=None, merchant_name=_MERCHANT, date=None):
     if description is None:
         description = _PEND_DESC if pending else _POST_DESC
-    return lam.banksync.BankSyncClient.normalise({
+    return lam.banksync.normalise({
         "id": txn_id, "date": date or authorized_date, "authorizedDate": authorized_date,
         "description": description, "merchantName": merchant_name, "amount": amount,
         "accountId": account_id, "accountName": "Altitude Qantas Black",

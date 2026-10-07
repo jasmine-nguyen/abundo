@@ -1,6 +1,6 @@
 # Test-only dependencies for the Python Lambda suites (installed by CI:
-# .github/workflows/python-tests.yml). conftest.py fakes `ssm`, so boto3 is not
-# required. pytest-cov adds the coverage report + the CI coverage gate.
+# .github/workflows/python-tests.yml). conftest.py installs a fake boto3, so the
+# real boto3 is not required. pytest-cov adds the coverage report + the CI coverage gate.
 # standardwebhooks (a real runtime dep, see lambda/requirements.txt) is needed so
 # the webhook handler tests can produce real signatures.
 pytest==8.*

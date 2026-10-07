@@ -1,18 +1,17 @@
 """WHIT-559 PR2a — adversarial gaps on the WEBHOOK-side auto-spreading (lambda/rule_ingest.py).
 
 Independent of the impl suite (test_rule_ingest_spread.py, which covers seed+mark / two-charges-once
-/ no-op-not-marked / non-spread-zero / already-seeded / reprocess-no-spread). Here: cross-DELIVERY
+/ no-op-not-marked / non-spread-zero / already-seeded). Here: cross-DELIVERY
 idempotency (the store-row spread_seeded flag survives across two deliveries, each with its OWN
 SpreadSeeder), a multi-condition (WHIT-541) spread rule, a spread rule matching nothing, and a
 budget_excluded (non-spread) regression with the spread wiring live. The real RuleRepository runs over
 the stand-in table, like test_rule_ingest_spread.py."""
 
 from decimal import Decimal
-from functools import partial
 
-from _budget_endpoint_fakes import _FakePayCycleRepo
 from _dynamo_fakes import FakeTable
 from _feed_fakes import FakeCategoryRepo
+from _rule_ingest_fakes import FakePaycycle
 
 
 def _rule_store(rules):
@@ -36,9 +35,6 @@ class FakeBudget:
     def set_spread_if_absent(self, *args):
         self.calls.append(args)
         return self._result
-
-
-FakePaycycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-01-07")
 
 
 def _charge(txn_id, description="ORIGIN ENERGY BILL", **extra):

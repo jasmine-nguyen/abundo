@@ -1,7 +1,7 @@
 """Test bootstrap for the BankSync webhook lambda suite (``lambda/``).
 
 ``lambda/`` owns only the webhook-specific ``handler`` / ``webhook_repository`` /
-``banksync`` (and imports ``ssm`` / ``standardwebhooks``); ``constants`` /
+``banksync`` (and imports ``standardwebhooks``); ``constants`` /
 ``models`` / ``api_key`` come from the shared layer (``shared/``), exactly as the
 deployed webhook resolves them (its function code shadows the attached layer). The
 ``lam`` fixture therefore pins ``lambda/`` in front of ``shared/`` on ``sys.path``
@@ -33,10 +33,7 @@ os.environ.setdefault("TABLE_NAME", "test-table")
 
 
 def _fake_import_satisfiers() -> dict:
-    """Fake ``ssm`` + ``standardwebhooks`` so ``handler.py`` imports without AWS."""
-    ssm = types.ModuleType("ssm")
-    ssm.get_param = lambda *a, **k: "fake-secret"
-
+    """Fake ``standardwebhooks`` so ``handler.py`` imports without the real library."""
     standardwebhooks = types.ModuleType("standardwebhooks")
     webhooks = types.ModuleType("standardwebhooks.webhooks")
 
@@ -50,7 +47,6 @@ def _fake_import_satisfiers() -> dict:
     webhooks.Webhook = Webhook
     standardwebhooks.webhooks = webhooks
     return {
-        "ssm": ssm,
         "standardwebhooks": standardwebhooks,
         "standardwebhooks.webhooks": webhooks,
     }
@@ -64,7 +60,7 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 # (constants / models / api_key). Shed so a sibling suite's cached copy can't win —
 # including the shared facade `repository` another suite may have cached.
 _REIMPORT = ("handler", "up_webhook", "constants", "models", "repository", "webhook_repository", "reconcile", "banksync", "api_key", "merchant", "reprocess", "age_out",
-             "budget_alerts", "repayment_alerts", "spend", "budget_standing", "push", "repository_base", "repository_transaction", "repository_budget",
+             "budget_alerts", "spend", "budget_standing", "push", "repository_push_receipt", "repository_base", "repository_transaction", "repository_budget",
              "repository_category", "repository_device", "repository_notify", "repository_paycycle", "rule_engine",
              "rule_ingest", "repository_rule", "pending_carry")
 
@@ -102,14 +98,13 @@ def lam():
         import reprocess
         import age_out
         import budget_alerts
-        import repayment_alerts
         import rule_ingest
 
         ns = types.SimpleNamespace(
             repository=webhook_repository, reconcile=reconcile, banksync=banksync, handler=handler, models=models,
             merchant=merchant, reprocess=reprocess,
             age_out=age_out,
-            budget_alerts=budget_alerts, repayment_alerts=repayment_alerts,
+            budget_alerts=budget_alerts,
             up_webhook=up_webhook, rule_ingest=rule_ingest,
             # Fresh per test, so its SSM cache starts empty: seed `_cache` or stub `get_param` here.
             api_key=api_key,

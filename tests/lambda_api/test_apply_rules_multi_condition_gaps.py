@@ -13,6 +13,7 @@ import json
 from decimal import Decimal
 
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
+from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 def _multi_rule(conditions, logic="all", category_id="transport", budget_excluded=False):
@@ -31,7 +32,8 @@ def _apply_event(body):
 def _call(handler, rows, rules, body, categories=frozenset({"transport", "groceries", "income"})):
     """Run the sweep over these stored charges; returns (body, table)."""
     table, repo, rule_repo = real_repos({SPENDING: rows}, rules=rules)
-    resp = handler.apply_rules_to_uncategorized(
+    resp = apply_rules_to_uncategorized(
+        handler,
         _apply_event(body), repo, FakeCategoryRepo(categories), rule_repo)
     return json.loads(resp["body"]), table
 
@@ -114,7 +116,8 @@ def test_inline_file_this_shop_is_still_single_condition(handler):
     table, repo, rule_repo = real_repos({SPENDING: [
         _row(SPENDING, "2026-07-01", "t1", description="ALDI 1")]})
     body = {"dryRun": False, "rule": {"value": "ALDI", "categoryId": "groceries"}}
-    handler.apply_rules_to_uncategorized(
+    apply_rules_to_uncategorized(
+        handler,
         _apply_event(body), repo, FakeCategoryRepo(frozenset({"groceries"})), rule_repo)
     assert stored(table, "t1")["category"] == "groceries"
     [minted] = rule_repo.list_rules()

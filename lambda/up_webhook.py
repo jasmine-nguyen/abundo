@@ -26,7 +26,6 @@ from decimal import Decimal
 
 from constants import MIN_REPAYMENT_NOTIFY
 from push import send_push
-from repayment_alerts import build_repayment_push
 from repository_device import DeviceRepository
 from repository_notify import NotifyRepository
 from api_key import forget_api_key, get_api_key
@@ -60,7 +59,6 @@ OK_RESPONSE = {"statusCode": 200, "body": "ok"}
 UNAUTHORISED_RESPONSE = {"statusCode": 401, "body": "unauthorised event"}
 ERROR_RESPONSE = {"statusCode": 500, "body": "processing failed"}
 
-
 def get_signing_secret() -> str:
     return get_api_key(UP_WEBHOOK_SIGNING_SECRET_PATH)
 
@@ -69,8 +67,13 @@ def get_personal_access_token() -> str:
     return get_api_key(UP_PERSONAL_ACCESS_TOKEN_PATH)
 
 
-def clear_personal_access_token() -> None:
-    forget_api_key(UP_PERSONAL_ACCESS_TOKEN_PATH)
+def build_repayment_push(amount: Decimal) -> tuple[str, str]:
+    """The (title, body) for a home-loan repayment push (WHIT-15). `amount` renders as whole
+    dollars with thousands separators, e.g. Decimal('3667.50') -> '$3,668'. The credit is the
+    GROSS repayment, of which only the principal comes off the balance, so the copy says
+    "put $X toward the mortgage", never "knocked $X off"."""
+    return ("Nice one! Another chunk down",
+            f"You just put ${amount:,.0f} toward the mortgage. You're crushing it — keep building! \U0001f4aa")
 
 
 def extract_raw_body(event: dict) -> bytes:
@@ -101,7 +104,7 @@ def fetch_transaction(transaction_id: str) -> dict:
         if error.code in UP_TOKEN_REJECTED_STATUSES:
             # Drop the cached token so Up's retry re-reads SSM — a replaced token then
             # takes effect on a warm container without a redeploy.
-            clear_personal_access_token()
+            forget_api_key(UP_PERSONAL_ACCESS_TOKEN_PATH)
             logger.error("UP_WEBHOOK_TOKEN_REJECTED Up answered %s for transaction %s — "
                          "the Up personal access token (%s) is revoked or invalid",
                          error.code, transaction_id, UP_PERSONAL_ACCESS_TOKEN_PATH)

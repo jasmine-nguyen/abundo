@@ -66,13 +66,6 @@ class FakeDeviceRepo:
         return list(self._t)
 
 
-class NoTwinRepo:
-    """webhook_repo stand-in: no pending twins."""
-
-    def get_pending_transactions_for_account(self, account):
-        return []
-
-
 def _run(alerts, monkeypatch, *, budgets, before, normalised, tokens=("ExpoPushToken[a]",),
          cats=None, webhook_repo=None, notify=None, paycycle=("2026-07-01", 14), send_ok=1):
     ba = alerts.budget_alerts
@@ -86,18 +79,15 @@ def _run(alerts, monkeypatch, *, budgets, before, normalised, tokens=("ExpoPushT
 
     monkeypatch.setattr(ba, "send_push", fake_send)
     notify = notify or notify_repo()
-    webhook_repo = webhook_repo or NoTwinRepo()
     ctx = ba.capture_pre_write(
         normalised,
         device_repo=FakeDeviceRepo(tokens),
         budget_repo=FakeBudgetRepo(budgets),
         paycycle_repo=FakePaycycleRepo(last_pay_date=paycycle[0], length=paycycle[1]),
-        window_repo=_AccountTransactionRepo(before),
-        webhook_repo=webhook_repo,
+        webhook_repo=_AccountTransactionRepo(before, pending_repo=webhook_repo),
     )
     ba.fire_budget_alerts(
-        ctx, normalised, webhook_repo=webhook_repo,
-        category_repo=_FakeCategoryRepo(cats or [{"id": "groceries", "name": "Groceries"}]),
+        ctx, normalised, category_repo=_FakeCategoryRepo(cats or [{"id": "groceries", "name": "Groceries"}]),
         notify_repo=notify,
     )
     return sent, notify, ctx
@@ -133,12 +123,10 @@ def test_crossing_push_carries_budget_deeplink_data(alerts, monkeypatch):
         device_repo=FakeDeviceRepo(("ExpoPushToken[a]",)),
         budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
         paycycle_repo=FakePaycycleRepo(last_pay_date="2026-07-01", length=14),
-        window_repo=_AccountTransactionRepo(before),
-        webhook_repo=NoTwinRepo(),
+        webhook_repo=_AccountTransactionRepo(before),
     )
     ba.fire_budget_alerts(
-        ctx, [new], webhook_repo=NoTwinRepo(),
-        category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
+        ctx, [new], category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
         notify_repo=notify_repo(),
     )
     assert captured == [{"type": "budget", "category": "groceries"}]
@@ -427,16 +415,14 @@ def test_budget_fully_pruned_ok_zero_leaves_unmarked(alerts, monkeypatch):
 
     monkeypatch.setattr(ba, "send_push", fake_send)
     notify = notify_repo()
-    webhook_repo = NoTwinRepo()
     before = [_txn("old", "groceries", -70, "posted")]
     new = _txn("new1", "groceries", -15, "posted")            # -> $85, crosses 80%
     ctx = ba.capture_pre_write(
         [new], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
         paycycle_repo=FakePaycycleRepo(last_pay_date="2026-07-01", length=14),
-        window_repo=_AccountTransactionRepo(before), webhook_repo=webhook_repo,
+        webhook_repo=_AccountTransactionRepo(before),
     )
-    ba.fire_budget_alerts(ctx, [new], webhook_repo=webhook_repo,
-                       category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
+    ba.fire_budget_alerts(ctx, [new], category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
                        notify_repo=notify)
     assert len(sent) == 1                                     # attempted
     assert notify.fired_markers("2026-07-01", 14) == set()    # pruned ok==0 => still unmarked
@@ -471,10 +457,10 @@ def test_claim_precedes_send_and_lower_marks_follow_it(alerts, monkeypatch):
     new = _txn("new1", "groceries", -15, "posted")                     # → $105, both thresholds
     ctx = ba.capture_pre_write(
         [new], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
-        paycycle_repo=FakePaycycleRepo(), window_repo=_AccountTransactionRepo(before), webhook_repo=NoTwinRepo(),
+        paycycle_repo=FakePaycycleRepo(), webhook_repo=_AccountTransactionRepo(before),
     )
-    ba.fire_budget_alerts(ctx, [new], webhook_repo=NoTwinRepo(),
-                          category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]), notify_repo=notify)
+    ba.fire_budget_alerts(ctx, [new],
+        category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]), notify_repo=notify)
     assert order == ["claim", "send", "mark"]
 
 
@@ -500,19 +486,19 @@ def test_no_tokens_skips_everything(alerts, monkeypatch):
     ctx = ba.capture_pre_write(
         [_txn("new1", "groceries", -100, "posted")],
         device_repo=FakeDeviceRepo(tokens=()), budget_repo=ExplodingBudgetRepo(),
-        paycycle_repo=FakePaycycleRepo(), window_repo=_AccountTransactionRepo([]), webhook_repo=NoTwinRepo(),
+        paycycle_repo=FakePaycycleRepo(), webhook_repo=_AccountTransactionRepo([]),
     )
     assert ctx is None
 
 
 def test_no_budgets_skips_the_window_read(alerts, monkeypatch):
     ba = alerts.budget_alerts
-    window_repo = _FailingTransactionRepo(AssertionError("must not read the window when there are no budgets"))
+    store = _FailingTransactionRepo(AssertionError("must not read the window when there are no budgets"))
 
     ctx = ba.capture_pre_write(
         [_txn("new1", "groceries", -100, "posted")],
         device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo({}),
-        paycycle_repo=FakePaycycleRepo(), window_repo=window_repo, webhook_repo=NoTwinRepo(),
+        paycycle_repo=FakePaycycleRepo(), webhook_repo=store,
     )
     assert ctx is None
 
@@ -520,8 +506,7 @@ def test_no_budgets_skips_the_window_read(alerts, monkeypatch):
 def test_fire_budget_alerts_ignores_a_none_context(alerts, monkeypatch):
     ba = alerts.budget_alerts
     monkeypatch.setattr(ba, "send_push", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no send")))
-    ba.fire_budget_alerts(None, [], webhook_repo=NoTwinRepo(),
-                       category_repo=_FakeCategoryRepo([]), notify_repo=notify_repo())  # no raise
+    ba.fire_budget_alerts(None, [], category_repo=_FakeCategoryRepo([]), notify_repo=notify_repo())  # no raise
 
 
 # --- the webhook straddle is best-effort: an alert failure never breaks the write --
@@ -557,7 +542,7 @@ def test_fire_failure_does_not_break_the_write(lam, monkeypatch):
 # ===========================================================================
 # QA gap tests (WHIT-22) — the reconcile-fidelity of _simulate_after against
 # the REAL webhook TransactionRepository, plus boundary / window / refund /
-# pagination gaps. The implementer's tests use NoTwinRepo (the reconcile path is
+# pagination gaps. The implementer's tests have no pending pool (the reconcile path is
 # never exercised); these seed a real pending twin into a FakeTable so
 # the reconcile planner runs for real inside the Δ sim.
 # Every assertion fails on a revert of the production behaviour it names.
@@ -580,7 +565,7 @@ def _bank(txn_id, amount, *, pending, category, date="2026-07-10",
 
 
 def _norm_real(alerts, **kw):
-    return alerts.banksync.BankSyncClient.normalise(_bank(**kw))
+    return alerts.banksync.normalise(_bank(**kw))
 
 
 def _seed(repo, alerts, **kw):
@@ -819,15 +804,14 @@ def test_window_read_accumulates_every_cursor_page(alerts, monkeypatch):
     # no crossing. So a passing send proves both pages were read.
     rows = [_txn("r0", "groceries", -35, "posted"), _txn("r1", "groceries", -35, "posted")]
     new = _txn("new1", "groceries", -15, "posted")
-    window_repo = _AccountPagesTransactionRepo({_ACCT: [([rows[0]], "c1"), ([rows[1]], None)]})
+    store = _AccountPagesTransactionRepo({_ACCT: [([rows[0]], "c1"), ([rows[1]], None)]})
     ctx = ba.capture_pre_write(
         [new], device_repo=FakeDeviceRepo(),
         budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
-        paycycle_repo=FakePaycycleRepo(), window_repo=window_repo, webhook_repo=NoTwinRepo(),
+        paycycle_repo=FakePaycycleRepo(), webhook_repo=store,
     )
     assert len(ctx["before_rows"]) == 2  # both pages accumulated
-    ba.fire_budget_alerts(ctx, [new], webhook_repo=NoTwinRepo(),
-                       category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
+    ba.fire_budget_alerts(ctx, [new], category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
                        notify_repo=notify_repo())
     assert len(sent) == 1
 
@@ -839,7 +823,7 @@ def test_window_read_backstop_raises_on_a_nonterminating_cursor(alerts):
         ba.capture_pre_write(
             [_txn("n", "groceries", -1, "posted")], device_repo=FakeDeviceRepo(),
             budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
-            paycycle_repo=FakePaycycleRepo(), window_repo=_EndlessTransactionRepo(), webhook_repo=NoTwinRepo(),
+            paycycle_repo=FakePaycycleRepo(), webhook_repo=_EndlessTransactionRepo(),
         )
 
 
@@ -1411,10 +1395,10 @@ def _coles_alert_rows(*, pend_date="2026-07-11", post_auth="2026-07-10",
 
 def test_one_word_skew_simulation_matches_the_real_write(alerts, repo):
     pending_row, posted_row = _coles_alert_rows()
-    repo.insert_transactions([alerts.banksync.BankSyncClient.normalise(pending_row)])
+    repo.insert_transactions([alerts.banksync.normalise(pending_row)])
     before = list(repo._table.store.values())
     account = before[0]["account_id"]
-    posted = alerts.banksync.BankSyncClient.normalise(posted_row)
+    posted = alerts.banksync.normalise(posted_row)
     ctx = {"before_rows": before,
            "pending_pools": {account: list(repo.get_pending_transactions_for_account(account))},
            "start": "2026-07-01", "end": "2026-07-14"}
@@ -1436,9 +1420,9 @@ def test_one_word_skew_across_the_cycle_boundary_counts_once_inside_the_window(a
     # window entirely and under-count.
     pending_row, posted_row = _coles_alert_rows(pend_date="2026-07-01",
                                                 post_auth="2026-06-30", post_date="2026-07-03")
-    repo.insert_transactions([alerts.banksync.BankSyncClient.normalise(pending_row)])
+    repo.insert_transactions([alerts.banksync.normalise(pending_row)])
     before = list(repo._table.store.values())
-    posted = alerts.banksync.BankSyncClient.normalise(posted_row)
+    posted = alerts.banksync.normalise(posted_row)
 
     sent, notify, ctx = _run(alerts, monkeypatch,
                              budgets={"groceries": {"target": Decimal("100")}},
@@ -1552,13 +1536,13 @@ def test_wh343_gap_tip_settlement_crossing_cancelled_by_sibling_refund(alerts, r
 
 # ======================================================================================
 # Folded from per-ticket budget-alert satellites (WHIT-452 Slice 1). Bodies moved
-# verbatim; budget_296's copy of the fake repos / alerts fixture / NoTwinRepo was dropped
+# verbatim; budget_296's copy of the fake repos / alerts fixture was dropped
 # in favour of this file's harness above.
 # ======================================================================================
 
 
 # --- WHIT-296: the over-budget push honours the budget_excluded override --------------
-# (was test_budget_alerts_whit296.py) Reuses this file's fake repos + NoTwinRepo above.
+# (was test_budget_alerts_whit296.py) Reuses this file's fake repos above.
 # [A-P1] drives the REAL webhook repo through the carry + spend gate; [A-P2] the gate alone.
 
 
@@ -1604,7 +1588,7 @@ def test_excluded_charge_in_batch_never_crosses_threshold(alerts, monkeypatch):
 
     sent, _, _ = _run(alerts, monkeypatch,
                       budgets={"groceries": {"target": Decimal("100")}},
-                      before=[], normalised=[posted], webhook_repo=NoTwinRepo())
+                      before=[], normalised=[posted])
 
     assert sent == []
 
@@ -1759,19 +1743,19 @@ def test_whit545_preview_buckets_a_settlement_under_the_landed_category(alerts, 
                         lambda title, body, toks, data=None: sent.append((title, body)) or
                         {"sent": len(list(toks)), "ok": 1, "pruned": []})
 
-    pending = alerts.banksync.BankSyncClient.normalise(
+    pending = alerts.banksync.normalise(
         _bal_bank_row("PEND", -15, pending=True, category="FOOD_AND_DRINK"))
     repo.insert_transactions([pending])
-    posted = alerts.banksync.BankSyncClient.normalise(
+    posted = alerts.banksync.normalise(
         _bal_bank_row("POST", -15, pending=False, category="groceries"))
 
     before = [_txn("old", "groceries", -70, "posted")]
     ctx = ba.capture_pre_write(
         [posted], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
-        paycycle_repo=FakePaycycleRepo(last_pay_date="2026-07-01", length=14), window_repo=_AccountTransactionRepo(before), webhook_repo=repo)
+        paycycle_repo=FakePaycycleRepo(last_pay_date="2026-07-01", length=14),
+            webhook_repo=_AccountTransactionRepo(before, pending_repo=repo))
     ba.fire_budget_alerts(
-        ctx, [posted], webhook_repo=repo,
-        category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
+        ctx, [posted], category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
         notify_repo=notify_repo())
 
     assert len(sent) == 1
@@ -1837,9 +1821,8 @@ def test_combined_push_opens_the_app_not_one_budget(alerts, monkeypatch):
     budgets = {"groceries": {"target": Decimal("100")}, "coffee": {"target": Decimal("50")}}
     before = [_txn("g", "groceries", -90, "posted"), _txn("c", "coffee", -45, "posted")]
     ctx = ba.capture_pre_write([], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo(budgets),
-                               paycycle_repo=FakePaycycleRepo(), window_repo=_AccountTransactionRepo(before),
-                               webhook_repo=NoTwinRepo())
-    ba.fire_budget_alerts(ctx, [], webhook_repo=NoTwinRepo(), category_repo=_FakeCategoryRepo(cats),
+                               paycycle_repo=FakePaycycleRepo(), webhook_repo=_AccountTransactionRepo(before))
+    ba.fire_budget_alerts(ctx, [], category_repo=_FakeCategoryRepo(cats),
                           notify_repo=notify_repo())
     assert pushed == [{"type": "budget"}]
 
@@ -1857,9 +1840,8 @@ def test_one_budget_already_warned_leaves_a_single_budget_push_with_its_deep_lin
     notify = notify_repo()
     notify.mark_fired("2026-07-01", 14, "coffee#80")
     ctx = ba.capture_pre_write([], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo(budgets),
-                               paycycle_repo=FakePaycycleRepo(), window_repo=_AccountTransactionRepo(before),
-                               webhook_repo=NoTwinRepo())
-    ba.fire_budget_alerts(ctx, [], webhook_repo=NoTwinRepo(), category_repo=_FakeCategoryRepo(cats),
+                               paycycle_repo=FakePaycycleRepo(), webhook_repo=_AccountTransactionRepo(before))
+    ba.fire_budget_alerts(ctx, [], category_repo=_FakeCategoryRepo(cats),
                           notify_repo=notify)
     assert pushed == [("Heads up \U0001f440", {"type": "budget", "category": "groceries"})]
 
@@ -1929,12 +1911,10 @@ def test_send_that_raises_releases_its_claim(alerts, monkeypatch):
     before = [_txn("old", "groceries", -90, "posted")]
     ctx = ba.capture_pre_write([], device_repo=FakeDeviceRepo(),
                                budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
-                               paycycle_repo=FakePaycycleRepo(), window_repo=_AccountTransactionRepo(before),
-                               webhook_repo=NoTwinRepo())
+                               paycycle_repo=FakePaycycleRepo(), webhook_repo=_AccountTransactionRepo(before))
     monkeypatch.setattr(ba, "send_push", boom)
     with pytest.raises(RuntimeError):
-        ba.fire_budget_alerts(ctx, [], webhook_repo=NoTwinRepo(),
-                              category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
+        ba.fire_budget_alerts(ctx, [], category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
                               notify_repo=notify)
     assert notify.fired_markers("2026-07-01", 14) == set()
 
@@ -1978,9 +1958,8 @@ def test_single_survivor_of_a_claim_race_gets_its_own_copy(alerts, monkeypatch):
     before = [_txn("a", "alpha", -110, "posted"), _txn("b", "bravo", -85, "posted")]
     budgets = {"alpha": {"target": Decimal("100")}, "bravo": {"target": Decimal("100")}}
     ctx = ba.capture_pre_write([], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo(budgets),
-                               paycycle_repo=FakePaycycleRepo(), window_repo=_AccountTransactionRepo(before),
-                               webhook_repo=NoTwinRepo())
-    ba.fire_budget_alerts(ctx, [], webhook_repo=NoTwinRepo(), category_repo=_FakeCategoryRepo(_THREE_OVER["cats"]),
+                               paycycle_repo=FakePaycycleRepo(), webhook_repo=_AccountTransactionRepo(before))
+    ba.fire_budget_alerts(ctx, [], category_repo=_FakeCategoryRepo(_THREE_OVER["cats"]),
                           notify_repo=notify)
     assert pushed == [("Budget hit", "You've spent your whole Alpha budget for this cycle.",
                        {"type": "budget", "category": "alpha"})]
