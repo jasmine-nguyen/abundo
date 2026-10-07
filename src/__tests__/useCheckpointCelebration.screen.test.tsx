@@ -10,9 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCheckpointCelebration } from '../hooks/useCheckpointCelebration';
 import { CHECKPOINT_SNAPSHOT_KEY, GoalSteps, StepSnapshot } from '../checkpointCelebration';
 import { goalSteps, stepSnapshot } from './support/celebrationSteps';
-import { savedCelebrationSnapshot } from './support/celebrationSnapshot';
-
-const saved = savedCelebrationSnapshot;
+import { savedCelebrationSnapshot as saved } from './support/celebrationSnapshot';
 
 // Render the hook and wait until the saved snapshot has loaded and the first comparison has saved.
 async function renderLoaded(initial: GoalSteps[], expectedSave: StepSnapshot) {

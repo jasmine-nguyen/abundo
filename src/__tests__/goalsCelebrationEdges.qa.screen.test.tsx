@@ -14,7 +14,7 @@ import { resetAuth } from './support/authMock';
 import { resetRouter, setFocused } from './support/routerMock';
 import { pinToday } from './support/clock';
 import { seedCelebrationHub } from './support/goalsScreen';
-import { savedCelebrationSnapshot, savedFromEarlierLaunch } from './support/celebrationSnapshot';
+import { savedCelebrationSnapshot as saved, savedFromEarlierLaunch } from './support/celebrationSnapshot';
 import { queryClient } from '../queryClient';
 import { holidaySaved, mortgageSaved } from './support/celebrationSteps';
 import type { GoalRecord, MilestoneRecord } from '../api';
@@ -56,7 +56,6 @@ useTestQueryClient();
 const seedHub = (goals: GoalRecord[], balances: Record<string, number>, homeLoanBalance: number | null = 596642.43) =>
   seedCelebrationHub(server, goals, balances, homeLoanBalance);
 
-const saved = savedCelebrationSnapshot;
 const HOLIDAY_AT_4000 = holidaySaved(true, false, false); // past $2,000 only
 
 beforeEach(async () => {

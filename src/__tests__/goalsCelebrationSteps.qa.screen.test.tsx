@@ -44,9 +44,6 @@ const SECOND: MilestoneRecord = { id: 'm2', label: 'Second', targetBalance: 5000
 const server = installFakeServer();
 useTestQueryClient();
 
-const seedHub = (goals: GoalRecord[], balances: Record<string, number>, homeLoanBalance: number | null = null) =>
-  seedCelebrationHub(server, goals, balances, homeLoanBalance);
-
 const refresh = () => refreshInAct(() => queryClient.invalidateQueries());
 const label = () => screen.findByTestId('checkpoint-celebration-label');
 
@@ -64,11 +61,11 @@ describe('Goals celebration steps (WHIT-811 QA)', () => {
     ['grow', HOLIDAY, 'up-spending', 1000, 6000, /^Holiday · Hotel paid reached/],
     ['paydown', CAR, 'up-car', -9000, -4000, /^Car loan · Halfway reached/],
   ] as const)('a %s goal jumping past two milestones at once celebrates once, naming the furthest', async (_, goal, account, before, after, expected) => {
-    seedHub([goal], { [account]: before });
+    seedCelebrationHub(server,[goal], { [account]: before });
     await renderWithQueries(<Goals />);
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
 
-    seedHub([goal], { [account]: after });
+    seedCelebrationHub(server,[goal], { [account]: after });
     await refresh();
     expect(await label()).toHaveTextContent(expected);
   });
@@ -76,12 +73,12 @@ describe('Goals celebration steps (WHIT-811 QA)', () => {
   // [A3]
   it('mortgage milestones are tracked by id: delete a cleared one, cross the next → it celebrates', async () => {
     server.seed('/milestones', [FIRST, SECOND]);
-    seedHub([], {}, 550000); // "First" cleared, "Second" not
+    seedCelebrationHub(server,[], {}, 550000); // "First" cleared, "Second" not
     await renderWithQueries(<Goals />);
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
 
     server.seed('/milestones', [SECOND]); // "Second" is now first in the list
-    seedHub([], {}, 490000);
+    seedCelebrationHub(server,[], {}, 490000);
     await refresh();
     expect(await label()).toHaveTextContent(/^The mortgage · Second reached/);
   });

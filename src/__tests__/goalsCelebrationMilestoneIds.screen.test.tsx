@@ -48,9 +48,6 @@ const BIKE: GoalRecord = {
 const server = installFakeServer();
 useTestQueryClient();
 
-const seedHub = (goals: GoalRecord[], balances: Record<string, number>, homeLoanBalance: number | null = null) =>
-  seedCelebrationHub(server, goals, balances, homeLoanBalance);
-
 const refresh = () => refreshInAct(() => queryClient.invalidateQueries());
 const banner = () => screen.queryByTestId('checkpoint-celebration');
 
@@ -64,43 +61,43 @@ beforeEach(async () => {
 
 describe('Goals celebrations remember which milestones were reached (WHIT-811)', () => {
   it('adding a milestone below the balance is already reached → no confetti', async () => {
-    seedHub([HOLIDAY], { 'up-spending': 4000 }); // past "Flights booked" only
+    seedCelebrationHub(server,[HOLIDAY], { 'up-spending': 4000 }); // past "Flights booked" only
     await renderWithQueries(<Goals />);
     expect(banner()).toBeNull();
 
     const added = { ...HOLIDAY, checkpoints: [FLIGHTS, { id: 'c', label: 'Passport', amount: 3000 }, HOTEL] };
-    seedHub([added], { 'up-spending': 4000 }); // same balance, a new milestone under it
+    seedCelebrationHub(server,[added], { 'up-spending': 4000 }); // same balance, a new milestone under it
     await refresh();
 
     expect(banner()).toBeNull();
   });
 
   it('lowering a milestone below the balance → no confetti', async () => {
-    seedHub([HOLIDAY], { 'up-spending': 4000 });
+    seedCelebrationHub(server,[HOLIDAY], { 'up-spending': 4000 });
     await renderWithQueries(<Goals />);
 
     const lowered = { ...HOLIDAY, checkpoints: [FLIGHTS, { ...HOTEL, amount: 3000 }] };
-    seedHub([lowered], { 'up-spending': 4000 });
+    seedCelebrationHub(server,[lowered], { 'up-spending': 4000 });
     await refresh();
 
     expect(banner()).toBeNull();
   });
 
   it('deleting a reached milestone then crossing the next one still celebrates it', async () => {
-    seedHub([HOLIDAY], { 'up-spending': 4000 }); // "Flights booked" reached, "Hotel paid" not
+    seedCelebrationHub(server,[HOLIDAY], { 'up-spending': 4000 }); // "Flights booked" reached, "Hotel paid" not
     await renderWithQueries(<Goals />);
 
-    seedHub([{ ...HOLIDAY, checkpoints: [HOTEL] }], { 'up-spending': 6000 }); // deleted one, crossed the other
+    seedCelebrationHub(server,[{ ...HOLIDAY, checkpoints: [HOTEL] }], { 'up-spending': 6000 }); // deleted one, crossed the other
     await refresh();
 
     expect(await screen.findByTestId('checkpoint-celebration-label')).toHaveTextContent(/Holiday · Hotel paid reached/);
   });
 
   it('two goals crossing in one refresh both celebrate, one banner after the other', async () => {
-    seedHub([HOLIDAY, BIKE], { 'up-spending': 4000, 'up-bike': 400 });
+    seedCelebrationHub(server,[HOLIDAY, BIKE], { 'up-spending': 4000, 'up-bike': 400 });
     await renderWithQueries(<Goals />);
 
-    seedHub([HOLIDAY, BIKE], { 'up-spending': 6000, 'up-bike': 1000 });
+    seedCelebrationHub(server,[HOLIDAY, BIKE], { 'up-spending': 6000, 'up-bike': 1000 });
     await refresh();
 
     expect(await screen.findByTestId('checkpoint-celebration-label')).toHaveTextContent(/^Holiday · /);
@@ -110,7 +107,7 @@ describe('Goals celebrations remember which milestones were reached (WHIT-811)',
 
   it('an old count-style saved copy switches over silently (all currently reached counts as seen)', async () => {
     await savedFromEarlierLaunch({ g1: 1 });
-    seedHub([HOLIDAY], { 'up-spending': 6000 }); // both milestones reached now
+    seedCelebrationHub(server,[HOLIDAY], { 'up-spending': 6000 }); // both milestones reached now
     await renderWithQueries(<Goals />);
     await refresh();
 
