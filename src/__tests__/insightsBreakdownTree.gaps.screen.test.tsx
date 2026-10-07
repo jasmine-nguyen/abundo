@@ -65,7 +65,7 @@ function indentOf(label: string): number {
   let n: any = screen.getByText(label);
   while (n) {
     const st = styleOf(n);
-    if (st && typeof st.marginLeft === 'number') return st.marginLeft;
+    if (typeof st.marginLeft === 'number') return st.marginLeft;
     n = n.parent;
   }
   return 0;
