@@ -1,13 +1,10 @@
-# Expo HAS CHANGED
+# Expo v56
 
-Read the exact versioned docs at https://docs.expo.dev/versions/v56.0.0/ before writing any code.
+The app runs Expo v56, which is newer than most training data. Before writing app code that uses an Expo or React Native API, check that API in the versioned docs: https://docs.expo.dev/versions/v56.0.0/
 
-# Must always run /build command when asked to implement a feature or fix a bug
+# Code changes go through /build
 
-When asked to look into an issue, or implement a feature, no matter how small, you must always run the `/build` command first.
-This ensures you go through the process with critics criticising the changes at multiple stages.
-
-Do not ever build or make changes without a critics reviewing your plan or changes.
+Run `/build` for every feature, bug fix or issue investigation, however small. It puts critics on both the plan and the code, and nothing ships without that review.
 
 # Pull request workflow
 
@@ -159,7 +156,7 @@ Check these before changing the touched area:
 - **The webhook repository subclasses the shared one** —
   `lambda/webhook_repository.py`'s `TransactionRepository` extends
   `shared/repository_transaction.py` and imports `handle_database_error` from
-  `shared/repository_base.py` (WHIT-454 removed the old duplicated copies).
+  `shared/repository_base.py` (WHIT-454).
   CRUD/error code lives in one place; only the webhook-only reconcile pipeline is
   local. Don't reintroduce a local copy of an inherited method — override only to
   change behaviour.
