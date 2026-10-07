@@ -165,15 +165,13 @@ def test_non_get_and_sub_paths_do_not_hit_the_export(handler, monkeypatch, today
     assert len(called) == 1
 
 
-# [A7] regression: the helper split left the drill-in response shape untouched (a bare array).
-def test_windowed_rows_response_still_wraps_a_bare_array(handler):
+# [A7] regression: the drill-in rows stay a bare, newest-first array with the storage keys stripped.
+def test_windowed_rows_returns_a_sorted_stripped_list(handler):
     rows = [
         {"transaction_id": "a", "date": "2026-07-01", "pk": "p", "sk": "s"},
         {"transaction_id": "b", "date": "2026-07-03", "pk": "p", "sk": "s"},
     ]
-    response = handler._windowed_rows_response(rows, lambda t: True)
-    assert response["statusCode"] == 200
-    assert json.loads(response["body"]) == [
+    assert handler._windowed_rows(rows, lambda t: True) == [
         {"transaction_id": "b", "date": "2026-07-03"},
         {"transaction_id": "a", "date": "2026-07-01"},
     ]

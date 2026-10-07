@@ -25,6 +25,11 @@ def real_job_repo(jobs=None):
     return repo
 
 
+def throttled_worker(function_env_var, payload):
+    """A worker launch that fails, standing in for ``_invoke_worker`` when Lambda throttles."""
+    raise RuntimeError("throttled")
+
+
 def created_jobs(repo):
     """(id, kind) of each job row the code created, in order."""
     return [(item["id"], item["kind"]) for item in repo._table.put_calls if item["pk"] == _PK]

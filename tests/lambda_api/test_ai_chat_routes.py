@@ -95,18 +95,6 @@ def test_post_keeps_a_short_seeded_history_whole(handler, lambda_client):
     assert json.loads(lambda_client.calls[0]["Payload"])["messages"] == history
 
 
-def test_post_returns_502_and_fails_the_job_when_the_invoke_fails(handler, lambda_client, monkeypatch):
-    def throttled(payload):
-        raise RuntimeError("throttled")
-    monkeypatch.setattr(handler, "_invoke_ai_chat_worker", throttled)
-    job_repo = real_job_repo()
-    resp = _post(handler, job_repo, {"messages": [_user()]})
-
-    assert resp["statusCode"] == 502
-    [(job_id, _kind)] = created_jobs(job_repo)
-    assert job_repo.get_job(job_id)["status"] == "failed"
-
-
 # --- GET -------------------------------------------------------------------------------------
 
 
