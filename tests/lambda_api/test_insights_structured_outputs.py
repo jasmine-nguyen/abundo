@@ -33,10 +33,10 @@ def test_post_sends_the_reply_schema_as_structured_output(anthropic_client, monk
 
     assert text == '{"x": 1}'
     body = captured["body"]
-    assert body["output_config"] == {"format": {"type": "json_schema", "schema": schema}}
-    assert body["model"] == "claude-sonnet-5"
+    assert body["output_config"] == {"effort": "low", "format": {"type": "json_schema", "schema": schema}}
+    assert body["model"] == "claude-sonnet-5-5"
     assert body["max_tokens"] == 700
-    assert body["thinking"] == {"type": "disabled"}
+    assert body["thinking"] == {"type": "between_tools"}
     assert body["system"] == "SYS"
     assert body["messages"][0]["content"] == 'Prefix:\n{"a":1}'
 
@@ -68,7 +68,7 @@ def test_insights_request_a_schema_shaped_reply_and_degrade_on_bad_replies(insig
     assert schema["additionalProperties"] is False
     # The prose JSON instruction is gone: the API enforces the shape now.
     assert "STRICT JSON" not in captured["body"]["system"]
-    assert captured["body"]["thinking"] == {"type": "disabled"}
+    assert captured["body"]["thinking"] == {"type": "between_tools"}
 
     # A reply cut off at max_tokens degrades to the empty result.
     reply["text"] = '{"summary": "ok", "suggestions": ["a'

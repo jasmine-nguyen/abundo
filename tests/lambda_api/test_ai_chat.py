@@ -1,6 +1,6 @@
 """Tests for lambda_api/ai_chat.py — the Ask Abundo chat worker (card 609).
 
-post_messages is replaced by a scripted fake that plays back model replies and records every
+post_messages is replaced by the shared ScriptedModel that plays back model replies and records every
 request, so the tool loop, reply validation, failure handling and the privacy guarantee are
 tested without the network.
 """
@@ -9,7 +9,9 @@ import json
 from decimal import Decimal
 
 import pytest
+from _anthropic_fakes import ScriptedModel, tool_reply, tool_use_block
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _job_fakes import FakeChatJobRepo
 from _transaction_range_fakes import _AccountTransactionRepo, _DateFilteringTransactionRepo
 
 TODAY = "2026-09-20"
@@ -37,39 +39,6 @@ SECRET_ROWS = [
     },
 ]
 SECRETS = ("4821", "98765432", "12345678", "062-123", "8765.43", "4444", "Jas Everyday")
-
-
-class FakeJobRepo:
-    def __init__(self):
-        self.statuses = []
-        self.finished = []
-
-    def set_tool_status(self, job_id, text):
-        self.statuses.append(text)
-
-    def finish_chat_job(self, job_id, status, reply_json=None, error=None):
-        self.finished.append({"status": status, "reply": reply_json, "error": error})
-
-
-class ScriptedModel:
-    """Plays back one reply per call and records each request body."""
-
-    def __init__(self, replies):
-        self._replies = list(replies)
-        self.requests = []
-
-    def __call__(self, system, messages, tools, tool_choice, max_tokens, timeout):
-        self.requests.append({"system": system, "messages": json.loads(json.dumps(messages)),
-                              "tool_choice": tool_choice, "timeout": timeout})
-        return self._replies.pop(0)
-
-
-def _tool_use(name, tool_input, call_id="c1"):
-    return {"type": "tool_use", "id": call_id, "name": name, "input": tool_input}
-
-
-def _reply(*blocks):
-    return {"content": list(blocks), "stop_reason": "tool_use"}
 
 
 def _data(ai_chat, transactions=SECRET_ROWS):
@@ -109,7 +78,7 @@ class FakeContext:
 def _run(ai_chat, monkeypatch, replies, messages=None, data=None, seconds_left=lambda: 200):
     model = ScriptedModel(replies)
     monkeypatch.setattr(ai_chat, "post_messages", model)
-    job_repo = FakeJobRepo()
+    job_repo = FakeChatJobRepo()
     reply = ai_chat.run_chat("job1", messages or [{"role": "user", "text": "Average eating out, 3 cycles?"}],
                              data or _data(ai_chat), job_repo, seconds_left)
     return reply, model, job_repo
@@ -120,8 +89,8 @@ def _run(ai_chat, monkeypatch, replies, messages=None, data=None, seconds_left=l
 
 def test_tool_call_then_respond_gives_a_camel_case_reply(ai_chat, monkeypatch):
     reply, model, job_repo = _run(ai_chat, monkeypatch, [
-        _reply(_tool_use("query_transactions", AVG_QUERY)),
-        _reply(_tool_use("respond", GOOD_ANSWER, "c2")),
+        tool_reply(tool_use_block("query_transactions", AVG_QUERY)),
+        tool_reply(tool_use_block("respond", GOOD_ANSWER, "c2")),
     ])
 
     assert reply["text"] == GOOD_ANSWER["text"]
@@ -146,27 +115,16 @@ def test_tool_call_then_respond_gives_a_camel_case_reply(ai_chat, monkeypatch):
     assert json.loads(result_turn["content"][0]["content"])["avg"] == 31.11
 
 
-def test_early_rounds_force_a_tool_and_the_last_round_forces_respond(ai_chat, monkeypatch):
-    rounds = ai_chat.CHAT_MAX_TOOL_ROUNDS
-    replies = [_reply(_tool_use("get_categories", {}, f"c{i}")) for i in range(rounds - 1)]
-    replies.append(_reply(_tool_use("respond", {"text": "Here's what I found."}, "last")))
-    reply, model, _ = _run(ai_chat, monkeypatch, replies)
-
-    assert reply == {"text": "Here's what I found."}
-    assert [request["tool_choice"] for request in model.requests[:-1]] == [{"type": "any"}] * (rounds - 1)
-    assert model.requests[-1]["tool_choice"] == {"type": "tool", "name": "respond"}
-
-
 def test_no_answer_by_the_last_round_fails(ai_chat, monkeypatch):
-    replies = [_reply(_tool_use("get_categories", {}, f"c{i}")) for i in range(ai_chat.CHAT_MAX_TOOL_ROUNDS)]
+    replies = [tool_reply(tool_use_block("get_categories", {}, f"c{i}")) for i in range(ai_chat.CHAT_MAX_TOOL_ROUNDS)]
     with pytest.raises(ai_chat.ChatError):
         _run(ai_chat, monkeypatch, replies)
 
 
 def test_a_bad_tool_argument_goes_back_as_is_error(ai_chat, monkeypatch):
     _, model, _ = _run(ai_chat, monkeypatch, [
-        _reply(_tool_use("query_transactions", {"filters": {"category_ids": ["nope"]}, "metric": "sum"})),
-        _reply(_tool_use("respond", {"text": "I couldn't find that category."}, "c2")),
+        tool_reply(tool_use_block("query_transactions", {"filters": {"category_ids": ["nope"]}, "metric": "sum"})),
+        tool_reply(tool_use_block("respond", {"text": "I couldn't find that category."}, "c2")),
     ])
     result = model.requests[1]["messages"][-1]["content"][0]
     assert result["is_error"] is True and "get_categories" in result["content"]
@@ -178,22 +136,22 @@ def test_a_bad_tool_argument_goes_back_as_is_error(ai_chat, monkeypatch):
 def test_a_card_with_an_invented_figure_is_dropped_but_the_text_kept(ai_chat, monkeypatch):
     invented = {**GOOD_ANSWER, "card": {**GOOD_ANSWER["card"], "value": 42.0}}
     reply, _, _ = _run(ai_chat, monkeypatch, [
-        _reply(_tool_use("query_transactions", AVG_QUERY)),
-        _reply(_tool_use("respond", invented, "c2")),
+        tool_reply(tool_use_block("query_transactions", AVG_QUERY)),
+        tool_reply(tool_use_block("respond", invented, "c2")),
     ])
     assert "card" not in reply and reply["text"] == GOOD_ANSWER["text"]
 
 
 def test_a_card_is_dropped_when_no_tool_ran_this_turn(ai_chat, monkeypatch):
-    reply, _, _ = _run(ai_chat, monkeypatch, [_reply(_tool_use("respond", GOOD_ANSWER))])
+    reply, _, _ = _run(ai_chat, monkeypatch, [tool_reply(tool_use_block("respond", GOOD_ANSWER))])
     assert "card" not in reply
 
 
 def test_a_made_up_ai_delta_amount_is_ignored(ai_chat, monkeypatch):
     made_up_delta = {**GOOD_ANSWER, "card": {**GOOD_ANSWER["card"], "delta": {"amount": 5, "vs": "budget"}}}
     reply, _, _ = _run(ai_chat, monkeypatch, [
-        _reply(_tool_use("query_transactions", AVG_QUERY)),
-        _reply(_tool_use("respond", made_up_delta, "c2")),
+        tool_reply(tool_use_block("query_transactions", AVG_QUERY)),
+        tool_reply(tool_use_block("respond", made_up_delta, "c2")),
     ])
     assert reply["card"]["delta"] == {"amount": -28.89, "vs": "budget"}
 
@@ -247,10 +205,10 @@ def test_consecutive_same_role_turns_are_merged(ai_chat):
 
 def test_no_request_to_the_model_carries_account_card_bsb_or_balance(ai_chat, monkeypatch):
     _, model, _ = _run(ai_chat, monkeypatch, [
-        _reply(_tool_use("query_transactions", {"filters": {"months": {"last_n": 3, "include_current": True}},
+        tool_reply(tool_use_block("query_transactions", {"filters": {"months": {"last_n": 3, "include_current": True}},
                                                 "metric": "list"})),
-        _reply(_tool_use("query_transactions", {"filters": {"months": {"last_n": 3}}, "metric": "max"}, "c2")),
-        _reply(_tool_use("respond", {"text": "Done."}, "c3")),
+        tool_reply(tool_use_block("query_transactions", {"filters": {"months": {"last_n": 3}}, "metric": "max"}, "c2")),
+        tool_reply(tool_use_block("respond", {"text": "Done."}, "c3")),
     ])
     sent = json.dumps(model.requests)
     # The rows did reach the model (so the check isn't vacuous)...
@@ -265,7 +223,7 @@ def test_no_request_to_the_model_carries_account_card_bsb_or_balance(ai_chat, mo
 
 @pytest.fixture
 def worker(ai_chat, monkeypatch):
-    job_repo = FakeJobRepo()
+    job_repo = FakeChatJobRepo()
     monkeypatch.setattr(ai_chat, "JobRepository", lambda: job_repo)
     for name in ("TransactionRepository", "CategoryRepository", "BudgetRepository", "PayCycleRepository"):
         monkeypatch.setattr(ai_chat, name, lambda: object())
@@ -278,8 +236,8 @@ EVENT = {"jobId": "job1", "messages": [{"role": "user", "text": "Average eating 
 
 def test_worker_stores_the_reply_as_json_and_succeeds(ai_chat, monkeypatch, worker):
     monkeypatch.setattr(ai_chat, "post_messages", ScriptedModel([
-        _reply(_tool_use("query_transactions", AVG_QUERY)),
-        _reply(_tool_use("respond", GOOD_ANSWER, "c2")),
+        tool_reply(tool_use_block("query_transactions", AVG_QUERY)),
+        tool_reply(tool_use_block("respond", GOOD_ANSWER, "c2")),
     ]))
     assert ai_chat.lambda_handler(EVENT, FakeContext()) == {"jobId": "job1", "status": "succeeded"}
     finished = worker.finished[0]
@@ -383,8 +341,8 @@ def test_a_tool_that_raises_a_non_value_error_goes_back_as_is_error(ai_chat, mon
     # [A7] get_budgets({"pay_cycle": {"cycles_back": 2}}) raises KeyError, not ValueError. It must still come back
     # to the model as is_error (so it can fix the call), not fail the whole job.
     reply, model, _ = _run(ai_chat, monkeypatch, [
-        _reply(_tool_use("get_budgets", {"pay_cycle": {"cycles_back": 2}})),
-        _reply(_tool_use("respond", {"text": "Sorted."}, "c2")),
+        tool_reply(tool_use_block("get_budgets", {"pay_cycle": {"cycles_back": 2}})),
+        tool_reply(tool_use_block("respond", {"text": "Sorted."}, "c2")),
     ])
     [result] = model.requests[1]["messages"][-1]["content"]
     assert result["is_error"] is True and result["tool_use_id"] == "c1"
@@ -410,16 +368,16 @@ def test_worker_still_returns_failed_when_marking_the_job_failed_also_fails(ai_c
 
 def test_each_model_call_is_capped_at_the_per_call_limit(ai_chat, monkeypatch):
     _, model, _ = _run(ai_chat, monkeypatch, [
-        _reply(_tool_use("query_transactions", AVG_QUERY)),
-        _reply(_tool_use("respond", GOOD_ANSWER, "c2")),
+        tool_reply(tool_use_block("query_transactions", AVG_QUERY)),
+        tool_reply(tool_use_block("respond", GOOD_ANSWER, "c2")),
     ], seconds_left=lambda: 1000)
     assert [request["timeout"] for request in model.requests] == [60, 60]
 
 
 def test_too_little_time_left_fails_before_calling_the_model(ai_chat, monkeypatch):
-    model = ScriptedModel([_reply(_tool_use("respond", GOOD_ANSWER))])
+    model = ScriptedModel([tool_reply(tool_use_block("respond", GOOD_ANSWER))])
     monkeypatch.setattr(ai_chat, "post_messages", model)
     # 19.9s left - 10s margin = 9.9s, just under the 10s minimum for a call.
     with pytest.raises(ai_chat.ChatError):
-        ai_chat.run_chat("job1", EVENT["messages"], _data(ai_chat), FakeJobRepo(), lambda: 19.9)
+        ai_chat.run_chat("job1", EVENT["messages"], _data(ai_chat), FakeChatJobRepo(), lambda: 19.9)
     assert model.requests == []

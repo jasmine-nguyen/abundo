@@ -5,30 +5,8 @@ fails cleanly before paying for a call it couldn't finish.
 """
 
 import pytest
-
-
-class FakeJobRepo:
-    def __init__(self):
-        self.statuses = []
-        self.finished = []
-
-    def set_tool_status(self, job_id, text):
-        self.statuses.append(text)
-
-    def finish_chat_job(self, job_id, status, reply_json=None, error=None):
-        self.finished.append({"status": status, "reply": reply_json, "error": error})
-
-
-class ScriptedModel:
-    """Plays back one reply per call and records the timeout each call was given."""
-
-    def __init__(self, replies):
-        self._replies = list(replies)
-        self.timeouts = []
-
-    def __call__(self, system, messages, tools, tool_choice, max_tokens, timeout):
-        self.timeouts.append(timeout)
-        return self._replies.pop(0)
+from _anthropic_fakes import ScriptedModel, tool_reply, tool_use_block
+from _job_fakes import FakeChatJobRepo
 
 
 class FakeContext:
@@ -37,11 +15,6 @@ class FakeContext:
 
     def get_remaining_time_in_millis(self):
         return self.remaining_ms
-
-
-def _tool_use(name, tool_input, call_id):
-    return {"content": [{"type": "tool_use", "id": call_id, "name": name, "input": tool_input}],
-            "stop_reason": "tool_use"}
 
 
 def _data():
@@ -60,27 +33,27 @@ def _clock(*readings):
 
 def test_each_model_call_gets_the_time_left_and_fails_cleanly_when_it_runs_out(ai_chat, monkeypatch):
     model = ScriptedModel([
-        _tool_use("get_categories", {}, "c1"),
-        _tool_use("get_categories", {}, "c2"),
-        _tool_use("respond", {"text": "never reached"}, "c3"),
+        tool_reply(tool_use_block("get_categories", {}, "c1")),
+        tool_reply(tool_use_block("get_categories", {}, "c2")),
+        tool_reply(tool_use_block("respond", {"text": "never reached"}, "c3")),
     ])
     monkeypatch.setattr(ai_chat, "post_messages", model)
 
     # 200s left → capped at 60s; 45s left → 45 - 10 margin = 35s; 15s left → under the 10s minimum.
     with pytest.raises(ai_chat.ChatError):
         ai_chat.run_chat("job1", [{"role": "user", "text": "What are my categories?"}], _data(),
-                         FakeJobRepo(), _clock(200, 45, 15))
+                         FakeChatJobRepo(), _clock(200, 45, 15))
 
     assert model.timeouts == [60, 35]
 
 
 def test_worker_with_almost_no_time_left_marks_the_job_could_not_answer(ai_chat, monkeypatch):
-    job_repo = FakeJobRepo()
+    job_repo = FakeChatJobRepo()
     monkeypatch.setattr(ai_chat, "JobRepository", lambda: job_repo)
     for name in ("TransactionRepository", "CategoryRepository", "BudgetRepository", "PayCycleRepository"):
         monkeypatch.setattr(ai_chat, name, lambda: object())
     monkeypatch.setattr(ai_chat, "load_chat_data", lambda *repos: _data())
-    model = ScriptedModel([_tool_use("respond", {"text": "Hi"}, "c1")])
+    model = ScriptedModel([tool_reply(tool_use_block("respond", {"text": "Hi"}, "c1"))])
     monkeypatch.setattr(ai_chat, "post_messages", model)
 
     event = {"jobId": "job1", "messages": [{"role": "user", "text": "Average eating out?"}]}

@@ -128,8 +128,8 @@ def test_system_prompt_keeps_every_rule(insights_ai, rule):
     assert rule in insights_ai._SYSTEM_PROMPT
 
 
-# [A9] (P1) the chat's tool-calling request is untouched: no output_config rides along.
-def test_post_messages_sends_no_output_config(anthropic_client, monkeypatch):
+# [A9] (P1) the chat's tool-calling request gets low effort but no output format.
+def test_post_messages_sends_effort_but_no_output_format(anthropic_client, monkeypatch):
     captured = {}
 
     def fake_urlopen(req, timeout=None):
@@ -137,9 +137,10 @@ def test_post_messages_sends_no_output_config(anthropic_client, monkeypatch):
         return FakeResponse({"content": [], "stop_reason": "tool_use"})
 
     monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", fake_urlopen)
-    anthropic_client.post_messages("s", [{"role": "user", "content": "q"}], [], {"type": "any"}, 10, 5)
+    anthropic_client.post_messages("s", [{"role": "user", "content": "q"}], [], 10, 5)
 
-    assert "output_config" not in captured["body"]
+    assert captured["body"]["output_config"] == {"effort": "low"}
+    assert captured["body"]["tool_choice"] == {"type": "auto"}
 
 
 # [A10] (P2) post sends the schema it was given verbatim (not a module default).
