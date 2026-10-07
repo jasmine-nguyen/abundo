@@ -8,6 +8,7 @@ requirements.txt
 .claude/agents/test-writer.md
 .claude/agents/reproducer.md
 .claude/agents/code-critic.md
+.claude/agents/ponytail.md
 .claude/hooks/protect-build-state.py
 .claude/skills/simulator-check/SKILL.md
 .github/pull_request_template.md

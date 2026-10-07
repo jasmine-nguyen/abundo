@@ -11,7 +11,8 @@
 # reproducer / test_writer ─→ escalation (pause)                no valid failing test
 # implementer ─┬→ escalation (pause) → implementer
 #              └→ checks ─┬→ implementer                        typecheck/lint/tests/pinned tests failed
-#                         └→ code_critic ∥ qa → fix_or_ship
+#                         └→ ponytail ─┬→ implementer           cuts to make (/ponytail-review)
+#                                      └→ code_critic ∥ qa → fix_or_ship
 # fix_or_ship ─┬→ implementer                                   findings, rounds left
 #              ├→ next_slice → test_writer                      more slices to build
 #              └→ ship → END                                    both reviews passed
@@ -133,6 +134,8 @@ class BuildState(TypedDict):
     code_verdict: NotRequired[str]
     code_feedback: NotRequired[str]
     code_summary: NotRequired[str]
+    ponytail_verdict: NotRequired[str]
+    ponytail_feedback: NotRequired[str]
     code_decisions: NotRequired[list[str]]
     advisory: Annotated[list[str], merge_unique]
     tech_debt: Annotated[list[dict], merge_unique]
@@ -187,6 +190,7 @@ TYPE_TO_PREFIX = {
 
 REVIEWERS = ["code_critic", "qa"]
 REVIEW_LABELS = {
+    "ponytail": "Ponytail",
     "code": "Code review",
     "qa": "QA"
 }
@@ -202,6 +206,7 @@ NODE_LABELS = {
     "implementer": "Implementer",
     "escalation": "Escalation",
     "checks": "Checks",
+    "ponytail": "Ponytail",
     "code_critic": "Code Review",
     "qa": "QA",
     "fix_or_ship": "Fix or Ship",
@@ -230,6 +235,7 @@ AGENTS = {
     "reproducer": Agent("reproducer.md", WRITE, "writer", 120, 12.0),
     "test_writer": Agent("test-writer.md", WRITE, "writer", 80, 8.0),
     "implementer": Agent("implementer.md", WRITE, "writer", 200, 25.0),
+    "ponytail": Agent("ponytail.md", READ, "read_only", 60, 6.0),
     "code_critic": Agent("code-critic.md", READ, "read_only", 80, 8.0),
     "qa": Agent("qa.md", WRITE, "qa", 150, 15.0),
 }
@@ -315,12 +321,12 @@ IMPLEMENTER_OUTPUT = _output(
     recommended=TEXT,
     follow_ups=TEXTS,
 )
+PONYTAIL_OUTPUT = _output(cuts=_list_of(file=TEXT, finding=TEXT))
 CODE_CRITIC_OUTPUT = _output(
     blocking_bugs=TEXTS,
     standards_breaches=TEXTS,
     decisions_to_escalate=TEXTS,
     fold_ins=TEXTS,
-    simplifications=TEXTS,
     advisory=TEXTS,
     tech_debt=_list_of(title=TEXT, problem=TEXT, fix=TEXT),
 )
@@ -514,7 +520,23 @@ def agent_prompt(name: str) -> str:
         prompt += FOLD_IN_RULE
     if name in FEWEST_TESTS_AGENTS:
         prompt += FEWEST_TESTS_RULE
+    if name == "ponytail":
+        prompt += ponytail_review_skill()
     return prompt
+
+
+PLUGINS_FILE = Path.home() / ".claude" / "plugins" / "installed_plugins.json"
+
+
+def ponytail_review_skill() -> str:
+    """The installed ponytail plugin's /ponytail-review instructions, or "" when it isn't installed here
+    (a cloud session, another machine): the step is then skipped rather than failing the build."""
+    try:
+        plugins = json.loads(PLUGINS_FILE.read_text())["plugins"]
+    except (OSError, ValueError, KeyError):
+        return ""
+    path = next((item["installPath"] for key, items in plugins.items() if key.split("@")[0] == "ponytail" for item in items), "")
+    return read_text(Path(path) / "skills" / "ponytail-review" / "SKILL.md") if path else ""
 
 
 async def run_agent(
@@ -630,7 +652,8 @@ def running_message(name: str, state: BuildState) -> str | None:
         "test_writer": "Writing the tests that define done",
         "implementer": f"Implementer is {verb} the code (round {round_number})",
         "checks": "Running typecheck and tests",
-        "code_critic": "Code review: hunting for bugs, checking your standards and what to cut",
+        "ponytail": "Ponytail: looking for what the change could cut",
+        "code_critic": "Code review: hunting for bugs and checking your standards",
         "qa": None if qa_passed_last_round(state) else "QA: checking it does what the card asked, then testing the edge cases",
         "ship": "Opening the PR (after running QA's new tests and the typecheck, if it added any)",
     }
@@ -656,10 +679,18 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
         if name == "qa" and qa_passed_last_round(state):
             return "✅ QA passed last round, not re-run (its tests ran in the checks)"
         if update[f"{key}_verdict"] == "APPROVED":
-            return f"✅ {label} passed" + (", nothing to cut" if key == "code" else "")
+            return f"✅ {label} passed"
         if key == "code":
             return f"❌ {label}: {update['code_summary']}"
         return f"❌ {label}: {plural(finding_count(review_findings(update, key)), 'thing')} to fix"
+    if name == "ponytail":
+        if update["ponytail_verdict"] == "SKIPPED":
+            return "⚠️ Ponytail isn't installed here, so the cut review was skipped"
+        if update["ponytail_verdict"] == "NEEDS_REWORK":
+            return f"❌ Ponytail: {plural(finding_count(update['ponytail_feedback']), 'cut')} to make"
+        if update.get("advisory"):
+            return f"⚠️ Ponytail: {plural(len(update['advisory']), 'cut')} left for the PR's follow-ups, no rounds left"
+        return "✅ Ponytail: nothing to cut"
     if name == "designer":
         if update["clarify_questions"]:
             return f"❓ Designer has {plural(len(update['clarify_questions']), 'question')} before planning"
@@ -2145,7 +2176,39 @@ def commit_message(state: BuildState) -> str:
     return f"{commit_prefix(state)}: {subject}"[:100]
 
 
-# --- review nodes (read-only, run in parallel) ---
+# --- review nodes (read-only) ---
+
+
+async def ponytail(state: BuildState):
+    """/ponytail-review before the code review and QA, so they review what's left after the cuts."""
+    if not ponytail_review_skill():
+        return {"ponytail_verdict": "SKIPPED", "history": ["• ponytail: not installed, cut review skipped"]}
+    result = await run_agent("ponytail", review_block(state, "ponytail"), PONYTAIL_OUTPUT)
+    cuts = result.output["cuts"]
+    if not cuts:
+        return {"ponytail_verdict": "APPROVED", "history": [mark(True, "ponytail: nothing to cut")]}
+    findings = [cut["finding"] for cut in cuts]
+    if state.get("implementation_attempts", 0) >= MAX_IMPLEMENTATION_ROUNDS:
+        return {
+            "ponytail_verdict": "APPROVED",
+            "advisory": findings,
+            "history": [f"• ponytail: {plural(len(cuts), 'cut')} left for the PR, no rounds left"],
+        }
+    locked = [cut["finding"] for cut in cuts if pinned_paths(state, [cut["file"]])]
+    free = [finding for finding in findings if finding not in locked]
+    sections = []
+    if free:
+        sections.append(f"### Cut\n{bullets(free)}")
+    if locked:
+        sections.append(
+            "### Cuts in locked test files\nDon't edit these files: reply with status ESCALATE, with one option to "
+            f"unlock and cut (its `unpin_files` lists the file) and one to keep it:\n{bullets(locked)}"
+        )
+    return {
+        "ponytail_verdict": "NEEDS_REWORK",
+        "ponytail_feedback": "\n\n".join(sections),
+        "history": [mark(False, f"ponytail: {plural(len(cuts), 'cut')} to make")],
+    }
 
 
 # (output field, heading in the fix round, word in the progress line)
@@ -2153,7 +2216,6 @@ CODE_FINDINGS = [
     ("blocking_bugs", "Bugs", "bug"),
     ("standards_breaches", "Standards breaches", "standards issue"),
     ("fold_ins", "Small fold-ins: bring this nearby code in line in this PR", "fold-in"),
-    ("simplifications", "Simplify: make the change smaller", "cut"),
 ]
 
 
@@ -2174,7 +2236,7 @@ async def code_critic(state: BuildState):
         "code_summary": summary,
         "advisory": out["advisory"],
         "tech_debt": out["tech_debt"],
-        "history": [mark(not rework, f"code review: {summary or 'approved, nothing to cut'}")],
+        "history": [mark(not rework, f"code review: {summary or 'approved'}")],
     }
 
 
@@ -2496,7 +2558,11 @@ def after_escalation(state: BuildState):
 
 
 def after_checks(state: BuildState):
-    return back_to_implementer(state, REVIEWERS)
+    return back_to_implementer(state, "ponytail")
+
+
+def after_ponytail(state: BuildState):
+    return "implementer" if state.get("ponytail_verdict") == "NEEDS_REWORK" else REVIEWERS
 
 
 def after_review(state: BuildState):
@@ -2530,6 +2596,7 @@ for name, node in [
     ("reproducer", reproducer),
     ("test_writer", test_writer),
     ("implementer", implementer),
+    ("ponytail", ponytail),
     ("code_critic", code_critic),
     ("qa", qa),
 ]:
@@ -2559,6 +2626,7 @@ builder.add_conditional_edges("test_writer", lambda state: after_tests(state, "t
 builder.add_conditional_edges("implementer", after_implementer)
 builder.add_conditional_edges("escalation", after_escalation)
 builder.add_conditional_edges("checks", after_checks)
+builder.add_conditional_edges("ponytail", after_ponytail)
 builder.add_conditional_edges("fix_or_ship", after_review)
 builder.add_conditional_edges("next_slice", after_next_slice)
 builder.add_conditional_edges("ship", after_ship)
