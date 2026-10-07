@@ -21,6 +21,7 @@ import json
 from decimal import Decimal
 
 from _feed_fakes import FakeCategoryRepo, date_queries, real_repos
+from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 def _stored_rule(value, category_id, *, field="description", operator="contains"):
@@ -107,7 +108,8 @@ def test_a_clash_on_a_rule_past_the_old_100_row_page_is_still_found(handler):
     clash = next(rule for rule in listed if rule["value"] == "COLES")
     assert listed.index(clash) >= 100                        # the premise: past the old page
 
-    resp = handler.apply_rules_to_uncategorized(
+    resp = apply_rules_to_uncategorized(
+        handler,
         _event({"dryRun": True, "rule": {"value": "COLES", "categoryId": "groceries"}}),
         repo, FakeCategoryRepo(["groceries", "petrol"]), rule_repo)
     body = json.loads(resp["body"])
@@ -129,7 +131,8 @@ def test_the_full_store_read_covers_a_NESTED_clash_beyond_the_first_page(handler
     nested = next(rule for rule in listed if rule["value"] == "COLES EXPRESS")
     assert listed.index(nested) >= 100                       # the premise: past the old page
 
-    resp = handler.apply_rules_to_uncategorized(
+    resp = apply_rules_to_uncategorized(
+        handler,
         _event({"dryRun": True, "rule": {"value": "COLES", "categoryId": "groceries"}}),
         repo, FakeCategoryRepo(["groceries", "petrol"]), rule_repo)
     body = json.loads(resp["body"])
@@ -148,7 +151,8 @@ def test_a_rules_read_failure_on_a_preview_is_a_500_and_scans_no_history(handler
     table, repo, rule_repo = real_repos()
     table.fail("query")
 
-    resp = handler.apply_rules_to_uncategorized(
+    resp = apply_rules_to_uncategorized(
+        handler,
         _event({"dryRun": True}), repo, FakeCategoryRepo(["groceries"]), rule_repo)
 
     assert resp["statusCode"] == 500

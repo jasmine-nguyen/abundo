@@ -22,6 +22,7 @@ import pytest
 from _feed_fakes import (
     SPENDING, FakeCategoryRepo, Repos, charge_writes, date_queries, on_write, _row, set_category,
 )
+from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 def _coles_rows():
@@ -66,7 +67,8 @@ def _event(body):
 def _call(handler, body, run=None, categories=frozenset({"groceries", "petrol"})):
     if run is None:
         run = _Run()
-    resp = handler.apply_rules_to_uncategorized(
+    resp = apply_rules_to_uncategorized(
+        handler,
         _event(body), run.transaction_repo, FakeCategoryRepo(categories), run.rule_repo)
     return resp, json.loads(resp["body"]), run
 

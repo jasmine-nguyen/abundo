@@ -12,6 +12,7 @@ the stored row — not by a fake deciding the outcome.
 import json
 
 from _feed_fakes import SPENDING, FakeCategoryRepo, _row, real_repos
+from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 def _stored(table, transaction_id, account=SPENDING):
@@ -40,7 +41,8 @@ def test_apply_rules_files_through_the_real_repositories_and_a_mid_run_tap_wins(
     table.before_write(
         lambda key, tbl: _tap(tbl, "t2", "coffee") if key["sk"] == "TXN#t1" else None)
 
-    resp = handler.apply_rules_to_uncategorized(
+    resp = apply_rules_to_uncategorized(
+        handler,
         {"rawPath": "/transactions/uncategorized/apply-rules",
          "requestContext": {"http": {"method": "POST"}},
          "body": json.dumps({"dryRun": False})},

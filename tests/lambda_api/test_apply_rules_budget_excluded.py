@@ -8,6 +8,7 @@ Runs the real TransactionRepository and RuleRepository over one FakeTable, like 
 import json
 
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
+from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 def _rule(value, category_id="groceries", *, budget_excluded=False):
@@ -24,7 +25,8 @@ def _apply_event(body):
 def _call(handler, row, rules, body, categories=frozenset({"groceries", "coffee"})):
     """Run the sweep over one stored charge; returns (resp, body, table)."""
     table, repo, rule_repo = real_repos({SPENDING: [row]}, rules=rules)
-    resp = handler.apply_rules_to_uncategorized(
+    resp = apply_rules_to_uncategorized(
+        handler,
         _apply_event(body), repo, FakeCategoryRepo(categories), rule_repo)
     return resp, json.loads(resp["body"]), table
 

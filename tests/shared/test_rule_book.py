@@ -144,7 +144,7 @@ def test_deleting_a_rule_undoes_its_charges_within_the_write_limit_then_finishes
     hand_filed = _store_charge(repo, "t3", "COLES", category="coffee")
     book = rule_book.RuleBook.load(rule_repo, category_repo)
 
-    capped = rule_book.WriteLimit(max_writes=1, time_budget=60, started=time.monotonic())
+    capped = rule_book.WriteLimit(max_writes=1, time_budget=60, started=time.monotonic(), clock=time.monotonic)
     assert book.refile_touched(rule["id"], None, repo, capped) == 1
     assert sum("category" not in repo._table.store[key] for key in owned) == 1
 

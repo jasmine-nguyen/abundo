@@ -175,7 +175,7 @@ def test_fetch_balance_builds_correct_get_request(handler, monkeypatch):
     out = handler.fetch_balance("fiskil_3", "T6d8ppsYssBDFCwl1qEb0w", "the-key")
 
     req = captured["req"]
-    assert req.method == "GET"
+    assert req.get_method() == "GET"
     assert req.full_url == "https://api.banksync.io/v1/banks/fiskil_3/accounts/T6d8ppsYssBDFCwl1qEb0w/balances"
     # urllib title-cases header keys, so "X-API-Key" is stored as "X-api-key".
     assert req.get_header("X-api-key") == "the-key"

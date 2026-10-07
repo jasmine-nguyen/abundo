@@ -281,7 +281,7 @@ def test_the_fetch_window_reaches_back_past_the_feed_window_to_tomorrow(repo, mi
 
 
 def _bank_by_account(westpac, up):
-    def fetch(bid, aid, api_key, date_from, date_to):
+    def fetch(api_key, bid, aid, date_from, date_to):
         if aid == WESTPAC_AID:
             if isinstance(westpac, Exception):
                 raise westpac
@@ -338,7 +338,7 @@ def test_one_account_failing_does_not_stop_the_other(repo, mirror, failure):
 def test_the_api_key_reaches_the_fetch(repo, mirror):
     keys = []
 
-    def fetch(bid, aid, api_key, date_from, date_to):
+    def fetch(api_key, bid, aid, date_from, date_to):
         keys.append(api_key)
         return bank_rows("x", aid=aid)
 
@@ -370,7 +370,7 @@ def bank_pages(mirror, monkeypatch):
 
 
 def _fetch(mirror):
-    return mirror.fetch_bank_transactions("fiskil_77", WESTPAC_AID, "the-key", "2026-09-19", "2026-09-30")
+    return mirror.fetch_bank_transactions("the-key", "fiskil_77", WESTPAC_AID, "2026-09-19", "2026-09-30")
 
 
 def test_fetch_follows_the_cursor_to_the_last_page(mirror, bank_pages):

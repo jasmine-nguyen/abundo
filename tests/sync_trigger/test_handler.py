@@ -71,7 +71,7 @@ def test_trigger_sync_happy_path_builds_correct_request(monkeypatch):
     handler.trigger_sync("feed-1", "the-key")
 
     req = captured["req"]
-    assert req.method == "POST"
+    assert req.get_method() == "POST"
     assert req.full_url == "https://api.banksync.io/v1/feeds/feed-1/sync"
     assert req.data == b""  # empty body => incremental sync
     # urllib title-cases header keys, so "X-API-Key" is stored as "X-api-key".

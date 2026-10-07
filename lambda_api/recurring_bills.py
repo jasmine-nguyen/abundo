@@ -24,10 +24,12 @@ count belongs with the WHIT-559 consumer, which knows the user's pay-cycle lengt
 (`get_paycycle()["length"]`); keeping it out here leaves the detector pure and pay-cycle-agnostic.
 """
 
+import statistics
 from datetime import date as date_type
 from decimal import ROUND_HALF_UP, Decimal
 
 from merchant_groups import (
+    as_text,
     bucket_by_merchant,
     _bucket_nameless_by_stem,
     _rule_value_for_stem_bucket,
@@ -67,10 +69,6 @@ _CADENCE_WINDOWS = (
 )
 
 
-def _text(value) -> str:
-    return str(value or "")
-
-
 def _parse_date(value):
     """The charge's ISO date as a date, or None when it is missing or unparseable — skipped, never
     a crash (same tolerance is_number gives a bad amount)."""
@@ -80,17 +78,6 @@ def _parse_date(value):
         return date_type.fromisoformat(str(value))
     except ValueError:
         return None
-
-
-def _median(values):
-    """Median of a non-empty list. Even count → the mean of the two middle values, so an even
-    number of amounts can yield a half-cent (quantised away by the caller) and an even number of
-    gaps a half-day."""
-    ordered = sorted(values)
-    middle = len(ordered) // 2
-    if len(ordered) % 2 == 1:
-        return ordered[middle]
-    return (ordered[middle - 1] + ordered[middle]) / 2
 
 
 def _is_bill_charge(transaction: dict) -> bool:
@@ -125,7 +112,7 @@ def _amount_steady(magnitudes: list, tolerance: Decimal) -> bool:
     """Do all charge magnitudes sit within `tolerance` of their median? A fixed-ish bill passes;
     genuinely variable spend at one merchant does not. The nameless pass passes a tighter tolerance
     than the named one (WHIT-569)."""
-    median_amount = _median(magnitudes)
+    median_amount = statistics.median(magnitudes)
     if median_amount <= 0:
         return False
     return all(abs(magnitude - median_amount) <= tolerance * median_amount
@@ -152,7 +139,7 @@ def _bill_from_bucket(bucket: list[dict], identity: str | None = None,
 
     gaps = [(charge_days[index] - charge_days[index - 1]).days
             for index in range(1, len(charge_days))]
-    median_gap = _median(gaps)
+    median_gap = statistics.median(gaps)
     if not _gaps_regular(gaps, median_gap):
         return None
     cadence = _cadence_for_gap(median_gap)
@@ -171,10 +158,10 @@ def _bill_from_bucket(bucket: list[dict], identity: str | None = None,
         return None
 
     if identity is None:
-        identity = _text(bill_charges[0].get("merchant_name")).strip()
+        identity = as_text(bill_charges[0].get("merchant_name")).strip()
     return {
         "merchant": identity,
-        "typicalAmount": _to_cents(_median(magnitudes)),
+        "typicalAmount": _to_cents(statistics.median(magnitudes)),
         "cadence": cadence,
         # Reported as a whole number of days for a stable int type (an even gap-count median is a
         # half-day); the cadence match above uses the raw median, so rounding here changes nothing.
@@ -200,7 +187,7 @@ def _nameless_bills(transactions: list[dict]) -> list[dict]:
     occurrence/amount floors fight the stem's fuzzier match, and the stem stands in for the merchant.
     """
     nameless = [transaction for transaction in transactions
-                if not _text(transaction.get("merchant_name")).strip()]
+                if not as_text(transaction.get("merchant_name")).strip()]
     bills = []
     for bucket in _bucket_nameless_by_stem(nameless).values():
         identity = _rule_value_for_stem_bucket(bucket)

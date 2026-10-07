@@ -114,7 +114,7 @@ def test_sweep_clock_stops_after_exactly_one_write_when_already_expired(rule_boo
         _store_charge(repo, transaction_id, "COLES")
     book = load()
     transactions, plan = _plan(book, repo)
-    expired = rule_book.WriteLimit(max_writes=None, time_budget=1, started=time.monotonic() - 100)
+    expired = rule_book.WriteLimit(max_writes=None, time_budget=1, started=time.monotonic() - 100, clock=time.monotonic)
 
     filed, _, _, _, matched_remaining = book.sweep(
         repo, transactions, plan, limit=expired, run_reconcile=True)
@@ -135,7 +135,7 @@ def test_reconcile_shares_the_cap_without_eating_matched_remaining(rule_book, ru
 
     filed, _, _, _, matched_remaining = book.sweep(
         repo, transactions, plan, run_reconcile=True, on_progress=progress.append,
-        limit=rule_book.WriteLimit(max_writes=2, time_budget=60, started=time.monotonic()))
+        limit=rule_book.WriteLimit(max_writes=2, time_budget=60, started=time.monotonic(), clock=time.monotonic))
 
     assert len(filed) == 1
     assert matched_remaining == 0
@@ -267,7 +267,7 @@ def test_refile_touched_clock_stops_after_one_write(rule_book, rule_repo, repo):
     rule, _ = rule_repo.create_rule("description", "contains", "COLES", "groceries")
     for transaction_id in ("t1", "t2", "t3"):
         _store_charge(repo, transaction_id, "COLES", category="groceries", filed_by_rule=rule["id"])
-    expired = rule_book.WriteLimit(max_writes=None, time_budget=1, started=time.monotonic() - 100)
+    expired = rule_book.WriteLimit(max_writes=None, time_budget=1, started=time.monotonic() - 100, clock=time.monotonic)
 
     assert rule_book.RuleBook.refile_touched(rule["id"], None, repo, expired) == 2
 

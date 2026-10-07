@@ -1,5 +1,6 @@
-"""Shared stand-ins for the webhook's rule filing (rule_ingest.apply) and the dead-letter
-re-run (reprocess.reprocess_failed), which always take their rule, taxonomy, budget and
+"""Shared stand-ins for the webhook's rule filing (rule_ingest.apply), the dead-letter
+re-run (reprocess.reprocess_failed) and the API's "Apply my rules" sweep
+(handler.apply_rules_to_uncategorized), which always take their rule, taxonomy, budget and
 pay-cycle stores (WHIT-793). On the pytest path via ``pythonpath = tests/shared`` (pytest.ini).
 """
 
@@ -37,3 +38,9 @@ def apply_rules(rule_ingest, rows, *, rule_repo, category_repo):
 def reprocess_failed(reprocess, repo):
     """reprocess.reprocess_failed with no rules and an empty taxonomy."""
     return reprocess.reprocess_failed(repo, rule_repo=FakeRuleStore(), category_repo=FakeCategoryRepo([]))
+
+
+def apply_rules_to_uncategorized(handler, event, transaction_repo, category_repo, rule_repo):
+    """The API's rules sweep with idle spread stores, for tests that don't look at spreading."""
+    return handler.apply_rules_to_uncategorized(
+        event, transaction_repo, category_repo, rule_repo, budget_repo(), FakePaycycle())

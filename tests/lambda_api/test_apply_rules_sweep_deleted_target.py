@@ -13,6 +13,7 @@ onTarget cases there: those keep the rule's target IN the taxonomy; this one del
 import json
 
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
+from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 def _rule(value, category_id="groceries", field="description", operator="contains"):
@@ -22,7 +23,8 @@ def _rule(value, category_id="groceries", field="description", operator="contain
 def _apply(handler, repo, rule_repo, body, categories):
     event = {"rawPath": "/transactions/uncategorized/apply-rules",
              "requestContext": {"http": {"method": "POST"}}, "body": json.dumps(body)}
-    resp = handler.apply_rules_to_uncategorized(
+    resp = apply_rules_to_uncategorized(
+        handler,
         event, repo, FakeCategoryRepo(categories), rule_repo)
     return resp, json.loads(resp["body"])
 

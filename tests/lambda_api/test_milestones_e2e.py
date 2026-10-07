@@ -281,7 +281,7 @@ def test_a_leap_day_row_the_user_saved_still_celebrates(
 def test_every_date_the_save_endpoint_accepts_is_readable_by_the_poller(handler, poller):
     # [F2] The general form of [F1]'s leap day. Walks every real calendar date across an 11-year
     # span (so every leap year, every month length and every year boundary in range is covered)
-    # plus the two extremes date supports, asserting the WRITE bar (handler._valid_iso_date, the
+    # plus the two extremes date supports, asserting the WRITE bar (handler.valid_iso_date, the
     # regex AND the calendar check) implies the READ bar (milestone_rows.row_date). Both rules
     # are called for real — nothing here re-implements either.
     import milestone_rows
@@ -291,7 +291,7 @@ def test_every_date_the_save_endpoint_accepts_is_readable_by_the_poller(handler,
     dates += [datetime.date.min.isoformat(), datetime.date.max.isoformat()]
 
     for iso in dates:
-        assert handler._valid_iso_date(iso) is True, iso
+        assert handler.valid_iso_date(iso) is True, iso
         row = {"id": "m", "label": "L", "targetBalance": Decimal("1"), "targetDate": iso}
         assert milestone_rows.row_date(row, "targetDate") == iso
 
@@ -305,7 +305,7 @@ def test_the_read_rule_now_matches_the_write_rule_rejecting_the_lenient_forms(ha
     # raises. If either rule ever loosened, THIS is the test that says so.
     import milestone_rows
 
-    assert handler._valid_iso_date(lenient) is False
+    assert handler.valid_iso_date(lenient) is False
     row = {"id": "m", "label": "L", "targetBalance": Decimal("1"), "targetDate": lenient}
     with pytest.raises(milestone_rows.MalformedMilestoneRow):
         milestone_rows.row_date(row, "targetDate")

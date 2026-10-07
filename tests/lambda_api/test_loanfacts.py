@@ -258,13 +258,13 @@ def test_set_loanfacts_rejects_non_finite_deposit_target(handler):
     repo = FakeLoanFactsRepo_edges()
     resp = handler.set_loanfacts(_put_event(body), repo)
     assert resp["statusCode"] == 400
-    assert "finite" in json.loads(resp["body"])["error"]
+    assert json.loads(resp["body"])["error"] == "depositTarget must be a number"
     assert repo.set_calls == []
 
 
 @pytest.mark.parametrize("token", ["Infinity", "-Infinity", "NaN"])
 def test_set_loanfacts_rejects_non_finite_numbers(handler, token):
-    # json.loads accepts these bare tokens; the handler's math.isfinite gate must catch them.
+    # json.loads accepts these bare tokens; the handler's finite-number check must catch them.
     body = (
         '{"original": %s, "homeValue": 770000, "lvr": 0.8, '
         '"ratePct": 5.74, "baseRepay": 1240, "extra": 200}' % token
@@ -272,5 +272,5 @@ def test_set_loanfacts_rejects_non_finite_numbers(handler, token):
     repo = FakeLoanFactsRepo_edges()
     resp = handler.set_loanfacts(_put_event(body), repo)
     assert resp["statusCode"] == 400
-    assert "finite" in json.loads(resp["body"])["error"]
+    assert json.loads(resp["body"])["error"] == "original must be a number"
     assert repo.set_calls == []

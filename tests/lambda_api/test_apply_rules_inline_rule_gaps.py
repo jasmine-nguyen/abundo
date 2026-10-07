@@ -36,6 +36,7 @@ import json
 import pytest
 
 from _feed_fakes import SPENDING, WESTPAC, FakeCategoryRepo, Repos, charge_writes, fail_writes, _row
+from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 def _existing(value, category_id):
@@ -57,7 +58,8 @@ def _apply(handler, rows_by_account, body, existing=(), categories=("groceries",
         "requestContext": {"http": {"method": "POST"}},
         "body": json.dumps(body),
     }
-    response = handler.apply_rules_to_uncategorized(
+    response = apply_rules_to_uncategorized(
+        handler,
         event, run.transaction_repo, FakeCategoryRepo(categories), run.rule_repo)
     return response, json.loads(response["body"]), run
 

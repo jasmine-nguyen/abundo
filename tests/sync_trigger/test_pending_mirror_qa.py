@@ -171,7 +171,7 @@ def test_exactly_the_page_cap_is_accepted(mirror, bank_by_aid):
         _page(bank_rows("c")),
     ])
 
-    rows = mirror.fetch_bank_transactions("fiskil_77", WESTPAC_AID, "k", "2026-09-19", "2026-09-30")
+    rows = mirror.fetch_bank_transactions("k", "fiskil_77", WESTPAC_AID, "2026-09-19", "2026-09-30")
 
     assert [row["id"] for row in rows] == ["a", "b", "c"]
     assert len(requests) == 3
@@ -202,7 +202,7 @@ def test_each_removal_and_the_run_summary_are_logged(repo, mirror, caplog):
     # [A10] Card: "Log each removal (ids + amounts) and a per-run summary".
     repo._table.seed(pending_row("kept"), pending_row("costco", amount=Decimal("-195.26")))
 
-    def fetch(bid, aid, api_key, date_from, date_to):
+    def fetch(api_key, bid, aid, date_from, date_to):
         return bank_rows("kept", aid=aid)
 
     with caplog.at_level(logging.INFO, logger="pending_mirror"):
@@ -218,7 +218,7 @@ def test_an_income_tagged_pending_is_kept(repo, mirror):
     # [A11] Plan risk: a pending the bank tagged "income" counts as filed → kept for age-out.
     repo._table.seed(pending_row("kept"), pending_row("refund", category="income"))
 
-    def fetch(bid, aid, api_key, date_from, date_to):
+    def fetch(api_key, bid, aid, date_from, date_to):
         return bank_rows("kept", aid=aid)
 
     summary = mirror.mirror_pendings("key", repo=repo, category_repo=_FakeCategoryRepo(), today=MIRROR_TODAY, fetch=fetch)

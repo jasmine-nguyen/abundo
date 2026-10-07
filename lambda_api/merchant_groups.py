@@ -59,7 +59,7 @@ MIN_DESCRIPTION_GROUP_SIZE = 2
 _TRAILING_REFERENCE = re.compile(r"(?:\s+\S*\d\S*)+$")
 
 
-def _text(value) -> str:
+def as_text(value) -> str:
     return str(value or "")
 
 
@@ -73,8 +73,8 @@ def _merchant_slice(transaction: dict) -> str | None:
     `contains` is case-sensitive, and dropping everything around the slice sheds the volatile
     store#/location/ref tokens that would otherwise pin the rule to one single charge.
     """
-    description = _text(transaction.get("description"))
-    merchant = _text(transaction.get("merchant_name")).strip()
+    description = as_text(transaction.get("description"))
+    merchant = as_text(transaction.get("merchant_name")).strip()
     # Belt-and-braces: the only caller buckets by merchant name, so a nameless row never reaches
     # here. Without the guard an empty name would "find" at index 0 and return an empty slice.
     if not merchant:
@@ -114,7 +114,7 @@ def bucket_by_merchant(transactions: list[dict]) -> dict[str, list[dict]]:
     """
     buckets: dict[str, list[dict]] = {}
     for transaction in transactions:
-        merchant = _text(transaction.get("merchant_name")).strip()
+        merchant = as_text(transaction.get("merchant_name")).strip()
         if not merchant:
             continue
         buckets.setdefault(merchant.lower(), []).append(transaction)
@@ -149,7 +149,7 @@ def _bucket_nameless_by_stem(transactions: list[dict]) -> dict[str, list[dict]]:
     """
     buckets: dict[str, list[dict]] = {}
     for transaction in transactions:
-        stem = _description_stem(_text(transaction.get("description")))
+        stem = _description_stem(as_text(transaction.get("description")))
         if stem is None:
             continue
         buckets.setdefault(stem.strip().lower(), []).append(transaction)
@@ -173,7 +173,7 @@ def _rule_value_for_stem_bucket(bucket: list[dict]) -> str | None:
         return None
     counts: dict[str, int] = {}
     for transaction in bucket:
-        stem = _description_stem(_text(transaction.get("description")))
+        stem = _description_stem(as_text(transaction.get("description")))
         counts[stem] = counts.get(stem, 0) + 1
     return _commonest(counts)
 
@@ -212,7 +212,7 @@ def rule_value_for_bucket(bucket: list[dict]) -> str | None:
 
 
 def _dates(members: list[dict]) -> tuple[str | None, str | None]:
-    dates = sorted(_text(member.get("date")) for member in members if member.get("date"))
+    dates = sorted(as_text(member.get("date")) for member in members if member.get("date"))
     if not dates:
         return None, None
     return dates[0], dates[-1]
@@ -243,11 +243,11 @@ def also_catches(members: list[dict], own_key: str, *, by_stem: bool = False) ->
     counts: dict[str | None, int] = {}
     display: dict[str | None, str | None] = {}
     for member in members:
-        merchant = _text(member.get("merchant_name")).strip()
+        merchant = as_text(member.get("merchant_name")).strip()
         if merchant:
             key, shown, named = merchant.lower(), merchant, True
         elif by_stem:
-            stem = _description_stem(_text(member.get("description")))
+            stem = _description_stem(as_text(member.get("description")))
             key = stem.strip().lower() if stem is not None else None
             shown, named = stem, False
         else:
@@ -281,7 +281,7 @@ def group_unfiled_by_merchant(transactions: list[dict], is_unfiled) -> dict:
     eligible = [t for t in transactions if is_unfiled(t.get("category"))]
     # Folded once, not once per group: every accepted bucket tests its value against every
     # eligible charge, so re-folding here is the whole cost of the walk.
-    folded_descriptions = [_text(t.get("description")).strip().lower() for t in eligible]
+    folded_descriptions = [as_text(t.get("description")).strip().lower() for t in eligible]
 
     groups = []
     grouped_positions: set[int] = set()
@@ -298,14 +298,14 @@ def group_unfiled_by_merchant(transactions: list[dict], is_unfiled) -> dict:
             # The heading is the merchant name as first seen; `rulePattern` is the commonest
             # slice, so the two can differ in casing for a merchant spelled inconsistently. The
             # app shows the heading — it is a label, and the pattern is the thing that matters.
-            "merchant": _text(bucket[0].get("merchant_name")).strip(),
+            "merchant": as_text(bucket[0].get("merchant_name")).strip(),
             "rulePattern": value,
             "groupedBy": "merchant",
             "count": len(members),
             # Scan order, not newest-first: the scan walks account by account, so a group
             # spanning two accounts samples the first account's charges. Illustrative only —
             # firstDate/lastDate cover the whole group.
-            "samples": [_text(member.get("description")) for member in members[:_SAMPLES_PER_GROUP]],
+            "samples": [as_text(member.get("description")) for member in members[:_SAMPLES_PER_GROUP]],
             "firstDate": first_date,
             "lastDate": last_date,
             "alsoCatches": also_catches(members, key),
@@ -318,7 +318,7 @@ def group_unfiled_by_merchant(transactions: list[dict], is_unfiled) -> dict:
     # same as a merchant group — so a wording group discloses any named charge it also reaches.
     nameless_leftovers = [
         transaction for index, transaction in enumerate(eligible)
-        if index not in grouped_positions and not _text(transaction.get("merchant_name")).strip()
+        if index not in grouped_positions and not as_text(transaction.get("merchant_name")).strip()
     ]
     for stem_key, bucket in _bucket_nameless_by_stem(nameless_leftovers).items():
         value = _rule_value_for_stem_bucket(bucket)
@@ -334,7 +334,7 @@ def group_unfiled_by_merchant(transactions: list[dict], is_unfiled) -> dict:
             "rulePattern": value,
             "groupedBy": "description",
             "count": len(members),
-            "samples": [_text(member.get("description")) for member in members[:_SAMPLES_PER_GROUP]],
+            "samples": [as_text(member.get("description")) for member in members[:_SAMPLES_PER_GROUP]],
             "firstDate": first_date,
             "lastDate": last_date,
             "alsoCatches": also_catches(members, stem_key, by_stem=True),
@@ -350,6 +350,6 @@ def group_unfiled_by_merchant(transactions: list[dict], is_unfiled) -> dict:
         "groups": groups,
         "ungrouped": {
             "count": len(ungrouped),
-            "samples": [_text(t.get("description")) for t in ungrouped[:_SAMPLES_PER_GROUP]],
+            "samples": [as_text(t.get("description")) for t in ungrouped[:_SAMPLES_PER_GROUP]],
         },
     }

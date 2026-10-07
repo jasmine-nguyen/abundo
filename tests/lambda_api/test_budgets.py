@@ -1125,7 +1125,6 @@ def test_melbourne_today_falls_back_to_utc_when_tzdata_missing(handler, monkeypa
     # Simulate tzdata missing from the layer: ZoneInfo raises. The budget path must
     # degrade to UTC, not 500.
     import spend
-    monkeypatch.setattr(spend, "_MELBOURNE", None)
     def _boom(name):
         raise ZoneInfoNotFoundError(name)
     monkeypatch.setattr(spend, "ZoneInfo", _boom)

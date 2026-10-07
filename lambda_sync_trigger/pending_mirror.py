@@ -9,6 +9,7 @@ deleted when that copy already holds the same edit (WHIT-678). Otherwise it's ke
 hour, with the age-out sweep as the backstop. Any doubt about the bank's reply → that account is skipped and nothing is deleted.
 """
 
+import functools
 import logging
 import urllib.parse
 import urllib.request  # noqa: F401 — test seam: tests patch `urllib.request.urlopen` here
@@ -50,7 +51,7 @@ class MirrorSkip(Exception):
     """The bank's reply can't be trusted as the full list, so the account is skipped."""
 
 
-def fetch_bank_transactions(bid: str, aid: str, api_key: str, date_from: str, date_to: str) -> list[dict]:
+def fetch_bank_transactions(api_key: str, bid: str, aid: str, date_from: str, date_to: str) -> list[dict]:
     """Every row BankSync lists for the account between `date_from` and `date_to` (booking date),
     following `cursor` until `hasMore` is false. Raises MirrorSkip on any sign of a partial list;
     HTTP errors propagate."""
@@ -258,9 +259,7 @@ def mirror_pendings(
         logger.exception("pending_mirror: could not read categories, skipping every account")
         return {"removed": 0, "carried": 0, "kept": 0, "skipped": len(PENDING_MIRROR_SOURCES), "accounts": {}}
 
-    def fetch_account(bid: str, aid: str, date_from: str, date_to: str) -> list[dict]:
-        return fetch(bid, aid, api_key, date_from, date_to)
-
+    fetch_account = functools.partial(fetch, api_key)
     accounts = {}
     for source in PENDING_MIRROR_SOURCES:
         account_id = ACCOUNT_ID_MAP[source["aid"]]

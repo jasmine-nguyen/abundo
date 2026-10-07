@@ -23,7 +23,7 @@ merchant_groups so a suggested rule and a merchant-screen rule can never derive 
 """
 
 from api_constants import MIN_FILING_HABIT_DAYS
-from merchant_groups import also_catches, bucket_by_merchant, rule_value_for_bucket
+from merchant_groups import also_catches, as_text, bucket_by_merchant, rule_value_for_bucket
 from rule_engine import (
     contains,
     existing_at_least_as_specific,
@@ -38,17 +38,13 @@ _IDENTITY_FIELDS = {"description", "merchant"}
 _IDENTITY_OPERATORS = {"contains", "equals"}
 
 
-def _text(value) -> str:
-    return str(value or "")
-
-
 def _is_hand_filed(transaction: dict, taxonomy_ids) -> bool:
     """Did the USER file this charge by hand? It carries a merchant name (a nameless charge can't
     form a merchant habit), its category is one of the user's own (a raw bank enum, a null, or a
     deleted category's dangling id is not in the taxonomy), and no rule filed it (`filed_by_rule`
     absent — a rule-filed charge carries the stamp)."""
     return (
-        _text(transaction.get("merchant_name")).strip() != ""
+        as_text(transaction.get("merchant_name")).strip() != ""
         and transaction.get("category") in taxonomy_ids
         and not transaction.get("filed_by_rule")
     )
@@ -65,7 +61,7 @@ def _winning_category(bucket: list[dict]) -> tuple[str | None, int]:
     """
     days_by_category: dict[str, set[str]] = {}
     for transaction in bucket:
-        date = _text(transaction.get("date"))
+        date = as_text(transaction.get("date"))
         if not date:
             continue
         days_by_category.setdefault(transaction["category"], set()).add(date)
@@ -127,7 +123,7 @@ def suggest_rules_from_filing_habits(
     hand_filed = [t for t in transactions if _is_hand_filed(t, taxonomy_ids)]
 
     unfiled = [t for t in transactions if is_unfiled_category(t.get("category"), taxonomy_ids)]
-    folded_unfiled = [_text(t.get("description")).strip().lower() for t in unfiled]
+    folded_unfiled = [as_text(t.get("description")).strip().lower() for t in unfiled]
 
     suggestions = []
     for merchant_key, bucket in bucket_by_merchant(hand_filed).items():
@@ -142,7 +138,7 @@ def suggest_rules_from_filing_habits(
         swept = [unfiled[index] for index, folded in enumerate(folded_unfiled)
                  if contains(rule_pattern, folded)]
         suggestions.append({
-            "merchant": _text(bucket[0].get("merchant_name")).strip(),
+            "merchant": as_text(bucket[0].get("merchant_name")).strip(),
             "rulePattern": rule_pattern,
             "categoryId": category_id,
             "distinctDays": distinct_days,

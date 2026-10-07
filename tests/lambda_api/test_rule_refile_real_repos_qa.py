@@ -10,6 +10,7 @@ either one left every suite green. These tests race a tap against each of them.
 import json
 
 from _feed_fakes import SPENDING, FakeCategoryRepo, _row, on_write, real_repos, stored
+from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 _CATEGORIES = frozenset({"groceries", "petrol", "eatingout"})
 
@@ -105,7 +106,8 @@ def test_a_tap_mid_sweep_reconcile_keeps_the_users_category(handler):
     )
     on_write(table, "a", _tap("eatingout", "b"))
 
-    resp = handler.apply_rules_to_uncategorized(
+    resp = apply_rules_to_uncategorized(
+        handler,
         {"rawPath": "/transactions/uncategorized/apply-rules",
          "requestContext": {"http": {"method": "POST"}},
          "body": json.dumps({"dryRun": False})},

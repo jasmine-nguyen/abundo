@@ -40,7 +40,7 @@ def test_fetch_balance_builds_request_from_params(shared, monkeypatch):
     )
 
     req = captured["req"]
-    assert req.method == "GET"
+    assert req.get_method() == "GET"
     # URL, timeout, and UA all come from the params — not hardcoded.
     assert req.full_url == "https://example.test/v1/banks/fiskil_9/accounts/acct-1/balances"
     assert req.get_header("X-api-key") == "the-key"

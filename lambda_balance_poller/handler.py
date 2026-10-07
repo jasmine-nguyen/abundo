@@ -343,11 +343,6 @@ def _check_goal_checkpoints(deltas: list) -> None:
             logger.error("goal checkpoint push failed for %s, continuing: %s", goal_id, e)
 
 
-def _recent_transactions(transaction_repo, account_id: str, start_date: str) -> list:
-    """Every stored transaction for `account_id` dated on or after `start_date`, every page (bounded)."""
-    return read_date_range_pages(transaction_repo, account_id, start_date, None, FEED_STALL_MAX_PAGES)
-
-
 def _check_feed_stall(account_id: str, balance: Decimal, *, transaction_repo, watch_repo,
                       device_repo, now: int) -> None:
     """Push once when `account_id`'s balance has moved but no new transaction id has arrived for
@@ -359,7 +354,7 @@ def _check_feed_stall(account_id: str, balance: Decimal, *, transaction_repo, wa
     app's on-demand refresh also rewrites that row and would hide the move.
     """
     start_date = time.strftime("%Y-%m-%d", time.gmtime(now - FEED_STALL_LOOKBACK_DAYS * SECONDS_PER_DAY))
-    transactions = _recent_transactions(transaction_repo, account_id, start_date)
+    transactions = read_date_range_pages(transaction_repo, account_id, start_date, None, FEED_STALL_MAX_PAGES)
     current_dates = {transaction["transaction_id"]: transaction["date"] for transaction in transactions}
     account_name = next(
         (transaction["account_name"] for transaction in transactions if transaction.get("account_name")),

@@ -40,6 +40,7 @@ from _feed_fakes import (
     ANZ, SPENDING, HOMELOAN, WESTPAC, FakeCategoryRepo, charge_writes, fail_writes, on_write,
     real_repos, _row, set_category, stored, vanish_on_write,
 )
+from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 class _StepClock:
@@ -86,7 +87,8 @@ def _apply_event(body=None, raw=None, base64_encoded=False):
 
 
 def _call(handler, repo, rule_repo, body, categories=("groceries", "coffee"), **event_kw):
-    resp = handler.apply_rules_to_uncategorized(
+    resp = apply_rules_to_uncategorized(
+        handler,
         _apply_event(body, **event_kw), repo, FakeCategoryRepo(set(categories)), rule_repo)
     return resp, json.loads(resp["body"])
 
@@ -141,7 +143,8 @@ def test_the_budget_covers_the_whole_request_but_still_guarantees_one_write(
         return read_rules()
 
     monkeypatch.setattr(rule_repo, "list_rules", slow_list_rules)
-    resp = handler.apply_rules_to_uncategorized(
+    resp = apply_rules_to_uncategorized(
+        handler,
         _apply_event({"dryRun": False}), repo, FakeCategoryRepo({"groceries"}), rule_repo)
     body = json.loads(resp["body"])
 

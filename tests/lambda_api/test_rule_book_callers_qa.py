@@ -15,6 +15,7 @@ import json
 
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
 from _job_fakes import real_job_repo
+from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 _CATEGORIES = frozenset({"groceries", "petrol"})
@@ -54,7 +55,8 @@ def test_apply_route_time_budget_reads_the_handlers_clock(handler, monkeypatch):
     event = {"rawPath": "/transactions/uncategorized/apply-rules",
              "requestContext": {"http": {"method": "POST"}}, "body": json.dumps({"dryRun": False})}
 
-    resp = handler.apply_rules_to_uncategorized(
+    resp = apply_rules_to_uncategorized(
+        handler,
         event, repo, FakeCategoryRepo(_CATEGORIES), rule_repo)
     body = json.loads(resp["body"])
 
