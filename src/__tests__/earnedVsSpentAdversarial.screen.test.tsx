@@ -11,13 +11,10 @@
 // Real RN preset (screen project): bar widths read off the fill View's style, text off the nodes.
 import { describe, it, expect } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
 import { EarnedVsSpent, earnedVsSpent } from '../components/EarnedVsSpent';
 import { C } from '../theme';
-
-const colorOf = (testID: string): string =>
-  StyleSheet.flatten(screen.getByTestId(testID).props.style).color;
+import { styleOf } from './support/layout';
 
 describe('EarnedVsSpent — deficit sliver floor [G1]', () => {
   // The mirror of the implementer's tiny-spend case: a tiny income against a large spend must
@@ -106,15 +103,15 @@ describe('EarnedVsSpent — tone→colour table pinned to source tokens [G4]', (
   // test that only checked "some colour". Distinct tokens (surplus≠good, bad, textBright).
   it('surplus headline uses C.surplus (distinct from the earned bar token C.good)', () => {
     render(<EarnedVsSpent earned={200} spent={50} testID="evs" />);
-    expect(colorOf('earned-vs-spent-amount')).toBe(C.surplus);
+    expect(styleOf(screen.getByTestId('earned-vs-spent-amount')).color).toBe(C.surplus);
     expect(C.surplus).not.toBe(C.good); // the headline is its own brighter green
   });
   it('deficit headline uses C.bad', () => {
     render(<EarnedVsSpent earned={50} spent={200} testID="evs" />);
-    expect(colorOf('earned-vs-spent-amount')).toBe(C.bad);
+    expect(styleOf(screen.getByTestId('earned-vs-spent-amount')).color).toBe(C.bad);
   });
   it('broke-even headline uses C.textBright (neutral)', () => {
     render(<EarnedVsSpent earned={200} spent={200} testID="evs" />);
-    expect(colorOf('earned-vs-spent-amount')).toBe(C.textBright);
+    expect(styleOf(screen.getByTestId('earned-vs-spent-amount')).color).toBe(C.textBright);
   });
 });

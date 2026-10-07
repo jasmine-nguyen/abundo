@@ -11,6 +11,7 @@ import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { flush } from './support/queryClient';
+import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -137,8 +138,8 @@ describe('with consent given', () => {
     expect(expected).not.toBe(chartCategoryColor('eatingout'));
     const bars = screen.getAllByTestId('chat-card-bar');
     expect(bars).toHaveLength(3);
-    for (const bar of bars) expect(StyleFlat(bar.props.style).backgroundColor).toBe(expected);
-    expect(StyleFlat(screen.getByTestId('chat-card-dot').props.style).backgroundColor).toBe(expected);
+    for (const bar of bars) expect(styleOf(bar).backgroundColor).toBe(expected);
+    expect(styleOf(screen.getByTestId('chat-card-dot')).backgroundColor).toBe(expected);
     expect(screen.getByText('3 completed pay cycles · 30 Jul – 9 Sep')).toBeTruthy();
     expect(screen.getByText('$60 budget')).toBeTruthy();
   });
@@ -184,17 +185,11 @@ describe('with consent given', () => {
   });
 });
 
-// RN style props may be arrays; flatten for the colour assertions.
-function StyleFlat(style: unknown): Record<string, unknown> {
-  if (Array.isArray(style)) return Object.assign({}, ...style.map(StyleFlat));
-  return (style as Record<string, unknown>) ?? {};
-}
-
 describe('the answer card difference colour', () => {
   const deltaColor = async (categoryId: string, amount: number) => {
     const card = { ...REPLY.card!, categoryId, delta: { amount, vs: 'budget' as const } };
     await renderWithQueries(<ChatAnswer text="ok" reply={{ ...REPLY, card }} onAction={() => {}} />);
-    return StyleFlat(screen.getByTestId('chat-card-delta').props.style).color;
+    return styleOf(screen.getByTestId('chat-card-delta')).color;
   };
 
   it('is red over a spending budget and green under it', async () => {

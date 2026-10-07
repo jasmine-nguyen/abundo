@@ -6,7 +6,6 @@
 // expo-router + safe-area are stubbed.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { C } from '../theme';
 import { installFakeServer } from './support/fakeServer';
@@ -15,6 +14,7 @@ import { resetAuth } from './support/authMock';
 import { setParams, resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { transactionsRecentKey } from '../queryKeys';
+import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ openPicker: jest.fn(), category: () => undefined })));
@@ -38,8 +38,6 @@ const bal = (over: Record<string, unknown> = {}) => ({
   as_of: '2026-07-08T09:32:37.337Z', account_type: 'unknown', ...over,
 });
 
-const colorOf = (node: unknown) => (StyleSheet.flatten((node as { props: { style?: unknown } }).props.style) as { color?: string }).color;
-
 beforeEach(() => {
   resetAuth();
   resetRouter();
@@ -50,14 +48,14 @@ beforeEach(() => {
 it('shows a negative balance in red and the credit-card "available" line (owe, but credit left)', async () => {
   server.seed('/accounts/balances', [bal({ amount: -6492.26, available_balance: 8171.88 })]);
   await renderWithQueries(<AccountDetail />);
-  expect(colorOf(screen.getByText('-$6,492.26'))).toBe(C.bad);
+  expect(styleOf(screen.getByText('-$6,492.26')).color).toBe(C.bad);
   expect(screen.getByText('$8,172 available')).toBeTruthy(); // fmt() rounds
 });
 
 it('shows a positive balance in green and NO available line (spending account)', async () => {
   server.seed('/accounts/balances', [bal({ amount: 96270.59, available_balance: 96270.59, account_type: 'checking' })]);
   await renderWithQueries(<AccountDetail />);
-  expect(colorOf(screen.getByText('$96,270.59'))).toBe(C.good);
+  expect(styleOf(screen.getByText('$96,270.59')).color).toBe(C.good);
   expect(screen.queryByText(/available/)).toBeNull();
 });
 

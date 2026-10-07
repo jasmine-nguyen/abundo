@@ -11,6 +11,7 @@ import { renderWithQueries, renderLoaded, useTestQueryClient } from './support/r
 import { resetAuth } from './support/authMock';
 import { seedGoal } from './support/goalsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
+import { styleOf } from './support/layout';
 
 // One stub for every screen here: each reads only the writers it needs off it.
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ saveLoanFacts: jest.fn(), saveGoal: jest.fn(), deleteGoal: jest.fn(), showToast: jest.fn() })));
@@ -32,8 +33,6 @@ beforeEach(() => {
   resetRouter();
 });
 
-const styleOf = (text: string) => StyleSheet.flatten(screen.getByText(text).props.style);
-
 describe('MoneyField on its own', () => {
   it('[A1] a suffix-only field shows the suffix and no prefix sign', () => {
     render(<MoneyField label="LVR" placeholder="e.g. 80" value="" onChangeText={() => {}} suffix="%" />);
@@ -51,7 +50,7 @@ describe('MoneyField on its own', () => {
     const view = render(
       <MoneyField label="Amount" labelStyle={{ fontSize: 99 }} style={{ marginBottom: 42 }} placeholder="e.g. 1" value="7" onChangeText={() => {}} />,
     );
-    expect(styleOf('Amount').fontSize).toBe(99);
+    expect(styleOf(screen.getByText('Amount')).fontSize).toBe(99);
     expect(StyleSheet.flatten((view.toJSON() as ReactTestRendererJSON).props.style)).toEqual(
       expect.objectContaining({ marginBottom: 42 }),
     );
@@ -79,15 +78,15 @@ describe('equity card on the screens (drift fix)', () => {
   it('[A8] (P0) Milestone heading is 14.5pt and its subheading 12.5pt, like Mortgage', async () => {
     seedGoal(server, { homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
     await renderWithQueries(<Milestone />);
-    expect(styleOf('Equity for your next place').fontSize).toBe(14.5);
-    expect(styleOf('Usable equity from your current home').fontSize).toBe(12.5);
+    expect(styleOf(screen.getByText('Equity for your next place')).fontSize).toBe(14.5);
+    expect(styleOf(screen.getByText('Usable equity from your current home')).fontSize).toBe(12.5);
   });
 
   it('[A9] (P0) Mortgage heading and subheading keep their 14.5 / 12.5pt size', async () => {
     seedGoal(server, { homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
     await renderWithQueries(<Mortgage />);
-    expect(styleOf('Equity for your next place').fontSize).toBe(14.5);
-    expect(styleOf('Usable equity from your current home').fontSize).toBe(12.5);
+    expect(styleOf(screen.getByText('Equity for your next place')).fontSize).toBe(14.5);
+    expect(styleOf(screen.getByText('Usable equity from your current home')).fontSize).toBe(12.5);
   });
 
   it('[A10] (P0) Mortgage "Set deposit target →" still opens the loan form', async () => {
@@ -114,7 +113,7 @@ describe('money box on the screens', () => {
     expect(screen.getByText('What you first borrowed')).toBeTruthy();
     expect(screen.getByText('How much the bank lends against it — usually 80')).toBeTruthy();
     expect(screen.getByText('Optional — sets the target the equity card tracks toward.')).toBeTruthy();
-    expect(styleOf('Original loan amount')).toEqual(expect.objectContaining({ fontSize: 13.5, fontWeight: '700' }));
+    expect(styleOf(screen.getByText('Original loan amount'))).toEqual(expect.objectContaining({ fontSize: 13.5, fontWeight: '700' }));
   });
 
   it('[A13] (P0) Goal edit: amount fields keep the $ sign, the small caps label look and the hint', async () => {
@@ -122,7 +121,7 @@ describe('money box on the screens', () => {
     server.seed('/transactions', []);
     server.seed('/accounts/balances', []);
     await renderWithQueries(<GoalEdit />);
-    expect(styleOf('TARGET AMOUNT')).toEqual(expect.objectContaining({ fontSize: 12, letterSpacing: 0.3 }));
+    expect(styleOf(screen.getByText('TARGET AMOUNT'))).toEqual(expect.objectContaining({ fontSize: 12, letterSpacing: 0.3 }));
     expect(screen.getByText('What you want to save up to.')).toBeTruthy();
     fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '5000');
     expect(screen.getByPlaceholderText('e.g. 10000').props.value).toBe('5000');

@@ -5,7 +5,7 @@
 // which the kit stands in for with a slice a test can set.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { routerSpies, fireFocus, resetRouter } from './support/routerMock';
-import { AccessibilityInfo, StyleSheet } from 'react-native';
+import { AccessibilityInfo } from 'react-native';
 import { screen, fireEvent, within } from '@testing-library/react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { UNCATEGORIZED_KEY } from '../model';
@@ -21,6 +21,7 @@ import {
   refreshAiInsights, generateAiInsights,
 } from './support/insightsScreen';
 import { GROCERIES_RECORD } from './support/categories';
+import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
@@ -578,35 +579,21 @@ describe('Insights remainder/Other plug (WHIT-357/375)', () => {
   function rowCard(node: ReactTestInstance): ReactTestInstance {
     let n: ReactTestInstance | null = node;
     while (n) {
-      const st = StyleSheet.flatten((n.props as { style?: unknown }).style) as { borderRadius?: number } | undefined;
-      if (st && st.borderRadius === 20) return n;
+      if (styleOf(n).borderRadius === 20) return n;
       n = n.parent;
     }
     throw new Error('no enclosing row card');
   }
   // A category-bar track (styles.track: height 8) — present on a real spend row, absent on a plug/refund.
-  const tracksIn = (card: ReactTestInstance) => card.findAll((n) => {
-    const st = StyleSheet.flatten((n.props as { style?: unknown }).style) as { height?: number } | undefined;
-    return !!st && st.height === 8;
-  });
+  const tracksIn = (card: ReactTestInstance) => card.findAll((n) => styleOf(n).height === 8);
   // The bold amount Text (styles.rowAmount: fontWeight '700') inside a card.
-  const amountColor = (card: ReactTestInstance) => {
-    const amt = card.findAll((n) => {
-      const st = StyleSheet.flatten((n.props as { style?: unknown }).style) as { fontWeight?: string } | undefined;
-      return !!st && st.fontWeight === '700';
-    })[0];
-    return (StyleSheet.flatten((amt.props as { style?: unknown }).style) as { color?: string }).color;
-  };
+  const amountColor = (card: ReactTestInstance) =>
+    styleOf(card.findAll((n) => styleOf(n).fontWeight === '700')[0]).color;
 
   // The row NAME Text (styles.rowName: fontWeight '600') inside a card — its colour moved from a
   // hardcoded C.textDim to breakdownLineStyle's nameColor in WHIT-375, so lock it here.
-  const nameColor = (card: ReactTestInstance) => {
-    const nm = card.findAll((n) => {
-      const st = StyleSheet.flatten((n.props as { style?: unknown }).style) as { fontWeight?: string } | undefined;
-      return !!st && st.fontWeight === '600';
-    })[0];
-    return (StyleSheet.flatten((nm.props as { style?: unknown }).style) as { color?: string }).color;
-  };
+  const nameColor = (card: ReactTestInstance) =>
+    styleOf(card.findAll((n) => styleOf(n).fontWeight === '600')[0]).color;
 
   it('hides the "Other" plug until the parent is expanded, then shows it muted, un-barred, and un-tappable', async () => {
     await renderInsights();
