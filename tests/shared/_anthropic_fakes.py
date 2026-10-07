@@ -8,6 +8,9 @@ _budget_endpoint_fakes.py.
 """
 
 import copy
+import json
+
+import _http_fakes
 
 
 def messages_payload(content):
@@ -46,3 +49,19 @@ class ScriptedModel:
     @property
     def timeouts(self):
         return [request["timeout"] for request in self.requests]
+
+
+def capture_urlopen(client, monkeypatch, payload):
+    """Fake the client's urlopen to answer `payload`; returns the dict it fills with the request's
+    url, headers, JSON body and timeout."""
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["timeout"] = timeout
+        captured["headers"] = req.headers
+        captured["body"] = json.loads(req.data.decode())
+        return _http_fakes.FakeResponse(payload)
+
+    monkeypatch.setattr(client.urllib.request, "urlopen", fake_urlopen)
+    return captured

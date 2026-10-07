@@ -253,6 +253,14 @@ def test_worker_marks_an_anthropic_failure_as_assistant_unavailable(ai_chat, mon
     assert worker.finished == [{"status": "failed", "reply": None, "error": "assistant unavailable"}]
 
 
+def test_worker_marks_a_refusal_could_not_answer_even_with_an_answer_attached(ai_chat, monkeypatch, worker):  # [A1]
+    monkeypatch.setattr(ai_chat, "post_messages", ScriptedModel([
+        tool_reply(tool_use_block("respond", {"text": "Hi"}), stop_reason="refusal"),
+    ]))
+    assert ai_chat.lambda_handler(EVENT, FakeContext())["status"] == "failed"
+    assert worker.finished == [{"status": "failed", "reply": None, "error": "could not answer"}]
+
+
 def test_worker_marks_any_other_failure_failed(ai_chat, monkeypatch, worker):
     def broken(*repos):
         raise RuntimeError("db down")

@@ -6,29 +6,15 @@ tips caller an empty result, and each call logs its token counts but never the m
 urllib.request.urlopen is faked; no network.
 """
 
-import json
 import logging
 
 import pytest
 
-from _anthropic_fakes import messages_payload
-from _http_fakes import FakeResponse
+from _anthropic_fakes import capture_urlopen, messages_payload
 
 SCHEMA = {"type": "object"}
 CHAT_MESSAGES = [{"role": "user", "content": "q"}]
 TOOLS = [{"name": "respond", "description": "d", "input_schema": {"type": "object"}}]
-
-
-def _capture(anthropic_client, monkeypatch, payload):
-    captured = {}
-
-    def fake_urlopen(req, timeout=None):
-        captured["headers"] = req.headers
-        captured["body"] = json.loads(req.data.decode())
-        return FakeResponse(payload)
-
-    monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", fake_urlopen)
-    return captured
 
 
 @pytest.mark.parametrize("call, extra", [
@@ -38,7 +24,7 @@ def _capture(anthropic_client, monkeypatch, payload):
      {"output_config": {"effort": "low"}, "tool_choice": {"type": "auto"}, "tools": TOOLS}),
 ], ids=["tips post", "chat post_messages"])
 def test_every_request_uses_the_sonnet_5_5_shape(anthropic_client, monkeypatch, call, extra):
-    captured = _capture(anthropic_client, monkeypatch, messages_payload([{"type": "text", "text": "{}"}]))
+    captured = capture_urlopen(anthropic_client, monkeypatch, messages_payload([{"type": "text", "text": "{}"}]))
 
     call(anthropic_client)
 
@@ -61,7 +47,7 @@ def test_a_refusal_gives_tips_nothing_and_each_call_logs_counts_not_text(
         "content": [{"type": "text", "text": f'{{"summary": "{sentinel}"}}'}],
         "usage": {"input_tokens": 4321, "output_tokens": 87},
     }
-    _capture(anthropic_client, monkeypatch, refusal)
+    capture_urlopen(anthropic_client, monkeypatch, refusal)
 
     with caplog.at_level(logging.INFO):
         result = anthropic_client.post("SYS", f"{sentinel}:\n", {"note": sentinel}, SCHEMA)

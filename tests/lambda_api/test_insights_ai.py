@@ -16,7 +16,7 @@ from functools import partial
 
 import pytest
 
-from _anthropic_fakes import text_payload
+from _anthropic_fakes import capture_urlopen, text_payload
 from _http_fakes import FakeResponse, http_error
 
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
@@ -31,16 +31,8 @@ def test_generate_suggestions_builds_request_and_parses(insights_ai, monkeypatch
     # generate_suggestions delegates the HTTP call to anthropic_client (WHIT-388), so
     # patch urlopen THERE — insights_ai no longer owns the urllib import.
     import anthropic_client as ac
-    captured = {}
-
-    def fake_urlopen(req, timeout=None):
-        captured["url"] = req.full_url
-        captured["headers"] = req.headers
-        captured["body"] = json.loads(req.data.decode())
-        return FakeResponse(text_payload(
-            '{"summary": "Solid cycle.", "suggestions": ["Cut coffee $20", "Watch groceries"]}'))
-
-    monkeypatch.setattr(ac.urllib.request, "urlopen", fake_urlopen)
+    captured = capture_urlopen(ac, monkeypatch, text_payload(
+        '{"summary": "Solid cycle.", "suggestions": ["Cut coffee $20", "Watch groceries"]}'))
 
     model_input = {"cycle": {"length": 14}, "categories": [{"name": "Coffee", "posted": 52.0}]}
     result = insights_ai.generate_suggestions(model_input)
