@@ -6,7 +6,6 @@
 // expo-router + safe-area are stubbed.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { C } from '../theme';
 import { installFakeServer } from './support/fakeServer';
@@ -15,6 +14,7 @@ import { resetAuth } from './support/authMock';
 import { setParams, resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { transactionsRecentKey } from '../queryKeys';
+import { colorOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ openPicker: jest.fn(), category: () => undefined })));
@@ -37,8 +37,6 @@ const bal = (over: Record<string, unknown> = {}) => ({
   account_id: 'a1', amount: -6492.26, available_balance: 8171.88, currency: 'AUD',
   as_of: '2026-07-08T09:32:37.337Z', account_type: 'unknown', ...over,
 });
-
-const colorOf = (node: unknown) => (StyleSheet.flatten((node as { props: { style?: unknown } }).props.style) as { color?: string }).color;
 
 beforeEach(() => {
   resetAuth();

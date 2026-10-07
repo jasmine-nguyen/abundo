@@ -9,6 +9,7 @@ import { resetAuth } from './support/authMock';
 import { resetRouter } from './support/routerMock';
 import { breakdownWire, seedInsights, renderInsights, resetAi } from './support/insightsScreen';
 import { C } from '../theme';
+import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
@@ -18,7 +19,6 @@ const server = installFakeServer();
 useTestQueryClient();
 
 const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', bucket: 'Lifestyle' }];
-const styleOf = (testID: string) => StyleSheet.flatten(screen.getByTestId(testID).props.style);
 
 beforeEach(() => {
   resetRouter();
@@ -31,10 +31,10 @@ describe('Insights error block matches the other tabs', () => {
     seedInsights(server, { breakdown: breakdownWire({ earned: 3000 }), categories: CATS });
     server.fail('/paycycle', 500);
     await renderInsights();
-    expect(styleOf('insights-error')).toMatchObject({ paddingVertical: 60 });
+    expect(styleOf(screen.getByTestId('insights-error'))).toMatchObject({ paddingVertical: 60 });
     const copy = StyleSheet.flatten(screen.getByText("Couldn't load your spending.").props.style);
     expect(copy).toMatchObject({ fontSize: 14.5, color: C.textMid });
-    expect(styleOf('insights-retry')).toMatchObject({ paddingVertical: 10, paddingHorizontal: 22 });
+    expect(styleOf(screen.getByTestId('insights-retry'))).toMatchObject({ paddingVertical: 10, paddingHorizontal: 22 });
   });
 
   it('[A2] pressing Retry after the read recovers → error goes, spending shows', async () => {

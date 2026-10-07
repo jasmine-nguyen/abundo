@@ -5,16 +5,14 @@
 // smaller bar is floored so a tiny spend stays visible.
 import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
 import { EarnedVsSpent, earnedVsSpent } from '../components/EarnedVsSpent';
 import { C } from '../theme';
+import { colorOf } from './support/layout';
 
 const SURPLUS_MSG = 'Nice, you earned more than you spent this cycle. 🎉';
 const DEFICIT_MSG = "oops, a little over this cycle. You've got the next one to balance it out. 💪";
 const EVEN_MSG = 'You broke even this cycle.';
-
-const colorOf = (testID: string): string => StyleSheet.flatten(screen.getByTestId(testID).props.style).color;
 
 describe('earnedVsSpent (pure)', () => {
   it('earned above spent → surplus headline, earned bar full width', () => {
@@ -96,7 +94,7 @@ describe('EarnedVsSpent (render)', () => {
     expect(screen.getByTestId('earned-bar').props.style.width).toBe('100%');            // larger → full
     expect(screen.getByTestId('spent-bar').props.style.width).toBe(`${(1723 / 6389) * 100}%`);
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('+$4,666 surplus');
-    expect(colorOf('earned-vs-spent-amount')).toBe(C.surplus);                          // green headline
+    expect(colorOf(screen.getByTestId('earned-vs-spent-amount'))).toBe(C.surplus);                          // green headline
     expect(screen.getByTestId('earned-vs-spent-message').props.children).toBe(` — ${SURPLUS_MSG}`);
   });
 
@@ -104,7 +102,7 @@ describe('EarnedVsSpent (render)', () => {
     render(<EarnedVsSpent earned={1000} spent={1500} testID="evs" />);
     expect(screen.getByTestId('spent-bar').props.style.width).toBe('100%');
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('−$500 deficit');
-    expect(colorOf('earned-vs-spent-amount')).toBe(C.bad);
+    expect(colorOf(screen.getByTestId('earned-vs-spent-amount'))).toBe(C.bad);
     expect(screen.getByTestId('earned-vs-spent-message').props.children).toBe(` — ${DEFICIT_MSG}`);
   });
 
@@ -113,7 +111,7 @@ describe('EarnedVsSpent (render)', () => {
     expect(screen.getByTestId('earned-bar').props.style.width).toBe('100%');
     expect(screen.getByTestId('spent-bar').props.style.width).toBe('100%');
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('$0');
-    expect(colorOf('earned-vs-spent-amount')).toBe(C.textBright);
+    expect(colorOf(screen.getByTestId('earned-vs-spent-amount'))).toBe(C.textBright);
   });
 
   it('a tiny spend against a large income floors to a visible nub, not a hairline', () => {

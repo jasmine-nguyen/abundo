@@ -11,7 +11,7 @@ import { it, expect, jest, beforeEach } from '@jest/globals';
 import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
-import { StyleSheet, RefreshControl } from 'react-native';
+import { RefreshControl } from 'react-native';
 import { C } from '../theme';
 import { Icon } from '../icons';
 import { installFakeServer } from './support/fakeServer';
@@ -19,12 +19,12 @@ import { GROCERIES_RECORD } from './support/categories';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { queryClient } from '../queryClient';
+import { colorOf } from './support/layout';
 
 const bal = (over: Record<string, unknown> = {}) => ({
   account_id: 'a1', amount: 96270.59, available_balance: 96270.59, currency: 'AUD',
   as_of: '2026-07-08T09:32:02.405Z', account_type: 'checking', ...over,
 });
-const colorOf = (node: unknown) => (StyleSheet.flatten((node as { props: { style?: unknown } }).props.style) as { color?: string }).color;
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 

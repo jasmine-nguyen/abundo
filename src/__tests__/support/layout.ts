@@ -1,9 +1,11 @@
-// Layout queries over the rendered tree: a node's flattened style, its text, and the nearest
-// host View holding two nodes (to tell "side by side" from "stacked").
+// Layout queries over the rendered tree: a node's flattened style and colour, its text, and the
+// nearest host View holding two nodes (to tell "side by side" from "stacked").
 import { StyleSheet } from 'react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
 
 export const styleOf = (node: ReactTestInstance) => StyleSheet.flatten(node.props.style) ?? {};
+
+export const colorOf = (node: ReactTestInstance) => styleOf(node).color;
 
 export const textOf = (node: ReactTestInstance): string =>
   node.children.map((child) => (typeof child === 'string' ? child : textOf(child))).join('');

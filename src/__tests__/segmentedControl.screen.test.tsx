@@ -9,6 +9,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { SegmentedControl } from '../components/SegmentedControl';
+import { styleOf } from './support/layout';
 
 // Synthetic colours on purpose (WHIT-398): these are fixtures for the generic component, not
 // production values, so they must not read as a second copy of a real theme colour.
@@ -21,7 +22,6 @@ const STR_OPTIONS = [
   { value: 'earning' as const, label: 'Earning', testID: 'seg-earning', activeTint: 'rgba(4,5,6,.16)', activeTextColor: '#2ac3de' },
 ];
 
-const styleOf = (testID: string) => StyleSheet.flatten(screen.getByTestId(testID).props.style);
 const textStyleOf = (label: string) => StyleSheet.flatten(screen.getByText(label).props.style);
 
 describe('SegmentedControl', () => {
@@ -56,11 +56,11 @@ describe('SegmentedControl', () => {
   it('applies the active tint + text colour only to the selected segment', () => {
     render(<SegmentedControl value="earning" onChange={jest.fn()} options={STR_OPTIONS} />);
     // active segment: earning → its tint + teal bold text
-    expect(styleOf('seg-earning').backgroundColor).toBe('rgba(4,5,6,.16)');
+    expect(styleOf(screen.getByTestId('seg-earning')).backgroundColor).toBe('rgba(4,5,6,.16)');
     expect(textStyleOf('Earning').color).toBe('#2ac3de');
     expect(textStyleOf('Earning').fontWeight).toBe('700');
     // inactive segment: no active tint, muted default weight
-    expect(styleOf('seg-spending').backgroundColor).toBeUndefined();
+    expect(styleOf(screen.getByTestId('seg-spending')).backgroundColor).toBeUndefined();
     expect(textStyleOf('Spending').fontWeight).toBe('600');
   });
 });
