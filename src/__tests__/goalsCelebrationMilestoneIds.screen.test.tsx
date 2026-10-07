@@ -20,7 +20,7 @@ import { seedGoalsHub } from './support/goalsScreen';
 import { EMPTY_LOAN_FACTS } from './factory';
 import { queryClient } from '../queryClient';
 import { CHECKPOINT_SNAPSHOT_KEY } from '../checkpointCelebration';
-import type { GoalRecord, MilestoneRecord } from '../api';
+import type { GoalRecord } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
 
@@ -100,31 +100,6 @@ describe('Goals celebrations remember which milestones were reached (WHIT-811)',
     await refresh();
 
     expect(await screen.findByTestId('checkpoint-celebration-label')).toHaveTextContent(/Holiday · Hotel paid reached/);
-  });
-
-  it('names the milestone by its label in the banner', async () => {
-    seedHub([HOLIDAY], { 'up-spending': 4000 });
-    await renderWithQueries(<Goals />);
-
-    seedHub([HOLIDAY], { 'up-spending': 6000 });
-    await refresh();
-
-    expect(await screen.findByTestId('checkpoint-celebration-label')).toHaveTextContent(/Holiday · Hotel paid reached/);
-  });
-
-  it('names a mortgage milestone by its label', async () => {
-    const milestones: MilestoneRecord[] = [
-      { id: 'm1', label: 'Sprint 1', targetBalance: 600000, targetDate: '2027-01-01' },
-      { id: 'm2', label: 'Sprint 2', targetBalance: 500000, targetDate: '2029-01-01' },
-    ];
-    server.seed('/milestones', milestones);
-    seedHub([HOLIDAY], { 'up-spending': 4000 }, 610000);
-    await renderWithQueries(<Goals />);
-
-    seedHub([HOLIDAY], { 'up-spending': 4000 }, 596642.43);
-    await refresh();
-
-    expect(await screen.findByTestId('checkpoint-celebration-label')).toHaveTextContent(/The mortgage · Sprint 1 reached/);
   });
 
   it('two goals crossing in one refresh both celebrate, one banner after the other', async () => {

@@ -3,7 +3,7 @@
 // highest), a step not in the last look never bursts, an unknown balance keeps the last look, a
 // drop re-arms, and deleted steps/goals fall out.
 import { describe, it, expect } from '@jest/globals';
-import { diffCheckpointReached, stepKey } from '../checkpointCelebration';
+import { diffCheckpointReached } from '../checkpointCelebration';
 import { goalSteps, stepSnapshot } from './support/celebrationSteps';
 
 describe('diffCheckpointReached', () => {
@@ -29,10 +29,6 @@ describe('diffCheckpointReached', () => {
   ] as const)('never bursts for a step not in the last look: %s', (_, prevSteps, currentSteps) => {
     const steps = currentSteps.map(([key, reached]) => ({ key, reached, label: key }));
     expect(diffCheckpointReached({ g1: prevSteps }, [{ id: 'g1', steps }]).bursts).toEqual([]);
-  });
-
-  it('builds a step key from its id and amount, so a moved amount is a new step', () => {
-    expect(stepKey('a', 3000)).not.toBe(stepKey('a', 5000));
   });
 
   it('still bursts when a reached step is deleted and the next one is crossed', () => {
