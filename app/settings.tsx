@@ -36,7 +36,7 @@ export function initialsFrom(u: { email?: string; name?: string } | null): strin
 }
 
 export default function Settings() {
-  const s = useAppContext(); // alerts toggle + setSheet (client-state)
+  const s = useAppContext(); // setSheet (client-state)
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -113,15 +113,8 @@ export default function Settings() {
           </View>
         ) : null}
 
-        <SectionLabel>PREFERENCES</SectionLabel>
+        <SectionLabel>ACCOUNT</SectionLabel>
         <View style={styles.group}>
-          <View style={styles.rowBase}>
-            <View style={[styles.rowIcon, { backgroundColor: 'rgba(255,255,255,.06)' }]}><Glyph name="bell" size={19} color="#b6b6c0" /></View>
-            <Text style={styles.rowLabel}>Pending alerts</Text>
-            <Pressable onPress={s.toggleAlerts} style={[styles.toggle, { backgroundColor: s.alerts ? C.accent : 'rgba(255,255,255,.12)' }]}>
-              <View style={[styles.knob, { left: s.alerts ? 21 : 3 }]} />
-            </Pressable>
-          </View>
           <Pressable testID="settings-logout" onPress={logOut} style={[styles.rowBase, { borderBottomWidth: 0 }]}>
             <View style={[styles.rowIcon, { backgroundColor: 'rgba(255,107,107,.12)' }]}><Glyph name="logout" size={19} color={C.bad} /></View>
             <Text style={[styles.rowLabel, { color: C.bad }]}>Log out</Text>
@@ -158,8 +151,6 @@ const styles = StyleSheet.create({
   rowIcon: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   rowLabel: { flex: 1, fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
   rowValue: { fontFamily: FONT.body, fontSize: 14, color: C.textDim },
-  toggle: { width: 46, height: 28, borderRadius: 14, position: 'relative' },
-  knob: { position: 'absolute', top: 3, width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff' },
 
   version: { textAlign: 'center', fontFamily: FONT.body, fontSize: 12, color: C.textFaintest, marginBottom: 6 },
 

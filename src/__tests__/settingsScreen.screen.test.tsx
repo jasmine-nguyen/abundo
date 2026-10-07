@@ -1,10 +1,10 @@
-// The Settings screen's Log out row, Back button and profile card, over the fake server: the real
+// The Settings screen's Log out row and Account group, Back button and profile card, over the fake server: the real
 // useSettingsScreenData / useRulesScreenData / usePayCycle read /categories, /loanfacts, /rules
 // and /paycycle (server defaults). Folded from settingsLogout (WHIT-176, WHIT-495) and
 // settingsProfile (WHIT-180).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { fireEvent, screen } from '@testing-library/react-native';
+import { fireEvent, screen, within } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, refreshInAct, settle, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
@@ -21,11 +21,8 @@ jest.mock('../auth', () => ({
   getCurrentUser: () => mockUser,
 }));
 
-// The screen reads only alerts/setSheet off context; the selectors stay real.
-jest.mock('../context', () => ({
-  ...(jest.requireActual('../context') as object),
-  useAppContext: () => ({ alerts: true, toggleAlerts: jest.fn(), setSheet: jest.fn() }),
-}));
+// The screen reads only setSheet off context; the selectors stay real.
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ setSheet: jest.fn() })));
 
 import Settings from '../../app/settings';
 
@@ -54,6 +51,18 @@ describe('Log out and Back', () => {
     await renderWithQueries(<Settings />);
     fireEvent.press(screen.getByLabelText('Back'));
     expect(routerSpies.back).toHaveBeenCalledTimes(1);
+  });
+});
+
+// WHIT-795: the "Pending alerts" switch did nothing (never saved, never read), so it's removed.
+// The group below Setup is now headed "Account" and holds only Log out.
+describe('Account group', () => {
+  it('shows no "Pending alerts" row; the Account group holds Log out', async () => {
+    await renderWithQueries(<Settings />);
+    expect(screen.queryByText('Pending alerts')).toBeNull();
+    expect(screen.queryByText('PREFERENCES')).toBeNull();
+    expect(screen.getByText('ACCOUNT')).toBeTruthy();
+    expect(within(screen.getByTestId('settings-logout')).getByText('Log out')).toBeTruthy();
   });
 });
 

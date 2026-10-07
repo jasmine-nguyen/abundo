@@ -981,7 +981,7 @@ export interface SettingsScreenData {
 
 /**
  * The two Settings rows that read server data — the categories count and whether loan
- * facts are set. Pay-cycle + alerts + the profile identity stay on the old store / auth.
+ * facts are set. Pay-cycle + the profile identity stay on the old store / auth.
  * The rules COUNT also stays on the store: WHIT-195 migrated the Rules *screen* onto the
  * ['rules'] query, but the rule writes double-write the store too, so Settings' count
  * stays consistent without coupling a third query into this composite's loading state.

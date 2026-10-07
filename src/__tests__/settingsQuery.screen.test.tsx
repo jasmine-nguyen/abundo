@@ -14,8 +14,7 @@
 //                  store can't leak a status across describes.
 //   fake server  — each describe seeds /categories, /loanfacts and /rules to its own fixtures;
 //                  /paycycle answers the server default (14 days).
-//   ../context   — one stub; the screen reads only alerts/setSheet off context (rules AND cycleName
-//                  are read from the query hooks, so both stubbed fields are vestigial).
+//   ../context   — one stub; the screen reads only setSheet off context.
 //   expo-router  — the shared fake; routerSpies.replace + mockSignOut so the WHIT-198 log-out-mid-outage test can assert.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { routerSpies, resetRouter } from './support/routerMock';
@@ -36,15 +35,8 @@ jest.mock('../auth', () => ({
 }));
 import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 
-// Real selectors (loanFactsReady) + composite deps; stub only the store-backed client-state rows.
-// `rules` and `cycleName` here are vestigial — the screen reads them from the query hooks, not context.
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({ rules: [{ id: 'r1' }], cycleName: () => 'Fortnightly', alerts: true, toggleAlerts: jest.fn(), setSheet: jest.fn() }),
-  };
-});
+// Real selectors (loanFactsReady) + composite deps; stub only setSheet.
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ setSheet: jest.fn() })));
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
@@ -346,7 +338,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
 //   [A7] one row errored while the OTHER is still loading → the isLoading gate wins, rows
 //        show "…" (never a premature "—");
 //   [A8] hook-level: BOTH per-row error flags true on a 500, then BOTH false after success;
-//   [A9] the profile / Automation rules / Pay cycle / alerts / Log out rows stay rendered
+//   [A9] the profile / Automation rules / Pay cycle / Log out rows stay rendered
 //        + the Log out affordance stays usable DURING a categories outage (why there is no
 //        full-screen error card).
 describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
