@@ -30,7 +30,7 @@ to the implementer. The build won't start without this block. Keep them fast
 and deterministic.
 
 The lines run at the same time. Join steps that must happen in order with `&&` on
-one line, or add a `# one at a time` line to the block to run them in order.
+one line.
 
 ```checks
 <typecheck command, e.g. npx tsc --noEmit>

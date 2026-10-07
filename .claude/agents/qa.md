@@ -206,7 +206,6 @@ git diff HEAD -- <your test files> > <patch path you were given>
 - `real_bugs` — one line each, worst first: `file:line — trigger → wrong outcome`.
   Only verified **real bugs**; anything here sends the change back for rework.
 - `manual_checks` — the Manual checklist items, one per line.
-- `patch_written` — true if you saved a patch.
 - `test_command` — one shell command, run from the repo root of the main checkout,
   that runs only the test files in your patch (e.g. `npx jest path/to/new.test.ts`).
   The pipeline runs it before it ships instead of the whole suite. Empty if you
