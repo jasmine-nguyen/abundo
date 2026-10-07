@@ -21,10 +21,7 @@ import { APPLY_RULES_MAX_WRITES } from '../context';
 import { ApiError } from '../apiError';
 
 let mockState: AppContext;
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => mockState };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { resetAuth } from './support/authMock';

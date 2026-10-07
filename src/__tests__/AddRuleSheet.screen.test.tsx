@@ -10,10 +10,7 @@ import type { AppContext } from '../context';
 import { C } from '../theme';
 
 let mockState: AppContext;
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => mockState };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { queryClient } from '../queryClient';
