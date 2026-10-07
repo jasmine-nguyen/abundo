@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmtExact, fmtSignedExact, tint, PRESSED } from '../../src/theme';
 import { formatDayMonth } from '../../src/dateutil';
@@ -181,9 +181,8 @@ export default function Budgets() {
       right={<HeaderIconButton icon="plus" accessibilityLabel="Add budget" onPress={() => router.push('/budget/pick')} />}
       // Always fill the viewport, so a short budget list is still a pull-to-refresh target.
       contentContainerStyle={styles.fill}
-      refreshControl={(headerHeight) => (
-        <RefreshControl refreshing={pulling && !showSpinner} onRefresh={onRefresh} tintColor={C.accent} progressViewOffset={headerHeight} />
-      )}
+      refreshing={pulling && !showSpinner}
+      onRefresh={onRefresh}
     >
       {showSpinner ? (
         <>

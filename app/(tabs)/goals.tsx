@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter, useFocusEffect, useIsFocused } from 'expo-router';
 import { C, FONT, fmt, tint } from '../../src/theme';
 import { Glyph } from '../../src/icons';
@@ -104,9 +104,8 @@ export default function Goals() {
       right={<HeaderIconButton testID="add-goal" icon="plus" accessibilityLabel="Add goal" onPress={() => router.push('/goal/edit')} />}
       // Always fill the viewport, so a short goal list is still a pull-to-refresh target.
       contentContainerStyle={styles.fill}
-      refreshControl={(headerHeight) => (
-        <RefreshControl refreshing={pulling && !showSpinner} onRefresh={onRefresh} tintColor={C.accent} progressViewOffset={headerHeight} />
-      )}
+      refreshing={pulling && !showSpinner}
+      onRefresh={onRefresh}
     >
       {showSpinner ? (
         <View testID="goals-loading" style={styles.centered}>
