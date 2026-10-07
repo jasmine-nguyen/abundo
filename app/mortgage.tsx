@@ -54,20 +54,12 @@ export default function Mortgage() {
           ) : loanFactsError ? (
             // WHIT-819: errors come before "not set up" — a failed facts read falls back to
             // empty facts, which must never look like an unset loan.
-            <>
-              <Text style={styles.heroEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
-              <Text style={[styles.heroSetupBody, { marginTop: 6 }]} accessibilityLiveRegion="polite">Couldn't load your loan details.</Text>
-              <RetryButton onPress={() => refetch()} label="Retry loading your loan details" testID="hero-facts-retry" style={styles.heroSetupBtn} textStyle={styles.heroSetupBtnText} />
-            </>
+            <HeroRetry text="Couldn't load your loan details." label="Retry loading your loan details" testID="hero-facts-retry" onRetry={refetch} />
           ) : homeLoanError ? (
             // WHIT-121 (#2), reordered by WHIT-819: the balance read FAILED. Show an error +
             // Retry whether or not facts are set, instead of a bare "—" or the waiting copy.
             // Mirrors milestone.tsx's homeLoanError hero branch.
-            <>
-              <Text style={styles.heroEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
-              <Text style={[styles.heroSetupBody, { marginTop: 6 }]} accessibilityLiveRegion="polite">Couldn't load your balance.</Text>
-              <RetryButton onPress={() => refetch()} label="Retry loading your balance" testID="hero-balance-retry" style={styles.heroSetupBtn} textStyle={styles.heroSetupBtnText} />
-            </>
+            <HeroRetry text="Couldn't load your balance." label="Retry loading your balance" testID="hero-balance-retry" onRetry={refetch} />
           ) : !loanFactsLoaded ? (
             // WHIT-819: facts still loading — a quiet placeholder, no set-up copy.
             <>
@@ -286,6 +278,16 @@ export default function Mortgage() {
         </EquityCard>
       </ScrollView>
     </View>
+  );
+}
+
+function HeroRetry({ text, label, testID, onRetry }: { text: string; label: string; testID: string; onRetry: () => void }) {
+  return (
+    <>
+      <Text style={styles.heroEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
+      <Text style={[styles.heroSetupBody, { marginTop: 6 }]} accessibilityLiveRegion="polite">{text}</Text>
+      <RetryButton onPress={() => onRetry()} label={label} testID={testID} style={styles.heroSetupBtn} textStyle={styles.heroSetupBtnText} />
+    </>
   );
 }
 
