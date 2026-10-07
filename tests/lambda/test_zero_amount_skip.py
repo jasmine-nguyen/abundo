@@ -6,18 +6,8 @@ reprocess sweep) with the webhook's REAL TransactionRepository over a FakeTable.
 """
 
 from _deadletter_fakes import _failed_keys, _txn_rows
-from functools import partial
 
-from _budget_endpoint_fakes import _FakeCategoryRepo
-from _rule_ingest_fakes import reprocess_failed
-
-
-class _NoRules:
-    def list_rules(self):
-        return []
-
-
-_Categories = partial(_FakeCategoryRepo, [{"id": "subscriptions"}])
+from _rule_ingest_fakes import FakeRuleStore, SubscriptionCategories, reprocess_failed
 
 
 _MAPPED_ACCOUNT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
@@ -33,8 +23,8 @@ def _raw(txn_id, *, amount, description="ANTHROPIC* CLAUDE SUB", pending=False):
 
 def test_a_zero_dollar_row_from_the_bank_is_dropped_and_real_charges_are_stored(lam, repo, monkeypatch):
     handler = lam.handler
-    monkeypatch.setattr(handler, "RuleRepository", _NoRules)
-    monkeypatch.setattr(handler, "CategoryRepository", _Categories)
+    monkeypatch.setattr(handler, "RuleRepository", FakeRuleStore)
+    monkeypatch.setattr(handler, "CategoryRepository", SubscriptionCategories)
 
     seen_by_rules = []
     real_apply = handler.rule_ingest.apply

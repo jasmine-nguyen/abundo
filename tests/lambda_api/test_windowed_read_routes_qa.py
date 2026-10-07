@@ -9,6 +9,7 @@ import json
 
 import pytest
 from _budget_endpoint_fakes import _FakeCategoryRepo
+from _rule_ingest_fakes import FakeRuleStore
 from _transaction_range_fakes import _AccountPagesTransactionRepo, _EndlessTransactionRepo
 
 
@@ -26,11 +27,6 @@ def _unfiled_row(account_id, transaction_id):
             "category": None, "amount": -1, "description": "shop"}
 
 
-class _RuleRepo:
-    def list_rules(self):
-        return []
-
-
 def _routes(handler):
     # Every route whose only transaction read is the windowed one.
     return {
@@ -38,7 +34,7 @@ def _routes(handler):
         "uncategorized_count": lambda repo: handler.get_uncategorized_count(repo, _FakeCategoryRepo()),
         "uncategorized_merchants": lambda repo: handler.get_uncategorized_merchants(repo, _FakeCategoryRepo()),
         "filing_suggestions": lambda repo: handler.get_filing_suggestions(
-            repo, _FakeCategoryRepo(), _RuleRepo()),
+            repo, _FakeCategoryRepo(), FakeRuleStore()),
     }
 
 

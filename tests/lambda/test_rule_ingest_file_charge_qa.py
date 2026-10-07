@@ -7,14 +7,7 @@ the rest of what the per-row path must still do (stamp, keep-out-of-budget, disa
 from functools import partial
 
 from _feed_fakes import FakeCategoryRepo
-
-
-class _Store:
-    def __init__(self, rules):
-        self._rules = [dict(rule) for rule in rules]
-
-    def list_rules(self):
-        return [dict(rule) for rule in self._rules]
+from _rule_ingest_fakes import FakeRuleStore
 
 
 _Cats = partial(FakeCategoryRepo, category_ids=["groceries", "petrol"])
@@ -31,7 +24,7 @@ def _charge(txn_id="t1", description="COLES 123 RICHMOND"):
 
 
 def _file(lam, charge, rules):
-    book = lam.rule_ingest.load_rules(_Store(rules), _Cats())
+    book = lam.rule_ingest.load_rules(FakeRuleStore(rules), _Cats())
     book.file_charges([charge], None, counts_to_budget=lam.rule_ingest.counts_to_budget)
     return book
 
