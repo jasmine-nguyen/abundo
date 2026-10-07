@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from _dynamo_fakes import FakeTable
+from _balance_fakes import feed_watch_repo
 from _transaction_range_fakes import _EndlessTransactionRepo, _QueuedTransactionRepo
 
 WESTPAC = "westpac-altitude-qantas-black"
@@ -30,8 +30,7 @@ def test_feed_stall_read_stops_at_its_own_20_page_limit(handler):
 def test_feed_stall_read_is_open_ended_from_the_start_date(handler):
     # [A7] reads from start_date with no end date, at MAX_PAGE_SIZE, on the given account.
     repo = _QueuedTransactionRepo([{"transaction_id": "t1", "date": "2026-09-22"}])
-    watch_repo = handler.FeedWatchRepository()
-    watch_repo._table = FakeTable()
+    watch_repo = feed_watch_repo(handler)
 
     _check(handler, repo, watch_repo)
 
