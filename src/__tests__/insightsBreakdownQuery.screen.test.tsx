@@ -18,26 +18,10 @@ import { installFakeServer } from './support/fakeServer';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 
-// Stub only useAppContext (the AI card); keep the real categoryBreakdown/cycleClock/
-// toCategory that ../queries and the screen import. The AI actions are single stable fns (as the
-// real context's useCallbacks are), so the stub itself never rebuilds the screen's focus callback.
-const mockRefreshAiInsights = jest.fn();
-const mockGenerateAiInsights = jest.fn();
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({
-      aiInsights: null,
-      aiInsightsLoading: false,
-      aiInsightsError: false,
-      refreshAiInsights: mockRefreshAiInsights,
-      generateAiInsights: mockGenerateAiInsights,
-      loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null },
-      homeLoan: { balance: null, asOf: null },
-    }),
-  };
-});
+// The shared AI actions are single stable fns (as the real context's useCallbacks are), so the
+// stub itself never rebuilds the screen's focus callback.
+jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
+import { resetAi, refreshAiInsights } from './support/insightsScreen';
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
@@ -57,8 +41,7 @@ function renderInsights(client = makeClient()) {
 
 beforeEach(() => {
   resetAuth();
-  mockRefreshAiInsights.mockClear();
-  mockGenerateAiInsights.mockClear();
+  resetAi();
   server.seed('/breakdown', BREAKDOWN);
   server.seed('/categories', CATS);
   server.seed('/paycycle', PAY_CYCLE);
@@ -133,7 +116,7 @@ it('the AI summary read fires once per focus, not on every redraw (WHIT-668)', a
   expect(await screen.findByText('LAST PAY CYCLE')).toBeTruthy();
   fireEvent.press(screen.getByTestId('insights-cycle-current'));
   expect(await screen.findByText('THIS PAY CYCLE')).toBeTruthy();
-  expect(mockRefreshAiInsights).toHaveBeenCalledTimes(1);
+  expect(refreshAiInsights).toHaveBeenCalledTimes(1);
 });
 
 // --- WHIT-68: historical look-back selector ----------------------------------

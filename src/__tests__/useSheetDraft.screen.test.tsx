@@ -9,9 +9,7 @@ import { renderHook, act } from '@testing-library/react-native';
 const mockStore = new Map<string, unknown>();
 const mockReadSheetDraft = jest.fn((key: string): unknown => mockStore.get(key));
 const mockWriteSheetDraft = jest.fn((key: string, value: unknown) => { mockStore.set(key, value); });
-jest.mock('../context', () => ({
-  useAppContext: () => ({ readSheetDraft: mockReadSheetDraft, writeSheetDraft: mockWriteSheetDraft }),
-}));
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ readSheetDraft: mockReadSheetDraft, writeSheetDraft: mockWriteSheetDraft })));
 
 import { useSheetDraft } from '../hooks/useSheetDraft';
 

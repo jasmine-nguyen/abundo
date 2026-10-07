@@ -37,10 +37,7 @@ let balances: AccountBalance[];
 let transactions: Transaction[];
 
 // Keep accountSummaries (the real account-name resolver) — only the writers are stubbed.
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ saveGoal: mockSaveGoal, deleteGoal: mockDeleteGoal, showToast: mockShowToast }) };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ saveGoal: mockSaveGoal, deleteGoal: mockDeleteGoal, showToast: mockShowToast })));
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 

@@ -13,13 +13,7 @@ import { seedGoal } from './support/goalsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
 
 // One stub for every screen here: each reads only the writers it needs off it.
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({ saveLoanFacts: jest.fn(), saveGoal: jest.fn(), deleteGoal: jest.fn(), showToast: jest.fn() }),
-  };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ saveLoanFacts: jest.fn(), saveGoal: jest.fn(), deleteGoal: jest.fn(), showToast: jest.fn() })));
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 

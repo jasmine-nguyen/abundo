@@ -14,10 +14,7 @@ import { PRESSED } from '../theme';
 
 // WHIT-192: the row reads only openPicker from the store; category is a prop.
 let mockState: { openPicker: jest.Mock; category: (id: string | null) => Category | undefined };
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => mockState };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
 
 // WHIT-272: the row now calls useRouter for the detail-page chevron. Stub it so the
 // direct-render row still mounts. The chevron uses a STATIC style, so the "exactly one

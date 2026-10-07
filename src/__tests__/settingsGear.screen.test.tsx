@@ -25,17 +25,11 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 // Real selectors (budgetViews / transactionGroups / accountSummaries / categoryBreakdown / …),
 // benign useAppContext covering every slice the five screens read.
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({
-      openMultiPicker: jest.fn(), showToast: jest.fn(), openGoalBalance: jest.fn(),
-      setSheet: jest.fn(), rules: [], cycleName: () => 'Fortnightly',
-      aiInsights: null, aiInsightsError: false, aiInsightsLoading: false, refreshAiInsights: jest.fn(),
-    }),
-  };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({
+  openMultiPicker: jest.fn(), showToast: jest.fn(), openGoalBalance: jest.fn(),
+  setSheet: jest.fn(), rules: [], cycleName: () => 'Fortnightly',
+  aiInsights: null, aiInsightsError: false, aiInsightsLoading: false, refreshAiInsights: jest.fn(),
+})));
 
 import { SettingsButton } from '../components/SettingsButton';
 import { ScrollChromeHeader } from '../motion/ScrollChromeHeader';

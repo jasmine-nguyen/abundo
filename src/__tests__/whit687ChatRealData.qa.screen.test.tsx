@@ -13,12 +13,9 @@ import { resetAuth } from './support/authMock';
 let mockAi: { summary: string; suggestions: string[]; generated_at: string } | null = null;
 const mockGenerate = jest.fn();
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => ({
-  ...(jest.requireActual('../context') as object),
-  useAppContext: () => ({
-    aiInsights: mockAi, aiInsightsLoading: false, aiInsightsError: false, generateAiInsights: mockGenerate,
-  }),
-}));
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({
+  aiInsights: mockAi, aiInsightsLoading: false, aiInsightsError: false, generateAiInsights: mockGenerate,
+})));
 jest.mock('../chat/ChatContext', () => ({ useChat: () => ({ openChat: jest.fn() }) }));
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 

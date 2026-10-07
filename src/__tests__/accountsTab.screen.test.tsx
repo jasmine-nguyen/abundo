@@ -29,13 +29,7 @@ const colorOf = (node: unknown) => (StyleSheet.flatten((node as { props: { style
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 const mockShowToast = jest.fn();
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({ showToast: mockShowToast }),
-  };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ showToast: mockShowToast })));
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 

@@ -11,10 +11,7 @@ import type { AppContext, LoanFacts, LoanFactsInput } from '../context';
 type LoanFormState = Pick<AppContext, 'saveLoanFacts' | 'showToast'>;
 
 let mockState: LoanFormState;
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => mockState };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
