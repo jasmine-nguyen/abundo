@@ -4,15 +4,7 @@ banksync.counts_to_budget resolve as the deployed webhook resolves them.
 """
 
 from _feed_fakes import FakeCategoryRepo
-from _rule_ingest_fakes import apply_rules
-
-
-class _Store:
-    def __init__(self, rules):
-        self._rules = [dict(rule) for rule in rules]
-
-    def list_rules(self):
-        return [dict(rule) for rule in self._rules]
+from _rule_ingest_fakes import FakeRuleStore, apply_rules
 
 
 def _rule(value, category_id="groceries", *, budget_excluded=False, rule_id=None):
@@ -28,7 +20,7 @@ def _charge(txn_id="t1", description="COLES 123 RICHMOND", category=None,
 
 def test_sets_budget_excluded_when_the_winning_rule_excludes(lam):
     charge = _charge()
-    apply_rules(lam.rule_ingest, [charge], rule_repo=_Store([_rule("COLES", budget_excluded=True)]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([_rule("COLES", budget_excluded=True)]),
                           category_repo=FakeCategoryRepo(["groceries"]))
     assert charge["category"] == "groceries"
     assert charge["budget_excluded"] is True
@@ -38,7 +30,7 @@ def test_leaves_the_flag_absent_when_the_rule_does_not_exclude(lam):
     # FAIL-ON-REVERT: setting charge["budget_excluded"] unconditionally would add False here,
     # breaking the sparse-storage convention (a cleared flag reads back ABSENT).
     charge = _charge()
-    apply_rules(lam.rule_ingest, [charge], rule_repo=_Store([_rule("COLES", budget_excluded=False)]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([_rule("COLES", budget_excluded=False)]),
                           category_repo=FakeCategoryRepo(["groceries"]))
     assert charge["category"] == "groceries"
     assert "budget_excluded" not in charge
@@ -49,7 +41,7 @@ def test_does_not_exclude_when_matching_rules_disagree(lam):
     # The exclusion must not land on a charge no rule got to file.
     charge = _charge(description="COLES ONLINE")
     apply_rules(lam.rule_ingest, [charge],
-        rule_repo=_Store([_rule("COLES", "groceries", budget_excluded=True, rule_id="a"),
+        rule_repo=FakeRuleStore([_rule("COLES", "groceries", budget_excluded=True, rule_id="a"),
                           _rule("ONLINE", "coffee", budget_excluded=True, rule_id="b")]),
         category_repo=FakeCategoryRepo(["groceries", "coffee"]))
     assert charge["category"] is None

@@ -9,12 +9,7 @@ from _deadletter_fakes import _failed_keys, _txn_rows
 from functools import partial
 
 from _budget_endpoint_fakes import _FakeCategoryRepo
-from _rule_ingest_fakes import reprocess_failed
-
-
-class _NoRules:
-    def list_rules(self):
-        return []
+from _rule_ingest_fakes import FakeRuleStore, reprocess_failed
 
 
 _Categories = partial(_FakeCategoryRepo, [{"id": "subscriptions"}])
@@ -33,7 +28,7 @@ def _raw(txn_id, *, amount, description="ANTHROPIC* CLAUDE SUB", pending=False):
 
 def test_a_zero_dollar_row_from_the_bank_is_dropped_and_real_charges_are_stored(lam, repo, monkeypatch):
     handler = lam.handler
-    monkeypatch.setattr(handler, "RuleRepository", _NoRules)
+    monkeypatch.setattr(handler, "RuleRepository", FakeRuleStore)
     monkeypatch.setattr(handler, "CategoryRepository", _Categories)
 
     seen_by_rules = []

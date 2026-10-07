@@ -9,11 +9,7 @@ the webhook repository.
 from functools import partial
 
 from _budget_endpoint_fakes import _FakeCategoryRepo
-
-
-class _NoRules:
-    def list_rules(self):
-        return []
+from _rule_ingest_fakes import FakeRuleStore
 
 
 _Categories = partial(_FakeCategoryRepo, [{"id": "subscriptions"}])
@@ -37,7 +33,7 @@ def _stored_charge(repo, txn_id):
 
 def test_a_deleted_charge_resent_by_the_bank_is_not_saved_again(lam, repo, monkeypatch):
     handler = lam.handler
-    monkeypatch.setattr(handler, "RuleRepository", _NoRules)
+    monkeypatch.setattr(handler, "RuleRepository", FakeRuleStore)
     monkeypatch.setattr(handler, "CategoryRepository", _Categories)
 
     seen_by_rules = []

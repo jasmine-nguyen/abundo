@@ -4,7 +4,7 @@ from functools import partial
 
 from _deadletter_fakes import _failed_keys, _txn_rows
 from _feed_fakes import FakeCategoryRepo
-from _rule_ingest_fakes import apply_rules
+from _rule_ingest_fakes import KKV_RULE, FakeRuleStore, apply_rules
 
 _MAPPED_ACCOUNT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
 
@@ -19,17 +19,6 @@ def _raw_row(txn_id):
     }
 
 
-class _BrokenRuleStore:
-    def list_rules(self):
-        raise RuntimeError("rules table unavailable")
-
-
-class _RuleStore:
-    def list_rules(self):
-        return [{"id": "r-kkv", "field": "description", "operator": "contains",
-                 "value": "KKV", "category_id": "groceries"}]
-
-
 _Cats = partial(FakeCategoryRepo, category_ids=["groceries"])
 
 
@@ -40,7 +29,7 @@ def test_reprocess_with_an_unreadable_rule_book_still_recovers_every_row_unfiled
     repo.save_failed_transactions([_raw_row("r1"), _raw_row("r2")])
 
     summary = lam.reprocess.reprocess_failed(
-        repo, rule_repo=_BrokenRuleStore(), category_repo=_Cats())
+        repo, rule_repo=FakeRuleStore(error=True), category_repo=_Cats())
 
     assert summary == {"reprocessed": 2, "skipped": 0, "errors": 0, "dropped_zero": 0}
     rows = _txn_rows(repo)
@@ -55,7 +44,7 @@ def test_apply_still_returns_rows_and_the_books_taxonomy_check(lam):
     charge = {"transaction_id": "t1", "account_id": "up-spending",
               "description": "SQ *KKV INTERNATIONAL PTY", "category": None, "counts_to_budget": True}
 
-    rows, is_unfiled = apply_rules(lam.rule_ingest, [charge], rule_repo=_RuleStore(), category_repo=_Cats())
+    rows, is_unfiled = apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([KKV_RULE]), category_repo=_Cats())
 
     assert rows[0]["category"] == "groceries"
     assert is_unfiled("FOOD_AND_DRINK") is True
@@ -67,7 +56,7 @@ def test_apply_with_an_unreadable_rule_book_returns_no_taxonomy_check(lam):
     charge = {"transaction_id": "t1", "account_id": "up-spending",
               "description": "SQ *KKV INTERNATIONAL PTY", "category": None, "counts_to_budget": True}
 
-    rows, is_unfiled = apply_rules(lam.rule_ingest, [charge], rule_repo=_BrokenRuleStore(), category_repo=_Cats())
+    rows, is_unfiled = apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore(error=True), category_repo=_Cats())
 
     assert rows[0]["category"] is None
     assert is_unfiled is None

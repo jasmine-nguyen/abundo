@@ -5,14 +5,10 @@ REAL process_transaction over the webhook's REAL TransactionRepository and a Fak
 from functools import partial
 
 from _budget_endpoint_fakes import _FakeCategoryRepo
+from _rule_ingest_fakes import FakeRuleStore
 
 _MAPPED_ACCOUNT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
 _ACCOUNT_PK = "ACCOUNT#anz-rewards-black-visa"
-
-
-class _NoRules:
-    def list_rules(self):
-        return []
 
 
 _Categories = partial(_FakeCategoryRepo, [{"id": "subscriptions"}])
@@ -31,7 +27,7 @@ def _charge_rows(repo):
 
 
 def _setup(lam, monkeypatch):
-    monkeypatch.setattr(lam.handler, "RuleRepository", _NoRules)
+    monkeypatch.setattr(lam.handler, "RuleRepository", FakeRuleStore)
     monkeypatch.setattr(lam.handler, "CategoryRepository", _Categories)
     return lam.handler
 

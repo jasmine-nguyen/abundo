@@ -26,6 +26,9 @@ class FakeRuleStore:
         return [dict(rule) for rule in self._rules]
 
 
+KKV_RULE = {"id": "r-kkv", "field": "description", "operator": "contains",
+            "value": "KKV", "category_id": "groceries"}
+
 FakePaycycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-01-07")
 
 

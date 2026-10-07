@@ -3,14 +3,7 @@
 from functools import partial
 
 from _feed_fakes import FakeCategoryRepo
-
-
-class _Store:
-    def __init__(self, rules):
-        self._rules = [dict(rule) for rule in rules]
-
-    def list_rules(self):
-        return [dict(rule) for rule in self._rules]
+from _rule_ingest_fakes import FakeRuleStore
 
 
 _Cats = partial(FakeCategoryRepo, category_ids=["groceries", "petrol"])
@@ -27,7 +20,7 @@ def _charge():
 
 
 def test_load_rules_returns_the_rule_book_that_files_a_charge(lam):
-    book = lam.rule_ingest.load_rules(_Store([_coles_rule()]), _Cats())
+    book = lam.rule_ingest.load_rules(FakeRuleStore([_coles_rule()]), _Cats())
 
     assert isinstance(book, lam.rule_ingest.RuleBook)
     assert book.is_unfiled("NOT_A_CATEGORY") is True and book.is_unfiled("groceries") is False
