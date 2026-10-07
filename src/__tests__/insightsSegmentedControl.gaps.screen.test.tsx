@@ -7,7 +7,6 @@
 // theme-token code scan instead.
 import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { styleOf } from './support/layout';
@@ -18,7 +17,6 @@ describe('SegmentedControl — value matches no option', () => {
     { value: 'spending' as const, label: 'Spending', testID: 'seg-spending', activeTint: 'rgba(1,2,3,.16)', activeTextColor: '#f7768e' },
     { value: 'earning' as const, label: 'Earning', testID: 'seg-earning', activeTint: 'rgba(4,5,6,.16)', activeTextColor: '#2ac3de' },
   ];
-  const textStyleOf = (label: string) => StyleSheet.flatten(screen.getByText(label).props.style);
 
   it('[A9] a value matching no option leaves every segment unselected and untinted', () => {
     // A value that matches no option (a cleared/unknown side) must render as a blank — no crash.
@@ -28,7 +26,7 @@ describe('SegmentedControl — value matches no option', () => {
     expect(styleOf(screen.getByTestId('seg-spending')).backgroundColor).toBeUndefined();
     expect(styleOf(screen.getByTestId('seg-earning')).backgroundColor).toBeUndefined();
     // no segment took the bold active weight
-    expect(textStyleOf('Spending').fontWeight).toBe('600');
-    expect(textStyleOf('Earning').fontWeight).toBe('600');
+    expect(styleOf(screen.getByText('Spending')).fontWeight).toBe('600');
+    expect(styleOf(screen.getByText('Earning')).fontWeight).toBe('600');
   });
 });

@@ -6,7 +6,6 @@
 // the component in isolation.
 import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { styleOf } from './support/layout';
@@ -22,7 +21,6 @@ const STR_OPTIONS = [
   { value: 'earning' as const, label: 'Earning', testID: 'seg-earning', activeTint: 'rgba(4,5,6,.16)', activeTextColor: '#2ac3de' },
 ];
 
-const textStyleOf = (label: string) => StyleSheet.flatten(screen.getByText(label).props.style);
 
 describe('SegmentedControl', () => {
   it('renders every option by label and testID', () => {
@@ -57,10 +55,10 @@ describe('SegmentedControl', () => {
     render(<SegmentedControl value="earning" onChange={jest.fn()} options={STR_OPTIONS} />);
     // active segment: earning → its tint + teal bold text
     expect(styleOf(screen.getByTestId('seg-earning')).backgroundColor).toBe('rgba(4,5,6,.16)');
-    expect(textStyleOf('Earning').color).toBe('#2ac3de');
-    expect(textStyleOf('Earning').fontWeight).toBe('700');
+    expect(styleOf(screen.getByText('Earning')).color).toBe('#2ac3de');
+    expect(styleOf(screen.getByText('Earning')).fontWeight).toBe('700');
     // inactive segment: no active tint, muted default weight
     expect(styleOf(screen.getByTestId('seg-spending')).backgroundColor).toBeUndefined();
-    expect(textStyleOf('Spending').fontWeight).toBe('600');
+    expect(styleOf(screen.getByText('Spending')).fontWeight).toBe('600');
   });
 });

@@ -1,7 +1,6 @@
 // WHIT-771 QA — Insights now renders ListStates: 60px vertical room and the brighter 14.5 textMid
 // copy, with the shared Retry chip. Retry still refetches the failed read.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { StyleSheet } from 'react-native';
 import { screen, fireEvent } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, useTestQueryClient, settle } from './support/renderWithQueries';
@@ -32,7 +31,7 @@ describe('Insights error block matches the other tabs', () => {
     server.fail('/paycycle', 500);
     await renderInsights();
     expect(styleOf(screen.getByTestId('insights-error'))).toMatchObject({ paddingVertical: 60 });
-    const copy = StyleSheet.flatten(screen.getByText("Couldn't load your spending.").props.style);
+    const copy = styleOf(screen.getByText("Couldn't load your spending."));
     expect(copy).toMatchObject({ fontSize: 14.5, color: C.textMid });
     expect(styleOf(screen.getByTestId('insights-retry'))).toMatchObject({ paddingVertical: 10, paddingHorizontal: 22 });
   });
