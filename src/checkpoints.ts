@@ -4,7 +4,8 @@
 // shared by app/goal/edit.tsx and its tests. Kept in sync with the server constants by the
 // twin-guard tests/lambda_api/test_goal_checkpoint_cap_sync.py.
 
-import type { GoalCheckpointInput, GoalRecord } from './api';
+import type { GoalCheckpoint, GoalCheckpointInput, GoalRecord } from './api';
+import type { BalanceGoalView } from './context';
 
 export const CHECKPOINT_MAX_COUNT = 20;
 export const CHECKPOINT_LABEL_MAX_LEN = 100;
@@ -77,4 +78,32 @@ export function checkpointsError(
     }
   }
   return null;
+}
+
+export interface CheckpointProgressRow {
+  checkpoint: GoalCheckpoint;
+  reached: boolean | null;
+  toGo: number | null;
+}
+
+// WHIT-812: per checkpoint, reached or how much is left, plus the next one to reach. Indexes
+// view.checkpointReached by the same stored order balanceGoalView maps over (never re-sorted), so
+// a row's reached mark always matches the bar. toGo rounds up so a sub-dollar gap never reads "$0".
+export function checkpointProgress(
+  checkpoints: GoalCheckpoint[],
+  direction: Direction,
+  view: Pick<BalanceGoalView, 'currentAmount' | 'checkpointReached'>,
+): { rows: CheckpointProgressRow[]; next: CheckpointProgressRow | null; allReached: boolean } {
+  const current = view.currentAmount;
+  const rows = checkpoints.map((checkpoint, i) => {
+    const reached = view.checkpointReached?.[i] ?? null;
+    if (current == null || reached) return { checkpoint, reached, toGo: null };
+    const gap = direction === 'grow' ? checkpoint.amount - current : current - checkpoint.amount;
+    return { checkpoint, reached, toGo: Math.ceil(gap) };
+  });
+  return {
+    rows,
+    next: rows.find((row) => row.reached === false) ?? null,
+    allReached: rows.length > 0 && rows.every((row) => row.reached === true),
+  };
 }

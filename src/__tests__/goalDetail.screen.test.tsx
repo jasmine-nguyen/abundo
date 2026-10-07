@@ -16,7 +16,8 @@ import type { GoalRecord } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule());
+const mockOpenGoalBalance = jest.fn();
+jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule(() => mockOpenGoalBalance));
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Goals from '../../app/(tabs)/goals';
@@ -36,6 +37,7 @@ beforeEach(() => {
   resetRouter();
   resetAuth();
   pinToday(GOAL_TODAY);
+  mockOpenGoalBalance.mockClear();
   seedHubWith(server, { goals: [GOAL], balances: { 'up-spending': 5000 } });
 });
 afterEach(() => { jest.useRealTimers(); });
@@ -74,5 +76,38 @@ describe('goal page', () => {
     expect(screen.queryByText(/Delete/)).toBeNull();
     fireEvent.press(screen.getByTestId('goal-detail-edit'));
     expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit?id=ef%201');
+  });
+});
+
+// WHIT-812 — the next milestone, what's left on each, and Update balance for a manual goal.
+// A manually tracked savings goal with $2,999.50 saved: the first milestone is reached, the next two
+// are $2,001 (rounded up) and $4,501 away.
+const BUFFER: GoalRecord = {
+  id: 'buf', name: 'Buffer', icon: 'wallet', direction: 'grow', target_amount: 10000,
+  account_id: null, manual_balance: 2999.5, manual_as_of: '2026-07-01', ...GOAL_START, start_balance: 0,
+  checkpoints: [
+    { id: 'c1', label: 'Small buffer', amount: 2000 },
+    { id: 'c2', label: 'Big buffer', amount: 5000 },
+    { id: 'c3', label: 'Nearly there', amount: 7500 },
+  ],
+};
+
+describe('goal page milestones', () => {
+  it('shows the next milestone, what is left on each, and lets a manual goal update its balance', async () => {
+    seedHubWith(server, { goals: [BUFFER] });
+    setParams({ id: 'buf' });
+    await renderWithQueries(<GoalDetail />);
+
+    expect(screen.getByTestId('goal-detail-next')).toHaveTextContent('Next: Big buffer · $2,001 to go');
+    expect(screen.queryByTestId('goal-checkpoints-buf')).toBeNull();
+
+    expect(screen.getByTestId('goal-milestone-reached-c1')).toBeTruthy();
+    expect(screen.queryByTestId('goal-milestone-togo-c1')).toBeNull();
+    expect(within(screen.getByTestId('goal-milestone-c2')).getByTestId('goal-milestone-togo-c2')).toHaveTextContent('$2,001 to go');
+    expect(within(screen.getByTestId('goal-milestone-c3')).getByTestId('goal-milestone-togo-c3')).toHaveTextContent('$4,501 to go');
+
+    expect(screen.getByText('Balance as of 1 Jul 2026')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('goal-balance-buf'));
+    expect(mockOpenGoalBalance).toHaveBeenCalledWith('buf');
   });
 });
