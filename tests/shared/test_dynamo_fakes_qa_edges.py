@@ -397,11 +397,11 @@ def test_config_item_table_seeds_one_config_item_or_none(config_item_table):
 
 # --- [A12] the folder-built _REIMPORT sheds every shared/ module ---------------------------
 
-def test_the_shared_fixture_sheds_every_shared_module_but_the_ssm_stub(request):
+def test_the_shared_fixture_sheds_every_shared_module(request):
     # [A12] Replaces the deleted [A19] guard (test_chart_ramp_parser_edges.py). Plant a stale
-    # module under every shared/ name; the `shared` fixture must shed each one (ssm excepted —
-    # that name is _boto_stubs' fake). FAIL-ON-REVERT: drop any name from conftest._REIMPORT.
-    stems = sorted(path.stem for path in _SHARED_DIR.glob("*.py") if path.stem != "ssm")
+    # module under every shared/ name; the `shared` fixture must shed each one.
+    # FAIL-ON-REVERT: drop any name from conftest._REIMPORT.
+    stems = sorted(path.stem for path in _SHARED_DIR.glob("*.py"))
     stale = {stem: type(sys)(f"stale_{stem}") for stem in stems}
     originals = {stem: sys.modules.get(stem) for stem in stems}
 

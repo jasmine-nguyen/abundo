@@ -6,16 +6,15 @@ process*, which is not trivial because the handler imports two modules that only
 exist inside the deployed Lambda layer:
 
     from constants import (...)   # real -> shared/constants.py
-    from ssm import get_param     # shared/ssm.py, which imports boto3
+    from api_key import ...       # shared/api_key.py, which imports boto3
 
 We do two things, once, at collection time (before the handler is imported):
 
 1. Put ``shared/`` and ``lambda_sync_trigger/`` on sys.path so ``import
    constants`` and ``import handler`` resolve the same way they do in the layer.
-2. Install the shared fakes: a fake ``ssm`` module so importing the handler does
-   NOT drag in boto3 (the real ssm.get_param talks to AWS; tests never want that),
-   plus AWS_REGION / TABLE_NAME and a fake boto3 for the repositories the pending
-   mirror (WHIT-662) imports.
+2. Install the shared fakes: AWS_REGION / TABLE_NAME and a fake boto3, so the
+   key read never talks to AWS and the repositories the pending mirror (WHIT-662)
+   imports load.
 
 This must be plain module-level code (not a fixture): the handler's top-level
 imports run during collection, before any fixture body executes, so a fixture
@@ -48,7 +47,7 @@ sys.path.insert(0, str(_REPO_ROOT / "lambda_sync_trigger"))
 install_import_satisfiers()
 
 _SHARED_DIR = str(_REPO_ROOT / "shared")
-_SHARED_MODULES = {path.stem for path in pathlib.Path(_SHARED_DIR).glob("*.py")} - {"ssm"}
+_SHARED_MODULES = {path.stem for path in pathlib.Path(_SHARED_DIR).glob("*.py")}
 
 
 @pytest.fixture

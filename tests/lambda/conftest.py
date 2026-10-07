@@ -1,7 +1,7 @@
 """Test bootstrap for the BankSync webhook lambda suite (``lambda/``).
 
 ``lambda/`` owns only the webhook-specific ``handler`` / ``webhook_repository`` /
-``banksync`` (and imports ``ssm`` / ``standardwebhooks``); ``constants`` /
+``banksync`` (and imports ``standardwebhooks``); ``constants`` /
 ``models`` / ``api_key`` come from the shared layer (``shared/``), exactly as the
 deployed webhook resolves them (its function code shadows the attached layer). The
 ``lam`` fixture therefore pins ``lambda/`` in front of ``shared/`` on ``sys.path``
@@ -33,10 +33,7 @@ os.environ.setdefault("TABLE_NAME", "test-table")
 
 
 def _fake_import_satisfiers() -> dict:
-    """Fake ``ssm`` + ``standardwebhooks`` so ``handler.py`` imports without AWS."""
-    ssm = types.ModuleType("ssm")
-    ssm.get_param = lambda *a, **k: "fake-secret"
-
+    """Fake ``standardwebhooks`` so ``handler.py`` imports without the real library."""
     standardwebhooks = types.ModuleType("standardwebhooks")
     webhooks = types.ModuleType("standardwebhooks.webhooks")
 
@@ -50,7 +47,6 @@ def _fake_import_satisfiers() -> dict:
     webhooks.Webhook = Webhook
     standardwebhooks.webhooks = webhooks
     return {
-        "ssm": ssm,
         "standardwebhooks": standardwebhooks,
         "standardwebhooks.webhooks": webhooks,
     }

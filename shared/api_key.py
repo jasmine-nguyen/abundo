@@ -8,12 +8,22 @@ key was fetched first to the other caller. Each consumer keeps a thin no-argumen
 wrapper passing its own path.
 """
 
-from ssm import get_param
+import boto3
+from botocore.exceptions import ClientError
 
 # Process-global (per warm container). Tests that import this module must reset the
 # cache between cases — see the `api_key_module` fixture in tests/shared/conftest.py
 # and the "api_key" entries in the sibling suites' reimport lists.
 _cache: dict[str, str] = {}
+
+
+def get_param(parameter_name: str) -> str:
+    ssm = boto3.client("ssm")
+    try:
+        response = ssm.get_parameter(Name=parameter_name, WithDecryption=True)
+        return response["Parameter"]["Value"]
+    except ClientError as e:
+        raise ValueError(f"Error fetching parameter {parameter_name}: {e}")
 
 
 def get_api_key(path: str) -> str:

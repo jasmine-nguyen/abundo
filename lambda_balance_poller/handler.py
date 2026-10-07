@@ -15,7 +15,7 @@ BankSync's `getLoan` (principalBalance) isn't supported by the fiskil:au provide
 yet, so we read `getBalance` and take abs(amount) for the mortgage account.
 
 Invoked only by EventBridge Scheduler, never by API Gateway. ``constants``,
-``ssm``, and ``repository`` are provided by the shared Lambda layer.
+``api_key``, and ``repository`` are provided by the shared Lambda layer.
 """
 
 import calendar

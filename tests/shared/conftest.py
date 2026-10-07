@@ -26,18 +26,16 @@ import pytest
 from _boto_stubs import install_import_satisfiers, use_condition_fields
 from _dynamo_fakes import FakeTable, _client_error
 
-# Set the env vars + install fake boto3/botocore/ssm at module load, so
-# shared/api_key.py's `from ssm import get_param` (and the repositories' boto imports)
-# resolve. Tests that exercise the key fetch monkeypatch api_key.get_param. The `shared`
+# Set the env vars + install fake boto3/botocore at module load, so shared/api_key.py's
+# ssm client (and the repositories' boto imports) resolve. Tests that exercise the key fetch monkeypatch api_key.get_param. The `shared`
 # fixture additionally swaps in the condition-recording Key/Attr via use_condition_fields.
 install_import_satisfiers()
 
 
 _SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
 # Every shared/ module, shed and re-imported per test: their bare names collide with the sibling
-# suites. Built from the folder so a new module needs no entry here. `ssm` stays out — the one in
-# sys.modules is _boto_stubs' fake, installed above.
-_REIMPORT = tuple(sorted({path.stem for path in pathlib.Path(_SHARED_DIR).glob("*.py")} - {"ssm"}))
+# suites. Built from the folder so a new module needs no entry here.
+_REIMPORT = tuple(sorted(path.stem for path in pathlib.Path(_SHARED_DIR).glob("*.py")))
 
 
 @pytest.fixture
