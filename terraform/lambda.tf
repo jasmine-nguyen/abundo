@@ -340,7 +340,7 @@ resource "aws_lambda_function" "transaction_trigger" {
 # shared layer (constants.py/api_key.py/repository.py) AND DynamoDB PutItem +
 # TABLE_NAME (the transaction trigger only reads and deletes, for its pending mirror).
 # The timeout scales with the account count: BALANCE_SOURCES is fetched serially at up
-# to HOMELOAN_BALANCE_TIMEOUT_SECONDS (30) each, so at 60s two slow bank calls exhausted
+# to BALANCE_POLL_TIMEOUT_SECONDS (30) each, so at 60s two slow bank calls exhausted
 # the budget and the remaining accounts were dropped for the day with no per-account log
 # line. 300 matches the other sweeps.
 resource "aws_lambda_function" "balance_poller" {

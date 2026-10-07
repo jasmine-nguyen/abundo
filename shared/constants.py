@@ -181,7 +181,7 @@ PENDING_MIRROR_MAX_REMOVALS = 10
 PENDING_MIRROR_TIMEOUT_SECONDS = 10
 
 # HTTP timeout, in seconds, for a single balance-poller request to BankSync.
-HOMELOAN_BALANCE_TIMEOUT_SECONDS = 30
+BALANCE_POLL_TIMEOUT_SECONDS = 30
 
 # Every account the balance poller reads a live balance for — the Accounts tab shows one
 # card per account with its current balance (WHIT-212). Each `aid` MUST be a key in
