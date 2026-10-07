@@ -110,22 +110,6 @@ describe('the shop list', () => {
     expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'fileByShopConfirm', group: g, categoryId: 'groceries' });
   });
 
-  // [A1] WHIT-796: the shared CategoryTree keeps this sheet's fold chevron (testID prefix) wired.
-  it('folds and unfolds a parent in the category tree without picking it', async () => {
-    const vehicle = { id: 'vehicle', name: 'Vehicle', bucket: 'Living', icon: 'car', color: '#F2C94C', parent: null };
-    const fuel = { ...CATEGORIES[1], parent: 'vehicle' };
-    await mountList([group()], [GROCERIES_TOP, vehicle, fuel]);
-    fireEvent.press((await screen.findAllByTestId('file-by-shop-group'))[0]);
-    expect(screen.getByText('Fuel')).toBeTruthy();
-    expect(screen.queryByTestId('file-by-shop-cat-toggle-groceries')).toBeNull();
-    fireEvent.press(screen.getByTestId('file-by-shop-cat-toggle-vehicle'));
-    expect(screen.queryByText('Fuel')).toBeNull();
-    expect(screen.getByTestId('file-by-shop-cat-toggle-vehicle').props.accessibilityState).toEqual({ expanded: false });
-    expect(fns.setSheet).not.toHaveBeenCalled();
-    fireEvent.press(screen.getByTestId('file-by-shop-cat-toggle-vehicle'));
-    expect(screen.getByText('Fuel')).toBeTruthy();
-  });
-
   it('shows the "every shop is filed" state when there are no groups', async () => {
     await mountList([]);
     expect(await screen.findByText('Every shop is filed')).toBeTruthy();

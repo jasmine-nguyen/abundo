@@ -318,7 +318,6 @@ export default function Login() {
           style={styles.logo}
           accessibilityIgnoresInvertColors
           importantForAccessibility="no"
-          testID="login-logo"
         />
         <Text style={styles.wordmark}>Abundo</Text>
         <Text style={styles.tagline}>Grow what's yours.</Text>

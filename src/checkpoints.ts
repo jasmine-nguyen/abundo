@@ -10,7 +10,7 @@ export const CHECKPOINT_MAX_COUNT = 20;
 export const CHECKPOINT_LABEL_MAX_LEN = 100;
 export const CHECKPOINT_AMOUNT_MAX = 1_000_000_000;
 
-type Direction = GoalRecord['direction'];
+export type Direction = GoalRecord['direction'];
 
 // A goal's checkpoints climb toward a savings target and fall toward a debt target, so a ladder is
 // sorted by amount: ascending for grow, descending for paydown. Stable + non-mutating; the server
