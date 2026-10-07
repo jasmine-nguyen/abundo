@@ -28,7 +28,7 @@ type Rendered = ReturnType<typeof render>;
 function slotCount(root: Rendered) {
   return root
     .UNSAFE_getAllByType(View)
-    .filter((v) => (styleOf(v) as { width?: number }).width === 40)
+    .filter((v) => styleOf(v).width === 40)
     .length;
 }
 

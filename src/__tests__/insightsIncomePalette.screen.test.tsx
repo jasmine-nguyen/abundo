@@ -34,7 +34,7 @@ function hasFillColor(node: unknown, bg: string): boolean {
   if (Array.isArray(node)) return node.some((n) => hasFillColor(n, bg));
   const n = node as { props: { style?: unknown }; children?: unknown[] };
   const flat = styleOf(n);
-  if ((flat as { backgroundColor?: string }).backgroundColor === bg) return true;
+  if (flat.backgroundColor === bg) return true;
   return Array.isArray(n.children) && n.children.some((c) => hasFillColor(c, bg));
 }
 

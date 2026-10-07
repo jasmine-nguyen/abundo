@@ -17,8 +17,8 @@ type Flat = { height?: number; backgroundColor?: string; zIndex?: number; positi
 function strip() {
   const r = render(<ScrollChromeHeader title="Budgets">{null}</ScrollChromeHeader>);
   const found = r.UNSAFE_getAllByType(View).find((v) => {
-    const s = styleOf(v) as Flat;
-    return s?.height === 47 && s?.backgroundColor === C.bg;
+    const s = styleOf(v);
+    return s.height === 47 && s.backgroundColor === C.bg;
   });
   if (!found) throw new Error('status-bar strip not rendered');
   return found;
@@ -26,7 +26,7 @@ function strip() {
 
 // [A1]
 it('strip is pinned to the top and stacks above the sliding header', () => {
-  const s = styleOf(strip()) as Flat;
+  const s = styleOf(strip());
   const header = StyleSheet.flatten(floatingHeaderStyle) as Flat;
   expect(s.position).toBe('absolute');
   expect(s.top).toBe(0);

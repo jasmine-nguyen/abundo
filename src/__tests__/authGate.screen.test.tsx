@@ -454,8 +454,8 @@ describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', 
       renderGate();
       act(() => setStatus('locked'));
       const cover = screen.getByTestId('lock-cover');
-      const coverStyle = styleOf(cover) as { pointerEvents?: string };
-      expect(cover.props.pointerEvents ?? coverStyle?.pointerEvents ?? 'auto').toBe('auto');
+      const coverStyle = styleOf(cover);
+      expect(cover.props.pointerEvents ?? coverStyle.pointerEvents ?? 'auto').toBe('auto');
     });
 
     it('hides the covered app from screen readers while locked, and restores it after unlock', () => {
@@ -897,8 +897,8 @@ describe('WHIT-265 auth gate — dynamic transitions', () => {
     // Effective pointerEvents ('auto') is load-bearing: 'none'/'box-none' — via the
     // prop OR the style form — would let a signed-out user's taps land on the
     // protected screen underneath the cover.
-    const coverStyle = styleOf(cover) as { pointerEvents?: string };
-    expect(cover.props.pointerEvents ?? coverStyle?.pointerEvents ?? 'auto').toBe('auto');
+    const coverStyle = styleOf(cover);
+    expect(cover.props.pointerEvents ?? coverStyle.pointerEvents ?? 'auto').toBe('auto');
     expect(stackMounts).toBe(mountsBefore);
 
     act(() => mockSegStore.set([])); // the router lands on the login screen

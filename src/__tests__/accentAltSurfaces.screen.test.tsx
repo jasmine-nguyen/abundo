@@ -36,10 +36,7 @@ function rowState() {
 // The row's outer View carries styles.row + the selected wash and has no testID; it is the render
 // root, so read it off the tree rather than inventing a testID for a colour assertion.
 const rootStyle = (): { backgroundColor?: string; borderBottomColor?: string } =>
-  styleOf(screen.toJSON() as ReactTestRendererJSON) as {
-    backgroundColor?: string;
-    borderBottomColor?: string;
-  };
+  styleOf(screen.toJSON() as ReactTestRendererJSON);
 
 describe('[G5] the selected-transaction wash (TransactionRow.tsx:88, swept from rgba(124,140,255,.1))', () => {
   it('[G5] a selected row in selection mode paints the chip blue at 10%', () => {
@@ -87,7 +84,7 @@ describe('[G6] the shared Retry pill (ui.tsx RetryButton default, swept from rgb
         <Text testID="thing-content">loaded</Text>
       </DetailStates>,
     );
-    const retry = styleOf(screen.getByTestId('thing-retry')) as { backgroundColor?: string };
+    const retry = styleOf(screen.getByTestId('thing-retry'));
     expect(retry.backgroundColor).toBe(CHIP_BLUE_16);
   });
 });

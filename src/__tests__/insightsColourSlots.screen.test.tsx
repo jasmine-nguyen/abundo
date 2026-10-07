@@ -57,7 +57,7 @@ describe('Insights chart palette (WHIT-402/432)', () => {
     if (Array.isArray(node)) return node.some((n) => hasFillColor(n, hex));
     const n = node as { props: { style?: unknown }; children?: unknown[] };
     const flat = styleOf(n);
-    if ((flat as { backgroundColor?: string }).backgroundColor === hex) return true;
+    if (flat.backgroundColor === hex) return true;
     return Array.isArray(n.children) && n.children.some((c) => hasFillColor(c, hex));
   }
 
@@ -190,8 +190,8 @@ describe('Insights slot rows (WHIT-402)', () => {
     if (!node || typeof node !== 'object') return out;
     if (Array.isArray(node)) { for (const n of node) styleValues(n, prop, out); return out; }
     const n = node as { props: { style?: unknown }; children?: unknown[] };
-    const flat = styleOf(n) as Record<string, unknown>;
-    if (typeof flat[prop] === 'string') out.push(flat[prop] as string);
+    const flat = styleOf(n);
+    if (typeof flat[prop] === 'string') out.push(flat[prop]);
     if (Array.isArray(n.children)) for (const c of n.children) styleValues(c, prop, out);
     return out;
   }
@@ -213,8 +213,8 @@ describe('Insights slot rows (WHIT-402)', () => {
     const n = node as { props: { style?: unknown }; children?: unknown[] };
     if (!subtreeHasText(n, text)) return undefined;
     for (const c of n.children ?? []) { const deeper = rowStyle(c, text, prop); if (deeper) return deeper; }
-    const flat = styleOf(n) as Record<string, unknown>;
-    return typeof flat[prop] === 'string' ? (flat[prop] as string) : undefined;
+    const flat = styleOf(n);
+    return typeof flat[prop] === 'string' ? flat[prop] : undefined;
   }
 
   beforeEach(() => {

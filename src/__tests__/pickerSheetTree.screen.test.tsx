@@ -127,7 +127,7 @@ describe('picker tree — gaps (WHIT-273)', () => {
   function rowStyle(name: string): Record<string, any> {
     let node: any = screen.getByText(name);
     while (node) {
-      const flat = styleOf(node) as any;
+      const flat = styleOf(node);
       if (flat.paddingVertical === 11) return flat;
       node = node.parent;
     }

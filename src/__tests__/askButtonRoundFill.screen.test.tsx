@@ -37,7 +37,7 @@ it('clips the gradient to the circle inside the 1px ring, with the accent → pu
 
   const fill = button.findAll((node) => typeof node.type === 'string' && styleOf(node).overflow === 'hidden')[0];
   expect(fill).toBeTruthy();
-  expect(styleOf(fill).borderRadius).toBe((buttonStyle.borderRadius as number) - (buttonStyle.borderWidth as number));
+  expect(styleOf(fill).borderRadius).toBe(buttonStyle.borderRadius - buttonStyle.borderWidth);
   expect(styleOf(fill).borderRadius).toBe(23);
   // The button itself must not clip, or the shadow disappears.
   expect(buttonStyle.overflow).toBeUndefined();
@@ -64,6 +64,6 @@ it('the circle sits inside the extra list clearance, so the last row can scroll 
   const button = await renderButton();
   const style = styleOf(button);
   const barHeight = 90;
-  const topAboveBar = (style.bottom as number) - barHeight + (style.height as number);
+  const topAboveBar = style.bottom - barHeight + style.height;
   expect(topAboveBar).toBeLessThanOrEqual(ASK_BUTTON_BOTTOM_CLEARANCE);
 });

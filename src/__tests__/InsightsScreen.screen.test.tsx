@@ -810,8 +810,8 @@ describe('Insights earning share bars (WHIT-373)', () => {
     if (Array.isArray(node)) { node.forEach((n) => incomeBarWidths(n, acc)); return acc; }
     const n = node as { props: { style?: unknown; testID?: string }; children?: unknown[] };
     const flat = styleOf(n);
-    if (RAMP.has((flat as { backgroundColor?: string }).backgroundColor as string)) {
-      acc.push(String((flat as { width?: unknown }).width));
+    if (RAMP.has(flat.backgroundColor)) {
+      acc.push(String(flat.width));
     }
     if (Array.isArray(n.children)) n.children.forEach((c) => incomeBarWidths(c, acc));
     return acc;
