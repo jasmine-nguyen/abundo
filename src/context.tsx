@@ -3316,7 +3316,7 @@ export function lastRepaymentView(s: RepaymentViewInput): LastRepaymentView {
 // ---------------------------------------------------------------------------
 
 export interface MilestoneRow {
-  sprint: number; label: string; targetBalance: number; targetEquity: number | null;
+  id: string; sprint: number; label: string; targetBalance: number; targetEquity: number | null;
   targetDate: string; cleared: boolean;
 }
 
@@ -3405,6 +3405,7 @@ export function milestoneView(s: GoalViewInput, today?: Date): MilestoneView {
   }
 
   const rows: MilestoneRow[] = plan.map((m, i) => ({
+    id: m.id,
     sprint: i,
     label: m.label,
     targetBalance: m.targetBalance,

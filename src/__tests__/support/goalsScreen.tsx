@@ -81,6 +81,15 @@ export function seedHubWith(server: FakeServer, over: GoalsHubSeed = {}) {
   seedGoalsHub(server, { ...GOALS_HUB_DEFAULTS, ...over });
 }
 
+/** The celebration suites' hub: these goals and balances, no loan facts, and the home loan owing `homeLoanBalance`. */
+export function seedCelebrationHub(
+  server: FakeServer, goals: GoalRecord[], balances: Record<string, number>, homeLoanBalance: number | null = null,
+) {
+  seedGoalsHub(server, {
+    goals, payCycle: GOALS_HUB_CYCLE, balances, loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: homeLoanBalance, asOf: AS_OF },
+  });
+}
+
 // The Goals screens call useAppContext only for openGoalBalance; the rest of ../context stays real
 // (balanceGoalView etc.). Pass a getter, not the fn: jest.mock factories run before the suite's consts.
 export function goalsContextMockModule(openGoalBalance: () => unknown = () => jest.fn()) {

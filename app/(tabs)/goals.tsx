@@ -6,7 +6,7 @@ import { Glyph } from '../../src/icons';
 import { balanceGoalView, goalView, milestoneView, useAppContext } from '../../src/context';
 import { useGoalsScreenData } from '../../src/queries';
 import { useCheckpointCelebration } from '../../src/hooks/useCheckpointCelebration';
-import { celebrationSteps } from '../../src/checkpointCelebration';
+import { GoalSteps, stepKey } from '../../src/checkpointCelebration';
 import { sortCheckpointsForDirection } from '../../src/checkpoints';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/components/ui';
@@ -50,32 +50,44 @@ export default function Goals() {
     [goals, balanceFor, payCycle],
   );
 
-  // WHIT-481 / WHIT-747: the in-app confetti. The hook compares each goal's reached steps (its
-  // checkpoints, then the target as the final step) and the mortgage's cleared milestones against
-  // the copy saved on the phone, and bursts when one ticks up — so a crossing that happened while
-  // the app was closed, or while another tab was open, celebrates the next time Goals is in view.
+  // WHIT-481 / WHIT-747 / WHIT-811: the in-app confetti. Each goal's steps (its checkpoints, then
+  // the target as the final step) and the mortgage's milestones go to the hook keyed by id, which
+  // compares them with the copy saved on the phone and bursts when a known step is newly reached —
+  // so a crossing that happened while the app was closed, or while another tab was open, celebrates
+  // the next time Goals is in view.
   const isFocused = useIsFocused();
-  const checkpointCounts = useMemo(() => {
-    const goalCounts = goalViews.map(({ goal, view }) => ({
-      id: goal.id,
-      reached: celebrationSteps(view),
-      labels: [
-        ...sortCheckpointsForDirection(goal.checkpoints ?? [], goal.direction).map((cp) =>
-          goal.direction === 'grow' ? `${goal.name} · ${fmt(cp.amount)} reached` : `${goal.name} · down to ${fmt(cp.amount)}`,
-        ),
-        `${goal.name} · goal reached`,
-      ],
-    }));
+  const celebrationGoals = useMemo((): GoalSteps[] => {
+    const goalSteps = goalViews.map(({ goal, view }): GoalSteps => {
+      if (view.targetReached === null) return { id: goal.id, steps: null };
+      const checkpoints = goal.checkpoints ?? [];
+      const checkpointSteps = sortCheckpointsForDirection(checkpoints, goal.direction).map((cp) => {
+        const i = checkpoints.indexOf(cp);
+        return {
+          key: stepKey(cp.id, cp.amount),
+          reached: view.checkpointReached?.[i] ?? false,
+          label: `${goal.name} · ${cp.label} reached`,
+        };
+      });
+      const targetStep = {
+        key: stepKey('target', goal.target_amount),
+        reached: view.targetReached,
+        label: `${goal.name} · goal reached`,
+      };
+      return { id: goal.id, steps: [...checkpointSteps, targetStep] };
+    });
     const plan = milestoneView({ loanFacts, homeLoan, milestones });
-    const mortgageCount = {
-      id: 'mortgage',
-      reached: plan.hasBalance && plan.hasPlan ? plan.clearedCount : null,
-      labels: plan.rows.map((row) => `The mortgage · down to ${fmt(row.targetBalance)}`),
-    };
-    return [...goalCounts, mortgageCount];
+    let mortgageSteps: GoalSteps['steps'] = null;
+    if (plan.hasBalance && plan.hasPlan) {
+      mortgageSteps = plan.rows.map((row) => ({
+        key: stepKey(row.id, row.targetBalance),
+        reached: row.cleared,
+        label: `The mortgage · ${row.label} reached`,
+      }));
+    }
+    return [...goalSteps, { id: 'mortgage', steps: mortgageSteps }];
   }, [goalViews, loanFacts, homeLoan, milestones]);
   const celebrationReady = isFocused && goalsLoaded && !isLoading && milestonesLoaded;
-  const { celebrationKey, label } = useCheckpointCelebration(checkpointCounts, celebrationReady);
+  const { celebrationKey, label, onDone } = useCheckpointCelebration(celebrationGoals, celebrationReady);
 
   // Cache-first: keep showing goals while a background refetch runs; error takes precedence
   // over the spinner so a failed read never sits under an endless spinner with no Retry. Both
@@ -184,7 +196,7 @@ export default function Goals() {
     </ScrollChromeHeader>
     {/* WHIT-481: the confetti overlay, a pointerEvents="none" absolute fill sibling to the header
         so it paints over the whole tab (which fills the viewport) without blocking taps beneath. */}
-    <Celebration celebrationKey={celebrationKey} label={label} />
+    <Celebration celebrationKey={celebrationKey} label={label} onDone={onDone} />
     </>
   );
 }
