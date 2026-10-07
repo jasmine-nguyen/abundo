@@ -6,7 +6,7 @@ import { C, FONT, fmt, tint } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { balanceGoalView, useAppContext, type BalanceGoalView } from '../../src/context';
 import { useGoalsScreenData } from '../../src/queries';
-import { checkpointProgress } from '../../src/checkpoints';
+import { checkpointProgress, type CheckpointProgressRow } from '../../src/checkpoints';
 import { Header } from '../../src/components/Header';
 import { DetailStates } from '../../src/components/DetailStates';
 import { EmptyState } from '../../src/components/EmptyState';
@@ -56,7 +56,7 @@ function GoalBody({ goal, view, onEdit }: { goal: GoalRecord; view: BalanceGoalV
 
   return (
     <>
-      <NextLine next={next} allReached={allReached} hasRows={rows.length > 0} />
+      <NextLine next={next} allReached={allReached} />
       <View style={styles.card}>
         <GoalHead goal={goal} view={view} />
         <GoalProgress goal={goal} view={view} onPastDue={onEdit} hideMilestoneCount />
@@ -94,10 +94,8 @@ function GoalBody({ goal, view, onEdit }: { goal: GoalRecord; view: BalanceGoalV
 
 // WHIT-812: "Next: <label> · $X to go", or "All milestones reached". Hidden with no milestones, or
 // while the balance is unknown (nothing is reached or next yet).
-function NextLine({ next, allReached, hasRows }: {
-  next: ReturnType<typeof checkpointProgress>['next']; allReached: boolean; hasRows: boolean;
-}) {
-  if (!hasRows || (next == null && !allReached)) return null;
+function NextLine({ next, allReached }: { next: CheckpointProgressRow | null; allReached: boolean }) {
+  if (next == null && !allReached) return null;
   const text = next ? `Next: ${next.checkpoint.label} · ${fmt(next.toGo ?? 0)} to go` : 'All milestones reached';
   return <Text testID="goal-detail-next" style={styles.next}>{text}</Text>;
 }
