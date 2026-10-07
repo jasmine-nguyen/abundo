@@ -181,6 +181,17 @@ def test_set_loanfacts_rejects_bad_fields(handler, body, needle):
     assert repo.set_calls == []   # nothing persisted on a rejected write
 
 
+# [A1] Every field except extra rejects zero (int and float) with its own full message.
+@pytest.mark.parametrize("field", [f for f in _FIELDS if f != "extra"])
+@pytest.mark.parametrize("zero", [0, 0.0])
+def test_set_loanfacts_rejects_zero_for_every_required_field(handler, field, zero):
+    repo = FakeLoanFactsRepo()
+    resp = handler.set_loanfacts(_put_event({**VALID, field: zero}), repo)
+    assert resp["statusCode"] == 400
+    assert json.loads(resp["body"])["error"].startswith(f"{field} must be a number above 0 and up to ")
+    assert repo.set_calls == []
+
+
 def test_set_loanfacts_rejects_invalid_json(handler):
     resp = handler.set_loanfacts(_put_event("{not json"), FakeLoanFactsRepo())
     assert resp["statusCode"] == 400
