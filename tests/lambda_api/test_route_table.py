@@ -2,7 +2,7 @@
 
 API Gateway's fixed-path route keys (no `{id}` placeholder) and the table must match both ways:
 a key the table lacks 404s inside the Lambda, a table entry the gateway lacks 404s at the gateway.
-The registration test covers only the second direction.
+This test is the only check in both directions.
 """
 
 from _terraform import app_route_keys, exact_route_keys
