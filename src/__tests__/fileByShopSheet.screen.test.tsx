@@ -63,8 +63,8 @@ const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
 });
 
 // The shops load once the sheet opens, so each list test waits for them before it checks.
-function mountList(groups = [group()], categories: unknown[] = CATEGORIES) {
-  server.seed('/categories', categories);
+function mountList(groups = [group()]) {
+  server.seed('/categories', CATEGORIES);
   server.seed('/transactions/uncategorized/merchants', merchants(groups));
   const state = { sheet: { mode: 'fileByShopList' }, toast: null, ...fns } as unknown as AppContext;
   return openOverlays(state, (next) => { mockState = next; });
@@ -108,22 +108,6 @@ describe('the shop list', () => {
     fireEvent.press((await screen.findAllByTestId('file-by-shop-group'))[0]);
     fireEvent.press(screen.getByText('Groceries'));   // press the row by name (siblings sort A–Z)
     expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'fileByShopConfirm', group: g, categoryId: 'groceries' });
-  });
-
-  // [A1] WHIT-796: the shared CategoryTree keeps this sheet's fold chevron (testID prefix) wired.
-  it('folds and unfolds a parent in the category tree without picking it', async () => {
-    const vehicle = { id: 'vehicle', name: 'Vehicle', bucket: 'Living', icon: 'car', color: '#F2C94C', parent: null };
-    const fuel = { ...CATEGORIES[1], parent: 'vehicle' };
-    await mountList([group()], [GROCERIES_TOP, vehicle, fuel]);
-    fireEvent.press((await screen.findAllByTestId('file-by-shop-group'))[0]);
-    expect(screen.getByText('Fuel')).toBeTruthy();
-    expect(screen.queryByTestId('file-by-shop-cat-toggle-groceries')).toBeNull();
-    fireEvent.press(screen.getByTestId('file-by-shop-cat-toggle-vehicle'));
-    expect(screen.queryByText('Fuel')).toBeNull();
-    expect(screen.getByTestId('file-by-shop-cat-toggle-vehicle').props.accessibilityState).toEqual({ expanded: false });
-    expect(fns.setSheet).not.toHaveBeenCalled();
-    fireEvent.press(screen.getByTestId('file-by-shop-cat-toggle-vehicle'));
-    expect(screen.getByText('Fuel')).toBeTruthy();
   });
 
   it('shows the "every shop is filed" state when there are no groups', async () => {

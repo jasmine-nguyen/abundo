@@ -75,27 +75,6 @@ it('pressing Add budget saves the amount once and navigates to the budgets tab',
   await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
 });
 
-// WHIT-794: the made-up numbers (an average the server always sent as $0, fixed-height history
-// bars) and the dead search box are gone from both budget screens.
-it.each(['coffee', 'salary'])('the set-budget screen for %s shows no recommendation, stats or history', async (categoryId) => {
-  setParams({ categoryId });
-  seedServer([SPEND, SALARY]);
-  await renderWithQueries(<BudgetEdit />);
-  for (const text of [/^Recommended:/, /^Use my average/, /^View (spending|earning) history$/, '6-cycle average', /^Last (week|fortnight|month)$/, 'Set your income floor']) {
-    expect(screen.queryByText(text)).toBeNull();
-  }
-  expect(screen.getByText(/ BUDGET$/)).toBeTruthy();
-});
-
-it('the add-a-budget list shows no average or search box, and keeps the earn-target tag', async () => {
-  seedServer([SPEND, SALARY]);
-  await renderWithQueries(<BudgetPick />);
-  expect(screen.getByText('earn-target')).toBeTruthy();
-  expect(screen.queryByText('avg / fortnight')).toBeNull();
-  expect(screen.queryByText('$0')).toBeNull();
-  expect(screen.queryByText('Search categories')).toBeNull();
-});
-
 // WHIT-249: an UNEXPECTED saveBudget throw used to leave the Add budget button stuck disabled
 // (the caller's setSubmitting(false) sits on the false-return branch, which a throw skips). The
 // handler now resets `submitting` in a catch (and re-throws so the guard logs). Fail-on-revert:
@@ -266,6 +245,7 @@ describe('budgetPickIncome (folded)', () => {
       await renderWithQueries(<BudgetPick />);
       expect(screen.getByText('Salary')).toBeTruthy();          // was filtered out pre-WHIT-69
       expect(screen.getByText('Cafes & Coffee')).toBeTruthy();  // control: spend still listed
+      expect(screen.getByText('earn-target')).toBeTruthy();
     });
 
     it('still hides an income category that already has a budget', async () => {

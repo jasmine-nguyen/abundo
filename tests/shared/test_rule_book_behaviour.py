@@ -65,10 +65,10 @@ def _plan(book, transaction_repo):
 
 
 def test_write_limit_stops_at_the_cap_and_after_the_clock_but_never_before_one_write(rule_book):
-    capped = rule_book.WriteLimit(max_writes=2, time_budget=60, started=time.monotonic(), clock=time.monotonic)
+    capped = rule_book.WriteLimit(max_writes=2, time_budget=60, started=time.monotonic())
     assert [capped.reached(attempted) for attempted in (0, 1, 2)] == [False, False, True]
 
-    expired = rule_book.WriteLimit(max_writes=None, time_budget=1, started=time.monotonic() - 100, clock=time.monotonic)
+    expired = rule_book.WriteLimit(max_writes=None, time_budget=1, started=time.monotonic() - 100)
     assert expired.reached(0) is False
     assert expired.reached(1) is True
 
@@ -84,7 +84,7 @@ def test_sweep_stops_at_the_write_cap_and_reports_the_unreached(rule_book, rule_
 
     filed, _, _, _, matched_remaining = loaded.sweep(
         repo, transactions, plan, run_reconcile=True,
-        limit=rule_book.WriteLimit(max_writes=2, time_budget=60, started=time.monotonic(), clock=time.monotonic))
+        limit=rule_book.WriteLimit(max_writes=2, time_budget=60, started=time.monotonic()))
 
     assert len(filed) == 2
     assert matched_remaining == 1

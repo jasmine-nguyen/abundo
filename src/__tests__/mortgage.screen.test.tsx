@@ -1,7 +1,7 @@
 // WHIT-233 — the mortgage screen relocated out of the Goal tab to its own stack route
 // (app/mortgage). This locks the RELOCATION-specific behaviour: it renders standalone WITHOUT
 // a NavBarsProvider (proving it uses the <Header /> + plain ScrollView detail pattern,
-// not the tab's ScrollChromeHeader, which would throw here), and its header reads "The mortgage".
+// not the tab's ScrollChromeHeader, which would throw here), and its header reads "Home loan".
 // The mortgage CONTENT (payoff cards, repayment, equity, milestone link) is covered by the
 // suites repointed to this screen (goals.paydown / repayment.* / milestone / goalErrorStates).
 // WHIT-685: drawn over the fake server, so the real screen data code runs.
@@ -18,7 +18,7 @@ import { routerSpies, resetRouter } from './support/routerMock';
 import { SAVED_MILESTONES } from './support/milestonePlan';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => require('./support/contextMock').emptyContextMockModule());
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({})));
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Mortgage from '../../app/mortgage';
@@ -31,12 +31,12 @@ beforeEach(() => {
   resetRouter();
 });
 
-it('renders standalone (no NavBarsProvider) with a "The mortgage" header', async () => {
+it('renders standalone (no NavBarsProvider) with a "Home loan" header', async () => {
   // If this screen still used ScrollChromeHeader it would throw here (no NavBarsProvider),
   // so a clean render is itself the relocation assertion.
   seedGoal(server);
   await renderWithQueries(<Mortgage />);
-  expect(screen.getByText('The mortgage')).toBeTruthy();
+  expect(screen.getByText('Home loan')).toBeTruthy();
 });
 
 it('shows the live balance owing in the hero when facts are unset', async () => {

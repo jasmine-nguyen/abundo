@@ -102,19 +102,6 @@ def _category_item_event(method, cat_id="coffee",
 # --- handler-level: GET ------------------------------------------------------
 
 
-def test_list_categories_returns_repo_rows(handler):
-    repo = FakeCategoryRepo(categories=[
-        {"id": "coffee", "name": "Cafes & Coffee", "icon": "coffee", "color": "#E8A87C", "bucket": "Lifestyle"},
-    ])
-
-    result = handler.list_categories(repo)
-
-    assert result == [{
-        "id": "coffee", "name": "Cafes & Coffee", "icon": "coffee",
-        "color": "#E8A87C", "bucket": "Lifestyle",
-    }]
-
-
 def test_get_categories_dispatch(handler, monkeypatch):
     repo = FakeCategoryRepo(categories=[
         {"id": "x", "name": "X", "icon": "tag", "color": "#111111", "bucket": "Living"},
@@ -126,7 +113,7 @@ def test_get_categories_dispatch(handler, monkeypatch):
 
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])
-    assert body[0]["id"] == "x" and "recent" not in body[0]
+    assert body[0]["id"] == "x"
 
 
 # --- handler-level: POST -----------------------------------------------------
@@ -139,7 +126,7 @@ def test_create_success(handler):
 
     assert resp["statusCode"] == 201
     body = json.loads(resp["body"])
-    assert body["id"] == "gym" and body["bucket"] == "Lifestyle" and "recent" not in body
+    assert body["id"] == "gym" and body["bucket"] == "Lifestyle"
     assert repo.create_calls == [("gym", "Gym", "Lifestyle", "dumbbell")]
 
 
@@ -263,7 +250,7 @@ def test_update_success(handler):
 
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])
-    assert body["name"] == "Coffee & Cake" and body["id"] == "coffee" and "recent" not in body
+    assert body["name"] == "Coffee & Cake" and body["id"] == "coffee"
     assert repo.update_calls == [("coffee", "Coffee & Cake", "Living", "coffee")]
 
 

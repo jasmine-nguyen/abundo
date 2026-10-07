@@ -1705,14 +1705,13 @@ export interface BalanceGoalView {
   // on start_balance, NOT the display baseline, so the progress bar and this label can measure
   // from slightly different starting points by design.
   status: BalanceGoalStatus | null;
-  // WHIT-478: how many checkpoints the current balance has passed, out of how many. `total` is 0
-  // when the goal has no ladder (the card renders nothing). `reached` is null when the balance
-  // isn't known yet (a synced goal not yet polled — degrade like the rest of the card).
-  checkpointsTotal: number;
+  // WHIT-478: how many checkpoints the current balance has passed. Null when the goal has no ladder
+  // (the card renders nothing) or the balance isn't known yet (a synced goal not yet polled —
+  // degrade like the rest of the card).
   checkpointsReached: number | null;
   // WHIT-486: one dot per checkpoint — `pct` is its position on the bar (0..1, same scale as
   // `progress`), `reached` whether the balance has passed it. Empty when the balance is unknown or
-  // the bar has no scale (paydown without a start), so dots and the reached-count travel together.
+  // the bar has no scale (paydown without a start), so the dots and the milestone line travel together.
   checkpointMarkers: { pct: number; reached: boolean }[];
   // WHIT-747: whether the balance has met the target (the goal's final step); null when unknown.
   targetReached: boolean | null;
@@ -1875,28 +1874,27 @@ export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalV
   // Checkpoints reached (WHIT-478): count the absolute amounts the CURRENT normalised balance has
   // passed — grow reaches AT/above the amount, paydown AT/below. Uses `current`, the same balance
   // the bar measures, so the count can never disagree with the bar. `reached` stays null while the
-  // balance is unknown so the card hides the line; `total` is 0 when there's no ladder.
+  // balance is unknown or there's no ladder, so the card hides the line.
   const checkpoints = goal.checkpoints ?? [];
-  const checkpointsTotal = checkpoints.length;
   const checkpointReached = known ? checkpoints.map((cp) => isReached(cp.amount)) : null;
   let checkpointsReached: number | null = null;
-  if (checkpointReached && checkpointsTotal > 0) {
+  if (checkpointReached && checkpoints.length > 0) {
     checkpointsReached = checkpointReached.filter(Boolean).length;
   }
 
   // WHIT-486: each checkpoint's dot — its position on the bar (0..1, the SAME scale as `progress`,
   // so a dot lines up with the fill by construction) and whether the balance has reached it (the
   // SAME test as the count above). Empty until the balance is known AND the bar is positionable, so
-  // the dots and the "N of M reached" line always appear together — never a count with no dots.
+  // the dots and the milestone line always appear together — never the line with no dots.
   let checkpointMarkers: { pct: number; reached: boolean }[] = [];
-  if (known && barPositionable && checkpointsTotal > 0) {
+  if (known && barPositionable) {
     checkpointMarkers = checkpoints.map((cp) => ({ pct: posOnBar(cp.amount), reached: isReached(cp.amount) }));
   }
 
   const targetReached = known ? isReached(target) : null;
 
   return {
-    progress, pacePerPayday, paydaysLeft, status, checkpointsTotal, checkpointsReached, checkpointMarkers,
+    progress, pacePerPayday, paydaysLeft, status, checkpointsReached, checkpointMarkers,
     movedAmount, spanAmount, aheadBy, targetReached,
     pastDue: isoToUtcDayMs(goal.target_date) < dateToUtcDayMs(today ?? new Date()),
     currentAmount: known ? current : null,
@@ -3003,7 +3001,7 @@ export function budgetEditInfo(s: BudgetEditInput, categoryId: string) {
   const spreadActive = !!existing?.spread;
   const cn = s.cycleName();
   return {
-    category: c, existing, isIncome,
+    category: c, existing,
     periodLabel: cn.toUpperCase(),
     title: existing ? 'Edit budget' : 'Set budget',
     saveText: existing ? 'Update budget' : 'Add budget',
@@ -3316,7 +3314,7 @@ export function lastRepaymentView(s: RepaymentViewInput): LastRepaymentView {
 // ---------------------------------------------------------------------------
 
 export interface MilestoneRow {
-  sprint: number; label: string; targetBalance: number; targetEquity: number | null;
+  id: string; sprint: number; label: string; targetBalance: number; targetEquity: number | null;
   targetDate: string; cleared: boolean;
 }
 
@@ -3405,6 +3403,7 @@ export function milestoneView(s: GoalViewInput, today?: Date): MilestoneView {
   }
 
   const rows: MilestoneRow[] = plan.map((m, i) => ({
+    id: m.id,
     sprint: i,
     label: m.label,
     targetBalance: m.targetBalance,

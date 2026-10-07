@@ -89,7 +89,6 @@ describe('budgetEditInfo — narrow BudgetEditInput', () => {
     };
     const info = budgetEditInfo(cold, 'missing');
     expect(info.category).toBeUndefined();
-    expect(info.isIncome).toBe(false);
     expect(info.existing).toBeUndefined();
     expect(info.title).toBe('Set budget');
   });

@@ -152,9 +152,9 @@ describe('the pay cycle is a primary read', () => {
     seedHub({ goals: [GROW], payCycle: { length: 7, last_pay_date: '2026-07-04' } });
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('goal-card-g1'));
-    expect(card.queryByText('$2,000 / payday')).toBeNull(); // the fortnightly figure
+    expect(card.queryByText('Set aside $2,000 each payday')).toBeNull(); // the fortnightly figure
     expect(card.getByText('5 paydays left')).toBeTruthy();  // weekly from Jul 4, as the real engine counts them to Aug 15
-    expect(card.getByText('$1,200 / payday')).toBeTruthy(); // 6,000 over 5 paydays
+    expect(card.getByText('Set aside $1,200 each payday')).toBeTruthy(); // 6,000 over 5 paydays
   });
 });
 

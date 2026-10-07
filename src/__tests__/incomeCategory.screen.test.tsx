@@ -106,7 +106,7 @@ describe('Categorize picker (WHIT-158)', () => {
       { id: 'm', name: 'Mango', icon: 'tag', bucket: 'Lifestyle', parent: null },
     ];
     await openPicker({ transaction_id: 't1', amount: -10, description: 'X' }, sheetFns, cats);
-    const names = screen.getAllByTestId('pickerCatName').map((n) => n.props.children);
+    const names = screen.getAllByTestId('pickerCat-name').map((n) => n.props.children);
     expect(names).toEqual(['Apple', 'Mango', 'Zebra']);
   });
 });

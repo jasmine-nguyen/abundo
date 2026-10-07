@@ -555,7 +555,6 @@ describe('balanceGoalView — checkpoints reached-count', () => {
     const g = goal({ checkpoints: CPS(2000, 4000, 6000, 8000) });
     const v = balanceGoalView({ goal: g, balance: 4000, payCycle: CYCLE }, TODAY);
     expect(v.checkpointsReached).toBe(2);
-    expect(v.checkpointsTotal).toBe(4);
   });
 
   it('grow: a rung one dollar above the balance is NOT reached', () => {
@@ -568,7 +567,6 @@ describe('balanceGoalView — checkpoints reached-count', () => {
     const g = goal({ direction: 'paydown', target_amount: 0, account_id: null, manual_balance: 10000 });
     const v = balanceGoalView({ goal: { ...g, checkpoints: CPS(15000, 10000, 5000) }, balance: null, payCycle: CYCLE }, TODAY);
     expect(v.checkpointsReached).toBe(2);
-    expect(v.checkpointsTotal).toBe(3);
   });
 
   it('uses the NORMALISED current, not the raw signed balance (synced paydown fail-on-revert)', () => {
@@ -593,17 +591,16 @@ describe('balanceGoalView — checkpoints reached-count', () => {
     expect(balanceGoalView({ goal: g, balance: 1000, payCycle: CYCLE }, TODAY).checkpointsReached).toBe(0);
   });
 
-  it('an unknown (not-yet-polled synced) balance leaves reached null but keeps the total', () => {
+  it('an unknown (not-yet-polled synced) balance leaves reached null', () => {
     const g = goal({ checkpoints: CPS(2000, 4000) });
     const v = balanceGoalView({ goal: g, balance: null, payCycle: CYCLE }, TODAY);
     expect(v.checkpointsReached).toBeNull();
-    expect(v.checkpointsTotal).toBe(2);
   });
 
-  it('a goal with no checkpoints reports total 0 and reached null (card renders nothing)', () => {
+  it('a goal with no checkpoints reports reached null and no markers (card renders nothing)', () => {
     const v = balanceGoalView({ goal: goal(), balance: 4000, payCycle: CYCLE }, TODAY);
-    expect(v.checkpointsTotal).toBe(0);
     expect(v.checkpointsReached).toBeNull();
+    expect(v.checkpointMarkers).toEqual([]);
   });
 });
 
@@ -717,7 +714,6 @@ describe('WHIT-478 gaps — checkpoints reached-count', () => {
     const g = goal({ checkpoints: CPS(2500, 5000, 7500) });
     const v = view(g, 10000);
     expect(v.checkpointsReached).toBe(3);
-    expect(v.checkpointsTotal).toBe(3);
     expect(v.progress).toBe(1);
   });
 
@@ -725,14 +721,12 @@ describe('WHIT-478 gaps — checkpoints reached-count', () => {
     const g = goal({ checkpoints: CPS(4000) });
     expect(view(g, 4000).checkpointsReached).toBe(1);
     expect(view(g, 3999).checkpointsReached).toBe(0);
-    expect(view(g, 4000).checkpointsTotal).toBe(1);
   });
 
   it('a full 20-rung ladder partially reached counts the passed rungs exactly', () => {
     const rungs = Array.from({ length: 20 }, (_, i) => (i + 1) * 500);
     const g = goal({ target_amount: 100000, checkpoints: CPS(...rungs) });
     expect(view(g, 5250).checkpointsReached).toBe(10);
-    expect(view(g, 5250).checkpointsTotal).toBe(20);
   });
 
   it('an unsorted checkpoints array counts the same as the sorted one (order-independent)', () => {
@@ -747,7 +741,6 @@ describe('WHIT-478 gaps — checkpoints reached-count', () => {
     const v = view(g, null);
     expect(v.progress).toBeCloseTo(0.5, 10);
     expect(v.checkpointsReached).toBe(2);
-    expect(v.checkpointsTotal).toBe(3);
   });
 
   it('paydown without a baseline: progress null (no bar) yet the reached-count still computes', () => {
@@ -755,7 +748,6 @@ describe('WHIT-478 gaps — checkpoints reached-count', () => {
     const v = view(g, null);
     expect(v.progress).toBeNull();
     expect(v.checkpointsReached).toBe(1);
-    expect(v.checkpointsTotal).toBe(2);
   });
 
   it('manual paydown owed exactly on a rung counts it (inclusive ≤ boundary)', () => {
@@ -763,12 +755,10 @@ describe('WHIT-478 gaps — checkpoints reached-count', () => {
     expect(view(g, null).checkpointsReached).toBe(1);
   });
 
-  it('a non-finite synced balance is unknown → reached null (line hides), total preserved', () => {
+  it('a non-finite synced balance is unknown → reached null (line hides)', () => {
     const g = goal({ checkpoints: CPS(2000, 4000) });
     for (const bad of [NaN, Infinity, -Infinity]) {
-      const v = view(g, bad);
-      expect(v.checkpointsReached).toBeNull();
-      expect(v.checkpointsTotal).toBe(2);
+      expect(view(g, bad).checkpointsReached).toBeNull();
     }
   });
 });
@@ -802,14 +792,13 @@ describe('balanceGoalView — checkpoint markers, QA gaps (WHIT-486)', () => {
 
   it('[A-gap3] degenerate grow (target<=baseline): progress null, NO dots, but the COUNT still computes', () => {
     // baseline==target==10000 → no bar scale. markers empty (dots hide), yet checkpointsReached is
-    // a real number (5000 has passed 3000, not 8000) — so the "N of M" line is hidden by the UI
+    // a real number (5000 has passed 3000, not 8000) — so the milestone line is hidden by the UI
     // gate on markers.length, NOT because the engine refused to count.
     const g = goal({ baseline: 10000, target_amount: 10000, checkpoints: CPS(3000, 8000) });
     const v = balanceGoalView({ goal: g, balance: 5000, payCycle: CYCLE }, TODAY);
     expect(v.progress).toBeNull();
     expect(v.checkpointMarkers).toEqual([]);
     expect(v.checkpointsReached).toBe(1);
-    expect(v.checkpointsTotal).toBe(2);
   });
 });
 

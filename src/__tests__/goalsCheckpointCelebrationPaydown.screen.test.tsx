@@ -3,7 +3,7 @@
 // account, whose debt FALLING past a rung must burst — proving balanceGoalView's paydown reached
 // count (current <= amount) drives the confetti the same way growth does; and (2) a plain redraw
 // where the goals array is a BRAND-NEW identity but the reached count is unchanged — the memo
-// recomputes a fresh checkpointCounts array, the hook effect re-runs, and it must STILL stay silent.
+// recomputes a fresh celebration steps array, the hook effect re-runs, and it must STILL stay silent.
 // The real balanceGoalView + hook + diff run end to end; only the data boundary and router are stubs.
 // WHIT-685: the goal and its balance come from the fake server through the real screen data code
 // (useGoalsScreenData); a balance move is a re-seeded server reply and a cache refresh, as in the app.
@@ -77,26 +77,26 @@ describe('checkpoint celebration for a paydown goal + array-identity churn (WHIT
 
     await moveOwed(4000);                                 // debt shrinks past the 5000 rung
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();
-    expect(screen.getByText(/Car loan · down to \$5,000/)).toBeTruthy();
+    expect(screen.getByText(/Car loan · B reached/)).toBeTruthy();
   });
 
   it('does NOT burst when the debt rises back above a rung (re-arm, not celebrate)', async () => {
     // [A-P2] a paydown balance going the WRONG way (owed increases, reached drops) must be silent.
     await renderWithQueries(<Goals />);                  // owe 6000 → reached 1
     await moveOwed(9000);                                 // owe more: now above the 8000 rung → reached 0
-    expect(within(screen.getByTestId('goal-card-d1')).getByText('$818 / payday')).toBeTruthy(); // 9,000 over 11 paydays
+    expect(within(screen.getByTestId('goal-card-d1')).getByText('Set aside $818 each payday')).toBeTruthy(); // 9,000 over 11 paydays
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
   });
 
   it('does not burst on a redraw that recomputes the counts with the same reached number', async () => {
     // [A-P3] a new account joins the balances list but the SAME owed amount: the balance lookup is
-    // rebuilt, so the memo yields a new checkpointCounts identity and the effect re-runs, yet reached
+    // rebuilt, so the memo yields a new celebration steps identity and the effect re-runs, yet reached
     // is unchanged → no burst. (An identical refresh can't reach this path: the cache keeps the old
     // data, so nothing recomputes.)
     await renderWithQueries(<Goals />);                  // owe 6000 → reached 1, seeded
     await moveOwed(6000, { 'up-saver': 1500 });           // new balances list, identical owed amount
     expect(server.sent('GET', '/accounts/balances')).toHaveLength(2);
-    expect(within(screen.getByTestId('goal-card-d1')).getByText('$545 / payday')).toBeTruthy(); // 6,000 over 11 paydays
+    expect(within(screen.getByTestId('goal-card-d1')).getByText('Set aside $545 each payday')).toBeTruthy(); // 6,000 over 11 paydays
     expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
   });
 });
