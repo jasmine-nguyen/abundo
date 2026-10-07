@@ -19,7 +19,7 @@ import { GROCERIES_RECORD } from './support/categories';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { queryClient } from '../queryClient';
-import { colorOf } from './support/layout';
+import { styleOf } from './support/layout';
 
 const bal = (over: Record<string, unknown> = {}) => ({
   account_id: 'a1', amount: 96270.59, available_balance: 96270.59, currency: 'AUD',
@@ -122,7 +122,7 @@ it('an account card shows its live balance — green when in credit (amount >= 0
   server.seed('/accounts/balances', [bal({ amount: 96270.59 })]);
   await renderWithQueries(<Accounts />);
   const label = screen.getByText('$96,270.59'); // bare, no + sign
-  expect(colorOf(label)).toBe(C.good);
+  expect(styleOf(label).color).toBe(C.good);
 });
 
 it('an account card shows a negative balance in red (money owed)', async () => {
@@ -130,7 +130,7 @@ it('an account card shows a negative balance in red (money owed)', async () => {
   server.seed('/accounts/balances', [bal({ amount: -596642.43 })]);
   await renderWithQueries(<Accounts />);
   const label = screen.getByText('-$596,642.43');
-  expect(colorOf(label)).toBe(C.bad);
+  expect(styleOf(label).color).toBe(C.bad);
 });
 
 it('an account with no balance yet shows a dim "—" placeholder', async () => {
@@ -189,7 +189,7 @@ it('shows a card for a balance-only account (no loaded transactions) with its li
   await renderWithQueries(<Accounts />);
   expect(screen.getByText('ANZ')).toBeTruthy();
   expect(screen.getByText('Up Homeloan')).toBeTruthy();
-  expect(colorOf(screen.getByText('-$500,000.00'))).toBe(C.bad);
+  expect(styleOf(screen.getByText('-$500,000.00')).color).toBe(C.bad);
   expect(screen.getByText('No recent transactions')).toBeTruthy();
   fireEvent.press(screen.getByText('Up Homeloan'));
   expect(routerSpies.push).toHaveBeenCalledWith('/account/up-homeloan');

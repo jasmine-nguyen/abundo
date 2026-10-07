@@ -21,7 +21,7 @@ import {
   refreshAiInsights, generateAiInsights,
 } from './support/insightsScreen';
 import { GROCERIES_RECORD } from './support/categories';
-import { colorOf, styleOf } from './support/layout';
+import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
@@ -588,12 +588,12 @@ describe('Insights remainder/Other plug (WHIT-357/375)', () => {
   const tracksIn = (card: ReactTestInstance) => card.findAll((n) => styleOf(n).height === 8);
   // The bold amount Text (styles.rowAmount: fontWeight '700') inside a card.
   const amountColor = (card: ReactTestInstance) =>
-    colorOf(card.findAll((n) => styleOf(n).fontWeight === '700')[0]);
+    styleOf(card.findAll((n) => styleOf(n).fontWeight === '700')[0]).color;
 
   // The row NAME Text (styles.rowName: fontWeight '600') inside a card — its colour moved from a
   // hardcoded C.textDim to breakdownLineStyle's nameColor in WHIT-375, so lock it here.
   const nameColor = (card: ReactTestInstance) =>
-    colorOf(card.findAll((n) => styleOf(n).fontWeight === '600')[0]);
+    styleOf(card.findAll((n) => styleOf(n).fontWeight === '600')[0]).color;
 
   it('hides the "Other" plug until the parent is expanded, then shows it muted, un-barred, and un-tappable', async () => {
     await renderInsights();

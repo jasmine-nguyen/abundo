@@ -4,7 +4,7 @@ import { it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { View } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
-import { colorOf, styleOf } from './support/layout';
+import { styleOf } from './support/layout';
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
@@ -15,7 +15,7 @@ import { BudgetBar, Bar } from '../components/ui';
 // [A1] pushed-screen title uses the theme's brightest text, not pure white (decision 2A)
 it('the pushed-screen header title is the theme off-white', () => {
   render(<Header title="Coffee" />);
-  expect(colorOf(screen.getByText('Coffee'))).toBe(C.textBright);
+  expect(styleOf(screen.getByText('Coffee')).color).toBe(C.textBright);
 });
 
 // [A2] one rail shade: BudgetBar's track, Bar's default track and the theme token all match

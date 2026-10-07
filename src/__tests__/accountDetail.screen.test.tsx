@@ -14,7 +14,7 @@ import { resetAuth } from './support/authMock';
 import { setParams, resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { transactionsRecentKey } from '../queryKeys';
-import { colorOf } from './support/layout';
+import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ openPicker: jest.fn(), category: () => undefined })));
@@ -48,14 +48,14 @@ beforeEach(() => {
 it('shows a negative balance in red and the credit-card "available" line (owe, but credit left)', async () => {
   server.seed('/accounts/balances', [bal({ amount: -6492.26, available_balance: 8171.88 })]);
   await renderWithQueries(<AccountDetail />);
-  expect(colorOf(screen.getByText('-$6,492.26'))).toBe(C.bad);
+  expect(styleOf(screen.getByText('-$6,492.26')).color).toBe(C.bad);
   expect(screen.getByText('$8,172 available')).toBeTruthy(); // fmt() rounds
 });
 
 it('shows a positive balance in green and NO available line (spending account)', async () => {
   server.seed('/accounts/balances', [bal({ amount: 96270.59, available_balance: 96270.59, account_type: 'checking' })]);
   await renderWithQueries(<AccountDetail />);
-  expect(colorOf(screen.getByText('$96,270.59'))).toBe(C.good);
+  expect(styleOf(screen.getByText('$96,270.59')).color).toBe(C.good);
   expect(screen.queryByText(/available/)).toBeNull();
 });
 

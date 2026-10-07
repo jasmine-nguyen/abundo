@@ -11,7 +11,7 @@ import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { flush } from './support/queryClient';
-import { colorOf, styleOf } from './support/layout';
+import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -189,7 +189,7 @@ describe('the answer card difference colour', () => {
   const deltaColor = async (categoryId: string, amount: number) => {
     const card = { ...REPLY.card!, categoryId, delta: { amount, vs: 'budget' as const } };
     await renderWithQueries(<ChatAnswer text="ok" reply={{ ...REPLY, card }} onAction={() => {}} />);
-    return colorOf(screen.getByTestId('chat-card-delta'));
+    return styleOf(screen.getByTestId('chat-card-delta')).color;
   };
 
   it('is red over a spending budget and green under it', async () => {

@@ -54,8 +54,7 @@ describe('SegmentedControl', () => {
     render(<SegmentedControl value="earning" onChange={jest.fn()} options={STR_OPTIONS} />);
     // active segment: earning → its tint + teal bold text
     expect(styleOf(screen.getByTestId('seg-earning')).backgroundColor).toBe('rgba(4,5,6,.16)');
-    expect(styleOf(screen.getByText('Earning')).color).toBe('#2ac3de');
-    expect(styleOf(screen.getByText('Earning')).fontWeight).toBe('700');
+    expect(styleOf(screen.getByText('Earning'))).toMatchObject({ color: '#2ac3de', fontWeight: '700' });
     // inactive segment: no active tint, muted default weight
     expect(styleOf(screen.getByTestId('seg-spending')).backgroundColor).toBeUndefined();
     expect(styleOf(screen.getByText('Spending')).fontWeight).toBe('600');
