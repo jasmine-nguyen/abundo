@@ -35,16 +35,14 @@ describe('every test takes its context stand-in from the shared builder', () => 
   });
 
   it('flags every hand-built spelling and lets shared or commented ones through', () => {
-    // Built from pieces so the older WHIT-777 guard's exact-text scan doesn't read this file.
-    const empty = ['()', '=>', '({})'].join(' ');
     const handBuilt = [
-      `jest.mock('../context', () => ({ useAppContext: ${empty} }));`,
+      "jest.mock('../context', () => ({ useAppContext: () => ({}) }));",
       "jest.mock('../context', () => ({ useAppContext: jest.fn(() => ({})) }));",
       "jest.mock('../context', () => ({ useAppContext: () => ({} as AppContext) }));",
       "jest.mock('../context', () => ({\n  ...(jest.requireActual('../context') as object),\n  useAppContext: () => mockState,\n}));",
       "jest.mock('../context', () => {\n  const actual = jest.requireActual('../context') as typeof import('../context');\n  return { ...actual, useAppContext: () => mockState };\n});",
       "jest.mock('../context', () => ({ useAppContext: mockUseAppContext }));",
-      `jest.doMock('../context', () => ({ useAppContext: ${empty} }));`,
+      "jest.doMock('../context', () => ({ useAppContext: () => ({}) }));",
       "jest.mock('../context', function () { return {}; });",
     ];
     const shared = [
@@ -53,7 +51,7 @@ describe('every test takes its context stand-in from the shared builder', () => 
       "jest.mock('../context', () =>\n  require('./support/contextMock').realContextWith(() => mockState),\n);",
       "jest.mock('../context');",
       "// jest.mock('../context', () => ({}))",
-      `/* jest.mock('../context', () => ({ useAppContext: ${empty} })) */`,
+      "/* jest.mock('../context', () => ({ useAppContext: () => ({}) })) */",
     ];
     expect(handBuilt.filter((source) => handBuiltContextMocks(source) !== 1)).toEqual([]);
     expect(shared.filter((source) => handBuiltContextMocks(source) !== 0)).toEqual([]);

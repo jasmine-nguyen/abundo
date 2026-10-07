@@ -14,7 +14,6 @@ import { installFakeServer } from './support/fakeServer';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
-import { resetAi } from './support/insightsScreen';
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
@@ -42,7 +41,6 @@ function renderInsights() {
 
 beforeEach(() => {
   resetRouter();
-  resetAi();
   server.seed('/breakdown', BREAKDOWN);
   server.seed('/categories', CATS);
   server.seed('/paycycle', PAY_CYCLE);
