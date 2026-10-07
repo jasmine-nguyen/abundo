@@ -8,10 +8,7 @@ import type { AppContext, ApplyRulesResult, FilingResult, FilingTarget, FilingWh
 import type { UncategorizedMerchantGroup } from '../api';
 
 let mockState: AppContext;
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => mockState };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { resetAuth, setAuthStatus } from './support/authMock';

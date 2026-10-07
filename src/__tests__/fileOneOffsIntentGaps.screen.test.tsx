@@ -20,16 +20,10 @@ import { screen, fireEvent } from '@testing-library/react-native';
 let mockPendingFlag = false;
 const mockClearSpy = jest.fn(() => { mockPendingFlag = false; });
 const mockOpenMultiPicker = jest.fn();
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({
-      openMultiPicker: mockOpenMultiPicker, showToast: jest.fn(), openPicker: jest.fn(), setSheet: jest.fn(),
-      pendingUncategorizedSelect: mockPendingFlag, clearUncategorizedSelect: mockClearSpy,
-    }),
-  };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({
+  openMultiPicker: mockOpenMultiPicker, showToast: jest.fn(), openPicker: jest.fn(), setSheet: jest.fn(),
+  pendingUncategorizedSelect: mockPendingFlag, clearUncategorizedSelect: mockClearSpy,
+})));
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
