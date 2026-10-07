@@ -135,7 +135,7 @@ from rule_engine import (
     rule_id_for)
 from recurring_bills import detect_recurring_bills
 from repository_notify import NotifyRepository
-from goal_checkpoints import notify_goal_checkpoint_crossing
+from goal_checkpoints import check_goal_checkpoints, notify_goal_checkpoint_crossing
 import base64
 import boto3
 import hashlib
@@ -2875,9 +2875,10 @@ def refresh_account_balances(repo: AccountBalanceRepository) -> dict:
     if not fresh:
         return _json_response(502, {"error": "could not refresh balances"})
 
-    new_homeloan = next(
-        (balance["amount"] for aid, balance in fresh if ACCOUNT_ID_MAP[aid] == HOMELOAN_ACCOUNT_ID), None)
-    old_homeloan = _stored_homeloan_amount(repo)
+    prior = _stored_amounts(repo)
+    deltas = [{"account_id": ACCOUNT_ID_MAP[aid], "old": prior.get(ACCOUNT_ID_MAP[aid]), "new": balance["amount"]}
+              for aid, balance in fresh]
+    homeloan = next((delta for delta in deltas if delta["account_id"] == HOMELOAN_ACCOUNT_ID), None)
 
     for aid, balance in fresh:
         repo.upsert_balance(
@@ -2889,31 +2890,35 @@ def refresh_account_balances(repo: AccountBalanceRepository) -> dict:
             balance["account_type"],
         )
 
-    # WHIT-792: this rewrites the row the daily poll compares against, so a milestone crossed
-    # since the last reading is celebrated here — otherwise the poll would see no change.
-    if new_homeloan is not None:
+    # WHIT-792 / WHIT-802: this rewrites the rows the daily poll compares against, so a home-loan
+    # milestone or goal checkpoint crossed since the last reading is celebrated here — otherwise
+    # the poll would see no change. Each check is best-effort and isolated.
+    if homeloan is not None:
         try:
             notify_homeloan_milestone(
-                old_homeloan, new_homeloan,
+                homeloan["old"], homeloan["new"],
                 loanfacts_repo=LoanFactsRepository(), device_repo=DeviceRepository(),
                 notify_repo=NotifyRepository(), milestone_repo=MilestoneRepository(),
             )
         except Exception as e:
             logger.error("milestone push on refresh failed (balances still stored): %s", e)
+    try:
+        check_goal_checkpoints(
+            deltas, goals_repo=GoalsRepository(), device_repo=DeviceRepository(), notify_repo=NotifyRepository())
+    except Exception as e:
+        logger.error("goal checkpoint push on refresh failed (balances still stored): %s", e)
     return _json_response(200, repo.list_balances(sorted(set(ACCOUNT_ID_MAP.values()))))
 
 
-def _stored_homeloan_amount(repo: AccountBalanceRepository):
-    """The home loan's stored SIGNED amount before a refresh overwrites it, or None (no row yet,
-    or a read hiccup — a missed celebration, never a wrong one)."""
+def _stored_amounts(repo: AccountBalanceRepository) -> dict:
+    """Each account's stored SIGNED amount before a refresh overwrites it (account_id -> amount).
+    Empty on a read hiccup — a missed celebration, never a wrong one."""
     try:
-        rows = repo.list_balances([HOMELOAN_ACCOUNT_ID])
+        rows = repo.list_balances(sorted(set(ACCOUNT_ID_MAP.values())))
     except Exception as e:
-        logger.warning("prior home-loan balance read failed, skipping milestone check: %s", e)
-        return None
-    if not rows:
-        return None
-    return rows[0]["amount"]
+        logger.warning("prior balance read failed, skipping milestone and goal checks: %s", e)
+        return {}
+    return {row["account_id"]: row["amount"] for row in rows}
 
 
 _REPAYMENT_NULL = {"amount": None, "date": None, "principal": None, "interest": None}

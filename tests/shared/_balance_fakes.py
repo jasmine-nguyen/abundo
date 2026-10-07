@@ -10,6 +10,7 @@ Resolved by pytest.ini's `pythonpath = tests/shared`. The shared layer is import
 from decimal import Decimal
 
 from _dynamo_fakes import FakeTable
+from _milestone_fakes import FakeGoalsRepo
 
 _MARKER_PK = "ACCTBAL#REFRESH"
 _BALANCE_PREFIX = "ACCTBAL#"
@@ -39,6 +40,14 @@ def balance_repo(rows=(), last=None, upsert_fails=False):
     if upsert_fails:
         repo._table.fail("put_item")
     return repo
+
+
+def stub_bank(handler, monkeypatch, fetch):
+    """Stub a refresh's bank fetch with ``fetch`` and its goal store with no goals, so the
+    refresh's goal-checkpoint check runs against a known empty list, not the stubbed boto3."""
+    monkeypatch.setattr(handler, "get_api_key", lambda: "test-key")
+    monkeypatch.setattr(handler, "fetch_balance", fetch)
+    monkeypatch.setattr(handler, "GoalsRepository", lambda: FakeGoalsRepo())
 
 
 def balance_writes(repo):

@@ -43,7 +43,7 @@ from constants import (
 )
 from milestones import notify_homeloan_milestone, owed
 from repayment_rules import is_repayment_credit
-from goal_checkpoints import notify_goal_checkpoint_crossing
+from goal_checkpoints import check_goal_checkpoints
 from repository import (
     AccountBalanceRepository,
     DeviceRepository,
@@ -270,30 +270,8 @@ def _check_goal_checkpoints(deltas: list) -> None:
     Manual goals cross when their balance is SAVED, so they're handled at the PUT, not here."""
     if not deltas:
         return
-    goals = GoalsRepository().list_goals()
-    if not goals:
-        return
-    delta_by_account = {d["account_id"]: d for d in deltas}
-    notify_repo = NotifyRepository()
-    device_repo = DeviceRepository()
-    for goal_id, goal in goals.items():
-        account_id = goal.get("account_id")
-        if not account_id:
-            continue  # manual goal — celebrated at save time
-        delta = delta_by_account.get(account_id)
-        if delta is None:
-            continue  # this account wasn't polled this run
-        # Per-goal isolation: one goal's transient DB hiccup must not abort the loop, or a later
-        # goal that also crossed this poll would never fire AND never be marked — and next poll its
-        # `old` is already past the rung, so that celebration is lost forever, not merely deferred.
-        try:
-            notify_goal_checkpoint_crossing(
-                delta["old"], delta["new"],
-                goal=goal, goal_id=goal_id, synced=True,
-                device_repo=device_repo, notify_repo=notify_repo,
-            )
-        except Exception as e:
-            logger.error("goal checkpoint push failed for %s, continuing: %s", goal_id, e)
+    check_goal_checkpoints(
+        deltas, goals_repo=GoalsRepository(), device_repo=DeviceRepository(), notify_repo=NotifyRepository())
 
 
 def _check_feed_stall(account_id: str, balance: Decimal, *, transaction_repo, watch_repo,

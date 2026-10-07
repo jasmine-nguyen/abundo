@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from _balance_fakes import balance_repo
+from _balance_fakes import balance_repo, stub_bank
 from _milestone_fakes import FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, notify_repo, _row
 
 _REFRESH_EVENT = {"rawPath": "/accounts/balances/refresh",
@@ -65,8 +65,7 @@ def test_refresh_celebrates_a_home_loan_milestone_crossing_once(
     monkeypatch.setattr(sys.modules["milestones"], "send_push",
                         lambda title, body, tokens, **kw: pushes.append(title)
                         or {"sent": len(tokens), "ok": len(tokens), "pruned": []})
-    monkeypatch.setattr(handler, "get_api_key", lambda: "test-key")
-    monkeypatch.setattr(handler, "fetch_balance", lambda bid, aid, key, **kw: _LIVE_PAYLOADS[aid])
+    stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: _LIVE_PAYLOADS[aid])
 
     assert 20_000 - 10_000 >= handler.REFRESH_THROTTLE_SECONDS
     for now in refresh_times:

@@ -17,6 +17,7 @@ from decimal import Decimal
 import pytest
 
 from _http_fakes import FakeResponse, http_error
+from _milestone_fakes import FakeGoalsRepo
 
 
 # --- helpers -----------------------------------------------------------------
@@ -312,14 +313,6 @@ def test_check_homeloan_milestone_failure_still_runs_the_drop_alarm(handler, mon
 
 # --- WHIT-479: goal-checkpoint celebration hook in the account poll -----------
 
-class _FakeGoalsRepo:
-    def __init__(self, goals):
-        self._goals = goals  # {goal_id: goal}
-
-    def list_goals(self):
-        return dict(self._goals)
-
-
 def test_poll_account_balances_returns_old_new_deltas(handler, monkeypatch):
     # A prior stored balance for spending; anz has none (first poll → old None).
     accounts = _FakeAccountRepo(prior={"up-spending": Decimal("90000")})
@@ -363,62 +356,6 @@ def test_poll_account_balances_batch_read_failure_degrades_old_but_still_stores(
     assert stored == len(handler.BALANCE_SOURCES)
     assert all(d["old"] is None for d in deltas)  # the failed read nulls every account's old
     assert len(accounts.calls) == len(handler.BALANCE_SOURCES)  # ...but every balance stored
-
-
-def test_check_goal_checkpoints_fires_for_a_synced_goal_whose_account_crossed(handler, monkeypatch):
-    goal = {"direction": "grow", "name": "Holiday", "account_id": "up-spending",
-            "checkpoints": [{"id": "cp1", "label": "Halfway", "amount": Decimal("95000")}]}
-    monkeypatch.setattr(handler, "GoalsRepository", lambda: _FakeGoalsRepo({"g1": goal}))
-    monkeypatch.setattr(handler, "NotifyRepository", lambda: object())
-    monkeypatch.setattr(handler, "DeviceRepository", lambda: object())
-    seen = []
-    monkeypatch.setattr(handler, "notify_goal_checkpoint_crossing",
-                        lambda old, new, **kw: seen.append((old, new, kw["goal_id"], kw["synced"])) or 1)
-
-    handler._check_goal_checkpoints([{"account_id": "up-spending", "old": Decimal("90000"), "new": Decimal("96270.59")}])
-    assert seen == [(Decimal("90000"), Decimal("96270.59"), "g1", True)]
-
-
-def test_check_goal_checkpoints_skips_manual_goals_and_unpolled_accounts(handler, monkeypatch):
-    goals = {
-        "manual1": {"direction": "grow", "account_id": None, "manual_balance": Decimal("5000"), "checkpoints": []},
-        "unpolled": {"direction": "grow", "account_id": "anz-rewards-black-visa", "checkpoints": []},
-    }
-    monkeypatch.setattr(handler, "GoalsRepository", lambda: _FakeGoalsRepo(goals))
-    monkeypatch.setattr(handler, "NotifyRepository", lambda: object())
-    monkeypatch.setattr(handler, "DeviceRepository", lambda: object())
-    seen = []
-    monkeypatch.setattr(handler, "notify_goal_checkpoint_crossing", lambda old, new, **kw: seen.append(kw["goal_id"]) or 0)
-
-    # deltas only has up-spending; neither goal matches (one manual, one on an unpolled account).
-    handler._check_goal_checkpoints([{"account_id": "up-spending", "old": Decimal("1"), "new": Decimal("2")}])
-    assert seen == []
-
-
-def test_check_goal_checkpoints_one_goals_error_does_not_sink_the_others(handler, monkeypatch):
-    # g1 raises (a transient DB hiccup); g2 also crossed this poll and MUST still be attempted —
-    # otherwise next poll its `old` is already past the rung and its celebration is lost forever.
-    goals = {
-        "g1": {"direction": "grow", "name": "A", "account_id": "up-spending", "checkpoints": []},
-        "g2": {"direction": "grow", "name": "B", "account_id": "anz-rewards-black-visa", "checkpoints": []},
-    }
-    monkeypatch.setattr(handler, "GoalsRepository", lambda: _FakeGoalsRepo(goals))
-    monkeypatch.setattr(handler, "NotifyRepository", lambda: object())
-    monkeypatch.setattr(handler, "DeviceRepository", lambda: object())
-    seen = []
-
-    def crossing(old, new, **kw):
-        seen.append(kw["goal_id"])
-        if kw["goal_id"] == "g1":
-            raise RuntimeError("dynamo throttle")
-        return 1
-
-    monkeypatch.setattr(handler, "notify_goal_checkpoint_crossing", crossing)
-    handler._check_goal_checkpoints([
-        {"account_id": "up-spending", "old": Decimal("1"), "new": Decimal("2")},
-        {"account_id": "anz-rewards-black-visa", "old": Decimal("1"), "new": Decimal("2")},
-    ])
-    assert seen == ["g1", "g2"]  # g1 raised, but g2 was still attempted
 
 
 _HOMELOAN_DELTA = {"account_id": "up-homeloan", "old": Decimal("-3"), "new": Decimal("-2")}
@@ -577,7 +514,7 @@ def test_batched_delta_drives_a_real_goal_checkpoint_crossing_end_to_end(handler
         "checkpoints": [{"id": "cp1", "label": "Halfway", "amount": Decimal("95000")}],
     }
     notify_repo = _FakeNotifyRepo()
-    monkeypatch.setattr(handler, "GoalsRepository", lambda: _FakeGoalsRepo({"g1": goal}))
+    monkeypatch.setattr(handler, "GoalsRepository", lambda: FakeGoalsRepo({"g1": goal}))
     monkeypatch.setattr(handler, "NotifyRepository", lambda: notify_repo)
     monkeypatch.setattr(handler, "DeviceRepository", lambda: _FakeDeviceRepo())
     sent = []

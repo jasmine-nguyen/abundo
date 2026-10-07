@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from _balance_fakes import balance_repo, marker_writes, upserted
+from _balance_fakes import balance_repo, marker_writes, stub_bank, upserted
 
 
 class FakeAccountBalanceRepo:
@@ -110,11 +110,6 @@ def _freeze_time(handler, monkeypatch, now):
     monkeypatch.setattr(handler, "time", SimpleNamespace(time=lambda: now))
 
 
-def _stub_bank(handler, monkeypatch, fetch):
-    monkeypatch.setattr(handler, "get_api_key", lambda: "test-key")
-    monkeypatch.setattr(handler, "fetch_balance", fetch)
-
-
 def test_refresh_throttled_returns_stored_without_bank_call(handler, monkeypatch):
     rows = [{"account_id": "up-spending", "amount": Decimal("96270.59"),
              "available_balance": None, "currency": "AUD", "as_of": "d", "account_type": "checking"}]
@@ -122,7 +117,7 @@ def test_refresh_throttled_returns_stored_without_bank_call(handler, monkeypatch
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
     calls = []
-    _stub_bank(handler, monkeypatch, lambda *a, **k: calls.append(1))
+    stub_bank(handler, monkeypatch, lambda *a, **k: calls.append(1))
 
     resp = handler.lambda_handler(_REFRESH_EVENT, None)
 
@@ -142,7 +137,7 @@ def test_refresh_live_fetches_upserts_and_arms_marker(handler, monkeypatch):
     repo = balance_repo(rows=rows, last=None)  # never refreshed -> live
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
-    _stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: _LIVE_PAYLOADS[aid])
+    stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: _LIVE_PAYLOADS[aid])
 
     resp = handler.lambda_handler(_REFRESH_EVENT, None)
 
@@ -167,7 +162,7 @@ def test_refresh_partial_failure_upserts_successes_and_returns_200(handler, monk
             raise OSError("bank unreachable")
         return _LIVE_PAYLOADS[aid]
 
-    _stub_bank(handler, monkeypatch, fetch)
+    stub_bank(handler, monkeypatch, fetch)
 
     resp = handler.lambda_handler(_REFRESH_EVENT, None)
 
@@ -181,7 +176,7 @@ def test_refresh_all_failed_returns_502_without_leaking_details(handler, monkeyp
     repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
-    _stub_bank(handler, monkeypatch, lambda *a, **k: (_ for _ in ()).throw(OSError("secret-key leaked?")))
+    stub_bank(handler, monkeypatch, lambda *a, **k: (_ for _ in ()).throw(OSError("secret-key leaked?")))
 
     resp = handler.lambda_handler(_REFRESH_EVENT, None)
 
@@ -203,7 +198,7 @@ def test_refresh_normalise_failure_counts_as_a_failed_account(handler, monkeypat
             return {"success": False, "error": "provider error"}
         return _LIVE_PAYLOADS[aid]
 
-    _stub_bank(handler, monkeypatch, fetch)
+    stub_bank(handler, monkeypatch, fetch)
 
     resp = handler.lambda_handler(_REFRESH_EVENT, None)
 
@@ -217,7 +212,7 @@ def test_refresh_accepts_post_with_no_body(handler, monkeypatch):
     repo = balance_repo(rows=[], last=990)  # throttled path, keeps it bank-free
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
-    _stub_bank(handler, monkeypatch, lambda *a, **k: pytest.fail("should not fetch while throttled"))
+    stub_bank(handler, monkeypatch, lambda *a, **k: pytest.fail("should not fetch while throttled"))
 
     resp = handler.lambda_handler(_REFRESH_EVENT, None)  # no "body" key at all
     assert resp["statusCode"] == 200

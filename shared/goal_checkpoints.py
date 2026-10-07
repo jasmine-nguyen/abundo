@@ -108,3 +108,34 @@ def notify_goal_checkpoint_crossing(
     for checkpoint in fresh:  # mark regardless of send outcome (see docstring)
         notify_repo.mark_goal_checkpoint_fired(_checkpoint_marker(goal_id, checkpoint), scope)
     return 1
+
+
+def check_goal_checkpoints(deltas, *, goals_repo, device_repo, notify_repo) -> None:
+    """Celebrate any goal-checkpoint crossing on a batch of {account_id, old, new} balance deltas
+    (the daily poll's or a pull-to-refresh's). One push per synced goal whose linked account crossed
+    a checkpoint; once ever per checkpoint. Manual goals cross when their balance is SAVED, so
+    they're handled at the PUT, not here."""
+    if not deltas:
+        return
+    goals = goals_repo.list_goals()
+    if not goals:
+        return
+    delta_by_account = {d["account_id"]: d for d in deltas}
+    for goal_id, goal in goals.items():
+        account_id = goal.get("account_id")
+        if not account_id:
+            continue  # manual goal — celebrated at save time
+        delta = delta_by_account.get(account_id)
+        if delta is None:
+            continue  # this account wasn't fetched this run
+        # Per-goal isolation: one goal's transient DB hiccup must not abort the loop, or a later
+        # goal that also crossed this run would never fire AND never be marked — and next run its
+        # `old` is already past the rung, so that celebration is lost forever, not merely deferred.
+        try:
+            notify_goal_checkpoint_crossing(
+                delta["old"], delta["new"],
+                goal=goal, goal_id=goal_id, synced=True,
+                device_repo=device_repo, notify_repo=notify_repo,
+            )
+        except Exception as e:
+            logger.error("goal checkpoint push failed for %s, continuing: %s", goal_id, e)
