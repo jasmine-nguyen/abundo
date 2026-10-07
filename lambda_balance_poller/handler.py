@@ -28,6 +28,7 @@ from typing import Optional
 
 from constants import (
     ACCOUNT_ID_MAP,
+    BALANCE_POLL_TIMEOUT_SECONDS,
     BALANCE_SOURCES,
     BANKSYNC_API_KEY_PATH,
     BANKSYNC_BASE_URL,
@@ -35,7 +36,6 @@ from constants import (
     FEED_STALL_DAYS,
     FEED_STALL_LOOKBACK_DAYS,
     HOMELOAN_ACCOUNT_ID,
-    HOMELOAN_BALANCE_TIMEOUT_SECONDS,
     MAX_PAGE_SIZE,
     MIN_REPAYMENT_NOTIFY,
     REPAYMENT_DROP_THRESHOLD,
@@ -87,7 +87,7 @@ def fetch_balance(bid: str, aid: str, api_key: str) -> dict:
     return _fetch_balance(
         bid, aid, api_key,
         base_url=BANKSYNC_BASE_URL,
-        timeout=HOMELOAN_BALANCE_TIMEOUT_SECONDS,
+        timeout=BALANCE_POLL_TIMEOUT_SECONDS,
         user_agent="abundo-homeloan-request",
     )
 

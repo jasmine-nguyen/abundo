@@ -117,7 +117,7 @@ def test_fetch_balance_builds_correct_get_request(handler, monkeypatch):
     # urllib title-cases header keys, so "X-API-Key" is stored as "X-api-key".
     assert req.get_header("X-api-key") == "the-key"
     assert req.get_header("User-agent") == "abundo-homeloan-request"
-    assert captured["timeout"] == handler.HOMELOAN_BALANCE_TIMEOUT_SECONDS
+    assert captured["timeout"] == handler.BALANCE_POLL_TIMEOUT_SECONDS
     assert out == _OK_PAYLOAD
 
 

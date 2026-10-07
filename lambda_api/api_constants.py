@@ -241,7 +241,7 @@ ACCOUNT_BALANCES_PATH = "/accounts/balances"
 ACCOUNT_BALANCES_REFRESH_PATH = "/accounts/balances/refresh"
 # Short per-account BankSync timeout for the interactive refresh: the accounts are fetched
 # concurrently, so worst-case wall time is ~this, kept well under the 30s API-Gateway
-# integration cap (the daily poller uses the longer HOMELOAN_BALANCE_TIMEOUT_SECONDS).
+# integration cap (the daily poller uses the longer BALANCE_POLL_TIMEOUT_SECONDS).
 REFRESH_FETCH_TIMEOUT_SECONDS = 10
 # Min seconds between live refreshes: a pull within this window returns the stored balances
 # with no bank call (protects against cost + BankSync rate-limits on repeated pulls).
