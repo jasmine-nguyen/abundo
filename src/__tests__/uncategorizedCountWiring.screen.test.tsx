@@ -15,10 +15,9 @@ import { render, screen, fireEvent, within } from '@testing-library/react-native
 import { txn } from './factory';
 
 // Real selectors (countUncategorized / transactionGroups); only useAppContext is stubbed.
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openPicker: () => {}, openMultiPicker: () => {}, retryLoad: () => {}, showToast: () => {} }) };
-});
+jest.mock('../context', () =>
+  require('./support/contextMock').realContextWith(() => ({ openPicker: () => {}, openMultiPicker: () => {}, retryLoad: () => {}, showToast: () => {} })),
+);
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());

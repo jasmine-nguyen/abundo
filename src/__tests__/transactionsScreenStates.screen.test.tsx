@@ -12,18 +12,14 @@ import { RefreshControl } from 'react-native';
 
 const mockOpenMultiPicker = jest.fn();
 const mockShowToast = jest.fn();
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({
-      retryLoad: jest.fn(),
-      openPicker: jest.fn(),
-      openMultiPicker: mockOpenMultiPicker,
-      showToast: mockShowToast,
-    }),
-  };
-});
+jest.mock('../context', () =>
+  require('./support/contextMock').realContextWith(() => ({
+    retryLoad: jest.fn(),
+    openPicker: jest.fn(),
+    openMultiPicker: mockOpenMultiPicker,
+    showToast: mockShowToast,
+  })),
+);
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());

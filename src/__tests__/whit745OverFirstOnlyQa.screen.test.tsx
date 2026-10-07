@@ -11,10 +11,7 @@ import { renderLoadedBudgetsWithQueries } from './support/budgetsScreen';
 import { pullAndSettle } from './support/pull';
 import { COFFEE, MORTGAGE_RECORD } from './support/categories';
 
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ deleteBudget: jest.fn(), openPicker: jest.fn() }) };
-});
+jest.mock('../context', () => require('./support/budgetsSuite').budgetsContextMockModule());
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 

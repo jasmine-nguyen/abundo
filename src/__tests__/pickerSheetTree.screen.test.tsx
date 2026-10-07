@@ -11,10 +11,7 @@ import type { AppContext } from '../context';
 import type { Category } from '../types';
 
 let mockState: AppContext;
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => mockState };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { colorForCategory } from '../categoryColors';

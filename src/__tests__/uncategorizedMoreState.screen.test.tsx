@@ -18,10 +18,9 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 // ../context PARTIAL — real selectors (transactionGroups/countUncategorized) so the tab list is
 // real; stub useAppContext for the row/multi-picker/toast the screen consumes.
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openMultiPicker: jest.fn(), showToast: jest.fn() }) };
-});
+jest.mock('../context', () =>
+  require('./support/contextMock').realContextWith(() => ({ openMultiPicker: jest.fn(), showToast: jest.fn() })),
+);
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Transactions from '../../app/(tabs)/transactions';

@@ -13,10 +13,9 @@ import type { Transaction } from '../types';
 
 const mockEdit = jest.fn();
 const mockToast = jest.fn();
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ applyTransactionEdit: mockEdit, showToast: mockToast }) };
-});
+jest.mock('../context', () =>
+  require('./support/contextMock').realContextWith(() => ({ applyTransactionEdit: mockEdit, showToast: mockToast })),
+);
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));

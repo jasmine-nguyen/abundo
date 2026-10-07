@@ -13,10 +13,7 @@ import type { Category } from '../types';
 // category taxonomy arrives as a prop from the screen's query composite. So the mocked
 // context supplies just openPicker + a category() lookup for the tests to pass as a prop.
 let mockState: { openPicker: typeof openPicker; category: (id: string | null) => Category | undefined };
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => mockState };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
 
 // WHIT-272: the row's trailing chevron routes to the detail page via useRouter. Stub it and
 // capture push so the chevron-routing test can assert the destination.
