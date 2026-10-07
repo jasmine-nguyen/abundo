@@ -100,7 +100,7 @@ export function GoalProgress({ goal, view, onPastDue }: { goal: GoalRecord; view
         </View>
       )}
 
-      {/* WHIT-486: the count travels with the dots — both show only when the bar has a scale to
+      {/* WHIT-486: the milestone line travels with the dots — both show only when the bar has a scale to
           place them on (markers non-empty), so it's never "N reached" + no dots. */}
       {showMilestones && (
         <Text testID={`goal-checkpoints-${goal.id}`} style={styles.checkpoints}>
