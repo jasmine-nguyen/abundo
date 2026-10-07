@@ -8,11 +8,9 @@ import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 
-let mockAi: { summary: string; suggestions: string[]; generated_at: string } | null = null;
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({
-  aiInsights: mockAi, aiInsightsLoading: false, aiInsightsError: false, generateAiInsights: jest.fn(),
-})));
+jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
+import { resetAi, setAi } from './support/insightsScreen';
 const mockOpenChat = jest.fn();
 jest.mock('../chat/ChatContext', () => ({ useChat: () => ({ openChat: mockOpenChat }) }));
 
@@ -23,17 +21,17 @@ useTestQueryClient();
 
 beforeEach(() => {
   resetAuth();
+  resetAi();
   mockOpenChat.mockClear();
 });
 
 it('is hidden before there is any advice', async () => {
-  mockAi = null;
   await renderWithQueries(<AiCoachCard />);
   expect(screen.queryByTestId('ai-ask-follow-up')).toBeNull();
 });
 
 it('opens the chat seeded with the summary', async () => {
-  mockAi = { summary: 'You are pacing well this cycle.', suggestions: ['Trim coffee'], generated_at: '2026-09-20T00:00:00Z' };
+  setAi({ aiInsights: { summary: 'You are pacing well this cycle.', suggestions: ['Trim coffee'], generated_at: '2026-09-20T00:00:00Z', cycle_start: '2026-09-01', cached: false } });
   await renderWithQueries(<AiCoachCard />);
   fireEvent.press(screen.getByText('Ask a follow-up →'));
   expect(mockOpenChat).toHaveBeenCalledWith({ seed: 'You are pacing well this cycle.' });
