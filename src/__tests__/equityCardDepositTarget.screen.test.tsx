@@ -18,7 +18,7 @@ import { resetRouter } from './support/routerMock';
 import { seedGoal } from './support/goalsScreen';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => require('./support/contextMock').emptyContextMockModule());
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({})));
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Mortgage from '../../app/mortgage';

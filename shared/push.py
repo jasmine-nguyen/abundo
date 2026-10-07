@@ -86,25 +86,23 @@ def _get_receipts_batch(ids: list, token) -> dict:
     return payload.get("data") or {}
 
 
-def get_receipts(ids, *, access_token=None) -> dict:
+def get_receipts(ids, *, access_token: str) -> dict:
     """Poll Expo for the delivery outcome of each receipt id. Best-effort: never raises.
 
     Returns a merged ``{receipt_id -> receipt}`` dict across ``EXPO_RECEIPTS_MAX``-id
     chunks. An id Expo hasn't resolved yet is simply absent from the result (the sweep
     leaves that row for a later poll). A per-chunk transport/decode error is logged and
-    skipped, so one bad chunk can't lose the ids in the others. ``access_token`` overrides
-    the SSM read (pass "" to poll unauthenticated).
+    skipped, so one bad chunk can't lose the ids in the others. ``access_token`` is the
+    caller's Expo token ("" polls unauthenticated).
     """
     ids = [i for i in (ids or []) if i]
     if not ids:
         return {}
 
-    token = access_token if access_token is not None else _safe_access_token()
-
     receipts: dict = {}
     for chunk in batched(ids, EXPO_RECEIPTS_MAX):
         try:
-            receipts.update(_get_receipts_batch(chunk, token))
+            receipts.update(_get_receipts_batch(chunk, access_token))
         except Exception:  # transport / decode / anything — best-effort, keep going
             logger.exception("Expo getReceipts batch failed for %d id(s)", len(chunk))
             continue

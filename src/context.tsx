@@ -3003,7 +3003,7 @@ export function budgetEditInfo(s: BudgetEditInput, categoryId: string) {
   const spreadActive = !!existing?.spread;
   const cn = s.cycleName();
   return {
-    category: c, existing, isIncome,
+    category: c, existing,
     periodLabel: cn.toUpperCase(),
     title: existing ? 'Edit budget' : 'Set budget',
     saveText: existing ? 'Update budget' : 'Add budget',

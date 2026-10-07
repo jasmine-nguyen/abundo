@@ -818,8 +818,8 @@ def test_conditional_write_declares_no_unused_expression_value_when_the_row_was_
 
     repo.update_transaction_category_if_unchanged(*key, "groceries", None)
 
-    assert updates[0]["ConditionExpression"] == "attribute_exists(pk) AND attribute_not_exists(#c)"
-    assert set(updates[0]["ExpressionAttributeValues"]) == {":category"}
+    assert updates[0]["ConditionExpression"] == "attribute_exists(pk) AND attribute_not_exists(#f0)"
+    assert set(updates[0]["ExpressionAttributeValues"]) == {":v0"}
 
 
 def test_conditional_write_compares_against_the_scanned_value_when_there_was_one(repo, monkeypatch):
@@ -831,9 +831,9 @@ def test_conditional_write_compares_against_the_scanned_value_when_there_was_one
 
     repo.update_transaction_category_if_unchanged(*key, "eatingout", "FOOD_AND_DRINK")
 
-    assert updates[0]["ConditionExpression"] == "attribute_exists(pk) AND #c = :expected"
+    assert updates[0]["ConditionExpression"] == "attribute_exists(pk) AND #f0 = :expected"
     assert updates[0]["ExpressionAttributeValues"] == {
-        ":category": "eatingout", ":expected": "FOOD_AND_DRINK"}
+        ":v0": "eatingout", ":expected": "FOOD_AND_DRINK"}
 
 
 def test_a_row_whose_category_attribute_disappeared_reads_as_changed_not_as_gone(repo):
@@ -975,7 +975,7 @@ def test_whit536_stamped_write_declares_no_unused_expression_value(repo, monkeyp
 
     expr = captured["UpdateExpression"] + " " + captured["ConditionExpression"]
     declared = set(captured["ExpressionAttributeValues"])
-    assert declared == {":category", ":expected", ":rule"}
+    assert declared == {":v0", ":expected", ":v1"}
     for value_alias in declared:
         assert value_alias in expr
 

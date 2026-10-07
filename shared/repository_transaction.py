@@ -299,27 +299,21 @@ class TransactionRepository(RepositoryBase):
         missing row as vanished, and the app then drops it from the list entirely. "gone" is
         therefore only ever returned on a clean, definite absence — a failed read raises.
         """
-        condition = "attribute_exists(pk) AND attribute_not_exists(#c)"
-        names = {"#c": "category"}
-        values = {":category": category}
-        assignments = ["#c = :category"]
-        if expected_category is not None:
-            condition = "attribute_exists(pk) AND #c = :expected"
-            values[":expected"] = expected_category
+        sets = {"category": category}
         # A rule filed this (WHIT-536): stamp filed_by_rule alongside the category, in the one
         # conditional write, so the stamp can never land on a row the tap-wins guard rejected.
         if filed_by_rule is not None:
-            names["#p"] = "filed_by_rule"
-            values[":rule"] = filed_by_rule
-            assignments.append("#p = :rule")
+            sets["filed_by_rule"] = filed_by_rule
         # The winning rule keeps this charge out of the budget (WHIT-558): set budget_excluded in the
         # SAME conditional write, for the same reason. Only ever SET True — never write False — so a
         # user's hand-set exclusion is never cleared by a rule (the user's tap always wins).
         if budget_excluded:
-            names["#b"] = "budget_excluded"
-            values[":bexcl"] = True
-            assignments.append("#b = :bexcl")
-        expression = "SET " + ", ".join(assignments)
+            sets["budget_excluded"] = True
+        expression, names, values = update_expression(sets)
+        condition = "attribute_exists(pk) AND attribute_not_exists(#f0)"
+        if expected_category is not None:
+            condition = "attribute_exists(pk) AND #f0 = :expected"
+            values[":expected"] = expected_category
 
         try:
             self._get_table().update_item(

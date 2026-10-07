@@ -487,20 +487,6 @@ def test_get_receipts_absent_data_and_top_level_errors_yield_empty(shared, monke
     assert push.get_receipts(["a"], access_token="k") == {}
 
 
-def test_get_receipts_reads_token_from_ssm_when_not_passed(shared, monkeypatch):
-    push = shared.push
-    _stub_ssm_token(push, monkeypatch, lambda path: "ssm-token")
-    captured = {}
-
-    def fake_urlopen(req, timeout=None):
-        captured["auth"] = req.get_header("Authorization")
-        return FakeResponse({"data": {"a": {"status": "ok"}}})
-
-    monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
-    push.get_receipts(["a"])
-    assert captured["auth"] == "Bearer ssm-token"
-
-
 def test_get_receipts_surfaces_request_level_errors_as_a_warning(shared, monkeypatch, caplog):
     # WHIT-246 — [A-warn] The refactor left getReceipts' request-level `errors` handling
     # OUTSIDE _post_expo, in _get_receipts_batch. Expo can 200 with a top-level {"errors":[...]}

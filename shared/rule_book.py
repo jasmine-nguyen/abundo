@@ -53,7 +53,7 @@ class WriteLimit:
     came from). `WriteLimit.none()` is uncapped (the worker)."""
 
     def __init__(self, max_writes: int | None, time_budget: float | None, started: float | None,
-                 clock: Callable[[], float]):
+                 clock: Callable[[], float] = time.monotonic):
         self.max_writes = max_writes
         self.time_budget = time_budget
         self.started = started
@@ -61,7 +61,7 @@ class WriteLimit:
 
     @classmethod
     def none(cls) -> "WriteLimit":
-        return cls(None, None, None, time.monotonic)
+        return cls(None, None, None)
 
     def reached(self, attempted: int) -> bool:
         if self.max_writes is not None and attempted >= self.max_writes:

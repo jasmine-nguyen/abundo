@@ -57,8 +57,8 @@ describe('picker category tree', () => {
     expect(screen.getByText('Groceries')).toBeTruthy();
     expect(screen.getByText('Transport')).toBeTruthy();
     // The parent (has subs) gets a fold chevron; a leaf does not.
-    expect(screen.getByTestId('pickerCatToggle-food')).toBeTruthy();
-    expect(screen.queryByTestId('pickerCatToggle-transport')).toBeNull();
+    expect(screen.getByTestId('pickerCat-toggle-food')).toBeTruthy();
+    expect(screen.queryByTestId('pickerCat-toggle-transport')).toBeNull();
   });
 
   it('tapping a parent name selects that parent', async () => {
@@ -75,7 +75,7 @@ describe('picker category tree', () => {
 
   it('tapping a parent chevron folds its subs away without selecting anything', async () => {
     await openPicker(FAMILY, fns);
-    fireEvent.press(screen.getByTestId('pickerCatToggle-food'));
+    fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
     // Subs gone; parent and the unrelated top-level stay.
     expect(screen.queryByText('Dining')).toBeNull();
     expect(screen.queryByText('Groceries')).toBeNull();
@@ -87,9 +87,9 @@ describe('picker category tree', () => {
 
   it('unfolding a parent brings its subs back', async () => {
     await openPicker(FAMILY, fns);
-    fireEvent.press(screen.getByTestId('pickerCatToggle-food'));
+    fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
     expect(screen.queryByText('Dining')).toBeNull();
-    fireEvent.press(screen.getByTestId('pickerCatToggle-food'));
+    fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
     expect(screen.getByText('Dining')).toBeTruthy();
     expect(screen.getByText('Groceries')).toBeTruthy();
   });
@@ -99,7 +99,7 @@ describe('picker category tree', () => {
     const deep = [cat('food', 'Food'), cat('restaurants', 'Restaurants', 'food'), cat('fastfood', 'Fast food', 'restaurants')];
     await openPicker(deep, fns);
     expect(screen.getByText('Fast food')).toBeTruthy();
-    fireEvent.press(screen.getByTestId('pickerCatToggle-food'));
+    fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
     expect(screen.queryByText('Restaurants')).toBeNull();
     expect(screen.queryByText('Fast food')).toBeNull();
   });
@@ -169,10 +169,10 @@ describe('picker tree — gaps (WHIT-273)', () => {
     it('[A-PER] folding Food hides only Food\'s subs — Shopping\'s subs stay visible', async () => {
       await openPicker(TWO_FAMILIES, fns);
       // Both families have their own chevron.
-      expect(screen.getByTestId('pickerCatToggle-food')).toBeTruthy();
-      expect(screen.getByTestId('pickerCatToggle-shopping')).toBeTruthy();
+      expect(screen.getByTestId('pickerCat-toggle-food')).toBeTruthy();
+      expect(screen.getByTestId('pickerCat-toggle-shopping')).toBeTruthy();
 
-      fireEvent.press(screen.getByTestId('pickerCatToggle-food'));
+      fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
 
       // Food's subs gone.
       expect(screen.queryByText('Dining')).toBeNull();
@@ -187,16 +187,16 @@ describe('picker tree — gaps (WHIT-273)', () => {
 
     it('[A-PER2] a collapsed parent keeps its OWN chevron so it can be reopened', async () => {
       await openPicker(TWO_FAMILIES, fns);
-      fireEvent.press(screen.getByTestId('pickerCatToggle-food'));
+      fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
       // Chevron survives the fold (implementer proves unfold works; this pins the target's presence).
-      expect(screen.getByTestId('pickerCatToggle-food')).toBeTruthy();
+      expect(screen.getByTestId('pickerCat-toggle-food')).toBeTruthy();
     });
   });
 
   describe('picker tree — chevron accessibility state', () => {
     it('[A-A11Y] the parent chevron reports expanded=true, then expanded=false after folding', async () => {
       await openPicker([cat('food', 'Food'), cat('dining', 'Dining', 'food')], fns);
-      const toggle = () => screen.getByTestId('pickerCatToggle-food');
+      const toggle = () => screen.getByTestId('pickerCat-toggle-food');
       expect((toggle().props as any).accessibilityState.expanded).toBe(true);
       fireEvent.press(toggle());
       expect((toggle().props as any).accessibilityState.expanded).toBe(false);

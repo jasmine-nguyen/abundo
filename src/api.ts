@@ -115,17 +115,16 @@ async function request(spec: RequestSpec, errors: ErrorHandling): Promise<any> {
   const idToken = await getAuthToken();
   if (!idToken) throw new Error("Not signed in");
   const hasBody = spec.body !== undefined;
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${idToken}`,
-    ...(hasBody && { "Content-Type": "application/json" }),
-  };
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${spec.path}`, {
-      headers,
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+        ...(hasBody && { "Content-Type": "application/json" }),
+      },
       signal: controller.signal,
       ...(spec.method && { method: spec.method }),
       ...(hasBody && { body: JSON.stringify(spec.body) }),

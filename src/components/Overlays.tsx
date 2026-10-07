@@ -286,7 +286,7 @@ function PickerSheet() {
         </Pressable>
         {/* WHIT-273: a parent→child tree (siblings A–Z within each group, so a newly-created
             category isn't stranded — WHIT-158). */}
-        <CategoryTree categories={cats} onPick={s.chooseCategory} testIDs={{ name: 'pickerCatName', togglePrefix: 'pickerCatToggle-' }} />
+        <CategoryTree categories={cats} onPick={s.chooseCategory} testID="pickerCat" />
       </ScrollView>
     </View>
   );
@@ -1330,7 +1330,7 @@ function FileByShopListSheet() {
           <CategoryTree
             categories={cats}
             onPick={(id) => s.setSheet({ mode: 'fileByShopConfirm', group: selectedGroup, categoryId: id })}
-            testIDs={{ pick: 'file-by-shop-cat', togglePrefix: 'file-by-shop-cat-toggle-' }}
+            testID="file-by-shop-cat"
           />
         </ScrollView>
       </View>

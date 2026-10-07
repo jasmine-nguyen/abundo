@@ -39,7 +39,7 @@ beforeEach(() => {
 
 const setMockState = (next: AppContext) => { mockState = next; };
 const stateFor = (sheet: Record<string, unknown>) => ({ sheet, toast: null, ...fns } as unknown as AppContext);
-const pickerNames = () => screen.queryAllByTestId('pickerCatName').map((n) => n.props.children);
+const pickerNames = () => screen.queryAllByTestId('pickerCat-name').map((n) => n.props.children);
 
 describe('picker resolves the tapped charge from the real caches', () => {
   // [A1] (P0)
@@ -119,7 +119,7 @@ describe('picker stays open across a context redraw', () => {
     server.seed('/categories', FAMILY);
     server.seed('/transactions', [TX]);
     const { rerender } = await openOverlays(stateFor({ mode: 'picker', txId: 't1' }), setMockState);
-    fireEvent.press(screen.getByTestId('pickerCatToggle-food'));
+    fireEvent.press(screen.getByTestId('pickerCat-toggle-food'));
     expect(screen.queryByText('Dining')).toBeNull();
 
     await act(async () => {
@@ -129,7 +129,7 @@ describe('picker stays open across a context redraw', () => {
 
     expect(screen.getByText('Categorize')).toBeTruthy();
     expect(screen.queryByText('Dining')).toBeNull();
-    expect((screen.getByTestId('pickerCatToggle-food').props as any).accessibilityState.expanded).toBe(false);
+    expect((screen.getByTestId('pickerCat-toggle-food').props as any).accessibilityState.expanded).toBe(false);
     expect(fns.chooseCategory).not.toHaveBeenCalled();
   });
 });
