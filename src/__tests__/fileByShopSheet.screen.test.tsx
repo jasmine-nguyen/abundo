@@ -63,8 +63,8 @@ const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
 });
 
 // The shops load once the sheet opens, so each list test waits for them before it checks.
-function mountList(groups = [group()], categories: unknown[] = CATEGORIES) {
-  server.seed('/categories', categories);
+function mountList(groups = [group()]) {
+  server.seed('/categories', CATEGORIES);
   server.seed('/transactions/uncategorized/merchants', merchants(groups));
   const state = { sheet: { mode: 'fileByShopList' }, toast: null, ...fns } as unknown as AppContext;
   return openOverlays(state, (next) => { mockState = next; });
