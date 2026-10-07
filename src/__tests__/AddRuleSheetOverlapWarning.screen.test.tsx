@@ -4,9 +4,9 @@
 // saves directly, unchanged.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, fireEvent } from '@testing-library/react-native';
-import { StyleSheet } from 'react-native';
 import { C } from '../theme';
 import type { AppContext } from '../context';
+import { styleOf } from './support/layout';
 
 let mockState: AppContext;
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
@@ -73,8 +73,8 @@ it('"Save anyway" is the filled button and "Cancel" the outlined one', async () 
   await openNew([colesGroceries]);
   buildColesUnder40();
   fireEvent.press(screen.getByText('Add rule'));
-  const save = StyleSheet.flatten(screen.getByTestId('rule-overlap-save').props.style);
-  const cancel = StyleSheet.flatten(screen.getByTestId('rule-overlap-cancel').props.style);
+  const save = styleOf(screen.getByTestId('rule-overlap-save'));
+  const cancel = styleOf(screen.getByTestId('rule-overlap-cancel'));
   expect(save.backgroundColor).toBe(C.accent);
   expect(cancel.backgroundColor).toBe('transparent');
 });

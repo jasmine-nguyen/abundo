@@ -3,7 +3,6 @@
 // of a rollover envelope. Real ../api over the fake server; ../auth + expo-router mocked.
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { screen } from '@testing-library/react-native';
 import { setParams } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
@@ -11,6 +10,7 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { seedBudgetsTab } from './support/budgetsTab';
 import { renderLoadedBudgetsWithQueries } from './support/budgetsScreen';
 import { COFFEE, GROCERIES } from './support/categories';
+import { styleOf } from './support/layout';
 
 jest.mock('../context', () => require('./support/budgetsSuite').budgetsContextMockModule());
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -43,5 +43,5 @@ it("[A15] the detail's \"today's plan\" label sits on the base pace of a rollove
   server.seed('/budgets/coffee/transactions', []);
   await renderWithQueries(<BudgetDetail />);
   const label = await screen.findByText("today's plan");
-  expect(StyleSheet.flatten(label.props.style).left).toBe('25%');
+  expect(styleOf(label).left).toBe('25%');
 });

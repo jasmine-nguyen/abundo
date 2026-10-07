@@ -20,6 +20,7 @@ import { render, renderHook, act, screen, fireEvent, waitFor } from '@testing-li
 import { formatDayMonthYear, toISODate } from '../dateutil';
 import { BUCKET_COLOR } from '../categoryColors';
 import { C } from '../theme';
+import { styleOf } from './support/layout';
 
 // Live auth store (support/authMock). A test drives login status via setAuthStatus (broadcasts),
 // setAuthStatus(getAuthStatus()) (re-notify, no change) or setAuthStatusQuietly (no broadcast).
@@ -452,9 +453,7 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
   // A category pill's label goes white (#fff) when selected, C.textMid otherwise
   // (Overlays.tsx ruleCatText style). Flatten the style array and read the effective color.
   function pillColor(name: string): string | undefined {
-    const el = screen.getByText(name);
-    const style = Array.isArray(el.props.style) ? el.props.style : [el.props.style];
-    return style.reduce((acc: Record<string, unknown>, s) => ({ ...acc, ...(s || {}) }), {}).color as string | undefined;
+    return styleOf(screen.getByText(name)).color as string | undefined;
   }
 
   beforeEach(() => {
@@ -668,13 +667,6 @@ describe('WHIT-283 GAP — the restored form RE-SELECTS bucket / icon / parent a
 
   const NAME_INPUT = 'Category name';
 
-  // Flatten an RN style prop (object | array | nested arrays) to one object, so a selected/unselected
-  // colour can be read regardless of how the component composes its styles.
-  function flat(style: unknown): Record<string, unknown> {
-    if (Array.isArray(style)) return style.reduce((acc: Record<string, unknown>, s) => Object.assign(acc, flat(s)), {});
-    return (style ?? {}) as Record<string, unknown>;
-  }
-
   beforeEach(() => {
     resetAuth();
     seedTransactions(T1);
@@ -702,11 +694,11 @@ describe('WHIT-283 GAP — the restored form RE-SELECTS bucket / icon / parent a
 
     // The reopened form must SHOW the choices selected: the bucket label paints in its bucket colour
     // and the icon tile borders in the accent ONLY when selected.
-    expect(flat(screen.getByText('Living').props.style).color).toBe(BUCKET_COLOR.Living);
-    expect(flat(screen.getByTestId('icon-cart').props.style).borderColor).toBe(C.accent);
+    expect(styleOf(screen.getByText('Living')).color).toBe(BUCKET_COLOR.Living);
+    expect(styleOf(screen.getByTestId('icon-cart')).borderColor).toBe(C.accent);
     // A sibling control must NOT read as selected — guards a "everything looks selected" false pass.
-    expect(flat(screen.getByText('Income').props.style).color).not.toBe(BUCKET_COLOR.Income);
-    expect(flat(screen.getByTestId('icon-coffee').props.style).borderColor).toBe('rgba(255,255,255,.07)');
+    expect(styleOf(screen.getByText('Income')).color).not.toBe(BUCKET_COLOR.Income);
+    expect(styleOf(screen.getByTestId('icon-coffee')).borderColor).toBe('rgba(255,255,255,.07)');
 
     // Clobber guard: the persist effect re-fires on the restored mount. Because the field state
     // lazy-inits FROM the draft before that effect writes committed state, the stored draft must be
@@ -728,8 +720,8 @@ describe('WHIT-283 GAP — the restored form RE-SELECTS bucket / icon / parent a
 
     // Reopened: the 'Coffee' parent chip reads selected (painted in the category's colour) and the
     // 'None' chip does not.
-    expect(flat(screen.getByText('Coffee').props.style).color).toBe('#ff9e64'); // the app's colour for id 'coffee'
-    expect(flat(screen.getByText('None').props.style).color).not.toBe(C.accentSofter);
+    expect(styleOf(screen.getByText('Coffee')).color).toBe('#ff9e64'); // the app's colour for id 'coffee'
+    expect(styleOf(screen.getByText('None')).color).not.toBe(C.accentSofter);
     expect(ctx.readSheetDraft('pickercat:t1')).toMatchObject({ name: 'Beans', parent: 'coffee' });
   });
 });

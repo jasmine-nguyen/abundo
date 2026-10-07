@@ -5,6 +5,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, act, waitFor } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 import { C } from '../theme';
+import { styleOf } from './support/layout';
 
 let mockState: AppContext;
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
@@ -27,10 +28,7 @@ const open = () => openOverlays(
 );
 
 // The selected row's label is drawn in accentSofter; the others in textMid.
-const isTicked = (label: string) => {
-  const style = [screen.getByText(label).props.style].flat(Infinity) as { color?: string }[];
-  return style.some((s) => s?.color === C.accentSofter);
-};
+const isTicked = (label: string) => styleOf(screen.getByText(label)).color === C.accentSofter;
 
 beforeEach(() => {
   jest.clearAllMocks();

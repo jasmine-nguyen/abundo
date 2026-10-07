@@ -6,9 +6,10 @@
 // from the fake server through the real query hooks (WHIT-670).
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
-import { StyleSheet, ScrollView } from 'react-native';
+import { ScrollView } from 'react-native';
 import type { AppContext } from '../context';
 import type { Category } from '../types';
+import { styleOf } from './support/layout';
 
 let mockState: AppContext;
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
@@ -126,8 +127,8 @@ describe('picker tree — gaps (WHIT-273)', () => {
   function rowStyle(name: string): Record<string, any> {
     let node: any = screen.getByText(name);
     while (node) {
-      const flat = StyleSheet.flatten(node.props?.style) as any;
-      if (flat && flat.paddingVertical === 11) return flat;
+      const flat = styleOf(node);
+      if (flat.paddingVertical === 11) return flat;
       node = node.parent;
     }
     throw new Error(`row not found for "${name}"`);

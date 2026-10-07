@@ -14,12 +14,12 @@
 //   - [A28] the list's error card (background refetch failed) and its ungrouped "one-offs" copy
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, fireEvent, act } from '@testing-library/react-native';
-import { StyleSheet } from 'react-native';
 import type { AppContext } from '../context';
 import { C } from '../theme';
 import type { FilingResult, FilingTarget, FilingWhen } from '../context';
 import { APPLY_RULES_MAX_WRITES } from '../context';
 import type { ApplyRulesResult, UncategorizedMerchantGroup, UncategorizedMerchants } from '../api';
+import { styleOf } from './support/layout';
 
 let mockState: AppContext;
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
@@ -303,7 +303,7 @@ describe('the shop list — background states', () => {
 // WHIT-760 — the list's end buttons are the shared SheetButton; "Done" picks its look from
 // whether one-offs remain. Fail-on-revert: flip or drop `primary={oneOffCount === 0}` and one fails.
 describe('the shop list — end button looks', () => {
-  const bg = (testID: string) => StyleSheet.flatten(screen.getByTestId(testID).props.style).backgroundColor;
+  const bg = (testID: string) => styleOf(screen.getByTestId(testID)).backgroundColor;
 
   it('[A2] with one-offs left, "Select to file" is filled and "Done" is outlined', async () => {
     server.seed(MERCHANTS, merchants([], { unfiled: 3, ungrouped: { count: 3, samples: ['ONE OFF'] } }));

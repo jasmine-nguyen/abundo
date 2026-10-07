@@ -4,7 +4,6 @@
 // and breakdown below. WHIT-687: drawn over the fake server with the shared Insights kit, so the
 // real category mapping (toCategory keeps colorSlot) and breakdown reads run.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { StyleSheet } from 'react-native';
 import { screen, fireEvent } from '@testing-library/react-native';
 import { CATEGORY_COLORS, ASSIGNMENT_ORDER, chartCategoryColor } from '../chartColors';
 import { PALETTE_CATS, SLOT_ROWS_CATS } from './insightsColourFixtures';
@@ -13,6 +12,7 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { breakdownWire, seedInsights, renderInsights, resetAi } from './support/insightsScreen';
+import { styleOf } from './support/layout';
 
 // Capture the slices the donut is handed, so each suite can assert their colours directly.
 let capturedSlices: { id: string; name: string; color: string; value: number }[] = [];
@@ -55,9 +55,8 @@ describe('Insights chart palette (WHIT-402/432)', () => {
   function hasFillColor(node: unknown, hex: string): boolean {
     if (!node || typeof node !== 'object') return false;
     if (Array.isArray(node)) return node.some((n) => hasFillColor(n, hex));
-    const n = node as { props?: { style?: unknown }; children?: unknown[] };
-    const flat = StyleSheet.flatten(n.props?.style as never) || {};
-    if ((flat as { backgroundColor?: string }).backgroundColor === hex) return true;
+    const n = node as { props: { style?: unknown }; children?: unknown[] };
+    if (styleOf(n).backgroundColor === hex) return true;
     return Array.isArray(n.children) && n.children.some((c) => hasFillColor(c, hex));
   }
 
@@ -189,9 +188,9 @@ describe('Insights slot rows (WHIT-402)', () => {
   function styleValues(node: unknown, prop: string, out: string[] = []): string[] {
     if (!node || typeof node !== 'object') return out;
     if (Array.isArray(node)) { for (const n of node) styleValues(n, prop, out); return out; }
-    const n = node as { props?: { style?: unknown }; children?: unknown[] };
-    const flat = (StyleSheet.flatten(n.props?.style as never) || {}) as Record<string, unknown>;
-    if (typeof flat[prop] === 'string') out.push(flat[prop] as string);
+    const n = node as { props: { style?: unknown }; children?: unknown[] };
+    const flat = styleOf(n);
+    if (typeof flat[prop] === 'string') out.push(flat[prop]);
     if (Array.isArray(n.children)) for (const c of n.children) styleValues(c, prop, out);
     return out;
   }
@@ -210,11 +209,11 @@ describe('Insights slot rows (WHIT-402)', () => {
   function rowStyle(node: unknown, text: string, prop: string): string | undefined {
     if (!node || typeof node !== 'object') return undefined;
     if (Array.isArray(node)) { for (const n of node) { const hit = rowStyle(n, text, prop); if (hit) return hit; } return undefined; }
-    const n = node as { props?: { style?: unknown }; children?: unknown[] };
+    const n = node as { props: { style?: unknown }; children?: unknown[] };
     if (!subtreeHasText(n, text)) return undefined;
     for (const c of n.children ?? []) { const deeper = rowStyle(c, text, prop); if (deeper) return deeper; }
-    const flat = (StyleSheet.flatten(n.props?.style as never) || {}) as Record<string, unknown>;
-    return typeof flat[prop] === 'string' ? (flat[prop] as string) : undefined;
+    const flat = styleOf(n);
+    return typeof flat[prop] === 'string' ? flat[prop] : undefined;
   }
 
   beforeEach(() => {

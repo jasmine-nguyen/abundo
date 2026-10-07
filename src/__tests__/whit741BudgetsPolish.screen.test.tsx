@@ -2,7 +2,6 @@
 // values in separate rows, both big numbers sized together, brighter notes, and a short tick band
 // on every row (WHIT-744). Real ../api over the fake server.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { StyleSheet } from 'react-native';
 import { screen } from '@testing-library/react-native';
 import { C } from '../theme';
 import { resetRouter } from './support/routerMock';
@@ -61,8 +60,8 @@ describe('WHIT-741 Budgets tab polish', () => {
     expect(typeof days.props.maxFontSizeMultiplier).toBe('number');
     expect(money.props.maxFontSizeMultiplier).toBe(days.props.maxFontSizeMultiplier);
     expect(days.props.adjustsFontSizeToFit).toBeFalsy();
-    expect(StyleSheet.flatten(days.props.style).fontSize).toBe(44);
-    expect(StyleSheet.flatten(money.props.style).fontSize).toBe(44);
+    expect(styleOf(days).fontSize).toBe(44);
+    expect(styleOf(money).fontSize).toBe(44);
   });
 
   it('every row\'s tick band is short (WHIT-744)', async () => {
@@ -79,6 +78,6 @@ describe('WHIT-741 Budgets tab polish', () => {
     });
     await renderLoadedBudgetsWithQueries();
 
-    expect(StyleSheet.flatten(screen.getByTestId('budget-row-note-coffee').props.style).color).toBe(C.textMid);
+    expect(styleOf(screen.getByTestId('budget-row-note-coffee')).color).toBe(C.textMid);
   });
 });

@@ -3,7 +3,7 @@
 import { StyleSheet } from 'react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
 
-export const styleOf = (node: ReactTestInstance) => StyleSheet.flatten(node.props.style) ?? {};
+export const styleOf = (node: Pick<ReactTestInstance, 'props'>) => StyleSheet.flatten(node.props.style) ?? {};
 
 export const textOf = (node: ReactTestInstance): string =>
   node.children.map((child) => (typeof child === 'string' ? child : textOf(child))).join('');

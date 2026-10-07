@@ -2,12 +2,16 @@
 // (goal edit, loan form) must keep the shared C.card box; boxStyle only overrides what it names.
 import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { MoneyField } from '../components/MoneyField';
 import { C } from '../theme';
+import { styleOf } from './support/layout';
 
-const boxStyleOf = (placeholder: string) => StyleSheet.flatten(screen.getByPlaceholderText(placeholder).parent?.parent?.props.style);
+const boxStyleOf = (placeholder: string) => {
+  const box = screen.getByPlaceholderText(placeholder).parent?.parent;
+  if (!box) throw new Error('no box around the input');
+  return styleOf(box);
+};
 
 describe('MoneyField boxStyle + testID', () => {
   it('[A1] with no boxStyle the box keeps the shared C.card background', () => {

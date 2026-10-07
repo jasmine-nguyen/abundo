@@ -5,9 +5,9 @@
 // from the fake server through the real query hooks (WHIT-670).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
-import { StyleSheet } from 'react-native';
 import type { AppContext } from '../context';
 import { C } from '../theme';
+import { styleOf } from './support/layout';
 
 let mockState: AppContext;
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
@@ -164,8 +164,8 @@ it('[A1] the clash card shows a filled "Replace" and an outlined "Cancel" side b
   fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
   fireEvent.press(screen.getByText('Groceries'));
   fireEvent.press(screen.getByText('Add rule'));
-  const replace = StyleSheet.flatten(screen.getByTestId('rule-conflict-replace').props.style);
-  const cancel = StyleSheet.flatten(screen.getByTestId('rule-conflict-cancel').props.style);
+  const replace = styleOf(screen.getByTestId('rule-conflict-replace'));
+  const cancel = styleOf(screen.getByTestId('rule-conflict-cancel'));
   expect(replace).toMatchObject({ backgroundColor: C.accent, flex: 1 });
   expect(cancel).toMatchObject({ backgroundColor: 'transparent', borderWidth: 1, flex: 1 });
 });

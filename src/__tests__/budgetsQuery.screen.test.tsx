@@ -14,6 +14,7 @@ import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
 import { pinToday } from './support/clock';
 import { pullControl, pullAndSettle } from './support/pull';
+import { styleOf } from './support/layout';
 
 // auth: controllable status + a real subscribe, so the "fires on login" test can flip it.
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -342,20 +343,12 @@ describe('WHIT-221 parent→sub tree + de-duped hero (folded from budgetsSubcate
     parking: { target: 50, posted: 30, pending: 0 },
   };
 
-  // Flatten a host element's style prop (array | object | StyleSheet-ref) into one object.
-  // StyleSheet.create refs spread to nothing; only inline objects (the indent block) carry
-  // through — exactly what we want to detect.
-  function flatStyle(node: any): Record<string, unknown> {
-    const s = node?.props?.style;
-    const arr = Array.isArray(s) ? s : [s];
-    return arr.reduce((acc, cur) => (cur && typeof cur === 'object' ? { ...acc, ...cur } : acc), {} as Record<string, unknown>);
-  }
-  // Walk up from a text node and return the first ancestor inline style carrying a numeric
+  // Walk up from a text node and return the first ancestor style carrying a numeric
   // marginLeft (the depth indent block), or {} if none — the parent row has no indent block.
   function indentStyleFor(name: string): Record<string, unknown> {
     let node: any = screen.getByText(name);
     for (let i = 0; i < 8 && node; i++) {
-      const st = flatStyle(node);
+      const st = styleOf(node);
       if (typeof st.marginLeft === 'number') return st;
       node = node.parent;
     }

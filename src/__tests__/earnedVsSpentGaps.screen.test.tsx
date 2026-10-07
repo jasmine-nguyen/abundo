@@ -6,14 +6,15 @@
 import { describe, it, expect } from '@jest/globals';
 import React from 'react';
 import { render, screen } from '@testing-library/react-native';
+import { styleOf } from './support/layout';
 import { EarnedVsSpent } from '../components/EarnedVsSpent';
 
 describe('EarnedVsSpent — render gaps (WHIT-312/324)', () => {
   // [A11] broke-even at the SCREEN level: both bars full, the headline reads "$0" + broke-even.
   it('broke even renders both bars full width with the broke-even line', () => {
     render(<EarnedVsSpent earned={1200} spent={1200} testID="evs" />);
-    expect(screen.getByTestId('earned-bar').props.style.width).toBe('100%');
-    expect(screen.getByTestId('spent-bar').props.style.width).toBe('100%');
+    expect(styleOf(screen.getByTestId('earned-bar')).width).toBe('100%');
+    expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('100%');
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('$0');
     expect(screen.getByTestId('earned-vs-spent-message').props.children).toBe(' — You broke even this cycle.');
   });
@@ -24,8 +25,8 @@ describe('EarnedVsSpent — render gaps (WHIT-312/324)', () => {
     render(<EarnedVsSpent earned={12_345_678} spent={1_000_000} testID="evs" />);
     expect(screen.getByText('$12,345,678')).toBeTruthy();
     expect(screen.getByText('$1,000,000')).toBeTruthy();
-    expect(screen.getByTestId('earned-bar').props.style.width).toBe('100%'); // earned larger → full
-    const spentW = screen.getByTestId('spent-bar').props.style.width as string;
+    expect(styleOf(screen.getByTestId('earned-bar')).width).toBe('100%'); // earned larger → full
+    const spentW = styleOf(screen.getByTestId('spent-bar')).width as string;
     const pct = Number(spentW.replace('%', ''));
     expect(Number.isFinite(pct)).toBe(true);
     expect(pct).toBeGreaterThan(0);

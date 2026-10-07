@@ -4,6 +4,7 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { screen } from '@testing-library/react-native';
+import { styleOf } from './support/layout';
 
 jest.mock('../motion/NavBarsContext', () => ({ useNavBars: () => ({ visibility: { interpolate: () => 0 } }) }));
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -24,8 +25,6 @@ beforeEach(() => resetAuth());
 
 const barProps = tabBarProps();
 
-const flat = (style: unknown) => Object.assign({}, ...[style].flat(3).filter(Boolean));
-
 async function renderButton() {
   await renderWithQueries(<ChatProvider><TabBar {...barProps} /></ChatProvider>);
   return screen.getByLabelText('Ask about your spending');
@@ -34,12 +33,12 @@ async function renderButton() {
 // [A1]
 it('clips the gradient to the circle inside the 1px ring, with the accent → purple diagonal', async () => {
   const button = await renderButton();
-  const buttonStyle = flat(button.props.style);
+  const buttonStyle = styleOf(button);
 
-  const fill = button.findAll((node) => typeof node.type === 'string' && flat(node.props.style).overflow === 'hidden')[0];
+  const fill = button.findAll((node) => typeof node.type === 'string' && styleOf(node).overflow === 'hidden')[0];
   expect(fill).toBeTruthy();
-  expect(flat(fill.props.style).borderRadius).toBe(buttonStyle.borderRadius - buttonStyle.borderWidth);
-  expect(flat(fill.props.style).borderRadius).toBe(23);
+  expect(styleOf(fill).borderRadius).toBe(buttonStyle.borderRadius - buttonStyle.borderWidth);
+  expect(styleOf(fill).borderRadius).toBe(23);
   // The button itself must not clip, or the shadow disappears.
   expect(buttonStyle.overflow).toBeUndefined();
 
@@ -63,7 +62,7 @@ it('shows only the 22pt dark chat-sparkle icon inside the circle', async () => {
 // [A3]
 it('the circle sits inside the extra list clearance, so the last row can scroll above it', async () => {
   const button = await renderButton();
-  const style = flat(button.props.style);
+  const style = styleOf(button);
   const barHeight = 90;
   const topAboveBar = style.bottom - barHeight + style.height;
   expect(topAboveBar).toBeLessThanOrEqual(ASK_BUTTON_BOTTOM_CLEARANCE);

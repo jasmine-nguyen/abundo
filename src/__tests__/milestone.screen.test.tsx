@@ -6,7 +6,6 @@
 // read only the editor's writers off it). expo-router's useRouter is mocked to capture navigation.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { render, screen, fireEvent, act, within } from '@testing-library/react-native';
 import { EMPTY_LOAN_FACTS, LOAN_FACTS } from './factory';
 import { installFakeServer } from './support/fakeServer';
@@ -19,6 +18,7 @@ import { saveMilestonesSpy, showToastSpy, milestoneLabelAt } from './support/mil
 import { SAVED_MILESTONES } from './support/milestonePlan';
 import { MoneyField } from '../components/MoneyField';
 import { C } from '../theme';
+import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -488,8 +488,9 @@ describe('WHIT-377 milestone editor', () => {
       expect(input.props.value).toBe('300000');
       // Sign-off option A: the box stays C.bg so it contrasts with the C.card row card.
       let box = input.parent;
-      while (box && !StyleSheet.flatten(box.props.style)?.backgroundColor) box = box.parent;
-      expect(StyleSheet.flatten(box?.props.style).backgroundColor).toBe(C.bg);
+      while (box && !styleOf(box).backgroundColor) box = box.parent;
+      if (!box) throw new Error('no filled box around the input');
+      expect(styleOf(box).backgroundColor).toBe(C.bg);
     });
 
     it('user can type a new target balance and save it', async () => {
@@ -504,7 +505,7 @@ describe('WHIT-377 milestone editor', () => {
     // [A4] the per-row tag follows the row index, so editing the LAST row changes only that row.
     it('typing into the last row only changes that row, and the label keeps the screen label style', async () => {
       await renderWithQueries(<MilestoneEdit />);
-      expect(StyleSheet.flatten(screen.getAllByText('TARGET BALANCE')[2].props.style).marginTop).toBe(14);
+      expect(styleOf(screen.getAllByText('TARGET BALANCE')[2]).marginTop).toBe(14);
       fireEvent.changeText(screen.getByTestId('milestone-balance-2'), '50000');
       expect(screen.getByTestId('milestone-balance-0').props.value).toBe('300000');
       await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });

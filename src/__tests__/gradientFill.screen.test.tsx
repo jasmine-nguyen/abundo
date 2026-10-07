@@ -3,9 +3,9 @@
 // stretch a 0-1 viewBox instead and take its corners from a clipping wrapper View.
 import { it, expect } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { render } from '@testing-library/react-native';
 import { GradientFill, HeroGradientFill } from '../components/ui';
+import { styleOf } from './support/layout';
 
 const LENGTH_PROPS = ['width', 'height', 'x', 'y', 'x1', 'y1', 'x2', 'y2'];
 
@@ -26,7 +26,8 @@ function expectViewBoxStretch(element: React.ReactElement, borderRadius: number 
   expect(svg?.props.preserveAspectRatio).toBe('none');
 
   const wrapper = nodes.find((node) => node.props.pointerEvents === 'none');
-  const wrapperStyle = StyleSheet.flatten(wrapper?.props.style);
+  if (!wrapper) throw new Error('no clipping wrapper');
+  const wrapperStyle = styleOf(wrapper);
   expect(wrapperStyle.overflow).toBe('hidden');
   expect(wrapperStyle.borderRadius).toBe(borderRadius);
 }

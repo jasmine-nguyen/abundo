@@ -4,6 +4,7 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { fireEvent, screen } from '@testing-library/react-native';
+import { styleOf } from './support/layout';
 
 // By default the bars are scrolled away: each slide sits at its hidden end (outputRange[0]).
 // A test sets mockBarsShown to read the shown end (outputRange[1]) instead.
@@ -43,7 +44,7 @@ it('the tab bar renders the round Ask button above itself, and tapping it opens 
   const button = screen.getByLabelText('Ask about your spending');
   expect(screen.queryByText('Ask')).toBeNull();
   // 16pt above the bar's (initial) 90pt height, pinned to the right; a 48pt circle.
-  const style = Object.assign({}, ...[button.props.style].flat(3).filter(Boolean));
+  const style = styleOf(button);
   expect(style).toMatchObject({ position: 'absolute', right: 18, bottom: 106, width: 48, height: 48, borderRadius: 24 });
 
   expect(chatOpen).toBe(false);
@@ -55,7 +56,7 @@ it('WHIT-730: the Ask button slides off-screen with the bar, and tab labels cap 
   await renderWithQueries(<ChatProvider><TabBar {...barProps} /></ChatProvider>);
 
   // Hidden: 90pt bar + 16pt gap + 64 → fully below the screen edge.
-  const slide = Object.assign({}, ...[screen.getByTestId('ask-button-slide').props.style].flat(3).filter(Boolean));
+  const slide = styleOf(screen.getByTestId('ask-button-slide'));
   expect(slide.transform).toEqual([{ translateY: 170 }]);
 
   const label = screen.getByText('Transactions');
@@ -67,7 +68,7 @@ it('[A20] WHIT-730: with the bars shown the Ask button sits in place, and its fu
   await renderWithQueries(<ChatProvider><TabBar {...barProps} /><Probe /></ChatProvider>);
 
   const slideView = screen.getByTestId('ask-button-slide');
-  const slide = Object.assign({}, ...[slideView.props.style].flat(3).filter(Boolean));
+  const slide = styleOf(slideView);
   expect(slide.transform).toEqual([{ translateY: 0 }]);
   // The wrapper covers the screen, so it must pass taps to the list and tabs beneath it.
   expect(slideView.props.pointerEvents).toBe('box-none');

@@ -13,7 +13,6 @@
 //
 // (Not a *.test file, so the jest testMatch never runs it as a suite.)
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -75,7 +74,7 @@ export function heroTotals() {
 
 // WHIT-730 follow-up: a node's effective left/right padding.
 function sidePaddingOf(node: ReactTestInstance) {
-  const style = StyleSheet.flatten(node.props.style) ?? {};
+  const style = styleOf(node);
   return {
     left: style.paddingLeft ?? style.paddingHorizontal ?? style.padding,
     right: style.paddingRight ?? style.paddingHorizontal ?? style.padding,

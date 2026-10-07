@@ -3,6 +3,7 @@
 import { act, render } from '@testing-library/react-native';
 import { Animated, ScrollView, StyleSheet } from 'react-native';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
+import { styleOf } from './layout';
 
 type Rendered = ReturnType<typeof render>;
 
@@ -19,7 +20,7 @@ export function contentStyle(r: Rendered) {
 }
 
 export function headerMotion(r: Rendered) {
-  const style = StyleSheet.flatten(r.UNSAFE_getAllByType(Animated.View)[0].props.style) as {
+  const style = styleOf(r.UNSAFE_getAllByType(Animated.View)[0]) as {
     paddingTop: number;
     opacity: { __getValue(): number };
     transform: { translateY: { __getValue(): number } }[];

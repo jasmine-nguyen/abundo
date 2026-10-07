@@ -11,7 +11,7 @@
 // Renders with the global zero safe-area insets and the NavBars default context.
 import { it, expect } from '@jest/globals';
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text } from 'react-native';
 import { render } from '@testing-library/react-native';
 import { contentStyle } from './support/scrollChromeHeader';
 import {
@@ -20,6 +20,7 @@ import {
   TAB_BAR_CLEARANCE,
   ASK_BUTTON_BOTTOM_CLEARANCE,
 } from '../motion/ScrollChromeHeader';
+import { styleOf } from './support/layout';
 
 type Rendered = ReturnType<typeof render>;
 
@@ -27,7 +28,7 @@ type Rendered = ReturnType<typeof render>;
 function slotCount(root: Rendered) {
   return root
     .UNSAFE_getAllByType(View)
-    .filter((v) => (StyleSheet.flatten(v.props.style) as { width?: number } | undefined)?.width === 40)
+    .filter((v) => styleOf(v).width === 40)
     .length;
 }
 

@@ -19,8 +19,8 @@ import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient } from './support/queryClient';
-import { StyleSheet } from 'react-native';
 import { installFakeServer } from './support/fakeServer';
+import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -64,8 +64,8 @@ function renderInsights() {
 function indentOf(label: string): number {
   let n: any = screen.getByText(label);
   while (n) {
-    const st = StyleSheet.flatten(n.props?.style);
-    if (st && typeof st.marginLeft === 'number') return st.marginLeft;
+    const st = styleOf(n);
+    if (typeof st.marginLeft === 'number') return st.marginLeft;
     n = n.parent;
   }
   return 0;

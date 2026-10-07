@@ -808,11 +808,10 @@ describe('Insights earning share bars (WHIT-373)', () => {
   function incomeBarWidths(node: unknown, acc: string[] = []): string[] {
     if (!node || typeof node !== 'object') return acc;
     if (Array.isArray(node)) { node.forEach((n) => incomeBarWidths(n, acc)); return acc; }
-    const n = node as { props?: { style?: unknown; testID?: string }; children?: unknown[] };
-    const style = n.props?.style;
-    const flat = Array.isArray(style) ? Object.assign({}, ...style.filter(Boolean)) : (style || {});
-    if (RAMP.has((flat as { backgroundColor?: string }).backgroundColor as string)) {
-      acc.push(String((flat as { width?: unknown }).width));
+    const n = node as { props: { style?: unknown; testID?: string }; children?: unknown[] };
+    const flat = styleOf(n);
+    if (RAMP.has(flat.backgroundColor)) {
+      acc.push(String(flat.width));
     }
     if (Array.isArray(n.children)) n.children.forEach((c) => incomeBarWidths(c, acc));
     return acc;

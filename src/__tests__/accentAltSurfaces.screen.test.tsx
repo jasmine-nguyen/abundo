@@ -12,11 +12,13 @@
 // these own "the component still asks for it".
 import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { Text, StyleSheet } from 'react-native';
+import { Text } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
 import { makeState, cat, txn } from './factory';
 import { C } from '../theme';
 import type { Category } from '../types';
+import type { ReactTestRendererJSON } from 'react-test-renderer';
+import { styleOf } from './support/layout';
 
 let mockState: { openPicker: () => void; category: (id: string | null) => Category | undefined };
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
@@ -34,10 +36,7 @@ function rowState() {
 // The row's outer View carries styles.row + the selected wash and has no testID; it is the render
 // root, so read it off the tree rather than inventing a testID for a colour assertion.
 const rootStyle = (): { backgroundColor?: string; borderBottomColor?: string } =>
-  StyleSheet.flatten((screen.toJSON() as unknown as { props: { style: unknown } }).props.style) as {
-    backgroundColor?: string;
-    borderBottomColor?: string;
-  };
+  styleOf(screen.toJSON() as ReactTestRendererJSON);
 
 describe('[G5] the selected-transaction wash (TransactionRow.tsx:88, swept from rgba(124,140,255,.1))', () => {
   it('[G5] a selected row in selection mode paints the chip blue at 10%', () => {
@@ -85,7 +84,7 @@ describe('[G6] the shared Retry pill (ui.tsx RetryButton default, swept from rgb
         <Text testID="thing-content">loaded</Text>
       </DetailStates>,
     );
-    const retry = StyleSheet.flatten(screen.getByTestId('thing-retry').props.style) as { backgroundColor?: string };
+    const retry = styleOf(screen.getByTestId('thing-retry'));
     expect(retry.backgroundColor).toBe(CHIP_BLUE_16);
   });
 });

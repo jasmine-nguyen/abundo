@@ -5,7 +5,6 @@
 // id-derived colour's tint is absent — fail-on-revert. WHIT-687: drawn over the fake server with the
 // shared Insights kit, so the real __income__ read and category mapping run.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { StyleSheet } from 'react-native';
 import { screen, fireEvent } from '@testing-library/react-native';
 import { tint } from '../theme';
 import { chartCategoryColor } from '../chartColors';
@@ -14,6 +13,7 @@ import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { breakdownWire, seedInsights, renderInsights, resetAi } from './support/insightsScreen';
 import { GROCERIES_RECORD } from './support/categories';
+import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
@@ -32,9 +32,8 @@ const CATS = [
 function hasFillColor(node: unknown, bg: string): boolean {
   if (!node || typeof node !== 'object') return false;
   if (Array.isArray(node)) return node.some((n) => hasFillColor(n, bg));
-  const n = node as { props?: { style?: unknown }; children?: unknown[] };
-  const flat = StyleSheet.flatten(n.props?.style as never) || {};
-  if ((flat as { backgroundColor?: string }).backgroundColor === bg) return true;
+  const n = node as { props: { style?: unknown }; children?: unknown[] };
+  if (styleOf(n).backgroundColor === bg) return true;
   return Array.isArray(n.children) && n.children.some((c) => hasFillColor(c, bg));
 }
 

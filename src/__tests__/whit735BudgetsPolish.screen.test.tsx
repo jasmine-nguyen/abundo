@@ -1,12 +1,12 @@
 // WHIT-735 — Budgets polish: the top card's amounts follow one rule (cents only when the amount has them),
 // and a short "nothing spent yet" row uses the full row's 16pt top / 14pt bottom padding.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { StyleSheet } from 'react-native';
 import { screen } from '@testing-library/react-native';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { showBudgets } from './support/budgetsScreen';
 import { MINUS } from '../theme';
+import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -37,8 +37,8 @@ describe('WHIT-735 Budgets polish', () => {
     await showOverWithSlimRow();
     await screen.findByText('Groceries');
 
-    const full = StyleSheet.flatten(screen.getByTestId('budget-row-coffee').props.style);
-    const slim = StyleSheet.flatten(screen.getByTestId('budget-row-groceries').props.style);
+    const full = styleOf(screen.getByTestId('budget-row-coffee'));
+    const slim = styleOf(screen.getByTestId('budget-row-groceries'));
 
     expect({ top: slim.paddingTop, bottom: slim.paddingBottom }).toEqual({ top: 16, bottom: 14 });
     expect({ top: slim.paddingTop, bottom: slim.paddingBottom }).toEqual({ top: full.paddingTop, bottom: full.paddingBottom });

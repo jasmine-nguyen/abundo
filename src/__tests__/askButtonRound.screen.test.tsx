@@ -3,6 +3,7 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { fireEvent, screen } from '@testing-library/react-native';
+import { styleOf } from './support/layout';
 
 jest.mock('../motion/NavBarsContext', () => ({ useNavBars: () => ({ visibility: { interpolate: () => 0 } }) }));
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -34,7 +35,7 @@ it('the tab bar shows a round 48pt icon-only Ask button in the same spot, and ta
   const button = screen.getByLabelText('Ask about your spending');
   expect(screen.queryByText('Ask')).toBeNull();
 
-  const style = Object.assign({}, ...[button.props.style].flat(3).filter(Boolean));
+  const style = styleOf(button);
   // 16pt above the bar's (initial) 90pt height, pinned to the right; a 48pt circle.
   expect(style).toMatchObject({
     position: 'absolute', right: 18, bottom: 106,

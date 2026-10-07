@@ -1,7 +1,6 @@
 // WHIT-712 QA — a budget row is full-strength at rest and dims + shrinks while pressed
 // (DESIGN.md Buttons). Real ../api over the fake server; ../auth + expo-router mocked.
 import { it, expect, jest, beforeEach } from '@jest/globals';
-import { StyleSheet } from 'react-native';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
@@ -9,6 +8,7 @@ import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedBudgetsTab } from './support/budgetsTab';
 import { renderLoadedBudgetsWithQueries } from './support/budgetsScreen';
+import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -27,7 +27,7 @@ function rowHost() {
   while (node && !node.props.onResponderRelease) node = node.parent;
   return node!;
 }
-const rowStyle = () => StyleSheet.flatten(rowHost().props.style) as { opacity?: number; transform?: { scale?: number }[] };
+const rowStyle = () => styleOf(rowHost()) as { opacity?: number; transform?: { scale?: number }[] };
 const touch = { nativeEvent: { timestamp: 0, pageX: 0, pageY: 0, touches: [], changedTouches: [] }, persist: () => {}, currentTarget: { measure: () => {} } };
 
 // [A5] (P1) at rest the row is full-strength; press-in dims + shrinks it inside DESIGN.md's range.

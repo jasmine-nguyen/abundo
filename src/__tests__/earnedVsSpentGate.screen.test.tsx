@@ -9,6 +9,7 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { breakdownWire, seedInsights, renderInsights, resetAi } from './support/insightsScreen';
+import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
@@ -32,8 +33,8 @@ describe('earned-vs-spent gate — earned exactly 0 with spend rows [G5]', () =>
     seedInsights(server, { breakdown: breakdownWire({ spend: { coffee: { posted: 100, pending: 0 } }, earned: 0 }), categories: CATS });
     await renderInsights();
     expect(screen.getByTestId('insights-earned-spent')).toBeTruthy();
-    expect(screen.getByTestId('spent-bar').props.style.width).toBe('100%');
-    expect(screen.getByTestId('earned-bar').props.style.width).toBe('0%');
+    expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('100%');
+    expect(styleOf(screen.getByTestId('earned-bar')).width).toBe('0%');
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('−$100 deficit');
   });
 

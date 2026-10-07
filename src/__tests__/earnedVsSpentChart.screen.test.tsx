@@ -91,8 +91,8 @@ describe('EarnedVsSpent (render)', () => {
     render(<EarnedVsSpent earned={6389} spent={1723} testID="evs" />);
     expect(screen.getByText('$6,389')).toBeTruthy();
     expect(screen.getByText('$1,723')).toBeTruthy();
-    expect(screen.getByTestId('earned-bar').props.style.width).toBe('100%');            // larger → full
-    expect(screen.getByTestId('spent-bar').props.style.width).toBe(`${(1723 / 6389) * 100}%`);
+    expect(styleOf(screen.getByTestId('earned-bar')).width).toBe('100%');            // larger → full
+    expect(styleOf(screen.getByTestId('spent-bar')).width).toBe(`${(1723 / 6389) * 100}%`);
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('+$4,666 surplus');
     expect(styleOf(screen.getByTestId('earned-vs-spent-amount')).color).toBe(C.surplus);
     expect(screen.getByTestId('earned-vs-spent-message').props.children).toBe(` — ${SURPLUS_MSG}`);
@@ -100,7 +100,7 @@ describe('EarnedVsSpent (render)', () => {
 
   it('deficit: the spent bar is full width and the headline is a coral minus', () => {
     render(<EarnedVsSpent earned={1000} spent={1500} testID="evs" />);
-    expect(screen.getByTestId('spent-bar').props.style.width).toBe('100%');
+    expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('100%');
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('−$500 deficit');
     expect(styleOf(screen.getByTestId('earned-vs-spent-amount')).color).toBe(C.bad);
     expect(screen.getByTestId('earned-vs-spent-message').props.children).toBe(` — ${DEFICIT_MSG}`);
@@ -108,8 +108,8 @@ describe('EarnedVsSpent (render)', () => {
 
   it('broke even: $0 headline in the neutral colour', () => {
     render(<EarnedVsSpent earned={1200} spent={1200} testID="evs" />);
-    expect(screen.getByTestId('earned-bar').props.style.width).toBe('100%');
-    expect(screen.getByTestId('spent-bar').props.style.width).toBe('100%');
+    expect(styleOf(screen.getByTestId('earned-bar')).width).toBe('100%');
+    expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('100%');
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('$0');
     expect(styleOf(screen.getByTestId('earned-vs-spent-amount')).color).toBe(C.textBright);
   });
@@ -117,13 +117,13 @@ describe('EarnedVsSpent (render)', () => {
   it('a tiny spend against a large income floors to a visible nub, not a hairline', () => {
     render(<EarnedVsSpent earned={6389} spent={30} testID="evs" />);
     // 30/6389 ≈ 0.47% would be near-invisible → floored to the 3% minimum.
-    expect(screen.getByTestId('spent-bar').props.style.width).toBe('3%');
-    expect(screen.getByTestId('earned-bar').props.style.width).toBe('100%');
+    expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('3%');
+    expect(styleOf(screen.getByTestId('earned-bar')).width).toBe('100%');
   });
 
   it('a zero-spend bar stays empty (the floor never fills a $0 bar)', () => {
     render(<EarnedVsSpent earned={2975} spent={0} testID="evs" />);
-    expect(screen.getByTestId('spent-bar').props.style.width).toBe('0%');
+    expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('0%');
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('+$2,975 surplus');
   });
 

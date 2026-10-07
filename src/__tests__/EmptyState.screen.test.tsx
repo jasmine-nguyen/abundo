@@ -2,15 +2,17 @@
 // and category/[id]. Locks: title + sub copy, testID on the outer block, and the optional icon tile.
 import { it, expect } from '@jest/globals';
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
 import { EmptyState } from '../components/EmptyState';
 import { C, tint } from '../theme';
+import { styleOf } from './support/layout';
 
 function tileStyle() {
   let node = screen.getByTestId('empty-icon').parent;
-  while (node && !StyleSheet.flatten(node.props.style)?.backgroundColor) node = node.parent;
-  return StyleSheet.flatten(node?.props.style);
+  while (node && !styleOf(node).backgroundColor) node = node.parent;
+  if (!node) throw new Error('no tinted tile above the icon');
+  return styleOf(node);
 }
 
 it('shows the title and sub with the testID, and no icon tile when no icon is given', () => {

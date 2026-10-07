@@ -22,8 +22,8 @@ describe('EarnedVsSpent — deficit sliver floor [G1]', () => {
   it('a tiny earned against a large spend floors the earned bar to the 3% nub', () => {
     render(<EarnedVsSpent earned={30} spent={6389} testID="evs" />);
     // 30/6389 ≈ 0.47% would be near-invisible → floored to MIN_BAR_SHARE (3%).
-    expect(screen.getByTestId('earned-bar').props.style.width).toBe('3%');
-    expect(screen.getByTestId('spent-bar').props.style.width).toBe('100%');
+    expect(styleOf(screen.getByTestId('earned-bar')).width).toBe('3%');
+    expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('100%');
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('−$6,359 deficit');
   });
 
@@ -70,25 +70,25 @@ describe('EarnedVsSpent — num() coercion at the render boundary [G3]', () => {
   // bar width a valid percent string and never spill NaN%/Infinity% into the style.
   it('NaN earned coerces to 0 → empty earned bar, deficit of the whole spend', () => {
     render(<EarnedVsSpent earned={NaN} spent={1500} testID="evs" />);
-    expect(screen.getByTestId('earned-bar').props.style.width).toBe('0%');
-    expect(screen.getByTestId('spent-bar').props.style.width).toBe('100%');
+    expect(styleOf(screen.getByTestId('earned-bar')).width).toBe('0%');
+    expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('100%');
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('−$1,500 deficit');
   });
 
   it('Infinity earned coerces to 0 (not a NaN/Infinity width)', () => {
     render(<EarnedVsSpent earned={Infinity} spent={100} testID="evs" />);
-    const earnedW = screen.getByTestId('earned-bar').props.style.width as string;
+    const earnedW = styleOf(screen.getByTestId('earned-bar')).width as string;
     expect(earnedW).toBe('0%');
     expect(Number.isFinite(Number(earnedW.replace('%', '')))).toBe(true);
-    expect(screen.getByTestId('spent-bar').props.style.width).toBe('100%');
+    expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('100%');
   });
 
   // A negative earned (only reachable via a corrupt mock) must not produce a negative-width bar:
   // share<0 → the Bar's `share > 0` guard keeps it at 0%, not a "-…%".
   it('a negative earned never yields a negative-width bar', () => {
     render(<EarnedVsSpent earned={-100} spent={500} testID="evs" />);
-    expect(screen.getByTestId('earned-bar').props.style.width).toBe('0%');
-    expect(screen.getByTestId('spent-bar').props.style.width).toBe('100%');
+    expect(styleOf(screen.getByTestId('earned-bar')).width).toBe('0%');
+    expect(styleOf(screen.getByTestId('spent-bar')).width).toBe('100%');
   });
 
   // Guard the null-render gate at the render boundary too: both non-positive after coercion → null.
