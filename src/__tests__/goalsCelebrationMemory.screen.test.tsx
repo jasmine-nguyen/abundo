@@ -1,4 +1,4 @@
-// WHIT-747 — celebrations that stick. The Goals hub remembers the last-seen reached counts on the
+// WHIT-747 — celebrations that stick. The Goals hub remembers which steps were reached (WHIT-811) on the
 // phone (AsyncStorage), so a crossing made while the app was closed celebrates on the next open;
 // reaching a goal's target is its final step (celebrated, and the card reads "Goal reached"); and
 // the mortgage's milestones take part. The REAL screen data code, goal engine and celebration hook
@@ -14,7 +14,8 @@ import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { seedGoalsHub } from './support/goalsScreen';
 import { EMPTY_LOAN_FACTS } from './factory';
-import { CHECKPOINT_SNAPSHOT_KEY } from '../checkpointCelebration';
+import { CHECKPOINT_SNAPSHOT_KEY, StepSnapshot } from '../checkpointCelebration';
+import { holidaySaved, mortgageSaved } from './support/celebrationSteps';
 import type { GoalRecord, MilestoneRecord } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
@@ -47,8 +48,8 @@ function seedHub(balance: number, homeLoanBalance: number | null = null) {
   });
 }
 
-// What an earlier launch of the app saved: goal id → last-seen reached step count.
-async function savedFromEarlierLaunch(snapshot: Record<string, number>) {
+// What an earlier launch of the app saved: goal id → each step it showed, and whether it was reached.
+async function savedFromEarlierLaunch(snapshot: StepSnapshot) {
   await AsyncStorage.setItem(CHECKPOINT_SNAPSHOT_KEY, JSON.stringify(snapshot));
 }
 
@@ -61,17 +62,17 @@ beforeEach(async () => {
 
 describe('Goals celebrations that stick (WHIT-747)', () => {
   it('celebrates a checkpoint crossed while the app was closed, naming the milestone', async () => {
-    await savedFromEarlierLaunch({ g1: 1 }); // last open: past $2,000 only
-    seedHub(6000);                            // since then the bank synced past $5,000
+    await savedFromEarlierLaunch({ g1: holidaySaved(true, false, false) }); // last open: past $2,000 only
+    seedHub(6000);                                                         // since then the bank synced past $5,000
 
     await renderWithQueries(<Goals />);
 
     const label = await screen.findByTestId('checkpoint-celebration-label');
-    expect(label).toHaveTextContent(/Holiday · \$5,000 reached/);
+    expect(label).toHaveTextContent(/Holiday · B reached/);
   });
 
   it('celebrates reaching the target and shows "Goal reached" instead of the pace', async () => {
-    await savedFromEarlierLaunch({ g1: 2 }); // last open: both checkpoints, target not yet met
+    await savedFromEarlierLaunch({ g1: holidaySaved(true, true, false) }); // last open: both checkpoints, target not yet met
     seedHub(10000);                           // now at the $10,000 target
 
     await renderWithQueries(<Goals />);
@@ -87,13 +88,13 @@ describe('Goals celebrations that stick (WHIT-747)', () => {
       { id: 'm1', label: 'First', targetBalance: 600000, targetDate: '2027-01-01' },
       { id: 'm2', label: 'Second', targetBalance: 500000, targetDate: '2029-01-01' },
     ];
-    await savedFromEarlierLaunch({ g1: 1, mortgage: 0 });
+    await savedFromEarlierLaunch({ g1: holidaySaved(true, false, false), mortgage: mortgageSaved(false, false) });
     seedHub(4000, 596642.43); // the goal is unchanged; the loan dropped below $600,000
     server.seed('/milestones', milestones);
 
     await renderWithQueries(<Goals />);
 
     const label = await screen.findByTestId('checkpoint-celebration-label');
-    expect(label).toHaveTextContent(/The mortgage · down to \$600,000/);
+    expect(label).toHaveTextContent(/The mortgage · First reached/);
   });
 });
