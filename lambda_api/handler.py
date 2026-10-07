@@ -2969,15 +2969,8 @@ def get_repayment(repo: TransactionRepository) -> dict:
 
 # The user-entered loan-facts fields, in the order the form + response use them.
 _LOANFACTS_FIELDS = ("original", "homeValue", "lvr", "ratePct", "baseRepay", "extra")
-# Each field's (inclusive upper bound, zero allowed). extra is an optional top-up, so 0 is fine.
-_LOANFACTS_BOUNDS = {
-    "original": (LOANFACTS_FIELD_MAX, False),
-    "homeValue": (LOANFACTS_FIELD_MAX, False),
-    "lvr": (1, False),
-    "ratePct": (100, False),
-    "baseRepay": (LOANFACTS_FIELD_MAX, False),
-    "extra": (LOANFACTS_FIELD_MAX, True),
-}
+# Fields with their own upper bound; the rest use LOANFACTS_FIELD_MAX. Only extra (an optional top-up) may be 0.
+_LOANFACTS_HIGH = {"lvr": 1, "ratePct": 100}
 
 
 def get_loanfacts(repo: LoanFactsRepository) -> dict:
@@ -3014,7 +3007,8 @@ def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
     values = {}
     for field in _LOANFACTS_FIELDS:
         v = body.get(field)
-        high, allow_zero = _LOANFACTS_BOUNDS[field]
+        high = _LOANFACTS_HIGH.get(field, LOANFACTS_FIELD_MAX)
+        allow_zero = field == "extra"
         if not _finite_number(v, high=high) or (v == 0 and not allow_zero):
             lowest = "between 0 and" if allow_zero else "above 0 and up to"
             return _json_response(400, {"error": f"{field} must be a number {lowest} {high}"})

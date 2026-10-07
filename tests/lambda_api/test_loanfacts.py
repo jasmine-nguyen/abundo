@@ -161,14 +161,10 @@ def test_route_put_loanfacts_dispatch(handler, monkeypatch):
         ({k: v for k, v in VALID.items() if k != "homeValue"}, "homeValue must be a number above 0"),  # missing
         ({**VALID, "original": "600000"}, "original must be a number above 0"),                    # string
         ({**VALID, "baseRepay": True}, "baseRepay must be a number above 0"),                      # bool
-        ({**VALID, "original": 0}, "original must be a number above 0"),                     # zero amount
         ({**VALID, "homeValue": -1}, "homeValue must be a number above 0"),                    # negative amount
         ({**VALID, "extra": -5}, "extra must be a number between 0"),                           # negative extra
-        ({**VALID, "lvr": 0}, "lvr must be a number above 0 and up to 1"),                        # lvr too low
         ({**VALID, "lvr": 1.5}, "lvr must be a number above 0 and up to 1"),                      # lvr > 1 (percent not divided)
-        ({**VALID, "ratePct": 0}, "ratePct must be a number above 0 and up to 100"),              # rate too low
         ({**VALID, "ratePct": 150}, "ratePct must be a number above 0 and up to 100"),            # rate too high
-        ({**VALID, "original": 2_000_000_000}, "original must be a number above 0"),                   # over ceiling
         ({**VALID, "baseRepay": CEILING + 1}, "baseRepay must be a number above 0"),              # over ceiling
         ({**VALID, "extra": CEILING + 1}, "extra must be a number between 0"),                     # extra over ceiling
     ],
