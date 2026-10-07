@@ -2969,6 +2969,15 @@ def get_repayment(repo: TransactionRepository) -> dict:
 
 # The user-entered loan-facts fields, in the order the form + response use them.
 _LOANFACTS_FIELDS = ("original", "homeValue", "lvr", "ratePct", "baseRepay", "extra")
+# Each field's (inclusive upper bound, zero allowed). extra is an optional top-up, so 0 is fine.
+_LOANFACTS_BOUNDS = {
+    "original": (LOANFACTS_FIELD_MAX, False),
+    "homeValue": (LOANFACTS_FIELD_MAX, False),
+    "lvr": (1, False),
+    "ratePct": (100, False),
+    "baseRepay": (LOANFACTS_FIELD_MAX, False),
+    "extra": (LOANFACTS_FIELD_MAX, True),
+}
 
 
 def get_loanfacts(repo: LoanFactsRepository) -> dict:
@@ -3005,24 +3014,11 @@ def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
     values = {}
     for field in _LOANFACTS_FIELDS:
         v = body.get(field)
-        if not _finite_number(v, low=-math.inf):
-            return _json_response(400, {"error": f"{field} must be a number"})
+        high, allow_zero = _LOANFACTS_BOUNDS[field]
+        if not _finite_number(v, high=high) or (v == 0 and not allow_zero):
+            lowest = "between 0 and" if allow_zero else "above 0 and up to"
+            return _json_response(400, {"error": f"{field} must be a number {lowest} {high}"})
         values[field] = v
-
-    # extra is an optional top-up (>= 0); every other amount must be positive.
-    if values["extra"] < 0:
-        return _json_response(400, {"error": "extra must be >= 0"})
-    for field in ("original", "homeValue", "baseRepay"):
-        if values[field] <= 0:
-            return _json_response(400, {"error": f"{field} must be > 0"})
-    # Dollar amounts share the budget ceiling; lvr/ratePct have tighter bounds below.
-    for field in ("original", "homeValue", "baseRepay", "extra"):
-        if values[field] > LOANFACTS_FIELD_MAX:
-            return _json_response(400, {"error": f"{field} too large"})
-    if not (0 < values["lvr"] <= 1):
-        return _json_response(400, {"error": "lvr must be a fraction between 0 and 1"})
-    if not (0 < values["ratePct"] <= 100):
-        return _json_response(400, {"error": "ratePct must be between 0 and 100"})
 
     # Optional target payoff date (WHIT-126): absent/None is fine (unset or cleared); when present
     # it must be a real ISO YYYY-MM-DD calendar date.

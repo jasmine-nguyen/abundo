@@ -158,17 +158,17 @@ def test_route_put_loanfacts_dispatch(handler, monkeypatch):
 @pytest.mark.parametrize(
     "body, needle",
     [
-        ({k: v for k, v in VALID.items() if k != "homeValue"}, "homeValue must be a number"),  # missing
-        ({**VALID, "original": "600000"}, "original must be a number"),                          # string
-        ({**VALID, "baseRepay": True}, "baseRepay must be a number"),                            # bool
-        ({**VALID, "original": 0}, "original must be > 0"),                                       # zero amount
-        ({**VALID, "homeValue": -1}, "homeValue must be > 0"),                                    # negative amount
-        ({**VALID, "extra": -5}, "extra must be >= 0"),                                           # negative extra
-        ({**VALID, "lvr": 0}, "lvr must be a fraction"),                                          # lvr too low
-        ({**VALID, "lvr": 1.5}, "lvr must be a fraction"),                                        # lvr > 1 (percent not divided)
-        ({**VALID, "ratePct": 0}, "ratePct must be between"),                                     # rate too low
-        ({**VALID, "ratePct": 150}, "ratePct must be between"),                                   # rate too high
-        ({**VALID, "original": 2_000_000_000}, "original too large"),                             # over ceiling
+        ({k: v for k, v in VALID.items() if k != "homeValue"}, "homeValue must be a number above 0"),  # missing
+        ({**VALID, "original": "600000"}, "original must be a number above 0"),                    # string
+        ({**VALID, "baseRepay": True}, "baseRepay must be a number above 0"),                      # bool
+        ({**VALID, "original": 0}, "original must be a number above 0"),                     # zero amount
+        ({**VALID, "homeValue": -1}, "homeValue must be a number above 0"),                    # negative amount
+        ({**VALID, "extra": -5}, "extra must be a number between 0"),                           # negative extra
+        ({**VALID, "lvr": 0}, "lvr must be a number above 0 and up to 1"),                        # lvr too low
+        ({**VALID, "lvr": 1.5}, "lvr must be a number above 0 and up to 1"),                      # lvr > 1 (percent not divided)
+        ({**VALID, "ratePct": 0}, "ratePct must be a number above 0 and up to 100"),              # rate too low
+        ({**VALID, "ratePct": 150}, "ratePct must be a number above 0 and up to 100"),            # rate too high
+        ({**VALID, "original": 2_000_000_000}, "original must be a number above 0"),                   # over ceiling
     ],
 )
 def test_set_loanfacts_rejects_bad_fields(handler, body, needle):
@@ -211,7 +211,7 @@ class FakeLoanFactsRepo_edges:
     [
         {"lvr": 1},                 # inclusive top of (0, 1]
         {"ratePct": 100},           # inclusive top of (0, 100]
-        {"original": CEILING},      # exactly at the ceiling (guard is strict >)
+        {"original": CEILING},      # exactly at the ceiling (the upper bound is inclusive)
         {"extra": CEILING},         # extra also shares the ceiling
     ],
 )
@@ -226,7 +226,7 @@ def test_set_loanfacts_accepts_inclusive_upper_bounds(handler, over):
 
 
 def test_set_loanfacts_accepts_deposit_target_at_the_ceiling(handler):
-    # Shares the dollar ceiling with the other amounts; the guard is strict >, so == is fine.
+    # Shares the dollar ceiling with the other amounts; the upper bound is inclusive, so == is fine.
     repo = FakeLoanFactsRepo_edges()
     resp = handler.set_loanfacts(_put_event({**VALID, "depositTarget": CEILING}), repo)
     assert resp["statusCode"] == 200
@@ -273,5 +273,5 @@ def test_set_loanfacts_rejects_non_finite_numbers(handler, token):
     repo = FakeLoanFactsRepo_edges()
     resp = handler.set_loanfacts(_put_event(body), repo)
     assert resp["statusCode"] == 400
-    assert json.loads(resp["body"])["error"] == "original must be a number"
+    assert json.loads(resp["body"])["error"] == f"original must be a number above 0 and up to {CEILING}"
     assert repo.set_calls == []
