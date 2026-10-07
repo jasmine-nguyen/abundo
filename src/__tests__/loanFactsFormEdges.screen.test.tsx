@@ -1,13 +1,12 @@
 // Loan facts card — app/loan.tsx client-guard boundaries the happy-path form test
 // (loanFactsForm.screen.test.tsx) doesn't lock: extra == 0 allowed, lvr/ratePct at
-// their exact upper bounds allowed, lvr == 0 blocked, and — the anti-wipe guard —
-// pressing Save on a blank form (a form opened before facts loaded) must NOT call
-// the API, so it can never overwrite saved facts with empties.
+// their exact upper bounds allowed, lvr == 0 blocked. The form never opens blank over
+// saved facts (WHIT-819): that's locked in whit819LoanFactsLoading.screen.test.tsx.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react-native';
-import type { AppContext, LoanFacts, LoanFactsInput } from '../context';
+import { screen, fireEvent, act } from '@testing-library/react-native';
+import type { AppContext, LoanFactsInput } from '../context';
 
 type LoanFormState = Pick<AppContext, 'saveLoanFacts' | 'showToast'>;
 
@@ -22,9 +21,9 @@ import { LOANFACTS_FIELD_MAX } from '../loanLimits';
 import { fmtCompact } from '../theme';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, renderLoaded, WithQueries } from './support/renderWithQueries';
+import { useTestQueryClient, renderLoaded } from './support/renderWithQueries';
 
-const server = installFakeServer();
+installFakeServer();
 useTestQueryClient();
 
 // Derived from the ceiling (WHIT-393) so a change to it needs no edit here. The prose is
@@ -32,10 +31,6 @@ useTestQueryClient();
 const AT = String(LOANFACTS_FIELD_MAX);
 const OVER = String(LOANFACTS_FIELD_MAX + 1);
 const AMOUNT_TOAST = `Keep each amount to ${fmtCompact(LOANFACTS_FIELD_MAX)} or less.`;
-
-const SAVED: LoanFacts = {
-  original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200,
-};
 
 function state(over: Partial<LoanFormState>): LoanFormState {
   return { saveLoanFacts: jest.fn() as LoanFormState['saveLoanFacts'], showToast: jest.fn() as AppContext['showToast'], ...over };
@@ -126,26 +121,4 @@ it('accepts exactly the ceiling (strict >, matching the server) and saves', asyn
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
   expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ original: LOANFACTS_FIELD_MAX }));
   expect(routerSpies.back).toHaveBeenCalled();
-});
-
-it('a blank form (opened before facts loaded) cannot wipe saved facts on Save', async () => {
-  const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
-  const showToast = jest.fn();
-  mockState = state({
-    saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'],
-    showToast: showToast as AppContext['showToast'],
-  });
-  // Saved facts exist on the server, but their reply hasn't landed when the form opens.
-  server.seed('/loanfacts', SAVED);
-  const held = server.hold('/loanfacts');
-  try {
-    render(<WithQueries><Loan /></WithQueries>);
-    // No fills — every field blank -> num() is NaN, guard fails.
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-    expect(saveLoanFacts).not.toHaveBeenCalled();   // no PUT -> saved facts untouched
-    expect(showToast).toHaveBeenCalled();
-    expect(routerSpies.back).not.toHaveBeenCalled();
-  } finally {
-    await act(async () => { held.release(); });
-  }
 });

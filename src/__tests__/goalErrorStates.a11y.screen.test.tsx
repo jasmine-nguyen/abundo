@@ -2,17 +2,13 @@
 //   1. a11y on BOTH new mortgage-screen error affordances (#4): accessibilityRole/Label/testID on
 //      the two Retry buttons + accessibilityLiveRegion on the two error copies. Nothing
 //      else asserts these props, so a revert that drops them is currently invisible.
-//   2. hero branch PRECEDENCE (#2): facts UNSET + a failed balance read must show the "set up loan"
-//      prompt, NOT the balance error — the `!g.factsReady` branch sits ABOVE the
-//      `homeLoanError` branch in goals.tsx. Guards a future re-order that would surface a
-//      balance error over a user who hasn't set up their loan (no balance to fail yet from
-//      their POV). The existing #2 test only covers facts SET, so it can't catch this.
+// The old #2 precedence test (facts UNSET beat a balance error) was reversed by WHIT-819:
+// errors now come first, locked in whit819LoanFactsLoading.screen.test.tsx.
 // WHIT-685: drawn over the fake server; a failed read is a 500 from it, so the real screen data
 // code decides the error flags.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { screen } from '@testing-library/react-native';
-import { EMPTY_LOAN_FACTS } from './factory';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
@@ -61,19 +57,4 @@ it('WHIT-121 #4: the repayment-error Retry + copy carry the a11y props', async (
   expect(retry.props.accessibilityLabel).toBe('Retry loading your last repayment');
 
   expect(screen.getByText("Couldn't load your last repayment.").props.accessibilityLiveRegion).toBe('polite');
-});
-
-// #2 precedence — facts UNSET wins over a balance error: the hero shows the set-up CTA, and
-// the "Couldn't load your balance." error is NOT shown (there is no loan to have a balance
-// for yet, from the user's POV). Re-ordering the goals.tsx hero branches so `homeLoanError`
-// precedes `!g.factsReady` turns this red. Pairs with the facts-SET #2 test that locks the
-// other side of the fork.
-it('WHIT-121 #2: with facts UNSET, a balance error yields the set-up prompt, not the error', async () => {
-  seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS });
-  server.fail('/homeloan', 500);
-  await renderWithQueries(<Mortgage />);
-
-  expect(screen.getByText('Set up loan details →')).toBeTruthy();
-  expect(screen.queryByText("Couldn't load your balance.")).toBeNull();
-  expect(screen.queryByTestId('hero-balance-retry')).toBeNull();
 });

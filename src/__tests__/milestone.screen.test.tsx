@@ -207,6 +207,14 @@ it('milestone screen shows an equity set-up prompt when the property value is un
   expect(routerSpies.push).toHaveBeenCalledWith('/loan');
 });
 
+it('WHIT-819: milestone screen hides the equity set-up prompt while loan facts load', async () => {
+  const held = server.hold('/loanfacts');
+  drawHeld(<Milestone />);
+  await screen.findByText('Your payoff plan'); // the balance has landed; only the facts are held
+  expect(screen.queryByText('Add loan details →')).toBeNull();
+  await releaseAndSettle(held);
+});
+
 // --- equity card copy: gap coverage (empty-state body, CTA routing, milestone subtitle) ---
 
 it('mortgage equity card empty-state uses the reworded prompt, not the old property framing', async () => {
