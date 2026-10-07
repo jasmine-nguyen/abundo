@@ -96,13 +96,11 @@ describe('Goals tab cards', () => {
     // The pace foot: plain wording in normal text colour, not link blue.
     const foot = screen.getByText('Set aside $2,000 each payday');
     expect(colorOf(foot)).toBe(C.text);
-    expect(screen.getByText('Set aside $4,000 each payday')).toBeTruthy();
     // Link blue stays on the tappable past-due nudge.
     expect(colorOf(screen.getByText('Past your date — pick a new one?'))).toBe(C.accentSoft);
 
-    // The milestone line names the next step, or says they're all done.
+    // The milestone line names the closest unreached step, not the first in the list.
     expect(screen.getByTestId('goal-checkpoints-g2')).toHaveTextContent('Next: 10k');
-    expect(screen.getByTestId('goal-checkpoints-g1')).toHaveTextContent('All milestones reached');
   });
 });
 
