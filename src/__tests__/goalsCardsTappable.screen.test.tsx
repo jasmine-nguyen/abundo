@@ -8,7 +8,6 @@
 // Clock pinned to Sat 11 Jul 2026 (paydays Jul18, Aug1, Aug15).
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { screen } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { installFakeServer } from './support/fakeServer';
@@ -18,6 +17,7 @@ import { pinToday } from './support/clock';
 import { seedHubWith } from './support/goalsScreen';
 import { GOAL_TODAY, GOAL_START } from './support/goalPace';
 import { pressedStyle } from './support/pressedStyle';
+import { styleOf } from './support/layout';
 import { resetRouter, setParams } from './support/routerMock';
 import { C, PRESSED } from '../theme';
 import type { GoalRecord } from '../api';
@@ -44,8 +44,6 @@ const pressableById = (testID: string) => {
   expect(hits.length).toBe(1);
   return hits[0];
 };
-
-const colorOf = (node: { props: { style?: unknown } }) => (StyleSheet.flatten(node.props.style as never) as { color?: string }).color;
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -95,9 +93,9 @@ describe('Goals tab cards', () => {
 
     // The pace foot: plain wording in normal text colour, not link blue.
     const foot = screen.getByText('Set aside $2,000 each payday');
-    expect(colorOf(foot)).toBe(C.text);
+    expect(styleOf(foot).color).toBe(C.text);
     // Link blue stays on the tappable past-due nudge.
-    expect(colorOf(screen.getByText('Past your date — pick a new one?'))).toBe(C.accentSoft);
+    expect(styleOf(screen.getByText('Past your date — pick a new one?')).color).toBe(C.accentSoft);
 
     // The milestone line names the closest unreached step, not the first in the list.
     expect(screen.getByTestId('goal-checkpoints-g2')).toHaveTextContent('Next: 10k');
