@@ -14,7 +14,7 @@ from _job_fakes import created_jobs, real_job_repo, throttled_worker
 
 _REPOSITORIES = [
     "AccountBalanceRepository", "BudgetRepository", "CategoryRepository", "DeviceRepository",
-    "GoalsRepository", "HomeLoanBalanceRepository", "InsightRepository", "JobRepository",
+    "GoalsRepository", "InsightRepository", "JobRepository",
     "LoanFactsRepository", "MilestoneRepository", "NotifyRepository", "PayCycleRepository",
     "RuleRepository", "TransactionRepository",
 ]

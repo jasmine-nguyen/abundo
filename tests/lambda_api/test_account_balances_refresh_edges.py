@@ -8,11 +8,12 @@ Reuses the `handler` fixture (tests/lambda_api/conftest.py) and the same fake/st
 pattern as test_account_balances.py.
 """
 
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
-from _balance_fakes import balance_repo, balance_writes, marker_writes, upserted
+from _balance_fakes import balance_repo, balance_writes, homeloan_row, marker_writes, upserted
 
 
 # --- fakes / stubs (mirror test_account_balances.py) -------------------------
@@ -204,3 +205,80 @@ def test_non_dict_payload_is_a_per_account_failure_not_a_total_crash(handler, mo
     assert set(upserted(repo)) == {"up-spending", "anz-rewards-black-visa",
                                             "westpac-altitude-qantas-black"}
     assert marker_writes(repo) == [1000]
+
+
+# --- WHIT-792: the refresh's home-loan milestone check is best-effort ---------
+
+
+def _refresh_with_milestone_spy(handler, monkeypatch, repo, fetch, milestone_raises):
+    """Run one live refresh; return (response, [(old, new)] the milestone helper got)."""
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
+    _freeze_time(handler, monkeypatch, 1000)
+    _stub_bank(handler, monkeypatch, fetch)
+    calls = []
+
+    def spy(old, new, **repos):
+        calls.append((old, new))
+        if milestone_raises:
+            raise RuntimeError("expo down")
+        return 0
+
+    monkeypatch.setattr(handler, "notify_homeloan_milestone", spy)
+    return handler.lambda_handler(_REFRESH_EVENT, None), calls
+
+
+def _fetch_all(bid, aid, key, **kw):
+    return _LIVE_PAYLOADS[aid]
+
+
+def _fetch_all_but_homeloan(bid, aid, key, **kw):
+    if aid == "T6d8ppsYssBDFCwl1qEb0w":
+        return {"success": False}
+    return _LIVE_PAYLOADS[aid]
+
+
+def _repo_owing(amount):
+    return lambda: balance_repo(rows=[homeloan_row(amount)])
+
+
+def _repo_whose_homeloan_read_fails():
+    repo = balance_repo(rows=[homeloan_row("-600000")])
+    real_list = repo.list_balances
+
+    def list_balances(account_ids):
+        if list(account_ids) == ["up-homeloan"]:
+            raise RuntimeError("dynamo throttled")
+        return real_list(account_ids)
+
+    repo.list_balances = list_balances
+    return repo
+
+
+_NEW_HOMELOAN = Decimal("-596642.43")
+_ALL_IDS = {"up-spending", "up-homeloan", "anz-rewards-black-visa", "westpac-altitude-qantas-black"}
+
+
+@pytest.mark.parametrize(
+    ("make_repo", "fetch", "milestone_raises", "expected_calls", "expected_stored"),
+    [
+        # [A1] The prior home-loan read fails: still 200, every balance stored, old passed as None.
+        (_repo_whose_homeloan_read_fails, _fetch_all, False, [(None, _NEW_HOMELOAN)], _ALL_IDS),
+        # [A2] First-ever reading (no stored home-loan row): old is None (the seed guard).
+        (lambda: balance_repo(rows=[]), _fetch_all, False, [(None, _NEW_HOMELOAN)], _ALL_IDS),
+        # [A3] The home-loan fetch fails: the others store, the milestone check never runs.
+        (_repo_owing("-600000"), _fetch_all_but_homeloan, False, [], _ALL_IDS - {"up-homeloan"}),
+        # [A4] The milestone push blows up: the refresh still answers 200 with balances stored.
+        (_repo_owing("-600000"), _fetch_all, True, [(Decimal("-600000"), _NEW_HOMELOAN)], _ALL_IDS),
+    ],
+    ids=["prior-read-fails", "first-ever-reading", "homeloan-fetch-fails", "milestone-push-raises"],
+)
+def test_refresh_home_loan_milestone_check_never_breaks_the_refresh(
+    handler, monkeypatch, make_repo, fetch, milestone_raises, expected_calls, expected_stored
+):
+    repo = make_repo()
+
+    resp, calls = _refresh_with_milestone_spy(handler, monkeypatch, repo, fetch, milestone_raises)
+
+    assert resp["statusCode"] == 200
+    assert set(upserted(repo)) == expected_stored
+    assert calls == expected_calls

@@ -1,17 +1,17 @@
-"""Unit tests for the home-loan balance poller (lambda_balance_poller/handler.py).
+"""Unit tests for the balance poller (lambda_balance_poller/handler.py).
 
 Covers:
-    - normalise_balance : sign handling (mortgage amount is negative -> abs),
-                          field tolerance, and the failure guards (BalanceError)
     - fetch_balance     : the GET request shape (url, method, headers)
-    - lambda_handler    : stores on success; on ANY failure logs, returns
-                          {"stored": False}, does NOT raise, does NOT upsert
+    - lambda_handler    : stores on success; on ANY failure logs, does NOT raise,
+                          does NOT upsert
+    - _check_homeloan   : the milestone hook driven by the home-loan delta
 
 No network and no AWS: ``urllib.request.urlopen`` is monkeypatched, ``ssm`` is
 faked by conftest, and the repository is replaced with a recording fake.
 """
 
 import logging
+import sys
 from decimal import Decimal
 
 import pytest
@@ -38,21 +38,6 @@ _OK_PAYLOAD = {
         "currency": "AUD",
     },
 }
-
-
-class _FakeRepo:
-    """Recording stand-in for HomeLoanBalanceRepository. `prior` is what get_balance
-    returns (the pre-upsert row) — None means nothing stored yet (first poll)."""
-
-    def __init__(self, prior=None):
-        self.calls = []
-        self.prior = prior
-
-    def get_balance(self, account_id):
-        return self.prior
-
-    def upsert_balance(self, account_id, balance, as_of, currency):
-        self.calls.append((account_id, balance, as_of, currency))
 
 
 class _FakeAccountRepo:
@@ -111,54 +96,6 @@ _PAYLOADS_BY_AID = {
 }
 
 
-# --- normalise_balance -------------------------------------------------------
-
-
-def test_normalise_balance_takes_absolute_value_of_negative_amount(handler):
-    out = handler.normalise_balance(_OK_PAYLOAD)
-    # The mortgage amount is -596642.43; the stored outstanding balance is positive.
-    assert out == {
-        "balance": Decimal("596642.43"),
-        "as_of": "2026-07-04T00:24:37.614Z",
-        "currency": "AUD",
-    }
-
-
-def test_normalise_balance_tolerates_missing_optional_fields(handler):
-    # No availableBalance/pendingBalance, no accountType — still fine.
-    payload = {"success": True, "data": {"amount": -400000, "date": "2026-07-04T00:00:00Z"}}
-    out = handler.normalise_balance(payload)
-    assert out["balance"] == Decimal("400000")
-    assert out["currency"] == "AUD"  # defaulted when absent
-
-
-def test_normalise_balance_raises_on_failure_response(handler):
-    payload = {"success": False, "error": "Provider fiskil:au does not support loans"}
-    with pytest.raises(handler.BalanceError):
-        handler.normalise_balance(payload)
-
-
-def test_normalise_balance_raises_on_missing_data(handler):
-    with pytest.raises(handler.BalanceError):
-        handler.normalise_balance({"success": True})
-
-
-def test_normalise_balance_raises_on_missing_amount(handler):
-    with pytest.raises(handler.BalanceError):
-        handler.normalise_balance({"success": True, "data": {"date": "2026-07-04T00:00:00Z"}})
-
-
-def test_normalise_balance_raises_on_missing_date(handler):
-    with pytest.raises(handler.BalanceError):
-        handler.normalise_balance({"success": True, "data": {"amount": -1}})
-
-
-def test_normalise_balance_raises_on_non_mortgage_account(handler):
-    payload = {"success": True, "data": {"amount": -1, "date": "d", "accountType": "transaction"}}
-    with pytest.raises(handler.BalanceError):
-        handler.normalise_balance(payload)
-
-
 # --- fetch_balance -----------------------------------------------------------
 
 
@@ -200,7 +137,7 @@ def test_normalise_account_balance_keeps_amount_signed_with_extras(handler):
 
 
 def test_normalise_account_balance_has_no_mortgage_guard(handler):
-    # Unlike normalise_balance, a non-mortgage account normalises fine (positive spending).
+    # A non-mortgage account normalises fine (positive spending).
     out = handler.normalise_account_balance(_SPENDING_PAYLOAD)
     assert out["amount"] == Decimal("96270.59")
     assert out["account_type"] == "checking"
@@ -223,7 +160,7 @@ def test_normalise_account_balance_raises_on_failure_and_missing_fields(handler)
         {"success": True, "data": {"date": "d"}},          # missing amount
         {"success": True, "data": {"amount": -1}},          # missing date
     ):
-        with pytest.raises(handler.BalanceError):
+        with pytest.raises(sys.modules["balance_fetch"].BalanceError):
             handler.normalise_account_balance(bad)
 
 
@@ -244,10 +181,8 @@ def test_get_api_key_reads_the_banksync_path(handler, monkeypatch):
 
 
 def test_lambda_handler_stores_homeloan_and_every_account_on_success(handler, monkeypatch, caplog):
-    homeloan = _FakeRepo()
     accounts = _FakeAccountRepo()
     monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: homeloan)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
 
     # Return a per-account payload keyed by the aid in the request URL. An aid with no
@@ -265,12 +200,10 @@ def test_lambda_handler_stores_homeloan_and_every_account_on_success(handler, mo
 
     result = handler.lambda_handler({}, None)
 
-    assert result == {"homeloan_stored": True, "accounts_stored": len(handler.BALANCE_SOURCES)}
+    assert result == {"accounts_stored": len(handler.BALANCE_SOURCES)}
     # The count alone can't prove every source stored — a swallowed per-account failure
     # lowers it silently. Assert the poller logged no skip at all.
     assert "account balance poll failed" not in caplog.text
-    # The abs home-loan row (Goal screen) is still written exactly as before.
-    assert homeloan.calls == [("up-homeloan", Decimal("596642.43"), "2026-07-04T00:24:37.614Z", "AUD")]
     # A signed row per account, each under its internal id.
     stored = {c[0]: c[1] for c in accounts.calls}
     assert stored == {
@@ -282,10 +215,8 @@ def test_lambda_handler_stores_homeloan_and_every_account_on_success(handler, mo
 
 
 def test_lambda_handler_swallows_http_error_and_keeps_last_good(handler, monkeypatch):
-    homeloan = _FakeRepo()
     accounts = _FakeAccountRepo()
     monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: homeloan)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
 
     def boom(req, timeout=None):
@@ -295,23 +226,19 @@ def test_lambda_handler_swallows_http_error_and_keeps_last_good(handler, monkeyp
 
     # Never raises, never writes — every reader keeps serving its last-good row.
     result = handler.lambda_handler({}, None)
-    assert result == {"homeloan_stored": False, "accounts_stored": 0}
-    assert homeloan.calls == []
+    assert result == {"accounts_stored": 0}
     assert accounts.calls == []
 
 
 def test_lambda_handler_swallows_failure_payload_without_writing(handler, monkeypatch):
-    homeloan = _FakeRepo()
     accounts = _FakeAccountRepo()
     monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: homeloan)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     fail = {"success": False, "error": "Provider fiskil:au does not support loans"}
     monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: FakeResponse(fail))
 
     result = handler.lambda_handler({}, None)
-    assert result == {"homeloan_stored": False, "accounts_stored": 0}
-    assert homeloan.calls == []
+    assert result == {"accounts_stored": 0}
     assert accounts.calls == []
 
 
@@ -319,19 +246,16 @@ def test_lambda_handler_swallows_an_api_key_fetch_failure(handler, monkeypatch):
     # An SSM/get_param failure (throttle, missing param, IAM) must not error the
     # invocation — it's best-effort like the polls, so nothing is stored, nothing is
     # zeroed, and every last-good row survives.
-    homeloan = _FakeRepo()
     accounts = _FakeAccountRepo()
 
     def boom():
         raise RuntimeError("SSM throttled")
 
     monkeypatch.setattr(handler, "get_api_key", boom)
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: homeloan)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
 
     result = handler.lambda_handler({}, None)
-    assert result == {"homeloan_stored": False, "accounts_stored": 0}
-    assert homeloan.calls == []
+    assert result == {"accounts_stored": 0}
     assert accounts.calls == []
 
 
@@ -354,48 +278,36 @@ def test_poll_account_balances_isolates_a_single_account_failure(handler, monkey
     assert ids == {"up-spending", "anz-rewards-black-visa", "westpac-altitude-qantas-black"}
 
 
-# --- WHIT-301: milestone celebration hook in _poll_homeloan ------------------
+# --- WHIT-301: milestone celebration hook in _check_homeloan -----------------
 
-def test_poll_homeloan_calls_milestone_detector_with_old_then_new(handler, monkeypatch):
-    """Reads the pre-upsert balance and passes (old, new) to the detector after storing."""
-    fake = _FakeRepo(prior={"balance": Decimal("600000"), "as_of": "x", "currency": "AUD"})
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: fake)
-    monkeypatch.setattr(handler, "fetch_balance", lambda *a, **k: _OK_PAYLOAD)
+@pytest.mark.parametrize(
+    ("prior", "expected_old"),
+    [(Decimal("-600000"), Decimal("600000")), (None, None)],
+    ids=["owed-amounts", "first-poll-passes-none"],
+)
+def test_check_homeloan_passes_the_owed_old_and_new_to_the_detector(handler, monkeypatch, prior, expected_old):
     seen = {}
-    monkeypatch.setattr(handler, "notify_milestone_crossing",
-                        lambda old, new, **kw: seen.update(old=old, new=new) or 1)
-
-    assert handler._poll_homeloan("key") is True
-    assert seen["old"] == Decimal("600000")            # the pre-upsert (last-good) balance
-    assert seen["new"] == Decimal("596642.43")         # the freshly-polled balance
-    assert fake.calls == [("up-homeloan", Decimal("596642.43"), "2026-07-04T00:24:37.614Z", "AUD")]
-
-
-def test_poll_homeloan_first_poll_passes_none_as_old(handler, monkeypatch):
-    fake = _FakeRepo(prior=None)  # nothing stored yet
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: fake)
-    monkeypatch.setattr(handler, "fetch_balance", lambda *a, **k: _OK_PAYLOAD)
-    seen = {}
-    monkeypatch.setattr(handler, "notify_milestone_crossing",
+    monkeypatch.setattr(sys.modules["milestones"], "notify_milestone_crossing",
                         lambda old, new, **kw: seen.update(old=old, new=new) or 0)
 
-    handler._poll_homeloan("key")
-    assert seen["old"] is None
+    handler._check_homeloan([{"account_id": "up-homeloan", "old": prior, "new": Decimal("-596642.43")}])
+
+    assert seen == {"old": expected_old, "new": Decimal("596642.43")}
 
 
-def test_poll_homeloan_milestone_failure_is_swallowed_balance_still_stored(handler, monkeypatch):
-    """Best-effort: a milestone-push failure must never flip the stored-balance result."""
-    fake = _FakeRepo(prior={"balance": Decimal("600000"), "as_of": "x", "currency": "AUD"})
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: fake)
-    monkeypatch.setattr(handler, "fetch_balance", lambda *a, **k: _OK_PAYLOAD)
-
+def test_check_homeloan_milestone_failure_still_runs_the_drop_alarm(handler, monkeypatch):
+    """Best-effort: a milestone-push failure must not skip the WHIT-316 alarm check."""
     def boom(*a, **k):
         raise RuntimeError("expo down")
 
-    monkeypatch.setattr(handler, "notify_milestone_crossing", boom)
+    monkeypatch.setattr(handler, "notify_homeloan_milestone", boom)
+    seen = []
+    monkeypatch.setattr(handler, "check_repayment_landed_but_no_push",
+                        lambda old, new, notify_repo: seen.append((old, new)))
 
-    assert handler._poll_homeloan("key") is True  # balance still stored despite the failure
-    assert fake.calls == [("up-homeloan", Decimal("596642.43"), "2026-07-04T00:24:37.614Z", "AUD")]
+    handler._check_homeloan([{"account_id": "up-homeloan", "old": Decimal("-600000"), "new": Decimal("-596642.43")}])
+
+    assert seen == [(Decimal("600000"), Decimal("596642.43"))]
 
 
 # --- WHIT-479: goal-checkpoint celebration hook in the account poll -----------
@@ -509,29 +421,32 @@ def test_check_goal_checkpoints_one_goals_error_does_not_sink_the_others(handler
     assert seen == ["g1", "g2"]  # g1 raised, but g2 was still attempted
 
 
+_HOMELOAN_DELTA = {"account_id": "up-homeloan", "old": Decimal("-3"), "new": Decimal("-2")}
+
+
 def test_lambda_handler_passes_account_deltas_to_the_goal_checkpoint_check(handler, monkeypatch):
     monkeypatch.setattr(handler, "get_api_key", lambda: "key")
-    monkeypatch.setattr(handler, "_poll_homeloan", lambda key: True)
-    deltas = [{"account_id": "up-spending", "old": Decimal("1"), "new": Decimal("2")}]
+    monkeypatch.setattr(handler, "_check_homeloan", lambda d: None)
+    deltas = [{"account_id": "up-spending", "old": Decimal("1"), "new": Decimal("2")}, _HOMELOAN_DELTA]
     monkeypatch.setattr(handler, "_poll_account_balances", lambda key: (2, deltas))
     seen = {}
     monkeypatch.setattr(handler, "_check_goal_checkpoints", lambda d: seen.update(deltas=d))
 
     result = handler.lambda_handler({}, None)
-    assert result == {"homeloan_stored": True, "accounts_stored": 2}
+    assert result == {"accounts_stored": 2}
     assert seen["deltas"] == deltas
 
 
 def test_lambda_handler_goal_checkpoint_failure_is_swallowed(handler, monkeypatch):
     monkeypatch.setattr(handler, "get_api_key", lambda: "key")
-    monkeypatch.setattr(handler, "_poll_homeloan", lambda key: True)
-    monkeypatch.setattr(handler, "_poll_account_balances", lambda key: (2, []))
+    monkeypatch.setattr(handler, "_check_homeloan", lambda d: None)
+    monkeypatch.setattr(handler, "_poll_account_balances", lambda key: (2, [_HOMELOAN_DELTA]))
     def boom(_deltas):
         raise RuntimeError("expo down")
     monkeypatch.setattr(handler, "_check_goal_checkpoints", boom)
 
     # A push failure must not flip the stored-balance result.
-    assert handler.lambda_handler({}, None) == {"homeloan_stored": True, "accounts_stored": 2}
+    assert handler.lambda_handler({}, None) == {"accounts_stored": 2}
 
 
 # --- WHIT-482 (QA additions): batched prior-read gaps -------------------------

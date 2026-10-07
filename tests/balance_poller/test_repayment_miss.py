@@ -3,12 +3,14 @@
 `check_repayment_landed_but_no_push` logs `UP_WEBHOOK_REPAYMENT_MISSED` (which a
 CloudWatch alarm watches) when the mortgage balance dropped like a repayment landed but
 no push fired within the lookback window. Unit-tests the branch matrix directly, then
-confirms `_poll_homeloan` calls it with (old, new) and swallows a failure.
+confirms `_check_homeloan` isolates each home-loan check's failure.
 """
 
 import logging
 import time
 from decimal import Decimal
+
+import pytest
 
 from _terraform import MONITORING_TF, filter_pattern, tf_attr, tf_block
 from _transaction_range_fakes import _QueuedTransactionRepo
@@ -105,85 +107,27 @@ def test_push_one_second_inside_lookback_is_healthy(handler, monkeypatch, caplog
     assert not _run_pinned_clock(handler, monkeypatch, caplog, last_fired_at=fresh)
 
 
-# --- integration with _poll_homeloan --------------------------------------
+# --- integration with _check_homeloan --------------------------------------
+# lambda_handler wiring (abs inputs, WHIT-317 surviving a failed fetch) is in test_homeloan_single_poll.py.
 
-class _FakeBalanceRepo:
-    def __init__(self, prior):
-        self.prior = prior
-
-    def get_balance(self, account_id):
-        return self.prior
-
-    def upsert_balance(self, *args):
-        pass
+_CHECKS = ("check_ingested_repayment_without_push", "notify_homeloan_milestone", "check_repayment_landed_but_no_push")
 
 
-def _wire_successful_poll(handler, monkeypatch, prior):
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: _FakeBalanceRepo(prior))
-    monkeypatch.setattr(handler, "fetch_balance", lambda *a, **k: {
-        "success": True,
-        "data": {"amount": -596000, "date": "2026-07-04T00:00:00Z", "accountType": "mortgage"},
-    })
-    monkeypatch.setattr(handler, "notify_milestone_crossing", lambda *a, **k: None)
-    monkeypatch.setattr(handler, "NotifyRepository", lambda: _FakeNotify())
-
-
-def test_poll_calls_check_with_old_and_new(handler, monkeypatch):
-    _wire_successful_poll(handler, monkeypatch, prior={"balance": Decimal("600000"), "as_of": "x", "currency": "AUD"})
-    calls = []
-    monkeypatch.setattr(handler, "check_repayment_landed_but_no_push",
-                        lambda old, new, notify_repo: calls.append((old, new)))
-    assert handler._poll_homeloan("key") is True
-    assert calls == [(Decimal("600000"), Decimal("596000"))]
-
-
-def test_poll_swallows_a_check_failure(handler, monkeypatch):
-    _wire_successful_poll(handler, monkeypatch, prior={"balance": Decimal("600000"), "as_of": "x", "currency": "AUD"})
-
-    def _raise(*a, **k):
-        raise RuntimeError("check blew up")
-
-    monkeypatch.setattr(handler, "check_repayment_landed_but_no_push", _raise)
-    # The balance was still stored, so the poll succeeds despite the check failing.
-    assert handler._poll_homeloan("key") is True
-
-
-# --- integration: the precise detector (WHIT-317) --------------------------
-
-def test_poll_runs_the_precise_detector(handler, monkeypatch):
-    _wire_successful_poll(handler, monkeypatch, prior={"balance": Decimal("600000"), "as_of": "x", "currency": "AUD"})
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: object())
-    monkeypatch.setattr(handler, "check_repayment_landed_but_no_push", lambda *a, **k: None)
-    calls = []
-    monkeypatch.setattr(handler, "check_ingested_repayment_without_push",
-                        lambda notify_repo, txn_repo, now: calls.append(now))
-    assert handler._poll_homeloan("key") is True
-    assert len(calls) == 1  # ran once
-
-
-def test_poll_swallows_a_precise_detector_failure(handler, monkeypatch):
-    _wire_successful_poll(handler, monkeypatch, prior={"balance": Decimal("600000"), "as_of": "x", "currency": "AUD"})
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: object())
-    monkeypatch.setattr(handler, "check_ingested_repayment_without_push", _raise_detector)
-    # The balance was still stored, so the poll succeeds despite the detector failing.
-    assert handler._poll_homeloan("key") is True
-
-
-def test_precise_detector_runs_even_when_balance_fetch_fails(handler, monkeypatch):
-    # The detector reads only DynamoDB, so a getBalance outage (poll returns False) must not
-    # blind it — it runs before the fetch.
-    monkeypatch.setattr(handler, "fetch_balance", _raise_detector)
+@pytest.mark.parametrize("failing", _CHECKS)
+def test_check_homeloan_isolates_each_check_failure(handler, monkeypatch, failing):
     monkeypatch.setattr(handler, "NotifyRepository", lambda: _FakeNotify())
     monkeypatch.setattr(handler, "TransactionRepository", lambda: object())
-    calls = []
-    monkeypatch.setattr(handler, "check_ingested_repayment_without_push",
-                        lambda notify_repo, txn_repo, now: calls.append(now))
-    assert handler._poll_homeloan("key") is False  # balance poll failed
-    assert len(calls) == 1  # but the detector still ran
+    ran = []
+    for name in _CHECKS:
+        def check(*a, name=name, **k):
+            ran.append(name)
+            if name == failing:
+                raise RuntimeError("check blew up")
+        monkeypatch.setattr(handler, name, check)
 
+    handler._check_homeloan([{"account_id": "up-homeloan", "old": Decimal("-600000"), "new": Decimal("-596000")}])
 
-def _raise_detector(*a, **k):
-    raise RuntimeError("detector blew up")
+    assert ran == list(_CHECKS)  # the failure was swallowed and every other check still ran
 
 
 # --- WHIT-655: both detectors' lines still feed the merged Up webhook alarm ---

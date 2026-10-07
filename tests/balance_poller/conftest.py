@@ -6,7 +6,7 @@ test is non-trivial: it imports ``repository`` (which at load reads
 (which imports ``boto3``). None of that AWS wiring is needed to unit-test the
 normaliser / request shape / failure isolation, so we set the env vars and
 register lightweight fakes before the first import. Handler tests replace the
-repository (monkeypatching ``handler.HomeLoanBalanceRepository``), so the fakes
+repository (monkeypatching ``handler.AccountBalanceRepository``), so the fakes
 are never exercised — they only satisfy the import chain.
 
 ``handler``/``constants``/``repository`` collide with the sibling lambda suites,
