@@ -8,10 +8,9 @@ import React from 'react';
 import { screen, fireEvent } from '@testing-library/react-native';
 
 const mockOpenMultiPicker = jest.fn();
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openPicker: () => {}, openMultiPicker: mockOpenMultiPicker }) };
-});
+jest.mock('../context', () =>
+  require('./support/contextMock').realContextWith(() => ({ openPicker: () => {}, openMultiPicker: mockOpenMultiPicker })),
+);
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());

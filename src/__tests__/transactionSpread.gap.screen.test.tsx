@@ -15,13 +15,9 @@ import type { BudgetRollup } from '../api';
 const mockApplyTransactionEdit = jest.fn();
 const mockToast = jest.fn();
 const mockOpenPicker = jest.fn();
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({ applyTransactionEdit: mockApplyTransactionEdit, showToast: mockToast, openPicker: mockOpenPicker }),
-  };
-});
+jest.mock('../context', () =>
+  require('./support/contextMock').realContextWith(() => ({ applyTransactionEdit: mockApplyTransactionEdit, showToast: mockToast, openPicker: mockOpenPicker })),
+);
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());

@@ -15,13 +15,9 @@ const mockRemoveSpread = jest.fn(async (_id: string) => true);
 
 const INCOME = { id: 'salary', name: 'Salary', icon: 'briefcase', color: '#7CC5E8', bucket: 'Income' };
 
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({ saveSpread: mockSaveSpread, removeSpread: mockRemoveSpread, deleteBudget: jest.fn() }),
-  };
-});
+jest.mock('../context', () =>
+  require('./support/contextMock').realContextWith(() => ({ saveSpread: mockSaveSpread, removeSpread: mockRemoveSpread, deleteBudget: jest.fn() })),
+);
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 

@@ -30,13 +30,9 @@ const mockCategories = [{ ...GROCERIES_RECORD, color: '#7FD49B' }];
 // retryLoad) so ../queries' real imports still resolve; the screen renders under a real
 // QueryClientProvider. INERT for the renderHook describes (they never mount a component that
 // reads useAppContext; every other export passes through requireActual).
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({ retryLoad: jest.fn(), openMultiPicker: jest.fn(), showToast: mockShowToast, category: (id: string | null) => mockCategories.find((c) => c.id === id) }),
-  };
-});
+jest.mock('../context', () =>
+  require('./support/contextMock').realContextWith(() => ({ retryLoad: jest.fn(), openMultiPicker: jest.fn(), showToast: mockShowToast, category: (id: string | null) => mockCategories.find((c) => c.id === id) })),
+);
 
 // expo-router — mocked for the screen render. INERT for the renderHook describes (the composite
 // hook does not import expo-router; it returns refetchStale for the screen to wire to focus).

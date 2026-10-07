@@ -10,13 +10,9 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { txn } from './factory';
 
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({ applyTransactionEdit: jest.fn(), showToast: jest.fn(), openPicker: jest.fn(), deleteTransaction: jest.fn() }),
-  };
-});
+jest.mock('../context', () =>
+  require('./support/contextMock').realContextWith(() => ({ applyTransactionEdit: jest.fn(), showToast: jest.fn(), openPicker: jest.fn(), deleteTransaction: jest.fn() })),
+);
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());

@@ -18,10 +18,7 @@ import { ScrollView, Switch } from 'react-native';
 // Hoisted module-scope mock so the writer is assertable across renders.
 const mockSaveBudget = jest.fn(async (_id: string, _amount: number, _rollover?: boolean) => true);
 
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ saveBudget: mockSaveBudget }) };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ saveBudget: mockSaveBudget })));
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 

@@ -17,10 +17,9 @@ import { txn } from './factory';
 // + showToast present. Every key below is harmless to the screen that doesn't use it.
 const mockOpenPicker = jest.fn();
 const mockOpenMultiPicker = jest.fn();
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openPicker: mockOpenPicker, openMultiPicker: mockOpenMultiPicker, applyTransactionEdit: jest.fn(), showToast: jest.fn() }) };
-});
+jest.mock('../context', () =>
+  require('./support/contextMock').realContextWith(() => ({ openPicker: mockOpenPicker, openMultiPicker: mockOpenMultiPicker, applyTransactionEdit: jest.fn(), showToast: jest.fn() })),
+);
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 // WHIT-459 fold: superset expo-router — useFocusEffect (list screen) + useLocalSearchParams

@@ -10,13 +10,9 @@ import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent } from '@testing-library/react-native';
 
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({ openMultiPicker: jest.fn(), showToast: jest.fn() }),
-  };
-});
+jest.mock('../context', () =>
+  require('./support/contextMock').realContextWith(() => ({ openMultiPicker: jest.fn(), showToast: jest.fn() })),
+);
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());

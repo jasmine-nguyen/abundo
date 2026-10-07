@@ -13,10 +13,7 @@ import type { AppContext } from '../context';
 import { ICON, ICON_KEYS } from '../icons';
 
 let mockState: AppContext;
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => mockState };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
