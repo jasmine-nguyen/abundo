@@ -6,10 +6,10 @@
 // read only the editor's writers off it). expo-router's useRouter is mocked to capture navigation.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act, within } from '@testing-library/react-native';
+import { screen, fireEvent, act, within } from '@testing-library/react-native';
 import { EMPTY_LOAN_FACTS, LOAN_FACTS } from './factory';
 import { installFakeServer } from './support/fakeServer';
-import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settle } from './support/renderWithQueries';
+import { refreshInAct, renderWithQueries, useTestQueryClient, drawHeld, releaseAndSettle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedGoal } from './support/goalsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
@@ -41,19 +41,6 @@ beforeEach(() => {
   resetRouter();
   seedGoal(server);
 });
-
-// Draw without waiting, for a held (still-loading) reply.
-function drawHeld(ui: React.ReactElement) {
-  return render(<WithQueries>{ui}</WithQueries>);
-}
-
-// Let a held reply go and wait for it to land and redraw the screen, so nothing is left pending
-// into the next test.
-async function releaseAndSettle(held: { release: () => void }) {
-  await act(async () => { held.release(); });
-  await settle();
-  await refreshInAct(() => {});
-}
 
 // --- the milestone screen ----------------------------------------------------
 
@@ -205,6 +192,14 @@ it('milestone screen shows an equity set-up prompt when the property value is un
   expect(screen.getByText(/Add your home's value/)).toBeTruthy();
   fireEvent.press(screen.getByText('Add loan details →'));
   expect(routerSpies.push).toHaveBeenCalledWith('/loan');
+});
+
+it('WHIT-819: milestone screen hides the equity set-up prompt while loan facts load', async () => {
+  const held = server.hold('/loanfacts');
+  drawHeld(<Milestone />);
+  await screen.findByText('Your payoff plan'); // the balance has landed; only the facts are held
+  expect(screen.queryByText('Add loan details →')).toBeNull();
+  await releaseAndSettle(held);
 });
 
 // --- equity card copy: gap coverage (empty-state body, CTA routing, milestone subtitle) ---

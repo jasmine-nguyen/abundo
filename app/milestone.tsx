@@ -18,7 +18,7 @@ export default function Milestone() {
   // WHIT-197: the live balance + loan facts now come from the cached query layer.
   // Re-check on focus only when stale. `homeLoanError` is the balance read's OWN error
   // (not the aggregate) — a repayment/loanFacts failure must not show as a balance error.
-  const { loanFacts, homeLoan, milestones, homeLoanError, refetch, refetchStale } = useGoalScreenData();
+  const { loanFacts, homeLoan, milestones, homeLoanError, loanFactsLoaded, refetch, refetchStale } = useGoalScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
   const v = milestoneView({ loanFacts, homeLoan, milestones });
 
@@ -154,7 +154,7 @@ export default function Milestone() {
               <EquityBody>Usable equity = your LVR × your home's value, minus what you still owe. Kill more principal, unlock more deposit. 📈</EquityBody>
             </>
           ) : (
-            <AddLoanDetailsPrompt />
+            loanFactsLoaded && <AddLoanDetailsPrompt />
           )}
         </EquityCard>
       </ScrollView>

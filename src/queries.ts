@@ -1160,6 +1160,11 @@ export interface GoalScreenData {
   // the only case with nothing truthful to show, so it's the only one that flags an error.
   // (homeLoanError uses the same firstLoadError rule — see above.)
   repaymentError: boolean;
+  // WHIT-819: loanFacts falls back to EMPTY_LOAN_FACTS while loading or after a failure, so
+  // "not set up" is only real once the facts have resolved (loanFactsLoaded). loanFactsError
+  // is the facts read's own first-load failure, the same firstLoadError rule as above.
+  loanFactsLoaded: boolean;
+  loanFactsError: boolean;
   refetch: () => void;
   refetchStale: () => void;
 }
@@ -1202,6 +1207,8 @@ export function useGoalScreenData(): GoalScreenData {
     // only a never-loaded read flags an error, so a cached repayment — real OR genuinely empty
     // — survives a failed background refetch and renders its honest last-good state.
     repaymentError: firstLoadError(repaymentQuery),
+    loanFactsLoaded: loanFactsQuery.data !== undefined,
+    loanFactsError: firstLoadError(loanFactsQuery),
     ...status,
   };
 }
