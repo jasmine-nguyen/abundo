@@ -9,6 +9,7 @@ import { chartCategoryColor } from '../chartColors';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
+import { styleOf } from './support/layout';
 
 let mockAi: { summary: string; suggestions: string[]; generated_at: string } | null = null;
 const mockGenerate = jest.fn();
@@ -80,11 +81,7 @@ const REPLY: ChatReply = {
   actions: [],
 };
 
-function flat(style: unknown): Record<string, unknown> {
-  if (Array.isArray(style)) return Object.assign({}, ...style.map(flat));
-  return (style as Record<string, unknown>) ?? {};
-}
-const dotColor = () => flat(screen.getByTestId('chat-card-dot').props.style).backgroundColor;
+const dotColor = () => styleOf(screen.getByTestId('chat-card-dot')).backgroundColor;
 
 describe('the chat answer colour follows the real category read', () => {
   // [A4]

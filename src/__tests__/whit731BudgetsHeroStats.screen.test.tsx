@@ -2,12 +2,12 @@
 // Spent · Budget · Next payday.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { screen } from '@testing-library/react-native';
-import { StyleSheet } from 'react-native';
 import { resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { COFFEE } from './support/categories';
 import { showBudgets } from './support/budgetsScreen';
 import { MINUS } from '../theme';
+import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -63,8 +63,8 @@ describe('WHIT-731 Budgets top card: Spent · Budget · Next payday row', () => 
   it('the money number is the same size as the days-left number', async () => {
     await showOverBudget();
 
-    const daysLeftSize = StyleSheet.flatten(screen.getByText('22').props.style).fontSize as number;
-    const moneySize = StyleSheet.flatten(screen.getByText(`${MINUS}$351.68`).props.style).fontSize as number;
+    const daysLeftSize = styleOf(screen.getByText('22')).fontSize as number;
+    const moneySize = styleOf(screen.getByText(`${MINUS}$351.68`)).fontSize as number;
 
     expect(moneySize).toBe(daysLeftSize);
   });

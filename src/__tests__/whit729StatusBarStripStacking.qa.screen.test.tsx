@@ -6,6 +6,7 @@ import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { render } from '@testing-library/react-native';
 import { C } from '../theme';
+import { styleOf } from './support/layout';
 
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 47, bottom: 34, left: 0, right: 0 }) }));
 
@@ -16,7 +17,7 @@ type Flat = { height?: number; backgroundColor?: string; zIndex?: number; positi
 function strip() {
   const r = render(<ScrollChromeHeader title="Budgets">{null}</ScrollChromeHeader>);
   const found = r.UNSAFE_getAllByType(View).find((v) => {
-    const s = StyleSheet.flatten(v.props.style) as Flat | undefined;
+    const s = styleOf(v) as Flat;
     return s?.height === 47 && s?.backgroundColor === C.bg;
   });
   if (!found) throw new Error('status-bar strip not rendered');
@@ -25,7 +26,7 @@ function strip() {
 
 // [A1]
 it('strip is pinned to the top and stacks above the sliding header', () => {
-  const s = StyleSheet.flatten(strip().props.style) as Flat;
+  const s = styleOf(strip()) as Flat;
   const header = StyleSheet.flatten(floatingHeaderStyle) as Flat;
   expect(s.position).toBe('absolute');
   expect(s.top).toBe(0);

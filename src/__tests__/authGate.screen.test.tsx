@@ -20,9 +20,10 @@
 // first; each describe then overrides only what it needs.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React, { useEffect } from 'react';
-import { StyleSheet, Text, AppState, Keyboard } from 'react-native';
+import { Text, AppState, Keyboard } from 'react-native';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import { C } from '../theme';
+import { styleOf } from './support/layout';
 
 // ---------------------------------------------------------------------------
 // expo-router SUPERSET mock
@@ -187,7 +188,7 @@ describe('WHIT-160 auth gate — static redirect states', () => {
     // unmounting it resets navigation and loops the gate. The opaque absolute-fill
     // cover is the privacy shield hiding the protected screen while the redirect lands.
     expect(screen.getByTestId('child')).toBeTruthy();
-    const cover = StyleSheet.flatten(screen.getByTestId('gate-cover').props.style);
+    const cover = styleOf(screen.getByTestId('gate-cover'));
     expect(cover.backgroundColor).toBe(C.bg);
     expect(cover.position).toBe('absolute');
     expect([cover.top, cover.right, cover.bottom, cover.left]).toEqual([0, 0, 0, 0]);
@@ -442,7 +443,7 @@ describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', 
     it('lock cover is opaque, absolute-fill, and painted on top', () => {
       renderGate();
       act(() => setStatus('locked'));
-      const cover = StyleSheet.flatten(screen.getByTestId('lock-cover').props.style);
+      const cover = styleOf(screen.getByTestId('lock-cover'));
       expect(cover.backgroundColor).toBe(C.bg);
       expect(cover.position).toBe('absolute');
       expect([cover.top, cover.right, cover.bottom, cover.left]).toEqual([0, 0, 0, 0]);
@@ -453,7 +454,7 @@ describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', 
       renderGate();
       act(() => setStatus('locked'));
       const cover = screen.getByTestId('lock-cover');
-      const coverStyle = StyleSheet.flatten(cover.props.style) as { pointerEvents?: string };
+      const coverStyle = styleOf(cover) as { pointerEvents?: string };
       expect(cover.props.pointerEvents ?? coverStyle?.pointerEvents ?? 'auto').toBe('auto');
     });
 
@@ -544,7 +545,7 @@ describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', 
       const cover = screen.getByTestId('gate-cover');
       expect(mockRedirectSpy).toHaveBeenCalledWith('/');
       // The cover is opaque (C.bg) so the signed-out app is not visible behind it.
-      const coverStyle = StyleSheet.flatten(cover.props.style);
+      const coverStyle = styleOf(cover);
       expect(coverStyle.backgroundColor).toBe(C.bg);
       // The app was covered/redirected, NOT torn down and rebuilt (state preserved end-to-end).
       expect(childMounts).toBe(1);
@@ -896,7 +897,7 @@ describe('WHIT-265 auth gate — dynamic transitions', () => {
     // Effective pointerEvents ('auto') is load-bearing: 'none'/'box-none' — via the
     // prop OR the style form — would let a signed-out user's taps land on the
     // protected screen underneath the cover.
-    const coverStyle = StyleSheet.flatten(cover.props.style) as { pointerEvents?: string };
+    const coverStyle = styleOf(cover) as { pointerEvents?: string };
     expect(cover.props.pointerEvents ?? coverStyle?.pointerEvents ?? 'auto').toBe('auto');
     expect(stackMounts).toBe(mountsBefore);
 

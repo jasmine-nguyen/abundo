@@ -3,18 +3,18 @@
 // default chip; a caller's style is merged on top, so its keys win and the rest stay default.
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
 import { RetryButton } from '../components/ui';
+import { styleOf } from './support/layout';
 
 const CHIP_BLUE_16 = 'rgba(124,140,255,0.16)';
 const ACCENT_SOFT = '#9db3f9';
 
 it('renders the shared Retry chip when the caller passes no style', () => {
   render(<RetryButton onPress={jest.fn()} label="Retry loading it" testID="thing-retry" />);
-  const button = StyleSheet.flatten(screen.getByTestId('thing-retry').props.style);
+  const button = styleOf(screen.getByTestId('thing-retry'));
   expect(button).toMatchObject({ paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: CHIP_BLUE_16 });
-  const text = StyleSheet.flatten(screen.getByText('Retry').props.style);
+  const text = styleOf(screen.getByText('Retry'));
   expect(text).toMatchObject({ fontSize: 14, fontWeight: '700', color: ACCENT_SOFT });
 });
 
@@ -28,8 +28,8 @@ it("lets the caller's style win key by key, keeping the default for the rest", (
       textStyle={{ color: '#ffffff' }}
     />,
   );
-  const button = StyleSheet.flatten(screen.getByTestId('thing-retry').props.style);
+  const button = styleOf(screen.getByTestId('thing-retry'));
   expect(button).toMatchObject({ paddingVertical: 6, paddingHorizontal: 22, borderRadius: 12, backgroundColor: '#000000' });
-  const text = StyleSheet.flatten(screen.getByText('Retry').props.style);
+  const text = styleOf(screen.getByText('Retry'));
   expect(text).toMatchObject({ fontSize: 14, fontWeight: '700', color: '#ffffff' });
 });

@@ -3,8 +3,8 @@
 // with cents), and the five tab labels at 11pt or more, still shrinking to fit.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { screen } from '@testing-library/react-native';
+import { styleOf } from './support/layout';
 
 jest.mock('../motion/NavBarsContext', () => ({ useNavBars: () => ({ visibility: { interpolate: () => 0 } }) }));
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -70,7 +70,7 @@ it('[A6] all five tab labels are 11pt or more and keep their one-line shrink-to-
 
   for (const label of ['Budgets', 'Transactions', 'Accounts', 'Insights', 'Goals']) {
     const text = screen.getByText(label);
-    expect(StyleSheet.flatten(text.props.style).fontSize).toBeGreaterThanOrEqual(11);
+    expect(styleOf(text).fontSize).toBeGreaterThanOrEqual(11);
     expect(text.props).toMatchObject({ numberOfLines: 1, adjustsFontSizeToFit: true, maxFontSizeMultiplier: 1.2 });
   }
 });

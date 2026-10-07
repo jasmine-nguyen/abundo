@@ -13,6 +13,8 @@ import type { AppContext, ApplyRulesJob, FilingResult, FilingTarget, FilingWhen 
 import type { ApplyRulesResult, UncategorizedMerchantGroup } from '../api';
 import { APPLY_RULES_MAX_WRITES } from '../context';
 import { ApiError } from '../apiError';
+import type { ReactTestInstance } from 'react-test-renderer';
+import { styleOf } from './support/layout';
 
 let mockState: AppContext;
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
@@ -154,7 +156,6 @@ it('[V8] the progress bar clamps to 100% when filed exceeds matched (late-count 
   await mountFileByShop(job({ status: 'running', matched: 800, filed: 1000 }));
 
   const track = screen.getByTestId('apply-rules-job-progress');
-  const fill = track.children[0] as unknown as { props: { style: unknown } };
-  const flat = Array.isArray(fill.props.style) ? Object.assign({}, ...fill.props.style) : fill.props.style;
-  expect((flat as { width: string }).width).toBe('100%');
+  const fill = track.children[0] as ReactTestInstance;
+  expect(styleOf(fill).width).toBe('100%');
 });

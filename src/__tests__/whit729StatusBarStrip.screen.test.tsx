@@ -4,9 +4,10 @@
 // hides. Uses the real ScrollChromeHeader geometry with a sentinel inset of 47.
 import { it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { View, Text, Animated, StyleSheet } from 'react-native';
+import { View, Text, Animated } from 'react-native';
 import { render } from '@testing-library/react-native';
 import { C } from '../theme';
+import { styleOf } from './support/layout';
 
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 47, right: 0, bottom: 34, left: 0 }) }));
 
@@ -24,7 +25,7 @@ it('renders a fixed status-bar strip (insets.top tall, C.bg) outside the sliding
     <ScrollChromeHeader title="Budgets"><Text>body</Text></ScrollChromeHeader>,
   );
   const strips = (r.UNSAFE_getAllByType(View) as unknown as Node[]).filter((v) => {
-    const s = StyleSheet.flatten(v.props.style as never) as { height?: number; backgroundColor?: string } | undefined;
+    const s = styleOf(v) as { height?: number; backgroundColor?: string } | undefined;
     return s?.height === 47 && s?.backgroundColor === C.bg;
   });
   expect(strips.length).toBeGreaterThan(0);

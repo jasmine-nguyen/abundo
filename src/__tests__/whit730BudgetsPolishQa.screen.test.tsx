@@ -3,7 +3,6 @@
 // column shrinks to fit instead of wrapping. Halfway through a 14-day cycle.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, within } from '@testing-library/react-native';
-import { StyleSheet } from 'react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { BudgetBar } from '../components/ui';
 import { resetRouter } from './support/routerMock';
@@ -13,6 +12,7 @@ import { resetAuth } from './support/authMock';
 import { COFFEE, GROCERIES, SUBS } from './support/categories';
 import { seedBudgetsTab } from './support/budgetsTab';
 import { renderLoadedBudgetsWithQueries } from './support/budgetsScreen';
+import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -30,7 +30,7 @@ beforeEach(() => {
   }, [COFFEE, GROCERIES, SUBS]);
 });
 
-const fontSize = (node: ReactTestInstance) => StyleSheet.flatten(node.props.style).fontSize as number;
+const fontSize = (node: ReactTestInstance) => styleOf(node).fontSize as number;
 
 it('[A13] (P0) an over-budget row draws its bar without the tick; an under-plan row keeps it', async () => {
   await renderLoadedBudgetsWithQueries();
@@ -61,7 +61,7 @@ it('[A16] (P1) the amount shrinks to one line and the label never wraps, so a bi
   expect(left.props.numberOfLines).toBe(1);
   // The amount column is capped so the name keeps the rest of the row.
   const column = amount.parent!.parent!;
-  const columnStyle = StyleSheet.flatten(column.props.style);
+  const columnStyle = styleOf(column);
   expect(columnStyle.maxWidth).toBe('45%');
   expect(within(column).getByText('left')).toBeTruthy();
 });

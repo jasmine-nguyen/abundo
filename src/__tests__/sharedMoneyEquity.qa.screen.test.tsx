@@ -3,7 +3,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
-import { StyleSheet, Text } from 'react-native';
+import { Text } from 'react-native';
 import type { ReactTestRendererJSON } from 'react-test-renderer';
 import { LOAN_FACTS } from './factory';
 import { installFakeServer } from './support/fakeServer';
@@ -51,7 +51,7 @@ describe('MoneyField on its own', () => {
       <MoneyField label="Amount" labelStyle={{ fontSize: 99 }} style={{ marginBottom: 42 }} placeholder="e.g. 1" value="7" onChangeText={() => {}} />,
     );
     expect(styleOf(screen.getByText('Amount')).fontSize).toBe(99);
-    expect(StyleSheet.flatten((view.toJSON() as ReactTestRendererJSON).props.style)).toEqual(
+    expect(styleOf(view.toJSON() as ReactTestRendererJSON)).toEqual(
       expect.objectContaining({ marginBottom: 42 }),
     );
     expect(screen.getByPlaceholderText('e.g. 1').props.value).toBe('7');
