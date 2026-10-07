@@ -81,6 +81,8 @@ describe('goal page milestones', () => {
     await openPage([goal], 'g');
     expect(screen.getByText('Flights')).toBeTruthy();
     expect(reached('c1')).toBeNull();
+    expect(screen.queryByTestId('goal-milestone-togo-c1')).toBeNull();
+    expect(screen.queryByTestId('goal-detail-next')).toBeNull();
     expect(screen.getByText('Waiting on your balance')).toBeTruthy();
   });
 });
@@ -112,16 +114,18 @@ describe('goal page progress', () => {
 });
 
 describe('goal page follows the cache', () => {
-  // [A7] cold load: header only while goals are in flight, then the goal fills in.
-  it('shows the goal once a slow goals read lands', async () => {
+  // [A7] cold load: a spinner (not "Goal not found") while goals are in flight, then the goal fills in.
+  it('shows a spinner, then the goal once a slow goals read lands', async () => {
     seedHubWith(server, { goals: [CARD] });
     const held = server.hold('/goals');
     setParams({ id: 'card' });
     render(<WithQueries><GoalDetail /></WithQueries>);
-    expect(screen.getByText('Goal')).toBeTruthy();
+    expect(screen.getByTestId('goal-detail-loading')).toBeTruthy();
+    expect(screen.queryByTestId('goal-detail-missing')).toBeNull();
     expect(screen.queryByText('Credit card')).toBeNull();
     await act(async () => { held.release(); });
     await waitFor(() => expect(screen.getByText('Credit card')).toBeTruthy());
+    expect(screen.queryByTestId('goal-detail-loading')).toBeNull();
     expect(screen.getByTestId('goal-detail-edit')).toBeTruthy();
   });
 
@@ -133,10 +137,11 @@ describe('goal page follows the cache', () => {
     expect(screen.getByText('Visa card')).toBeTruthy();
   });
 
-  // [A9] the goal removed from the cache (deleted) → header-only, no stale Edit to a dead id.
-  it('drops to header-only when the goal leaves the cache', async () => {
+  // [A9] the goal removed from the cache (deleted) → "Goal not found", no stale Edit to a dead id.
+  it('shows "Goal not found" when the goal leaves the cache', async () => {
     await openPage([CARD], 'card');
     await refreshInAct(() => queryClient.setQueryData<GoalRecord[]>(goalsKey, []));
+    expect(screen.getByTestId('goal-detail-missing')).toBeTruthy();
     expect(screen.queryByText('Credit card')).toBeNull();
     expect(screen.queryByTestId('goal-detail-edit')).toBeNull();
   });

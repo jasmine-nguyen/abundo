@@ -8,21 +8,12 @@ import { useGoalsScreenData } from '../../src/queries';
 import { useCheckpointCelebration } from '../../src/hooks/useCheckpointCelebration';
 import { celebrationSteps } from '../../src/checkpointCelebration';
 import { sortCheckpointsForDirection } from '../../src/checkpoints';
-import { formatDayMonthYear, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from '../../src/dateutil';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/components/ui';
 import { SettingsButton } from '../../src/components/SettingsButton';
 import { Celebration } from '../../src/components/Celebration';
 import { PayoffSummary } from '../../src/components/PayoffSummary';
-import { GoalProgress, GoalHead } from '../../src/components/GoalProgress';
-
-// WHIT-235: a manual balance is "stale" once it hasn't been updated in over 30 days — the
-// number the pace math trusts is getting old, so the card nudges the user to refresh it.
-const STALE_DAYS = 30;
-function balanceIsStale(manualAsOf: string | null | undefined): boolean {
-  if (!manualAsOf) return false;
-  return wholeDaysBetween(isoToUtcDayMs(manualAsOf), dateToUtcDayMs(new Date())) > STALE_DAYS;
-}
+import { GoalProgress, GoalHead, GoalBalanceRow } from '../../src/components/GoalProgress';
 
 // WHIT-233: the Goals hub — the tab formerly showing only the mortgage. Lists the user's
 // savings/debt goals (each a progress + pace card off the pure balanceGoalView engine) and
@@ -168,10 +159,6 @@ export default function Goals() {
             </Text>
           ) : (
             goalViews.map(({ goal, view: v }) => {
-              // A manual goal (no synced account) keeps its own balance — show when it was last
-              // set + an in-place "Update balance" affordance. Synced goals track the live feed.
-              const manual = !goal.account_id;
-              const stale = manual && balanceIsStale(goal.manual_as_of);
               const editGoal = () => router.push(`/goal/edit?id=${encodeURIComponent(goal.id)}`);
               return (
                 <Pressable
@@ -182,25 +169,7 @@ export default function Goals() {
                 >
                   <GoalHead goal={goal} view={v} />
                   <GoalProgress goal={goal} view={v} onPastDue={editGoal} />
-
-                  {manual && (
-                    <View style={styles.manualRow}>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={styles.asOf} numberOfLines={1}>
-                          {goal.manual_as_of ? `Balance as of ${formatDayMonthYear(goal.manual_as_of)}` : 'Balance not set'}
-                        </Text>
-                        {stale && <Text style={styles.staleTag}>Haven’t updated in a while</Text>}
-                      </View>
-                      <Pressable
-                        testID={`goal-balance-${goal.id}`}
-                        onPress={() => s.openGoalBalance(goal.id)}
-                        hitSlop={8}
-                        style={styles.updateBtn}
-                      >
-                        <Text style={styles.updateText}>Update balance</Text>
-                      </Pressable>
-                    </View>
-                  )}
+                  <GoalBalanceRow goal={goal} onUpdate={() => s.openGoalBalance(goal.id)} />
                 </Pressable>
               );
             })
@@ -244,13 +213,6 @@ const styles = StyleSheet.create({
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textDim, letterSpacing: 0.5, marginBottom: 12, marginLeft: 2 },
 
   goalCard: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, padding: 16, marginBottom: 12 },
-
-  // WHIT-235: the manual-goal "as of <date>" + Update balance row, under the pace foot.
-  manualRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.hairline },
-  asOf: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim },
-  staleTag: { fontFamily: FONT.body, fontSize: 11, fontWeight: '700', color: C.warn, marginTop: 2 },
-  updateBtn: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 11, backgroundColor: tint(C.accentAlt, 0.14) },
-  updateText: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.accentSoft },
 
   // WHIT-295: the additive invite shown when the mortgage is your only goal — a light hint line,
   // not a "you have nothing" card, since the mortgage above already counts.
