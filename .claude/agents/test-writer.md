@@ -43,17 +43,13 @@ changes), write no tests and say why in `summary`.
 ## Rules
 
 - Don't write implementation code. Only tests and test fixtures.
-- Put every test inside this repo. The pipeline runs and locks only tests here, and
+- Put every test inside this repo. The pipeline runs only tests here, and
   it rejects test files anywhere else.
-- Put your tests in a new test file of your own, never in an existing one. The
-  pipeline locks every test file you hand it, so adding to a shared file would lock
-  its older tests too, and it rejects test files that already existed.
 - Don't copy setup or helpers from another test file: import the existing ones.
   If you need a helper that doesn't exist yet, put it in a new shared helper file and
-  list it in `test_files` too. It's new, so locking it freezes no older tests.
+  list it in `test_files` too.
 - Don't commit, stage, or switch branches — the pipeline does that.
-- Once written, your tests are pinned: the implementer isn't allowed to edit them,
-  so get the expected values right.
+- Get the expected values right: the implementer builds to them.
 - If a test searches files for some text (a banned word), make sure it
   can't find that text in its own file, in a comment or anywhere else: exclude the
   test file, or build the text from pieces. Otherwise it fails on itself forever.

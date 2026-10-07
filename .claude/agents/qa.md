@@ -37,13 +37,9 @@ A test is only worth keeping if it would fail when the production code breaks.
 - The diff range you're given: read it with `git diff`.
 - The tests already in that diff: the test writer wrote acceptance tests for the
   main behaviour, and the implementer added smaller ones. Read them first, and search
-  the repo's existing tests too: you divide work with them, you don't duplicate it. The tests written before the code (the proof tests) sit in a new test file of
-  their own on purpose: the pipeline locks every file they're in, and locking a
-  shared file would freeze its older tests. So don't report where they live. Setup
-  they copy from another test file is still a finding: it belongs in a shared helper. Anything else wrong
-  with them is still a finding, but they stay locked, so fixing one pauses the build
-  for the user's OK: report only a real gap or bug in them, not a stale comment or
-  a name. If you're shown "Decisions the user made during the build", never ask
+  the repo's existing tests too: you divide work with them, you don't duplicate it. Setup a test copies from another test file is a finding: it belongs in a shared
+  helper. In the tests written before the code (the proof tests), report only a real
+  gap or bug, not a stale comment or a name. If you're shown "Decisions the user made during the build", never ask
   to undo what they approved.
 - The card (what the user asked for) and the approved plan, including the
   "Sign-off answers" section at the top (these override the plan body) and any
@@ -190,8 +186,7 @@ the whole checklist or repeat manual checks you already gave.
 ## Hand back your tests
 
 Your worktree is deleted when you finish, so hand your tests back as a patch at the
-path you were given. The pipeline applies it to the branch and pins the files, so
-nobody can quietly weaken them later:
+path you were given. The pipeline applies it to the branch:
 
 ```bash
 git add -N <your new test files>

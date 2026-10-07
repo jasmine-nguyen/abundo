@@ -10,7 +10,7 @@
 #                              └→ test_writer
 # reproducer / test_writer ─→ escalation (pause)                no valid failing test
 # implementer ─┬→ escalation (pause) → implementer
-#              └→ checks ─┬→ implementer                        typecheck/lint/tests/pinned tests failed
+#              └→ checks ─┬→ implementer                        typecheck/lint/tests failed
 #                         └→ ponytail ─┬→ implementer           cuts to make (/ponytail-review)
 #                                      └→ code_critic ∥ qa → fix_or_ship
 # fix_or_ship ─┬→ implementer                                   findings, rounds left
@@ -41,7 +41,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, NotRequired, TypedDict
 
-import jsonschema
 from claude_agent_sdk import (
     ClaudeAgentOptions,
     CLIConnectionError,
@@ -111,11 +110,10 @@ class BuildState(TypedDict):
     repro: NotRequired[str]
     repro_command: NotRequired[str]
     tests: NotRequired[str]
+    red: NotRequired[bool]
     test_attempts: NotRequired[int]
     test_feedback: NotRequired[str]
     test_rejection: NotRequired[str]
-    pinned: NotRequired[dict[str, str]]
-    unpinned: NotRequired[dict[str, str]]
     user_decisions: NotRequired[list[str]]
     # implementation
     implementer_session: NotRequired[str]
@@ -317,11 +315,11 @@ IMPLEMENTER_OUTPUT = _output(
     status=_one_of("DONE", "ESCALATE"),
     summary=TEXT,
     escalation=TEXT,
-    options=_list_of(id=TEXT, label=TEXT, what_happens=TEXT, cost=TEXT, unpin_files=TEXTS),
+    options=_list_of(id=TEXT, label=TEXT, what_happens=TEXT, cost=TEXT),
     recommended=TEXT,
     follow_ups=TEXTS,
 )
-PONYTAIL_OUTPUT = _output(cuts=_list_of(file=TEXT, finding=TEXT))
+PONYTAIL_OUTPUT = _output(cuts=TEXTS)
 CODE_CRITIC_OUTPUT = _output(
     blocking_bugs=TEXTS,
     standards_breaches=TEXTS,
@@ -566,8 +564,6 @@ async def run_agent(
         # read-only agents write tools (e.g. a Notion MCP).
         setting_sources=["project"],
         strict_mcp_config=True,
-        # The project's hook that keeps the chat session out of .build/ lets the build's own agents through.
-        env={"BUILD_PIPELINE_AGENT": "1"},
     )
     result = None
     try:
@@ -739,8 +735,8 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
             return "❌ Couldn't write tests that fail before the code exists"
         if update.get("test_feedback"):
             return f"❌ The new tests were rejected: {update['test_rejection']}. Rewriting them"
-        if "pinned" in update:
-            return "✅ Failing tests written and locked"
+        if update.get("red"):
+            return "✅ Failing tests written"
         return "✅ No new tests needed at this level"
     if name == "reproducer":
         if update.get("repro"):
@@ -1049,11 +1045,7 @@ def remove_worktree(worktree: Path) -> None:
     run(["git", "worktree", "prune"])
 
 
-# --- pinned tests ---
-#
-# Tests written before the code (and QA's tests) are fingerprinted and copied
-# aside. The checks step puts back any the implementer edits or deletes, so
-# "don't weaken the tests" is enforced rather than requested.
+# --- repo paths ---
 
 
 def git_top() -> Path:
@@ -1084,89 +1076,6 @@ def repo_path(path: str) -> str | None:
     return str(resolved.relative_to(ROOT)) if resolved.is_relative_to(ROOT) else None
 
 
-def _digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def pin_copy(state: BuildState, digest: str) -> Path:
-    return work_dir(state) / "pins" / digest
-
-
-def pin(state: BuildState, paths) -> dict[str, str]:
-    """Fingerprint test files and keep a copy of each, to put back if they're changed."""
-    pins = {}
-    for path in paths:
-        relative = repo_path(path)
-        if relative and (ROOT / relative).is_file():
-            digest = _digest(ROOT / relative)
-            copy = pin_copy(state, digest)
-            copy.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(ROOT / relative, copy)
-            pins[relative] = digest
-    return pins
-
-
-def tampered_pins(pinned: dict[str, str]) -> list[str]:
-    return [
-        path for path, expected in pinned.items()
-        if not (ROOT / path).is_file() or _digest(ROOT / path) != expected
-    ]
-
-
-def pinned_paths(state: BuildState, paths) -> list[str]:
-    """The paths that name pinned (or already unlocked) test files, as the pins store them."""
-    locked = {*state.get("pinned", {}), *state.get("unpinned", {})}
-    return sorted({relative for relative in map(repo_path, paths) if relative in locked})
-
-
-def unpin_update(state: BuildState, files: list[str], approval: str) -> dict:
-    """Unlock pinned test files for the implementer's next round; the checks after it pin them again."""
-    pinned = state.get("pinned", {})
-    return {
-        "pinned": {path: digest for path, digest in pinned.items() if path not in files},
-        "unpinned": {**state.get("unpinned", {}), **{path: pinned[path] for path in files if path in pinned}},
-        "user_decisions": [
-            *state.get("user_decisions", []), f"Unlocked {', '.join(files)} so the implementer could change it: {approval}"
-        ],
-    }
-
-
-def relock(state: BuildState) -> dict:
-    """Pin the test files the user unlocked again, at the contents the implementer left them in.
-    The user approved changing them, not deleting them, so a deleted one is put back first."""
-    unpinned = state.get("unpinned", {})
-    if not unpinned:
-        return {}
-    history = []
-    for path, digest in unpinned.items():
-        copy = pin_copy(state, digest)
-        if not (ROOT / path).is_file() and copy.is_file():
-            (ROOT / path).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(copy, ROOT / path)
-            print(f"   ↺ Put back {path}: it was deleted while unlocked, and only changing it was approved", flush=True)
-            history.append(f"• put back {path}: deleted while unlocked")
-    pins = pin(state, unpinned)
-    if pins:
-        print(f"   🔒 Locked {', '.join(sorted(pins))} again, at the implementer's new version", flush=True)
-    gone = [path for path in unpinned if path not in pins]
-    if gone:
-        print(f"   ⚠️ {', '.join(gone)} was deleted while unlocked, and there's no copy to put back", flush=True)
-        history.append(f"• unlocked test file deleted, no longer locked: {', '.join(gone)}")
-    return {"pinned": {**state.get("pinned", {}), **pins}, "unpinned": {}, "history": history}
-
-
-def restore_pins(state: BuildState) -> list[str]:
-    """Put back every pinned test file that was changed or deleted. Returns their paths."""
-    restored = []
-    for path in tampered_pins(state.get("pinned", {})):
-        copy = pin_copy(state, state["pinned"][path])
-        if copy.is_file():
-            (ROOT / path).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(copy, ROOT / path)
-            restored.append(path)
-    return restored
-
-
 # Test runners that found nothing to run: a typo'd path, or a filter that matched no test.
 NO_TESTS_RAN = re.compile(
     r"no tests ran|no tests? (?:files? )?found|file or directory not found|no test files", re.IGNORECASE
@@ -1177,7 +1086,6 @@ REJECTIONS = {
     "no command given": "it gave no command to run them",
     "The pipeline won't run": "its test command touches git",
     "These test files are outside this repo": "they're outside this repo",
-    "These test files already existed": "they were added to an existing test file instead of a new one",
     "These test files don't exist": "the test files it named don't exist",
     "No tests ran": "the test command ran no tests",
     "timed out after": "they timed out",
@@ -1196,17 +1104,9 @@ def is_red(command: str, test_files=()) -> tuple[bool, str]:
     # The agent wrote this command, so it gets the same guard as the agent's own shell.
     if BASH_DENY["writer"].search(command):
         return False, f"The pipeline won't run `{command}`: it touches git, and the pipeline owns git."
-    # Pins cover whole files, so tests added to a shared file would lock every older test in it.
-    inside = [repo_path(path) for path in test_files if repo_path(path)]
-    existing = git("ls-files", "--", *inside).splitlines() if inside else []
-    if existing:
-        return False, (
-            f"These test files already existed: {', '.join(existing)}. Put the new tests in a new file of their "
-            "own: the pipeline locks every test file it's given, so adding to a shared file locks its older tests too."
-        )
     elsewhere = [path for path in test_files if not repo_path(path)]
     if elsewhere:
-        return False, f"These test files are outside this repo, where the pipeline can't run or pin them: {', '.join(elsewhere)}"
+        return False, f"These test files are outside this repo, where the pipeline can't run them: {', '.join(elsewhere)}"
     missing = [path for path in test_files if not (ROOT / repo_path(path)).is_file()]
     if missing:
         return False, f"These test files don't exist: {', '.join(missing)}"
@@ -1287,6 +1187,7 @@ def review_block(state: BuildState, key: str, extra: str = "") -> str:
         ),
         fix_round_block(state, key),
         user_decisions_block(state),
+        state.get("implementation") and f"## Implementer's notes\n{state['implementation']}",
         extra,
     ]
     return "\n\n".join(part for part in parts if part)
@@ -1802,7 +1703,6 @@ async def reproducer(state: BuildState):
             "repro": f"`{out['command']}` fails on: {out['symptom']}\n\n{out['summary']}",
             "repro_command": out["command"],
             "tests": out["summary"],
-            "pinned": {**state.get("pinned", {}), **pin(state, out["test_files"])},
             "history": [f"✓ reproducer: red on {first_line(out['symptom'])}"],
         }
     reason = rejection_reason(output, passed="it passed, so it doesn't show the bug")
@@ -1851,8 +1751,8 @@ async def test_writer(state: BuildState):
         return {
             **done,
             "tests": out["summary"],
-            "pinned": {**state.get("pinned", {}), **pin(state, out["test_files"])},
-            "history": [f"✓ test_writer: {len(out['test_files'])} failing test file(s) pinned"],
+            "red": True,
+            "history": [f"✓ test_writer: {len(out['test_files'])} failing test file(s)"],
         }
     reason = rejection_reason(output)
     feedback = (
@@ -1878,30 +1778,11 @@ def implementer_prompt(state: BuildState, news: str) -> str:
     return "\n\n".join(part for part in parts if part)
 
 
-def pinned_block(state: BuildState) -> str:
-    if not state.get("pinned"):
-        return ""
-    return (
-        "## Pinned test files (read-only: the pipeline puts back any change; if one is wrong, ESCALATE "
-        "with an option whose `unpin_files` lists it)\n" + bullets(sorted(state["pinned"]))
-    )
-
-
-def unpinned_block(state: BuildState) -> str:
-    if not state.get("unpinned"):
-        return ""
-    return (
-        "## Test files you may change this round\nThe user approved changing these pinned test files. Make only "
-        "the change they approved. The pipeline pins them again, at your new contents, when you finish:\n"
-        + bullets(sorted(state["unpinned"]))
-    )
-
-
 async def implementer(state: BuildState):
     feedback = fix_feedback(state)
     answer = state.get("escalation_answer", "")
     answered = answer and f"## Your escalated question, answered\n{answer}"
-    news = "\n\n".join(p for p in [pinned_block(state), unpinned_block(state), feedback, answered] if p)
+    news = "\n\n".join(p for p in [feedback, answered] if p)
     resumes = state.get("implementer_resumes", 0)
     # Continue the same session on fix rounds: it already knows the code it wrote.
     session = state.get("implementer_session", "") if resumes < MAX_SESSION_RESUMES else ""
@@ -1920,7 +1801,7 @@ async def implementer(state: BuildState):
         for option in out.get("options", []):
             key = option.get("id", "").strip()
             if key and key.lower() not in ("other", "stop") and key not in options:
-                options[key] = {**option, "id": key, "unpin_files": pinned_paths(state, option.get("unpin_files", []))}
+                options[key] = {**option, "id": key}
         options = list(options.values())
         if out.get("options") and not options:
             question += "\n\n**Options**\n" + bullets(f"{o.get('label', '')} — {o.get('what_happens', '')}" for o in out["options"])
@@ -1951,53 +1832,15 @@ ESCALATION_HINTS = {
 }
 
 
-def unpin_hint(state: BuildState) -> str:
-    """For a question without options: plain "unpin" unlocks every pinned test for one round."""
-    files = sorted(state.get("pinned", {}))
-    if not files:
-        return ""
-    return (
-        f"\n\nOnly if this is about a locked test: \"unpin: <reason>\" unlocks all "
-        f"{plural(len(files), 'locked test file')}: {', '.join(files)}, for the implementer's next round only."
-    )
-
-
-# --- structured replies (stage 2) ---
+# --- structured replies ---
 #
 # The implementer's options reach the build as SDK-checked JSON. The reply comes
 # back from the chat session as text on the command line, so the build checks it
-# against a schema made for this pause before resuming. Which tests a choice
-# unlocks is read off the option itself, never worked out by the messenger.
+# names this pause and one of its options before resuming.
 
 
 def structured_pause(values: dict) -> bool:
     return values.get("escalation_source") == "implementer" and bool(values.get("pause_options"))
-
-
-def reply_schema(values: dict) -> dict:
-    """What a reply to this pause must look like: this pause's ID, and one of its options or your own answer."""
-    locked = sorted(values.get("pinned", {}))
-    properties = {
-        "pause_id": {"const": values["pause_id"]},
-        "choice": {"enum": [option["id"] for option in values["pause_options"]] + ["other"]},
-        "tests": {"enum": ["keep", "unpin"] if locked else ["keep"]},
-        "answer": {"type": "string"},
-    }
-    other = {"required": ["tests", "answer"], "properties": {"answer": {"pattern": r"\S"}}}
-    if locked:
-        properties["files"] = {"type": "array", "items": {"enum": locked}, "uniqueItems": True}
-        other["if"] = {"properties": {"tests": {"const": "unpin"}}, "required": ["tests"]}
-        other["then"] = {"required": ["files"], "properties": {"files": {"minItems": 1}}}
-    return {
-        "type": "object",
-        "required": ["pause_id", "choice"],
-        "properties": properties,
-        "additionalProperties": False,
-        "if": {"properties": {"choice": {"const": "other"}}},
-        "then": other,
-        # A picked option already says which tests it unlocks.
-        "else": {"properties": {"tests": False, "files": False}},
-    }
 
 
 def check_reply(values: dict, text: str) -> tuple[dict | str | None, str]:
@@ -2014,27 +1857,23 @@ def check_reply(values: dict, text: str) -> tuple[dict | str | None, str]:
         reply = json.loads(text)
     except json.JSONDecodeError:
         return None, "this question needs a JSON reply, in the shape below"
-    errors = sorted(jsonschema.Draft202012Validator(reply_schema(values)).iter_errors(reply), key=str)
-    if errors:
-        error = errors[0]
-        where = ".".join(str(part) for part in error.absolute_path)
-        if not where:
-            where = error.message.split("'")[1] if error.validator == "required" else "reply"
-        if error.schema is False:
-            return None, "a picked option already says which tests it unlocks, so leave out tests and files"
-        return None, f"{where}: {error.message}"
+    if not isinstance(reply, dict) or reply.get("pause_id") != values["pause_id"]:
+        return None, f"pause_id: this reply isn't for pause {values['pause_id']}"
+    choices = [option["id"] for option in values["pause_options"]] + ["other"]
+    if reply.get("choice") not in choices:
+        return None, f"choice: pick one of {', '.join(choices)}"
+    if reply["choice"] == "other" and not str(reply.get("answer", "")).strip():
+        return None, "answer: give the user's own answer when the choice is other"
     return reply, ""
 
 
 def reply_format(values: dict) -> str:
     pause = values["pause_id"]
     example = json.dumps({"pause_id": pause, "choice": values["pause_options"][0]["id"]})
-    own = {"pause_id": pause, "choice": "other", "tests": "keep", "answer": "<the user's own words>"}
+    own = {"pause_id": pause, "choice": "other", "answer": "<the user's own words>"}
     return (
         f"Reply with JSON (pause {pause}). To pick an option: {example}\n"
-        f"For the user's own answer: {json.dumps(own)}. Use \"tests\": \"unpin\" with \"files\": [...] "
-        "to unlock locked tests for one round. \"stop\" ends the build.\n"
-        f"Reply schema: {json.dumps(reply_schema(values))}"
+        f"For the user's own answer: {json.dumps(own)}. \"stop\" ends the build."
     )
 
 
@@ -2042,24 +1881,20 @@ def option_lines(values: dict) -> str:
     lines = []
     for option in values["pause_options"]:
         recommended = " (recommended)" if option["id"] == values.get("pause_recommended") else ""
-        files = option["unpin_files"]
-        unlocks = f" Choosing it unlocks {plural(len(files), 'locked test')}: {', '.join(files)}." if files else ""
         lines.append(
             f"{option['id']}) {option['label']}{recommended} — {option.get('what_happens', '')} "
-            f"Cost: {option.get('cost', '')}{unlocks}"
+            f"Cost: {option.get('cost', '')}"
         )
     return "\n".join(lines)
 
 
-def chosen(state: BuildState, reply: dict) -> tuple[str, list[str]]:
-    """What the user chose, in words for the implementer and reviewers, and the tests it unlocks."""
+def chosen(state: BuildState, reply: dict) -> str:
+    """What the user chose, in words for the implementer and reviewers."""
     if reply["choice"] == "other":
-        files = reply.get("files", []) if reply.get("tests") == "unpin" else []
-        unlocks = f" Unlock for one round: {', '.join(files)}." if files else " Keep every test locked."
-        return f"The user gave their own answer: {reply['answer']}{unlocks}", files
+        return f"The user gave their own answer: {reply['answer']}"
     option = next(option for option in state["pause_options"] if option["id"] == reply["choice"])
     words = f" The user added: {reply['answer']}" if reply.get("answer") else ""
-    return f"The user chose {option['id']}) {option['label']}.{words}", option["unpin_files"]
+    return f"The user chose {option['id']}) {option['label']}.{words}"
 
 
 def escalation(state: BuildState):
@@ -2067,16 +1902,12 @@ def escalation(state: BuildState):
     if structured_pause(state):
         ask = f"Options:\n{option_lines(state)}\n\n{reply_format(state)}"
     else:
-        hint = unpin_hint(state) if source == "implementer" else ""
-        ask = f"Reply with your decision, or \"stop\" to end the build.{ESCALATION_HINTS.get(source, '')}{hint}"
+        ask = f"Reply with your decision, or \"stop\" to end the build.{ESCALATION_HINTS.get(source, '')}"
     reply = interrupt(f"DECISION NEEDED (from the {NODE_LABELS[source]})\n\n{state['escalation']}\n\n{ask}")
     if isinstance(reply, dict):
-        answer, files = chosen(state, reply)
-        word, rest = "", ""
+        answer, word = chosen(state, reply), ""
     else:
-        word, rest = split_reply(reply)
-        answer = reply.strip()
-        files = sorted(state.get("pinned", {})) if word == "unpin" and source == "implementer" else []
+        answer, word = reply.strip(), split_reply(reply)[0]
     if is_stop(reply):
         return {"escalation": "", **stopped("escalation")}
     update = {
@@ -2094,9 +1925,6 @@ def escalation(state: BuildState):
         update["pause_options"] = []
         # Reviewers see every answer, so they don't send back what the user decided.
         update["user_decisions"] = [*state.get("user_decisions", []), answer]
-        if files:
-            update.update(unpin_update(state, files, answer if isinstance(reply, dict) else rest or "approved"))
-            update["history"].append(f"• unpinned for one round: {', '.join(files)}")
     return update
 
 
@@ -2113,18 +1941,8 @@ def failing_commands(commands: list[str]) -> list[str]:
 
 
 def failing_checks(state: BuildState) -> list[str]:
-    """Put back tampered pinned tests, then run every command in AGENTS.md's checks block."""
+    """Run every command in AGENTS.md's checks block, and the bug's reproduction."""
     problems = []
-    restored = restore_pins(state)
-    if restored:
-        print(f"   ↺ Put back {plural(len(restored), 'pinned test file')} the implementer changed", flush=True)
-    tampered = tampered_pins(state.get("pinned", {}))
-    if tampered:
-        problems.append(
-            "Pinned test files were changed or deleted, and the pipeline has no copy to put back. Restore "
-            "them; if one is genuinely wrong, ESCALATE instead, with an option whose `unpin_files` lists it:\n"
-            f"{bullets(tampered)}"
-        )
     commands = check_commands()
     if not commands:
         problems.append(f"{AGENTS_FILE.name} has no ```checks block, so the tests can't be run.")
@@ -2136,30 +1954,19 @@ def failing_checks(state: BuildState) -> list[str]:
         print(f"   {'✅' if code == 0 else '❌'} {repro} (the bug's reproduction)", flush=True)
         if code != 0:
             problems.append(f"The bug still reproduces:\n$ {repro}\n{tail(output)}")
-    if restored and problems:
-        problems.insert(0, (
-            "You changed or deleted pinned test files, so the pipeline put them back before running the "
-            f"checks:\n{bullets(restored)}\nDon't edit them. If one is genuinely wrong, ESCALATE with an option "
-            "whose `unpin_files` lists it: the user can unlock it for one round."
-        ))
     return problems
 
 
 def checks(state: BuildState):
-    relocked = relock(state)
     problems = failing_checks(state)
     if not problems:
         ok, output = commit_all(state, commit_message(state))
         if not ok:
             problems.append(f"git commit failed (a pre-commit hook?):\n{tail(output)}")
     return {
-        **relocked,
         **out_of_rounds(state, bool(problems)),
         "checks_feedback": "\n\n".join(problems),
-        "history": [
-            *relocked.get("history", []),
-            mark(False, f"checks: {first_line(problems[0])}") if problems else mark(True, "checks: passed, committed"),
-        ],
+        "history": [mark(False, f"checks: {first_line(problems[0])}") if problems else mark(True, "checks: passed, committed")],
     }
 
 
@@ -2187,26 +1994,15 @@ async def ponytail(state: BuildState):
     cuts = result.output["cuts"]
     if not cuts:
         return {"ponytail_verdict": "APPROVED", "history": [mark(True, "ponytail: nothing to cut")]}
-    findings = [cut["finding"] for cut in cuts]
     if state.get("implementation_attempts", 0) >= MAX_IMPLEMENTATION_ROUNDS:
         return {
             "ponytail_verdict": "APPROVED",
-            "advisory": findings,
+            "advisory": cuts,
             "history": [f"• ponytail: {plural(len(cuts), 'cut')} left for the PR, no rounds left"],
         }
-    locked = [cut["finding"] for cut in cuts if pinned_paths(state, [cut["file"]])]
-    free = [finding for finding in findings if finding not in locked]
-    sections = []
-    if free:
-        sections.append(f"### Cut\n{bullets(free)}")
-    if locked:
-        sections.append(
-            "### Cuts in locked test files\nDon't edit these files: reply with status ESCALATE, with one option to "
-            f"unlock and cut (its `unpin_files` lists the file) and one to keep it:\n{bullets(locked)}"
-        )
     return {
         "ponytail_verdict": "NEEDS_REWORK",
-        "ponytail_feedback": "\n\n".join(sections),
+        "ponytail_feedback": f"### Cut\n{bullets(cuts)}",
         "history": [mark(False, f"ponytail: {plural(len(cuts), 'cut')} to make")],
     }
 
@@ -2259,8 +2055,8 @@ def qa_depth_block(state: BuildState) -> str:
 
 
 def qa_passed_last_round(state: BuildState) -> bool:
-    """QA re-runs on a fix round only if it asked for changes. Its tests are pinned and run
-    in every check, and the code critic reviews the fixes."""
+    """QA re-runs on a fix round only if it asked for changes. Its tests run in every check,
+    and the code critic reviews the fixes."""
     last = state.get("last_review") or {}
     return bool(last.get("head")) and not last.get("qa")
 
@@ -2316,9 +2112,7 @@ def fix_or_ship(state: BuildState):
     if state.get("qa_patch"):
         applied, note = apply_test_patch(Path(state["qa_patch"]))
         history.append(note)
-        if applied:
-            update["pinned"] = {**state.get("pinned", {}), **pin(state, applied)}
-        elif note.startswith("✗"):
+        if not applied and note.startswith("✗"):
             problem = f"QA's tests weren't added to the branch: {note.removeprefix('✗ qa: ')}"
             print(f"   ⚠️ {problem}", flush=True)
             update["advisory"] = [problem]
@@ -2384,11 +2178,6 @@ def next_slice(state: BuildState):
         "implementer_session": "",
         "implementer_resumes": 0,
         "implementation_attempts": 0,
-        # This slice's tests passed and were reviewed, so a later slice may change them (a rename,
-        # a behaviour the plan changes). They still run in every check, and the code review
-        # flags any change that weakens them.
-        "pinned": {},
-        "unpinned": {},
         "pause_options": [],
         "tests": "",
         "test_attempts": 0,
@@ -2641,7 +2430,6 @@ builder.add_conditional_edges("ship", after_ship)
 #   python3 build_graph.py --thread WHIT-123 --status                              → where is it?
 #   python3 build_graph.py --thread WHIT-123 --retry                               → re-run a step that errored
 #   python3 build_graph.py --thread WHIT-123 --recheck                             → after fixing a failed build by hand
-#   add --unpin <test file> to --recheck when the user approved changing that locked test
 #   python3 build_graph.py --thread WHIT-123 --replan "<what to change>"           → stop it, even mid-run, and replan
 #   python3 build_graph.py --thread WHIT-123 --cancel                              → stop it, even mid-run, and end it
 #   python3 build_graph.py --thread WHIT-123 --clean-backups                       → delete the backup branches replans left, once the ticket is done
@@ -2687,10 +2475,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--clean-backups", action="store_true", help="delete the backup branches replans left, once the build is done"
     )
     parser.add_argument(
-        "--unpin", action="append", metavar="TEST_FILE",
-        help="with --recheck: a locked test file the user approved changing (repeat for more)",
-    )
-    parser.add_argument(
         "--allow-api-billing", action="store_true",
         help="run even though an API key is set, so every token is billed (the user's call only)",
     )
@@ -2705,8 +2489,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.request and not args.card and not continuing:
         args.thread = args.thread or hashlib.sha256(args.request.encode()).hexdigest()[:8]
     args.thread = args.thread or args.card
-    if args.unpin and not args.recheck:
-        parser.error("--unpin only works with --recheck; at a pause, reply \"unpin: <reason>\" instead")
     if continuing:
         if not args.thread:
             parser.error(
@@ -2851,11 +2633,6 @@ def report(thread: str, result: dict) -> int:
             print(
                 "\n## Decisions for the user\nThe code took these without sign-off. Ask the user about each "
                 f"one, and change the code only as they decide:\n{bullets(result['code_decisions'])}"
-            )
-        if result.get("pinned"):
-            print(
-                f"\n## Locked test files\n{bullets(sorted(result['pinned']))}\nThe recheck puts back any change to "
-                "these. Change one only if the user approves, then add --unpin <that file> to the recheck."
             )
         print(f"\nFix these by hand, then re-run checks and reviews:\n  {rerun()} --thread {thread} --recheck")
         code = 1
@@ -3006,21 +2783,14 @@ async def retry_build(graph, config, snapshot):
     return None
 
 
-async def recheck_build(graph, config, snapshot, unpin: list[str]):
-    values = snapshot.values
-    if values.get("outcome") != "failed" or snapshot.next:
+async def recheck_build(graph, config, snapshot):
+    if snapshot.values.get("outcome") != "failed" or snapshot.next:
         print("Only a failed, finished build can be rechecked. Use --status to see where this one is.")
-        return None
-    files = pinned_paths(values, unpin)
-    unknown = [path for path in unpin if repo_path(path) not in files]
-    if unknown:
-        print(f"{', '.join(unknown)} isn't a locked test file. Locked: {', '.join(sorted(values.get('pinned', {}))) or 'none'}.")
         return None
     await graph.aupdate_state(
         config,
         {
             **cleared_reviews(),
-            **(unpin_update(values, files, "the user approved changing it after the build failed") if files else {}),
             "failed": False,
             "outcome": "",
             "implementation_attempts": 0,
@@ -3141,7 +2911,7 @@ def reply_from_answer(values: dict, ask: dict, answer: dict) -> tuple[str, str]:
     if pick == "stop" or is_stop(typed(pick)):
         return "stop", ""
     if typed(pick):
-        return json.dumps({"pause_id": values["pause_id"], "choice": "other", "tests": "keep", "answer": typed(pick)}), ""
+        return json.dumps({"pause_id": values["pause_id"], "choice": "other", "answer": typed(pick)}), ""
     if isinstance(pick, str) and pick:
         return json.dumps({"pause_id": values["pause_id"], "choice": pick}), ""
     return "", "the user didn't pick an option"
@@ -3156,35 +2926,6 @@ def save_pause(thread: str, snapshot) -> None:
     else:
         outcome = (snapshot.values or {}).get("outcome", "")
         write_progress(thread, status="finished" if outcome else "stopped", outcome=outcome, question="", ask=None)
-
-
-def last_save_file(thread: str) -> Path:
-    return BUILD_DIR / thread / "last-save"
-
-
-def record_saves(saver) -> None:
-    """Note each save this build writes, so a save written by anything else shows up (see changed_elsewhere)."""
-    put = saver.aput
-
-    async def aput(config, checkpoint, metadata, new_versions):
-        saved = await put(config, checkpoint, metadata, new_versions)
-        write_text(last_save_file(saved["configurable"]["thread_id"]), saved["configurable"]["checkpoint_id"])
-        return saved
-
-    saver.aput = aput
-
-
-def changed_elsewhere(thread: str, snapshot) -> bool:
-    """Whether the thread's latest save isn't the last one the build wrote: something else changed its
-    saved progress. A repair session the user opened (`ticket repair`) may, and its changes are accepted."""
-    recorded = read_text(last_save_file(thread)).strip()
-    latest = (snapshot.config or {}).get("configurable", {}).get("checkpoint_id", "")
-    if not recorded or not latest or recorded == latest:
-        return False
-    if os.environ.get("ALLOW_BUILD_REPAIR") == "1":
-        write_text(last_save_file(thread), latest)
-        return False
-    return True
 
 
 # --- stopping a running build ---
@@ -3415,8 +3156,6 @@ async def replan_build(graph, config, snapshot, feedback: str, pid: int | None):
             "escalation": "",
             "escalation_answer": "",
             "escalation_next": "",
-            "pinned": {},
-            "unpinned": {},
             "pause_options": [],
             "user_decisions": [],
             "repro": "",
@@ -3500,7 +3239,6 @@ async def main(argv: list[str] | None = None) -> int:
     config = {"configurable": {"thread_id": args.thread}}
     async with AsyncSqliteSaver.from_conn_string(str(DB_PATH)) as saver:
         await saver.setup()
-        record_saves(saver)
         graph = builder.compile(checkpointer=saver)
         snapshot = await graph.aget_state(config)
         if args.status:
@@ -3511,13 +3249,6 @@ async def main(argv: list[str] | None = None) -> int:
             return 1
         if args.clean_backups:
             return clean_backups(snapshot.values, args.branch)
-        if not args.restart and changed_elsewhere(args.thread, snapshot):
-            print(
-                f"{args.thread}'s saved progress was changed by something other than the build, so it won't run "
-                "on it. If that was a deliberate repair, run this command from the repair session "
-                f"(`ticket repair {args.thread}`); otherwise start over with --restart."
-            )
-            return 1
         if not take_lock(args.thread, running):
             print(f"Another run of {args.thread} just started. Wait for it, or stop it with --replan or --cancel.")
             return 1
@@ -3533,7 +3264,7 @@ async def main(argv: list[str] | None = None) -> int:
             elif args.retry:
                 result = await retry_build(graph, config, snapshot)
             elif args.recheck:
-                result = await recheck_build(graph, config, snapshot, args.unpin or [])
+                result = await recheck_build(graph, config, snapshot)
             else:
                 result = await start_build(graph, saver, config, snapshot, args)
         except Exception as e:  # noqa: BLE001 — every failure gets the same --retry advice

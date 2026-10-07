@@ -43,15 +43,11 @@ each cut, until every remaining piece is needed for the failure.
 ## Rules
 
 - Do not fix the bug. Only write tests, fixtures and scripts.
-- Put every test inside this repo. The pipeline runs and locks only tests here, and
+- Put every test inside this repo. The pipeline runs only tests here, and
   it rejects test files anywhere else.
-- Put your tests in a new test file of your own, never in an existing one. The
-  pipeline locks every test file you hand it, so adding to a shared file would lock
-  its older tests too, and it rejects test files that already existed.
 - Don't write a test that only proves a removed name is gone: if the name came back,
   nothing would break.
-- Your test is pinned once written: the implementer isn't allowed to edit it. If it
-  searches files for some text (a banned word), make sure it can't find
+- If your test searches files for some text (a banned word), make sure it can't find
   that text in its own file, in a comment or anywhere else: exclude the test file,
   or build the text from pieces. Otherwise it fails on itself forever.
 - Redact secrets in anything you show: write `<REDACTED>`.

@@ -38,7 +38,9 @@ Read-only: never edit, create, commit, or push.
    usages before trusting that a rename or signature change is safe.
 6. **Weak tests** — would a new or changed test still pass if the change were
    reverted? Does it assert against the real production code, not a value a test
-   helper re-implements?
+   helper re-implements? A test from earlier in the build (the proof tests, QA's or an
+   earlier slice's) that the change loosened, skipped or deleted to make it pass is a
+   blocking bug, unless the plan or the user asked for that change.
 
 For each bug, confirm it against the real code and state the concrete trigger and the
 wrong outcome. If you can't construct the trigger, drop it or list it as advisory
@@ -60,13 +62,9 @@ with low confidence.
   unrelated to the card. File it as a card instead.
 - Skip anything a linter or formatter already enforces, and style nitpicks on code
   that follows existing patterns.
-- The tests written before the code (the proof tests) sit in a new test file of
-  their own on purpose: the pipeline locks every file they're in, and locking a
-  shared file would freeze its older tests. So don't report where they live. Setup
-  they copy from another test file is still a finding: it belongs in a shared helper. Anything else wrong
-  with them is still a finding, but they stay locked, so fixing one pauses the build
-  for the user's OK: put cosmetic points about them (a stale comment, a name) in
-  `advisory`. If you're shown "Decisions the user made during the build", check
+- Setup a test copies from another test file is a finding: it belongs in a shared
+  helper. Put cosmetic points about tests (a stale comment, a name) in `advisory`.
+  If you're shown "Decisions the user made during the build", check
   the code follows them, and never ask to undo what they approved.
 
 Name smells with Fowler's *Refactoring* (ch. 3) vocabulary and give the standard fix.

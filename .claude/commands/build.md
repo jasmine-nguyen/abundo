@@ -296,7 +296,7 @@ the card number for card builds) and check where it is:
        block shows. Say plainly if the helper's work was fine and the build
        rejected it for another reason (e.g. it looked in the wrong folder).
      - **Your options:** each option it lists, and any hint on the last line
-       (`skip`, `unpin`), with what happens if they pick it and what it costs.
+       (`skip`), with what happens if they pick it and what it costs.
      Then ask the user.
 
      **Pauses with an Options list** (from the implementer) take a JSON reply,
@@ -304,26 +304,15 @@ the card number for card builds) and check where it is:
      - Ask with AskUserQuestion using exactly the block's options, in its order:
        its labels, "(Recommended)" on the one it recommends, and what each
        does and costs in plain words. Don't add, merge or drop options.
-     - An option that "unlocks N locked test(s)" lets the implementer change
-       those tests (the ones written before the code, or QA's), for one round.
-       The build then locks them again at the new version. Say how many and
-       what each checks, using only the block's count.
      - The user picks an option: reply `{"pause_id": "<id>", "choice": "<its
-       id>"}`, with the pause ID and option ID copied from the block. The
-       build reads which tests to unlock from the option itself, so never add
-       `tests` or `files` to a picked option.
-     - The user types their own answer: reply with `"choice": "other"`, their
-       words in `answer`, and `"tests": "keep"`, unless they clearly said a
-       locked test may change. Then use `"tests": "unpin"` and list those
-       files from the block's schema in `files`. If you can't tell which,
-       ask them; never guess.
+       id>"}`, with the pause ID and option ID copied from the block.
+     - The user types their own answer: reply with `"choice": "other"` and
+       their words in `answer`.
      - If the build answers "Reply rejected", fix the field it names and
        resend. The question is still open, so don't ask the user again.
 
      **Pauses without options** take the decision in plain words. The hint on
-     the last line may offer `skip`, or `unpin: <reason>`. `unpin` unlocks
-     every locked test for one round: mention it only if the question is about
-     a locked test.
+     the last line may offer `skip`.
 
    Every pause also accepts **Stop**: it ends the build there and nothing
    ships.
@@ -332,14 +321,9 @@ the card number for card builds) and check where it is:
 
    **You relay and resume, nothing more.** While a build is running or paused,
    never edit the card's code or tests yourself, and never touch the build's
-   saved progress (the `.build/` folder, including `build_graph.db`) at all, not
-   even to "unstick" it (a project safety check blocks it; only `.build/cards/` is
-   yours to write). If a build is stuck and none of `--resume`, `--retry`,
-   `--recheck` or `--replan` can fix it, tell the user what's stuck and that
-   `ticket repair <card>` opens a separate session allowed to repair these
-   files. Never work around the block yourself. Every change goes through a resume reply, so the build
-   knows about it: a locked test through an option that unlocks it (or
-   `unpin`), anything else through the user's decision. If no reply fits, tell the user what's stuck and
+   saved progress (the `.build/` folder, including `build_graph.db`), not even to
+   "unstick" it; only `.build/cards/` is yours to write. Every change goes through
+   `--resume`, `--retry`, `--recheck` or `--replan`, so the build knows about it. If no reply fits, tell the user what's stuck and
    ask. The one time you change code is BUILD FAILED (step 5).
 
    **Recommendations are the helper's, not yours.** Mark "(Recommended)" on the
@@ -361,8 +345,8 @@ the card number for card builds) and check where it is:
    | PLAN FOR REVIEW | `go` (recommended answers) · `go: Q1 <answer>; Q2 <answer>` · `rework: <feedback>` |
    | CARD LOOKS INVALID | `close` · `rework: <why it's still needed>` |
    | QUESTIONS BEFORE PLANNING | `go` (recommendations) or `Q1: <answer>; Q2: <answer>` |
-   | DECISION NEEDED with Options | `{"pause_id": "<id>", "choice": "A"}` · `{"pause_id": "<id>", "choice": "other", "tests": "keep", "answer": "<the user's words>"}` |
-   | DECISION NEEDED without options | the decision in plain words · `skip` · `unpin: <reason>` |
+   | DECISION NEEDED with Options | `{"pause_id": "<id>", "choice": "A"}` · `{"pause_id": "<id>", "choice": "other", "answer": "<the user's words>"}` |
+   | DECISION NEEDED without options | the decision in plain words · `skip` |
 
    If the reply contains quotes (every JSON reply does), backticks or `$`, pass it through a
    quoted heredoc so the shell doesn't touch it:
@@ -401,12 +385,8 @@ the card number for card builds) and check where it is:
      code only as they decide. Then run
      `python3 build_graph.py --thread <id> --recheck`
      to re-run the checks and both reviews (code review and QA) on your fixes. Repeat until
-     it passes.
-     Don't change a locked test (they're listed under "Locked test files";
-     the recheck puts back any change to one). If one is wrong,
-     explain it to the user and ask. Only if they approve, change it and add
-     `--unpin <that test file>` to the recheck: it stays locked at your new
-     version.
+     it passes. Never weaken a test to make it pass: if one is wrong, explain
+     it to the user and change it only if they approve.
    - **BUILD STOPPED** — a step errored (an agent ran out of turns or
      budget, returned no verdict, or files changed that shouldn't have).
      Show the user the error, fix the cause if it's yours to fix, then
