@@ -23,21 +23,15 @@ import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMo
 // real context's useCallbacks are), so the stub itself never rebuilds the screen's focus callback.
 const mockRefreshAiInsights = jest.fn();
 const mockGenerateAiInsights = jest.fn();
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({
-      aiInsights: null,
-      aiInsightsLoading: false,
-      aiInsightsError: false,
-      refreshAiInsights: mockRefreshAiInsights,
-      generateAiInsights: mockGenerateAiInsights,
-      loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null },
-      homeLoan: { balance: null, asOf: null },
-    }),
-  };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({
+  aiInsights: null,
+  aiInsightsLoading: false,
+  aiInsightsError: false,
+  refreshAiInsights: mockRefreshAiInsights,
+  generateAiInsights: mockGenerateAiInsights,
+  loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null },
+  homeLoan: { balance: null, asOf: null },
+})));
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 

@@ -17,10 +17,7 @@ import { queryClient } from '../queryClient';
 import { transactionsRecentKey } from '../queryKeys';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openPicker: jest.fn(), category: () => undefined }) };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ openPicker: jest.fn(), category: () => undefined })));
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 

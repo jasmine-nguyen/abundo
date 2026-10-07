@@ -24,18 +24,12 @@ import { installFakeServer } from './support/fakeServer';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({
-      aiInsights: null, aiInsightsLoading: false, aiInsightsError: false,
-      refreshAiInsights: jest.fn(), generateAiInsights: jest.fn(),
-      loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null },
-      homeLoan: { balance: null, asOf: null },
-    }),
-  };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({
+  aiInsights: null, aiInsightsLoading: false, aiInsightsError: false,
+  refreshAiInsights: jest.fn(), generateAiInsights: jest.fn(),
+  loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null },
+  homeLoan: { balance: null, asOf: null },
+})));
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 

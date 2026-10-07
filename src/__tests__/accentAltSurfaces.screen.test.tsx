@@ -19,10 +19,7 @@ import { C } from '../theme';
 import type { Category } from '../types';
 
 let mockState: { openPicker: () => void; category: (id: string | null) => Category | undefined };
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => mockState };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import { TransactionRow } from '../components/TransactionRow';

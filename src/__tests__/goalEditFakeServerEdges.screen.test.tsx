@@ -19,10 +19,7 @@ const mockSaveGoal = jest.fn(async (_editId: string | null, _body: unknown) => t
 const mockDeleteGoal = jest.fn(async (_id: string) => true);
 const mockShowToast = jest.fn();
 
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ saveGoal: mockSaveGoal, deleteGoal: mockDeleteGoal, showToast: mockShowToast }) };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ saveGoal: mockSaveGoal, deleteGoal: mockDeleteGoal, showToast: mockShowToast })));
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 

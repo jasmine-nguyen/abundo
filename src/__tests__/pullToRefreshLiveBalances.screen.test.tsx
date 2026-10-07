@@ -21,13 +21,7 @@ import { resetAuth } from './support/authMock';
 const mockShowToast = jest.fn<(m: string) => void>();
 
 const mockCategories = [{ ...GROCERIES_RECORD, color: '#7FD49B' }];
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return {
-    ...actual,
-    useAppContext: () => ({ retryLoad: jest.fn(), openMultiPicker: jest.fn(), showToast: mockShowToast, category: (id: string | null) => mockCategories.find((c) => c.id === id) }),
-  };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ retryLoad: jest.fn(), openMultiPicker: jest.fn(), showToast: mockShowToast, category: (id: string | null) => mockCategories.find((c) => c.id === id) })));
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 

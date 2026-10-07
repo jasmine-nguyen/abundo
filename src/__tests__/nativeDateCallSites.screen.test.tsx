@@ -41,10 +41,7 @@ jest.mock('@react-native-community/datetimepicker', () => {
 
 // ---- shared boundary mocks (both screens live behind these) ----
 const mockAppCtx = { saveGoal: jest.fn(async () => true), deleteGoal: jest.fn(async () => true), saveLoanFacts: jest.fn(async () => true), showToast: jest.fn() };
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => mockAppCtx };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockAppCtx));
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());

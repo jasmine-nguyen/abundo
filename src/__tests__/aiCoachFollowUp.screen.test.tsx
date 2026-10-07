@@ -10,12 +10,9 @@ import { resetAuth } from './support/authMock';
 
 let mockAi: { summary: string; suggestions: string[]; generated_at: string } | null = null;
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => ({
-  ...(jest.requireActual('../context') as object),
-  useAppContext: () => ({
-    aiInsights: mockAi, aiInsightsLoading: false, aiInsightsError: false, generateAiInsights: jest.fn(),
-  }),
-}));
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({
+  aiInsights: mockAi, aiInsightsLoading: false, aiInsightsError: false, generateAiInsights: jest.fn(),
+})));
 const mockOpenChat = jest.fn();
 jest.mock('../chat/ChatContext', () => ({ useChat: () => ({ openChat: mockOpenChat }) }));
 

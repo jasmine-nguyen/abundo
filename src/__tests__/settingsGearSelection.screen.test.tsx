@@ -16,10 +16,7 @@ import { routerSpies, resetRouter } from './support/routerMock';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 const mockOpenMultiPicker = jest.fn();
-jest.mock('../context', () => {
-  const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openPicker: () => {}, openMultiPicker: mockOpenMultiPicker }) };
-});
+jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ openPicker: () => {}, openMultiPicker: mockOpenMultiPicker })));
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
