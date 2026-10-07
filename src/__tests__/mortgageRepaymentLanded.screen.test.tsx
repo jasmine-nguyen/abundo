@@ -5,10 +5,10 @@
 // motion on so the banner shows without the confetti animation.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { screen } from '@testing-library/react-native';
+import { screen, fireEvent } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { installFakeServer } from './support/fakeServer';
-import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { refreshInAct, renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedGoal } from './support/goalsScreen';
 import { resetRouter } from './support/routerMock';
@@ -62,4 +62,41 @@ it('a repayment the phone has already shown stays a plain row, with no banner', 
   expect(plainRow()).toBeTruthy();
   expect(screen.queryByTestId('repayment-landed')).toBeNull();
   expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
+});
+
+// [A1] [A2] QA — with no card, the note is saved quietly (first run, old repayment) or left alone
+// (an older repayment never overwrites a newer note).
+it.each<[string, Date, string | null, string]>([
+  ['first run, repayment 8 days old → saved quietly', new Date(2026, 6, 9), null, '2026-07-01@1440'],
+  ['a newer note is already saved → left alone', new Date(2026, 6, 5), '2026-07-15@1500', '2026-07-15@1500'],
+])('%s', async (_case, today, earlier, expectedNote) => {
+  pinToday(today);
+  if (earlier) await repaymentSeenEarlier(earlier);
+  await renderWithQueries(<Mortgage />);
+  expect(plainRow()).toBeTruthy();
+  expect(screen.queryByTestId('repayment-landed')).toBeNull();
+  expect(screen.queryByTestId('checkpoint-celebration')).toBeNull();
+  expect(await savedRepaymentNote()).toBe(expectedNote);
+});
+
+// [A3] QA — a repayment newer than the one shown last time celebrates and replaces the note.
+it('a repayment newer than the saved note celebrates and replaces the note', async () => {
+  await repaymentSeenEarlier('2026-06-17@1440');
+  await renderWithQueries(<Mortgage />);
+  expect(await screen.findByTestId('repayment-landed')).toHaveTextContent(/\$1,208 off your loan/);
+  expect(screen.getByTestId('checkpoint-celebration-label')).toHaveTextContent('Repayment landed 🎉');
+  expect(await savedRepaymentNote()).toBe('2026-07-01@1440');
+});
+
+// [A4] QA — a failed repayment read never celebrates or touches the note; the Retry that loads it does.
+it('a failed repayment read leaves the note alone; the retry that loads it celebrates', async () => {
+  server.once('GET', '/repayment', { status: 500 });
+  await renderWithQueries(<Mortgage />);
+  expect(screen.getByText("Couldn't load your last repayment.")).toBeTruthy();
+  expect(screen.queryByTestId('repayment-landed')).toBeNull();
+  expect(await savedRepaymentNote()).toBeNull();
+
+  await refreshInAct(() => fireEvent.press(screen.getByText('Retry')));
+  expect(await screen.findByTestId('repayment-landed')).toBeTruthy();
+  expect(await savedRepaymentNote()).toBe('2026-07-01@1440');
 });
