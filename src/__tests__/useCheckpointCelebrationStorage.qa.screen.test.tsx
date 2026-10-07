@@ -2,20 +2,15 @@
 // read, a saved value that isn't an object, a failed write, and no rewrite when nothing changed.
 // Real hook + real diff + the in-memory AsyncStorage stand-in.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { act, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useCheckpointCelebration } from '../hooks/useCheckpointCelebration';
 import { CHECKPOINT_SNAPSHOT_KEY, GoalSteps } from '../checkpointCelebration';
 import { goalSteps, stepSnapshot } from './support/celebrationSteps';
-import { savedCelebrationSnapshot as saved } from './support/celebrationSnapshot';
+import { renderCelebrationHook as renderReady, savedCelebrationSnapshot as saved } from './support/celebrationSnapshot';
 
 const holiday = (reached: boolean[] | null): GoalSteps[] => [goalSteps('g1', reached)];
 const ONE_REACHED = stepSnapshot({ g1: [true, false] });
 const BOTH_REACHED = stepSnapshot({ g1: [true, true] });
-
-function renderReady(initial: GoalSteps[]) {
-  return renderHook(({ c }: { c: GoalSteps[] }) => useCheckpointCelebration(c, true), { initialProps: { c: initial } });
-}
 
 beforeEach(async () => {
   await AsyncStorage.clear();

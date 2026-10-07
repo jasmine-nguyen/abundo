@@ -1,15 +1,9 @@
 // WHIT-811 QA — the celebration hook's queue when a burst lands while a banner is already showing. Real hook + real diff + the in-memory AsyncStorage stand-in.
 import { describe, it, expect, beforeEach } from '@jest/globals';
-import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { act, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useCheckpointCelebration } from '../hooks/useCheckpointCelebration';
-import { GoalSteps } from '../checkpointCelebration';
 import { goalSteps, stepSnapshot } from './support/celebrationSteps';
-import { savedCelebrationSnapshot as saved } from './support/celebrationSnapshot';
-
-function renderReady(initial: GoalSteps[]) {
-  return renderHook(({ c }: { c: GoalSteps[] }) => useCheckpointCelebration(c, true), { initialProps: { c: initial } });
-}
+import { renderCelebrationHook as renderReady, savedCelebrationSnapshot as saved } from './support/celebrationSnapshot';
 
 beforeEach(async () => {
   await AsyncStorage.clear();
