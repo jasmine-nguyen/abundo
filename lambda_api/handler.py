@@ -160,11 +160,7 @@ def get_api_key() -> str:
 
 
 def _is_budget_spread_path(path: str) -> bool:
-    """Exactly "/budgets/{id}/spread" — three segments — and nothing else. A suffix check
-    alone would also match "/budgets/spread", i.e. the item route for a category whose id
-    is literally "spread" (a plausible slug), and steal its target PUT/DELETE. The
-    /transactions suffix has no such hole only because it is GET-only, with no generic
-    GET item route beneath it."""
+    """Exactly /budgets/{id}/spread, so a category id "spread" stays an item route."""
     return path.startswith(f"{BUDGET_PATH}/") and path.endswith("/spread") and path.count("/") == 3
 
 
@@ -189,8 +185,8 @@ def _breakdown_route(event):
             CategoryRepository(), TransactionRepository(), PayCycleRepository(), cycle=cycle))
 
 
-# Each value is a lambda so route functions and repositories resolve at call time (tests
-# monkeypatch both on this module).
+# Each value resolves its route function and repositories at call time (tests monkeypatch
+# both on this module); _breakdown_route builds its own.
 _EXACT_ROUTES = {
     ("GET", TRANSACTION_PATH): lambda event: _json_response(
         200, get_recent_transactions(TransactionRepository())),
@@ -228,7 +224,7 @@ _EXACT_ROUTES = {
         200, list_budgets(
             BudgetRepository(), TransactionRepository(), PayCycleRepository(),
             CategoryRepository())),
-    ("GET", BREAKDOWN_PATH): lambda event: _breakdown_route(event),
+    ("GET", BREAKDOWN_PATH): _breakdown_route,
     # GET reads the per-cycle cache (never pays); POST generates (the paid Anthropic call).
     ("GET", INSIGHTS_AI_PATH): lambda event: _json_response(
         200, get_ai_insights(InsightRepository(), PayCycleRepository())),
@@ -2607,12 +2603,10 @@ def _sanitise_goal(raw) -> dict | None:
 def _extract_goal(event) -> dict | None:
     """Pull + sanitise the optional home-loan goal from a POST body (WHIT-134).
 
-    Never raises, never 400s: an absent/empty/non-JSON body — or one with no valid
-    "goal" — yields None (spend-only). An empty or missing body short-circuits to None
-    before _parse_json_body, and its 400 is turned into None, so older app versions that
-    POST with no body at all keep working.
+    Never raises, never 400s: a missing, empty or non-JSON body, or one with no valid
+    "goal", gives None.
     """
-    if not event or not event.get("body"):
+    if not event:
         return None
     body, error = _parse_json_body(event)
     if error is not None:

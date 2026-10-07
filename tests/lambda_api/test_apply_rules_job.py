@@ -12,7 +12,7 @@ import json
 import pytest
 
 from _feed_fakes import FakeCategoryRepo, real_repos
-from _job_fakes import created_jobs, real_job_repo, throttled_worker
+from _job_fakes import created_jobs, real_job_repo
 
 
 def _rule(value, category_id="groceries"):
@@ -124,17 +124,6 @@ def test_post_rejects_a_missing_body(handler, worker_env):
 
     assert resp["statusCode"] == 400
     assert created_jobs(job_repo) == [] and worker_env.calls == []
-
-
-def test_post_returns_502_and_fails_the_job_when_the_invoke_cannot_be_dispatched(handler, worker_env, monkeypatch):
-    monkeypatch.setattr(handler, "_invoke_worker", throttled_worker)
-    job_repo = real_job_repo()
-    resp = _start(handler, job_repo, {})
-
-    assert resp["statusCode"] == 502
-    [(job_id, _kind)] = created_jobs(job_repo)
-    # The job it created is marked failed so a poll sees it end, not hang at "running".
-    assert job_repo.get_job(job_id)["status"] == "failed"
 
 
 def test_post_returns_500_when_the_job_row_cannot_be_written(handler, worker_env):

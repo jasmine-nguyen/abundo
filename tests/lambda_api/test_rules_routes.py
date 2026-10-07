@@ -403,7 +403,7 @@ def test_delete_rule_store_fault_is_a_clean_500(handler, monkeypatch):
 
 
 def test_item_routes_are_declared_in_api_gateway():
-    # test_route_registration.py covers the exact GET/POST routes automatically, but the
+    # test_route_table.py covers the exact GET/POST routes automatically, but the
     # startswith-dispatched {id} routes carry a placeholder it can't derive — pin them by hand so
     # a PUT/DELETE that works in tests can't 404 at the deployed gateway (WHIT-506's failure mode).
     apigateway = (TERRAFORM_DIR / "apigateway.tf").read_text()
