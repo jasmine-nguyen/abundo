@@ -7,7 +7,11 @@ import { MoneyField } from '../components/MoneyField';
 import { C } from '../theme';
 import { styleOf } from './support/layout';
 
-const boxStyleOf = (placeholder: string) => styleOf(screen.getByPlaceholderText(placeholder).parent!.parent!);
+const boxStyleOf = (placeholder: string) => {
+  const box = screen.getByPlaceholderText(placeholder).parent?.parent;
+  expect(box).toBeTruthy();
+  return styleOf(box!);
+};
 
 describe('MoneyField boxStyle + testID', () => {
   it('[A1] with no boxStyle the box keeps the shared C.card background', () => {

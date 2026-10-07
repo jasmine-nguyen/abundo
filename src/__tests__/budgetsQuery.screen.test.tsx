@@ -343,7 +343,7 @@ describe('WHIT-221 parent→sub tree + de-duped hero (folded from budgetsSubcate
     parking: { target: 50, posted: 30, pending: 0 },
   };
 
-  // Walk up from a text node and return the first ancestor inline style carrying a numeric
+  // Walk up from a text node and return the first ancestor style carrying a numeric
   // marginLeft (the depth indent block), or {} if none — the parent row has no indent block.
   function indentStyleFor(name: string): Record<string, unknown> {
     let node: any = screen.getByText(name);

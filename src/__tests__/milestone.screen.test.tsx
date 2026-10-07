@@ -489,6 +489,7 @@ describe('WHIT-377 milestone editor', () => {
       // Sign-off option A: the box stays C.bg so it contrasts with the C.card row card.
       let box = input.parent;
       while (box && !styleOf(box).backgroundColor) box = box.parent;
+      expect(box).toBeTruthy();
       expect(styleOf(box!).backgroundColor).toBe(C.bg);
     });
 
