@@ -1,8 +1,8 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { C, FONT } from '../theme';
-import { Glyph } from '../icons';
+import { HeaderIconButton } from './ui';
 
 export function Header({
   title, right,
@@ -15,9 +15,7 @@ export function Header({
     <View style={styles.wrap}>
       <View style={styles.row}>
         <View style={styles.side}>
-          <Pressable onPress={() => router.back()} style={styles.iconBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel="Back">
-            <Glyph name="back" size={22} color="#fff" />
-          </Pressable>
+          <HeaderIconButton icon="back" accessibilityLabel="Back" onPress={() => router.back()} />
         </View>
         <Text style={styles.title} numberOfLines={1}>{title}</Text>
         <View style={[styles.side, { alignItems: 'flex-end' }]}>{right}</View>
@@ -30,6 +28,5 @@ const styles = StyleSheet.create({
   wrap: { paddingHorizontal: 20, paddingTop: 6, paddingBottom: 12, zIndex: 20 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: 40 },
   side: { minWidth: 40, height: 40, justifyContent: 'center' },
-  iconBtn: { width: 40, height: 40, backgroundColor: 'rgba(255,255,255,.06)', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   title: { fontFamily: FONT.display, fontWeight: '700', fontSize: 19, color: C.textBright, letterSpacing: -0.2, flex: 1, textAlign: 'center' },
 });

@@ -138,12 +138,11 @@ describe('every accentAlt surface is one of two looks', () => {
     ]));
     expect(DASHED_SURFACES.map(key)).toEqual(expect.arrayContaining([
       `${join('app', 'rules.tsx')} newRuleBtn`,
-      `${join('app', '(tabs)', 'budgets.tsx')} addBudget`,
       `${join('app', 'category', 'index.tsx')} newBtn`,
       `${join('app', '(tabs)', 'goals.tsx')} addGoal`,
     ]));
     expect(SOLID.length).toBeGreaterThanOrEqual(5);
-    expect(DASHED_SURFACES.length).toBeGreaterThanOrEqual(4);
+    expect(DASHED_SURFACES.length).toBeGreaterThanOrEqual(3);
     // and it read real tint() values, not truncations that stopped inside the call.
     for (const surface of [...SOLID, ...DASHED_SURFACES]) {
       expect(surface.fill).toMatch(/^tint\(/);
@@ -481,7 +480,6 @@ const BASELINE: Record<string, number> = {
   'src/AuthGate.tsx': 1,
   'src/components/CategoryFields.tsx': 8,
   'src/components/EarnedVsSpent.tsx': 1,
-  'src/components/Header.tsx': 2,
   'src/components/Overlays.tsx': 20,
   'src/components/QuickCreateCategory.tsx': 3,
   'src/components/TransactionRow.tsx': 3,

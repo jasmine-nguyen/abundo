@@ -29,7 +29,7 @@ describe('WHIT-714 Budgets top card totals', () => {
     expect(screen.queryByTestId('budgets-hero-spent')).toBeNull();
     expect(screen.getByText(NO_SPENDING)).toBeTruthy();
     expect(screen.queryByTestId('budgets-hero-add')).toBeNull();
-    expect(screen.getByText('Add a budget')).toBeTruthy();
+    expect(screen.queryByText('Add a budget')).toBeNull(); // WHIT-814: the header "+" is the one add button
     expect(screen.getByText('4')).toBeTruthy();
     expect(screen.getByText('days left')).toBeTruthy();
   });

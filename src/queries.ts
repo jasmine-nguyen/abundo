@@ -1061,7 +1061,7 @@ export interface GoalsScreenData {
   goalsLoaded: boolean;
   isLoading: boolean; // first load, nothing cached yet → spinner
   isError: boolean; // a PRIMARY read failed after retries → inline retry
-  refetch: () => void; // force a refresh (inline Retry / pull-to-refresh)
+  refetch: () => Promise<unknown>; // force a refresh (inline Retry / pull-to-refresh)
   refetchStale: () => void; // focus refresh — only refetches stale queries
 }
 

@@ -1,11 +1,12 @@
 import React, { useCallback, useMemo } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
 import { useRouter, useFocusEffect, useIsFocused } from 'expo-router';
 import { C, FONT, fmt, tint } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { balanceGoalView, goalView, milestoneView, useAppContext } from '../../src/context';
 import { useGoalsScreenData } from '../../src/queries';
 import { useCheckpointCelebration } from '../../src/hooks/useCheckpointCelebration';
+import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { celebrationSteps } from '../../src/checkpointCelebration';
 import { sortCheckpointsForDirection } from '../../src/checkpoints';
 import { formatDayMonthYear, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from '../../src/dateutil';
@@ -92,6 +93,8 @@ export default function Goals() {
   // shows per-card, never blanking the hub.
   const showError = isError && goals.length === 0;
   const showSpinner = !showError && isLoading && goals.length === 0;
+  // WHIT-814: a pull reloads goals, pay cycle, mortgage and balances.
+  const { pulling, onRefresh } = usePullToRefresh(refetch);
 
   return (
     <>
@@ -99,7 +102,11 @@ export default function Goals() {
       title="Goals"
       left={<SettingsButton />}
       right={<HeaderIconButton testID="add-goal" icon="plus" accessibilityLabel="Add goal" onPress={() => router.push('/goal/edit')} />}
-      contentContainerStyle={(showSpinner || showError) ? styles.fill : undefined}
+      // Always fill the viewport, so a short goal list is still a pull-to-refresh target.
+      contentContainerStyle={styles.fill}
+      refreshControl={(headerHeight) => (
+        <RefreshControl refreshing={pulling && !showSpinner} onRefresh={onRefresh} tintColor={C.accent} progressViewOffset={headerHeight} />
+      )}
     >
       {showSpinner ? (
         <View testID="goals-loading" style={styles.centered}>
@@ -162,10 +169,17 @@ export default function Goals() {
 
           {goals.length === 0 ? (
             // WHIT-295: no "No goals yet" card — the mortgage above IS a goal. Just a short additive
-            // invite to track more alongside it.
-            <Text testID="goals-empty-hint" style={styles.emptyHint}>
-              The mortgage is your first goal. Add a savings target or another debt to pay down, and we'll show how far you've come and how much to set aside each payday.
-            </Text>
+            // invite to track more alongside it. WHIT-814: the dashed add row shows only here; with
+            // goals, the header "+" is the one add button.
+            <>
+              <Text testID="goals-empty-hint" style={styles.emptyHint}>
+                The mortgage is your first goal. Add a savings target or another debt to pay down, and we'll show how far you've come and how much to set aside each payday.
+              </Text>
+              <Pressable testID="add-goal-cta" onPress={() => router.push('/goal/edit')} style={styles.addGoal}>
+                <Glyph name="plus" size={18} color={C.accentSoft} />
+                <Text style={styles.addGoalText}>Add a goal</Text>
+              </Pressable>
+            </>
           ) : (
             goalViews.map(({ goal, view: v }) => {
               // A manual goal (no synced account) keeps its own balance — show when it was last
@@ -205,11 +219,6 @@ export default function Goals() {
               );
             })
           )}
-
-          <Pressable testID="add-goal-cta" onPress={() => router.push('/goal/edit')} style={styles.addGoal}>
-            <Glyph name="plus" size={18} color={C.accentSoft} />
-            <Text style={styles.addGoalText}>Add a goal</Text>
-          </Pressable>
         </>
       )}
     </ScrollChromeHeader>
