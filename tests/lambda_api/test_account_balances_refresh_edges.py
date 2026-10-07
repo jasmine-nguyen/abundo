@@ -9,21 +9,16 @@ pattern as test_account_balances.py.
 """
 
 from decimal import Decimal
-from types import SimpleNamespace
 
 import pytest
 
 from _balance_fakes import (
-    LIVE_PAYLOADS, REFRESH_EVENT, balance_repo, balance_writes, fetch_all, fetch_all_but_homeloan, homeloan_row,
-    marker_writes, milestone_spy, stub_bank, upserted,
+    LIVE_PAYLOADS, REFRESH_EVENT, balance_repo, balance_writes, fetch_all, fetch_all_but_homeloan, freeze_time,
+    homeloan_row, marker_writes, milestone_spy, stub_bank, upserted,
 )
 
 
 _ALL_AIDS = set(LIVE_PAYLOADS)
-
-
-def _freeze_time(handler, monkeypatch, now):
-    monkeypatch.setattr(handler, "time", SimpleNamespace(time=lambda: now))
 
 
 # --- throttle boundary: < not <= (exactly REFRESH_THROTTLE_SECONDS refreshes) ----
@@ -35,7 +30,7 @@ def test_refresh_at_exactly_throttle_window_does_a_live_fetch(handler, monkeypat
     window = handler.REFRESH_THROTTLE_SECONDS
     repo = balance_repo(rows=[], last=1000)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
-    _freeze_time(handler, monkeypatch, 1000 + window)  # exactly `window` seconds later
+    freeze_time(handler, monkeypatch, 1000 + window)  # exactly `window` seconds later
     calls = []
     stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: (calls.append(aid), LIVE_PAYLOADS[aid])[1])
 
@@ -52,7 +47,7 @@ def test_refresh_one_second_inside_window_is_throttled(handler, monkeypatch):
     window = handler.REFRESH_THROTTLE_SECONDS
     repo = balance_repo(rows=[], last=1000)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
-    _freeze_time(handler, monkeypatch, 1000 + window - 1)
+    freeze_time(handler, monkeypatch, 1000 + window - 1)
     stub_bank(handler, monkeypatch, lambda *a, **k: pytest.fail("must not fetch while throttled"))
 
     resp = handler.lambda_handler(REFRESH_EVENT, None)
@@ -70,7 +65,7 @@ def test_fan_out_fetches_all_configured_sources(handler, monkeypatch):
     # BALANCE_SOURCES so adding/removing a source keeps this honest.
     repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
-    _freeze_time(handler, monkeypatch, 1000)
+    freeze_time(handler, monkeypatch, 1000)
     fetched = []
     stub_bank(handler, monkeypatch,
                lambda bid, aid, key, **kw: (fetched.append((bid, aid)), LIVE_PAYLOADS[aid])[1])
@@ -94,7 +89,7 @@ def test_db_error_reading_marker_propagates(handler, monkeypatch):
             raise handler.DatabaseError("dynamo down")
 
     monkeypatch.setattr(handler, "AccountBalanceRepository", BoomRepo)
-    _freeze_time(handler, monkeypatch, 1000)
+    freeze_time(handler, monkeypatch, 1000)
     stub_bank(handler, monkeypatch, lambda *a, **k: pytest.fail("must not fetch after a repo failure"))
 
     with pytest.raises(handler.DatabaseError):
@@ -110,8 +105,8 @@ def test_marker_is_armed_before_any_upsert(handler, monkeypatch):
     # mid-upsert can't leave the throttle un-armed. Lock the observed order.
     repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
-    _freeze_time(handler, monkeypatch, 1000)
-    stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: LIVE_PAYLOADS[aid])
+    freeze_time(handler, monkeypatch, 1000)
+    stub_bank(handler, monkeypatch, fetch_all)
 
     handler.lambda_handler(REFRESH_EVENT, None)
 
@@ -129,7 +124,7 @@ def test_timeout_worker_is_treated_as_a_failed_account(handler, monkeypatch):
     # a per-account failure; the others still refresh -> 200.
     repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
-    _freeze_time(handler, monkeypatch, 1000)
+    freeze_time(handler, monkeypatch, 1000)
 
     def fetch(bid, aid, key, **kw):
         if aid == "T6d8ppsYssBDFCwl1qEb0w":
@@ -150,7 +145,7 @@ def test_all_timeout_returns_502(handler, monkeypatch):
     # Every account timing out -> 502 (all failed), marker still armed.
     repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
-    _freeze_time(handler, monkeypatch, 1000)
+    freeze_time(handler, monkeypatch, 1000)
     stub_bank(handler, monkeypatch,
                lambda *a, **k: (_ for _ in ()).throw(TimeoutError("timed out")))
 
@@ -171,7 +166,7 @@ def test_non_dict_payload_is_a_per_account_failure_not_a_total_crash(handler, mo
     # shared/balance_fetch.py — without it this raises AttributeError and 500s the request.)
     repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
-    _freeze_time(handler, monkeypatch, 1000)
+    freeze_time(handler, monkeypatch, 1000)
 
     def fetch(bid, aid, key, **kw):
         if aid == "T6d8ppsYssBDFCwl1qEb0w":
@@ -194,7 +189,7 @@ def test_non_dict_payload_is_a_per_account_failure_not_a_total_crash(handler, mo
 def _refresh_with_milestone_spy(handler, monkeypatch, repo, fetch, milestone_raises):
     """Run one live refresh; return (response, [(old, new)] the milestone helper got)."""
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
-    _freeze_time(handler, monkeypatch, 1000)
+    freeze_time(handler, monkeypatch, 1000)
     stub_bank(handler, monkeypatch, fetch)
     calls = []
     monkeypatch.setattr(handler, "notify_homeloan_milestone", milestone_spy(calls, milestone_raises))

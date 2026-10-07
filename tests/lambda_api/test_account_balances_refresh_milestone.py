@@ -7,20 +7,13 @@ nothing. Only the bank fetch, DynamoDB (FakeTable), time and the push send are s
 """
 
 import sys
-from decimal import Decimal
-from types import SimpleNamespace
 
 import pytest
 
-from _balance_fakes import LIVE_PAYLOADS, REFRESH_EVENT, balance_repo, stub_bank
+from _balance_fakes import REFRESH_EVENT, balance_repo, fetch_all, freeze_time, homeloan_row, stub_bank
 from _milestone_fakes import FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, notify_repo, _row
 
 _PUSH_TITLE = "\U0001f389 Milestone reached — Under 598k!"
-
-
-def _homeloan_row(amount):
-    return {"account_id": "up-homeloan", "amount": Decimal(amount), "available_balance": Decimal("0"),
-            "currency": "AUD", "as_of": "2026-10-05T00:00:00Z", "account_type": "mortgage"}
 
 
 @pytest.mark.parametrize(
@@ -38,7 +31,7 @@ def _homeloan_row(amount):
 def test_refresh_celebrates_a_home_loan_milestone_crossing_once(
     handler, monkeypatch, stored_homeloan, last_refresh_at, refresh_times, expected_pushes
 ):
-    accounts = balance_repo(rows=[_homeloan_row(stored_homeloan)], last=last_refresh_at)
+    accounts = balance_repo(rows=[homeloan_row(stored_homeloan)], last=last_refresh_at)
     notify = notify_repo()
     pushes = []
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
@@ -50,11 +43,11 @@ def test_refresh_celebrates_a_home_loan_milestone_crossing_once(
     monkeypatch.setattr(sys.modules["milestones"], "send_push",
                         lambda title, body, tokens, **kw: pushes.append(title)
                         or {"sent": len(tokens), "ok": len(tokens), "pruned": []})
-    stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: LIVE_PAYLOADS[aid])
+    stub_bank(handler, monkeypatch, fetch_all)
 
     assert 20_000 - 10_000 >= handler.REFRESH_THROTTLE_SECONDS
     for now in refresh_times:
-        monkeypatch.setattr(handler, "time", SimpleNamespace(time=lambda now=now: now))
+        freeze_time(handler, monkeypatch, now)
         assert handler.lambda_handler(REFRESH_EVENT, None)["statusCode"] == 200
 
     assert pushes == expected_pushes

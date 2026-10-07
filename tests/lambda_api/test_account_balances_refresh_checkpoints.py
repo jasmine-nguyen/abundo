@@ -7,13 +7,12 @@ push send are stubbed; the goal store is the real GoalsRepository over a FakeTab
 """
 
 from decimal import Decimal
-from types import SimpleNamespace
 
 import pytest
 
 from _balance_fakes import (
     CHECKPOINT_GOAL, CHECKPOINT_PUSH_TITLE, LIVE_PAYLOADS, REFRESH_EVENT, BrokenGoalsRepo, balance_repo,
-    spending_row, stub_bank, stub_refresh_side_effects,
+    fetch_all, freeze_time, spending_row, stub_bank, stub_refresh_side_effects,
 )
 from _dynamo_fakes import FakeTable
 from _milestone_fakes import goal_checkpoint_repo
@@ -51,7 +50,7 @@ def test_refresh_celebrates_a_goal_checkpoint_crossing_once(
 
     assert 20_000 - 10_000 >= handler.REFRESH_THROTTLE_SECONDS
     for now in refresh_times:
-        monkeypatch.setattr(handler, "time", SimpleNamespace(time=lambda now=now: now))
+        freeze_time(handler, monkeypatch, now)
         assert handler.lambda_handler(REFRESH_EVENT, None)["statusCode"] == 200
 
     assert pushes == expected_pushes
@@ -63,10 +62,10 @@ def test_refresh_survives_a_failing_goal_read(handler, monkeypatch):
     accounts = balance_repo(rows=[spending_row("90000")])
 
     pushes = []
-    stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: LIVE_PAYLOADS[aid])
+    stub_bank(handler, monkeypatch, fetch_all)
     stub_refresh_side_effects(handler, monkeypatch, accounts=accounts, goals=BrokenGoalsRepo(),
                               notify=goal_checkpoint_repo(), pushes=pushes)
-    monkeypatch.setattr(handler, "time", SimpleNamespace(time=lambda: 10_000))
+    freeze_time(handler, monkeypatch, 10_000)
 
     response = handler.lambda_handler(REFRESH_EVENT, None)
 
