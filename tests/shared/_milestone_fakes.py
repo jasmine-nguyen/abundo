@@ -50,6 +50,16 @@ class FakeDeviceRepo:
         return list(self._tokens)
 
 
+class FakeGoalsRepo:
+    """Stand-in for GoalsRepository: `goals` is the {goal_id: goal} map list_goals returns."""
+
+    def __init__(self, goals=None):
+        self._goals = goals or {}
+
+    def list_goals(self):
+        return dict(self._goals)
+
+
 class FakeLoanFactsRepo:
     """Stand-in for LoanFactsRepository. `facts=None` models the no-loanfacts path; the
     row-family suites construct it with no args (the figures aren't what they test)."""

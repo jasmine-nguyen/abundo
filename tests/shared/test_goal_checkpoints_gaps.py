@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import pytest
 
-from _milestone_fakes import checkpoints_marked, goal_checkpoint_repo
+from _milestone_fakes import FakeGoalsRepo, checkpoints_marked, goal_checkpoint_repo
 
 
 @pytest.fixture
@@ -212,3 +212,76 @@ def test_notify_no_tokens_leaves_marker_unset_for_a_later_fresh_cross(gc, monkey
         device_repo=device, notify_repo=notify) == 1
     assert "Second" in sent[0][0]
     assert checkpoints_marked(notify) == ["g:g1:cp:cp2:bal:5000.00"]
+
+
+# --- check_goal_checkpoints: the per-goal loop the daily poll and pull-to-refresh share -------
+# (WHIT-479 [A31-A34], moved from the poller in WHIT-802.) The crossing maths is stubbed: these
+# prove which goals are checked, with which old/new, and that one goal's failure keeps going.
+
+def _synced(account_id, direction="grow"):
+    return {"direction": direction, "name": "G", "account_id": account_id,
+            "checkpoints": [_cp("c", "H", 95000)]}
+
+
+def _delta(account_id, old, new):
+    return {"account_id": account_id, "old": old, "new": new}
+
+
+@pytest.mark.parametrize(
+    ("goals", "deltas", "expected"),
+    [
+        ({}, [_delta("up-spending", Decimal("1"), Decimal("2"))], []),
+        (
+            {"g1": _synced("up-spending"), "g2": _synced("anz-rewards-black-visa", "paydown")},
+            [_delta("up-spending", Decimal("90000"), Decimal("96270.59")),
+             _delta("anz-rewards-black-visa", Decimal("-6000"), Decimal("-4000"))],
+            [("g1", Decimal("90000"), Decimal("96270.59"), True),
+             ("g2", Decimal("-6000"), Decimal("-4000"), True)],
+        ),
+        (
+            {"manual": {"direction": "grow", "account_id": None, "manual_balance": Decimal("5000"),
+                        "checkpoints": []},
+             "unfetched": _synced("anz-rewards-black-visa")},
+            [_delta("up-spending", Decimal("1"), Decimal("2"))],
+            [],
+        ),
+        (
+            {"g1": _synced("up-spending")},
+            [_delta("up-spending", None, Decimal("96000"))],
+            [("g1", None, Decimal("96000"), True)],
+        ),
+    ],
+    ids=["no-goals", "each-goal-gets-its-own-delta", "manual-and-unfetched-skipped", "first-reading-old-none"],
+)
+def test_check_goal_checkpoints_checks_each_synced_goal_on_its_accounts_delta(
+    gc, monkeypatch, goals, deltas, expected
+):
+    seen = []
+    monkeypatch.setattr(gc, "notify_goal_checkpoint_crossing",
+                        lambda old, new, **kw: seen.append((kw["goal_id"], old, new, kw["synced"])) or 1)
+
+    gc.check_goal_checkpoints(deltas, goals_repo=FakeGoalsRepo(goals),
+                              device_repo=object(), notify_repo=object())
+
+    assert seen == expected
+
+
+def test_check_goal_checkpoints_isolates_a_single_goal_failure(gc, monkeypatch):
+    goals = {"boom": _synced("up-spending"), "ok": _synced("anz-rewards-black-visa", "paydown")}
+    fired = []
+
+    def flaky(old, new, **kw):
+        if kw["goal_id"] == "boom":
+            raise RuntimeError("expo down for this goal")
+        fired.append(kw["goal_id"])
+        return 1
+
+    monkeypatch.setattr(gc, "notify_goal_checkpoint_crossing", flaky)
+
+    gc.check_goal_checkpoints(
+        [_delta("up-spending", Decimal("90000"), Decimal("96000")),
+         _delta("anz-rewards-black-visa", Decimal("-6000"), Decimal("-4000"))],
+        goals_repo=FakeGoalsRepo(goals), device_repo=object(), notify_repo=object(),
+    )
+
+    assert fired == ["ok"]

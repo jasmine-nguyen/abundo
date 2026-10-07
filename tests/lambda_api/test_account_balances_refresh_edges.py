@@ -13,36 +13,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from _balance_fakes import balance_repo, balance_writes, homeloan_row, marker_writes, upserted
+from _balance_fakes import (
+    LIVE_PAYLOADS, REFRESH_EVENT, balance_repo, balance_writes, fetch_all, fetch_all_but_homeloan, homeloan_row,
+    marker_writes, milestone_spy, stub_bank, upserted,
+)
 
 
-# --- fakes / stubs (mirror test_account_balances.py) -------------------------
-
-
-def _ok_payload(amount, account_type="checking"):
-    return {"success": True, "data": {"amount": amount, "date": "2026-08-11T00:00:00Z",
-                                      "currency": "AUD", "accountType": account_type}}
-
-
-_LIVE_PAYLOADS = {
-    "3zVQJ8Btz_IRmqp78VrQnQ": _ok_payload("96270.59", "checking"),                       # up-spending
-    "T6d8ppsYssBDFCwl1qEb0w": _ok_payload("-596642.43", "mortgage"),                     # up-homeloan
-    "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": _ok_payload("-6492.26", "unknown"),   # anz
-    "A3AC9195-9E8D-48B8-86D0-46D130D7F64A": _ok_payload("-230", "unknown"),              # westpac
-}
-_ALL_AIDS = set(_LIVE_PAYLOADS)
-
-_REFRESH_EVENT = {"rawPath": "/accounts/balances/refresh",
-                  "requestContext": {"http": {"method": "POST"}}}
+_ALL_AIDS = set(LIVE_PAYLOADS)
 
 
 def _freeze_time(handler, monkeypatch, now):
     monkeypatch.setattr(handler, "time", SimpleNamespace(time=lambda: now))
-
-
-def _stub_bank(handler, monkeypatch, fetch):
-    monkeypatch.setattr(handler, "get_api_key", lambda: "test-key")
-    monkeypatch.setattr(handler, "fetch_balance", fetch)
 
 
 # --- throttle boundary: < not <= (exactly REFRESH_THROTTLE_SECONDS refreshes) ----
@@ -56,9 +37,9 @@ def test_refresh_at_exactly_throttle_window_does_a_live_fetch(handler, monkeypat
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000 + window)  # exactly `window` seconds later
     calls = []
-    _stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: (calls.append(aid), _LIVE_PAYLOADS[aid])[1])
+    stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: (calls.append(aid), LIVE_PAYLOADS[aid])[1])
 
-    resp = handler.lambda_handler(_REFRESH_EVENT, None)
+    resp = handler.lambda_handler(REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
     assert set(calls) == _ALL_AIDS       # it fetched — not throttled
@@ -72,9 +53,9 @@ def test_refresh_one_second_inside_window_is_throttled(handler, monkeypatch):
     repo = balance_repo(rows=[], last=1000)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000 + window - 1)
-    _stub_bank(handler, monkeypatch, lambda *a, **k: pytest.fail("must not fetch while throttled"))
+    stub_bank(handler, monkeypatch, lambda *a, **k: pytest.fail("must not fetch while throttled"))
 
-    resp = handler.lambda_handler(_REFRESH_EVENT, None)
+    resp = handler.lambda_handler(REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
     assert marker_writes(repo) == []          # throttled: marker untouched
@@ -91,10 +72,10 @@ def test_fan_out_fetches_all_configured_sources(handler, monkeypatch):
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
     fetched = []
-    _stub_bank(handler, monkeypatch,
-               lambda bid, aid, key, **kw: (fetched.append((bid, aid)), _LIVE_PAYLOADS[aid])[1])
+    stub_bank(handler, monkeypatch,
+               lambda bid, aid, key, **kw: (fetched.append((bid, aid)), LIVE_PAYLOADS[aid])[1])
 
-    resp = handler.lambda_handler(_REFRESH_EVENT, None)
+    resp = handler.lambda_handler(REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
     expected = {(s["bid"], s["aid"]) for s in handler.BALANCE_SOURCES}
@@ -114,10 +95,10 @@ def test_db_error_reading_marker_propagates(handler, monkeypatch):
 
     monkeypatch.setattr(handler, "AccountBalanceRepository", BoomRepo)
     _freeze_time(handler, monkeypatch, 1000)
-    _stub_bank(handler, monkeypatch, lambda *a, **k: pytest.fail("must not fetch after a repo failure"))
+    stub_bank(handler, monkeypatch, lambda *a, **k: pytest.fail("must not fetch after a repo failure"))
 
     with pytest.raises(handler.DatabaseError):
-        handler.lambda_handler(_REFRESH_EVENT, None)
+        handler.lambda_handler(REFRESH_EVENT, None)
 
 
 # --- marker armed BEFORE the upserts (ordering) ------------------------------
@@ -130,9 +111,9 @@ def test_marker_is_armed_before_any_upsert(handler, monkeypatch):
     repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
-    _stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: _LIVE_PAYLOADS[aid])
+    stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: LIVE_PAYLOADS[aid])
 
-    handler.lambda_handler(_REFRESH_EVENT, None)
+    handler.lambda_handler(REFRESH_EVENT, None)
 
     kinds = [e[0] for e in balance_writes(repo)]
     assert kinds[0] == "set"                       # marker first
@@ -153,11 +134,11 @@ def test_timeout_worker_is_treated_as_a_failed_account(handler, monkeypatch):
     def fetch(bid, aid, key, **kw):
         if aid == "T6d8ppsYssBDFCwl1qEb0w":
             raise TimeoutError("read timed out")
-        return _LIVE_PAYLOADS[aid]
+        return LIVE_PAYLOADS[aid]
 
-    _stub_bank(handler, monkeypatch, fetch)
+    stub_bank(handler, monkeypatch, fetch)
 
-    resp = handler.lambda_handler(_REFRESH_EVENT, None)
+    resp = handler.lambda_handler(REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
     assert set(upserted(repo)) == {"up-spending", "anz-rewards-black-visa",
@@ -170,10 +151,10 @@ def test_all_timeout_returns_502(handler, monkeypatch):
     repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
-    _stub_bank(handler, monkeypatch,
+    stub_bank(handler, monkeypatch,
                lambda *a, **k: (_ for _ in ()).throw(TimeoutError("timed out")))
 
-    resp = handler.lambda_handler(_REFRESH_EVENT, None)
+    resp = handler.lambda_handler(REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 502
     assert upserted(repo) == {}
@@ -195,11 +176,11 @@ def test_non_dict_payload_is_a_per_account_failure_not_a_total_crash(handler, mo
     def fetch(bid, aid, key, **kw):
         if aid == "T6d8ppsYssBDFCwl1qEb0w":
             return []        # malformed: a JSON array, not the expected object
-        return _LIVE_PAYLOADS[aid]
+        return LIVE_PAYLOADS[aid]
 
-    _stub_bank(handler, monkeypatch, fetch)
+    stub_bank(handler, monkeypatch, fetch)
 
-    resp = handler.lambda_handler(_REFRESH_EVENT, None)
+    resp = handler.lambda_handler(REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
     assert set(upserted(repo)) == {"up-spending", "anz-rewards-black-visa",
@@ -214,39 +195,25 @@ def _refresh_with_milestone_spy(handler, monkeypatch, repo, fetch, milestone_rai
     """Run one live refresh; return (response, [(old, new)] the milestone helper got)."""
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
-    _stub_bank(handler, monkeypatch, fetch)
+    stub_bank(handler, monkeypatch, fetch)
     calls = []
-
-    def spy(old, new, **repos):
-        calls.append((old, new))
-        if milestone_raises:
-            raise RuntimeError("expo down")
-        return 0
-
-    monkeypatch.setattr(handler, "notify_homeloan_milestone", spy)
-    return handler.lambda_handler(_REFRESH_EVENT, None), calls
-
-
-def _fetch_all(bid, aid, key, **kw):
-    return _LIVE_PAYLOADS[aid]
-
-
-def _fetch_all_but_homeloan(bid, aid, key, **kw):
-    if aid == "T6d8ppsYssBDFCwl1qEb0w":
-        return {"success": False}
-    return _LIVE_PAYLOADS[aid]
+    monkeypatch.setattr(handler, "notify_homeloan_milestone", milestone_spy(calls, milestone_raises))
+    return handler.lambda_handler(REFRESH_EVENT, None), calls
 
 
 def _repo_owing(amount):
     return lambda: balance_repo(rows=[homeloan_row(amount)])
 
 
-def _repo_whose_homeloan_read_fails():
+def _repo_whose_prior_read_fails():
+    """The first list_balances (the prior read) raises; the final response read still succeeds."""
     repo = balance_repo(rows=[homeloan_row("-600000")])
     real_list = repo.list_balances
+    reads = []
 
     def list_balances(account_ids):
-        if list(account_ids) == ["up-homeloan"]:
+        reads.append(account_ids)
+        if len(reads) == 1:
             raise RuntimeError("dynamo throttled")
         return real_list(account_ids)
 
@@ -261,14 +228,14 @@ _ALL_IDS = {"up-spending", "up-homeloan", "anz-rewards-black-visa", "westpac-alt
 @pytest.mark.parametrize(
     ("make_repo", "fetch", "milestone_raises", "expected_calls", "expected_stored"),
     [
-        # [A1] The prior home-loan read fails: still 200, every balance stored, old passed as None.
-        (_repo_whose_homeloan_read_fails, _fetch_all, False, [(None, _NEW_HOMELOAN)], _ALL_IDS),
+        # [A1] The prior balance read fails: still 200, every balance stored, old passed as None.
+        (_repo_whose_prior_read_fails, fetch_all, False, [(None, _NEW_HOMELOAN)], _ALL_IDS),
         # [A2] First-ever reading (no stored home-loan row): old is None (the seed guard).
-        (lambda: balance_repo(rows=[]), _fetch_all, False, [(None, _NEW_HOMELOAN)], _ALL_IDS),
+        (lambda: balance_repo(rows=[]), fetch_all, False, [(None, _NEW_HOMELOAN)], _ALL_IDS),
         # [A3] The home-loan fetch fails: the others store, the milestone check never runs.
-        (_repo_owing("-600000"), _fetch_all_but_homeloan, False, [], _ALL_IDS - {"up-homeloan"}),
+        (_repo_owing("-600000"), fetch_all_but_homeloan, False, [], _ALL_IDS - {"up-homeloan"}),
         # [A4] The milestone push blows up: the refresh still answers 200 with balances stored.
-        (_repo_owing("-600000"), _fetch_all, True, [(Decimal("-600000"), _NEW_HOMELOAN)], _ALL_IDS),
+        (_repo_owing("-600000"), fetch_all, True, [(Decimal("-600000"), _NEW_HOMELOAN)], _ALL_IDS),
     ],
     ids=["prior-read-fails", "first-ever-reading", "homeloan-fetch-fails", "milestone-push-raises"],
 )
