@@ -1887,7 +1887,7 @@ export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalV
   // SAME test as the count above). Empty until the balance is known AND the bar is positionable, so
   // the dots and the milestone line always appear together — never the line with no dots.
   let checkpointMarkers: { pct: number; reached: boolean }[] = [];
-  if (known && barPositionable && checkpoints.length > 0) {
+  if (known && barPositionable) {
     checkpointMarkers = checkpoints.map((cp) => ({ pct: posOnBar(cp.amount), reached: isReached(cp.amount) }));
   }
 
