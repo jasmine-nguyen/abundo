@@ -19,7 +19,7 @@ import pytest
 
 from _budget_endpoint_fakes import _FakePayCycleRepo, _SpendCategoryRepo, _spend_cat, pin_cycle_window
 from _budget_fakes import recording_budget_repo
-from _terraform import TERRAFORM_DIR
+from _terraform import app_route_keys
 from _transaction_range_fakes import _QueuedTransactionRepo
 
 # Same fixed grid as the rollover suite: monthly, cycle_start 2026-08-06, payday grid from
@@ -543,6 +543,6 @@ def test_a_category_whose_id_is_literally_spread_still_reaches_the_item_routes(h
 def test_the_spread_routes_are_registered_in_api_gateway():
     # The gateway lists every route explicitly (no greedy proxy): a handler branch with no
     # matching route key 404s before the Lambda is ever invoked.
-    tf = (TERRAFORM_DIR / "apigateway.tf").read_text()
-    assert '"PUT /budgets/{category}/spread"' in tf
-    assert '"DELETE /budgets/{category}/spread"' in tf
+    routes = app_route_keys()
+    assert "PUT /budgets/{category}/spread" in routes
+    assert "DELETE /budgets/{category}/spread" in routes

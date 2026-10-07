@@ -35,11 +35,15 @@ def alarm_names(text):
     return re.findall(r'^resource "aws_cloudwatch_metric_alarm" "([^"]+)"', text, re.M)
 
 
-def app_route_keys():
-    """WHIT-791: every "VERB /path" route key in apigateway.tf's app_route_keys list."""
-    source = (TERRAFORM_DIR / "apigateway.tf").read_text()
+def route_keys(source):
+    """WHIT-805: the active "VERB /path" keys in the app_route_keys list; a key behind # or // is switched off."""
     block = source.split("app_route_keys = toset([", 1)[1].split("])", 1)[0]
-    return set(re.findall(r'"([A-Z]+ /[^"]*)"', block))
+    return set(re.findall(r'^\s*"([A-Z]+ /[^"]*)"', block, re.M))
+
+
+def app_route_keys():
+    """WHIT-791: every active route key in apigateway.tf's app_route_keys list."""
+    return route_keys((TERRAFORM_DIR / "apigateway.tf").read_text())
 
 
 def exact_route_keys(handler):
