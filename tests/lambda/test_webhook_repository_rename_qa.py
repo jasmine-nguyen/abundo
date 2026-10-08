@@ -1,6 +1,6 @@
 """WHIT-608 QA — after lambda/repository.py -> lambda/webhook_repository.py, every webhook entry
 point still binds the WEBHOOK TransactionRepository (with the reconcile/dedup overrides), not the
-shared facade's one that a bare `from repository import` would now resolve to."""
+shared parent class in repository_transaction."""
 
 import pathlib
 

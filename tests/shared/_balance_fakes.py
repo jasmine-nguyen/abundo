@@ -92,7 +92,7 @@ def balance_repo(rows=(), last=None, upsert_fails=False):
     through the real upsert_balance) and, when ``last`` is given, a refresh marker at that epoch.
     The put log is cleared after that setup, so ``balance_writes`` shows only the code under test.
     ``upsert_fails`` makes every later write raise (DynamoDB down); the attempt is still logged."""
-    from repository import AccountBalanceRepository
+    from repository_balance import AccountBalanceRepository
 
     repo = AccountBalanceRepository()
     repo._table = FakeTable()

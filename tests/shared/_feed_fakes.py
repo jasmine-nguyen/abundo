@@ -33,7 +33,8 @@ def real_repos(rows_by_account=None, rules=()):
 
     ``rows_by_account`` maps an account id to its ``_row`` rows. Each of ``rules`` is the kwargs of
     one real ``RuleRepository.create_rule`` call, so ids and dedup come from production."""
-    from repository import RuleRepository, TransactionRepository
+    from repository_rule import RuleRepository
+    from repository_transaction import TransactionRepository
 
     table = FakeTable()
     for rows in (rows_by_account or {}).values():

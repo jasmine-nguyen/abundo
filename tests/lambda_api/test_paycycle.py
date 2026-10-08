@@ -7,8 +7,8 @@ BudgetRepository the pay cycle is one settings object, not a per-key `items` map
 so the write REPLACES both `length` and `last_pay_date` together under the version guard.
 
 The `handler` fixture (conftest.py) makes lambda_api importable in isolation and
-puts `shared/` on the path, so `import repository` inside a test resolves to
-shared/repository.py with boto3/botocore already faked.
+puts `shared/` on the path, so `import repository_paycycle` inside a test resolves to
+shared/repository_paycycle.py with boto3/botocore already faked.
 """
 
 import json
@@ -229,9 +229,9 @@ def test_set_paycycle_conflict_returns_409(handler, monkeypatch):
 
 
 def _repo_with_fake_table(handler):
-    import repository
+    import repository_paycycle
     _, repo = paycycle_repo()
-    return repository, repo
+    return repository_paycycle, repo
 
 
 def test_repo_get_paycycle_seeds_default_then_stable(handler):
@@ -292,11 +292,12 @@ def test_repo_set_paycycle_retries_after_version_race(handler):
 
 def test_repo_set_paycycle_raises_under_sustained_contention(handler):
     # Every attempt sees a fresh version bump -> never converges -> 409.
-    repository, repo = _repo_with_fake_table(handler)
+    import repository_errors
+    _, repo = _repo_with_fake_table(handler)
     repo._table.always_race()
 
     try:
         repo.set_paycycle(7, "2024-06-05")
         assert False, "expected VersionConflictError under sustained contention"
-    except repository.VersionConflictError:
+    except repository_errors.VersionConflictError:
         pass

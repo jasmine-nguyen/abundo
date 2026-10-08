@@ -18,7 +18,7 @@ _PAYCYCLE_KEY = ("PAYCYCLE", "PAYCYCLE")
 def paycycle_repo(cycle=None):
     """``(table, PayCycleRepository)``. ``cycle`` ({"length", "last_pay_date"}) is stored as the
     saved pay cycle; None leaves the table empty, so the repository seeds its own default."""
-    from repository import PayCycleRepository
+    from repository_paycycle import PayCycleRepository
 
     table = FakeTable()
     if cycle is not None:

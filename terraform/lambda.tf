@@ -69,7 +69,7 @@ data "archive_file" "sync_trigger_zip" {
 }
 
 # Balance-poller lambda source. Contains only handler.py; constants.py, api_key.py,
-# and repository.py come from the shared layer.
+# and the repository_*.py files come from the shared layer.
 data "archive_file" "balance_poller_zip" {
   type        = "zip"
   source_dir  = "${path.module}/../lambda_balance_poller"
@@ -85,7 +85,7 @@ data "archive_file" "push_receipts_zip" {
 }
 
 # Goal-nudge sweep lambda source (WHIT-236). Contains only handler.py; goal_nudge.py,
-# goal_pace.py, push.py, repository.py, repository_notify.py, spend.py come from the shared layer.
+# goal_pace.py, push.py, the repository_*.py files and spend.py come from the shared layer.
 data "archive_file" "goal_nudge_zip" {
   type        = "zip"
   source_dir  = "${path.module}/../lambda_goal_nudge"
@@ -337,7 +337,7 @@ resource "aws_lambda_function" "transaction_trigger" {
 
 # Triggered daily by EventBridge Scheduler (see scheduler.tf) to poll the live Up
 # home-loan balance from BankSync (getBalance) and store it (WHIT-8). Needs the
-# shared layer (constants.py/api_key.py/repository.py) AND DynamoDB PutItem +
+# shared layer (constants.py/api_key.py/repository_*.py) AND DynamoDB PutItem +
 # TABLE_NAME (the transaction trigger only reads and deletes, for its pending mirror).
 # The timeout scales with the account count: BALANCE_SOURCES is fetched serially at up
 # to BALANCE_POLL_TIMEOUT_SECONDS (30) each, so at 60s two slow bank calls exhausted

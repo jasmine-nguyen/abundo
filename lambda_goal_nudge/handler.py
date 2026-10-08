@@ -13,12 +13,10 @@ the next sweep.
 import logging
 
 from goal_nudge import notify_behind_goals
-from repository import (
-    AccountBalanceRepository,
-    DeviceRepository,
-    GoalsRepository,
-    PayCycleRepository,
-)
+from repository_balance import AccountBalanceRepository
+from repository_device import DeviceRepository
+from repository_goals import GoalsRepository
+from repository_paycycle import PayCycleRepository
 from repository_notify import NotifyRepository
 
 logger = logging.getLogger(__name__)

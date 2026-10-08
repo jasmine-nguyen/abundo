@@ -8,8 +8,8 @@ FakeTable directly (WHIT-625). The budget write is an idempotent UPSERT
 never raise.
 
 The `handler` fixture (conftest.py) makes lambda_api importable in isolation and
-puts `shared/` on the path, so `import repository` inside a test resolves to
-shared/repository.py with boto3/botocore already faked.
+puts `shared/` on the path, so `import repository_budget` inside a test resolves to
+shared/repository_budget.py with boto3/botocore already faked.
 """
 
 import base64
@@ -728,10 +728,10 @@ def test_set_budget_conflict_returns_409(handler, monkeypatch):
 
 
 def _repo_with_fake_table(handler):
-    import repository
-    repo = repository.BudgetRepository()
+    import repository_budget
+    repo = repository_budget.BudgetRepository()
     repo._table = FakeTable()
-    return repository, repo
+    return repository_budget, repo
 
 
 def test_repo_list_budgets_seeds_empty_then_stable(handler):
@@ -794,14 +794,15 @@ def test_repo_set_budget_retries_after_version_race(handler):
 
 def test_repo_set_budget_raises_under_sustained_contention(handler):
     # Every attempt sees a fresh version bump -> never converges -> 409.
-    repository, repo = _repo_with_fake_table(handler)
+    import repository_errors
+    _, repo = _repo_with_fake_table(handler)
     repo.list_budgets()  # seed the config item, so the races below have a row to bump
     repo._table.always_race()
 
     try:
         repo.set_budget("coffee", Decimal("58"))
         assert False, "expected VersionConflictError under sustained contention"
-    except repository.VersionConflictError:
+    except repository_errors.VersionConflictError:
         pass
 
 

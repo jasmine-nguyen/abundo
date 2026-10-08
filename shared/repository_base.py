@@ -5,8 +5,8 @@ table connect, the 'read every page' query loop and the settings-record steps
 (read, create-if-missing, save with a version check retried once) every
 repository class inherits (WHIT-763).
 
-Split out of the formerly-monolithic repository.py so each repository class can
-live in its own file while sharing one table configuration.
+Each repository class lives in its own repository_<x>.py file and shares this
+one table configuration.
 """
 
 import logging
