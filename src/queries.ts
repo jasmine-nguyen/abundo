@@ -1141,7 +1141,6 @@ export interface GoalScreenData {
   // loading/error status below, so a milestones failure never blanks or errors the balance hero.
   // Empty [] → milestoneView yields an empty view (hasPlan:false); there is no built-in default.
   milestones: MilestoneRecord[];
-  // WHIT-823: WHIT-819 rule for milestones; screens key on these so loading/failed ≠ empty plan.
   milestonesLoaded: boolean;
   milestonesError: boolean;
   refetchMilestones: () => void;

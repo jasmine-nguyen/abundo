@@ -6,7 +6,7 @@ import { C, FONT, fmt, tint } from '../src/theme';
 import { Glyph } from '../src/icons';
 import { milestoneView } from '../src/context';
 import { useGoalScreenData } from '../src/queries';
-import { Bar, RetryButton, HeroGradientFill, CardLoadError } from '../src/components/ui';
+import { Bar, RetryButton, HeroGradientFill, MilestonesCardStatus, cardStyle } from '../src/components/ui';
 import { Header } from '../src/components/Header';
 import { EquityCard, EquityBody, EquitySetupTeaser } from '../src/components/EquityCard';
 import { formatMonthYear } from '../src/dateutil';
@@ -92,12 +92,10 @@ export default function Milestone() {
         )}
 
         {/* sprint track — or an empty-state invite when the user hasn't set a plan */}
-        {milestonesError ? (
-          <CardLoadError title="Your payoff milestones" message="Couldn't load your milestones." retryLabel="Retry loading your milestones" testID="milestone-plan-retry" onRetry={refetchMilestones} />
-        ) : !milestonesLoaded ? (
-          <View style={styles.card} testID="milestone-plan-loading"><Text style={styles.cardTitle}>Your payoff milestones</Text></View>
+        {milestonesError || !milestonesLoaded ? (
+          <MilestonesCardStatus error={milestonesError} onRetry={refetchMilestones} testIDPrefix="milestone-plan" />
         ) : v.hasPlan ? (
-          <View style={styles.card}>
+          <View style={cardStyle}>
             <View style={styles.planHeader}>
               <Text style={styles.cardTitle}>Your payoff plan</Text>
               <Pressable
@@ -129,7 +127,7 @@ export default function Milestone() {
             ))}
           </View>
         ) : (
-          <View style={styles.card}>
+          <View style={cardStyle}>
             <Text style={styles.cardTitle}>Your payoff milestones</Text>
             <Text style={styles.emptyBody}>
               You haven't set any milestones yet. Add your own balance targets to track your progress to a paid-off home.
@@ -191,7 +189,6 @@ const styles = StyleSheet.create({
   nextTo: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.accentSoft },
   nextBody: { fontFamily: FONT.body, fontSize: 13, color: '#a6a6b0', lineHeight: 19, marginTop: 6 },
 
-  card: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, padding: 16, marginBottom: 12 },
   cardTitle: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.textBright, marginBottom: 12 },
   planHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   editPlan: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '700', color: C.accent, paddingHorizontal: 4, marginBottom: 12 },
