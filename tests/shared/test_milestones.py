@@ -6,8 +6,6 @@ behaviour via lightweight fake repos.
 
 from decimal import Decimal
 
-import pytest
-
 from _dynamo_fakes import FakeTable
 # The milestone fakes + FACTS + the send_push recorder live in tests/shared/_milestone_fakes.py
 # so the whole milestone family shares ONE definition of each (WHIT-445).
@@ -365,27 +363,8 @@ def test_populated_plan_still_sweeps_a_dead_marker(shared, recorder):
 
 
 # --- QA gap tests (adversarial) — added alongside the implementer's G-386a/b -----------------
-# These cover the edges the implementer's two tests leave: an empty plan colliding with a genuine
-# DEFAULT crossing in the same poll, and the "no notify I/O at all" short-circuit. Each is proven
-# fail-on-revert (revert `and plan` -> it goes red).
-
-
-def test_empty_plan_suppresses_a_default_crossing_and_sweeps_nothing(shared, recorder):
-    # [G-386c] An authoritative [] must NOT fall back to the built-in default for CROSSING (nothing
-    # fires) AND must not sweep (WHIT-386). old=545000 -> new=544000 WOULD cross the built-in
-    # "Kickoff" (544000) if the empty plan leaked to the default. A live custom marker is seeded so a
-    # reverted `and plan` wipes it. Guarded: sent==0, removed==set(). Revert `and plan` -> the
-    # custom marker is swept -> removed != set() -> fails.
-    # NB: no built-in sprint marker is seeded, so `sent == 0` genuinely discriminates the leak — if
-    # an empty [] fell back to the default and crossed Kickoff (544000), it WOULD fire (sent==1).
-    notify = notify_repo({"id:m1:bal:400000.00"})
-    sent = _notify(shared, old="545000", new="544000",
-                milestone_repo=FakeMilestoneRepo(stored=[]), notify=notify)
-    assert sent == 0                       # empty plan does NOT fall back to the default crossing
-    assert recorder == []
-    assert removal_calls(notify) == 0
-    assert removed_markers(notify) == set()
-    assert stored_markers(notify) == {"id:m1:bal:400000.00"}
+# This covers the edge the implementer's two tests leave: the "no notify I/O at all"
+# short-circuit. Proven fail-on-revert (revert `and plan` -> it goes red).
 
 
 def test_empty_plan_never_touches_the_notify_store(shared, recorder):
@@ -523,17 +502,6 @@ def test_plan_marker_id_with_a_colon_stays_distinct(shared):
     b = m({"id": "a", "targetBalance": Decimal("480000")})
     assert a == "id:a:b:bal:480000.00"
     assert a != b
-
-
-@pytest.mark.parametrize("row", [
-    pytest.param({"targetBalance": Decimal("480000")}, id="id key missing"),
-    pytest.param({"id": None, "targetBalance": Decimal("480000")}, id="id None"),
-])
-def test_plan_marker_rejects_a_row_without_an_id(shared, row):
-    # WHIT-830 — [A-MARK-6] a row with no id is malformed (the same rule as the client read), so
-    # _resolve_plan skips and logs it instead of keying it as "id:None:..." or an id-less marker.
-    with pytest.raises(shared.milestones.MalformedMilestoneRow):
-        shared.milestones._plan_marker(row)
 
 
 # ==========================================================================

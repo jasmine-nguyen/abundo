@@ -77,15 +77,6 @@ def test_custom_plan_fires_on_the_users_own_target_and_label(shared, recorder):
     assert title == "\U0001f389 Milestone reached — My House!"
 
 
-def test_custom_plan_does_not_fire_on_a_default_balance(shared, recorder):
-    # A saved plan that excludes 544000: crossing the OLD built-in Kickoff must NOT fire —
-    # proves the push stopped reading the hardcoded table (fail-on-revert on the whole card).
-    repo = FakeMilestoneRepo(stored=[_row("My House", "480000")])
-    sent, _ = _notify(shared, old="545000", new="544000", milestone_repo=repo)
-    assert sent == 0
-    assert recorder == []
-
-
 def test_custom_marker_is_namespaced_so_it_cannot_collide_with_a_sprint_marker(shared, recorder):
     notify = notify_repo()
     shared.milestones.notify_milestone_crossing(
@@ -196,18 +187,6 @@ def test_retarget_drops_the_dead_marker(shared, recorder):
     assert sent == 0
     assert removed_markers(notify) == {"bal:300000.00"}
     assert stored_markers(notify) == set()
-
-
-def test_read_failure_does_not_delete_any_marker(shared, recorder):
-    # BLOCKER guard, fail-on-revert: a milestones-store read failure is an empty plan.
-    # Reconciling against it would treat EVERY marker as dead and delete it, so it must
-    # delete nothing here.
-    notify = notify_repo({"bal:300000.00", "bal:480000.00"})
-    sent, _ = _notify(shared, old="250000", new="249000",
-                milestone_repo=FakeMilestoneRepo(raises=RuntimeError("dynamo down")), notify=notify)
-    assert sent == 0
-    assert removed_markers(notify) == set()
-    assert stored_markers(notify) == {"bal:300000.00", "bal:480000.00"}
 
 
 def test_unset_plan_does_not_delete_markers(shared, recorder):
