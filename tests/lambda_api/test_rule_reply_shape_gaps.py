@@ -20,7 +20,7 @@ import pytest
 
 from _api_event import api_event
 from _budget_endpoint_fakes import _FakePayCycleRepo
-from _feed_fakes import apply_rules_event, SPENDING, FakeCategoryRepo, Repos, _row, inject_rule_routes
+from _feed_fakes import apply_rules_event, apply_rules_job_post_event, SPENDING, FakeCategoryRepo, Repos, _row, inject_rule_routes
 from _job_fakes import created_jobs, real_job_repo
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
@@ -168,8 +168,7 @@ def test_job_start_clash_409_existing_rule_has_no_spread_seeded(handler, monkeyp
     job_repo = real_job_repo()
 
     resp = handler.start_apply_rules_job(
-        api_event("POST", "/transactions/uncategorized/apply-rules/jobs",
-               {"rule": {"value": "ORIGIN", "categoryId": "groceries"}}),
+        apply_rules_job_post_event({"rule": {"value": "ORIGIN", "categoryId": "groceries"}}),
         FakeCategoryRepo(_CATEGORIES), _seeded_store().rule_repo, job_repo)
     body = json.loads(resp["body"])
 

@@ -275,7 +275,7 @@ def test_limit_above_max_is_clamped(handler):
 
 def test_missing_query_params_uses_defaults_not_500(handler):
     table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1", category=None)]})
-    event = api_event("GET", "/transactions/uncategorized/feed", query=None)
+    event = uncategorized_feed_event()
     resp = handler.get_uncategorized_feed(event, repo, FakeCategoryRepo(set()))
     assert resp["statusCode"] == 200
 
