@@ -7,7 +7,7 @@
 // scopes the ceiling to screen tests while the fast `logic` project stays at Jest's 5s default.
 // A project-level `testTimeout` is silently ignored under Jest 30 (the old jest.config.js home);
 // jest.setTimeout in setupFilesAfterEnv is honoured. Drop or lower this and the heavy full-provider
-// screen suites red under the sharded coverage run (fail-on-revert; see jestScreenTimeout.logic.test.ts).
+// screen suites red under the sharded coverage run.
 jest.setTimeout(15000);
 
 // The date picker is a native view; render a lightweight stand-in that still fires
