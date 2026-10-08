@@ -8,7 +8,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { act, render, screen, fireEvent, waitFor } from '@testing-library/react-native';
-import { EMPTY_LOAN_FACTS } from './factory';
+import { EMPTY_LOAN_FACTS, LOAN_FACTS } from './factory';
 import { PayoffSummary } from '../components/PayoffSummary';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
@@ -286,9 +286,14 @@ it('user can pull down on Home loan to reload the balance', async () => {
   expect(await screen.findByText('$430,000 to go')).toBeTruthy();
 });
 
-it('the screen never says "sprint" and shows no emoji', async () => {
-  // Default loan facts are set, so the payoff mini-cards and the contribution card render too.
-  seedGoal(server, { milestones: SAVED_MILESTONES, homeLoan: { balance: 250000, asOf: '2026-07-04T00:24:37.614Z' } });
+// [A1] Each state draws different copy: the second one reaches "Target reached" and the equity card's
+// deposit-target body, which the first never renders.
+it.each([
+  ['a plan in progress, no deposit target', LOAN_FACTS, 250000],
+  ['every milestone reached, deposit target set', { ...LOAN_FACTS, depositTarget: 100000 }, 90000],
+])('the screen never says "sprint" and shows no emoji: %s', async (_state, loanFacts, balance) => {
+  // Loan facts are set, so the payoff mini-cards and the contribution card render too.
+  seedGoal(server, { loanFacts, milestones: SAVED_MILESTONES, homeLoan: { balance, asOf: '2026-07-04T00:24:37.614Z' } });
   await renderWithQueries(<Mortgage />);
   const tree = screenJson();
   expect(tree).not.toMatch(/sprint/i);
