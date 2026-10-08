@@ -120,7 +120,7 @@ export function makeGoalData(over: Partial<GoalScreenData> = {}): GoalScreenData
     milestonesLoaded: true,
     milestonesError: false,
     refetchMilestones: () => {},
-    refetch: () => {},
+    refetch: () => Promise.resolve(),
     refetchStale: () => {},
     ...over,
   };

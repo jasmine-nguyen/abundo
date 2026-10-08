@@ -16,7 +16,7 @@ export type { FilingResult, FilingTarget, FilingWhen } from './filingRun';
 export { APPLY_RULES_MAX_WRITES } from './filingRun';
 import type { Bucket, Category, Transaction } from './types';
 import { loanFactsReady, toCategory, toRule, EMPTY_LOAN_FACTS, UNCATEGORIZED_KEY, EARNED_KEY, INCOME_KEY, ROLLUP_KEY, readRollup, type Budget, type Rule, type RuleWrite, type HomeLoanState } from './model';
-import { cycleName, cycleClock, cycleClockView, elapsedFrac } from './payCycle';
+import { cycleName, paydaysPerYear, cycleClock, cycleClockView, elapsedFrac } from './payCycle';
 import { availableToSpend, contributesToBudget, pacePct, paceTarget, paceWarning, paidInOneGo } from './budgetMath';
 import { breakdownKey, budgetsKey, categoriesKey, filingSuggestionsKey, goalsKey, loanFactsKey, milestonesKey, payCycleKey, rulesKey, transactionsSearchKey } from './queryKeys';
 import { queryClient } from './queryClient';
@@ -430,10 +430,13 @@ export function amortize(balance: number, i: number, pmt: number): Amort | null 
 // null when the inputs can't define a payment (non-positive balance or periods, or
 // non-finite). For any finite periods>0 the result strictly exceeds the interest-only
 // floor B·i, so amortize(balance, i, requiredRepayment(...)) always converges back.
-export function requiredRepayment(balance: number, i: number, periods: number): number | null {
-  if (!(balance > 0) || !(periods > 0) || !Number.isFinite(i)) return null;
-  if (i <= 0) return balance / periods;
-  return (balance * i) / (1 - Math.pow(1 + i, -periods));
+// WHIT-822: `target` generalises it to "bring the balance down to `target`" (0 = clear it):
+// pmt = (B − T·(1+i)^(−n))·i/(1 − (1+i)^(−n)), or (B − T)/n when i≤0.
+export function requiredRepayment(balance: number, i: number, periods: number, target = 0): number | null {
+  if (!(balance > target) || !(periods > 0) || !Number.isFinite(i)) return null;
+  if (i <= 0) return (balance - target) / periods;
+  const discount = Math.pow(1 + i, -periods);
+  return ((balance - target * discount) * i) / (1 - discount);
 }
 
 // `from` advanced by `months` whole calendar months. The day is pinned to the 1st
@@ -3332,6 +3335,7 @@ export interface MilestoneView {
   clearedCount: number;
   total: number;
   nextMilestone: MilestoneRow | null;
+  nextSegmentPct: number;          // 0..100 from the previous target down to the next one
   amountToNext: number;
   amountToNextLabel: string;
   rows: MilestoneRow[];
@@ -3370,6 +3374,20 @@ function overallProgressPct(balance: number, start: number, end: number): number
   return Math.max(0, Math.min(100, ((start - balance) / (start - end)) * 100));
 }
 
+// WHIT-822: the repayment needed each payday to bring the balance down to the next milestone's
+// target by its month, interest included. The payoff maths is monthly, so the monthly figure is
+// spread over a year's paydays. null when there's nothing meaningful to say.
+export function milestonePace(m: MilestoneView, loanFacts: LoanFacts, payCycle: PayCycle | null, today = new Date()): string | null {
+  const next = m.nextMilestone;
+  if (!next || !payCycle || !loanFactsReady(loanFacts)) return null;
+  const months = monthsUntil(today, next.targetDate);
+  if (months == null || months <= 0) return null;
+  const monthly = requiredRepayment(m.balance, loanFacts.ratePct / 100 / MONTHS_PER_YEAR, months, next.targetBalance);
+  if (monthly == null) return null;
+  const perPayday = (monthly * MONTHS_PER_YEAR) / paydaysPerYear(payCycle.length);
+  return `${fmt(perPayday)} per payday to hit ${formatMonthYear(next.targetDate)}`;
+}
+
 // Progress against the paydown plan (WHIT-8). Pure over the live home-loan balance
 // (s.homeLoan) + the plan + `today` (injected for tests). The plan is the user's
 // saved milestones (WHIT-367), or the built-in default when they haven't saved one.
@@ -3398,7 +3416,7 @@ export function milestoneView(s: GoalViewInput, today?: Date): MilestoneView {
       equityKnown, propertyValue: equityKnown ? homeValue! : null,
       usableEquity: equity, usableEquityLabel: equity != null ? fmt(equity) : '—',
       hasPlan: false, overallPct: 0, clearedCount: 0, total: 0,
-      nextMilestone: null, amountToNext: 0, amountToNextLabel: '—', rows: [], schedule: null,
+      nextMilestone: null, nextSegmentPct: 0, amountToNext: 0, amountToNextLabel: '—', rows: [], schedule: null,
     };
   }
 
@@ -3419,6 +3437,9 @@ export function milestoneView(s: GoalViewInput, today?: Date): MilestoneView {
   // above the current balance. null once every target is reached.
   const next = hasBalance ? rows.find((r) => !r.cleared) ?? null : null;
   const amountToNext = next ? balance - next.targetBalance : 0;
+  const nextSegmentPct = next && next.sprint > 0
+    ? overallProgressPct(balance, rows[next.sprint - 1].targetBalance, next.targetBalance)
+    : 0;
 
   const start = plan[0].targetBalance;
   const end = plan[plan.length - 1].targetBalance;
@@ -3454,6 +3475,7 @@ export function milestoneView(s: GoalViewInput, today?: Date): MilestoneView {
     clearedCount,
     total: rows.length,
     nextMilestone: next,
+    nextSegmentPct,
     amountToNext,
     amountToNextLabel: next ? fmt(amountToNext) : '—',
     rows,

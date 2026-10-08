@@ -61,7 +61,7 @@ it('Home loan: Retry after a failed milestones read brings back the plan card', 
   await settle();
   await refreshInAct(() => undefined);
   expect(screen.queryByTestId('milestones-retry')).toBeNull();
-  expect(screen.getByText(/sprints reached|Your payoff plan/)).toBeTruthy();
+  expect(screen.getByText(/milestones reached|Your payoff plan/)).toBeTruthy();
   expect(screen.queryByText(INVITE)).toBeNull();
 });
 

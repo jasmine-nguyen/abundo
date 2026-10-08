@@ -67,6 +67,8 @@ export const C = {
 
   purple: '#bb9af7',
   purpleWash: 'rgba(201,179,245,.16)',
+  // Pale lavender figure text on the purple equity card (mortgage + milestone screens).
+  purpleSoft: '#d9c9f7',
 
   // Ink drawn ON a bright surface — accentInk on the accent-blue buttons, heroInk on the hero
   // gradient. Both are the screen background's hex, but that is a coincidence of the palette, not
@@ -81,6 +83,8 @@ export const C = {
   heroInkSoft: 'rgba(20,18,50,.62)',
   heroInkWash: 'rgba(21,18,58,.16)',
   heroBlobFill: 'rgba(255,255,255,.1)',
+  // The muted icon-tile fill behind an inactive glyph (empty repayment chip, an unreached milestone).
+  neutralWash: 'rgba(255,255,255,.06)',
   // The unfilled rail behind every progress bar (budget, goal, mortgage, apply-rules).
   progressTrack: 'rgba(255,255,255,.07)',
   // The "today" target tick on budget bars.
