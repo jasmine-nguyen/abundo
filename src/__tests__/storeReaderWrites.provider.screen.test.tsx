@@ -7,10 +7,8 @@
 // The caches are seeded first (as if a screen had loaded them); the provider no longer
 // eager-loads.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
-import { QueryClientProvider } from '@tanstack/react-query';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Category, Transaction } from '../types';
 import type { BudgetRollup } from '../api';
 import { useCategories, usePayCycle } from '../queries';
@@ -20,6 +18,7 @@ import { seedTransactionsCache, readTransactionsCache } from './support/transact
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
+import { appProviderWrapper, queriesAppWrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 const categoryReads = () => server.sent('GET', '/categories');
@@ -42,7 +41,7 @@ beforeEach(() => {
 afterEach(() => { queryClient.clear(); });
 
 function mount() {
-  const { result } = renderHook(() => useAppContext(), { wrapper: ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider> });
+  const { result } = renderHook(() => useAppContext(), { wrapper: appProviderWrapper });
   return result;
 }
 
@@ -122,9 +121,9 @@ it('deleteCategory drops the id from EVERY budget window, skips windows lacking 
 // ===== WHIT-203 GAP (folded from storeReaderObservers.provider.screen.test.tsx) =====
 // The suite above asserts getQueryData + an invalidate spy; this block asserts the mirror caches
 // reach a LIVE mounted observer (useCategories / usePayCycle) under the SAME singleton
-// queryClient the writers write to. It mounts through QueryClientProvider(client=singleton) and
-// needs the eager reads answered, so its divergent wrapper + beforeEach are scoped here.
-describe('WHIT-203 live observers (QueryClientProvider + real reader hooks)', () => {
+// queryClient the writers write to. It mounts through queriesAppWrapper (the singleton
+// queryClient around AppProvider) and needs the eager reads answered, so its beforeEach is scoped here.
+describe('WHIT-203 live observers (singleton queryClient + real reader hooks)', () => {
   const NEW: Category = { id: 'new', name: 'New', bucket: 'Living', icon: 'home', color: '#fff' };
 
   beforeEach(() => {
@@ -133,14 +132,8 @@ describe('WHIT-203 live observers (QueryClientProvider + real reader hooks)', ()
     server.seed('/paycycle', { length: 14, last_pay_date: '2024-01-03' });
   });
 
-  const wrapper = ({ children }: { children: React.ReactNode }) => (
-    <QueryClientProvider client={queryClient}>
-      <AppProvider>{children}</AppProvider>
-    </QueryClientProvider>
-  );
-
   it('usePayCycle observer reflects setPayCycleLength immediately (read-your-write)', async () => {
-    const { result } = renderHook(() => ({ ctx: useAppContext(), pc: usePayCycle() }), { wrapper });
+    const { result } = renderHook(() => ({ ctx: useAppContext(), pc: usePayCycle() }), { wrapper: queriesAppWrapper });
 
     // Let the initial payCycle fetch settle first so it can't overwrite our write late.
     await waitFor(() => expect(queryClient.getQueryData(['payCycle'])).toBeTruthy());
@@ -159,7 +152,7 @@ describe('WHIT-203 live observers (QueryClientProvider + real reader hooks)', ()
     // resurrect it, which is exactly what must not happen (delete uses setQueryData, not invalidate).
     server.seed('/categories', [CAT, OTHER]);
     server.once('DELETE', '/categories/coffee', { body: { id: 'coffee' } });
-    const { result } = renderHook(() => ({ ctx: useAppContext(), cats: useCategories() }), { wrapper });
+    const { result } = renderHook(() => ({ ctx: useAppContext(), cats: useCategories() }), { wrapper: queriesAppWrapper });
 
     await waitFor(() => expect(result.current.cats.categories).toHaveLength(2));
     const fetchCalls = categoryReads().length;
@@ -175,7 +168,7 @@ describe('WHIT-203 live observers (QueryClientProvider + real reader hooks)', ()
 
   it('useCategories observer shows a newly-created category via the invalidate refetch', async () => {
     server.seed('/categories', [CAT]);
-    const { result } = renderHook(() => ({ ctx: useAppContext(), cats: useCategories() }), { wrapper });
+    const { result } = renderHook(() => ({ ctx: useAppContext(), cats: useCategories() }), { wrapper: queriesAppWrapper });
     await waitFor(() => expect(result.current.cats.categories).toHaveLength(1));
 
     server.once('POST', '/categories', { body: NEW });

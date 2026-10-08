@@ -2,7 +2,6 @@
 // real useCategories. These cover what the moved suites never exercise: a slow, failed, missing or
 // changed categories reply, and a signed-out session. The preview / filing writers stay faked.
 import { it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
 import { render, screen, act, waitFor } from '@testing-library/react-native';
 import type { AppContext, ApplyRulesResult, FilingResult, FilingTarget, FilingWhen } from '../context';
 import type { UncategorizedMerchantGroup } from '../api';
@@ -18,6 +17,7 @@ import { refreshInAct, useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
 import { queryClient } from '../queryClient';
 import { categoriesKey } from '../queries';
+import { applyRulesReport } from './support/applyRulesReport';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -35,11 +35,10 @@ const CATEGORIES = [
   { id: 'fuel', name: 'Fuel', bucket: 'Living', icon: 'car', parent: null },
 ];
 
-const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
-  dryRun: true, rulesConsidered: 1, unfiled: 10, matched: 4, conflicted: 0, conflictedSamples: [],
-  byCategory: { groceries: 4 },
+const report = (over: Partial<ApplyRulesResult> = {}) => applyRulesReport({
+  rulesConsidered: 1, unfiled: 10, matched: 4, byCategory: { groceries: 4 },
   byRule: [{ ruleId: 'r1', value: 'coles', categoryId: 'groceries', count: 4, samples: [] }],
-  skippedRules: [], filed: [], vanished: [], failed: [], alreadyFiled: [], remaining: 4,
+  alreadyFiled: [], remaining: 4,
   ...over,
 });
 

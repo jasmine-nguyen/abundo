@@ -21,12 +21,9 @@ from functools import partial
 import json
 
 from _api_event import api_event
-from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo, pin_cycle_window
+from _budget_endpoint_fakes import LENGTH, PAYDATE, _FakeCategoryRepo, _FakePayCycleRepo, pin_cycle_window
 from _budget_fakes import recording_budget_repo
 from _transaction_range_fakes import _QueuedTransactionRepo
-
-LENGTH = 30
-PAYDATE = "2026-01-01"
 
 
 FakePayCycleRepo = partial(_FakePayCycleRepo, length=LENGTH, last_pay_date=PAYDATE)

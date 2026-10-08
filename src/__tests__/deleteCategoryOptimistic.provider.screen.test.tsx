@@ -1,10 +1,9 @@
 // WHIT-628 slice 2 — deleting a category is instant, undoes on failure, and reaches every copy of
 // its charges: the main copies AND the budget / category charge lists (which also reload).
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import type { InfiniteData, QueryKey } from '@tanstack/react-query';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Transaction, Category } from '../types';
 import type { Rule } from '../model';
 import type { TransactionFeedPage } from '../api';
@@ -12,13 +11,12 @@ import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 import {
   DELETE_DINING, DELETE_GROCERIES, DELETE_DINING_RULE, DELETE_GROCERIES_RULE, DELETE_DINING_BUDGET, DELETE_GROCERIES_BUDGET, tx, page,
 } from './support/deleteCategorySeed';
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 // A parent budget's charge list holding a Dining charge, and the Insights drill-in for Dining.
 const BUDGET_KEY = ['budgetTransactions', 'parentBudget'];

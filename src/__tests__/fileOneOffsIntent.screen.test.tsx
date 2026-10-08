@@ -4,7 +4,6 @@
 // is covered in fileByShopSheetGaps ([A28d]/[A28e]); this file covers the screen-side consume.
 // The screen and its data code are real, over the pretend server (WHIT-686).
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
-import React from 'react';
 import { screen } from '@testing-library/react-native';
 
 // A STATEFUL flag so the one-shot lifecycle is real: the consume effect calls clearUncategorizedSelect,
@@ -24,15 +23,12 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries } from './support/renderWithQueries';
+import { colesTxn } from './factory';
 
 const server = installFakeServer();
 useTestQueryClient();
 
-const unfiled = (id: string) => ({
-  transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01', description: 'COLES',
-  merchant_name: 'Coles', amount: -12.5, account_id: 'a1', account_name: 'ANZ', category: null,
-  status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-});
+const unfiled = (id: string) => colesTxn({ transaction_id: id });
 
 beforeEach(() => {
   resetAuth();

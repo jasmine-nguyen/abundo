@@ -8,7 +8,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, FilingResult, FilingTarget, FilingWhen } from '../context';
-import type { ApplyRulesResult, UncategorizedMerchantGroup } from '../api';
+import type { UncategorizedMerchantGroup } from '../api';
 import { ApiError } from '../apiError';
 
 let mockState: AppContext;
@@ -20,6 +20,7 @@ import { installFakeServer } from './support/fakeServer';
 import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
+import { shopPreviewReport as report } from './support/applyRulesReport';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -38,13 +39,6 @@ const fns = {
 const group = (over: Partial<UncategorizedMerchantGroup> = {}): UncategorizedMerchantGroup => ({
   merchant: 'Coles', rulePattern: 'coles', groupedBy: 'merchant', count: 20,
   samples: ['COLES 1234 RICHMOND'], firstDate: '2026-06-01', lastDate: '2026-08-01', alsoCatches: [],
-  ...over,
-});
-
-const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
-  dryRun: true, rulesConsidered: 1, unfiled: 20, matched: 20, conflicted: 0, conflictedSamples: [],
-  byCategory: { groceries: 20 }, byRule: [], skippedRules: [],
-  filed: [], vanished: [], failed: [], alreadyFiled: [], remaining: 20, createdRule: null,
   ...over,
 });
 

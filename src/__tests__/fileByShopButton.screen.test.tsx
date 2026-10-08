@@ -7,7 +7,6 @@
 // whole-history count > 0, not selection mode, not the cold spinner / error state).
 // The screen and its data code are real, over the pretend server (WHIT-686).
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
-import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 
 const mockSetSheet = jest.fn();
@@ -22,6 +21,7 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries, WithQueries, settle } from './support/renderWithQueries';
+import { colesTxn } from './factory';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -29,11 +29,7 @@ useTestQueryClient();
 const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
 const COUNT = '/transactions/uncategorized/count';
 const MERCHANTS = '/transactions/uncategorized/merchants';
-const unfiled = (id: string) => ({
-  transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01', description: 'COLES',
-  merchant_name: 'Coles', amount: -12.5, account_id: 'a1', account_name: 'ANZ', category: null,
-  status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-});
+const unfiled = (id: string) => colesTxn({ transaction_id: id });
 
 const merchants = (over: Record<string, unknown> = {}) => ({
   unfiled: 20,

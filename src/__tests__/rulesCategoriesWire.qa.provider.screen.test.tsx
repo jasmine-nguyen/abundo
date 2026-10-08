@@ -2,9 +2,8 @@
 // server — the parts the auto-mock could never reach: the sign-in token, the path escaping, the
 // request time limit, and how each error style (plain / statusOnly / withReason) reaches the toast.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Category } from '../types';
 import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
@@ -13,10 +12,10 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { resetAuth, setAuthToken } from './support/authMock';
 import { SUBS } from './support/categories';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 const NETFLIX: Rule = { id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false, field: 'description', operator: 'contains' };
 const rules = () => queryClient.getQueryData<Rule[]>(['rules']);
 const categoryIds = () => queryClient.getQueryData<Category[]>(['categories'])?.map((c) => c.id);

@@ -6,19 +6,17 @@
 // auth flip" behaviour that this used to cover on the store now lives in the *Query tests
 // (transactionsQuery / budgetsQuery / settingsQuery / goalScreenData / rulesScreenData).
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import { queryClient } from '../queryClient';
 
 // Pin 'authed' so a (hypothetical, reverted) auth-reload effect would fire if it still
 // existed — making this a real fail-on-revert guard, not one masked by a signed-out gate.
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });

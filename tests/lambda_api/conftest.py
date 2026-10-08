@@ -27,6 +27,7 @@ import sys
 import pytest
 
 from _boto_stubs import install_import_satisfiers, use_condition_fields
+from _budget_endpoint_fakes import CYCLE_START, TODAY, pin_cycle_window
 
 # Env vars + fake boto3/botocore the handler import chain needs.
 install_import_satisfiers()
@@ -77,6 +78,12 @@ def handler():
     """Import lambda_api/handler.py in isolation and hand it to the test."""
     with _isolated_import("handler") as module:
         yield module
+
+
+@pytest.fixture
+def fixed_window(handler, monkeypatch):
+    """Pin the budgets read's current cycle to CYCLE_START..TODAY."""
+    pin_cycle_window(handler, monkeypatch, CYCLE_START, TODAY)
 
 
 @pytest.fixture

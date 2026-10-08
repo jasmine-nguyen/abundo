@@ -27,7 +27,7 @@ export const SUBSCRIPTIONS = Object.freeze({ ...SUBSCRIPTIONS_RECORD, color: '#f
 
 export const COFFEE_SHORT = Object.freeze({ id: 'coffee', name: 'Coffee', icon: 'coffee', bucket: 'Lifestyle' } as const);
 
-export const ESSENTIAL_GROCERIES_RECORD = Object.freeze({ id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Essentials' } as const);
+const ESSENTIAL_GROCERIES_RECORD = Object.freeze({ id: 'groceries', name: 'Groceries', icon: 'cart', bucket: 'Essentials' } as const);
 
 export const ESSENTIAL_GROCERIES = Object.freeze({ ...ESSENTIAL_GROCERIES_RECORD, color: '#00AA00' } as const);
 

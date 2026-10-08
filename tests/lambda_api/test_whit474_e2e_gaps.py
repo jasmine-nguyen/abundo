@@ -20,15 +20,12 @@ from functools import partial
 import pytest
 
 from _api_event import api_event
-from _budget_endpoint_fakes import _FakePayCycleRepo, pin_cycle_window
+from _budget_endpoint_fakes import LENGTH, PAYDATE, _FakePayCycleRepo
 from _category_fakes import _cat, _schema
 from _dynamo_fakes import FakeTable
 from _transaction_range_fakes import _QueuedTransactionRepo
 
-LENGTH = 30
-PAYDATE = "2026-01-01"
-CYCLE_START = "2026-08-06"
-TODAY = "2026-08-10"
+pytestmark = pytest.mark.usefixtures("fixed_window")
 
 
 _KEY = ("BUDGETS", "BUDGETS")
@@ -79,11 +76,6 @@ def _rollover_entry(target=100, carryover=0, carryover_from="2026-05-08"):
         "carryover_from": carryover_from, "carryover_len": Decimal(LENGTH),
         "carryover_paydate": PAYDATE,
     }
-
-
-@pytest.fixture(autouse=True)
-def _fixed_window(handler, monkeypatch):
-    pin_cycle_window(handler, monkeypatch, CYCLE_START, TODAY)
 
 
 def _budget_repo(handler, table):

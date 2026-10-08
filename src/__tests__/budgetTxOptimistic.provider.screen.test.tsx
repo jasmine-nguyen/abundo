@@ -10,9 +10,8 @@
 // module beforeEach/afterEach) hoisted once. The ../auth mock is reconciled to the LIVE-store
 // SUPERSET so the sign-out siblings can flip the status; every other describe simply stays 'authed'.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Transaction, Category } from '../types';
 import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
@@ -26,22 +25,17 @@ import { invalidatedKeys } from './support/queryClient';
 // 'authed' for them; the two sign-out siblings flip it via setAuthStatus to drive sign-out.
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, resetAuth } from './support/authMock';
+import { cafeTxn, colesTxn } from './factory';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const sentBodies = (path: string) => server.sent('PATCH', path).map((request) => request.body);
 
 function signOut() { act(() => { queryClient.clear(); setAuthStatus('anon'); }); }
 
 const CAT = GROCERIES;
-const txn = (over: Partial<Transaction> = {}): Transaction => ({
-  transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-  account_name: 'ANZ', category: 'groceries', status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-  ...over,
-});
+const txn = (over: Partial<Transaction> = {}) => colesTxn({ category: 'groceries', ...over });
 
 beforeEach(() => {
   resetAuth();
@@ -224,12 +218,7 @@ it('exclude keeps the charge in the transactions cache, flagged excluded', async
 // its header after a write. NB this suite's `txn` defaults to category:null (an unmapped charge) so
 // the applyCategory('one') re-tag is a real move, not a no-op — kept block-scoped below.
 describe('budgetTxInvalidation (folded)', () => {
-  const txn = (over: Partial<Transaction> = {}): Transaction => ({
-    transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
-    description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-    account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-    ...over,
-  });
+  const txn = colesTxn;
 
   beforeEach(() => { queryClient.clear(); });
   afterEach(() => { queryClient.clear(); jest.restoreAllMocks(); }); // clear the singleton + restore spies (config has clearMocks, not restoreMocks)
@@ -327,12 +316,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
     { id: 'shopping', name: 'Shopping', bucket: 'Living', icon: 'bag', color: '#f0b27a', parent: null },
   ];
 
-  const txn = (id: string, over: Partial<Transaction> = {}): Transaction => ({
-    transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
-    description: 'CAFE', merchant_name: 'Cafe', amount: -6, account_id: 'a1',
-    account_name: 'ANZ', category: 'coffee', status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-    ...over,
-  });
+  const txn = (id: string, over: Partial<Transaction> = {}) => cafeTxn({ transaction_id: id, ...over });
 
   const foodList = () => queryClient.getQueryData<Transaction[]>(['budgetTransactions', 'food']);
   const budgetList = (id: string) => queryClient.getQueryData<Transaction[]>(['budgetTransactions', id]);
@@ -616,12 +600,7 @@ describe('budgetTxRefileParentSubtree (folded)', () => {
     { id: 'shopping', name: 'Shopping', bucket: 'Living', icon: 'bag', color: '#f0b27a', parent: null },
   ];
 
-  const txn = (id: string, over: Partial<Transaction> = {}): Transaction => ({
-    transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
-    description: 'CAFE', merchant_name: 'Cafe', amount: -6, account_id: 'a1',
-    account_name: 'ANZ', category: 'coffee', status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-    ...over,
-  });
+  const txn = (id: string, over: Partial<Transaction> = {}) => cafeTxn({ transaction_id: id, ...over });
 
   const list = (id: string) => queryClient.getQueryData<Transaction[]>(['budgetTransactions', id]);
 
@@ -733,17 +712,10 @@ describe('WHIT-348 re-file budget-list rollback settling after sign-out', () => 
     { id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', parent: null },
   ];
 
-  const txn = (over: Partial<Transaction> = {}): Transaction => ({
-    transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
-    description: 'CAFE', merchant_name: 'Cafe', amount: -6, account_id: 'a1',
-    account_name: 'ANZ', category: 'coffee', status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-    ...over,
-  });
-
   it('does NOT re-seat the old account budget list into the cleared cache', async () => {
-    seedTransactionsCache(queryClient, [txn()]);
+    seedTransactionsCache(queryClient, [cafeTxn()]);
     queryClient.setQueryData(['categories'], CATS);
-    queryClient.setQueryData(['budgetTransactions', 'food'], [txn()]);
+    queryClient.setQueryData(['budgetTransactions', 'food'], [cafeTxn()]);
     const held = server.hold('/transactions');
     const { result } = renderHook(() => useAppContext(), { wrapper });
 

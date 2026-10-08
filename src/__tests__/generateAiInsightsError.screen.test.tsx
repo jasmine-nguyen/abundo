@@ -7,19 +7,17 @@
 // aiInsightsError=true by InsightsScreen.screen.test.tsx. This closes the one
 // untested link between them: the context callback's catch -> setAiInsightsError.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 const generates = () => server.sent('POST', '/insights/ai');
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 beforeEach(() => { queryClient.clear(); resetAuth(); });
 afterEach(() => { queryClient.clear(); });

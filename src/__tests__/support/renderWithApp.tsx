@@ -27,6 +27,12 @@ export function resetAppProbe() {
   sheet = null;
 }
 
+/** The bare AppProvider, for renderHook's `wrapper` option. */
+export const appProviderWrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
+
+/** AppProvider under the singleton queryClient, as app/_layout.tsx mounts it, for renderHook tests that also read queries. */
+export const queriesAppWrapper = ({ children }: { children: React.ReactNode }) => <WithQueries><AppProvider>{children}</AppProvider></WithQueries>;
+
 export function WithApp({ children }: { children: React.ReactNode }) {
   return (
     <WithQueries>
