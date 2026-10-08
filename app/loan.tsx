@@ -19,23 +19,24 @@ export default function Loan() {
   // saved facts have loaded, so it can never open blank and overwrite them on save.
   const authed = useIsAuthed();
   const loanFactsQuery = useLoanFactsQuery(authed);
-  // WHIT-821: the last repayment pre-fills Scheduled repayment. Wait for its first load so the
-  // seed isn't missed; a failed read doesn't block the form.
+  // WHIT-821: the last repayment pre-fills Scheduled repayment. Spin until its first answer so
+  // the seed isn't missed; its first failure stops the wait (no blocking through the retries).
   const repaymentQuery = useRepaymentQuery(authed);
+  const repaymentPending = repaymentQuery.isLoading && repaymentQuery.failureCount === 0;
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title="Loan details" />
       <DetailStates
-        isLoading={loanFactsQuery.isLoading}
+        isLoading={loanFactsQuery.isLoading || repaymentPending}
         isError={loanFactsQuery.isError}
-        hasCache={loanFactsQuery.data !== undefined}
+        hasCache={loanFactsQuery.data !== undefined && !repaymentPending}
         idPrefix="loan-facts"
         errorText="Couldn't load your loan details."
         retryLabel="Retry loading your loan details"
         onRetry={() => loanFactsQuery.refetch()}
       >
-        {loanFactsQuery.data && !repaymentQuery.isLoading && (
+        {loanFactsQuery.data && !repaymentPending && (
           <LoanForm facts={loanFactsQuery.data} lastRepayment={repaymentQuery.data?.amount ?? null} />
         )}
       </DetailStates>

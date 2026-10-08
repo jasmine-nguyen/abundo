@@ -7,7 +7,7 @@ import { screen } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 import { EMPTY_LOAN_FACTS, LOAN_FACTS, NO_REPAYMENT } from './factory';
 import { installFakeServer } from './support/fakeServer';
-import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { renderWithQueries, useTestQueryClient, drawHeld, refreshInAct, releaseAndSettle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { resetRouter } from './support/routerMock';
 import { LOAN_FORM_PLACEHOLDERS } from './support/loanForm';
@@ -50,4 +50,18 @@ it.each([
   for (const personal of ['3667', '600000', '770000', '5.74']) {
     expect(screen.queryByPlaceholderText(new RegExp(personal.replace('.', '\\.')))).toBeNull();
   }
+});
+
+// [A5] The form waits for the last repayment before it opens, so a slow repayment read can't
+// leave Scheduled repayment empty (its first value is only read once, when the form opens).
+it('Loan form: waits for a slow repayment read, then opens pre-filled', async () => {
+  server.seed('/loanfacts', EMPTY_LOAN_FACTS);
+  server.seed('/repayment', LAST_REPAYMENT);
+  const held = server.hold('/repayment');
+  drawHeld(<Loan />);
+  await refreshInAct(() => undefined);
+  expect(screen.queryByText('Save loan details')).toBeNull();
+
+  await releaseAndSettle(held);
+  expect(screen.getByPlaceholderText(LOAN_FORM_PLACEHOLDERS.base).props.value).toBe('3667');
 });

@@ -38,9 +38,11 @@ beforeEach(() => {
   mockState = { saveLoanFacts: jest.fn() as AppContext['saveLoanFacts'], showToast: jest.fn() as AppContext['showToast'] };
 });
 
-it('Loan form: does not open blank while saved facts are still loading', async () => {
+// WHIT-821: the form also waits for the last repayment (it pre-fills Scheduled repayment) —
+// with a spinner, never a blank screen.
+it.each(['/loanfacts', '/repayment'])('Loan form: shows a spinner, not a blank or empty form, while %s is loading', async (path) => {
   server.seed('/loanfacts', SAVED);
-  const held = server.hold('/loanfacts');
+  const held = server.hold(path);
   drawHeld(<Loan />);
   await refreshInAct(() => undefined);
   expect(screen.queryByText('Save loan details')).toBeNull();
