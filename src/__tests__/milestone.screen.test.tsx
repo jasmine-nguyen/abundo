@@ -110,7 +110,7 @@ it('Mortgage-screen Sprint summary shows real progress when the balance has load
   seedGoal(server, { homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
   await renderWithQueries(<Mortgage />);
   // Real Sprint model (from the live balance), not the old $50k chunks.
-  expect(screen.getByText('0 of 5 sprints reached')).toBeTruthy();
+  expect(screen.getByText('0 of 5 milestones reached')).toBeTruthy();
   expect(screen.getByText('Next: under $544,000')).toBeTruthy();
   expect(screen.queryByText(/chunks cleared/)).toBeNull();
 });
@@ -249,12 +249,12 @@ describe('WHIT-367 milestone read path', () => {
   it('renders the saved milestone plan when one exists', async () => {
     seedGoal(server, { milestones: SAVED_MILESTONES, homeLoan: { balance: 250000, asOf: null } });
     await renderWithQueries(<Milestone />);
-    // The user's own rows — label + step number derived from position.
-    expect(screen.getByText('Sprint 0 · Start')).toBeTruthy();
-    expect(screen.getByText('Sprint 1 · Midway')).toBeTruthy();
+    // The user's own rows, by the name the user gave each one.
+    expect(screen.getByText('Start')).toBeTruthy();
+    expect(screen.getByText('Midway')).toBeTruthy();
     expect(screen.getByText('under $300,000 · Jan 2026')).toBeTruthy();
     // The built-in default plan's rows must NOT appear once a saved plan is present.
-    expect(screen.queryByText('Sprint 0 · Kickoff')).toBeNull();
+    expect(screen.queryByText('Kickoff')).toBeNull();
     expect(screen.queryByText('under $544,000 · Jun 2026')).toBeNull();
   });
 
@@ -264,7 +264,7 @@ describe('WHIT-367 milestone read path', () => {
     // No hardcoded default any more — a user who hasn't set a plan gets an invite, not fake sprints.
     expect(screen.getByText(/You haven't set any milestones yet/)).toBeTruthy();
     expect(screen.getByText('Add milestones')).toBeTruthy();
-    expect(screen.queryByText('Sprint 0 · Kickoff')).toBeNull();
+    expect(screen.queryByText('Kickoff')).toBeNull();
     expect(screen.queryByText(/milestones reached/)).toBeNull();
   });
 });
@@ -530,7 +530,7 @@ describe('WHIT-459 empty-milestones gaps', () => {
     expect(screen.queryByText(/milestones reached/)).toBeNull();       // no "N of M" hero line
     expect(screen.queryByText(/target \$/)).toBeNull();                // no heroRowR "target $X"
     expect(screen.queryByText('NEXT MILESTONE')).toBeNull();           // nextMilestone is null
-    expect(screen.queryByText('Sprint 0 · Kickoff')).toBeNull();       // no fabricated sprints
+    expect(screen.queryByText('Kickoff')).toBeNull();       // no fabricated sprints
   });
 });
 

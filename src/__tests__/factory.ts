@@ -117,7 +117,7 @@ export function makeGoalData(over: Partial<GoalScreenData> = {}): GoalScreenData
     repaymentError: false,
     loanFactsLoaded: true,
     loanFactsError: false,
-    refetch: () => {},
+    refetch: () => Promise.resolve(),
     refetchStale: () => {},
     ...over,
   };

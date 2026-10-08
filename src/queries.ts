@@ -1168,7 +1168,7 @@ export interface GoalScreenData {
   // is the facts read's own first-load failure, the same firstLoadError rule as above.
   loanFactsLoaded: boolean;
   loanFactsError: boolean;
-  refetch: () => void;
+  refetch: () => Promise<unknown>; // force a refresh (the inline Retry buttons, and the pull)
   refetchStale: () => void;
 }
 

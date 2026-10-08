@@ -46,7 +46,7 @@ it("'ahead': shows the real date + '4y 1m early' + '$83,331' dodged, NOT the old
   seedPaydown({ homeLoan: { balance: 528000, asOf: null } });
   await renderWithQueries(<Mortgage />);
   expect(screen.getByText('Nov 2042')).toBeTruthy();
-  expect(screen.getByText('4y 1m early 🏁')).toBeTruthy();
+  expect(screen.getByText('4y 1m early')).toBeTruthy();
   expect(screen.getByText("Interest you'll dodge")).toBeTruthy();
   expect(screen.getByText('$83,331')).toBeTruthy();
   // Retired seed values must be nowhere on screen.
@@ -59,7 +59,7 @@ it("'partial': one card with the date + 'your extra gets you there', no dodged f
   seedPaydown({ homeLoan: { balance: 815000, asOf: null } });
   await renderWithQueries(<Mortgage />);
   expect(screen.getByText('Jun 2074')).toBeTruthy();
-  expect(screen.getByText('Your extra repayment is what gets you there 🏁')).toBeTruthy();
+  expect(screen.getByText('Your extra repayment is what gets you there')).toBeTruthy();
   // No "interest dodged" card in this state.
   expect(screen.queryByText("Interest you'll dodge")).toBeNull();
 });
@@ -69,14 +69,14 @@ it("'flat': the date on 'current repayments', no 'early' claim", async () => {
   await renderWithQueries(<Mortgage />);
   expect(screen.getByText('Dec 2046')).toBeTruthy();
   expect(screen.getByText('On your current repayments')).toBeTruthy();
-  expect(screen.queryByText(/early 🏁/)).toBeNull();
+  expect(screen.queryByText(/ early$/)).toBeNull();
 });
 
 it("'none': the honest 'won't pay off' nudge, no fabricated date", async () => {
   seedPaydown({ homeLoan: { balance: 900000, asOf: null } }); // payment < interest
   await renderWithQueries(<Mortgage />);
   expect(screen.getByText("Won't pay off at this rate")).toBeTruthy();
-  expect(screen.getByText(/Increase your repayment/)).toBeTruthy();
+  expect(screen.getByText(/Raising it, even a little/)).toBeTruthy();
   expect(screen.queryByText('Mortgage-free')).toBeNull();
 });
 
@@ -89,7 +89,7 @@ it("'none' with a payoff goal date: shows the required repayment, not the static
   expect(screen.getByText("Won't pay off at this rate")).toBeTruthy();
   // The real required-repayment prompt replaces the static "increase your repayment" copy.
   expect(screen.getByText(/To clear it by Jun 2035 you'd need .* more than now\./)).toBeTruthy();
-  expect(screen.queryByText(/Increase your repayment/)).toBeNull();
+  expect(screen.queryByText(/Raising it, even a little/)).toBeNull();
   // WHIT-215: a realistic goal shows NO "too soon" hint.
   expect(screen.queryByTestId('goal-too-aggressive-hint')).toBeNull();
 });
@@ -119,7 +119,7 @@ it("'none' with a too-soon goal date OVER $1M: shows the hint in place of the st
   // The hint replaces BOTH the (suppressed) figure and the generic static copy.
   expect(screen.getByTestId('goal-too-aggressive-hint')).toBeTruthy();
   expect(screen.queryByText(/To clear it by/)).toBeNull();
-  expect(screen.queryByText(/Increase your repayment/)).toBeNull();
+  expect(screen.queryByText(/Raising it, even a little/)).toBeNull();
 });
 
 it("'unready' (balance not loaded): renders NO payoff card at all", async () => {

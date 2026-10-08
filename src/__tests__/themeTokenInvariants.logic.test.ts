@@ -472,9 +472,7 @@ const BASELINE: Record<string, number> = {
   'app/category/edit.tsx': 4,
   'app/goal/edit.tsx': 4,
   'app/index.tsx': 8,
-  'app/milestone.tsx': 5,
   'app/milestone/edit.tsx': 1,
-  'app/mortgage.tsx': 10,
   'app/rules.tsx': 6,
   'app/transaction/[id].tsx': 1,
   'src/AuthGate.tsx': 1,
@@ -496,7 +494,7 @@ for (const [file, src] of shippedCode()) {
 
 describe('hand-written colours can only decrease', () => {
   it('the scan reaches real files and the detector detects (guards a vacuous pass)', () => {
-    expect(counts.size).toBeGreaterThan(20);
+    expect(counts.size).toBeGreaterThan(15);
     // the detector is real
     expect("backgroundColor: '#7c8cff'".match(RAW_COLOR)).toHaveLength(1);
     expect("borderColor: 'rgba(1,2,3,.5)'".match(RAW_COLOR)).toHaveLength(1);

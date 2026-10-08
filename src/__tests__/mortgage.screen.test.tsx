@@ -16,6 +16,7 @@ import { resetAuth } from './support/authMock';
 import { seedGoal } from './support/goalsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { SAVED_MILESTONES } from './support/milestonePlan';
+import { screenJson } from './support/pull';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({})));
@@ -59,10 +60,10 @@ it('mortgage Sprint summary reflects the saved plan (count + next target), not t
   // The default 5-sprint plan at this balance would read "3 of 5" / "under $170,000".
   seedGoal(server, { milestones: SAVED_MILESTONES, homeLoan: { balance: 250000, asOf: '2026-07-04T00:24:37.614Z' } });
   await renderWithQueries(<Mortgage />);
-  expect(screen.getByText('1 of 3 sprints reached')).toBeTruthy();
+  expect(screen.getByText('1 of 3 milestones reached')).toBeTruthy();
   expect(screen.getByText('Next: under $200,000')).toBeTruthy();
   // The default plan's rows/targets must NOT drive the mortgage screen once a plan is saved.
-  expect(screen.queryByText('3 of 5 sprints reached')).toBeNull();
+  expect(screen.queryByText('3 of 5 milestones reached')).toBeNull();
   expect(screen.queryByText('Next: under $170,000')).toBeNull();
   expect(screen.queryByText('Next: under $544,000')).toBeNull();
 });
@@ -72,7 +73,7 @@ it('mortgage Sprint summary shows the "set milestones" invite when none is saved
   await renderWithQueries(<Mortgage />);
   // No hardcoded default: a user who hasn't set a plan gets an invite, not fake sprints/progress.
   expect(screen.getByText('Set your payoff milestones')).toBeTruthy();
-  expect(screen.queryByText('0 of 5 sprints reached')).toBeNull();
+  expect(screen.queryByText('0 of 5 milestones reached')).toBeNull();
   expect(screen.queryByText('Next: under $544,000')).toBeNull();
 });
 
@@ -190,7 +191,7 @@ describe('mortgage hero — WHIT-391 sub-0.5% paydown, rendered', () => {
     seedGoal(server, { homeLoan: { balance: 498800, asOf: '2026-07-04T00:00:00Z' } });
     await renderWithQueries(<Mortgage />);
     expect(screen.getByText('1% gone')).toBeTruthy();
-    const tree = JSON.stringify(screen.toJSON());
+    const tree = screenJson();
     expect(tree).toContain('0.24%');        // Bar fill width uses the raw paidPct
     expect(tree).not.toContain('width":"1%'); // ...and is NOT snapped to the floored label
   });
