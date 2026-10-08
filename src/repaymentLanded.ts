@@ -30,7 +30,7 @@ export function isRepaymentNew(seen: string | null, repayment: Repayment, today:
 }
 
 export function repaymentLandedView(repayment: Repayment, m: MilestoneView) {
-  const amount = repayment.amount ?? 0;
+  const amount = repayment.amount!;
   const split = repayment.principal != null && repayment.interest != null;
   const headline = repayment.principal != null
     ? `${fmt(repayment.principal)} off your loan`
