@@ -27,6 +27,7 @@ import json
 from decimal import Decimal
 from functools import partial
 
+from _api_event import api_event
 from _feed_fakes import SPENDING, Repos, _row, inject_rule_routes
 
 
@@ -36,15 +37,6 @@ _CATEGORIES = ("groceries", "subscriptions", "insurance")
 def _rule(value, category_id="subscriptions", **kw):
     return {"field": "description", "operator": "contains", "value": value,
             "category_id": category_id, **kw}
-
-
-def _event(method, path, body=None, path_params=None):
-    event = {"rawPath": path, "requestContext": {"http": {"method": method}}}
-    if body is not None:
-        event["body"] = json.dumps(body)
-    if path_params is not None:
-        event["pathParameters"] = path_params
-    return event
 
 
 _inject = partial(inject_rule_routes, categories=_CATEGORIES)
@@ -71,7 +63,7 @@ def test_spread_non_boolean_is_a_400(handler, monkeypatch):
     repo = Repos()
     _inject(handler, monkeypatch, repo, transactions={})
     resp = handler.lambda_handler(
-        _event("POST", "/rules",
+        api_event("POST", "/rules",
                {"value": "NETFLIX", "categoryId": "subscriptions", "spread": "yes"}), None)
     assert resp["statusCode"] == 400
     assert "spread" in json.loads(resp["body"])["error"]
@@ -87,7 +79,7 @@ def test_a_second_spreading_rule_on_a_different_category_is_allowed(handler, mon
     _inject(handler, monkeypatch, repo,
             transactions={SPENDING: _fixed("ACME INSURANCE", "ACME INSURANCE PREMIUM", "-90.00")})
     resp = handler.lambda_handler(
-        _event("POST", "/rules",
+        api_event("POST", "/rules",
                {"value": "ACME INSURANCE", "categoryId": "insurance", "spread": True}), None)
     assert resp["statusCode"] == 201
     assert json.loads(resp["body"])["spread"] is True
@@ -100,7 +92,7 @@ def test_a_non_spread_second_rule_on_the_same_category_is_allowed(handler, monke
     repo = Repos(rules=[existing])
     _inject(handler, monkeypatch, repo, transactions={})
     resp = handler.lambda_handler(
-        _event("POST", "/rules", {"value": "SPOTIFY", "categoryId": "subscriptions"}), None)
+        api_event("POST", "/rules", {"value": "SPOTIFY", "categoryId": "subscriptions"}), None)
     assert resp["statusCode"] == 201
     assert json.loads(resp["body"])["spread"] is False
     assert len(repo.rule_repo.list_rules()) == 2
@@ -116,7 +108,7 @@ def test_turning_spread_off_through_put_clears_the_captured_bill(handler, monkey
     repo.rule_repo.mark_spread_seeded(rule_id)
     _inject(handler, monkeypatch, repo, transactions={})
     resp = handler.lambda_handler(
-        _event("PUT", "/rules/x",
+        api_event("PUT", "/rules/x",
                {"value": "NETFLIX", "categoryId": "subscriptions", "spread": False},
                path_params={"id": rule_id}), None)
     body = json.loads(resp["body"])
@@ -134,7 +126,7 @@ def test_toggling_spread_on_an_existing_plain_rule_captures_and_arms(handler, mo
     _inject(handler, monkeypatch, repo,
             transactions={SPENDING: _fixed("NETFLIX", "NETFLIX SUBSCRIPTION", "-15.99")})
     resp = handler.lambda_handler(
-        _event("PUT", "/rules/x",
+        api_event("PUT", "/rules/x",
                {"value": "NETFLIX", "categoryId": "subscriptions", "spread": True},
                path_params={"id": rule_id}), None)
     body = json.loads(resp["body"])
@@ -152,7 +144,7 @@ def test_text_edit_of_a_spread_rule_recaptures_and_rearms_through_the_route(hand
     _inject(handler, monkeypatch, repo,
             transactions={SPENDING: _fixed("SPOTIFY", "SPOTIFY PREMIUM", "-12.99")})
     resp = handler.lambda_handler(
-        _event("PUT", "/rules/x",
+        api_event("PUT", "/rules/x",
                {"value": "SPOTIFY", "categoryId": "subscriptions", "spread": True},
                path_params={"id": old_id}), None)
     body = json.loads(resp["body"])
@@ -174,7 +166,7 @@ def test_an_unrelated_edit_preserves_the_captured_amount_without_redetecting(han
     rule_id = repo.rule_repo.list_rules()[0]["id"]
     _inject(handler, monkeypatch, repo, transactions={})   # history aged out / empty
     resp = handler.lambda_handler(
-        _event("PUT", "/rules/x",
+        api_event("PUT", "/rules/x",
                {"value": "NETFLIX", "categoryId": "groceries", "spread": True},
                path_params={"id": rule_id}), None)
     body = json.loads(resp["body"])
@@ -190,7 +182,7 @@ def test_income_only_matches_capture_no_bill_and_reject_422(handler, monkeypatch
     payroll = _charges("ACME PAYROLL", "ACME PAYROLL", ["2500.00"] * 4, category="income")
     _inject(handler, monkeypatch, repo, transactions={SPENDING: payroll})
     resp = handler.lambda_handler(
-        _event("POST", "/rules",
+        api_event("POST", "/rules",
                {"value": "PAYROLL", "categoryId": "subscriptions", "spread": True}), None)
     assert resp["statusCode"] == 422
     assert repo.minted_rules() == []
@@ -201,7 +193,7 @@ def test_variable_amount_merchant_is_not_a_bill_422(handler, monkeypatch):
     varying = _charges("CORNER CAFE", "CORNER CAFE", ["-10.00", "-50.00", "-90.00", "-95.00"])
     _inject(handler, monkeypatch, repo, transactions={SPENDING: varying})
     resp = handler.lambda_handler(
-        _event("POST", "/rules",
+        api_event("POST", "/rules",
                {"value": "CORNER CAFE", "categoryId": "subscriptions", "spread": True}), None)
     assert resp["statusCode"] == 422
     assert repo.minted_rules() == []
@@ -214,7 +206,7 @@ def test_capture_is_the_detector_median_not_first_or_mean(handler, monkeypatch):
     charges = _charges("ORIGIN ENERGY", "ORIGIN ENERGY", ["-40.00", "-42.00", "-44.00", "-50.00"])
     _inject(handler, monkeypatch, repo, transactions={SPENDING: charges})
     resp = handler.lambda_handler(
-        _event("POST", "/rules",
+        api_event("POST", "/rules",
                {"value": "ORIGIN ENERGY", "categoryId": "subscriptions", "spread": True}), None)
     body = json.loads(resp["body"])
     assert resp["statusCode"] == 201
@@ -229,7 +221,7 @@ def test_multi_condition_spread_rule_captures_and_round_trips(handler, monkeypat
     _inject(handler, monkeypatch, repo,
             transactions={SPENDING: _fixed("NETFLIX", "NETFLIX SUBSCRIPTION", "-15.99")})
     resp = handler.lambda_handler(
-        _event("POST", "/rules",
+        api_event("POST", "/rules",
                {"categoryId": "subscriptions", "spread": True, "logic": "all",
                 "conditions": [{"field": "description", "operator": "contains", "value": "NETFLIX"},
                                {"field": "description", "operator": "contains",
@@ -248,7 +240,7 @@ def test_multi_condition_and_that_matches_no_single_bill_is_422(handler, monkeyp
     _inject(handler, monkeypatch, repo,
             transactions={SPENDING: _fixed("NETFLIX", "NETFLIX SUBSCRIPTION", "-15.99")})
     resp = handler.lambda_handler(
-        _event("POST", "/rules",
+        api_event("POST", "/rules",
                {"categoryId": "subscriptions", "spread": True, "logic": "all",
                 "conditions": [{"field": "description", "operator": "contains", "value": "NETFLIX"},
                                {"field": "description", "operator": "contains", "value": "GYMPASS"}]}),
@@ -264,7 +256,7 @@ def test_spread_fields_serialise_as_json_number_and_int(handler, monkeypatch):
     _inject(handler, monkeypatch, repo,
             transactions={SPENDING: _fixed("NETFLIX", "NETFLIX SUBSCRIPTION", "-15.99")})
     resp = handler.lambda_handler(
-        _event("POST", "/rules",
+        api_event("POST", "/rules",
                {"value": "NETFLIX", "categoryId": "subscriptions", "spread": True}), None)
     body = json.loads(resp["body"])
     assert isinstance(body["spreadAmount"], float)

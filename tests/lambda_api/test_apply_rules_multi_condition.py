@@ -5,6 +5,7 @@ import json
 
 from decimal import Decimal
 
+from _api_event import api_event
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
@@ -17,8 +18,7 @@ def _multi_rule(conditions, logic="all", category_id="transport"):
 
 
 def _apply_event(body):
-    return {"rawPath": "/transactions/uncategorized/apply-rules",
-            "requestContext": {"http": {"method": "POST"}}, "body": json.dumps(body)}
+    return api_event("POST", "/transactions/uncategorized/apply-rules", body=body)
 
 
 def _call(handler, charge, rules, body, categories=frozenset({"transport", "groceries"})):

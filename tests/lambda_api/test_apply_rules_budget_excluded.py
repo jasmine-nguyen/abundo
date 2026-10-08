@@ -7,6 +7,7 @@ Runs the real TransactionRepository and RuleRepository over one FakeTable, like 
 
 import json
 
+from _api_event import api_event
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
@@ -18,8 +19,7 @@ def _rule(value, category_id="groceries", *, budget_excluded=False):
 
 
 def _apply_event(body):
-    return {"rawPath": "/transactions/uncategorized/apply-rules",
-            "requestContext": {"http": {"method": "POST"}}, "body": json.dumps(body)}
+    return api_event("POST", "/transactions/uncategorized/apply-rules", body=body)
 
 
 def _call(handler, row, rules, body, categories=frozenset({"groceries", "coffee"})):

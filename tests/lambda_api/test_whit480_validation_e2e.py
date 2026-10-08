@@ -12,6 +12,7 @@ its own; nothing importable lives in conftest).
 
 import json
 
+from _api_event import api_event
 from _milestone_fakes import recording_notify_repo, stored_markers
 
 
@@ -47,12 +48,7 @@ class FakeBalanceRepo:
 # --- event builders ----------------------------------------------------------
 
 def _ms_event(rows):
-    return {
-        "rawPath": "/milestones",
-        "requestContext": {"http": {"method": "PUT"}},
-        "body": json.dumps({"milestones": rows}),
-        "isBase64Encoded": False,
-    }
+    return api_event("PUT", "/milestones", body={"milestones": rows}, is_base64=False)
 
 
 def _put_milestones(handler, rows, repo=None, notify=None):
@@ -70,13 +66,7 @@ VALID_MS = {"label": "Kickoff", "targetBalance": 544000, "targetDate": "2026-06-
 
 
 def _goal_event(body, goal_id="g1"):
-    return {
-        "rawPath": f"/goals/{goal_id}",
-        "requestContext": {"http": {"method": "PUT"}},
-        "pathParameters": {"id": goal_id},
-        "body": json.dumps(body),
-        "isBase64Encoded": False,
-    }
+    return api_event("PUT", f"/goals/{goal_id}", body=body, path_params={"id": goal_id}, is_base64=False)
 
 
 def _grow_body(**over):

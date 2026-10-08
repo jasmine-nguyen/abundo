@@ -16,6 +16,7 @@ from decimal import Decimal
 import pytest
 
 # Resolved via pytest.ini's pythonpath (tests/shared).
+from _api_event import api_event
 from _feed_fakes import ANZ, SPENDING, HOMELOAN, WESTPAC, date_reads, _feed_event, real_repos, _row
 from _transaction_range_fakes import _AccountPagesTransactionRepo
 
@@ -224,8 +225,7 @@ def test_limit_zero_is_clamped_to_one(handler):
 def test_missing_query_params_uses_defaults_not_500(handler):
     # API Gateway sends queryStringParameters: None when the query string is absent.
     table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})
-    event = {"rawPath": "/transactions/feed", "requestContext": {"http": {"method": "GET"}},
-             "queryStringParameters": None}
+    event = api_event("GET", "/transactions/feed", query=None)
     resp = handler.get_transactions_feed(event, repo)
     assert resp["statusCode"] == 200
     assert all(call[3] == handler.FEED_PAGE_SIZE for call in date_reads(table))

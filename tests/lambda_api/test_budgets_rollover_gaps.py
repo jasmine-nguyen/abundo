@@ -20,6 +20,7 @@ from functools import partial
 
 import json
 
+from _api_event import api_event
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo, pin_cycle_window
 from _budget_fakes import recording_budget_repo
 from _transaction_range_fakes import _QueuedTransactionRepo
@@ -145,13 +146,13 @@ def test_a_transaction_dated_exactly_on_cycle_start_is_current_not_sealed(handle
 
 
 def _put_budget_event(category="coffee", body=None):
-    return {
-        "rawPath": f"/budgets/{category}",
-        "requestContext": {"http": {"method": "PUT"}},
-        "pathParameters": {"category": category},
-        "body": body if body is not None else '{"target": 60}',
-        "isBase64Encoded": False,
-    }
+    return api_event(
+        "PUT",
+        f"/budgets/{category}",
+        raw=body if body is not None else '{"target": 60}',
+        path_params={"category": category},
+        is_base64=False,
+    )
 
 
 def test_turning_rollover_on_for_an_existing_budget_re_anchors_to_the_current_cycle(handler, monkeypatch):

@@ -9,6 +9,7 @@ import json
 from datetime import date
 from decimal import Decimal
 
+from _api_event import api_event
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _transaction_range_fakes import _DateFilteringTransactionRepo
 
@@ -52,10 +53,8 @@ TXNS = [
 
 
 def _event(cycle=None):
-    event = {"rawPath": "/transactions/cycle", "requestContext": {"http": {"method": "GET"}}}
-    if cycle is not None:
-        event["queryStringParameters"] = {"cycle": cycle}
-    return event
+    query = {"cycle": cycle} if cycle is not None else None
+    return api_event("GET", "/transactions/cycle", query=query)
 
 
 def _call(handler, monkeypatch, event):

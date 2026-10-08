@@ -20,6 +20,7 @@ clash/read-failure paths return before the history scan, which the table's query
 import json
 from decimal import Decimal
 
+from _api_event import api_event
 from _feed_fakes import FakeCategoryRepo, date_queries, real_repos
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
@@ -30,11 +31,7 @@ def _stored_rule(value, category_id, *, field="description", operator="contains"
 
 
 def _event(body):
-    return {
-        "rawPath": "/transactions/uncategorized/apply-rules",
-        "requestContext": {"http": {"method": "POST"}},
-        "body": json.dumps(body),
-    }
+    return api_event("POST", "/transactions/uncategorized/apply-rules", body=body)
 
 
 # --- [G1]-[G3] the boundary mapper -----------------------------------------------------------

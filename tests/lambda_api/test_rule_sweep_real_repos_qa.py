@@ -8,6 +8,7 @@ the handler over the real repositories, so a loosened comparison can't hide behi
 
 import json
 
+from _api_event import api_event
 from _feed_fakes import SPENDING, FakeCategoryRepo, _row, on_write, real_repos, set_category, stored
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
@@ -15,9 +16,7 @@ from _rule_ingest_fakes import apply_rules_to_uncategorized
 def _sweep(handler, repo, rule_repo):
     resp = apply_rules_to_uncategorized(
         handler,
-        {"rawPath": "/transactions/uncategorized/apply-rules",
-         "requestContext": {"http": {"method": "POST"}},
-         "body": json.dumps({"dryRun": False})},
+        api_event("POST", "/transactions/uncategorized/apply-rules", body={"dryRun": False}),
         repo, FakeCategoryRepo(("groceries", "coffee")), rule_repo)
     return resp, json.loads(resp["body"])
 

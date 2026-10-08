@@ -7,8 +7,9 @@ omits `checkpoints` still celebrates against the stored ladder. notify_goal_chec
 a recorder; the crossing math is unit-tested in tests/shared/test_goal_checkpoints.py.
 """
 
-import json
 from decimal import Decimal
+
+from _api_event import api_event
 
 
 class _FakeGoalsRepo:
@@ -38,13 +39,7 @@ class _FakeBalanceRepo:
 
 
 def _put_event(goal_id="g1", body=None):
-    return {
-        "rawPath": f"/goals/{goal_id}",
-        "requestContext": {"http": {"method": "PUT"}},
-        "pathParameters": {"id": goal_id},
-        "body": json.dumps(body),
-        "isBase64Encoded": False,
-    }
+    return api_event("PUT", f"/goals/{goal_id}", body=body, path_params={"id": goal_id}, is_base64=False)
 
 
 def _manual_grow_body(**over):

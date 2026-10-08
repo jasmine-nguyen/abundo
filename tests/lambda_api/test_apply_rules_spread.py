@@ -3,10 +3,10 @@ creating the category's spread plan ONCE across the whole run, create-only so a 
 clobbered. Runs the real TransactionRepository and RuleRepository over one FakeTable; a fake
 budget + pay-cycle repo record the seed."""
 
-import json
 from decimal import Decimal
 from functools import partial
 
+from _api_event import api_event
 from _budget_endpoint_fakes import _FakePayCycleRepo
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row
 
@@ -26,8 +26,7 @@ def _seed_marks(table):
 
 
 def _event(body):
-    return {"rawPath": "/transactions/uncategorized/apply-rules",
-            "requestContext": {"http": {"method": "POST"}}, "body": json.dumps(body)}
+    return api_event("POST", "/transactions/uncategorized/apply-rules", body=body)
 
 
 class FakeBudget:

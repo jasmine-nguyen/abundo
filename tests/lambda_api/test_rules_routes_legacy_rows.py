@@ -15,6 +15,7 @@ round trip over a legacy row.
 import json
 from functools import partial
 
+from _api_event import api_event
 from _feed_fakes import Repos, inject_rule_routes
 
 
@@ -34,10 +35,6 @@ def _legacy_row(value="COLES", category_id="groceries"):
     }
 
 
-def _event(method, path):
-    return {"rawPath": path, "requestContext": {"http": {"method": method}}}
-
-
 _inject = partial(inject_rule_routes, categories=("groceries",))
 
 
@@ -47,7 +44,7 @@ def test_get_rules_maps_a_legacy_row_to_the_clean_shape(handler, monkeypatch):
     store.table.seed(_legacy_row("COLES"))
     _inject(handler, monkeypatch, store)
 
-    resp = handler.lambda_handler(_event("GET", "/rules"), None)
+    resp = handler.lambda_handler(api_event("GET", "/rules"), None)
     body = json.loads(resp["body"])
 
     assert resp["statusCode"] == 200

@@ -14,6 +14,7 @@ import json
 from decimal import Decimal
 from functools import partial
 
+from _api_event import api_event
 from _budget_endpoint_fakes import _FakePayCycleRepo
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
 from _job_fakes import real_job_repo
@@ -40,8 +41,7 @@ def _seeded(rule_repo):
 
 
 def _event(body):
-    return {"rawPath": "/transactions/uncategorized/apply-rules",
-            "requestContext": {"http": {"method": "POST"}}, "body": json.dumps(body)}
+    return api_event("POST", "/transactions/uncategorized/apply-rules", body=body)
 
 
 class FakeBudget:

@@ -13,17 +13,14 @@ import json
 
 import pytest
 
+from _api_event import api_event
 from _feed_fakes import (
     ANZ, SPENDING, HOMELOAN, WESTPAC, FakeCategoryRepo, date_reads, real_repos, _row,
 )
 
 
 def _uncat_event(params=None):
-    return {
-        "rawPath": "/transactions/uncategorized/feed",
-        "requestContext": {"http": {"method": "GET"}},
-        "queryStringParameters": params,
-    }
+    return api_event("GET", "/transactions/uncategorized/feed", query=params)
 
 
 def _drain(handler, repo, category_repo, limit=None):
@@ -279,8 +276,7 @@ def test_limit_above_max_is_clamped(handler):
 
 def test_missing_query_params_uses_defaults_not_500(handler):
     table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1", category=None)]})
-    event = {"rawPath": "/transactions/uncategorized/feed",
-             "requestContext": {"http": {"method": "GET"}}, "queryStringParameters": None}
+    event = api_event("GET", "/transactions/uncategorized/feed", query=None)
     resp = handler.get_uncategorized_feed(event, repo, FakeCategoryRepo(set()))
     assert resp["statusCode"] == 200
 
@@ -314,10 +310,7 @@ def test_post_to_uncategorized_feed_is_not_routed(handler, monkeypatch):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: real_repos()[1])
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
 
-    event = {
-        "rawPath": "/transactions/uncategorized/feed",
-        "requestContext": {"http": {"method": "POST"}},
-    }
+    event = api_event("POST", "/transactions/uncategorized/feed")
     resp = handler.lambda_handler(event, None)
 
     assert resp["statusCode"] == 404

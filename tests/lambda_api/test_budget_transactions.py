@@ -14,6 +14,7 @@ from decimal import Decimal
 import pytest
 
 # Repo fakes + row/event builders, shared with the folded WHIT-362 gap tests (tests/shared).
+from _api_event import api_event
 from _budget_endpoint_fakes import (
     _FakeBudgetRepo,
     _FakeCategoryRepo,
@@ -197,9 +198,7 @@ def test_strips_pk_sk(handler, monkeypatch):
 
 
 def test_missing_category_id_returns_404(handler):
-    event = {"rawPath": "/budgets//transactions",
-             "requestContext": {"http": {"method": "GET"}},
-             "pathParameters": {}}
+    event = api_event("GET", "/budgets//transactions", path_params={})
     resp = handler.get_budget_transactions(
         event, _DateFilteringTransactionRepo([]), _FakePayCycleRepo(),
         _FakeCategoryRepo(CATEGORIES))
@@ -247,8 +246,7 @@ def test_router_put_budget_not_captured_by_transactions_route(handler, monkeypat
                         lambda *a: handler._json_response(200, {"id": "coffee", "target": 58}))
 
     resp = handler.lambda_handler(
-        {"rawPath": "/budgets/coffee", "requestContext": {"http": {"method": "PUT"}},
-         "pathParameters": {"category": "coffee"}, "body": '{"target": 58}'}, None)
+        api_event("PUT", "/budgets/coffee", raw='{"target": 58}', path_params={"category": "coffee"}), None)
 
     assert resp["statusCode"] == 200
 

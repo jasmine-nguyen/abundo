@@ -18,6 +18,7 @@ import json
 
 import pytest
 
+from _api_event import api_event
 from _feed_fakes import ANZ, FakeCategoryRepo, date_reads, real_repos, _row
 
 
@@ -252,10 +253,7 @@ def test_route_wires_to_get_filing_suggestions(handler, monkeypatch):
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo({"dining"}))
     monkeypatch.setattr(handler, "RuleRepository", lambda: rule_repo)
 
-    resp = handler.lambda_handler({
-        "rawPath": "/transactions/filing-suggestions",
-        "requestContext": {"http": {"method": "GET"}},
-    }, None)
+    resp = handler.lambda_handler(api_event("GET", "/transactions/filing-suggestions"), None)
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"])["suggestions"][0]["rulePattern"] == "SEDDONS EATERY"
@@ -271,9 +269,6 @@ def test_post_to_the_suggestions_path_is_not_routed(handler, monkeypatch):
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
     monkeypatch.setattr(handler, "RuleRepository", lambda: rule_repo)
 
-    resp = handler.lambda_handler({
-        "rawPath": "/transactions/filing-suggestions",
-        "requestContext": {"http": {"method": "POST"}},
-    }, None)
+    resp = handler.lambda_handler(api_event("POST", "/transactions/filing-suggestions"), None)
 
     assert resp["statusCode"] == 404

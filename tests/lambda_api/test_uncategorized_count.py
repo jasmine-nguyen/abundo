@@ -14,6 +14,7 @@ import json
 
 import pytest
 
+from _api_event import api_event
 from _feed_fakes import (
     ANZ, SPENDING, HOMELOAN, WESTPAC, FakeCategoryRepo, date_reads, real_repos, _row,
 )
@@ -88,10 +89,7 @@ def test_route_wires_to_get_uncategorized_count(handler, monkeypatch):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
 
-    event = {
-        "rawPath": "/transactions/uncategorized/count",
-        "requestContext": {"http": {"method": "GET"}},
-    }
+    event = api_event("GET", "/transactions/uncategorized/count")
     resp = handler.lambda_handler(event, None)
 
     assert resp["statusCode"] == 200
@@ -219,10 +217,7 @@ def test_post_to_count_path_is_not_routed_to_count(handler, monkeypatch):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: real_repos()[1])
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
 
-    event = {
-        "rawPath": "/transactions/uncategorized/count",
-        "requestContext": {"http": {"method": "POST"}},
-    }
+    event = api_event("POST", "/transactions/uncategorized/count")
     resp = handler.lambda_handler(event, None)
 
     assert resp["statusCode"] == 404
@@ -237,9 +232,6 @@ def test_unbounded_pagination_propagates_through_handler(handler, monkeypatch):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: endless)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
 
-    event = {
-        "rawPath": "/transactions/uncategorized/count",
-        "requestContext": {"http": {"method": "GET"}},
-    }
+    event = api_event("GET", "/transactions/uncategorized/count")
     with pytest.raises(RuntimeError, match="did not finish"):
         handler.lambda_handler(event, None)

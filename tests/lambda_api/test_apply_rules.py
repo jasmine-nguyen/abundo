@@ -14,6 +14,7 @@ import json
 
 import pytest
 
+from _api_event import api_event
 from _feed_fakes import (
     ANZ, SPENDING, FakeCategoryRepo, charge_writes, date_queries, fail_writes, on_write,
     real_repos, _row, set_category, stored, vanish_on_write,
@@ -32,13 +33,7 @@ def _rule_ids(rule_repo):
 
 
 def _apply_event(body=None, method="POST"):
-    event = {
-        "rawPath": "/transactions/uncategorized/apply-rules",
-        "requestContext": {"http": {"method": method}},
-    }
-    if body is not None:
-        event["body"] = json.dumps(body)
-    return event
+    return api_event(method, "/transactions/uncategorized/apply-rules", body=body)
 
 
 def _call(handler, repo, rule_repo, body, categories=frozenset({"groceries", "coffee"})):

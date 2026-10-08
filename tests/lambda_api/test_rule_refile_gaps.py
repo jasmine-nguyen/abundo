@@ -10,6 +10,7 @@ that minted it; a NEW id comes from the response body.
 
 import json
 
+from _api_event import api_event
 from _feed_fakes import ANZ, SPENDING, FakeCategoryRepo, fail_writes, real_repos, _row, stored
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
@@ -28,21 +29,17 @@ def _seed_rule(value, category_id="groceries", field="description", operator="co
 
 
 def _put_event(rule_id, value, category_id, field="description", operator="contains"):
-    return {
-        "rawPath": f"/rules/{rule_id}",
-        "requestContext": {"http": {"method": "PUT"}},
-        "pathParameters": {"id": rule_id},
-        "body": json.dumps({"value": value, "categoryId": category_id,
-                            "field": field, "operator": operator}),
-    }
+    return api_event(
+        "PUT",
+        f"/rules/{rule_id}",
+        body={"value": value, "categoryId": category_id,
+              "field": field, "operator": operator},
+        path_params={"id": rule_id},
+    )
 
 
 def _delete_event(rule_id):
-    return {
-        "rawPath": f"/rules/{rule_id}",
-        "requestContext": {"http": {"method": "DELETE"}},
-        "pathParameters": {"id": rule_id},
-    }
+    return api_event("DELETE", f"/rules/{rule_id}", path_params={"id": rule_id})
 
 
 def _update(handler, rule_repo, txn_repo, event, categories=_CATEGORIES):
@@ -56,8 +53,7 @@ def _delete(handler, rule_repo, txn_repo, event):
 
 
 def _apply(handler, repo, rule_repo, body, categories=_CATEGORIES):
-    event = {"rawPath": "/transactions/uncategorized/apply-rules",
-             "requestContext": {"http": {"method": "POST"}}, "body": json.dumps(body)}
+    event = api_event("POST", "/transactions/uncategorized/apply-rules", body=body)
     resp = apply_rules_to_uncategorized(
         handler,
         event, repo, FakeCategoryRepo(categories), rule_repo)

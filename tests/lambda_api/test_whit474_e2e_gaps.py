@@ -19,6 +19,7 @@ from functools import partial
 
 import pytest
 
+from _api_event import api_event
 from _budget_endpoint_fakes import _FakePayCycleRepo, pin_cycle_window
 from _category_fakes import _cat, _schema
 from _dynamo_fakes import FakeTable
@@ -60,13 +61,13 @@ def _stored_bucket(cat_repo, cat_id):
 
 
 def _event(bucket, cat_id="sink"):
-    return {
-        "rawPath": f"/categories/{cat_id}",
-        "requestContext": {"http": {"method": "PATCH"}},
-        "pathParameters": {"id": cat_id},
-        "body": json.dumps({"name": "Sink", "bucket": bucket}),
-        "isBase64Encoded": False,
-    }
+    return api_event(
+        "PATCH",
+        f"/categories/{cat_id}",
+        body={"name": "Sink", "bucket": bucket},
+        path_params={"id": cat_id},
+        is_base64=False,
+    )
 
 
 def _rollover_entry(target=100, carryover=0, carryover_from="2026-05-08"):

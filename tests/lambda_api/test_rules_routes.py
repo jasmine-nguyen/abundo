@@ -13,6 +13,7 @@ from functools import partial
 
 import pytest
 
+from _api_event import api_event
 from _feed_fakes import Repos, inject_rule_routes
 from _terraform import app_route_keys
 
@@ -26,16 +27,10 @@ def _rule(value, category_id="groceries", field="description", operator="contain
 
 
 def _event(method, path, body=None, path_params=None, base64_body=False):
-    event = {"rawPath": path, "requestContext": {"http": {"method": method}}}
-    if body is not None:
-        if base64_body:
-            event["body"] = base64.b64encode(json.dumps(body).encode()).decode()
-            event["isBase64Encoded"] = True
-        else:
-            event["body"] = json.dumps(body)
-    if path_params is not None:
-        event["pathParameters"] = path_params
-    return event
+    if body is not None and base64_body:
+        raw = base64.b64encode(json.dumps(body).encode()).decode()
+        return api_event(method, path, raw=raw, path_params=path_params, is_base64=True)
+    return api_event(method, path, body=body, path_params=path_params)
 
 
 _inject = partial(inject_rule_routes, categories=_CATEGORIES)
@@ -201,7 +196,7 @@ def test_create_rule_rejects_unverified_vocab_400(handler, monkeypatch, bad):
 
 def test_create_rule_invalid_json_is_400(handler, monkeypatch):
     _inject(handler, monkeypatch, Repos())
-    event = {"rawPath": "/rules", "requestContext": {"http": {"method": "POST"}}, "body": "{bad"}
+    event = api_event("POST", "/rules", raw="{bad")
     resp = handler.lambda_handler(event, None)
     assert resp["statusCode"] == 400
 

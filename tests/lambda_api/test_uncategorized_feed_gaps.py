@@ -25,15 +25,12 @@ import json
 
 import pytest
 
+from _api_event import api_event
 from _feed_fakes import ANZ, SPENDING, FakeCategoryRepo, real_repos, _row
 
 
 def _uncat_event(params=None):
-    return {
-        "rawPath": "/transactions/uncategorized/feed",
-        "requestContext": {"http": {"method": "GET"}},
-        "queryStringParameters": params,
-    }
+    return api_event("GET", "/transactions/uncategorized/feed", query=params)
 
 
 def _drain(handler, repo, category_repo, limit=None):

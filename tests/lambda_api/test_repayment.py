@@ -9,6 +9,7 @@ non-repayment rows ignored, and the route's JSON shaping.
 import json
 from decimal import Decimal
 
+from _api_event import api_event
 from _transaction_range_fakes import _QueuedTransactionRepo
 
 
@@ -91,7 +92,7 @@ def test_returns_a_sub_ten_dollar_repayment(handler):
 def test_route_get_repayment_json_numbers(handler, monkeypatch):
     repo = _QueuedTransactionRepo([_repayment("2026-07-01"), _interest("2026-07-05")])
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
-    event = {"rawPath": "/repayment", "requestContext": {"http": {"method": "GET"}}}
+    event = api_event("GET", "/repayment")
     resp = handler.lambda_handler(event, None)
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"amount": 1440, "date": "2026-07-01", "principal": 1208, "interest": 232}
@@ -99,7 +100,7 @@ def test_route_get_repayment_json_numbers(handler, monkeypatch):
 
 def test_route_get_repayment_null_sentinel(handler, monkeypatch):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: _QueuedTransactionRepo([]))
-    event = {"rawPath": "/repayment", "requestContext": {"http": {"method": "GET"}}}
+    event = api_event("GET", "/repayment")
     resp = handler.lambda_handler(event, None)
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"amount": None, "date": None, "principal": None, "interest": None}
@@ -371,7 +372,7 @@ def test_route_sums_multi_leg_interest_json(handler, monkeypatch):
     # subtraction + encoding stay exact (not float). Revert -> 300/1140.
     rows = [_interest("2026-07-20", "-300"), _interest("2026-07-05", "-232"), _repayment("2026-07-01")]
     monkeypatch.setattr(handler, "TransactionRepository", lambda: _QueuedTransactionRepo(rows))
-    event = {"rawPath": "/repayment", "requestContext": {"http": {"method": "GET"}}}
+    event = api_event("GET", "/repayment")
     resp = handler.lambda_handler(event, None)
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {

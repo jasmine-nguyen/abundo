@@ -27,6 +27,7 @@ from decimal import Decimal
 
 import pytest
 
+from _api_event import api_event
 from _dynamo_fakes import FakeTable
 from _milestone_fakes import recording_notify_repo, stored_markers
 
@@ -56,8 +57,7 @@ class FakeLoanFactsRepo:
 
 
 def _put_event(rows):
-    return {"rawPath": "/milestones", "requestContext": {"http": {"method": "PUT"}},
-            "body": json.dumps({"milestones": rows}), "isBase64Encoded": False}
+    return api_event("PUT", "/milestones", body={"milestones": rows}, is_base64=False)
 
 
 # --- handler-level: migrate only minted rows, at the notify shared scope -------------------

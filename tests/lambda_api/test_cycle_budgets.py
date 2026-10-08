@@ -12,6 +12,7 @@ from decimal import Decimal
 
 import pytest
 
+from _api_event import api_event
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _budget_fakes import recording_budget_repo
 from _transaction_range_fakes import _DateFilteringTransactionRepo
@@ -106,7 +107,7 @@ def wired(handler, monkeypatch):
 
 
 def _get(handler, path, query=None):
-    event = {"rawPath": path, "requestContext": {"http": {"method": "GET"}}}
+    event = api_event("GET", path)
     if query is not None:
         event["queryStringParameters"] = query
     response = handler.lambda_handler(event, None)

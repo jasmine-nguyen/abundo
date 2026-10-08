@@ -8,6 +8,7 @@ them. The marker is what stops a BankSync re-send bringing the charge back.
 import json
 import time
 
+from _api_event import api_event
 from _feed_fakes import WESTPAC, Repos, _row
 
 _DUPLICATE_ID = "westpac-claude-sub-pending"
@@ -15,16 +16,9 @@ _SIBLING_ID = "westpac-claude-sub-posted"
 _FEED_WINDOW_SECONDS = 7 * 24 * 3600
 
 
-def _event(method, path, path_params=None):
-    event = {"rawPath": path, "requestContext": {"http": {"method": method}}}
-    if path_params is not None:
-        event["pathParameters"] = path_params
-    return event
-
-
 def _delete(handler, transaction_id):
     return handler.lambda_handler(
-        _event("DELETE", f"/transactions/{transaction_id}", {"id": transaction_id}), None)
+        api_event("DELETE", f"/transactions/{transaction_id}", path_params={"id": transaction_id}), None)
 
 
 def test_user_can_delete_a_charge_and_it_is_marked_so_a_resend_cannot_bring_it_back(
@@ -65,6 +59,6 @@ def test_user_can_delete_a_charge_and_it_is_marked_so_a_resend_cannot_bring_it_b
 
     # The PATCH item route still routes.
     patch = handler.lambda_handler(
-        {**_event("PATCH", f"/transactions/{_SIBLING_ID}", {"id": _SIBLING_ID}),
+        {**api_event("PATCH", f"/transactions/{_SIBLING_ID}", path_params={"id": _SIBLING_ID}),
          "body": json.dumps({"notes": "kept"})}, None)
     assert patch["statusCode"] == 200

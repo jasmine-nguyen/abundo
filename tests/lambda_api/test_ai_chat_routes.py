@@ -7,6 +7,7 @@ import json
 
 import pytest
 
+from _api_event import api_event
 from _job_fakes import created_jobs, real_job_repo
 
 
@@ -28,14 +29,12 @@ def lambda_client(handler, monkeypatch):
 
 
 def _post(handler, job_repo, body):
-    event = {"rawPath": "/ai/chat", "requestContext": {"http": {"method": "POST"}},
-             "body": json.dumps(body)}
+    event = api_event("POST", "/ai/chat", body=body)
     return handler.start_ai_chat_job(event, job_repo)
 
 
 def _get_event(job_id):
-    return {"rawPath": f"/ai/chat/jobs/{job_id}", "requestContext": {"http": {"method": "GET"}},
-            "pathParameters": {"id": job_id}}
+    return api_event("GET", f"/ai/chat/jobs/{job_id}", path_params={"id": job_id})
 
 
 def _user(text="How much on eating out?"):
@@ -130,7 +129,7 @@ def test_router_dispatches_both_chat_routes(handler, monkeypatch):
     monkeypatch.setattr(handler, "start_ai_chat_job", lambda event, repo: handler._json_response(202, {"r": "post"}))
     monkeypatch.setattr(handler, "get_ai_chat_job", lambda event, repo: handler._json_response(200, {"r": "get"}))
 
-    post = handler.lambda_handler({"rawPath": "/ai/chat", "requestContext": {"http": {"method": "POST"}}}, None)
+    post = handler.lambda_handler(api_event("POST", "/ai/chat"), None)
     get = handler.lambda_handler(_get_event("j1"), None)
     assert json.loads(post["body"]) == {"r": "post"}
     assert json.loads(get["body"]) == {"r": "get"}

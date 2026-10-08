@@ -14,15 +14,11 @@ Complements test_rules_routes_multi_condition.py. Probes the validator seams tha
 import json
 from functools import partial
 
+from _api_event import api_event
 from _feed_fakes import Repos, inject_rule_routes
 
 
 _CATEGORIES = ("transport", "groceries")
-
-
-def _event(method, path, body):
-    return {"rawPath": path, "requestContext": {"http": {"method": method}},
-            "body": json.dumps(body)}
 
 
 _inject = partial(inject_rule_routes, categories=_CATEGORIES)
@@ -30,7 +26,7 @@ _inject = partial(inject_rule_routes, categories=_CATEGORIES)
 
 def _post(handler, monkeypatch, repo, conditions, logic="all", category_id="transport"):
     body = {"conditions": conditions, "logic": logic, "categoryId": category_id}
-    return handler.lambda_handler(_event("POST", "/rules", body), None)
+    return handler.lambda_handler(api_event("POST", "/rules", body), None)
 
 
 # --- amount as a JSON number vs string --------------------------------------------------------
@@ -181,7 +177,7 @@ def test_single_condition_create_emits_null_conditions(handler, monkeypatch):
     repo = Repos()
     _inject(handler, monkeypatch, repo)
     resp = handler.lambda_handler(
-        _event("POST", "/rules", {"value": "COLES", "categoryId": "groceries"}), None)
+        api_event("POST", "/rules", {"value": "COLES", "categoryId": "groceries"}), None)
     out = json.loads(resp["body"])
     assert resp["statusCode"] == 201
     assert out["conditions"] is None and out["logic"] is None

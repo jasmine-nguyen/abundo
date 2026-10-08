@@ -8,6 +8,7 @@ import json
 
 import pytest
 
+from _api_event import api_event
 from _dynamo_fakes import _client_error
 from _feed_fakes import WESTPAC, Repos, _row
 from _terraform import app_route_keys
@@ -18,12 +19,9 @@ _MARKER_KEY = (f"DELETED#ACCOUNT#{WESTPAC}", f"TXN#{_DUP}")
 
 
 def _event(transaction_id, path_params="default"):
-    event = {"rawPath": f"/transactions/{transaction_id}", "requestContext": {"http": {"method": "DELETE"}}}
     if path_params == "default":
-        event["pathParameters"] = {"id": transaction_id}
-    elif path_params is not None:
-        event["pathParameters"] = path_params
-    return event
+        path_params = {"id": transaction_id}
+    return api_event("DELETE", f"/transactions/{transaction_id}", path_params=path_params)
 
 
 @pytest.fixture

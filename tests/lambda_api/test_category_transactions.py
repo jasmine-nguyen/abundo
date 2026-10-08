@@ -13,6 +13,7 @@ from decimal import Decimal
 
 import pytest
 
+from _api_event import api_event
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _transaction_range_fakes import _AccountTransactionRepo, _DateFilteringTransactionRepo
 
@@ -53,14 +54,8 @@ def _txn(txn_id, category, amount, date_, status="posted", counts=True, excluded
 
 
 def _event(category_id="coffee", cycle=None):
-    event = {
-        "rawPath": f"/categories/{category_id}/transactions",
-        "requestContext": {"http": {"method": "GET"}},
-        "pathParameters": {"id": category_id},
-    }
-    if cycle is not None:
-        event["queryStringParameters"] = {"cycle": cycle}
-    return event
+    query = {"cycle": cycle} if cycle is not None else None
+    return api_event("GET", f"/categories/{category_id}/transactions", path_params={"id": category_id}, query=query)
 
 
 def _pin_today(monkeypatch, day=date(2026, 7, 25)):
@@ -197,8 +192,7 @@ def test_cycle_out_of_range_returns_400(handler):
 
 
 def test_missing_category_id_returns_404(handler):
-    event = {"rawPath": "/categories//transactions",
-             "requestContext": {"http": {"method": "GET"}}, "pathParameters": {}}
+    event = api_event("GET", "/categories//transactions", path_params={})
     resp = handler.get_category_transactions(
         event, _DateFilteringTransactionRepo([]), _FakePayCycleRepo(), _FakeCategoryRepo(CATS))
     assert resp["statusCode"] == 404
@@ -257,8 +251,7 @@ def test_router_patch_category_not_captured_by_transactions_route(handler, monke
                         lambda *a: handler._json_response(200, {"id": "coffee"}))
 
     resp = handler.lambda_handler(
-        {"rawPath": "/categories/coffee", "requestContext": {"http": {"method": "PATCH"}},
-         "pathParameters": {"id": "coffee"}, "body": "{}"}, None)
+        api_event("PATCH", "/categories/coffee", raw="{}", path_params={"id": "coffee"}), None)
 
     assert resp["statusCode"] == 200
 

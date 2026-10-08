@@ -17,6 +17,7 @@ from functools import partial
 
 import pytest
 
+from _api_event import api_event
 from _budget_endpoint_fakes import _FakePayCycleRepo, _SpendCategoryRepo, _spend_cat, pin_cycle_window
 from _budget_fakes import recording_budget_repo
 from _terraform import app_route_keys
@@ -295,21 +296,17 @@ def test_the_handlers_spread_field_list_matches_the_repositorys(handler):
 
 
 def _put_spread_event(category="insurance", body='{"amount": 1390.91, "cycles": 4}'):
-    return {
-        "rawPath": f"/budgets/{category}/spread",
-        "requestContext": {"http": {"method": "PUT"}},
-        "pathParameters": {"category": category},
-        "body": body,
-        "isBase64Encoded": False,
-    }
+    return api_event(
+        "PUT",
+        f"/budgets/{category}/spread",
+        raw=body,
+        path_params={"category": category},
+        is_base64=False,
+    )
 
 
 def _delete_spread_event(category="insurance"):
-    return {
-        "rawPath": f"/budgets/{category}/spread",
-        "requestContext": {"http": {"method": "DELETE"}},
-        "pathParameters": {"category": category},
-    }
+    return api_event("DELETE", f"/budgets/{category}/spread", path_params={"category": category})
 
 
 def _budgeted(**extra):
@@ -414,13 +411,13 @@ def test_turning_rollover_on_is_rejected_while_a_spread_is_active(handler):
     # Mutual exclusion, direction 2: the mirror guard on PUT /budgets/{id}.
     repo = _budgeted(spread_amount=BILL, spread_cycles=Decimal(4), spread_from=CYCLE_START,
                      spread_len=Decimal(LENGTH), spread_paydate=PAYDATE)
-    event = {
-        "rawPath": "/budgets/insurance",
-        "requestContext": {"http": {"method": "PUT"}},
-        "pathParameters": {"category": "insurance"},
-        "body": '{"target": 250, "rollover": true}',
-        "isBase64Encoded": False,
-    }
+    event = api_event(
+        "PUT",
+        "/budgets/insurance",
+        raw='{"target": 250, "rollover": true}',
+        path_params={"category": "insurance"},
+        is_base64=False,
+    )
 
     resp = handler.set_budget(event, repo, _SpendCategoryRepo(), FakePayCycleRepo())
 
@@ -433,13 +430,13 @@ def test_a_plain_target_edit_is_still_allowed_while_a_spread_is_active(handler):
     # Only the rollover flag is guarded; changing the amount with a spread on is fine.
     repo = _budgeted(spread_amount=BILL, spread_cycles=Decimal(4), spread_from=CYCLE_START,
                      spread_len=Decimal(LENGTH), spread_paydate=PAYDATE)
-    event = {
-        "rawPath": "/budgets/insurance",
-        "requestContext": {"http": {"method": "PUT"}},
-        "pathParameters": {"category": "insurance"},
-        "body": '{"target": 300}',
-        "isBase64Encoded": False,
-    }
+    event = api_event(
+        "PUT",
+        "/budgets/insurance",
+        raw='{"target": 300}',
+        path_params={"category": "insurance"},
+        is_base64=False,
+    )
 
     resp = handler.set_budget(event, repo, _SpendCategoryRepo(), FakePayCycleRepo())
 
@@ -523,14 +520,14 @@ def test_a_category_whose_id_is_literally_spread_still_reaches_the_item_routes(h
     monkeypatch.setattr(handler, "CategoryRepository", lambda: _SpendCategoryRepo(_spend_cat("spread")))
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: FakePayCycleRepo())
 
-    put = handler.lambda_handler({
-        "rawPath": "/budgets/spread", "requestContext": {"http": {"method": "PUT"}},
-        "pathParameters": {"category": "spread"}, "body": '{"target": 60}', "isBase64Encoded": False,
-    }, None)
-    delete = handler.lambda_handler({
-        "rawPath": "/budgets/spread", "requestContext": {"http": {"method": "DELETE"}},
-        "pathParameters": {"category": "spread"},
-    }, None)
+    put = handler.lambda_handler(api_event(
+        "PUT",
+        "/budgets/spread",
+        raw='{"target": 60}',
+        path_params={"category": "spread"},
+        is_base64=False,
+    ), None)
+    delete = handler.lambda_handler(api_event("DELETE", "/budgets/spread", path_params={"category": "spread"}), None)
 
     assert put["statusCode"] == 200
     assert repo.set_calls == [("spread", Decimal(60))]

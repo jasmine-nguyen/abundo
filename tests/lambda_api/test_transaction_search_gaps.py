@@ -8,16 +8,13 @@ calls get_transactions_search directly):
 
 import pytest
 
+from _api_event import api_event
 from _budget_endpoint_fakes import _FakeCategoryRepo
 from _feed_fakes import ANZ, date_reads, real_repos, _row
 
 
 def _event(params, method="GET"):
-    return {
-        "rawPath": "/transactions/search",
-        "requestContext": {"http": {"method": method}},
-        "queryStringParameters": params,
-    }
+    return api_event(method, "/transactions/search", query=params)
 
 
 @pytest.fixture

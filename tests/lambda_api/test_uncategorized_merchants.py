@@ -18,6 +18,7 @@ import json
 
 import pytest
 
+from _api_event import api_event
 from _feed_fakes import ANZ, SPENDING, WESTPAC, FakeCategoryRepo, date_reads, real_repos, _row
 from _transaction_range_fakes import _EndlessTransactionRepo
 
@@ -451,10 +452,7 @@ def test_route_wires_to_get_uncategorized_merchants(handler, monkeypatch):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
 
-    resp = handler.lambda_handler({
-        "rawPath": "/transactions/uncategorized/merchants",
-        "requestContext": {"http": {"method": "GET"}},
-    }, None)
+    resp = handler.lambda_handler(api_event("GET", "/transactions/uncategorized/merchants"), None)
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"])["groups"][0]["rulePattern"] == "ALDI"
@@ -469,10 +467,7 @@ def test_post_to_the_merchants_path_is_not_routed(handler, monkeypatch):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: real_repos()[1])
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
 
-    resp = handler.lambda_handler({
-        "rawPath": "/transactions/uncategorized/merchants",
-        "requestContext": {"http": {"method": "POST"}},
-    }, None)
+    resp = handler.lambda_handler(api_event("POST", "/transactions/uncategorized/merchants"), None)
 
     assert resp["statusCode"] == 404
 

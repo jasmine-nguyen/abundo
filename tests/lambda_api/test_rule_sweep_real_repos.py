@@ -11,6 +11,7 @@ the stored row — not by a fake deciding the outcome.
 
 import json
 
+from _api_event import api_event
 from _feed_fakes import SPENDING, FakeCategoryRepo, _row, real_repos
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
@@ -43,9 +44,7 @@ def test_apply_rules_files_through_the_real_repositories_and_a_mid_run_tap_wins(
 
     resp = apply_rules_to_uncategorized(
         handler,
-        {"rawPath": "/transactions/uncategorized/apply-rules",
-         "requestContext": {"http": {"method": "POST"}},
-         "body": json.dumps({"dryRun": False})},
+        api_event("POST", "/transactions/uncategorized/apply-rules", body={"dryRun": False}),
         transaction_repo, FakeCategoryRepo(("groceries", "coffee")), rule_repo)
     body = json.loads(resp["body"])
 
@@ -79,9 +78,7 @@ def test_deleting_a_rule_undoes_its_fills_through_the_real_repositories(handler)
         lambda key, tbl: _tap(tbl, "b", "coffee") if key["sk"] == "TXN#a" else None)
 
     resp = handler.delete_rule_route(
-        {"rawPath": f"/rules/{rule_id}",
-         "requestContext": {"http": {"method": "DELETE"}},
-         "pathParameters": {"id": rule_id}},
+        api_event("DELETE", f"/rules/{rule_id}", path_params={"id": rule_id}),
         rule_repo, transaction_repo)
     body = json.loads(resp["body"])
 

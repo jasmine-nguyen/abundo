@@ -11,6 +11,7 @@ module scope: ``real_repos`` imports ``repository`` lazily, so inside a ``handle
 builds the repositories from the same freshly loaded copy the handler uses.
 """
 
+from _api_event import api_event
 from _dynamo_fakes import FakeTable
 
 # The internal account ids, in ACCOUNT_ID_MAP order.
@@ -130,11 +131,7 @@ def on_write(table, transaction_id, action):
 
 
 def _feed_event(params=None):
-    return {
-        "rawPath": "/transactions/feed",
-        "requestContext": {"http": {"method": "GET"}},
-        "queryStringParameters": params,
-    }
+    return api_event("GET", "/transactions/feed", query=params)
 
 
 class FakeCategoryRepo:

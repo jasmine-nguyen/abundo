@@ -20,16 +20,12 @@ def _today_utc():
     return datetime.now(timezone.utc).date()
 
 
+from _api_event import api_event
 from _paycycle_fakes import paycycle_repo, stored_cycle
 
 
 def _put_paycycle_event(body='{"length": 7, "last_pay_date": "2024-06-05"}', is_b64=False):
-    return {
-        "rawPath": "/paycycle",
-        "requestContext": {"http": {"method": "PUT"}},
-        "body": body,
-        "isBase64Encoded": is_b64,
-    }
+    return api_event("PUT", "/paycycle", raw=body, is_base64=is_b64)
 
 
 # --- handler-level: PUT /paycycle --------------------------------------------
@@ -162,10 +158,7 @@ def test_get_paycycle_dispatch(handler, monkeypatch):
     table, repo = paycycle_repo({"length": 14, "last_pay_date": "2024-01-03"})
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: repo)
 
-    resp = handler.lambda_handler({
-        "rawPath": "/paycycle",
-        "requestContext": {"http": {"method": "GET"}},
-    }, None)
+    resp = handler.lambda_handler(api_event("GET", "/paycycle"), None)
 
     assert resp["statusCode"] == 200
     # days_left = next payday (03 + 14 = 17) - today (10) = 7.
@@ -205,10 +198,7 @@ def test_unknown_paycycle_method_falls_through_404(handler, monkeypatch):
     # DELETE /paycycle isn't a route -> catch-all 404.
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: paycycle_repo()[1])
 
-    resp = handler.lambda_handler({
-        "rawPath": "/paycycle",
-        "requestContext": {"http": {"method": "DELETE"}},
-    }, None)
+    resp = handler.lambda_handler(api_event("DELETE", "/paycycle"), None)
 
     assert resp["statusCode"] == 404
 

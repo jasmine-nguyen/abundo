@@ -13,6 +13,7 @@ can't see:
 
 import json
 
+from _api_event import api_event
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
 from _job_fakes import real_job_repo
 from _rule_ingest_fakes import apply_rules_to_uncategorized
@@ -52,8 +53,7 @@ def test_apply_route_time_budget_reads_the_handlers_clock(handler, monkeypatch):
     monkeypatch.setattr(handler, "time", _FutureStepClock(step=4))
     rows = [_row(SPENDING, f"2026-07-0{n}", f"t{n}", description="COLES") for n in range(1, 6)]
     table, repo, rule_repo = real_repos({SPENDING: rows}, rules=[_store_rule("coles")])
-    event = {"rawPath": "/transactions/uncategorized/apply-rules",
-             "requestContext": {"http": {"method": "POST"}}, "body": json.dumps({"dryRun": False})}
+    event = api_event("POST", "/transactions/uncategorized/apply-rules", body={"dryRun": False})
 
     resp = apply_rules_to_uncategorized(
         handler,
@@ -74,8 +74,7 @@ def test_delete_route_time_budget_reads_the_handlers_clock(handler, monkeypatch)
     rule_id = rule_repo.list_rules()[0]["id"]
     table.seed(*[_row(SPENDING, f"2026-07-0{n}", f"t{n}", description="COLES",
                       category="groceries", filed_by_rule=rule_id) for n in range(1, 4)])
-    event = {"rawPath": f"/rules/{rule_id}", "requestContext": {"http": {"method": "DELETE"}},
-             "pathParameters": {"id": rule_id}}
+    event = api_event("DELETE", f"/rules/{rule_id}", path_params={"id": rule_id})
 
     body = json.loads(handler.delete_rule_route(event, rule_repo, repo)["body"])
 

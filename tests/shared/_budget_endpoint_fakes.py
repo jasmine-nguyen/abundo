@@ -12,6 +12,8 @@ The transaction-range stand-ins live in _transaction_range_fakes.py (WHIT-767).
 
 from decimal import Decimal
 
+from _api_event import api_event
+
 
 class _FakePayCycleRepo:
     def __init__(self, length=30, last_pay_date="2026-07-01"):
@@ -74,11 +76,7 @@ def _txn(txn_id, category, amount, date_str, status="posted", counts=True, exclu
 
 
 def _event(category="coffee"):
-    return {
-        "rawPath": f"/budgets/{category}/transactions",
-        "requestContext": {"http": {"method": "GET"}},
-        "pathParameters": {"category": category},
-    }
+    return api_event("GET", f"/budgets/{category}/transactions", path_params={"category": category})
 
 
 def pin_cycle_window(handler, monkeypatch, cycle_start, today):

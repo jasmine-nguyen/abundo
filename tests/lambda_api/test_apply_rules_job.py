@@ -11,6 +11,7 @@ import json
 
 import pytest
 
+from _api_event import api_event
 from _feed_fakes import FakeCategoryRepo, real_repos
 from _job_fakes import created_jobs, real_job_repo
 
@@ -22,21 +23,15 @@ def _rule(value, category_id="groceries"):
 
 
 def _post_event(body=None):
-    event = {
-        "rawPath": "/transactions/uncategorized/apply-rules/jobs",
-        "requestContext": {"http": {"method": "POST"}},
-    }
-    if body is not None:
-        event["body"] = json.dumps(body)
-    return event
+    return api_event("POST", "/transactions/uncategorized/apply-rules/jobs", body=body)
 
 
 def _get_event(job_id):
-    return {
-        "rawPath": f"/transactions/uncategorized/apply-rules/jobs/{job_id}",
-        "requestContext": {"http": {"method": "GET"}},
-        "pathParameters": {"id": job_id},
-    }
+    return api_event(
+        "GET",
+        f"/transactions/uncategorized/apply-rules/jobs/{job_id}",
+        path_params={"id": job_id},
+    )
 
 
 class FakeLambdaClient:
@@ -179,7 +174,6 @@ def test_get_unknown_job_is_404(handler):
 
 
 def test_get_missing_id_is_404(handler):
-    event = {"rawPath": "/transactions/uncategorized/apply-rules/jobs/",
-             "requestContext": {"http": {"method": "GET"}}, "pathParameters": None}
+    event = api_event("GET", "/transactions/uncategorized/apply-rules/jobs/", path_params=None)
     resp = handler.get_apply_rules_job(event, real_job_repo())
     assert resp["statusCode"] == 404

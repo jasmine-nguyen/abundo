@@ -11,6 +11,8 @@ import json
 
 import pytest
 
+from _api_event import api_event
+
 
 class _StubJobRepo:
     def __init__(self, jobs):
@@ -21,11 +23,11 @@ class _StubJobRepo:
 
 
 def _get_event(job_id):
-    return {
-        "rawPath": f"/transactions/uncategorized/apply-rules/jobs/{job_id}",
-        "requestContext": {"http": {"method": "GET"}},
-        "pathParameters": {"id": job_id},
-    }
+    return api_event(
+        "GET",
+        f"/transactions/uncategorized/apply-rules/jobs/{job_id}",
+        path_params={"id": job_id},
+    )
 
 
 def test_get_reports_a_failed_job_with_its_partial_counts_and_error(handler):

@@ -18,6 +18,7 @@ from functools import partial
 
 import pytest
 
+from _api_event import api_event
 from _budget_endpoint_fakes import _FakePayCycleRepo
 from _feed_fakes import SPENDING, FakeCategoryRepo, Repos, _row, inject_rule_routes
 from _job_fakes import created_jobs, real_job_repo
@@ -46,15 +47,6 @@ def _seed_marks(table):
     return len([names for _, names, _ in table.update_calls if "spread_seeded" in names.values()])
 
 
-def _event(method, path, body=None, path_params=None):
-    event = {"rawPath": path, "requestContext": {"http": {"method": method}}}
-    if body is not None:
-        event["body"] = json.dumps(body)
-    if path_params is not None:
-        event["pathParameters"] = path_params
-    return event
-
-
 _inject = partial(inject_rule_routes, categories=_CATEGORIES)
 
 
@@ -69,7 +61,7 @@ def test_get_rules_on_a_seeded_spread_rule_has_no_spread_seeded(handler, monkeyp
     # [A1]
     _inject(handler, monkeypatch, _seeded_store())
 
-    resp = handler.lambda_handler(_event("GET", "/rules"), None)
+    resp = handler.lambda_handler(api_event("GET", "/rules"), None)
     [rule] = json.loads(resp["body"])
 
     assert resp["statusCode"] == 200
@@ -82,7 +74,7 @@ def test_post_rules_201_reply_has_no_spread_seeded(handler, monkeypatch):
     _inject(handler, monkeypatch, Repos())
 
     resp = handler.lambda_handler(
-        _event("POST", "/rules", {"value": "COLES", "categoryId": "groceries"}), None)
+        api_event("POST", "/rules", {"value": "COLES", "categoryId": "groceries"}), None)
 
     assert resp["statusCode"] == 201
     assert set(json.loads(resp["body"])) == _REPLY_KEYS
@@ -93,7 +85,7 @@ def test_post_rules_409_existing_rule_has_no_spread_seeded(handler, monkeypatch)
     _inject(handler, monkeypatch, _seeded_store())
 
     resp = handler.lambda_handler(
-        _event("POST", "/rules", {"value": "ORIGIN", "categoryId": "groceries"}), None)
+        api_event("POST", "/rules", {"value": "ORIGIN", "categoryId": "groceries"}), None)
     body = json.loads(resp["body"])
 
     assert resp["statusCode"] == 409
@@ -109,7 +101,7 @@ def test_put_rules_200_reply_on_a_seeded_spread_rule_has_no_spread_seeded(handle
     rule_id = repo.rule_id("ORIGIN")
 
     resp = handler.lambda_handler(
-        _event("PUT", f"/rules/{rule_id}",
+        api_event("PUT", f"/rules/{rule_id}",
                {"value": "ORIGIN", "categoryId": "insurance", "spread": True},
                path_params={"id": rule_id}), None)
     body = json.loads(resp["body"])
@@ -127,7 +119,7 @@ def test_put_rules_409_existing_rule_has_no_spread_seeded(handler, monkeypatch):
     _inject(handler, monkeypatch, repo)
 
     resp = handler.lambda_handler(
-        _event("PUT", f"/rules/{coles_id}", {"value": "ORIGIN", "categoryId": "groceries"},
+        api_event("PUT", f"/rules/{coles_id}", {"value": "ORIGIN", "categoryId": "groceries"},
                path_params={"id": coles_id}), None)
     body = json.loads(resp["body"])
 
@@ -139,8 +131,7 @@ def test_put_rules_409_existing_rule_has_no_spread_seeded(handler, monkeypatch):
 
 
 def _apply_event(body):
-    return {"rawPath": "/transactions/uncategorized/apply-rules",
-            "requestContext": {"http": {"method": "POST"}}, "body": json.dumps(body)}
+    return api_event("POST", "/transactions/uncategorized/apply-rules", body=body)
 
 
 def test_apply_pre_scan_clash_409_existing_rule_has_no_spread_seeded(handler):
@@ -181,7 +172,7 @@ def test_job_start_clash_409_existing_rule_has_no_spread_seeded(handler, monkeyp
     job_repo = real_job_repo()
 
     resp = handler.start_apply_rules_job(
-        _event("POST", "/transactions/uncategorized/apply-rules/jobs",
+        api_event("POST", "/transactions/uncategorized/apply-rules/jobs",
                {"rule": {"value": "ORIGIN", "categoryId": "groceries"}}),
         FakeCategoryRepo(_CATEGORIES), _seeded_store().rule_repo, job_repo)
     body = json.loads(resp["body"])

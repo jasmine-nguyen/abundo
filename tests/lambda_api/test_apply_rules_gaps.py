@@ -36,6 +36,7 @@ import json
 
 import pytest
 
+from _api_event import api_event
 from _feed_fakes import (
     ANZ, SPENDING, HOMELOAN, WESTPAC, FakeCategoryRepo, charge_writes, fail_writes, on_write,
     real_repos, _row, set_category, stored, vanish_on_write,
@@ -72,18 +73,8 @@ def _rule_ids(rule_repo):
     return {rule["value"]: rule["id"] for rule in rule_repo.list_rules()}
 
 
-def _apply_event(body=None, raw=None, base64_encoded=False):
-    event = {
-        "rawPath": "/transactions/uncategorized/apply-rules",
-        "requestContext": {"http": {"method": "POST"}},
-    }
-    if raw is not None:
-        event["body"] = raw
-    elif body is not None:
-        event["body"] = json.dumps(body)
-    if base64_encoded:
-        event["isBase64Encoded"] = True
-    return event
+def _apply_event(body=None, raw=None, is_base64=None):
+    return api_event("POST", "/transactions/uncategorized/apply-rules", body=body, raw=raw, is_base64=is_base64)
 
 
 def _call(handler, repo, rule_repo, body, categories=("groceries", "coffee"), **event_kw):
@@ -357,7 +348,7 @@ def test_a_base64_encoded_gateway_body_is_honoured(handler):
         {SPENDING: [_row(SPENDING, "2026-07-01", "t1", description="COLES")]})
     encoded = base64.b64encode(json.dumps({"dryRun": False}).encode()).decode()
 
-    _, body = _call(handler, repo, rule_repo, None, raw=encoded, base64_encoded=True)
+    _, body = _call(handler, repo, rule_repo, None, raw=encoded, is_base64=True)
 
     assert body["dryRun"] is False
     assert body["filed"] == [{"id": "t1", "category": "groceries"}]
@@ -368,7 +359,7 @@ def test_a_malformed_base64_body_is_a_400_and_writes_nothing(handler):
     table, repo, rule_repo = _coles(
         {SPENDING: [_row(SPENDING, "2026-07-01", "t1", description="COLES")]})
 
-    resp, _ = _call(handler, repo, rule_repo, None, raw="!!!not-base64!!!", base64_encoded=True)
+    resp, _ = _call(handler, repo, rule_repo, None, raw="!!!not-base64!!!", is_base64=True)
 
     assert resp["statusCode"] == 400
     assert table.update_calls == []

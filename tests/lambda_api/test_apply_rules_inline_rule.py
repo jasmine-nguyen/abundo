@@ -19,6 +19,7 @@ import json
 
 import pytest
 
+from _api_event import api_event
 from _feed_fakes import (
     SPENDING, FakeCategoryRepo, Repos, charge_writes, date_queries, on_write, _row, set_category,
 )
@@ -57,11 +58,7 @@ class _Run(Repos):
 
 
 def _event(body):
-    return {
-        "rawPath": "/transactions/uncategorized/apply-rules",
-        "requestContext": {"http": {"method": "POST"}},
-        "body": json.dumps(body),
-    }
+    return api_event("POST", "/transactions/uncategorized/apply-rules", body=body)
 
 
 def _call(handler, body, run=None, categories=frozenset({"groceries", "petrol"})):
