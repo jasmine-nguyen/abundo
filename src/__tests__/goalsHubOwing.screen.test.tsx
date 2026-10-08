@@ -70,7 +70,8 @@ describe('WHIT-487 plain mortgage card — owing headline gaps', () => {
   // headline number is ABSENT — the two branches are exclusive. Edges [A25] locks the copy/`/owing/`
   // null but NOT the testID absence nor the fallback style; this is the missing lock.
   it('[O2] no-balance fallback renders the fallback line and NOT the big-number testID', async () => {
-    seedHub({ homeLoan: { balance: null, asOf: null } });
+    // Facts set, so a null balance is "waiting", not WHIT-821's "no home loan".
+    seedHub({ loanFacts: READY_FACTS, homeLoan: { balance: null, asOf: null } });
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('mortgage-link'));
     expect(card.queryByTestId('mortgage-owing')).toBeNull();     // the loud number must be absent
@@ -86,11 +87,14 @@ describe('WHIT-487 plain mortgage card — owing headline gaps', () => {
     expect(card.getByText('Tap to open your payoff plan')).toBeTruthy();
   });
 
-  // [O4] the restacked NO-balance card still routes into /mortgage on tap (the existing nav test
-  // only presses the balance-present card; the fallback arm is a different subtree).
-  it('[O4] tapping the no-balance fallback card still routes to /mortgage', async () => {
+  // [O4] WHIT-821: balance checked but none found + nothing set up → the calm "no home loan" line,
+  // no "Tap to see", and the card still routes into /mortgage on tap.
+  it('[O4] no home loan: shows the calm line and tapping still routes to /mortgage', async () => {
     seedHub({ homeLoan: { balance: null, asOf: null } });
     await renderWithQueries(<Goals />);
+    const card = within(screen.getByTestId('mortgage-link'));
+    expect(card.getByTestId('mortgage-no-home-loan')).toBeTruthy();
+    expect(card.queryByText('Tap to see your payoff plan')).toBeNull();
     fireEvent.press(screen.getByTestId('mortgage-link'));
     expect(routerSpies.push).toHaveBeenCalledWith('/mortgage');
   });

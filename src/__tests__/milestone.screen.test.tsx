@@ -32,6 +32,7 @@ import Mortgage from '../../app/mortgage';
 import MilestoneEdit from '../../app/milestone/edit';
 
 const server = installFakeServer();
+const EQUITY_TEASER = 'Your usable equity will show here once your loan details are set up.';
 useTestQueryClient();
 
 // Loan facts are saved by default (property value + LVR set) so equity renders; pass
@@ -188,17 +189,17 @@ it('milestone screen shows an equity set-up prompt when the property value is un
   // Balance + sprint plan still render (they only need the live balance)...
   expect(screen.getByText('$596,642')).toBeTruthy();
   expect(screen.getByText('Your payoff plan')).toBeTruthy();
-  // ...but equity is a prompt, not a fabricated figure.
-  expect(screen.getByText(/Add your home's value/)).toBeTruthy();
-  fireEvent.press(screen.getByText('Add loan details →'));
-  expect(routerSpies.push).toHaveBeenCalledWith('/loan');
+  // ...but equity is a teaser, not a fabricated figure. WHIT-821: no button — set-up lives on
+  // the Home loan screen's top card.
+  expect(screen.getByText(EQUITY_TEASER)).toBeTruthy();
+  expect(screen.queryByText('Add loan details →')).toBeNull();
 });
 
 it('WHIT-819: milestone screen hides the equity set-up prompt while loan facts load', async () => {
   const held = server.hold('/loanfacts');
   drawHeld(<Milestone />);
   await screen.findByText('Your payoff plan'); // the balance has landed; only the facts are held
-  expect(screen.queryByText('Add loan details →')).toBeNull();
+  expect(screen.queryByText(EQUITY_TEASER)).toBeNull();
   await releaseAndSettle(held);
 });
 
@@ -207,18 +208,9 @@ it('WHIT-819: milestone screen hides the equity set-up prompt while loan facts l
 it('mortgage equity card empty-state uses the reworded prompt, not the old property framing', async () => {
   seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
   await renderWithQueries(<Mortgage />);
-  expect(screen.getByText(/Add your home's value/)).toBeTruthy();
+  expect(screen.getByText(EQUITY_TEASER)).toBeTruthy();
   expect(screen.queryByText(/Add your property value/)).toBeNull();
   expect(screen.queryByText('Investment property #2')).toBeNull();
-});
-
-it('mortgage equity card "Add loan details →" routes to /loan', async () => {
-  // Two CTAs render in the empty state (hero "Set up loan details →" + equity "Add loan
-  // details →"); this locks the equity one specifically.
-  seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
-  await renderWithQueries(<Mortgage />);
-  fireEvent.press(screen.getByText('Add loan details →'));
-  expect(routerSpies.push).toHaveBeenCalledWith('/loan');
 });
 
 it('milestone equity card known-state shows the current-home subtitle, not "Investment property #2"', async () => {

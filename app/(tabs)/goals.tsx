@@ -25,7 +25,7 @@ export default function Goals() {
   const router = useRouter();
   const s = useAppContext(); // openGoalBalance — the in-place manual-balance update sheet (WHIT-235)
   const {
-    goals, payCycle, balanceFor, loanFacts, homeLoan, mortgageError, milestones, milestonesLoaded, goalsLoaded,
+    goals, payCycle, balanceFor, loanFacts, homeLoan, homeLoanLoaded, mortgageError, milestones, milestonesLoaded, goalsLoaded,
     isLoading, isError, refetch, refetchStale,
   } = useGoalsScreenData();
 
@@ -39,6 +39,8 @@ export default function Goals() {
   // this card and the /mortgage hero read — a sub-dollar paydown rounds to "$0" and has no honest
   // headline, so it stays on the plain "owing" line.
   const mortgageRich = mortgage.paidDownReady;
+  // WHIT-821: the balance check worked but found nothing, and nothing's set up → no home loan.
+  const noHomeLoan = homeLoanLoaded && homeLoan.balance == null && !mortgage.factsReady;
 
   // Load-on-focus, staleness-gated (like Budgets) so tab-hopping doesn't refetch every tap.
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
@@ -154,10 +156,12 @@ export default function Goals() {
                     minus the set-up body + button. The taller tile spreads the gradient (no band). */}
                 <View style={styles.mortgageBlob} />
                 <View style={styles.mortgageEyebrowRow}>
-                  <Text style={styles.mortgageEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
+                  <Text style={styles.mortgageEyebrow}>{noHomeLoan ? 'YOUR HOME LOAN' : 'YOUR HOME LOAN · BALANCE OWING'}</Text>
                   <Glyph name="chevron" size={16} color={C.heroInkSoft} />
                 </View>
-                {homeLoan.balance != null ? (
+                {noHomeLoan ? (
+                  <Text testID="mortgage-no-home-loan" style={styles.mortgageFallback}>No home loan found in your linked accounts</Text>
+                ) : homeLoan.balance != null ? (
                   <Text testID="mortgage-owing" style={[styles.mortgageBig, { marginTop: 6 }]}>
                     {fmt(homeLoan.balance)}
                   </Text>

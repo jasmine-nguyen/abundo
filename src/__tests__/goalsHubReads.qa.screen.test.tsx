@@ -104,7 +104,8 @@ describe('secondary reads degrade one card, never the hub', () => {
 
   // [A5b] a cached "not polled yet" home loan also survives: it keeps the waiting line, not the error line.
   it('a cached not-yet-polled home loan keeps "Tap to see" after a failed refetch, never "Tap to open"', async () => {
-    seedHub({ homeLoan: { balance: null, asOf: null } });
+    // Facts set, so a null balance is "waiting", not WHIT-821's "no home loan".
+    seedHub({ loanFacts: READY_FACTS, homeLoan: { balance: null, asOf: null } });
     await renderWithQueries(<Goals />);
     expect(within(screen.getByTestId('mortgage-link')).getByText('Tap to see your payoff plan')).toBeTruthy();
     server.fail('/homeloan', 500);
