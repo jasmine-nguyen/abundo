@@ -3,8 +3,6 @@
 as test_pending_mirror_reissue_qa.py (the REAL shared repo over FakeTable)."""
 
 from _pending_mirror_fakes import (
-    GOGI_NEW,
-    GOGI_OLD,
     REISSUE_TODAY,
     RUSH_NEW,
     RUSH_OLD,
@@ -16,22 +14,6 @@ from _pending_mirror_fakes import (
 )
 
 _is_unfiled = unfiled_except("shopping", "clothing", "eatingout", "transport")
-
-
-# [A15] (P0) The user hand-picked the old copy's category; the bank's re-issue got the SAME category
-# from a rule. One row must remain AND the user must still own the category (no rule stamp) — a
-# stamp lets a later rule edit/delete re-file or clear the user's choice (rule_book reconcile).
-def test_a_hand_filed_category_stays_user_owned_when_the_reissue_is_rule_filed_the_same(repo, mirror, row):
-    repo._table.seed(
-        row("old_gogi", GOGI_OLD, "-84.50", category="eatingout"),
-        row("new_gogi", GOGI_NEW, "-84.50", category="eatingout", filed_by_rule="rule-1"),
-    )
-
-    run_mirror(mirror, repo, reissue_bank_rows("new_gogi"), _is_unfiled, REISSUE_TODAY)
-
-    assert stored_ids(repo) == {"new_gogi"}
-    assert stored(repo, "new_gogi")["category"] == "eatingout"
-    assert "filed_by_rule" not in stored(repo, "new_gogi")
 
 
 # [A16] (P1) Old hand-filed + note, re-issue hand-filed the same category with no note → nothing

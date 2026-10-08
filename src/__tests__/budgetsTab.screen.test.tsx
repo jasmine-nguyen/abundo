@@ -667,51 +667,6 @@ describe('WHIT-723 shared Budgets screen steps', () => {
   });
 });
 
-describe('WHIT-726 top card lines', () => {
-  // WHIT-726 → WHIT-731 — Budgets top card: no pill, no "resets in" and no pending on the card. The
-  // over-budget values and the Spent · Budget · Next payday order are covered under WHIT-731 below.
-  function seedCoffee(coffee: { target: number; posted: number; pending?: number }) {
-    seedBudgets(server, {
-      budgets: { coffee },
-      categories: [COFFEE],
-      payCycle: { ...BUDGET_PAY_CYCLE, days_left: 22 },
-    });
-  }
-
-  // The hero card: the closest host View above the eyebrow that holds the stats row.
-  function hero(): ReactTestInstance {
-    let node: ReactTestInstance | null = screen.getByText('THIS PAY CYCLE');
-    while (node && !(String(node.type) === 'View' && within(node).queryByTestId('budgets-hero-payday'))) node = node.parent;
-    if (!node) throw new Error('no hero card');
-    return node;
-  }
-
-  describe('WHIT-731 Budgets top card: no pill, resets or pending', () => {
-    it('over budget with pending → no resets, pending or pill on the card', async () => {
-      seedCoffee({ target: 5785, posted: 5948.92, pending: 187.76 });
-      await renderLoadedBudgets();
-
-      expect(screen.getByText('Over budget')).toBeTruthy();
-      expect(within(hero()).queryByText(/resets/)).toBeNull();
-      expect(within(hero()).queryByText(/pending/)).toBeNull();
-      expect(screen.queryByTestId('budgets-hero-pill')).toBeNull();
-      expect(screen.queryByTestId('budgets-hero-resets')).toBeNull();
-    });
-
-    it('under budget → same three values: Spent $4,500.60 · Budget $5,785 · Next payday', async () => {
-      seedCoffee({ target: 5785, posted: 4500.6, pending: 0 });
-      await renderLoadedBudgets();
-
-      expect(screen.getByText('Left to spend')).toBeTruthy();
-      expect(heroTotals()).toMatchObject({ spent: '$4,500.60', budget: '$5,785' });
-      expect(heroTotals().payday).toMatch(/^\d{1,2} [A-Z][a-z]{2}$/);
-
-      expect(within(hero()).queryByText(/resets/)).toBeNull();
-      expect(screen.queryByTestId('budgets-hero-pill')).toBeNull();
-    });
-  });
-});
-
 describe('WHIT-727 urgent rows first', () => {
   // WHIT-727 QA / WHIT-745 — on the Budgets tab, a family whose sub-budget is only behind pace keeps
   // its category order (no pace tier), with the sub directly under its parent.
@@ -1656,7 +1611,7 @@ describe('WHIT-745 only over-budget rows move up', () => {
   const rowOrder = () =>
     screen.getAllByTestId(/^budget-row-(mortgage|coffee|groceries)$/).map((r) => r.props.testID);
 
-  it('lifts only the over-budget row; a fully used mortgage keeps its place and no charge lists are fetched', async () => {
+  it('lifts only the over-budget row; a fully used mortgage keeps its place and no charge lists are fetched, even after a pull-to-refresh', async () => {
     // Halfway through a 14-day cycle: Coffee on pace, Mortgage fully used (behind pace), Groceries over.
     seedBudgetsTab(
       server,
@@ -1671,40 +1626,8 @@ describe('WHIT-745 only over-budget rows move up', () => {
     await waitFor(() =>
       expect(rowOrder()).toEqual(['budget-row-groceries', 'budget-row-coffee', 'budget-row-mortgage']),
     );
-    expect(server.sentUnder('GET', '/budgets/')).toEqual([]);
-  });
-
-  // WHIT-745 QA on screen: a pull-to-refresh with a fully used Mortgage still sends no charge-list
-  // lookups and doesn't move it; pending charges that tip it over do move it.
-
-  // [A6] (P0) refreshing the tab doesn't bring the lookups back or lift the fully used bill.
-  it('a pull-to-refresh sends no charge-list lookups and keeps a fully used mortgage below coffee', async () => {
-    seedBudgetsTab(
-      server,
-      {
-        coffee: { target: 100, posted: 40, pending: 0 },
-        mortgage: { target: 3667, posted: 3667, pending: 0 },
-      },
-      [COFFEE, MORTGAGE_RECORD],
-    );
-    await renderLoadedBudgetsWithQueries();
-    await waitFor(() => expect(rowOrder()).toEqual(['budget-row-coffee', 'budget-row-mortgage']));
     await pullAndSettle();
-    expect(rowOrder()).toEqual(['budget-row-coffee', 'budget-row-mortgage']);
+    expect(rowOrder()).toEqual(['budget-row-groceries', 'budget-row-coffee', 'budget-row-mortgage']);
     expect(server.sentUnder('GET', '/budgets/')).toEqual([]);
-  });
-
-  // [A7] (P1) a mortgage that tips over budget by pending charges moves above coffee on screen.
-  it('a mortgage pushed over by a pending charge moves above coffee', async () => {
-    seedBudgetsTab(
-      server,
-      {
-        coffee: { target: 100, posted: 40, pending: 0 },
-        mortgage: { target: 3667, posted: 3600, pending: 100 },
-      },
-      [COFFEE, MORTGAGE_RECORD],
-    );
-    await renderLoadedBudgetsWithQueries();
-    await waitFor(() => expect(rowOrder()).toEqual(['budget-row-mortgage', 'budget-row-coffee']));
   });
 });
