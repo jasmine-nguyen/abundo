@@ -7,7 +7,7 @@ import { Glyph } from '../src/icons';
 import { goalView, paydownView, milestoneView, milestonePace, lastRepaymentView } from '../src/context';
 import { useGoalScreenData, usePayCycle } from '../src/queries';
 import { BalanceFreshnessPill } from '../src/components/BalanceFreshnessPill';
-import { Bar, RetryButton, HeroGradientFill } from '../src/components/ui';
+import { Bar, RetryButton, HeroGradientFill, MilestonesCardStatus, cardStyle } from '../src/components/ui';
 import { PayoffSummary } from '../src/components/PayoffSummary';
 import { Header } from '../src/components/Header';
 import { EquityCard, EquityBody, EquityCta, EquitySetupTeaser } from '../src/components/EquityCard';
@@ -29,7 +29,7 @@ export default function Mortgage() {
   // layer. Re-check on focus, but only if the cache has gone stale (no request storm).
   const {
     loanFacts, homeLoan, homeLoanLoaded, repayment, milestones, repaymentError, homeLoanError, loanFactsLoaded, loanFactsError,
-    isLoading, refetch, refetchStale,
+    milestonesLoaded, milestonesError, refetchMilestones, isLoading, refetch, refetchStale,
   } = useGoalScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
   const { pulling, onRefresh } = usePullToRefresh(refetch);
@@ -192,7 +192,10 @@ export default function Mortgage() {
         {/* WHIT-821: no home loan → only the calm explainer above, no secondary cards. */}
         {!noHomeLoan && (<>
         {/* Milestone plan — the user's own milestones (empty until they set one), taps into the full screen */}
-        <Pressable testID="milestone-link" onPress={() => router.push(m.hasPlan ? '/milestone' : '/milestone/edit')} style={styles.card}>
+        {milestonesError || !milestonesLoaded ? (
+          <MilestonesCardStatus error={milestonesError} onRetry={refetchMilestones} testIDPrefix="milestones" />
+        ) : (
+        <Pressable testID="milestone-link" onPress={() => router.push(m.hasPlan ? '/milestone' : '/milestone/edit')} style={cardStyle}>
           {!m.hasPlan ? (
             <>
               <View style={styles.cardHead}>
@@ -246,6 +249,7 @@ export default function Mortgage() {
             </>
           )}
         </Pressable>
+        )}
 
         {/* contribution — from the user's saved scheduled + extra repayment */}
         {g.factsReady && (
@@ -260,7 +264,7 @@ export default function Mortgage() {
 
         {/* last repayment — the real most-recent home-loan repayment (WHIT-115),
             or a graceful empty state. Independent of the loan-facts form. */}
-        {!justLanded && <View style={styles.card}>
+        {!justLanded && <View style={cardStyle}>
           {lr.present ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               <View style={styles.repayChip}><Glyph name="arrowDown" size={22} color={C.good} /></View>
@@ -363,7 +367,6 @@ const styles = StyleSheet.create({
   // distinct from the plain gray sub-copy.
   miniHint: { fontFamily: FONT.body, fontSize: 11.5, color: C.warn, fontWeight: '600', marginTop: 4 },
 
-  card: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, padding: 16, marginBottom: 12 },
   cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   cardTitle: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.textBright },
   cardHint: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim },

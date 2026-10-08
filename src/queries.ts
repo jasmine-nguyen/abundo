@@ -1138,10 +1138,12 @@ export interface GoalScreenData {
   homeLoanLoaded: boolean; // WHIT-821: loaded with a null balance = no home loan account in the feed
   repayment: Repayment;
   // The user's saved milestone plan (WHIT-367). SECONDARY data, deliberately kept OUT of the
-  // loading/error status below: a milestones read hiccup degrades to an empty plan (the "set your
-  // milestones" empty state) rather than blanking or erroring the balance hero. Empty [] →
-  // milestoneView yields an empty view (hasPlan:false); there is no built-in default.
+  // loading/error status below, so a milestones failure never blanks or errors the balance hero.
+  // Empty [] → milestoneView yields an empty view (hasPlan:false); there is no built-in default.
   milestones: MilestoneRecord[];
+  milestonesLoaded: boolean;
+  milestonesError: boolean;
+  refetchMilestones: () => void;
   isLoading: boolean; // first load, nothing cached yet
   isError: boolean; // ANY of the three reads failed after retries
   // The home-loan balance read's OWN error, kept separate from the aggregate: the Goal +
@@ -1188,8 +1190,8 @@ export function useGoalScreenData(): GoalScreenData {
   const milestonesQuery = useMilestonesQuery(authed);
 
   // milestones is SECONDARY and stays OUT of the combined status (like accountBalances vs its
-  // composite): a milestones failure must never blank/spin the balance hero — it degrades to an
-  // empty plan (the "set your milestones" empty state). The editor (WHIT-377) saves via
+  // composite): a milestones failure must never blank/spin the balance hero — the milestones
+  // card shows its own error via milestonesError (WHIT-823). The editor (WHIT-377) saves via
   // saveMilestones, which invalidates ['milestones'] to refresh, so leaving it out of refetch
   // costs nothing.
   const status = useCombineScreenQueries([homeLoanQuery, repaymentQuery, loanFactsQuery]);
@@ -1213,6 +1215,9 @@ export function useGoalScreenData(): GoalScreenData {
     repaymentError: firstLoadError(repaymentQuery),
     loanFactsLoaded: loanFactsQuery.data !== undefined,
     loanFactsError: firstLoadError(loanFactsQuery),
+    milestonesLoaded: milestonesQuery.data !== undefined,
+    milestonesError: firstLoadError(milestonesQuery),
+    refetchMilestones: () => { milestonesQuery.refetch(); },
     ...status,
   };
 }

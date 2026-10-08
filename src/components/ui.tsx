@@ -56,6 +56,24 @@ export function RetryButton({ onPress, label, testID, style, textStyle }: {
   );
 }
 
+// WHIT-823: the milestones card until its plan is in — a title-only card while loading, or a short
+// message + Retry if the first load failed — so neither falls through to the empty "set it up" invite.
+export function MilestonesCardStatus({ error, onRetry, testIDPrefix }: {
+  error: boolean; onRetry: () => void; testIDPrefix: string;
+}) {
+  return (
+    <View style={styles.card} testID={error ? undefined : `${testIDPrefix}-loading`}>
+      <Text style={styles.cardTitle}>Your payoff milestones</Text>
+      {error && (
+        <View style={styles.cardErrorRow}>
+          <Text style={styles.cardErrorText} accessibilityLiveRegion="polite">Couldn't load your milestones.</Text>
+          <RetryButton onPress={onRetry} label="Retry loading your milestones" testID={`${testIDPrefix}-retry`} />
+        </View>
+      )}
+    </View>
+  );
+}
+
 // WHIT-702: a text button in the ScrollChromeHeader's top bar (Select / Cancel / Export).
 export function HeaderTextButton({ label, onPress, testID, busy = false, accessibilityLabel }: {
   label: string; onPress: () => void; testID?: string; busy?: boolean; accessibilityLabel?: string;
@@ -164,4 +182,11 @@ const styles = StyleSheet.create({
   hdrBtnText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentSoft },
   retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: tint(C.accentAlt, 0.16) },
   retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
+  card: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, padding: 16, marginBottom: 12 },
+  cardTitle: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.textBright },
+  cardErrorRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 12 },
+  cardErrorText: { flex: 1, fontFamily: FONT.body, fontSize: 13, color: C.textDim },
 });
+
+// The Goal screens' secondary card look (Home loan, Milestone), kept in one place.
+export const cardStyle = styles.card;
