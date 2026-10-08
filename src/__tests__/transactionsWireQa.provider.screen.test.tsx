@@ -2,7 +2,6 @@
 // server: lost connections, whole-batch errors, partial batches and the server-minted rule id.
 // These paths could not be reached with the bare jest.mock('../api') auto-mock the moved suites used.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
 import type { Transaction } from '../types';

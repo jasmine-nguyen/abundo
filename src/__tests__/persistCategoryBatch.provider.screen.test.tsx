@@ -9,7 +9,6 @@
 //             Promise.allSettled([createRule, ...chunks]) always issued the rule).
 //   [A-DEDUPE] applyCategoryToMany's Set-dedupe still collapses duplicate ids to ONE update.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
 import type { Transaction, Category } from '../types';

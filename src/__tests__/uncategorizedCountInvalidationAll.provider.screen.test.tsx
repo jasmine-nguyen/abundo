@@ -7,7 +7,6 @@
 // Fail-on-revert: delete the invalidateAfterCategorise() call at the end of the scope==='all' branch
 // (or drop the ['uncategorizedCount'] line from invalidateAfterCategorise) → [A-inval-all] fails.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
 import type { Transaction } from '../types';

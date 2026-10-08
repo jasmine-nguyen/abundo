@@ -13,7 +13,6 @@
 //   - ['transactions'] is never invalidated (the documented InfiniteData storm).
 //   - `vanished` rows are removed from the caches, or a deleted charge lingers as a phantom.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
 import type { FilingResult, FilingTarget } from '../context';

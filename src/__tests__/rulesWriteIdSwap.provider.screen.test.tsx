@@ -4,7 +4,6 @@
 // Existing rulesWrite "updateRule edits the cached rule in place" returns the SAME id, so this
 // id-changing path is uncovered. Same mock-by-function-name pattern as rulesWrite (URL-agnostic).
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
 import type { Rule } from '../model';

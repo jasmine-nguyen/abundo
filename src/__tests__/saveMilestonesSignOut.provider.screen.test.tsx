@@ -8,7 +8,6 @@
 // Harness mirrors sessionGuardRollbacks.provider.screen: a live miniature auth store (so the anon
 // broadcast actually bumps the session epoch), the fake server, the real singleton queryClient.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());

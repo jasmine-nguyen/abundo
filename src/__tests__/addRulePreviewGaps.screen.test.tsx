@@ -13,7 +13,6 @@
 //   - [A39] double-tap the file button → fileNewRule fires exactly once (useInFlightGuard)
 //   - [A40] null sample descriptions from byRule[0].samples are filtered out, not rendered blank
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, FilingResult, FilingTarget, FilingWhen } from '../context';
 import { APPLY_RULES_MAX_WRITES } from '../context';

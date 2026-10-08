@@ -1,7 +1,6 @@
 // WHIT-628 slice 2 — deleting a category is instant, undoes on failure, and reaches every copy of
 // its charges: the main copies AND the budget / category charge lists (which also reload).
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import type { InfiniteData, QueryKey } from '@tanstack/react-query';
 import { useAppContext } from '../context';

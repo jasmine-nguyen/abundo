@@ -5,10 +5,9 @@
 // bail or no-op gracefully — never corrupt the cache or fire a defaulted server write. Drives
 // the REAL writers via AppProvider + the singleton queryClient (../auth mocked + the fake server).
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
-import type { Category, Transaction } from '../types';
+import { useAppContext } from '../context';
+import type { Category } from '../types';
 import type { Rule } from '../model';
 import type { BudgetRollup } from '../api';
 import { queryClient } from '../queryClient';
@@ -18,15 +17,11 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES } from './support/categories';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
+import { colesTxn as txn } from './factory';
 
 const server = installFakeServer();
 
 const CAT: Category = { ...GROCERIES };
-const txn = (over: Partial<Transaction> = {}): Transaction => ({
-  transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01', description: 'COLES',
-  merchant_name: 'Coles', amount: -12.5, account_id: 'a1', account_name: 'ANZ', category: null,
-  status: 'posted', type: 'PAYMENT', counts_to_budget: true, ...over,
-});
 
 beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });

@@ -4,7 +4,6 @@
 // sessionGuardRollbacks.provider.screen.test.tsx: live miniature auth store, the fake server,
 // the real queryClient.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
-import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import * as Crypto from 'expo-crypto';
 

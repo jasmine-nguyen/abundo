@@ -7,7 +7,6 @@
 //   - once applyRulesJob is non-null the SAME ApplyRulesJobView renders INSIDE that confirm sheet;
 //   - the progress bar clamps to 100% when filed exceeds matched (a late count race).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, ApplyRulesJob, FilingResult, FilingTarget, FilingWhen } from '../context';
 import type { ApplyRulesResult, UncategorizedMerchantGroup } from '../api';

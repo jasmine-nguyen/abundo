@@ -5,7 +5,6 @@
 //     that swap standing (no ['rules'] refetch racing it).
 // Modelled on uncategorizedCountRulesGuard.provider.screen.test.tsx.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
 import type { Rule } from '../model';

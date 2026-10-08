@@ -5,10 +5,9 @@
 // marked for a refresh (search is patched in place, so it is not). The lookup then finds the
 // fresh copy, not the stale one in the category drill-in list.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import type { InfiniteData } from '@tanstack/react-query';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Transaction } from '../types';
 import type { TransactionFeedPage, TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';

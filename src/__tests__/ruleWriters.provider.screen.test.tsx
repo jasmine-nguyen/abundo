@@ -4,9 +4,8 @@
 // LOAD + error paths moved to the query layer (rulesScreenData.screen.test.tsx). renderHook
 // drives useAppContext directly.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
 

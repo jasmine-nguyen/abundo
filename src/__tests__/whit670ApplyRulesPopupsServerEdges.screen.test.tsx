@@ -2,7 +2,6 @@
 // real useCategories. These cover what the moved suites never exercise: a slow, failed, missing or
 // changed categories reply, and a signed-out session. The preview / filing writers stay faked.
 import { it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
 import { render, screen, act, waitFor } from '@testing-library/react-native';
 import type { AppContext, ApplyRulesResult, FilingResult, FilingTarget, FilingWhen } from '../context';
 import type { UncategorizedMerchantGroup } from '../api';

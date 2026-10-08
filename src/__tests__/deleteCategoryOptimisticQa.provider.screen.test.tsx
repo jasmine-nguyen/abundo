@@ -2,7 +2,6 @@
 // mid-delete must re-seat nothing, the undo puts back exactly what it changed, and every copy
 // (main + scoped, every cycle) is unfiled.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import type { InfiniteData, QueryKey } from '@tanstack/react-query';
 

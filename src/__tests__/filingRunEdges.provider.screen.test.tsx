@@ -6,9 +6,8 @@
 // the stable identities the sheets and the lock subscription rely on, and the lock/sign-out/unmount
 // teardowns.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { ApplyRulesJob, ApplyRulesResult, FilingResult, FilingTarget } from '../context';
 import type { Rule } from '../model';
 import type { UncategorizedMerchantGroup } from '../api';

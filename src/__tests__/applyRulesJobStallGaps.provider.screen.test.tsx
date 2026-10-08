@@ -10,7 +10,6 @@
 //   [G7] a 404 / network-cap terminal on the stall poll clears the hint and sets the error.
 //   [G8] the hint survives a dismiss + reopen of the SAME running job.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
 import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';

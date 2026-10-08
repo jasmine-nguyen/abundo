@@ -8,7 +8,6 @@
 //   [A-G0]   the spread copy is gated on the write REQUESTING spread — a 409/422 on a NON-spread
 //            save keeps the generic toast (guards ruleWriteErrorMessage's `spread &&` gate).
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
 import { toRule } from '../model';

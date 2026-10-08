@@ -10,7 +10,6 @@
 //   - a running job holds the "one heavy run at a time" lock — the sync sweep can't start on top.
 //   - sign-out mid-run stops polling; no status read fires into the next session.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
 import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';

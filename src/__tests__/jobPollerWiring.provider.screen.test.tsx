@@ -3,7 +3,6 @@
 //     starts from zero again;
 //   - the chat's overall time limit counts from BEFORE the start request, not from the first check.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act, render } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
@@ -14,10 +13,10 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { CHAT_ERROR_TEXT, CHAT_MAX_WAIT_MS, CHAT_POLL_DELAY_MS, ChatProvider, useChat } from '../chat/ChatContext';
-const SWEEP: FilingTarget = { kind: 'sweep' };
-const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
 import type { ChatContextValue } from '../chat/ChatContext';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
+const SWEEP: FilingTarget = { kind: 'sweep' };
+const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
 
 const server = installFakeServer();
 const jobPath = (jobId: string) => `/transactions/uncategorized/apply-rules/jobs/${jobId}`;

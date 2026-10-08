@@ -6,9 +6,8 @@
 // Covers applyCategory (one + all), saveBudget, saveCategory (create + edit),
 // deleteCategory, saveLoanFacts — success and failure/rollback.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { LoanFacts } from '../context';
 import type { Transaction, Category } from '../types';
 import type { Rule } from '../model';

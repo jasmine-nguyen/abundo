@@ -3,9 +3,8 @@
 // specific copy (driven by the ApiError status createRule/updateRule now throw); anything else keeps
 // the generic toast. Drives the REAL writers via AppProvider + the singleton queryClient.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
 

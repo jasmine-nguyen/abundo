@@ -4,9 +4,8 @@
 // failure. (Pre-192 it also double-wrote an old store; that store is gone.) Drives the REAL
 // saveLoanFacts via AppProvider + the singleton queryClient.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { LoanFacts } from '../context';
 import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';

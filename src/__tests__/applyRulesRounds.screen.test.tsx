@@ -10,7 +10,6 @@
 //   [A16] a round whose rows all ERRORED reports work left even though `remaining` is 0.
 //   [A17] a round that files nothing and shrinks nothing stops offering another tap.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, ApplyRulesResult, FilingResult, FilingTarget, FilingWhen } from '../context';
 

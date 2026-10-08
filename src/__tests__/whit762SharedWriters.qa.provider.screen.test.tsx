@@ -3,7 +3,6 @@
 // edit), the spread guard + cold-cache toast, and deleteCategory's budget strip across every
 // ['budgets'] entry.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());

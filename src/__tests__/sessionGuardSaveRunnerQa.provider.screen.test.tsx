@@ -2,7 +2,6 @@
 // must (a) never undo, toast or refresh after sign-out, even once the NEXT account has loaded its
 // own data, and (b) keep every in-session undo / toast / rule reconcile / refresh working.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());

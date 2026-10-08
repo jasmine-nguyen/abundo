@@ -9,7 +9,6 @@
 // These are DISTINCT call paths from the single-file test: a regression that routed either through
 // a ['transactions']-only patch would pass that test but be caught here.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
 import type { Transaction } from '../types';

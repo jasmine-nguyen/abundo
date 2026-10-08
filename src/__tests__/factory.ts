@@ -51,9 +51,32 @@ export function txn(over: Partial<Transaction> = {}): Transaction {
   };
 }
 
-// An unfiled Coles charge on the ANZ account, as the bank sends it.
+// Charges on the ANZ account, as the bank sends them.
+const anzTxn = (over: Partial<Transaction>): Transaction => txn({ account_name: 'ANZ', type: 'PAYMENT', ...over });
+
 export function colesTxn(over: Partial<Transaction> = {}): Transaction {
-  return txn({ description: 'COLES', merchant_name: 'Coles', account_name: 'ANZ', type: 'PAYMENT', category: null, ...over });
+  return anzTxn({ description: 'COLES', merchant_name: 'Coles', category: null, ...over });
+}
+
+export function cafeTxn(over: Partial<Transaction> = {}): Transaction {
+  return anzTxn({ description: 'CAFE', merchant_name: 'Cafe', amount: -6, category: 'coffee', ...over });
+}
+
+// A pending Anthropic subscription on the Westpac account, the row the delete tests remove.
+export function anthropicSubTxn(over: Partial<Transaction> = {}): Transaction {
+  return txn({
+    transaction_id: 'dup', date: '2026-09-27', authorized_date: '2026-09-27',
+    description: 'ANTHROPIC* CLAUDE SUB', merchant_name: 'Anthropic', amount: -170.01,
+    account_name: 'Westpac', category: 'subscriptions', status: 'pending', type: 'PAYMENT', ...over,
+  });
+}
+
+// An old unfiled charge, found only by searching.
+export function stevenTxn(over: Partial<Transaction> = {}): Transaction {
+  return anzTxn({
+    description: 'STEVEN NGUYEN', merchant_name: 'Steven Nguyen', amount: -50,
+    date: '2020-01-01', authorized_date: '2020-01-01', category: null, ...over,
+  });
 }
 
 // WHIT-539: a client Rule fixture (isNew is required on the interface). Defaults to a

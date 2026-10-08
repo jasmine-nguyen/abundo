@@ -2,9 +2,8 @@
 // the recent window, the removal showing BEFORE the server answers, multi-page feeds, a 404 or a
 // lost connection, and which caches are (and aren't) refreshed. REAL action through AppProvider.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Transaction } from '../types';
 import { queryClient } from '../queryClient';
 import { seedTransactionsPages, readTransactionsCache } from './support/transactionsCache';
@@ -13,15 +12,11 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
+import { anthropicSubTxn } from './factory';
 
 const server = installFakeServer();
 
-const txn = (over: Partial<Transaction> = {}): Transaction => ({
-  transaction_id: 'dup', date: '2026-09-27', authorized_date: '2026-09-27',
-  description: 'ANTHROPIC* CLAUDE SUB', merchant_name: 'Anthropic', amount: -170.01, account_id: 'a1',
-  account_name: 'Westpac', category: null as unknown as string, status: 'pending', type: 'PAYMENT', counts_to_budget: true,
-  ...over,
-});
+const txn = (over: Partial<Transaction> = {}) => anthropicSubTxn({ category: null as unknown as string, ...over });
 const KEEP = txn({ transaction_id: 'keep', status: 'posted' });
 const OLDER = txn({ transaction_id: 'older', status: 'posted', date: '2026-08-01' });
 

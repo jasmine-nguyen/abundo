@@ -11,7 +11,6 @@
 //   - a shop bigger than the write cap shows "up to N", not the full count;
 //   - a 409 clash surfaced by the preview shows the clash card and no file button.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, FilingResult, FilingTarget, FilingWhen } from '../context';
 import { APPLY_RULES_MAX_WRITES } from '../context';

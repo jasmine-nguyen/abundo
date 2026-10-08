@@ -2,7 +2,6 @@
 // server — the parts the auto-mock could never reach: the sign-in token, the path escaping, the
 // request time limit, and how each error style (plain / statusOnly / withReason) reaches the toast.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
 import type { Category } from '../types';

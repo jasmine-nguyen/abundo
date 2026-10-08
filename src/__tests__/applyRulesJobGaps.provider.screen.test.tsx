@@ -5,7 +5,6 @@
 // drop the job; and the terminal reconcile differs by variant — the "add rule" job prepends the
 // minted rule with its NEW badge (skipRules) while "file this shop" refreshes rules normally.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
 import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';

@@ -5,7 +5,6 @@
 // a retry. Over the per-run cap the preview promotes "Apply to all history" (the uncapped background
 // sweep) to primary and demotes the one-round instant file. Context is mocked, like the sync sheet.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, ApplyRulesResult, ApplyRulesJob, FilingResult, FilingTarget, FilingWhen } from '../context';
 

@@ -6,7 +6,6 @@
 // lock: it fires at the threshold (incl. the planning phase where matched/attempted sit at 0), never
 // fires while progress advances, clears on resumed progress, and always yields to a terminal state.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
 import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';

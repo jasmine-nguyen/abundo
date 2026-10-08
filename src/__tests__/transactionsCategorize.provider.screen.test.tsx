@@ -5,9 +5,8 @@
 // is NOT invalidated (the optimistic patch already wrote it; an InfiniteData invalidate would
 // storm every loaded page) — the tests assert that too. (Pre-192 it also wrote an old store.)
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Transaction } from '../types';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache, seedTransactionsPages, type FeedPage } from './support/transactionsCache';

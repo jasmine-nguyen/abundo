@@ -10,7 +10,6 @@
 //   - `failed` rows sit outside `remaining` but are still unfiled, so "still to go" is the sum.
 //   - a rule filing to Income has no row in the taxonomy map and must not render a blank name.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, ApplyRulesResult, FilingResult, FilingTarget, FilingWhen } from '../context';
 

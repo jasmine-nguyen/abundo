@@ -12,7 +12,6 @@
 //   - it shares the in-flight latch with applyRulesToHistory;
 //   - a run settling after sign-out paints nothing.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
 import type { ApplyRulesResult, FilingResult, FilingTarget } from '../context';

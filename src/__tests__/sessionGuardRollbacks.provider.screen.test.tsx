@@ -4,7 +4,6 @@
 // toasts were unguarded; this pins the session-epoch guard reused from WHIT-268. Harness mirrors
 // overlaysAuthClearGaps [A10]: live miniature auth store, the fake server, the real queryClient.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());

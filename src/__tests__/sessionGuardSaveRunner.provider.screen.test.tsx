@@ -4,7 +4,6 @@
 // stale undo writes account A's old values over them. The runner skips the undo entirely after
 // sign-out; these pin that at the provider (freshness window, mirrors sessionGuardRollbacks).
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());

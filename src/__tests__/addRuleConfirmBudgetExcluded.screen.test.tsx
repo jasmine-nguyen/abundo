@@ -6,7 +6,6 @@
 // is unpinned. Fail-on-revert: drop `budgetExcluded` from any of the three call sites in
 // AddRuleConfirmSheet and the matching assertion reddens.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, FilingResult, FilingTarget, FilingWhen } from '../context';
 

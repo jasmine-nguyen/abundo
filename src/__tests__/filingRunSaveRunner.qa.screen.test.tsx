@@ -2,7 +2,6 @@
 // that lands after sign-out must come back as a plain failure: no clash sheet, no refresh, and the
 // one-run-at-a-time lock released.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
 import type { FilingResult, FilingTarget } from '../context';

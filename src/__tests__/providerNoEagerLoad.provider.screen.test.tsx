@@ -7,7 +7,7 @@
 // (transactionsQuery / budgetsQuery / settingsQuery / goalScreenData / rulesScreenData).
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import { queryClient } from '../queryClient';
 
 // Pin 'authed' so a (hypothetical, reverted) auth-reload effect would fire if it still

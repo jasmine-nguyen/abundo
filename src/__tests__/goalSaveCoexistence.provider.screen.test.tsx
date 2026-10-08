@@ -8,13 +8,12 @@
 // loan facts read also returns the saved facts, so the observer stays on FACTS whether or not the
 // invalidate-refetch runs (that just avoids a timing-dependent flap back to the server value).
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
-import { QueryClientProvider } from '@tanstack/react-query';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import { useGoalScreenData } from '../queries';
 import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';
+import { queriesAppWrapper as wrapper } from './support/renderWithApp';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -22,12 +21,6 @@ const server = installFakeServer();
 
 const EMPTY = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
 const FACTS = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
-
-// Provider order mirrors app/_layout.tsx: QueryClientProvider (singleton) OUTSIDE AppProvider,
-// so saveLoanFacts' setQueryData on the singleton is seen by the composite's observer.
-const wrapper = ({ children }: { children: React.ReactNode }) => (
-  <QueryClientProvider client={queryClient}><AppProvider>{children}</AppProvider></QueryClientProvider>
-);
 
 // Every read the Goal screen makes answers the fake server's defaults: loan facts start unset.
 beforeEach(() => { queryClient.clear(); });

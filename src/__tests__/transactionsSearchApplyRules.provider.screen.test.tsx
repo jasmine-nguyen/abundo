@@ -3,11 +3,9 @@
 //   [A10] a rule-filed row is patched inside the search result, a vanished row is dropped from it,
 //         and every ['transactionsSearch', …] query is invalidated.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
 import type { FilingTarget } from '../context';
-import type { Transaction } from '../types';
 import type { TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
 
@@ -17,17 +15,14 @@ import { installFakeServer } from './support/fakeServer';
 import { GROCERIES } from './support/categories';
 import { invalidatedKeys } from './support/queryClient';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
+import { stevenTxn } from './factory';
 
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const server = installFakeServer();
 
 const CAT = GROCERIES;
 const SEARCH_KEY = ['transactionsSearch', 'uncategorized', 'steven'];
-const txn = (id: string): Transaction => ({
-  transaction_id: id, date: '2020-01-01', authorized_date: '2020-01-01',
-  description: 'STEVEN NGUYEN', merchant_name: 'Steven Nguyen', amount: -50, account_id: 'a1',
-  account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-});
+const txn = (id: string) => stevenTxn({ transaction_id: id });
 
 beforeEach(() => {
   queryClient.clear();

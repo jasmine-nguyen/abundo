@@ -3,10 +3,9 @@ cycles it came from. The listed cycles plus the remainder always add up to the c
 
 from decimal import Decimal
 
+from _budget_endpoint_fakes import LENGTH, TODAY  # settle cutoff 2026-07-31
 from _rollover_fakes import charge, cycle_record
 
-TODAY = "2026-08-10"  # settle cutoff 2026-07-31
-LENGTH = 30
 SEALED = ("2026-06-07", "2026-07-06")
 SETTLING = ("2026-07-07", "2026-08-05")
 
