@@ -130,9 +130,9 @@ def test_get_milestones_with_every_row_corrupt_is_an_empty_list_not_null(
 # === [A7] the over-rejection guard (client read): a saved row must never vanish ==============
 
 _ROUND_TRIP = [
-    {"label": "x" * 100, "targetBalance": 1_000_000_000, "targetDate": "2027-02-28"},
-    {"label": "Ünïcödé 🎉 目標", "targetBalance": 595413.43, "targetDate": "2028-02-29"},
-    {"label": "Paid off", "targetBalance": 0, "targetDate": "2030-12-31"},
+    {"id": "r1", "label": "x" * 100, "targetBalance": 1_000_000_000, "targetDate": "2027-02-28"},
+    {"id": "r2", "label": "Ünïcödé 🎉 目標", "targetBalance": 595413.43, "targetDate": "2028-02-29"},
+    {"id": "r3", "label": "Paid off", "targetBalance": 0, "targetDate": "2030-12-31"},
 ]
 
 
@@ -155,8 +155,8 @@ def test_every_row_the_save_endpoint_accepts_survives_the_read(handler, mileston
 # === [L6] a hidden row's marker survives until the next save drops the row ===================
 
 _HIDDEN_ROW_PLAN = [
-    {"label": "Quarter down", "targetBalance": 400000, "targetDate": "2030-01-01"},
-    {"label": "Halfway", "targetBalance": 250000, "targetDate": "2031-01-01"},
+    {"id": "r4", "label": "Quarter down", "targetBalance": 400000, "targetDate": "2030-01-01"},
+    {"id": "r5", "label": "Halfway", "targetBalance": 250000, "targetDate": "2031-01-01"},
 ]
 
 
@@ -217,9 +217,9 @@ def test_a_hidden_rows_marker_survives_until_the_next_save_drops_the_row(
 # === [F1]-[F3] the over-rejection guard for the POLLER path ==================================
 
 _SAVED_PLAN = [
-    {"label": "x" * 100, "targetBalance": 1_000_000_000, "targetDate": "2027-02-28"},
-    {"label": "Ünïcödé 🎉 目標", "targetBalance": 595413.43, "targetDate": "2028-02-29"},
-    {"label": "Paid off", "targetBalance": 0, "targetDate": "2030-12-31"},
+    {"id": "r6", "label": "x" * 100, "targetBalance": 1_000_000_000, "targetDate": "2027-02-28"},
+    {"id": "r7", "label": "Ünïcödé 🎉 目標", "targetBalance": 595413.43, "targetDate": "2028-02-29"},
+    {"id": "r8", "label": "Paid off", "targetBalance": 0, "targetDate": "2030-12-31"},
 ]
 
 
@@ -309,8 +309,8 @@ def test_the_read_rule_now_matches_the_write_rule_rejecting_the_lenient_forms(ha
 # === [W1]-[W3] keep-the-marker of an unreadable-but-identifiable row, end to end =============
 
 _RETARGET_PLAN = [
-    {"label": "Deposit", "targetBalance": 480000, "targetDate": "2027-01-01"},
-    {"label": "Halfway", "targetBalance": 300000, "targetDate": "2028-01-01"},
+    {"id": "r9", "label": "Deposit", "targetBalance": 480000, "targetDate": "2027-01-01"},
+    {"id": "r10", "label": "Halfway", "targetBalance": 300000, "targetDate": "2028-01-01"},
 ]
 
 

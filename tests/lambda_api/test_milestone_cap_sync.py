@@ -10,9 +10,6 @@ Same shape as the loan-facts guard (test_loanfacts_ceiling_sync.py): both read t
 client `const NAME = <number>` through the shared reader in tests/shared/_ts_const.py.
 One difference — the server value lives in handler.py, which has real imports, so it is
 read through the `handler` fixture rather than exec'd.
-
-tests/shared/test_milestones_twin_drift.py is a different guard: it compares the
-milestone PLAN rows across the two twins, not this cap.
 """
 
 import pathlib

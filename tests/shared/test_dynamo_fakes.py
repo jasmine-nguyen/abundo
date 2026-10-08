@@ -213,8 +213,7 @@ def test_real_notify_repository_runs_over_the_fake_table(shared, database_error)
     assert notify.claim_fired("2026-09-01", 14, "groceries#80") is True
 
     notify.mark_milestone_fired("id:m1:bal:100000")
-    notify.migrate_milestone_markers([("id:m1:bal:100000", "id:m2:bal:100000")])
-    assert notify.fired_milestones() == {"id:m2:bal:100000"}
+    assert notify.fired_milestones() == {"id:m1:bal:100000"}
 
     # A failed call surfaces as the app's DatabaseError, converted by the real repository.
     table.fail("update_item")

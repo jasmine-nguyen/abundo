@@ -17,14 +17,11 @@ export interface Milestone {
 
 // This is a SUGGESTED template, no longer an implicit default: milestoneView shows an empty
 // state until the user saves their own plan, and the editor loads these rows only when the user
-// taps "Use a suggested plan". (Its server twin shared/milestones.py still backs crossed_milestones
-// and the read-failure celebration fallback, so the two stay pinned in lockstep — see below.)
+// taps "Use a suggested plan".
 // Ordered by targetDate ascending (equivalently targetBalance descending — the
 // loan is being paid DOWN, so each later milestone is a lower balance).
 // milestone.logic.test.ts enforces both, because milestoneView's schedule curve
 // and next-milestone selection both rely on this ordering.
-// Labels kept in lockstep with the server twin (shared/milestones.py); the payoff-push
-// drift-pin test pins these exact rows, so update BOTH if the plan changes.
 export const MILESTONES: Milestone[] = [
   { sprint: 0, label: 'Kickoff',        targetBalance: 544000, targetDate: '2026-06-18' },
   { sprint: 1, label: 'Quarter way',    targetBalance: 420000, targetDate: '2027-03-18' },

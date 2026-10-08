@@ -3,8 +3,7 @@
 The implementer's tests/lambda_api/test_validation_helpers.py pins the two helpers in
 ISOLATION. These pin them THROUGH the two real callers (set_milestones, upsert_goal ->
 _validate_goal_checkpoints), because the only way the refactor can go wrong is a wrong
-`noun`/`max_len` wired at a call site, or the id-helper's mid-loop early-return colliding
-with the WHIT-447 mint bookkeeping. Existing goal tests assert only status 400, and the
+`noun`/`max_len` wired at a call site. Existing goal tests assert only status 400, and the
 existing milestone label/id tests only substring-match — neither guards the approved
 wording change or the noun wiring. Fakes mirror the per-suite pattern (each suite defines
 its own; nothing importable lives in conftest).
@@ -12,7 +11,7 @@ its own; nothing importable lives in conftest).
 
 import json
 
-from _milestone_fakes import goal_put_event, milestones_put_event, recording_notify_repo, stored_markers
+from _milestone_fakes import goal_put_event, milestones_put_event
 
 
 # --- fakes (mirror test_milestones_api.py / test_goals.py) -------------------
@@ -46,18 +45,17 @@ class FakeBalanceRepo:
 
 # --- event builders ----------------------------------------------------------
 
-def _put_milestones(handler, rows, repo=None, notify=None):
-    repo = repo or FakeMilestoneRepo()
-    notify = notify or recording_notify_repo()
-    resp = handler.set_milestones(milestones_put_event(rows), repo, notify)
-    return resp, repo, notify
+def _put_milestones(handler, rows):
+    repo = FakeMilestoneRepo()
+    resp = handler.set_milestones(milestones_put_event(rows), repo)
+    return resp, repo
 
 
 def _err(resp):
     return json.loads(resp["body"])["error"]
 
 
-VALID_MS = {"label": "Kickoff", "targetBalance": 544000, "targetDate": "2026-06-18"}
+VALID_MS = {"id": "kick", "label": "Kickoff", "targetBalance": 544000, "targetDate": "2026-06-18"}
 
 
 def _grow_body(**over):
@@ -85,7 +83,7 @@ def _put_goal(handler, body):
 
 def test_milestone_label_too_long_uses_the_prefixed_wording(handler):
     # WHIT-480 — [E1] approved: "label too long" -> "milestone label too long"
-    resp, repo, _ = _put_milestones(handler, [{**VALID_MS, "label": "x" * 101}])
+    resp, repo = _put_milestones(handler, [{**VALID_MS, "label": "x" * 101}])
     assert resp["statusCode"] == 400
     assert _err(resp) == "milestone label too long"
     assert repo.set_calls == []
@@ -93,7 +91,7 @@ def test_milestone_label_too_long_uses_the_prefixed_wording(handler):
 
 def test_milestone_blank_id_uses_the_prefixed_wording(handler):
     # WHIT-480 — [E2] approved: "id must be a non-empty string" -> "milestone id must be..."
-    resp, repo, _ = _put_milestones(handler, [{**VALID_MS, "id": "   "}])
+    resp, repo = _put_milestones(handler, [{**VALID_MS, "id": "   "}])
     assert resp["statusCode"] == 400
     assert _err(resp) == "milestone id must be a non-empty string"
     assert repo.set_calls == []
@@ -101,7 +99,7 @@ def test_milestone_blank_id_uses_the_prefixed_wording(handler):
 
 def test_milestone_empty_label_message_unchanged(handler):
     # WHIT-480 — [E3] noun wired at the empty-label branch; message must NOT have drifted
-    resp, _, _ = _put_milestones(handler, [{**VALID_MS, "label": ""}])
+    resp, _ = _put_milestones(handler, [{**VALID_MS, "label": ""}])
     assert _err(resp) == "each milestone needs a non-empty label"
 
 
@@ -109,7 +107,7 @@ def test_milestone_duplicate_id_message_unchanged(handler):
     # WHIT-480 — [E4]
     rows = [{**VALID_MS, "id": "dup"},
             {"label": "Two", "targetBalance": 100000, "targetDate": "2027-06-18", "id": "dup"}]
-    resp, repo, _ = _put_milestones(handler, rows)
+    resp, repo = _put_milestones(handler, rows)
     assert resp["statusCode"] == 400
     assert _err(resp) == "milestone ids must be unique"
     assert repo.set_calls == []
@@ -151,52 +149,14 @@ def test_checkpoint_empty_label_keeps_checkpoint_noun(handler):
 
 
 # =====================================================================
-# WHIT-447 mint bookkeeping × id-helper early-return
-# (existing tests trigger the failure via ordering/balance; these trigger it
-#  INSIDE _validate_id, after an earlier row already minted)
-# =====================================================================
-
-def test_mint_then_blank_id_failure_persists_nothing_and_migrates_nothing(handler):
-    # WHIT-480 — [E9] row0 id-less -> mints & lands in `minted`; row1 blank id -> _validate_id
-    # returns the 400. Must short-circuit before repo.set_milestones AND before migration.
-    notify = recording_notify_repo({"bal:544000.00", "bal:100000.00"})
-    rows = [
-        {"label": "First", "targetBalance": 544000, "targetDate": "2026-06-18"},      # no id -> mints
-        {"label": "Second", "targetBalance": 100000, "targetDate": "2027-06-18", "id": "  "},
-    ]
-    resp, repo, notify = _put_milestones(handler, rows, notify=notify)
-    assert resp["statusCode"] == 400
-    assert _err(resp) == "milestone id must be a non-empty string"
-    assert repo.set_calls == []                        # nothing persisted
-    assert notify.migrate_calls == []                  # no marker moved for an unsaved plan
-    assert stored_markers(notify) == {"bal:544000.00", "bal:100000.00"}   # markers untouched
-
-
-def test_mint_then_duplicate_id_failure_persists_and_migrates_nothing(handler):
-    # WHIT-480 — [E10] row0 explicit "keep"; row1 id-less -> mints; row2 duplicates "keep".
-    # The duplicate check in _validate_id fires AFTER a mint already ran on row1.
-    notify = recording_notify_repo({"bal:100000.00"})
-    rows = [
-        {"label": "Keep", "targetBalance": 544000, "targetDate": "2026-06-18", "id": "keep"},
-        {"label": "Minted", "targetBalance": 300000, "targetDate": "2027-06-18"},     # no id -> mints
-        {"label": "Dup", "targetBalance": 100000, "targetDate": "2028-06-18", "id": "keep"},
-    ]
-    resp, repo, notify = _put_milestones(handler, rows, notify=notify)
-    assert resp["statusCode"] == 400
-    assert _err(resp) == "milestone ids must be unique"
-    assert repo.set_calls == []
-    assert notify.migrate_calls == []
-
-
-# =====================================================================
 # seen_ids scope — the set is per-call, and the two paths don't share one
 # =====================================================================
 
 def test_seen_ids_is_per_request_not_shared_across_calls(handler):
     # WHIT-480 — [E11] two independent saves reusing the same id must both succeed;
     # a leaked module-level set would 400 the second as a duplicate.
-    resp1, repo1, _ = _put_milestones(handler, [{**VALID_MS, "id": "dup"}])
-    resp2, repo2, _ = _put_milestones(handler, [{**VALID_MS, "id": "dup"}])
+    resp1, repo1 = _put_milestones(handler, [{**VALID_MS, "id": "dup"}])
+    resp2, repo2 = _put_milestones(handler, [{**VALID_MS, "id": "dup"}])
     assert resp1["statusCode"] == 200 and resp2["statusCode"] == 200
     assert repo1.set_calls[0]["milestones"][0]["id"] == "dup"
     assert repo2.set_calls[0]["milestones"][0]["id"] == "dup"
@@ -204,7 +164,7 @@ def test_seen_ids_is_per_request_not_shared_across_calls(handler):
 
 def test_milestone_and_goal_can_reuse_the_same_id(handler):
     # WHIT-480 — [E11] the milestone and checkpoint save paths keep separate seen-sets.
-    resp_ms, _, _ = _put_milestones(handler, [{**VALID_MS, "id": "shared-1"}])
+    resp_ms, _ = _put_milestones(handler, [{**VALID_MS, "id": "shared-1"}])
     resp_goal, repo_goal = _put_goal(handler, _grow_body(
         checkpoints=[_cp("Halfway", 2500, id="shared-1")]))
     assert resp_ms["statusCode"] == 200
@@ -218,10 +178,10 @@ def test_milestone_and_goal_can_reuse_the_same_id(handler):
 
 def test_milestone_label_100_unicode_code_points_accepted_101_rejected(handler):
     # WHIT-480 — [E12] len() counts code points; the emoji is one code point in Python 3.
-    ok, repo_ok, _ = _put_milestones(handler, [{**VALID_MS, "label": "\U0001F600" * 100}])
+    ok, repo_ok = _put_milestones(handler, [{**VALID_MS, "label": "\U0001F600" * 100}])
     assert ok["statusCode"] == 200
     assert repo_ok.set_calls[0]["milestones"][0]["label"] == "\U0001F600" * 100
-    over, repo_over, _ = _put_milestones(handler, [{**VALID_MS, "label": "\U0001F600" * 101}])
+    over, repo_over = _put_milestones(handler, [{**VALID_MS, "label": "\U0001F600" * 101}])
     assert over["statusCode"] == 400
     assert _err(over) == "milestone label too long"
     assert repo_over.set_calls == []
@@ -230,6 +190,6 @@ def test_milestone_label_100_unicode_code_points_accepted_101_rejected(handler):
 def test_milestone_label_trimmed_to_cap_is_accepted_and_stored_trimmed(handler):
     # WHIT-480 — [E13] raw is 104 chars but trims to exactly 100 -> accepted, stored trimmed.
     raw = "  " + "y" * 100 + "  "
-    resp, repo, _ = _put_milestones(handler, [{**VALID_MS, "label": raw}])
+    resp, repo = _put_milestones(handler, [{**VALID_MS, "label": raw}])
     assert resp["statusCode"] == 200
     assert repo.set_calls[0]["milestones"][0]["label"] == "y" * 100

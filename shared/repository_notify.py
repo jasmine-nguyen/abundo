@@ -205,9 +205,8 @@ class NotifyRepository(RepositoryBase):
 
     def fired_milestones(self, scope: Optional[str] = None) -> set:
         """The set of already-celebrated payoff-milestone markers for `scope` (WHIT-301/369).
-        A marker is the milestone's dedup key — "id:<id>:bal:<amount>" for a saved milestone,
-        or a bare sprint "0".."4" for the built-in default. `scope` selects the owner; None is
-        the shared tenant."""
+        A marker is the saved milestone's dedup key "id:<id>:bal:<amount>". `scope` selects the
+        owner; None is the shared tenant."""
         with db_errors("read milestone-notify markers"):
             item = self._get_table().get_item(Key=_milestone_key(scope)).get("Item")
         if item is None:
@@ -265,42 +264,4 @@ class NotifyRepository(RepositoryBase):
                 UpdateExpression="DELETE #f :m",
                 ExpressionAttributeNames={"#f": "fired"},
                 ExpressionAttributeValues={":m": set(keys)},
-            )
-
-    def migrate_milestone_markers(self, migrations: list, scope: Optional[str] = None) -> None:
-        """Rename each (old, new) once-ever milestone marker in place, for a legacy id-less row
-        that the save endpoint has just minted an id for (WHIT-447). Without this, the next poll
-        keys the now-id'd row under `new`, finds `old` uncovered, and sweeps it as dead — re-arming
-        an already-celebrated milestone.
-
-        ONLY a marker already in the fired set is migrated: adding a `new` whose `old` was never
-        celebrated would wrongly suppress a legitimate future first celebration. Same no-TTL
-        once-ever contract as mark_milestone_fired / remove_milestone_markers.
-
-        ADD the new markers BEFORE deleting the old ones — the order is the partial-failure
-        contract. If the DELETE never runs, the row is left holding BOTH markers: still deduped,
-        and the poller later reaps the now-genuinely-dead `old` as stale. Deleting first and then
-        failing to add would leave NO marker and re-arm the celebration — the exact bug this
-        migration prevents. `scope` selects the owner; None is the shared tenant."""
-        if not migrations:
-            return
-        fired = self.fired_milestones(scope)
-        relevant = [(old, new) for old, new in migrations if old in fired]
-        if not relevant:
-            return
-        to_add = {new for _, new in relevant}
-        to_remove = {old for old, _ in relevant}
-        key = _milestone_key(scope)
-        with db_errors("migrate milestone markers"):
-            self._get_table().update_item(
-                Key=key,
-                UpdateExpression="ADD #f :m",
-                ExpressionAttributeNames={"#f": "fired"},
-                ExpressionAttributeValues={":m": to_add},
-            )
-            self._get_table().update_item(
-                Key=key,
-                UpdateExpression="DELETE #f :m",
-                ExpressionAttributeNames={"#f": "fired"},
-                ExpressionAttributeValues={":m": to_remove},
             )
