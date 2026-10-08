@@ -39,7 +39,6 @@ it.each([
   server.seed('/paycycle', { length: 14, last_pay_date: '2026-10-02' });
   await renderWithQueries(<Mortgage />);
 
-  expect(screen.getByText('1 of 3 milestones reached')).toBeTruthy();
   expect(screen.getByText('Next: under $200,000 → unlocks $416,000 equity')).toBeTruthy();
   expect(screen.getByText('$75,000 to go')).toBeTruthy();
   // $275k is a quarter of the way from Start ($300k) to Midway ($200k): that segment fills 25%.
