@@ -153,7 +153,6 @@ def test_each_settings_store_seeds_its_own_starting_record(shared):
         repository_category.CategoryRepository: {
             "pk": "CATEGORIES", "sk": "CATEGORIES",
             "items": dict(repository_category.SEED_CATEGORIES),
-            "colorSlotSchema": Decimal(2),
         },
     }
     for cls, fields in expected.items():

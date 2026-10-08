@@ -1484,8 +1484,7 @@ def _parent_with_children(repo, repository, count, parent_id="coffee"):
         items[child] = _cat(child, bucket, parent=parent_id,
                             colorSlot=Decimal(index % _COLOR_SLOT_COUNT_FOR_TESTS))
     repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES",
-                               "items": items, "version": Decimal(1),
-                               "colorSlotSchema": Decimal(1)}
+                               "items": items, "version": Decimal(1)}
     return items
 
 
@@ -1692,7 +1691,7 @@ def test_a_full_parents_delete_fits_even_with_very_long_child_ids(handler):
         long_id = f"{'x' * 200}{index:04d}"              # ids far longer than any slug
         items[long_id] = _cat(long_id, items["coffee"]["bucket"], parent="coffee")
     repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES", "items": items,
-                               "version": Decimal(1), "colorSlotSchema": Decimal(1)}
+                               "version": Decimal(1)}
 
     repo.delete_category("coffee")
 
@@ -1903,7 +1902,7 @@ def test_breadth_counts_direct_children_only_not_the_whole_subtree(handler):
         gc = f"gc{index:04d}"
         items[gc] = _cat(gc, items["coffee"]["bucket"], parent="mid")
     repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES", "items": items,
-                               "version": Decimal(1), "colorSlotSchema": Decimal(1)}
+                               "version": Decimal(1)}
 
     repository.validate_category_breadth(items, "new", "coffee")   # 1 direct child: fine
 
@@ -1927,7 +1926,7 @@ def test_depth_is_reported_before_breadth_when_a_create_breaks_both(handler):
         kid = f"deepkid{index:04d}"
         items[kid] = _cat(kid, bucket, parent="lvl5")
     repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES", "items": items,
-                               "version": Decimal(1), "colorSlotSchema": Decimal(1)}
+                               "version": Decimal(1)}
 
     with pytest.raises(repository.InvalidCategoryParentError, match="levels deep"):
         repo.create_category("toodeep", "Too Deep", bucket, "tag", parent="lvl5")

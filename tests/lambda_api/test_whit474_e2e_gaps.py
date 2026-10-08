@@ -21,7 +21,7 @@ import pytest
 
 from _api_event import api_event
 from _budget_endpoint_fakes import _FakePayCycleRepo, pin_cycle_window
-from _category_fakes import _cat, _schema
+from _category_fakes import _cat
 from _dynamo_fakes import FakeTable
 from _transaction_range_fakes import _QueuedTransactionRepo
 
@@ -51,8 +51,7 @@ def _category_repo(cat_id, bucket):
     repo = repository.CategoryRepository()
     repo._table = FakeTable()
     repo._table.seed({"pk": "CATEGORIES", "sk": "CATEGORIES", "version": Decimal(1),
-                      "items": {cat_id: _cat(cat_id, bucket, parent=None)},
-                      "colorSlotSchema": _schema()})
+                      "items": {cat_id: _cat(cat_id, bucket, parent=None)}})
     return repo
 
 

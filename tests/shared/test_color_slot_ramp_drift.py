@@ -132,8 +132,7 @@ def test_assignment_order_covers_exactly_the_server_slot_range(slots):
 def test_every_seed_slot_is_inside_the_server_slot_range(slots):
     """The built-in categories carry hand-solved slots. If the slot range were ever
     lowered below one of them, _coerce_slot would read that built-in's stored slot as
-    ABSENT, the backfill would hand it a different one, and it would repaint
-    PERMANENTLY — for every existing user, silently."""
+    ABSENT and it would lose its colour — for every existing user, silently."""
     server = slots._COLOR_SLOT_COUNT
     outside = {
         category_id: category["colorSlot"]
