@@ -13,6 +13,7 @@
 #              └→ checks ─┬→ implementer                        typecheck/lint/tests failed
 #                         └→ ponytail ─┬→ implementer           cuts to make (/ponytail-review)
 #                                      └→ code_critic ∥ qa → fix_or_ship
+# fix_or_ship ─→ ponytail                                       QA added tests: cut-check them too
 # fix_or_ship ─┬→ implementer                                   findings, rounds left
 #              ├→ next_slice → test_writer                      more slices to build
 #              └→ ship → END                                    both reviews passed
@@ -140,6 +141,7 @@ class BuildState(TypedDict):
     qa_feedback: NotRequired[str]
     qa_patch: NotRequired[str]
     qa_test_command: NotRequired[str]
+    qa_test_files: NotRequired[list[str]]
     manual_checks: Annotated[list[str], merge_unique]
     follow_ups: Annotated[list[str], merge_unique]
     last_review: NotRequired[dict[str, str]]
@@ -647,7 +649,8 @@ def running_message(name: str, state: BuildState) -> str | None:
         "test_writer": "Writing the tests that define done",
         "implementer": f"Implementer is {verb} the code (round {round_number})",
         "checks": "Running typecheck and tests",
-        "ponytail": "Ponytail: looking for what the change could cut",
+        "ponytail": "Ponytail: checking QA's new tests for what to cut" if state.get("qa_test_files")
+        else "Ponytail: looking for what the change could cut",
         "code_critic": "Code review: hunting for bugs and checking your standards",
         "qa": None if qa_passed_last_round(state) else "QA: checking it does what the card asked, then testing the edge cases",
         "ship": "Opening the PR (after running QA's new tests and the typecheck, if it added any)",
@@ -1321,6 +1324,7 @@ def cleared_reviews() -> dict:
     return {
         "checks_feedback": "",
         "code_decisions": [],
+        "qa_test_files": [],
         **{f"{key}_verdict": "" for key in REVIEW_LABELS},
         **{f"{key}_feedback": "" for key in REVIEW_LABELS},
     }
@@ -1983,7 +1987,13 @@ async def ponytail(state: BuildState):
     """/ponytail-review before the code review and QA, so they review what's left after the cuts."""
     if not ponytail_review_skill():
         return {"ponytail_verdict": "SKIPPED", "history": ["• ponytail: not installed, cut review skipped"]}
-    result = await run_agent("ponytail", review_block(state, "ponytail"), PONYTAIL_OUTPUT)
+    extra = ""
+    if state.get("qa_test_files"):
+        extra = (
+            "## QA's new tests\nThe rest of the change already passed this review. QA has just added these tests "
+            f"(on the branch, not committed yet), so check only them:\n{bullets(state['qa_test_files'])}"
+        )
+    result = await run_agent("ponytail", review_block(state, "ponytail", extra), PONYTAIL_OUTPUT)
     cuts = result.output["cuts"]
     if not cuts:
         return {"ponytail_verdict": "APPROVED", "history": [mark(True, "ponytail: nothing to cut")]}
@@ -2109,7 +2119,9 @@ def fix_or_ship(state: BuildState):
             problem = f"QA's tests weren't added to the branch: {note.removeprefix('✗ qa: ')}"
             print(f"   ⚠️ {problem}", flush=True)
             update["advisory"] = [problem]
-    if not applied:
+    if applied:
+        update["qa_test_files"] = applied
+    else:
         update["qa_test_command"] = ""
     needs_rework = any(state.get(f"{key}_verdict") == "NEEDS_REWORK" for key in REVIEW_LABELS)
     return {**update, **out_of_rounds(state, needs_rework), "history": history}
@@ -2344,12 +2356,18 @@ def after_checks(state: BuildState):
 
 
 def after_ponytail(state: BuildState):
-    return "implementer" if state.get("ponytail_verdict") == "NEEDS_REWORK" else REVIEWERS
+    if state.get("ponytail_verdict") == "NEEDS_REWORK":
+        return "implementer"
+    return next_slice_or_ship(state) if state.get("qa_test_files") else REVIEWERS
 
 
 def after_review(state: BuildState):
     if any(state.get(f"{key}_verdict") == "NEEDS_REWORK" for key in REVIEW_LABELS):
         return END if state.get("failed") else "implementer"
+    return "ponytail" if state.get("qa_test_files") else next_slice_or_ship(state)
+
+
+def next_slice_or_ship(state: BuildState):
     if state.get("current_slice", 0) + 1 < len(state.get("slices") or []):
         return "next_slice"
     return "ship"

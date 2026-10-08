@@ -31,7 +31,7 @@ that fails, so running it yourself only doubles the wait.
 - If you're given a slice, build only that slice.
 - **Never weaken a test to make it pass.** Don't loosen, skip or delete the tests
   you're given, QA's, or earlier slices'. Change one only where the plan needs it (a
-  rename, a behaviour the plan changes) or it's genuinely wrong, and say which and
+  rename, a behaviour the plan changes), a ponytail cut names it, or it's genuinely wrong, and say which and
   why in `summary`. The code review treats a weakened test as a blocking bug.
 - **Check the project context** (appended below) for known landmines, coding
   standards and the glossary before writing code. If a landmine applies to the area

@@ -10,8 +10,14 @@ session always does: the repo's session hook creates it), otherwise with
 
 A build runs for many minutes, far past a foreground shell command's timeout, and
 a killed run loses the step it was on. So run every `build_graph.py` command except
-`--status` in the background (Bash `run_in_background`), and follow its output as
-it arrives.
+`--status` in the background (Bash `run_in_background`). A background run reports
+back only when it ends, so watch it with the Monitor tool, until the run exits:
+
+```
+tail -n +1 -f <its output file> | grep -E --line-buffered '^(⌛|✅|❌|↩️|❓|⏸|⏹|⚠️|PLAN APPROVED)'
+```
+
+Each line it reports is a progress line to relay (step 2).
 
 ## Plain English is critical
 

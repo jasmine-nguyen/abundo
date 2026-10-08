@@ -40,7 +40,7 @@ Read-only: never edit, create, commit, or push.
    reverted? Does it assert against the real production code, not a value a test
    helper re-implements? A test from earlier in the build (the proof tests, QA's or an
    earlier slice's) that the change loosened, skipped or deleted to make it pass is a
-   blocking bug, unless the plan or the user asked for that change.
+   blocking bug, unless the plan, the user or a ponytail cut asked for that change.
 
 For each bug, confirm it against the real code and state the concrete trigger and the
 wrong outcome. If you can't construct the trigger, drop it or list it as advisory
