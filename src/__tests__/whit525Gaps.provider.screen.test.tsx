@@ -8,7 +8,7 @@
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Transaction, Category } from '../types';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
@@ -16,10 +16,9 @@ import { installFakeServer } from './support/fakeServer';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const CATS: Category[] = [
   { id: 'food', name: 'Food', bucket: 'Living', icon: 'cart', color: '#7fd49b', parent: null },

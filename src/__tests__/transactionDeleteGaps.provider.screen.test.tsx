@@ -12,10 +12,9 @@ import { seedTransactionsPages, readTransactionsCache } from './support/transact
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const txn = (over: Partial<Transaction> = {}): Transaction => ({
   transaction_id: 'dup', date: '2026-09-27', authorized_date: '2026-09-27',

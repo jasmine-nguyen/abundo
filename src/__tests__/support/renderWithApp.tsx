@@ -27,6 +27,9 @@ export function resetAppProbe() {
   sheet = null;
 }
 
+/** The bare AppProvider, for renderHook's `wrapper` option. */
+export const appProviderWrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
+
 export function WithApp({ children }: { children: React.ReactNode }) {
   return (
     <WithQueries>

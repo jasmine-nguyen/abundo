@@ -17,18 +17,16 @@ from functools import partial
 
 import pytest
 
-from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo, pin_cycle_window
+from _budget_endpoint_fakes import CYCLE_START, LENGTH, PAYDATE, _FakeCategoryRepo, _FakePayCycleRepo
 from _budget_fakes import recording_budget_repo
 from _lambda_api_constants import constants_namespace
 from _transaction_range_fakes import _QueuedTransactionRepo
 
+pytestmark = pytest.mark.usefixtures("fixed_window")
+
 # A fixed monthly cycle: current cycle_start 2026-08-06, today 2026-08-10 (4 days in), payday
 # grid anchored at 2026-01-01. The settle lag is 10 days, so the cutoff is 2026-07-31: a
 # completed cycle whose end is before that seals; a more recent one stays live.
-CYCLE_START = "2026-08-06"
-TODAY = "2026-08-10"
-LENGTH = 30
-PAYDATE = "2026-01-01"
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
@@ -42,11 +40,6 @@ def _txn(category, amount, date, status="posted", counts=True):
 
 def _spend_cat(cat_id="sink", bucket="Lifestyle"):
     return [{"id": cat_id, "bucket": bucket, "parent": None}]
-
-
-@pytest.fixture(autouse=True)
-def _fixed_window(handler, monkeypatch):
-    pin_cycle_window(handler, monkeypatch, CYCLE_START, TODAY)
 
 
 def _entry(target, **extra):

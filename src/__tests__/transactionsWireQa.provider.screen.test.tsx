@@ -4,7 +4,7 @@
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Transaction } from '../types';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
@@ -13,18 +13,13 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { DINING, GROCERIES } from './support/categories';
 import { invalidatedKeys } from './support/queryClient';
+import { colesTxn } from './factory';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
 const CAT = GROCERIES;
-const txn = (id: string, extra: Partial<Transaction> = {}): Transaction => ({
-  transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-  account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-  ...extra,
-});
+const txn = (id: string, extra: Partial<Transaction> = {}) => colesTxn({ transaction_id: id, ...extra });
 const cached = (id: string) => readTransactionsCache(queryClient).find((t) => t.transaction_id === id);
 beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); jest.restoreAllMocks(); });

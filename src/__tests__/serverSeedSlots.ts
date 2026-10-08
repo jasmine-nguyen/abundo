@@ -14,7 +14,7 @@ import path from 'path';
 const SEED_SOURCE = path.resolve(__dirname, '../../shared/repository_category.py');
 
 /** The raw text of the server module, so a test can assert on it directly if it needs to. */
-export const SEED_SOURCE_TEXT = fs.readFileSync(SEED_SOURCE, 'utf8');
+const SEED_SOURCE_TEXT = fs.readFileSync(SEED_SOURCE, 'utf8');
 
 function seedBlock(src: string): string {
   const start = src.indexOf('SEED_CATEGORIES = {');

@@ -14,7 +14,6 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, FilingResult, FilingTarget, FilingWhen } from '../context';
-import type { ApplyRulesResult } from '../api';
 import { APPLY_RULES_MAX_WRITES } from '../context';
 import { ApiError } from '../apiError';
 
@@ -27,6 +26,7 @@ import { installFakeServer } from './support/fakeServer';
 import { GROCERIES_TOP_RECORD } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
+import { previewReport as report } from './support/applyRulesReport';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -43,14 +43,6 @@ const CATEGORIES = [
   GROCERIES_TOP_RECORD,
   { id: 'fuel', name: 'Fuel', bucket: 'Living', icon: 'car', parent: null },
 ];
-
-const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
-  dryRun: true, rulesConsidered: 1, unfiled: 20, matched: 12, conflicted: 0, conflictedSamples: [],
-  byCategory: { groceries: 12 },
-  byRule: [{ ruleId: null, value: 'coles', categoryId: 'groceries', count: 12, samples: ['COLES 1234 RICHMOND', 'COLES 5678 CBD'] }],
-  skippedRules: [], filed: [], vanished: [], failed: [], alreadyFiled: [], remaining: 12, createdRule: null,
-  ...over,
-});
 
 async function mountConfirm(pattern = 'COLES', categoryId = 'groceries') {
   server.seed('/categories', CATEGORIES);

@@ -7,7 +7,7 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
+import { useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
 import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';
 import { queryClient } from '../queryClient';
 
@@ -16,6 +16,7 @@ import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMo
 import type { CreatedRule, UncategorizedMerchantGroup } from '../api';
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
 
@@ -24,8 +25,6 @@ const JOBS = '/transactions/uncategorized/apply-rules/jobs';
 const jobPath = (jobId: string) => `${JOBS}/${jobId}`;
 // How many times the app has checked on a job (any job) so far.
 const polls = () => server.sentUnder('GET', `${JOBS}/`).length;
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
   jobId: 'job-1', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,

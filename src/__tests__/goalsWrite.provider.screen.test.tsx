@@ -14,12 +14,11 @@ import type { GoalRecord, GoalWriteBody } from '../api';
 import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const GOAL_G1: GoalRecord = {
   id: 'g1', name: 'Emergency fund', icon: 'umbrella', direction: 'grow',

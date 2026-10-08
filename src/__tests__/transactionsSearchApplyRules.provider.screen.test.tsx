@@ -5,7 +5,7 @@
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { FilingTarget } from '../context';
 import type { Transaction } from '../types';
 import type { TransactionSearchResult } from '../api';
@@ -16,11 +16,11 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES } from './support/categories';
 import { invalidatedKeys } from './support/queryClient';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const server = installFakeServer();
 
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 const CAT = GROCERIES;
 const SEARCH_KEY = ['transactionsSearch', 'uncategorized', 'steven'];
 const txn = (id: string): Transaction => ({

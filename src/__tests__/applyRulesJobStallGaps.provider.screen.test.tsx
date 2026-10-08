@@ -12,13 +12,14 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
+import { useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
 import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';
 import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
 
@@ -26,8 +27,6 @@ const server = installFakeServer();
 const JOBS = '/transactions/uncategorized/apply-rules/jobs';
 const JOB_PATH = `${JOBS}/job-1`;
 const polls = () => server.sent('GET', JOB_PATH).length;
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
   jobId: 'job-1', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,

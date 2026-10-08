@@ -19,14 +19,14 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
+import { applyRulesReport } from './support/applyRulesReport';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 const APPLY_RULES = '/transactions/uncategorized/apply-rules';
 const JOBS = `${APPLY_RULES}/jobs`;
 const posts = (path: string) => server.sent('POST', path);
 const polls = () => server.sentUnder('GET', `${JOBS}/`).length;
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const GROUP: UncategorizedMerchantGroup = {
   merchant: 'Coles', rulePattern: 'coles', groupedBy: 'merchant', count: 999,
@@ -38,11 +38,10 @@ const NEW_RULE: FilingTarget = { kind: 'newRule', pattern: '  COLES  ', category
 const MINTED = { id: 'r-new', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' };
 const EXISTING_RULE = { id: 'r-old', field: 'description', operator: 'contains', value: 'woolies', categoryId: 'groceries', isNew: false } as unknown as Rule;
 
-const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
-  dryRun: false, rulesConsidered: 1, unfiled: 5, matched: 5, conflicted: 0, conflictedSamples: [],
-  byCategory: { groceries: 5 }, byRule: [], skippedRules: [],
-  filed: [], vanished: [], failed: [], remaining: 0, createdRule: null, ...over,
-} as ApplyRulesResult);
+const report = (over: Partial<ApplyRulesResult> = {}) => applyRulesReport({
+  dryRun: false, rulesConsidered: 1, unfiled: 5, matched: 5, byCategory: { groceries: 5 }, createdRule: null,
+  ...over,
+});
 
 const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
   jobId: 'job-1', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,
@@ -108,7 +107,7 @@ it('[A3] refreshes after a direct failure but not after a direct clash', async (
 // prepended with its NEW badge, and ['rules'] is not refetched (it would wipe the badge).
 it('[A4] files a new rule now with the trimmed pattern and shows the minted rule as NEW', async () => {
   seedRules();
-  server.seed(APPLY_RULES, report({ createdRule: MINTED } as Partial<ApplyRulesResult>));
+  server.seed(APPLY_RULES, report({ createdRule: MINTED }));
   const r = mount().result;
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -124,7 +123,7 @@ it('[A4] files a new rule now with the trimmed pattern and shows the minted rule
 // [A5] (P0) A shop run also mints a rule, but it must NOT be shown as NEW — rules refetch instead.
 it('[A5] does not prepend the rule a shop run mints, and refetches rules', async () => {
   seedRules();
-  server.seed(APPLY_RULES, report({ createdRule: MINTED } as Partial<ApplyRulesResult>));
+  server.seed(APPLY_RULES, report({ createdRule: MINTED }));
   const r = mount().result;
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -290,7 +289,7 @@ it('[A14] stops polling, clears the job and frees the lock on a Face ID lock', a
 it('[A15] drops a preview and a direct run that settle after sign-out', async () => {
   seedRules();
   server.once('POST', APPLY_RULES, { body: report({ dryRun: true }) });
-  server.once('POST', APPLY_RULES, { body: report({ createdRule: MINTED } as Partial<ApplyRulesResult>) });
+  server.once('POST', APPLY_RULES, { body: report({ createdRule: MINTED }) });
   const pending = server.hold(APPLY_RULES);   // the preview and the commit both stay in flight
   const r = mount().result;
 

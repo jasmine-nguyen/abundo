@@ -11,12 +11,9 @@ import type { QueryKey } from '@tanstack/react-query';
 import { makeQueryClient, queryClient } from '../queryClient';
 import { readTransactionCopies, findTransaction, refreshAfter } from '../transactionCache';
 import type { Transaction } from '../types';
+import { colesTxn } from './factory';
 
-const tx = (id: string, category: string): Transaction => ({
-  transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-  account_name: 'ANZ', category, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-});
+const tx = (id: string, category: string) => colesTxn({ transaction_id: id, category });
 const page = (transactions: Transaction[]) => ({ pages: [{ transactions, nextCursor: null }], pageParams: [undefined] });
 
 // Clear every cache after each case so no 5-minute cleanup timer keeps Jest running.

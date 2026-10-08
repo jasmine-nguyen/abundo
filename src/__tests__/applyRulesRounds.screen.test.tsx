@@ -23,6 +23,7 @@ import { installFakeServer } from './support/fakeServer';
 import { GROCERIES_TOP_RECORD } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
+import { applyRulesReport } from './support/applyRulesReport';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -39,11 +40,10 @@ const FAILED: FilingResult = { status: 'failed', background: false };
 
 const CATEGORIES = [GROCERIES_TOP_RECORD];
 
-const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
-  dryRun: true, rulesConsidered: 2, unfiled: 639, matched: 512, conflicted: 0, conflictedSamples: [],
-  byCategory: { groceries: 512 },
+const report = (over: Partial<ApplyRulesResult> = {}) => applyRulesReport({
+  rulesConsidered: 2, unfiled: 639, matched: 512, byCategory: { groceries: 512 },
   byRule: [{ ruleId: 'r1', value: 'coles', categoryId: 'groceries', count: 512, samples: ['COLES 1234'] }],
-  skippedRules: [], filed: [], vanished: [], failed: [], alreadyFiled: [], remaining: 512,
+  alreadyFiled: [], remaining: 512,
   ...over,
 });
 

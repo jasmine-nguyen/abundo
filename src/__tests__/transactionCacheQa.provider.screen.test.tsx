@@ -21,10 +21,9 @@ import { queryClient } from '../queryClient';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { DELETE_DINING, DELETE_GROCERIES, tx, page } from './support/deleteCategorySeed';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const CATEGORIES = [DELETE_DINING, DELETE_GROCERIES];
 

@@ -17,17 +17,13 @@ import { findTransaction } from '../transactionCache';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { DELETE_DINING, DELETE_GROCERIES } from './support/deleteCategorySeed';
+import { colesTxn } from './factory';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
 const CATEGORIES = [DELETE_DINING, DELETE_GROCERIES];
-const tx = (id: string, over: Partial<Transaction> = {}): Transaction => ({
-  transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-  account_name: 'ANZ', category: 'dining', status: 'posted', type: 'PAYMENT', counts_to_budget: true, ...over,
-});
+const tx = (id: string, over: Partial<Transaction> = {}) => colesTxn({ transaction_id: id, category: 'dining', ...over });
 const page = (transactions: Transaction[]) => ({ pages: [{ transactions, nextCursor: null }], pageParams: [undefined] });
 
 const SEARCH_KEY = ['transactionsSearch', 'all', 'coles'];

@@ -34,6 +34,7 @@ import { useCategories, useGoalsQuery, useIsAuthed, useRulesScreenData, useTrans
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES, SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient, WithQueries, renderWithQueries } from './support/renderWithQueries';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -69,7 +70,6 @@ function ScreensUnderneath() {
 // The auth store is mocked LIVE (mutable status + real listener set, the
 // authGateTransitions pattern) so status flips re-render exactly as production does.
 describe('WHIT-268 — overlays live outside the auth gate', () => {
-  const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
   beforeEach(() => {
     resetAuth();
@@ -234,7 +234,6 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
 //  [A10] an async rule save settling after sign-out does NOT re-seed the cleared
 //        ['rules'] query cache (patchRules' undefined-guard is the fail-on-revert seam).
 describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
-  const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
   function Probe({ grab }: { grab: (ctx: ReturnType<typeof useAppContext>) => void }) {
     grab(useAppContext());

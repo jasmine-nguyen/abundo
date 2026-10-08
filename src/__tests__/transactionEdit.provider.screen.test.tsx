@@ -4,7 +4,6 @@
 // changed fields, and rolls back on failure. A note/tag edit invalidates NOTHING (the feed is
 // patched in place, never invalidated — an InfiniteData invalidate would storm every page).
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 import type { Transaction } from '../types';
@@ -14,17 +13,11 @@ import { seedTransactionsCache, readTransactionsCache } from './support/transact
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
+import { colesTxn as txn } from './factory';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
-const txn = (over: Partial<Transaction> = {}): Transaction => ({
-  transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-  account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-  ...over,
-});
 const cached = (id: string) =>
   readTransactionsCache(queryClient).find((t) => t.transaction_id === id);
 

@@ -12,10 +12,9 @@
 //   [A24] a write that FAILS after a sign-out must not refresh the next session's caches.
 //   [A25] dismissing the sheet mid-write cannot start a second concurrent run.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
-import type { ApplyRulesResult, FilingResult, FilingTarget } from '../context';
+import { useAppContext } from '../context';
+import type { FilingResult, FilingTarget } from '../context';
 import type { Transaction } from '../types';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
@@ -23,6 +22,9 @@ import { seedTransactionsCache } from './support/transactionsCache';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { filedReport as report } from './support/applyRulesReport';
+import { colesTxn as txn } from './factory';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const FAILED: FilingResult = { status: 'failed', background: false };
@@ -30,22 +32,6 @@ const FAILED: FilingResult = { status: 'failed', background: false };
 const server = installFakeServer();
 const APPLY_RULES = '/transactions/uncategorized/apply-rules';
 const runs = () => server.sent('POST', APPLY_RULES).length;
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
-const txn = (over: Partial<Transaction> = {}): Transaction => ({
-  transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-  account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-  ...over,
-});
-
-const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
-  dryRun: false, rulesConsidered: 2, unfiled: 3, matched: 1, conflicted: 0, conflictedSamples: [],
-  byCategory: { groceries: 1 }, byRule: [], skippedRules: [],
-  filed: [{ id: 't1', category: 'groceries' }], vanished: [], failed: [], remaining: 0,
-  ...over,
-});
 
 function rowsIn(key: 'transactions' | 'uncategorizedFeed'): Transaction[] {
   const data = queryClient.getQueryData<{ pages: { transactions: Transaction[] }[] }>([key]);

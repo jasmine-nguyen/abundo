@@ -51,6 +51,11 @@ export function txn(over: Partial<Transaction> = {}): Transaction {
   };
 }
 
+// An unfiled Coles charge on the ANZ account, as the bank sends it.
+export function colesTxn(over: Partial<Transaction> = {}): Transaction {
+  return txn({ description: 'COLES', merchant_name: 'Coles', account_name: 'ANZ', type: 'PAYMENT', category: null, ...over });
+}
+
 // WHIT-539: a client Rule fixture (isNew is required on the interface). Defaults to a
 // description/contains rule filing into 'coffee', the fixture transaction's category.
 export function rule(over: Partial<Rule> = {}): Rule {

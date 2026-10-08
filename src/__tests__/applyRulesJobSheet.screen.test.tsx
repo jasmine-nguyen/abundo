@@ -18,6 +18,7 @@ import { installFakeServer } from './support/fakeServer';
 import { GROCERIES_TOP_RECORD } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
+import { applyRulesReport } from './support/applyRulesReport';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -32,10 +33,9 @@ const fns = {
 
 const CATEGORIES = [GROCERIES_TOP_RECORD];
 
-const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
-  dryRun: true, rulesConsidered: 2, unfiled: 639, matched: 512, conflicted: 0, conflictedSamples: [],
-  byCategory: { groceries: 512 }, byRule: [], skippedRules: [],
-  filed: [], vanished: [], failed: [], alreadyFiled: [], remaining: 512, ...over,
+const report = (over: Partial<ApplyRulesResult> = {}) => applyRulesReport({
+  rulesConsidered: 2, unfiled: 639, matched: 512, byCategory: { groceries: 512 }, alreadyFiled: [], remaining: 512,
+  ...over,
 });
 
 const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({

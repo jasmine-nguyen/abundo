@@ -8,7 +8,6 @@
 // edit.tsx relies on: it captures `s` at render and re-reads s.getSessionEpoch() across the
 // await). Harness mirrors sessionGuardRollbacksGaps.provider.screen.test.tsx.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 
 let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
@@ -32,10 +31,9 @@ jest.mock('../auth', () => ({
 import { AppProvider, useAppContext } from '../context';
 import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 // Sign out in PRODUCTION order: clear the cache, THEN broadcast 'anon' — which the context's
 // subscription turns into the sessionEpoch bump.

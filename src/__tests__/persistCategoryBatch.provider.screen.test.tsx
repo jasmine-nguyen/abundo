@@ -11,7 +11,7 @@
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Transaction, Category } from '../types';
 import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
@@ -20,20 +20,16 @@ import { seedTransactionsCache, readTransactionsCache } from './support/transact
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { DINING, GROCERIES } from './support/categories';
+import { colesTxn } from './factory';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 // The `updates` of every batch save the app sent, in order.
 const batches = () => server.sent('PATCH', '/transactions')
   .map((r) => (r.body as { updates: { id: string; category: string }[] }).updates);
 
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
 const CAT = GROCERIES;
-const TXN = {
-  transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-  account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-} as const;
+const TXN = colesTxn();
 
 const txns = () => readTransactionsCache(queryClient);
 const rules = () => queryClient.getQueryData<Rule[]>(['rules']) ?? [];

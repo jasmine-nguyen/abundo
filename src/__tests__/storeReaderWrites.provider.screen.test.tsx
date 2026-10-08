@@ -20,6 +20,7 @@ import { seedTransactionsCache, readTransactionsCache } from './support/transact
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
+import { appProviderWrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 const categoryReads = () => server.sent('GET', '/categories');
@@ -42,7 +43,7 @@ beforeEach(() => {
 afterEach(() => { queryClient.clear(); });
 
 function mount() {
-  const { result } = renderHook(() => useAppContext(), { wrapper: ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider> });
+  const { result } = renderHook(() => useAppContext(), { wrapper: appProviderWrapper });
   return result;
 }
 

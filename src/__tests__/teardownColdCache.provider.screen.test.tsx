@@ -17,10 +17,9 @@ import { seedTransactionsCache } from './support/transactionsCache';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES } from './support/categories';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const CAT: Category = { ...GROCERIES };
 const txn = (over: Partial<Transaction> = {}): Transaction => ({

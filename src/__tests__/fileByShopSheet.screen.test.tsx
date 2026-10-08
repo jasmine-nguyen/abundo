@@ -14,7 +14,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 import type { FilingResult, FilingTarget, FilingWhen } from '../context';
-import type { ApplyRulesResult, UncategorizedMerchantGroup, UncategorizedMerchants } from '../api';
+import type { UncategorizedMerchantGroup, UncategorizedMerchants } from '../api';
 import { APPLY_RULES_MAX_WRITES } from '../context';
 import { ApiError } from '../apiError';
 
@@ -27,6 +27,7 @@ import { installFakeServer } from './support/fakeServer';
 import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
+import { shopPreviewReport as report } from './support/applyRulesReport';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -53,13 +54,6 @@ const merchants = (groups: UncategorizedMerchantGroup[]): UncategorizedMerchants
   unfiled: groups.reduce((n, g) => n + g.count, 0),
   groups,
   ungrouped: { count: 0, samples: [] },
-});
-
-const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
-  dryRun: true, rulesConsidered: 1, unfiled: 20, matched: 20, conflicted: 0, conflictedSamples: [],
-  byCategory: { groceries: 20 }, byRule: [], skippedRules: [],
-  filed: [], vanished: [], failed: [], alreadyFiled: [], remaining: 20, createdRule: null,
-  ...over,
 });
 
 // The shops load once the sheet opens, so each list test waits for them before it checks.

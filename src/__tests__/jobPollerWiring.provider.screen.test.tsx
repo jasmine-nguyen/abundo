@@ -6,7 +6,7 @@ import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, render } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AppProvider, useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
+import { useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
 import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';
 import { queryClient } from '../queryClient';
 
@@ -17,6 +17,7 @@ import { CHAT_ERROR_TEXT, CHAT_MAX_WAIT_MS, CHAT_POLL_DELAY_MS, ChatProvider, us
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
 import type { ChatContextValue } from '../chat/ChatContext';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 const jobPath = (jobId: string) => `/transactions/uncategorized/apply-rules/jobs/${jobId}`;
@@ -24,8 +25,6 @@ const gets = (prefix: string) => server.sentUnder('GET', prefix).length;
 const drop = (path: string, times: number) => {
   for (let i = 0; i < times; i++) server.once('GET', path, 'dropped');
 };
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
   jobId: 'job-1', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,

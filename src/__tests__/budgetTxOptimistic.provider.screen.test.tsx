@@ -26,22 +26,17 @@ import { invalidatedKeys } from './support/queryClient';
 // 'authed' for them; the two sign-out siblings flip it via setAuthStatus to drive sign-out.
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, resetAuth } from './support/authMock';
+import { colesTxn } from './factory';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const sentBodies = (path: string) => server.sent('PATCH', path).map((request) => request.body);
 
 function signOut() { act(() => { queryClient.clear(); setAuthStatus('anon'); }); }
 
 const CAT = GROCERIES;
-const txn = (over: Partial<Transaction> = {}): Transaction => ({
-  transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-  account_name: 'ANZ', category: 'groceries', status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-  ...over,
-});
+const txn = (over: Partial<Transaction> = {}) => colesTxn({ category: 'groceries', ...over });
 
 beforeEach(() => {
   resetAuth();
@@ -224,12 +219,7 @@ it('exclude keeps the charge in the transactions cache, flagged excluded', async
 // its header after a write. NB this suite's `txn` defaults to category:null (an unmapped charge) so
 // the applyCategory('one') re-tag is a real move, not a no-op — kept block-scoped below.
 describe('budgetTxInvalidation (folded)', () => {
-  const txn = (over: Partial<Transaction> = {}): Transaction => ({
-    transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
-    description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-    account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-    ...over,
-  });
+  const txn = colesTxn;
 
   beforeEach(() => { queryClient.clear(); });
   afterEach(() => { queryClient.clear(); jest.restoreAllMocks(); }); // clear the singleton + restore spies (config has clearMocks, not restoreMocks)

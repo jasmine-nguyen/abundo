@@ -14,15 +14,14 @@ import { renderHook, act } from '@testing-library/react-native';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, resetAuth } from './support/authMock';
 
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import { queryClient } from '../queryClient';
 import type { MilestoneRecord } from '../api';
 import { SAVED_MILESTONES } from './support/milestonePlan';
 import { installFakeServer } from './support/fakeServer';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 // Sign out in PRODUCTION order: clear the cache, THEN broadcast anon (which the context subscription
 // turns into the epoch bump). Matches sessionGuardRollbacks.signOut.

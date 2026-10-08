@@ -11,24 +11,20 @@
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Transaction } from '../types';
 import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES } from './support/categories';
+import { colesTxn } from './factory';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
 const CAT = GROCERIES;
-const txn = (over: Partial<Transaction> = {}): Transaction => ({
-  transaction_id: 't1', date: '2020-01-01', authorized_date: '2020-01-01',
-  description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-  account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true, ...over,
-});
+const txn = (over: Partial<Transaction> = {}) => colesTxn({ date: '2020-01-01', authorized_date: '2020-01-01', ...over });
 
 function seedUncategorizedFeed(transactions: Partial<Transaction>[]) {
   queryClient.setQueryData(['uncategorizedFeed'], { pages: [{ transactions, nextCursor: null }], pageParams: [undefined] });
