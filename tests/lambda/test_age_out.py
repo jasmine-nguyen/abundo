@@ -909,37 +909,6 @@ def test_second_sweep_after_rescue_does_not_recarry(lam, repo, monkeypatch):
     assert rows["settled_twin"]["category"] == "groceries"
 
 
-def test_get_posted_paginates_beyond_first_page(lam, repo):
-    # [A33] (P0) A posted row beyond the first query page must still be returned (WHIT-82).
-    # Fail-on-revert: drop the LastEvaluatedKey loop and the later-page posted disappears.
-    internal_a = lam.banksync.resolve_account_id(_ACCOUNT_A)
-    p1 = _norm(lam, "posted1", "2026-06-01", pending=False)
-    p2 = _norm(lam, "posted2", "2026-06-02", pending=False)
-    pend = _norm(lam, "pending1", "2026-06-03", pending=True)
-    target = _norm(lam, "posted_target", "2026-06-04", pending=False)
-    repo.insert_transactions([p1, p2, pend, target])
-    repo._table.page_size = 2
-
-    got = {r["transaction_id"] for r in repo.get_account_transactions(internal_a, "posted")}
-
-    assert got == {"posted1", "posted2", "posted_target"}
-    assert "pending1" not in got
-
-
-def test_get_posted_returns_only_posted_rows(lam, repo):
-    # [A34] (P0) Only status==posted comes back — never a pending. Fail-on-revert: swap the
-    # filter to PENDING_STATUS and this returns the wrong row.
-    internal_a = lam.banksync.resolve_account_id(_ACCOUNT_A)
-    repo.insert_transactions([
-        _norm(lam, "the_posted", "2026-06-01", pending=False),
-        _norm(lam, "a_pending", "2026-06-02", pending=True),
-    ])
-
-    got = {r["transaction_id"] for r in repo.get_account_transactions(internal_a, "posted")}
-
-    assert got == {"the_posted"}
-
-
 def test_get_posted_is_per_account(lam, repo):
     # [A35] (P1) The query keys on the account partition — a posted in another account is not
     # returned. This is what makes the rescue's candidate pool per-account.

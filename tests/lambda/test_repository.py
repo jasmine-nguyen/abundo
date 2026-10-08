@@ -177,7 +177,7 @@ def test_get_failed_sends_no_filter_while_pending_and_posted_do(repo):
 
 # --- WHIT-554 (QA gaps): parts neither the implementer's nor the existing tests lock ---
 # Already covered, NOT duplicated: the shared loop's multi-page follow for every variant —
-#   get_pending (this file), get_posted (test_age_out::test_get_posted_paginates_beyond_first_page),
+#   get_account_transactions (this file, one loop for pending and posted),
 #   get_failed (test_reprocess::test_multi_page_backlog_with_mixed_outcomes); single-status
 #   filtering; the "read" label + filter-omission (the implementer's two tests). Gaps below.
 
