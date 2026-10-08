@@ -194,14 +194,14 @@ describe('the mortgage and milestone screens over the fake server', () => {
   });
 
   // [A10] milestones are SECONDARY: a failed plan read never blanks the balance hero or shows a
-  // balance error; the Sprint summary falls back to the "set your milestones" invite.
-  it('[A10] a failed milestones read keeps the mortgage balance and shows the set-milestones invite', async () => {
+  // balance error; the Sprint summary shows its own milestones error, not the invite (WHIT-823).
+  it('[A10] a failed milestones read keeps the mortgage balance and shows the milestones error', async () => {
     seedGoal(server, { homeLoan: { balance: 432900, asOf: AS_OF } });
     server.fail('/milestones', 500);
     await renderWithQueries(<Mortgage />);
     expect(screen.getByText('$67,100')).toBeTruthy();
     expect(screen.queryByText("Couldn't load your balance.")).toBeNull();
-    expect(screen.getByText('Set your payoff milestones')).toBeTruthy();
+    expect(screen.getByText("Couldn't load your milestones.")).toBeTruthy();
   });
 
   // [A10b] the same with the balance not polled yet (null): the hero must stay on the waiting copy,

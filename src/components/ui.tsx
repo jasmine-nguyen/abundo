@@ -56,6 +56,22 @@ export function RetryButton({ onPress, label, testID, style, textStyle }: {
   );
 }
 
+// WHIT-823: a secondary card whose first load failed — its title, a short message and Retry, so
+// a failed read never falls through to the card's empty "set it up" invite.
+export function CardLoadError({ title, message, retryLabel, testID, onRetry }: {
+  title: string; message: string; retryLabel: string; testID: string; onRetry: () => void;
+}) {
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>{title}</Text>
+      <View style={styles.cardErrorRow}>
+        <Text style={styles.cardErrorText} accessibilityLiveRegion="polite">{message}</Text>
+        <RetryButton onPress={onRetry} label={retryLabel} testID={testID} />
+      </View>
+    </View>
+  );
+}
+
 // WHIT-702: a text button in the ScrollChromeHeader's top bar (Select / Cancel / Export).
 export function HeaderTextButton({ label, onPress, testID, busy = false, accessibilityLabel }: {
   label: string; onPress: () => void; testID?: string; busy?: boolean; accessibilityLabel?: string;
@@ -164,4 +180,8 @@ const styles = StyleSheet.create({
   hdrBtnText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentSoft },
   retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: tint(C.accentAlt, 0.16) },
   retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
+  card: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, padding: 16, marginBottom: 12 },
+  cardTitle: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.textBright, marginBottom: 12 },
+  cardErrorRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  cardErrorText: { flex: 1, fontFamily: FONT.body, fontSize: 13, color: C.textDim },
 });

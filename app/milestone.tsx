@@ -6,7 +6,7 @@ import { C, FONT, fmt, tint } from '../src/theme';
 import { Glyph } from '../src/icons';
 import { milestoneView } from '../src/context';
 import { useGoalScreenData } from '../src/queries';
-import { Bar, RetryButton, HeroGradientFill } from '../src/components/ui';
+import { Bar, RetryButton, HeroGradientFill, CardLoadError } from '../src/components/ui';
 import { Header } from '../src/components/Header';
 import { EquityCard, EquityBody, EquitySetupTeaser } from '../src/components/EquityCard';
 import { formatMonthYear } from '../src/dateutil';
@@ -18,7 +18,7 @@ export default function Milestone() {
   // WHIT-197: the live balance + loan facts now come from the cached query layer.
   // Re-check on focus only when stale. `homeLoanError` is the balance read's OWN error
   // (not the aggregate) — a repayment/loanFacts failure must not show as a balance error.
-  const { loanFacts, homeLoan, milestones, homeLoanError, loanFactsLoaded, refetch, refetchStale } = useGoalScreenData();
+  const { loanFacts, homeLoan, milestones, homeLoanError, loanFactsLoaded, milestonesLoaded, milestonesError, refetch, refetchMilestones, refetchStale } = useGoalScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
   const v = milestoneView({ loanFacts, homeLoan, milestones });
 
@@ -92,7 +92,11 @@ export default function Milestone() {
         )}
 
         {/* sprint track — or an empty-state invite when the user hasn't set a plan */}
-        {v.hasPlan ? (
+        {milestonesError ? (
+          <CardLoadError title="Your payoff milestones" message="Couldn't load your milestones." retryLabel="Retry loading your milestones" testID="milestone-plan-retry" onRetry={refetchMilestones} />
+        ) : !milestonesLoaded ? (
+          <View style={styles.card} testID="milestone-plan-loading"><Text style={styles.cardTitle}>Your payoff milestones</Text></View>
+        ) : v.hasPlan ? (
           <View style={styles.card}>
             <View style={styles.planHeader}>
               <Text style={styles.cardTitle}>Your payoff plan</Text>

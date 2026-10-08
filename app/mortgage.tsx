@@ -6,7 +6,7 @@ import { C, FONT, fmt, tint } from '../src/theme';
 import { Glyph } from '../src/icons';
 import { goalView, paydownView, milestoneView, lastRepaymentView } from '../src/context';
 import { useGoalScreenData } from '../src/queries';
-import { Bar, RetryButton, HeroGradientFill } from '../src/components/ui';
+import { Bar, RetryButton, HeroGradientFill, CardLoadError } from '../src/components/ui';
 import { PayoffSummary } from '../src/components/PayoffSummary';
 import { Header } from '../src/components/Header';
 import { EquityCard, EquityBody, EquityCta, EquitySetupTeaser } from '../src/components/EquityCard';
@@ -27,7 +27,7 @@ export default function Mortgage() {
   // layer. Re-check on focus, but only if the cache has gone stale (no request storm).
   const {
     loanFacts, homeLoan, homeLoanLoaded, repayment, milestones, repaymentError, homeLoanError, loanFactsLoaded, loanFactsError,
-    isLoading, refetch, refetchStale,
+    milestonesLoaded, milestonesError, refetchMilestones, isLoading, refetch, refetchStale,
   } = useGoalScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
@@ -183,7 +183,12 @@ export default function Mortgage() {
         {/* WHIT-821: no home loan → only the calm explainer above, no secondary cards. */}
         {!noHomeLoan && (<>
         {/* Milestone plan — the user's own sprints (empty until they set one), taps into the full screen */}
-        <Pressable testID="milestone-link" onPress={() => router.push(m.hasPlan ? '/milestone' : '/milestone/edit')} style={styles.card}>
+        {milestonesError ? (
+          <CardLoadError title="Your payoff milestones" message="Couldn't load your milestones." retryLabel="Retry loading your milestones" testID="milestones-retry" onRetry={refetchMilestones} />
+        ) : !milestonesLoaded ? (
+          <View style={styles.card} testID="milestones-loading"><Text style={styles.cardTitle}>Your payoff milestones</Text></View>
+        ) : (
+        <Pressable testID="milestone-link"onPress={() => router.push(m.hasPlan ? '/milestone' : '/milestone/edit')} style={styles.card}>
           {!m.hasPlan ? (
             <>
               <View style={styles.cardHead}>
@@ -230,6 +235,7 @@ export default function Mortgage() {
             </>
           )}
         </Pressable>
+        )}
 
         {/* contribution — from the user's saved scheduled + extra repayment */}
         {g.factsReady && (
