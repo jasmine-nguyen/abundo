@@ -61,7 +61,7 @@ it('mortgage Sprint summary reflects the saved plan (count + next target), not t
   seedGoal(server, { milestones: SAVED_MILESTONES, homeLoan: { balance: 250000, asOf: '2026-07-04T00:24:37.614Z' } });
   await renderWithQueries(<Mortgage />);
   expect(screen.getByText('1 of 3 milestones reached')).toBeTruthy();
-  expect(screen.getByText('Next: under $200,000')).toBeTruthy();
+  expect(screen.getByText('Next: under $200,000 → unlocks $416,000 equity')).toBeTruthy();
   // The default plan's rows/targets must NOT drive the mortgage screen once a plan is saved.
   expect(screen.queryByText('3 of 5 milestones reached')).toBeNull();
   expect(screen.queryByText('Next: under $170,000')).toBeNull();

@@ -4,8 +4,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmt, tint } from '../src/theme';
 import { Glyph } from '../src/icons';
-import { goalView, paydownView, milestoneView, lastRepaymentView } from '../src/context';
-import { useGoalScreenData } from '../src/queries';
+import { goalView, paydownView, milestoneView, milestonePace, lastRepaymentView } from '../src/context';
+import { useGoalScreenData, usePayCycle } from '../src/queries';
+import { BalanceFreshnessPill } from '../src/components/BalanceFreshnessPill';
 import { Bar, RetryButton, HeroGradientFill } from '../src/components/ui';
 import { PayoffSummary } from '../src/components/PayoffSummary';
 import { Header } from '../src/components/Header';
@@ -35,6 +36,9 @@ export default function Mortgage() {
 
   const g = goalView({ loanFacts, homeLoan });
   const m = milestoneView({ loanFacts, homeLoan, milestones });
+  // usePayCycle falls back to a default cycle while loading / on error — never pace off that.
+  const { payCycle, isLoading: payCycleLoading, isError: payCycleError } = usePayCycle();
+  const pace = milestonePace(m, loanFacts, payCycleLoading || payCycleError ? null : payCycle);
   const lr = lastRepaymentView({ repayment });
   const p = paydownView({ loanFacts, homeLoan });
   // WHIT-820: a repayment this phone hasn't shown yet → a "Just landed" card at the top + the banner.
@@ -133,6 +137,7 @@ export default function Mortgage() {
               <Text style={styles.heroSetupBody}>We'll show your payoff progress once your balance loads.</Text>
             </>
           )}
+          {typeof homeLoan.balance === 'number' && !loanFactsError && !homeLoanError && !noHomeLoan && <BalanceFreshnessPill asOf={homeLoan.asOf} />}
         </View>
 
         {/* freedom + interest — real payoff projection (WHIT-114) from the live
@@ -210,15 +215,21 @@ export default function Mortgage() {
                 </View>
               </View>
               <View style={{ flexDirection: 'row', gap: 5 }}>
-                {m.rows.map((r) => (
-                  <View key={r.sprint} style={{ flex: 1, height: 9, borderRadius: 3, backgroundColor: r.cleared ? C.good : C.progressTrack }} />
-                ))}
+                {m.rows.map((r) => {
+                  let pct = 0;
+                  if (r.cleared) pct = 100;
+                  else if (r === m.nextMilestone) pct = m.nextSegmentPct;
+                  return <View key={r.sprint} style={{ flex: 1 }}><Bar pct={pct} color={C.good} track={C.progressTrack} height={9} /></View>;
+                })}
               </View>
               <View style={[styles.cardHead, { marginTop: 12, marginBottom: 0 }]}>
                 {m.hasBalance ? (
                   m.nextMilestone ? (
                     <>
-                      <Text style={[styles.cardTitle, { color: C.accentSofter, fontSize: 12.5 }]}>Next: under {fmt(m.nextMilestone.targetBalance)}</Text>
+                      <Text style={[styles.cardTitle, { color: C.accentSofter, fontSize: 12.5 }]}>
+                        Next: under {fmt(m.nextMilestone.targetBalance)}
+                        {m.nextMilestone.targetEquity != null && ` → unlocks ${fmt(m.nextMilestone.targetEquity)} equity`}
+                      </Text>
                       <Text style={styles.cardHint}>{m.amountToNextLabel} to go</Text>
                     </>
                   ) : (
@@ -228,6 +239,7 @@ export default function Mortgage() {
                   <Text style={[styles.cardTitle, { color: C.accentSofter, fontSize: 12.5 }]}>Tap to see your live progress</Text>
                 )}
               </View>
+              {pace && <Text style={[styles.planSchedule, { color: C.textDim }]} testID="milestone-pace">{pace}</Text>}
               {m.schedule && !m.schedule.onTrack && (
                 <Text style={[styles.planSchedule, { color: m.schedule.ahead ? C.good : C.warn }]}>{m.schedule.label}</Text>
               )}

@@ -10,6 +10,7 @@ import { Bar, RetryButton, HeroGradientFill } from '../src/components/ui';
 import { Header } from '../src/components/Header';
 import { EquityCard, EquityBody, EquitySetupTeaser } from '../src/components/EquityCard';
 import { formatMonthYear } from '../src/dateutil';
+import { BalanceFreshnessPill } from '../src/components/BalanceFreshnessPill';
 
 export default function Milestone() {
   const insets = useSafeAreaInsets();
@@ -57,12 +58,7 @@ export default function Milestone() {
                   </View>
                 </>
               )}
-              {v.asOf && (
-                <View style={styles.syncPill}>
-                  <View style={styles.syncDot} />
-                  <Text style={styles.syncText}>Live · Up Home Loan · {formatMonthYear(v.asOf.slice(0, 10))}</Text>
-                </View>
-              )}
+              <BalanceFreshnessPill asOf={v.asOf} />
             </>
           ) : homeLoanError ? (
             <View style={styles.waiting}>
@@ -173,9 +169,6 @@ const styles = StyleSheet.create({
   pill: { flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 7, borderRadius: 9, paddingVertical: 6, paddingHorizontal: 11, marginTop: 12 },
   pillDot: { width: 7, height: 7, borderRadius: 4 },
   pillText: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.heroInk },
-  syncPill: { flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 7, backgroundColor: C.heroInkWash, borderRadius: 9, paddingVertical: 6, paddingHorizontal: 11, marginTop: 14 },
-  syncDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.goodBright },
-  syncText: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.heroInk },
   waiting: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14 },
   waitingText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.heroInk },
   retryBtn: { backgroundColor: C.heroInkWash, borderRadius: 9, paddingVertical: 6, paddingHorizontal: 14 },

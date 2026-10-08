@@ -55,10 +55,10 @@ it('renders the live balance, the sprint plan, and usable equity', async () => {
   expect(screen.getByText(/your LVR × your home's value/)).toBeTruthy();
   // Sprint 0 is the next milestone at this balance, so its callout shows.
   expect(screen.getByText('under $544,000')).toBeTruthy();
-  // WHIT-216 fail-on-revert: the sync pill's "Mon YYYY" label comes from milestone.tsx's
-  // monthYear over the shared MONTHS array (asOf 2026-07-04 → Jul). A broken array swap
-  // would change the month name here — previously this file had zero month-string coverage.
-  expect(screen.getByText('Live · Up Home Loan · Jul 2026')).toBeTruthy();
+  // WHIT-216 fail-on-revert: the shared balance pill's "D Mon" label reads the shared MONTHS
+  // array (asOf 2026-07-04 → Jul). A broken array swap would change the month name here.
+  // WHIT-822: the pill is the shared "As of <day>" one, no hard-coded bank name.
+  expect(within(screen.getByTestId('balance-freshness')).getByText('As of 4 Jul')).toBeTruthy();
 });
 
 it('shows a waiting state before the live balance has loaded', async () => {
@@ -111,7 +111,7 @@ it('Mortgage-screen Sprint summary shows real progress when the balance has load
   await renderWithQueries(<Mortgage />);
   // Real Sprint model (from the live balance), not the old $50k chunks.
   expect(screen.getByText('0 of 5 milestones reached')).toBeTruthy();
-  expect(screen.getByText('Next: under $544,000')).toBeTruthy();
+  expect(screen.getByText('Next: under $544,000 → unlocks $72,000 equity')).toBeTruthy();
   expect(screen.queryByText(/chunks cleared/)).toBeNull();
 });
 
