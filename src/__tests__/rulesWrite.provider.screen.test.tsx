@@ -6,10 +6,8 @@
 // AppProvider + the singleton queryClient. The cache is seeded first (as if the Rules screen
 // had loaded) so patchRules's `prev` is defined — an un-opened Rules screen has nothing to patch.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
-import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
-import { QueryClientProvider } from '@tanstack/react-query';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Transaction } from '../types';
 import type { Rule } from '../model';
 import { useRulesScreenData } from '../queries';
@@ -19,11 +17,10 @@ import { seedTransactionsCache } from './support/transactionsCache';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { SUBS } from './support/categories';
+import { appProviderWrapper as wrapper, queriesAppWrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 const rulesReads = () => server.sent('GET', '/rules');
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const RULE_E1: Rule = { id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false, field: 'description', operator: 'contains' };
 
@@ -140,16 +137,9 @@ it('deleteCategory drops the category rules from the cache without resurrecting 
 // crash / fabricate a partial cache); updateRule / deleteRule FAILURE paths write optimistically
 // then roll back; and a MOUNTED useRulesQuery observer sees the write instantly with NO refetch.
 // Reuses this file's RULE_E1 / cacheRules (byte-identical). Block-scopes the gaps-only helpers
-// (observerWrapper, seedCache, mount) and consts (SERVER_RULE).
+// (seedCache, mount) and consts (SERVER_RULE).
 describe('WHIT-195/192 rule-write gaps (folded)', () => {
   const SERVER_RULE = { id: 'e1', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs' } as const;
-  // The mounted-observer wrapper: the singleton queryClient wraps AppProvider, so an active
-  // useRulesQuery observer and the context's patchRules share the exact same cache.
-  const observerWrapper = ({ children }: { children: React.ReactNode }) => (
-    <QueryClientProvider client={queryClient}>
-      <AppProvider>{children}</AppProvider>
-    </QueryClientProvider>
-  );
 
   beforeEach(() => {
     // Only the mounted-observer test fetches (via the real useRulesQuery); the rest read
@@ -243,7 +233,7 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
     // observer reads it synchronously without an initial fetch — deterministic, and it makes the
     // "no refetch after the write" assertion exact (listRules must stay at zero calls).
     queryClient.setQueryData<Rule[]>(['rules'], [RULE_E1]);
-    const { result } = renderHook(() => ({ ctx: useAppContext(), screen: useRulesScreenData() }), { wrapper: observerWrapper });
+    const { result } = renderHook(() => ({ ctx: useAppContext(), screen: useRulesScreenData() }), { wrapper: queriesAppWrapper });
     await waitFor(() => expect(result.current.screen.rules).toHaveLength(1));
     expect(rulesReads()).toHaveLength(0); // fresh cache → no initial fetch
 

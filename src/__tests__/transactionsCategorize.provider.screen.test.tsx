@@ -5,9 +5,8 @@
 // is NOT invalidated (the optimistic patch already wrote it; an InfiniteData invalidate would
 // storm every loaded page) — the tests assert that too. (Pre-192 it also wrote an old store.)
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Transaction } from '../types';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache, seedTransactionsPages, type FeedPage } from './support/transactionsCache';
@@ -16,6 +15,8 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { DINING, GROCERIES } from './support/categories';
 import { invalidatedKeys } from './support/queryClient';
+import { colesTxn } from './factory';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 const ruleMints = () => server.sent('POST', '/rules');
@@ -23,14 +24,8 @@ const ruleMintBodies = () => ruleMints().map((r) => r.body);
 const ruleUpdates = () => server.sentUnder('PUT', '/rules/');
 const batchSaves = () => server.sent('PATCH', '/transactions');
 
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
 const CAT = GROCERIES;
-const txn = (id: string): Transaction => ({
-  transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-  account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-});
+const txn = (id: string) => colesTxn({ transaction_id: id });
 const cachedCategory = (id: string) => readTransactionsCache(queryClient).find((t) => t.transaction_id === id)?.category;
 
 // The fake server mints a well-formed rule and reports every batch id updated unless a test queues otherwise.

@@ -9,10 +9,9 @@
 //   - [A33] a 409 from previewRuleApplication returns null (a preview reconciles nothing)
 //   - [A34] an in-flight applyRulesToHistory turns away a fileByShop (the shared latch, both ways)
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
-import type { ApplyRulesResult, FilingResult, FilingTarget } from '../context';
+import { useAppContext } from '../context';
+import type { FilingResult, FilingTarget } from '../context';
 import type { UncategorizedMerchantGroup } from '../api';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
@@ -21,19 +20,12 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
+import { filedReport as report } from './support/applyRulesReport';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 const APPLY_RULES = '/transactions/uncategorized/apply-rules';
 const SWEEP: FilingTarget = { kind: 'sweep' };
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
-const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
-  dryRun: false, rulesConsidered: 2, unfiled: 3, matched: 1, conflicted: 0, conflictedSamples: [],
-  byCategory: { groceries: 1 }, byRule: [], skippedRules: [],
-  filed: [{ id: 't1', category: 'groceries' }], vanished: [], failed: [], remaining: 0,
-  ...over,
-});
 
 const GROUP: UncategorizedMerchantGroup = {
   merchant: 'Coles', rulePattern: 'coles', groupedBy: 'merchant', count: 1,

@@ -18,18 +18,16 @@ from functools import partial
 import pytest
 
 from _api_event import api_event
-from _budget_endpoint_fakes import _FakePayCycleRepo, _SpendCategoryRepo, _spend_cat, pin_cycle_window
+from _budget_endpoint_fakes import CYCLE_START, LENGTH, PAYDATE, _FakePayCycleRepo, _SpendCategoryRepo, _spend_cat, pin_cycle_window
 from _budget_fakes import recording_budget_repo
 from _terraform import app_route_keys
 from _transaction_range_fakes import _QueuedTransactionRepo
 
+pytestmark = pytest.mark.usefixtures("fixed_window")
+
 # Same fixed grid as the rollover suite: monthly, cycle_start 2026-08-06, payday grid from
 # 2026-01-01. Anchors used below: 2026-08-06 (this cycle), 2026-07-07 (1 back),
 # 2026-05-08 (3 back), 2026-04-08 (4 back), 2026-03-09 (5 back).
-CYCLE_START = "2026-08-06"
-TODAY = "2026-08-10"
-LENGTH = 30
-PAYDATE = "2026-01-01"
 
 BILL = Decimal("1390.91")   # over 4 cycles: slices 347.73, 347.73, 347.73, 347.72
 
@@ -52,11 +50,6 @@ def _entry(spread_from, amount=BILL, cycles=4, spread_len=LENGTH, target=250):
 def _list(handler, budget_repo, transactions=None, categories=None):
     return handler.list_budgets(
         budget_repo, _QueuedTransactionRepo(transactions), FakePayCycleRepo(), _SpendCategoryRepo(categories))
-
-
-@pytest.fixture(autouse=True)
-def _fixed_window(handler, monkeypatch):
-    pin_cycle_window(handler, monkeypatch, CYCLE_START, TODAY)
 
 
 # --- GET /budgets: the cushion, then the slices, then nothing ------------------
@@ -280,16 +273,6 @@ def test_a_partial_spread_entry_is_cleared_instead_of_500ing_the_whole_screen(ha
     assert result["insurance"] == {"available": Decimal(250), "target": Decimal(250), "posted": Decimal(0), "pending": Decimal(0)}
     assert result["food"]["target"] == Decimal(80)
     assert budget_repo.clear_spread_calls == ["insurance"]
-
-
-def test_the_handlers_spread_field_list_matches_the_repositorys(handler):
-    # GUARD: the read trusts an entry only when it has every field in SPREAD_ENTRY_FIELDS;
-    # the repo writes/strips _SPREAD_FIELDS. If one gains a field the other doesn't, a
-    # freshly-written plan would read as "partial" and be cleared on its first read.
-    import repository_budget
-    import spend
-
-    assert set(spend.SPREAD_ENTRY_FIELDS) == set(repository_budget._SPREAD_FIELDS)
 
 
 # --- PUT /budgets/{category}/spread ---------------------------------------------

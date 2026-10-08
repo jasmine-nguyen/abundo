@@ -8,20 +8,13 @@ from decimal import Decimal
 
 import pytest
 
-from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo, _txn, pin_cycle_window
+from _budget_endpoint_fakes import CYCLE_START, LENGTH, PAYDATE, _FakeCategoryRepo, _FakePayCycleRepo, _txn
 from _transaction_range_fakes import _DateFilteringTransactionRepo
 from _budget_fakes import recording_budget_repo, stored_budgets
 
-CYCLE_START = "2026-08-06"
-TODAY = "2026-08-10"
-LENGTH = 30
-PAYDATE = "2026-01-01"
+pytestmark = pytest.mark.usefixtures("fixed_window")
+
 CATEGORIES = _FakeCategoryRepo([{"id": "sink", "bucket": "Lifestyle", "parent": None}])
-
-
-@pytest.fixture(autouse=True)
-def _fixed_window(handler, monkeypatch):
-    pin_cycle_window(handler, monkeypatch, CYCLE_START, TODAY)
 
 
 def _record(start, end, spent, leftover):

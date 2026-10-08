@@ -11,9 +11,9 @@ Static: parses terraform/iam.tf and AST-scans the shared repository modules. Imp
 (those modules need env + boto3 at load). It checks POLICY TEXT + call sites — AWS's actual
 enforcement of the LeadingKeys condition is verified once, live, after `terraform apply`.
 
-`repository_push_receipt` / `repository_notify` run on OTHER roles and are deliberately not
-imported by `repository.py`, so they are outside this scan (their deletes are that role's
-concern).
+The scan covers every `repository_*` module a lambda_api/ file imports. Modules only the other
+functions import (e.g. `repository_push_receipt`) run on OTHER roles, so they are outside this
+scan (their deletes are that role's concern).
 """
 
 import ast
@@ -25,7 +25,7 @@ from _terraform import DYNAMODB_VERB_TO_ACTION, TERRAFORM_DIR, granted_dynamodb_
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _SHARED = _REPO_ROOT / "shared"
 _IAM = TERRAFORM_DIR / "iam.tf"
-_FACADE = _SHARED / "repository.py"
+_LAMBDA_API = _REPO_ROOT / "lambda_api"
 
 
 def _app_api_policy_block() -> str:
@@ -44,10 +44,14 @@ def _delete_scope() -> set[str]:
 
 
 def _scanned_modules() -> list[pathlib.Path]:
-    """The repository modules the app_api role loads: everything repository.py imports by
-    `from repository_* import ...`. repository_rule is in there (the facade exports it)."""
-    names = set(re.findall(r'^from (repository_\w+) import', _FACADE.read_text(), re.MULTILINE))
-    assert "repository_rule" in names, "repository.py no longer imports repository_rule"
+    """The repository modules the app_api role loads: everything a lambda_api/ module imports by
+    `from repository_* import ...`. repository_rule is in there (the handler imports it)."""
+    names = {
+        name
+        for path in _LAMBDA_API.glob("*.py")
+        for name in re.findall(r'^from (repository_\w+) import', path.read_text(), re.MULTILINE)
+    }
+    assert "repository_rule" in names, "lambda_api no longer imports repository_rule"
     names.add("repository_base")  # the shared base issues verbs on behalf of every repo
     return [_SHARED / f"{name}.py" for name in sorted(names)]
 

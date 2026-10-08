@@ -5,9 +5,8 @@
 // of the only element restores [x]; deleteGoal false-on-failure; a toast surfaces on failure;
 // and the deleteRule cache-evicted-mid-flight asymmetry vs deleteGoal's `prev ?? []`.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Rule } from '../model';
 import type { GoalRecord } from '../api';
 import { queryClient } from '../queryClient';
@@ -15,10 +14,10 @@ import { queryClient } from '../queryClient';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 const mountAppContext = () => renderHook(() => useAppContext(), { wrapper }).result;
 
 const goal = (id: string): GoalRecord => ({

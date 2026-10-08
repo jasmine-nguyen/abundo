@@ -12,9 +12,8 @@
 // Fail-on-revert: drop readSearchRows from readTransactionsCache → [1] fails; drop the
 // setQueriesData arm from patchTransactionsCache → [2]/[3]/[4]/[5] fail; drop an invalidate → [6]/[7] fail; drop the name-changed check → [8] fails.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Transaction } from '../types';
 import type { TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
@@ -23,19 +22,14 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES } from './support/categories';
 import { invalidatedKeys } from './support/queryClient';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
+import { stevenTxn } from './factory';
 
 const server = installFakeServer();
 
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
 const CAT = GROCERIES;
 const SEARCH_KEY = ['transactionsSearch', 'all', 'steven'];
-const txn = (over: Partial<Transaction> = {}): Transaction => ({
-  transaction_id: 'deep1', date: '2020-01-01', authorized_date: '2020-01-01',
-  description: 'STEVEN NGUYEN', merchant_name: 'Steven Nguyen', amount: -50, account_id: 'a1',
-  account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-  ...over,
-});
+const txn = (over: Partial<Transaction> = {}) => stevenTxn({ transaction_id: 'deep1', ...over });
 
 function seedSearch(transactions: Transaction[]) {
   queryClient.setQueryData<TransactionSearchResult>(SEARCH_KEY, { transactions, truncated: false });

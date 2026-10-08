@@ -5,9 +5,8 @@
 //     that swap standing (no ['rules'] refetch racing it).
 // Modelled on uncategorizedCountRulesGuard.provider.screen.test.tsx.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
 
@@ -16,10 +15,9 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES } from './support/categories';
 import { invalidatedKeys } from './support/queryClient';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const RULE: Rule = { id: 'r1', pattern: 'COLES', categoryId: 'groceries', isNew: false, field: 'description', operator: 'contains' };
 

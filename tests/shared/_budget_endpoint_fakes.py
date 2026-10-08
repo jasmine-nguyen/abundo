@@ -14,6 +14,12 @@ from decimal import Decimal
 
 from _api_event import api_event
 
+# The fixed pay cycle the budgets suites pin (see the `fixed_window` fixture in tests/lambda_api/conftest.py).
+CYCLE_START = "2026-08-06"
+TODAY = "2026-08-10"
+LENGTH = 30
+PAYDATE = "2026-01-01"
+
 
 class _FakePayCycleRepo:
     def __init__(self, length=30, last_pay_date="2026-07-01"):

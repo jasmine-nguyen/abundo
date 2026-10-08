@@ -3,19 +3,17 @@
 // (../auth mocked, the fake server behind ../api) with a live miniature auth store so the anon broadcast runs the real
 // sign-out subscription. Mirrors saveMilestonesSignOut.provider's harness.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, resetAuth } from './support/authMock';
 
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 // Production sign-out order: clear the cache, THEN broadcast anon (which the context subscription
 // turns into the reset). Matches saveMilestonesSignOut.signOut.

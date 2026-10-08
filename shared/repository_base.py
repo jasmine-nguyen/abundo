@@ -5,8 +5,8 @@ table connect, the 'read every page' query loop and the settings-record steps
 (read, create-if-missing, save with a version check retried once) every
 repository class inherits (WHIT-763).
 
-Split out of the formerly-monolithic repository.py so each repository class can
-live in its own file while sharing one table configuration.
+Each repository class lives in its own repository_<x>.py file and shares this
+one table configuration.
 """
 
 import logging
@@ -41,6 +41,18 @@ def db_errors(action: str) -> Iterator[None]:
         yield
     except ClientError as e:
         handle_database_error(e, action)
+
+
+def conditional_write(action: str, write: Callable[[], Any]) -> bool:
+    """Run one conditional write: True if it landed, False if its condition refused it.
+    Any other client error becomes a DatabaseError for `action`."""
+    try:
+        write()
+        return True
+    except ClientError as e:
+        if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            handle_database_error(e, action)
+        return False
 
 
 def update_expression(sets: dict, removes: Iterable[str] = ()) -> tuple[str, dict, dict]:
@@ -118,15 +130,19 @@ class RepositoryBase:
     def _ensure_seeded(self) -> None:
         """Idempotently create the config item if absent. A lost race (another caller seeded
         first) raises ConditionalCheckFailed and is a no-op success."""
-        try:
-            self._get_table().put_item(
-                Item={**self._config_key, **self._seed_fields(), "version": Decimal(1)},
-                ConditionExpression="attribute_not_exists(pk)",
-            )
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                return
-            handle_database_error(e, f"seed {self._config_label}")
+        conditional_write(f"seed {self._config_label}", lambda: self._get_table().put_item(
+            Item={**self._config_key, **self._seed_fields(), "version": Decimal(1)},
+            ConditionExpression="attribute_not_exists(pk)",
+        ))
+
+    def _read_seeded(self) -> dict:
+        """The config item, creating it first when it doesn't exist yet (re-read after the
+        seed so a concurrent write is reflected)."""
+        item = self._get_config()
+        if item is None:
+            self._ensure_seeded()
+            item = self._get_config()
+        return item
 
     def _versioned_update(self, build: Callable[[Optional[dict]], Optional[tuple]], *, action: str,
                           seed: bool = True, on_conflict: Optional[Callable[[], None]] = None) -> Any:
@@ -152,22 +168,18 @@ class RepositoryBase:
             condition = "attribute_exists(pk) AND #v = :expected"
             if "condition" in update:
                 condition += " AND " + update["condition"]
-            try:
-                self._get_table().update_item(
-                    Key=self._config_key,
-                    UpdateExpression=update["expression"],
-                    ConditionExpression=condition,
-                    ExpressionAttributeNames={**update["names"], "#v": "version"},
-                    ExpressionAttributeValues={
-                        **update.get("values", {}),
-                        ":expected": version,
-                        ":next": version + Decimal(1),
-                    },
-                )
+            if conditional_write(action, lambda: self._get_table().update_item(
+                Key=self._config_key,
+                UpdateExpression=update["expression"],
+                ConditionExpression=condition,
+                ExpressionAttributeNames={**update["names"], "#v": "version"},
+                ExpressionAttributeValues={
+                    **update.get("values", {}),
+                    ":expected": version,
+                    ":next": version + Decimal(1),
+                },
+            )):
                 return result
-            except ClientError as e:
-                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                    handle_database_error(e, action)
-                if on_conflict:
-                    on_conflict()
+            if on_conflict:
+                on_conflict()
         raise VersionConflictError(f"{action}: exhausted retries under write contention")

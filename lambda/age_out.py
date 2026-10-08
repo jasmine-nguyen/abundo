@@ -29,7 +29,7 @@ import json
 import logging
 from datetime import date, timedelta
 
-from constants import ACCOUNT_ID_MAP, PENDING_AGE_OUT_DAYS
+from constants import ACCOUNT_ID_MAP, PENDING_AGE_OUT_DAYS, PENDING_STATUS, POSTED_STATUS
 from pending_carry import find_carry_twin, is_filed, load_is_unfiled, with_carried_category
 from webhook_repository import TransactionRepository
 from repository_category import CategoryRepository
@@ -77,7 +77,7 @@ def age_out_account(repo, account_id: str, cutoff: str, dry_run: bool, is_unfile
     # The account's posted rows — loaded once, lazily, only if a filed pending actually needs a
     # rescue (most accounts have none), then trimmed as twins are claimed.
     posted_rows = None
-    for pending in repo.get_pending_transactions_for_account(account_id):
+    for pending in repo.get_account_transactions(account_id, PENDING_STATUS):
         pending_date = pending.get("date")
         # No age signal, or still inside the window -> never reap. `date == cutoff` is
         # NOT stale (only strictly-older is), so a pending exactly at the boundary lives.
@@ -98,7 +98,7 @@ def age_out_account(repo, account_id: str, cutoff: str, dry_run: bool, is_unfile
                 # abort the unattended sweep for every later account. Skip the rescue here (no
                 # candidates -> reap as today); the next daily sweep retries the still-filed pending.
                 try:
-                    posted_rows = repo.get_posted_transactions_for_account(account_id)
+                    posted_rows = repo.get_account_transactions(account_id, POSTED_STATUS)
                 except DatabaseError as exc:
                     logger.warning(
                         "age_out rescue: could not read posted rows account=%s: %s; reaping as usual",

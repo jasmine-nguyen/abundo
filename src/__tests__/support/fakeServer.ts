@@ -15,6 +15,7 @@
 // seed / fail / hold / once take an exact path with no query string. The request log keeps
 // the full path, query included. No timers of its own, so it works under jest fake timers.
 import { beforeEach, afterEach } from '@jest/globals';
+import { applyRulesReport } from './applyRulesReport';
 
 const API_BASE = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
 
@@ -78,11 +79,7 @@ const EMPTY_APPLY_RULES_JOB = {
   createdRule: null, error: null, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', completedAt: null,
 };
 
-const EMPTY_APPLY_RULES_RESULT = {
-  dryRun: true, rulesConsidered: 0, unfiled: 0, matched: 0, conflicted: 0, conflictedSamples: [],
-  byCategory: {}, byRule: [], skippedRules: [], filed: [], vanished: [], failed: [], alreadyFiled: [],
-  remaining: 0, createdRule: null,
-};
+const EMPTY_APPLY_RULES_RESULT = applyRulesReport({ alreadyFiled: [], createdRule: null });
 
 const APPLY_RULES_JOBS = '/transactions/uncategorized/apply-rules/jobs';
 const CHAT_JOBS = '/ai/chat/jobs';

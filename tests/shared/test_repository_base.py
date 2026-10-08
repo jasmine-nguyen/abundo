@@ -3,6 +3,8 @@ class (WHIT-763): the lazy table connect and the 'read every page' loop."""
 
 import importlib
 
+import pytest
+
 from _dynamo_fakes import FakeTable
 
 # (module, class) for all 15 database classes.
@@ -68,3 +70,36 @@ def test_paginated_query_reads_every_page_and_sends_no_filter_when_none_given(sh
     )
     assert [item["sk"] for item in kept] == ["1", "4", "5"]
     assert all("FilterExpression" in query for query in table.queries)
+
+
+@pytest.mark.parametrize(
+    "raised, expected",
+    [
+        (None, True),
+        ("ConditionalCheckFailedException", False),
+    ],
+)
+def test_conditional_write_says_whether_the_save_landed(shared, client_error, raised, expected):
+    import repository_base
+
+    writes = []
+
+    def write():
+        writes.append("tried")
+        if raised:
+            raise client_error(raised)
+
+    assert repository_base.conditional_write("claim budget-alert marker", write) is expected
+    assert writes == ["tried"]
+
+
+def test_conditional_write_turns_any_other_client_error_into_a_database_error_naming_the_action(
+    shared, client_error, database_error,
+):
+    import repository_base
+
+    def write():
+        raise client_error("InternalServerError", "down")
+
+    with pytest.raises(database_error, match="Database claim budget-alert marker failed: down"):
+        repository_base.conditional_write("claim budget-alert marker", write)

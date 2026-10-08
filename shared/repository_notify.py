@@ -28,10 +28,8 @@ being relevant instead of accumulating.
 import time
 from typing import Optional
 
-from botocore.exceptions import ClientError
-
 from constants import NOTIFY_TTL_SECONDS
-from repository_base import RepositoryBase, db_errors, handle_database_error
+from repository_base import RepositoryBase, conditional_write, db_errors
 
 
 def _pk(last_pay_date: str, length: int) -> str:
@@ -83,67 +81,68 @@ class NotifyRepository(RepositoryBase):
     already-sent "<catId>#<pct>" strings for a cycle; `claim_fired` adds one only if it's
     absent, `release_fired` drops one, `mark_fired` adds one unconditionally."""
 
-    def fired_markers(self, last_pay_date: str, length: int) -> set:
-        """The set of "<catId>#<pct>" markers already fired this cycle ({} if none)."""
-        key = {"pk": _pk(last_pay_date, length), "sk": "FIRED"}
-        with db_errors("read budget-alert markers"):
+    def _read_set(self, key: dict, action: str, attr: str = "fired") -> set:
+        """The String Set stored under `attr` on the item at `key` (set() if either is missing)."""
+        with db_errors(action):
             item = self._get_table().get_item(Key=key).get("Item")
         if item is None:
             return set()
-        return set(item.get("fired", set()))
+        return set(item.get(attr, set()))
+
+    def _update_set(self, key: dict, op: str, members: set, *, action: str, attr: str = "fired",
+                    ttl: bool = False, now: Optional[int] = None) -> None:
+        """ADD or DELETE (`op`) `members` on the `attr` String Set at `key`. With `ttl`, also
+        refresh the item's `expires_at` from `now` (default: the current time)."""
+        expression = f"{op} #f :m"
+        names = {"#f": attr}
+        values = {":m": members}
+        if ttl:
+            expression += " SET #e = :exp"
+            names["#e"] = "expires_at"
+            values[":exp"] = (int(time.time()) if now is None else now) + NOTIFY_TTL_SECONDS
+        with db_errors(action):
+            self._get_table().update_item(
+                Key=key,
+                UpdateExpression=expression,
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
+            )
+
+    def fired_markers(self, last_pay_date: str, length: int) -> set:
+        """The set of "<catId>#<pct>" markers already fired this cycle ({} if none)."""
+        key = {"pk": _pk(last_pay_date, length), "sk": "FIRED"}
+        return self._read_set(key, "read budget-alert markers")
 
     def mark_fired(self, last_pay_date: str, length: int, marker: str) -> None:
         """Record that "<marker>" (e.g. "groceries#80") has fired this cycle, and
         refresh the item's TTL. ADD to a String Set is idempotent, so re-marking is
         harmless; the first ADD creates the item."""
         key = {"pk": _pk(last_pay_date, length), "sk": "FIRED"}
-        with db_errors("mark budget-alert fired"):
-            self._get_table().update_item(
-                Key=key,
-                UpdateExpression="ADD #f :m SET #e = :exp",
-                ExpressionAttributeNames={"#f": "fired", "#e": "expires_at"},
-                ExpressionAttributeValues={":m": {marker}, ":exp": int(time.time()) + NOTIFY_TTL_SECONDS},
-            )
+        self._update_set(key, "ADD", {marker}, action="mark budget-alert fired", ttl=True)
 
     def claim_fired(self, last_pay_date: str, length: int, marker: str) -> bool:
         """Add "<marker>" to this cycle's set ONLY if it isn't there yet, and refresh the TTL.
         True if this caller claimed it (and so owns the send), False if another delivery
         already had (WHIT-577). The first claim creates the item."""
         key = {"pk": _pk(last_pay_date, length), "sk": "FIRED"}
-        try:
-            self._get_table().update_item(
-                Key=key,
-                UpdateExpression="ADD #f :m SET #e = :exp",
-                ConditionExpression="attribute_not_exists(#f) OR NOT contains(#f, :v)",
-                ExpressionAttributeNames={"#f": "fired", "#e": "expires_at"},
-                ExpressionAttributeValues={
-                    ":m": {marker}, ":v": marker, ":exp": int(time.time()) + NOTIFY_TTL_SECONDS},
-            )
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                return False
-            handle_database_error(e, "claim budget-alert marker")
-        return True
+        return conditional_write("claim budget-alert marker", lambda: self._get_table().update_item(
+            Key=key,
+            UpdateExpression="ADD #f :m SET #e = :exp",
+            ConditionExpression="attribute_not_exists(#f) OR NOT contains(#f, :v)",
+            ExpressionAttributeNames={"#f": "fired", "#e": "expires_at"},
+            ExpressionAttributeValues={
+                ":m": {marker}, ":v": marker, ":exp": int(time.time()) + NOTIFY_TTL_SECONDS},
+        ))
 
     def release_fired(self, last_pay_date: str, length: int, marker: str) -> None:
         """Drop a claimed "<marker>" whose push never landed, so the next delivery can retry
         it. Deleting the last member drops the `fired` attribute; fired_markers reads set()."""
         key = {"pk": _pk(last_pay_date, length), "sk": "FIRED"}
-        with db_errors("release budget-alert marker"):
-            self._get_table().update_item(
-                Key=key,
-                UpdateExpression="DELETE #f :m",
-                ExpressionAttributeNames={"#f": "fired"},
-                ExpressionAttributeValues={":m": {marker}},
-            )
+        self._update_set(key, "DELETE", {marker}, action="release budget-alert marker")
 
     def fired_repayments(self) -> set:
         """The set of home-loan repayment transaction ids already notified (WHIT-15)."""
-        with db_errors("read repayment-notify markers"):
-            item = self._get_table().get_item(Key=_REPAYMENT_KEY).get("Item")
-        if item is None:
-            return set()
-        return set(item.get("fired", set()))
+        return self._read_set(_REPAYMENT_KEY, "read repayment-notify markers")
 
     def mark_repayment_fired(self, txn_id: str) -> None:
         """Record that repayment `txn_id` has been notified, refresh the item's TTL, and
@@ -179,25 +178,16 @@ class NotifyRepository(RepositoryBase):
         now = int(time.time())
         stamped_at = now if fired_at is None else fired_at
         token = f"{stamped_at}#{amount_cents}#{txn_id}"
-        with db_errors("mark repayment push"):
-            self._get_table().update_item(
-                Key=_REPAYMENT_PUSH_KEY,
-                UpdateExpression="ADD #f :m SET #e = :exp",
-                ExpressionAttributeNames={"#f": "pushes", "#e": "expires_at"},
-                ExpressionAttributeValues={":m": {token}, ":exp": now + NOTIFY_TTL_SECONDS},
-            )
+        self._update_set(_REPAYMENT_PUSH_KEY, "ADD", {token}, action="mark repayment push",
+                         attr="pushes", ttl=True, now=now)
 
     def repayment_push_amounts_since(self, cutoff: int) -> list:
         """The amounts (integer cents) of every repayment push fired at or after `cutoff`
         (epoch seconds), as a LIST so duplicates survive — two same-amount repayments need
         two pushes to both count as alerted (WHIT-317). Tokens older than `cutoff` fall
         outside the detector's window and are skipped."""
-        with db_errors("read repayment pushes"):
-            item = self._get_table().get_item(Key=_REPAYMENT_PUSH_KEY).get("Item")
-        if item is None:
-            return []
         amounts = []
-        for token in item.get("pushes", set()):
+        for token in self._read_set(_REPAYMENT_PUSH_KEY, "read repayment pushes", attr="pushes"):
             fired_at_str, amount_str, _txn_id = token.split("#", 2)
             if int(fired_at_str) >= cutoff:
                 amounts.append(int(amount_str))
@@ -207,47 +197,27 @@ class NotifyRepository(RepositoryBase):
         """The set of already-celebrated payoff-milestone markers for `scope` (WHIT-301/369).
         A marker is the saved milestone's dedup key "id:<id>:bal:<amount>". `scope` selects the
         owner; None is the shared tenant."""
-        with db_errors("read milestone-notify markers"):
-            item = self._get_table().get_item(Key=_milestone_key(scope)).get("Item")
-        if item is None:
-            return set()
-        return set(item.get("fired", set()))
+        return self._read_set(_milestone_key(scope), "read milestone-notify markers")
 
     def mark_milestone_fired(self, key: str, scope: Optional[str] = None) -> None:
         """Record that the milestone with dedup marker `key` has been celebrated for `scope`.
         Deliberately NO TTL (unlike the per-cycle/per-repayment markers above): the paydown is
         monotonic, so a milestone is a once-ever event that must never expire and re-fire.
         `scope` selects the owner; None is the shared tenant."""
-        with db_errors("mark milestone celebrated"):
-            self._get_table().update_item(
-                Key=_milestone_key(scope),
-                UpdateExpression="ADD #f :m",
-                ExpressionAttributeNames={"#f": "fired"},
-                ExpressionAttributeValues={":m": {key}},
-            )
+        self._update_set(_milestone_key(scope), "ADD", {key}, action="mark milestone celebrated")
 
     def fired_goal_checkpoints(self, scope: Optional[str] = None) -> set:
         """The set of already-celebrated goal-checkpoint markers for `scope` (WHIT-479). A marker
         is a checkpoint's dedup key "g:<goal>:cp:<id>:bal:<amount>" (goal_checkpoints._checkpoint_marker).
         `scope` selects the owner; None is the shared tenant."""
-        with db_errors("read goal-checkpoint markers"):
-            item = self._get_table().get_item(Key=_goalcheckpoint_key(scope)).get("Item")
-        if item is None:
-            return set()
-        return set(item.get("fired", set()))
+        return self._read_set(_goalcheckpoint_key(scope), "read goal-checkpoint markers")
 
     def mark_goal_checkpoint_fired(self, key: str, scope: Optional[str] = None) -> None:
         """Record that the goal checkpoint with dedup marker `key` has been celebrated for `scope`
         (WHIT-479). Deliberately NO TTL: a checkpoint crossing is a once-ever event that must never
         expire and re-fire (the balance isn't monotonic, so it could be re-crossed). `scope`
         selects the owner; None is the shared tenant."""
-        with db_errors("mark goal checkpoint celebrated"):
-            self._get_table().update_item(
-                Key=_goalcheckpoint_key(scope),
-                UpdateExpression="ADD #f :m",
-                ExpressionAttributeNames={"#f": "fired"},
-                ExpressionAttributeValues={":m": {key}},
-            )
+        self._update_set(_goalcheckpoint_key(scope), "ADD", {key}, action="mark goal checkpoint celebrated")
 
     def remove_milestone_markers(self, keys: set, scope: Optional[str] = None) -> None:
         """Drop dead milestone markers from the String Set (WHIT-385): a re-targeted or deleted
@@ -258,10 +228,4 @@ class NotifyRepository(RepositoryBase):
         call must not touch the table. `scope` selects the owner; None is the shared tenant."""
         if not keys:
             return
-        with db_errors("remove milestone markers"):
-            self._get_table().update_item(
-                Key=_milestone_key(scope),
-                UpdateExpression="DELETE #f :m",
-                ExpressionAttributeNames={"#f": "fired"},
-                ExpressionAttributeValues={":m": set(keys)},
-            )
+        self._update_set(_milestone_key(scope), "DELETE", set(keys), action="remove milestone markers")

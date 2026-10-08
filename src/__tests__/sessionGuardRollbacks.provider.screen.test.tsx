@@ -4,22 +4,20 @@
 // toasts were unguarded; this pins the session-epoch guard reused from WHIT-268. Harness mirrors
 // overlaysAuthClearGaps [A10]: live miniature auth store, the fake server, the real queryClient.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, resetAuth } from './support/authMock';
 
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Bucket } from '../types';
 import { queryClient } from '../queryClient';
 import { ApiError } from '../apiError';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 import { installFakeServer } from './support/fakeServer';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 // Sign out in PRODUCTION order: clearSession() wipes the cache, THEN broadcasts anon (which the
 // context's subscription turns into the epoch bump). Matches [A10]:175.

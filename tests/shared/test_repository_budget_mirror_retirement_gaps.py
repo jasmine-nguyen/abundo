@@ -251,9 +251,9 @@ def test_no_mirror_field_names_in_strip_tuples(shared):
         "payback_amount", "payback_cycles", "payback_from", "payback_len", "payback_paydate",
     }
     rollover_set = set(shared.budget._ROLLOVER_FIELDS)
-    spread_set = set(shared.budget._SPREAD_FIELDS)
+    spread_set = set(shared.spend.SPREAD_ENTRY_FIELDS)
     assert not rollover_set & mirror_field_names, f"mirror fields leaked into _ROLLOVER_FIELDS: {rollover_set & mirror_field_names}"
-    assert not spread_set & mirror_field_names, f"mirror fields leaked into _SPREAD_FIELDS: {spread_set & mirror_field_names}"
+    assert not spread_set & mirror_field_names, f"mirror fields leaked into SPREAD_ENTRY_FIELDS: {spread_set & mirror_field_names}"
 
 
 def test_xor_drop_still_correct_when_orphan_mirror_keys_present(shared, budget_repo, config_item_table):
@@ -266,7 +266,7 @@ def test_xor_drop_still_correct_when_orphan_mirror_keys_present(shared, budget_r
 
     assert entry["rollover"] is True
     assert entry["carryover_from"] == "2026-09-01"
-    for f in shared.budget._SPREAD_FIELDS:
+    for f in shared.spend.SPREAD_ENTRY_FIELDS:
         assert f not in entry, f"spread field {f} should have been dropped"
     assert "payback_amount" in entry
 

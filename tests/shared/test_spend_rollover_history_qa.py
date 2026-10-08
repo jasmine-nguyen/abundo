@@ -4,10 +4,9 @@ from decimal import Decimal
 
 import pytest
 
+from _budget_endpoint_fakes import LENGTH, TODAY  # settle cutoff 2026-07-31
 from _rollover_fakes import charge, cycle_record
 
-TODAY = "2026-08-10"  # settle cutoff 2026-07-31
-LENGTH = 30
 W1 = ("2026-05-08", "2026-06-06")
 W2 = ("2026-06-07", "2026-07-06")
 W3 = ("2026-07-07", "2026-08-05")  # still settling

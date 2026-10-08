@@ -4,7 +4,7 @@ These are wiring/regression guards, not behaviour re-tests: the CRUD behaviour
 (insert / save-failed uuid sk / TTL) is owned and covered by
 tests/shared/test_repository_transaction.py. Here we prove the dedup didn't
 silently (a) drop a webhook-only method, (b) let the shared parent SHADOW the
-webhook's paginated get_pending override, or (c) reintroduce a local copy of an
+webhook's paginated get_account_transactions override, or (c) reintroduce a local copy of an
 inherited method. Backed by the webhook suite's in-memory FakeTable (`repo`)."""
 
 # Every method the deployed webhook must still expose by name after the dedup.
@@ -13,7 +13,7 @@ _INHERITED_CRUD = (
     "save_failed_transactions", "_batch_put",
 )
 _WEBHOOK_ONLY = (
-    "get_transaction", "get_pending_transactions_for_account",
+    "get_transaction", "get_account_transactions",
     "get_failed_transactions", "delete_failed_transaction",
     "insert_or_reconcile", "has_event", "mark_event",
 )
@@ -26,19 +26,19 @@ def test_subclass_still_exposes_every_inherited_and_webhook_method(repo):
         assert callable(getattr(type(repo), name, None)), f"missing method: {name}"
 
 
-def test_get_pending_is_the_webhook_paginated_override_not_the_parent(repo):
-    # [A-W2] the money/pagination-critical guard. get_pending_transactions_for_account
+def test_get_account_transactions_is_the_webhook_paginated_override_not_the_parent(repo):
+    # [A-W2] the money/pagination-critical guard. get_account_transactions
     # MUST resolve to the webhook's own paginated (WHIT-82) override. If the shared
     # parent ever grows a same-named method, MRO would still pick the subclass's — but
     # if the subclass's copy were dropped, resolution would fall through to a parent
     # that PAGINATES DIFFERENTLY (or not at all). Pin it to the webhook module.
-    method = type(repo).get_pending_transactions_for_account
+    method = type(repo).get_account_transactions
     assert method.__module__ == "webhook_repository", method.__module__
 
     parent = type(repo).__mro__[1]
     assert parent.__module__ == "repository_transaction", parent.__module__
     # And the parent must NOT define it in its own body (no shadow/conflict today).
-    assert "get_pending_transactions_for_account" not in vars(parent)
+    assert "get_account_transactions" not in vars(parent)
 
 
 def test_inherited_crud_methods_are_the_shared_ones_not_local_recopies(repo):

@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Optional
 
 from repository_base import RepositoryBase, remove_map_entry, set_map_entry
+from spend import SPREAD_ENTRY_FIELDS
 
 _BUDGETS_KEY = {"pk": "BUDGETS", "sk": "BUDGETS"}
 
@@ -15,12 +16,18 @@ _ROLLOVER_FIELDS = (
     "rollover", "carryover", "carryover_from", "carryover_len", "carryover_paydate", "carryover_history",
 )
 
-# The bill-spread fields on a budget entry (WHIT-504): the bill amount, how many cycles it
-# is paid back over, and the anchor cycle it was created in (`spread_from`) plus the pay
-# cycle that anchor was captured under (`spread_len`/`spread_paydate`, so a cycle-config
-# change can be detected — the same pattern as the rollover anchor). Spend-only, like
-# rollover, and cleared on a reclassify out of spend. Kept local.
-_SPREAD_FIELDS = ("spread_amount", "spread_cycles", "spread_from", "spread_len", "spread_paydate")
+
+def _spread_fields(amount: Decimal, cycles: int, spread_from: str, spread_len: int,
+                   spread_paydate: str) -> dict:
+    """A bill spread's stored fields (WHIT-504): the amount, how many cycles it is paid back
+    over, and the anchor cycle plus the pay cycle that anchor was captured under."""
+    return {
+        "spread_amount": amount,
+        "spread_cycles": Decimal(cycles),
+        "spread_from": spread_from,
+        "spread_len": Decimal(spread_len),
+        "spread_paydate": spread_paydate,
+    }
 
 
 class BudgetRepository(RepositoryBase):
@@ -32,7 +39,7 @@ class BudgetRepository(RepositoryBase):
     `rollover` (bool), `carryover` (signed Decimal buffer), `carryover_from` (ISO cycle
     start the buffer is sealed as of), `carryover_len`/`carryover_paydate` (the pay-cycle
     the buffer was sealed under, so a cycle-config change can re-anchor), or — instead of
-    rollover, never alongside it — a bill spread's `spread_*` fields (see _SPREAD_FIELDS,
+    rollover, never alongside it — a bill spread's `spread_*` fields (see SPREAD_ENTRY_FIELDS,
     WHIT-504). All optional fields are absent on a legacy/plain budget and default to off/0. Kept separate from
     the CATEGORIES item on purpose: an independent version means budget writes and
     category edits never contend on the same lock. Unlike the taxonomy there is no
@@ -48,10 +55,7 @@ class BudgetRepository(RepositoryBase):
         """Return the stored {category id -> {"target": Decimal}} map (empty before
         any target is set). The handler flattens it to the API's {id: number} shape.
         """
-        item = self._get_config()
-        if item is None:
-            self._ensure_seeded()
-            item = self._get_config()  # re-read so a concurrent set is reflected
+        item = self._read_seeded()
         return dict(item["items"])
 
     def _merge_entry(self, cat_id: str, fields: dict, drop: tuple = ()) -> dict:
@@ -102,7 +106,7 @@ class BudgetRepository(RepositoryBase):
             fields["rollover"] = rollover
         if anchor is not None:
             fields.update(anchor)
-        drop = _SPREAD_FIELDS if rollover else ()
+        drop = SPREAD_ENTRY_FIELDS if rollover else ()
         entry = self._merge_entry(cat_id, fields, drop=drop)
         return {"id": cat_id, "target": entry["target"]}
 
@@ -162,13 +166,9 @@ class BudgetRepository(RepositoryBase):
         wins; the mirror strip lives in set_budget). Raises VersionConflictError if it
         can't converge.
         """
-        entry = self._merge_entry(cat_id, {
-            "spread_amount": amount,
-            "spread_cycles": Decimal(cycles),
-            "spread_from": spread_from,
-            "spread_len": Decimal(spread_len),
-            "spread_paydate": spread_paydate,
-        }, drop=_ROLLOVER_FIELDS)
+        entry = self._merge_entry(
+            cat_id, _spread_fields(amount, cycles, spread_from, spread_len, spread_paydate),
+            drop=_ROLLOVER_FIELDS)
         return {"id": cat_id, "amount": entry["spread_amount"], "cycles": cycles}
 
     def set_spread_if_absent(self, cat_id: str, amount: Decimal, cycles: int, spread_from: str,
@@ -195,12 +195,7 @@ class BudgetRepository(RepositoryBase):
                     or "spread_amount" in entry or entry.get("rollover")):
                 return None
             kept = {k: v for k, v in entry.items() if k not in _ROLLOVER_FIELDS}
-            merged = {**kept,
-                      "spread_amount": amount,
-                      "spread_cycles": Decimal(cycles),
-                      "spread_from": spread_from,
-                      "spread_len": Decimal(spread_len),
-                      "spread_paydate": spread_paydate}
+            merged = {**kept, **_spread_fields(amount, cycles, spread_from, spread_len, spread_paydate)}
             return set_map_entry(cat_id, merged), {"id": cat_id, "amount": amount, "cycles": cycles}
 
         return self._versioned_update(build, action="set spread if absent")
@@ -218,12 +213,12 @@ class BudgetRepository(RepositoryBase):
         self._strip_fields(cat_id, _ROLLOVER_FIELDS, "clear rollover")
 
     def clear_spread(self, cat_id: str) -> None:
-        """Strip the bill-spread fields (see _SPREAD_FIELDS) from a category's budget entry,
+        """Strip the bill-spread fields (see SPREAD_ENTRY_FIELDS) from a category's budget entry,
         KEEPING its `target` and rollover fields — run when the user removes the spread, when
         a plan has run its course or been settled after a pay-cycle change (best-effort from
         the read path), and on a reclassify out of spend. No-op/lock semantics per _strip_fields.
         """
-        self._strip_fields(cat_id, _SPREAD_FIELDS, "clear spread")
+        self._strip_fields(cat_id, SPREAD_ENTRY_FIELDS, "clear spread")
 
     def _strip_fields(self, cat_id: str, fields: tuple, operation: str) -> None:
         """Remove `fields` from ONE category's budget entry, keeping everything else.

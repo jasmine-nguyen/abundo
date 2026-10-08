@@ -40,7 +40,7 @@ def test_shared_carry_modules_import_with_only_the_layer_on_the_path(module):
     probe = (
         "import sys; "
         f"sys.path[:] = [p for p in sys.path if 'site-packages' not in p]; import {module}; "
-        "print(sorted(m for m in ('banksync', 'reconcile', 'age_out', 'boto3', 'repository') "
+        "print(sorted(m for m in ('banksync', 'reconcile', 'age_out', 'boto3', 'repository_base') "
         "if m in sys.modules))"
     )
     result = subprocess.run([sys.executable, "-S", "-c", probe], cwd=_SHARED_DIR,

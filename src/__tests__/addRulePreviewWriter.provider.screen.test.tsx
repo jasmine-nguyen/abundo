@@ -12,9 +12,8 @@
 //   - it shares the in-flight latch with applyRulesToHistory;
 //   - a run settling after sign-out paints nothing.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { ApplyRulesResult, FilingResult, FilingTarget } from '../context';
 import type { Transaction } from '../types';
 import type { Rule } from '../model';
@@ -26,27 +25,15 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
+import { COLES_CREATED_RULE, filedReport } from './support/applyRulesReport';
+import { colesTxn as txn } from './factory';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 const APPLY_RULES = '/transactions/uncategorized/apply-rules';
 const SWEEP: FilingTarget = { kind: 'sweep' };
 
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
-const txn = (over: Partial<Transaction> = {}): Transaction => ({
-  transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-  account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-  ...over,
-});
-
-const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
-  dryRun: false, rulesConsidered: 1, unfiled: 3, matched: 1, conflicted: 0, conflictedSamples: [],
-  byCategory: { groceries: 1 }, byRule: [], skippedRules: [],
-  filed: [{ id: 't1', category: 'groceries' }], vanished: [], failed: [], remaining: 0,
-  createdRule: { id: 'r1', field: 'description', operator: 'contains', value: 'coles', categoryId: 'groceries' },
-  ...over,
-});
+const report = (over: Partial<ApplyRulesResult> = {}) => filedReport({ rulesConsidered: 1, createdRule: COLES_CREATED_RULE, ...over });
 
 function rowsIn(key: 'transactions'): Transaction[] {
   const data = queryClient.getQueryData<{ pages: { transactions: Transaction[] }[] }>([key]);

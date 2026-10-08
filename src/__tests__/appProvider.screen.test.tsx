@@ -6,9 +6,8 @@
 // Covers applyCategory (one + all), saveBudget, saveCategory (create + edit),
 // deleteCategory, saveLoanFacts — success and failure/rollback.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { LoanFacts } from '../context';
 import type { Transaction, Category } from '../types';
 import type { Rule } from '../model';
@@ -17,6 +16,8 @@ import { seedTransactionsCache, readTransactionsCache } from './support/transact
 import { installFakeServer, type LoggedRequest } from './support/fakeServer';
 import { GROCERIES } from './support/categories';
 import { DELETE_GROCERIES } from './support/deleteCategorySeed';
+import { colesTxn } from './factory';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 // The writers guard the load-error banner on auth (retired), but auth still gates
 // nothing in these direct-action tests; pin 'authed' for parity with the app.
@@ -24,14 +25,8 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 const server = installFakeServer();
 
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
 const CAT = GROCERIES;
-const TXN = {
-  transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-  account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-} as const;
+const TXN = colesTxn();
 
 // Read helpers over the query caches the writers now target.
 const txns = () => readTransactionsCache(queryClient);

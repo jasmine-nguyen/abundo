@@ -2,26 +2,24 @@
 // mid-delete must re-seat nothing, the undo puts back exactly what it changed, and every copy
 // (main + scoped, every cycle) is unfiled.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import type { InfiniteData, QueryKey } from '@tanstack/react-query';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, resetAuth } from './support/authMock';
 
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Transaction, Category } from '../types';
 import type { Rule } from '../model';
 import type { TransactionFeedPage, TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 import {
   DELETE_DINING, DELETE_GROCERIES, DELETE_DINING_RULE, DELETE_GROCERIES_RULE, DELETE_DINING_BUDGET, DELETE_GROCERIES_BUDGET, tx, page,
 } from './support/deleteCategorySeed';
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const BUDGET_KEY = ['budgetTransactions', 'parentBudget'];
 const OTHER_BUDGET_KEY = ['budgetTransactions', 'otherBudget'];

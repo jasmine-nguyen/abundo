@@ -8,9 +8,8 @@
 //   [E4] excluding a charge that lives ONLY in a category-drill cache MARKS it (budget_excluded)
 //        there so the detail toggle moves and the screen keeps showing it — the qa-found bug.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Transaction, Category } from '../types';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
@@ -18,21 +17,17 @@ import { installFakeServer } from './support/fakeServer';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
+import { cafeTxn } from './factory';
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const CATS: Category[] = [
   { id: 'food', name: 'Food', bucket: 'Living', icon: 'cart', color: '#7fd49b', parent: null },
   { id: 'coffee', name: 'Coffee', bucket: 'Living', icon: 'cup', color: '#7fd49b', parent: 'food' },
   { id: 'insurance', name: 'Insurance', bucket: 'Living', icon: 'shield', color: '#8ab4f8', parent: null },
 ];
-const txn = (id: string, over: Partial<Transaction> = {}): Transaction => ({
-  transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'CAFE', merchant_name: 'Cafe', amount: -6, account_id: 'a1',
-  account_name: 'ANZ', category: 'coffee', status: 'posted', type: 'PAYMENT', counts_to_budget: true, ...over,
-});
+const txn = (id: string, over: Partial<Transaction> = {}) => cafeTxn({ transaction_id: id, ...over });
 const budgetList = (id: string) => queryClient.getQueryData<Transaction[]>(['budgetTransactions', id]);
 
 beforeEach(() => { resetAuth(); queryClient.clear(); });

@@ -14,11 +14,10 @@ from _boto_stubs import FAKE_SSM_KEY, FakeSsmClient
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
-def test_the_handler_fixture_sheds_every_lambda_api_module_and_the_shared_repository(request):
-    # [A12] Plant a stale module under every lambda_api/ name plus `repository` (the shared name
-    # the webhook folder also defines); the fixture must shed each one. FAIL-ON-REVERT: drop the
-    # lambda_api glob or the shared∩other-lambdas term from conftest._COLLIDING.
-    names = sorted({path.stem for path in (_REPO_ROOT / "lambda_api").glob("*.py")} | {"repository"})
+def test_the_handler_fixture_sheds_every_lambda_api_module(request):
+    # [A12] Plant a stale module under every lambda_api/ name; the fixture must shed each one.
+    # FAIL-ON-REVERT: drop the lambda_api glob from conftest._COLLIDING.
+    names = sorted({path.stem for path in (_REPO_ROOT / "lambda_api").glob("*.py")})
     stale = {name: type(sys)(f"stale_{name}") for name in names}
     originals = {name: sys.modules.get(name) for name in names}
 

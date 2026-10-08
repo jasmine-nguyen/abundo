@@ -26,10 +26,7 @@ class GoalsRepository(RepositoryBase):
     def list_goals(self) -> dict:
         """Return the stored {goal id -> goal object} map (empty before any goal is
         created). The handler flattens it to a list of goal objects for the API."""
-        item = self._get_config()
-        if item is None:
-            self._ensure_seeded()
-            item = self._get_config()  # re-read so a concurrent create is reflected
+        item = self._read_seeded()
         return dict(item["items"])
 
     def upsert_goal(self, goal_id: str, goal: dict, start_candidate: Optional[dict] = None) -> dict:

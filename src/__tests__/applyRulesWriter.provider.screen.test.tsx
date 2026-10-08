@@ -13,10 +13,9 @@
 //   - ['transactions'] is never invalidated (the documented InfiniteData storm).
 //   - `vanished` rows are removed from the caches, or a deleted charge lingers as a phantom.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
-import type { ApplyRulesResult, FilingResult, FilingTarget } from '../context';
+import { useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
+import type { FilingResult, FilingTarget } from '../context';
 import type { Transaction } from '../types';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, seedTransactionsPages } from './support/transactionsCache';
@@ -27,28 +26,15 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
+import { filedReport as report } from './support/applyRulesReport';
+import { colesTxn as txn } from './factory';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const FAILED: FilingResult = { status: 'failed', background: false };
 
 const server = installFakeServer();
 const APPLY_RULES = '/transactions/uncategorized/apply-rules';
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
-const txn = (over: Partial<Transaction> = {}): Transaction => ({
-  transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-  account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
-  ...over,
-});
-
-const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
-  dryRun: false, rulesConsidered: 2, unfiled: 3, matched: 1, conflicted: 0, conflictedSamples: [],
-  byCategory: { groceries: 1 }, byRule: [], skippedRules: [],
-  filed: [{ id: 't1', category: 'groceries' }], vanished: [], failed: [], remaining: 0,
-  ...over,
-});
 
 /** Read a named list cache back as a flat list of rows. */
 function rowsIn(key: 'transactions' | 'uncategorizedFeed'): Transaction[] {

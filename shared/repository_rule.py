@@ -16,7 +16,7 @@ from typing import Any, Optional
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
-from repository_base import RepositoryBase, db_errors, handle_database_error, update_expression
+from repository_base import RepositoryBase, conditional_write, db_errors, handle_database_error, update_expression
 from repository_errors import (
     RuleClashError,
     RuleNotFoundError,
@@ -218,19 +218,15 @@ class RuleRepository(RepositoryBase):
         else:
             removes += ["spread_amount", "spread_gap_days", "spread_seeded"]
         expression, names, values = update_expression(sets, removes)
-        try:
-            self._get_table().update_item(
-                Key={"pk": _PK, "sk": f"RULE#{rule_id}"},
-                UpdateExpression=expression,
-                ExpressionAttributeNames=names,
-                ExpressionAttributeValues=values,
-                ConditionExpression="attribute_exists(pk)",
-            )
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                # Read then write are not atomic — the row was deleted in the gap.
-                raise RuleNotFoundError(rule_id)
-            handle_database_error(e, "update rule")
+        if not conditional_write("update rule", lambda: self._get_table().update_item(
+            Key={"pk": _PK, "sk": f"RULE#{rule_id}"},
+            UpdateExpression=expression,
+            ExpressionAttributeNames=names,
+            ExpressionAttributeValues=values,
+            ConditionExpression="attribute_exists(pk)",
+        )):
+            # Read then write are not atomic — the row was deleted in the gap.
+            raise RuleNotFoundError(rule_id)
 
     def delete_rule(self, rule_id: str) -> None:
         """Delete a rule. Safe to run twice — deleting a missing key is a no-op, so the app's
@@ -249,18 +245,13 @@ class RuleRepository(RepositoryBase):
         mid-flight is a no-op success — the ``attribute_exists(pk)`` guard fails, and a plan that no
         rule points at simply won't be re-seeded, which is the intended end state.
         """
-        try:
-            self._get_table().update_item(
-                Key={"pk": _PK, "sk": f"RULE#{rule_id}"},
-                UpdateExpression="SET #ss = :true",
-                ConditionExpression="attribute_exists(pk)",
-                ExpressionAttributeNames={"#ss": "spread_seeded"},
-                ExpressionAttributeValues={":true": True},
-            )
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                return  # the rule was deleted between filing and this write — nothing to mark
-            handle_database_error(e, "mark rule spread")
+        conditional_write("mark rule spread", lambda: self._get_table().update_item(
+            Key={"pk": _PK, "sk": f"RULE#{rule_id}"},
+            UpdateExpression="SET #ss = :true",
+            ConditionExpression="attribute_exists(pk)",
+            ExpressionAttributeNames={"#ss": "spread_seeded"},
+            ExpressionAttributeValues={":true": True},
+        ))
 
 
 def _rule_row(rule_id: str, field: str, operator: str, value: str, category_id: str,

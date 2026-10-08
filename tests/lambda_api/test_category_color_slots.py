@@ -8,7 +8,7 @@ Extracted from test_categories.py and consolidated with the former per-ticket sa
 roof (WHIT-462). Test bodies moved verbatim; each folded block keeps its own local helpers.
 
 The `handler` fixture (conftest.py) makes lambda_api importable in isolation and puts
-`shared/` on the path, so `import repository` inside a test resolves under it.
+`shared/` on the path, so `import repository_category` inside a test resolves under it.
 """
 
 import copy
@@ -315,7 +315,6 @@ def test_least_held_color_slot_prefers_slots_no_builtin_owns(handler):
     """WHIT-404 option B: a repeat has to land somewhere, and doubling up on a colour only a
     custom category wears beats doubling up on Eating Out's. Derived from SEED_CATEGORIES, so
     it cannot drift if the seeds are retuned."""
-    import repository
     import repository_category
     seed_slots = {int(cat["colorSlot"]) for cat in repository_category.SEED_CATEGORIES.values()}
     non_seed = repository_category._NON_SEED_COLOR_SLOTS
@@ -351,7 +350,6 @@ def test_least_held_color_slot_treats_reserved_as_a_hard_exclusion(handler):
 
 def test_slot_survives_json_encoding_as_a_number(handler):
     """DynamoDB hands back Decimal; the client reads JSON. Pin the seam between the slices."""
-    import repository
     _, repo = _repo_with_fake_table(handler)
     repo.list_categories()
     created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
@@ -3129,8 +3127,8 @@ def test_patch_is_never_stricter_than_the_read_it_now_borrows_its_planner_from(
 
 
 def test_plan_new_category_slot_holds_its_contract_on_stores_create_cannot_produce(handler):
-    """WHIT-428 — [B8]/[B9] the planner was extracted out of create_category and exported in
-    shared/repository.py __all__, so it is now callable on inputs the create path never
+    """WHIT-428 — [B8]/[B9] the planner was extracted out of create_category and made public in
+    shared/repository_category.py, so it is now callable on inputs the create path never
     reaches: an empty store, one where EVERY row is corrupt, one where every row is unslotted,
     600 rows, and mixtures. Two contracts, on every one of them:
 
@@ -3223,7 +3221,6 @@ def test_a_zero_row_allowance_is_reached_but_provably_inert(handler):
     of every colour) reddens: at EVERY row count from 1 to 60, one row per colour is never a
     mover.
     """
-    import repository as R
     import repository_category as RC
 
     # Reached, and inert: no movers, no plan, settled, and no category clause in the write.

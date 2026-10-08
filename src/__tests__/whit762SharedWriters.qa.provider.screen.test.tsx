@@ -3,20 +3,18 @@
 // edit), the spread guard + cold-cache toast, and deleteCategory's budget strip across every
 // ['budgets'] entry.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
 
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES, SUBS } from './support/categories';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const rollup = (target: number) => ({ target, spent: 0 });
 const multi = {
