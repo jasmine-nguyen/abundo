@@ -11,6 +11,7 @@ module scope: ``real_repos`` imports ``repository`` lazily, so inside a ``handle
 builds the repositories from the same freshly loaded copy the handler uses.
 """
 
+from _api_event import api_event
 from _dynamo_fakes import FakeTable
 
 # The internal account ids, in ACCOUNT_ID_MAP order.
@@ -130,11 +131,11 @@ def on_write(table, transaction_id, action):
 
 
 def _feed_event(params=None):
-    return {
-        "rawPath": "/transactions/feed",
-        "requestContext": {"http": {"method": "GET"}},
-        "queryStringParameters": params,
-    }
+    return api_event("GET", "/transactions/feed", query=params)
+
+
+def uncategorized_feed_event(params=None):
+    return api_event("GET", "/transactions/uncategorized/feed", query=params)
 
 
 class FakeCategoryRepo:
@@ -165,3 +166,24 @@ def inject_rule_routes(handler, monkeypatch, store, categories, transactions=Non
     monkeypatch.setattr(handler, "RuleRepository", lambda: store.rule_repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(categories))
     monkeypatch.setattr(handler, "TransactionRepository", lambda: store.transaction_repo)
+
+
+def apply_rules_event(body=None, method="POST", **kwargs):
+    return api_event(method, "/transactions/uncategorized/apply-rules", body=body, **kwargs)
+
+
+def apply_rules_job_post_event(body=None):
+    return api_event("POST", "/transactions/uncategorized/apply-rules/jobs", body=body)
+
+
+def apply_rules_job_get_event(job_id):
+    return api_event("GET", f"/transactions/uncategorized/apply-rules/jobs/{job_id}", path_params={"id": job_id})
+
+
+def rule_put_event(rule_id, value, category_id, field="description", operator="contains"):
+    body = {"value": value, "categoryId": category_id, "field": field, "operator": operator}
+    return api_event("PUT", f"/rules/{rule_id}", body=body, path_params={"id": rule_id})
+
+
+def rule_delete_event(rule_id):
+    return api_event("DELETE", f"/rules/{rule_id}", path_params={"id": rule_id})

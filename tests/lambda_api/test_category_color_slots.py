@@ -20,6 +20,7 @@ from decimal import Decimal
 
 import pytest
 
+from _api_event import api_event
 from _chart_ramp import assignment_order as client_assignment_order
 from _category_fakes import (
     _ccfe, _before_next_update, budget_repo,
@@ -2798,7 +2799,7 @@ def test_get_categories_mid_repaint_is_a_200_even_when_the_write_is_throttled(ha
     monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
 
     response = handler.lambda_handler(
-        {"rawPath": "/categories", "requestContext": {"http": {"method": "GET"}}}, None)
+        api_event("GET", "/categories"), None)
 
     assert response["statusCode"] == 200
     body = json.loads(response["body"])

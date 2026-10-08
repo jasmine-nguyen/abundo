@@ -9,6 +9,7 @@ import json
 
 import pytest
 
+from _api_event import api_event
 from _feed_fakes import FakeCategoryRepo, real_repos
 from _job_fakes import created_jobs, real_job_repo, throttled_worker
 
@@ -44,7 +45,7 @@ def test_each_method_and_path_reaches_its_route_function(handler, monkeypatch, m
             handler, target,
             lambda *args, _target=target, **kwargs: called.append(_target) or {"statusCode": 299})
 
-    event = {"rawPath": path, "requestContext": {"http": {"method": method}}}
+    event = api_event(method, path)
     resp = handler.lambda_handler(event, None)
 
     if expected is None:

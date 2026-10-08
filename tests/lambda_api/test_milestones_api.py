@@ -16,6 +16,7 @@ from decimal import Decimal
 
 import pytest
 
+from _api_event import api_event
 from _milestone_fakes import recording_notify_repo
 
 # A valid strictly-paid-down 3-row plan (decreasing balance, increasing date).
@@ -45,12 +46,12 @@ class FakeMilestoneRepo:
 
 
 def _put_event(body):
-    return {
-        "rawPath": "/milestones",
-        "requestContext": {"http": {"method": "PUT"}},
-        "body": json.dumps(body) if not isinstance(body, str) else body,
-        "isBase64Encoded": False,
-    }
+    return api_event(
+        "PUT",
+        "/milestones",
+        raw=json.dumps(body) if not isinstance(body, str) else body,
+        is_base64=False,
+    )
 
 
 def _put(handler, body, repo=None, notify_repo=None):
@@ -79,7 +80,7 @@ def test_get_milestones_returns_saved_list(handler):
 def test_route_get_milestones(handler, monkeypatch):
     saved = [{"id": "a", "label": "Kickoff", "targetBalance": 544000.0, "targetDate": "2026-06-18"}]
     monkeypatch.setattr(handler, "MilestoneRepository", lambda: FakeMilestoneRepo(saved))
-    event = {"rawPath": "/milestones", "requestContext": {"http": {"method": "GET"}}}
+    event = api_event("GET", "/milestones")
     resp = handler.lambda_handler(event, None)
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == saved

@@ -19,6 +19,7 @@ from datetime import date
 from decimal import Decimal
 from functools import partial
 
+from _api_event import api_event
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _transaction_range_fakes import _DateFilteringTransactionRepo
 
@@ -76,8 +77,7 @@ def test_breakdown_cap_boundary_cycle_12_is_served_not_rejected(handler, monkeyp
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
     monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
 
-    event = {"rawPath": "/breakdown", "requestContext": {"http": {"method": "GET"}},
-             "queryStringParameters": {"cycle": "12"}}
+    event = api_event("GET", "/breakdown", query={"cycle": "12"})
     resp = handler.lambda_handler(event, None)
 
     assert resp["statusCode"] == 200

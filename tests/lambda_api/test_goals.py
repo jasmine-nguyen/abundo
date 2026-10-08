@@ -14,6 +14,7 @@ import json
 from datetime import date
 from decimal import Decimal
 
+from _api_event import api_event
 from _dynamo_fakes import FakeTable
 from _milestone_fakes import checkpoints_marked, goal_checkpoint_repo
 
@@ -86,13 +87,7 @@ def _manual_paydown_body(**over):
 def _put_event(goal_id="g1", body=None, raw=None, is_b64=False):
     if raw is None:
         raw = json.dumps(_grow_body() if body is None else body)
-    return {
-        "rawPath": f"/goals/{goal_id}",
-        "requestContext": {"http": {"method": "PUT"}},
-        "pathParameters": {"id": goal_id},
-        "body": raw,
-        "isBase64Encoded": is_b64,
-    }
+    return api_event("PUT", f"/goals/{goal_id}", raw=raw, path_params={"id": goal_id}, is_base64=is_b64)
 
 
 # --- PUT happy paths ---------------------------------------------------------
@@ -343,8 +338,7 @@ def test_list_goals_empty(handler):
 
 def test_delete_goal_success(handler):
     repo = FakeGoalsRepo(goals={"g1": {"name": "Holiday"}})
-    resp = handler.delete_goal(
-        {"pathParameters": {"id": "g1"}, "requestContext": {"http": {"method": "DELETE"}}}, repo)
+    resp = handler.delete_goal(api_event("DELETE", "/goals/g1", path_params={"id": "g1"}), repo)
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"id": "g1"}
@@ -371,7 +365,7 @@ def test_get_goals_dispatch(handler, monkeypatch):
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
 
     resp = handler.lambda_handler(
-        {"rawPath": "/goals", "requestContext": {"http": {"method": "GET"}}}, None)
+        api_event("GET", "/goals"), None)
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"])[0]["id"] == "g1"
@@ -394,8 +388,7 @@ def test_delete_goal_dispatch(handler, monkeypatch):
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
 
     resp = handler.lambda_handler(
-        {"rawPath": "/goals/g1", "pathParameters": {"id": "g1"},
-         "requestContext": {"http": {"method": "DELETE"}}}, None)
+        api_event("DELETE", "/goals/g1", path_params={"id": "g1"}), None)
 
     assert resp["statusCode"] == 200
     assert repo.delete_calls == ["g1"]
@@ -416,24 +409,14 @@ def test_unknown_goals_method_falls_through_404(handler, monkeypatch):
     monkeypatch.setattr(handler, "GoalsRepository", lambda: FakeGoalsRepo())
 
     resp = handler.lambda_handler(
-        {"rawPath": "/goals", "requestContext": {"http": {"method": "POST"}}}, None)
+        api_event("POST", "/goals"), None)
     assert resp["statusCode"] == 404
 
 
 # === WHIT-231 adversarial gap tests (folded from test_goals_gaps.py) — value boundaries,
 # leap-year dates, signed/zero manual balances, extra-field stripping, empty-string ids, and
-# GET-after-PUT round trips. The drifted FakeGoalsRepo/FakeBalanceRepo/_put_event are kept
+# GET-after-PUT round trips. The drifted FakeGoalsRepo/FakeBalanceRepo are kept
 # renamed with a _gaps suffix (they are stripped variants of the ones above). ===============
-
-
-def _put_event_gaps(goal_id="g1", body=None):
-    return {
-        "rawPath": f"/goals/{goal_id}",
-        "requestContext": {"http": {"method": "PUT"}},
-        "pathParameters": {"id": goal_id},
-        "body": json.dumps(_grow_body() if body is None else body),
-        "isBase64Encoded": False,
-    }
 
 
 class FakeGoalsRepo_gaps:
@@ -459,7 +442,7 @@ class FakeBalanceRepo_gaps:
 
 def _put(handler, body, goal_id="g1"):
     repo = FakeGoalsRepo_gaps()
-    resp = handler.upsert_goal(_put_event_gaps(goal_id=goal_id, body=body), repo, FakeBalanceRepo_gaps())
+    resp = handler.upsert_goal(_put_event(goal_id=goal_id, body=body), repo, FakeBalanceRepo_gaps())
     return resp, repo
 
 
@@ -588,7 +571,7 @@ def test_direction_wrong_type_number_is_rejected(handler):
 def test_put_empty_string_id_is_404(handler):
     # [G13] "" is falsy -> 404 before the repo (an empty map key would 500 at DynamoDB).
     repo = FakeGoalsRepo_gaps()
-    resp = handler.upsert_goal(_put_event_gaps(goal_id="", body=_grow_body()), repo, FakeBalanceRepo_gaps())
+    resp = handler.upsert_goal(_put_event(goal_id="", body=_grow_body()), repo, FakeBalanceRepo_gaps())
     assert resp["statusCode"] == 404
     assert repo.upsert_calls == []
 
@@ -629,11 +612,11 @@ def test_get_after_put_round_trips_numbers_and_echoes_id(handler, monkeypatch):
     monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo_gaps)
 
     body = _manual_paydown_body(manual_balance=8400.25, baseline=100, sneaky="x")
-    put = handler.lambda_handler(_put_event_gaps(goal_id="car1", body=body), None)
+    put = handler.lambda_handler(_put_event(goal_id="car1", body=body), None)
     assert put["statusCode"] == 200
 
     got = handler.lambda_handler(
-        {"rawPath": "/goals", "requestContext": {"http": {"method": "GET"}}}, None)
+        api_event("GET", "/goals"), None)
     assert got["statusCode"] == 200
     goals = json.loads(got["body"])
     saved = {g["id"]: g for g in goals}["car1"]
@@ -670,11 +653,11 @@ def test_get_after_put_carries_start_pair_as_json(handler, monkeypatch):
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: balances)
     monkeypatch.setattr(handler, "melbourne_today", lambda: date(2026, 7, 11))
 
-    put = handler.lambda_handler(_put_event_gaps(goal_id="hol1", body=_grow_body()), None)
+    put = handler.lambda_handler(_put_event(goal_id="hol1", body=_grow_body()), None)
     assert put["statusCode"] == 200
 
     got = handler.lambda_handler(
-        {"rawPath": "/goals", "requestContext": {"http": {"method": "GET"}}}, None)
+        api_event("GET", "/goals"), None)
     assert got["statusCode"] == 200
     saved = {g["id"]: g for g in json.loads(got["body"])}["hol1"]
 
@@ -873,10 +856,10 @@ def _ladder_round_trip(handler, monkeypatch, goal_id, body):
     repo = _persisting_goals_repo(handler)
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
     monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo_gaps)
-    put = handler.lambda_handler(_put_event_gaps(goal_id=goal_id, body=body), None)
+    put = handler.lambda_handler(_put_event(goal_id=goal_id, body=body), None)
     assert put["statusCode"] == 200, json.loads(put["body"])
     got = handler.lambda_handler(
-        {"rawPath": "/goals", "requestContext": {"http": {"method": "GET"}}}, None)
+        api_event("GET", "/goals"), None)
     assert got["statusCode"] == 200
     return {g["id"]: g for g in json.loads(got["body"])}[goal_id]
 
@@ -914,10 +897,10 @@ def test_an_edit_that_omits_checkpoints_keeps_the_saved_ladder(handler, monkeypa
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
     monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo_gaps)
 
-    handler.lambda_handler(_put_event_gaps(
+    handler.lambda_handler(_put_event(
         goal_id="hol1", body=_grow_body(checkpoints=[_cp("Halfway", 2500)])), None)
 
-    second = handler.lambda_handler(_put_event_gaps(
+    second = handler.lambda_handler(_put_event(
         goal_id="hol1", body=_grow_body(name="Bigger holiday")), None)   # no checkpoints sent
     assert second["statusCode"] == 200
     ladder = _stored_goal(repo, "hol1")["checkpoints"]
@@ -932,10 +915,10 @@ def test_an_explicit_empty_list_clears_the_saved_ladder(handler, monkeypatch):
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
     monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo_gaps)
 
-    handler.lambda_handler(_put_event_gaps(
+    handler.lambda_handler(_put_event(
         goal_id="hol1", body=_grow_body(checkpoints=[_cp("Halfway", 2500)])), None)
 
-    handler.lambda_handler(_put_event_gaps(
+    handler.lambda_handler(_put_event(
         goal_id="hol1", body=_grow_body(checkpoints=[])), None)
     assert "checkpoints" not in _stored_goal(repo, "hol1")            # cleared, stored as no key
 

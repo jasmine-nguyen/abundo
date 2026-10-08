@@ -11,7 +11,8 @@ import json
 
 import pytest
 
-from _feed_fakes import FakeCategoryRepo, real_repos
+from _api_event import api_event
+from _feed_fakes import apply_rules_job_get_event, apply_rules_job_post_event, FakeCategoryRepo, real_repos
 from _job_fakes import created_jobs, real_job_repo
 
 
@@ -19,24 +20,6 @@ def _rule(value, category_id="groceries"):
     # The kwargs of one real RuleRepository.create_rule call.
     return {"field": "description", "operator": "contains", "value": value,
             "category_id": category_id}
-
-
-def _post_event(body=None):
-    event = {
-        "rawPath": "/transactions/uncategorized/apply-rules/jobs",
-        "requestContext": {"http": {"method": "POST"}},
-    }
-    if body is not None:
-        event["body"] = json.dumps(body)
-    return event
-
-
-def _get_event(job_id):
-    return {
-        "rawPath": f"/transactions/uncategorized/apply-rules/jobs/{job_id}",
-        "requestContext": {"http": {"method": "GET"}},
-        "pathParameters": {"id": job_id},
-    }
 
 
 class FakeLambdaClient:
@@ -60,7 +43,7 @@ def worker_env(handler, monkeypatch):
 def _start(handler, job_repo, body, rules=(), categories=frozenset({"groceries", "coffee"})):
     _, _, rule_repo = real_repos(rules=rules)
     return handler.start_apply_rules_job(
-        _post_event(body), FakeCategoryRepo(categories), rule_repo, job_repo)
+        apply_rules_job_post_event(body), FakeCategoryRepo(categories), rule_repo, job_repo)
 
 
 # --- POST: start a job --------------------------------------------------------
@@ -120,7 +103,7 @@ def test_post_rejects_a_missing_body(handler, worker_env):
     job_repo = real_job_repo()
     _, _, rule_repo = real_repos()
     resp = handler.start_apply_rules_job(
-        _post_event(), FakeCategoryRepo({"groceries"}), rule_repo, job_repo)
+        apply_rules_job_post_event(), FakeCategoryRepo({"groceries"}), rule_repo, job_repo)
 
     assert resp["statusCode"] == 400
     assert created_jobs(job_repo) == [] and worker_env.calls == []
@@ -149,7 +132,7 @@ def test_get_returns_the_job_in_client_shape(handler):
         "created_at": "t0", "updated_at": "t1", "completed_at": None,
     }
     job_repo = real_job_repo({"job1": stored})
-    resp = handler.get_apply_rules_job(_get_event("job1"), job_repo)
+    resp = handler.get_apply_rules_job(apply_rules_job_get_event("job1"), job_repo)
     body = json.loads(resp["body"])
 
     assert resp["statusCode"] == 200
@@ -167,19 +150,18 @@ def test_get_reports_a_succeeded_job(handler):
               "createdRule": {"id": "r1", "categoryId": "groceries"}, "error": None,
               "created_at": "t0", "updated_at": "t2", "completed_at": "t2"}
     job_repo = real_job_repo({"job2": stored})
-    body = json.loads(handler.get_apply_rules_job(_get_event("job2"), job_repo)["body"])
+    body = json.loads(handler.get_apply_rules_job(apply_rules_job_get_event("job2"), job_repo)["body"])
     assert body["status"] == "succeeded" and body["filed"] == 3 and body["remaining"] == 0
     assert body["createdRule"] == {"id": "r1", "categoryId": "groceries"}
     assert body["completedAt"] == "t2"
 
 
 def test_get_unknown_job_is_404(handler):
-    resp = handler.get_apply_rules_job(_get_event("nope"), real_job_repo())
+    resp = handler.get_apply_rules_job(apply_rules_job_get_event("nope"), real_job_repo())
     assert resp["statusCode"] == 404
 
 
 def test_get_missing_id_is_404(handler):
-    event = {"rawPath": "/transactions/uncategorized/apply-rules/jobs/",
-             "requestContext": {"http": {"method": "GET"}}, "pathParameters": None}
+    event = api_event("GET", "/transactions/uncategorized/apply-rules/jobs/", path_params=None)
     resp = handler.get_apply_rules_job(event, real_job_repo())
     assert resp["statusCode"] == 404

@@ -15,6 +15,7 @@ that id and the rule is PUT-edited. Probes:
 
 import json
 
+from _api_event import api_event
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
 
 
@@ -22,17 +23,22 @@ _CATEGORIES = frozenset({"transport", "groceries", "petrol"})
 
 
 def _create_event(conditions, logic="all", category_id="transport"):
-    return {"rawPath": "/rules", "requestContext": {"http": {"method": "POST"}},
-            "body": json.dumps({"conditions": conditions, "logic": logic,
-                                "categoryId": category_id})}
+    return api_event(
+        "POST",
+        "/rules",
+        body={"conditions": conditions, "logic": logic,
+              "categoryId": category_id},
+    )
 
 
 def _put_event(rule_id, conditions, logic="all", category_id="transport"):
-    return {"rawPath": f"/rules/{rule_id}",
-            "requestContext": {"http": {"method": "PUT"}},
-            "pathParameters": {"id": rule_id},
-            "body": json.dumps({"conditions": conditions, "logic": logic,
-                                "categoryId": category_id})}
+    return api_event(
+        "PUT",
+        f"/rules/{rule_id}",
+        body={"conditions": conditions, "logic": logic,
+              "categoryId": category_id},
+        path_params={"id": rule_id},
+    )
 
 
 def _mint(handler, rule_repo, transaction_repo, conditions, logic="all", category_id="transport"):

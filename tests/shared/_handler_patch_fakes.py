@@ -11,6 +11,8 @@ Resolved by pytest.ini's `pythonpath = tests/shared`. Pure stdlib, no shared/-la
 so no conftest `_REIMPORT` entry is needed.
 """
 
+from _api_event import api_event
+
 # Sentinel marking "field not provided" — distinct from any real value (including None), so
 # update_transaction_fields records ONLY the fields a request actually carried.
 _UNSET = object()
@@ -48,10 +50,10 @@ class FakeRepo:
 
 
 def _patch_event(transaction_id="txn-1", body='{"category": "groceries"}', is_b64=False):
-    return {
-        "rawPath": f"/transactions/{transaction_id}",
-        "requestContext": {"http": {"method": "PATCH"}},
-        "pathParameters": {"id": transaction_id},
-        "body": body,
-        "isBase64Encoded": is_b64,
-    }
+    return api_event(
+        "PATCH",
+        f"/transactions/{transaction_id}",
+        raw=body,
+        path_params={"id": transaction_id},
+        is_base64=is_b64,
+    )

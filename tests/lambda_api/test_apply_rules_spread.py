@@ -3,12 +3,11 @@ creating the category's spread plan ONCE across the whole run, create-only so a 
 clobbered. Runs the real TransactionRepository and RuleRepository over one FakeTable; a fake
 budget + pay-cycle repo record the seed."""
 
-import json
 from decimal import Decimal
 from functools import partial
 
 from _budget_endpoint_fakes import _FakePayCycleRepo
-from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row
+from _feed_fakes import apply_rules_event, SPENDING, FakeCategoryRepo, real_repos, _row
 
 
 def _spread_rule(value="ORIGIN", category_id="insurance", *, spread=True):
@@ -23,11 +22,6 @@ def _spread_rule(value="ORIGIN", category_id="insurance", *, spread=True):
 def _seed_marks(table):
     """How many times the store's spread_seeded marker was written."""
     return len([names for _, names, _ in table.update_calls if "spread_seeded" in names.values()])
-
-
-def _event(body):
-    return {"rawPath": "/transactions/uncategorized/apply-rules",
-            "requestContext": {"http": {"method": "POST"}}, "body": json.dumps(body)}
 
 
 class FakeBudget:
@@ -51,7 +45,7 @@ def _call(handler, rows, rules, *, budget=None, paycycle=None, already_seeded=Fa
     if already_seeded:
         rule_repo.mark_spread_seeded(rule["id"])
     handler.apply_rules_to_uncategorized(
-        _event({"dryRun": False}), repo, FakeCategoryRepo(categories), rule_repo,
+        apply_rules_event({"dryRun": False}), repo, FakeCategoryRepo(categories), rule_repo,
         budget or FakeBudget(), paycycle or FakePaycycle())
     return table, rule_repo.get_rule(rule["id"])
 

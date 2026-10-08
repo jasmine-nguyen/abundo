@@ -11,6 +11,7 @@ from decimal import Decimal
 
 import pytest
 
+from _api_event import api_event
 from _balance_fakes import (
     LIVE_PAYLOADS, REFRESH_EVENT, balance_repo, fetch_all, freeze_time, marker_writes, stub_bank, upserted,
 )
@@ -66,7 +67,7 @@ def test_route_serves_signed_balances_as_json_numbers(handler, monkeypatch):
     ]
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: FakeAccountBalanceRepo(rows))
 
-    event = {"rawPath": "/accounts/balances", "requestContext": {"http": {"method": "GET"}}}
+    event = api_event("GET", "/accounts/balances")
     resp = handler.lambda_handler(event, None)
 
     assert resp["statusCode"] == 200
@@ -82,7 +83,7 @@ def test_route_serves_signed_balances_as_json_numbers(handler, monkeypatch):
 
 def test_route_empty_list_before_any_poll(handler, monkeypatch):
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: FakeAccountBalanceRepo([]))
-    event = {"rawPath": "/accounts/balances", "requestContext": {"http": {"method": "GET"}}}
+    event = api_event("GET", "/accounts/balances")
     resp = handler.lambda_handler(event, None)
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == []

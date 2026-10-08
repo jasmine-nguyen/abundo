@@ -22,6 +22,7 @@ from decimal import Decimal
 
 import pytest
 
+from _api_event import api_event
 from _dynamo_fakes import FakeTable
 
 
@@ -203,3 +204,11 @@ def recorder(shared, monkeypatch):
 
     monkeypatch.setattr(shared.milestones, "send_push", fake)
     return calls
+
+
+def milestones_put_event(rows):
+    return api_event("PUT", "/milestones", body={"milestones": rows}, is_base64=False)
+
+
+def goal_put_event(body, goal_id="g1"):
+    return api_event("PUT", f"/goals/{goal_id}", body=body, path_params={"id": goal_id}, is_base64=False)

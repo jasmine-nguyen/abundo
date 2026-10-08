@@ -9,6 +9,8 @@ through to 404.
 
 import json
 
+from _api_event import api_event
+
 
 class _FakeDeviceRepo:
     def __init__(self):
@@ -20,11 +22,7 @@ class _FakeDeviceRepo:
 
 def _post(token=None, raw=None):
     body = raw if raw is not None else json.dumps({"token": token})
-    return {
-        "rawPath": "/devices",
-        "requestContext": {"http": {"method": "POST"}},
-        "body": body,
-    }
+    return api_event("POST", "/devices", raw=body)
 
 
 def test_registers_a_valid_expo_token(handler, monkeypatch):
@@ -103,7 +101,7 @@ def test_invalid_json_body_is_400(handler, monkeypatch):
 
 def test_get_devices_falls_through_to_404(handler):
     resp = handler.lambda_handler(
-        {"rawPath": "/devices", "requestContext": {"http": {"method": "GET"}}}, None)
+        api_event("GET", "/devices"), None)
     assert resp["statusCode"] == 404
 
 

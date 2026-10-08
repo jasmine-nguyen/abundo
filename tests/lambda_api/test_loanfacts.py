@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from _api_event import api_event
 from _lambda_api_constants import api_constant
 
 VALID = {"original": 600000, "homeValue": 770000, "lvr": 0.8, "ratePct": 5.74, "baseRepay": 1240, "extra": 200}
@@ -42,12 +43,12 @@ class FakeLoanFactsRepo:
 
 
 def _put_event(body):
-    return {
-        "rawPath": "/loanfacts",
-        "requestContext": {"http": {"method": "PUT"}},
-        "body": json.dumps(body) if not isinstance(body, str) else body,
-        "isBase64Encoded": False,
-    }
+    return api_event(
+        "PUT",
+        "/loanfacts",
+        raw=json.dumps(body) if not isinstance(body, str) else body,
+        is_base64=False,
+    )
 
 
 # --- get_loanfacts -----------------------------------------------------------
@@ -66,7 +67,7 @@ def test_get_loanfacts_returns_saved_facts(handler):
 
 def test_route_get_loanfacts(handler, monkeypatch):
     monkeypatch.setattr(handler, "LoanFactsRepository", lambda: FakeLoanFactsRepo(dict(VALID)))
-    event = {"rawPath": "/loanfacts", "requestContext": {"http": {"method": "GET"}}}
+    event = api_event("GET", "/loanfacts")
     resp = handler.lambda_handler(event, None)
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == VALID

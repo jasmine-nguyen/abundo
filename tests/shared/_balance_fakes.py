@@ -10,6 +10,7 @@ Resolved by pytest.ini's `pythonpath = tests/shared`. The shared layer is import
 from decimal import Decimal
 from types import SimpleNamespace
 
+from _api_event import api_event
 from _dynamo_fakes import FakeTable
 from _milestone_fakes import FakeDeviceRepo, FakeGoalsRepo, FakeLoanFactsRepo, FakeMilestoneRepo
 
@@ -17,7 +18,7 @@ _MARKER_PK = "ACCTBAL#REFRESH"
 _BALANCE_PREFIX = "ACCTBAL#"
 
 
-REFRESH_EVENT = {"rawPath": "/accounts/balances/refresh", "requestContext": {"http": {"method": "POST"}}}
+REFRESH_EVENT = api_event("POST", "/accounts/balances/refresh")
 
 
 def ok_payload(amount, account_type):

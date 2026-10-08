@@ -15,6 +15,7 @@ import json
 import pytest
 
 from _feed_fakes import (
+    apply_rules_event,
     ANZ, SPENDING, FakeCategoryRepo, charge_writes, date_queries, fail_writes, on_write,
     real_repos, _row, set_category, stored, vanish_on_write,
 )
@@ -31,20 +32,10 @@ def _rule_ids(rule_repo):
     return {rule["value"]: rule["id"] for rule in rule_repo.list_rules()}
 
 
-def _apply_event(body=None, method="POST"):
-    event = {
-        "rawPath": "/transactions/uncategorized/apply-rules",
-        "requestContext": {"http": {"method": method}},
-    }
-    if body is not None:
-        event["body"] = json.dumps(body)
-    return event
-
-
 def _call(handler, repo, rule_repo, body, categories=frozenset({"groceries", "coffee"})):
     resp = apply_rules_to_uncategorized(
         handler,
-        _apply_event(body), repo, FakeCategoryRepo(categories), rule_repo)
+        apply_rules_event(body), repo, FakeCategoryRepo(categories), rule_repo)
     return resp, json.loads(resp["body"])
 
 
@@ -79,7 +70,7 @@ def test_a_non_boolean_dry_run_is_rejected_rather_than_guessed(handler, bad):
         {SPENDING: [_row(SPENDING, "2026-07-01", "t1")]}, rules=[_rule("coles")])
     resp = apply_rules_to_uncategorized(
         handler,
-        _apply_event({"dryRun": bad}), repo, FakeCategoryRepo({"groceries"}), rule_repo)
+        apply_rules_event({"dryRun": bad}), repo, FakeCategoryRepo({"groceries"}), rule_repo)
 
     assert resp["statusCode"] == 400
     assert table.update_calls == []
@@ -90,7 +81,7 @@ def test_a_missing_body_is_rejected_not_treated_as_a_write(handler):
         {SPENDING: [_row(SPENDING, "2026-07-01", "t1")]}, rules=[_rule("coles")])
     resp = apply_rules_to_uncategorized(
         handler,
-        _apply_event(), repo, FakeCategoryRepo({"groceries"}), rule_repo)
+        apply_rules_event(), repo, FakeCategoryRepo({"groceries"}), rule_repo)
 
     assert resp["statusCode"] == 400
     assert table.update_calls == []
@@ -356,7 +347,7 @@ def test_a_rules_read_failure_reads_no_history_and_writes_nothing(handler):
     table.fail("query")
     resp = apply_rules_to_uncategorized(
         handler,
-        _apply_event({"dryRun": False}), repo, FakeCategoryRepo({"groceries"}), rule_repo)
+        apply_rules_event({"dryRun": False}), repo, FakeCategoryRepo({"groceries"}), rule_repo)
 
     assert resp["statusCode"] == 500
     assert date_queries(table) == [] and table.update_calls == []
@@ -373,7 +364,7 @@ def test_post_routes_to_the_apply_handler(handler, monkeypatch):
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo({"groceries"}))
     monkeypatch.setattr(handler, "RuleRepository", lambda: rule_repo)
 
-    resp = handler.lambda_handler(_apply_event({"dryRun": True}), None)
+    resp = handler.lambda_handler(apply_rules_event({"dryRun": True}), None)
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"])["matched"] == 1
@@ -391,6 +382,6 @@ def test_other_methods_on_the_apply_path_are_not_routed(handler, monkeypatch, me
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
 
-    resp = handler.lambda_handler(_apply_event({"dryRun": True}, method=method), None)
+    resp = handler.lambda_handler(apply_rules_event({"dryRun": True}, method=method), None)
 
     assert resp["statusCode"] == 404

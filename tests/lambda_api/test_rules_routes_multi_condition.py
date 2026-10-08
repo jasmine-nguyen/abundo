@@ -5,18 +5,11 @@ test_rules_routes.py."""
 import json
 from functools import partial
 
+from _api_event import api_event
 from _feed_fakes import Repos, inject_rule_routes
 
 
 _CATEGORIES = ("transport", "groceries")
-
-
-def _event(method, path, body, path_params=None):
-    event = {"rawPath": path, "requestContext": {"http": {"method": method}},
-             "body": json.dumps(body)}
-    if path_params is not None:
-        event["pathParameters"] = path_params
-    return event
 
 
 _inject = partial(inject_rule_routes, categories=_CATEGORIES)
@@ -32,7 +25,7 @@ def _body(conditions=None, logic="all", category_id="transport"):
 def test_create_multi_condition_rule_round_trips(handler, monkeypatch):
     repo = Repos()
     _inject(handler, monkeypatch, repo)
-    resp = handler.lambda_handler(_event("POST", "/rules", _body()), None)
+    resp = handler.lambda_handler(api_event("POST", "/rules", _body()), None)
     out = json.loads(resp["body"])
     assert resp["statusCode"] == 201
     assert out["logic"] == "all"
@@ -47,7 +40,7 @@ def test_default_logic_is_all(handler, monkeypatch):
     _inject(handler, monkeypatch, repo)
     body = _body()
     del body["logic"]
-    out = json.loads(handler.lambda_handler(_event("POST", "/rules", body), None)["body"])
+    out = json.loads(handler.lambda_handler(api_event("POST", "/rules", body), None)["body"])
     assert out["logic"] == "all"
 
 
@@ -55,7 +48,7 @@ def test_bad_field_operator_pair_is_400(handler, monkeypatch):
     repo = Repos()
     _inject(handler, monkeypatch, repo)
     body = _body(conditions=[{"field": "amount", "operator": "contains", "value": "30"}])
-    resp = handler.lambda_handler(_event("POST", "/rules", body), None)
+    resp = handler.lambda_handler(api_event("POST", "/rules", body), None)
     assert resp["statusCode"] == 400
     assert repo.minted_rules() == []
 
@@ -63,7 +56,7 @@ def test_bad_field_operator_pair_is_400(handler, monkeypatch):
 def test_bad_logic_is_400(handler, monkeypatch):
     repo = Repos()
     _inject(handler, monkeypatch, repo)
-    resp = handler.lambda_handler(_event("POST", "/rules", _body(logic="maybe")), None)
+    resp = handler.lambda_handler(api_event("POST", "/rules", _body(logic="maybe")), None)
     assert resp["statusCode"] == 400
 
 
@@ -71,7 +64,7 @@ def test_non_numeric_amount_is_400(handler, monkeypatch):
     repo = Repos()
     _inject(handler, monkeypatch, repo)
     body = _body(conditions=[{"field": "amount", "operator": "less_than", "value": "lots"}])
-    resp = handler.lambda_handler(_event("POST", "/rules", body), None)
+    resp = handler.lambda_handler(api_event("POST", "/rules", body), None)
     assert resp["statusCode"] == 400
 
 
@@ -79,7 +72,7 @@ def test_non_positive_amount_is_400(handler, monkeypatch):
     repo = Repos()
     _inject(handler, monkeypatch, repo)
     body = _body(conditions=[{"field": "amount", "operator": "less_than", "value": "0"}])
-    resp = handler.lambda_handler(_event("POST", "/rules", body), None)
+    resp = handler.lambda_handler(api_event("POST", "/rules", body), None)
     assert resp["statusCode"] == 400
 
 
@@ -87,14 +80,14 @@ def test_bad_direction_value_is_400(handler, monkeypatch):
     repo = Repos()
     _inject(handler, monkeypatch, repo)
     body = _body(conditions=[{"field": "direction", "operator": "is", "value": "sideways"}])
-    resp = handler.lambda_handler(_event("POST", "/rules", body), None)
+    resp = handler.lambda_handler(api_event("POST", "/rules", body), None)
     assert resp["statusCode"] == 400
 
 
 def test_empty_conditions_list_is_400(handler, monkeypatch):
     repo = Repos()
     _inject(handler, monkeypatch, repo)
-    resp = handler.lambda_handler(_event("POST", "/rules", _body(conditions=[])), None)
+    resp = handler.lambda_handler(api_event("POST", "/rules", _body(conditions=[])), None)
     assert resp["statusCode"] == 400
 
 
@@ -104,7 +97,7 @@ def test_value_floor_applies_per_description_contains_condition(handler, monkeyp
     _inject(handler, monkeypatch, repo)
     body = _body(conditions=[{"field": "description", "operator": "contains", "value": "."},
                              {"field": "amount", "operator": "less_than", "value": "30"}])
-    resp = handler.lambda_handler(_event("POST", "/rules", body), None)
+    resp = handler.lambda_handler(api_event("POST", "/rules", body), None)
     assert resp["statusCode"] == 400
     assert "letters or digits" in json.loads(resp["body"])["error"]
 
@@ -117,7 +110,7 @@ def test_value_floor_applies_per_merchant_contains_condition(handler, monkeypatc
     _inject(handler, monkeypatch, repo)
     body = _body(conditions=[{"field": "merchant", "operator": "contains", "value": "."},
                              {"field": "amount", "operator": "less_than", "value": "30"}])
-    resp = handler.lambda_handler(_event("POST", "/rules", body), None)
+    resp = handler.lambda_handler(api_event("POST", "/rules", body), None)
     assert resp["statusCode"] == 400
     assert "letters or digits" in json.loads(resp["body"])["error"]
     assert repo.minted_rules() == []

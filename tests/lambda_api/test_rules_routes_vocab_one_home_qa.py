@@ -7,6 +7,7 @@ import json
 
 import pytest
 
+from _api_event import api_event
 from _feed_fakes import Repos, inject_rule_routes
 
 _PAIRS = [
@@ -24,8 +25,7 @@ _VALUE = {"amount": "30", "direction": "debit"}
 def _post(handler, monkeypatch, body):
     store = Repos()
     inject_rule_routes(handler, monkeypatch, store, ("transport",))
-    event = {"rawPath": "/rules", "requestContext": {"http": {"method": "POST"}},
-             "body": json.dumps(body)}
+    event = api_event("POST", "/rules", body=body)
     response = handler.lambda_handler(event, None)
     return response["statusCode"], json.loads(response["body"])
 

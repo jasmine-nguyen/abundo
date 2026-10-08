@@ -15,6 +15,7 @@ from functools import partial
 
 import pytest
 
+from _api_event import api_event
 from _budget_endpoint_fakes import _FakePayCycleRepo, _SpendCategoryRepo, _spend_cat, pin_cycle_window
 from _budget_fakes import recording_budget_repo, stored_budgets
 from _dynamo_fakes import _client_error
@@ -60,13 +61,12 @@ def _list(handler, budget_repo, transactions=None, categories=None):
 
 
 def _event(method, path, category=None, body=None, b64=False):
-    event = {"rawPath": path, "requestContext": {"http": {"method": method}}}
-    if category is not None:
-        event["pathParameters"] = {"category": category}
-    if body is not None:
-        event["body"] = base64.b64encode(body.encode()).decode() if b64 else body
-        event["isBase64Encoded"] = b64
-    return event
+    path_params = {"category": category} if category is not None else None
+    if body is None:
+        return api_event(method, path, path_params=path_params)
+    if b64:
+        body = base64.b64encode(body.encode()).decode()
+    return api_event(method, path, raw=body, path_params=path_params, is_base64=b64)
 
 
 def _wire(handler, monkeypatch, budget_repo, categories=None, transactions=None):
@@ -126,11 +126,13 @@ def test_a_spread_cannot_be_stranded_on_a_savings_category_via_reclassify(handle
     # reclassify path clears. Pin that the guard fires before any clear is attempted.
     repo = FakeCategoryRepo(_spend_cat("coffee"))
     budget = recording_budget_repo({"coffee": _entry(spread_from=CYCLE_START)})
-    event = {
-        "rawPath": "/categories/coffee", "requestContext": {"http": {"method": "PATCH"}},
-        "pathParameters": {"id": "coffee"},
-        "body": '{"name": "Coffee", "bucket": "Savings", "icon": "coffee"}', "isBase64Encoded": False,
-    }
+    event = api_event(
+        "PATCH",
+        "/categories/coffee",
+        raw='{"name": "Coffee", "bucket": "Savings", "icon": "coffee"}',
+        path_params={"id": "coffee"},
+        is_base64=False,
+    )
 
     resp = handler.update_category(event, repo, budget)
 

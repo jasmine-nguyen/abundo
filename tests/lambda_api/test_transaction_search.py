@@ -12,6 +12,7 @@ import pathlib
 
 import pytest
 
+from _api_event import api_event
 from _budget_endpoint_fakes import _FakeCategoryRepo
 from _feed_fakes import ANZ, SPENDING, HOMELOAN, WESTPAC, date_reads, real_repos, _row
 
@@ -24,11 +25,7 @@ _CATEGORIES = _FakeCategoryRepo(_FIXTURE["categories"])
 
 
 def _search_event(params):
-    return {
-        "rawPath": "/transactions/search",
-        "requestContext": {"http": {"method": "GET"}},
-        "queryStringParameters": params,
-    }
+    return api_event("GET", "/transactions/search", query=params)
 
 
 def _search(handler, repo, params):

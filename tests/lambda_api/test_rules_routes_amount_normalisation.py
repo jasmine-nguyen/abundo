@@ -10,15 +10,11 @@ test_rules_routes_multi_condition.py. Rows are keyed by id, so a dedup hit mints
 import json
 from functools import partial
 
+from _api_event import api_event
 from _feed_fakes import Repos, inject_rule_routes
 
 
 _CATEGORIES = ("transport", "groceries")
-
-
-def _event(method, path, body):
-    return {"rawPath": path, "requestContext": {"http": {"method": method}},
-            "body": json.dumps(body)}
 
 
 _inject = partial(inject_rule_routes, categories=_CATEGORIES)
@@ -27,13 +23,13 @@ _inject = partial(inject_rule_routes, categories=_CATEGORIES)
 def _post_multi(handler, amount_value, category_id="transport"):
     body = {"conditions": [{"field": "amount", "operator": "less_than", "value": amount_value}],
             "logic": "all", "categoryId": category_id}
-    return handler.lambda_handler(_event("POST", "/rules", body), None)
+    return handler.lambda_handler(api_event("POST", "/rules", body), None)
 
 
 def _post_flat(handler, amount_value, category_id="transport"):
     body = {"field": "amount", "operator": "less_than", "value": amount_value,
             "categoryId": category_id}
-    return handler.lambda_handler(_event("POST", "/rules", body), None)
+    return handler.lambda_handler(api_event("POST", "/rules", body), None)
 
 
 # --- multi-condition path: spellings of one amount dedup to one rule --------------------------

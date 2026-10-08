@@ -13,6 +13,7 @@ test_rules_routes.py.
 import json
 from functools import partial
 
+from _api_event import api_event
 from _feed_fakes import Repos, inject_rule_routes
 
 
@@ -24,15 +25,6 @@ def _rule(value, category_id="groceries", **kw):
             "category_id": category_id, **kw}
 
 
-def _event(method, path, body=None, path_params=None):
-    event = {"rawPath": path, "requestContext": {"http": {"method": method}}}
-    if body is not None:
-        event["body"] = json.dumps(body)
-    if path_params is not None:
-        event["pathParameters"] = path_params
-    return event
-
-
 _inject = partial(inject_rule_routes, categories=_CATEGORIES)
 
 
@@ -40,7 +32,7 @@ def test_create_rule_round_trips_budget_excluded_true(handler, monkeypatch):
     repo = Repos()
     _inject(handler, monkeypatch, repo)
     resp = handler.lambda_handler(
-        _event("POST", "/rules",
+        api_event("POST", "/rules",
                {"value": "SPLITWISE", "categoryId": "groceries", "budgetExcluded": True}), None)
     body = json.loads(resp["body"])
     assert resp["statusCode"] == 201
@@ -56,7 +48,7 @@ def test_create_rule_same_text_same_category_different_flag_is_a_409(handler, mo
     repo = Repos(rules=[_rule("COLES", "groceries", budget_excluded=False)])
     _inject(handler, monkeypatch, repo)
     resp = handler.lambda_handler(
-        _event("POST", "/rules",
+        api_event("POST", "/rules",
                {"value": "COLES", "categoryId": "groceries", "budgetExcluded": True}), None)
     body = json.loads(resp["body"])
     assert resp["statusCode"] == 409
@@ -70,7 +62,7 @@ def test_update_rule_toggles_the_flag_in_place_and_returns_it(handler, monkeypat
     _inject(handler, monkeypatch, repo)
     rule_id = repo.rule_repo.list_rules()[0]["id"]
     resp = handler.lambda_handler(
-        _event("PUT", "/rules/x", {"value": "COLES", "categoryId": "groceries",
+        api_event("PUT", "/rules/x", {"value": "COLES", "categoryId": "groceries",
                                    "budgetExcluded": True}, path_params={"id": rule_id}), None)
     body = json.loads(resp["body"])
     assert resp["statusCode"] == 200
@@ -87,7 +79,7 @@ def test_legacy_row_without_the_field_reads_back_budget_excluded_false(handler, 
     repo = Repos()
     repo.table.seed(legacy)
     _inject(handler, monkeypatch, repo)
-    resp = handler.lambda_handler(_event("GET", "/rules"), None)
+    resp = handler.lambda_handler(api_event("GET", "/rules"), None)
     body = json.loads(resp["body"])
     assert resp["statusCode"] == 200
     row = next(r for r in body if r["value"] == "OLDRULE")

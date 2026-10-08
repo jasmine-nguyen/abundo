@@ -16,6 +16,7 @@ _repo_with_fake_table, budget_repo and _schema are lazy on purpose: they run at 
 from collections import Counter
 from decimal import Decimal
 
+from _api_event import api_event
 from _dynamo_fakes import FakeTable, _client_error
 
 _CFG = ("CATEGORIES", "CATEGORIES")
@@ -69,12 +70,7 @@ def _schema():
 
 
 def _categories_event(body='{"name": "Gym", "bucket": "Lifestyle", "icon": "dumbbell"}', is_b64=False):
-    return {
-        "rawPath": "/categories",
-        "requestContext": {"http": {"method": "POST"}},
-        "body": body,
-        "isBase64Encoded": is_b64,
-    }
+    return api_event("POST", "/categories", raw=body, is_base64=is_b64)
 
 
 def _cat(cat_id, bucket="Living", **extra):

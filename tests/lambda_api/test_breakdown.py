@@ -12,6 +12,7 @@ from functools import partial
 
 import pytest
 
+from _api_event import api_event
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _transaction_range_fakes import _DateFilteringTransactionRepo, _QueuedTransactionRepo
 
@@ -463,7 +464,7 @@ def test_get_breakdown_dispatches_and_runs_real_body(handler, monkeypatch):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
     monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
 
-    event = {"rawPath": "/breakdown", "requestContext": {"http": {"method": "GET"}}}
+    event = api_event("GET", "/breakdown")
     resp = handler.lambda_handler(event, None)
 
     assert resp["statusCode"] == 200
@@ -534,7 +535,7 @@ def test_breakdown_fractional_amounts_survive_decimal_encoder(handler, monkeypat
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
     monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
 
-    event = {"rawPath": "/breakdown", "requestContext": {"http": {"method": "GET"}}}
+    event = api_event("GET", "/breakdown")
     resp = handler.lambda_handler(event, None)
 
     import json
@@ -607,8 +608,7 @@ def test_breakdown_cycle_param_flows_through_dispatch(handler, monkeypatch):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
     monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
 
-    event = {"rawPath": "/breakdown", "requestContext": {"http": {"method": "GET"}},
-             "queryStringParameters": {"cycle": "1"}}
+    event = api_event("GET", "/breakdown", query={"cycle": "1"})
     resp = handler.lambda_handler(event, None)
 
     assert resp["statusCode"] == 200
@@ -620,8 +620,7 @@ def test_breakdown_cycle_param_flows_through_dispatch(handler, monkeypatch):
 def test_breakdown_bad_cycle_returns_400(handler, bad):
     # Non-int, negative, and above-cap (BREAKDOWN_MAX_LOOKBACK=12) all reject before any
     # repo is touched. Fail-loud, not a silent fallback to the current cycle.
-    event = {"rawPath": "/breakdown", "requestContext": {"http": {"method": "GET"}},
-             "queryStringParameters": {"cycle": bad}}
+    event = api_event("GET", "/breakdown", query={"cycle": bad})
     resp = handler.lambda_handler(event, None)
     assert resp["statusCode"] == 400
 
@@ -679,7 +678,7 @@ def test_get_breakdown_dispatches_and_serialises_earned_as_json_numbers(handler,
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
     monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
 
-    event = {"rawPath": "/breakdown", "requestContext": {"http": {"method": "GET"}}}
+    event = api_event("GET", "/breakdown")
     resp = handler.lambda_handler(event, None)
 
     import json
@@ -702,7 +701,7 @@ def test_get_breakdown_dispatches_and_serialises_income_sources_as_json_numbers(
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
     monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
 
-    event = {"rawPath": "/breakdown", "requestContext": {"http": {"method": "GET"}}}
+    event = api_event("GET", "/breakdown")
     resp = handler.lambda_handler(event, None)
 
     import json
@@ -1065,7 +1064,7 @@ def test_get_breakdown_dispatches_and_serialises_rollup_as_nested_json_numbers(h
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
     monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
 
-    event = {"rawPath": "/breakdown", "requestContext": {"http": {"method": "GET"}}}
+    event = api_event("GET", "/breakdown")
     resp = handler.lambda_handler(event, None)
 
     import json

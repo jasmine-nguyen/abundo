@@ -19,6 +19,7 @@ from functools import partial
 
 import pytest
 
+from _api_event import api_event
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _budget_fakes import recording_budget_repo
 from _dynamo_fakes import FakeTable
@@ -26,13 +27,13 @@ from _transaction_range_fakes import _DateFilteringTransactionRepo, _QueuedTrans
 
 
 def _put_budget_event(category="coffee", body='{"target": 58}', is_b64=False):
-    return {
-        "rawPath": f"/budgets/{category}",
-        "requestContext": {"http": {"method": "PUT"}},
-        "pathParameters": {"category": category},
-        "body": body,
-        "isBase64Encoded": is_b64,
-    }
+    return api_event(
+        "PUT",
+        f"/budgets/{category}",
+        raw=body,
+        path_params={"category": category},
+        is_base64=is_b64,
+    )
 
 
 # --- handler-level: PUT /budgets/{category} ----------------------------------
@@ -587,7 +588,7 @@ def test_get_budgets_dispatch(handler, monkeypatch):
     monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo())
 
     resp = handler.lambda_handler(
-        {"rawPath": "/budgets", "requestContext": {"http": {"method": "GET"}}}, None)
+        api_event("GET", "/budgets"), None)
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"coffee": {"available": 58, "target": 58, "posted": 50, "pending": 0}}
@@ -605,11 +606,7 @@ def test_get_budgets_dispatch_ignores_days_param(handler, monkeypatch):
                         lambda: FakePayCycleRepo(length=14, last_pay_date="2024-01-03"))
     monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo())
 
-    resp = handler.lambda_handler({
-        "rawPath": "/budgets",
-        "requestContext": {"http": {"method": "GET"}},
-        "queryStringParameters": {"days": "7"},
-    }, None)
+    resp = handler.lambda_handler(api_event("GET", "/budgets", query={"days": "7"}), None)
 
     assert resp["statusCode"] == 200  # ?days is ignored, not a 400
     expected_start, _ = handler.current_cycle_window("2024-01-03", 14)
@@ -632,11 +629,7 @@ def test_unknown_budget_method_falls_through_404(handler, monkeypatch):
     # (PATCH) hits the catch-all 404.
     monkeypatch.setattr(handler, "BudgetRepository", lambda: recording_budget_repo())
 
-    resp = handler.lambda_handler({
-        "rawPath": "/budgets/coffee",
-        "requestContext": {"http": {"method": "PATCH"}},
-        "pathParameters": {"category": "coffee"},
-    }, None)
+    resp = handler.lambda_handler(api_event("PATCH", "/budgets/coffee", path_params={"category": "coffee"}), None)
 
     assert resp["statusCode"] == 404
 
@@ -645,11 +638,7 @@ def test_unknown_budget_method_falls_through_404(handler, monkeypatch):
 
 
 def _delete_budget_event(category="coffee"):
-    return {
-        "rawPath": f"/budgets/{category}",
-        "requestContext": {"http": {"method": "DELETE"}},
-        "pathParameters": {"category": category},
-    }
+    return api_event("DELETE", f"/budgets/{category}", path_params={"category": category})
 
 
 def test_delete_budget_success(handler):

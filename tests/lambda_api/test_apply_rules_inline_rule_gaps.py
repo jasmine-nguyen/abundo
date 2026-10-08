@@ -35,7 +35,7 @@ import json
 
 import pytest
 
-from _feed_fakes import SPENDING, WESTPAC, FakeCategoryRepo, Repos, charge_writes, fail_writes, _row
+from _feed_fakes import apply_rules_event, SPENDING, WESTPAC, FakeCategoryRepo, Repos, charge_writes, fail_writes, _row
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
@@ -53,11 +53,7 @@ def _apply(handler, rows_by_account, body, existing=(), categories=("groceries",
            run=None):
     if run is None:
         run = Repos(rows_by_account, rules=existing)
-    event = {
-        "rawPath": "/transactions/uncategorized/apply-rules",
-        "requestContext": {"http": {"method": "POST"}},
-        "body": json.dumps(body),
-    }
+    event = apply_rules_event(body)
     response = apply_rules_to_uncategorized(
         handler,
         event, run.transaction_repo, FakeCategoryRepo(categories), run.rule_repo)

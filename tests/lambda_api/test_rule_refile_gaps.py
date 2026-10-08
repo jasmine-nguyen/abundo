@@ -10,7 +10,10 @@ that minted it; a NEW id comes from the response body.
 
 import json
 
-from _feed_fakes import ANZ, SPENDING, FakeCategoryRepo, fail_writes, real_repos, _row, stored
+from _feed_fakes import (
+    ANZ, SPENDING, FakeCategoryRepo, apply_rules_event, fail_writes, real_repos, rule_delete_event, rule_put_event,
+    _row, stored,
+)
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
@@ -27,24 +30,6 @@ def _seed_rule(value, category_id="groceries", field="description", operator="co
     return table, txn_repo, rule_repo, rule_repo.list_rules()[0]["id"]
 
 
-def _put_event(rule_id, value, category_id, field="description", operator="contains"):
-    return {
-        "rawPath": f"/rules/{rule_id}",
-        "requestContext": {"http": {"method": "PUT"}},
-        "pathParameters": {"id": rule_id},
-        "body": json.dumps({"value": value, "categoryId": category_id,
-                            "field": field, "operator": operator}),
-    }
-
-
-def _delete_event(rule_id):
-    return {
-        "rawPath": f"/rules/{rule_id}",
-        "requestContext": {"http": {"method": "DELETE"}},
-        "pathParameters": {"id": rule_id},
-    }
-
-
 def _update(handler, rule_repo, txn_repo, event, categories=_CATEGORIES):
     resp = handler.update_rule_route(event, rule_repo, FakeCategoryRepo(categories), txn_repo)
     return resp, json.loads(resp["body"])
@@ -56,8 +41,7 @@ def _delete(handler, rule_repo, txn_repo, event):
 
 
 def _apply(handler, repo, rule_repo, body, categories=_CATEGORIES):
-    event = {"rawPath": "/transactions/uncategorized/apply-rules",
-             "requestContext": {"http": {"method": "POST"}}, "body": json.dumps(body)}
+    event = apply_rules_event(body)
     resp = apply_rules_to_uncategorized(
         handler,
         event, repo, FakeCategoryRepo(categories), rule_repo)
@@ -79,7 +63,7 @@ def test_delete_undoes_charges_across_multiple_accounts(handler):
              category="groceries", filed_by_rule=rid),
     )
 
-    _, body = _delete(handler, rule_repo, repo, _delete_event(rid))
+    _, body = _delete(handler, rule_repo, repo, rule_delete_event(rid))
 
     assert body["remaining"] == 0
     s1 = stored(table, "s1", SPENDING)
@@ -106,7 +90,7 @@ def test_delete_skips_a_row_that_errors_and_still_counts_it_reached(handler):
     )
     fail_writes(table, "boom")
 
-    resp, body = _delete(handler, rule_repo, repo, _delete_event(rid))
+    resp, body = _delete(handler, rule_repo, repo, rule_delete_event(rid))
 
     assert resp["statusCode"] == 200
     assert body["remaining"] == 0                      # all three reached (one just failed)
@@ -125,7 +109,7 @@ def test_edit_skips_a_row_that_errors_and_re_files_the_rest(handler):
     )
     fail_writes(table, "boom")
 
-    resp, body = _update(handler, rule_repo, repo, _put_event(rid, "coles", "petrol"))
+    resp, body = _update(handler, rule_repo, repo, rule_put_event(rid, "coles", "petrol"))
 
     assert resp["statusCode"] == 200 and body["remaining"] == 0
     assert stored(table, "ok")["category"] == "petrol"        # re-filed
@@ -147,7 +131,7 @@ def test_delete_stops_on_the_time_budget_and_reports_the_tail(handler, monkeypat
                  category="groceries", filed_by_rule=rid) for n in range(1, 4)]
     table.seed(*rows)
 
-    _, body = _delete(handler, rule_repo, repo, _delete_event(rid))
+    _, body = _delete(handler, rule_repo, repo, rule_delete_event(rid))
 
     assert body["remaining"] == 2       # one write got in before the clock, two left
     cleared = sum(1 for n in range(1, 4) if "category" not in stored(table, f"t{n}"))

@@ -19,6 +19,7 @@ import pytest
 # The shared category fakes and store builders live in one module (tests/shared); the
 # call-time `import repository` inside these still runs under the `handler` fixture.
 # (The colorSlot fakes moved to test_category_color_slots.py with their tests — WHIT-462.)
+from _api_event import api_event
 from _category_fakes import (
     _CFG, _SLOT, _before_next_update, _cat, _categories_event,
     _repo_with_fake_table, budget_repo, stored_budgets,
@@ -90,13 +91,7 @@ def _category_item_event(method, cat_id="coffee",
                          body='{"name": "Coffee & Cake", "bucket": "Living", "icon": "coffee"}',
                          is_b64=False):
     """Event for the /categories/{id} routes (update/delete)."""
-    return {
-        "rawPath": f"/categories/{cat_id}",
-        "requestContext": {"http": {"method": method}},
-        "pathParameters": {"id": cat_id},
-        "body": body,
-        "isBase64Encoded": is_b64,
-    }
+    return api_event(method, f"/categories/{cat_id}", raw=body, path_params={"id": cat_id}, is_base64=is_b64)
 
 
 # --- handler-level: GET ------------------------------------------------------
@@ -109,7 +104,7 @@ def test_get_categories_dispatch(handler, monkeypatch):
     monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
 
     resp = handler.lambda_handler(
-        {"rawPath": "/categories", "requestContext": {"http": {"method": "GET"}}}, None)
+        api_event("GET", "/categories"), None)
 
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])

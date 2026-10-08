@@ -11,6 +11,7 @@ from functools import partial
 
 import pytest
 
+from _api_event import api_event
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _transaction_range_fakes import _AccountTransactionRepo
 
@@ -63,10 +64,7 @@ def today(monkeypatch):
 
 
 def _event(params=None, method="GET", path="/transactions/cycle"):
-    event = {"rawPath": path, "requestContext": {"http": {"method": method}}}
-    if params is not None:
-        event["queryStringParameters"] = params
-    return event
+    return api_event(method, path, query=params)
 
 
 def _call(handler, monkeypatch, event, repo=None):

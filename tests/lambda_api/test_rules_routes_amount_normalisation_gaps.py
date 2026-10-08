@@ -13,18 +13,11 @@ an in-place edit (id kept, one row) is distinguishable from a move (id changed, 
 import json
 from functools import partial
 
+from _api_event import api_event
 from _feed_fakes import Repos, inject_rule_routes
 
 
 _CATEGORIES = ("transport", "groceries")
-
-
-def _event(method, path, body, path_params=None):
-    event = {"rawPath": path, "requestContext": {"http": {"method": method}},
-             "body": json.dumps(body)}
-    if path_params is not None:
-        event["pathParameters"] = path_params
-    return event
 
 
 _inject = partial(inject_rule_routes, categories=_CATEGORIES)
@@ -40,12 +33,12 @@ def _multi_amount_body(value, category_id="transport"):
 
 
 def _post(handler, body):
-    return handler.lambda_handler(_event("POST", "/rules", body), None)
+    return handler.lambda_handler(api_event("POST", "/rules", body), None)
 
 
 def _put(handler, rule_id, body):
     return handler.lambda_handler(
-        _event("PUT", f"/rules/{rule_id}", body, path_params={"id": rule_id}), None)
+        api_event("PUT", f"/rules/{rule_id}", body, path_params={"id": rule_id}), None)
 
 
 # --- EDIT path: re-spelling an amount MUST NOT move the id (no orphaned history) -------------

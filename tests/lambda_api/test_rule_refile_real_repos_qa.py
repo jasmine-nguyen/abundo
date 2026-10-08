@@ -9,7 +9,8 @@ either one left every suite green. These tests race a tap against each of them.
 
 import json
 
-from _feed_fakes import SPENDING, FakeCategoryRepo, _row, on_write, real_repos, stored
+from _api_event import api_event
+from _feed_fakes import apply_rules_event, SPENDING, FakeCategoryRepo, _row, on_write, real_repos, stored
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 _CATEGORIES = frozenset({"groceries", "petrol", "eatingout"})
@@ -39,11 +40,13 @@ def _two_stamped_charges(value="coles"):
 
 
 def _put(handler, rule_repo, transaction_repo, rule_id, value, category_id):
-    event = {"rawPath": f"/rules/{rule_id}",
-             "requestContext": {"http": {"method": "PUT"}},
-             "pathParameters": {"id": rule_id},
-             "body": json.dumps({"value": value, "categoryId": category_id,
-                                 "field": "description", "operator": "contains"})}
+    event = api_event(
+        "PUT",
+        f"/rules/{rule_id}",
+        body={"value": value, "categoryId": category_id,
+              "field": "description", "operator": "contains"},
+        path_params={"id": rule_id},
+    )
     resp = handler.update_rule_route(event, rule_repo, FakeCategoryRepo(_CATEGORIES),
                                      transaction_repo)
     return resp, json.loads(resp["body"])
@@ -108,9 +111,7 @@ def test_a_tap_mid_sweep_reconcile_keeps_the_users_category(handler):
 
     resp = apply_rules_to_uncategorized(
         handler,
-        {"rawPath": "/transactions/uncategorized/apply-rules",
-         "requestContext": {"http": {"method": "POST"}},
-         "body": json.dumps({"dryRun": False})},
+        apply_rules_event({"dryRun": False}),
         transaction_repo, FakeCategoryRepo(_CATEGORIES), rule_repo)
 
     assert resp["statusCode"] == 200

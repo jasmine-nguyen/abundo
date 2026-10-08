@@ -10,8 +10,8 @@ that quietly starts (or stops) carrying the flag on re-file is caught.
 Same handler + real-repositories-over-a-FakeTable harness as test_rule_refile.py.
 """
 
-import json
 
+from _api_event import api_event
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
 
 _CATEGORIES = ("groceries", "petrol", "coffee")
@@ -23,14 +23,14 @@ def _rule(value, category_id="groceries", *, budget_excluded=False):
 
 
 def _put_event(rule_id, value, category_id, budget_excluded):
-    return {
-        "rawPath": f"/rules/{rule_id}",
-        "requestContext": {"http": {"method": "PUT"}},
-        "pathParameters": {"id": rule_id},
-        "body": json.dumps({"value": value, "categoryId": category_id,
-                            "field": "description", "operator": "contains",
-                            "budgetExcluded": budget_excluded}),
-    }
+    return api_event(
+        "PUT",
+        f"/rules/{rule_id}",
+        body={"value": value, "categoryId": category_id,
+              "field": "description", "operator": "contains",
+              "budgetExcluded": budget_excluded},
+        path_params={"id": rule_id},
+    )
 
 
 def test_turning_a_rules_flag_on_does_not_exclude_already_filed_charges(handler):

@@ -9,6 +9,7 @@ import json
 from decimal import Decimal
 
 import pytest
+from _api_event import api_event
 from _anthropic_fakes import ScriptedModel, tool_reply, tool_use_block
 from _job_fakes import FakeChatJobRepo
 
@@ -387,8 +388,7 @@ def worker(handler, monkeypatch):
 
 def _post(handler, body):
     jobs = _Jobs()
-    event = {"rawPath": "/ai/chat", "requestContext": {"http": {"method": "POST"}},
-             "body": body if isinstance(body, str) else json.dumps(body)}
+    event = api_event("POST", "/ai/chat", raw=body if isinstance(body, str) else json.dumps(body))
     return handler.start_ai_chat_job(event, jobs), jobs
 
 

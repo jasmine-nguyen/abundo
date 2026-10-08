@@ -12,7 +12,7 @@ its own; nothing importable lives in conftest).
 
 import json
 
-from _milestone_fakes import recording_notify_repo, stored_markers
+from _milestone_fakes import goal_put_event, milestones_put_event, recording_notify_repo, stored_markers
 
 
 # --- fakes (mirror test_milestones_api.py / test_goals.py) -------------------
@@ -46,19 +46,10 @@ class FakeBalanceRepo:
 
 # --- event builders ----------------------------------------------------------
 
-def _ms_event(rows):
-    return {
-        "rawPath": "/milestones",
-        "requestContext": {"http": {"method": "PUT"}},
-        "body": json.dumps({"milestones": rows}),
-        "isBase64Encoded": False,
-    }
-
-
 def _put_milestones(handler, rows, repo=None, notify=None):
     repo = repo or FakeMilestoneRepo()
     notify = notify or recording_notify_repo()
-    resp = handler.set_milestones(_ms_event(rows), repo, notify)
+    resp = handler.set_milestones(milestones_put_event(rows), repo, notify)
     return resp, repo, notify
 
 
@@ -67,16 +58,6 @@ def _err(resp):
 
 
 VALID_MS = {"label": "Kickoff", "targetBalance": 544000, "targetDate": "2026-06-18"}
-
-
-def _goal_event(body, goal_id="g1"):
-    return {
-        "rawPath": f"/goals/{goal_id}",
-        "requestContext": {"http": {"method": "PUT"}},
-        "pathParameters": {"id": goal_id},
-        "body": json.dumps(body),
-        "isBase64Encoded": False,
-    }
 
 
 def _grow_body(**over):
@@ -94,7 +75,7 @@ def _cp(label, amount, **over):
 
 def _put_goal(handler, body):
     repo = FakeGoalsRepo()
-    resp = handler.upsert_goal(_goal_event(body), repo, FakeBalanceRepo())
+    resp = handler.upsert_goal(goal_put_event(body), repo, FakeBalanceRepo())
     return resp, repo
 
 

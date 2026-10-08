@@ -9,8 +9,9 @@ handler.py:2029 would pass the existing suite yet 500 in production. These lock 
 (and that a fractional value survives the str() round-trip exactly).
 """
 
-import json
 from decimal import Decimal
+
+from _api_event import api_event
 
 VALID = {"original": 600000, "homeValue": 770000, "lvr": 0.8, "ratePct": 5.74, "baseRepay": 1240, "extra": 200}
 
@@ -33,12 +34,7 @@ class FakeLoanFactsRepo:
 
 
 def _put_event(body):
-    return {
-        "rawPath": "/loanfacts",
-        "requestContext": {"http": {"method": "PUT"}},
-        "body": json.dumps(body),
-        "isBase64Encoded": False,
-    }
+    return api_event("PUT", "/loanfacts", body=body, is_base64=False)
 
 
 def test_handler_forwards_deposit_target_as_decimal_not_float(handler):

@@ -15,6 +15,7 @@ from functools import partial
 
 import pytest
 
+from _api_event import api_event
 from _feed_fakes import Repos, inject_rule_routes
 
 
@@ -23,15 +24,6 @@ _CATEGORIES = ("groceries", "petrol")
 
 def _rule(value, category_id="groceries", field="description", operator="contains"):
     return {"field": field, "operator": operator, "value": value, "category_id": category_id}
-
-
-def _event(method, path, body=None, path_params=None):
-    event = {"rawPath": path, "requestContext": {"http": {"method": method}}}
-    if body is not None:
-        event["body"] = json.dumps(body)
-    if path_params is not None:
-        event["pathParameters"] = path_params
-    return event
 
 
 _inject = partial(inject_rule_routes, categories=_CATEGORIES)
@@ -48,9 +40,9 @@ def test_create_then_get_preserves_display_value_verbatim(handler, monkeypatch):
     _inject(handler, monkeypatch, repo)
 
     handler.lambda_handler(
-        _event("POST", "/rules", {"value": "  cOlEs  Online  ", "categoryId": "groceries"}), None)
+        api_event("POST", "/rules", {"value": "  cOlEs  Online  ", "categoryId": "groceries"}), None)
 
-    body = json.loads(handler.lambda_handler(_event("GET", "/rules"), None)["body"])
+    body = json.loads(handler.lambda_handler(api_event("GET", "/rules"), None)["body"])
     assert len(body) == 1
     assert body[0]["value"] == "cOlEs  Online"        # ends trimmed, inner double space + case kept
     assert body[0]["categoryId"] == "groceries"       # category_id -> categoryId mapping
@@ -65,12 +57,12 @@ def test_case_and_spacing_variant_dedups_through_the_http_layer(handler, monkeyp
     _inject(handler, monkeypatch, repo)
 
     same = handler.lambda_handler(
-        _event("POST", "/rules", {"value": "coles express", "categoryId": "groceries"}), None)
+        api_event("POST", "/rules", {"value": "coles express", "categoryId": "groceries"}), None)
     assert same["statusCode"] == 201
     assert repo.minted_rules() == []                            # folded variant deduped, nothing written
 
     clash = handler.lambda_handler(
-        _event("POST", "/rules", {"value": "coles express", "categoryId": "petrol"}), None)
+        api_event("POST", "/rules", {"value": "coles express", "categoryId": "petrol"}), None)
     assert clash["statusCode"] == 409
     assert json.loads(clash["body"])["existingRule"]["categoryId"] == "groceries"
 
@@ -82,10 +74,10 @@ def test_create_non_ascii_value_passes_floor_and_round_trips(handler, monkeypatc
     _inject(handler, monkeypatch, repo)
 
     resp = handler.lambda_handler(
-        _event("POST", "/rules", {"value": "Café", "categoryId": "groceries"}), None)
+        api_event("POST", "/rules", {"value": "Café", "categoryId": "groceries"}), None)
     assert resp["statusCode"] == 201
 
-    body = json.loads(handler.lambda_handler(_event("GET", "/rules"), None)["body"])
+    body = json.loads(handler.lambda_handler(api_event("GET", "/rules"), None)["body"])
     assert body[0]["value"] == "Café"
 
 
@@ -103,7 +95,7 @@ def test_value_floor_counts_alphanumerics_only(handler, monkeypatch, value, expe
     repo = Repos()
     _inject(handler, monkeypatch, repo)
     resp = handler.lambda_handler(
-        _event("POST", "/rules", {"value": value, "categoryId": "groceries"}), None)
+        api_event("POST", "/rules", {"value": value, "categoryId": "groceries"}), None)
     assert resp["statusCode"] == expected
 
 
@@ -116,7 +108,7 @@ def test_value_floor_is_enforced_on_put_text_edit(handler, monkeypatch):
     _inject(handler, monkeypatch, repo)
 
     resp = handler.lambda_handler(
-        _event("PUT", f"/rules/{rule_id}", {"value": ".", "categoryId": "groceries"},
+        api_event("PUT", f"/rules/{rule_id}", {"value": ".", "categoryId": "groceries"},
                path_params={"id": rule_id}), None)
     assert resp["statusCode"] == 400
     assert "letters or digits" in json.loads(resp["body"])["error"]
@@ -134,7 +126,7 @@ def test_get_still_returns_a_rule_whose_category_was_deleted(handler, monkeypatc
     repo = Repos(rules=[_rule("COLES", "ghost-category")])
     _inject(handler, monkeypatch, repo, categories=_CATEGORIES)   # taxonomy has NO "ghost-category"
 
-    body = json.loads(handler.lambda_handler(_event("GET", "/rules"), None)["body"])
+    body = json.loads(handler.lambda_handler(api_event("GET", "/rules"), None)["body"])
     assert len(body) == 1
     assert body[0]["categoryId"] == "ghost-category"
 
@@ -149,7 +141,7 @@ def test_put_text_only_edit_with_stale_deleted_category_is_400(handler, monkeypa
     _inject(handler, monkeypatch, repo, categories=_CATEGORIES)
 
     resp = handler.lambda_handler(
-        _event("PUT", f"/rules/{rule_id}",
+        api_event("PUT", f"/rules/{rule_id}",
                {"value": "COLES EXPRESS", "categoryId": "ghost-category"},
                path_params={"id": rule_id}), None)
     assert resp["statusCode"] == 400
@@ -167,7 +159,7 @@ def test_below_floor_value_and_unknown_category_returns_the_floor_error_first(ha
     _inject(handler, monkeypatch, repo)
 
     resp = handler.lambda_handler(
-        _event("POST", "/rules", {"value": ".", "categoryId": "not-a-category"}), None)
+        api_event("POST", "/rules", {"value": ".", "categoryId": "not-a-category"}), None)
     assert resp["statusCode"] == 400
     assert "letters or digits" in json.loads(resp["body"])["error"]
 
@@ -184,7 +176,7 @@ def test_case_only_value_edit_keeps_the_id_and_updates_in_place(handler, monkeyp
     _inject(handler, monkeypatch, repo)
 
     resp = handler.lambda_handler(
-        _event("PUT", f"/rules/{rule_id}", {"value": "coles", "categoryId": "groceries"},
+        api_event("PUT", f"/rules/{rule_id}", {"value": "coles", "categoryId": "groceries"},
                path_params={"id": rule_id}), None)
     body = json.loads(resp["body"])
 

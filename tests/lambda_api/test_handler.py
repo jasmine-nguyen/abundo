@@ -18,6 +18,7 @@ import pytest
 # _UNSET / FakeRepo / _patch_event live in tests/shared/_handler_patch_fakes.py so this impl
 # suite and the two PATCH gap suites share ONE definition (WHIT-445); the batch fake below
 # is used only here and stays local.
+from _api_event import api_event
 from _handler_patch_fakes import FakeRepo, _patch_event
 from _transaction_range_fakes import _AccountPagesTransactionRepo
 
@@ -39,12 +40,7 @@ class FakeBatchRepo:
 
 
 def _batch_event(body, is_b64=False):
-    return {
-        "rawPath": "/transactions",
-        "requestContext": {"http": {"method": "PATCH"}},
-        "body": body,
-        "isBase64Encoded": is_b64,
-    }
+    return api_event("PATCH", "/transactions", raw=body, is_base64=is_b64)
 
 
 def _row(account_id, date, txn_id, **extra):
@@ -413,7 +409,7 @@ def test_get_transactions_still_dispatches(handler, monkeypatch):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: object())
     monkeypatch.setattr(handler, "get_recent_transactions", lambda repo: [{"id": 1}])
 
-    event = {"rawPath": "/transactions", "requestContext": {"http": {"method": "GET"}}}
+    event = api_event("GET", "/transactions")
     resp = handler.lambda_handler(event, None)
 
     assert resp["statusCode"] == 200
@@ -421,7 +417,7 @@ def test_get_transactions_still_dispatches(handler, monkeypatch):
 
 
 def test_unknown_route_returns_404(handler):
-    event = {"rawPath": "/nope", "requestContext": {"http": {"method": "GET"}}}
+    event = api_event("GET", "/nope")
     resp = handler.lambda_handler(event, None)
     assert resp["statusCode"] == 404
     assert json.loads(resp["body"]) == {"error": "Not found"}
@@ -573,7 +569,7 @@ def test_get_transactions_dispatch_runs_real_body(handler, monkeypatch):
     })
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
 
-    event = {"rawPath": "/transactions", "requestContext": {"http": {"method": "GET"}}}
+    event = api_event("GET", "/transactions")
     resp = handler.lambda_handler(event, None)
 
     assert resp["statusCode"] == 200
