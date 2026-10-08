@@ -11,7 +11,7 @@ import { routerSpies, resetRouter, setParams } from './support/routerMock';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
-import { seedBudgets, renderBudgets, renderLoadedBudgets, heroTotals, renderLoadedBudgetsWithQueries, BUDGET_PAY_CYCLE, showBudgets, sidePadding, showTwoRows, tickBandOf, noteOffsetBelowBar } from './support/budgetsScreen';
+import { seedBudgets, renderBudgets, renderLoadedBudgets, heroTotals, renderLoadedBudgetsWithQueries, BUDGET_PAY_CYCLE, showBudgets, sidePadding, showTwoRows, showRows, tickBandOf, tickBandHeight, noteOffsetBelowBar } from './support/budgetsScreen';
 import { MINUS, C } from '../theme';
 import { refreshInAct, renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { COFFEE, GROCERIES_RECORD, SALARY, SAVINGS, DINING, SUBSCRIPTIONS, GROCERIES, SUBS, LATTE, MORTGAGE_RECORD } from './support/categories';
@@ -51,78 +51,75 @@ describe('WHIT-706 Budgets top card', () => {
     seedBudgets(server, { payCycle: { length: 30, last_pay_date: '2026-07-01', days_left: 4 } });
   });
 
-  describe('Budgets top card', () => {
-    it('no budgets → days left stays, money part is replaced by one "Add a spending budget" button', async () => {
-      server.seed('/budgets', {});
+  it('no budgets → days left stays, money part is replaced by one "Add a spending budget" button', async () => {
+    server.seed('/budgets', {});
+    renderBudgets();
+    expect(await screen.findByText('Add a spending budget')).toBeTruthy();
+    expect(screen.getByText("No spending budgets yet. Set one and this shows what's left to spend.")).toBeTruthy();
+    expect(screen.getByText('days left')).toBeTruthy();
+    expect(screen.queryByText('Budget remaining')).toBeNull();
+    expect(screen.queryByText('Left to spend')).toBeNull();
+    expect(screen.queryByText('Over budget')).toBeNull();
+    expect(screen.queryByTestId('budgets-hero-spent')).toBeNull();
+    expect(screen.queryByText('Add a budget')).toBeNull();  // the duplicate dashed button is hidden
+    fireEvent.press(screen.getByTestId('budgets-hero-add'));
+    expect(routerSpies.push).toHaveBeenCalledWith('/budget/pick');
+  });
+
+  it('under budget → "Left to spend", no over-budget line', async () => {
+    await renderLoadedBudgets();
+    expect(screen.getByText('Left to spend')).toBeTruthy();
+    expect(screen.getByText('days left')).toBeTruthy();
+    expect(screen.queryByText('Over budget')).toBeNull();
+    expect(screen.queryByText(/resets/)).toBeNull();
+    expect(screen.queryByText('Budget remaining')).toBeNull();
+  });
+
+  it('over budget → real minus sign, the amount said once, no resets text', async () => {
+    server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
+    await renderLoadedBudgets();
+    expect(screen.getByText('Over budget')).toBeTruthy();
+    expect(screen.getByText(`${MINUS}$100`)).toBeTruthy();
+    expect(screen.queryByText('-$100')).toBeNull();
+    expect(screen.queryByText(/resets/)).toBeNull();
+    expect(screen.queryByText(/Over by/)).toBeNull();
+  });
+
+  it('1 day left and over → singular "day left", no resets text', async () => {
+    server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01', days_left: 1 });
+    server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
+    await renderLoadedBudgets();
+    expect(screen.getByText('day left')).toBeTruthy();
+    expect(screen.queryByText('days left')).toBeNull();
+    expect(screen.queryByText(/resets/)).toBeNull();
+  });
+
+  it('0 days left and over → "0 days left", no resets text', async () => {
+    server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01', days_left: 0 });
+    server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
+    await renderLoadedBudgets();
+    expect(screen.getByText('0')).toBeTruthy();
+    expect(screen.getByText('days left')).toBeTruthy();
+    expect(screen.queryByText(/resets/)).toBeNull();
+  });
+
+  it('shows the next payday date instead of the cycle start', async () => {
+    pinToday(new Date('2026-09-18T10:00:00+10:00')); // 18 Sep 2026, Melbourne
+    try {
+      // last payday 1 Sep, 30-day cycle → next payday 1 Oct
+      server.seed('/paycycle', { length: 30, last_pay_date: '2026-09-01' });
       renderBudgets();
-      expect(await screen.findByText('Add a spending budget')).toBeTruthy();
-      expect(screen.getByText("No spending budgets yet. Set one and this shows what's left to spend.")).toBeTruthy();
-      expect(screen.getByText('days left')).toBeTruthy();
-      expect(screen.queryByText('Budget remaining')).toBeNull();
-      expect(screen.queryByText('Left to spend')).toBeNull();
-      expect(screen.queryByText('Over budget')).toBeNull();
-      expect(screen.queryByTestId('budgets-hero-spent')).toBeNull();
-      expect(screen.queryByText('Add a budget')).toBeNull();  // the duplicate dashed button is hidden
-      fireEvent.press(screen.getByTestId('budgets-hero-add'));
-      expect(routerSpies.push).toHaveBeenCalledWith('/budget/pick');
-    });
-
-    it('under budget → "Left to spend", no over-budget line', async () => {
-      await renderLoadedBudgets();
-      expect(screen.getByText('Left to spend')).toBeTruthy();
-      expect(screen.getByText('days left')).toBeTruthy();
-      expect(screen.queryByText('Over budget')).toBeNull();
-      expect(screen.queryByText(/resets/)).toBeNull();
-      expect(screen.queryByText('Budget remaining')).toBeNull();
-    });
-
-    it('over budget → real minus sign, the amount said once, no resets text', async () => {
-      server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
-      await renderLoadedBudgets();
-      expect(screen.getByText('Over budget')).toBeTruthy();
-      expect(screen.getByText(`${MINUS}$100`)).toBeTruthy();
-      expect(screen.queryByText('-$100')).toBeNull();
-      expect(screen.queryByText(/resets/)).toBeNull();
-      expect(screen.queryByText(/Over by/)).toBeNull();
-    });
-
-    it('1 day left and over → singular "day left", no resets text', async () => {
-      server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01', days_left: 1 });
-      server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
-      await renderLoadedBudgets();
-      expect(screen.getByText('day left')).toBeTruthy();
-      expect(screen.queryByText('days left')).toBeNull();
-      expect(screen.queryByText(/resets/)).toBeNull();
-    });
-
-    it('0 days left and over → "0 days left", no resets text', async () => {
-      server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01', days_left: 0 });
-      server.seed('/budgets', { coffee: { target: 100, posted: 200, pending: 0 } });
-      await renderLoadedBudgets();
-      expect(screen.getByText('0')).toBeTruthy();
-      expect(screen.getByText('days left')).toBeTruthy();
-      expect(screen.queryByText(/resets/)).toBeNull();
-    });
-
-    it('shows the next payday date instead of the cycle start', async () => {
-      pinToday(new Date('2026-09-18T10:00:00+10:00')); // 18 Sep 2026, Melbourne
-      try {
-        // last payday 1 Sep, 30-day cycle → next payday 1 Oct
-        server.seed('/paycycle', { length: 30, last_pay_date: '2026-09-01' });
-        renderBudgets();
-        await waitFor(() => expect(heroTotals().payday).toBe('1 Oct'));
-        expect(screen.queryByText(/^Started /)).toBeNull();
-      } finally {
-        jest.useRealTimers();
-      }
-    });
+      await waitFor(() => expect(heroTotals().payday).toBe('1 Oct'));
+      expect(screen.queryByText(/^Started /)).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   // WHIT-706 QA: adversarial edges for the Budgets top card (hero).
   const GROCERIES = { ...GROCERIES_RECORD, color: '#7fd1b9' };
 
   describe('Budgets top card — QA edges', () => {
-    // [A1] (P0) under budget: the money-left amount itself is on the card next to its label
     it('[A1] under budget shows the left-to-spend amount (summed across rows) and the spent line', async () => {
       server.seed('/categories', [COFFEE, GROCERIES]);
       server.seed('/budgets', {
@@ -136,7 +133,6 @@ describe('WHIT-706 Budgets top card', () => {
       expect(screen.getByText('4')).toBeTruthy();
     });
 
-    // [A2] (P0) empty: no money figure or minus sign anywhere, days count kept, payday kept
     it('[A2] no budgets → no "$" figure, no spent line, but the days count and next payday stay', async () => {
       pinToday(new Date('2026-09-18T10:00:00+10:00'));
       try {
@@ -155,7 +151,6 @@ describe('WHIT-706 Budgets top card', () => {
       }
     });
 
-    // [A3] (P1) empty + 1 day left → singular
     it('[A3] no budgets with 1 day left → "day left"', async () => {
       server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01', days_left: 1 });
       server.seed('/budgets', {});
@@ -165,7 +160,6 @@ describe('WHIT-706 Budgets top card', () => {
       expect(screen.queryByText('days left')).toBeNull();
     });
 
-    // [A4] (P0) once a first budget is added, the card switches to the normal money view
     it('[A4] empty → a budget appears on refetch → money view returns, first-time prompt goes', async () => {
       server.seed('/budgets', {});
       const { client } = renderBudgets();
@@ -201,7 +195,6 @@ describe('WHIT-706 Budgets top card', () => {
       expect(screen.getByText('Over budget')).toBeTruthy();
     });
 
-    // [A9] (P1) a large deficit: comma-grouped in the big number, said once, no hyphen anywhere
     it('[A9] large deficit → "−$6,056" once, no hyphen-minus figure', async () => {
       server.seed('/budgets', { coffee: { target: 1000, posted: 7056, pending: 0 } });
       await renderLoadedBudgets();
@@ -210,7 +203,6 @@ describe('WHIT-706 Budgets top card', () => {
       expect(screen.queryAllByText(/-\$/)).toHaveLength(0);
     });
 
-    // [A10] (P1) the empty-state button press does not double-navigate
     it('[A10] tapping "Add a spending budget" pushes the picker exactly once', async () => {
       server.seed('/budgets', {});
       renderBudgets();
@@ -257,7 +249,6 @@ describe('WHIT-707 Budgets sections and rows', () => {
 
     useBudgetsSuiteReset(); // today: Sat 3 Oct 2026, Melbourne
 
-    // [A20] (P0) spend only → SPENDING heading, no EARNING heading.
     it('[A20] no income budgets → no EARNING heading', async () => {
       seed([COFFEE], { coffee: { target: 100, posted: 40, pending: 0 } });
       await renderLoadedBudgetsWithQueries();
@@ -265,7 +256,6 @@ describe('WHIT-707 Budgets sections and rows', () => {
       expect(screen.queryByText('EARNING')).toBeNull();
     });
 
-    // [A21] (P0) income only → EARNING heading, no SPENDING heading.
     it('[A21] only income → no SPENDING heading', async () => {
       seed([SALARY], { salary: { target: 5000, posted: 1000, pending: 0 } });
       await renderWithQueries(<Budgets />);
@@ -291,7 +281,6 @@ describe('WHIT-707 Budgets sections and rows', () => {
       expect(screen.queryByText(/under plan|over plan|\$[\d,]+ to go|on pace|above target/)).toBeNull();
     });
 
-    // [A23] (P0) payday more than 6 days away (fortnightly, 14 days left) → the date.
     it('[A23] 14 days left → "next pay ~17 Oct"', async () => {
       seed([SALARY], { salary: { target: 5000, posted: 1000, pending: 0 } }, 14);
       server.seed('/paycycle', { length: 14, last_pay_date: '2026-10-03', days_left: 14 }); // paid today → next pay in 14 days
@@ -299,7 +288,6 @@ describe('WHIT-707 Budgets sections and rows', () => {
       expect(await screen.findByText('$1,000 earned · next pay ~17 Oct')).toBeTruthy();
     });
 
-    // [A24] (P0) over but rollover → the overspend shows once on the amount.
     it('[A24] over + rollover → overspend said once', async () => {
       seed([COFFEE], { coffee: { target: 100, posted: 120, pending: 0, rollover: true, carryover: 0 } });
       await renderLoadedBudgetsWithQueries();
@@ -307,7 +295,6 @@ describe('WHIT-707 Budgets sections and rows', () => {
       expect(screen.queryByText('$20 over budget')).toBeNull();
     });
 
-    // [A25] (P0) pressing a full row (with a bar) opens its detail.
     it('[A25] the row press opens the detail', async () => {
       seed([COFFEE], { coffee: { target: 80, posted: 90.25, pending: 0 } });
       await renderLoadedBudgetsWithQueries();
@@ -315,7 +302,6 @@ describe('WHIT-707 Budgets sections and rows', () => {
       expect(routerSpies.push).toHaveBeenCalledWith('/budget/coffee');
     });
 
-    // [A26] (P1) pending is counted in the spent amount, with no pending line (WHIT-744).
     it('[A26] a row with pending reads "… of …" and names no pending (WHIT-744)', async () => {
       seed([COFFEE], { coffee: { target: 100, posted: 40, pending: 10 } });
       await renderWithQueries(<Budgets />);
@@ -333,7 +319,6 @@ describe('WHIT-707 Budgets sections and rows', () => {
       expect(screen.queryByText("today's target")).toBeNull();
     });
 
-    // [A2] (P0) WHIT-715: the detail screen shows the new warning and the plain carry-over line.
     it('[A2] budget detail reads "Over plan — ease up" and "Includes $20 past leftovers"', async () => {
       setParams({ id: 'coffee' });
       seed([COFFEE], { coffee: { target: 100, posted: 100, pending: 0, rollover: true, carryover: 20, available: 120 } });
@@ -410,82 +395,79 @@ describe('WHIT-714 top card totals', () => {
     seedBudgets(server, { categories: [COFFEE, SALARY, SAVINGS], payCycle: { ...BUDGET_PAY_CYCLE, days_left: 4 } });
   });
 
-  describe('WHIT-714 Budgets top card totals', () => {
-    it('income-only budgets → no "$0 Left to spend" money column, honest empty wording', async () => {
-      server.seed('/budgets', { salary: { target: 5000, posted: 1000, pending: 0 } });
-      renderBudgets();
-      await screen.findByText('Salary');
-      expect(screen.queryByText('Left to spend')).toBeNull();
-      expect(screen.queryByTestId('budgets-hero-spent')).toBeNull();
-      expect(screen.getByText(NO_SPENDING)).toBeTruthy();
-      expect(screen.queryByTestId('budgets-hero-add')).toBeNull();
-      expect(screen.queryByText('Add a budget')).toBeNull(); // WHIT-814: the header "+" is the one add button
-      expect(screen.getByText('4')).toBeTruthy();
-      expect(screen.getByText('days left')).toBeTruthy();
-    });
+  it('income-only budgets → no "$0 Left to spend" money column, honest empty wording', async () => {
+    server.seed('/budgets', { salary: { target: 5000, posted: 1000, pending: 0 } });
+    renderBudgets();
+    await screen.findByText('Salary');
+    expect(screen.queryByText('Left to spend')).toBeNull();
+    expect(screen.queryByTestId('budgets-hero-spent')).toBeNull();
+    expect(screen.getByText(NO_SPENDING)).toBeTruthy();
+    expect(screen.queryByTestId('budgets-hero-add')).toBeNull();
+    expect(screen.queryByText('Add a budget')).toBeNull(); // WHIT-814: the header "+" is the one add button
+    expect(screen.getByText('4')).toBeTruthy();
+    expect(screen.getByText('days left')).toBeTruthy();
+  });
 
-    it('income-only over target → no "Over" text on the top card', async () => {
-      server.seed('/budgets', { salary: { target: 1000, posted: 5000, pending: 0 } });
-      renderBudgets();
-      await screen.findByText('Salary');
-      expect(screen.queryByText('Over budget')).toBeNull();
-      expect(screen.queryByTestId('budgets-hero-spent')).toBeNull();
-    });
+  it('income-only over target → no "Over" text on the top card', async () => {
+    server.seed('/budgets', { salary: { target: 1000, posted: 5000, pending: 0 } });
+    renderBudgets();
+    await screen.findByText('Salary');
+    expect(screen.queryByText('Over budget')).toBeNull();
+    expect(screen.queryByTestId('budgets-hero-spent')).toBeNull();
+  });
 
-    it('Savings-only budgets → not "No budgets yet"; offers "Add a spending budget"', async () => {
-      server.seed('/budgets', { rainy: { target: 300, posted: 100, pending: 0 } });
-      renderBudgets();
-      expect(await screen.findByText(NO_SPENDING)).toBeTruthy();
-      expect(screen.queryByText(/No budgets yet/)).toBeNull();
-      expect(screen.getByText('Add a spending budget')).toBeTruthy();
-      expect(screen.getByTestId('budgets-hero-add')).toBeTruthy();
-      expect(screen.queryByText('Add a budget')).toBeNull();
-    });
+  it('Savings-only budgets → not "No budgets yet"; offers "Add a spending budget"', async () => {
+    server.seed('/budgets', { rainy: { target: 300, posted: 100, pending: 0 } });
+    renderBudgets();
+    expect(await screen.findByText(NO_SPENDING)).toBeTruthy();
+    expect(screen.queryByText(/No budgets yet/)).toBeNull();
+    expect(screen.getByText('Add a spending budget')).toBeTruthy();
+    expect(screen.getByTestId('budgets-hero-add')).toBeTruthy();
+    expect(screen.queryByText('Add a budget')).toBeNull();
+  });
 
-    it('mixed spending + income + Savings → money view from spending rows only', async () => {
-      server.seed('/budgets', {
-        coffee: { target: 100, posted: 40, pending: 10 },
-        salary: { target: 5000, posted: 1000, pending: 0 },
-        rainy: { target: 300, posted: 100, pending: 0 },
-      });
-      await renderLoadedBudgets();
-      expect(screen.getByText('Left to spend')).toBeTruthy();
-      expect(heroTotals()).toMatchObject({ spent: '$50', budget: '$100' });
-      expect(screen.queryByText(NO_SPENDING)).toBeNull();
+  it('mixed spending + income + Savings → money view from spending rows only', async () => {
+    server.seed('/budgets', {
+      coffee: { target: 100, posted: 40, pending: 10 },
+      salary: { target: 5000, posted: 1000, pending: 0 },
+      rainy: { target: 300, posted: 100, pending: 0 },
     });
+    await renderLoadedBudgets();
+    expect(screen.getByText('Left to spend')).toBeTruthy();
+    expect(heroTotals()).toMatchObject({ spent: '$50', budget: '$100' });
+    expect(screen.queryByText(NO_SPENDING)).toBeNull();
+  });
 
-    it('while budgets load with the pay cycle ready → a days-only top card above the spinner', async () => {
-      const held = server.hold('/budgets');
-      renderBudgets();
-      expect(await screen.findByText('days left')).toBeTruthy();
-      expect(screen.getByText('4')).toBeTruthy();
-      expect(heroTotals()).toEqual({ spent: undefined, budget: undefined, payday: expect.stringMatching(/^\d{1,2} [A-Z][a-z]{2}$/) });
-      expect(screen.getByTestId('budgets-loading')).toBeTruthy();
-      expect(screen.queryByText('Left to spend')).toBeNull();
-      expect(screen.queryByText(NO_SPENDING)).toBeNull();
-      expect(screen.queryByTestId('budgets-hero-add')).toBeNull();
-      held.release();
-      expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-      expect(screen.queryByTestId('budgets-loading')).toBeNull();
-    });
+  it('while budgets load with the pay cycle ready → a days-only top card above the spinner', async () => {
+    const held = server.hold('/budgets');
+    renderBudgets();
+    expect(await screen.findByText('days left')).toBeTruthy();
+    expect(screen.getByText('4')).toBeTruthy();
+    expect(heroTotals()).toEqual({ spent: undefined, budget: undefined, payday: expect.stringMatching(/^\d{1,2} [A-Z][a-z]{2}$/) });
+    expect(screen.getByTestId('budgets-loading')).toBeTruthy();
+    expect(screen.queryByText('Left to spend')).toBeNull();
+    expect(screen.queryByText(NO_SPENDING)).toBeNull();
+    expect(screen.queryByTestId('budgets-hero-add')).toBeNull();
+    held.release();
+    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+    expect(screen.queryByTestId('budgets-loading')).toBeNull();
+  });
 
-    it('while the pay cycle is still loading → spinner only, never the default cycle count', async () => {
-      const heldPayCycle = server.hold('/paycycle');
-      const heldBudgets = server.hold('/budgets');
-      renderBudgets();
-      await waitFor(() => expect(server.sent('GET', '/categories')).toHaveLength(1));
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      expect(screen.getByTestId('budgets-loading')).toBeTruthy();
-      expect(screen.queryByText(/days? left/)).toBeNull();
-      heldPayCycle.release();
-      heldBudgets.release();
-      expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-    });
+  it('while the pay cycle is still loading → spinner only, never the default cycle count', async () => {
+    const heldPayCycle = server.hold('/paycycle');
+    const heldBudgets = server.hold('/budgets');
+    renderBudgets();
+    await waitFor(() => expect(server.sent('GET', '/categories')).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByTestId('budgets-loading')).toBeTruthy();
+    expect(screen.queryByText(/days? left/)).toBeNull();
+    heldPayCycle.release();
+    heldBudgets.release();
+    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
   });
 
   // WHIT-714 QA: adversarial edges for the Budgets top card with no spending rows and while loading.
   describe('WHIT-714 top card — QA edges', () => {
-    // [A2] (P0) income-only → a spending budget is added on refetch → the money view replaces the empty wording
     it('[A2] income-only → spending budget appears on refetch → money column back, empty wording gone', async () => {
       server.seed('/budgets', { salary: { target: 5000, posted: 1000, pending: 0 } });
       const { client } = renderBudgets();
@@ -533,30 +515,28 @@ describe('WHIT-716 top card spent and over lines', () => {
   // in the rows' cents format, and "Over budget" from 1 cent over. The Spent and Budget
   // values use the same format (WHIT-735).
 
-  describe('WHIT-716 Budgets top card spent line + over line', () => {
-    it('over budget → "−$100" and "Over budget", the amount not repeated', async () => {
-      await showBudgets(server, { coffee: { target: 100, posted: 200, pending: 0 } });
-      expect(screen.getByText(`${MINUS}$100`)).toBeTruthy();
-      expect(screen.getByText('Over budget')).toBeTruthy();
-      expect(screen.queryByText(/Over by/)).toBeNull();
-    });
+  it('over budget → "−$100" and "Over budget", the amount not repeated', async () => {
+    await showBudgets(server, { coffee: { target: 100, posted: 200, pending: 0 } });
+    expect(screen.getByText(`${MINUS}$100`)).toBeTruthy();
+    expect(screen.getByText('Over budget')).toBeTruthy();
+    expect(screen.queryByText(/Over by/)).toBeNull();
+  });
 
-    it('big number and Spent keep cents like the rows ("$66.25"; "$83.75" of "$150")', async () => {
-      await showBudgets(server, {
-        coffee: { target: 100, posted: 73.5, pending: 0 },
-        groceries: { target: 50, posted: 10.25, pending: 0 },
-      });
-      expect(screen.getByText('$66.25')).toBeTruthy();
-      expect(screen.getByText('Left to spend')).toBeTruthy();
-      expect(heroTotals()).toMatchObject({ spent: '$83.75', budget: '$150' });
+  it('big number and Spent keep cents like the rows ("$66.25"; "$83.75" of "$150")', async () => {
+    await showBudgets(server, {
+      coffee: { target: 100, posted: 73.5, pending: 0 },
+      groceries: { target: 50, posted: 10.25, pending: 0 },
     });
+    expect(screen.getByText('$66.25')).toBeTruthy();
+    expect(screen.getByText('Left to spend')).toBeTruthy();
+    expect(heroTotals()).toMatchObject({ spent: '$83.75', budget: '$150' });
+  });
 
-    it('30 cents over → "−$0.30" and "Over budget", never "Left to spend"', async () => {
-      await showBudgets(server, { coffee: { target: 100, posted: 100.3, pending: 0 } });
-      expect(screen.getByText(`${MINUS}$0.30`)).toBeTruthy();
-      expect(screen.getByText('Over budget')).toBeTruthy();
-      expect(screen.queryByText('Left to spend')).toBeNull();
-    });
+  it('30 cents over → "−$0.30" and "Over budget", never "Left to spend"', async () => {
+    await showBudgets(server, { coffee: { target: 100, posted: 100.3, pending: 0 } });
+    expect(screen.getByText(`${MINUS}$0.30`)).toBeTruthy();
+    expect(screen.getByText('Over budget')).toBeTruthy();
+    expect(screen.queryByText('Left to spend')).toBeNull();
   });
 
   // WHIT-716 QA — adversarial edges of the Budgets top card: spend summed across rows (spend only,
@@ -566,7 +546,6 @@ describe('WHIT-716 top card spent and over lines', () => {
   const PARKING = { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8AB4F8', parent: 'car' };
 
   describe('WHIT-716 QA — spent line totals', () => {
-    // [A1] (P0) posted + pending from several rows sums into Spent, cents kept (WHIT-735)
     it('[A1] sums posted + pending across spending rows: Spent "$39.75" of "$150"', async () => {
       await showBudgets(server, {
         coffee: { target: 100, posted: 20, pending: 10.5 },
@@ -575,7 +554,6 @@ describe('WHIT-716 top card spent and over lines', () => {
       expect(heroTotals()).toMatchObject({ spent: '$39.75', budget: '$150' });
     });
 
-    // [A2] (P0) Income and Savings never reach the spent line
     it('[A2] Income and Savings stay out of the spent line', async () => {
       await showBudgets(
         server,
@@ -613,7 +591,6 @@ describe('WHIT-716 top card spent and over lines', () => {
       expect(screen.getByText('Left to spend')).toBeTruthy();
     });
 
-    // [A6] (P1) summed float cents (0.1 + 0.2) render cleanly, not 0.30000000000000004
     it('[A6] float dust in summed cents: Spent "$0.30" of "$100", left "$99.70"', async () => {
       await showBudgets(server, {
         coffee: { target: 50, posted: 0.1, pending: 0 },
@@ -623,7 +600,6 @@ describe('WHIT-716 top card spent and over lines', () => {
       expect(screen.getByText('$99.70')).toBeTruthy();
     });
 
-    // [A7] (P0) the card's left equals the rows' lefts added up (both in cents)
     it('[A7] card left matches the rows: $26.50 + $39.75 = $66.25', async () => {
       await showBudgets(server, {
         coffee: { target: 100, posted: 70, pending: 3.5 },
@@ -650,7 +626,6 @@ describe('WHIT-716 top card spent and over lines', () => {
       expect(screen.queryByText('Over budget')).toBeNull();
     });
 
-    // [A10] (P1) over budget with pending: the spent line includes it, overspend amount said once
     it('[A10] over with pending → "−$20.50" once, Spent "$120.50", Budget "$100"', async () => {
       await showBudgets(server, { coffee: { target: 100, posted: 90, pending: 30.5 } }, { categories: [COFFEE] });
       expect(screen.getAllByText(`${MINUS}$20.50`)).toHaveLength(1);
@@ -733,18 +708,6 @@ describe('WHIT-726 top card lines', () => {
 
       expect(within(hero()).queryByText(/resets/)).toBeNull();
       expect(screen.queryByTestId('budgets-hero-pill')).toBeNull();
-    });
-  });
-
-  // WHIT-726 → WHIT-731 QA — adversarial edges of the Spent · Budget · Next payday row on the Budgets
-  // top card: pending is gone from the card and the rows (WHIT-744), the empty state keeps only the payday,
-  // and the whole-dollar rounding at the half-dollar edge with thousands separators.
-
-  describe('WHIT-731 QA — the Spent · Budget · Next payday row', () => {
-    // [A4] (P1) cents stay when the amount has them (WHIT-735), thousands get commas
-    it('[A4] $1,234.50 of $12,345 → Spent "$1,234.50", Budget "$12,345"', async () => {
-      await showBudgets(server, { coffee: { target: 12345, posted: 1234, pending: 0.5 } }, { categories: [COFFEE] });
-      expect(heroTotals()).toMatchObject({ spent: '$1,234.50', budget: '$12,345' });
     });
   });
 });
@@ -852,13 +815,11 @@ describe('WHIT-730 Budgets polish', () => {
   // muted note and still opens the budget. A budget with spending keeps its full card and bar.
 
   it('a $0 budget is a slim row with no bar that keeps its note and still opens the budget', async () => {
-    seedBudgetsTab(server, {
+    await showRows(server, {
       // Nothing spent; a spread cushion makes this cycle's budget $300 and adds the note.
       coffee: { target: 100, posted: 0, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } },
       groceries: { target: 100, posted: 30, pending: 0 },
-    }, [COFFEE, GROCERIES]);
-    await renderLoadedBudgetsWithQueries();
-    await screen.findByText('Groceries');
+    });
 
     expect(screen.UNSAFE_queryAllByType(BudgetBar)).toHaveLength(1);
     expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes spread bills');
@@ -969,14 +930,11 @@ describe('WHIT-730 Budgets polish', () => {
       expect(styleOf(screen.getByTestId('budget-row-latte')).paddingBottom).toBe(14);
     });
 
-    // [A2] (P0) the slim row is still slim (one bar on screen: the full row's), and opens.
     it('[A2] the slim row has no bar and still opens its budget', async () => {
-      seedBudgetsTab(server, {
+      await showRows(server, {
         coffee: { target: 100, posted: 0, pending: 0 },
         groceries: { target: 100, posted: 30, pending: 0 },
-      }, [COFFEE, GROCERIES]);
-      await renderLoadedBudgetsWithQueries();
-      await screen.findByText('Groceries');
+      });
 
       expect(screen.UNSAFE_queryAllByType(BudgetBar)).toHaveLength(1);
       fireEvent.press(screen.getByTestId('budget-row-coffee'));
@@ -999,57 +957,61 @@ describe('WHIT-731 top card stats row', () => {
       .map((node) => node.props.testID);
   }
 
-  describe('WHIT-731 Budgets top card: Spent · Budget · Next payday row', () => {
-    it('over budget → money keeps cents, and the row shows Spent $6,136.68 · Budget $5,785 · Next payday, with no pending on the card', async () => {
-      await showOverBudget();
+  it('over budget → money keeps cents, and the row shows Spent $6,136.68 · Budget $5,785 · Next payday, with no pending on the card', async () => {
+    await showOverBudget();
 
-      // 5948.92 posted + 187.76 pending − 5785 budget = 351.68 over.
-      expect(screen.getByText(`${MINUS}$351.68`)).toBeTruthy();
-      expect(screen.getByText('Over budget')).toBeTruthy();
+    // 5948.92 posted + 187.76 pending − 5785 budget = 351.68 over.
+    expect(screen.getByText(`${MINUS}$351.68`)).toBeTruthy();
+    expect(screen.getByText('Over budget')).toBeTruthy();
 
-      expect(screen.getByTestId('budgets-hero-spent')).toHaveTextContent('$6,136.68');
-      expect(screen.getByTestId('budgets-hero-budget')).toHaveTextContent('$5,785');
-      const payday = screen.getByTestId('budgets-hero-payday');
-      expect(payday).toHaveTextContent(/^\d{1,2} [A-Z][a-z]{2}$/);
+    expect(screen.getByTestId('budgets-hero-spent')).toHaveTextContent('$6,136.68');
+    expect(screen.getByTestId('budgets-hero-budget')).toHaveTextContent('$5,785');
+    const payday = screen.getByTestId('budgets-hero-payday');
+    expect(payday).toHaveTextContent(/^\d{1,2} [A-Z][a-z]{2}$/);
 
-      expect(screen.getByText('Spent')).toBeTruthy();
-      expect(screen.getByText('Budget')).toBeTruthy();
-      expect(screen.getByText('Next payday')).toBeTruthy();
-      expect(screen.queryByText(/ spent$/)).toBeNull();
+    expect(screen.getByText('Spent')).toBeTruthy();
+    expect(screen.getByText('Budget')).toBeTruthy();
+    expect(screen.getByText('Next payday')).toBeTruthy();
+    expect(screen.queryByText(/ spent$/)).toBeNull();
 
-      expect(statIdsInOrder()).toEqual(STAT_IDS);
+    expect(statIdsInOrder()).toEqual(STAT_IDS);
 
-      expect(heroTotals()).toMatchObject({ spent: '$6,136.68', budget: '$5,785' });
+    expect(heroTotals()).toMatchObject({ spent: '$6,136.68', budget: '$5,785' });
 
-      // Pending shows nowhere: not on the card, not on the row (WHIT-744). No "resets" line either.
-      expect(screen.queryByText(/pending/)).toBeNull();
-      expect(screen.queryByText(/resets/)).toBeNull();
-    });
+    // Pending shows nowhere: not on the card, not on the row (WHIT-744). No "resets" line either.
+    expect(screen.queryByText(/pending/)).toBeNull();
+    expect(screen.queryByText(/resets/)).toBeNull();
+  });
 
-    it('a budget total pulled negative with cents shows the minus and the cents (WHIT-735)', async () => {
-      await showBudgets(server, {
-        coffee: { target: 200, posted: 10, pending: 0, rollover: true, carryover: -859.5, available: -659.5 },
-      }, { categories: [COFFEE] });
+  it('a budget total pulled negative with cents shows the minus and the cents (WHIT-735)', async () => {
+    await showBudgets(server, {
+      coffee: { target: 200, posted: 10, pending: 0, rollover: true, carryover: -859.5, available: -659.5 },
+    }, { categories: [COFFEE] });
 
-      expect(screen.getByTestId('budgets-hero-budget')).toHaveTextContent(`${MINUS}$659.50`);
-      expect(screen.getByTestId('budgets-hero-spent')).toHaveTextContent('$10');
-    });
+    expect(screen.getByTestId('budgets-hero-budget')).toHaveTextContent(`${MINUS}$659.50`);
+    expect(screen.getByTestId('budgets-hero-spent')).toHaveTextContent('$10');
+  });
 
-    it('the money number is the same size as the days-left number', async () => {
-      await showOverBudget();
+  it('the money number is the same size as the days-left number', async () => {
+    await showOverBudget();
 
-      const daysLeftSize = styleOf(screen.getByText('22')).fontSize as number;
-      const moneySize = styleOf(screen.getByText(`${MINUS}$351.68`)).fontSize as number;
+    const daysLeftSize = styleOf(screen.getByText('22')).fontSize as number;
+    const moneySize = styleOf(screen.getByText(`${MINUS}$351.68`)).fontSize as number;
 
-      expect(moneySize).toBe(daysLeftSize);
-    });
+    expect(moneySize).toBe(daysLeftSize);
   });
 
   // WHIT-731 QA — adversarial edges of the Spent · Budget · Next payday row: the totals survive a
-  // missing payday, and huge totals stay on one line instead of wrapping.
+  // missing payday, huge totals stay on one line instead of wrapping, and cents and thousands
+  // separators show.
 
   describe('WHIT-731 QA — the Spent · Budget · Next payday row', () => {
-    // [A1] (P1) unparseable payday → Spent and Budget still show, the payday cell and its label don't
+    // [A4] (P1) cents stay when the amount has them (WHIT-735), thousands get commas
+    it('[A4] $1,234.50 of $12,345 → Spent "$1,234.50", Budget "$12,345"', async () => {
+      await showBudgets(server, { coffee: { target: 12345, posted: 1234, pending: 0.5 } }, { categories: [COFFEE] });
+      expect(heroTotals()).toMatchObject({ spent: '$1,234.50', budget: '$12,345' });
+    });
+
     it('[A1] no payday date → Spent and Budget still show, no "Next payday" cell', async () => {
       seedBudgets(server, { payCycle: { length: 30, last_pay_date: 'garbage', days_left: 4 } });
       await renderLoadedBudgets();
@@ -1059,7 +1021,6 @@ describe('WHIT-731 top card stats row', () => {
       expect(screen.queryByText('Next payday')).toBeNull();
     });
 
-    // [A2] (P2) huge totals stay one line and shrink to fit rather than wrap
     it('[A2] million-dollar totals → each value is one line that shrinks to fit', async () => {
       await showBudgets(server, { coffee: { target: 1234567, posted: 2345678, pending: 0 } }, { categories: [COFFEE] });
       expect(heroTotals()).toMatchObject({ spent: '$2,345,678', budget: '$1,234,567' });
@@ -1078,12 +1039,10 @@ describe('WHIT-732 calm pace', () => {
   // of a rollover envelope.
   // [A14] (P0) halfway through: $70 of $100 is calm; $85 of $100 must slow down, but neither moves (WHIT-745).
   it('[A14] neither a slightly-ahead row nor a row that must slow down moves; no pace text', async () => {
-    seedBudgetsTab(server, {
+    await showRows(server, {
       coffee: { target: 100, posted: 70, pending: 0 },
       groceries: { target: 100, posted: 85, pending: 0 },
-    }, [COFFEE, GROCERIES]);
-    await renderLoadedBudgetsWithQueries();
-    await screen.findByText('Groceries');
+    });
     const order = screen.getAllByTestId(/^budget-row-(coffee|groceries)$/).map((r) => r.props.testID);
     expect(order).toEqual(['budget-row-coffee', 'budget-row-groceries']);
     expect(screen.queryByText(/over plan/)).toBeNull();
@@ -1111,26 +1070,24 @@ describe('WHIT-735 Budgets polish', () => {
       groceries: { target: 100, posted: 0, pending: 0 },
     });
 
-  describe('WHIT-735 Budgets polish', () => {
-    it('the top card shows cents only when the amount has them: Spent $6,136.68 · Budget $5,785 · −$351.68', async () => {
-      await showOverWithSlimRow();
+  it('the top card shows cents only when the amount has them: Spent $6,136.68 · Budget $5,785 · −$351.68', async () => {
+    await showOverWithSlimRow();
 
-      expect(screen.getByTestId('budgets-hero-spent')).toHaveTextContent('$6,136.68');
-      expect(screen.getByTestId('budgets-hero-budget')).toHaveTextContent('$5,785');
-      expect(screen.getByText(`${MINUS}$351.68`)).toBeTruthy();
-      expect(screen.getByText('Over budget')).toBeTruthy();
-    });
+    expect(screen.getByTestId('budgets-hero-spent')).toHaveTextContent('$6,136.68');
+    expect(screen.getByTestId('budgets-hero-budget')).toHaveTextContent('$5,785');
+    expect(screen.getByText(`${MINUS}$351.68`)).toBeTruthy();
+    expect(screen.getByText('Over budget')).toBeTruthy();
+  });
 
-    it('a short "nothing spent yet" row has the same top and bottom padding as a full row', async () => {
-      await showOverWithSlimRow();
-      await screen.findByText('Groceries');
+  it('a short "nothing spent yet" row has the same top and bottom padding as a full row', async () => {
+    await showOverWithSlimRow();
+    await screen.findByText('Groceries');
 
-      const full = styleOf(screen.getByTestId('budget-row-coffee'));
-      const slim = styleOf(screen.getByTestId('budget-row-groceries'));
+    const full = styleOf(screen.getByTestId('budget-row-coffee'));
+    const slim = styleOf(screen.getByTestId('budget-row-groceries'));
 
-      expect({ top: slim.paddingTop, bottom: slim.paddingBottom }).toEqual({ top: 16, bottom: 14 });
-      expect({ top: slim.paddingTop, bottom: slim.paddingBottom }).toEqual({ top: full.paddingTop, bottom: full.paddingBottom });
-    });
+    expect({ top: slim.paddingTop, bottom: slim.paddingBottom }).toEqual({ top: 16, bottom: 14 });
+    expect({ top: slim.paddingTop, bottom: slim.paddingBottom }).toEqual({ top: full.paddingTop, bottom: full.paddingBottom });
   });
 
   // WHIT-735 QA — the top card's one rule (cents only when the amount has them) on the cases the
@@ -1138,7 +1095,6 @@ describe('WHIT-735 Budgets polish', () => {
   // with cents). Its tab-label check lives in tabBarDot.screen.test.tsx.
 
   describe('WHIT-735 QA: top card amounts', () => {
-    // [A3] (P0) under budget with cents → no minus, cents kept, "Left to spend".
     it('[A3] under budget with cents shows $249.75 left, Spent $50.25 · Budget $300', async () => {
       await showBudgets(server, {
         coffee: { target: 200, posted: 50.25, pending: 0 },
@@ -1151,7 +1107,6 @@ describe('WHIT-735 Budgets polish', () => {
       expect(heroTotals()).toMatchObject({ spent: '$50.25', budget: '$300' });
     });
 
-    // [A4] (P0) over budget by whole dollars → a real minus, no ".00".
     it('[A4] over budget by whole dollars shows −$100, not −$100.00', async () => {
       await showBudgets(server, { coffee: { target: 100, posted: 200, pending: 0 } }, { categories: [COFFEE] });
 
@@ -1176,62 +1131,57 @@ describe('WHIT-741 Budgets polish', () => {
   // values in separate rows, both big numbers sized together, brighter notes, and a short tick band
   // on every row (WHIT-744).
 
-  // The height of the band under a row's bar that holds the target tick.
-  const tickBandHeight = (rowTestID: string) => styleOf(tickBandOf(screen.getByTestId(rowTestID))!).height;
+  it('no line on the row starts with "·", and no row shows pending (WHIT-744)', async () => {
+    await showTwoRows(server);
 
-  describe('WHIT-741 Budgets tab polish', () => {
-    it('no line on the row starts with "·", and no row shows pending (WHIT-744)', async () => {
-      await showTwoRows(server);
+    expect(screen.queryByTestId('budget-row-pending-coffee')).toBeNull();
+    expect(screen.queryByText(/pending/)).toBeNull();
+    expect(textOf(screen.getByTestId('budget-row-coffee'))).not.toContain('·');
+  });
 
-      expect(screen.queryByTestId('budget-row-pending-coffee')).toBeNull();
-      expect(screen.queryByText(/pending/)).toBeNull();
-      expect(textOf(screen.getByTestId('budget-row-coffee'))).not.toContain('·');
+  it('the top card puts Spent · Budget · Next payday labels in one row and their values in the next', async () => {
+    await showTwoRows(server);
+
+    const spent = screen.getByTestId('budgets-hero-spent');
+    const payday = screen.getByTestId('budgets-hero-payday');
+    expect(screen.getByTestId('budgets-hero-budget')).toBeTruthy();
+    expect(spent.props.numberOfLines).toBe(1);
+    expect(spent.props.adjustsFontSizeToFit).toBe(true);
+
+    const valuesRow = sharedHost(spent, payday);
+    expect(textOf(valuesRow)).not.toMatch(/Spent|Budget|Next payday/);
+
+    const labelsRow = sharedHost(screen.getByText('Spent'), screen.getByText('Next payday'));
+    expect(textOf(labelsRow)).not.toContain('$105');
+  });
+
+  it('both big numbers grow and shrink together: same size cap, and the days number never shrinks alone', async () => {
+    await showTwoRows(server);
+
+    const days = screen.getByText('7');
+    const money = screen.getByText('$95');
+    expect(typeof days.props.maxFontSizeMultiplier).toBe('number');
+    expect(money.props.maxFontSizeMultiplier).toBe(days.props.maxFontSizeMultiplier);
+    expect(days.props.adjustsFontSizeToFit).toBeFalsy();
+    expect(styleOf(days).fontSize).toBe(44);
+    expect(styleOf(money).fontSize).toBe(44);
+  });
+
+  it('every row\'s tick band is short (WHIT-744)', async () => {
+    await showTwoRows(server);
+
+    expect(screen.queryByText(/over plan/)).toBeNull();
+    expect(tickBandHeight(screen.getByTestId('budget-row-coffee'))).toBe(3);
+    expect(tickBandHeight(screen.getByTestId('budget-row-groceries'))).toBe(3);
+  });
+
+  it('the "Includes …" note is a little brighter than the dim sub-line', async () => {
+    seedBudgetsTab(server, {
+      coffee: { target: 100, posted: 150, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } },
     });
+    await renderLoadedBudgetsWithQueries();
 
-    it('the top card puts Spent · Budget · Next payday labels in one row and their values in the next', async () => {
-      await showTwoRows(server);
-
-      const spent = screen.getByTestId('budgets-hero-spent');
-      const payday = screen.getByTestId('budgets-hero-payday');
-      expect(screen.getByTestId('budgets-hero-budget')).toBeTruthy();
-      expect(spent.props.numberOfLines).toBe(1);
-      expect(spent.props.adjustsFontSizeToFit).toBe(true);
-
-      const valuesRow = sharedHost(spent, payday);
-      expect(textOf(valuesRow)).not.toMatch(/Spent|Budget|Next payday/);
-
-      const labelsRow = sharedHost(screen.getByText('Spent'), screen.getByText('Next payday'));
-      expect(textOf(labelsRow)).not.toContain('$105');
-    });
-
-    it('both big numbers grow and shrink together: same size cap, and the days number never shrinks alone', async () => {
-      await showTwoRows(server);
-
-      const days = screen.getByText('7');
-      const money = screen.getByText('$95');
-      expect(typeof days.props.maxFontSizeMultiplier).toBe('number');
-      expect(money.props.maxFontSizeMultiplier).toBe(days.props.maxFontSizeMultiplier);
-      expect(days.props.adjustsFontSizeToFit).toBeFalsy();
-      expect(styleOf(days).fontSize).toBe(44);
-      expect(styleOf(money).fontSize).toBe(44);
-    });
-
-    it('every row\'s tick band is short (WHIT-744)', async () => {
-      await showTwoRows(server);
-
-      expect(screen.queryByText(/over plan/)).toBeNull();
-      expect(tickBandHeight('budget-row-coffee')).toBe(3);
-      expect(tickBandHeight('budget-row-groceries')).toBe(3);
-    });
-
-    it('the "Includes …" note is a little brighter than the dim sub-line', async () => {
-      seedBudgetsTab(server, {
-        coffee: { target: 100, posted: 150, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } },
-      });
-      await renderLoadedBudgetsWithQueries();
-
-      expect(styleOf(screen.getByTestId('budget-row-note-coffee')).color).toBe(C.textMid);
-    });
+    expect(styleOf(screen.getByTestId('budget-row-note-coffee')).color).toBe(C.textMid);
   });
 
   describe('QA', () => {
@@ -1246,22 +1196,15 @@ describe('WHIT-741 Budgets polish', () => {
     // Host Text children of a host row, in order.
     const hostCells = (row: ReactTestInstance) => row.findAll((n) => isHostText(n) && hostParent(n) === row);
 
-    // The height of the band holding the first tick under `root`.
-    const tickBandHeight = (root: ReactTestInstance) => styleOf(tickBandOf(root)!).height;
-
-    // [A13] (P0) a fully used budget ("$0 left") shows its bar with no tick; a budget with money left keeps it.
     it('[A13] "$0 left" row has no tick; a row with money left has one', async () => {
-      seedBudgetsTab(server, {
+      await showRows(server, {
         coffee: { target: 100, posted: 100, pending: 0 },
         groceries: { target: 100, posted: 20, pending: 0 },
-      }, [COFFEE, GROCERIES]);
-      await renderLoadedBudgetsWithQueries();
-      await screen.findByText('Groceries');
+      });
       expect(tickBandOf(screen.getByTestId('budget-row-coffee'))).toBeNull();
       expect(tickBandOf(screen.getByTestId('budget-row-groceries'))).not.toBeNull();
     });
 
-    // [A14] (P1) a row with a note gets the same short tick band as every row (WHIT-744).
     it('[A14] a note-only row has the short tick band', async () => {
       seedBudgetsTab(server, {
         coffee: { target: 100, posted: 20, pending: 0, rollover: true, carryover: 40 },
@@ -1272,7 +1215,6 @@ describe('WHIT-741 Budgets polish', () => {
       expect(tickBandHeight(screen.getByTestId('budget-row-coffee'))).toBe(3);
     });
 
-    // [A15] (P0) an earning row never shows a pending line, even with pending money.
     it('[A15] income row with pending has no pending line', async () => {
       seedBudgetsTab(server, { salary: { target: 5000, posted: 1000, pending: 300 } }, [SALARY]);
       await renderWithQueries(<Budgets />);
@@ -1310,7 +1252,6 @@ describe('WHIT-741 Budgets polish', () => {
       expect(moneyCol.minWidth).toBe(0);
     });
 
-    // [A18] (P0) over budget: the hero amount and the Budget total keep the minus glued to "$".
     it('[A18] hero "−$" amounts carry the word joiner', async () => {
       seedBudgetsTab(server, { coffee: { target: 100, posted: 120.5, pending: 0, spreadAdjustment: -150, spread: { amount: 450, cycles: 3, index: 1, adjustment: -150 } } });
       await renderLoadedBudgetsWithQueries();
@@ -1319,7 +1260,6 @@ describe('WHIT-741 Budgets polish', () => {
       expect(screen.getByText(`$120.50 of ${MINUS}$50`)).toBeTruthy();
     });
 
-    // [A19] (P0) detail: a used-up budget hides the tick and "today's plan"; the "of" line has cents.
     it('[A19] used-up budget detail: no "today\'s plan", "of $140.67"', async () => {
       setParams({ id: 'coffee' });
       seedBudgetsTab(server, { coffee: { target: 140.67, posted: 140.67, pending: 0 } });
@@ -1435,67 +1375,65 @@ describe('WHIT-743 large text', () => {
     return { name: row.getByText(name), remain: row.getByText(remain) };
   };
 
-  describe('WHIT-743 Budgets tab at very large text', () => {
-    it('a budget row stacks: the amount sits below the name, not squeezed beside it', async () => {
-      await showTwoRows(server);
-      const { name, remain } = rowParts('coffee', 'Cafes & Coffee', '$20');
+  it('a budget row stacks: the amount sits below the name, not squeezed beside it', async () => {
+    await showTwoRows(server);
+    const { name, remain } = rowParts('coffee', 'Cafes & Coffee', '$20');
 
-      expect(styleOf(sharedHost(name, remain)).flexDirection).not.toBe('row');
-      for (let host: ReactTestInstance | null = remain.parent; host; host = host.parent) {
-        if (typeof host.type === 'string') expect(styleOf(host).maxWidth).not.toBe('45%');
-      }
-    });
+    expect(styleOf(sharedHost(name, remain)).flexDirection).not.toBe('row');
+    for (let host: ReactTestInstance | null = remain.parent; host; host = host.parent) {
+      if (typeof host.type === 'string') expect(styleOf(host).maxWidth).not.toBe('45%');
+    }
+  });
 
-    it('row name, sub-lines and amount stop growing at about 2× so no word splits mid-word', async () => {
-      await showTwoRows(server);
-      const row = within(screen.getByTestId('budget-row-coffee'));
-      const texts = [
-        row.getByText('Cafes & Coffee'),
-        row.getByText(/^\$80 of/),
-        row.getByText('$20'),
-      ];
-      for (const text of texts) {
-        expect(typeof text.props.maxFontSizeMultiplier).toBe('number');
-        expect(text.props.maxFontSizeMultiplier).toBeLessThanOrEqual(2);
-      }
-    });
+  it('row name, sub-lines and amount stop growing at about 2× so no word splits mid-word', async () => {
+    await showTwoRows(server);
+    const row = within(screen.getByTestId('budget-row-coffee'));
+    const texts = [
+      row.getByText('Cafes & Coffee'),
+      row.getByText(/^\$80 of/),
+      row.getByText('$20'),
+    ];
+    for (const text of texts) {
+      expect(typeof text.props.maxFontSizeMultiplier).toBe('number');
+      expect(text.props.maxFontSizeMultiplier).toBeLessThanOrEqual(2);
+    }
+  });
 
-    it('the top card stacks the days and money numbers, and both stay the same size', async () => {
-      await showTwoRows(server);
-      const days = screen.getByText('7');
-      const money = screen.getByText('$95');
+  it('the top card stacks the days and money numbers, and both stay the same size', async () => {
+    await showTwoRows(server);
+    const days = screen.getByText('7');
+    const money = screen.getByText('$95');
 
-      expect(styleOf(sharedHost(days, money)).flexDirection).not.toBe('row');
-      expect(styleOf(money).fontSize).toBe(styleOf(days).fontSize);
-      expect(typeof days.props.maxFontSizeMultiplier).toBe('number');
-      expect(money.props.maxFontSizeMultiplier).toBe(days.props.maxFontSizeMultiplier);
-    });
+    expect(styleOf(sharedHost(days, money)).flexDirection).not.toBe('row');
+    expect(styleOf(money).fontSize).toBe(styleOf(days).fontSize);
+    expect(typeof days.props.maxFontSizeMultiplier).toBe('number');
+    expect(money.props.maxFontSizeMultiplier).toBe(days.props.maxFontSizeMultiplier);
+  });
 
-    it('the top card shows each stat as its own label-above-value pair', async () => {
-      await showTwoRows(server);
-      const pairs: [string, string][] = [['Spent', 'budgets-hero-spent'], ['Budget', 'budgets-hero-budget'], ['Next payday', 'budgets-hero-payday']];
-      for (const [label, testID] of pairs) {
-        const pair = textOf(sharedHost(screen.getByText(label), screen.getByTestId(testID)));
-        const others = pairs.filter(([other]) => other !== label).map(([other]) => other);
-        for (const other of others) expect(pair).not.toContain(other);
-      }
-    });
+  it('the top card shows each stat as its own label-above-value pair', async () => {
+    await showTwoRows(server);
+    const pairs: [string, string][] = [['Spent', 'budgets-hero-spent'], ['Budget', 'budgets-hero-budget'], ['Next payday', 'budgets-hero-payday']];
+    for (const [label, testID] of pairs) {
+      const pair = textOf(sharedHost(screen.getByText(label), screen.getByTestId(testID)));
+      const others = pairs.filter(([other]) => other !== label).map(([other]) => other);
+      for (const other of others) expect(pair).not.toContain(other);
+    }
+  });
 
-    it('the tab title cannot grow taller than its fixed-height title bar (no covering "THIS PAY CYCLE")', async () => {
-      await showTwoRows(server);
-      const title = screen.UNSAFE_getAllByType(Text).find((t) => textOf(t) === 'Budgets' && styleOf(t).fontSize === 19)!;
-      expect(title).toBeTruthy();
-      expect(typeof title.props.maxFontSizeMultiplier).toBe('number');
-      // The bar is HEADER_BODY_HEIGHT tall with 6 top + 12 bottom padding → 40px for the title.
-      expect(19 * title.props.maxFontSizeMultiplier).toBeLessThanOrEqual(HEADER_BODY_HEIGHT - 18);
-    });
+  it('the tab title cannot grow taller than its fixed-height title bar (no covering "THIS PAY CYCLE")', async () => {
+    await showTwoRows(server);
+    const title = screen.UNSAFE_getAllByType(Text).find((t) => textOf(t) === 'Budgets' && styleOf(t).fontSize === 19)!;
+    expect(title).toBeTruthy();
+    expect(typeof title.props.maxFontSizeMultiplier).toBe('number');
+    // The bar is HEADER_BODY_HEIGHT tall with 6 top + 12 bottom padding → 40px for the title.
+    expect(19 * title.props.maxFontSizeMultiplier).toBeLessThanOrEqual(HEADER_BODY_HEIGHT - 18);
+  });
 
-    it('at normal text the row keeps its side-by-side layout', async () => {
-      mockLarge = false;
-      await showTwoRows(server);
-      const { name, remain } = rowParts('coffee', 'Cafes & Coffee', '$20');
-      expect(styleOf(sharedHost(name, remain)).flexDirection).toBe('row');
-    });
+  it('at normal text the row keeps its side-by-side layout', async () => {
+    mockLarge = false;
+    await showTwoRows(server);
+    const { name, remain } = rowParts('coffee', 'Cafes & Coffee', '$20');
+    expect(styleOf(sharedHost(name, remain)).flexDirection).toBe('row');
   });
 
   describe('WHIT-743 budget detail at very large text', () => {
@@ -1534,21 +1472,17 @@ describe('WHIT-743 large text', () => {
   // keep their values, the over-budget and earning-only top cards, and the normal layout is untouched.
   // 14-day cycle, 7 days left (pace = half). Coffee $80 of $100 → "$20 left".
   // Groceries $25 of $100 + $200 spread → the spread note. Totals $105 of $400 → "$295".
-  const showRows = async () => {
-    seedBudgetsTab(server, {
-      coffee: { target: 100, posted: 70, pending: 10 },
-      groceries: { target: 100, posted: 25, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } },
-    }, [COFFEE, GROCERIES]);
-    await renderLoadedBudgetsWithQueries();
-    await screen.findByText('Groceries');
-  };
+  const showSpreadRows = () => showRows(server, {
+    coffee: { target: 100, posted: 70, pending: 10 },
+    groceries: { target: 100, posted: 25, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } },
+  });
 
   const coffeeRow = () => within(screen.getByTestId('budget-row-coffee'));
 
   describe('WHIT-743 QA — Budgets tab at very large text', () => {
     // [A2]
     it('every row text (name, spent line, amount, its label, note) is capped at 2×', async () => {
-      await showRows();
+      await showSpreadRows();
       const row = coffeeRow();
       const texts = [
         row.getByText('Cafes & Coffee'),
@@ -1563,7 +1497,7 @@ describe('WHIT-743 large text', () => {
 
     // [A3]
     it('the note has no line limit, so it wraps, and its cap is the large-text cap', async () => {
-      await showRows();
+      await showSpreadRows();
       const note = screen.getByTestId('budget-row-note-groceries');
       expect(note.props.numberOfLines).toBeUndefined();
       expect(note.props.maxFontSizeMultiplier).toBe(LARGE_TEXT_MAX_SCALE);
@@ -1571,7 +1505,7 @@ describe('WHIT-743 large text', () => {
 
     // [A4]
     it('the stacked amount keeps one line and spans the row (no 45% cap)', async () => {
-      await showRows();
+      await showSpreadRows();
       const remain = coffeeRow().getByText('$20');
       expect(remain.props.numberOfLines).toBe(1);
       for (let host = remain.parent; host; host = host.parent) {
@@ -1582,7 +1516,7 @@ describe('WHIT-743 large text', () => {
 
     // [A5]
     it('the money number may still shrink to fit, the days number never does; both one line', async () => {
-      await showRows();
+      await showSpreadRows();
       const days = screen.getByText('7');
       const money = screen.getByText('$295');
       expect(money.props.adjustsFontSizeToFit).toBe(true);
@@ -1594,7 +1528,7 @@ describe('WHIT-743 large text', () => {
 
     // [A6]
     it('stacked stats keep their values and testIDs, each at full width', async () => {
-      await showRows();
+      await showSpreadRows();
       expect(textOf(screen.getByTestId('budgets-hero-spent'))).toBe('$105');
       expect(textOf(screen.getByTestId('budgets-hero-budget'))).toBe('$400');
       expect(textOf(screen.getByTestId('budgets-hero-payday'))).not.toBe('');
@@ -1628,7 +1562,7 @@ describe('WHIT-743 large text', () => {
 
     // [A9]
     it('the stats keep their label row and value row of three', async () => {
-      await showRows();
+      await showSpreadRows();
       const labels = sharedHost(screen.getByText('Spent'), screen.getByText('Next payday'));
       expect(styleOf(labels).flexDirection).toBe('row');
       expect(textOf(labels)).toBe('SpentBudgetNext payday');
@@ -1639,7 +1573,7 @@ describe('WHIT-743 large text', () => {
 
     // [A10]
     it('the amount column keeps its 45% cap', async () => {
-      await showRows();
+      await showSpreadRows();
       const row = coffeeRow();
       expect(styleOf(sharedHost(row.getByText('$20'), row.getByText('left'))).maxWidth).toBe('45%');
     });
@@ -1651,60 +1585,45 @@ describe('WHIT-744 quiet budget rows', () => {
   // "Includes …" note starts at the left, the same distance below the bar whether or not the row
   // draws a pace tick.
 
-  describe('WHIT-744 quiet Budgets tab rows', () => {
-    it('rows show no pending or plan line, keep a short tick, and put every note the same distance below the bar', async () => {
-      // Halfway through a 14-day cycle. Coffee: $80 spent ($10 pending) of $105 → under budget but
-      // spending too fast, draws a tick, note "Includes $5 past leftovers". Groceries: $150 of $50
-      // → over budget, no tick, note "Includes $50 past overspend".
-      seedBudgetsTab(server, {
-        coffee: { target: 100, posted: 70, pending: 10, rollover: true, carryover: 5 },
-        groceries: { target: 100, posted: 150, pending: 0, rollover: true, carryover: -50 },
-      }, [COFFEE, GROCERIES]);
-      await renderLoadedBudgetsWithQueries();
-      await screen.findByText('Groceries');
+  // Halfway through a 14-day cycle. Coffee: $80 ($10 pending) of $105 → under budget but spending too fast, ticked, "Includes $5 past
+  // leftovers". Groceries: $150 of $50 → over, no tick, "Includes $50 past overspend".
+  const showTickAndOver = () => showRows(server, {
+    coffee: { target: 100, posted: 70, pending: 10, rollover: true, carryover: 5 },
+    groceries: { target: 100, posted: 150, pending: 0, rollover: true, carryover: -50 },
+  });
 
-      expect(screen.queryByTestId('budget-row-pending-coffee')).toBeNull();
-      expect(screen.queryByText(/pending/)).toBeNull();
-      expect(screen.queryByText(/over plan/)).toBeNull();
-      expect(screen.queryByText(/under plan/)).toBeNull();
-      expect(within(screen.getByTestId('budget-row-coffee')).getByText('$25')).toBeTruthy();
-      expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes $5 past leftovers');
-      expect(screen.getByTestId('budget-row-note-groceries').props.children).toBe('Includes $50 past overspend');
+  it('rows show no pending or plan line, keep a short tick, and put every note the same distance below the bar', async () => {
+    await showTickAndOver();
 
-      const coffeeBand = tickBandOf(screen.getByTestId('budget-row-coffee'));
-      expect(coffeeBand).not.toBeNull();
-      expect(styleOf(coffeeBand!).height).toBe(3);
-      expect(tickBandOf(screen.getByTestId('budget-row-groceries'))).toBeNull();
+    expect(screen.queryByTestId('budget-row-pending-coffee')).toBeNull();
+    expect(screen.queryByText(/pending/)).toBeNull();
+    expect(screen.queryByText(/over plan/)).toBeNull();
+    expect(screen.queryByText(/under plan/)).toBeNull();
+    expect(within(screen.getByTestId('budget-row-coffee')).getByText('$25')).toBeTruthy();
+    expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes $5 past leftovers');
+    expect(screen.getByTestId('budget-row-note-groceries').props.children).toBe('Includes $50 past overspend');
 
-      expect(noteOffsetBelowBar('coffee')).toBe(noteOffsetBelowBar('groceries'));
-      expect(noteOffsetBelowBar('coffee')).toBeGreaterThan(4);
+    const coffeeBand = tickBandOf(screen.getByTestId('budget-row-coffee'));
+    expect(coffeeBand).not.toBeNull();
+    expect(styleOf(coffeeBand!).height).toBe(3);
+    expect(tickBandOf(screen.getByTestId('budget-row-groceries'))).toBeNull();
 
-      // QA [A3]: the bar keeps its lighter pending part. Posted $70 and pending $10 of $105: the
-      // pending segment starts where posted ends and has width.
-      const segments = screen.getByTestId('budget-row-coffee')
-        .findAll((n) => typeof n.type === 'string' && typeof styleOf(n).left === 'string' && typeof styleOf(n).width === 'string');
-      expect(segments).toHaveLength(1);
-      expect(parseFloat(String(styleOf(segments[0]).width))).toBeGreaterThan(5);
-    });
+    expect(noteOffsetBelowBar('coffee')).toBe(noteOffsetBelowBar('groceries'));
+    expect(noteOffsetBelowBar('coffee')).toBeGreaterThan(4);
+
+    // QA [A3]: the bar keeps its lighter pending part. Posted $70 and pending $10 of $105: the
+    // pending segment starts where posted ends and has width.
+    const segments = screen.getByTestId('budget-row-coffee')
+      .findAll((n) => typeof n.type === 'string' && typeof styleOf(n).left === 'string' && typeof styleOf(n).width === 'string');
+    expect(segments).toHaveLength(1);
+    expect(parseFloat(String(styleOf(segments[0]).width))).toBeGreaterThan(5);
   });
 
   // WHIT-744 QA — the edges the proof test leaves: notes still line up at very large text (WHIT-743
   // layout kept), a row spent exactly to its budget (no tick, not over) lines up with a ticked spread
   // row, and the bar keeps its lighter pending part now the pending line is gone.
 
-  // Halfway through a 14-day cycle. Coffee: $80 ($10 pending) of $105 → ticked, "Includes $5 past
-  // leftovers". Groceries: $150 of $50 → over, no tick, "Includes $50 past overspend".
-  const showTickAndOver = async () => {
-    seedBudgetsTab(server, {
-      coffee: { target: 100, posted: 70, pending: 10, rollover: true, carryover: 5 },
-      groceries: { target: 100, posted: 150, pending: 0, rollover: true, carryover: -50 },
-    }, [COFFEE, GROCERIES]);
-    await renderLoadedBudgetsWithQueries();
-    await screen.findByText('Groceries');
-  };
-
   describe('WHIT-744 QA — quiet Budgets rows', () => {
-    // [A1] (P0)
     it('[A1] at very large text, a ticked and an unticked row still put the note the same distance below the bar', async () => {
       mockLarge = true;
       await showTickAndOver();
@@ -1714,16 +1633,13 @@ describe('WHIT-744 quiet budget rows', () => {
       expect(screen.queryByText(/pending|over plan|under plan/)).toBeNull();
     });
 
-    // [A2] (P1)
     it('[A2] a row spent exactly to its budget (no tick, not over) lines up with a ticked spread-bills row', async () => {
       // Coffee: $105 of $105 ($100 + $5 leftovers) → $0 left, not over, no tick. Groceries: $25 of $300
       // with a $200 spread → ticked, "Includes spread bills".
-      seedBudgetsTab(server, {
+      await showRows(server, {
         coffee: { target: 100, posted: 105, pending: 0, rollover: true, carryover: 5 },
         groceries: { target: 100, posted: 25, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } },
-      }, [COFFEE, GROCERIES]);
-      await renderLoadedBudgetsWithQueries();
-      await screen.findByText('Groceries');
+      });
       expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes $5 past leftovers');
       expect(screen.getByTestId('budget-row-note-groceries').props.children).toBe('Includes spread bills');
       expect(tickBandOf(screen.getByTestId('budget-row-coffee'))).toBeNull();

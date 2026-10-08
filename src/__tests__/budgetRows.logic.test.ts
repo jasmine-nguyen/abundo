@@ -29,7 +29,6 @@ describe('WHIT-707 budget row text', () => {
   }).rows[0];
 
   describe('income "next pay" label boundaries (decision 3)', () => {
-    // [A1] (P0) 1 day out → weekday.
     it('[A1] daysLeft 1 → "~Sun" (weekday)', () => {
       expect(incomeRow(1, '2026-10-04').spentLabel).toBe('$1,000 earned · next pay ~Sun');
     });
@@ -56,7 +55,6 @@ describe('WHIT-707 budget row text', () => {
   });
 
   describe('over budget: quiet row', () => {
-    // [A6] (P0) over with an active spread → the red amount says it once.
     it('[A6] over with an active spread → the red amount says it once', () => {
       const row = budgetRowFor({
         budget: 100, posted: 130, pending: 0, spreadAdjustment: -10,
@@ -67,19 +65,16 @@ describe('WHIT-707 budget row text', () => {
       expect(row.remainColor).toBe(C.bad); // rose stays on the amount
     });
 
-    // [A7] (P1) a sub-cent overshoot still counts as over.
     it('[A7] sub-cent overshoot → over', () => {
       expect(budgetRowFor({ budget: 100, posted: 100.004, pending: 0 }).over).toBe(true);
     });
 
-    // [A8] (P0) pending pushes a row over budget.
     it('[A8] over with pending → pending counted in spent, over', () => {
       const row = budgetRowFor({ budget: 100, posted: 90, pending: 25 });
       expect(row.spentLabel).toBe('$115 of\u00a0$100');
       expect(row.over).toBe(true);
     });
 
-    // [A9] (P0) over plan but under budget → not over.
     it('[A9] over plan but under budget → not over', () => {
       const row = budgetRowFor({ budget: 100, posted: 90, pending: 0 }); // target 50
       expect(row.over).toBe(false);
@@ -94,19 +89,16 @@ describe('WHIT-707 budget row text', () => {
   });
 
   describe('pending in the spent amount', () => {
-    // [A12] (P1) a sub-cent pending float adds no "pending" words.
     it('[A12] pending 0.004 → no pending words', () => {
       const row = budgetRowFor({ budget: 100, posted: 40, pending: 0.004 });
       expect(row.spentLabel).not.toContain('pending');
     });
 
-    // [A13] (P1) one cent pending is real → counted with cents.
     it('[A13] pending 0.01 → counted in spent', () => {
       const row = budgetRowFor({ budget: 100, posted: 40, pending: 0.01 });
       expect(row.spentLabel).toBe('$40.01 of\u00a0$100');
     });
 
-    // [A14] (P1) rollover envelope: "of" shows the available envelope, pending counted in spent.
     it('[A14] rollover with carryover → "of" the envelope, pending in spent', () => {
       const row = budgetRowFor({ budget: 100, posted: 30, pending: 20, rollover: true, carryover: 50 });
       expect(row.spentLabel).toBe('$50 of\u00a0$150');
@@ -137,7 +129,6 @@ describe('WHIT-707 budget row text', () => {
       expect(totSpent).toBe(1040);
     });
 
-    // [A16] (P1) income only → every row is earning, none hidden.
     it('[A16] only income budgets → all rows earning', () => {
       const { rows } = budgetViews(makeState({
         categories: [salary], budgets: [budget({ id: 'salary', budget: 5000, posted: 0, pending: 0 })], cycleLen: 14, daysLeft: 7,
@@ -150,7 +141,6 @@ describe('WHIT-707 budget row text', () => {
     // [A17] and [A18] (late evening around the DST changes) now run through nextPayday in
     // whit710PayCycleCleanup.logic.test.ts.
 
-    // [A19] (P2) weekday on the DST-change days, and garbage input → ''.
     it('[A19] formatWeekdayShort on DST days and garbage', () => {
       expect(formatWeekdayShort('2026-04-05')).toBe('Sun');
       expect(formatWeekdayShort('2026-10-05')).toBe('Mon');
@@ -162,46 +152,42 @@ describe('WHIT-707 budget row text', () => {
 describe('WHIT-712 quiet budget rows', () => {
   // WHIT-712 — budget rows stay quiet by default: one money line ("$X of $Y"), no
   // "on pace" line, the overspend said once, and carried-over / borrowed only on the detail screen.
-  describe('budget rows stay quiet (WHIT-712)', () => {
-    it('an on-pace row shows what is left', () => {
-      const row = budgetRowFor({ budget: 100, posted: 50, pending: 0 });
-      expect(row.remainAmount).toBe('$50');
-      expect(row.remainLabel).toBe('left');
-    });
+  it('an on-pace row shows what is left', () => {
+    const row = budgetRowFor({ budget: 100, posted: 50, pending: 0 });
+    expect(row.remainAmount).toBe('$50');
+    expect(row.remainLabel).toBe('left');
+  });
 
-    it('over budget says the overspend once, in the red amount', () => {
-      const row = budgetRowFor({ budget: 100, posted: 120, pending: 0, rollover: true, carryover: 0 });
-      expect(row.remainAmount).toBe('$20');
-      expect(row.remainLabel).toBe('over');
-      expect(row.remainColor).toBe(C.bad);
-      expect(rowText(row).match(/\$20(?![\d.,])/g)).toHaveLength(1);
-    });
+  it('over budget says the overspend once, in the red amount', () => {
+    const row = budgetRowFor({ budget: 100, posted: 120, pending: 0, rollover: true, carryover: 0 });
+    expect(row.remainAmount).toBe('$20');
+    expect(row.remainLabel).toBe('over');
+    expect(row.remainColor).toBe(C.bad);
+    expect(rowText(row).match(/\$20(?![\d.,])/g)).toHaveLength(1);
+  });
 
-    it('the money line reads "$X of $Y", pending included, no pending line (WHIT-744)', () => {
-      const row = budgetRowFor({ budget: 600, posted: 374, pending: 38 });
-      expect(row.spentLabel).toBe('$412 of\u00a0$600');
-      expect(budgetRowFor({ budget: 100, posted: 40, pending: 0 }).spentLabel).toBe('$40 of\u00a0$100');
-    });
+  it('the money line reads "$X of $Y", pending included, no pending line (WHIT-744)', () => {
+    const row = budgetRowFor({ budget: 600, posted: 374, pending: 38 });
+    expect(row.spentLabel).toBe('$412 of\u00a0$600');
+    expect(budgetRowFor({ budget: 100, posted: 40, pending: 0 }).spentLabel).toBe('$40 of\u00a0$100');
+  });
 
-    it('no row field mentions the carry-over', () => {
-      for (const carryover of [200, -40]) {
-        const row = budgetRowFor({ budget: 100, posted: 0, pending: 0, rollover: true, carryover });
-        expect(rowText(row)).not.toMatch(/carried over|borrowed|short from|left over from/);
-        expect(row).not.toHaveProperty('carryoverLabel');
-      }
-    });
+  it('no row field mentions the carry-over', () => {
+    for (const carryover of [200, -40]) {
+      const row = budgetRowFor({ budget: 100, posted: 0, pending: 0, rollover: true, carryover });
+      expect(rowText(row)).not.toMatch(/carried over|borrowed|short from|left over from/);
+      expect(row).not.toHaveProperty('carryoverLabel');
+    }
   });
 
   // WHIT-712 QA — the pace deadband edges now that "on pace" is silent: exactly ±$0.50 off pace
   // stays calm on the detail screen; and an overspend in cents is said once, exactly, on the row.
   describe('pace deadband edges (WHIT-712)', () => {
-    // [A1] (P0) exactly $0.50 either side of pace is still "on pace" → no warning.
     it('[A1] exactly ±$0.50 off pace → on track', () => {
       expect(budgetDetailFor({ budget: 100, posted: 50.5 }).statusLabel).toBe('On track for payday');
       expect(budgetDetailFor({ budget: 100, posted: 49.5 }).statusLabel).toBe('On track for payday');
     });
 
-    // [A3] (P1) spent exactly the budget is NOT over: amount "left", and over plan in detail.
     it('[A3] spent exactly the budget → not over, $0 left, over plan', () => {
       const row = budgetRowFor({ budget: 100, posted: 100, pending: 0 });
       expect(row.over).toBe(false);
@@ -210,7 +196,6 @@ describe('WHIT-712 quiet budget rows', () => {
       expect(budgetDetailFor({ budget: 100, posted: 100 }).statusLabel).toBe('Over plan — ease up');
     });
 
-    // [A4] (P1) a cents overspend with no spread: the exact amount once, on the red amount only.
     it('[A4] over by $20.40 (rollover, no spread) → "$20.40" once', () => {
       const row = budgetRowFor({ budget: 100, posted: 120.4, pending: 0, rollover: true, carryover: 0 });
       expect(row.remainAmount).toBe('$20.40');
@@ -226,20 +211,18 @@ describe('WHIT-715 budget status words', () => {
   // and the detail carry-over line says "Includes $X past leftovers" / "past overspend" (WHIT-733).
   const incomeRow = (b: object) => budgetRowFor({ pending: 0, ...b }, SALARY);
 
-  describe('budget status words say good or bad plainly (WHIT-715)', () => {
-    it('a met income target reads "above target", and no income row field says "over"', () => {
-      const met = incomeRow({ budget: 100, posted: 120 });
-      expect(met.remainLabel).toBe('above target');
-      expect(rowText(met)).not.toMatch(/\bover\b/i);
-      expect(incomeRow({ budget: 100, posted: 40 }).remainLabel).toBe('to go');
-    });
+  it('a met income target reads "above target", and no income row field says "over"', () => {
+    const met = incomeRow({ budget: 100, posted: 120 });
+    expect(met.remainLabel).toBe('above target');
+    expect(rowText(met)).not.toMatch(/\bover\b/i);
+    expect(incomeRow({ budget: 100, posted: 40 }).remainLabel).toBe('to go');
+  });
 
-    it('the detail carry-over line says past leftovers / past overspend', () => {
-      expect(budgetDetailFor({ budget: 100, posted: 10, rollover: true, carryover: 40 }).carryoverLine)
-        .toBe('Includes $40 past leftovers');
-      expect(budgetDetailFor({ budget: 100, posted: 10, rollover: true, carryover: -20 }).carryoverLine)
-        .toBe('Includes $20 past overspend');
-    });
+  it('the detail carry-over line says past leftovers / past overspend', () => {
+    expect(budgetDetailFor({ budget: 100, posted: 10, rollover: true, carryover: 40 }).carryoverLine)
+      .toBe('Includes $40 past leftovers');
+    expect(budgetDetailFor({ budget: 100, posted: 10, rollover: true, carryover: -20 }).carryoverLine)
+      .toBe('Includes $20 past overspend');
   });
 
   // WHIT-715 QA — the detail screen's pace words across budgets with pending, rollover buffers either
@@ -671,7 +654,6 @@ describe('WHIT-732 calm pace', () => {
       expect(paceWarning({ spent: 150, target: 50, available: 100, over: true }, HALFWAY)).toBe(false);
     });
 
-    // [A3] (P0) ahead by exactly 50c stays quiet even with no room left.
     it('[A3] ahead by exactly $0.50 → quiet, even with almost nothing left per day', () => {
       expect(paceWarning({ spent: 50.5, target: 50, available: 51, over: false }, HALFWAY)).toBe(false);
       expect(paceWarning({ spent: 50.51, target: 50, available: 51, over: false }, HALFWAY)).toBe(true);
@@ -696,12 +678,10 @@ describe('WHIT-732 calm pace', () => {
   });
 
   describe('budgets with the new rule', () => {
-    // [A6] (P0) slightly ahead → not flagged.
     it('[A6] ahead of pace but with room → not urgent', () => {
       expect(budgetDetailFor({ budget: 100, posted: 74 }).statusLabel).toBe('On track for payday');
     });
 
-    // [A7] (P0) pending spend counts toward the warning.
     it('[A7] pending pushes a budget over plan', () => {
       expect(budgetDetailFor({ budget: 100, posted: 70, pending: 15 }).statusLabel).toBe('Over plan — ease up');
     });
@@ -910,19 +890,16 @@ describe('WHIT-741 Budgets polish', () => {
   // large and dust-sized amounts. Calls the real budgetViews / budgetDetail / fmtSignedExact.
 
   describe('WHIT-741 QA — tick boundary', () => {
-    // [A1] (P0) less than half a cent left reads "$0 left" → no tick, on the row and the detail.
     it('[A1] $0.004 left → no tick (row + detail)', () => {
       expect(budgetRowFor({ budget: 100, posted: 99.996, pending: 0 }).showTarget).toBe(false);
       expect(budgetDetailFor({ budget: 100, posted: 99.996 }).showTarget).toBe(false);
     });
 
-    // [A2] (P0) a cent left → the tick stays (row + detail).
     it('[A2] $0.01 left → tick stays (row + detail)', () => {
       expect(budgetRowFor({ budget: 100, posted: 99.99, pending: 0 }).showTarget).toBe(true);
       expect(budgetDetailFor({ budget: 100, posted: 99.99 }).showTarget).toBe(true);
     });
 
-    // [A3] (P0) pending counts as spent: posted + pending = the whole budget → fully used, no tick.
     it('[A3] posted + pending use the whole budget → no tick', () => {
       expect(budgetRowFor({ budget: 100, posted: 60, pending: 40 }).showTarget).toBe(false);
       expect(budgetDetailFor({ budget: 100, posted: 60, pending: 40 }).showTarget).toBe(false);
@@ -937,21 +914,18 @@ describe('WHIT-741 Budgets polish', () => {
   });
 
   describe('WHIT-741 QA — pending counted in spent', () => {
-    // [A5] (P0) pending with cents is counted in spent, with no pending words (WHIT-744).
     it('[A5] pending $39.10 → "$89.10 of $200", no pending words', () => {
       const row = budgetRowFor({ budget: 200, posted: 50, pending: 39.1 });
       expect(row.spentLabel).not.toContain('pending');
       expect(row.spentLabel).toBe(`$89.10 of${NBSP}$200`);
     });
 
-    // [A7] (P1) an over-budget row with pending has no "·" on the spent line.
     it('[A7] over budget + pending → no "·" on the spent line', () => {
       const row = budgetRowFor({ budget: 100, posted: 100, pending: 20 });
       expect(row.over).toBe(true);
       expect(row.spentLabel).not.toContain('·');
     });
 
-    // [A8] (P1) earning rows never name pending, even with pending money.
     it('[A8] an income row with pending has no pending words', () => {
       const row = budgetRowFor({ budget: 5000, posted: 1000, pending: 300 }, cat(SALARY));
       expect(row.section).toBe('earning');
@@ -960,7 +934,6 @@ describe('WHIT-741 Budgets polish', () => {
   });
 
   describe('WHIT-741 QA — exact signed amounts', () => {
-    // [A9] (P0) the word joiner sits between the minus and "$" on thousands too.
     it('[A9] fmtSignedExact(-1234.5) → minus, word joiner, "$1,234.50"', () => {
       expect(MINUS).toBe('−⁠');
       expect(fmtSignedExact(-1234.5)).toBe('−⁠$1,234.50');
@@ -972,7 +945,6 @@ describe('WHIT-741 Budgets polish', () => {
       expect(fmtSignedExact(-0.004)).not.toContain('−');
     });
 
-    // [A11] (P1) detail "of" with cents on a positive non-whole budget.
     it('[A11] detail reads "of $140.67"', () => {
       expect(budgetDetailFor({ budget: 140.67, posted: 0 }).ofBudget).toBe(`of${NBSP}$140.67`);
     });
@@ -1214,7 +1186,6 @@ describe('WHIT-750 no row pace flag', () => {
 
   // WHIT-750 QA — row-only pace cases removed with the row flag, re-pinned at the detail screen.
   describe('detail pace words for cases the row flag used to cover (WHIT-750 QA)', () => {
-    // [A1] (P0) exactly on pace ($50 of $100, halfway) → calm, both with and without pending.
     it('[A1] exactly on the pace line stays calm', () => {
       expect(budgetDetailFor({ budget: 100, posted: 50 }).statusLabel).toBe('On track for payday');
       expect(budgetDetailFor({ budget: 100, posted: 40, pending: 10 }).statusLabel).toBe('On track for payday');

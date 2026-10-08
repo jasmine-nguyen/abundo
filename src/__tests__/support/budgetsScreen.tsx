@@ -57,11 +57,16 @@ export async function showBudgets(
 // Halfway through a 14-day cycle (7 days left), so a $100 budget's pace target is $50.
 // Coffee: $80 spent ($10 pending) → behind pace. Groceries: $25 spent, nothing
 // pending → on pace, no note. Totals: spent $105 of $200 → $95 left (WHIT-741, WHIT-743).
-export async function showTwoRows(server: ReturnType<typeof installFakeServer>) {
-  seedBudgetsTab(server, {
+export function showTwoRows(server: ReturnType<typeof installFakeServer>) {
+  return showRows(server, {
     coffee: { target: 100, posted: 70, pending: 10 },
     groceries: { target: 100, posted: 25, pending: 0 },
-  }, [COFFEE, GROCERIES]);
+  });
+}
+
+// Seed coffee + groceries rows (7 days left of 14), draw over the shared query client, wait for both.
+export async function showRows(server: ReturnType<typeof installFakeServer>, budgets: Record<string, unknown>) {
+  seedBudgetsTab(server, budgets, [COFFEE, GROCERIES]);
   await renderLoadedBudgetsWithQueries();
   await screen.findByText('Groceries');
 }
@@ -102,6 +107,10 @@ export function tickBandOf(row: ReactTestInstance) {
   const tick = row.findAll((n) => typeof n.type === 'string' && styleOf(n).backgroundColor === C.progressTick)[0];
   if (!tick) return null;
   return hostParent(tick);
+}
+
+export function tickBandHeight(row: ReactTestInstance) {
+  return styleOf(tickBandOf(row)!).height;
 }
 
 // WHIT-744: how far a row's note sits below its bar's bottom — the tick band (height + top margin)
