@@ -134,6 +134,10 @@ def _feed_event(params=None):
     return api_event("GET", "/transactions/feed", query=params)
 
 
+def uncategorized_feed_event(params=None):
+    return api_event("GET", "/transactions/uncategorized/feed", query=params)
+
+
 class FakeCategoryRepo:
     """Read-only taxonomy stub: list_categories() over an iterable of category ids.
 
@@ -166,6 +170,14 @@ def inject_rule_routes(handler, monkeypatch, store, categories, transactions=Non
 
 def apply_rules_event(body=None, method="POST", **kwargs):
     return api_event(method, "/transactions/uncategorized/apply-rules", body=body, **kwargs)
+
+
+def apply_rules_job_post_event(body=None):
+    return api_event("POST", "/transactions/uncategorized/apply-rules/jobs", body=body)
+
+
+def apply_rules_job_get_event(job_id):
+    return api_event("GET", f"/transactions/uncategorized/apply-rules/jobs/{job_id}", path_params={"id": job_id})
 
 
 def rule_put_event(rule_id, value, category_id, field="description", operator="contains"):

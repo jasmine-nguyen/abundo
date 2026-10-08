@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from _api_event import api_event
+from _feed_fakes import apply_rules_job_get_event
 
 
 class _StubJobRepo:
@@ -20,14 +20,6 @@ class _StubJobRepo:
 
     def get_job(self, job_id):
         return self._jobs.get(job_id)
-
-
-def _get_event(job_id):
-    return api_event(
-        "GET",
-        f"/transactions/uncategorized/apply-rules/jobs/{job_id}",
-        path_params={"id": job_id},
-    )
 
 
 def test_get_reports_a_failed_job_with_its_partial_counts_and_error(handler):
@@ -39,7 +31,7 @@ def test_get_reports_a_failed_job_with_its_partial_counts_and_error(handler):
         "createdRule": None, "error": "database temporarily unavailable",
         "created_at": "t0", "updated_at": "t1", "completed_at": "t1",
     }
-    resp = handler.get_apply_rules_job(_get_event("jobF"), _StubJobRepo({"jobF": stored}))
+    resp = handler.get_apply_rules_job(apply_rules_job_get_event("jobF"), _StubJobRepo({"jobF": stored}))
     body = json.loads(resp["body"])
 
     assert resp["statusCode"] == 200
@@ -58,5 +50,5 @@ def test_get_returns_500_when_the_read_raises(handler):
         def get_job(self, job_id):
             raise handler.DatabaseError("db down")
 
-    resp = handler.get_apply_rules_job(_get_event("jobX"), _Boom())
+    resp = handler.get_apply_rules_job(apply_rules_job_get_event("jobX"), _Boom())
     assert resp["statusCode"] == 500

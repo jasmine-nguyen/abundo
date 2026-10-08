@@ -9,7 +9,7 @@ a recorder; the crossing math is unit-tested in tests/shared/test_goal_checkpoin
 
 from decimal import Decimal
 
-from _api_event import api_event
+from _milestone_fakes import goal_put_event
 
 
 class _FakeGoalsRepo:
@@ -36,10 +36,6 @@ class _FakeGoalsRepo:
 class _FakeBalanceRepo:
     def list_balances(self, account_ids):
         return []
-
-
-def _put_event(goal_id="g1", body=None):
-    return api_event("PUT", f"/goals/{goal_id}", body=body, path_params={"id": goal_id}, is_base64=False)
 
 
 def _manual_grow_body(**over):
@@ -89,7 +85,7 @@ def _record(handler, monkeypatch):
 def test_manual_paydown_save_fires_with_old_then_new_owed(handler, monkeypatch):
     repo = _FakeGoalsRepo(goals={"g1": dict(_STORED_PAYDOWN)})
     seen = _record(handler, monkeypatch)
-    resp = handler.upsert_goal(_put_event(body=_manual_paydown_body(manual_balance=3000)),
+    resp = handler.upsert_goal(goal_put_event(body=_manual_paydown_body(manual_balance=3000)),
                                repo, _FakeBalanceRepo())
     assert resp["statusCode"] == 200
     assert seen[0][:4] == (Decimal("5000"), Decimal("3000"), "g1", False)
@@ -99,7 +95,7 @@ def test_manual_paydown_save_fires_with_old_then_new_owed(handler, monkeypatch):
 def test_synced_save_does_not_read_the_old_goal(handler, monkeypatch):
     repo = _FakeGoalsRepo()
     seen = _record(handler, monkeypatch)
-    resp = handler.upsert_goal(_put_event(body=_synced_body()), repo, _FakeBalanceRepo())
+    resp = handler.upsert_goal(goal_put_event(body=_synced_body()), repo, _FakeBalanceRepo())
     assert resp["statusCode"] == 200
     assert seen == []                 # never fires on a synced save
     assert repo.list_calls == 0       # and never pays for the old-balance read
@@ -109,7 +105,7 @@ def test_synced_save_does_not_read_the_old_goal(handler, monkeypatch):
 def test_manual_save_reads_the_old_goal_once(handler, monkeypatch):
     repo = _FakeGoalsRepo(goals={"g1": dict(_STORED_PAYDOWN)})
     _record(handler, monkeypatch)
-    handler.upsert_goal(_put_event(body=_manual_grow_body()), repo, _FakeBalanceRepo())
+    handler.upsert_goal(goal_put_event(body=_manual_grow_body()), repo, _FakeBalanceRepo())
     assert repo.list_calls == 1
 
 
@@ -129,7 +125,7 @@ def test_manual_save_omitting_checkpoints_celebrates_against_saved_ladder(handle
     # Body omits `checkpoints` entirely.
     body = _manual_grow_body(manual_balance=5000)
     del body["checkpoints"]
-    resp = handler.upsert_goal(_put_event(body=body), repo, _FakeBalanceRepo())
+    resp = handler.upsert_goal(goal_put_event(body=body), repo, _FakeBalanceRepo())
     assert resp["statusCode"] == 200
     # old=stored 1000, new=saved 5000, and the ladder passed is the SAVED carried one.
     assert seen[0][0] == Decimal("1000")

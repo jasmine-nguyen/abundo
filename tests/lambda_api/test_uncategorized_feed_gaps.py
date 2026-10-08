@@ -25,12 +25,7 @@ import json
 
 import pytest
 
-from _api_event import api_event
-from _feed_fakes import ANZ, SPENDING, FakeCategoryRepo, real_repos, _row
-
-
-def _uncat_event(params=None):
-    return api_event("GET", "/transactions/uncategorized/feed", query=params)
+from _feed_fakes import uncategorized_feed_event, ANZ, SPENDING, FakeCategoryRepo, real_repos, _row
 
 
 def _drain(handler, repo, category_repo, limit=None):
@@ -41,7 +36,7 @@ def _drain(handler, repo, category_repo, limit=None):
         page_params = dict(params)
         if cursor is not None:
             page_params["cursor"] = cursor
-        resp = handler.get_uncategorized_feed(_uncat_event(page_params), repo, category_repo)
+        resp = handler.get_uncategorized_feed(uncategorized_feed_event(page_params), repo, category_repo)
         assert resp["statusCode"] == 200
         body = json.loads(resp["body"])
         all_transactions.extend(body["transactions"])
@@ -64,7 +59,8 @@ def test_overshoot_page_returns_all_rows_untruncated_and_resumes_gap_free(handle
     table, repo, _ = real_repos({SPENDING: rows})  # 6 uncategorized rows, newest u6 .. oldest u1
 
     first = json.loads(
-        handler.get_uncategorized_feed(_uncat_event({"limit": "2"}), repo, FakeCategoryRepo(set()))["body"]
+        handler.get_uncategorized_feed(
+            uncategorized_feed_event({"limit": "2"}), repo, FakeCategoryRepo(set()))["body"]
     )
     assert len(first["transactions"]) == 3          # overshoot: the whole first chunk, NOT clamped to 2
     assert first["nextCursor"] is not None           # and more history behind it
@@ -95,7 +91,8 @@ def test_scan_cap_returns_short_nonempty_page_then_completes(handler, monkeypatc
     table, repo, _ = real_repos({SPENDING: rows})
 
     first = json.loads(
-        handler.get_uncategorized_feed(_uncat_event({"limit": "3"}), repo, FakeCategoryRepo({"groceries"}))["body"]
+        handler.get_uncategorized_feed(
+            uncategorized_feed_event({"limit": "3"}), repo, FakeCategoryRepo({"groceries"}))["body"]
     )
     assert [t["transaction_id"] for t in first["transactions"]] == ["u6", "u4"]  # 2 of the wanted 3 (cap)
     assert first["nextCursor"] is not None                                        # NOT a false end-of-history

@@ -208,3 +208,7 @@ def recorder(shared, monkeypatch):
 
 def milestones_put_event(rows):
     return api_event("PUT", "/milestones", body={"milestones": rows}, is_base64=False)
+
+
+def goal_put_event(body, goal_id="g1"):
+    return api_event("PUT", f"/goals/{goal_id}", body=body, path_params={"id": goal_id}, is_base64=False)

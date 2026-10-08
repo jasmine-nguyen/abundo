@@ -12,8 +12,7 @@ its own; nothing importable lives in conftest).
 
 import json
 
-from _api_event import api_event
-from _milestone_fakes import milestones_put_event, recording_notify_repo, stored_markers
+from _milestone_fakes import goal_put_event, milestones_put_event, recording_notify_repo, stored_markers
 
 
 # --- fakes (mirror test_milestones_api.py / test_goals.py) -------------------
@@ -61,10 +60,6 @@ def _err(resp):
 VALID_MS = {"label": "Kickoff", "targetBalance": 544000, "targetDate": "2026-06-18"}
 
 
-def _goal_event(body, goal_id="g1"):
-    return api_event("PUT", f"/goals/{goal_id}", body=body, path_params={"id": goal_id}, is_base64=False)
-
-
 def _grow_body(**over):
     body = {"name": "Holiday", "icon": "palm", "direction": "grow",
             "target_amount": 5000, "target_date": "2026-12-01", "account_id": "up-spending"}
@@ -80,7 +75,7 @@ def _cp(label, amount, **over):
 
 def _put_goal(handler, body):
     repo = FakeGoalsRepo()
-    resp = handler.upsert_goal(_goal_event(body), repo, FakeBalanceRepo())
+    resp = handler.upsert_goal(goal_put_event(body), repo, FakeBalanceRepo())
     return resp, repo
 
 
