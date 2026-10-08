@@ -89,3 +89,15 @@ it('Milestone detail: no empty state while milestones are still loading', async 
   expect(screen.getByTestId('milestone-plan-loading')).toBeTruthy();
   await releaseAndSettle(held);
 });
+
+// [A1] the detail screen also reads `refetch` (balance/facts only): its plan-card Retry must reload milestones.
+it('Milestone detail: Retry after a failed milestones read brings back the plan', async () => {
+  seedGoal(server, { homeLoan: HOME_LOAN });
+  server.once('GET', '/milestones', { status: 500 });
+  await renderWithQueries(<Milestone />);
+  await act(async () => { fireEvent.press(screen.getByTestId('milestone-plan-retry')); });
+  await settle();
+  await refreshInAct(() => undefined);
+  expect(screen.queryByTestId('milestone-plan-retry')).toBeNull();
+  expect(screen.getByText('Your payoff plan')).toBeTruthy();
+});
