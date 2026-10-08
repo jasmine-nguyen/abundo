@@ -363,14 +363,12 @@ def test_populated_plan_still_sweeps_a_dead_marker(shared, recorder):
 
 
 # --- QA gap tests (adversarial) — added alongside the implementer's G-386a/b -----------------
-# This covers the edge the implementer's two tests leave: the "no notify I/O at all"
-# short-circuit. Proven fail-on-revert (revert `and plan` -> it goes red).
 
 
 def test_empty_plan_never_touches_the_notify_store(shared, recorder):
-    # [G-386e] The guard short-circuits BEFORE the reconcile try, so on an authoritative [] the
+    # [G-386e] The guard short-circuits BEFORE the reconcile try, so on an empty [] plan the
     # notify store is never read (fired_milestones is never called). The table's read log is the
-    # fail-on-revert lever: revert `and plan` -> the reconcile enters the try and calls
+    # fail-on-revert lever: remove the `if plan:` guard -> the reconcile enters the try and calls
     # fired_milestones -> one get_item -> fails. (A failing read alone would NOT distinguish: the
     # reconcile try swallows the exception and still returns 0.)
     notify = notify_repo({"id:m1:bal:400000.00"})
