@@ -8,7 +8,7 @@ import { milestoneView } from '../src/context';
 import { useGoalScreenData } from '../src/queries';
 import { Bar, RetryButton, HeroGradientFill } from '../src/components/ui';
 import { Header } from '../src/components/Header';
-import { EquityCard, EquityBody, AddLoanDetailsPrompt } from '../src/components/EquityCard';
+import { EquityCard, EquityBody, EquitySetupTeaser } from '../src/components/EquityCard';
 import { formatMonthYear } from '../src/dateutil';
 
 export default function Milestone() {
@@ -154,7 +154,7 @@ export default function Milestone() {
               <EquityBody>Usable equity = your LVR × your home's value, minus what you still owe. Kill more principal, unlock more deposit. 📈</EquityBody>
             </>
           ) : (
-            loanFactsLoaded && <AddLoanDetailsPrompt />
+            loanFactsLoaded && <EquitySetupTeaser />
           )}
         </EquityCard>
       </ScrollView>

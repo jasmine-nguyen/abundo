@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { C, FONT, fmtCompact } from '../src/theme';
 import { useAppContext } from '../src/context';
-import { useLoanFactsQuery, useIsAuthed } from '../src/queries';
+import { useLoanFactsQuery, useRepaymentQuery, useIsAuthed } from '../src/queries';
 import { Header } from '../src/components/Header';
 import { DetailStates } from '../src/components/DetailStates';
 import { NativeDateField } from '../src/components/NativeDateField';
@@ -17,27 +17,34 @@ export default function Loan() {
   const insets = useSafeAreaInsets();
   // WHIT-203: the form reads the cached loan-facts query. WHIT-819: it only mounts once the
   // saved facts have loaded, so it can never open blank and overwrite them on save.
-  const loanFactsQuery = useLoanFactsQuery(useIsAuthed());
+  const authed = useIsAuthed();
+  const loanFactsQuery = useLoanFactsQuery(authed);
+  // WHIT-821: the last repayment pre-fills Scheduled repayment. Spin until its first answer so
+  // the seed isn't missed; its first failure stops the wait (no blocking through the retries).
+  const repaymentQuery = useRepaymentQuery(authed);
+  const repaymentPending = repaymentQuery.isLoading && repaymentQuery.failureCount === 0;
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title="Loan details" />
       <DetailStates
-        isLoading={loanFactsQuery.isLoading}
+        isLoading={loanFactsQuery.isLoading || repaymentPending}
         isError={loanFactsQuery.isError}
-        hasCache={loanFactsQuery.data !== undefined}
+        hasCache={loanFactsQuery.data !== undefined && !repaymentPending}
         idPrefix="loan-facts"
         errorText="Couldn't load your loan details."
         retryLabel="Retry loading your loan details"
         onRetry={() => loanFactsQuery.refetch()}
       >
-        {loanFactsQuery.data && <LoanForm facts={loanFactsQuery.data} />}
+        {loanFactsQuery.data && (
+          <LoanForm facts={loanFactsQuery.data} lastRepayment={repaymentQuery.data?.amount ?? null} />
+        )}
       </DetailStates>
     </View>
   );
 }
 
-function LoanForm({ facts: f }: { facts: LoanFacts }) {
+function LoanForm({ facts: f, lastRepayment }: { facts: LoanFacts; lastRepayment: number | null }) {
   const s = useAppContext(); // showToast + saveLoanFacts (write) stay on the store
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -47,7 +54,8 @@ function LoanForm({ facts: f }: { facts: LoanFacts }) {
   const [homeValue, setHomeValue] = useState(numText(f.homeValue));
   const [lvr, setLvr] = useState(f.lvr == null ? '' : String(f.lvr * 100));
   const [ratePct, setRatePct] = useState(numText(f.ratePct));
-  const [baseRepay, setBaseRepay] = useState(numText(f.baseRepay));
+  const [baseRepay, setBaseRepay] = useState(numText(f.baseRepay ?? lastRepayment));
+  const prefilledRepay = f.baseRepay == null && lastRepayment != null;
   const [extra, setExtra] = useState(numText(f.extra));
   const [payoffGoalDate, setPayoffGoalDate] = useState<string | null>(f.payoffGoalDate ?? null);
   const [depositTarget, setDepositTarget] = useState(numText(f.depositTarget));
@@ -119,12 +127,20 @@ function LoanForm({ facts: f }: { facts: LoanFacts }) {
         Add your loan facts so Abundo can show real progress and equity. We only ask for what the bank feed can't tell us.
       </Text>
 
-      <MoneyField label="Original loan amount" hint="What you first borrowed" placeholder="e.g. 600000" prefix="$" value={original} onChangeText={setOriginal} {...loanLook} />
-      <MoneyField label="Property value" hint="What it's worth today" placeholder="e.g. 770000" prefix="$" value={homeValue} onChangeText={setHomeValue} {...loanLook} />
+      <MoneyField label="Original loan amount" hint="What you first borrowed" placeholder="e.g. 500000" prefix="$" value={original} onChangeText={setOriginal} {...loanLook} />
+      <MoneyField label="Property value" hint="What it's worth today" placeholder="e.g. 650000" prefix="$" value={homeValue} onChangeText={setHomeValue} {...loanLook} />
       <MoneyField label="Loan-to-value ratio" hint="How much the bank lends against it — usually 80" placeholder="e.g. 80" suffix="%" value={lvr} onChangeText={setLvr} {...loanLook} />
-      <MoneyField label="Interest rate" hint="Your current rate" placeholder="e.g. 5.74" suffix="%" value={ratePct} onChangeText={setRatePct} {...loanLook} />
-      <MoneyField label="Scheduled repayment" hint="Your minimum, per month" placeholder="e.g. 3667" prefix="$" value={baseRepay} onChangeText={setBaseRepay} {...loanLook} />
-      <MoneyField label="Extra repayment" hint="Optional top-up per month" placeholder="e.g. 500" prefix="$" value={extra} onChangeText={setExtra} {...loanLook} />
+      <MoneyField label="Interest rate" hint="Your current rate" placeholder="e.g. 6.2" suffix="%" value={ratePct} onChangeText={setRatePct} {...loanLook} />
+      <MoneyField
+        label="Scheduled repayment"
+        hint={prefilledRepay ? "From your last repayment — check it's your monthly minimum" : 'Your minimum, per month'}
+        placeholder="e.g. 2500"
+        prefix="$"
+        value={baseRepay}
+        onChangeText={setBaseRepay}
+        {...loanLook}
+      />
+      <MoneyField label="Extra repayment" hint="Optional top-up per month" placeholder="e.g. 200" prefix="$" value={extra} onChangeText={setExtra} {...loanLook} />
 
       <View style={styles.field}>
         <Text style={styles.label}>Target payoff date</Text>
@@ -138,7 +154,7 @@ function LoanForm({ facts: f }: { facts: LoanFacts }) {
         <Text style={styles.hint}>Optional — how we work out the repayment needed if the loan won't clear at your current rate.</Text>
       </View>
 
-      <MoneyField label="Deposit needed for your next place" hint="Optional — sets the target the equity card tracks toward." placeholder="e.g. 120000" prefix="$" value={depositTarget} onChangeText={setDepositTarget} {...loanLook} />
+      <MoneyField label="Deposit needed for your next place" hint="Optional — sets the target the equity card tracks toward." placeholder="e.g. 100000" prefix="$" value={depositTarget} onChangeText={setDepositTarget} {...loanLook} />
 
       <Pressable onPress={onSave} disabled={saving} style={[styles.save, saving && { opacity: 0.6 }]}>
         <Text style={styles.saveText}>{saving ? 'Saving…' : 'Save loan details'}</Text>

@@ -35,13 +35,9 @@ export function EquityCta({ label }: { label: string }) {
   );
 }
 
-export function AddLoanDetailsPrompt() {
-  return (
-    <>
-      <EquityBody>Add your home's value to see how much equity you could unlock toward your next place.</EquityBody>
-      <EquityCta label="Add loan details →" />
-    </>
-  );
+// WHIT-821: no button — the Home loan screen's top card is the one place to set up.
+export function EquitySetupTeaser() {
+  return <EquityBody>Your usable equity will show here once your loan details are set up.</EquityBody>;
 }
 
 const styles = StyleSheet.create({

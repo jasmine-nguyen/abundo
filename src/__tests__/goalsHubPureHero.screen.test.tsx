@@ -56,7 +56,8 @@ describe('WHIT-488 pure-hero plain mortgage card — eyebrow in every plain stat
   // testID but NOT the eyebrow's presence — moving the eyebrow inside `balance != null` would slip
   // through there. Here a no-balance card that lost its eyebrow reddens.
   it('[H1] no-balance fallback still renders the eyebrow above the fallback line', async () => {
-    seedHub({ homeLoan: { balance: null, asOf: null } });
+    // Facts set, so a null balance is "waiting", not WHIT-821's "no home loan".
+    seedHub({ loanFacts: READY_FACTS, homeLoan: { balance: null, asOf: null } });
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('mortgage-link'));
     expect(card.getByText(EYEBROW)).toBeTruthy();
@@ -115,7 +116,7 @@ describe('WHIT-488 eyebrow case-sensitivity contract', () => {
   // and the regex has no i-flag. Lock the coupling both ways so a future lower-casing of the eyebrow
   // (which would silently make [A25] start matching the eyebrow and flip its meaning) is caught here.
   it('[H6] the uppercase eyebrow is present but a lowercase /owing/ does NOT match it', async () => {
-    seedHub({ homeLoan: { balance: null, asOf: null } }); // no big number, only the eyebrow text
+    seedHub({ loanFacts: READY_FACTS, homeLoan: { balance: null, asOf: null } }); // no big number, only the eyebrow text
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('mortgage-link'));
     expect(card.getByText(EYEBROW)).toBeTruthy();      // the eyebrow IS on screen

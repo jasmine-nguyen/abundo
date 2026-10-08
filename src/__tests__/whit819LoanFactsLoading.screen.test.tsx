@@ -12,8 +12,9 @@ import { renderWithQueries, renderLoaded, refreshInAct, settle, useTestQueryClie
 import { queryClient } from '../queryClient';
 import { loanFactsKey } from '../queries';
 import { resetAuth } from './support/authMock';
-import { seedGoal } from './support/goalsScreen';
+import { seedGoal, EQUITY_TEASER } from './support/goalsScreen';
 import { resetRouter } from './support/routerMock';
+import { LOAN_FORM_PLACEHOLDERS } from './support/loanForm';
 
 let mockState: Partial<AppContext>;
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
@@ -43,7 +44,7 @@ it('Loan form: does not open blank while saved facts are still loading', async (
   drawHeld(<Loan />);
   await refreshInAct(() => undefined);
   expect(screen.queryByText('Save loan details')).toBeNull();
-  expect(screen.queryByPlaceholderText('e.g. 600000')).toBeNull();
+  expect(screen.queryByPlaceholderText(LOAN_FORM_PLACEHOLDERS.orig)).toBeNull();
   expect(screen.getByTestId('loan-facts-loading')).toBeTruthy();
   await releaseAndSettle(held);
   expect(screen.getByDisplayValue('600000')).toBeTruthy();
@@ -62,7 +63,7 @@ it('Home loan: no "set up" copy while saved facts are still loading', async () =
   drawHeld(<Mortgage />);
   await refreshInAct(() => undefined);
   expect(screen.queryByText('Set up loan details →')).toBeNull();
-  expect(screen.queryByText('Add loan details →')).toBeNull();
+  expect(screen.queryByText(EQUITY_TEASER)).toBeNull();
   expect(screen.getByTestId('hero-facts-loading')).toBeTruthy();
   await releaseAndSettle(held);
 });
@@ -136,12 +137,12 @@ it('Home loan: a failed refetch over cached facts shows neither the facts error 
   expect(screen.queryByText('Set up loan details →')).toBeNull();
 });
 
-// [A6] Milestone equity card: no "Add loan details →" when the facts read failed.
+// [A6] Milestone equity card: no set-up teaser when the facts read failed.
 it('Milestone: a failed facts read hides the equity set-up prompt', async () => {
   seedGoal(server);
   server.fail('/loanfacts', 500);
   await renderWithQueries(<Milestone />);
-  expect(screen.queryByText('Add loan details →')).toBeNull();
+  expect(screen.queryByText(EQUITY_TEASER)).toBeNull();
 });
 
 // [A7] The form mounts once: a background refetch must not wipe what the user is typing.

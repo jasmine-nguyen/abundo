@@ -1048,6 +1048,7 @@ export interface GoalsScreenData {
   balanceFor: (accountId: string | null | undefined) => number | null;
   loanFacts: LoanFacts; // the mortgage summary card (WHIT-233 keeps the mortgage as one card)
   homeLoan: HomeLoanState;
+  homeLoanLoaded: boolean; // WHIT-821: loaded with a null balance = no home loan account in the feed
   // The mortgage summary card's OWN first-load error, kept separate from the aggregate so a
   // mortgage hiccup shows the card's "—" + retry, never blanks the goals list.
   mortgageError: boolean;
@@ -1104,6 +1105,7 @@ export function useGoalsScreenData(): GoalsScreenData {
     balanceFor,
     loanFacts: loanFactsQuery.data ?? EMPTY_LOAN_FACTS,
     homeLoan: homeLoanQuery.data ?? EMPTY_HOME_LOAN,
+    homeLoanLoaded: homeLoanQuery.data !== undefined,
     // firstLoadError (not bare .isError, like homeLoanError in useGoalScreenData): a cached
     // balance — real OR a genuine "not polled yet" null — survives a failed background
     // refetch as honest waiting copy; only a NEVER-loaded read flags the card's error.
@@ -1133,6 +1135,7 @@ const EMPTY_MILESTONES: MilestoneRecord[] = [];
 export interface GoalScreenData {
   loanFacts: LoanFacts;
   homeLoan: HomeLoanState;
+  homeLoanLoaded: boolean; // WHIT-821: loaded with a null balance = no home loan account in the feed
   repayment: Repayment;
   // The user's saved milestone plan (WHIT-367). SECONDARY data, deliberately kept OUT of the
   // loading/error status below: a milestones read hiccup degrades to an empty plan (the "set your
@@ -1194,6 +1197,7 @@ export function useGoalScreenData(): GoalScreenData {
   return {
     loanFacts: loanFactsQuery.data ?? EMPTY_LOAN_FACTS,
     homeLoan: homeLoanQuery.data ?? EMPTY_HOME_LOAN,
+    homeLoanLoaded: homeLoanQuery.data !== undefined,
     repayment: repaymentQuery.data ?? EMPTY_REPAYMENT,
     milestones: milestonesQuery.data ?? EMPTY_MILESTONES,
     // homeLoanError: the balance read's OWN error, kept separate from the aggregate so the
