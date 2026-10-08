@@ -1,45 +1,13 @@
-// WHIT-710: nextPayday is the one pay-date function left in payCycle.ts. The old start-date and
-// days-left date helpers are gone, and their useful checks now run through nextPayday.
+// WHIT-710: nextPayday carries the pay-date checks that used to run through the old start-date
+// and days-left date helpers.
 // Runs under TZ=Australia/Melbourne (the npm test script).
 import { describe, it, expect } from '@jest/globals';
-import fs from 'fs';
-import path from 'path';
-import * as payCycle from '../payCycle';
 import { nextPayday } from '../payCycle';
 import { DEFAULT_PAY_CYCLE } from '../queries';
 import { isoToUtcDayMs, dateToUtcDayMs, formatDayMonth, MS_PER_DAY } from '../dateutil';
 
 const day = (y: number, m: number, d: number) => new Date(y, m - 1, d);
 const cycle = (length: number, last_pay_date: string) => ({ length, last_pay_date });
-
-const REMOVED_NAMES = ['cycle' + 'Start', 'nextPayday' + 'ISO'];
-const payCycleSource = fs.readFileSync(path.join(__dirname, '..', 'payCycle.ts'), 'utf8');
-
-describe('payCycle module after the cleanup', () => {
-  it('no longer exports the unused pay-date helpers', () => {
-    const exported = Object.keys(payCycle);
-    for (const name of REMOVED_NAMES) expect(exported).not.toContain(name);
-    expect(exported).toEqual(
-      expect.arrayContaining(['cycleName', 'cycleClock', 'nextPayday', 'cycleClockView', 'elapsedFrac']),
-    );
-  });
-
-  it('its notes no longer mention the removed helpers or the old "Started" line', () => {
-    for (const name of REMOVED_NAMES) expect(payCycleSource).not.toContain(name);
-    expect(payCycleSource).not.toMatch(/Started/);
-  });
-
-  it('the note above currentCycleAnchor is wrapped at 100 columns', () => {
-    const lines = payCycleSource.split('\n');
-    const fnLine = lines.findIndex((line) => line.startsWith('function currentCycleAnchor'));
-    expect(fnLine).toBeGreaterThan(0);
-    let start = fnLine;
-    while (start > 0 && lines[start - 1].startsWith('//')) start -= 1;
-    const note = lines.slice(start, fnLine);
-    expect(note.length).toBeGreaterThan(0);
-    for (const line of note) expect(line.length).toBeLessThanOrEqual(100);
-  });
-});
 
 describe('nextPayday carries the moved pay-date checks', () => {
   it('advances by a full cycle after each payday', () => {

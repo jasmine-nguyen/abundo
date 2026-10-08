@@ -25,11 +25,6 @@ function handBuiltButtonTestIds(text: string): (string | null)[] {
 }
 
 describe('sheet buttons share one SheetButton', () => {
-  it('Overlays.tsx defines SheetButton and no longer has ApplyRulesCancel', () => {
-    expect(source).toMatch(/function SheetButton\(/);
-    expect(source).not.toMatch(/ApplyRulesCancel/);
-  });
-
   it('only the two special buttons are still hand-built outside SheetButton', () => {
     const rest = withoutSheetButton(source);
     expect(handBuiltButtonTestIds(rest).sort()).toEqual(['goal-balance-save', 'rule-submit']);

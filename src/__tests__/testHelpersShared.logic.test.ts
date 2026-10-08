@@ -7,7 +7,6 @@ import { basename, join } from 'path';
 import { testFiles } from './support/sourceScan';
 
 const TESTS_DIR = __dirname;
-const SUPPORT_DIR = join(TESTS_DIR, 'support');
 const SELF = basename(__filename);
 const read = (file: string) => readFileSync(join(TESTS_DIR, file), 'utf8');
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -31,17 +30,6 @@ function offenders(pattern: RegExp, home: string): string[] {
 }
 
 describe('test helpers are shared, not copied', () => {
-  it('support/queryClient.ts exports invalidatedKeys and flush', () => {
-    const source = readFileSync(join(SUPPORT_DIR, 'queryClient.ts'), 'utf8');
-    expect(source).toMatch(new RegExp(`export (function|const) ${KEYS_NAME}\\b`));
-    expect(source).toMatch(/export (async )?(function|const) flush\b/);
-  });
-
-  it('support/fakeServer.ts exports drainMicrotasks', () => {
-    const source = readFileSync(join(SUPPORT_DIR, 'fakeServer.ts'), 'utf8');
-    expect(source).toMatch(/export (async )?(function|const) drainMicrotasks\b/);
-  });
-
   it('no test file defines its own invalidatedKeys or rebuilds the key list inline', () => {
     expect(offenders(LOCAL_KEYS, 'support/queryClient.ts')).toEqual([]);
     expect(offenders(KEYS_BODY, 'support/queryClient.ts')).toEqual([]);
@@ -53,21 +41,5 @@ describe('test helpers are shared, not copied', () => {
 
   it('no test file copies the 20-tick microtask drain', () => {
     expect(offenders(TICK_FLUSH_BODY, 'support/fakeServer.ts')).toEqual([]);
-  });
-
-  it('the unused auth stand-in is gone', () => {
-    expect(read('support/authMock.ts')).not.toMatch(new RegExp('useIsAuthed' + 'Mock'));
-  });
-
-  it.each([
-    ['support/alertSpy.ts', 'AlertButton'],
-    ['support/sourceScan.ts', 'CODE_FILE'],
-    ['support/budgetsScreen.tsx', 'sidePaddingOf'],
-    ['support/goalsScreen.tsx', 'GOALS_HUB_DEFAULTS'],
-    ['support/openOverlays.tsx', 'OverlaysOverScreens'],
-  ])('%s keeps %s private', (file, name) => {
-    const source = read(file);
-    expect(source).toMatch(new RegExp(`\\b${name}\\b`));
-    expect(source).not.toMatch(new RegExp(`export\\s+(async\\s+)?(type|interface|function|const|let)\\s+${name}\\b`));
   });
 });

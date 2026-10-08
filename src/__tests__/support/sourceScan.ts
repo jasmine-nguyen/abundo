@@ -12,8 +12,7 @@
 // The cache-in-act guard (cacheRefreshInAct.logic.test.ts) uses stripComments and matchingBrace
 // to read each act(...) body whole.
 //
-// The shared-wait guards (sharedLoadedWait.logic, sharedQueryWaits.screen) hand their line rule to
-// findOffenders.
+// The shared-wait guard (sharedQueryWaits.screen) hands its line rule to findOffenders.
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, relative, sep } from 'path';
 
@@ -42,8 +41,7 @@ export function shippedSourceFiles(): string[] {
 }
 
 // Every .ts/.tsx file under `dir`, relative to `root` and forward-slashed — the test-tree guards
-// (noAutoMockApi, noQueriesMock, cacheRefreshInAct, cacheInActSingleGuard, testQueryClientShared)
-// scan this.
+// (noAutoMockApi, noQueriesMock, cacheRefreshInAct) scan this.
 export function testFiles(root: string, dir: string = root): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
