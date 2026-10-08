@@ -18,6 +18,7 @@ shared-layer unit test can reach.
        no second celebration.
   [W2] retargeting through a second PUT sweeps the old marker and re-arms the new amount.
   [W3] the save endpoint rejects a shape-matching-but-uncalendar date (one shared validator).
+  WHIT-830: the save rejects a row without an id (missing or null); ids sent are kept.
 
 The `poller` fixture imports shared/milestones.py in the handler's sys.path window (the module the
 balance poller loads) and restores the module table afterwards, so the shared-layer suite is
@@ -413,3 +414,26 @@ def test_the_save_endpoint_rejects_a_shape_matching_but_uncalendar_date(handler,
     resp = handler.lambda_handler(milestones_put_event([row]), None)
     assert resp["statusCode"] == 400, resp["body"]
     assert "targetDate" in resp["body"]
+
+# --- WHIT-830: the save requires an id on every row ---------------------------
+
+_KICKOFF = {"label": "Kickoff", "targetBalance": 544000, "targetDate": "2026-06-18"}
+_HALFWAY = {"id": "half", "label": "Halfway", "targetBalance": 295000, "targetDate": "2027-12-18"}
+
+
+@pytest.mark.parametrize("first_row, status", [
+    pytest.param(_KICKOFF, 400, id="id key missing"),
+    pytest.param({**_KICKOFF, "id": None}, 400, id="id explicitly null"),
+    pytest.param({**_KICKOFF, "id": "kick"}, 200, id="id supplied"),
+])
+def test_user_can_save_a_plan_only_when_every_milestone_has_an_id(handler, milestone_repo, first_row, status):
+    resp = handler.set_milestones(milestones_put_event([first_row, _HALFWAY]), milestone_repo)
+
+    assert resp["statusCode"] == status
+    body = json.loads(resp["body"])
+    if status == 400:
+        assert body == {"error": "milestone id is required"}
+        assert milestone_repo.get_milestones() is None
+        return
+    assert [m["id"] for m in body] == ["kick", "half"]
+    assert [m["id"] for m in milestone_repo.get_milestones()] == ["kick", "half"]

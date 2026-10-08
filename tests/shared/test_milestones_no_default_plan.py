@@ -55,3 +55,23 @@ def test_poll_celebrates_only_saved_milestones_with_an_id(
     assert removed_markers(notify) == removed
     assert stored_markers(notify) == kept
     assert any(log_text in r.message and r.levelno == level for r in caplog.records)
+
+
+@pytest.mark.parametrize("id_less", [
+    pytest.param(dict(_ID_LESS), id="id key missing"),
+    pytest.param({**_ID_LESS, "id": None}, id="id null"),
+])
+def test_one_poll_crossing_an_id_less_and_a_good_milestone_celebrates_only_the_good_one(
+        shared, recorder, id_less):
+    # [A1] 490k -> 290k crosses the id-less 480k row AND _GOOD (300k). The id-less row is skipped,
+    # not keyed as "bal:..." or "id:None:...", and it doesn't take the good row's push down with it.
+    notify = notify_repo()
+
+    sent = shared.milestones.notify_milestone_crossing(
+        Decimal("490000"), Decimal("290000"),
+        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
+        notify_repo=notify, milestone_repo=FakeMilestoneRepo(stored=[dict(_GOOD), id_less]))
+
+    assert sent == 1
+    assert [title for title, _body, _tokens in recorder] == ["\U0001f389 Milestone reached — Halfway!"]
+    assert stored_markers(notify) == {_KEEP_MARKER}
