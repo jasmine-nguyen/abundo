@@ -7,7 +7,7 @@
 // WHIT-685: drawn over the fake server, so the real screen data code runs.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { EMPTY_LOAN_FACTS } from './factory';
 import { PayoffSummary } from '../components/PayoffSummary';
 import { installFakeServer } from './support/fakeServer';
@@ -16,7 +16,7 @@ import { resetAuth } from './support/authMock';
 import { seedGoal } from './support/goalsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { SAVED_MILESTONES } from './support/milestonePlan';
-import { screenJson } from './support/pull';
+import { pullControl, screenJson } from './support/pull';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({})));
@@ -268,4 +268,29 @@ describe('PayoffSummary', () => {
     expect(screen.getByText('$432,900 to go')).toBeTruthy();
     expect(screen.getByText('started at $500,000')).toBeTruthy();
   });
+});
+
+// WHIT-822 — pull-to-refresh, and no "sprints" or emoji anywhere on the screen.
+it('user can pull down on Home loan to reload the balance', async () => {
+  seedGoal(server, { milestones: SAVED_MILESTONES, homeLoan: { balance: 432900, asOf: '2026-07-04T00:00:00Z' } });
+  await renderWithQueries(<Mortgage />);
+  expect(screen.getByText('$432,900 to go')).toBeTruthy();
+
+  seedGoal(server, { milestones: SAVED_MILESTONES, homeLoan: { balance: 430000, asOf: '2026-07-05T00:00:00Z' } });
+  const held = server.hold('/homeloan');
+  act(() => { pullControl().props.onRefresh(); });
+  await waitFor(() => expect(pullControl().props.refreshing).toBe(true));
+
+  held.release();
+  await waitFor(() => expect(pullControl().props.refreshing).toBe(false));
+  expect(await screen.findByText('$430,000 to go')).toBeTruthy();
+});
+
+it('the screen never says "sprint" and shows no emoji', async () => {
+  // Default loan facts are set, so the payoff mini-cards and the contribution card render too.
+  seedGoal(server, { milestones: SAVED_MILESTONES, homeLoan: { balance: 250000, asOf: '2026-07-04T00:24:37.614Z' } });
+  await renderWithQueries(<Mortgage />);
+  const tree = screenJson();
+  expect(tree).not.toMatch(/sprint/i);
+  expect(tree).not.toMatch(/\p{Extended_Pictographic}/u);
 });
