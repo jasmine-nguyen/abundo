@@ -36,7 +36,7 @@ export default function Loan() {
         retryLabel="Retry loading your loan details"
         onRetry={() => loanFactsQuery.refetch()}
       >
-        {loanFactsQuery.data && !repaymentPending && (
+        {loanFactsQuery.data && (
           <LoanForm facts={loanFactsQuery.data} lastRepayment={repaymentQuery.data?.amount ?? null} />
         )}
       </DetailStates>

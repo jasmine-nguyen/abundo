@@ -61,6 +61,7 @@ it('Loan form: waits for a slow repayment read, then opens pre-filled', async ()
   drawHeld(<Loan />);
   await refreshInAct(() => undefined);
   expect(screen.queryByText('Save loan details')).toBeNull();
+  expect(screen.getByTestId('loan-facts-loading')).toBeTruthy();
 
   await releaseAndSettle(held);
   expect(screen.getByPlaceholderText(LOAN_FORM_PLACEHOLDERS.base).props.value).toBe('3667');
