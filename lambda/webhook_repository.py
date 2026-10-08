@@ -1,10 +1,9 @@
-from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr, Key
 from typing import Any, Callable, Optional
 import reconcile
 from models import Transaction
-from constants import PENDING_STATUS, POSTED_STATUS
-from repository_base import db_errors, handle_database_error, update_expression
+from constants import PENDING_STATUS
+from repository_base import conditional_write, db_errors, update_expression
 from repository_transaction import (
     TransactionRepository as _SharedTransactionRepository,
     _build_pk,
@@ -29,27 +28,17 @@ class TransactionRepository(_SharedTransactionRepository):
             # first-sight case, not something to log (WHIT-329).
             return response.get("Item") or None
 
-    def get_pending_transactions_for_account(self, account_id: str) -> list[dict]:
-        """Retrieves all pending transactions of an account using the account_id.
+    def get_account_transactions(self, account_id: str, status: str) -> list[dict]:
+        """Retrieves all of an account's transactions with this status (pending or posted).
 
         Follows pagination (WHIT-82) via _paginated_query: a pending row beyond the first
         1MB page must stay visible to reconciliation, else a silent duplicate + lost category.
+        The age-out rescue (WHIT-511) reads the posted rows for the settled twin of a filed
+        pending it is about to reap.
         """
         return self._paginated_query(
             key_condition=Key("pk").eq(_build_pk(account_id)),
-            filter_expression=Attr("status").eq(PENDING_STATUS),
-        )
-
-    def get_posted_transactions_for_account(self, account_id: str) -> list[dict]:
-        """Retrieves all posted (settled) transactions of an account.
-
-        Same paginated per-account query as get_pending, only the status filter differs. Used by
-        the age-out rescue (WHIT-511), which scans an account's posted rows for the settled twin
-        of a filed pending it is about to reap.
-        """
-        return self._paginated_query(
-            key_condition=Key("pk").eq(_build_pk(account_id)),
-            filter_expression=Attr("status").eq(POSTED_STATUS),
+            filter_expression=Attr("status").eq(status),
         )
 
     def get_failed_transactions(self) -> list[dict]:
@@ -115,7 +104,7 @@ class TransactionRepository(_SharedTransactionRepository):
         # One pending scan per account that has a first-time settlement to match.
         accounts = dict.fromkeys(t["account_id"] for t in posted_txns
                                  if t["transaction_id"] not in stored_rows)
-        pending_pools = {account_id: self.get_pending_transactions_for_account(account_id)
+        pending_pools = {account_id: self.get_account_transactions(account_id, PENDING_STATUS)
                          for account_id in accounts}
 
         plan = reconcile.plan_reconcile(transactions, stored_rows, pending_pools)
@@ -178,13 +167,7 @@ class TransactionRepository(_SharedTransactionRepository):
             "ConditionExpression": "attribute_exists(pk)",
         }
 
-        try:
-            self._get_table().update_item(**update_kwargs)
-            return True
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                return False
-            handle_database_error(e, "write")
+        return conditional_write("write", lambda: self._get_table().update_item(**update_kwargs))
 
     def delete_pending_if_present(self, pk: str, sk: str) -> None:
         """Delete a stale pending row. No attribute_exists guard, so deleting an

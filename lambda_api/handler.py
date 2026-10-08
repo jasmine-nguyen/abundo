@@ -87,7 +87,7 @@ from repository_errors import (
 )
 from repository_goals import GoalsRepository
 from repository_insight import InsightRepository
-from repository_loanfacts import LoanFactsRepository
+from repository_loanfacts import LOANFACTS_FIELDS, LoanFactsRepository
 from repository_milestone import MilestoneRepository
 from repository_paycycle import PayCycleRepository
 from repository_rule import RuleRepository
@@ -2965,8 +2965,6 @@ def get_repayment(repo: TransactionRepository) -> dict:
     return {"amount": amount, "date": when, "principal": principal, "interest": interest}
 
 
-# The user-entered loan-facts fields, in the order the form + response use them.
-_LOANFACTS_FIELDS = ("original", "homeValue", "lvr", "ratePct", "baseRepay", "extra")
 # Fields with their own upper bound; the rest use LOANFACTS_FIELD_MAX. Only extra (an optional top-up) may be 0.
 _LOANFACTS_HIGH = {"lvr": 1, "ratePct": 100}
 
@@ -2981,7 +2979,7 @@ def get_loanfacts(repo: LoanFactsRepository) -> dict:
     """
     stored = repo.get_loanfacts()
     if stored is None:
-        return {**{field: None for field in _LOANFACTS_FIELDS}, "payoffGoalDate": None, "depositTarget": None}
+        return {**{field: None for field in LOANFACTS_FIELDS}, "payoffGoalDate": None, "depositTarget": None}
     return stored
 
 
@@ -3003,7 +3001,7 @@ def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
         return error
 
     values = {}
-    for field in _LOANFACTS_FIELDS:
+    for field in LOANFACTS_FIELDS:
         v = body.get(field)
         high = _LOANFACTS_HIGH.get(field, LOANFACTS_FIELD_MAX)
         allow_zero = field == "extra"

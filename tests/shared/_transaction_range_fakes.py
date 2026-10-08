@@ -47,10 +47,10 @@ class _PendingPool:
 
     pending_repo = None
 
-    def get_pending_transactions_for_account(self, account_id):
+    def get_account_transactions(self, account_id, status):
         if self.pending_repo is None:
             return []
-        return self.pending_repo.get_pending_transactions_for_account(account_id)
+        return self.pending_repo.get_account_transactions(account_id, status)
 
 
 class _AccountTransactionRepo(_PendingPool):

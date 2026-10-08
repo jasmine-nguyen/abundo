@@ -166,7 +166,7 @@ def test_sweeps_every_account(lam, repo):
 def test_reaps_stale_pending_beyond_first_page(lam, repo):
     # Rows come back date-ascending and the page is cut before the pending filter, so the two
     # older posted rows fill page 1 and the stale pending sits on page 2. If
-    # get_pending_transactions_for_account didn't paginate, the sweep would see no pending at
+    # get_account_transactions didn't paginate, the sweep would see no pending at
     # all and the ghost would linger (WHIT-82 class).
     _store(lam, repo,
            _raw_row("settled1", "2026-06-01", pending=False),
@@ -920,7 +920,7 @@ def test_get_posted_paginates_beyond_first_page(lam, repo):
     repo.insert_transactions([p1, p2, pend, target])
     repo._table.page_size = 2
 
-    got = {r["transaction_id"] for r in repo.get_posted_transactions_for_account(internal_a)}
+    got = {r["transaction_id"] for r in repo.get_account_transactions(internal_a, "posted")}
 
     assert got == {"posted1", "posted2", "posted_target"}
     assert "pending1" not in got
@@ -935,7 +935,7 @@ def test_get_posted_returns_only_posted_rows(lam, repo):
         _norm(lam, "a_pending", "2026-06-02", pending=True),
     ])
 
-    got = {r["transaction_id"] for r in repo.get_posted_transactions_for_account(internal_a)}
+    got = {r["transaction_id"] for r in repo.get_account_transactions(internal_a, "posted")}
 
     assert got == {"the_posted"}
 
@@ -949,7 +949,7 @@ def test_get_posted_is_per_account(lam, repo):
         _norm(lam, "posted_b", "2026-06-01", pending=False, account=_ACCOUNT_B),
     ])
 
-    got = {r["transaction_id"] for r in repo.get_posted_transactions_for_account(internal_a)}
+    got = {r["transaction_id"] for r in repo.get_account_transactions(internal_a, "posted")}
 
     assert got == {"posted_a"}
 
@@ -962,10 +962,14 @@ def test_posted_read_failure_reaps_as_today_without_aborting(lam, repo, monkeypa
     twin = _norm(lam, "settled_twin", "2026-06-11", pending=False, category=None)
     repo.insert_transactions([filed, twin])
 
-    def boom(_account_id):
-        raise lam.age_out.DatabaseError("Database read failed: throttled")
+    real_read = repo.get_account_transactions
 
-    monkeypatch.setattr(repo, "get_posted_transactions_for_account", boom)
+    def boom(account_id, status):
+        if status == "posted":
+            raise lam.age_out.DatabaseError("Database read failed: throttled")
+        return real_read(account_id, status)
+
+    monkeypatch.setattr(repo, "get_account_transactions", boom)
 
     import logging
     with caplog.at_level(logging.WARNING, logger="age_out"):

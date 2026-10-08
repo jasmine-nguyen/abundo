@@ -25,7 +25,7 @@ _PK = "JOB"
 # The running tallies a job carries. update_progress accepts any subset of these; anything else
 # in the passed dict is ignored, so an outcome-list key can't accidentally land a list in a
 # numeric column.
-_COUNT_FIELDS = ("matched", "attempted", "filed", "vanished", "failed", "alreadyFiled", "remaining")
+COUNT_FIELDS = ("matched", "attempted", "filed", "vanished", "failed", "alreadyFiled", "remaining")
 
 # Terminal states the worker sets via finish_job; "running" is the only non-terminal state.
 STATUS_RUNNING = "running"
@@ -52,7 +52,7 @@ class JobRepository(RepositoryBase):
         item = {
             "pk": _PK, "sk": _sk(job_id), "id": job_id, "kind": kind,
             "status": STATUS_RUNNING,
-            **{field: 0 for field in _COUNT_FIELDS},
+            **{field: 0 for field in COUNT_FIELDS},
             "createdRule": None, "error": None,
             "created_at": now, "updated_at": now, "completed_at": None,
             # Epoch-seconds TTL (NOT the isoformat timestamps above) — DynamoDB only expires a
@@ -70,17 +70,17 @@ class JobRepository(RepositoryBase):
         return response.get("Item")
 
     def update_progress(self, job_id: str, counts: dict) -> None:
-        """Merge the running tallies (any subset of ``_COUNT_FIELDS``) into the job row and bump
+        """Merge the running tallies (any subset of ``COUNT_FIELDS``) into the job row and bump
         ``updated_at``. The worker calls this periodically so a poll sees the bar move; it never
         changes ``status`` (only finish_job does)."""
-        self._set_fields(job_id, {field: counts[field] for field in _COUNT_FIELDS if field in counts})
+        self._set_fields(job_id, {field: counts[field] for field in COUNT_FIELDS if field in counts})
 
     def finish_job(self, job_id: str, status: str, counts: dict,
                    created_rule: Optional[dict] = None, error: Optional[str] = None) -> None:
         """Mark the job terminal (``succeeded`` or ``failed``), write the final tallies, the minted
         rule (or None), any error string, and ``completed_at``. Safe to call after a partial run —
         the counts are whatever was reached."""
-        fields: dict[str, Any] = {field: counts[field] for field in _COUNT_FIELDS if field in counts}
+        fields: dict[str, Any] = {field: counts[field] for field in COUNT_FIELDS if field in counts}
         fields["status"] = status
         fields["createdRule"] = created_rule
         fields["error"] = error

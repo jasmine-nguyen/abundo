@@ -23,6 +23,6 @@ def test_old_webhook_repository_file_is_gone():
 
 # [A15] (P1) the webhook-only methods still live on the class the entry points use.
 def test_webhook_only_methods_reachable_from_the_handler(lam):
-    for name in ("insert_or_reconcile", "has_event", "mark_event", "get_pending_transactions_for_account"):
+    for name in ("insert_or_reconcile", "has_event", "mark_event", "get_account_transactions"):
         method = getattr(lam.handler.TransactionRepository, name)
         assert method.__module__ == "webhook_repository", name

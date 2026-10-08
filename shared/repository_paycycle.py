@@ -34,10 +34,7 @@ class PayCycleRepository(RepositoryBase):
         """Return the stored {"length": int, "last_pay_date": str}, seeding the default on
         first read. `length` is normalised back to a plain int (DynamoDB stores it
         as a Decimal) so the handler serialises it as a JSON integer."""
-        item = self._get_config()
-        if item is None:
-            self._ensure_seeded()
-            item = self._get_config()  # re-read so a concurrent set is reflected
+        item = self._read_seeded()
         return {"length": int(item["length"]), "last_pay_date": item["last_pay_date"]}
 
     def set_paycycle(self, length: int, last_pay_date: str) -> dict:

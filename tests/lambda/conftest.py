@@ -11,7 +11,7 @@ colliding bare names from ``sys.modules`` before importing, and restores
 everything afterwards.
 
 Unlike the lambda_api fakes (which set ``Key = Attr = object`` because those tests
-never query), this suite exercises ``get_pending_transactions_for_account``, so it
+never query), this suite exercises ``get_account_transactions``, so it
 installs condition-recording ``Key``/``Attr`` (``_Field``) that the shared
 ``_dynamo_fakes.FakeTable`` can actually evaluate against a stored item.
 """

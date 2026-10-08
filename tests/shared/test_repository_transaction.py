@@ -235,18 +235,18 @@ def test_get_by_date_range_maps_database_error(repo, client_error, database_erro
 
 
 # --------------------------------------------------------------------------- #
-# WHIT-123 — shared get_pending_transactions_for_account is DELETED, stays gone #
+# WHIT-123 — shared get_account_transactions is never defined, stays absent      #
 # --------------------------------------------------------------------------- #
 
-def test_shared_repo_has_no_get_pending_transactions_for_account(shared):
+def test_shared_repo_has_no_get_account_transactions(shared):
     # WHIT-123 — [A1] regression guard. The shared TransactionRepository must NOT
-    # expose get_pending_transactions_for_account: the only correct (paginated)
+    # expose get_account_transactions: the only correct (paginated)
     # copy lives in lambda/webhook_repository.py. The shared method read only DynamoDB's
     # first page, so re-adding it here would silently reintroduce the WHIT-82
     # first-page-only miss for any future caller that binds to the shared repo.
     assert not hasattr(
         shared.repository.TransactionRepository,
-        "get_pending_transactions_for_account",
+        "get_account_transactions",
     )
 
 

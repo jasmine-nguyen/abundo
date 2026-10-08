@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from boto3.dynamodb.conditions import Key
-from botocore.exceptions import ClientError
 
 from constants import (
     ACCOUNT_ID_MAP,
@@ -18,7 +17,7 @@ from constants import (
     PENDING_STATUS,
 )
 from models import Transaction
-from repository_base import RepositoryBase, db_errors, handle_database_error, logger, update_expression
+from repository_base import RepositoryBase, conditional_write, db_errors, logger, update_expression
 
 # Sentinel for update_transaction_fields: distinguishes "field not in this request"
 # (leave it untouched) from "clear this field" (None/""/[]). A plain None can't do
@@ -188,36 +187,25 @@ class TransactionRepository(RepositoryBase):
         failed delete is harmless. Returns False when the row is already gone (a 404).
         """
         now = int(datetime.now(timezone.utc).timestamp())
-        try:
+        with db_errors("delete"):
             self._get_table().put_item(Item={
                 "pk": _build_deleted_pk(pk),
                 "sk": sk,
                 "expires_at": now + DELETED_TRANSACTION_TTL_SECONDS,
             })
-            self._get_table().delete_item(
-                Key={"pk": pk, "sk": sk}, ConditionExpression="attribute_exists(pk)"
-            )
-            return True
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                return False
-            handle_database_error(e, "delete")
+        return conditional_write("delete", lambda: self._get_table().delete_item(
+            Key={"pk": pk, "sk": sk}, ConditionExpression="attribute_exists(pk)"
+        ))
 
     def delete_if_still_pending(self, pk: str, sk: str) -> bool:
         """Deletes a pending the bank no longer lists (WHIT-662). No "deleted by you" marker: the
         bank dropped it, the user didn't. Returns False when the row is gone or has since posted."""
-        try:
-            self._get_table().delete_item(
-                Key={"pk": pk, "sk": sk},
-                ConditionExpression="#s = :pending",
-                ExpressionAttributeNames={"#s": "status"},
-                ExpressionAttributeValues={":pending": PENDING_STATUS},
-            )
-            return True
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                return False
-            handle_database_error(e, "delete")
+        return conditional_write("delete", lambda: self._get_table().delete_item(
+            Key={"pk": pk, "sk": sk},
+            ConditionExpression="#s = :pending",
+            ExpressionAttributeNames={"#s": "status"},
+            ExpressionAttributeValues={":pending": PENDING_STATUS},
+        ))
 
     def carry_onto_pending(self, pk: str, sk: str, carried: Transaction) -> bool:
         """Write a carried edit onto a still-pending row (WHIT-678): its category, notes, tags,
@@ -227,19 +215,13 @@ class TransactionRepository(RepositoryBase):
         sets = {field: carried[field] for field in fields if carried.get(field) is not None}
         removes = ["filed_by_rule"] if carried.get("filed_by_rule") is None else []
         expression, names, values = update_expression(sets, removes)
-        try:
-            self._get_table().update_item(
-                Key={"pk": pk, "sk": sk},
-                UpdateExpression=expression,
-                ExpressionAttributeNames={**names, "#s": "status"},
-                ExpressionAttributeValues={**values, ":pending": PENDING_STATUS},
-                ConditionExpression="attribute_exists(pk) AND #s = :pending",
-            )
-            return True
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                return False
-            handle_database_error(e, "write")
+        return conditional_write("write", lambda: self._get_table().update_item(
+            Key={"pk": pk, "sk": sk},
+            UpdateExpression=expression,
+            ExpressionAttributeNames={**names, "#s": "status"},
+            ExpressionAttributeValues={**values, ":pending": PENDING_STATUS},
+            ConditionExpression="attribute_exists(pk) AND #s = :pending",
+        ))
 
     def is_deleted(self, account_id: str, transaction_id: str) -> bool:
         """True while the user's "deleted by you" marker for this transaction hasn't expired."""
@@ -256,21 +238,15 @@ class TransactionRepository(RepositoryBase):
         row deleted in between yields ConditionalCheckFailedException, which we
         surface as False (a 404 for the caller) rather than a 500.
         """
-        try:
-            self._get_table().update_item(
-                Key={"pk": pk, "sk": sk},
-                # Filing by hand clears any rule stamp (WHIT-536) — REMOVE of an absent
-                # attribute is a harmless no-op on a never-stamped row.
-                UpdateExpression="SET #c = :category REMOVE #p",
-                ExpressionAttributeNames={"#c": "category", "#p": "filed_by_rule"},
-                ExpressionAttributeValues={":category": category},
-                ConditionExpression="attribute_exists(pk)",
-            )
-            return True
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                return False
-            handle_database_error(e, "write")
+        return conditional_write("write", lambda: self._get_table().update_item(
+            Key={"pk": pk, "sk": sk},
+            # Filing by hand clears any rule stamp (WHIT-536) — REMOVE of an absent
+            # attribute is a harmless no-op on a never-stamped row.
+            UpdateExpression="SET #c = :category REMOVE #p",
+            ExpressionAttributeNames={"#c": "category", "#p": "filed_by_rule"},
+            ExpressionAttributeValues={":category": category},
+            ConditionExpression="attribute_exists(pk)",
+        ))
 
     def update_transaction_category_if_unchanged(
         self, pk: str, sk: str, category: str, expected_category: Optional[str],
@@ -315,22 +291,18 @@ class TransactionRepository(RepositoryBase):
             condition = "attribute_exists(pk) AND #f0 = :expected"
             values[":expected"] = expected_category
 
-        try:
-            self._get_table().update_item(
-                Key={"pk": pk, "sk": sk},
-                UpdateExpression=expression,
-                ExpressionAttributeNames=names,
-                ExpressionAttributeValues=values,
-                ConditionExpression=condition,
-            )
+        if conditional_write("write", lambda: self._get_table().update_item(
+            Key={"pk": pk, "sk": sk},
+            UpdateExpression=expression,
+            ExpressionAttributeNames=names,
+            ExpressionAttributeValues=values,
+            ConditionExpression=condition,
+        )):
             return "written", category
-        except ClientError as e:
-            if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                handle_database_error(e, "write")
-            # Fall through: the write was refused, so find out which refusal it was. Strongly
-            # consistent because the scan reads an index that cannot be — reading stale here would
-            # reintroduce the very race this method exists to close.
 
+        # The write was refused, so find out which refusal it was. Strongly consistent because
+        # the scan reads an index that cannot be — reading stale here would reintroduce the very
+        # race this method exists to close.
         with db_errors("read"):
             item = self._get_table().get_item(
                 Key={"pk": pk, "sk": sk}, ConsistentRead=True
@@ -350,19 +322,13 @@ class TransactionRepository(RepositoryBase):
         and their choice stands untouched. Returns False on that mismatch and on a vanished row (a
         best-effort no-op the caller can skip), True when the fill was cleared.
         """
-        try:
-            self._get_table().update_item(
-                Key={"pk": pk, "sk": sk},
-                UpdateExpression="REMOVE #c, #p",
-                ExpressionAttributeNames={"#c": "category", "#p": "filed_by_rule"},
-                ExpressionAttributeValues={":rule_id": rule_id},
-                ConditionExpression="attribute_exists(pk) AND #p = :rule_id",
-            )
-            return True
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                return False
-            handle_database_error(e, "write")
+        return conditional_write("write", lambda: self._get_table().update_item(
+            Key={"pk": pk, "sk": sk},
+            UpdateExpression="REMOVE #c, #p",
+            ExpressionAttributeNames={"#c": "category", "#p": "filed_by_rule"},
+            ExpressionAttributeValues={":rule_id": rule_id},
+            ConditionExpression="attribute_exists(pk) AND #p = :rule_id",
+        ))
 
     def refile_rule_fill(
         self, pk: str, sk: str, category: str, old_rule_id: str, new_rule_id: str
@@ -381,20 +347,14 @@ class TransactionRepository(RepositoryBase):
         or cosmetic value change) — the stamp is rewritten to the same id, only the category moves.
         Returns False on a stamp mismatch or a vanished row, True when the charge was re-filed.
         """
-        try:
-            self._get_table().update_item(
-                Key={"pk": pk, "sk": sk},
-                UpdateExpression="SET #c = :category, #p = :new",
-                ExpressionAttributeNames={"#c": "category", "#p": "filed_by_rule"},
-                ExpressionAttributeValues={":category": category, ":new": new_rule_id,
-                                           ":old": old_rule_id},
-                ConditionExpression="attribute_exists(pk) AND #p = :old",
-            )
-            return True
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                return False
-            handle_database_error(e, "write")
+        return conditional_write("write", lambda: self._get_table().update_item(
+            Key={"pk": pk, "sk": sk},
+            UpdateExpression="SET #c = :category, #p = :new",
+            ExpressionAttributeNames={"#c": "category", "#p": "filed_by_rule"},
+            ExpressionAttributeValues={":category": category, ":new": new_rule_id,
+                                       ":old": old_rule_id},
+            ConditionExpression="attribute_exists(pk) AND #p = :old",
+        ))
 
     def update_transaction_fields(
         self,
@@ -460,13 +420,7 @@ class TransactionRepository(RepositoryBase):
         if values:
             update_kwargs["ExpressionAttributeValues"] = values
 
-        try:
-            self._get_table().update_item(**update_kwargs)
-            return True
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                return False
-            handle_database_error(e, "write")
+        return conditional_write("write", lambda: self._get_table().update_item(**update_kwargs))
 
     def update_transaction_categories(
         self, updates: list[dict[str, str]]

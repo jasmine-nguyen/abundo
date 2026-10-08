@@ -802,10 +802,7 @@ class CategoryRepository(RepositoryBase):
             logger.warning("colour-slot backfill deferred: %s", e)
 
     def list_categories(self) -> list[dict]:
-        item = self._get_config()
-        if item is None:
-            self._ensure_seeded()
-            item = self._get_config()  # re-read so a concurrent create is reflected
+        item = self._read_seeded()
         items = item["items"]
         # Planning is pure and cheap (a scan of ~15 map entries), so compute it every read
         # and let its emptiness decide whether a write is needed. An already-stamped, fully

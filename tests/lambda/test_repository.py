@@ -63,7 +63,7 @@ def test_concurrent_duplicate_dead_letters_are_not_deduped(repo):
     assert len(failed) == 2  # not deduped
 
 
-# --- WHIT-82: get_pending_transactions_for_account paginates -----------------
+# --- WHIT-82: get_account_transactions paginates -----------------
 # DynamoDB caps a query at 1MB/page and applies the status filter per page. A
 # pending row beyond page 1 must still be found, or reconciliation silently misses
 # it. FakeTable.page_size forces the paging; pages are cut BEFORE the filter runs.
@@ -87,7 +87,7 @@ def test_get_pending_finds_a_pending_hidden_beyond_the_first_page(repo):
     _put(repo, "acc", "c_pending", "pending")
     repo._table.page_size = 2  # page1 = [a_posted, b_posted], page2 = [c_pending]
 
-    pendings = repo.get_pending_transactions_for_account("acc")
+    pendings = repo.get_account_transactions("acc", "pending")
 
     assert [t["transaction_id"] for t in pendings] == ["c_pending"]
     assert repo._table.query_calls == 2  # followed the cursor to page 2
@@ -100,7 +100,7 @@ def test_get_pending_accumulates_pendings_across_pages(repo):
     _put(repo, "acc", "c_pend", "pending")
     repo._table.page_size = 2  # page1 = [a_pend, b_post], page2 = [c_pend]
 
-    pendings = repo.get_pending_transactions_for_account("acc")
+    pendings = repo.get_account_transactions("acc", "pending")
 
     assert sorted(t["transaction_id"] for t in pendings) == ["a_pend", "c_pend"]
     assert repo._table.query_calls == 2
@@ -113,7 +113,7 @@ def test_get_pending_single_page_returns_all_and_queries_once(repo):
     _put(repo, "acc", "b", "posted")
     _put(repo, "acc", "c", "pending")
 
-    pendings = repo.get_pending_transactions_for_account("acc")
+    pendings = repo.get_account_transactions("acc", "pending")
 
     assert sorted(t["transaction_id"] for t in pendings) == ["a", "c"]
     assert repo._table.query_calls == 1
@@ -143,7 +143,7 @@ def test_paginated_query_wraps_a_client_error_as_database_error(lam, repo, monke
     monkeypatch.setattr(repo._table, "query", boom)
 
     with pytest.raises(lam.age_out.DatabaseError, match="Database read failed: throttled"):
-        repo.get_pending_transactions_for_account("acc")
+        repo.get_account_transactions("acc", "pending")
 
 
 def test_get_failed_sends_no_filter_while_pending_and_posted_do(repo):
@@ -164,10 +164,10 @@ def test_get_failed_sends_no_filter_while_pending_and_posted_do(repo):
     repo.get_failed_transactions()
     failed_calls = list(captured)
     captured.clear()
-    repo.get_pending_transactions_for_account("acc")
+    repo.get_account_transactions("acc", "pending")
     pending_calls = list(captured)
     captured.clear()
-    repo.get_posted_transactions_for_account("acc")
+    repo.get_account_transactions("acc", "posted")
     posted_calls = list(captured)
 
     assert failed_calls and all("FilterExpression" not in c for c in failed_calls)
@@ -236,8 +236,8 @@ def test_pending_and_posted_do_not_cross_contaminate_through_the_shared_loop(rep
     _put(repo, "acc", "pend_only", "pending")
     _put(repo, "acc", "post_only", "posted")
 
-    pendings = {t["transaction_id"] for t in repo.get_pending_transactions_for_account("acc")}
-    posteds = {t["transaction_id"] for t in repo.get_posted_transactions_for_account("acc")}
+    pendings = {t["transaction_id"] for t in repo.get_account_transactions("acc", "pending")}
+    posteds = {t["transaction_id"] for t in repo.get_account_transactions("acc", "posted")}
 
     assert pendings == {"pend_only"}
     assert posteds == {"post_only"}
