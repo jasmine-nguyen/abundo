@@ -3377,10 +3377,10 @@ function overallProgressPct(balance: number, start: number, end: number): number
 // WHIT-822: the repayment needed each payday to bring the balance down to the next milestone's
 // target by its month, interest included. The payoff maths is monthly, so the monthly figure is
 // spread over a year's paydays. null when there's nothing meaningful to say.
-export function milestonePace(m: MilestoneView, loanFacts: LoanFacts, payCycle: PayCycle | null, today?: Date): string | null {
+export function milestonePace(m: MilestoneView, loanFacts: LoanFacts, payCycle: PayCycle | null, today = new Date()): string | null {
   const next = m.nextMilestone;
   if (!next || !payCycle || !loanFactsReady(loanFacts)) return null;
-  const months = monthsUntil(today ?? new Date(), next.targetDate);
+  const months = monthsUntil(today, next.targetDate);
   if (months == null || months <= 0) return null;
   const monthly = requiredRepayment(m.balance, loanFacts.ratePct / 100 / MONTHS_PER_YEAR, months, next.targetBalance);
   if (monthly == null) return null;

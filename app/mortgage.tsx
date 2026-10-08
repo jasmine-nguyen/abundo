@@ -137,7 +137,7 @@ export default function Mortgage() {
               <Text style={styles.heroSetupBody}>We'll show your payoff progress once your balance loads.</Text>
             </>
           )}
-          {typeof homeLoan.balance === 'number' && !loanFactsError && !homeLoanError && !noHomeLoan && <BalanceFreshnessPill asOf={homeLoan.asOf} />}
+          {g.balanceKnown && !loanFactsError && !homeLoanError && !noHomeLoan && <BalanceFreshnessPill asOf={homeLoan.asOf} />}
         </View>
 
         {/* freedom + interest — real payoff projection (WHIT-114) from the live

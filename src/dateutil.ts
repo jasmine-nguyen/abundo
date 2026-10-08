@@ -109,9 +109,6 @@ export function wholeDaysBetween(fromMs: number, toMs: number): number {
   return Math.round((toMs - fromMs) / MS_PER_DAY);
 }
 
-// WHIT-822: a balance older than this many days reads as out of date (amber).
-export const BALANCE_STALE_DAYS = 3;
-
 // A balance's `asOf` (a full timestamp, or a date-only "YYYY-MM-DD" for a manual balance) ->
 // "As of today" / "As of yesterday" / "As of 3 Oct", counted on local calendar days. null when
 // there's no usable date.
@@ -123,5 +120,5 @@ export function balanceFreshness(asOf: string | null, now = new Date()): { label
   let label = `As of ${formatDayMonth(toISODate(parsed))}`;
   if (days === 0) label = 'As of today';
   if (days === 1) label = 'As of yesterday';
-  return { label, stale: days > BALANCE_STALE_DAYS };
+  return { label, stale: days > 3 };
 }
