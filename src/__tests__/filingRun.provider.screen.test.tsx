@@ -4,9 +4,8 @@
 // picks "file now" or "background job" and hands back one FilingResult. These tests prove the
 // choice lives in the context, not the sheet, and that every path answers in the same shape.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { ApplyRulesResult, FilingResult, FilingTarget } from '../context';
 import type { UncategorizedMerchantGroup } from '../api';
 import { ApiError } from '../apiError';
@@ -15,13 +14,13 @@ import { queryClient } from '../queryClient';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { applyRulesReport } from './support/applyRulesReport';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 const APPLY_RULES = '/transactions/uncategorized/apply-rules';
 const JOBS = `${APPLY_RULES}/jobs`;
 const posts = (path: string) => server.sent('POST', path);
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const GROUP: UncategorizedMerchantGroup = {
   merchant: 'Coles', rulePattern: 'coles', groupedBy: 'merchant', count: 999,
@@ -30,11 +29,10 @@ const GROUP: UncategorizedMerchantGroup = {
 const SHOP: FilingTarget = { kind: 'shop', group: GROUP, categoryId: 'groceries' };
 const SWEEP: FilingTarget = { kind: 'sweep' };
 
-const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
-  dryRun: false, rulesConsidered: 1, unfiled: 999, matched: 999, conflicted: 0, conflictedSamples: [],
-  byCategory: { groceries: 300 }, byRule: [], skippedRules: [],
-  filed: [], vanished: [], failed: [], remaining: 699, ...over,
-} as ApplyRulesResult);
+const report = (over: Partial<ApplyRulesResult> = {}) => applyRulesReport({
+  dryRun: false, rulesConsidered: 1, unfiled: 999, matched: 999, byCategory: { groceries: 300 }, remaining: 699,
+  ...over,
+});
 
 function mount() { return renderHook(() => useAppContext(), { wrapper }).result; }
 

@@ -8,7 +8,7 @@ impl suite through importlib (WHIT-440). The table is the shared FakeTable (_dyn
 
 Resolved by pytest.ini's `pythonpath = tests/shared`, the same way test_categories.py
 already imports `_chart_ramp` from here — no `handler`-fixture sys.path juggling needed
-to import THIS module. The `import repository` / `import repository_category` inside
+to import THIS module. The `import repository_budget` / `import repository_category` inside
 _repo_with_fake_table and budget_repo are lazy on purpose: they run at test time, under the
 `handler` fixture that puts shared/ on the path.
 """
@@ -41,7 +41,7 @@ def _before_next_update(table, mutate):
 def budget_repo(budgets=None):
     """The REAL BudgetRepository over its own FakeTable holding ``budgets`` ({id: entry}), so the
     delete cascade and the rollover/spread clears run as production wrote them (WHIT-625)."""
-    from repository import BudgetRepository
+    from repository_budget import BudgetRepository
 
     repo = BudgetRepository()
     repo._table = FakeTable()

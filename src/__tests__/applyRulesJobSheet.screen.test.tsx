@@ -5,7 +5,6 @@
 // a retry. Over the per-run cap the preview promotes "Apply to all history" (the uncapped background
 // sweep) to primary and demotes the one-round instant file. Context is mocked, like the sync sheet.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, ApplyRulesResult, ApplyRulesJob, FilingResult, FilingTarget, FilingWhen } from '../context';
 
@@ -18,6 +17,7 @@ import { installFakeServer } from './support/fakeServer';
 import { GROCERIES_TOP_RECORD } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
+import { applyRulesReport } from './support/applyRulesReport';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -32,10 +32,9 @@ const fns = {
 
 const CATEGORIES = [GROCERIES_TOP_RECORD];
 
-const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
-  dryRun: true, rulesConsidered: 2, unfiled: 639, matched: 512, conflicted: 0, conflictedSamples: [],
-  byCategory: { groceries: 512 }, byRule: [], skippedRules: [],
-  filed: [], vanished: [], failed: [], alreadyFiled: [], remaining: 512, ...over,
+const report = (over: Partial<ApplyRulesResult> = {}) => applyRulesReport({
+  rulesConsidered: 2, unfiled: 639, matched: 512, byCategory: { groceries: 512 }, alreadyFiled: [], remaining: 512,
+  ...over,
 });
 
 const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({

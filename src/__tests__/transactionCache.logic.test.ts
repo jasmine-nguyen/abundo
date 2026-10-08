@@ -6,12 +6,9 @@ import { it, expect, describe } from '@jest/globals';
 import { makeQueryClient } from '../queryClient';
 import { readTransactionCopies } from '../transactionCache';
 import type { Transaction } from '../types';
+import { colesTxn } from './factory';
 
-const tx = (id: string, over: Partial<Transaction> = {}): Transaction => ({
-  transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
-  description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
-  account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true, ...over,
-});
+const tx = (id: string, over: Partial<Transaction> = {}) => colesTxn({ transaction_id: id, ...over });
 const ids = (list: Transaction[]) => list.map((t) => t.transaction_id);
 
 function seededClient() {

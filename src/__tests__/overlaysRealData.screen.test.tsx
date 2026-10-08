@@ -14,7 +14,6 @@
 // consts / helpers / Probe / renderOverlays / beforeEach block-scoped; only the ../auth mock, the fake
 // server and the auth store are module-level (jest.mock can't be per-describe).
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { Text } from 'react-native';
 import { render, renderHook, act, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { formatDayMonthYear, toISODate } from '../dateutil';
@@ -34,6 +33,8 @@ import { useCategories, useGoalsQuery, useIsAuthed, useRulesScreenData, useTrans
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES, SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient, WithQueries, renderWithQueries } from './support/renderWithQueries';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
+import { previewReport } from './support/applyRulesReport';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -69,8 +70,6 @@ function ScreensUnderneath() {
 // The auth store is mocked LIVE (mutable status + real listener set, the
 // authGateTransitions pattern) so status flips re-render exactly as production does.
 describe('WHIT-268 — overlays live outside the auth gate', () => {
-  const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
   beforeEach(() => {
     resetAuth();
     queryClient.clear();
@@ -234,8 +233,6 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
 //  [A10] an async rule save settling after sign-out does NOT re-seed the cleared
 //        ['rules'] query cache (patchRules' undefined-guard is the fail-on-revert seam).
 describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
-  const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
-
   function Probe({ grab }: { grab: (ctx: ReturnType<typeof useAppContext>) => void }) {
     grab(useAppContext());
     return <Text testID="probe">probe</Text>;
@@ -847,19 +844,18 @@ describe('WHIT-538 — Back from the add-rule preview restores the form draft', 
     { ...GROCERIES },
     { ...SUBSCRIPTIONS },
   ];
-  const previewReport = {
-    dryRun: true, rulesConsidered: 1, unfiled: 5, matched: 5, conflicted: 0, conflictedSamples: [],
-    byCategory: { groceries: 5 },
+  const spotifyPreview = previewReport({
+    unfiled: 5, matched: 5, byCategory: { groceries: 5 },
     byRule: [{ ruleId: null, value: 'SPOTIFY', categoryId: 'groceries', count: 5, samples: ['SPOTIFY AB'] }],
-    skippedRules: [], filed: [], vanished: [], failed: [], alreadyFiled: [], remaining: 5, createdRule: null,
-  };
+    remaining: 5,
+  });
 
   beforeEach(() => {
     resetAuth();
     server.seed('/categories', CATS);
     server.seed('/rules', []);
     queryClient.clear();
-    server.seed('/transactions/uncategorized/apply-rules', previewReport);
+    server.seed('/transactions/uncategorized/apply-rules', spotifyPreview);
   });
 
   it('restores the typed pattern after transitioning to the confirm step and pressing Back', async () => {

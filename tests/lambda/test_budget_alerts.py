@@ -1364,7 +1364,7 @@ def test_simulation_matches_the_real_write_when_a_posting_precedes_its_pending_r
                         description="SQ *KKV INTERNATIONAL PTY Sunshine",
                         merchant_name="SQ *KKV INTERNATIONAL PTY ")
     ctx = {"before_rows": before,
-           "pending_pools": {account: list(repo.get_pending_transactions_for_account(account))},
+           "pending_pools": {account: list(repo.get_account_transactions(account, "pending"))},
            "start": "2026-07-01", "end": "2026-07-14"}
 
     simulated = alerts.budget_alerts._simulate_after(ctx, [posted, resend])  # posted FIRST
@@ -1400,7 +1400,7 @@ def test_one_word_skew_simulation_matches_the_real_write(alerts, repo):
     account = before[0]["account_id"]
     posted = alerts.banksync.normalise(posted_row)
     ctx = {"before_rows": before,
-           "pending_pools": {account: list(repo.get_pending_transactions_for_account(account))},
+           "pending_pools": {account: list(repo.get_account_transactions(account, "pending"))},
            "start": "2026-07-01", "end": "2026-07-14"}
 
     simulated = alerts.budget_alerts._simulate_after(ctx, [posted])

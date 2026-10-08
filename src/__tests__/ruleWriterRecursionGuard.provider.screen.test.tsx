@@ -5,20 +5,19 @@
 // mis-alias would make it call the WRONG api fn. These assert each writer hits its own
 // api fn EXACTLY ONCE and touches no sibling rule api. [A-recursion]
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer, type Method } from './support/fakeServer';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 // Every rule write the app sent with this method (POST = create, PUT = update, DELETE = delete).
 const ruleWrites = (method: Method) => server.sentUnder(method, '/rules');
 
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 const NETFLIX: Rule = { id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false, field: 'description', operator: 'contains' };
 
 function seed(seedRules: Rule[] = []) {

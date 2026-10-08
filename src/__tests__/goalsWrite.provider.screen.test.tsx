@@ -6,20 +6,18 @@
 // if the hub had loaded) so the writers' `prev` is defined. expo-crypto is auto-mocked
 // (__mocks__/expo-crypto.js) so the minted id is deterministic.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import * as Crypto from 'expo-crypto';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { GoalRecord, GoalWriteBody } from '../api';
 import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const GOAL_G1: GoalRecord = {
   id: 'g1', name: 'Emergency fund', icon: 'umbrella', direction: 'grow',

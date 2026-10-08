@@ -341,10 +341,7 @@ class CategoryRepository(RepositoryBase):
             raise CategoryNotFoundError(cat_id)
 
     def list_categories(self) -> list[dict]:
-        item = self._get_config()
-        if item is None:
-            self._ensure_seeded()
-            item = self._get_config()  # re-read so a concurrent create is reflected
+        item = self._read_seeded()
         # Default `parent` to None so every category leaving the repo carries the
         # field, even seed rows and rows written before sub-categories existed.
         # The slot goes out as a plain int (DynamoDB hands back a Decimal), None if corrupt.

@@ -4,19 +4,18 @@
 // Existing rulesWrite "updateRule edits the cached rule in place" returns the SAME id, so this
 // id-changing path is uncovered. Same mock-by-function-name pattern as rulesWrite (URL-agnostic).
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { SUBS } from './support/categories';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 const RULE_E1: Rule = { id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false, field: 'description', operator: 'contains' };
 const cacheRules = () => queryClient.getQueryData<Rule[]>(['rules']);
 

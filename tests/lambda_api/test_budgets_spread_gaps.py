@@ -16,15 +16,13 @@ from functools import partial
 import pytest
 
 from _api_event import api_event
-from _budget_endpoint_fakes import _FakePayCycleRepo, _SpendCategoryRepo, _spend_cat, pin_cycle_window
+from _budget_endpoint_fakes import CYCLE_START, LENGTH, PAYDATE, _FakePayCycleRepo, _SpendCategoryRepo, _spend_cat
 from _budget_fakes import recording_budget_repo, stored_budgets
 from _dynamo_fakes import _client_error
 from _transaction_range_fakes import _QueuedTransactionRepo
 
-CYCLE_START = "2026-08-06"
-TODAY = "2026-08-10"
-LENGTH = 30
-PAYDATE = "2026-01-01"
+pytestmark = pytest.mark.usefixtures("fixed_window")
+
 BILL = Decimal("1390.91")   # over 4 cycles: 347.73, 347.73, 347.73, 347.72
 
 
@@ -74,11 +72,6 @@ def _wire(handler, monkeypatch, budget_repo, categories=None, transactions=None)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(categories))
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: FakePayCycleRepo())
     monkeypatch.setattr(handler, "TransactionRepository", lambda: _QueuedTransactionRepo(transactions))
-
-
-@pytest.fixture(autouse=True)
-def _fixed_window(handler, monkeypatch):
-    pin_cycle_window(handler, monkeypatch, CYCLE_START, TODAY)
 
 
 # --- subtree rows ------------------------------------------------------------------

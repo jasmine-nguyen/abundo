@@ -14,18 +14,13 @@ sync route runs, so the two can never drift on WHAT gets filed; only the write l
 import logging
 
 from api_constants import DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR
-from repository import (
-    BudgetRepository,
-    CategoryRepository,
-    DatabaseError,
-    JobRepository,
-    PayCycleRepository,
-    RuleClashError,
-    RuleRepository,
-    TransactionRepository,
-)
-from repository_job import STATUS_FAILED, STATUS_SUCCEEDED
-from repository_transaction import read_window
+from repository_budget import BudgetRepository
+from repository_category import CategoryRepository
+from repository_errors import DatabaseError, RuleClashError
+from repository_paycycle import PayCycleRepository
+from repository_rule import RuleRepository
+from repository_job import COUNT_FIELDS, STATUS_FAILED, STATUS_SUCCEEDED, JobRepository
+from repository_transaction import TransactionRepository, read_window
 from rule_book import RuleBook, WriteLimit, rule_from_row, rule_reply
 from rule_spreading import SpreadSeeder
 
@@ -37,8 +32,7 @@ PROGRESS_EVERY = 50
 
 
 def _zero_counts() -> dict:
-    return {"matched": 0, "attempted": 0, "filed": 0, "vanished": 0,
-            "failed": 0, "alreadyFiled": 0, "remaining": 0}
+    return {field: 0 for field in COUNT_FIELDS}
 
 
 def lambda_handler(event: dict, context=None) -> dict:

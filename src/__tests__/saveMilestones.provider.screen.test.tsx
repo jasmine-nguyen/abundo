@@ -4,9 +4,8 @@
 // it), and rolls the cache back on failure. Drives the REAL saveMilestones via AppProvider + the
 // singleton queryClient — mirrors loanFactsWrite.provider.screen.test.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { MilestoneRecord } from '../api';
 import { SAVED_MILESTONES } from './support/milestonePlan';
 import { queryClient } from '../queryClient';
@@ -14,10 +13,9 @@ import { queryClient } from '../queryClient';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const cached = () => queryClient.getQueryData<MilestoneRecord[]>(['milestones']);
 

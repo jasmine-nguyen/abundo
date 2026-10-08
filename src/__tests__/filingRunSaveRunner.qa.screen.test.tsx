@@ -2,9 +2,8 @@
 // that lands after sign-out must come back as a plain failure: no clash sheet, no refresh, and the
 // one-run-at-a-time lock released.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { FilingResult, FilingTarget } from '../context';
 import { useFilingRun } from '../filingRun';
 import { runOptimisticSave, type SaveSteps } from '../optimisticSave';
@@ -14,6 +13,7 @@ import { queryClient } from '../queryClient';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { appProviderWrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
 const APPLY_RULES = '/transactions/uncategorized/apply-rules';
@@ -76,7 +76,7 @@ it('[A3] drops a preview clash and a file-now clash that land after sign-out', a
   server.once('POST', APPLY_RULES, { status: 409 });
   const pending = server.hold(APPLY_RULES);   // the preview and the commit both stay in flight
   const r = renderHook(() => useAppContext(), {
-    wrapper: ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>,
+    wrapper: appProviderWrapper,
   }).result;
 
   let previewing!: Promise<FilingResult>;

@@ -15,6 +15,7 @@ import { seedTransactionsCache, readTransactionsCache } from './support/transact
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
+import { applyRulesReport } from './support/applyRulesReport';
 
 const server = installFakeServer();
 
@@ -24,11 +25,11 @@ const GROUP: UncategorizedMerchantGroup = {
 };
 const SHOP: FilingTarget = { kind: 'shop', group: GROUP, categoryId: 'groceries' };
 
-const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
-  dryRun: false, rulesConsidered: 1, unfiled: 1, matched: 1, conflicted: 0, conflictedSamples: [],
-  byCategory: { groceries: 1 }, byRule: [], skippedRules: [],
-  filed: [{ id: 't1', category: 'groceries' }], vanished: [], failed: [], remaining: 0, createdRule: null, ...over,
-} as ApplyRulesResult);
+const report = (over: Partial<ApplyRulesResult> = {}) => applyRulesReport({
+  dryRun: false, rulesConsidered: 1, unfiled: 1, matched: 1, byCategory: { groceries: 1 },
+  filed: [{ id: 't1', category: 'groceries' }], createdRule: null,
+  ...over,
+});
 
 const UNFILED = { transaction_id: 't1', description: 'COLES 1234', amount: -10, category: null } as unknown as Transaction;
 

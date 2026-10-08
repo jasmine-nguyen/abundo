@@ -1,11 +1,10 @@
 """WHIT-384 / WHIT-369 — the milestone celebration push reads the user's SAVED plan.
 
-Covers the resolve-plan fallback (unset / read-failure → built-in default), a custom plan
-firing on the user's own targets/labels, the "id:<id>:bal:<amount>" dedup marker (WHIT-369:
-key by permanent id AND amount, so reorder/delete can't repeat or drop an alert while
-re-pointing a target still re-arms it), the re-target re-arm, and cent-exact custom
-boundaries. The no-saved-plan / default path stays covered by test_milestones.py (its callers
-omit milestone_repo → None → default), which is itself the no-regression guard.
+Covers the unset plan (celebrate nothing), a custom plan firing on the user's own
+targets/labels, the "id:<id>:bal:<amount>" dedup marker (WHIT-369: key by permanent id AND
+amount, so reorder/delete can't repeat or drop an alert while re-pointing a target still
+re-arms it), the re-target re-arm, and cent-exact custom boundaries. A read failure and an
+id-less row are covered by test_milestones_no_default_plan.py (WHIT-830).
 """
 
 import logging
@@ -26,7 +25,7 @@ def _notify(shared, *, old, new, milestone_repo=None, stored=None, facts=FACTS,
             fired=None, notify=None, scope=None):
     # One wrapper for the whole custom-plan family (WHIT-472 fold). Give `milestone_repo`
     # directly OR `stored` (wrapped in a FakeMilestoneRepo); with neither, the store read fails
-    # and the built-in plan is measured. `fired` builds a fresh notify repo;
+    # and there is no plan. `fired` builds a fresh notify repo;
     # `notify` supplies one you assert on. `facts=None` for the empty-loanfacts (live) cases.
     # Returns (sent, notify).
     notify = notify if notify is not None else notify_repo(fired)
@@ -55,16 +54,8 @@ def _sweep(shared, stored, fired):
 # --- the resolved plan ---------------------------------------------------------------------
 
 def test_resolve_plan_unset_is_an_empty_plan(shared):
-    # The user sets their own milestones now — an UNSET plan resolves to EMPTY (celebrate nothing),
-    # NOT the built-in default. (A READ FAILURE still defaults — see the test below.)
+    # The user sets their own milestones — an UNSET plan resolves to EMPTY (celebrate nothing).
     assert shared.milestones._resolve_plan(FakeMilestoneRepo(stored=None))[0] == []
-
-
-def test_resolve_plan_read_failure_falls_back_to_the_default(shared):
-    # Any read error must degrade to the built-in default, never propagate (which the poller's
-    # outer except would turn into a silently-skipped celebration).
-    plan = shared.milestones._resolve_plan(FakeMilestoneRepo(raises=RuntimeError("dynamo down")))[0]
-    assert plan == list(shared.milestones.MILESTONES)
 
 
 def test_resolve_plan_maps_a_saved_plan_to_namespaced_decimal_rows(shared):
@@ -84,15 +75,6 @@ def test_custom_plan_fires_on_the_users_own_target_and_label(shared, recorder):
     assert sent == 1
     title, _body, _tokens = recorder[0]
     assert title == "\U0001f389 Milestone reached — My House!"
-
-
-def test_custom_plan_does_not_fire_on_a_default_balance(shared, recorder):
-    # A saved plan that excludes 544000: crossing the OLD built-in Kickoff must NOT fire —
-    # proves the push stopped reading the hardcoded table (fail-on-revert on the whole card).
-    repo = FakeMilestoneRepo(stored=[_row("My House", "480000")])
-    sent, _ = _notify(shared, old="545000", new="544000", milestone_repo=repo)
-    assert sent == 0
-    assert recorder == []
 
 
 def test_custom_marker_is_namespaced_so_it_cannot_collide_with_a_sprint_marker(shared, recorder):
@@ -167,22 +149,6 @@ def test_two_targets_at_the_same_amount_get_distinct_markers(shared, recorder):
     assert stored_markers(notify) == {"id:one:bal:300000.00", "id:two:bal:300000.00"}
 
 
-def test_legacy_row_without_id_falls_back_to_amount_marker(shared, recorder):
-    # A row saved before ids were minted (WHIT-378) has no "id" — the marker degrades to the
-    # amount-only form rather than raising (which the poller's outer except would swallow into a
-    # silently-lost celebration).
-    # The date is a real one because WHIT-417 made the poller reject unparsable dates; this test
-    # is about the id fallback, and a null date here would fail it for the wrong reason.
-    legacy = [{"label": "Old", "targetBalance": Decimal("480000"), "targetDate": "2030-01-01"}]
-    notify = notify_repo()
-    sent = shared.milestones.notify_milestone_crossing(
-        Decimal("490000"), Decimal("480000"),
-        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
-        notify_repo=notify, milestone_repo=FakeMilestoneRepo(stored=legacy))
-    assert sent == 1
-    assert stored_markers(notify) == {"bal:480000.00"}
-
-
 def test_cent_exact_custom_boundary(shared):
     # The raw-Decimal path preserves cents: crossing 295000.01 counts; 295000.02 does not.
     plan = shared.milestones._resolve_plan(FakeMilestoneRepo(stored=[_row("Halfway", "295000.01")]))[0]
@@ -190,15 +156,7 @@ def test_cent_exact_custom_boundary(shared):
     assert shared.milestones.crossed_milestones(Decimal("296000"), Decimal("295000.02"), plan) == []
 
 
-# --- fallback still celebrates from the default --------------------------------------------
-
-def test_read_failure_still_celebrates_from_the_default(shared, recorder):
-    # The MAJOR case: a milestones-store hiccup must fall back to the default AND still fire.
-    repo = FakeMilestoneRepo(raises=RuntimeError("dynamo down"))
-    sent, _ = _notify(shared, old="545000", new="544000", milestone_repo=repo)
-    assert sent == 1
-    assert recorder[0][0] == "\U0001f389 Milestone reached — Kickoff!"
-
+# --- no plan celebrates nothing ------------------------------------------------------------
 
 def test_no_plan_celebrates_nothing(shared, recorder):
     # A user who has never saved a plan (unset) now resolves to an EMPTY plan, so a paydown that
@@ -215,9 +173,8 @@ def test_no_plan_celebrates_nothing(shared, recorder):
 # --- WHIT-385: reconcile dead custom markers ------------------------------------------------
 # The set of "bal:<amount>" celebration markers must not grow forever when a user re-targets a
 # milestone. On each poll, drop markers whose target is no longer in the saved plan — but ONLY
-# when the plan read was authoritative (a genuine saved list). A read failure or an unset plan
-# falls back to the built-in default and must delete NOTHING, or a transient blip would wipe the
-# once-ever "already celebrated" record.
+# when the plan is non-empty. A read failure or an unset plan is an empty plan and must delete
+# NOTHING, or a transient blip would wipe the once-ever "already celebrated" record.
 
 
 def test_retarget_drops_the_dead_marker(shared, recorder):
@@ -232,21 +189,9 @@ def test_retarget_drops_the_dead_marker(shared, recorder):
     assert stored_markers(notify) == set()
 
 
-def test_read_failure_does_not_delete_any_marker(shared, recorder):
-    # BLOCKER guard, fail-on-revert: a milestones-store read failure falls back to the default
-    # plan (no "bal:" keys). Reconciling against it would treat EVERY live custom marker as dead
-    # and delete it. Authoritative-only reconcile must delete nothing here.
-    notify = notify_repo({"bal:300000.00", "bal:480000.00"})
-    sent, _ = _notify(shared, old="250000", new="249000",
-                milestone_repo=FakeMilestoneRepo(raises=RuntimeError("dynamo down")), notify=notify)
-    assert sent == 0
-    assert removed_markers(notify) == set()
-    assert stored_markers(notify) == {"bal:300000.00", "bal:480000.00"}
-
-
 def test_unset_plan_does_not_delete_markers(shared, recorder):
     # An unset plan (stored is None) now resolves to an AUTHORITATIVE EMPTY plan, but custom markers
-    # are still left intact: the WHIT-386 `authoritative and plan` sweep short-circuits on the empty
+    # are still left intact: the WHIT-386 `if plan` sweep guard short-circuits on the empty
     # (falsy) plan, so nothing is swept — a no-plan user's once-ever record survives.
     notify = notify_repo({"bal:300000.00"})
     _notify(shared, old="250000", new="249000",
@@ -265,16 +210,6 @@ def test_empty_saved_plan_does_not_wipe_markers(shared, recorder):
     assert sent == 0
     assert removed_markers(notify) == set()
     assert stored_markers(notify) == {"bal:300000.00", "bal:120000.00", "0"}
-
-
-def test_reconcile_preserves_builtin_sprint_markers(shared, recorder):
-    # Sprint markers ("0".."4") never carry the "bal:" prefix, so reconcile leaves them alone even
-    # while dropping a dead custom marker.
-    notify = notify_repo({"0", "1", "bal:300000.00"})
-    _notify(shared, old="285000", new="284000",
-         milestone_repo=FakeMilestoneRepo(stored=[_row("My House", "280000")]), notify=notify)
-    assert removed_markers(notify) == {"bal:300000.00"}
-    assert stored_markers(notify) == {"0", "1"}
 
 
 def test_reconcile_no_delete_when_marker_still_live(shared, recorder):
@@ -358,20 +293,6 @@ def test_mixed_fired_and_fresh_only_fresh_fire_and_mark(shared, recorder):
     assert recorder[0][0] == "\U0001f389 Milestone reached — Nearly!"  # furthest FRESH (120k)
     # only the two fresh keys are added; the pre-existing one is untouched, none re-fired.
     assert stored_markers(notify) == {"id:b:bal:300000.00", "id:a:bal:480000.00", "id:c:bal:120000.00"}
-
-
-# --- a custom target EQUAL to a default (544000) must not collide with a stale sprint marker -
-
-def test_custom_target_equal_to_default_does_not_collide_with_stale_sprint_marker(shared, recorder):
-    # A user who previously fired the built-in Kickoff (marker "0"), then saved a custom plan
-    # whose target happens to equal 544000. Its key is "id:m1:bal:544000.00", not "0" — so the
-    # stale "0" must NOT suppress the custom celebration.
-    repo = FakeMilestoneRepo(stored=[_row("My House", "544000")])
-    notify = notify_repo(fired={"0"})
-    sent, notify = _notify(shared, old="545000", new="544000", milestone_repo=repo, notify=notify)
-    assert sent == 1
-    assert recorder[0][0] == "\U0001f389 Milestone reached — My House!"
-    assert stored_markers(notify) == {"0", "id:m1:bal:544000.00"}      # both live independently
 
 
 # --- empty-list ([]) vs unset (None) semantics ---------------------------------------------
@@ -761,8 +682,6 @@ _STILL_GONE = [
      {"id": "x", "targetBalance": Decimal("250000")}, "id:x:bal:300000.00"),
     ("deleted and re-added under a new id",
      {"id": "new", "targetBalance": Decimal("300000")}, "id:old:bal:300000.00"),
-    ("legacy row given an id on its first save (WHIT-369/378)",
-     {"id": "minted", "targetBalance": Decimal("300000")}, "bal:300000.00"),
     ("re-targeted AND re-identified",
      {"id": "new", "targetBalance": Decimal("250000")}, "id:old:bal:300000.00"),
 ]
@@ -789,28 +708,7 @@ def test_an_unreadable_row_does_not_hoard_the_marker_it_no_longer_keys_to(
     assert stored_markers(notify) == {_KEEP_MARKER}, why
 
 
-# --- [L3] two rows, one marker — and the legacy id-less collision ------------
-
-def test_a_legacy_id_less_row_and_an_idd_row_at_the_same_amount_hold_distinct_markers(
-        shared, recorder):
-    # [L3] `live_keys` is a SET, so anything that makes two rows key alike merges their fates.
-    # The one shape where that is reachable is the WHIT-378 legacy row: no id -> "bal:<amount>",
-    # which sits next to an id'd row's "id:<id>:bal:<amount>" at the same target. They must stay
-    # two markers: deleting the legacy row has to sweep "bal:300000.00" and ONLY that, or an
-    # id'd row would be silently keeping a deleted milestone's record alive (and vice versa).
-    # Both rows are unreadable here, which is the case the change newly keeps alive.
-    legacy = {"label": "", "targetBalance": Decimal("300000"), "targetDate": "2030-01-01"}
-    idd = _row_kw(id="keep", targetDate="not-a-date")
-    markers = {"bal:300000.00", _KEEP_MARKER}
-
-    assert removed_markers(_sweep(shared, [_GOOD, legacy, idd], fired=markers)) == set()
-
-    # ...and once the legacy row is gone, its marker alone dies. The id'd row at the identical
-    # amount does NOT hold it open.
-    notify = _sweep(shared, [_GOOD, idd], fired=markers)
-    assert removed_markers(notify) == {"bal:300000.00"}
-    assert stored_markers(notify) == {_KEEP_MARKER}
-
+# --- [L3] two rows, one marker ------------------------------------------------
 
 def test_two_rows_keying_to_the_same_marker_keep_it_while_either_survives(shared, recorder):
     # [L3] Duplicate rows (same id AND same amount — reachable by a direct write; the save
@@ -967,47 +865,6 @@ def test_two_unreadable_rows_with_distinct_ids_each_keep_only_their_own(shared, 
     assert {m_p, m_q, _KEEP_MARKER} <= stored_markers(notify)
 
 
-# ==========================================================================
-# --- folded from test_milestones_whit447_mint_markers_gaps.py (WHIT-472) ---
-# ==========================================================================
-
-# stored Decimal(str(balance)) the save endpoint feeds mint, and the (legacy, idd) it must yield.
-@pytest.mark.parametrize("stored, legacy, idd", [
-    (Decimal(str(0)),               "bal:0.00",             "id:u1:bal:0.00"),
-    (Decimal(str(1_000_000_000)),   "bal:1000000000.00",    "id:u1:bal:1000000000.00"),
-    (Decimal(str(400000.005)),      "bal:400000.00",        "id:u1:bal:400000.00"),  # sub-cent → half-even
-    (Decimal(str(55000.5)),         "bal:55000.50",         "id:u1:bal:55000.50"),
-])
-def test_mint_markers_match_the_literal_poller_key_at_quantization_edges(shared, stored, legacy, idd):
-    got_legacy, got_idd = shared.milestones.mint_migration_markers(stored, "u1")
-    assert (got_legacy, got_idd) == (legacy, idd)
-
-
-@pytest.mark.parametrize("stored", [
-    Decimal(str(0)), Decimal(str(1_000_000_000)), Decimal(str(400000.005)), Decimal(str(55000.5)),
-])
-def test_the_idd_marker_is_exactly_what_the_poller_would_key_the_stored_row_to(shared, stored):
-    # The contract: the idd marker mint writes MUST equal the marker _plan_marker (the poller's
-    # keying) builds for a row carrying that id + stored balance. Ties mint to the poller so a
-    # future divergence (different quantize / prefix) fails here, not silently at the next poll.
-    _, got_idd = shared.milestones.mint_migration_markers(stored, "u1")
-    poller_key = shared.milestones._plan_marker({"id": "u1", "targetBalance": stored})
-    assert got_idd == poller_key
-
-
-@pytest.mark.parametrize("stored", [
-    Decimal(str(0)), Decimal(str(400000.005)),
-])
-def test_the_legacy_marker_is_the_bare_id_less_form_the_poller_first_celebrated(shared, stored):
-    # The legacy half must equal the id-LESS marker the poller keyed the row under before an id
-    # existed — otherwise migrate would look for a bare marker that was never in the fired set and
-    # silently no-op, leaving the celebration to re-arm.
-    got_legacy, _ = shared.milestones.mint_migration_markers(stored, "u1")
-    poller_bare = shared.milestones._plan_marker({"targetBalance": stored})
-    assert got_legacy == poller_bare
-    assert got_legacy.startswith("bal:") and "id:" not in got_legacy
-
-
 # --- WHIT QA GAP: unset user is now AUTHORITATIVE-empty, not a fallback default -------------
 
 def test_unset_user_with_live_markers_on_a_crossing_poll_neither_fires_nor_sweeps(shared, recorder):
@@ -1018,9 +875,8 @@ def test_unset_user_with_live_markers_on_a_crossing_poll_neither_fires_nor_sweep
     #   - nothing crosses  -> no push (they never chose this plan)
     #   - the WHIT-386 `and plan` guard short-circuits on the empty plan -> the sweep removes NOTHING,
     #     so the once-ever record survives (no crash on the empty live-marker set).
-    # Fail-on-revert (two ways): revert `stored is None -> [], True` back to `list(MILESTONES), False`
-    # and the default Kickoff fires (sent==1, marker "0" added); OR relax the `and plan` guard to a
-    # bare `authoritative` and the empty live set wipes the seeded custom marker (removed != set()).
+    # Fail-on-revert: drop the `if plan` sweep guard and the empty live set wipes the seeded
+    # custom marker (removed != set()).
     notify = notify_repo({"id:m1:bal:280000.00"})
     sent, notify = _notify(shared, old="545000", new="544000",
                            milestone_repo=FakeMilestoneRepo(stored=None), notify=notify)

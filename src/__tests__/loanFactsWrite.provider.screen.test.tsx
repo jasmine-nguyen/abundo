@@ -4,19 +4,17 @@
 // failure. (Pre-192 it also double-wrote an old store; that store is gone.) Drives the REAL
 // saveLoanFacts via AppProvider + the singleton queryClient.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import type { LoanFacts } from '../context';
 import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const FACTS = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
 const EMPTY: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };

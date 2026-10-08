@@ -7,7 +7,6 @@
 //   - once applyRulesJob is non-null the SAME ApplyRulesJobView renders INSIDE that confirm sheet;
 //   - the progress bar clamps to 100% when filed exceeds matched (a late count race).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import React from 'react';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, ApplyRulesJob, FilingResult, FilingTarget, FilingWhen } from '../context';
 import type { ApplyRulesResult, UncategorizedMerchantGroup } from '../api';
@@ -25,6 +24,7 @@ import { installFakeServer } from './support/fakeServer';
 import { GROCERIES_TOP_RECORD } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
+import { applyRulesReport } from './support/applyRulesReport';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -46,10 +46,11 @@ const group = (over: Partial<UncategorizedMerchantGroup> = {}): UncategorizedMer
   samples: ['COLES 1234 RICHMOND'], firstDate: '2026-06-01', lastDate: '2026-08-01', alsoCatches: [], ...over,
 });
 
-const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
-  dryRun: true, rulesConsidered: 1, unfiled: OVER, matched: OVER, conflicted: 0, conflictedSamples: [],
-  byCategory: { groceries: OVER }, byRule: [{ ruleId: null, value: 'coles', categoryId: 'groceries', count: OVER, samples: ['COLES 1'] }],
-  skippedRules: [], filed: [], vanished: [], failed: [], alreadyFiled: [], remaining: OVER, createdRule: null, ...over,
+const report = (over: Partial<ApplyRulesResult> = {}) => applyRulesReport({
+  rulesConsidered: 1, unfiled: OVER, matched: OVER, byCategory: { groceries: OVER },
+  byRule: [{ ruleId: null, value: 'coles', categoryId: 'groceries', count: OVER, samples: ['COLES 1'] }],
+  alreadyFiled: [], remaining: OVER, createdRule: null,
+  ...over,
 });
 
 const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({

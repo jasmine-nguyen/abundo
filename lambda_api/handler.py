@@ -72,30 +72,28 @@ from constants import (
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
-from repository import (
-    AccountBalanceRepository,
-    BudgetRepository,
+from repository_balance import AccountBalanceRepository
+from repository_budget import BudgetRepository
+from repository_category import CategoryRepository
+from repository_device import DeviceRepository
+from repository_errors import (
     CategoryNotFoundError,
-    CategoryRepository,
     DatabaseError,
-    DeviceRepository,
     DuplicateCategoryError,
-    GoalsRepository,
-    InsightRepository,
-    JobRepository,
     InvalidCategoryParentError,
-    LoanFactsRepository,
-    MilestoneRepository,
-    PayCycleRepository,
     RuleClashError,
     RuleNotFoundError,
-    RuleRepository,
-    TransactionRepository,
     VersionConflictError,
 )
-from repository_job import STATUS_RUNNING, STATUS_FAILED
+from repository_goals import GoalsRepository
+from repository_insight import InsightRepository
+from repository_loanfacts import LOANFACTS_FIELDS, LoanFactsRepository
+from repository_milestone import MilestoneRepository
+from repository_paycycle import PayCycleRepository
+from repository_rule import RuleRepository
+from repository_job import STATUS_RUNNING, STATUS_FAILED, JobRepository
 from rule_engine import rule_identity
-from repository_transaction import read_window
+from repository_transaction import TransactionRepository, read_window
 from budget_standing import budget_spend, budget_standing, standing_window
 from rule_book import RuleBook, WriteLimit, rule_from_row, rule_reply
 from rule_spreading import SpreadSeeder
@@ -129,7 +127,7 @@ from merchant_groups import (
 )
 from filing_habits import suggest_rules_from_filing_habits
 from transaction_search import SEARCH_QUERY_MAX_LEN, search_transactions
-from milestones import mint_migration_markers, notify_homeloan_milestone
+from milestones import notify_homeloan_milestone
 from rule_engine import (
     is_unfiled_category, existing_at_least_as_specific, rule_matches,
     rule_id_for)
@@ -242,7 +240,7 @@ _EXACT_ROUTES = {
     ("GET", MILESTONES_PATH): lambda event: _json_response(
         200, get_milestones(event, MilestoneRepository())),
     ("PUT", MILESTONES_PATH): lambda event: set_milestones(
-        event, MilestoneRepository(), NotifyRepository()),
+        event, MilestoneRepository()),
     ("GET", PAYCYCLE_PATH): lambda event: _json_response(
         200, get_paycycle_view(PayCycleRepository())),
     ("PUT", PAYCYCLE_PATH): lambda event: set_paycycle(event, PayCycleRepository()),
@@ -2967,8 +2965,6 @@ def get_repayment(repo: TransactionRepository) -> dict:
     return {"amount": amount, "date": when, "principal": principal, "interest": interest}
 
 
-# The user-entered loan-facts fields, in the order the form + response use them.
-_LOANFACTS_FIELDS = ("original", "homeValue", "lvr", "ratePct", "baseRepay", "extra")
 # Fields with their own upper bound; the rest use LOANFACTS_FIELD_MAX. Only extra (an optional top-up) may be 0.
 _LOANFACTS_HIGH = {"lvr": 1, "ratePct": 100}
 
@@ -2983,7 +2979,7 @@ def get_loanfacts(repo: LoanFactsRepository) -> dict:
     """
     stored = repo.get_loanfacts()
     if stored is None:
-        return {**{field: None for field in _LOANFACTS_FIELDS}, "payoffGoalDate": None, "depositTarget": None}
+        return {**{field: None for field in LOANFACTS_FIELDS}, "payoffGoalDate": None, "depositTarget": None}
     return stored
 
 
@@ -3005,7 +3001,7 @@ def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
         return error
 
     values = {}
-    for field in _LOANFACTS_FIELDS:
+    for field in LOANFACTS_FIELDS:
         v = body.get(field)
         high = _LOANFACTS_HIGH.get(field, LOANFACTS_FIELD_MAX)
         allow_zero = field == "extra"
@@ -3046,40 +3042,29 @@ def current_scope(event: dict) -> str:
     # request maps to the shared scope. Later, return the authenticated user id from the JWT
     # claims (event["requestContext"]["authorizer"]["jwt"]["claims"]["sub"]) — only this line
     # changes. No scope literal lives anywhere else.
-    #
-    # NOTE: the notify store's shared tenant is None, not this "SHARED" (WHIT-447). If you ever
-    # rename the shared literal here, update _notify_scope in lockstep — it bridges the two on the
-    # exact string "SHARED", and a silent mismatch makes the mint-marker migration write an item
-    # the poller never reads (an inert fix, no error).
     return "SHARED"
 
 
 def get_milestones(event: dict, repo: MilestoneRepository) -> list:
     """GET /milestones — the user's saved milestone plan.
 
-    Returns the saved list, or an empty list while unset — the app shows its own built-in
-    default plan until the user saves their own (WHIT-376).
+    Returns the saved list, or an empty list while unset — the app shows an empty state
+    until the user saves their own (WHIT-376).
     """
     stored = repo.get_milestones(current_scope(event))
     return stored if stored is not None else []
 
 
-def set_milestones(event: dict, repo: MilestoneRepository, notify_repo: NotifyRepository) -> dict:
+def set_milestones(event: dict, repo: MilestoneRepository) -> dict:
     """PUT /milestones — save (replace) the whole milestone plan.
 
-    Body: {"milestones": [{label, targetBalance, targetDate, id?}, ...]} — a non-empty
+    Body: {"milestones": [{id, label, targetBalance, targetDate}, ...]} — a non-empty
     list, replaced whole (add/edit/delete/reorder are all one PUT). Each targetBalance is
     validated like a loan-facts field (reject bool, require a finite number in [0, cap]);
     targetDate must be a real ISO YYYY-MM-DD date; and the list must be strictly paid-down —
-    each step a LOWER targetBalance and a LATER targetDate than the one before. (This extends
-    shared/milestones.py's balance-only load-time invariant, additionally requiring
-    strictly-increasing targetDate.) A milestone without an id gets a fresh uuid so later
-    edits key off a stable id (WHIT-378); a supplied id is preserved. Stored via
-    Decimal(str(...)) to avoid float drift.
-
-    Minting an id for a legacy id-less row also migrates that row's "already celebrated"
-    notify marker onto the new id (WHIT-447), so the next poll keeps — rather than re-arms —
-    the celebration. `notify_repo` is required so that migration can never be silently skipped.
+    each step a LOWER targetBalance and a LATER targetDate than the one before. Every
+    milestone needs a unique id from the client (WHIT-830), preserved as sent so later edits
+    key off it. Stored via Decimal(str(...)) to avoid float drift.
     """
     body, error = _parse_json_body(event)
     if error:
@@ -3093,7 +3078,6 @@ def set_milestones(event: dict, repo: MilestoneRepository, notify_repo: NotifyRe
 
     cleaned = []
     ids = set()
-    minted = []  # (stored target, minted id) for legacy rows we filled an id into — WHIT-447
     for m in raw:
         if not isinstance(m, dict):
             return _json_response(400, {"error": "each milestone must be an object"})
@@ -3111,60 +3095,29 @@ def set_milestones(event: dict, repo: MilestoneRepository, notify_repo: NotifyRe
             return _json_response(400, {"error": "targetDate must be a real ISO YYYY-MM-DD date"})
 
         raw_id = m.get("id")
-        was_id_less = raw_id is None  # capture before minting — drives the WHIT-447 marker backfill
+        if raw_id is None:
+            return _json_response(400, {"error": "milestone id is required"})
         milestone_id, error = _validate_id(raw_id, ids, "milestone")
         if error:
             return error
 
-        stored_balance = Decimal(str(balance))
         cleaned.append({
             "id": milestone_id,
             "label": label,
-            "targetBalance": stored_balance,
+            "targetBalance": Decimal(str(balance)),
             "targetDate": target_date,
         })
-        if was_id_less:
-            minted.append((stored_balance, milestone_id))
 
     # Strictly paid-down: each step a LOWER balance and a LATER date than the previous. ISO
     # YYYY-MM-DD strings compare lexically == chronologically, so a plain string compare is
-    # safe. (Extends shared/milestones.py's balance-only invariant with the date check.)
+    # safe.
     for prev, cur in zip(cleaned, cleaned[1:]):
         if not (cur["targetBalance"] < prev["targetBalance"] and cur["targetDate"] > prev["targetDate"]):
             return _json_response(400, {
                 "error": "milestones must be ordered by strictly decreasing targetBalance and increasing targetDate"})
 
     saved = repo.set_milestones(cleaned, current_scope(event))
-    _migrate_minted_milestone_markers(event, notify_repo, minted)
     return _json_response(200, saved)
-
-
-def _notify_scope(event: dict):
-    """The notify-store scope for this request. The plan store's shared tenant is "SHARED"
-    (current_scope); the notify store's is None → sk="FIRED" (repository_notify's back-compat
-    wart). The poller reads and writes notify markers at scope None, so the save path must
-    migrate at None too — passing "SHARED" would write to an sk="SHARED" item the poller never
-    reads, making the fix inert (WHIT-447). A real per-user scope later returns the SAME id for
-    both stores, so this bridge only affects the shared default."""
-    scope = current_scope(event)
-    return None if scope == "SHARED" else scope
-
-
-def _migrate_minted_milestone_markers(event: dict, notify_repo: NotifyRepository, minted: list) -> None:
-    """Carry each just-minted legacy row's "already celebrated" marker onto its new id, so the
-    next poll keeps rather than re-arms the celebration (WHIT-447).
-
-    Best-effort: the plan save has already committed, so a notify blip must never 500 the PUT.
-    Worst case is one milestone left re-armed — a single stray celebration only if its balance
-    later genuinely re-crosses (Option A, approved). The row is never id-less again, so this is a
-    one-shot with no retry; that trade is accepted over blocking a plan save on the notify table."""
-    if not minted:
-        return
-    try:
-        migrations = [mint_migration_markers(target, minted_id) for target, minted_id in minted]
-        notify_repo.migrate_milestone_markers(migrations, _notify_scope(event))
-    except Exception as e:
-        logger.warning("milestone marker mint-migration failed (plan already saved): %s", e)
 
 
 # Absurd for a personal budget; also keeps a giant value from blowing past DynamoDB's
@@ -3361,7 +3314,7 @@ def _validate_goal_checkpoints(raw, direction: str, target_amount: Decimal):
     a paydown ladder falls (each below the last, above the target).
 
     `id` is permanent and preserved as sent: the client normally mints it (like the goal's own
-    id) and this only mints one for a row that arrives without, exactly like set_milestones. The
+    id) and this only mints one for a row that arrives without. The
     once-ever celebration marker keys on it, so it has to outlive a rename or a reorder.
     """
     if raw is None:

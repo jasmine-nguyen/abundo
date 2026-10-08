@@ -6,17 +6,15 @@
 import { describe, it, expect } from '@jest/globals';
 import { ruleFor, needsBackground, APPLY_RULES_MAX_WRITES } from '../filingRun';
 import type { FilingTarget } from '../filingRun';
-import type { ApplyRulesResult, UncategorizedMerchantGroup } from '../api';
+import type { UncategorizedMerchantGroup } from '../api';
+import { applyRulesReport } from './support/applyRulesReport';
 
 const GROUP: UncategorizedMerchantGroup = {
   merchant: 'Coles', rulePattern: 'coles', groupedBy: 'merchant', count: 4,
   samples: ['COLES 1234'], firstDate: '2026-06-01', lastDate: '2026-08-01', alsoCatches: [],
 };
 
-const report = (matched: number): ApplyRulesResult => ({
-  dryRun: true, rulesConsidered: 1, unfiled: matched, matched, conflicted: 0, conflictedSamples: [],
-  byCategory: {}, byRule: [], skippedRules: [], filed: [], vanished: [], failed: [], remaining: 0,
-} as ApplyRulesResult);
+const report = (matched: number) => applyRulesReport({ rulesConsidered: 1, unfiled: matched, matched });
 
 describe('ruleFor: the rule each filing target sends', () => {
   it('sends no rule for the plain sweep', () => {

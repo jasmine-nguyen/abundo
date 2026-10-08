@@ -11,24 +11,17 @@ from decimal import Decimal
 
 import pytest
 
-from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo, _txn, pin_cycle_window
+from _budget_endpoint_fakes import LENGTH, PAYDATE, _FakeCategoryRepo, _FakePayCycleRepo, _txn
 from _transaction_range_fakes import _DateFilteringTransactionRepo
 from _budget_fakes import recording_budget_repo, stored_budgets
+
+pytestmark = pytest.mark.usefixtures("fixed_window")
 
 # Monthly cycle: current cycle starts 2026-08-06, today 2026-08-10. Settle lag 10 days →
 # cutoff 2026-07-31. Anchor 2026-05-08 gives three completed cycles:
 #   2026-05-08 – 2026-06-06  spent 150 → −50  (sealed)
 #   2026-06-07 – 2026-07-06  spent   0 → +100 (sealed)
 #   2026-07-07 – 2026-08-05  spent  30 → +70  (still settling)
-CYCLE_START = "2026-08-06"
-TODAY = "2026-08-10"
-LENGTH = 30
-PAYDATE = "2026-01-01"
-
-
-@pytest.fixture(autouse=True)
-def _fixed_window(handler, monkeypatch):
-    pin_cycle_window(handler, monkeypatch, CYCLE_START, TODAY)
 
 
 def test_rollover_row_lists_the_cycles_behind_its_carryover_and_saves_the_sealed_ones(handler):

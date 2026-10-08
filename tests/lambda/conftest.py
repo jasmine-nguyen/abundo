@@ -11,7 +11,7 @@ colliding bare names from ``sys.modules`` before importing, and restores
 everything afterwards.
 
 Unlike the lambda_api fakes (which set ``Key = Attr = object`` because those tests
-never query), this suite exercises ``get_pending_transactions_for_account``, so it
+never query), this suite exercises ``get_account_transactions``, so it
 installs condition-recording ``Key``/``Attr`` (``_Field``) that the shared
 ``_dynamo_fakes.FakeTable`` can actually evaluate against a stored item.
 """
@@ -57,9 +57,8 @@ _LAMBDA_DIR = str(_REPO_ROOT / "lambda")
 _SHARED_DIR = str(_REPO_ROOT / "shared")
 # Bare module names whose imports must resolve fresh per test: lambda/'s own copies
 # (handler / webhook_repository / banksync) plus the folded modules now provided by shared/
-# (constants / models / api_key). Shed so a sibling suite's cached copy can't win —
-# including the shared facade `repository` another suite may have cached.
-_REIMPORT = ("handler", "up_webhook", "constants", "models", "repository", "webhook_repository", "reconcile", "banksync", "api_key", "merchant", "reprocess", "age_out",
+# (constants / models / api_key). Shed so a sibling suite's cached copy can't win.
+_REIMPORT = ("handler", "up_webhook", "constants", "models", "webhook_repository", "reconcile", "banksync", "api_key", "merchant", "reprocess", "age_out",
              "budget_alerts", "spend", "budget_standing", "push", "repository_push_receipt", "repository_base", "repository_transaction", "repository_budget",
              "repository_category", "repository_device", "repository_notify", "repository_paycycle", "rule_engine",
              "rule_ingest", "repository_rule", "pending_carry")

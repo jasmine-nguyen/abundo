@@ -4,7 +4,7 @@ A category's chart colour is a STORED integer, assigned once and never recompute
 adding or deleting a category cannot repaint any other one (WHIT-404/415/429).
 
 The `handler` fixture (conftest.py) makes lambda_api importable in isolation and puts
-`shared/` on the path, so `import repository` inside a test resolves under it.
+`shared/` on the path, so `import repository_category` inside a test resolves under it.
 """
 
 import json
@@ -112,7 +112,6 @@ def test_least_held_color_slot_prefers_slots_no_builtin_owns(handler):
     """WHIT-404 option B: a repeat has to land somewhere, and doubling up on a colour only a
     custom category wears beats doubling up on Eating Out's. Derived from SEED_CATEGORIES, so
     it cannot drift if the seeds are retuned."""
-    import repository
     import repository_category
     seed_slots = {int(cat["colorSlot"]) for cat in repository_category.SEED_CATEGORIES.values()}
     non_seed = repository_category._NON_SEED_COLOR_SLOTS
@@ -128,7 +127,6 @@ def test_least_held_color_slot_prefers_slots_no_builtin_owns(handler):
 
 def test_slot_survives_json_encoding_as_a_number(handler):
     """DynamoDB hands back Decimal; the client reads JSON. Pin the seam between the slices."""
-    import repository
     _, repo = _repo_with_fake_table(handler)
     repo.list_categories()
     created = repo.create_category("wine", "Wine", "Lifestyle", "glass")

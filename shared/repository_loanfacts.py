@@ -20,6 +20,17 @@ _LOANFACTS_KEY = {"pk": "LOANFACTS", "sk": "LOANFACTS"}
 LOANFACTS_FIELDS = ("original", "homeValue", "lvr", "ratePct", "baseRepay", "extra")
 
 
+def _to_api(item: dict) -> dict:
+    """The stored item as the API shape: the six fields as floats (stored as Decimal),
+    payoffGoalDate (WHIT-126) and depositTarget (WHIT-378), each None when absent (legacy
+    rows saved before the field existed — no migration)."""
+    result = {field: float(item[field]) for field in LOANFACTS_FIELDS}
+    result["payoffGoalDate"] = item.get("payoffGoalDate")
+    deposit_target = item.get("depositTarget")
+    result["depositTarget"] = float(deposit_target) if deposit_target is not None else None
+    return result
+
+
 class LoanFactsRepository(RepositoryBase):
     """Stores the user's home-loan facts as a single config item at
     pk=sk="LOANFACTS". `get_loanfacts` returns the six fields (or None if the user
@@ -39,13 +50,7 @@ class LoanFactsRepository(RepositoryBase):
             item = self._get_table().get_item(Key=_LOANFACTS_KEY).get("Item")
         if item is None:
             return None
-        result = {field: float(item[field]) for field in LOANFACTS_FIELDS}
-        result["payoffGoalDate"] = item.get("payoffGoalDate")
-        # depositTarget (WHIT-378) is stored as Decimal; surface as float, or None when
-        # absent (legacy rows saved before the field existed — no migration).
-        deposit_target = item.get("depositTarget")
-        result["depositTarget"] = float(deposit_target) if deposit_target is not None else None
-        return result
+        return _to_api(item)
 
     def set_loanfacts(
         self,
@@ -79,13 +84,4 @@ class LoanFactsRepository(RepositoryBase):
             item["depositTarget"] = depositTarget
         with db_errors("set loan facts"):
             self._get_table().put_item(Item=item)
-        return {
-            "original": float(original),
-            "homeValue": float(homeValue),
-            "lvr": float(lvr),
-            "ratePct": float(ratePct),
-            "baseRepay": float(baseRepay),
-            "extra": float(extra),
-            "payoffGoalDate": payoffGoalDate,
-            "depositTarget": float(depositTarget) if depositTarget is not None else None,
-        }
+        return _to_api(item)

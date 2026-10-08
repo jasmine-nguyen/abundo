@@ -264,19 +264,18 @@ def test_each_path_keeps_its_own_numeric_type(shared, milestone_repo):
     assert isinstance(client_target, float) and client_target == 595413.43
 
 
-def test_a_null_id_passes_the_client_read_and_a_missing_id_degrades_the_poller_marker(
-        shared, milestone_repo):
-    # WHIT-378's deliberate carve-out, explicitly preserved by WHIT-394 option B3: id handling
-    # is UNCHANGED on both paths. The poller degrades to the amount-only marker; the client
-    # still requires the key (its pre-existing behaviour) but a NULL id passes through.
+def test_a_null_id_passes_the_client_read_but_the_poller_skips_it(shared, milestone_repo):
+    # The client read still requires only the id KEY, so a NULL id passes through to the screen,
+    # while the poller (WHIT-830) skips the row: it has no id to key a celebration on. Pinned so
+    # unifying the two is a conscious decision. The save endpoint rejects a null id, so only a
+    # direct write can store one.
     legacy = {"id": None, "label": "Old", "targetBalance": Decimal("480000"),
               "targetDate": "2030-01-01"}
     _store_raw_row(milestone_repo, [legacy])
     assert milestone_repo.get_milestones() == [
         {"id": None, "label": "Old", "targetBalance": 480000.0, "targetDate": "2030-01-01"}]
 
-    plan = shared.milestones._resolve_plan(FakeMilestoneRepo([{k: v for k, v in legacy.items() if k != "id"}]))[0]
-    assert [p.key for p in plan] == ["bal:480000.00"]
+    assert shared.milestones._resolve_plan(FakeMilestoneRepo([legacy]))[0] == []
 
 
 def test_a_huge_target_is_skipped_not_raised_through_the_poller(shared, caplog):
@@ -383,22 +382,17 @@ def test_a_plan_where_every_row_has_a_bad_date_celebrates_nothing(shared, record
     assert "0" in stored_markers(notify)
 
 
-# --- [B2] PIN: a row with no `id` KEY diverges (WHIT-378 carve-out) ---------
+# --- [B2] a row with no `id` KEY is dropped by both reads (WHIT-830) ---------
 
-def test_a_row_with_no_id_key_at_all_is_dropped_by_the_client_and_kept_by_the_poller(
-        shared, milestone_repo):
-    # [B2] The implementer's WHIT-378 test uses {"id": None} — a PRESENT key — where both
-    # paths agree. A row saved before ids were minted has no `id` key at all: _to_client's
-    # row_field(m, "id") raises (repository_milestone.py:66) and drops it, while
-    # _plan_marker's milestone.get("id") (milestones.py:82) falls back to "bal:<amount>".
-    # The card froze id handling on both paths, so this is deliberate — pinned so a future
-    # "unify the last field too" change is a conscious decision, not a silent one.
+def test_a_row_with_no_id_key_at_all_is_dropped_by_both_reads(shared, milestone_repo):
+    # [B2] A row with no `id` key at all: both the client read and the poller drop it, so the
+    # screen never shows a milestone the poller would still celebrate (or the reverse).
     legacy = {"label": "Old", "targetBalance": Decimal("480000"), "targetDate": "2030-01-01"}
     _store_raw_row(milestone_repo, [_GOOD, legacy])
 
     assert [m["id"] for m in milestone_repo.get_milestones()] == ["keep"]
     plan = shared.milestones._resolve_plan(FakeMilestoneRepo([_GOOD, legacy]))[0]
-    assert [p.key for p in plan] == ["id:keep:bal:300000.00", "bal:480000.00"]
+    assert [p.key for p in plan] == ["id:keep:bal:300000.00"]
 
 
 # --- [B3] the NEW poller-side rejection vs the WHIT-385 marker sweep --------
@@ -421,7 +415,7 @@ def test_an_unreadable_row_keeps_its_marker_but_a_deleted_one_loses_it(
     stored = [_row(id="keep", label="Halfway", targetBalance=Decimal("300000")), bad_row]
     keep_marker, bad_marker = "id:keep:bal:300000.00", "id:bad:bal:250000.00"
     gone_marker = "id:gone:bal:999000.00"            # a row genuinely no longer in the plan
-    notify = notify_repo(fired={keep_marker, bad_marker, gone_marker, "0"})
+    notify = notify_repo(fired={keep_marker, bad_marker, gone_marker})
 
     # A no-crossing poll: the sweep runs on its own, before any celebration logic.
     sent, notify = _notify(shared, old="500000", new="450000", stored=stored, notify=notify)
@@ -431,7 +425,6 @@ def test_an_unreadable_row_keeps_its_marker_but_a_deleted_one_loses_it(
     assert removed_markers(notify) == {gone_marker}, why      # only the row that is actually gone
     assert bad_marker in stored_markers(notify), why           # unreadable != deleted
     assert keep_marker in stored_markers(notify)               # healthy row's record intact
-    assert "0" in stored_markers(notify)                       # built-in sprint marker never swept
 
 
 # --- [B4] the nesting trap, for row_date this time --------------------------

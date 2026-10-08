@@ -8,7 +8,7 @@
 // The blend (compositeOver) is DELIBERATELY UNROUNDED: it matches what CoreGraphics / Skia actually
 // do. Working in rgb arrays removes any need to round to whole channels.
 
-export type Rgb = readonly [number, number, number];
+type Rgb = readonly [number, number, number];
 
 // #rrggbb → [r, g, b]. The suites only ever hand this 6-digit shipped colours.
 export const hexToRgb = (hex: string): Rgb => {

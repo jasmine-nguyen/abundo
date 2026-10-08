@@ -4,20 +4,18 @@
 // sessionGuardRollbacks.provider.screen.test.tsx: live miniature auth store, the fake server,
 // the real queryClient.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
-import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import * as Crypto from 'expo-crypto';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, resetAuth } from './support/authMock';
 
-import { AppProvider, useAppContext } from '../context';
+import { useAppContext } from '../context';
 import { queryClient } from '../queryClient';
 import { installFakeServer } from './support/fakeServer';
+import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
-
-const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 // Production order: clearSession() wipes the cache, THEN broadcasts anon (the epoch bump).
 function signOut() {

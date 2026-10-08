@@ -44,17 +44,13 @@ from constants import (
 from milestones import notify_homeloan_milestone, owed
 from repayment_rules import is_repayment_credit
 from goal_checkpoints import check_goal_checkpoints
-from repository import (
-    AccountBalanceRepository,
-    DeviceRepository,
-    FeedWatchRepository,
-    GoalsRepository,
-    LoanFactsRepository,
-    MilestoneRepository,
-    TransactionRepository,
-)
+from repository_balance import AccountBalanceRepository, FeedWatchRepository
+from repository_device import DeviceRepository
+from repository_goals import GoalsRepository
+from repository_loanfacts import LoanFactsRepository
+from repository_milestone import MilestoneRepository
 from repository_notify import NotifyRepository
-from repository_transaction import read_date_range_pages
+from repository_transaction import TransactionRepository, read_date_range_pages
 from push import send_push
 from api_key import get_api_key as _fetch_api_key
 # normalise_account_balance + the raw fetch live in the shared balance_fetch module (reused

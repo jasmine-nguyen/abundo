@@ -181,8 +181,8 @@ def unified_available(budget: Decimal, buffer: Decimal, payback: Decimal) -> Dec
     return budget + buffer + payback
 
 
-# The five fields a stored bill spread carries — mirrors repository_budget._SPREAD_FIELDS (a
-# test pins the two equal). A read only trusts an entry that has all of them.
+# The five fields a stored bill spread carries (WHIT-504). Spend-only, like rollover, and
+# cleared on a reclassify out of spend. A read only trusts an entry that has all of them.
 SPREAD_ENTRY_FIELDS = ("spread_amount", "spread_cycles", "spread_from", "spread_len", "spread_paydate")
 
 

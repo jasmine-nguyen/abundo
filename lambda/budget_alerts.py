@@ -87,7 +87,7 @@ def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, we
     # pending twins against the SAME pre-write pool the real write saw (post-write the
     # settled twins are already deleted). Only accounts with a posted row can reconcile.
     accounts = {t["account_id"] for t in normalised if t.get("status") != PENDING_STATUS}
-    pending_pools = {a: list(webhook_repo.get_pending_transactions_for_account(a)) for a in accounts}
+    pending_pools = {a: list(webhook_repo.get_account_transactions(a, PENDING_STATUS)) for a in accounts}
 
     return {
         "tokens": tokens, "targets": targets, "window": window,

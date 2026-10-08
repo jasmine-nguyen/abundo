@@ -2,7 +2,7 @@
 get_milestones / set_milestones handlers (WHIT-375, user-owned milestone plan).
 
 Handler-level tests inject a FakeMilestoneRepo directly. GET returns the saved list
-or [] (unset); PUT validates the list + each field, assigns/preserves ids, enforces
+or [] (unset); PUT validates the list + each field, requires/preserves ids, enforces
 the strictly-paid-down ordering, and stores the whole list.
 
 The adversarial edge tests (whitelist/pk-smuggle, cap + label + count boundaries,
@@ -17,7 +17,6 @@ from decimal import Decimal
 import pytest
 
 from _api_event import api_event
-from _milestone_fakes import recording_notify_repo
 
 # A valid strictly-paid-down 3-row plan (decreasing balance, increasing date).
 VALID = [
@@ -54,15 +53,19 @@ def _put_event(body):
     )
 
 
-def _put(handler, body, repo=None, notify_repo=None):
+def _put(handler, body, repo=None):
     repo = repo or FakeMilestoneRepo()
-    notify_repo = notify_repo or recording_notify_repo()
-    return handler.set_milestones(_put_event(body), repo, notify_repo), repo
+    return handler.set_milestones(_put_event(body), repo), repo
+
+
+def _with_ids(milestones):
+    # Every saved row needs an id (WHIT-830); fill one in where a test doesn't care which.
+    return [{"id": f"m{i}", **m} for i, m in enumerate(milestones)]
 
 
 def _put_plan(handler, milestones, repo=None):
     # Wrap a milestone list into the request body ({"milestones": [...]}) the endpoint expects.
-    return _put(handler, {"milestones": milestones}, repo)
+    return _put(handler, {"milestones": _with_ids(milestones)}, repo)
 
 
 # --- get_milestones ----------------------------------------------------------
@@ -89,13 +92,11 @@ def test_route_get_milestones(handler, monkeypatch):
 # --- set_milestones: success -------------------------------------------------
 
 
-def test_set_milestones_success_assigns_ids_and_persists(handler):
+def test_set_milestones_success_persists(handler):
     resp, repo = _put_plan(handler, VALID)
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])
     assert [m["label"] for m in body] == ["Kickoff", "Halfway", "Target"]
-    # Every returned milestone has a non-empty id (the server minted them).
-    assert all(isinstance(m["id"], str) and m["id"] for m in body)
     # The repo received a Decimal, not a raw float — boto3's DynamoDB client raises on a
     # float, so a float regression would 500 every PUT. isinstance is the real guard;
     # `== Decimal(...)` alone is a tautology a float also satisfies.
@@ -119,16 +120,6 @@ def test_set_milestones_preserves_supplied_ids(handler):
     resp, _ = _put_plan(handler, with_ids)
     assert resp["statusCode"] == 200
     assert [m["id"] for m in json.loads(resp["body"])] == ["m0", "m1", "m2"]
-
-
-def test_set_milestones_mixed_ids_stay_unique(handler):
-    # Some rows carry ids, some don't; assigned ids must not collide with supplied ones.
-    mixed = [{**VALID[0], "id": "keep"}, {**VALID[1]}, {**VALID[2], "id": "keep2"}]
-    resp, _ = _put_plan(handler, mixed)
-    assert resp["statusCode"] == 200
-    ids = [m["id"] for m in json.loads(resp["body"])]
-    assert ids[0] == "keep" and ids[2] == "keep2"
-    assert len(set(ids)) == 3
 
 
 def test_set_milestones_single_milestone_is_valid(handler):
@@ -156,8 +147,7 @@ def test_set_milestones_label_is_trimmed(handler):
 def test_route_put_milestones_dispatch(handler, monkeypatch):
     repo = FakeMilestoneRepo()
     monkeypatch.setattr(handler, "MilestoneRepository", lambda: repo)
-    monkeypatch.setattr(handler, "NotifyRepository", recording_notify_repo)
-    resp = handler.lambda_handler(_put_event({"milestones": VALID}), None)
+    resp = handler.lambda_handler(_put_event({"milestones": _with_ids(VALID)}), None)
     assert resp["statusCode"] == 200
     assert len(repo.set_calls) == 1
 
