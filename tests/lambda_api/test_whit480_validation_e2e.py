@@ -13,7 +13,7 @@ its own; nothing importable lives in conftest).
 import json
 
 from _api_event import api_event
-from _milestone_fakes import recording_notify_repo, stored_markers
+from _milestone_fakes import milestones_put_event, recording_notify_repo, stored_markers
 
 
 # --- fakes (mirror test_milestones_api.py / test_goals.py) -------------------
@@ -47,14 +47,10 @@ class FakeBalanceRepo:
 
 # --- event builders ----------------------------------------------------------
 
-def _ms_event(rows):
-    return api_event("PUT", "/milestones", body={"milestones": rows}, is_base64=False)
-
-
 def _put_milestones(handler, rows, repo=None, notify=None):
     repo = repo or FakeMilestoneRepo()
     notify = notify or recording_notify_repo()
-    resp = handler.set_milestones(_ms_event(rows), repo, notify)
+    resp = handler.set_milestones(milestones_put_event(rows), repo, notify)
     return resp, repo, notify
 
 

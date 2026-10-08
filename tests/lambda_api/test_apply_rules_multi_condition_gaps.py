@@ -12,8 +12,7 @@ import json
 
 from decimal import Decimal
 
-from _api_event import api_event
-from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
+from _feed_fakes import apply_rules_event, SPENDING, FakeCategoryRepo, real_repos, _row, stored
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
@@ -25,16 +24,12 @@ def _multi_rule(conditions, logic="all", category_id="transport", budget_exclude
             "conditions": conditions, "logic": logic, "budget_excluded": budget_excluded}
 
 
-def _apply_event(body):
-    return api_event("POST", "/transactions/uncategorized/apply-rules", body=body)
-
-
 def _call(handler, rows, rules, body, categories=frozenset({"transport", "groceries", "income"})):
     """Run the sweep over these stored charges; returns (body, table)."""
     table, repo, rule_repo = real_repos({SPENDING: rows}, rules=rules)
     resp = apply_rules_to_uncategorized(
         handler,
-        _apply_event(body), repo, FakeCategoryRepo(categories), rule_repo)
+        apply_rules_event(body), repo, FakeCategoryRepo(categories), rule_repo)
     return json.loads(resp["body"]), table
 
 
@@ -118,7 +113,7 @@ def test_inline_file_this_shop_is_still_single_condition(handler):
     body = {"dryRun": False, "rule": {"value": "ALDI", "categoryId": "groceries"}}
     apply_rules_to_uncategorized(
         handler,
-        _apply_event(body), repo, FakeCategoryRepo(frozenset({"groceries"})), rule_repo)
+        apply_rules_event(body), repo, FakeCategoryRepo(frozenset({"groceries"})), rule_repo)
     assert stored(table, "t1")["category"] == "groceries"
     [minted] = rule_repo.list_rules()
     assert "conditions" not in minted                   # single-condition, byte-identical to legacy

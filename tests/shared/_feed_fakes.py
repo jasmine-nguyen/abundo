@@ -162,3 +162,16 @@ def inject_rule_routes(handler, monkeypatch, store, categories, transactions=Non
     monkeypatch.setattr(handler, "RuleRepository", lambda: store.rule_repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(categories))
     monkeypatch.setattr(handler, "TransactionRepository", lambda: store.transaction_repo)
+
+
+def apply_rules_event(body=None, method="POST", **kwargs):
+    return api_event(method, "/transactions/uncategorized/apply-rules", body=body, **kwargs)
+
+
+def rule_put_event(rule_id, value, category_id, field="description", operator="contains"):
+    body = {"value": value, "categoryId": category_id, "field": field, "operator": operator}
+    return api_event("PUT", f"/rules/{rule_id}", body=body, path_params={"id": rule_id})
+
+
+def rule_delete_event(rule_id):
+    return api_event("DELETE", f"/rules/{rule_id}", path_params={"id": rule_id})

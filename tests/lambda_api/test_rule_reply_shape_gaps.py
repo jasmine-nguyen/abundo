@@ -20,7 +20,7 @@ import pytest
 
 from _api_event import api_event
 from _budget_endpoint_fakes import _FakePayCycleRepo
-from _feed_fakes import SPENDING, FakeCategoryRepo, Repos, _row, inject_rule_routes
+from _feed_fakes import apply_rules_event, SPENDING, FakeCategoryRepo, Repos, _row, inject_rule_routes
 from _job_fakes import created_jobs, real_job_repo
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
@@ -130,17 +130,13 @@ def test_put_rules_409_existing_rule_has_no_spread_seeded(handler, monkeypatch):
 # --- the sync apply-rules route ---------------------------------------------------------------
 
 
-def _apply_event(body):
-    return api_event("POST", "/transactions/uncategorized/apply-rules", body=body)
-
-
 def test_apply_pre_scan_clash_409_existing_rule_has_no_spread_seeded(handler):
     # [A6] The pre-scan clash returns a rule straight out of the engine-shaped list (rule_from_row),
     # the path most likely to leak — only _rule_clash_response strips it.
     store = _seeded_store(transactions={SPENDING: [_origin("t1")]})
     resp = apply_rules_to_uncategorized(
         handler,
-        _apply_event({"dryRun": True, "rule": {"value": "ORIGIN", "categoryId": "groceries"}}),
+        apply_rules_event({"dryRun": True, "rule": {"value": "ORIGIN", "categoryId": "groceries"}}),
         store.transaction_repo, FakeCategoryRepo(_CATEGORIES), store.rule_repo)
     body = json.loads(resp["body"])
 
@@ -154,7 +150,7 @@ def test_apply_inline_created_rule_has_no_spread_seeded(handler):
     store = Repos({SPENDING: [_row(SPENDING, "2026-07-01", "t1", description="COLES")]})
     resp = apply_rules_to_uncategorized(
         handler,
-        _apply_event({"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}}),
+        apply_rules_event({"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}}),
         store.transaction_repo, FakeCategoryRepo(_CATEGORIES), store.rule_repo)
     body = json.loads(resp["body"])
 

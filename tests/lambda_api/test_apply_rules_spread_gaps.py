@@ -14,9 +14,8 @@ import json
 from decimal import Decimal
 from functools import partial
 
-from _api_event import api_event
 from _budget_endpoint_fakes import _FakePayCycleRepo
-from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
+from _feed_fakes import apply_rules_event, SPENDING, FakeCategoryRepo, real_repos, _row, stored
 from _job_fakes import real_job_repo
 
 
@@ -40,10 +39,6 @@ def _seeded(rule_repo):
     return rule["spread_seeded"]
 
 
-def _event(body):
-    return api_event("POST", "/transactions/uncategorized/apply-rules", body=body)
-
-
 class FakeBudget:
     def __init__(self, result={"id": "x"}):
         self._result = result
@@ -64,7 +59,7 @@ def _origin(txn_id, date="2026-07-01", **extra):
 def _sweep(handler, repo, rule_repo, *, budget=None, paycycle=None,
            categories=frozenset({"insurance", "coffee"})):
     resp = handler.apply_rules_to_uncategorized(
-        _event({"dryRun": False}), repo, FakeCategoryRepo(categories), rule_repo,
+        apply_rules_event({"dryRun": False}), repo, FakeCategoryRepo(categories), rule_repo,
         budget or FakeBudget(), paycycle or FakePaycycle())
     return resp
 

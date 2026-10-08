@@ -27,9 +27,8 @@ from decimal import Decimal
 
 import pytest
 
-from _api_event import api_event
 from _dynamo_fakes import FakeTable
-from _milestone_fakes import recording_notify_repo, stored_markers
+from _milestone_fakes import milestones_put_event, recording_notify_repo, stored_markers
 
 
 class RaisingNotifyRepo:
@@ -56,10 +55,6 @@ class FakeLoanFactsRepo:
         return None
 
 
-def _put_event(rows):
-    return api_event("PUT", "/milestones", body={"milestones": rows}, is_base64=False)
-
-
 # --- handler-level: migrate only minted rows, at the notify shared scope -------------------
 
 
@@ -68,7 +63,7 @@ def test_supplied_id_row_is_not_migrated(handler):
     # notify store must not be touched at all.
     notify = recording_notify_repo({"bal:400000.00"})
     row = {"id": "keep-me", "label": "Target", "targetBalance": 400000, "targetDate": "2030-01-01"}
-    resp = handler.set_milestones(_put_event([row]), FakeMilestoneRepo(), notify)
+    resp = handler.set_milestones(milestones_put_event([row]), FakeMilestoneRepo(), notify)
     assert resp["statusCode"] == 200, resp["body"]
     assert notify.migrate_calls == []
 
@@ -78,7 +73,7 @@ def test_a_minted_legacy_row_migrates_at_the_notify_shared_scope_none(handler):
     # save path must migrate at None (what the poller reads), NOT "SHARED" — else the fix is inert.
     notify = recording_notify_repo({"bal:400000.00"})
     row = {"label": "Target", "targetBalance": 400000, "targetDate": "2030-01-01"}  # no id
-    resp = handler.set_milestones(_put_event([row]), FakeMilestoneRepo(), notify)
+    resp = handler.set_milestones(milestones_put_event([row]), FakeMilestoneRepo(), notify)
     assert resp["statusCode"] == 200, resp["body"]
     assert len(notify.migrate_calls) == 1
     assert notify.migrate_calls[0]["scope"] is None
@@ -89,7 +84,7 @@ def test_a_minted_legacy_rows_marker_is_migrated_onto_its_new_id(handler):
     # migrated marker matches what the poller will later key the saved row to.
     notify = recording_notify_repo({"bal:400000.00"})
     row = {"label": "Target", "targetBalance": 400000, "targetDate": "2030-01-01"}  # no id
-    resp = handler.set_milestones(_put_event([row]), FakeMilestoneRepo(), notify)
+    resp = handler.set_milestones(milestones_put_event([row]), FakeMilestoneRepo(), notify)
     minted_id = json.loads(resp["body"])[0]["id"]
     assert stored_markers(notify) == {f"id:{minted_id}:bal:400000.00"}
 
@@ -146,7 +141,7 @@ def test_minting_an_id_then_re_crossing_sends_no_second_celebration(
 
     # First save mints the id — and migrates the marker onto it (the WHIT-447 write).
     legacy_row = {"label": "Target", "targetBalance": 400000, "targetDate": "2030-01-01"}  # no id
-    put = handler.lambda_handler(_put_event([legacy_row]), None)
+    put = handler.lambda_handler(milestones_put_event([legacy_row]), None)
     assert put["statusCode"] == 200, put["body"]
     minted_id = json.loads(put["body"])[0]["id"]
     idd_marker = f"id:{minted_id}:bal:400000.00"
@@ -182,7 +177,7 @@ def test_two_minted_legacy_rows_each_migrate_their_own_marker(handler):
         {"label": "First", "targetBalance": 400000, "targetDate": "2030-01-01"},   # no id
         {"label": "Second", "targetBalance": 300000, "targetDate": "2031-01-01"},  # no id
     ]
-    resp = handler.set_milestones(_put_event(rows), FakeMilestoneRepo(), notify)
+    resp = handler.set_milestones(milestones_put_event(rows), FakeMilestoneRepo(), notify)
     assert resp["statusCode"] == 200, resp["body"]
     id1, id2 = (row["id"] for row in json.loads(resp["body"]))
     assert id1 != id2
@@ -199,7 +194,7 @@ def test_only_the_minted_row_migrates_when_a_supplied_id_row_shares_the_save(han
         {"id": "keep-me", "label": "Kept", "targetBalance": 400000, "targetDate": "2030-01-01"},
         {"label": "Minted", "targetBalance": 300000, "targetDate": "2031-01-01"},  # no id
     ]
-    resp = handler.set_milestones(_put_event(rows), FakeMilestoneRepo(), notify)
+    resp = handler.set_milestones(milestones_put_event(rows), FakeMilestoneRepo(), notify)
     assert resp["statusCode"] == 200, resp["body"]
     minted_id = json.loads(resp["body"])[1]["id"]
     assert len(notify.migrate_calls) == 1
@@ -220,7 +215,7 @@ def test_a_validation_failure_after_minting_never_migrates(handler):
         {"label": "First", "targetBalance": 400000, "targetDate": "2030-01-01"},   # no id
         {"label": "Higher", "targetBalance": 500000, "targetDate": "2031-01-01"},  # no id, NOT decreasing
     ]
-    resp = handler.set_milestones(_put_event(rows), FakeMilestoneRepo(), notify)
+    resp = handler.set_milestones(milestones_put_event(rows), FakeMilestoneRepo(), notify)
     assert resp["statusCode"] == 400, resp["body"]
     assert notify.migrate_calls == []
     assert stored_markers(notify) == {"bal:400000.00", "bal:500000.00"}  # markers untouched
@@ -234,7 +229,7 @@ def test_a_bad_row_field_returns_400_before_any_migration(handler):
         {"label": "First", "targetBalance": 400000, "targetDate": "2030-01-01"},   # no id → mints
         {"label": "Bad", "targetBalance": -1, "targetDate": "2031-01-01"},         # invalid
     ]
-    resp = handler.set_milestones(_put_event(rows), FakeMilestoneRepo(), notify)
+    resp = handler.set_milestones(milestones_put_event(rows), FakeMilestoneRepo(), notify)
     assert resp["statusCode"] == 400, resp["body"]
     assert notify.migrate_calls == []
 
@@ -246,7 +241,7 @@ def test_a_notify_failure_after_the_save_does_not_500_the_put(handler):
     # still returns 200 with the saved plan. Worst case is one milestone left re-armed — approved
     # over blocking a plan save on the notify table.
     row = {"label": "Target", "targetBalance": 400000, "targetDate": "2030-01-01"}  # no id
-    resp = handler.set_milestones(_put_event([row]), FakeMilestoneRepo(), RaisingNotifyRepo())
+    resp = handler.set_milestones(milestones_put_event([row]), FakeMilestoneRepo(), RaisingNotifyRepo())
     assert resp["statusCode"] == 200, resp["body"]
     assert json.loads(resp["body"])[0]["label"] == "Target"
 
@@ -259,14 +254,14 @@ def test_re_putting_the_same_plan_mints_and_migrates_only_once(handler):
     # idd marker stays; the bare marker does not come back).
     notify = recording_notify_repo({"bal:400000.00"})
     row = {"label": "Target", "targetBalance": 400000, "targetDate": "2030-01-01"}  # no id
-    first = handler.set_milestones(_put_event([row]), FakeMilestoneRepo(), notify)
+    first = handler.set_milestones(milestones_put_event([row]), FakeMilestoneRepo(), notify)
     minted_id = json.loads(first["body"])[0]["id"]
     assert len(notify.migrate_calls) == 1
     assert stored_markers(notify) == {f"id:{minted_id}:bal:400000.00"}
 
     # Re-PUT with the id now present (what a client round-trips after the first save).
     row_with_id = {**row, "id": minted_id}
-    second = handler.set_milestones(_put_event([row_with_id]), FakeMilestoneRepo(), notify)
+    second = handler.set_milestones(milestones_put_event([row_with_id]), FakeMilestoneRepo(), notify)
     assert second["statusCode"] == 200, second["body"]
     assert len(notify.migrate_calls) == 1, "second save minted nothing → no second migrate"
     assert stored_markers(notify) == {f"id:{minted_id}:bal:400000.00"}  # first migration intact

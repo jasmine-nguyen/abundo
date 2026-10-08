@@ -19,8 +19,8 @@ import json
 
 import pytest
 
-from _api_event import api_event
 from _feed_fakes import (
+    apply_rules_event,
     SPENDING, FakeCategoryRepo, Repos, charge_writes, date_queries, on_write, _row, set_category,
 )
 from _rule_ingest_fakes import apply_rules_to_uncategorized
@@ -57,16 +57,12 @@ class _Run(Repos):
                       if row["pk"] == f"ACCOUNT#{SPENDING}" and "category" in row)
 
 
-def _event(body):
-    return api_event("POST", "/transactions/uncategorized/apply-rules", body=body)
-
-
 def _call(handler, body, run=None, categories=frozenset({"groceries", "petrol"})):
     if run is None:
         run = _Run()
     resp = apply_rules_to_uncategorized(
         handler,
-        _event(body), run.transaction_repo, FakeCategoryRepo(categories), run.rule_repo)
+        apply_rules_event(body), run.transaction_repo, FakeCategoryRepo(categories), run.rule_repo)
     return resp, json.loads(resp["body"]), run
 
 
@@ -433,7 +429,7 @@ def test_the_route_carries_the_inline_rule_through(handler, monkeypatch):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: run.transaction_repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo({"groceries"}))
 
-    resp = handler.lambda_handler(_event({"dryRun": False, "rule": _COLES}), None)
+    resp = handler.lambda_handler(apply_rules_event({"dryRun": False, "rule": _COLES}), None)
 
     assert resp["statusCode"] == 200
     assert run.minted() == [("description", "contains", "COLES", "groceries")]

@@ -36,8 +36,8 @@ import json
 
 import pytest
 
-from _api_event import api_event
 from _feed_fakes import (
+    apply_rules_event,
     ANZ, SPENDING, HOMELOAN, WESTPAC, FakeCategoryRepo, charge_writes, fail_writes, on_write,
     real_repos, _row, set_category, stored, vanish_on_write,
 )
@@ -73,14 +73,10 @@ def _rule_ids(rule_repo):
     return {rule["value"]: rule["id"] for rule in rule_repo.list_rules()}
 
 
-def _apply_event(body=None, raw=None, is_base64=None):
-    return api_event("POST", "/transactions/uncategorized/apply-rules", body=body, raw=raw, is_base64=is_base64)
-
-
 def _call(handler, repo, rule_repo, body, categories=("groceries", "coffee"), **event_kw):
     resp = apply_rules_to_uncategorized(
         handler,
-        _apply_event(body, **event_kw), repo, FakeCategoryRepo(set(categories)), rule_repo)
+        apply_rules_event(body, **event_kw), repo, FakeCategoryRepo(set(categories)), rule_repo)
     return resp, json.loads(resp["body"])
 
 
@@ -136,7 +132,7 @@ def test_the_budget_covers_the_whole_request_but_still_guarantees_one_write(
     monkeypatch.setattr(rule_repo, "list_rules", slow_list_rules)
     resp = apply_rules_to_uncategorized(
         handler,
-        _apply_event({"dryRun": False}), repo, FakeCategoryRepo({"groceries"}), rule_repo)
+        apply_rules_event({"dryRun": False}), repo, FakeCategoryRepo({"groceries"}), rule_repo)
     body = json.loads(resp["body"])
 
     # The budget is long spent by the first row, but the floor still writes one.

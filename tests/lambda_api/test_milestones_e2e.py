@@ -33,7 +33,7 @@ import pytest
 
 from _api_event import api_event
 from _dynamo_fakes import FakeTable
-from _milestone_fakes import notify_repo, removed_markers, stored_markers
+from _milestone_fakes import milestones_put_event, notify_repo, removed_markers, stored_markers
 
 
 # --- harness ----------------------------------------------------------------
@@ -77,10 +77,6 @@ class FakeLoanFactsRepo:
 
 def _get_event():
     return api_event("GET", "/milestones", raw="")
-
-
-def _put_event(rows):
-    return api_event("PUT", "/milestones", body={"milestones": rows}, is_base64=False)
 
 
 def _store_raw(repo, rows, scope="SHARED"):
@@ -146,7 +142,7 @@ def test_every_row_the_save_endpoint_accepts_survives_the_read(handler, mileston
     # way back. Boundary rows on purpose — the balance cap, a 0 balance, a 100-char label,
     # a non-ASCII label, and a leap day (which date.fromisoformat only accepts in a leap
     # year). PUT then GET through lambda_handler, one repository, no fakes in between.
-    put = handler.lambda_handler(_put_event(_ROUND_TRIP), None)
+    put = handler.lambda_handler(milestones_put_event(_ROUND_TRIP), None)
     assert put["statusCode"] == 200, put["body"]
     assert len(json.loads(put["body"])) == 3, "set_milestones' own return dropped a row"
 
@@ -178,7 +174,7 @@ def test_a_hidden_rows_marker_survives_until_the_next_save_drops_the_row(
             device_repo=FakeDeviceRepo(), notify_repo=notify, milestone_repo=milestone_repo)
 
     # 1. The user saves a plan and genuinely earns the first milestone.
-    put = handler.lambda_handler(_put_event(_HIDDEN_ROW_PLAN), None)
+    put = handler.lambda_handler(milestones_put_event(_HIDDEN_ROW_PLAN), None)
     assert put["statusCode"] == 200, put["body"]
     quarter_id, half_id = [row["id"] for row in json.loads(put["body"])]
     quarter_marker = f"id:{quarter_id}:bal:400000.00"
@@ -204,7 +200,7 @@ def test_a_hidden_rows_marker_survives_until_the_next_save_drops_the_row(
 
     # 4. The user edits their plan. The app can only send back what it was shown, and PUT
     # replaces the plan whole — so the hidden row is silently dropped from the store.
-    resave = handler.lambda_handler(_put_event(on_screen), None)
+    resave = handler.lambda_handler(milestones_put_event(on_screen), None)
     assert resave["statusCode"] == 200, resave["body"]
     assert [row["id"] for row in milestone_repo._table.store[
         ("MILESTONES", "SHARED")]["milestones"]] == [half_id]
@@ -236,7 +232,7 @@ def test_every_row_the_save_endpoint_accepts_still_resolves_for_the_poller(
     # _resolve_plan, exactly as the daily poll does.
     # Fail-on-revert: make row_date stricter than the save endpoint (e.g. reject Feb 29) and
     # the leap-day row vanishes from the plan here.
-    put = handler.lambda_handler(_put_event(_SAVED_PLAN), None)
+    put = handler.lambda_handler(milestones_put_event(_SAVED_PLAN), None)
     assert put["statusCode"] == 200, put["body"]
     saved = json.loads(put["body"])
 
@@ -261,7 +257,7 @@ def test_a_leap_day_row_the_user_saved_still_celebrates(
     monkeypatch.setattr(poller, "send_push",
                         lambda title, body, tokens, **kw: sent_pushes.append(title))
 
-    put = handler.lambda_handler(_put_event(_SAVED_PLAN), None)
+    put = handler.lambda_handler(milestones_put_event(_SAVED_PLAN), None)
     assert put["statusCode"] == 200, put["body"]
     leap_id = json.loads(put["body"])[1]["id"]
 
@@ -345,7 +341,7 @@ def test_a_corrupted_target_keeps_its_marker_across_polls_and_never_fires_twice(
     pushes = []
     monkeypatch.setattr(poller, "send_push", lambda t, b, tok, **kw: pushes.append(t))
 
-    ids = _saved_ids(handler.lambda_handler(_put_event(_RETARGET_PLAN), None))
+    ids = _saved_ids(handler.lambda_handler(milestones_put_event(_RETARGET_PLAN), None))
     halfway_marker = f"id:{ids[1]}:bal:300000.00"
     deposit_marker = f"id:{ids[0]}:bal:480000.00"
 
@@ -368,7 +364,7 @@ def test_a_corrupted_target_keeps_its_marker_across_polls_and_never_fires_twice(
     # never reaped, the crossing is NOT fresh -> NO second celebration. This is the double-
     # celebration the card closes. Fail-on-revert: rebuild liveness from `plan` (drop the id
     # prefix) -> the marker is swept during the corrupt polls and this re-cross congratulates again.
-    handler.lambda_handler(_put_event(
+    handler.lambda_handler(milestones_put_event(
         [{**_RETARGET_PLAN[0], "id": ids[0]}, {**_RETARGET_PLAN[1], "id": ids[1]}]), None)
     pushes.clear()
     assert _poll(poller, milestone_repo, notify, pushes, old="310000", new="250000") == 0
@@ -381,7 +377,7 @@ def test_retargeting_through_the_endpoint_sweeps_the_old_marker_and_rearms(
     pushes = []
     monkeypatch.setattr(poller, "send_push", lambda t, b, tok, **kw: pushes.append(t))
 
-    ids = _saved_ids(handler.lambda_handler(_put_event(_RETARGET_PLAN), None))
+    ids = _saved_ids(handler.lambda_handler(milestones_put_event(_RETARGET_PLAN), None))
     old_marker = f"id:{ids[1]}:bal:300000.00"
     new_marker = f"id:{ids[1]}:bal:250000.00"
 
@@ -391,7 +387,7 @@ def test_retargeting_through_the_endpoint_sweeps_the_old_marker_and_rearms(
 
     # Re-target Halfway 300000 -> 250000 through a real PUT (same id preserved). "Gone" now means
     # the OLD amount is gone: it keys to a new marker, so the old one must be reaped.
-    handler.lambda_handler(_put_event(
+    handler.lambda_handler(milestones_put_event(
         [{**_RETARGET_PLAN[0], "id": ids[0]},
          {"id": ids[1], "label": "Halfway", "targetBalance": 250000, "targetDate": "2028-01-01"}]), None)
 
@@ -414,6 +410,6 @@ def test_the_save_endpoint_rejects_a_shape_matching_but_uncalendar_date(handler,
     # Unicode-digit date (passes ISO_DATE_RE's `\d`), a trailing-newline date (passes `$`) and a
     # month-00 date (passes the shape) are all 400s — the SAME rule the reads reject them by.
     row = {"label": "Bad", "targetBalance": 300000, "targetDate": bad_date}
-    resp = handler.lambda_handler(_put_event([row]), None)
+    resp = handler.lambda_handler(milestones_put_event([row]), None)
     assert resp["statusCode"] == 400, resp["body"]
     assert "targetDate" in resp["body"]

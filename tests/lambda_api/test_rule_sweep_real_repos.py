@@ -12,7 +12,7 @@ the stored row — not by a fake deciding the outcome.
 import json
 
 from _api_event import api_event
-from _feed_fakes import SPENDING, FakeCategoryRepo, _row, real_repos
+from _feed_fakes import apply_rules_event, SPENDING, FakeCategoryRepo, _row, real_repos
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
@@ -44,7 +44,7 @@ def test_apply_rules_files_through_the_real_repositories_and_a_mid_run_tap_wins(
 
     resp = apply_rules_to_uncategorized(
         handler,
-        api_event("POST", "/transactions/uncategorized/apply-rules", body={"dryRun": False}),
+        apply_rules_event({"dryRun": False}),
         transaction_repo, FakeCategoryRepo(("groceries", "coffee")), rule_repo)
     body = json.loads(resp["body"])
 

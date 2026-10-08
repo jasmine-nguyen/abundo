@@ -20,18 +20,13 @@ clash/read-failure paths return before the history scan, which the table's query
 import json
 from decimal import Decimal
 
-from _api_event import api_event
-from _feed_fakes import FakeCategoryRepo, date_queries, real_repos
+from _feed_fakes import apply_rules_event, FakeCategoryRepo, date_queries, real_repos
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 def _stored_rule(value, category_id, *, field="description", operator="contains"):
     # The kwargs of one real RuleRepository.create_rule call — the store mints the id.
     return {"field": field, "operator": operator, "value": value, "category_id": category_id}
-
-
-def _event(body):
-    return api_event("POST", "/transactions/uncategorized/apply-rules", body=body)
 
 
 # --- [G1]-[G3] the boundary mapper -----------------------------------------------------------
@@ -107,7 +102,7 @@ def test_a_clash_on_a_rule_past_the_old_100_row_page_is_still_found(handler):
 
     resp = apply_rules_to_uncategorized(
         handler,
-        _event({"dryRun": True, "rule": {"value": "COLES", "categoryId": "groceries"}}),
+        apply_rules_event({"dryRun": True, "rule": {"value": "COLES", "categoryId": "groceries"}}),
         repo, FakeCategoryRepo(["groceries", "petrol"]), rule_repo)
     body = json.loads(resp["body"])
 
@@ -130,7 +125,7 @@ def test_the_full_store_read_covers_a_NESTED_clash_beyond_the_first_page(handler
 
     resp = apply_rules_to_uncategorized(
         handler,
-        _event({"dryRun": True, "rule": {"value": "COLES", "categoryId": "groceries"}}),
+        apply_rules_event({"dryRun": True, "rule": {"value": "COLES", "categoryId": "groceries"}}),
         repo, FakeCategoryRepo(["groceries", "petrol"]), rule_repo)
     body = json.loads(resp["body"])
 
@@ -150,7 +145,7 @@ def test_a_rules_read_failure_on_a_preview_is_a_500_and_scans_no_history(handler
 
     resp = apply_rules_to_uncategorized(
         handler,
-        _event({"dryRun": True}), repo, FakeCategoryRepo(["groceries"]), rule_repo)
+        apply_rules_event({"dryRun": True}), repo, FakeCategoryRepo(["groceries"]), rule_repo)
 
     assert resp["statusCode"] == 500
     assert json.loads(resp["body"])["error"] == "could not read your rules"

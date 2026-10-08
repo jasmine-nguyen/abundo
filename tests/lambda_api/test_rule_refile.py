@@ -16,8 +16,9 @@ by construction, and the writes below re-confirm the stamp so a tap in the scan-
 
 import json
 
-from _api_event import api_event
-from _feed_fakes import SPENDING, FakeCategoryRepo, charge_writes, real_repos, _row, stored
+from _feed_fakes import (
+    SPENDING, FakeCategoryRepo, charge_writes, real_repos, rule_delete_event, rule_put_event, _row, stored,
+)
 
 
 _CATEGORIES = frozenset({"groceries", "petrol", "eatingout"})
@@ -31,20 +32,6 @@ def _seed_rule(value, category_id="groceries", field="description", operator="co
     """Real repos over one table holding one rule, plus the id the store minted (== the stamp)."""
     table, txn_repo, rule_repo = real_repos(rules=[_rule(value, category_id, field, operator)])
     return table, txn_repo, rule_repo, rule_repo.list_rules()[0]["id"]
-
-
-def _put_event(rule_id, value, category_id, field="description", operator="contains"):
-    return api_event(
-        "PUT",
-        f"/rules/{rule_id}",
-        body={"value": value, "categoryId": category_id,
-              "field": field, "operator": operator},
-        path_params={"id": rule_id},
-    )
-
-
-def _delete_event(rule_id):
-    return api_event("DELETE", f"/rules/{rule_id}", path_params={"id": rule_id})
 
 
 def _update(handler, rule_repo, txn_repo, event, categories=_CATEGORIES):
@@ -72,7 +59,7 @@ def test_edit_description_value_refiles_matches_and_clears_non_matches(handler):
              category="groceries", filed_by_rule=old),
     )
 
-    resp, body = _update(handler, rule_repo, repo, _put_event(old, "coles express", "petrol"))
+    resp, body = _update(handler, rule_repo, repo, rule_put_event(old, "coles express", "petrol"))
     new = body["id"]
 
     assert resp["statusCode"] == 200 and new != old and body["remaining"] == 0
@@ -91,7 +78,7 @@ def test_edit_description_target_only_moves_every_owned_charge_in_place(handler)
         _row(SPENDING, "2026-07-01", "b", description="ALDI", category="groceries", filed_by_rule=rid),
     )
 
-    _, body = _update(handler, rule_repo, repo, _put_event(rid, "coles", "petrol"))
+    _, body = _update(handler, rule_repo, repo, rule_put_event(rid, "coles", "petrol"))
 
     assert body["id"] == rid and body["remaining"] == 0
     # "ALDI" would NOT match "coles" — but because this is an in-place edit we do NOT re-evaluate,
@@ -119,7 +106,7 @@ def test_edit_category_rule_refiles_without_reevaluating(handler):
     )
 
     _, body = _update(handler, rule_repo, repo,
-                     _put_event(old, "SUPERMARKETS", "petrol", field="category", operator="equals"))
+                     rule_put_event(old, "SUPERMARKETS", "petrol", field="category", operator="equals"))
     new = body["id"]
 
     assert new != old                          # value changed -> id changed
@@ -142,7 +129,7 @@ def test_edit_leaves_a_charge_the_user_refiled_since(handler):
         _row(SPENDING, "2026-07-02", "t1", description="COLES 1", category="coffee"),  # no stamp
     )
 
-    _update(handler, rule_repo, repo, _put_event(old, "coles", "petrol"))
+    _update(handler, rule_repo, repo, rule_put_event(old, "coles", "petrol"))
 
     assert stored(table, "t1")["category"] == "coffee"   # user's choice stands
     assert charge_writes(table) == []                           # never even attempted
@@ -155,7 +142,7 @@ def test_edit_leaves_charges_owned_by_other_rules(handler):
         _row(SPENDING, "2026-07-01", "theirs", description="ALDI", category="groceries", filed_by_rule="other-rule"),
     )
 
-    _update(handler, rule_repo, repo, _put_event(old, "coles", "petrol"))
+    _update(handler, rule_repo, repo, rule_put_event(old, "coles", "petrol"))
 
     assert stored(table, "theirs")["category"] == "groceries"       # untouched
     assert stored(table, "theirs")["filed_by_rule"] == "other-rule"
@@ -171,7 +158,7 @@ def test_delete_clears_every_charge_the_rule_filed(handler):
         _row(SPENDING, "2026-07-01", "b", description="COLES 2", category="groceries", filed_by_rule=rid),
     )
 
-    resp, body = _delete(handler, rule_repo, repo, _delete_event(rid))
+    resp, body = _delete(handler, rule_repo, repo, rule_delete_event(rid))
 
     assert resp["statusCode"] == 200 and body == {"id": rid, "remaining": 0}
     for txn_id in ("a", "b"):
@@ -189,7 +176,7 @@ def test_delete_leaves_a_charge_the_user_refiled_since(handler):
         _row(SPENDING, "2026-07-02", "kept", description="COLES 1", category="coffee"),  # stamp gone
     )
 
-    _delete(handler, rule_repo, repo, _delete_event(rid))
+    _delete(handler, rule_repo, repo, rule_delete_event(rid))
 
     assert stored(table, "kept")["category"] == "coffee"
 
@@ -201,7 +188,7 @@ def test_delete_of_an_unknown_rule_undoes_nothing(handler):
              filed_by_rule="some-rule"),
     ]})
 
-    resp, body = _delete(handler, rule_repo, repo, _delete_event("deadbeef"))
+    resp, body = _delete(handler, rule_repo, repo, rule_delete_event("deadbeef"))
 
     assert resp["statusCode"] == 200 and body["remaining"] == 0
     assert stored(table, "t1")["category"] == "groceries"   # not this delete's business
@@ -217,7 +204,7 @@ def test_remaining_counts_charges_beyond_the_write_budget(handler, monkeypatch):
                  category="groceries", filed_by_rule=rid) for n in range(1, 6)]
     table.seed(*rows)
 
-    _, body = _delete(handler, rule_repo, repo, _delete_event(rid))
+    _, body = _delete(handler, rule_repo, repo, rule_delete_event(rid))
 
     assert body["remaining"] == 3          # 5 owned, 2 cleared this request
     cleared = sum(1 for n in range(1, 6) if "category" not in stored(table, f"t{n}"))

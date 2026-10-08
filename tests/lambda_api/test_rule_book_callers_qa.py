@@ -14,7 +14,7 @@ can't see:
 import json
 
 from _api_event import api_event
-from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
+from _feed_fakes import apply_rules_event, SPENDING, FakeCategoryRepo, real_repos, _row, stored
 from _job_fakes import real_job_repo
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
@@ -53,7 +53,7 @@ def test_apply_route_time_budget_reads_the_handlers_clock(handler, monkeypatch):
     monkeypatch.setattr(handler, "time", _FutureStepClock(step=4))
     rows = [_row(SPENDING, f"2026-07-0{n}", f"t{n}", description="COLES") for n in range(1, 6)]
     table, repo, rule_repo = real_repos({SPENDING: rows}, rules=[_store_rule("coles")])
-    event = api_event("POST", "/transactions/uncategorized/apply-rules", body={"dryRun": False})
+    event = apply_rules_event({"dryRun": False})
 
     resp = apply_rules_to_uncategorized(
         handler,

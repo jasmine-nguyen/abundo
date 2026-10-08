@@ -10,7 +10,7 @@ either one left every suite green. These tests race a tap against each of them.
 import json
 
 from _api_event import api_event
-from _feed_fakes import SPENDING, FakeCategoryRepo, _row, on_write, real_repos, stored
+from _feed_fakes import apply_rules_event, SPENDING, FakeCategoryRepo, _row, on_write, real_repos, stored
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 _CATEGORIES = frozenset({"groceries", "petrol", "eatingout"})
@@ -111,7 +111,7 @@ def test_a_tap_mid_sweep_reconcile_keeps_the_users_category(handler):
 
     resp = apply_rules_to_uncategorized(
         handler,
-        api_event("POST", "/transactions/uncategorized/apply-rules", body={"dryRun": False}),
+        apply_rules_event({"dryRun": False}),
         transaction_repo, FakeCategoryRepo(_CATEGORIES), rule_repo)
 
     assert resp["statusCode"] == 200

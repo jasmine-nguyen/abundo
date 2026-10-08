@@ -5,8 +5,7 @@ import json
 
 from decimal import Decimal
 
-from _api_event import api_event
-from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
+from _feed_fakes import apply_rules_event, SPENDING, FakeCategoryRepo, real_repos, _row, stored
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
@@ -17,16 +16,12 @@ def _multi_rule(conditions, logic="all", category_id="transport"):
             "category_id": category_id, "conditions": conditions, "logic": logic}
 
 
-def _apply_event(body):
-    return api_event("POST", "/transactions/uncategorized/apply-rules", body=body)
-
-
 def _call(handler, charge, rules, body, categories=frozenset({"transport", "groceries"})):
     """Run the sweep over one stored charge; returns (body, table)."""
     table, repo, rule_repo = real_repos({SPENDING: [charge]}, rules=rules)
     resp = apply_rules_to_uncategorized(
         handler,
-        _apply_event(body), repo, FakeCategoryRepo(categories), rule_repo)
+        apply_rules_event(body), repo, FakeCategoryRepo(categories), rule_repo)
     return json.loads(resp["body"]), table
 
 
