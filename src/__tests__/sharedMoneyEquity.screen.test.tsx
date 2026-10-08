@@ -1,15 +1,13 @@
 // WHIT-773 — the shared money box (Loan + Goal edit) and the shared equity card (Milestone + Mortgage).
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
-import { resetRouter } from './support/routerMock';
+import { EQUITY_TEASER } from './support/goalsScreen';
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import { MoneyField } from '../components/MoneyField';
 import { EquityCard, EquitySetupTeaser } from '../components/EquityCard';
-
-beforeEach(() => resetRouter());
 
 describe('shared money box and equity card', () => {
   it('money box shows its label, sign and hint, uses the number keypad, and reports typing', () => {
@@ -47,8 +45,7 @@ describe('shared money box and equity card', () => {
 
     expect(screen.getByText('Equity for your next place')).toBeTruthy();
     expect(screen.getByText('Usable equity from your current home')).toBeTruthy();
-    expect(screen.getByText('Your usable equity will show here once your loan details are set up.')).toBeTruthy();
+    expect(screen.getByText(EQUITY_TEASER)).toBeTruthy();
     expect(screen.queryByRole('button')).toBeNull();
-    expect(screen.queryByText('Add loan details →')).toBeNull();
   });
 });

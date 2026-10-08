@@ -10,6 +10,7 @@ import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { resetRouter } from './support/routerMock';
+import { LOAN_FORM_PLACEHOLDERS } from './support/loanForm';
 
 let mockState: Partial<AppContext>;
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
@@ -42,7 +43,7 @@ it.each([
   await renderWithQueries(<Loan />);
 
   expect(screen.getByText('Save loan details')).toBeTruthy();
-  const scheduled = screen.getByPlaceholderText('e.g. 2500');
+  const scheduled = screen.getByPlaceholderText(LOAN_FORM_PLACEHOLDERS.base);
   expect(scheduled.props.value).toBe(expected);
   expect(screen.queryByText(PREFILL_HINT) !== null).toBe(hinted);
 

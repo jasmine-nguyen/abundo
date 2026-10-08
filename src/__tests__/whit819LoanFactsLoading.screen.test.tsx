@@ -12,7 +12,7 @@ import { renderWithQueries, renderLoaded, refreshInAct, settle, useTestQueryClie
 import { queryClient } from '../queryClient';
 import { loanFactsKey } from '../queries';
 import { resetAuth } from './support/authMock';
-import { seedGoal } from './support/goalsScreen';
+import { seedGoal, EQUITY_TEASER } from './support/goalsScreen';
 import { resetRouter } from './support/routerMock';
 import { LOAN_FORM_PLACEHOLDERS } from './support/loanForm';
 
@@ -26,7 +26,6 @@ import Mortgage from '../../app/mortgage';
 import Milestone from '../../app/milestone';
 
 const server = installFakeServer();
-const EQUITY_TEASER = 'Your usable equity will show here once your loan details are set up.';
 useTestQueryClient();
 
 const SAVED: LoanFacts = {

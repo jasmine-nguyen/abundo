@@ -11,7 +11,7 @@ import { EMPTY_LOAN_FACTS, LOAN_FACTS } from './factory';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, renderWithQueries, useTestQueryClient, drawHeld, releaseAndSettle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
-import { seedGoal } from './support/goalsScreen';
+import { seedGoal, EQUITY_TEASER } from './support/goalsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { saveMilestonesSpy, showToastSpy, milestoneLabelAt } from './support/milestoneEditor';
@@ -32,7 +32,6 @@ import Mortgage from '../../app/mortgage';
 import MilestoneEdit from '../../app/milestone/edit';
 
 const server = installFakeServer();
-const EQUITY_TEASER = 'Your usable equity will show here once your loan details are set up.';
 useTestQueryClient();
 
 // Loan facts are saved by default (property value + LVR set) so equity renders; pass
