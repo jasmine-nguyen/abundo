@@ -10,6 +10,9 @@ import { Bar, RetryButton, HeroGradientFill } from '../src/components/ui';
 import { PayoffSummary } from '../src/components/PayoffSummary';
 import { Header } from '../src/components/Header';
 import { EquityCard, EquityBody, EquityCta, EquitySetupTeaser } from '../src/components/EquityCard';
+import { Celebration } from '../src/components/Celebration';
+import { useRepaymentLanded } from '../src/hooks/useRepaymentLanded';
+import { repaymentLandedView } from '../src/repaymentLanded';
 
 // WHIT-233: the home-loan detail screen, relocated out of the Goal tab (which is now the
 // Goals hub). It's a stack route under the root <Stack> — OUTSIDE NavBarsProvider — so it
@@ -32,6 +35,9 @@ export default function Mortgage() {
   const m = milestoneView({ loanFacts, homeLoan, milestones });
   const lr = lastRepaymentView({ repayment });
   const p = paydownView({ loanFacts, homeLoan });
+  // WHIT-820: a repayment this phone hasn't shown yet → a "Just landed" card at the top + the banner.
+  const { justLanded, celebrationKey } = useRepaymentLanded(repayment, !isLoading && !repaymentError && lr.present);
+  const landed = justLanded ? repaymentLandedView(repayment, m) : null;
   // WHIT-821: inferred on the phone — the balance check worked but found nothing, nothing's
   // set up, and no repayment on record (any repayment, even a half one, proves a loan exists).
   const noHomeLoan = homeLoanLoaded && loanFactsLoaded && homeLoan.balance == null && !g.factsReady
@@ -44,6 +50,18 @@ export default function Mortgage() {
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title="Home loan" />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }} showsVerticalScrollIndicator={false}>
+        {landed && (
+          <View style={styles.landedCard} testID="repayment-landed">
+            <Text style={styles.landedEyebrow}>JUST LANDED · {lr.whenLabel}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 8 }}>
+              <View style={styles.repayChip}><Glyph name="arrowDown" size={22} color={C.good} /></View>
+              <Text style={styles.landedHeadline}>{landed.headline}</Text>
+            </View>
+            {landed.detail && <Text style={styles.landedDetail}>{landed.detail}</Text>}
+            {landed.milestoneLine && <Text style={styles.landedMilestone}>{landed.milestoneLine}</Text>}
+          </View>
+        )}
+
         {/* hero — real payoff progress once loan facts are set, else a set-up prompt
             that still shows the one thing we genuinely know: the live balance. */}
         <View style={styles.hero}>
@@ -226,7 +244,7 @@ export default function Mortgage() {
 
         {/* last repayment — the real most-recent home-loan repayment (WHIT-115),
             or a graceful empty state. Independent of the loan-facts form. */}
-        <View style={styles.card}>
+        {!justLanded && <View style={styles.card}>
           {lr.present ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               <View style={styles.repayChip}><Glyph name="arrowDown" size={22} color={C.good} /></View>
@@ -259,7 +277,7 @@ export default function Mortgage() {
               </View>
             </View>
           )}
-        </View>
+        </View>}
 
         {/* usable equity from the home — how much the user could unlock from their
             current home toward the deposit on their next place, once the value is set. */}
@@ -295,6 +313,7 @@ export default function Mortgage() {
         </EquityCard>
         </>)}
       </ScrollView>
+      <Celebration celebrationKey={celebrationKey} label="Repayment landed" />
     </View>
   );
 }
@@ -340,6 +359,12 @@ const styles = StyleSheet.create({
   contribBig: { fontFamily: FONT.display, fontSize: 30, fontWeight: '800', color: '#fff', letterSpacing: -1, marginTop: 4 },
   contribBody: { fontFamily: FONT.body, fontSize: 13, color: '#a6a6b0', lineHeight: 19, marginTop: 6 },
   contribStrong: { color: '#e6e6ea', fontWeight: '700' },
+
+  landedCard: { backgroundColor: tint(C.good, 0.1), borderWidth: 1, borderColor: tint(C.good, 0.24), borderRadius: 18, padding: 16, marginBottom: 14 },
+  landedEyebrow: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.good, letterSpacing: 0.3 },
+  landedHeadline: { flex: 1, fontFamily: FONT.display, fontSize: 24, fontWeight: '800', color: C.textBright, letterSpacing: -0.6 },
+  landedDetail: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 8 },
+  landedMilestone: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.accentSofter, marginTop: 6 },
 
   repayChip: { width: 42, height: 42, borderRadius: 13, backgroundColor: tint(C.good, 0.14), alignItems: 'center', justifyContent: 'center' },
   repayTitle: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.textBright },

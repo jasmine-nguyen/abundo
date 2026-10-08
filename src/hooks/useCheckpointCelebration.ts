@@ -12,7 +12,7 @@
 // its banner ends) moves on to the next. An old count-style saved copy (a number per goal) has
 // no steps to compare, so the diff seeds those goals silently and overwrites them.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useSavedNote } from './useSavedNote';
 import { CHECKPOINT_SNAPSHOT_KEY, diffCheckpointReached, GoalSteps, StepSnapshot } from '../checkpointCelebration';
 
 export interface CheckpointCelebration {
@@ -36,32 +36,25 @@ function parseSnapshot(raw: string | null): StepSnapshot {
 
 export function useCheckpointCelebration(goals: GoalSteps[], ready: boolean): CheckpointCelebration {
   const lastShown = useRef<StepSnapshot>({});
-  const [hydrated, setHydrated] = useState(false);
+  const { loaded, note, save } = useSavedNote(CHECKPOINT_SNAPSHOT_KEY);
   const [state, setState] = useState({ key: 0, queue: [] as string[] });
 
+  // Seed the working copy once, when the saved copy first loads; never re-parse it afterwards.
   useEffect(() => {
-    let cancelled = false;
-    AsyncStorage.getItem(CHECKPOINT_SNAPSHOT_KEY).catch(() => null).then((raw) => {
-      if (cancelled) return;
-      lastShown.current = parseSnapshot(raw);
-      setHydrated(true);
-    });
-    return () => { cancelled = true; };
-  }, []);
+    if (loaded) lastShown.current = parseSnapshot(note.current);
+  }, [loaded]);
 
   useEffect(() => {
-    if (!hydrated || !ready) return;
+    if (!loaded || !ready) return;
     const prev = lastShown.current;
     const { bursts, next } = diffCheckpointReached(prev, goals);
     lastShown.current = next;
-    if (JSON.stringify(prev) !== JSON.stringify(next)) {
-      AsyncStorage.setItem(CHECKPOINT_SNAPSHOT_KEY, JSON.stringify(next)).catch(() => {});
-    }
+    if (JSON.stringify(prev) !== JSON.stringify(next)) save(JSON.stringify(next));
     if (bursts.length === 0) return;
 
     const labels = bursts.map((burst) => burst.label);
     setState((s) => ({ key: s.queue.length === 0 ? s.key + 1 : s.key, queue: [...s.queue, ...labels] }));
-  }, [goals, hydrated, ready]);
+  }, [goals, loaded, ready]);
 
   const onDone = useCallback(() => {
     setState((s) => {
