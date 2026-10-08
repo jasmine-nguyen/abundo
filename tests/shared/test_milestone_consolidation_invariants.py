@@ -29,7 +29,6 @@ _TESTS = pathlib.Path(__file__).resolve().parent.parent          # tests/
 _SURVIVORS = [
     _TESTS / "lambda_api" / "test_milestones_api.py",
     _TESTS / "lambda_api" / "test_milestones_e2e.py",
-    _TESTS / "lambda_api" / "test_milestones_whit447_mint_migration.py",
     _TESTS / "balance_poller" / "test_handler_milestone_gaps.py",
 ]
 

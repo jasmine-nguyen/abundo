@@ -3,8 +3,7 @@
 The ramp (`CATEGORY_COLORS`) and the slot permutation (`ASSIGNMENT_ORDER`) live
 client-side, but the server hands out the slots that index them. Server tests need
 the real client values to prove the two agree, so this parses the TypeScript as
-TEXT — there is no JS runtime in the pytest suite, the same reason
-tests/shared/test_milestones_twin_drift.py parses its twin that way.
+TEXT — there is no JS runtime in the pytest suite.
 
 It DISCOVERS the ramp file by content rather than hard-coding a path: that file has
 already moved once (src/theme/chartColors.ts -> src/chartColors.ts, WHIT-408). Finding

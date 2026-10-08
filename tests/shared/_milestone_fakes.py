@@ -40,6 +40,16 @@ def _row(label, balance, id="m1", date="2027-01-01"):
     return {"id": id, "label": label, "targetBalance": Decimal(str(balance)), "targetDate": date}
 
 
+# A populated saved plan for suites that just need one: the app's five suggested steps, with ids.
+SAMPLE_PLAN = [
+    _row("Kickoff", 544000, id="kickoff"),
+    _row("Quarter way", 420000, id="quarter"),
+    _row("Halfway", 295000, id="halfway"),
+    _row("Three-quarters", 170000, id="three-quarters"),
+    _row("Target", 55000, id="target"),
+]
+
+
 class FakeDeviceRepo:
     """Stand-in for DeviceRepository. `tokens` defaults to one push token; pass an explicit
     tuple to exercise the multi-device / no-device fan-out."""
@@ -85,21 +95,6 @@ def notify_repo(fired=None, scope=None):
     repo._table.update_calls.clear()
     repo._table.update_keys.clear()
     return repo
-
-
-def recording_notify_repo(fired=()):
-    """``notify_repo(fired)`` plus a spy that records every migrate call (its migrations and scope)
-    before the real rename runs, so a handler test can assert WHAT set_milestones migrates."""
-    notify = notify_repo(fired)
-    notify.migrate_calls = []
-    migrate = notify.migrate_milestone_markers
-
-    def spy(migrations, scope=None):
-        notify.migrate_calls.append({"migrations": list(migrations), "scope": scope})
-        return migrate(migrations, scope=scope)
-
-    notify.migrate_milestone_markers = spy
-    return notify
 
 
 def goal_checkpoint_repo(fired=()):
@@ -189,8 +184,13 @@ class FakeMilestoneRepo:
 
 
 def unreadable_milestone_repo():
-    """A milestone store whose read fails, so the poller measures against the built-in plan."""
+    """A milestone store whose read fails, so the poller has no plan to measure against."""
     return FakeMilestoneRepo(raises=RuntimeError("milestone store unreadable"))
+
+
+def sample_plan_repo():
+    """A milestone store holding SAMPLE_PLAN."""
+    return FakeMilestoneRepo(stored=SAMPLE_PLAN)
 
 
 @pytest.fixture

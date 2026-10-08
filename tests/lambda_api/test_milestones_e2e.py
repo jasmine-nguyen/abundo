@@ -18,6 +18,7 @@ shared-layer unit test can reach.
        no second celebration.
   [W2] retargeting through a second PUT sweeps the old marker and re-arms the new amount.
   [W3] the save endpoint rejects a shape-matching-but-uncalendar date (one shared validator).
+  WHIT-830: the save rejects a row without an id (missing or null); ids sent are kept.
 
 The `poller` fixture imports shared/milestones.py in the handler's sys.path window (the module the
 balance poller loads) and restores the module table afterwards, so the shared-layer suite is
@@ -130,9 +131,9 @@ def test_get_milestones_with_every_row_corrupt_is_an_empty_list_not_null(
 # === [A7] the over-rejection guard (client read): a saved row must never vanish ==============
 
 _ROUND_TRIP = [
-    {"label": "x" * 100, "targetBalance": 1_000_000_000, "targetDate": "2027-02-28"},
-    {"label": "Ünïcödé 🎉 目標", "targetBalance": 595413.43, "targetDate": "2028-02-29"},
-    {"label": "Paid off", "targetBalance": 0, "targetDate": "2030-12-31"},
+    {"id": "r1", "label": "x" * 100, "targetBalance": 1_000_000_000, "targetDate": "2027-02-28"},
+    {"id": "r2", "label": "Ünïcödé 🎉 目標", "targetBalance": 595413.43, "targetDate": "2028-02-29"},
+    {"id": "r3", "label": "Paid off", "targetBalance": 0, "targetDate": "2030-12-31"},
 ]
 
 
@@ -155,8 +156,8 @@ def test_every_row_the_save_endpoint_accepts_survives_the_read(handler, mileston
 # === [L6] a hidden row's marker survives until the next save drops the row ===================
 
 _HIDDEN_ROW_PLAN = [
-    {"label": "Quarter down", "targetBalance": 400000, "targetDate": "2030-01-01"},
-    {"label": "Halfway", "targetBalance": 250000, "targetDate": "2031-01-01"},
+    {"id": "r4", "label": "Quarter down", "targetBalance": 400000, "targetDate": "2030-01-01"},
+    {"id": "r5", "label": "Halfway", "targetBalance": 250000, "targetDate": "2031-01-01"},
 ]
 
 
@@ -217,9 +218,9 @@ def test_a_hidden_rows_marker_survives_until_the_next_save_drops_the_row(
 # === [F1]-[F3] the over-rejection guard for the POLLER path ==================================
 
 _SAVED_PLAN = [
-    {"label": "x" * 100, "targetBalance": 1_000_000_000, "targetDate": "2027-02-28"},
-    {"label": "Ünïcödé 🎉 目標", "targetBalance": 595413.43, "targetDate": "2028-02-29"},
-    {"label": "Paid off", "targetBalance": 0, "targetDate": "2030-12-31"},
+    {"id": "r6", "label": "x" * 100, "targetBalance": 1_000_000_000, "targetDate": "2027-02-28"},
+    {"id": "r7", "label": "Ünïcödé 🎉 目標", "targetBalance": 595413.43, "targetDate": "2028-02-29"},
+    {"id": "r8", "label": "Paid off", "targetBalance": 0, "targetDate": "2030-12-31"},
 ]
 
 
@@ -309,8 +310,8 @@ def test_the_read_rule_now_matches_the_write_rule_rejecting_the_lenient_forms(ha
 # === [W1]-[W3] keep-the-marker of an unreadable-but-identifiable row, end to end =============
 
 _RETARGET_PLAN = [
-    {"label": "Deposit", "targetBalance": 480000, "targetDate": "2027-01-01"},
-    {"label": "Halfway", "targetBalance": 300000, "targetDate": "2028-01-01"},
+    {"id": "r9", "label": "Deposit", "targetBalance": 480000, "targetDate": "2027-01-01"},
+    {"id": "r10", "label": "Halfway", "targetBalance": 300000, "targetDate": "2028-01-01"},
 ]
 
 
@@ -413,3 +414,26 @@ def test_the_save_endpoint_rejects_a_shape_matching_but_uncalendar_date(handler,
     resp = handler.lambda_handler(milestones_put_event([row]), None)
     assert resp["statusCode"] == 400, resp["body"]
     assert "targetDate" in resp["body"]
+
+# --- WHIT-830: the save requires an id on every row ---------------------------
+
+_KICKOFF = {"label": "Kickoff", "targetBalance": 544000, "targetDate": "2026-06-18"}
+_HALFWAY = {"id": "half", "label": "Halfway", "targetBalance": 295000, "targetDate": "2027-12-18"}
+
+
+@pytest.mark.parametrize("first_row, status", [
+    pytest.param(_KICKOFF, 400, id="id key missing"),
+    pytest.param({**_KICKOFF, "id": None}, 400, id="id explicitly null"),
+    pytest.param({**_KICKOFF, "id": "kick"}, 200, id="id supplied"),
+])
+def test_user_can_save_a_plan_only_when_every_milestone_has_an_id(handler, milestone_repo, first_row, status):
+    resp = handler.set_milestones(milestones_put_event([first_row, _HALFWAY]), milestone_repo)
+
+    assert resp["statusCode"] == status
+    body = json.loads(resp["body"])
+    if status == 400:
+        assert body == {"error": "milestone id is required"}
+        assert milestone_repo.get_milestones() is None
+        return
+    assert [m["id"] for m in body] == ["kick", "half"]
+    assert [m["id"] for m in milestone_repo.get_milestones()] == ["kick", "half"]

@@ -4,7 +4,7 @@ no bank feed provides), kept as a single DynamoDB config item.
 Mirrors LoanFactsRepository (single item, whole-object PUT overwrite, None when
 unset) — a milestone plan is one settings object with a single writer, so a plain
 put_item is enough (no version guard). Deliberately NOT seeded: get returns None
-until the user saves, and the app falls back to its own built-in default plan.
+until the user saves, and the app shows an empty state until then.
 
 WHIT-375 multi-tenant seam: the DynamoDB key is derived through _milestones_key(scope)
 rather than a fixed constant. Today every caller passes the shared scope, so the plan

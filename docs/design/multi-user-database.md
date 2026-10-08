@@ -67,7 +67,7 @@ RULE | RULE#r1                        USER#<owner_id> | RULE#r1
 | 18 | `NOTIFY#GOALCHECKPOINT` \| `FIRED` or `<scope>` | `U` \| `NOTIFY#GOALCHECKPOINT` | `repository_notify.py`, `goal_nudge.py` (its markers live in this row's fired set) |
 | 19 | `NOTIFY#REPAYPUSH` \| `FIRED` | `U` \| `NOTIFY#REPAYPUSH` | `repository_notify.py` |
 
-- The `SHARED` / `FIRED` / `None` scope in the sort key goes away. The owner is now in `pk`, so a scope adds nothing. This also removes the `"SHARED"` ↔ `None` bridge in `lambda_api/handler.py` (`_notify_scope`).
+- The `SHARED` / `FIRED` / `None` scope in the sort key goes away. The owner is now in `pk`, so a scope adds nothing.
 - `U | ACCOUNT#<a>#TXN#<t>` lets one query read one account's transactions (`begins_with ACCOUNT#<a>#TXN#`) or all of the user's transactions (`begins_with ACCOUNT#`).
 - Rows 12–14: `<a>` is the generated account id, never a name.
 - Row 8 is the one exception to "owner is the whole `pk`": rules sit in a second per-user partition `USER#<owner_id>#RULES`. That keeps the API's delete permission limited to rules (section 3).

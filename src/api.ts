@@ -1044,8 +1044,8 @@ export const fetchGoals = endpoint("plain", (send): Promise<GoalRecord[]> =>
   send({ path: "/goals" }));
 
 /**
- * A saved milestone in the user's home-loan paydown plan. The server owns the id (it mints one
- * when a new row is saved). There is no `sprint` — the screen derives the step number from the
+ * A saved milestone in the user's home-loan paydown plan. The client mints the id and the server
+ * requires it. There is no `sprint` — the screen derives the step number from the
  * row's position in the list. Matches the server's client shape (shared/repository_milestone.py).
  */
 export interface MilestoneRecord {
@@ -1057,7 +1057,7 @@ export interface MilestoneRecord {
 
 /**
  * Fetch the user's saved milestone plan. Empty until the user has saved one — a normal success,
- * not an error — so the caller falls back to the built-in default plan.
+ * not an error — so the caller shows its empty state.
  *
  * @throws If the response status is not OK.
  */
@@ -1066,7 +1066,7 @@ export const fetchMilestones = endpoint("plain", (send): Promise<MilestoneRecord
 
 /**
  * Save (replace) the user's milestone plan — the whole ordered list at once. The client mints an
- * id for a new row; the server preserves supplied ids and mints one for any missing. Returns the
+ * id for a new row; the server preserves supplied ids and rejects a row without one. Returns the
  * saved list the server echoes back.
  *
  * @throws If the response status is not OK (e.g. 400 on an empty / invalid / out-of-order list).

@@ -1,41 +1,29 @@
 """Tests for the payoff-milestone celebration push (shared/milestones.py, WHIT-301).
 
-Covers the pure crossing/equity math, the twin-table drift-pin (client<->server), and
-the detector's send/dedup/mark-regardless/degrade behaviour via lightweight fake repos.
+Covers the pure crossing/equity math and the detector's send/dedup/mark-regardless/degrade
+behaviour via lightweight fake repos.
 """
 
 from decimal import Decimal
-
-import pytest
 
 from _dynamo_fakes import FakeTable
 # The milestone fakes + FACTS + the send_push recorder live in tests/shared/_milestone_fakes.py
 # so the whole milestone family shares ONE definition of each (WHIT-445).
 from _milestone_fakes import (
     FACTS, FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, notify_repo,
-    _row, recorder, removal_calls, removed_markers, scopes_marked, scopes_read, stored_markers,
-    unreadable_milestone_repo,
+    _row, recorder, removal_calls, removed_markers, sample_plan_repo, scopes_marked, scopes_read,
+    stored_markers,
 )
 
-
-# --- twin-table drift-pin (client <-> server) -------------------------------------------
-
-def test_milestones_match_the_client_plan(shared):
-    rows = [(m.sprint, m.label, m.target_balance) for m in shared.milestones.MILESTONES]
-    assert rows == [
-        (0, "Kickoff", 544000),
-        (1, "Quarter way", 420000),
-        (2, "Halfway", 295000),
-        (3, "Three-quarters", 170000),
-        (4, "Target", 55000),
-    ]
+# SAMPLE_PLAN's markers for the steps these tests cross.
+KICKOFF = "id:kickoff:bal:544000.00"
+QUARTER = "id:quarter:bal:420000.00"
+HALFWAY = "id:halfway:bal:295000.00"
 
 
-def test_strictly_paid_down_invariant_fires_on_a_bad_table(shared):
-    Milestone = shared.milestones.Milestone
-    bad = [Milestone(0, "a", 100000), Milestone(1, "b", 200000)]  # balance goes UP
-    with pytest.raises(ValueError):
-        shared.milestones._assert_strictly_paid_down(bad)
+def _sample_plan(shared):
+    plan, _live = shared.milestones._resolve_plan(sample_plan_repo())
+    return plan
 
 
 # --- usable_equity ----------------------------------------------------------------------
@@ -52,28 +40,29 @@ def test_usable_equity_clamps_at_zero(shared):
 # --- crossed_milestones (pure) ----------------------------------------------------------
 
 def test_no_crossing_when_balance_holds_above_a_target(shared):
-    assert shared.milestones.crossed_milestones(Decimal("600000"), Decimal("560000"), shared.milestones.MILESTONES) == []
+    assert shared.milestones.crossed_milestones(Decimal("600000"), Decimal("560000"), _sample_plan(shared)) == []
 
 
 def test_first_poll_none_crosses_nothing(shared):
     # old is None (first-ever poll / seed guard) → never fire, even far below a target.
-    assert shared.milestones.crossed_milestones(None, Decimal("100000"), shared.milestones.MILESTONES) == []
+    assert shared.milestones.crossed_milestones(None, Decimal("100000"), _sample_plan(shared)) == []
 
 
 def test_rising_balance_crosses_nothing(shared):
-    assert shared.milestones.crossed_milestones(Decimal("400000"), Decimal("410000"), shared.milestones.MILESTONES) == []
+    assert shared.milestones.crossed_milestones(Decimal("400000"), Decimal("410000"), _sample_plan(shared)) == []
 
 
 def test_exact_boundary_landing_counts_as_crossed(shared):
     # new == target fires; the NEXT poll starting ON the boundary must not (old > target false).
-    crossed = shared.milestones.crossed_milestones(Decimal("545000"), Decimal("544000"), shared.milestones.MILESTONES)
-    assert [m.sprint for m in crossed] == [0]
-    assert shared.milestones.crossed_milestones(Decimal("544000"), Decimal("543000"), shared.milestones.MILESTONES) == []
+    plan = _sample_plan(shared)
+    crossed = shared.milestones.crossed_milestones(Decimal("545000"), Decimal("544000"), plan)
+    assert [m.label for m in crossed] == ["Kickoff"]
+    assert shared.milestones.crossed_milestones(Decimal("544000"), Decimal("543000"), plan) == []
 
 
 def test_lump_sum_jump_returns_furthest_first(shared):
     # 600k -> 290k crosses Kickoff(544k), Quarter(420k), Halfway(295k); furthest (lowest) first.
-    crossed = shared.milestones.crossed_milestones(Decimal("600000"), Decimal("290000"), shared.milestones.MILESTONES)
+    crossed = shared.milestones.crossed_milestones(Decimal("600000"), Decimal("290000"), _sample_plan(shared))
     assert [m.target_balance for m in crossed] == [295000, 420000, 544000]
 
 
@@ -83,14 +72,14 @@ def _notify(shared, *, old, new, facts=FACTS, tokens=("tok",), fired=None, notif
             milestone_repo=None):
     # One wrapper for the whole milestone family (WHIT-471 fold): pass `fired` to build a fresh
     # notify repo, or `notify` to supply one you assert on; `milestone_repo` measures a saved plan,
-    # and without one the store read fails so the built-in plan is measured.
+    # and without one SAMPLE_PLAN is measured.
     return shared.milestones.notify_milestone_crossing(
         Decimal(old) if old is not None else None,
         Decimal(new),
         loanfacts_repo=FakeLoanFactsRepo(facts),
         device_repo=FakeDeviceRepo(tokens),
         notify_repo=notify if notify is not None else notify_repo(fired),
-        milestone_repo=milestone_repo if milestone_repo is not None else unreadable_milestone_repo(),
+        milestone_repo=milestone_repo if milestone_repo is not None else sample_plan_repo(),
     )
 
 
@@ -105,7 +94,7 @@ def test_single_crossing_sends_one_push_with_both_numbers(shared, recorder):
     assert "$56,000 down on your mortgage" in body
     assert "$72,000 in equity unlocked" in body
     assert "Keep building!" in body
-    assert stored_markers(notify) == {"0"}
+    assert stored_markers(notify) == {KICKOFF}
 
 
 def test_crossing_push_carries_milestone_deeplink_data(shared, monkeypatch):
@@ -124,7 +113,7 @@ def test_lump_sum_sends_furthest_and_marks_all(shared, recorder):
     assert sent == 1
     assert len(recorder) == 1
     assert recorder[0][0] == "\U0001f389 Milestone reached — Halfway!"  # furthest crossed (295k)
-    assert stored_markers(notify) == {"0", "1", "2"}  # all three crossed are marked
+    assert stored_markers(notify) == {KICKOFF, QUARTER, HALFWAY}  # all three crossed are marked
 
 
 def test_lump_sum_push_carries_milestone_deeplink_data(shared, monkeypatch):
@@ -139,11 +128,11 @@ def test_lump_sum_push_carries_milestone_deeplink_data(shared, monkeypatch):
     sent = _notify(shared, old="600000", new="290000", notify=notify)
     assert sent == 1
     assert captured == [{"type": "milestone"}]  # one push, carrying the deep-link tag
-    assert stored_markers(notify) == {"0", "1", "2"}       # all crossed still marked
+    assert stored_markers(notify) == {KICKOFF, QUARTER, HALFWAY}       # all crossed still marked
 
 
 def test_already_fired_milestone_does_not_resend(shared, recorder):
-    sent = _notify(shared, old="545000", new="544000", fired={"0"})
+    sent = _notify(shared, old="545000", new="544000", fired={KICKOFF})
     assert sent == 0
     assert recorder == []
 
@@ -164,7 +153,7 @@ def test_expo_not_ok_still_marks_no_permanent_loss(shared, monkeypatch):
     notify = notify_repo()
     sent = _notify(shared, old="545000", new="544000", notify=notify)
     assert sent == 1
-    assert stored_markers(notify) == {"0"}  # marked even though Expo accepted nothing
+    assert stored_markers(notify) == {KICKOFF}  # marked even though Expo accepted nothing
 
 
 def test_loan_facts_unset_sends_bare_body_no_crash(shared, recorder):
@@ -190,14 +179,14 @@ def test_first_poll_none_sends_nothing(shared, recorder):
 
 def test_oscillation_across_boundary_never_refires(shared, recorder):
     repo = notify_repo()  # persists across the three polls
-    # poll 1: 545k -> 544k crosses Kickoff, fires + marks "0"
+    # poll 1: 545k -> 544k crosses Kickoff, fires + marks Kickoff
     assert _notify(shared, old="545000", new="544000", notify=repo) == 1
     # poll 2: a market correction pushes the balance back UP over the line -> nothing
     assert _notify(shared, old="544000", new="546000", notify=repo) == 0
-    # poll 3: it dips back through the SAME boundary -> crosses again, but "0" is marked
+    # poll 3: it dips back through the SAME boundary -> crosses again, but Kickoff is marked
     assert _notify(shared, old="546000", new="544000", notify=repo) == 0
     assert len(recorder) == 1          # exactly one celebration across the whole wobble
-    assert stored_markers(repo) == {"0"}
+    assert stored_markers(repo) == {KICKOFF}
 
 
 # --- Decimal-with-cents vs int target at the >= boundary ----------------------
@@ -205,25 +194,25 @@ def test_oscillation_across_boundary_never_refires(shared, recorder):
 # boundary characterization of the strict side (guards against a sloppier mutation like rounding new).
 
 def test_cents_exactly_on_target_counts_as_crossed(shared):
-    crossed = shared.milestones.crossed_milestones(Decimal("296000"), Decimal("295000.00"), shared.milestones.MILESTONES)
-    assert [m.sprint for m in crossed] == [2]  # Halfway, landed exactly
+    crossed = shared.milestones.crossed_milestones(Decimal("296000"), Decimal("295000.00"), _sample_plan(shared))
+    assert [m.label for m in crossed] == ["Halfway"]  # Halfway, landed exactly
 
 
 def test_one_cent_above_target_is_not_yet_crossed(shared):
-    assert shared.milestones.crossed_milestones(Decimal("296000"), Decimal("295000.01"), shared.milestones.MILESTONES) == []
+    assert shared.milestones.crossed_milestones(Decimal("296000"), Decimal("295000.01"), _sample_plan(shared)) == []
 
 
 # --- lump sum: furthest already fired, a nearer one still fresh ---------------
 # WHIT-301 — [A22] fail-on-revert: sends the furthest FRESH (not the furthest crossed) + marks all fresh.
 
 def test_lump_sum_sends_nearer_fresh_when_furthest_already_fired(shared, recorder):
-    repo = notify_repo(fired={"2"})  # Halfway (295k, the furthest) already celebrated
-    # 600k -> 290k crosses Kickoff(0), Quarter(1), Halfway(2); only 0 & 1 are fresh.
+    repo = notify_repo(fired={HALFWAY})  # Halfway (295k, the furthest) already celebrated
+    # 600k -> 290k crosses Kickoff, Quarter, Halfway; only Kickoff & Quarter are fresh.
     sent = _notify(shared, old="600000", new="290000", notify=repo)
     assert sent == 1
     assert len(recorder) == 1
     assert recorder[0][0] == "\U0001f389 Milestone reached — Quarter way!"  # furthest FRESH (420k)
-    assert stored_markers(repo) == {"0", "1", "2"}  # both fresh ones now marked too
+    assert stored_markers(repo) == {KICKOFF, QUARTER, HALFWAY}  # both fresh ones now marked too
 
 
 # --- loan facts present but original < new_balance: paid clamps at $0 ---------
@@ -321,15 +310,13 @@ def test_duplicate_live_target_preserved_while_stale_removed(shared, recorder):
 
 def test_malformed_bal_keys_are_swept_as_stale(shared, recorder):
     # [G-D1] Characterization: any custom-namespaced key not in the plan is dead — including garbage
-    # like "bal:" (no amount) or "bal:oops". Reconcile sweeps them, self-healing the set. Here the
-    # plan row is a LEGACY row with no id, so its live marker is the amount-only "bal:280000.00",
-    # which is preserved while the garbage keys are swept.
-    legacy_row = {"label": "House", "targetBalance": Decimal("280000"), "targetDate": "2027-01-01"}
-    notify = notify_repo({"bal:", "bal:oops", "bal:280000.00"})
+    # like "bal:" (no amount) or "bal:oops", and a leftover id-less "bal:280000.00" that no row
+    # keys to any more (WHIT-830). Reconcile sweeps them, keeping the live row's marker.
+    notify = notify_repo({"bal:", "bal:oops", "bal:280000.00", "id:m1:bal:280000.00"})
     _notify(shared, old="285000", new="284000",
-         milestone_repo=FakeMilestoneRepo(stored=[legacy_row]), notify=notify)
-    assert removed_markers(notify) == {"bal:", "bal:oops"}
-    assert stored_markers(notify) == {"bal:280000.00"}
+         milestone_repo=FakeMilestoneRepo(stored=[_row("House", "280000")]), notify=notify)
+    assert removed_markers(notify) == {"bal:", "bal:oops", "bal:280000.00"}
+    assert stored_markers(notify) == {"id:m1:bal:280000.00"}
 
 
 # --- Gap E: reconcile runs BEFORE the device-token check -------------------------------------
@@ -376,33 +363,12 @@ def test_populated_plan_still_sweeps_a_dead_marker(shared, recorder):
 
 
 # --- QA gap tests (adversarial) — added alongside the implementer's G-386a/b -----------------
-# These cover the edges the implementer's two tests leave: an empty plan colliding with a genuine
-# DEFAULT crossing in the same poll, and the "no notify I/O at all" short-circuit. Each is proven
-# fail-on-revert (revert `and plan` -> it goes red).
-
-
-def test_empty_plan_suppresses_a_default_crossing_and_sweeps_nothing(shared, recorder):
-    # [G-386c] An authoritative [] must NOT fall back to the built-in default for CROSSING (nothing
-    # fires) AND must not sweep (WHIT-386). old=545000 -> new=544000 WOULD cross the built-in
-    # "Kickoff" (544000) if the empty plan leaked to the default. A live custom marker is seeded so a
-    # reverted `and plan` wipes it. Guarded: sent==0, removed==set(). Revert `and plan` -> the
-    # custom marker is swept -> removed != set() -> fails.
-    # NB: no built-in sprint marker is seeded, so `sent == 0` genuinely discriminates the leak — if
-    # an empty [] fell back to the default and crossed Kickoff (544000), it WOULD fire (sent==1).
-    notify = notify_repo({"id:m1:bal:400000.00"})
-    sent = _notify(shared, old="545000", new="544000",
-                milestone_repo=FakeMilestoneRepo(stored=[]), notify=notify)
-    assert sent == 0                       # empty plan does NOT fall back to the default crossing
-    assert recorder == []
-    assert removal_calls(notify) == 0
-    assert removed_markers(notify) == set()
-    assert stored_markers(notify) == {"id:m1:bal:400000.00"}
 
 
 def test_empty_plan_never_touches_the_notify_store(shared, recorder):
-    # [G-386e] The guard short-circuits BEFORE the reconcile try, so on an authoritative [] the
+    # [G-386e] The guard short-circuits BEFORE the reconcile try, so on an empty [] plan the
     # notify store is never read (fired_milestones is never called). The table's read log is the
-    # fail-on-revert lever: revert `and plan` -> the reconcile enters the try and calls
+    # fail-on-revert lever: remove the `if plan:` guard -> the reconcile enters the try and calls
     # fired_milestones -> one get_item -> fails. (A failing read alone would NOT distinguish: the
     # reconcile try swallows the exception and still returns 0.)
     notify = notify_repo({"id:m1:bal:400000.00"})
@@ -484,12 +450,11 @@ def test_marks_all_fresh_regardless_of_send_outcome_under_a_scope(shared, monkey
     assert scopes_marked(notify) == ["u1", "u1"]                            # both under the scope
 
 
-# --- a SAVED plan is NOT guarded by the strictly-paid-down import assert --------------------
+# --- a SAVED plan is used as stored, in any order ------------------------------------------
 
 def test_out_of_order_user_plan_still_fires_furthest_and_marks_each(shared, recorder):
-    # WHIT-369 — [A-ORDER-1] _assert_strictly_paid_down only guards the built-in default at
-    # import; a user's SAVED plan is used as-is. crossed_milestones re-sorts by target, so an
-    # out-of-order plan must still fire the furthest crossed and mark every crossed one.
+    # WHIT-369 — [A-ORDER-1] a user's SAVED plan is used as-is. crossed_milestones re-sorts by
+    # target, so an out-of-order plan must still fire the furthest crossed and mark every one.
     plan = [_row("Mid", "300000", id="b"), _row("Far", "120000", id="c"), _row("Near", "480000", id="a")]
     notify = notify_repo()
     sent = shared.milestones.notify_milestone_crossing(
@@ -535,15 +500,6 @@ def test_plan_marker_id_with_a_colon_stays_distinct(shared):
     b = m({"id": "a", "targetBalance": Decimal("480000")})
     assert a == "id:a:b:bal:480000.00"
     assert a != b
-
-
-def test_plan_marker_missing_and_explicit_none_id_both_fall_back_to_amount(shared):
-    # WHIT-369 — [A-MARK-6] a legacy row with no id, and a row with an explicit id=None, both
-    # degrade to the amount-only marker rather than raising (a raise would be swallowed by the
-    # poller into a silently-lost celebration).
-    m = shared.milestones._plan_marker
-    assert m({"targetBalance": Decimal("480000")}) == "bal:480000.00"
-    assert m({"id": None, "targetBalance": Decimal("480000")}) == "bal:480000.00"
 
 
 # ==========================================================================
