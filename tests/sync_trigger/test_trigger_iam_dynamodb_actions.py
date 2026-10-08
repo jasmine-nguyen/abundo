@@ -9,8 +9,8 @@ never checks IAM, so nothing in the suite noticed.
 Static: parses terraform/iam.tf and AST-scans lambda_sync_trigger/pending_mirror.py and
 shared/repository_transaction.py. Imports neither (they need env + boto3 at load).
 
-The category repository is left out on purpose: its only write is the fail-open colour
-backfill on the CATEGORIES row, which this role is meant NOT to have.
+The category repository is left out on purpose: the mirror only reads categories, and the
+read path never writes.
 """
 
 import ast

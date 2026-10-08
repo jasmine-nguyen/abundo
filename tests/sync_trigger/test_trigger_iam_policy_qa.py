@@ -103,21 +103,18 @@ def test_the_rush_and_cettire_doubles_are_removed_with_notes_kept_under_the_trig
     assert repo._table.store[(f"ACCOUNT#{WESTPAC}", "TXN#new_rush")]["notes"] == "Patagonia Backpack"
 
 
-# [A5] P1 — with the backfill denied, the mirror's category read still fails open.
-def test_the_category_read_still_succeeds_when_its_backfill_is_denied(layer):
+# [A5] P1 — the mirror's category read succeeds under the trigger policy and never writes.
+def test_the_category_read_succeeds_under_the_trigger_policy_without_writing(layer):
     repository_category = importlib.import_module("repository_category")
     pending_carry = importlib.import_module("pending_carry")
     category_repo = repository_category.CategoryRepository()
     table = _enforce_trigger_policy(FakeTable())
-    unslotted = {
-        cat_id: {key: value for key, value in category.items() if key != "colorSlot"}
-        for cat_id, category in repository_category.SEED_CATEGORIES.items()
-    }
-    table.seed({"pk": "CATEGORIES", "sk": "CATEGORIES", "items": unslotted, "version": Decimal(1)})
+    table.seed({"pk": "CATEGORIES", "sk": "CATEGORIES",
+                "items": dict(repository_category.SEED_CATEGORIES), "version": Decimal(1)})
     category_repo._table = table
 
     is_unfiled = pending_carry.load_is_unfiled(category_repo)
 
-    assert table.update_keys, "the store should need a backfill, so the denied write is attempted"
+    assert table.update_keys == [], "a category read must not write"
     assert is_unfiled("not-a-category")
     assert not is_unfiled(next(iter(repository_category.SEED_CATEGORIES)))
