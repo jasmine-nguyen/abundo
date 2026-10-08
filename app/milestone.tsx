@@ -10,6 +10,7 @@ import { Bar, RetryButton, HeroGradientFill } from '../src/components/ui';
 import { Header } from '../src/components/Header';
 import { EquityCard, EquityBody, EquitySetupTeaser } from '../src/components/EquityCard';
 import { formatMonthYear } from '../src/dateutil';
+import { BalanceFreshnessPill } from '../src/components/BalanceFreshnessPill';
 
 export default function Milestone() {
   const insets = useSafeAreaInsets();
@@ -57,12 +58,7 @@ export default function Milestone() {
                   </View>
                 </>
               )}
-              {v.asOf && (
-                <View style={styles.syncPill}>
-                  <View style={styles.syncDot} />
-                  <Text style={styles.syncText}>Live · Up Home Loan · {formatMonthYear(v.asOf.slice(0, 10))}</Text>
-                </View>
-              )}
+              <BalanceFreshnessPill asOf={v.asOf} />
             </>
           ) : homeLoanError ? (
             <View style={styles.waiting}>
@@ -91,7 +87,7 @@ export default function Milestone() {
           </View>
         )}
 
-        {/* sprint track — or an empty-state invite when the user hasn't set a plan */}
+        {/* milestone track — or an empty-state invite when the user hasn't set a plan */}
         {v.hasPlan ? (
           <View style={styles.card}>
             <View style={styles.planHeader}>
@@ -107,14 +103,14 @@ export default function Milestone() {
             </View>
             {v.rows.map((r) => (
               <View key={r.sprint} style={styles.row}>
-                <View style={[styles.check, { backgroundColor: r.cleared ? tint(C.good, 0.16) : 'rgba(255,255,255,.06)' }]}>
+                <View style={[styles.check, { backgroundColor: r.cleared ? tint(C.good, 0.16) : C.neutralWash }]}>
                   <Glyph name={r.cleared ? 'check' : 'target'} size={16} color={r.cleared ? C.good : C.textFaint} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.rowTitle}>Sprint {r.sprint} · {r.label}</Text>
+                  <Text style={styles.rowTitle}>{r.label}</Text>
                   <Text style={styles.rowSub}>under {fmt(r.targetBalance)} · {formatMonthYear(r.targetDate)}</Text>
                 </View>
-                {/* per-sprint equity only once the property value + LVR are set */}
+                {/* per-milestone equity only once the property value + LVR are set */}
                 {r.targetEquity != null && (
                   <View style={{ alignItems: 'flex-end' }}>
                     <Text style={styles.rowEquity}>{fmt(r.targetEquity)}</Text>
@@ -164,18 +160,15 @@ export default function Milestone() {
 
 const styles = StyleSheet.create({
   hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 22, paddingBottom: 20, marginBottom: 14, backgroundColor: C.accent },
-  heroBlob: { position: 'absolute', right: -26, top: -26, width: 140, height: 140, borderRadius: 70, backgroundColor: 'rgba(255,255,255,.1)' },
+  heroBlob: { position: 'absolute', right: -26, top: -26, width: 140, height: 140, borderRadius: 70, backgroundColor: C.heroBlobFill },
   heroEyebrow: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.heroInkSoft, letterSpacing: 0.3 },
-  heroBig: { fontFamily: FONT.display, fontSize: 44, fontWeight: '800', color: C.heroInk, lineHeight: 46, letterSpacing: -1.6, marginTop: 6 },
+  heroBig: { fontFamily: FONT.display, fontSize: 44, fontWeight: '800', color: C.heroInk, letterSpacing: -1.5, marginTop: 6 },
   heroRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 9 },
   heroRowL: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: C.heroInk2 },
   heroRowR: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: C.heroInkSoft },
   pill: { flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 7, borderRadius: 9, paddingVertical: 6, paddingHorizontal: 11, marginTop: 12 },
   pillDot: { width: 7, height: 7, borderRadius: 4 },
   pillText: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.heroInk },
-  syncPill: { flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 7, backgroundColor: C.heroInkWash, borderRadius: 9, paddingVertical: 6, paddingHorizontal: 11, marginTop: 14 },
-  syncDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.goodBright },
-  syncText: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.heroInk },
   waiting: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14 },
   waitingText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.heroInk },
   retryBtn: { backgroundColor: C.heroInkWash, borderRadius: 9, paddingVertical: 6, paddingHorizontal: 14 },
@@ -183,9 +176,9 @@ const styles = StyleSheet.create({
 
   nextCard: { backgroundColor: tint(C.accentAlt, 0.1), borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), borderRadius: 18, padding: 16, marginBottom: 12 },
   nextEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.accentSofter },
-  nextBig: { fontFamily: FONT.display, fontSize: 26, fontWeight: '800', color: '#fff', letterSpacing: -0.8 },
+  nextBig: { fontFamily: FONT.display, fontSize: 26, fontWeight: '800', color: C.textBright, letterSpacing: -0.8 },
   nextTo: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.accentSoft },
-  nextBody: { fontFamily: FONT.body, fontSize: 13, color: '#a6a6b0', lineHeight: 19, marginTop: 6 },
+  nextBody: { fontFamily: FONT.body, fontSize: 13, color: C.textMid, lineHeight: 19, marginTop: 6 },
 
   card: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, padding: 16, marginBottom: 12 },
   cardTitle: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.textBright, marginBottom: 12 },
@@ -202,6 +195,6 @@ const styles = StyleSheet.create({
   addPlanText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentInk },
 
   equityHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
-  equityBig: { fontFamily: FONT.display, fontSize: 22, fontWeight: '800', color: '#d9c9f7', letterSpacing: -0.6 },
+  equityBig: { fontFamily: FONT.display, fontSize: 22, fontWeight: '800', color: C.purpleSoft, letterSpacing: -0.6 },
   equityHint: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim },
 });

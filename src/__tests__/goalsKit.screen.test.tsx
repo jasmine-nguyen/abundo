@@ -39,7 +39,7 @@ describe('the mortgage screen drawn over the fake server with the shared Goals k
     await renderWithQueries(<MortgageScreen />);
 
     expect(await screen.findByText('$250,000')).toBeTruthy();
-    expect(screen.getByText('1 of 3 sprints reached')).toBeTruthy();
+    expect(screen.getByText('1 of 3 milestones reached')).toBeTruthy();
     expect(screen.getByText('Next: under $200,000')).toBeTruthy();
     expect(server.sent('GET', '/homeloan')).toHaveLength(1);
     expect(server.sent('GET', '/milestones')).toHaveLength(1);

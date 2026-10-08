@@ -9,6 +9,12 @@ export function cycleName(length: number): 'Weekly' | 'Fortnightly' | 'Monthly' 
   return length === 7 ? 'Weekly' : length === 14 ? 'Fortnightly' : 'Monthly';
 }
 
+const PAYDAYS_PER_YEAR = { Weekly: 52, Fortnightly: 26, Monthly: 12 } as const;
+
+export function paydaysPerYear(length: number): number {
+  return PAYDAYS_PER_YEAR[cycleName(length)];
+}
+
 // The current pay-cycle anchor, computed ONCE on the shared UTC-whole-day clock (WHIT-575).
 // cycleClock (daysLeft) and nextPayday (the hero's "Next payday {date}" line, WHIT-706) both read
 // this, so the countdown and the date can't drift apart. Returns the raw pieces; each caller

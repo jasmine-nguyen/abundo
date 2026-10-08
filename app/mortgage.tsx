@@ -1,11 +1,12 @@
 import React, { useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmt, tint } from '../src/theme';
 import { Glyph } from '../src/icons';
-import { goalView, paydownView, milestoneView, lastRepaymentView } from '../src/context';
-import { useGoalScreenData } from '../src/queries';
+import { goalView, paydownView, milestoneView, milestonePace, lastRepaymentView } from '../src/context';
+import { useGoalScreenData, usePayCycle } from '../src/queries';
+import { BalanceFreshnessPill } from '../src/components/BalanceFreshnessPill';
 import { Bar, RetryButton, HeroGradientFill } from '../src/components/ui';
 import { PayoffSummary } from '../src/components/PayoffSummary';
 import { Header } from '../src/components/Header';
@@ -13,11 +14,12 @@ import { EquityCard, EquityBody, EquityCta, EquitySetupTeaser } from '../src/com
 import { Celebration } from '../src/components/Celebration';
 import { useRepaymentLanded } from '../src/hooks/useRepaymentLanded';
 import { repaymentLandedView } from '../src/repaymentLanded';
+import { usePullToRefresh } from '../src/hooks/usePullToRefresh';
 
 // WHIT-233: the home-loan detail screen, relocated out of the Goal tab (which is now the
 // Goals hub). It's a stack route under the root <Stack> — OUTSIDE NavBarsProvider — so it
 // can't use the tab's ScrollChromeHeader (that needs the provider); it uses the shared
-// <Header /> + a plain ScrollView, the same detail-screen pattern as milestone.tsx /
+// <Header /> + a ScrollView, the same detail-screen pattern as milestone.tsx /
 // loan.tsx. The content + the useGoalScreenData reads are otherwise unchanged.
 export default function Mortgage() {
   const router = useRouter();
@@ -30,9 +32,13 @@ export default function Mortgage() {
     isLoading, refetch, refetchStale,
   } = useGoalScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
+  const { pulling, onRefresh } = usePullToRefresh(refetch);
 
   const g = goalView({ loanFacts, homeLoan });
   const m = milestoneView({ loanFacts, homeLoan, milestones });
+  // usePayCycle falls back to a default cycle while loading / on error — never pace off that.
+  const { payCycle, isLoading: payCycleLoading, isError: payCycleError } = usePayCycle();
+  const pace = milestonePace(m, loanFacts, payCycleLoading || payCycleError ? null : payCycle);
   const lr = lastRepaymentView({ repayment });
   const p = paydownView({ loanFacts, homeLoan });
   // WHIT-820: a repayment this phone hasn't shown yet → a "Just landed" card at the top + the banner.
@@ -49,7 +55,9 @@ export default function Mortgage() {
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title="Home loan" />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }} showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={pulling} onRefresh={onRefresh} tintColor={C.accent} />}
+      >
         {landed && (
           <View style={styles.landedCard} testID="repayment-landed">
             <Text style={styles.landedEyebrow}>JUST LANDED · {lr.whenLabel}</Text>
@@ -129,6 +137,7 @@ export default function Mortgage() {
               <Text style={styles.heroSetupBody}>We'll show your payoff progress once your balance loads.</Text>
             </>
           )}
+          {g.balanceKnown && !loanFactsError && !homeLoanError && !noHomeLoan && <BalanceFreshnessPill asOf={homeLoan.asOf} />}
         </View>
 
         {/* freedom + interest — real payoff projection (WHIT-114) from the live
@@ -140,7 +149,7 @@ export default function Mortgage() {
             <View style={styles.miniCard}>
               <View style={styles.miniHead}><Glyph name="check" size={15} color={C.accentSoft} /><Text style={styles.miniLabel}>Mortgage-free</Text></View>
               <Text style={styles.miniValue}>{p.freedomLabel}</Text>
-              <Text style={[styles.miniSub, { color: C.good }]}>{p.aheadLabel} early 🏁</Text>
+              <Text style={[styles.miniSub, { color: C.good }]}>{p.aheadLabel} early</Text>
             </View>
             <View style={styles.miniCard}>
               <View style={styles.miniHead}><Glyph name="dollar" size={15} color={C.accentSoft} /><Text style={styles.miniLabel}>Interest you'll dodge</Text></View>
@@ -154,7 +163,7 @@ export default function Mortgage() {
             <View style={styles.miniHead}><Glyph name="check" size={15} color={C.accentSoft} /><Text style={styles.miniLabel}>Mortgage-free</Text></View>
             <Text style={styles.miniValue}>{p.freedomLabel}</Text>
             <Text style={[styles.miniSub, p.mode === 'partial' && { color: C.good }]}>
-              {p.mode === 'partial' ? 'Your extra repayment is what gets you there 🏁' : 'On your current repayments'}
+              {p.mode === 'partial' ? 'Your extra repayment is what gets you there' : 'On your current repayments'}
             </Text>
           </View>
         )}
@@ -175,14 +184,14 @@ export default function Mortgage() {
               // date is unrealistic, in place of the generic "increase your repayment" line.
               tooSoonHint
             ) : (
-              <Text style={styles.miniSub}>Increase your repayment to clear the loan.</Text>
+              <Text style={styles.miniSub}>Your repayment only just covers the interest. Raising it, even a little, starts paying it off.</Text>
             )}
           </View>
         )}
 
         {/* WHIT-821: no home loan → only the calm explainer above, no secondary cards. */}
         {!noHomeLoan && (<>
-        {/* Milestone plan — the user's own sprints (empty until they set one), taps into the full screen */}
+        {/* Milestone plan — the user's own milestones (empty until they set one), taps into the full screen */}
         <Pressable testID="milestone-link" onPress={() => router.push(m.hasPlan ? '/milestone' : '/milestone/edit')} style={styles.card}>
           {!m.hasPlan ? (
             <>
@@ -190,7 +199,7 @@ export default function Mortgage() {
                 <Text style={styles.cardTitle}>Set your payoff milestones</Text>
                 <Glyph name="plus" size={16} color={C.accentSoft} />
               </View>
-              <Text style={[styles.cardTitle, { color: C.accentSofter, fontSize: 12.5, marginTop: 2 }]}>
+              <Text style={styles.cardBody}>
                 Add your own targets to track your progress to a paid-off home →
               </Text>
             </>
@@ -198,32 +207,39 @@ export default function Mortgage() {
             <>
               <View style={styles.cardHead}>
                 <Text style={styles.cardTitle}>
-                  {m.hasBalance ? `${m.clearedCount} of ${m.total} sprints reached` : 'Your payoff plan'}
+                  {m.hasBalance ? `${m.clearedCount} of ${m.total} milestones reached` : 'Your payoff plan'}
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={styles.cardHint}>Sprint plan</Text>
+                  <Text style={styles.cardHint}>Milestones</Text>
                   <Glyph name="chevron" size={15} color={C.textFaint} />
                 </View>
               </View>
               <View style={{ flexDirection: 'row', gap: 5 }}>
-                {m.rows.map((r) => (
-                  <View key={r.sprint} style={{ flex: 1, height: 9, borderRadius: 3, backgroundColor: r.cleared ? C.good : 'rgba(255,255,255,.12)' }} />
-                ))}
+                {m.rows.map((r) => {
+                  let pct = 0;
+                  if (r.cleared) pct = 100;
+                  else if (r === m.nextMilestone) pct = m.nextSegmentPct;
+                  return <View key={r.sprint} style={{ flex: 1 }}><Bar pct={pct} color={C.good} track={C.progressTrack} height={9} /></View>;
+                })}
               </View>
               <View style={[styles.cardHead, { marginTop: 12, marginBottom: 0 }]}>
                 {m.hasBalance ? (
                   m.nextMilestone ? (
                     <>
-                      <Text style={[styles.cardTitle, { color: C.accentSofter, fontSize: 12.5 }]}>Next: under {fmt(m.nextMilestone.targetBalance)}</Text>
+                      <Text style={[styles.cardTitle, { color: C.accentSofter, fontSize: 12.5 }]}>
+                        Next: under {fmt(m.nextMilestone.targetBalance)}
+                        {m.nextMilestone.targetEquity != null && ` → unlocks ${fmt(m.nextMilestone.targetEquity)} equity`}
+                      </Text>
                       <Text style={styles.cardHint}>{m.amountToNextLabel} to go</Text>
                     </>
                   ) : (
-                    <Text style={[styles.cardTitle, { color: C.good, fontSize: 12.5 }]}>Target reached 🎉</Text>
+                    <Text style={[styles.cardTitle, { color: C.good, fontSize: 12.5 }]}>Target reached</Text>
                   )
                 ) : (
                   <Text style={[styles.cardTitle, { color: C.accentSofter, fontSize: 12.5 }]}>Tap to see your live progress</Text>
                 )}
               </View>
+              {pace && <Text style={[styles.planSchedule, { color: C.textDim }]} testID="milestone-pace">{pace}</Text>}
               {m.schedule && !m.schedule.onTrack && (
                 <Text style={[styles.planSchedule, { color: m.schedule.ahead ? C.good : C.warn }]}>{m.schedule.label}</Text>
               )}
@@ -237,7 +253,7 @@ export default function Mortgage() {
             <Text style={styles.contribEyebrow}>HEADING TO THE LOAN THIS MONTH</Text>
             <Text style={styles.contribBig}>{fmt(g.contribution!)}</Text>
             <Text style={styles.contribBody}>
-              {fmt(g.baseRepay!)} scheduled <Text style={styles.contribStrong}>+ {fmt(g.extra!)} extra</Text>. Every coffee you skipped is a brick out of the wall. 🧱
+              {fmt(g.baseRepay!)} scheduled <Text style={styles.contribStrong}>+ {fmt(g.extra!)} extra</Text>. Every extra dollar comes straight off what you owe.
             </Text>
           </View>
         )}
@@ -261,7 +277,7 @@ export default function Mortgage() {
             // user they have no repayment. lr.present takes precedence above, so a cached
             // repayment surviving a background-refetch failure still shows the real card.
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <View style={[styles.repayChip, { backgroundColor: 'rgba(255,255,255,.06)' }]}><Glyph name="arrowDown" size={22} color={C.textFaint} /></View>
+              <View style={[styles.repayChip, { backgroundColor: C.neutralWash }]}><Glyph name="arrowDown" size={22} color={C.textFaint} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.repayTitle}>Last repayment</Text>
                 <Text style={styles.repaySub} accessibilityLiveRegion="polite">Couldn't load your last repayment.</Text>
@@ -270,7 +286,7 @@ export default function Mortgage() {
             </View>
           ) : (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <View style={[styles.repayChip, { backgroundColor: 'rgba(255,255,255,.06)' }]}><Glyph name="arrowDown" size={22} color={C.textFaint} /></View>
+              <View style={[styles.repayChip, { backgroundColor: C.neutralWash }]}><Glyph name="arrowDown" size={22} color={C.textFaint} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.repayTitle}>Last repayment</Text>
                 <Text style={styles.repaySub}>No repayment on record yet — it'll show here when one lands.</Text>
@@ -290,17 +306,17 @@ export default function Mortgage() {
               <>
                 <Bar pct={g.depositPct} color={C.purple} height={10} />
                 <View style={[styles.cardHead, { marginTop: 9, marginBottom: 0 }]}>
-                  <Text style={[styles.cardTitle, { color: '#d9c9f7', fontSize: 12.5 }]}>{fmt(g.usableEquity)} unlocked</Text>
+                  <Text style={[styles.cardTitle, { color: C.purpleSoft, fontSize: 12.5 }]}>{fmt(g.usableEquity)} unlocked</Text>
                   <Text style={styles.cardHint}>of {fmt(g.depositTarget)} needed</Text>
                 </View>
-                <EquityBody>Keep chipping away — the more principal you clear, the more equity you can put toward your next place. 📈</EquityBody>
+                <EquityBody>Keep chipping away — the more principal you clear, the more equity you can put toward your next place.</EquityBody>
               </>
             ) : (
               // Equity known, but no deposit target yet — show the real figure, never a
               // fabricated denominator; nudge the user to set their target.
               <>
-                <Text style={[styles.cardTitle, { color: '#d9c9f7', fontSize: 12.5 }]}>{fmt(g.usableEquity)} unlocked</Text>
-                <EquityBody>Set your deposit target and we'll track how close this gets you to your next place. 📈</EquityBody>
+                <Text style={[styles.cardTitle, { color: C.purpleSoft, fontSize: 12.5 }]}>{fmt(g.usableEquity)} unlocked</Text>
+                <EquityBody>Set your deposit target and we'll track how close this gets you to your next place.</EquityBody>
                 <EquityCta label="Set deposit target →" />
               </>
             )
@@ -331,9 +347,9 @@ function HeroRetry({ text, label, testID, onRetry }: { text: string; label: stri
 const styles = StyleSheet.create({
 
   hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 22, paddingBottom: 20, marginBottom: 14, backgroundColor: C.accent },
-  heroBlob: { position: 'absolute', right: -26, top: -26, width: 140, height: 140, borderRadius: 70, backgroundColor: 'rgba(255,255,255,.1)' },
+  heroBlob: { position: 'absolute', right: -26, top: -26, width: 140, height: 140, borderRadius: 70, backgroundColor: C.heroBlobFill },
   heroEyebrow: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.heroInkSoft, letterSpacing: 0.3 },
-  heroBig: { fontFamily: FONT.display, fontSize: 48, fontWeight: '800', color: C.heroInk, lineHeight: 48, letterSpacing: -2 },
+  heroBig: { fontFamily: FONT.display, fontSize: 44, fontWeight: '800', color: C.heroInk, letterSpacing: -1.5 },
   heroSetupBody: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.heroInk2, lineHeight: 20, marginTop: 10 },
   heroSetupBtn: { alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center', backgroundColor: C.heroInkWash, borderRadius: 11, paddingVertical: 9, paddingHorizontal: 14, marginTop: 14 },
   heroSetupBtnText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '700', color: C.heroInk },
@@ -352,13 +368,15 @@ const styles = StyleSheet.create({
   cardTitle: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.textBright },
   cardHint: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim },
 
+  cardBody: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '500', color: C.textDim, marginTop: 2 },
+
   planSchedule: { fontFamily: FONT.body, fontSize: 12, fontWeight: '600', marginTop: 8 },
 
   contribCard: { backgroundColor: tint(C.accentAlt, 0.1), borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), borderRadius: 18, padding: 16, marginBottom: 12 },
   contribEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.accentSofter },
-  contribBig: { fontFamily: FONT.display, fontSize: 30, fontWeight: '800', color: '#fff', letterSpacing: -1, marginTop: 4 },
-  contribBody: { fontFamily: FONT.body, fontSize: 13, color: '#a6a6b0', lineHeight: 19, marginTop: 6 },
-  contribStrong: { color: '#e6e6ea', fontWeight: '700' },
+  contribBig: { fontFamily: FONT.display, fontSize: 30, fontWeight: '800', color: C.textBright, letterSpacing: -1, marginTop: 4 },
+  contribBody: { fontFamily: FONT.body, fontSize: 13, color: C.textMid, lineHeight: 19, marginTop: 6 },
+  contribStrong: { color: C.textBright, fontWeight: '700' },
 
   landedCard: { backgroundColor: tint(C.good, 0.1), borderWidth: 1, borderColor: tint(C.good, 0.24), borderRadius: 18, padding: 16, marginBottom: 14 },
   landedEyebrow: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.good, letterSpacing: 0.3 },
@@ -375,6 +393,6 @@ const styles = StyleSheet.create({
   repayRetryBtn: { backgroundColor: tint(C.accentAlt, 0.14), borderRadius: 10, paddingVertical: 7, paddingHorizontal: 14 },
   repayRetryText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.accentSoft },
 
-  ipPct: { backgroundColor: 'rgba(201,179,245,.14)', paddingVertical: 3, paddingHorizontal: 9, borderRadius: 8 },
+  ipPct: { backgroundColor: C.purpleWash, paddingVertical: 3, paddingHorizontal: 9, borderRadius: 8 },
   ipPctText: { fontFamily: FONT.body, fontSize: 11, fontWeight: '700', color: C.purple },
 });
