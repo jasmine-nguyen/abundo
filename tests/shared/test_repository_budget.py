@@ -434,7 +434,7 @@ def test_clear_spread_raises_a_conflict_when_it_cannot_converge(shared, budget_r
 
 
 def test_spread_fields_tuple_matches_what_set_spread_persists(shared, budget_repo, config_item_table):
-    # GUARD (mirrors the rollover one): _SPREAD_FIELDS is what clear_spread strips, so it
+    # GUARD (mirrors the rollover one): SPREAD_ENTRY_FIELDS is what clear_spread strips, so it
     # MUST equal every key set_spread writes minus target — a field added to the write but
     # not the tuple would survive a clear and keep adjusting the spendable forever.
     table = config_item_table("BUDGETS", items={"insurance": {"target": Decimal(250)}})
@@ -443,8 +443,8 @@ def test_spread_fields_tuple_matches_what_set_spread_persists(shared, budget_rep
     budget_repo.set_spread("insurance", Decimal("1390.91"), 4, "2026-08-06", 30, "2026-01-01")
 
     persisted_spread_keys = set(table.store[_KEY]["items"]["insurance"].keys()) - {"target"}
-    assert persisted_spread_keys == set(shared.budget._SPREAD_FIELDS)
-    assert not set(shared.budget._SPREAD_FIELDS) & set(shared.budget._ROLLOVER_FIELDS)
+    assert persisted_spread_keys == set(shared.spend.SPREAD_ENTRY_FIELDS)
+    assert not set(shared.spend.SPREAD_ENTRY_FIELDS) & set(shared.budget._ROLLOVER_FIELDS)
 
 
 # --- rollover OR spread, never both: the write makes it structural (WHIT-504) ---
@@ -473,7 +473,7 @@ def test_turning_rollover_on_strips_any_spread_fields_in_the_same_write(shared, 
 
     entry = table.store[_KEY]["items"]["insurance"]
     assert entry["rollover"] is True
-    assert not set(shared.budget._SPREAD_FIELDS) & set(entry)
+    assert not set(shared.spend.SPREAD_ENTRY_FIELDS) & set(entry)
 
 
 def test_a_plain_target_edit_keeps_the_spread(shared, budget_repo, config_item_table):

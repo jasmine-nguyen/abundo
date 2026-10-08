@@ -70,7 +70,7 @@ def test_worker_marks_the_job_failed_when_a_read_raises(apply_rules_worker, monk
     _, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: []}, rules=[_rule("COLES")])
     # A DB fault reading the taxonomy: the worker must end the job "failed" (with the error), not
     # leave it stuck "running" until its TTL.
-    from repository import DatabaseError
+    from repository_errors import DatabaseError
     monkeypatch.setattr(worker, "CategoryRepository",
                         lambda: FakeCategoryRepo([], error=DatabaseError("db down")))
 

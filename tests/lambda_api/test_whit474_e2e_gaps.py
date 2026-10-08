@@ -47,8 +47,8 @@ FakePayCycleRepo = partial(_FakePayCycleRepo, length=LENGTH, last_pay_date=PAYDA
 def _category_repo(cat_id, bucket):
     """The REAL CategoryRepository over a FakeTable holding the one category, so a re-bucket
     lands in the store and a later list_categories reads it back."""
-    import repository
-    repo = repository.CategoryRepository()
+    import repository_category
+    repo = repository_category.CategoryRepository()
     repo._table = FakeTable()
     repo._table.seed({"pk": "CATEGORIES", "sk": "CATEGORIES", "version": Decimal(1),
                       "items": {cat_id: _cat(cat_id, bucket, parent=None)},

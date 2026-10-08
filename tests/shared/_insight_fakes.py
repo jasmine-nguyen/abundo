@@ -14,7 +14,7 @@ def insight_repo(existing=None, cycle_start="2026-06-25"):
     """The real InsightRepository, holding ``existing`` (summary / suggestions / generated_at /
     input_hash) as the cached insight for ``cycle_start``. The put log is cleared after that
     setup, so ``insight_puts`` shows only the code under test."""
-    from repository import InsightRepository
+    from repository_insight import InsightRepository
 
     repo = InsightRepository()
     repo._table = FakeTable()

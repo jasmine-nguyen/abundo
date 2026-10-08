@@ -282,16 +282,6 @@ def test_a_partial_spread_entry_is_cleared_instead_of_500ing_the_whole_screen(ha
     assert budget_repo.clear_spread_calls == ["insurance"]
 
 
-def test_the_handlers_spread_field_list_matches_the_repositorys(handler):
-    # GUARD: the read trusts an entry only when it has every field in SPREAD_ENTRY_FIELDS;
-    # the repo writes/strips _SPREAD_FIELDS. If one gains a field the other doesn't, a
-    # freshly-written plan would read as "partial" and be cleared on its first read.
-    import repository_budget
-    import spend
-
-    assert set(spend.SPREAD_ENTRY_FIELDS) == set(repository_budget._SPREAD_FIELDS)
-
-
 # --- PUT /budgets/{category}/spread ---------------------------------------------
 
 

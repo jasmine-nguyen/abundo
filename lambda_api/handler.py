@@ -72,30 +72,28 @@ from constants import (
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
-from repository import (
-    AccountBalanceRepository,
-    BudgetRepository,
+from repository_balance import AccountBalanceRepository
+from repository_budget import BudgetRepository
+from repository_category import CategoryRepository
+from repository_device import DeviceRepository
+from repository_errors import (
     CategoryNotFoundError,
-    CategoryRepository,
     DatabaseError,
-    DeviceRepository,
     DuplicateCategoryError,
-    GoalsRepository,
-    InsightRepository,
-    JobRepository,
     InvalidCategoryParentError,
-    LoanFactsRepository,
-    MilestoneRepository,
-    PayCycleRepository,
     RuleClashError,
     RuleNotFoundError,
-    RuleRepository,
-    TransactionRepository,
     VersionConflictError,
 )
-from repository_job import STATUS_RUNNING, STATUS_FAILED
+from repository_goals import GoalsRepository
+from repository_insight import InsightRepository
+from repository_loanfacts import LOANFACTS_FIELDS, LoanFactsRepository
+from repository_milestone import MilestoneRepository
+from repository_paycycle import PayCycleRepository
+from repository_rule import RuleRepository
+from repository_job import STATUS_RUNNING, STATUS_FAILED, JobRepository
 from rule_engine import rule_identity
-from repository_transaction import read_window
+from repository_transaction import TransactionRepository, read_window
 from budget_standing import budget_spend, budget_standing, standing_window
 from rule_book import RuleBook, WriteLimit, rule_from_row, rule_reply
 from rule_spreading import SpreadSeeder
@@ -2967,8 +2965,6 @@ def get_repayment(repo: TransactionRepository) -> dict:
     return {"amount": amount, "date": when, "principal": principal, "interest": interest}
 
 
-# The user-entered loan-facts fields, in the order the form + response use them.
-_LOANFACTS_FIELDS = ("original", "homeValue", "lvr", "ratePct", "baseRepay", "extra")
 # Fields with their own upper bound; the rest use LOANFACTS_FIELD_MAX. Only extra (an optional top-up) may be 0.
 _LOANFACTS_HIGH = {"lvr": 1, "ratePct": 100}
 
@@ -2983,7 +2979,7 @@ def get_loanfacts(repo: LoanFactsRepository) -> dict:
     """
     stored = repo.get_loanfacts()
     if stored is None:
-        return {**{field: None for field in _LOANFACTS_FIELDS}, "payoffGoalDate": None, "depositTarget": None}
+        return {**{field: None for field in LOANFACTS_FIELDS}, "payoffGoalDate": None, "depositTarget": None}
     return stored
 
 
@@ -3005,7 +3001,7 @@ def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
         return error
 
     values = {}
-    for field in _LOANFACTS_FIELDS:
+    for field in LOANFACTS_FIELDS:
         v = body.get(field)
         high = _LOANFACTS_HIGH.get(field, LOANFACTS_FIELD_MAX)
         allow_zero = field == "extra"

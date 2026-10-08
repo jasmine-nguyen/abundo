@@ -2,9 +2,9 @@
 
 Two things make importing ``lambda_api/handler.py`` in a test non-trivial:
 
-1. It transitively imports ``shared/repository.py``, which at module load reads
-   ``os.environ["AWS_REGION"]`` / ``["TABLE_NAME"]`` (repository.py:15-16) and
-   imports ``boto3`` / ``botocore`` (repository.py:8-10). None of that is needed
+1. It transitively imports ``shared/repository_base.py``, which at module load reads
+   ``os.environ["AWS_REGION"]`` / ``["TABLE_NAME"]`` and imports ``boto3`` /
+   ``botocore``. None of that is needed
    to unit-test the handler's routing/validation, so we set the env vars and
    register lightweight fake boto3/botocore modules before the first import.
    Most handler tests replace the repository wholesale; the ones that run the
@@ -37,14 +37,13 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 # Modules re-imported fresh per test: every lambda_api/ module. Built from the folder so a new
 # module needs no entry here. Shedding every shared/ module too is correct but ~70% slower.
 # `api_key` is always shed: it caches keys and the Anthropic fixtures below stub its get_param.
-# `repository` (the shared facade) is always shed: the sibling suites import it under their own
-# fakes. The shared/ modules that bind boto3's Key/Attr are shed too, so they re-bind the fake
+# The shared/ modules that bind boto3's Key/Attr are shed too, so they re-bind the fake
 # query helpers (use_condition_fields) and a real repository can run its queries over a FakeTable.
 _SHARED_MODULES = list(pathlib.Path(_SHARED_DIR).glob("*.py"))
 _COLLIDING = tuple(sorted(
     {path.stem for path in pathlib.Path(_LAMBDA_API_DIR).glob("*.py")}
     | {path.stem for path in _SHARED_MODULES if "boto3.dynamodb.conditions" in path.read_text()}
-    | {"api_key", "repository"}
+    | {"api_key"}
 ))
 
 
@@ -53,7 +52,7 @@ def _isolated_import(module_name):
     """Import one lambda_api (or shared) module fresh for a test, then restore sys.modules.
 
     lambda_api's dir goes first on sys.path (mirrors prod, where the function root precedes the
-    shared layer); constants and repository resolve in shared. The fake Key/Attr stay in place
+    shared layer); constants and the repository_* modules resolve in shared. The fake Key/Attr stay in place
     for the whole test, so a real repository built from these modules can query a FakeTable."""
     for d in (_SHARED_DIR, _LAMBDA_API_DIR):
         while d in sys.path:
