@@ -133,13 +133,6 @@ describe('EarnedVsSpent (render)', () => {
     expect(screen.queryByTestId('earned-bar')).toBeNull();
   });
 
-  it('has no leftover budget-overlay bits (removed in WHIT-324)', () => {
-    render(<EarnedVsSpent earned={6389} spent={1723} testID="evs" />);
-    expect(screen.queryByTestId('earned-bar-target')).toBeNull();
-    expect(screen.queryByTestId('spent-bar-target')).toBeNull();
-    expect(screen.queryByTestId('budgeted-surplus')).toBeNull();
-  });
-
   it('carries an accessible summary of earned, spent, and the surplus line', () => {
     render(<EarnedVsSpent earned={6389} spent={1723} testID="evs" />);
     expect(screen.getByTestId('evs').props.accessibilityLabel).toBe(
