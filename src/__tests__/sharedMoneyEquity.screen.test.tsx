@@ -1,15 +1,13 @@
 // WHIT-773 — the shared money box (Loan + Goal edit) and the shared equity card (Milestone + Mortgage).
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
-import { routerSpies, resetRouter } from './support/routerMock';
+import { EQUITY_TEASER } from './support/goalsScreen';
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import { MoneyField } from '../components/MoneyField';
-import { EquityCard, AddLoanDetailsPrompt } from '../components/EquityCard';
-
-beforeEach(() => resetRouter());
+import { EquityCard, EquitySetupTeaser } from '../components/EquityCard';
 
 describe('shared money box and equity card', () => {
   it('money box shows its label, sign and hint, uses the number keypad, and reports typing', () => {
@@ -36,20 +34,18 @@ describe('shared money box and equity card', () => {
     expect(onChangeText).toHaveBeenCalledWith('720000');
   });
 
-  it('equity card shows its heading, and the add-loan-details button opens the loan form', () => {
+  // WHIT-821: before set-up the equity card is a teaser with no button — set-up lives on the
+  // Home loan screen's top card only.
+  it('equity card shows its heading, and the set-up teaser has no button', () => {
     render(
       <EquityCard>
-        <AddLoanDetailsPrompt />
+        <EquitySetupTeaser />
       </EquityCard>,
     );
 
     expect(screen.getByText('Equity for your next place')).toBeTruthy();
     expect(screen.getByText('Usable equity from your current home')).toBeTruthy();
-    expect(
-      screen.getByText("Add your home's value to see how much equity you could unlock toward your next place."),
-    ).toBeTruthy();
-
-    fireEvent.press(screen.getByText('Add loan details →'));
-    expect(routerSpies.push).toHaveBeenCalledWith('/loan');
+    expect(screen.getByText(EQUITY_TEASER)).toBeTruthy();
+    expect(screen.queryByRole('button')).toBeNull();
   });
 });

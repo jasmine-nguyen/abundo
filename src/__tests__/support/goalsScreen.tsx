@@ -22,6 +22,9 @@ type FakeServer = ReturnType<typeof installFakeServer>;
 
 const AS_OF = '2026-07-04T00:00:00Z';
 
+// WHIT-821: the equity card's buttonless teaser before loan details are set up.
+export const EQUITY_TEASER = 'Your usable equity will show here once your loan details are set up.';
+
 function seedHomeLoan(server: FakeServer, homeLoan: HomeLoanState) {
   server.seed('/homeloan', { balance: homeLoan.balance, as_of: homeLoan.asOf, currency: 'AUD' });
 }

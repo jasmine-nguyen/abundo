@@ -23,20 +23,12 @@ import { LOANFACTS_FIELD_MAX } from '../loanLimits';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderLoaded } from './support/renderWithQueries';
+import { fillLoanForm, VALID_LOAN_FORM, type LoanFormValues } from './support/loanForm';
 
 installFakeServer();
 useTestQueryClient();
 
-function fill(over: Partial<Record<'orig' | 'home' | 'lvr' | 'rate' | 'base' | 'extra' | 'deposit', string>> = {}) {
-  const v = { orig: '600000', home: '770000', lvr: '80', rate: '5.74', base: '1240', extra: '200', deposit: '', ...over };
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 600000'), v.orig);
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 770000'), v.home);
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 80'), v.lvr);
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 5.74'), v.rate);
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 3667'), v.base);
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 500'), v.extra);
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 120000'), v.deposit);
-}
+const fill = (over: LoanFormValues = {}) => fillLoanForm({ ...VALID_LOAN_FORM, deposit: '', ...over });
 
 function setup() {
   const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);

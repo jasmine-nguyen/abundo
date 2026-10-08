@@ -18,6 +18,7 @@ import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { seedHubWith, type GoalsHubSeed } from './support/goalsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
+import { LOAN_FACTS } from './factory';
 import type { GoalRecord, LoanFacts } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
@@ -107,7 +108,8 @@ describe('mortgage card — the third (null, no-error) branch', () => {
   // [A25] balance null AND no mortgageError: neither "owing" nor the error copy — the honest
   // "Tap to see your payoff plan" waiting copy. The goalsHub suite covers owing + error only.
   it('shows "Tap to see your payoff plan" when the balance is not loaded and there is no error', async () => {
-    seedHub({ homeLoan: { balance: null, asOf: null } });
+    // Facts set, so a null balance is "waiting", not WHIT-821's "no home loan".
+    seedHub({ loanFacts: LOAN_FACTS, homeLoan: { balance: null, asOf: null } });
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('mortgage-link'));
     expect(card.getByText('Tap to see your payoff plan')).toBeTruthy();

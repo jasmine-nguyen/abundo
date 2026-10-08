@@ -9,7 +9,7 @@ import { useGoalScreenData } from '../src/queries';
 import { Bar, RetryButton, HeroGradientFill } from '../src/components/ui';
 import { PayoffSummary } from '../src/components/PayoffSummary';
 import { Header } from '../src/components/Header';
-import { EquityCard, EquityBody, EquityCta, AddLoanDetailsPrompt } from '../src/components/EquityCard';
+import { EquityCard, EquityBody, EquityCta, EquitySetupTeaser } from '../src/components/EquityCard';
 import { Celebration } from '../src/components/Celebration';
 import { useRepaymentLanded } from '../src/hooks/useRepaymentLanded';
 import { repaymentLandedView } from '../src/repaymentLanded';
@@ -25,7 +25,10 @@ export default function Mortgage() {
 
   // WHIT-197: the live balance, last repayment, and loan facts come from the cached query
   // layer. Re-check on focus, but only if the cache has gone stale (no request storm).
-  const { loanFacts, homeLoan, repayment, milestones, repaymentError, homeLoanError, isLoading, refetch, refetchStale } = useGoalScreenData();
+  const {
+    loanFacts, homeLoan, homeLoanLoaded, repayment, milestones, repaymentError, homeLoanError, loanFactsLoaded, loanFactsError,
+    isLoading, refetch, refetchStale,
+  } = useGoalScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   const g = goalView({ loanFacts, homeLoan });
@@ -35,6 +38,10 @@ export default function Mortgage() {
   // WHIT-820: a repayment this phone hasn't shown yet → a "Just landed" card at the top + the banner.
   const { justLanded, celebrationKey } = useRepaymentLanded(repayment, !isLoading && !repaymentError && lr.present);
   const landed = justLanded ? repaymentLandedView(repayment, m) : null;
+  // WHIT-821: inferred on the phone — the balance check worked but found nothing, nothing's
+  // set up, and no repayment on record (any repayment, even a half one, proves a loan exists).
+  const noHomeLoan = homeLoanLoaded && loanFactsLoaded && homeLoan.balance == null && !g.factsReady
+    && !lr.present && !lr.malformed && !repaymentError;
   // WHIT-215: one hint element, used in both mutually-exclusive 'none' arms (figure shown
   // vs suppressed) so the copy + testID can't drift between them.
   const tooSoonHint = <Text style={styles.miniHint} testID="goal-too-aggressive-hint">That target may be too soon — try a later date.</Text>;
@@ -69,26 +76,39 @@ export default function Mortgage() {
               balanceLabel={g.balanceLabel}
               original={g.original!}
             />
+          ) : loanFactsError ? (
+            // WHIT-819: errors come before "not set up" — a failed facts read falls back to
+            // empty facts, which must never look like an unset loan.
+            <HeroRetry text="Couldn't load your loan details." label="Retry loading your loan details" testID="hero-facts-retry" onRetry={refetch} />
+          ) : homeLoanError ? (
+            // WHIT-121 (#2), reordered by WHIT-819: the balance read FAILED. Show an error +
+            // Retry whether or not facts are set, instead of a bare "—" or the waiting copy.
+            // Mirrors milestone.tsx's homeLoanError hero branch.
+            <HeroRetry text="Couldn't load your balance." label="Retry loading your balance" testID="hero-balance-retry" onRetry={refetch} />
+          ) : !loanFactsLoaded || (!g.factsReady && isLoading) ? (
+            // WHIT-819: facts still loading — a quiet placeholder, no set-up copy. WHIT-821: when
+            // not set up, also wait for the balance + repayment so "no home loan" can't flash.
+            <>
+              <Text style={styles.heroEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
+              <Text style={[styles.heroBig, { marginTop: 6 }]} testID="hero-facts-loading">{g.balanceLabel}</Text>
+            </>
+          ) : noHomeLoan ? (
+            <>
+              <Text style={styles.heroEyebrow}>YOUR HOME LOAN</Text>
+              <Text style={styles.heroSetupBody} testID="hero-no-home-loan">
+                We didn't find a home loan in your linked accounts. If you add one, it'll show up here.
+              </Text>
+            </>
           ) : !g.factsReady ? (
             <>
               <Text style={styles.heroEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
               <Text style={[styles.heroBig, { marginTop: 6 }]}>{g.balanceLabel}</Text>
               <Text style={styles.heroSetupBody}>
-                Add your loan amount and repayments to see how much you've paid down and your real payoff progress.
+                Add 6 quick facts about your loan (about a minute) to see how much you've paid down and when you'll be mortgage-free.
               </Text>
-              <Pressable onPress={() => router.push('/loan')} style={styles.heroSetupBtn}>
+              <Pressable onPress={() => router.push('/loan')} style={styles.heroSetupBtn} accessibilityRole="button">
                 <Text style={styles.heroSetupBtnText}>Set up loan details →</Text>
               </Pressable>
-            </>
-          ) : homeLoanError ? (
-            // WHIT-121 (#2): facts are set but the balance read FAILED. Show an error + Retry
-            // instead of the "once your balance loads" waiting copy — otherwise the hero
-            // silently swallows a balance failure (the same silent-failure this card fixes for
-            // the repayment card). Mirrors milestone.tsx's homeLoanError hero branch.
-            <>
-              <Text style={styles.heroEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
-              <Text style={[styles.heroSetupBody, { marginTop: 6 }]} accessibilityLiveRegion="polite">Couldn't load your balance.</Text>
-              <RetryButton onPress={() => refetch()} label="Retry loading your balance" testID="hero-balance-retry" style={styles.heroSetupBtn} textStyle={styles.heroSetupBtnText} />
             </>
           ) : g.balanceKnown ? (
             // WHIT-372: facts + balance are both loaded, but nothing's genuinely paid down — the
@@ -160,6 +180,8 @@ export default function Mortgage() {
           </View>
         )}
 
+        {/* WHIT-821: no home loan → only the calm explainer above, no secondary cards. */}
+        {!noHomeLoan && (<>
         {/* Milestone plan — the user's own sprints (empty until they set one), taps into the full screen */}
         <Pressable testID="milestone-link" onPress={() => router.push(m.hasPlan ? '/milestone' : '/milestone/edit')} style={styles.card}>
           {!m.hasPlan ? (
@@ -286,12 +308,23 @@ export default function Mortgage() {
             // Property value is set; the equity figure just needs the live balance.
             <EquityBody>Your usable equity will show once your balance loads.</EquityBody>
           ) : (
-            <AddLoanDetailsPrompt />
+            loanFactsLoaded && <EquitySetupTeaser />
           )}
         </EquityCard>
+        </>)}
       </ScrollView>
       <Celebration celebrationKey={celebrationKey} label="Repayment landed" />
     </View>
+  );
+}
+
+function HeroRetry({ text, label, testID, onRetry }: { text: string; label: string; testID: string; onRetry: () => void }) {
+  return (
+    <>
+      <Text style={styles.heroEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
+      <Text style={[styles.heroSetupBody, { marginTop: 6 }]} accessibilityLiveRegion="polite">{text}</Text>
+      <RetryButton onPress={() => onRetry()} label={label} testID={testID} style={styles.heroSetupBtn} textStyle={styles.heroSetupBtnText} />
+    </>
   );
 }
 
@@ -302,7 +335,7 @@ const styles = StyleSheet.create({
   heroEyebrow: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.heroInkSoft, letterSpacing: 0.3 },
   heroBig: { fontFamily: FONT.display, fontSize: 48, fontWeight: '800', color: C.heroInk, lineHeight: 48, letterSpacing: -2 },
   heroSetupBody: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.heroInk2, lineHeight: 20, marginTop: 10 },
-  heroSetupBtn: { alignSelf: 'flex-start', backgroundColor: C.heroInkWash, borderRadius: 11, paddingVertical: 9, paddingHorizontal: 14, marginTop: 14 },
+  heroSetupBtn: { alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center', backgroundColor: C.heroInkWash, borderRadius: 11, paddingVertical: 9, paddingHorizontal: 14, marginTop: 14 },
   heroSetupBtnText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '700', color: C.heroInk },
 
   miniCard: { flex: 1, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 14 },

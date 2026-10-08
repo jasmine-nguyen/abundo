@@ -65,9 +65,21 @@ export async function renderWithQueries(ui: React.ReactElement) {
   return view;
 }
 
+/** Draw inside WithQueries without waiting, for a held (still-loading) reply. */
+export function drawHeld(ui: React.ReactElement) {
+  return render(<WithQueries>{ui}</WithQueries>);
+}
+
+/** Let a held reply go and wait for it to land and redraw, so nothing runs into the next test. */
+export async function releaseAndSettle(held: { release: () => void }) {
+  await act(async () => { held.release(); });
+  await settle();
+  await refreshInAct(() => undefined);
+}
+
 /**
- * Load the screen's data, then remount it over the warm cache — the way the app opens a form that
- * fills its fields once on first draw (the Loan form, app/loan.tsx) after the data has loaded.
+ * Load the screen's data, then remount it over the warm cache — the way the app usually opens a
+ * screen whose data was already fetched elsewhere (e.g. the Loan form after the Home loan screen).
  * `Wrapper` must include WithQueries (support/renderWithApp's WithApp does).
  */
 export async function renderLoaded(ui: React.ReactElement, Wrapper: React.ComponentType<{ children: React.ReactNode }> = WithQueries) {

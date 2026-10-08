@@ -106,6 +106,7 @@ export function makeGoalData(over: Partial<GoalScreenData> = {}): GoalScreenData
   return {
     loanFacts: LOAN_FACTS,
     homeLoan: { balance: null, asOf: null },
+    homeLoanLoaded: false,
     repayment: NO_REPAYMENT,
     // A default saved plan so milestone view-math tests that don't pass one still exercise a real
     // plan (the hardcoded default was removed). Empty-state tests pass `milestones: []` explicitly.
@@ -114,6 +115,8 @@ export function makeGoalData(over: Partial<GoalScreenData> = {}): GoalScreenData
     isError: false,
     homeLoanError: false,
     repaymentError: false,
+    loanFactsLoaded: true,
+    loanFactsError: false,
     refetch: () => {},
     refetchStale: () => {},
     ...over,

@@ -45,7 +45,8 @@ it('renders the last-repayment card even when loan facts are UNSET (un-gated fro
 });
 
 it('shows the empty card (not nothing) when facts are unset and no repayment exists', async () => {
-  seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS, repayment: NO_REPAYMENT });
+  // WHIT-821: a live balance proves the loan exists (null balance + nothing else = "no home loan").
+  seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:00:00Z' }, repayment: NO_REPAYMENT });
   await renderWithQueries(<Mortgage />);
   expect(screen.getByText(/No repayment on record yet/)).toBeTruthy();
   // WHIT-121 precedence guard: no error flag → the empty state, NOT the error copy.

@@ -24,6 +24,7 @@ import { fmtCompact } from '../theme';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderLoaded } from './support/renderWithQueries';
+import { fillLoanForm, VALID_LOAN_FORM, type LoanFormValues } from './support/loanForm';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -39,14 +40,7 @@ function state(over: Partial<LoanFormState>): LoanFormState {
   return { saveLoanFacts: jest.fn() as LoanFormState['saveLoanFacts'], showToast: jest.fn() as AppContext['showToast'], ...over };
 }
 
-function fillValid() {
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 600000'), '600000');
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 770000'), '770000');
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 80'), '80');       // LVR percent
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 5.74'), '5.74');
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 3667'), '1240');
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 500'), '200');
-}
+const fillValid = () => fillLoanForm(VALID_LOAN_FORM);
 
 beforeEach(() => {
   resetRouter();
@@ -90,7 +84,7 @@ it('sends a typed deposit target as a number (WHIT-378)', async () => {
   mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
   await renderLoaded(<Loan />);
   fillValid();
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 120000'), '120000');
+  fillLoanForm({ deposit: '120000' });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
   expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ depositTarget: 120000 }));
   // (the blank → null case is already locked by the "saves the facts" test above)
@@ -109,10 +103,7 @@ it('blocks an incomplete save with a toast and no API call', async () => {
   mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
   await renderLoaded(<Loan />);
   // Fill everything except property value → invalid.
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 600000'), '600000');
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 80'), '80');
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 5.74'), '5.74');
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 3667'), '1240');
+  fillLoanForm({ orig: '600000', lvr: '80', rate: '5.74', base: '1240' });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
 
   expect(saveLoanFacts).not.toHaveBeenCalled();
@@ -155,7 +146,7 @@ describe('WHIT-378 deposit-target guard + clear (gaps)', () => {
     mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
     await renderLoaded(<Loan />);
     fillValid();
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 120000'), '12abc');
+    fillLoanForm({ deposit: '12abc' });
     await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
 
     // The six-field guard passes, so it's the DEPOSIT-specific message that fires...
@@ -172,7 +163,7 @@ describe('WHIT-378 deposit-target guard + clear (gaps)', () => {
     mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
     await renderLoaded(<Loan />);
     fillValid();
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 120000'), '0');
+    fillLoanForm({ deposit: '0' });
     await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
     expect(showToast).toHaveBeenCalledWith('Enter a valid deposit target, or leave it blank.');
     expect(saveLoanFacts).not.toHaveBeenCalled();
@@ -184,7 +175,7 @@ describe('WHIT-378 deposit-target guard + clear (gaps)', () => {
     mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
     await renderLoaded(<Loan />);
     fillValid();
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 120000'), OVER);
+    fillLoanForm({ deposit: OVER });
     await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
     // Distinct from the finite/>0 toast — this is the ceiling message. Fail-on-revert: drop the
     // deposit-target ceiling guard and an over-ceiling value sails through to saveLoanFacts.
@@ -219,16 +210,7 @@ describe('WHIT-382 dollar-ceiling guards (gaps)', () => {
   const AMOUNT_TOAST = `Keep each amount to ${fmtCompact(LOANFACTS_FIELD_MAX)} or less.`;
 
   // The six required fields plus the optional deposit target. Valid baseline; override per test.
-  function fill(over: Partial<Record<'orig' | 'home' | 'lvr' | 'rate' | 'base' | 'extra' | 'deposit', string>> = {}) {
-    const v = { orig: '600000', home: '770000', lvr: '80', rate: '5.74', base: '1240', extra: '200', deposit: '', ...over };
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 600000'), v.orig);
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 770000'), v.home);
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 80'), v.lvr);
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 5.74'), v.rate);
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 3667'), v.base);
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 500'), v.extra);
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. 120000'), v.deposit);
-  }
+  const fill = (over: LoanFormValues = {}) => fillLoanForm({ ...VALID_LOAN_FORM, deposit: '', ...over });
 
   function setup() {
     const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);

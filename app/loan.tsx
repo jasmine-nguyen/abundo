@@ -4,29 +4,58 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { C, FONT, fmtCompact } from '../src/theme';
 import { useAppContext } from '../src/context';
-import { EMPTY_LOAN_FACTS } from '../src/model';
-import { useLoanFactsQuery, useIsAuthed } from '../src/queries';
+import { useLoanFactsQuery, useRepaymentQuery, useIsAuthed } from '../src/queries';
 import { Header } from '../src/components/Header';
+import { DetailStates } from '../src/components/DetailStates';
 import { NativeDateField } from '../src/components/NativeDateField';
 import { MoneyField } from '../src/components/MoneyField';
 import { parseAmount, numText } from '../src/numutil';
 import { LOANFACTS_FIELD_MAX } from '../src/loanLimits';
-import type { LoanFactsInput } from '../src/api';
+import type { LoanFacts, LoanFactsInput } from '../src/api';
 
 export default function Loan() {
+  const insets = useSafeAreaInsets();
+  // WHIT-203: the form reads the cached loan-facts query. WHIT-819: it only mounts once the
+  // saved facts have loaded, so it can never open blank and overwrite them on save.
+  const authed = useIsAuthed();
+  const loanFactsQuery = useLoanFactsQuery(authed);
+  // WHIT-821: the last repayment pre-fills Scheduled repayment. Spin until its first answer so
+  // the seed isn't missed; its first failure stops the wait (no blocking through the retries).
+  const repaymentQuery = useRepaymentQuery(authed);
+  const repaymentPending = repaymentQuery.isLoading && repaymentQuery.failureCount === 0;
+
+  return (
+    <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
+      <Header title="Loan details" />
+      <DetailStates
+        isLoading={loanFactsQuery.isLoading || repaymentPending}
+        isError={loanFactsQuery.isError}
+        hasCache={loanFactsQuery.data !== undefined && !repaymentPending}
+        idPrefix="loan-facts"
+        errorText="Couldn't load your loan details."
+        retryLabel="Retry loading your loan details"
+        onRetry={() => loanFactsQuery.refetch()}
+      >
+        {loanFactsQuery.data && (
+          <LoanForm facts={loanFactsQuery.data} lastRepayment={repaymentQuery.data?.amount ?? null} />
+        )}
+      </DetailStates>
+    </View>
+  );
+}
+
+function LoanForm({ facts: f, lastRepayment }: { facts: LoanFacts; lastRepayment: number | null }) {
   const s = useAppContext(); // showToast + saveLoanFacts (write) stay on the store
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  // WHIT-203: seed the form from the cached loan-facts query instead of the eager store.
-  const f = useLoanFactsQuery(useIsAuthed()).data ?? EMPTY_LOAN_FACTS;
 
-  // Seed each input from the saved facts (empty when unset). By the time the user
-  // reaches this screen the mount fetch has resolved, so these reflect saved data.
+  // Seed each input from the saved facts (empty when unset).
   const [original, setOriginal] = useState(numText(f.original));
   const [homeValue, setHomeValue] = useState(numText(f.homeValue));
   const [lvr, setLvr] = useState(f.lvr == null ? '' : String(f.lvr * 100));
   const [ratePct, setRatePct] = useState(numText(f.ratePct));
-  const [baseRepay, setBaseRepay] = useState(numText(f.baseRepay));
+  const [baseRepay, setBaseRepay] = useState(numText(f.baseRepay ?? lastRepayment));
+  const prefilledRepay = f.baseRepay == null && lastRepayment != null;
   const [extra, setExtra] = useState(numText(f.extra));
   const [payoffGoalDate, setPayoffGoalDate] = useState<string | null>(f.payoffGoalDate ?? null);
   const [depositTarget, setDepositTarget] = useState(numText(f.depositTarget));
@@ -86,46 +115,51 @@ export default function Loan() {
   };
 
   return (
-    <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-      <Header title="Loan details" />
-      <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        // The keyboard opens over the Save button at the bottom — inset the scroll by the
-        // keyboard height so it scrolls into reach (iOS), and let a tap on Save land.
-        automaticallyAdjustKeyboardInsets
-      >
-        <Text style={styles.intro}>
-          Add your loan facts so Abundo can show real progress and equity. We only ask for what the bank feed can't tell us.
-        </Text>
+    <ScrollView
+      contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }}
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      // The keyboard opens over the Save button at the bottom — inset the scroll by the
+      // keyboard height so it scrolls into reach (iOS), and let a tap on Save land.
+      automaticallyAdjustKeyboardInsets
+    >
+      <Text style={styles.intro}>
+        Add your loan facts so Abundo can show real progress and equity. We only ask for what the bank feed can't tell us.
+      </Text>
 
-        <MoneyField label="Original loan amount" hint="What you first borrowed" placeholder="e.g. 600000" prefix="$" value={original} onChangeText={setOriginal} {...loanLook} />
-        <MoneyField label="Property value" hint="What it's worth today" placeholder="e.g. 770000" prefix="$" value={homeValue} onChangeText={setHomeValue} {...loanLook} />
-        <MoneyField label="Loan-to-value ratio" hint="How much the bank lends against it — usually 80" placeholder="e.g. 80" suffix="%" value={lvr} onChangeText={setLvr} {...loanLook} />
-        <MoneyField label="Interest rate" hint="Your current rate" placeholder="e.g. 5.74" suffix="%" value={ratePct} onChangeText={setRatePct} {...loanLook} />
-        <MoneyField label="Scheduled repayment" hint="Your minimum, per month" placeholder="e.g. 3667" prefix="$" value={baseRepay} onChangeText={setBaseRepay} {...loanLook} />
-        <MoneyField label="Extra repayment" hint="Optional top-up per month" placeholder="e.g. 500" prefix="$" value={extra} onChangeText={setExtra} {...loanLook} />
+      <MoneyField label="Original loan amount" hint="What you first borrowed" placeholder="e.g. 500000" prefix="$" value={original} onChangeText={setOriginal} {...loanLook} />
+      <MoneyField label="Property value" hint="What it's worth today" placeholder="e.g. 650000" prefix="$" value={homeValue} onChangeText={setHomeValue} {...loanLook} />
+      <MoneyField label="Loan-to-value ratio" hint="How much the bank lends against it — usually 80" placeholder="e.g. 80" suffix="%" value={lvr} onChangeText={setLvr} {...loanLook} />
+      <MoneyField label="Interest rate" hint="Your current rate" placeholder="e.g. 6.2" suffix="%" value={ratePct} onChangeText={setRatePct} {...loanLook} />
+      <MoneyField
+        label="Scheduled repayment"
+        hint={prefilledRepay ? "From your last repayment — check it's your monthly minimum" : 'Your minimum, per month'}
+        placeholder="e.g. 2500"
+        prefix="$"
+        value={baseRepay}
+        onChangeText={setBaseRepay}
+        {...loanLook}
+      />
+      <MoneyField label="Extra repayment" hint="Optional top-up per month" placeholder="e.g. 200" prefix="$" value={extra} onChangeText={setExtra} {...loanLook} />
 
-        <View style={styles.field}>
-          <Text style={styles.label}>Target payoff date</Text>
-          <NativeDateField
-            value={payoffGoalDate}
-            onChange={setPayoffGoalDate}
-            minimumDate={payoffMinDate}
-            clearable
-            alwaysShowPillIOS
-          />
-          <Text style={styles.hint}>Optional — how we work out the repayment needed if the loan won't clear at your current rate.</Text>
-        </View>
+      <View style={styles.field}>
+        <Text style={styles.label}>Target payoff date</Text>
+        <NativeDateField
+          value={payoffGoalDate}
+          onChange={setPayoffGoalDate}
+          minimumDate={payoffMinDate}
+          clearable
+          alwaysShowPillIOS
+        />
+        <Text style={styles.hint}>Optional — how we work out the repayment needed if the loan won't clear at your current rate.</Text>
+      </View>
 
-        <MoneyField label="Deposit needed for your next place" hint="Optional — sets the target the equity card tracks toward." placeholder="e.g. 120000" prefix="$" value={depositTarget} onChangeText={setDepositTarget} {...loanLook} />
+      <MoneyField label="Deposit needed for your next place" hint="Optional — sets the target the equity card tracks toward." placeholder="e.g. 100000" prefix="$" value={depositTarget} onChangeText={setDepositTarget} {...loanLook} />
 
-        <Pressable onPress={onSave} disabled={saving} style={[styles.save, saving && { opacity: 0.6 }]}>
-          <Text style={styles.saveText}>{saving ? 'Saving…' : 'Save loan details'}</Text>
-        </Pressable>
-      </ScrollView>
-    </View>
+      <Pressable onPress={onSave} disabled={saving} style={[styles.save, saving && { opacity: 0.6 }]}>
+        <Text style={styles.saveText}>{saving ? 'Saving…' : 'Save loan details'}</Text>
+      </Pressable>
+    </ScrollView>
   );
 }
 

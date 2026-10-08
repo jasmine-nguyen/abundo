@@ -6,12 +6,12 @@
 // read only the editor's writers off it). expo-router's useRouter is mocked to capture navigation.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act, within } from '@testing-library/react-native';
+import { screen, fireEvent, act, within } from '@testing-library/react-native';
 import { EMPTY_LOAN_FACTS, LOAN_FACTS } from './factory';
 import { installFakeServer } from './support/fakeServer';
-import { refreshInAct, renderWithQueries, useTestQueryClient, WithQueries, settle } from './support/renderWithQueries';
+import { refreshInAct, renderWithQueries, useTestQueryClient, drawHeld, releaseAndSettle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
-import { seedGoal } from './support/goalsScreen';
+import { seedGoal, EQUITY_TEASER } from './support/goalsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { saveMilestonesSpy, showToastSpy, milestoneLabelAt } from './support/milestoneEditor';
@@ -41,19 +41,6 @@ beforeEach(() => {
   resetRouter();
   seedGoal(server);
 });
-
-// Draw without waiting, for a held (still-loading) reply.
-function drawHeld(ui: React.ReactElement) {
-  return render(<WithQueries>{ui}</WithQueries>);
-}
-
-// Let a held reply go and wait for it to land and redraw the screen, so nothing is left pending
-// into the next test.
-async function releaseAndSettle(held: { release: () => void }) {
-  await act(async () => { held.release(); });
-  await settle();
-  await refreshInAct(() => {});
-}
 
 // --- the milestone screen ----------------------------------------------------
 
@@ -201,10 +188,18 @@ it('milestone screen shows an equity set-up prompt when the property value is un
   // Balance + sprint plan still render (they only need the live balance)...
   expect(screen.getByText('$596,642')).toBeTruthy();
   expect(screen.getByText('Your payoff plan')).toBeTruthy();
-  // ...but equity is a prompt, not a fabricated figure.
-  expect(screen.getByText(/Add your home's value/)).toBeTruthy();
-  fireEvent.press(screen.getByText('Add loan details →'));
-  expect(routerSpies.push).toHaveBeenCalledWith('/loan');
+  // ...but equity is a teaser, not a fabricated figure. WHIT-821: no button — set-up lives on
+  // the Home loan screen's top card.
+  expect(screen.getByText(EQUITY_TEASER)).toBeTruthy();
+  expect(screen.queryByText('Add loan details →')).toBeNull();
+});
+
+it('WHIT-819: milestone screen hides the equity set-up prompt while loan facts load', async () => {
+  const held = server.hold('/loanfacts');
+  drawHeld(<Milestone />);
+  await screen.findByText('Your payoff plan'); // the balance has landed; only the facts are held
+  expect(screen.queryByText(EQUITY_TEASER)).toBeNull();
+  await releaseAndSettle(held);
 });
 
 // --- equity card copy: gap coverage (empty-state body, CTA routing, milestone subtitle) ---
@@ -212,18 +207,9 @@ it('milestone screen shows an equity set-up prompt when the property value is un
 it('mortgage equity card empty-state uses the reworded prompt, not the old property framing', async () => {
   seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
   await renderWithQueries(<Mortgage />);
-  expect(screen.getByText(/Add your home's value/)).toBeTruthy();
+  expect(screen.getByText(EQUITY_TEASER)).toBeTruthy();
   expect(screen.queryByText(/Add your property value/)).toBeNull();
   expect(screen.queryByText('Investment property #2')).toBeNull();
-});
-
-it('mortgage equity card "Add loan details →" routes to /loan', async () => {
-  // Two CTAs render in the empty state (hero "Set up loan details →" + equity "Add loan
-  // details →"); this locks the equity one specifically.
-  seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
-  await renderWithQueries(<Mortgage />);
-  fireEvent.press(screen.getByText('Add loan details →'));
-  expect(routerSpies.push).toHaveBeenCalledWith('/loan');
 });
 
 it('milestone equity card known-state shows the current-home subtitle, not "Investment property #2"', async () => {
