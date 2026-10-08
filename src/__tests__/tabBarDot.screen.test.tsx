@@ -15,6 +15,8 @@ import { tabBarProps, TAB_ROUTES } from './support/tabBar';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { COFFEE_SHORT } from './support/categories';
+import { styleOf } from './support/layout';
+import { ChatProvider } from '../chat/ChatContext';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
@@ -107,4 +109,17 @@ it('renders the five remaining tabs and never a Settings tab, even when a settin
     expect(screen.getByText(label)).toBeTruthy();
   }
   expect(screen.queryByText('Settings')).toBeNull();
+});
+
+describe('WHIT-735 tab labels', () => {
+  // [A6] (P0) every tab label is at least Apple's 11pt, and still shrinks to fit on one line.
+  it('[A6] all five tab labels are 11pt or more and keep their one-line shrink-to-fit', async () => {
+    await renderWithQueries(<ChatProvider><TabBar {...tabBarProps()} /></ChatProvider>);
+
+    for (const label of ['Budgets', 'Transactions', 'Accounts', 'Insights', 'Goals']) {
+      const text = screen.getByText(label);
+      expect(styleOf(text).fontSize).toBeGreaterThanOrEqual(11);
+      expect(text.props).toMatchObject({ numberOfLines: 1, adjustsFontSizeToFit: true, maxFontSizeMultiplier: 1.2 });
+    }
+  });
 });
