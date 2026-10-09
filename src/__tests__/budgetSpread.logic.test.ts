@@ -119,7 +119,7 @@ describe('budgetDetail — spread', () => {
 describe('budgetEditInfo — Smoothing switch vs spread', () => {
   const editInfo = (b: object) => budgetEditInfo({
     budgets: [budget({ id: 'sink', ...b })], category: (id: string) => (id === 'sink' ? sink() : undefined),
-    cycleName: () => cycleName(14),
+    cycleName: cycleName(14),
   }, 'sink');
 
   it('shows the switch but locks it ON while a spread is active', () => {
@@ -140,7 +140,7 @@ describe('budgetEditInfo — Smoothing switch vs spread', () => {
     const infoFor = (category: Category) => budgetEditInfo({
       budgets: [budget({ id: 'x' })],
       category: () => category,
-      cycleName: () => cycleName(14),
+      cycleName: cycleName(14),
     }, 'x');
     expect(infoFor(cat({ id: 'x', name: 'X', bucket: 'Income' })).smoothingShown).toBe(false);
     expect(infoFor(cat({ id: 'x', name: 'X', bucket: 'Savings' })).smoothingShown).toBe(false);

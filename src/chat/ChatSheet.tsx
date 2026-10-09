@@ -1,7 +1,7 @@
 // Card 609 — the Ask Abundo chat sheet: a one-time consent step, the empty state with suggested
 // questions, the conversation, and the text box. A native page sheet, so swipe-down closes it
 // (onRequestClose). Mounted once at the root, next to the other overlays, and only while signed in.
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Animated, KeyboardAvoidingView, Modal, NativeScrollEvent, NativeSyntheticEvent, Platform,
   Pressable, ScrollView, StyleSheet, Text, TextInput, View,

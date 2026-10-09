@@ -10,7 +10,7 @@ import { EMPTY_LOAN_FACTS } from './factory';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, renderLoaded, refreshInAct, settle, useTestQueryClient, drawHeld, releaseAndSettle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
-import { loanFactsKey } from '../queries';
+import { loanFactsKey } from '../queryKeys';
 import { resetAuth } from './support/authMock';
 import { seedGoal, EQUITY_TEASER } from './support/goalsScreen';
 import { resetRouter } from './support/routerMock';

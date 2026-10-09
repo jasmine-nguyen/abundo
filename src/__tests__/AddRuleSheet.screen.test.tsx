@@ -14,7 +14,7 @@ jest.mock('../context', () => require('./support/contextMock').realContextWith((
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { queryClient } from '../queryClient';
-import { categoriesKey } from '../queries';
+import { categoriesKey } from '../queryKeys';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES_RECORD, SUBSCRIPTIONS_RECORD } from './support/categories';

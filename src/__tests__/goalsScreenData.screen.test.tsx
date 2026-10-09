@@ -14,7 +14,8 @@ import { installFakeServer } from './support/fakeServer';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 
-import { useGoalsScreenData, homeLoanKey } from '../queries';
+import { useGoalsScreenData } from '../queries';
+import { homeLoanKey } from '../queryKeys';
 
 const server = installFakeServer();
 

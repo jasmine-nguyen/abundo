@@ -29,7 +29,7 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries, settle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
-import { transactionsKey, uncategorizedCountKey } from '../queries';
+import { transactionsKey, uncategorizedCountKey } from '../queryKeys';
 import { COFFEE_RECORD, GROCERIES_TOP } from './support/categories';
 
 const server = installFakeServer();

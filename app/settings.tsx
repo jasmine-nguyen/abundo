@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Image, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -99,7 +99,7 @@ export default function Settings() {
         <View style={styles.group}>
           <Row icon="tag" label="Categories" value={isLoading ? '…' : categoriesError ? '—' : String(categoriesCount)} onPress={() => router.push('/category')} />
           <Row icon="sliders" label="Automation rules" value={rulesLoading ? '…' : rulesError ? '—' : String(rules.length)} onPress={() => router.push('/rules')} />
-          <Row icon="calendar" label="Pay cycle" value={cycleName()} onPress={() => s.setSheet({ mode: 'paycycle' })} />
+          <Row icon="calendar" label="Pay cycle" value={cycleName} onPress={() => s.setSheet({ mode: 'paycycle' })} />
           <Row icon="building" label="Loan details" value={isLoading ? '…' : loanReadyError ? '—' : loanReady ? 'Edit' : 'Set up'} onPress={() => router.push('/loan')} last />
         </View>
         {/* WHIT-198: a sustained categories/rules/loan read failure shows "—" on the rows above (not

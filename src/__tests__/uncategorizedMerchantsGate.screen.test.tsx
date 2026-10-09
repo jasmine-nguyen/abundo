@@ -33,7 +33,7 @@ import { installFakeServer } from './support/fakeServer';
 import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries, WithQueries, refreshInAct, settle, loaded } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
-import { uncategorizedCountKey, uncategorizedFeedKey } from '../queries';
+import { uncategorizedCountKey, uncategorizedFeedKey } from '../queryKeys';
 
 const server = installFakeServer();
 useTestQueryClient();

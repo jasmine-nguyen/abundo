@@ -24,10 +24,7 @@ export function makeQueryClient(): QueryClient {
     defaultOptions: {
       queries: {
         retry: (failureCount, error) => !isAuthError(error) && failureCount < RETRY_LIMIT,
-        retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 30_000), // 1s, 2s, 4s … capped 30s
         staleTime: 45_000, // data stays "fresh" for 45s before a background revalidate
-        gcTime: 5 * 60_000, // keep unused cache 5 min so a tab revisit renders instantly
-        refetchOnReconnect: true,
       },
     },
   });

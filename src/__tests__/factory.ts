@@ -154,7 +154,7 @@ export function makeGoalData(over: Partial<GoalScreenData> = {}): GoalScreenData
   };
 }
 
-// Build the exact slice the pure selectors read — a category() lookup, cycleName(),
+// Build the exact slice the pure selectors read — a category() lookup, cycleName,
 // and the data fields — and return it as its concrete inferred shape. WHIT-192: the
 // selectors take NARROW inputs (BudgetViewsInput, GoalViewInput, ...) rather than the
 // whole AppContext (whose server-data fields are gone with the eager store), so this
@@ -176,6 +176,6 @@ export function makeState(over: StateOver = {}) {
     cycleLen,
     daysLeft: over.daysLeft ?? 7,
     category: (id: string | null) => categories.find((c) => c.id === id),
-    cycleName: () => cycleName(cycleLen),
+    cycleName: cycleName(cycleLen),
   };
 }

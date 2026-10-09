@@ -31,7 +31,7 @@ import { installFakeServer } from './support/fakeServer';
 import { tabBarProps } from './support/tabBar';
 import { useTestQueryClient, renderWithQueries, WithQueries, settle, loaded } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
-import { transactionsKey, uncategorizedFeedKey } from '../queries';
+import { transactionsKey, uncategorizedFeedKey } from '../queryKeys';
 
 const server = installFakeServer();
 useTestQueryClient();

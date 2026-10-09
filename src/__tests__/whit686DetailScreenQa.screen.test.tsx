@@ -23,7 +23,7 @@ import { resetAuth, setAuthStatus } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
-import { transactionsSearchKey, uncategorizedFeedKey } from '../queries';
+import { transactionsSearchKey, uncategorizedFeedKey } from '../queryKeys';
 import { COFFEE_RECORD } from './support/categories';
 
 const server = installFakeServer();

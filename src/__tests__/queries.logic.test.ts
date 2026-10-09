@@ -2,7 +2,8 @@
 // mappers that turn raw API payloads into client shapes. No React/RN, so these run
 // in the fast logic project alongside the other selector tests.
 import { describe, it, expect } from '@jest/globals';
-import { selectBudgets, selectCategories, budgetsKey, breakdownKey, categoriesKey, payCycleKey } from '../queries';
+import { selectBudgets, selectCategories } from '../queries';
+import { budgetsKey, breakdownKey, categoriesKey, payCycleKey } from '../queryKeys';
 import { GROCERIES_RECORD } from './support/categories';
 
 describe('query keys', () => {

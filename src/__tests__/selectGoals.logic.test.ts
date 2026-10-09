@@ -2,7 +2,8 @@
 // mirroring selectCategories/selectRules. A non-array must throw so the query rejects and the
 // hub shows its error card, rather than a cryptic "goals.map is not a function" downstream.
 import { describe, it, expect } from '@jest/globals';
-import { selectGoals, goalsKey } from '../queries';
+import { selectGoals } from '../queries';
+import { goalsKey } from '../queryKeys';
 
 // context.tsx's goal writes patch the ['goals'] cache with a LITERAL key (it can't import
 // goalsKey without a circular import — see the queries.ts comment), so the literal and the

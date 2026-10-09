@@ -22,7 +22,8 @@ import { refreshInAct } from './support/renderWithQueries';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
 
-import { useTransactionsScreenData, useTransactionResolver, transactionsKey, uncategorizedFeedKey, budgetTransactionsKey, categoryTransactionsKey, transactionsRecentKey } from '../queries';
+import { useTransactionsScreenData, useTransactionResolver } from '../queries';
+import { transactionsKey, uncategorizedFeedKey, budgetTransactionsKey, categoryTransactionsKey, transactionsRecentKey } from '../queryKeys';
 
 const server = installFakeServer();
 const FEED = '/transactions/feed';

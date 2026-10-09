@@ -28,7 +28,7 @@ import { spyOnAlert } from './support/alertSpy';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
-import { transactionsKey } from '../queries';
+import { transactionsKey } from '../queryKeys';
 import { COFFEE_RECORD } from './support/categories';
 
 const server = installFakeServer();

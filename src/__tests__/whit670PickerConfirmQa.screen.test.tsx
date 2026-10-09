@@ -12,7 +12,7 @@ jest.mock('../context', () => require('./support/contextMock').realContextWith((
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { Overlays } from '../components/Overlays';
-import { categoriesKey } from '../queries';
+import { categoriesKey } from '../queryKeys';
 import { queryClient } from '../queryClient';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';

@@ -16,7 +16,7 @@ import { GROCERIES_TOP_RECORD } from './support/categories';
 import { refreshInAct, useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays, overlaysTree } from './support/openOverlays';
 import { queryClient } from '../queryClient';
-import { categoriesKey } from '../queries';
+import { categoriesKey } from '../queryKeys';
 import { applyRulesReport } from './support/applyRulesReport';
 
 const server = installFakeServer();

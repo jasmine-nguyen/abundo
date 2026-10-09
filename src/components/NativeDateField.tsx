@@ -9,7 +9,7 @@
 //    sheets keep their own card chrome and just call this.
 //  - NativeDateField: a styled inline field row for the two forms (they share row chrome).
 // Both preserve every call-site's behaviour and look exactly.
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { C, FONT } from '../theme';

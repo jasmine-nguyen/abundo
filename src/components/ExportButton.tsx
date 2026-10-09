@@ -1,6 +1,6 @@
 // WHIT-700 / WHIT-703: the Insights header's Export button — shares the selected cycle as an
 // Excel (.xlsx) file.
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Alert } from 'react-native';
 import { HeaderTextButton } from './ui';
 import { shareCycleExport } from '../cycleShare';

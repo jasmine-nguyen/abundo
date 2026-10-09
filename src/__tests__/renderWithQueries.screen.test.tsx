@@ -10,7 +10,8 @@ import { useQueryClient } from '@tanstack/react-query';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { queryClient } from '../queryClient';
-import { categoriesKey, useCategories } from '../queries';
+import { useCategories } from '../queries';
+import { categoriesKey } from '../queryKeys';
 import { installFakeServer } from './support/fakeServer';
 import { ESSENTIAL_GROCERIES_TOP } from './support/categories';
 import { resetAuth } from './support/authMock';

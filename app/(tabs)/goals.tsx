@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter, useFocusEffect, useIsFocused } from 'expo-router';
 import { C, FONT, fmt, tint, PRESSED } from '../../src/theme';
