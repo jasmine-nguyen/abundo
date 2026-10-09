@@ -141,3 +141,20 @@ def test_get_homeloan_account_id_falls_back_then_reads_up_once(lam, monkeypatch,
 @pytest.fixture(autouse=True)
 def _no_real_ssm(lam, monkeypatch):
     monkeypatch.setattr(lam.api_key, "get_param", lambda path: "fake-secret")
+
+
+@pytest.mark.parametrize("body", [{"data": None}, {"data": [{"id": "x", "attributes": {}}]},
+                                  {"data": [{"attributes": {"accountType": "HOME_LOAN"}}]}],
+                         ids=["data_null", "no_account_type", "no_id"])
+def test_malformed_body_falls_back_unsaved(lam, monkeypatch, caplog, body):
+    up = lam.up_webhook
+    monkeypatch.setattr(up, "get_personal_access_token", lambda: "up-token")
+    responses = [body, _accounts_response(NEW_HOMELOAN_ID)]
+    monkeypatch.setattr(up.urllib.request, "urlopen",
+                        lambda request, timeout=None: FakeResponse(responses.pop(0)))
+    caplog.set_level(logging.INFO)
+
+    assert up.get_homeloan_account_id() == OLD_HOMELOAN_ID
+    [record] = _markers(caplog, "UP_WEBHOOK_HOMELOAN_LOOKUP_FALLBACK")
+    assert "reason=lookup_failed" in record.getMessage().split()
+    assert up.get_homeloan_account_id() == NEW_HOMELOAN_ID

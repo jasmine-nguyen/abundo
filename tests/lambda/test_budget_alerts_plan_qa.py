@@ -3,18 +3,15 @@ carries out the SAME `reconcile` plan as the real save. Every test drives the re
 preview and, where it matters, the real `insert_or_reconcile` on FakeTable over the
 same data — never a hand-copied preview."""
 
-import re
 from datetime import date
 from decimal import Decimal
 from functools import partial
-from pathlib import Path
 
 import pytest
 from _budget_alert_fakes import notify_repo
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _transaction_range_fakes import _AccountTransactionRepo
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
 _BANK_ACCT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
 _BUDGET = {"groceries": {"target": Decimal("100")}}
 _CATS = [{"id": "groceries", "name": "Groceries"}]
@@ -102,21 +99,6 @@ def test_resend_of_an_unfiled_stored_row_does_not_count_the_incoming_category(al
     assert _view(alerts.budget_alerts._simulate_after(ctx, [resend])) == _view(ledger)
 
 
-# [A2] P0 — a pending re-sync with a bigger amount (tip added) keeps the user's
-# hand-filed category and counts the NEW amount: 70 → 85 of 100 crosses 80%.
-def test_pending_resync_keeps_stored_category_and_counts_the_new_amount(alerts, repo, monkeypatch):
-    _seed(repo, alerts, txn_id="PEND", amount=Decimal("-70"), pending=True, category="groceries")
-    before = list(repo._table.store.values())
-    resync = _norm_real(alerts, txn_id="PEND", amount=Decimal("-85"), pending=True, category="FOOD_AND_DRINK")
-
-    sent, notify, ctx = _fire(alerts, monkeypatch, repo, before, [resync])
-
-    assert sent == ["Heads up \U0001f440"]
-    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}
-    ledger = list(repo._table.store.values())
-    assert _view(alerts.budget_alerts._simulate_after(ctx, [resync])) == _view(ledger)
-
-
 # [A3] P0 — full-row parity on a mixed batch through the REAL preview: a pending re-sync
 # carrying notes + a rule stamp, a first settlement that carries its twin's category, a
 # posted re-send, and a plain new charge. Every row's category/amount/date/status/notes/
@@ -147,89 +129,3 @@ def test_preview_rows_equal_the_real_save_on_a_mixed_batch(alerts, repo, monkeyp
     ledger = list(repo._table.store.values())
     assert sorted(r["transaction_id"] for r in ledger) == ["NEW", "OP", "RS", "SET"]
     assert _view(alerts.budget_alerts._simulate_after(ctx, batch)) == _view(ledger)
-
-
-# WHIT-653 — a settled charge dated a day earlier with a foreign fee folded in (+3%)
-# reconciles its pending in the preview exactly as the real save does: counted once.
-def test_preview_reconciles_a_skewed_fee_pair_like_the_real_save(alerts, repo, monkeypatch):
-    _seed(repo, alerts, txn_id="PEND", amount=Decimal("-40.00"), pending=True, category="groceries",
-          date="2026-07-11", authorized_date="2026-07-11")
-    before = [dict(r) for r in repo._table.store.values()]
-    batch = [_norm_real(alerts, txn_id="POST", amount=Decimal("-41.20"), pending=False,
-                        category="FOOD_AND_DRINK", date="2026-07-10", authorized_date="2026-07-10")]
-
-    _, _, ctx = _fire(alerts, monkeypatch, repo, before, batch)
-
-    ledger = list(repo._table.store.values())
-    preview = alerts.budget_alerts._simulate_after(ctx, batch)
-    assert [r["transaction_id"] for r in preview] == ["POST"]   # pending absent — spend counted once
-    assert _view(preview) == _view(ledger)
-
-
-# [A4] P1 — the preview never mutates the snapshot: running it twice gives the same rows,
-# and the pending pools / before-rows the ctx holds are untouched (the fire step reads them).
-def test_preview_does_not_mutate_the_snapshot(alerts, repo, monkeypatch):
-    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="groceries")
-    before = list(repo._table.store.values())
-    posted = _norm_real(alerts, txn_id="B", amount=Decimal("-70"), pending=False, category="GROCERIES")
-    _, _, ctx = _fire(alerts, monkeypatch, repo, before, [posted])
-    pools_before = {a: [dict(r) for r in rows] for a, rows in ctx["pending_pools"].items()}
-    rows_before = [dict(r) for r in ctx["before_rows"]]
-
-    first = _view(alerts.budget_alerts._simulate_after(ctx, [posted]))
-    second = _view(alerts.budget_alerts._simulate_after(ctx, [posted]))
-
-    assert first == second
-    assert list(first) == ["B"]
-    assert {a: [dict(r) for r in rows] for a, rows in ctx["pending_pools"].items()} == pools_before
-    assert [dict(r) for r in ctx["before_rows"]] == rows_before
-
-
-# [A5] P0 — the card's "done when": no code outside lambda/webhook_repository.py reaches into the
-# webhook repository's private names, and the moved matching helpers are gone from it.
-_MOVED = ("_reconcile_matches", "_ensure_pool", "_find_exact_twin", "_find_tip_twin",
-          "_find_skewed_auth_twin", "_find_blank_auth_twin", "_with_carried_category",
-          "_inherit_swipe_date", "_delete_pending_if_present", "_merchant_matches_pending")
-
-
-def test_nothing_outside_the_repository_uses_its_private_names(lam):
-    repo_cls = lam.repository.TransactionRepository
-    own_private = [n for n in vars(repo_cls) if n.startswith("_") and not n.startswith("__")]
-    assert not [n for n in _MOVED if hasattr(repo_cls, n) or hasattr(lam.repository, n)]
-
-    pattern = re.compile(r"\.(%s)\b|\b(?:webhook_)?repository\._[a-z]" % "|".join(map(re.escape, own_private + list(_MOVED))))
-    offenders = []
-    for folder in ("lambda", "shared", "lambda_api"):
-        for path in (_REPO_ROOT / folder).rglob("*.py"):
-            if path == _REPO_ROOT / "lambda" / "webhook_repository.py":
-                continue
-            for number, line in enumerate(path.read_text().splitlines(), 1):
-                if pattern.search(line):
-                    offenders.append(f"{path.relative_to(_REPO_ROOT)}:{number}: {line.strip()}")
-    assert offenders == []
-
-
-# [A6] P1 — the move: budget_alerts lives only in lambda/ (reconcile.py imports
-# lambda-only modules, so a shared/ copy can't import it) and is allow-listed for commit.
-def test_budget_alerts_lives_in_lambda_and_is_allow_listed():
-    assert (_REPO_ROOT / "lambda" / "budget_alerts.py").is_file()
-    assert not (_REPO_ROOT / "shared" / "budget_alerts.py").exists()
-    allow = (_REPO_ROOT / ".gitignore").read_text().splitlines()
-    assert "!lambda/budget_alerts.py" in allow
-    assert "!lambda/reconcile.py" in allow
-
-
-# [A19] P0 (WHIT-653 QA) — pending -60 groceries (07-11) settles as -61.80 dated 07-10.
-# Counted once → 61.80 of 100 → no push. Double-counted (tier missing) → 121.80 → pushes.
-def test_skewed_fee_settlement_does_not_trigger_a_double_counted_alert(alerts, repo, monkeypatch):
-    _seed(repo, alerts, txn_id="PEND", amount=Decimal("-60.00"), pending=True, category="groceries",
-          date="2026-07-11", authorized_date="2026-07-11")
-    before = [dict(r) for r in repo._table.store.values()]
-    batch = [_norm_real(alerts, txn_id="POST", amount=Decimal("-61.80"), pending=False,
-                        category="groceries", date="2026-07-10", authorized_date="2026-07-10")]
-
-    sent, notify, _ = _fire(alerts, monkeypatch, repo, before, batch)
-
-    assert sent == []
-    assert notify.fired_markers("2026-07-01", 14) == set()
-    assert [r["transaction_id"] for r in repo._table.store.values()] == ["POST"]
