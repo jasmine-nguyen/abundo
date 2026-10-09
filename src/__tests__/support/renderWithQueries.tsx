@@ -50,8 +50,11 @@ export async function refreshInAct(refresh: () => unknown) {
   });
 }
 
-/** Wait until no query is fetching. */
-export const settle = () => waitFor(() => expect(queryClient.isFetching()).toBe(0));
+/** Wait until no query is fetching, then flush the redraw their results queued. */
+export async function settle() {
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await refreshInAct(() => undefined);
+}
 
 /** Wait until one query has loaded. */
 export const loaded = (queryKey: readonly unknown[]) =>
@@ -61,7 +64,6 @@ export const loaded = (queryKey: readonly unknown[]) =>
 export async function renderWithQueries(ui: React.ReactElement) {
   const view = render(<WithQueries>{ui}</WithQueries>);
   await settle();
-  await refreshInAct(() => undefined);
   return view;
 }
 
@@ -74,7 +76,6 @@ export function drawHeld(ui: React.ReactElement) {
 export async function releaseAndSettle(held: { release: () => void }) {
   await act(async () => { held.release(); });
   await settle();
-  await refreshInAct(() => undefined);
 }
 
 /**
@@ -84,11 +85,10 @@ export async function releaseAndSettle(held: { release: () => void }) {
  */
 export async function renderLoaded(ui: React.ReactElement, Wrapper: React.ComponentType<{ children: React.ReactNode }> = WithQueries) {
   const view = render(<Wrapper><React.Fragment key="loading">{ui}</React.Fragment></Wrapper>);
-  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  await settle();
   await act(async () => {
     view.rerender(<Wrapper><React.Fragment key="loaded">{ui}</React.Fragment></Wrapper>);
   });
   await settle();
-  await refreshInAct(() => undefined);
   return view;
 }

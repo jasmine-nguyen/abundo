@@ -7,7 +7,7 @@ import React from 'react';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { Category } from '../types';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, refreshInAct } from './support/renderWithQueries';
+import { useTestQueryClient } from './support/renderWithQueries';
 import { renderWithApp, shownToasts, resetAppProbe } from './support/renderWithApp';
 import { resetAuth, setAuthStatus } from './support/authMock';
 
@@ -26,7 +26,6 @@ const LIVING = (id: string, name: string, parent: string | null = null): Categor
 async function drawEdit(categories: Category[]) {
   server.seed('/categories', categories);
   await renderWithApp(<CategoryEdit />);
-  await refreshInAct(() => undefined);
 }
 
 beforeEach(() => {

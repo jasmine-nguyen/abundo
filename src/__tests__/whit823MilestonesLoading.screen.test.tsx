@@ -59,7 +59,6 @@ it('Home loan: Retry after a failed milestones read brings back the plan card', 
   await renderWithQueries(<Mortgage />);
   await act(async () => { fireEvent.press(screen.getByTestId('milestones-retry')); });
   await settle();
-  await refreshInAct(() => undefined);
   expect(screen.queryByTestId('milestones-retry')).toBeNull();
   expect(screen.getByText(/milestones reached|Your payoff plan/)).toBeTruthy();
   expect(screen.queryByText(INVITE)).toBeNull();
@@ -97,7 +96,6 @@ it('Milestone detail: Retry after a failed milestones read brings back the plan'
   await renderWithQueries(<Milestone />);
   await act(async () => { fireEvent.press(screen.getByTestId('milestone-plan-retry')); });
   await settle();
-  await refreshInAct(() => undefined);
   expect(screen.queryByTestId('milestone-plan-retry')).toBeNull();
   expect(screen.getByText('Your payoff plan')).toBeTruthy();
 });

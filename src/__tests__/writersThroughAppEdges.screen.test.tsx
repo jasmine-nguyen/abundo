@@ -118,7 +118,6 @@ describe('Category edit save through the real saveCategory', () => {
   async function drawEdit() {
     setParams({ categoryId: 'coffee' });
     await renderWithApp(<CategoryEdit />);
-    await refreshInAct(() => undefined);
   }
 
   // [A6] (P0) a blocked save (the list failed to load) sends NO write at all — not a PATCH, and

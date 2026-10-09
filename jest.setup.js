@@ -10,6 +10,11 @@
 // screen suites red under the sharded coverage run.
 jest.setTimeout(15000);
 
+// WHIT-842: RNTL's 1s default for waitFor/findBy* is too short under a full parallel screen run
+// (a late fetch → redraw failed a random suite). 5s stays well below the 15s ceiling, so a real
+// hang still fails.
+require('@testing-library/react-native').configure({ asyncUtilTimeout: 5000 });
+
 // The date picker is a native view; render a lightweight stand-in that still fires
 // onChange, so the pay-cycle sheet can be tested headlessly.
 jest.mock('@react-native-community/datetimepicker', () => {
