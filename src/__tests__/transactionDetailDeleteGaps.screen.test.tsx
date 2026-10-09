@@ -129,17 +129,23 @@ it('deleting the ONLY cached charge never flashes the empty/loading states befor
   await refreshInAct(() => reload.release());
 });
 
-// WHIT-843: leaving saves an edited note, but not after a delete — the charge is gone.
-it('after a successful delete, leaving does not save an edited note', async () => {
-  mockDeleteTransaction.mockResolvedValue(true);
+// WHIT-843: leaving saves an edited note, but not after a delete — the charge is gone. A FAILED
+// delete keeps the charge, so leaving still saves the note. [A2]
+it.each([
+  { result: 'succeeds', ok: true, backs: 1, saves: 0 },
+  { result: 'fails', ok: false, backs: 0, saves: 1 },
+])('when the delete $result, leaving saves the edited note $saves time(s)', async ({ ok, backs, saves }) => {
+  let finish: (done: boolean) => void = () => {};
+  mockDeleteTransaction.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
   const view = await draw();
   fireEvent.changeText(screen.getByTestId('note-input'), 'edited');
 
-  await refreshInAct(() => { openConfirm().confirm.onPress?.(); });
+  await refreshInAct(() => { openConfirm().confirm.onPress?.(); });  // the screen draws mid-delete
+  await refreshInAct(() => finish(ok));
   view.unmount();
 
-  expect(routerSpies.back).toHaveBeenCalledTimes(1);
-  expect(mockEdit).not.toHaveBeenCalled();
+  expect(routerSpies.back).toHaveBeenCalledTimes(backs);
+  expect(mockEdit).toHaveBeenCalledTimes(saves);
 });
 
 // [C6]

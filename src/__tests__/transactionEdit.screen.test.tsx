@@ -90,10 +90,12 @@ it.each([
 
   if (saved === null) {
     expect(mockEdit).not.toHaveBeenCalled();
+    expect(mockToast).not.toHaveBeenCalled();
     return;
   }
   expect(mockEdit).toHaveBeenCalledTimes(1);
   expect(mockEdit).toHaveBeenCalledWith('t1', { notes: saved });
+  expect(mockToast).toHaveBeenCalledWith('Note saved'); // [A1] sign-off Q1: say it was saved
 });
 
 it('saves the note exactly once per Save tap', async () => {
