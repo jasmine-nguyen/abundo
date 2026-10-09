@@ -15,7 +15,7 @@ let mockState: AppContext;
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { colorForCategory } from '../categoryColors';
+import { chartCategoryColor } from '../chartColors';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
@@ -148,7 +148,7 @@ describe('picker tree — gaps (WHIT-273)', () => {
       const child = rowStyle('Dining');
       expect(child.marginLeft).toBe(18);
       expect(child.borderLeftWidth).toBe(2);
-      expect(child.borderLeftColor).toBe(colorForCategory('dining'));
+      expect(child.borderLeftColor).toBe(chartCategoryColor('dining'));
       expect(child.paddingLeft).toBe(11);
     });
 

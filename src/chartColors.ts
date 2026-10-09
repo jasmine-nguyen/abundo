@@ -3,8 +3,8 @@
 // one family — no slice jumps out on weight the way the old mixed-weight hues did. Verbatim from
 // Design; do NOT hand-tune individual hexes (they are a computed set — changing one breaks parity).
 //
-// Scope: this recolours the Insights pie + its category rows only. Budgets / Transactions still read
-// the app-wide `colorForCategory` (src/categoryColors.ts); rolling this out everywhere is a follow-up.
+// Scope: the app-wide category palette (WHIT-836). toCategory sets every Category.color from
+// chartCategoryColor, so Budgets, Transactions and Insights paint a category the same colour.
 export const CATEGORY_COLORS = [
   '#f98f98', '#f9927e', '#f49964', '#e8a24f', '#d2ae45', '#b5bb51', '#8ec56f',
   '#6eca89', '#4ccda3', '#25cdbd', '#0bcbd3', '#25c7e6', '#47c1f5', '#65baff',
@@ -91,14 +91,14 @@ export const BUILTIN_CATEGORY_INDEX: Record<string, number> = {
 
 // Stable djb2 hash → a ramp slot for an UNKNOWN (user-created) id. Two custom ids can collide (rare,
 // and unknowable at build time — acceptable); we hash across the full ramp so custom categories stay
-// as distinct from each other as possible. Also picks categoryColors' darker sibling.
-export function categoryColorHash(id: string): number {
+// as distinct from each other as possible.
+function categoryColorHash(id: string): number {
   let h = 5381;
   for (let i = 0; i < id.length; i++) h = ((h << 5) + h + id.charCodeAt(i)) | 0;
   return Math.abs(h);
 }
 
-// A category's chart colour on the Insights screen.
+// A category's colour on every screen (toCategory sets Category.color from this).
 // PREFERRED: its stored, permanent `colorSlot` resolved through ASSIGNMENT_ORDER — assigned once
 // server-side, so adding or deleting a category can never repaint another one. ONE exception,
 // once per account: accounts that migrated before the server spread its colours are levelled a

@@ -14,7 +14,6 @@ import { AiCoachCard } from '../../src/components/AiCoachCard';
 import { SpendingDonut } from '../../src/components/SpendingDonut';
 import { EarnedVsSpent } from '../../src/components/EarnedVsSpent';
 import { SegmentedControl } from '../../src/components/SegmentedControl';
-import { chartCategoryColor } from '../../src/chartColors';
 import { toggleIn, visibleTreeRows } from '../../src/setutil';
 
 export default function Insights() {
@@ -27,23 +26,13 @@ export default function Insights() {
   // `incomeSources = []` default: the real hook always returns an array, but the default keeps a
   // hand-mocked test harness that omits it from throwing on `.length` (WHIT-381).
   const { breakdown, earned, incomeSources = [], category, isLoading, isError, categoriesError, refetch, refetchStale } = useInsightsScreenData(cycle);
-  // Recolour the Insights pie + rows from the chart palette: wrap the category accessor so its
-  // `color` comes from the category's PERMANENT server-assigned slot (falling back to the id-derived
-  // colour when a category has no slot yet), then feed that to the breakdown selectors. The pie
-  // slices, row icons, chips, and bars all read the wrapped colour — so this screen recolours
-  // consistently while Budgets / Transactions keep the app-wide `colorForCategory` untouched.
-  const chartCategory = useCallback((id: string) => {
-    const c = category(id);
-    if (!c) return c;
-    return { ...c, color: chartCategoryColor(id, { slot: c.colorSlot }) };
-  }, [category]);
-  const { rows, total } = categoryBreakdown({ breakdown, category: chartCategory });
+  const { rows, total } = categoryBreakdown({ breakdown, category });
 
   // WHIT-373: one list, a switch. "Spending" shows the category breakdown; "Earning" shows the same
   // cycle's income sources. Default is Spending. `side` is clamped to 'spending' whenever the toggle
   // is hidden (nothing to switch to), so an income-only cycle a user last left on Earning can't come
   // back to a blank hidden-toggle screen.
-  const { rows: incomeRows } = incomeBreakdown({ incomeSources, earned, category: chartCategory });
+  const { rows: incomeRows } = incomeBreakdown({ incomeSources, earned, category });
   // Each source's share of total income drives its green bar. Denominator is the shown positive
   // income (a reversed source or the muted plug adds no bar), so the bars read as a share of income.
   const incomeShareTotal = incomeRows.reduce((sum, r) => (r.muted || r.amount < 0 ? sum : sum + r.amount), 0);
