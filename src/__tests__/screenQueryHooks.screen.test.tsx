@@ -55,7 +55,7 @@ it('useBudgetDetailScreenData assembles the budget list + budgets + categories f
   await waitFor(() => expect(result.current.isLoading).toBe(false));
   expect(result.current.cycleLen).toBe(30);
   expect(result.current.category('coffee')?.name).toBe('Coffee');
-  expect(result.current.budgets).toEqual([{ id: 'coffee', budget: 100, posted: 40, pending: 10, rollover: false, carryover: 0, carryoverCycles: [], carryoverEarlier: 0, spreadAdjustment: 0 }]);
+  expect(result.current.budgets).toEqual([{ id: 'coffee', budget: 100, posted: 40, pending: 10, rollover: false, carryover: 0, carryoverCycles: [], carryoverEarlier: 0, spreadAdjustment: 0, available: 100 }]);
   expect(server.sent('GET', COFFEE_BUDGET_TX).length).toBeGreaterThanOrEqual(1); // the list is fetched per-budget
   expect(result.current.transactions).toHaveLength(1);
   expect(result.current.isError).toBe(false);

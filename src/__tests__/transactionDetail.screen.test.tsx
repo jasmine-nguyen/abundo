@@ -7,7 +7,7 @@ import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
-import { txn } from './factory';
+import { budgetRow, txn } from './factory';
 import type { Transaction } from '../types';
 import type { BudgetRollup, RuleRecord } from '../api';
 
@@ -246,7 +246,7 @@ describe('spread this bill prompt', () => {
   it('active plan → shows "Edit or remove" and routes with NO prefill (never a second plan)', async () => {
     seedSpend();
     server.seed('/budgets', {
-      coffee: rollup({ target: 100, posted: 0, pending: 0, spread: { amount: 200, cycles: 4, index: 1, adjustment: -50 } }),
+      coffee: rollup(budgetRow({ target: 100, posted: 0, pending: 0, spread: { amount: 200, cycles: 4, index: 1, adjustment: -50 } })),
     });
     await draw();
 

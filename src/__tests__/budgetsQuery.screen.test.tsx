@@ -13,6 +13,7 @@ import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
 import { pinToday } from './support/clock';
+import { budgetRow } from './factory';
 import { pullControl, pullAndSettle } from './support/pull';
 import { styleOf } from './support/layout';
 
@@ -526,7 +527,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     // carryover -80 → available = 100 + (-80) = 20; spent 50 > 20 → totRemain -30. Modest raw spend,
     // but the borrowed envelope is blown — proves the hero total is built on `available`, not target.
     server.seed('/budgets', {
-      coffee: { target: 100, posted: 50, pending: 0, rollover: true, carryover: -80 },
+      coffee: budgetRow({ target: 100, posted: 50, pending: 0, rollover: true, carryover: -80 }),
     });
     await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();

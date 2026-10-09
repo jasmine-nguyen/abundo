@@ -11,6 +11,7 @@ import { routerSpies, resetRouter, setParams } from './support/routerMock';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { pinToday } from './support/clock';
+import { budgetRow } from './factory';
 import { seedBudgets, renderBudgets, renderLoadedBudgets, heroTotals, renderLoadedBudgetsWithQueries, BUDGET_PAY_CYCLE, showBudgets, sidePadding, showTwoRows, showRows, tickBandOf, tickBandHeight, noteOffsetBelowBar } from './support/budgetsScreen';
 import { MINUS, C } from '../theme';
 import { refreshInAct, renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
@@ -335,7 +336,7 @@ describe('WHIT-712 quiet budget rows', () => {
   // WHIT-712 — the Budgets tab rows on screen: an on-pace row is quiet (no "on pace"), an
   // over-budget row says the overspend once, and rows never show carried-over / borrowed text.
   // 14-day cycle, 7 days left → halfway, so a $100 budget's pace target is $50.
-  const seed = (coffee: Record<string, unknown>) => seedBudgetsTab(server, { coffee });
+  const seed = (coffee: object) => seedBudgetsTab(server, { coffee });
 
   it('an on-pace row shows the money line and no pace line', async () => {
     seed({ target: 100, posted: 50, pending: 0 });
@@ -353,7 +354,7 @@ describe('WHIT-712 quiet budget rows', () => {
   });
 
   it('a rollover row shows no carried-over or borrowed text', async () => {
-    seed({ target: 100, posted: 0, pending: 0, rollover: true, carryover: 200 });
+    seed(budgetRow({ target: 100, posted: 0, pending: 0, rollover: true, carryover: 200 }));
     await renderLoadedBudgetsWithQueries();
     expect(screen.queryByText(/carried over|borrowed|short from|left over from/)).toBeNull();
   });
@@ -585,7 +586,7 @@ describe('WHIT-716 top card spent and over lines', () => {
   describe('WHIT-716 QA — money format', () => {
     // [A5] (P0) rollover cents show on Spent and Budget, like the big number (WHIT-735)
     it('[A5] rollover cents: Spent "$50.40" of "$100.40", big number "$50"', async () => {
-      await showBudgets(server, { coffee: { target: 100, posted: 50.4, pending: 0, rollover: true, carryover: 0.4 } }, { categories: [COFFEE] });
+      await showBudgets(server, { coffee: budgetRow({ target: 100, posted: 50.4, pending: 0, rollover: true, carryover: 0.4 }) }, { categories: [COFFEE] });
       expect(heroTotals()).toMatchObject({ spent: '$50.40', budget: '$100.40' });
       expect(screen.getAllByText('$50')).toHaveLength(2); // card's money + the row's left
       expect(screen.getByText('Left to spend')).toBeTruthy();
@@ -732,7 +733,7 @@ describe('WHIT-728 rollover and spread rows', () => {
   it('a payback row shows "$617.75 of −$659" and the spread note; the top card budget keeps the minus', async () => {
     seedBudgetsTab(server, {
       // $41 target − $700 payback slice → this cycle's budget is −$659.
-      coffee: { target: 41, posted: 617.75, pending: 0, spread: { amount: 2100, cycles: 3, index: 1, adjustment: -700 } },
+      coffee: budgetRow({ target: 41, posted: 617.75, pending: 0, spread: { amount: 2100, cycles: 3, index: 1, adjustment: -700 } }),
     });
     await renderLoadedBudgetsWithQueries();
     expect(screen.getByText(`$617.75 of ${MINUS}$659`)).toBeTruthy();
@@ -742,7 +743,7 @@ describe('WHIT-728 rollover and spread rows', () => {
 
   it('an on-pace row with a spread cushion still draws the note under the bar', async () => {
     seedBudgetsTab(server, {
-      coffee: { target: 100, posted: 150, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } },
+      coffee: budgetRow({ target: 100, posted: 150, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } }),
     });
     await renderLoadedBudgetsWithQueries();
     expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes spread bills');
@@ -756,7 +757,7 @@ describe('WHIT-728 rollover and spread rows', () => {
     seedBudgetsTab(server, {
       // $100 + $200 cushion = $300 available; pace runs on the $100 target, so $250 spent is behind,
       // with little room left per day.
-      coffee: { target: 100, posted: 250, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } },
+      coffee: budgetRow({ target: 100, posted: 250, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } }),
     });
     await renderLoadedBudgetsWithQueries();
     expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes spread bills');
@@ -772,7 +773,7 @@ describe('WHIT-730 Budgets polish', () => {
   it('a $0 budget is a slim row with no bar that keeps its note and still opens the budget', async () => {
     await showRows(server, {
       // Nothing spent; a spread cushion makes this cycle's budget $300 and adds the note.
-      coffee: { target: 100, posted: 0, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } },
+      coffee: budgetRow({ target: 100, posted: 0, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } }),
       groceries: { target: 100, posted: 30, pending: 0 },
     });
 
@@ -833,7 +834,7 @@ describe('WHIT-730 Budgets polish', () => {
 
     it('[A17] (P1) a $0 row with a note shows it at 12pt', async () => {
       seedBudgetsTab(server, {
-        coffee: { target: 100, posted: 0, pending: 0, rollover: true, carryover: 40 },
+        coffee: budgetRow({ target: 100, posted: 0, pending: 0, rollover: true, carryover: 40 }),
       }, [COFFEE]);
       await renderLoadedBudgetsWithQueries();
       const note = await screen.findByTestId('budget-row-note-coffee');
@@ -1132,7 +1133,7 @@ describe('WHIT-741 Budgets polish', () => {
 
   it('the "Includes …" note is a little brighter than the dim sub-line', async () => {
     seedBudgetsTab(server, {
-      coffee: { target: 100, posted: 150, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } },
+      coffee: budgetRow({ target: 100, posted: 150, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } }),
     });
     await renderLoadedBudgetsWithQueries();
 
@@ -1162,7 +1163,7 @@ describe('WHIT-741 Budgets polish', () => {
 
     it('[A14] a note-only row has the short tick band', async () => {
       seedBudgetsTab(server, {
-        coffee: { target: 100, posted: 20, pending: 0, rollover: true, carryover: 40 },
+        coffee: budgetRow({ target: 100, posted: 20, pending: 0, rollover: true, carryover: 40 }),
       });
       await renderLoadedBudgetsWithQueries();
       expect(screen.getByTestId('budget-row-note-coffee')).toBeTruthy();
@@ -1208,7 +1209,7 @@ describe('WHIT-741 Budgets polish', () => {
     });
 
     it('[A18] hero "−$" amounts carry the word joiner', async () => {
-      seedBudgetsTab(server, { coffee: { target: 100, posted: 120.5, pending: 0, spreadAdjustment: -150, spread: { amount: 450, cycles: 3, index: 1, adjustment: -150 } } });
+      seedBudgetsTab(server, { coffee: budgetRow({ target: 100, posted: 120.5, pending: 0, spread: { amount: 450, cycles: 3, index: 1, adjustment: -150 } }) });
       await renderLoadedBudgetsWithQueries();
       expect(heroTotals().budget).toBe(`${MINUS}$50`);
       expect(screen.getByText(`${MINUS}$170.50`)).toBeTruthy();
@@ -1429,7 +1430,7 @@ describe('WHIT-743 large text', () => {
   // Groceries $25 of $100 + $200 spread → the spread note. Totals $105 of $400 → "$295".
   const showSpreadRows = () => showRows(server, {
     coffee: { target: 100, posted: 70, pending: 10 },
-    groceries: { target: 100, posted: 25, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } },
+    groceries: budgetRow({ target: 100, posted: 25, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } }),
   });
 
   const coffeeRow = () => within(screen.getByTestId('budget-row-coffee'));
@@ -1543,8 +1544,8 @@ describe('WHIT-744 quiet budget rows', () => {
   // Halfway through a 14-day cycle. Coffee: $80 ($10 pending) of $105 → under budget but spending too fast, ticked, "Includes $5 past
   // leftovers". Groceries: $150 of $50 → over, no tick, "Includes $50 past overspend".
   const showTickAndOver = () => showRows(server, {
-    coffee: { target: 100, posted: 70, pending: 10, rollover: true, carryover: 5 },
-    groceries: { target: 100, posted: 150, pending: 0, rollover: true, carryover: -50 },
+    coffee: budgetRow({ target: 100, posted: 70, pending: 10, rollover: true, carryover: 5 }),
+    groceries: budgetRow({ target: 100, posted: 150, pending: 0, rollover: true, carryover: -50 }),
   });
 
   it('rows show no pending or plan line, keep a short tick, and put every note the same distance below the bar', async () => {
@@ -1592,8 +1593,8 @@ describe('WHIT-744 quiet budget rows', () => {
       // Coffee: $105 of $105 ($100 + $5 leftovers) → $0 left, not over, no tick. Groceries: $25 of $300
       // with a $200 spread → ticked, "Includes spread bills".
       await showRows(server, {
-        coffee: { target: 100, posted: 105, pending: 0, rollover: true, carryover: 5 },
-        groceries: { target: 100, posted: 25, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } },
+        coffee: budgetRow({ target: 100, posted: 105, pending: 0, rollover: true, carryover: 5 }),
+        groceries: budgetRow({ target: 100, posted: 25, pending: 0, spread: { amount: 600, cycles: 3, index: 0, adjustment: 200 } }),
       });
       expect(screen.getByTestId('budget-row-note-coffee').props.children).toBe('Includes $5 past leftovers');
       expect(screen.getByTestId('budget-row-note-groceries').props.children).toBe('Includes spread bills');

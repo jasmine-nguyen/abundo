@@ -2876,7 +2876,7 @@ export function budgetSpreadEligibility(
     return { entry: 'hidden', overspend: 0 };
   }
   if (budget.spread) return { entry: 'edit', overspend: 0 };
-  // Matches budgetDetail's spendable envelope exactly (WHIT-549 server value, else the parts-sum).
+  // Matches budgetDetail's spendable envelope exactly (the WHIT-549 server value).
   const available = availableToSpend(budget);
   const spent = budget.posted + budget.pending;
   const overspend = Math.round(Math.max(0, spent - available) * 100) / 100;

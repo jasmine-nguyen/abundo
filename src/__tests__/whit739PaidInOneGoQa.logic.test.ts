@@ -60,7 +60,7 @@ describe('budgetDetail — envelope bigger than the base budget', () => {
     expect(d.statusLabel).toBe('On track for payday');
     expect(d.statusColor).toBe(C.good);
   });
-  // [A4b] the server-computed available wins over the parts-sum.
+  // [A4b] the server-computed available is the envelope.
   it('server available: one charge using it all → quiet; a dollar short of it → still muted', () => {
     expect(detail({ posted: 3800, available: 3800 }, [charge('a', 3800)]).statusLabel).toBe('On track for payday');
     expect(detail({ posted: 3799, available: 3800 }, [charge('a', 3799)]).statusLabel).toBe('Over plan — ease up');

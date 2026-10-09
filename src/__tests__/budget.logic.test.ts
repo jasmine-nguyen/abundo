@@ -587,9 +587,8 @@ describe('budgetViews sub-category tree — gaps (WHIT-221)', () => {
 });
 
 // The spendable "available" is now computed server-side and read straight off the Budget
-// (WHIT-549). The client keeps a fallback (target + cushion) only for a server that predates
-// the field. These pin: the server value wins when present, the fallback fires when absent,
-// and a legitimate server 0 is honoured (guarded with `??`, not `||`).
+// (WHIT-549); the client never adds up target + cushion itself (WHIT-840). These pin: the server
+// value is the envelope, and a legitimate server 0 is honoured.
 describe('budgetViews — server-computed available (WHIT-549)', () => {
   it('uses the server available when present, not the client parts-sum', () => {
     // budget 100 but the server sends available 500 (a big smoothing cushion). The row spends the
@@ -599,14 +598,6 @@ describe('budgetViews — server-computed available (WHIT-549)', () => {
       cycleLen: 14, daysLeft: 7 })).rows[0];
     expect(row.remainAmount).toBe('$500');
     expect(row.spentLabel).toBe('$0 of\u00a0$500');
-  });
-
-  it('falls back to the parts-sum when the server omits available', () => {
-    // available undefined (old server): envelope = budget + carryover = 100 + 200.
-    const row = budgetViews(makeState({ categories: [cat()],
-      budgets: [budget({ budget: 100, posted: 0, pending: 0, rollover: true, carryover: 200 })],
-      cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(row.remainAmount).toBe('$300');
   });
 
   it('honours a server available of 0 (?? not ||): a smoothed-away envelope, not the target', () => {

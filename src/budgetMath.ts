@@ -4,10 +4,9 @@ import type { Budget } from './model';
 import { elapsedFrac } from './payCycle';
 import type { Transaction } from './types';
 
-// Prefer the server-computed spendable (WHIT-549); fall back to the old parts-sum only when the
-// server omits it. `??` (not `||`) so a legitimate server 0 is kept.
-export function availableToSpend(budget: Pick<Budget, 'available' | 'budget' | 'rollover' | 'carryover' | 'spreadAdjustment'>): number {
-  return budget.available ?? (budget.budget + (budget.rollover ? budget.carryover : 0) + budget.spreadAdjustment);
+// The server-computed spendable (WHIT-549); the app never adds up the parts itself (WHIT-840).
+export function availableToSpend(budget: Pick<Budget, 'available'>): number {
+  return budget.available;
 }
 
 // How much of the base target should be spent by now, at an even pace through the cycle.

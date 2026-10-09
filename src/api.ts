@@ -695,8 +695,8 @@ export interface BudgetRollup {
   // A category has rollover OR a spread, never both. Absent = no plan; the client defaults it.
   spread?: SpreadPlan;
   // The spendable this cycle, computed server-side on the unified Smoothing model (WHIT-549):
-  // target + this-cycle cushion (rollover carryover OR spread adjustment). Absent on a server
-  // that predates this field — the client falls back to computing it from the parts above.
+  // target + this-cycle cushion (rollover carryover OR spread adjustment). Absent on past-cycle
+  // /transactions/cycle budgets — toBudget fills it with the target there.
   available?: number;
 }
 
