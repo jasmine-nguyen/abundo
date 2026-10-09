@@ -8,9 +8,9 @@ the "no cap", progress, failure, and idempotency behaviours are exercised for re
 """
 
 from _feed_fakes import (
-    SPENDING, FakeCategoryRepo, fail_writes, real_repos, _row, stored, vanish_on_write,
+    SPENDING, FakeCategoryRepo, fail_writes, _row, stored, vanish_on_write,
 )
-from _job_fakes import progress_writes, real_job_repo
+from _job_fakes import progress_writes, wire_apply_rules_worker
 
 
 def _rule(value, category_id="groceries"):
@@ -19,26 +19,12 @@ def _rule(value, category_id="groceries"):
             "category_id": category_id}
 
 
-def _wire(worker, monkeypatch, *, transactions, rules, categories=frozenset({"groceries"})):
-    """Point the worker's repo constructors at real repos over one FakeTable.
-
-    Returns (table, job_repo)."""
-    table, txn_repo, rule_repo = real_repos(transactions, rules=rules)
-    job_repo = real_job_repo()
-    job_repo.create_job("job1")
-    monkeypatch.setattr(worker, "TransactionRepository", lambda: txn_repo)
-    monkeypatch.setattr(worker, "CategoryRepository", lambda: FakeCategoryRepo(categories))
-    monkeypatch.setattr(worker, "RuleRepository", lambda: rule_repo)
-    monkeypatch.setattr(worker, "JobRepository", lambda: job_repo)
-    return table, job_repo
-
-
 def test_worker_files_the_whole_backlog_past_the_300_cap(apply_rules_worker, monkeypatch):
     worker = apply_rules_worker
     rows = [_row(SPENDING, "2026-07-01", f"t{i}", description="COLES")
             for i in range(900)]
-    table, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: rows},
-                               rules=[_rule("COLES")])
+    table, _, job_repo = wire_apply_rules_worker(
+        worker, monkeypatch, transactions={SPENDING: rows}, rules=[_rule("COLES")])
 
     result = worker.lambda_handler({"jobId": "job1"})
 
@@ -55,7 +41,8 @@ def test_worker_records_progress_as_it_files(apply_rules_worker, monkeypatch):
     worker = apply_rules_worker
     rows = [_row(SPENDING, "2026-07-01", f"t{i}", description="COLES")
             for i in range(120)]
-    _, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: rows}, rules=[_rule("COLES")])
+    _, _, job_repo = wire_apply_rules_worker(
+        worker, monkeypatch, transactions={SPENDING: rows}, rules=[_rule("COLES")])
 
     worker.lambda_handler({"jobId": "job1"})
 
@@ -69,7 +56,8 @@ def test_worker_records_progress_as_it_files(apply_rules_worker, monkeypatch):
 
 def test_worker_marks_the_job_failed_when_a_read_raises(apply_rules_worker, monkeypatch):
     worker = apply_rules_worker
-    _, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: []}, rules=[_rule("COLES")])
+    _, _, job_repo = wire_apply_rules_worker(
+        worker, monkeypatch, transactions={SPENDING: []}, rules=[_rule("COLES")])
     # A DB fault reading the taxonomy: the worker must end the job "failed" (with the error), not
     # leave it stuck "running" until its TTL.
     from repository_errors import DatabaseError
@@ -87,8 +75,8 @@ def test_worker_is_idempotent_on_a_second_run(apply_rules_worker, monkeypatch):
     worker = apply_rules_worker
     rows = [_row(SPENDING, "2026-07-01", f"t{i}", description="COLES")
             for i in range(5)]
-    table, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: rows},
-                               rules=[_rule("COLES")])
+    table, _, job_repo = wire_apply_rules_worker(
+        worker, monkeypatch, transactions={SPENDING: rows}, rules=[_rule("COLES")])
 
     worker.lambda_handler({"jobId": "job1"})
     first_writes = len(table.update_calls)
@@ -108,7 +96,8 @@ def test_worker_is_idempotent_on_a_second_run(apply_rules_worker, monkeypatch):
 def test_worker_with_an_inline_rule_mints_it_and_records_created_rule(apply_rules_worker, monkeypatch):
     worker = apply_rules_worker
     rows = [_row(SPENDING, "2026-07-01", "t1", description="COLES")]
-    table, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: rows}, rules=[])
+    table, _, job_repo = wire_apply_rules_worker(
+        worker, monkeypatch, transactions={SPENDING: rows}, rules=[])
 
     result = worker.lambda_handler(
         {"jobId": "job1", "rule": {"value": "COLES", "categoryId": "groceries", "budgetExcluded": False}})
@@ -124,7 +113,8 @@ def test_worker_saves_created_rule_in_the_app_shape_without_spread_seeded(apply_
     # internal spreadSeeded flag the matcher's shape carries must not leak into it.
     worker = apply_rules_worker
     rows = [_row(SPENDING, "2026-07-01", "t1", description="COLES")]
-    _, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: rows}, rules=[])
+    _, _, job_repo = wire_apply_rules_worker(
+        worker, monkeypatch, transactions={SPENDING: rows}, rules=[])
 
     worker.lambda_handler(
         {"jobId": "job1", "rule": {"value": "COLES", "categoryId": "groceries", "budgetExcluded": False}})
@@ -136,9 +126,9 @@ def test_worker_saves_created_rule_in_the_app_shape_without_spread_seeded(apply_
 
 def test_worker_succeeds_with_no_rules(apply_rules_worker, monkeypatch):
     worker = apply_rules_worker
-    _, job_repo = _wire(worker, monkeypatch,
-                        transactions={SPENDING: [_row(SPENDING, "2026-07-01", "t1")]},
-                        rules=[])
+    _, _, job_repo = wire_apply_rules_worker(
+        worker, monkeypatch, transactions={SPENDING: [_row(SPENDING, "2026-07-01", "t1")]},
+        rules=[])
 
     result = worker.lambda_handler({"jobId": "job1"})
     assert result["status"] == "succeeded"
@@ -152,9 +142,9 @@ def test_worker_inline_run_files_only_that_shop_stamped_with_the_minted_rule(
     # instead of created_rule["id"] and t1 carries no stamp.
     rows = [_row(SPENDING, "2026-07-01", "t1", description="COLES"),
             _row(SPENDING, "2026-07-02", "t2", description="UBER")]
-    table, job_repo = _wire(apply_rules_worker, monkeypatch, transactions={SPENDING: rows},
-                            rules=[_rule("uber", "petrol")],
-                            categories=frozenset({"groceries", "petrol"}))
+    table, _, job_repo = wire_apply_rules_worker(
+        apply_rules_worker, monkeypatch, transactions={SPENDING: rows},
+        rules=[_rule("uber", "petrol")], categories=frozenset({"groceries", "petrol"}))
 
     apply_rules_worker.lambda_handler(
         {"jobId": "job1", "rule": {"value": "COLES", "categoryId": "groceries",
@@ -175,8 +165,8 @@ def test_worker_clears_a_500_row_reconcile_tail_the_300_cap_would_leave(apply_ru
                     category="oldcat", filed_by_rule="r_dead") for i in range(500)]
     # A live rule must exist (else the worker returns before the write phase) but it targets COLES,
     # so it matches NONE of the MYER orphans — the only writes are reconcile clears.
-    table, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: orphans},
-                            rules=[_rule("COLES")])
+    table, _, job_repo = wire_apply_rules_worker(
+        worker, monkeypatch, transactions={SPENDING: orphans}, rules=[_rule("COLES")])
 
     result = worker.lambda_handler({"jobId": "job1"})
 
@@ -209,9 +199,9 @@ def test_worker_counts_filed_vanished_failed_and_alreadyfiled_in_one_sweep(apply
         # Store holds the bank's raw label (still unfiled); the scan is behind and shows None.
         _row(SPENDING, "2026-07-01", "c1", description="COLES", category="RAW-EFTPOS"),
     ]
-    table, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: rows},
-                            rules=[_rule("COLES")],
-                            categories=frozenset({"groceries", "coffee"}))
+    table, _, job_repo = wire_apply_rules_worker(
+        worker, monkeypatch, transactions={SPENDING: rows}, rules=[_rule("COLES")],
+        categories=frozenset({"groceries", "coffee"}))
     vanish_on_write(table, "v1")
     fail_writes(table, "e1")
     # Make a1/c1 planned (scan shows them unfiled) while the store holds the changed value.

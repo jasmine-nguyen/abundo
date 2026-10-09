@@ -9,7 +9,7 @@ from functools import partial
 
 from _budget_endpoint_fakes import _FakePayCycleRepo
 from _feed_fakes import apply_rules_event, SPENDING, FakeCategoryRepo, real_repos, _row, stored
-from _job_fakes import real_job_repo
+from _job_fakes import wire_apply_rules_worker
 
 
 def _spread_rule(value="ORIGIN", category_id="insurance", *, spread=True):
@@ -39,14 +39,18 @@ class FakeBudget:
 FakePaycycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-01-07")
 
 
-def _call(handler, rows, rules, *, budget=None, paycycle=None,
-          categories=frozenset({"insurance", "coffee"})):
-    """Run the sweep; returns (table, the stored rule after the run)."""
-    table, repo, rule_repo = real_repos({SPENDING: rows}, rules=rules)
-    [rule] = rule_repo.list_rules()
-    handler.apply_rules_to_uncategorized(
+def _sweep(handler, repo, rule_repo, *, budget=None, paycycle=None,
+           categories=frozenset({"insurance", "coffee"})):
+    return handler.apply_rules_to_uncategorized(
         apply_rules_event({"dryRun": False}), repo, FakeCategoryRepo(categories), rule_repo,
         budget or FakeBudget(), paycycle or FakePaycycle())
+
+
+def _call(handler, rows, rules, **sweep_kwargs):
+    """Run the sweep over fresh repos; returns (table, the stored rule after the run)."""
+    table, repo, rule_repo = real_repos({SPENDING: rows}, rules=rules)
+    [rule] = rule_repo.list_rules()
+    _sweep(handler, repo, rule_repo, **sweep_kwargs)
     return table, rule_repo.get_rule(rule["id"])
 
 
@@ -83,13 +87,6 @@ def _seeded(rule_repo):
     """The one stored rule's spread_seeded marker."""
     [rule] = rule_repo.list_rules()
     return rule["spread_seeded"]
-
-
-def _sweep(handler, repo, rule_repo, *, budget=None, paycycle=None,
-           categories=frozenset({"insurance", "coffee"})):
-    return handler.apply_rules_to_uncategorized(
-        apply_rules_event({"dryRun": False}), repo, FakeCategoryRepo(categories), rule_repo,
-        budget or FakeBudget(), paycycle or FakePaycycle())
 
 
 def test_two_sweeps_over_the_same_store_seed_once(handler):
@@ -139,20 +136,6 @@ def test_a_none_create_stays_unseeded_and_a_later_run_retries(handler):
     assert len(ok.calls) == 1 and _seeded(rule_repo) is True   # the retry seeds + marks
 
 
-def _wire_worker(worker, monkeypatch, *, transactions, rules, budget, paycycle,
-                 categories=frozenset({"insurance", "coffee"})):
-    table, txn_repo, rule_repo = real_repos(transactions, rules=rules)
-    job_repo = real_job_repo()
-    job_repo.create_job("job1")
-    monkeypatch.setattr(worker, "TransactionRepository", lambda: txn_repo)
-    monkeypatch.setattr(worker, "CategoryRepository", lambda: FakeCategoryRepo(categories))
-    monkeypatch.setattr(worker, "RuleRepository", lambda: rule_repo)
-    monkeypatch.setattr(worker, "JobRepository", lambda: job_repo)
-    monkeypatch.setattr(worker, "BudgetRepository", lambda: budget)
-    monkeypatch.setattr(worker, "PayCycleRepository", lambda: paycycle)
-    return table, rule_repo, job_repo
-
-
 def test_worker_seeds_a_spread_rules_plan_once_and_marks_it(apply_rules_worker, monkeypatch):
     # The async (uncapped) worker builds its own SpreadSeeder + spread map. Three matching charges
     # -> one plan seeded, one pay-cycle read, rule marked. FAIL-ON-REVERT: drop the worker's
@@ -160,9 +143,9 @@ def test_worker_seeds_a_spread_rules_plan_once_and_marks_it(apply_rules_worker, 
     worker = apply_rules_worker
     budget, paycycle = FakeBudget(), FakePaycycle()
     rows = [_origin("t1", "2026-07-01"), _origin("t2", "2026-07-02"), _origin("t3", "2026-07-03")]
-    table, rule_repo, job_repo = _wire_worker(
+    table, rule_repo, job_repo = wire_apply_rules_worker(
         worker, monkeypatch, transactions={SPENDING: rows}, rules=[_spread_rule()],
-        budget=budget, paycycle=paycycle)
+        categories=frozenset({"insurance", "coffee"}), budget=budget, paycycle=paycycle)
 
     result = worker.lambda_handler({"jobId": "job1"})
 

@@ -25,6 +25,28 @@ def real_job_repo(jobs=None):
     return repo
 
 
+def wire_apply_rules_worker(worker, monkeypatch, *, transactions, rules,
+                            categories=frozenset({"groceries"}), budget=None, paycycle=None):
+    """Point the apply-rules worker's repo constructors at the real repos over one FakeTable, with
+    a created "job1". ``budget`` / ``paycycle`` replace its spread repositories when given.
+
+    Returns (table, rule_repo, job_repo)."""
+    from _feed_fakes import FakeCategoryRepo, real_repos
+
+    table, txn_repo, rule_repo = real_repos(transactions, rules=rules)
+    job_repo = real_job_repo()
+    job_repo.create_job("job1")
+    monkeypatch.setattr(worker, "TransactionRepository", lambda: txn_repo)
+    monkeypatch.setattr(worker, "CategoryRepository", lambda: FakeCategoryRepo(categories))
+    monkeypatch.setattr(worker, "RuleRepository", lambda: rule_repo)
+    monkeypatch.setattr(worker, "JobRepository", lambda: job_repo)
+    if budget is not None:
+        monkeypatch.setattr(worker, "BudgetRepository", lambda: budget)
+    if paycycle is not None:
+        monkeypatch.setattr(worker, "PayCycleRepository", lambda: paycycle)
+    return table, rule_repo, job_repo
+
+
 def throttled_worker(function_env_var, payload):
     """A worker launch that fails, standing in for ``_invoke_worker`` when Lambda throttles."""
     raise RuntimeError("throttled")
