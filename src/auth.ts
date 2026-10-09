@@ -306,9 +306,10 @@ async function hostedUiAuthorize(extraParams?: Record<string, string>): Promise<
       } catch (persistError) {
         // WHIT-172: a partial persist (e.g. the guarded token stored but the sentinel
         // write threw) would leave a guarded token with NO sentinel — launch would then
-        // skip the lock and read the guarded item through restore. Roll back every stored key so the invariant
-        // "guarded token ⇒ sentinel" always holds, then fall to the outer catch
-        // (signed-out, never crash). Mirrors seatCognitoSession's partial-seat rollback.
+        // skip the lock and read the guarded item through restore. Roll back every
+        // stored key so the invariant "guarded token ⇒ sentinel" always holds, then fall
+        // to the outer catch (signed-out, never crash). Mirrors seatCognitoSession's
+        // partial-seat rollback.
         await clearStoredSession().catch(() => {});
         throw persistError;
       }
