@@ -8,7 +8,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test": "TZ=Australia/Melbourne jest --selectProjects logic",
+    "test": "TZ=Australia/Melbourne jest --selectProjects logic --maxWorkers=2",
     "test:screen": "TZ=Australia/Melbourne jest --selectProjects screen --workerIdleMemoryLimit=512MB",
     "test:all": "TZ=Australia/Melbourne jest --workerIdleMemoryLimit=512MB",
     "coverage:local": "bash scripts/coverage-run-local.sh",
