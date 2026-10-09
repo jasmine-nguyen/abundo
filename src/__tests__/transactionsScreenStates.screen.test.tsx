@@ -138,6 +138,34 @@ it('a cold-loading Uncategorized tab shows the spinner and no "Updated" line', a
   expect(await screen.findByTestId('transactions-updated')).toBeTruthy();
 });
 
+// [A1] A cold load that failed shows the error, not "Updated <time>" from the categories' load
+// alone (refreshStatus skips the never-loaded feed, so updatedAt is non-zero here).
+it('[A1] a cold feed error shows the error and no "Updated" line', async () => {
+  server.fail(FEED, 500);
+  await draw();
+  expect(screen.getByTestId('transactions-error')).toBeTruthy();
+  expect(screen.queryByTestId('transactions-updated')).toBeNull();
+});
+
+// [A3] The line sits directly under the search box: above the Uncategorized hint, not below it.
+it('[A3] the "Updated" line renders above the Uncategorized hint', async () => {
+  seedUncategorizedFeed([{ ...ROW, category: null }]);
+  await draw();
+  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  expect(await screen.findByText(/Tap a transaction to categorize it/)).toBeTruthy();
+  // Every rendered string, in screen order (the line's text, then the hint's text).
+  const texts: string[] = [];
+  const walk = (node: unknown): void => {
+    if (typeof node === 'string') { texts.push(node); return; }
+    if (Array.isArray(node)) { node.forEach(walk); return; }
+    if (node && typeof node === 'object') walk((node as { children?: unknown }).children ?? []);
+  };
+  walk(screen.toJSON());
+  const updatedAt = texts.findIndex((text) => text.startsWith('Updated '));
+  expect(updatedAt).toBeGreaterThan(-1);
+  expect(updatedAt).toBeLessThan(texts.findIndex((text) => text.startsWith('Tap a transaction to categorize it')));
+});
+
 it('empty Uncategorized tab (settled) shows the "All caught up" empty state', async () => {
   await draw();
   fireEvent.press(screen.getByText('Uncategorized'));
