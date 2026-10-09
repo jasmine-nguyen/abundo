@@ -16,13 +16,12 @@
 // modules are lazy-`require`d inside the functions that use them, so the `logic`
 // jest project (node env, no native mocks) can import this file without crashing.
 //
-// WHIT-161 (Face ID): when EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED === 'true' AND the
-// device supports biometrics, the refresh token is stored in a biometric-locked
-// keychain item (`requireAuthentication`) — reading it pops Face ID / Touch ID,
-// which IS the unlock. The token is then cached in memory for the session so
-// hourly refreshes never re-prompt; the app re-locks (drops the cache, re-reads)
-// on resume. Also ships dark (default off); a device with no biometrics stores
-// unguarded and never locks out.
+// WHIT-161 (Face ID): whenever the device supports biometrics, the refresh token is
+// stored in a biometric-locked keychain item (`requireAuthentication`) — reading it
+// pops Face ID / Touch ID, which IS the unlock. The token is then cached in memory
+// for the session so hourly refreshes never re-prompt; the app re-locks (drops the
+// cache, re-reads) on resume. A device with no biometrics stores unguarded and never
+// locks out.
 
 // Types only — erased at compile, so nothing native loads on import.
 import type { DiscoveryDocument, TokenResponse } from "expo-auth-session";
@@ -99,8 +98,8 @@ function seedRefreshOnlySession(refreshToken: string): Session {
 const REFRESH_TOKEN_KEY = "abundo.cognito.refreshToken";
 // Unguarded marker written in lockstep with the refresh token, so the gate can
 // tell "a session exists" WITHOUT reading the guarded token (which would pop Face
-// ID blindly). Written AFTER the token, deleted with it. Flag-independent, so a
-// session created while biometrics are off is still found when the flag flips on.
+// ID blindly). Written AFTER the token, deleted with it. Biometrics-independent, so a
+// session created while biometrics are unavailable is still found once they're enrolled.
 const SESSION_SENTINEL_KEY = "abundo.cognito.hasSession";
 // WHIT-178: which surface minted the session — "srp" (native email/password via
 // InitiateAuth) vs absent/"oauth" (Hosted UI / federated Google). The REFRESH path
@@ -214,10 +213,9 @@ function clearSession(): void {
   setStatus("anon");
 }
 
-// Biometric lock is active only when the flag is on AND the device can actually
-// store/read a value behind biometrics. Exposed for the gate's launch decision.
+// Biometric lock is active whenever the device can store/read a value behind
+// biometrics. Exposed for the gate's launch decision.
 export function canBiometricLock(): boolean {
-  if (process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED !== "true") return false;
   try {
     return secureStore().canUseBiometricAuthentication() === true;
   } catch {
@@ -731,7 +729,7 @@ async function refreshFromStoredToken(): Promise<string | undefined> {
   if (session?.refreshToken) {
     refreshToken = session.refreshToken;
   } else {
-    // WHIT-270: on a cold flag-OFF launch the token may still be stored GUARDED (a
+    // WHIT-270: on a cold launch with biometrics unavailable the token may still be stored GUARDED (a
     // WHIT-267 unlock re-stores it guarded), so iOS pops Face ID for this read even
     // though our query is unguarded — the item's own ACL prompts. Handle both outcomes:
     try {
@@ -747,8 +745,9 @@ async function refreshFromStoredToken(): Promise<string | undefined> {
       return undefined;
     }
     // The read succeeded. If the item was guarded, it just prompted and — with a
-    // non-rotating refresh — would prompt again on every future launch. The Face ID
-    // flag is OFF, so re-store the token UNGUARDED now: one prompt total, then silent.
+    // non-rotating refresh — would prompt again on every future launch. Biometrics are
+    // unavailable on this device, so re-store the token UNGUARDED now: one prompt total,
+    // then silent.
     if (refreshToken) {
       await resaveUnguarded(refreshToken);
       // WHIT-274: seed the in-memory refresh token (same seed as the unlock path) so
@@ -873,7 +872,7 @@ async function performUnlock(): Promise<boolean> {
       clearSession(); // → anon
       return false;
     }
-    // WHIT-267: a session seated while the biometric flag was OFF is stored UNGUARDED,
+    // WHIT-267: a session seated while biometrics were unavailable is stored UNGUARDED,
     // and iOS reads it through SILENTLY even with guarded opts (expo-secure-store's
     // native get() ignores JS read options and searches the no-auth keychain service
     // first) — so the lock screen never actually prompted for those sessions. Re-store
@@ -885,7 +884,7 @@ async function performUnlock(): Promise<boolean> {
     // refresh's own guarded write always lands last. iOS-only: on Android the guarded
     // WRITE itself opens a biometric prompt (AESEncryptor authenticates the cipher),
     // which would double-prompt every unlock — Android needs its own migration story
-    // if the biometric flag ever ships there.
+    // if the app ever ships there.
     // Accepted risk: process death in the millisecond delete→create window leaves
     // sentinel-without-token, which the null-read path above self-heals to a clean
     // re-login on the next launch.
@@ -966,10 +965,10 @@ async function getRefreshToken(): Promise<string | null> {
 }
 
 // WHIT-270: re-store the refresh token UNGUARDED, so a token left GUARDED by a WHIT-267
-// unlock stops re-prompting Face ID once the biometric flag has been turned OFF. Guarded
-// ONLY to the flag-OFF case (canBiometricLock() false) so this can never strip protection
-// from an active-lock session, and iOS-only (a guarded item can't arise on this path on
-// Android — the biometric flag isn't shipped there). Delete-then-create: deleting never
+// unlock stops re-prompting Face ID once biometrics are unavailable on this device. Guarded
+// ONLY to that case (canBiometricLock() false) so this can never strip protection from an
+// active-lock session, and iOS-only (a guarded item can't arise on this path on Android —
+// the app isn't shipped there). Delete-then-create: deleting never
 // prompts, whereas an in-place overwrite of a guarded item WOULD re-prompt (WHIT-170).
 // Best-effort/silent — the token is already in memory, so this launch proceeds regardless.
 async function resaveUnguarded(refreshToken: string): Promise<void> {

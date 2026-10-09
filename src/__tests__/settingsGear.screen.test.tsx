@@ -4,8 +4,8 @@
 //      navigates to /settings.
 //   2. In the shared header the gear renders BEFORE the title (so it's first in the VoiceOver
 //      focus order and reads as an action, not part of the title).
-//   3. The gear is actually present on ALL FIVE remaining tabs — so a dropped `left` prop on any
-//      one screen fails here rather than shipping silently.
+//   3. The gear is actually present on ALL FIVE remaining tabs. Since WHIT-841 the shared header
+//      draws it itself (no `left` prop), so a header that stops drawing it fails here.
 import { it, expect, jest, describe, beforeEach } from '@jest/globals';
 import React from 'react';
 import { Text } from 'react-native';
@@ -64,15 +64,15 @@ describe('SettingsButton (the header gear)', () => {
   });
 });
 
-it('renders the gear BEFORE the title in the shared header (VoiceOver focus order)', () => {
+it('the shared header draws the gear itself, BEFORE the title (VoiceOver focus order)', () => {
   render(
-    <ScrollChromeHeader title="TITLE_MARKER" left={<Text>GEAR_MARKER</Text>}>
+    <ScrollChromeHeader title="TITLE_MARKER">
       <Text>body</Text>
     </ScrollChromeHeader>,
   );
   const serialized = screenJson();
-  expect(serialized.indexOf('GEAR_MARKER')).toBeGreaterThanOrEqual(0);
-  expect(serialized.indexOf('GEAR_MARKER')).toBeLessThan(serialized.indexOf('TITLE_MARKER'));
+  expect(serialized.indexOf('"Settings"')).toBeGreaterThanOrEqual(0);
+  expect(serialized.indexOf('"Settings"')).toBeLessThan(serialized.indexOf('TITLE_MARKER'));
 });
 
 // The whole point of the ticket: the gear must be on EVERY remaining tab. A dropped `left` on any

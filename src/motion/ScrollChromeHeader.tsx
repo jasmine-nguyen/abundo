@@ -2,8 +2,9 @@
 // Extracts the block WHIT-184/WHIT-200 left copy-pasted in Transactions/Budgets, and gives
 // Insights/Goals/Settings the same scroll-to-hide chrome. Owns the geometry and the scroll
 // wiring so a screen supplies only its title, optional header actions, and its scrolling
-// content. A centered title falls out of the default 40px spacers on BOTH sides; pass
-// `right` (and/or `left`) for the action-button screens. Nav-bars state has a single owner —
+// content. The header draws the Settings gear on the left itself, so no tab can lose it; a
+// 40px spacer on the right keeps the title centred unless a screen passes `right`. Nav-bars
+// state has a single owner —
 // the provider's stateRef (read here, written via setNavBars), which also honours
 // reduce-motion. `prevY` is per-ScrollView scroll geometry, not chrome state.
 import React, { useCallback, useRef } from 'react';
@@ -12,6 +13,7 @@ import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../theme';
 import { useNavBars } from './NavBarsContext';
+import { SettingsButton } from '../components/SettingsButton';
 import { nextNavBarsState } from './navBarsVisibility';
 
 // A tab screen's header is a fixed-height row (a ~40px action button) with paddingTop
@@ -45,10 +47,9 @@ export const SCREEN_PADDING = 18;
 const TITLE_MAX_SCALE = 1.5;
 
 export function ScrollChromeHeader({
-  title, left, right, refreshing, onRefresh, contentContainerStyle, keyboardShouldPersistTaps, children,
+  title, right, refreshing, onRefresh, contentContainerStyle, keyboardShouldPersistTaps, children,
 }: {
   title: string;
-  left?: React.ReactNode;
   right?: React.ReactNode;
   // Given onRefresh, the wrapper builds the pull-to-refresh spinner, offset by headerHeight so it
   // doesn't draw behind the opaque floating header at y≈0 (WHIT-211). No onRefresh → no spinner.
@@ -82,7 +83,7 @@ export function ScrollChromeHeader({
     <View style={{ flex: 1 }}>
       <View pointerEvents="none" style={[styles.statusStrip, { height: insets.top }]} />
       <Animated.View style={[floatingHeaderStyle, { paddingTop: insets.top + 6 }, headerStyle]}>
-        {left ?? <View style={styles.slot} />}
+        <SettingsButton />
         <Text style={styles.title} maxFontSizeMultiplier={TITLE_MAX_SCALE}>{title}</Text>
         {right ?? <View style={styles.slot} />}
       </Animated.View>
@@ -92,9 +93,11 @@ export function ScrollChromeHeader({
         scrollEventThrottle={16}
         // Flatten to a single object so `contentContainerStyle.paddingTop/Bottom` stays
         // directly readable (the motion/clearance tests inspect it), while still folding in
-        // a screen's extra style (e.g. Budgets' flexGrow for its centered spinner/error).
+        // a screen's extra style (e.g. Transactions' select-mode bottom padding).
         contentContainerStyle={StyleSheet.flatten([
           {
+            // Fill the viewport so a short list (or a centred spinner/error) can still be pulled to refresh.
+            flexGrow: 1,
             paddingHorizontal: SCREEN_PADDING,
             paddingTop: headerHeight,
             paddingBottom: TAB_BAR_CLEARANCE + ASK_BUTTON_BOTTOM_CLEARANCE,
@@ -114,9 +117,8 @@ export function ScrollChromeHeader({
 }
 
 const styles = StyleSheet.create({
-  // A fixed 40px slot on each side of the title. Both filled (default spacers) → the title
-  // centres, matching the old Insights/Goals/Settings centred headers. One replaced by an
-  // action button → the title stays centred against the opposite spacer (Transactions/Budgets).
+  // The right-hand 40px spacer, as wide as the gear on the left, so the title stays centred
+  // when a screen has no right action.
   slot: { width: 40 },
   // Sits above the sliding header (zIndex 10) so the status bar keeps a solid backing when it hides.
   statusStrip: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 11, backgroundColor: C.bg },

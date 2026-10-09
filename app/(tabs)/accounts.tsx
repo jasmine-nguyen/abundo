@@ -9,7 +9,6 @@ import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { EmptyState } from '../../src/components/EmptyState';
-import { SettingsButton } from '../../src/components/SettingsButton';
 
 // The Accounts tab. Lifted out of the Transactions segmented control into its own bottom-bar
 // tab: it derives one card per account_id from the same transactions query the Transactions
@@ -40,15 +39,10 @@ export default function Accounts() {
   return (
     <ScrollChromeHeader
       title="Accounts"
-      left={<SettingsButton />}
-      // Fill the viewport even with only a few cards, so the whole screen is a pull-to-refresh
-      // target. Without this the content is shorter than the screen and the pull never catches
-      // on a short account list (the tall Transactions list never hit this).
-      contentContainerStyle={styles.fill}
       // Show the pull spinner for a user pull unless the cold-load spinner owns the screen
       // (WHIT-363: never double-spin). `!showSpinner` — not `transactions.length > 0` — so a
       // pull on the settled "No accounts yet" empty state still shows feedback, now that the
-      // fill makes that short state pullable.
+      // header's full-height content makes that short state pullable.
       refreshing={pulling && !showSpinner}
       onRefresh={onRefresh}
     >
@@ -106,10 +100,6 @@ export default function Accounts() {
 }
 
 const styles = StyleSheet.create({
-  // Stretch the scroll content to the viewport so a short account list is still one full-screen
-  // pull-to-refresh surface (same idiom as budgets/goals styles.fill).
-  fill: { flexGrow: 1 },
-
   acct: { flexDirection: 'row', alignItems: 'center', gap: 13, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 15, paddingHorizontal: 16, marginBottom: 10 },
   acctChip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   acctName: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },

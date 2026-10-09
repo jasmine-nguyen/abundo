@@ -9,6 +9,8 @@ import { Animated, Text } from 'react-native';
 import { render } from '@testing-library/react-native';
 import { scrollTo } from './support/scrollChromeHeader';
 
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
+
 // The mocked context exposes the SAME single stateRef the provider owns; setNavBars must
 // write it, so the header's dedup/direction logic runs against the shared source of truth.
 let mockVisibility: Animated.Value;

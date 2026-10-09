@@ -9,7 +9,6 @@ import { useBudgetsScreenData } from '../../src/queries';
 import { urgentFirst } from '../../src/budgetOrder';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { BudgetBar, RetryButton, HeroGradientFill, HeaderIconButton } from '../../src/components/ui';
-import { SettingsButton } from '../../src/components/SettingsButton';
 import { StaleDataLine } from '../../src/components/ListStates';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { useLargeText, LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
@@ -177,10 +176,7 @@ export default function Budgets() {
   return (
     <ScrollChromeHeader
       title="Budgets"
-      left={<SettingsButton />}
       right={<HeaderIconButton icon="plus" accessibilityLabel="Add budget" onPress={() => router.push('/budget/pick')} />}
-      // Always fill the viewport, so a short budget list is still a pull-to-refresh target.
-      contentContainerStyle={styles.fill}
       refreshing={pulling && !showSpinner}
       onRefresh={onRefresh}
     >
@@ -239,9 +235,6 @@ export default function Budgets() {
 }
 
 const styles = StyleSheet.create({
-  // Grows the ScrollView content so the spinner/error state centres mid-viewport (WHIT-199).
-  fill: { flexGrow: 1 },
-
   hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 24, paddingTop: 26, paddingBottom: 22, marginBottom: 22, backgroundColor: C.accent },
   heroBlob1: { position: 'absolute', right: -30, top: -30, width: 150, height: 150, borderRadius: 75, backgroundColor: C.heroBlobFill },
   heroBlob2: { position: 'absolute', right: 34, bottom: -46, width: 90, height: 90, borderRadius: 45, backgroundColor: C.heroBlobFill },

@@ -95,13 +95,11 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN;
   delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
-  delete process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED;
 });
 
 // --- guarded WRITE path on a biometric device -----------------------------------
 describe('signInWithGoogle guarded-write path', () => {
   it('a keychain write FAILURE leaves a clean signed-out state: returns false, NO orphan sentinel, not authed', async () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     mockCanUseBiometric.mockReturnValue(true);
     // The guarded refresh-token write fails; the sentinel write (if reached) would succeed.
     mockSetItem.mockImplementation(async (k) => {
@@ -125,7 +123,6 @@ describe('signInWithGoogle guarded-write path', () => {
 // --- refresh-token ROTATION while authed ----------------------------------------
 describe('refresh-token rotation', () => {
   it('re-writes the rotated token GUARDED and updates the in-memory copy (next refresh reuses it, no re-prompt)', async () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     mockCanUseBiometric.mockReturnValue(true);
     mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
     // First refresh (during unlock) ROTATES the refresh token to 'R2' and hands back an
@@ -155,7 +152,6 @@ describe('refresh-token rotation', () => {
 // --- unlockOrRestore: biometrics active but no stored session -------------------
 describe('unlockOrRestore with no stored session', () => {
   it('falls to RESTORE and never enters the locked state (no blind lock screen) when the sentinel is absent', async () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     mockCanUseBiometric.mockReturnValue(true);
     mockGetItem.mockResolvedValue(null); // no sentinel, no token
     const auth = loadAuth();
@@ -173,7 +169,6 @@ describe('unlockOrRestore with no stored session', () => {
   // [A1] WHIT-835: the pre-WHIT-161 move is gone — a token with no sentinel is restored
   // as-is, never re-stored, never given a sentinel, never sealed behind the lock.
   it('a token with NO sentinel goes straight to restore: authed, never locked, nothing re-written', async () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     mockCanUseBiometric.mockReturnValue(true);
     mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
     mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
@@ -194,7 +189,6 @@ describe('unlockOrRestore with no stored session', () => {
 // --- WHIT-172: signInWithGoogle partial-persist rollback (keeps the invariant airtight) ---
 describe('signInWithGoogle partial-persist rollback', () => {
   it('rolls back when the sentinel write fails AFTER the guarded token write, so no guarded-token-without-sentinel orphan survives', async () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     mockCanUseBiometric.mockReturnValue(true);
     mockPromptAsync.mockResolvedValue({ type: 'success', params: { code: 'C' } });
     mockExchange.mockResolvedValue({ idToken: 'ID', accessToken: 'A', refreshToken: 'R', issuedAt: nowSec(), expiresIn: 3600 });
@@ -221,7 +215,6 @@ describe('signInWithGoogle partial-persist rollback', () => {
 // --- unlock with missing config --------------------------------------------------
 describe('unlock with missing OAuth config', () => {
   it('is graceful: reads the token, refresh no-ops on missing domain → stays LOCKED, keeps the stored session, never throws', async () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     mockCanUseBiometric.mockReturnValue(true);
     mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
     delete process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN; // config gone
@@ -239,13 +232,12 @@ describe('unlock with missing OAuth config', () => {
   });
 });
 
-// --- WHIT-267: unlock-time guarded re-store (the flag-flip migration) ------------
+// --- WHIT-267: unlock-time guarded re-store (the biometrics-unavailable migration) ------------
 describe('unlock re-stores the token GUARDED (WHIT-267)', () => {
-  // The bug: a session seated while the flag was OFF is stored unguarded, and iOS reads
+  // The bug: a session seated while biometrics were unavailable is stored unguarded, and iOS reads
   // it through silently even with guarded opts — so the mock below returning the token
   // regardless of read opts IS the device behaviour, not a shortcut.
-  const seedFlagFlipSession = () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
+  const seedUnguardedSession = () => {
     mockCanUseBiometric.mockReturnValue(true);
     mockGetItem.mockImplementation(async (k) => {
       if (k === SENTINEL_KEY) return '1';
@@ -255,7 +247,7 @@ describe('unlock re-stores the token GUARDED (WHIT-267)', () => {
   };
 
   it('fail-on-revert: the silently-read token is re-stored GUARDED via the silent delete-then-create path, one read only', async () => {
-    seedFlagFlipSession();
+    seedUnguardedSession();
     // NON-rotating refresh, so the ONLY possible guarded REFRESH_KEY write is the
     // WHIT-267 re-store — on revert, no guarded write happens at all and this fails.
     mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
@@ -277,7 +269,7 @@ describe('unlock re-stores the token GUARDED (WHIT-267)', () => {
   });
 
   it('a FAILED re-store is best-effort: unlock still completes from the in-memory token, sentinel untouched, never mistaken for a cancel', async () => {
-    seedFlagFlipSession();
+    seedUnguardedSession();
     mockSetItem.mockImplementation(async (k) => {
       if (k === REFRESH_KEY) throw new Error('keychain write denied');
     });
@@ -295,7 +287,7 @@ describe('unlock re-stores the token GUARDED (WHIT-267)', () => {
   });
 
   it('a CANCELLED prompt is unchanged: stays locked, zero token writes (no re-store attempted)', async () => {
-    seedFlagFlipSession();
+    seedUnguardedSession();
     mockGetItem.mockImplementation(async (k) => {
       if (k === SENTINEL_KEY) return '1';
       if (k === REFRESH_KEY) throw new Error('user cancelled');
@@ -310,7 +302,7 @@ describe('unlock re-stores the token GUARDED (WHIT-267)', () => {
   });
 
   it('a NULL read (biometrics changed) is unchanged: clean re-login, zero token writes', async () => {
-    seedFlagFlipSession();
+    seedUnguardedSession();
     mockGetItem.mockImplementation(async (k) => (k === SENTINEL_KEY ? '1' : null));
     const auth = loadAuth();
 
@@ -347,11 +339,10 @@ describe('unlock re-stores the token GUARDED (WHIT-267)', () => {
 // gate can be exercised from both sides.
 // -------------------------------------------------------------------------------------
 describe('WHIT-267 (folded from authUnlockRestoreGaps.logic.test.ts)', () => {
-  // The WHIT-267 shape: sentinel present, token stored while the flag was off. iOS reads
+  // The WHIT-267 shape: sentinel present, token stored while biometrics were unavailable. iOS reads
   // the unguarded item through silently even with guarded opts, so the mock returning the
   // token regardless of read opts IS the device behaviour.
-  const seedFlagFlipSession = () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
+  const seedUnguardedSession = () => {
     mockCanUseBiometric.mockReturnValue(true);
     mockGetItem.mockImplementation(async (k) => {
       if (k === SENTINEL_KEY) return '1';
@@ -376,7 +367,6 @@ describe('WHIT-267 (folded from authUnlockRestoreGaps.logic.test.ts)', () => {
   afterEach(() => {
     delete process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN;
     delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
-    delete process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED;
   });
 
   describe('WHIT-267 re-store on the RESUME path', () => {
@@ -384,7 +374,7 @@ describe('WHIT-267 (folded from authUnlockRestoreGaps.logic.test.ts)', () => {
     // AuthGate background→active path) re-stores again. Fail-on-revert: with the WHIT-267
     // block gone, a NON-rotating refresh means zero guarded REFRESH_KEY writes ever.
     it('re-stores the token guarded on a resume unlock too — one read and one guarded write per unlock', async () => {
-      seedFlagFlipSession();
+      seedUnguardedSession();
       mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
       const auth = loadAuth();
 
@@ -411,7 +401,7 @@ describe('WHIT-267 (folded from authUnlockRestoreGaps.logic.test.ts)', () => {
     // one guarded read AND exactly one re-store write. Fail-on-revert both ways: revert
     // the WHIT-267 block → 0 guarded writes; break the single-flight → 2 reads + 2 writes.
     it('two concurrent unlock() calls produce exactly one read and one guarded re-store', async () => {
-      seedFlagFlipSession();
+      seedUnguardedSession();
       mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
       const auth = loadAuth();
 
@@ -433,7 +423,7 @@ describe('WHIT-267 (folded from authUnlockRestoreGaps.logic.test.ts)', () => {
     // the rotation write itself — the mock makes that first write throw, refreshViaOAuth's
     // catch returns undefined, and the unlock dies at 'locked'.
     it('the rotation write resurrects the token guarded after a failed re-store; ends authed', async () => {
-      seedFlagFlipSession();
+      seedUnguardedSession();
       let failedOnce = false;
       mockSetItem.mockImplementation(async (k) => {
         if (k === REFRESH_KEY && !failedOnce) {
@@ -465,7 +455,7 @@ describe('WHIT-267 (folded from authUnlockRestoreGaps.logic.test.ts)', () => {
     // catch → 'locked' → getAuthToken returns undefined), not of the whole block; the
     // no-re-store code passes this by construction (that's the pin, stated honestly).
     it('a later near-expiry refresh reuses the in-memory token with no extra keychain read', async () => {
-      seedFlagFlipSession();
+      seedUnguardedSession();
       mockSetItem.mockImplementation(async (k) => {
         if (k === REFRESH_KEY) throw new Error('keychain write denied');
       });
@@ -486,13 +476,13 @@ describe('WHIT-267 (folded from authUnlockRestoreGaps.logic.test.ts)', () => {
   });
 
   describe('WHIT-267 re-store gating', () => {
-    // [A11] canBiometricLock() false at unlock time (flag off / device biometrics gone
-    // mid-session) → the re-store must NOT run: secureOpts() would be {} and an unguarded
+    // [A11] canBiometricLock() false at unlock time (device biometrics gone mid-session)
+    // → the re-store must NOT run: secureOpts() would be {} and an unguarded
     // UPDATE of a still-guarded item is exactly the prompting/ambiguous iOS write the
     // scheme avoids. Fail-on-revert: drop `&& canBiometricLock()` and the write fires.
     it('skips the re-store when canBiometricLock() is false at unlock time — zero token writes', async () => {
-      // Flag deliberately NOT set; device capable. A direct unlock() with a stored token.
-      mockCanUseBiometric.mockReturnValue(true);
+      // Device biometrics unavailable. A direct unlock() with a stored token.
+      mockCanUseBiometric.mockReturnValue(false);
       mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
       mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
       const auth = loadAuth();
@@ -501,7 +491,7 @@ describe('WHIT-267 (folded from authUnlockRestoreGaps.logic.test.ts)', () => {
 
       expect(auth.getStatus()).toBe('authed');
       expect(refreshWrites()).toHaveLength(0); // non-rotating refresh → the only candidate write was the re-store
-      expect(refreshReads()[0][1]).toEqual({}); // and the read was unguarded (flag off)
+      expect(refreshReads()[0][1]).toEqual({}); // and the read was unguarded (biometrics unavailable)
     });
 
     // [A12] The deliberate ANDROID exclusion: a guarded WRITE on Android opens its own
@@ -509,7 +499,7 @@ describe('WHIT-267 (folded from authUnlockRestoreGaps.logic.test.ts)', () => {
     // Fail-on-revert: drop `isIOS() &&` and the guarded write fires on android.
     it('skips the re-store on Android — unlock still works, zero token writes', async () => {
       mockPlatformOS = 'android';
-      seedFlagFlipSession();
+      seedUnguardedSession();
       mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
       const auth = loadAuth();
 
@@ -521,14 +511,14 @@ describe('WHIT-267 (folded from authUnlockRestoreGaps.logic.test.ts)', () => {
     });
   });
 
-  // WHIT-270 — the flag-flip kill switch. After a WHIT-267 unlock the token is stored
-  // GUARDED; if the Face ID flag is later turned OFF, the signed-out restore reads that
-  // guarded item with an unguarded query and iOS still pops Face ID (the item's own ACL).
+  // WHIT-270 — biometrics going away. After a WHIT-267 unlock the token is stored
+  // GUARDED; if the device's biometrics later become unavailable, the signed-out restore reads
+  // that guarded item with an unguarded query and iOS still pops Face ID (the item's own ACL).
   // The read can be CANCELLED (must not hang the gate) or SUCCEED (must not keep prompting
-  // on every future launch). Flag OFF here means EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED unset
-  // and mockCanUseBiometric false (both from beforeEach) → canBiometricLock() false →
-  // unlockOrRestore takes restoreSession, and getRefreshToken reads with `{}` opts.
-  describe('WHIT-270 — flag-off restore never hangs on a cancelled prompt', () => {
+  // on every future launch). Biometrics unavailable here means mockCanUseBiometric false
+  // (from beforeEach) → canBiometricLock() false → unlockOrRestore takes restoreSession,
+  // and getRefreshToken reads with `{}` opts.
+  describe('WHIT-270 — biometrics-unavailable restore never hangs on a cancelled prompt', () => {
     // The prompt is CANCELLED → the guarded read rejects. restoreSession must RESOLVE to a
     // clean 'anon' (login screen), never reject/hang on 'loading' (the blank screen). The
     // stale guarded item is cleared so the next sign-in writes a fresh token.
@@ -561,11 +551,11 @@ describe('WHIT-267 (folded from authUnlockRestoreGaps.logic.test.ts)', () => {
     });
   });
 
-  describe('WHIT-270 — flag-off restore re-stores the token unguarded (no repeat prompt)', () => {
-    // The prompt SUCCEEDS → the read returns the token. Flag is OFF, so the token is
+  describe('WHIT-270 — biometrics-unavailable restore re-stores the token unguarded (no repeat prompt)', () => {
+    // The prompt SUCCEEDS → the read returns the token. Biometrics are unavailable, so the token is
     // re-stored UNGUARDED via delete-then-create, so later launches read it silently.
     // Fail-on-revert: remove the resaveUnguarded call → no delete and no unguarded write.
-    it('re-stores unguarded (delete-then-create) after a successful flag-off read', async () => {
+    it('re-stores unguarded (delete-then-create) after a successful biometrics-unavailable read', async () => {
       mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
       mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
       const auth = loadAuth();
@@ -578,7 +568,7 @@ describe('WHIT-267 (folded from authUnlockRestoreGaps.logic.test.ts)', () => {
     });
 
     // End-to-end recurrence pin against a stateful keychain that starts GUARDED. After the
-    // first flag-off launch the on-disk item must end UNGUARDED, so a second launch reads it
+    // first biometrics-unavailable launch the on-disk item must end UNGUARDED, so a second launch reads it
     // silently. Fail-on-revert: without the re-store the item stays guarded.
     it('leaves the on-disk token unguarded so a second launch does not re-prompt', async () => {
       let stored: string | null = 'R';
@@ -606,11 +596,10 @@ describe('WHIT-267 (folded from authUnlockRestoreGaps.logic.test.ts)', () => {
   });
 
   describe('WHIT-270 — re-store safety gate', () => {
-    // The guard must NEVER strip protection while the biometric flag is ON (that would
-    // silently disable Face ID). Exercise the keychain read directly via getAuthToken with
-    // the flag on. Fail-on-revert: drop `|| canBiometricLock()` and the guard gets stripped.
-    it('never re-stores unguarded while the biometric flag is ON', async () => {
-      process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
+    // The guard must NEVER strip protection while biometrics are available (that would
+    // silently disable Face ID). Exercise the keychain read directly via getAuthToken on
+    // a capable device. Fail-on-revert: drop `|| canBiometricLock()` and the guard gets stripped.
+    it('never re-stores unguarded while biometrics are available', async () => {
       mockCanUseBiometric.mockReturnValue(true);
       mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
       mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
@@ -641,9 +630,9 @@ describe('WHIT-267 (folded from authUnlockRestoreGaps.logic.test.ts)', () => {
 
 // -------------------------------------------------------------------------------------
 // WHIT-270 (folded from authRestoreResaveGaps.logic.test.ts)
-// Adversarial GAP tests for the FLAG-OFF restore path in src/auth.ts (refreshFromStoredToken
+// Adversarial GAP tests for the BIOMETRICS-UNAVAILABLE restore path in src/auth.ts (refreshFromStoredToken
 // + resaveUnguarded). Complements the WHIT-267 folded block above (cancel→anon,
-// getAuthToken→anon, success→unguarded re-store, recurrence pin, flag-ON safety, Android
+// getAuthToken→anon, success→unguarded re-store, recurrence pin, biometrics-available safety, Android
 // skip). Covers what THOSE leave open:
 //   [G1] clearStoredSession itself REJECTS inside the recovery catch → the best-effort
 //        `.catch(() => {})` must still land 'anon' (never a rejected/hung restore)
@@ -651,7 +640,7 @@ describe('WHIT-267 (folded from authUnlockRestoreGaps.logic.test.ts)', () => {
 //        catch must swallow it and the restore still proceeds 'authed' (never a hang)
 //   [G3] a ROTATING refresh AFTER resaveUnguarded → the rotation write is unguarded too
 //        (no double-guard), ends authed, the on-disk token is the rotated one
-//   [G4] a NULL read (no token) on the flag-off path → 'anon' via the existing
+//   [G4] a NULL read (no token) on the biometrics-unavailable path → 'anon' via the existing
 //        `if (!refreshToken)` branch, and resaveUnguarded is NOT called (no stray
 //        delete/write) — a regression pin that the new re-store didn't break it
 // NOT duplicated here (already pinned elsewhere):
@@ -678,7 +667,6 @@ describe('WHIT-270 (folded from authRestoreResaveGaps.logic.test.ts)', () => {
   afterEach(() => {
     delete process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN;
     delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
-    delete process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED;
   });
 
   // [G1] The recovery branch does `await clearStoredSession().catch(() => {})`. If the
@@ -724,9 +712,9 @@ describe('WHIT-270 (folded from authRestoreResaveGaps.logic.test.ts)', () => {
     });
   });
 
-  // [G3] Interaction pin: flag-off read succeeds → resaveUnguarded writes the token
+  // [G3] Interaction pin: biometrics-unavailable read succeeds → resaveUnguarded writes the token
   // UNGUARDED, then the OAuth refresh ROTATES (returns R2) → setRefreshToken(R2) also runs.
-  // With the flag OFF secureOpts() is {}, so BOTH writes are unguarded (no double-guard, and
+  // With biometrics unavailable secureOpts() is {}, so BOTH writes are unguarded (no double-guard, and
   // no re-prompt), the rotated token wins on disk, and the restore ends authed. Uses a
   // stateful keychain to assert the end state. Fail-on-revert: comment resaveUnguarded's body
   // → only the single rotation write remains (1 write, 0 resave delete) → the write-count and
@@ -756,7 +744,7 @@ describe('WHIT-270 (folded from authRestoreResaveGaps.logic.test.ts)', () => {
       expect(auth.getStatus()).toBe('authed');
       // Two writes: the unguarded re-store of R, then the unguarded rotation write of R2.
       expect(unguardedRefreshWrites()).toHaveLength(2);
-      expect(guardedRefreshWrites()).toHaveLength(0); // never re-guarded on the flag-off path
+      expect(guardedRefreshWrites()).toHaveLength(0); // never re-guarded on the biometrics-unavailable path
       expect(deletesOf(REFRESH_KEY)).toHaveLength(1); // only the resave deletes; the unguarded rotation write does not
       // End state: the rotated token, still unguarded so a later launch reads it silently.
       expect(stored).toBe('R2');
@@ -764,14 +752,14 @@ describe('WHIT-270 (folded from authRestoreResaveGaps.logic.test.ts)', () => {
     });
   });
 
-  // [G4] Regression pin: on the flag-off path with NO stored token (null read), the existing
+  // [G4] Regression pin: on the biometrics-unavailable path with NO stored token (null read), the existing
   // `if (!refreshToken)` branch must still drop cleanly to 'anon' — and resaveUnguarded must
   // NOT run (it is guarded by `if (refreshToken)`). If that guard were dropped,
   // resaveUnguarded(null) would delete then write a null token. Assert zero token deletes AND
   // zero token writes to prove the new re-store never touches the empty-keychain path.
-  describe('WHIT-270 — null read on the flag-off path is unchanged', () => {
+  describe('WHIT-270 — null read on the biometrics-unavailable path is unchanged', () => {
     it('no stored token → anon, and resaveUnguarded never fires (no stray delete/write)', async () => {
-      // Default mockGetItem resolves null for every key (flag off from beforeEach).
+      // Default mockGetItem resolves null for every key (biometrics unavailable from beforeEach).
       const auth = loadAuth();
 
       await expect(auth.restoreSession()).resolves.toBe(false);
@@ -781,7 +769,7 @@ describe('WHIT-270 (folded from authRestoreResaveGaps.logic.test.ts)', () => {
     });
   });
 
-  // [G5] WHIT-274 — the seed pin. On the flag-off NON-ROTATING path the first restore reads
+  // [G5] WHIT-274 — the seed pin. On the biometrics-unavailable NON-ROTATING path the first restore reads
   // the keychain once and re-saves the token unguarded. The fix seeds session.refreshToken so
   // the NEXT hourly refresh reuses memory — no second keychain read, no second resave. Without
   // the seed, cacheToken leaves session.refreshToken undefined (a refresh omits it and there's
@@ -789,7 +777,7 @@ describe('WHIT-270 (folded from authRestoreResaveGaps.logic.test.ts)', () => {
   // re-runs resaveUnguarded (delete + create) forever. Fail-on-revert: drop the `session = {…}`
   // seed → the second getAuthToken re-reads the keychain → reads==2 and a second delete/write,
   // and each count assertion below fails.
-  describe('WHIT-274 — flag-off non-rotating restore seeds memory for the hourly refresh', () => {
+  describe('WHIT-274 — biometrics-unavailable non-rotating restore seeds memory for the hourly refresh', () => {
     it('a second refresh reuses the in-memory token: no extra keychain read or resave', async () => {
       mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
       // Non-rotating: neither response carries a refreshToken. The first id token is already
@@ -817,16 +805,16 @@ describe('WHIT-270 (folded from authRestoreResaveGaps.logic.test.ts)', () => {
 
 // -------------------------------------------------------------------------------------
 // WHIT-274 (RE-HOMED here from authRestoreSeedGaps.logic.test.ts)
-// Adversarial GAP tests for the flag-OFF restore SEED in src/auth.ts (refreshFromStoredToken
+// Adversarial GAP tests for the biometrics-unavailable restore SEED in src/auth.ts (refreshFromStoredToken
 // seeds session.refreshToken after resaveUnguarded, ~line 735). Complements the [G5] pin in
-// the WHIT-270 folded block above (OAuth, NON-rotating flag-off reuse) with the surfaces [G5]
+// the WHIT-270 folded block above (OAuth, NON-rotating biometrics-unavailable reuse) with the surfaces [G5]
 // cannot reach from its harness:
 //   [G6] the SRP / InitiateAuth refresh surface — [G5] only mocks the OAuth refreshAsync,
 //        so it never proves the seed also spares the InitiateAuth (fetch) path a second
 //        keychain read + resave. refreshTokens() routes on the stored auth method, so an
 //        SRP session takes a DIFFERENT production code path (refreshViaInitiateAuth) whose
 //        own cacheToken must preserve the seeded token across the hourly refresh.
-//   [G7] a ROTATING flag-off restore, then a SECOND refresh — the seed plants the OLD 'R';
+//   [G7] a ROTATING biometrics-unavailable restore, then a SECOND refresh — the seed plants the OLD 'R';
 //        the rotation's cacheToken must OVERWRITE memory with 'R2' so the next refresh
 //        redeems the ROTATED token, not the stale seeded one (the card's flagged risk:
 //        "seeding a stale token a rotating refresh should replace"). No second keychain read.
@@ -861,7 +849,6 @@ describe('WHIT-274 (folded from authRestoreSeedGaps.logic.test.ts)', () => {
     delete process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN;
     delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
     delete process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID;
-    delete process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED;
   });
 
   // [G6] The seed on the SRP / InitiateAuth surface. The stored auth method is 'srp', so the
@@ -903,7 +890,7 @@ describe('WHIT-274 (folded from authRestoreSeedGaps.logic.test.ts)', () => {
     });
   });
 
-  // [G7] A ROTATING flag-off restore, then the hourly refresh. The seed plants the OLD token
+  // [G7] A ROTATING biometrics-unavailable restore, then the hourly refresh. The seed plants the OLD token
   // 'R' in memory BEFORE the refresh; the rotation returns 'R2', and cacheToken's
   // `token.refreshToken ?? session?.refreshToken` must OVERWRITE the seed so the NEXT refresh
   // redeems 'R2', never the stale seeded 'R'. This is the card's flagged risk. The second

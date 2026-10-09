@@ -5,11 +5,10 @@
 // protected route is redirected to the login screen. The redirect DECISION is the
 // pure gateRedirect() in src/auth.ts.
 //
-// WHIT-161 (Face ID): when biometric locking is active (EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED
-// on + supported device) and a stored session exists, the gate seals the app to a
-// 'locked' state on launch and on resume-from-background, showing a lock screen
-// until the biometric-guarded keychain read (the Face ID prompt) succeeds. Face ID
-// stays OPT-IN (the flag); login itself is not optional.
+// WHIT-161 (Face ID): when the device supports biometrics and a stored session
+// exists, the gate seals the app to a 'locked' state on launch and on
+// resume-from-background, showing a lock screen until the biometric-guarded keychain
+// read (the Face ID prompt) succeeds. Face ID is on wherever the device supports it.
 import React, { useEffect, useSyncExternalStore } from "react";
 import { View, Text, Pressable, StyleSheet, AppState, Keyboard, Image } from "react-native";
 import { Redirect, useSegments, useRootNavigationState } from "expo-router";
@@ -41,8 +40,8 @@ function useAuthSession(): AuthStatus {
   useEffect(() => {
     // WHIT-162: login is mandatory (the static secret is retired), so the launch
     // path is unconditional — biometric-unlock a stored session if biometrics are
-    // active (checked inside unlockOrRestore/canBiometricLock), else a normal restore.
-    // Face ID stays opt-in via EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED (canBiometricLock).
+    // available on the device (checked inside unlockOrRestore/canBiometricLock), else a
+    // normal restore.
     void unlockOrRestore();
 
     // Resume re-lock: on a genuine background→active return, re-prompt Face ID ONLY if
