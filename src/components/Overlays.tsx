@@ -336,11 +336,12 @@ function ConfirmSheet() {
       <Text style={styles.confirmSub}>
         Apply to just '{merchantLabel(tx)}', or set a rule so every charge from this merchant files itself?
       </Text>
+      {/* WHIT-843: "Just this one" is the main button — the rule below changes every future charge. */}
+      <SheetButton primary label="Just this one" onPress={() => s.applyCategory('one')} />
       {/* Fixed label (not the interpolated merchant): the merchant is already named
           in the sub-text above, and a raw/long descriptor made this button ugly and
-          wrap. Pairs with "Just this one" below. */}
-      <SheetButton primary label="All from this merchant" onPress={() => s.applyCategory('all')} />
-      <SheetButton label="Just this one" onPress={() => s.applyCategory('one')} />
+          wrap. Pairs with "Just this one" above. */}
+      <SheetButton label="All from this merchant" onPress={() => s.applyCategory('all')} />
     </View>
   );
 }

@@ -9,9 +9,10 @@ import { screen, fireEvent } from '@testing-library/react-native';
 import { txn } from './factory';
 
 const mockDeleteTransaction = jest.fn<(txId: string) => Promise<boolean>>();
+const mockEdit = jest.fn();
 jest.mock('../context', () =>
   require('./support/contextMock').realContextWith(() => ({
-    applyTransactionEdit: jest.fn(),
+    applyTransactionEdit: mockEdit,
     showToast: jest.fn(),
     openPicker: jest.fn(),
     deleteTransaction: mockDeleteTransaction,
@@ -41,6 +42,7 @@ beforeEach(() => {
   server.seed('/categories', [{ ...COFFEE_RECORD, parent: null }]);
   server.seed('/transactions/feed', { transactions: [txn({ transaction_id: 't1', category: 'coffee' })], nextCursor: null });
   mockDeleteTransaction.mockReset();
+  mockEdit.mockClear();
 });
 
 const draw = () => renderWithQueries(<TransactionDetail />);
@@ -125,6 +127,25 @@ it('deleting the ONLY cached charge never flashes the empty/loading states befor
   await refreshInAct(() => finish(true));
   expect(routerSpies.back).toHaveBeenCalledTimes(1);
   await refreshInAct(() => reload.release());
+});
+
+// WHIT-843: leaving saves an edited note, but not after a delete — the charge is gone. A FAILED
+// delete keeps the charge, so leaving still saves the note. [A2]
+it.each([
+  { result: 'succeeds', ok: true, backs: 1, saves: 0 },
+  { result: 'fails', ok: false, backs: 0, saves: 1 },
+])('when the delete $result, leaving saves the edited note $saves time(s)', async ({ ok, backs, saves }) => {
+  let finish: (done: boolean) => void = () => {};
+  mockDeleteTransaction.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+  const view = await draw();
+  fireEvent.changeText(screen.getByTestId('note-input'), 'edited');
+
+  await refreshInAct(() => { openConfirm().confirm.onPress?.(); });  // the screen draws mid-delete
+  await refreshInAct(() => finish(ok));
+  view.unmount();
+
+  expect(routerSpies.back).toHaveBeenCalledTimes(backs);
+  expect(mockEdit).toHaveBeenCalledTimes(saves);
 });
 
 // [C6]

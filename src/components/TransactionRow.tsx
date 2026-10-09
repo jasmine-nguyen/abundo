@@ -8,8 +8,8 @@ import type { Transaction, Category } from '../types';
 
 // WHIT-203: the category taxonomy comes in as a prop (from the screen's query composite),
 // so the row doesn't read the store for it. openPicker stays on the store (client-state).
-// WHIT-272: the row body keeps its tap-to-categorise behaviour; a separate trailing chevron
-// (its own Pressable, so pressing it never fires the body press) opens the detail page.
+// WHIT-843: the row body opens the category picker when unfiled and the detail page otherwise;
+// the trailing chevron (its own Pressable) also opens the detail page, as a hint of where taps go.
 // WHIT-291: in the Transactions selection mode (`selectable`), the row is a checkbox instead —
 // the whole row toggles selection, and the single-tap categorise + detail chevron are suppressed.
 export function TransactionRow({ t, category, selectable = false, selected = false, onToggleSelect }: {
@@ -22,7 +22,12 @@ export function TransactionRow({ t, category, selectable = false, selected = fal
   const s = useAppContext();
   const router = useRouter();
   const v = transactionView({ category }, t);
-  const onPress = selectable ? onToggleSelect : (v.tappable ? () => s.openPicker(t.transaction_id) : undefined);
+  const openDetail = () => router.push(`/transaction/${t.transaction_id}`);
+  const onPress = () => {
+    if (selectable) return onToggleSelect?.();
+    if (v.tappable) return s.openPicker(t.transaction_id);
+    openDetail();
+  };
   return (
     <View style={[styles.row, selectable && selected && styles.rowSelected]}>
       {selectable && (
@@ -41,9 +46,6 @@ export function TransactionRow({ t, category, selectable = false, selected = fal
       )}
       <Pressable
         onPress={onPress}
-        // In selection mode the whole row is always pressable (toggles selection). Otherwise a
-        // non-tappable (categorized) row stays disabled so it never dims (WHIT-184 taste).
-        disabled={selectable ? false : !v.tappable}
         // In selection mode the labelled checkbox is the SOLE accessibility target for the row —
         // hide this body (merchant/amount) from assistive tech so a screen reader doesn't stop on
         // an unlabelled second tap target. The whole-row tap still works for sighted users.
@@ -70,7 +72,7 @@ export function TransactionRow({ t, category, selectable = false, selected = fal
       </Pressable>
       {!selectable && (
         <Pressable
-          onPress={() => router.push(`/transaction/${t.transaction_id}`)}
+          onPress={openDetail}
           hitSlop={8}
           accessibilityRole="button"
           accessibilityLabel="View transaction details"
@@ -88,7 +90,7 @@ const styles = StyleSheet.create({
   // WHIT-291: a faint accent wash marks a selected row in selection mode.
   rowSelected: { backgroundColor: tint(C.accentAlt, 0.1) },
   body: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 13, paddingVertical: 13, paddingLeft: 6 },
-  check: { paddingLeft: 6, paddingRight: 2, paddingVertical: 13, alignItems: 'center', justifyContent: 'center' },
+  check: { paddingHorizontal: 11, paddingVertical: 13, alignItems: 'center', justifyContent: 'center' },
   checkBox: { width: 22, height: 22, borderRadius: 7, borderWidth: 2, borderColor: C.hairlineStrong, alignItems: 'center', justifyContent: 'center' },
   checkBoxOn: { backgroundColor: C.accent, borderColor: C.accent },
   chevron: { paddingVertical: 13, paddingLeft: 8, paddingRight: 6, alignItems: 'center', justifyContent: 'center' },
