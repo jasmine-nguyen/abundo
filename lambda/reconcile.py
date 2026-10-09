@@ -7,10 +7,10 @@ the table; the budget-alert preview (budget_alerts.py) carries it out in memory 
 """
 
 from dataclasses import dataclass, field
-from datetime import date
 from decimal import Decimal
 import logging
 from typing import Any, Callable, Optional
+from iso_date import day_gap
 from merchant import _merchant_gate, _words, clean_merchant, merchant_matches_pending, pending_merchant_column
 from models import Transaction
 from constants import (
@@ -44,16 +44,8 @@ def _is_skewed_next_day(pending_date: Optional[str], posted_date: Optional[str])
     One-directional on purpose. Melbourne is UTC+10/+11, so the local day is always the
     same as, or one AHEAD of, the UTC day — never behind. Accepting a pending dated
     earlier than its posting would admit a whole extra class of false match for a skew
-    the clocks cannot produce. Both are bare "YYYY-MM-DD"; missing or unparseable is
-    never a skew."""
-    if not pending_date or not posted_date:
-        return False
-    try:
-        pending_day = date.fromisoformat(pending_date[:10])
-        posted_day = date.fromisoformat(posted_date[:10])
-    except ValueError:
-        return False
-    return (pending_day - posted_day).days == AUTH_DATE_SKEW_DAYS
+    the clocks cannot produce. Missing or unparseable is never a skew."""
+    return day_gap(posted_date, pending_date) == AUTH_DATE_SKEW_DAYS
 
 
 def _is_larger_within(auth_amount: Decimal, settled_amount: Decimal, headroom: Decimal) -> bool:
@@ -72,16 +64,10 @@ def _settles_after(pending_date: Optional[str], posted_date: Optional[str]) -> b
     """Whether `pending_date` could be the swipe day of a charge that settled on
     `posted_date`: same day or up to FEED_WINDOW_DAYS earlier. Used only by the
     blank-authorized_date twin tier, where there is no exact date key to match on, so
-    a bounded window keeps a coincidental same-amount pending from being swept in. Both
-    are bare "YYYY-MM-DD"; an unparseable/missing value is treated as out-of-window."""
-    if not pending_date or not posted_date:
-        return False
-    try:
-        pd = date.fromisoformat(pending_date[:10])
-        qd = date.fromisoformat(posted_date[:10])
-    except ValueError:
-        return False
-    return 0 <= (qd - pd).days <= FEED_WINDOW_DAYS
+    a bounded window keeps a coincidental same-amount pending from being swept in. An
+    unparseable/missing value is treated as out-of-window."""
+    gap = day_gap(pending_date, posted_date)
+    return gap is not None and 0 <= gap <= FEED_WINDOW_DAYS
 
 
 def _pop_lowest_id(pool: list[dict], indices: list[int]) -> dict:

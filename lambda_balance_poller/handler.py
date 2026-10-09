@@ -31,7 +31,6 @@ from constants import (
     BALANCE_POLL_TIMEOUT_SECONDS,
     BALANCE_SOURCES,
     BANKSYNC_API_KEY_PATH,
-    BANKSYNC_BASE_URL,
     FEED_STALL_ACCOUNT_IDS,
     FEED_STALL_DAYS,
     FEED_STALL_LOOKBACK_DAYS,
@@ -56,7 +55,7 @@ from api_key import get_api_key as _fetch_api_key
 # normalise_account_balance + the raw fetch live in the shared balance_fetch module (reused
 # by the on-demand refresh API). `import urllib.request` stays above so the poller tests'
 # `handler.urllib.request.urlopen` patch still reaches the shared fetch (same module singleton).
-from balance_fetch import normalise_account_balance, fetch_balance as _fetch_balance
+from balance_fetch import normalise_account_balance, fetch_balance
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -73,19 +72,6 @@ FEED_STALL_MAX_PAGES = 20
 def get_api_key() -> str:
     """The BankSync API key (fetched + cached in shared/api_key.py, keyed by path)."""
     return _fetch_api_key(BANKSYNC_API_KEY_PATH)
-
-
-def fetch_balance(bid: str, aid: str, api_key: str) -> dict:
-    """GET /v1/banks/{bid}/accounts/{aid}/balances -> the parsed JSON payload.
-
-    Thin wrapper over the shared fetch with the poller's own base URL, 30s timeout and
-    User-Agent (BankSync sits behind Cloudflare, which 403s the default urllib UA)."""
-    return _fetch_balance(
-        bid, aid, api_key,
-        base_url=BANKSYNC_BASE_URL,
-        timeout=BALANCE_POLL_TIMEOUT_SECONDS,
-        user_agent="abundo-homeloan-request",
-    )
 
 
 def check_repayment_landed_but_no_push(
@@ -231,14 +217,14 @@ def _poll_account_balances(api_key: str):
     deltas = []
     for source in BALANCE_SOURCES:
         aid = source["aid"]
-        internal_id = ACCOUNT_ID_MAP.get(aid)
-        if internal_id is None:
-            # Guarded at import by the BALANCE_SOURCES assert; stay defensive anyway.
-            logger.error("balance source aid %s has no internal-id mapping, skipping", aid)
-            continue
+        internal_id = ACCOUNT_ID_MAP[aid]
         try:
             old_amount = prior_by_id.get(internal_id)  # None on the account's first-ever poll
-            payload = fetch_balance(source["bid"], aid, api_key)
+            payload = fetch_balance(
+                source["bid"], aid, api_key,
+                timeout=BALANCE_POLL_TIMEOUT_SECONDS,
+                user_agent="abundo-homeloan-request",
+            )
             n = normalise_account_balance(payload)
             repo.upsert_balance(
                 internal_id,

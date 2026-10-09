@@ -34,18 +34,16 @@ def _charge(txn_id="t1", description="COLES 123 RICHMOND", category=None,
 def test_empty_store_is_a_noop(lam):
     charge = _charge(category=None)
     before = dict(charge)
-    rows, _ = apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([]),
+    apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([]),
         category_repo=FakeCategoryRepo(["groceries"]))
-    assert rows[0] == before                 # returned untouched
-    assert charge["category"] is None       # nothing filed
+    assert charge == before                  # left untouched: nothing filed
 
 
 def test_empty_batch_reads_nothing(lam):
     # A data-less delivery (summary event) must not pay for the rules/taxonomy reads.
     # FAIL-ON-REVERT: drop the `if not rows` guard and list_rules is called once.
     store = FakeRuleStore([_rule("COLES", "groceries")])
-    rows, is_unfiled = apply_rules(lam.rule_ingest, [], rule_repo=store, category_repo=FakeCategoryRepo(["groceries"]))
-    assert rows == []
+    is_unfiled = apply_rules(lam.rule_ingest, [], rule_repo=store, category_repo=FakeCategoryRepo(["groceries"]))
     assert is_unfiled is None                 # data-less delivery reads no taxonomy -> no carry gate
     assert store.list_calls == 0
 
@@ -122,9 +120,9 @@ def test_rule_to_a_deleted_category_is_skipped(lam):
 def test_rules_read_failure_leaves_the_charge_unfiled_and_logs(lam, caplog):
     charge = _charge(description="COLES", category=None)
     with caplog.at_level(logging.ERROR):
-        rows, is_unfiled = apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore(error=True),
+        is_unfiled = apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore(error=True),
             category_repo=FakeCategoryRepo(["groceries"]))
-    assert rows[0]["category"] is None                 # best-effort: charge still lands, unfiled
+    assert charge["category"] is None                # best-effort: charge still lands, unfiled
     assert is_unfiled is None                          # read failed: no gate for the carry
     assert "could not read rules" in caplog.text      # FAIL-ON-REVERT: no try/except -> raises
 

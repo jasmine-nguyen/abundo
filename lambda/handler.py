@@ -1,12 +1,12 @@
 """AWS Lambda entry point for syncing BankSync transactions into DynamoDB."""
 
-import base64
 import logging
 
 from banksync import UnknownAccountError, normalise
 from models import Transaction
 from webhook_repository import TransactionRepository
 from api_key import get_api_key
+from event_body import raw_body
 from standardwebhooks.webhooks import Webhook
 
 import budget_alerts
@@ -35,20 +35,26 @@ def get_webhook_signing_secret() -> str:
 
 
 def verify_and_parse(event) -> dict:
-    raw_body = event.get("body", "")
-    if event.get("isBase64Encoded"):
-        raw_body = base64.b64decode(raw_body).decode("utf-8")
+    body_text = raw_body(event).decode("utf-8")
     wh = Webhook(get_webhook_signing_secret())
 
     normalized_headers = {k.lower(): v for k, v in event.get("headers", {}).items()}
-    return wh.verify(raw_body, normalized_headers)
+    return wh.verify(body_text, normalized_headers)
+
+
+def _drop(rows: list, keep, why: str) -> list:
+    """The rows `keep` accepts, logging how many were dropped and why."""
+    kept = [row for row in rows if keep(row)]
+    if len(kept) < len(rows):
+        logger.info("skipped %d %s", len(rows) - len(kept), why)
+    return kept
 
 
 def lambda_handler(event, context) -> dict:
-    """Lambda handler: runs a full sync and returns a 200 response.
+    """Lambda handler: verifies a BankSync webhook delivery and stores its rows.
 
-    `event` and `context` are supplied by the AWS Lambda runtime and are unused
-    because the sync is driven entirely by the hardcoded account list.
+    `event` is the API Gateway request: its signed body holds the transaction rows.
+    Returns 401 when the signature doesn't verify, else a 200 response.
     """
     repo = TransactionRepository()
     try:
@@ -116,23 +122,17 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
 
     # A charge the user deleted must not come back through a BankSync re-send (WHIT-654): drop it
     # before rules, alerts or the write ever see it.
-    received_count = len(normalised_transactions)
-    normalised_transactions = [
-        transaction for transaction in normalised_transactions
-        if not repo.is_deleted(transaction["account_id"], transaction["transaction_id"])
-    ]
-    if received_count > len(normalised_transactions):
-        logger.info("skipped %d re-sent transaction(s) the user deleted",
-                    received_count - len(normalised_transactions))
+    normalised_transactions = _drop(
+        normalised_transactions,
+        lambda transaction: not repo.is_deleted(transaction["account_id"], transaction["transaction_id"]),
+        "re-sent transaction(s) the user deleted",
+    )
 
     # A $0.00 row is information only (WHIT-705): e.g. Westpac's "FOREIGN FEE" rows, whose real fee
     # is already folded into the purchase. Drop it before rules, alerts or the write see it.
-    received_count = len(normalised_transactions)
-    normalised_transactions = [
-        transaction for transaction in normalised_transactions if transaction["amount"] != 0
-    ]
-    if received_count > len(normalised_transactions):
-        logger.info("skipped %d $0.00 transaction(s)", received_count - len(normalised_transactions))
+    normalised_transactions = _drop(
+        normalised_transactions, lambda transaction: transaction["amount"] != 0, "$0.00 transaction(s)",
+    )
 
     # Apply the user's rules as each charge lands (WHIT-530): BankSync no longer labels charges
     # for us, so our server files each unfiled one by our own rules here, BEFORE the budget
@@ -141,7 +141,7 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
     # `is_unfiled` (the taxonomy check) is threaded into the write below so a stored raw
     # category can't clobber a rule-fill on settlement, and counts_to_budget is recomputed
     # for the carried category (WHIT-545). None on a rules-read failure -> carry unchanged.
-    _, is_unfiled = rule_ingest.apply(
+    is_unfiled = rule_ingest.apply(
         normalised_transactions,
         rule_repo=RuleRepository(),
         category_repo=CategoryRepository(),

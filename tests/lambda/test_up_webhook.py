@@ -128,17 +128,6 @@ def wired(lam, monkeypatch):
 
 # --- helper-level ----------------------------------------------------------
 
-def test_extract_raw_body_plain(lam):
-    event = {"body": '{"a": 1}', "isBase64Encoded": False}
-    assert lam.up_webhook.extract_raw_body(event) == b'{"a": 1}'
-
-
-def test_extract_raw_body_base64(lam):
-    encoded = base64.b64encode(b'{"a": 1}').decode("utf-8")
-    event = {"body": encoded, "isBase64Encoded": True}
-    assert lam.up_webhook.extract_raw_body(event) == b'{"a": 1}'
-
-
 def test_verify_signature_success(lam, monkeypatch):
     monkeypatch.setattr(lam.up_webhook, "get_signing_secret", lambda: MOCK_SECRET)
     raw = b'{"hello": "up"}'

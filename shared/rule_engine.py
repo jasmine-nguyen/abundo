@@ -20,10 +20,6 @@ from decimal import Decimal, InvalidOperation
 
 from constants import RULE_FIELD_OPERATORS, RULE_LOGIC
 
-# Back-compat shorthands for the two shapes that predate multi-condition rules (WHIT-541).
-_DESCRIPTION_CONTAINS = ("description", "contains")
-_CATEGORY_EQUALS = ("category", "equals")
-
 # How many example descriptions each rule shows in the preview.
 _SAMPLES_PER_RULE = 3
 

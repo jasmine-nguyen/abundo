@@ -89,3 +89,24 @@ def test_a_non_string_is_rejected_without_raising(shared, value):
 def test_a_real_calendar_date_is_accepted(shared, value):
     import iso_date
     assert iso_date.valid_iso_date(value) is True, value
+
+
+# --- day_gap: the one whole-day gap between two date strings (WHIT-832) -----------------------
+
+@pytest.mark.parametrize("earlier, later, expected", [
+    ("2026-06-10", "2026-06-13", 3),
+    ("2026-06-13", "2026-06-10", -3),                     # order matters: later - earlier
+    ("2026-06-10", "2026-06-10", 0),
+    ("2026-06-10T23:00:00Z", "2026-06-11T01:00:00Z", 1),  # timestamps compare by calendar day
+    ("2026-02-28", "2026-03-01", 1),
+    (None, "2026-06-10", None),
+    ("2026-06-10", None, None),
+    ("", "2026-06-10", None),
+    ("not-a-date", "2026-06-10", None),
+    ("2026-06-10", "2026-02-30", None),
+])
+def test_day_gap_counts_whole_days_or_gives_none(shared, earlier, later, expected):
+    # Settlement matching and the pending carry both decide on this gap. Fail-on-revert: swap
+    # the subtraction and the signed cases flip; drop the [:10] slice and timestamps give None.
+    import iso_date
+    assert iso_date.day_gap(earlier, later) == expected

@@ -55,7 +55,6 @@ from constants import (
     ACCOUNT_ID_MAP,
     BALANCE_SOURCES,
     BANKSYNC_API_KEY_PATH,
-    BANKSYNC_BASE_URL,
     FEED_WINDOW_DAYS,
     HOMELOAN_ACCOUNT_ID,
     INCOME_BUCKET,
@@ -100,6 +99,7 @@ from rule_spreading import SpreadSeeder
 from repayment_rules import is_repayment_credit, is_number
 from api_key import get_api_key as _fetch_api_key
 from balance_fetch import BalanceError, fetch_balance, normalise_account_balance
+from event_body import raw_body
 # The pay-cycle window + spend summariser live in the shared layer (WHIT-22) so the
 # webhook's budget-alert detection computes spend identically to this read API.
 from spend import (
@@ -322,13 +322,10 @@ def _parse_json_body(event: dict):
     body isn't valid JSON or isn't a JSON object. Shared by the PATCH and POST
     handlers so the base64/UTF-8 handling never diverges.
     """
-    raw_body = event.get("body") or ""
     try:
-        if event.get("isBase64Encoded"):
-            # b64decode raises binascii.Error and .decode raises UnicodeDecodeError —
-            # both ValueError subclasses, so a malformed/binary body yields a clean 400.
-            raw_body = base64.b64decode(raw_body).decode("utf-8")
-        body = json.loads(raw_body)
+        # b64decode raises binascii.Error and .decode raises UnicodeDecodeError —
+        # both ValueError subclasses, so a malformed/binary body yields a clean 400.
+        body = json.loads(raw_body(event).decode("utf-8"))
     except (json.JSONDecodeError, ValueError):
         return None, _json_response(400, {"error": "invalid JSON body"})
     if not isinstance(body, dict):
@@ -2822,7 +2819,6 @@ def _fetch_one_account_balance(source: dict, api_key: str) -> tuple:
         source["bid"],
         source["aid"],
         api_key,
-        base_url=BANKSYNC_BASE_URL,
         timeout=REFRESH_FETCH_TIMEOUT_SECONDS,
         user_agent=BANKSYNC_USER_AGENT,
     )
