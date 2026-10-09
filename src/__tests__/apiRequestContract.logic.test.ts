@@ -7,7 +7,7 @@ jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule());
 
 import { getAuthToken } from '../auth';
 import * as api from '../api';
-import { WIRE } from './support/apiWire';
+import { REASON_ENDPOINTS, WIRE } from './support/apiWire';
 
 const mockGetAuthToken = getAuthToken as jest.MockedFunction<typeof getAuthToken>;
 const BASE = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
@@ -65,7 +65,7 @@ describe('[A1][A2][A3] each endpoint sends the same method, path, body and time 
 });
 
 describe('[A4] a reason-carrying failure reads its error body under the endpoint time limit', () => {
-  it.each(NAMES.filter((name) => (api as unknown as Record<string, { errors: string }>)[name].errors === 'withReason'))(
+  it.each(REASON_ENDPOINTS)(
     '%s', async (name) => {
       fetchMock.mockReturnValue(Promise.resolve({ ok: false, status: 400, json: () => Promise.resolve({ error: 'no' }) }));
       const [call, [, , timeoutMs]] = WIRE[name];

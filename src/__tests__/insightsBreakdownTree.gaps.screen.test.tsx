@@ -153,7 +153,7 @@ it('[A13] a parent accessibilityState.expanded tracks open/closed', async () => 
 // breakdown/hero behind the pay cycle strands this on "Loading…".
 // Its own coffee fixtures + nested beforeEach (re-seeds ALL three fetchers) keep it isolated
 // from this file's tree fixtures.
-describe('cycle-independent hero (pay cycle pending)', () => {
+describe('cycle-independent hero', () => {
   const CATS = [{ ...COFFEE }];
   const BREAKDOWN = { coffee: { posted: 40, pending: 10 } };
 
@@ -163,17 +163,13 @@ describe('cycle-independent hero (pay cycle pending)', () => {
     server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01' });
   });
 
-  it('renders the breakdown hero while the pay cycle is STILL pending (cycle-independent hero → Insights exclusion is safe)', async () => {
-    // Hold the pay cycle unresolved; breakdown + categories resolve. The hero must paint its
-    // total anyway — it reads breakdown, never the cycle. On a payCycle-gated hero it would sit
-    // on "Loading…" until the (held) cycle landed.
-    const held = server.hold('/paycycle');
+  it('renders the breakdown hero without ever reading the pay cycle (WHIT-840)', async () => {
+    // The hero reads breakdown, never the cycle, so Insights doesn't ask for the pay cycle at all.
     render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Insights)));
 
     expect(await screen.findByText('spent across 1 category')).toBeTruthy(); // hero painted from breakdown
     expect(screen.queryByText('Loading…')).toBeNull();
-    expect(server.sent('GET', '/breakdown?days=14')).toHaveLength(1); // parallel, default length, current cycle (WHIT-68); server derives the window
-
-    await act(async () => { held.release(); }); // settle to avoid act() leak
+    expect(server.sent('GET', '/breakdown')).toHaveLength(1); // current cycle (WHIT-68); server derives the window
+    expect(server.sent('GET', '/paycycle')).toHaveLength(0);
   });
 });

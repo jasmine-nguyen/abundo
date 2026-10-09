@@ -28,7 +28,7 @@ beforeEach(() => {
 describe('Insights error block matches the other tabs', () => {
   it('[A1] a failed read → 60px error area, 14.5 textMid copy and the shared 10/22 Retry chip', async () => {
     seedInsights(server, { breakdown: breakdownWire({ earned: 3000 }), categories: CATS });
-    server.fail('/paycycle', 500);
+    server.fail('/breakdown', 500);
     await renderInsights();
     expect(styleOf(screen.getByTestId('insights-error'))).toMatchObject({ paddingVertical: 60 });
     const copy = styleOf(screen.getByText("Couldn't load your spending."));
@@ -38,7 +38,7 @@ describe('Insights error block matches the other tabs', () => {
 
   it('[A2] pressing Retry after the read recovers → error goes, spending shows', async () => {
     seedInsights(server, { breakdown: breakdownWire({ earned: 3000 }), categories: CATS });
-    server.once('GET', '/paycycle', { status: 500 });
+    server.once('GET', '/breakdown', { status: 500 });
     await renderInsights();
     expect(screen.getByTestId('insights-error')).toBeTruthy();
     await refreshInAct(() => fireEvent.press(screen.getByTestId('insights-retry')));

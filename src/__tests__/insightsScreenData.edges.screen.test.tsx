@@ -1,13 +1,6 @@
-// WHIT-204 GAP (composite) — the Insights status array's payCycle membership, which no
-// existing test locks (Budgets has the equivalent lock in budgetsQuery.screen.test.tsx — WHIT-459
-// folded the former budgetsQueryGaps file into it; Insights did not). Insights windows its
-// breakdown on payCycleQuery.isSuccess, so a
-// pay-cycle failure leaves breakdown DISABLED (isPending:true, isLoading:false). If payCycle
-// were dropped from useCombineScreenQueries([...]), a pay-cycle outage would surface neither
-// isError (nothing to OR) nor isLoading — stranding the user on an empty screen with no Retry.
-// Fail-on-revert: dropping payCycleQuery from the Insights array flips isError to false here.
-// Real ../api over the fake server, ../auth mocked; real QueryClientProvider drives the hook
-// (mirrors goalScreenData.edges).
+// WHIT-194 GAP (composite) — the Insights categoriesError signal. Real ../api over the fake
+// server, ../auth mocked; real QueryClientProvider drives the hook (mirrors goalScreenData.edges).
+// Insights no longer reads the pay cycle (WHIT-840): insightsWithoutPayCycle.screen.test.tsx.
 //
 // WHIT-467 folded in insightsIncomeEpsilon.edges (WHIT-380 QA gap) — same harness + timer
 // regime. It seeds its own breakdown over the default and inherits categories/payCycle/budgets.
@@ -34,18 +27,6 @@ beforeEach(() => {
   server.seed('/categories', CATS);
   server.seed('/paycycle', PAY_CYCLE);
   server.seed('/budgets', {}); // no budgets by default
-});
-
-it('a payCycle failure surfaces as isError and does NOT strand isLoading (payCycle IS in the Insights array)', async () => {
-  server.fail('/paycycle', 503);
-  const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
-
-  await waitFor(() => expect(result.current.isError).toBe(true)); // payCycleQuery IS in the OR
-  expect(result.current.isLoading).toBe(false);                   // errored dependency → inline error, not a forever spinner
-  // WHIT-72: breakdown no longer waits behind payCycleQuery.isSuccess — it fetches in parallel
-  // with the default length (the server derives the window itself), so it DID fetch. The
-  // composite still surfaces isError via the payCycle failure in the OR.
-  await waitFor(() => expect(server.sent('GET', '/breakdown?days=14')).toHaveLength(1)); // WHIT-68: current cycle = 0
 });
 
 // WHIT-194: the categoriesError signal that lets Insights distinguish a first-load categories
@@ -143,7 +124,7 @@ it('re-derives earned from the selected cycle (no stale carry-over on cycle swit
   rerender({ cycle: 1 });
   await waitFor(() => expect(result.current.earned).toBe(1000)); // last cycle: its OWN __earned__
   expect(result.current.breakdown.coffee).toEqual({ posted: 5, pending: 0 });
-  expect(server.sentUnder('GET', '/breakdown').slice(-1)[0].path).toMatch(/&cycle=1$/);
+  expect(server.sentUnder('GET', '/breakdown').slice(-1)[0].path).toBe('/breakdown?cycle=1');
 });
 
 // --- WHIT-380 QA gap (folded in by WHIT-467) ----------------------------------

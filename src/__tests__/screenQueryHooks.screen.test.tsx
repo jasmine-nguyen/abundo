@@ -80,7 +80,7 @@ it('useBudgetDetailScreenData refetchStale re-fires every stale read exactly onc
   await act(async () => { result.current.refetchStale(); });
   // staleTime 0 → immediately stale → each read (the budget list included) refires once.
   await waitFor(() => expect(server.sent('GET', COFFEE_BUDGET_TX)).toHaveLength(2)); // budgetTransactionsQuery IS in refetchStale
-  expect(server.sentUnder('GET', '/budgets?')).toHaveLength(2);
+  expect(server.sent('GET', '/budgets')).toHaveLength(2);
   expect(server.sent('GET', '/categories')).toHaveLength(2);
 });
 

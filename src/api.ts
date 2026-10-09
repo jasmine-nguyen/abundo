@@ -80,16 +80,6 @@ async function failed(response: Response, timeoutMs: number): Promise<ApiError> 
   return new ApiError(response.status, serverMessage);
 }
 
-/**
- * How an endpoint turns a not-OK response into an error. Every message stays `API error: N`
- * (src/queryClient.ts's auth-retry match reads it):
- *  - plain: a plain Error.
- *  - statusOnly: an ApiError carrying the status only — the caller branches on it (a 409 clash,
- *    a 404 expired job), but the server's wording is never shown, so it isn't carried.
- *  - withReason: failed() — an ApiError carrying the server's stated reason as user-facing copy.
- */
-type ErrorHandling = "plain" | "statusOnly" | "withReason";
-
 interface RequestSpec {
   path: string;
   method?: "POST" | "PUT" | "PATCH" | "DELETE";
@@ -110,7 +100,7 @@ interface RequestSpec {
  *   headers, so the body read gets the same limit via withBodyTimeout — a stalled body would
  *   otherwise hang the query or writer behind it (WHIT-441 error body, WHIT-448 success body).
  */
-async function request(spec: RequestSpec, errors: ErrorHandling): Promise<any> {
+async function request(spec: RequestSpec, withReason: boolean): Promise<any> {
   const timeoutMs = spec.timeoutMs ?? REQUEST_TIMEOUT_MS;
   const idToken = await getAuthToken();
   if (!idToken) throw new Error("Not signed in");
@@ -134,9 +124,8 @@ async function request(spec: RequestSpec, errors: ErrorHandling): Promise<any> {
   }
 
   if (response.ok == false) {
-    if (errors === "withReason") throw await failed(response, timeoutMs);
-    if (errors === "statusOnly") throw new ApiError(response.status, null);
-    throw new Error(`API error: ${response.status}`);
+    if (withReason) throw await failed(response, timeoutMs);
+    throw new ApiError(response.status, null);
   }
   return withBodyTimeout(response.json(), timeoutMs);
 }
@@ -144,15 +133,16 @@ async function request(spec: RequestSpec, errors: ErrorHandling): Promise<any> {
 type Send = (spec: RequestSpec) => Promise<any>;
 
 /**
- * Declare an endpoint with its error style. The style is attached as `.errors` so
- * src/__tests__/apiErrorContainment.logic.test.ts can check each endpoint behaves as declared.
+ * Declare an endpoint. A not-OK response always rejects with an ApiError whose message is
+ * `API error: N` (src/queryClient.ts's auth-retry match reads it). `withReason` also carries the
+ * server's stated reason (failed()) as user-facing copy; otherwise only the status is kept.
  */
 function endpoint<A extends unknown[], R>(
-  errors: ErrorHandling,
   run: (send: Send, ...args: A) => Promise<R>,
+  { withReason = false }: { withReason?: boolean } = {},
 ): (...args: A) => Promise<R> {
-  const send: Send = (spec) => request(spec, errors);
-  return Object.assign(async (...args: A) => run(send, ...args), { errors });
+  const send: Send = (spec) => request(spec, withReason);
+  return async (...args: A) => run(send, ...args);
 }
 
 /** One condition of a categorisation rule (WHIT-541 multi-condition). */
@@ -214,7 +204,7 @@ export interface RuleWriteInput {
  * @returns The recent-window transactions from the API.
  * @throws If the response status is not OK.
  */
-export const fetchTransactions = endpoint("plain", (send): Promise<Transaction[]> =>
+export const fetchTransactions = endpoint((send): Promise<Transaction[]> =>
   send({ path: "/transactions" }));
 
 /** One page of the all-accounts transaction feed (the Transactions tab's "Load More"). */
@@ -235,7 +225,6 @@ export interface TransactionFeedPage {
  * @throws If the response status is not OK.
  */
 export const fetchTransactionsFeed = endpoint(
-  "plain",
   (send, cursor?: string, limit?: number): Promise<TransactionFeedPage> => {
     const parts: string[] = [];
     if (cursor) parts.push(`cursor=${encodeURIComponent(cursor)}`);
@@ -260,7 +249,6 @@ export const fetchTransactionsFeed = endpoint(
  * @throws If the response status is not OK.
  */
 export const fetchUncategorizedFeed = endpoint(
-  "plain",
   (send, cursor?: string, limit?: number): Promise<TransactionFeedPage> => {
     const parts: string[] = [];
     if (cursor) parts.push(`cursor=${encodeURIComponent(cursor)}`);
@@ -288,7 +276,6 @@ export interface TransactionSearchResult {
  * @throws If the response status is not OK.
  */
 export const fetchTransactionsSearch = endpoint(
-  "plain",
   (send, tab: 'all' | 'uncategorized', query: string): Promise<TransactionSearchResult> =>
     send({
       path: `/transactions/search?tab=${encodeURIComponent(tab)}&q=${encodeURIComponent(query)}`,
@@ -304,7 +291,7 @@ export const fetchTransactionsSearch = endpoint(
  * @returns The count (a bare number, unwrapped from the server's {count}).
  * @throws If the response status is not OK.
  */
-export const fetchUncategorizedCount = endpoint("plain", async (send): Promise<number> => {
+export const fetchUncategorizedCount = endpoint(async (send): Promise<number> => {
   const body = await send({ path: "/transactions/uncategorized/count" });
   // Fail LOUD on a malformed envelope (missing / stringified count), mirroring selectCategories.
   // A non-number would otherwise flow straight through as the badge TEXT and defeat the `=== 0`
@@ -409,7 +396,6 @@ export interface CreatedRule {
 // This endpoint's 4xx wording ("dryRun must be a boolean", BankSync internals) is never shown to
 // the user, so it must not be carried.
 export const applyRulesToUncategorized = endpoint(
-  "statusOnly",
   (
     send,
     dryRun: boolean,
@@ -462,7 +448,6 @@ export interface ApplyRulesJob {
  *   409 (a rule that would clash), and 502 (the worker could not be dispatched).
  */
 export const startApplyRulesJob = endpoint(
-  "statusOnly",
   (send, rule?: { value: string; categoryId: string; budgetExcluded?: boolean }): Promise<ApplyRulesJob> =>
     send({
       path: "/transactions/uncategorized/apply-rules/jobs",
@@ -480,7 +465,7 @@ export const startApplyRulesJob = endpoint(
  *   TTL) — the caller treats that as a real terminal failure, distinct from a thrown network error
  *   (offline/airplane), which it tolerates and retries.
  */
-export const getApplyRulesJob = endpoint("statusOnly", (send, jobId: string): Promise<ApplyRulesJob> =>
+export const getApplyRulesJob = endpoint((send, jobId: string): Promise<ApplyRulesJob> =>
   send({
     path: `/transactions/uncategorized/apply-rules/jobs/${encodeURIComponent(jobId)}`,
     timeoutMs: APPLY_RULES_JOB_POLL_TIMEOUT_MS,
@@ -537,7 +522,7 @@ export interface ChatJob {
  * @param messages - The conversation so far, ending with the user's new question.
  * @throws ApiError carrying the status.
  */
-export const startAiChat = endpoint("statusOnly", (send, messages: ChatTurn[]): Promise<ChatJob> =>
+export const startAiChat = endpoint((send, messages: ChatTurn[]): Promise<ChatJob> =>
   send({ path: "/ai/chat", method: "POST", body: { messages } }));
 
 /**
@@ -546,7 +531,7 @@ export const startAiChat = endpoint("statusOnly", (send, messages: ChatTurn[]): 
  *
  * @throws ApiError carrying the status; 404 = unknown or expired job.
  */
-export const getAiChatJob = endpoint("statusOnly", (send, jobId: string): Promise<ChatJob> =>
+export const getAiChatJob = endpoint((send, jobId: string): Promise<ChatJob> =>
   send({ path: `/ai/chat/jobs/${encodeURIComponent(jobId)}`, timeoutMs: AI_CHAT_JOB_POLL_TIMEOUT_MS }));
 
 /** One rule-group of unfiled charges the server proposes for "file by shop" (WHIT-517). The
@@ -581,7 +566,7 @@ export interface UncategorizedMerchants {
  * @returns The grouped shops plus the ungrouped one-offs.
  * @throws If the response status is not OK.
  */
-export const fetchUncategorizedMerchants = endpoint("plain", (send): Promise<UncategorizedMerchants> =>
+export const fetchUncategorizedMerchants = endpoint((send): Promise<UncategorizedMerchants> =>
   send({ path: "/transactions/uncategorized/merchants", timeoutMs: APPLY_RULES_TIMEOUT_MS }));
 
 /** One rule suggested from the user's hand-filing habits (WHIT-542): they have filed `merchant`
@@ -610,7 +595,7 @@ export interface FilingSuggestions {
  * @returns The suggested rules, most-filed first.
  * @throws If the response status is not OK.
  */
-export const fetchFilingSuggestions = endpoint("plain", (send): Promise<FilingSuggestions> =>
+export const fetchFilingSuggestions = endpoint((send): Promise<FilingSuggestions> =>
   send({ path: "/transactions/filing-suggestions", timeoutMs: APPLY_RULES_TIMEOUT_MS }));
 
 /**
@@ -619,7 +604,7 @@ export const fetchFilingSuggestions = endpoint("plain", (send): Promise<FilingSu
  * @returns The list of categories from the API.
  * @throws If the response status is not OK.
  */
-export const fetchCategories = endpoint("plain", (send): Promise<Category[]> =>
+export const fetchCategories = endpoint((send): Promise<Category[]> =>
   send({ path: "/categories" }));
 
 /**
@@ -631,9 +616,9 @@ export const fetchCategories = endpoint("plain", (send): Promise<Category[]> =>
  * @throws If the response status is not OK (e.g. 409 when the slug already exists).
  */
 export const createCategory = endpoint(
-  "withReason",
   (send, input: { name: string; bucket: Bucket; icon: string; parent?: string | null }): Promise<Category> =>
     send({ path: "/categories", method: "POST", body: input }),
+  { withReason: true },
 );
 
 /**
@@ -646,13 +631,13 @@ export const createCategory = endpoint(
  * @throws If the response status is not OK (e.g. 404 when the id is unknown).
  */
 export const updateCategory = endpoint(
-  "withReason",
   (
     send,
     id: string,
     input: { name: string; bucket: Bucket; icon: string; parent?: string | null },
   ): Promise<Category> =>
     send({ path: `/categories/${encodeURIComponent(id)}`, method: "PATCH", body: input }),
+  { withReason: true },
 );
 
 /**
@@ -663,8 +648,11 @@ export const updateCategory = endpoint(
  * @returns The id of the deleted category.
  * @throws If the response status is not OK (e.g. 404 when the id is unknown).
  */
-export const deleteCategory = endpoint("withReason", (send, id: string): Promise<{ id: string }> =>
-  send({ path: `/categories/${encodeURIComponent(id)}`, method: "DELETE" }));
+export const deleteCategory = endpoint(
+  (send, id: string): Promise<{ id: string }> =>
+    send({ path: `/categories/${encodeURIComponent(id)}`, method: "DELETE" }),
+  { withReason: true },
+);
 
 /** A bill spread's shape on a budget (WHIT-504/505). `adjustment` is the signed dollars this
  * cycle's spendable moves by — a positive cushion in the anchor cycle, a negative slice in a
@@ -716,13 +704,11 @@ export interface BudgetRollup {
  * Fetch every budgeted category's target plus its computed posted/pending spend
  * for the current window. Empty {} before any target is set.
  *
- * @param days - The client's pay-cycle length. The server derives the window from the
- *   stored pay cycle and ignores this (WHIT-72); kept for symmetry with fetchBreakdown.
  * @returns A map of category id to its { target, posted, pending }.
  * @throws If the response status is not OK.
  */
-export const fetchBudgets = endpoint("plain", (send, days: number): Promise<Record<string, BudgetRollup>> =>
-  send({ path: `/budgets?days=${encodeURIComponent(days)}` }));
+export const fetchBudgets = endpoint((send): Promise<Record<string, BudgetRollup>> =>
+  send({ path: "/budgets" }));
 
 /**
  * Fetch the transactions behind a budget's total: every contributing charge in the
@@ -735,7 +721,7 @@ export const fetchBudgets = endpoint("plain", (send, days: number): Promise<Reco
  * @returns The cycle's transactions for that budget, newest first.
  * @throws If the response status is not OK.
  */
-export const fetchBudgetTransactions = endpoint("plain", (send, categoryId: string): Promise<Transaction[]> =>
+export const fetchBudgetTransactions = endpoint((send, categoryId: string): Promise<Transaction[]> =>
   send({ path: `/budgets/${encodeURIComponent(categoryId)}/transactions` }));
 
 /** A category's computed spend for the current pay cycle. */
@@ -768,8 +754,6 @@ export interface BreakdownRollup {
  * with spend this cycle, plus the special "__uncategorized__" bucket for spend
  * that counts to budget but isn't in the taxonomy. Empty {} when nothing had spend.
  *
- * @param days - The client's pay-cycle length. The server derives the window from
- *   the stored pay cycle and ignores this; kept for symmetry with fetchBudgets.
  * @param cycle - Which pay cycle to read (WHIT-68): 0 = the current cycle (default),
  *   n >= 1 = the nth prior cycle for the historical look-back. Only sent when > 0, so
  *   the default request is byte-identical to before.
@@ -777,10 +761,9 @@ export interface BreakdownRollup {
  * @throws If the response status is not OK.
  */
 export const fetchBreakdown = endpoint(
-  "plain",
-  (send, days: number, cycle: number = 0): Promise<Record<string, CategorySpend>> => {
-    const cycleParam = cycle > 0 ? `&cycle=${encodeURIComponent(cycle)}` : '';
-    return send({ path: `/breakdown?days=${encodeURIComponent(days)}${cycleParam}` });
+  (send, cycle: number = 0): Promise<Record<string, CategorySpend>> => {
+    if (cycle > 0) return send({ path: `/breakdown?cycle=${encodeURIComponent(cycle)}` });
+    return send({ path: "/breakdown" });
   },
 );
 
@@ -798,7 +781,6 @@ export const fetchBreakdown = endpoint(
  * @throws If the response status is not OK.
  */
 export const fetchCategoryTransactions = endpoint(
-  "plain",
   (send, categoryId: string, cycle: number = 0, range?: DateRange): Promise<Transaction[]> => {
     // Card 609: a date range (the Ask Abundo deep link) replaces the cycle. The server then
     // includes the category's subcategories, so the list adds up to the chat's figure.
@@ -829,7 +811,6 @@ export interface CycleTransactions {
  * @throws If the response status is not OK.
  */
 export const fetchCycleTransactions = endpoint(
-  "plain",
   (send, cycle: number = 0): Promise<CycleTransactions> =>
     send({ path: `/transactions/cycle${cycle > 0 ? `?cycle=${encodeURIComponent(cycle)}` : ''}` }),
 );
@@ -845,7 +826,6 @@ export const fetchCycleTransactions = endpoint(
  * @throws If the response status is not OK (e.g. 404 when the id is unknown).
  */
 export const setTransactionCategory = endpoint(
-  "plain",
   (
     _send,
     id: string,
@@ -864,7 +844,6 @@ export const setTransactionCategory = endpoint(
  * @throws If the response status is not OK (e.g. 404 when the id is unknown).
  */
 export const setTransactionFields = endpoint(
-  "plain",
   (
     send,
     id: string,
@@ -879,7 +858,7 @@ export const setTransactionFields = endpoint(
  *
  * @throws If the response status is not OK (e.g. 404 when the id is unknown).
  */
-export const deleteTransaction = endpoint("plain", (send, id: string): Promise<{ transaction_id: string }> =>
+export const deleteTransaction = endpoint((send, id: string): Promise<{ transaction_id: string }> =>
   send({ path: `/transactions/${encodeURIComponent(id)}`, method: "DELETE" }));
 
 /** One transaction's outcome in a batch category update (WHIT-70). */
@@ -898,7 +877,6 @@ export interface BatchCategoryResult {
  * @throws If the response status is not OK.
  */
 export const setTransactionCategories = endpoint(
-  "plain",
   (send, updates: { id: string; category: string }[]): Promise<{ results: BatchCategoryResult[] }> =>
     send({ path: "/transactions", method: "PATCH", body: { updates } }),
 );
@@ -922,7 +900,7 @@ export interface HomeLoan {
  * @returns The stored { balance, as_of, currency } (balance null if unpolled).
  * @throws If the response status is not OK.
  */
-export const fetchHomeLoan = endpoint("plain", (send): Promise<HomeLoan> =>
+export const fetchHomeLoan = endpoint((send): Promise<HomeLoan> =>
   send({ path: "/homeloan" }));
 
 /**
@@ -948,7 +926,7 @@ export interface AccountBalance {
  *
  * @throws If the response status is not OK.
  */
-export const fetchAccountBalances = endpoint("plain", (send): Promise<AccountBalance[]> =>
+export const fetchAccountBalances = endpoint((send): Promise<AccountBalance[]> =>
   send({ path: "/accounts/balances" }));
 
 /**
@@ -960,7 +938,7 @@ export const fetchAccountBalances = endpoint("plain", (send): Promise<AccountBal
  *
  * @throws If the response status is not OK (the caller keeps the last-good balances + toasts).
  */
-export const refreshAccountBalances = endpoint("plain", (send): Promise<AccountBalance[]> =>
+export const refreshAccountBalances = endpoint((send): Promise<AccountBalance[]> =>
   send({ path: "/accounts/balances/refresh", method: "POST", timeoutMs: BALANCE_REFRESH_TIMEOUT_MS }));
 
 /**
@@ -1040,7 +1018,7 @@ export type GoalWriteBody =
  *
  * @throws If the response status is not OK.
  */
-export const fetchGoals = endpoint("plain", (send): Promise<GoalRecord[]> =>
+export const fetchGoals = endpoint((send): Promise<GoalRecord[]> =>
   send({ path: "/goals" }));
 
 /**
@@ -1061,7 +1039,7 @@ export interface MilestoneRecord {
  *
  * @throws If the response status is not OK.
  */
-export const fetchMilestones = endpoint("plain", (send): Promise<MilestoneRecord[]> =>
+export const fetchMilestones = endpoint((send): Promise<MilestoneRecord[]> =>
   send({ path: "/milestones" }));
 
 /**
@@ -1071,7 +1049,7 @@ export const fetchMilestones = endpoint("plain", (send): Promise<MilestoneRecord
  *
  * @throws If the response status is not OK (e.g. 400 on an empty / invalid / out-of-order list).
  */
-export const setMilestones = endpoint("plain", (send, milestones: MilestoneRecord[]): Promise<MilestoneRecord[]> =>
+export const setMilestones = endpoint((send, milestones: MilestoneRecord[]): Promise<MilestoneRecord[]> =>
   send({ path: "/milestones", method: "PUT", body: { milestones } }));
 
 /**
@@ -1084,7 +1062,7 @@ export const setMilestones = endpoint("plain", (send, milestones: MilestoneRecor
  * @returns The saved goal, with its id echoed by the server.
  * @throws If the response status is not OK (e.g. 400 on an invalid field or two sources).
  */
-export const saveGoal = endpoint("plain", (send, id: string, body: GoalWriteBody): Promise<GoalRecord> =>
+export const saveGoal = endpoint((send, id: string, body: GoalWriteBody): Promise<GoalRecord> =>
   send({ path: `/goals/${encodeURIComponent(id)}`, method: "PUT", body }));
 
 /**
@@ -1095,7 +1073,7 @@ export const saveGoal = endpoint("plain", (send, id: string, body: GoalWriteBody
  * @returns The id of the deleted goal.
  * @throws If the response status is not OK.
  */
-export const deleteGoal = endpoint("plain", (send, id: string): Promise<{ id: string }> =>
+export const deleteGoal = endpoint((send, id: string): Promise<{ id: string }> =>
   send({ path: `/goals/${encodeURIComponent(id)}`, method: "DELETE" }));
 
 /**
@@ -1117,7 +1095,7 @@ export interface Repayment {
  *
  * @throws If the response status is not OK.
  */
-export const fetchRepayment = endpoint("plain", (send): Promise<Repayment> =>
+export const fetchRepayment = endpoint((send): Promise<Repayment> =>
   send({ path: "/repayment" }));
 
 /**
@@ -1158,7 +1136,7 @@ export interface LoanFactsInput {
  *
  * @throws If the response status is not OK.
  */
-export const fetchLoanFacts = endpoint("plain", (send): Promise<LoanFacts> =>
+export const fetchLoanFacts = endpoint((send): Promise<LoanFacts> =>
   send({ path: "/loanfacts" }));
 
 /**
@@ -1168,7 +1146,7 @@ export const fetchLoanFacts = endpoint("plain", (send): Promise<LoanFacts> =>
  * @returns The saved facts.
  * @throws If the response status is not OK (e.g. 400 on an invalid field).
  */
-export const setLoanFacts = endpoint("plain", (send, facts: LoanFactsInput): Promise<LoanFactsInput> =>
+export const setLoanFacts = endpoint((send, facts: LoanFactsInput): Promise<LoanFactsInput> =>
   send({ path: "/loanfacts", method: "PUT", body: facts }));
 
 /** The persisted pay cycle: window length in days + the last pay date. */
@@ -1188,7 +1166,7 @@ export interface PayCycle {
  * @returns The stored { length, last_pay_date }.
  * @throws If the response status is not OK.
  */
-export const fetchPayCycle = endpoint("plain", (send): Promise<PayCycle> =>
+export const fetchPayCycle = endpoint((send): Promise<PayCycle> =>
   send({ path: "/paycycle" }));
 
 /**
@@ -1200,7 +1178,7 @@ export const fetchPayCycle = endpoint("plain", (send): Promise<PayCycle> =>
  * @throws If the response status is not OK (e.g. 400 on a bad length or a
  *   future/malformed last_pay_date).
  */
-export const setPayCycle = endpoint("plain", (send, cycle: PayCycle): Promise<PayCycle> =>
+export const setPayCycle = endpoint((send, cycle: PayCycle): Promise<PayCycle> =>
   send({ path: "/paycycle", method: "PUT", body: cycle }));
 
 /**
@@ -1213,7 +1191,6 @@ export const setPayCycle = endpoint("plain", (send, cycle: PayCycle): Promise<Pa
  * @throws If the response status is not OK (e.g. 400 on an invalid target).
  */
 export const setBudget = endpoint(
-  "plain",
   (send, categoryId: string, target: number, rollover?: boolean): Promise<{ id: string; target: number }> => {
     // Send `rollover` only when the caller passes it, so a plain amount edit leaves the
     // stored flag untouched (the server treats an absent `rollover` as "no change").
@@ -1231,7 +1208,7 @@ export const setBudget = endpoint(
  * @returns The id whose budget was removed.
  * @throws If the response status is not OK.
  */
-export const deleteBudget = endpoint("plain", (send, categoryId: string): Promise<{ id: string }> =>
+export const deleteBudget = endpoint((send, categoryId: string): Promise<{ id: string }> =>
   send({ path: `/budgets/${encodeURIComponent(categoryId)}`, method: "DELETE" }));
 
 /**
@@ -1246,7 +1223,6 @@ export const deleteBudget = endpoint("plain", (send, categoryId: string): Promis
  * @throws If the response status is not OK (e.g. 400 on a bad amount/cycles, rollover on, or no budget).
  */
 export const setSpread = endpoint(
-  "plain",
   (send, categoryId: string, amount: number, cycles: number): Promise<{ id: string; amount: number; cycles: number }> =>
     send({ path: `/budgets/${encodeURIComponent(categoryId)}/spread`, method: "PUT", body: { amount, cycles } }),
 );
@@ -1259,7 +1235,7 @@ export const setSpread = endpoint(
  * @returns The id whose spread was removed.
  * @throws If the response status is not OK.
  */
-export const deleteSpread = endpoint("plain", (send, categoryId: string): Promise<{ id: string }> =>
+export const deleteSpread = endpoint((send, categoryId: string): Promise<{ id: string }> =>
   send({ path: `/budgets/${encodeURIComponent(categoryId)}/spread`, method: "DELETE" }));
 
 /**
@@ -1268,7 +1244,7 @@ export const deleteSpread = endpoint("plain", (send, categoryId: string): Promis
  * @returns The rules currently held in our own rule store.
  * @throws If the response status is not OK (401 when the token is wrong/missing).
  */
-export const listRules = endpoint("plain", (send): Promise<RuleRecord[]> =>
+export const listRules = endpoint((send): Promise<RuleRecord[]> =>
   send({ path: "/rules" }));
 
 /**
@@ -1282,7 +1258,7 @@ export const listRules = endpoint("plain", (send): Promise<RuleRecord[]> =>
  *   tell a spread rule's 409 (category already spread) / 422 (no recurring bill) apart (WHIT-559),
  *   from a 400 (invalid) or 401 (auth).
  */
-export const createRule = endpoint("statusOnly", (send, input: RuleWriteInput): Promise<RuleRecord> =>
+export const createRule = endpoint((send, input: RuleWriteInput): Promise<RuleRecord> =>
   send({ path: "/rules", method: "POST", body: input }));
 
 /**
@@ -1295,7 +1271,7 @@ export const createRule = endpoint("statusOnly", (send, input: RuleWriteInput): 
  * @throws {ApiError} If the response status is not OK — carrying `.status` so an edit that turns
  *   spread on can surface its 409/422 (WHIT-559), apart from 404 (unknown id) / 400 / 401.
  */
-export const updateRule = endpoint("statusOnly", (send, id: string, input: RuleWriteInput): Promise<RuleRecord> =>
+export const updateRule = endpoint((send, id: string, input: RuleWriteInput): Promise<RuleRecord> =>
   send({ path: `/rules/${encodeURIComponent(id)}`, method: "PUT", body: input }));
 
 /**
@@ -1306,7 +1282,7 @@ export const updateRule = endpoint("statusOnly", (send, id: string, input: RuleW
  * @returns The id of the deleted rule.
  * @throws If the response status is not OK (401 on auth).
  */
-export const deleteRule = endpoint("plain", (send, id: string): Promise<{ id: string }> =>
+export const deleteRule = endpoint((send, id: string): Promise<{ id: string }> =>
   send({ path: `/rules/${encodeURIComponent(id)}`, method: "DELETE" }));
 
 /**
@@ -1367,7 +1343,7 @@ export type AiGoalSignal =
  *
  * @throws If the response status is not OK (401 on auth).
  */
-export const fetchAiInsights = endpoint("plain", (send): Promise<AiInsights> =>
+export const fetchAiInsights = endpoint((send): Promise<AiInsights> =>
   send({ path: "/insights/ai" }));
 
 /**
@@ -1382,7 +1358,7 @@ export const fetchAiInsights = endpoint("plain", (send): Promise<AiInsights> =>
  *
  * @throws If the response status is not OK (401 auth, 502 when the AI is unavailable).
  */
-export const generateAiInsights = endpoint("plain", (send, goal?: AiGoalSignal | null): Promise<AiInsights> =>
+export const generateAiInsights = endpoint((send, goal?: AiGoalSignal | null): Promise<AiInsights> =>
   send({
     path: "/insights/ai",
     method: "POST",
@@ -1400,5 +1376,5 @@ export const generateAiInsights = endpoint("plain", (send, goal?: AiGoalSignal |
  * @returns The registered token, echoed by the server.
  * @throws If the response status is not OK (400 invalid token, 401 auth).
  */
-export const registerDevice = endpoint("plain", (send, token: string): Promise<{ token: string }> =>
+export const registerDevice = endpoint((send, token: string): Promise<{ token: string }> =>
   send({ path: "/devices", method: "POST", body: { token } }));

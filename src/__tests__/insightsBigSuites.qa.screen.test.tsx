@@ -46,13 +46,12 @@ describe('the earned-vs-spent card stays hidden over a real loading/error state 
     expect(await screen.findByTestId('insights-earned-spent')).toBeTruthy(); // positive control
   });
 
-  it('[A2] income arrived but the pay-cycle read failed → error card, no card', async () => {
+  it('[A2] income arrived and the pay-cycle read failed → no error, card still shows (WHIT-840)', async () => {
     seedInsights(server, { breakdown: breakdownWire({ earned: 3000 }), categories: CATS });
     server.fail('/paycycle', 500);
     await renderInsights();
-    expect(queryClient.getQueryState([...breakdownKey, 0])?.status).toBe('success');
-    expect(screen.getByTestId('insights-error')).toBeTruthy();
-    expect(screen.queryByTestId('insights-earned-spent')).toBeNull();
+    expect(screen.queryByTestId('insights-error')).toBeNull();
+    expect(screen.getByTestId('insights-earned-spent')).toBeTruthy();
   });
 
   it('[A3] spend + income arrived but categories never loaded → error card, no card and no donut', async () => {
@@ -80,7 +79,7 @@ describe('cycle switch reads each cycle from its own reply', () => {
     await settle();
     expect(screen.getByText('LAST PAY CYCLE')).toBeTruthy();
     expect(screen.getByTestId('insights-hero-total').props.children).toBe('$125');
-    expect(server.sentUnder('GET', '/breakdown').slice(-1)[0].path).toMatch(/&cycle=1$/);
+    expect(server.sentUnder('GET', '/breakdown').slice(-1)[0].path).toBe('/breakdown?cycle=1');
 
     fireEvent.press(screen.getByTestId('insights-cycle-current'));
     await settle();

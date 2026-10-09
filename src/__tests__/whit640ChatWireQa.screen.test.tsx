@@ -1,6 +1,6 @@
 // WHIT-640 QA — the Ask Abundo provider on the real api.ts: which HTTP failures on the start and
 // on a check end the answer, and how many requests each one costs. The old suites faked
-// startAiChat/getAiChatJob, so the ApiError status wiring (api.ts "statusOnly") never ran.
+// startAiChat/getAiChatJob, so the ApiError status wiring in api.ts never ran.
 // Same harness as chatContext.provider.screen.test.tsx (fake server, auth mocked, fake timers).
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';

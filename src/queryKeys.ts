@@ -4,7 +4,7 @@
 export const categoriesKey = ['categories'] as const;
 export const payCycleKey = ['payCycle'] as const;
 // Budgets are un-windowed at the KEY (WHIT-72): the server derives the pay-cycle window
-// itself (GET /budgets ignores the client ?days=), so a flat key is correct — it lets
+// itself (GET /budgets sends no length), so a flat key is correct — it lets
 // budgets fetch in PARALLEL with the pay cycle (no waterfall) and refetch exactly ONCE on
 // a cycle-length change (the explicit invalidate of budgetsKey in persistPayCycle),
 // rather than a length change shifting the key AND the invalidate firing two fetches.

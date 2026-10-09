@@ -1,6 +1,6 @@
 // WHIT-637 — the in-memory pretend server the app tests use instead of jest.mock('../api').
 // Driven through the REAL src/api.ts calls, so it proves the fake answers the way the real code
-// reads a reply, and that each call keeps its declared error style (plain / statusOnly / withReason).
+// reads a reply, and that a failure is an ApiError carrying the server's reason only on a reason endpoint.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 
 jest.mock('../../auth', () => require('./authMock').authMockModule());
@@ -40,12 +40,11 @@ describe('WHIT-637 fake server', () => {
     await expect(api.fetchCategories()).resolves.toEqual([]);
   });
 
-  it('a forced failure rejects in each call\'s declared error style', async () => {
+  it('a forced failure rejects with an ApiError, the reason carried only by a reason endpoint', async () => {
     server.fail('/categories', 500);
-    const plain = await api.fetchCategories().catch((error: unknown) => error);
-    expect(plain).toBeInstanceOf(Error);
-    expect(plain).not.toBeInstanceOf(ApiError);
-    expect((plain as Error).message).toBe('API error: 500');
+    await expect(api.fetchCategories()).rejects.toMatchObject({
+      name: 'ApiError', message: 'API error: 500', status: 500, serverMessage: null,
+    });
 
     server.fail('/rules', 409, 'Rule already exists');
     await expect(api.createRule({ value: 'COLES', categoryId: 'groceries' })).rejects.toMatchObject({
@@ -138,13 +137,12 @@ describe('WHIT-637 fake server', () => {
   });
 
   it('a seeded path answers a call that adds a query string, and the log keeps the query', async () => {
-    const budgets = { groceries: { target: 100, spent: 40 } };
-    server.seed('/budgets', budgets);
-    await expect(api.fetchBudgets(14)).resolves.toEqual(budgets);
-    expect(server.requests()).toEqual([{ method: 'GET', path: '/budgets?days=14', body: undefined }]);
+    server.seed('/breakdown', BREAKDOWN);
+    await expect(api.fetchBreakdown(1)).resolves.toEqual(BREAKDOWN);
+    expect(server.requests()).toEqual([{ method: 'GET', path: '/breakdown?cycle=1', body: undefined }]);
 
-    server.fail('/budgets', 503);
-    await expect(api.fetchBudgets(14)).rejects.toThrow('API error: 503');
+    server.fail('/breakdown', 503);
+    await expect(api.fetchBreakdown(1)).rejects.toThrow('API error: 503');
   });
 
   it('replies are copies: changing a reply or the seeded object leaves the store alone', async () => {
@@ -434,7 +432,7 @@ describe('WHIT-652 fake server request counts (sent / sentUnder)', () => {
     await api.createRule(COLES);
     await api.listRules();
     await api.createRule(WOOLIES);
-    await api.fetchBudgets(14);
+    await api.fetchBreakdown(1);
 
     expect(server.sent('GET', '/rules')).toEqual([{ method: 'GET', path: '/rules', body: undefined }]);
     expect(server.sent('POST', '/rules')).toEqual([
@@ -442,23 +440,23 @@ describe('WHIT-652 fake server request counts (sent / sentUnder)', () => {
       { method: 'POST', path: '/rules', body: WOOLIES },
     ]);
     expect(server.sent('DELETE', '/rules')).toEqual([]);
-    expect(server.sent('GET', '/budgets')).toEqual([]);
-    expect(server.sent('GET', '/budgets?days=14')).toHaveLength(1);
+    expect(server.sent('GET', '/breakdown')).toEqual([]);
+    expect(server.sent('GET', '/breakdown?cycle=1')).toHaveLength(1);
   });
 
   it('sentUnder(method, prefix) returns the requests with that method whose path starts with the prefix, in order', async () => {
     server.seed(JOB_PATH, { jobId: 'job-1', status: 'running' });
     await api.createRule(COLES);
     await api.getApplyRulesJob('job-1');
-    await api.fetchBudgets(14);
+    await api.fetchBreakdown(1);
     await api.getApplyRulesJob('job-1');
 
     expect(server.sentUnder('GET', '/transactions/uncategorized/apply-rules/jobs/')).toEqual([
       { method: 'GET', path: JOB_PATH, body: undefined },
       { method: 'GET', path: JOB_PATH, body: undefined },
     ]);
-    expect(server.sentUnder('GET', '/budgets')).toEqual([{ method: 'GET', path: '/budgets?days=14', body: undefined }]);
-    expect(server.sentUnder('POST', '/budgets')).toEqual([]);
+    expect(server.sentUnder('GET', '/breakdown')).toEqual([{ method: 'GET', path: '/breakdown?cycle=1', body: undefined }]);
+    expect(server.sentUnder('POST', '/breakdown')).toEqual([]);
   });
 
   it('sent does not treat its path as a prefix', async () => {
@@ -487,15 +485,15 @@ describe('WHIT-652 fake server request counts (sent / sentUnder)', () => {
     expect(server.sentUnder('GET', '/rules')).toHaveLength(1);
   });
 
-  it('cycle 0 sends ?days=N only; cycle 1 appends &cycle=1', async () => {
+  it('cycle 0 sends a bare /breakdown; cycle 1 adds ?cycle=1', async () => {
     server.seed('/breakdown', BREAKDOWN);
 
-    await api.fetchBreakdown(14);
-    await api.fetchBreakdown(30, 1);
+    await api.fetchBreakdown();
+    await api.fetchBreakdown(1);
 
     expect(server.sentUnder('GET', '/breakdown').map((request) => request.path)).toEqual([
-      '/breakdown?days=14',
-      '/breakdown?days=30&cycle=1',
+      '/breakdown',
+      '/breakdown?cycle=1',
     ]);
   });
 });

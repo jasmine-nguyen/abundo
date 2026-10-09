@@ -1,7 +1,6 @@
-// WHIT-437 / WHIT-631 — [A10][A11][A12] containment: every endpoint in src/api.ts DECLARES its
-// error style next to itself (`api.<name>.errors`), and this sweep checks each one behaves as it
-// says. `failed()` (the server's reason) reaches only the three category writes, and
-// `API error: N` stays byte-identical on every endpoint.
+// WHIT-437 / WHIT-631 — [A10][A12] containment: `API error: N` stays byte-identical on every
+// endpoint. Which endpoints carry the server's reason (only the three category writes) is swept in
+// apiOneErrorStyle.logic.test.ts (WHIT-840).
 //
 // Nothing else stops a later edit from (a) folding the server's words INTO the message — which
 // would feed arbitrary server text to src/queryClient.ts's /\b40[13]\b/ auth-retry match and to
@@ -32,14 +31,6 @@ beforeEach(() => {
   (global as unknown as { fetch: jest.Mock }).fetch = fetchMock;
 });
 
-type ErrorHandling = 'plain' | 'statusOnly' | 'withReason';
-const ERROR_STYLES: readonly ErrorHandling[] = ['plain', 'statusOnly', 'withReason'];
-
-/** The error style an endpoint declares next to itself in src/api.ts. */
-function declaredErrors(name: string): unknown {
-  return (api as unknown as Record<string, { errors?: unknown }>)[name].errors;
-}
-
 // Every exported endpoint with plausible arguments. Keyed by name so the tripwire below can
 // prove none was skipped (and that a NEW endpoint can't be added without a decision here).
 const CALLS: Record<string, () => Promise<unknown>> = {
@@ -53,10 +44,10 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   // WHIT-508/WHIT-517: a write. It throws an ApiError so "file by shop" can read the 409 clash
   // STATUS — but with serverMessage NULL, deliberately: its 4xx wording ("dryRun must be a
   // boolean") and 502 BankSync internals are never shown, so the body is never carried. The sheet's
-  // own phase-specific + clash copy is what the user reads. Declared statusOnly in src/api.ts.
+  // own phase-specific + clash copy is what the user reads.
   applyRulesToUncategorized: () => api.applyRulesToUncategorized(true),
   // WHIT-560: the async apply-rules job endpoints. Both throw an ApiError to expose the STATUS
-  // (start reads a 409 clash; get reads a 404 expired id) but carry NO server reason — statusOnly.
+  // (start reads a 409 clash; get reads a 404 expired id) but carry NO server reason.
   startApplyRulesJob: () => api.startApplyRulesJob(),
   getApplyRulesJob: () => api.getApplyRulesJob('j1'),
   // Card 609: the Ask Abundo chat job endpoints — same job pattern, status only (the chat reads a
@@ -67,9 +58,9 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   createCategory: () => api.createCategory({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }),
   updateCategory: () => api.updateCategory('gym', { name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }),
   deleteCategory: () => api.deleteCategory('gym'),
-  fetchBudgets: () => api.fetchBudgets(14),
+  fetchBudgets: () => api.fetchBudgets(),
   fetchBudgetTransactions: () => api.fetchBudgetTransactions('groceries'),
-  fetchBreakdown: () => api.fetchBreakdown(14, 1),
+  fetchBreakdown: () => api.fetchBreakdown(1),
   fetchCategoryTransactions: () => api.fetchCategoryTransactions('groceries', 0),
   fetchCycleTransactions: () => api.fetchCycleTransactions(0),
   setTransactionCategory: () => api.setTransactionCategory('t1', 'groceries'),
@@ -111,22 +102,9 @@ describe('[A12] the sweep really covers every endpoint', () => {
       .filter(([name, value]) => typeof value === 'function' && name !== 'ApiError')
       .map(([name]) => name)
       .sort();
-    // If this fails you added an endpoint: add it to CALLS, and declare its error style next to it
-    // in src/api.ts — deliberately, not by copying a neighbour.
+    // If this fails you added an endpoint: add it to CALLS, and decide deliberately whether it
+    // carries the server's reason (REASON_ENDPOINTS in support/apiWire.ts).
     expect(exported).toEqual([...NAMES].sort());
-  });
-});
-
-describe('[A12b] every endpoint declares its error style', () => {
-  it.each(NAMES)('%s has an errors label', (name) => {
-    expect(ERROR_STYLES).toContain(declaredErrors(name));
-  });
-
-  it('only the three category writes carry the server reason', () => {
-    // Deliberate pin: widening failed() to another endpoint makes its 4xx wording user-facing copy.
-    // That is a product decision, so it must edit this line on purpose.
-    expect(NAMES.filter((name) => declaredErrors(name) === 'withReason').sort())
-      .toEqual(['createCategory', 'deleteCategory', 'updateCategory']);
   });
 });
 
@@ -148,29 +126,6 @@ describe('[A10] every endpoint keeps the byte-identical `API error: N`', () => {
     // The message must NOT have grown the body. queryClient's /\b40[13]\b/ runs over exactly this.
     expect((error as Error).message).toBe(`API error: ${STATUS}`);
     expect((error as Error).message).not.toContain(LEAK);
-  });
-});
-
-describe('[A11] a failed response behaves as the endpoint declares', () => {
-  it.each(NAMES)('%s follows its declared errors label', async (name) => {
-    const error = (await CALLS[name]().then(() => null, (e: unknown) => e)) as Error & {
-      serverMessage?: string | null;
-    };
-    const errors = declaredErrors(name);
-    if (errors === 'withReason') {
-      expect(error).toBeInstanceOf(ApiError);
-      expect(error.serverMessage).toBe(LEAK);
-    } else if (errors === 'statusOnly') {
-      // An ApiError for its STATUS (e.g. a 409 clash or 404 expired job drives control flow), but
-      // the body is deliberately NOT carried — the server's wording is never shown.
-      expect(error).toBeInstanceOf(ApiError);
-      expect(error.serverMessage).toBeNull();
-      expect((error as Error).message).not.toContain(LEAK);
-    } else {
-      expect(errors).toBe('plain');
-      expect(error).not.toBeInstanceOf(ApiError);
-      expect(error.serverMessage).toBeUndefined();
-    }
   });
 });
 
