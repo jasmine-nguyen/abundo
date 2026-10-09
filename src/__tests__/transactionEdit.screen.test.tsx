@@ -2,7 +2,7 @@
 // screen and its data code over the pretend server (WHIT-686), with a seeded transaction;
 // ../context is partially mocked (real selectors, stubbed useAppContext so the edit action is a
 // spy); expo-router + safe-area stubbed. Verifies the note saves via an explicit Save button —
-// not on blur (WHIT-843: leaving saves it, see whit843NoteSavedOnLeave) — tags add on submit/comma, duplicate tags are ignored, and a chip's ✕
+// not on blur (WHIT-843: leaving the screen saves it) — tags add on submit/comma, duplicate tags are ignored, and a chip's ✕
 // removes it.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import { setParams, resetRouter } from './support/routerMock';
@@ -75,6 +75,25 @@ it('Save note is disabled (a no-op) when the note is unchanged', async () => {
   expect(save.props.accessibilityState).toMatchObject({ disabled: true });
   fireEvent.press(save);
   expect(mockEdit).not.toHaveBeenCalled();
+});
+
+// WHIT-843 (decision A): leaving saves an edited note once with the LATEST text (typed twice, so a
+// save using the first-render text would fail); an unchanged note writes nothing on leave.
+it.each([
+  { case: 'an edited note is saved once with the latest text', typed: ['first draft', 'latest note'], saved: 'latest note' },
+  { case: 'an unchanged note is not saved', typed: [], saved: null },
+])('leaving the details screen: $case', async ({ typed, saved }) => {
+  const view = await draw();
+  for (const text of typed) fireEvent.changeText(screen.getByTestId('note-input'), text);
+
+  view.unmount();
+
+  if (saved === null) {
+    expect(mockEdit).not.toHaveBeenCalled();
+    return;
+  }
+  expect(mockEdit).toHaveBeenCalledTimes(1);
+  expect(mockEdit).toHaveBeenCalledWith('t1', { notes: saved });
 });
 
 it('saves the note exactly once per Save tap', async () => {

@@ -3,7 +3,7 @@
 // now uses style={({pressed}) => [styles.body, pressed && PRESSED]} (WHIT-717 shared style). We call that
 // style function with pressed true/false and flatten it: a revert that drops the pressed
 // branch (row feels dead again) fails here. WHIT-843: a filed row is no longer disabled — it
-// opens details and takes the same pressed look (whit843RowOpensDetails.screen.test.tsx).
+// opens details and takes the same pressed look.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render } from '@testing-library/react-native';
@@ -36,10 +36,15 @@ function pressable(root: { findAll: (p: (n: Node) => boolean) => Node[] }): Node
   return hits[0];
 }
 
-it('a tappable row takes the shared pressed style on press and is solid at rest', () => {
-  const { UNSAFE_root } = render(<TransactionRow t={txn({ transaction_id: 'tx9', category: null })} category={mockState.category} />);
+// WHIT-843: every row body is enabled (unfiled → picker, filed/Income → details), never a disabled look.
+it.each([
+  { row: 'an unfiled row', category: null },
+  { row: 'a filed row', category: 'coffee' },
+  { row: 'an Income row', category: 'income' },
+])('$row takes the shared pressed style on press and is solid at rest', ({ category }) => {
+  const { UNSAFE_root } = render(<TransactionRow t={txn({ transaction_id: 'tx9', category })} category={mockState.category} />);
   const row = pressable(UNSAFE_root as unknown as { findAll: (p: (n: Node) => boolean) => Node[] });
-  expect(row.props.disabled).toBeFalsy();          // tappable → can enter pressed state
+  expect(row.props.disabled).toBeFalsy();          // enabled → can enter pressed state
   expect(pressedStyle(row, false).opacity).toBeUndefined(); // at rest: no dim
   const pressed = pressedStyle(row, true);
   expect(pressed.opacity).toBe(PRESSED.opacity);     // pressed: dim

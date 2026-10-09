@@ -1,7 +1,7 @@
 // Screen test: the transaction row (feed + budget detail). Verifies the row
 // actually renders the label/amount/pending pill from transactionView and that
-// an uncategorized row opens the categorize picker (WHIT-843: a categorized one opens
-// details — see whit843RowOpensDetails.screen.test.tsx). Seeded from the QA "Automatable (UI)" feed scenarios.
+// an uncategorized row opens the categorize picker while a categorized one opens
+// details (WHIT-843). Seeded from the QA "Automatable (UI)" feed scenarios.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
@@ -67,6 +67,23 @@ it('an uncategorized row is labelled Uncategorized and opens the picker on tap',
   expect(label).toBeTruthy();
   fireEvent.press(label);
   expect(openPicker).toHaveBeenCalledWith('tx9');
+});
+
+// WHIT-843: tapping anywhere on a filed row's body opens its details, not the picker; in select
+// mode the body tap only toggles selection (the body is hidden from screen readers there).
+it.each([
+  { row: 'a filed row', category: 'coffee', label: 'Cafes & Coffee', selectable: false, push: '/transaction/tx1' },
+  { row: 'an Income row', category: 'income', label: 'Income', selectable: false, push: '/transaction/tx1' },
+  { row: 'a filed row in select mode', category: 'coffee', label: 'Cafes & Coffee', selectable: true, push: null },
+])('tapping the body of $row → details: $push', ({ category, label, selectable, push }) => {
+  mockState = stateWith();
+  const onToggleSelect = jest.fn();
+  render(<TransactionRow t={txn({ transaction_id: 'tx1', category })} category={mockState.category} selectable={selectable} onToggleSelect={onToggleSelect} />);
+  fireEvent.press(screen.getByText(label, { includeHiddenElements: true }));
+  if (push) expect(routerSpies.push).toHaveBeenCalledWith(push);
+  else expect(routerSpies.push).not.toHaveBeenCalled();
+  expect(openPicker).not.toHaveBeenCalled();
+  expect(onToggleSelect).toHaveBeenCalledTimes(selectable ? 1 : 0);
 });
 
 // WHIT-272: the trailing chevron opens /transaction/[id]. It is a SEPARATE Pressable from the
