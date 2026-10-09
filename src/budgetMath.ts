@@ -1,13 +1,8 @@
-// WHIT-630: the "what can I spend this cycle" formula and the pace target, in one place so
-// budgetViews, budgetDetail and spread eligibility can't drift apart.
+// WHIT-630: the pace target, in one place so budgetViews, budgetDetail and spread eligibility
+// can't drift apart. The spendable is the server's `available` (WHIT-549), read as sent.
 import type { Budget } from './model';
 import { elapsedFrac } from './payCycle';
 import type { Transaction } from './types';
-
-// The server-computed spendable (WHIT-549); the app never adds up the parts itself (WHIT-840).
-export function availableToSpend(budget: Pick<Budget, 'available'>): number {
-  return budget.available;
-}
 
 // How much of the base target should be spent by now, at an even pace through the cycle.
 export function paceTarget(budget: Pick<Budget, 'budget'>, cycle: { cycleLen: number; daysLeft: number }): number {

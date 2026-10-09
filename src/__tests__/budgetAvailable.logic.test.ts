@@ -3,7 +3,6 @@
 // adds up target + carryover + spread itself.
 import { describe, it, expect } from '@jest/globals';
 import type { BudgetRollup } from '../api';
-import { availableToSpend } from '../budgetMath';
 import { toBudget } from '../model';
 
 const row = (over: Partial<BudgetRollup>): BudgetRollup => ({ target: 400, posted: 50, pending: 10, ...over });
@@ -17,6 +16,5 @@ describe('toBudget — available to spend', () => {
   ])('%s', (_name, rollup, expected) => {
     const stored = toBudget('coffee', rollup);
     expect(stored.available).toBe(expected);
-    expect(availableToSpend(stored)).toBe(expected);
   });
 });

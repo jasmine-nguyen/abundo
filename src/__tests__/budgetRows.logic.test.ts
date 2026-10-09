@@ -7,7 +7,7 @@ import { budgetRowFor, rowText, budgetDetailFor, budgetRowsFor, rowIds } from '.
 import { SALARY, COFFEE, DINING, GROCERIES, LATTE } from './support/categories';
 import { urgentFirst } from '../budgetOrder';
 import { buildBudgetRows } from '../cycleExport';
-import { availableToSpend, paceWarning, pacePct, paceTarget } from '../budgetMath';
+import { paceWarning, pacePct, paceTarget } from '../budgetMath';
 import { toBudget } from '../model';
 import type { Budget } from '../model';
 import type { Transaction } from '../types';
@@ -739,7 +739,7 @@ describe('WHIT-732 calm pace', () => {
           warned++;
         } else if (!row.over) quiet++;
         expect(detail.targetPct).toBe(row.targetPct);
-        const available = availableToSpend(b);
+        const available = b.available;
         expect(row.targetPct).toBe(pacePct(paceTarget(b, clock), available > 0 ? available : 100));
       }
       expect(warned).toBeGreaterThan(0);

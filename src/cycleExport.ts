@@ -5,7 +5,6 @@ import type { Category } from './types';
 import type { Budget } from './model';
 import { selectBudgets } from './queries';
 import { budgetViews } from './context';
-import { availableToSpend } from './budgetMath';
 import { buildXlsx, type Cell } from './xlsx';
 
 const UNCATEGORISED = 'Uncategorised';
@@ -81,7 +80,7 @@ export function buildBudgetRows(
     const [parentName, categoryName] = categoryColumns(budget.id, category);
     const spent = budget.posted + budget.pending;
     let carryOver: number | null = budget.rollover ? budget.carryover : budget.spreadAdjustment;
-    let available = availableToSpend(budget);
+    let available = budget.available;
     if (isPastCycle) {
       carryOver = null;
       available = budget.budget;
