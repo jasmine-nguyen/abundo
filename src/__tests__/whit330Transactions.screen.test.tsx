@@ -26,7 +26,6 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 // (detail screen deep-link to id 't1') + useRouter with back+push (union). Each screen ignores
 // the hooks it doesn't call.
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
-jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import Transactions from '../../app/(tabs)/transactions';
 import TransactionDetail from '../../app/transaction/[id]';

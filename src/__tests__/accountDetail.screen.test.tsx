@@ -19,7 +19,6 @@ import { styleOf } from './support/layout';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({ openPicker: jest.fn(), category: () => undefined })));
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
-jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import AccountDetail from '../../app/account/[id]';
 import { Header } from '../components/Header';

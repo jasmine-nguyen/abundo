@@ -20,7 +20,6 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 // Real ScrollChromeHeader, rendered on the NavBars default context (no provider) with zero
 // safe-area insets. The header renders left → title → right in JSX order.
-jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
