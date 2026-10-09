@@ -7,6 +7,7 @@ import { Glyph } from '../../src/icons';
 import { transactionGroups, transactionMatchesSearch, countUncategorized, unionById, useAppContext, SEARCH_QUERY_MAX_LEN } from '../../src/context';
 import { useTransactionsScreenData, useUncategorizedCount, useUncategorizedMerchants } from '../../src/queries';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
+import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
 import { useDebouncedValue } from '../../src/hooks/useDebouncedValue';
 import { ScrollChromeHeader, ASK_BUTTON_BOTTOM_CLEARANCE } from '../../src/motion/ScrollChromeHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
@@ -361,7 +362,7 @@ function Seg({ label, active, onPress, flex, badge }: { label: string; active: b
       <Text style={[styles.segText, { color: active ? C.accentInk : C.textMid }]}>{label}</Text>
       {badge !== undefined && (
         <View style={[styles.badge, { backgroundColor: active ? tint(C.accentInk, 0.18) : tint(C.bad, 0.2) }]}>
-          <Text style={[styles.badgeText, { color: active ? C.accentInk : C.badBright }]}>{badge}</Text>
+          <Text style={[styles.badgeText, { color: active ? C.accentInk : C.badBright }]} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{badge}</Text>
         </View>
       )}
     </Pressable>
@@ -383,7 +384,7 @@ const styles = StyleSheet.create({
   seg: { flexDirection: 'row', gap: 4, padding: 4, backgroundColor: C.card, borderRadius: 14, marginBottom: 8 },
   segBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 9, borderRadius: 10 },
   segText: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600' },
-  badge: { minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 5, alignItems: 'center', justifyContent: 'center' },
+  badge: { minWidth: 18, minHeight: 18, borderRadius: 9, paddingHorizontal: 5, alignItems: 'center', justifyContent: 'center' },
   badgeText: { fontFamily: FONT.body, fontSize: 11, fontWeight: '700' },
 
   search: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 13, paddingVertical: 4, paddingHorizontal: 14, marginTop: 8 },

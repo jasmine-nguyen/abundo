@@ -20,7 +20,12 @@ jest.mock('../context', () => require('./support/contextMock').realContextWith((
 // capture push so the chevron-routing test can assert the destination.
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
+// WHIT-845: large-text switch for the stacked-row tests; off by default.
+let mockLarge = false;
+jest.mock('../hooks/useLargeText', () => require('./support/largeTextMock').largeTextMockModule(() => mockLarge));
+
 import { TransactionRow } from '../components/TransactionRow';
+import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 const openPicker = jest.fn();
 function stateWith() {
@@ -108,4 +113,48 @@ it('the trailing chevron opens the transaction detail page without opening the p
   fireEvent.press(screen.getByLabelText('View transaction details'));
   expect(routerSpies.push).toHaveBeenCalledWith('/transaction/tx9');
   expect(openPicker).not.toHaveBeenCalled();
+});
+
+// WHIT-845: at the largest text sizes the amount drew over the "Pending" tag. Below 1.5× the
+// category gets one line (and shrinks) and the amount one line; every row text caps at 2×.
+// From 1.5× the row stacks: the amount sits under the merchant + Pending, in the same column.
+describe('large text never lets the amount overlap the Pending tag (WHIT-845)', () => {
+  beforeEach(() => { pinToday(new Date('2026-10-09T08:00:00+11:00')); });
+  afterEach(() => { jest.useRealTimers(); mockLarge = false; });
+
+  const pendingRow = () => {
+    mockState = stateWith();
+    render(<TransactionRow t={txn({ merchant_name: 'Woolworths', amount: -279.4, status: 'pending', category: 'coffee', date: '2026-10-09', authorized_date: '2026-10-09' })} category={mockState.category} />);
+    return {
+      merchant: screen.getByText('Woolworths'),
+      category: screen.getByText('Cafes & Coffee'),
+      pending: screen.getByText('Pending'),
+      amount: screen.getByText('-$279.40'),
+    };
+  };
+
+  it('normal text: category and amount are one line each, and every row text caps at 2×', () => {
+    const { merchant, category, pending, amount } = pendingRow();
+    expect(category.props.numberOfLines).toBe(1);
+    expect(amount.props.numberOfLines).toBe(1);
+    for (const text of [merchant, category, pending, amount]) {
+      expect(text.props.maxFontSizeMultiplier).toBe(LARGE_TEXT_MAX_SCALE);
+    }
+  });
+
+  it('large text: the amount stacks under Pending, inside the merchant column', () => {
+    mockLarge = true;
+    const { merchant, pending, amount } = pendingRow();
+    let column = merchant.parent!;
+    while (String(column.type) !== 'View') column = column.parent!;
+    const inColumn = (node: typeof amount) => {
+      for (let n: typeof amount | null = node.parent; n; n = n.parent) if (n === column) return true;
+      return false;
+    };
+    expect(inColumn(pending)).toBe(true);
+    expect(inColumn(amount)).toBe(true);
+    const order = screen.root.findAll((n) => n === merchant || n === pending || n === amount);
+    expect(order.map((n) => n.props.children)).toEqual(['Woolworths', 'Pending', '-$279.40']);
+    expect(merchant.props.numberOfLines).toBe(2);
+  });
 });

@@ -4,6 +4,7 @@ import { C, FONT, tint, PRESSED } from '../theme';
 import { Icon, Glyph } from '../icons';
 import { useAppContext, transactionView } from '../context';
 import { pendingLabel } from '../dateutil';
+import { useLargeText, LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 import type { Transaction, Category } from '../types';
 
 // WHIT-203: the category taxonomy comes in as a prop (from the screen's query composite),
@@ -22,6 +23,11 @@ export function TransactionRow({ t, category, selectable = false, selected = fal
   const s = useAppContext();
   const router = useRouter();
   const v = transactionView({ category }, t);
+  // WHIT-845: from 1.5× text the amount stacks under the merchant + Pending instead of squeezing beside them.
+  const large = useLargeText();
+  const amount = (
+    <Text style={[styles.amount, large ? styles.amountStacked : styles.amountSide, { color: v.amountColor }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{v.amountLabel}</Text>
+  );
   const openDetail = () => router.push(`/transaction/${t.transaction_id}`);
   const onPress = () => {
     if (selectable) return onToggleSelect?.();
@@ -51,24 +57,25 @@ export function TransactionRow({ t, category, selectable = false, selected = fal
         // an unlabelled second tap target. The whole-row tap still works for sighted users.
         accessibilityElementsHidden={selectable}
         importantForAccessibility={selectable ? 'no-hide-descendants' : 'auto'}
-        style={({ pressed }) => [styles.body, pressed && PRESSED]}
+        style={({ pressed }) => [styles.body, large && styles.bodyStacked, pressed && PRESSED]}
       >
         <View style={[styles.chip, { backgroundColor: v.chipBg }]}>
           <Icon name={v.icon} size={22} color={v.iconColor} />
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.merchant} numberOfLines={1}>{v.merchant}</Text>
-          <View style={styles.metaRow}>
-            <Text style={[styles.category, { color: v.categoryColor, fontWeight: v.categoryWeight }]}>{v.categoryLabel}</Text>
+          <Text style={styles.merchant} numberOfLines={large ? 2 : 1} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{v.merchant}</Text>
+          <View style={[styles.metaRow, large && styles.metaRowWrap]}>
+            <Text style={[styles.category, { color: v.categoryColor, fontWeight: v.categoryWeight }]} numberOfLines={1} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{v.categoryLabel}</Text>
             {v.isPending && (
               <View style={styles.pending}>
                 <Glyph name="clock" size={12} color="#8b8b95" />
-                <Text style={styles.pendingText}>{pendingLabel(t.date)}</Text>
+                <Text style={styles.pendingText} numberOfLines={1} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{pendingLabel(t.date)}</Text>
               </View>
             )}
           </View>
+          {large && amount}
         </View>
-        <Text style={[styles.amount, { color: v.amountColor }]}>{v.amountLabel}</Text>
+        {!large && amount}
       </Pressable>
       {!selectable && (
         <Pressable
@@ -90,6 +97,7 @@ const styles = StyleSheet.create({
   // WHIT-291: a faint accent wash marks a selected row in selection mode.
   rowSelected: { backgroundColor: tint(C.accentAlt, 0.1) },
   body: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 13, paddingVertical: 13, paddingLeft: 6 },
+  bodyStacked: { alignItems: 'flex-start' },
   check: { paddingHorizontal: 11, paddingVertical: 13, alignItems: 'center', justifyContent: 'center' },
   checkBox: { width: 22, height: 22, borderRadius: 7, borderWidth: 2, borderColor: C.hairlineStrong, alignItems: 'center', justifyContent: 'center' },
   checkBoxOn: { backgroundColor: C.accent, borderColor: C.accent },
@@ -97,8 +105,11 @@ const styles = StyleSheet.create({
   chip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   merchant: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 },
-  category: { fontFamily: FONT.body, fontSize: 12.5 },
-  pending: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(255,255,255,.06)', paddingVertical: 2, paddingLeft: 5, paddingRight: 7, borderRadius: 6 },
+  metaRowWrap: { flexWrap: 'wrap' },
+  category: { fontFamily: FONT.body, fontSize: 12.5, flexShrink: 1 },
+  pending: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(255,255,255,.06)', paddingVertical: 2, paddingLeft: 5, paddingRight: 7, borderRadius: 6 },
   pendingText: { fontFamily: FONT.body, fontSize: 11, color: '#8b8b95' },
   amount: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', letterSpacing: -0.3 },
+  amountSide: { flexShrink: 0 },
+  amountStacked: { marginTop: 6 },
 });
