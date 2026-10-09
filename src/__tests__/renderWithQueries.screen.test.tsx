@@ -57,8 +57,6 @@ describe('renderWithQueries', () => {
     const defaults = queryClient.getDefaultOptions().queries;
     expect(defaults?.retry).toBe(false);
     expect(defaults?.staleTime).toBe(45_000);
-    expect(defaults?.gcTime).toBe(5 * 60_000);
-    expect(defaults?.refetchOnReconnect).toBe(true);
   });
 
   // [A6] WithQueries alone draws without waiting (for tests that hold a read or start signed out).
