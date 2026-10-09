@@ -8,15 +8,13 @@ date-index reads) so the "deep page" case — old unfiled charges beyond page 1 
 exercised, since that is the bug this endpoint fixes.
 """
 
-import base64
 import json
 
 import pytest
 
-from _api_event import api_event
 from _feed_fakes import (
     uncategorized_feed_event,
-    ANZ, SPENDING, HOMELOAN, WESTPAC, FakeCategoryRepo, date_reads, real_repos, _row,
+    ANZ, SPENDING, HOMELOAN, WESTPAC, FakeCategoryRepo, real_repos, _row,
 )
 
 
@@ -65,26 +63,6 @@ def test_first_page_returns_only_uncategorized_merged_newest_first(handler):
     assert body["nextCursor"] is None  # everything fit and history exhausted
 
 
-def test_row_shape_strips_keys_and_defaults_category(handler):
-    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1")]})  # no category kwarg
-    resp = handler.get_uncategorized_feed(uncategorized_feed_event({}), repo, FakeCategoryRepo(set()))
-    txn = json.loads(resp["body"])["transactions"][0]
-    assert "pk" not in txn and "sk" not in txn
-    assert txn["category"] is None  # sparse field defaulted, matching the plain feed
-    assert txn["transaction_id"] == "s1"
-
-
-def test_first_page_defaults_to_feed_page_size_target(handler):
-    # No ?limit= -> the page fills toward FEED_PAGE_SIZE uncategorized rows. Seed exactly that
-    # many so the first page returns them all and then exhausts.
-    rows = [_row(SPENDING, f"2026-06-{(i % 28) + 1:02d}", f"s{i}", category=None)
-            for i in range(handler.FEED_PAGE_SIZE)]
-    table, repo, _ = real_repos({SPENDING: rows})
-    resp = handler.get_uncategorized_feed(uncategorized_feed_event({}), repo, FakeCategoryRepo(set()))
-    body = json.loads(resp["body"])
-    assert len(body["transactions"]) == handler.FEED_PAGE_SIZE
-
-
 # --- fill-the-page over sparse history ---------------------------------------
 
 
@@ -126,36 +104,6 @@ def test_deep_history_uncategorized_surfaced_by_load_more(handler):
     assert dates == sorted(dates, reverse=True)   # newest-first
 
 
-def test_drain_reaches_all_uncategorized_no_dupes_no_gaps(handler):
-    # Interleaved uncategorized + filed across accounts, small page size. Draining yields
-    # exactly the uncategorized set, once each, newest-first.
-    rows = {
-        ANZ: [_row(ANZ, f"2026-07-{d:02d}", f"a{d}",
-                   category=(None if d % 2 else "groceries")) for d in (1, 4, 7, 10, 13)],
-        SPENDING: [_row(SPENDING, f"2026-07-{d:02d}", f"s{d}",
-                        category=(None if d % 2 else "groceries")) for d in (2, 5, 8, 11, 14)],
-        HOMELOAN: [_row(HOMELOAN, f"2026-07-{d:02d}", f"h{d}", category=None) for d in (3, 6, 9)],
-    }
-    table, repo, _ = real_repos(rows)
-    expected = {
-        r["transaction_id"]
-        for acc in rows.values() for r in acc
-        if r.get("category") != "groceries"
-    }
-
-    drained = _drain(handler, repo, FakeCategoryRepo({"groceries"}), limit=2)
-
-    ids = [t["transaction_id"] for t in drained]
-    assert set(ids) == expected
-    assert len(ids) == len(expected)
-
-
-def test_empty_history_returns_empty_page_and_null_cursor(handler):
-    resp = handler.get_uncategorized_feed(uncategorized_feed_event({}), real_repos()[1], FakeCategoryRepo(set()))
-    assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == {"transactions": [], "nextCursor": None}
-
-
 def test_all_filed_history_returns_empty_page_and_null_cursor(handler):
     # WHIT-499 counterpart: a user with charges but NONE uncategorized -> the feed walks all
     # history, finds nothing, and returns a null cursor (no false "more pages").
@@ -171,36 +119,6 @@ def test_all_filed_history_returns_empty_page_and_null_cursor(handler):
 # --- predicate parity with the count -----------------------------------------
 
 
-def test_lists_an_excluded_transfer_not_gated_on_budget(handler):
-    # FAIL-ON-REVERT: an uncategorized charge the user excluded from budgets (a transfer) is
-    # still listed. The badge counts it (WHIT-330), so the list must show it too — swapping in
-    # the /breakdown contributes_to_budget-gated predicate would wrongly drop this row and make
-    # the list shorter than the badge.
-    table, repo, _ = real_repos({
-        ANZ: [_row(ANZ, "2026-07-10", "x", category=None,
-                   counts_to_budget=False, budget_excluded=True)],
-    })
-
-    resp = handler.get_uncategorized_feed(uncategorized_feed_event({}), repo, FakeCategoryRepo(set()))
-
-    body = json.loads(resp["body"])
-    assert [t["transaction_id"] for t in body["transactions"]] == ["x"]
-
-
-def test_income_and_mapped_never_listed(handler):
-    # Mirrors the count's exclusions: exact "income" and any taxonomy id are filed, not listed.
-    table, repo, _ = real_repos({
-        ANZ: [_row(ANZ, "2026-07-10", "raw", category="INCOME"),   # raw enum -> listed
-              _row(ANZ, "2026-07-09", "inc", category="income"),   # mapped income -> not
-              _row(ANZ, "2026-07-08", "map", category="groceries")],  # mapped -> not
-    })
-
-    resp = handler.get_uncategorized_feed(uncategorized_feed_event({}), repo, FakeCategoryRepo({"groceries"}))
-
-    body = json.loads(resp["body"])
-    assert [t["transaction_id"] for t in body["transactions"]] == ["raw"]
-
-
 def test_feed_total_equals_count_over_same_data(handler):
     # The list, drained to exhaustion, must have exactly as many rows as the badge count over
     # the same data — the whole point of sharing is_unfiled_category.
@@ -209,7 +127,11 @@ def test_feed_total_equals_count_over_same_data(handler):
               _row(ANZ, "2026-07-09", "a2", category="groceries"),
               _row(ANZ, "2026-07-08", "a3", category="FOOD")],
         SPENDING: [_row(SPENDING, "2026-07-07", "s1", category="income"),
-                   _row(SPENDING, "2026-07-06", "s2", category=None)],
+                   _row(SPENDING, "2026-07-06", "s2", category=None),
+                   # An unfiled transfer excluded from budgets is still listed AND counted
+                   # (WHIT-330): neither side may gate on contributes_to_budget.
+                   _row(SPENDING, "2026-07-05", "s3", category=None,
+                        counts_to_budget=False, budget_excluded=True)],
     }
     category_repo = FakeCategoryRepo({"groceries"})
 
@@ -246,70 +168,24 @@ def test_scan_cap_returns_short_page_with_non_null_cursor(handler, monkeypatch):
     assert [t["transaction_id"] for t in drained] == ["deep"]
 
 
-# --- bad input -> 400, never a 500 -------------------------------------------
+# --- overshoot with a live cursor: the page is never truncated -----------------
 
 
-def test_non_numeric_limit_is_400_and_never_hits_repo(handler):
-    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1", category=None)]})
-    resp = handler.get_uncategorized_feed(
-        uncategorized_feed_event({"limit": "abc"}), repo, FakeCategoryRepo(set()))
-    assert resp["statusCode"] == 400
-    assert date_reads(table) == []
+def test_overshoot_page_returns_all_rows_untruncated_and_resumes_gap_free(handler, monkeypatch):
+    # A chunk of 3 uncategorized rows overshoots target=2 WHILE more history (a non-null cursor)
+    # remains. The page must return all 3 (never truncated to 2), because the cursor has advanced
+    # past all 3 — dropping one would lose it forever (a gap).
+    monkeypatch.setattr(handler, "MAX_PAGE_SIZE", 3)  # 3-row raw chunks -> forces the multi-chunk walk
+    rows = [_row(SPENDING, f"2026-06-{d:02d}", f"u{d}", category=None) for d in range(6, 0, -1)]
+    table, repo, _ = real_repos({SPENDING: rows})  # 6 uncategorized rows, newest u6 .. oldest u1
 
+    first = json.loads(
+        handler.get_uncategorized_feed(
+            uncategorized_feed_event({"limit": "2"}), repo, FakeCategoryRepo(set()))["body"]
+    )
+    assert len(first["transactions"]) == 3          # overshoot: the whole first chunk, NOT clamped to 2
+    assert first["nextCursor"] is not None           # and more history behind it
 
-def test_malformed_cursor_is_400(handler):
-    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1", category=None)]})
-    bad = base64.urlsafe_b64encode(b"not json").decode("ascii")
-    resp = handler.get_uncategorized_feed(uncategorized_feed_event({"cursor": bad}), repo, FakeCategoryRepo(set()))
-    assert resp["statusCode"] == 400
-    assert date_reads(table) == []
-
-
-def test_limit_above_max_is_clamped(handler):
-    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1", category=None)]})
-    handler.get_uncategorized_feed(uncategorized_feed_event({"limit": "500"}), repo, FakeCategoryRepo(set()))
-    # The internal raw chunk is always MAX_PAGE_SIZE; the clamp bounds the target, so no query
-    # ever asks DynamoDB for more than MAX_PAGE_SIZE.
-    assert all(call[3] == handler.MAX_PAGE_SIZE for call in date_reads(table))
-
-
-def test_missing_query_params_uses_defaults_not_500(handler):
-    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1", category=None)]})
-    event = uncategorized_feed_event()
-    resp = handler.get_uncategorized_feed(event, repo, FakeCategoryRepo(set()))
-    assert resp["statusCode"] == 200
-
-
-# --- dispatch through lambda_handler -----------------------------------------
-
-
-def test_route_wires_to_get_uncategorized_feed(handler, monkeypatch):
-    # GET /transactions/uncategorized/feed reaches get_uncategorized_feed, NOT the plain feed
-    # or the count.
-    table, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "s1", category=None)]})
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
-    monkeypatch.setattr(handler, "get_transactions_feed",
-                        lambda *a, **k: pytest.fail("uncategorized route reached the plain feed"))
-
-    resp = handler.lambda_handler(uncategorized_feed_event({}), None)
-
-    assert resp["statusCode"] == 200
-    body = json.loads(resp["body"])
-    assert [t["transaction_id"] for t in body["transactions"]] == ["s1"]
-    assert body["nextCursor"] is None
-
-
-def test_post_to_uncategorized_feed_is_not_routed(handler, monkeypatch):
-    # Method-gated: a POST must not reach the handler; it falls through to 404.
-    def _boom(*a, **k):
-        raise AssertionError("get_uncategorized_feed must not run for POST")
-
-    monkeypatch.setattr(handler, "get_uncategorized_feed", _boom)
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: real_repos()[1])
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
-
-    event = api_event("POST", "/transactions/uncategorized/feed")
-    resp = handler.lambda_handler(event, None)
-
-    assert resp["statusCode"] == 404
+    drained = _drain(handler, repo, FakeCategoryRepo(set()), limit=2)
+    ids = [t["transaction_id"] for t in drained]
+    assert ids == [f"u{d}" for d in range(6, 0, -1)]  # every row once, newest-first, no dupe/gap

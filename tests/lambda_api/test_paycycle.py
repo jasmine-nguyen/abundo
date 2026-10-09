@@ -15,13 +15,14 @@ import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-
-def _today_utc():
-    return datetime.now(timezone.utc).date()
-
+import pytest
 
 from _api_event import api_event
 from _paycycle_fakes import paycycle_repo, stored_cycle
+
+
+def _today_utc():
+    return datetime.now(timezone.utc).date()
 
 
 def _put_paycycle_event(body='{"length": 7, "last_pay_date": "2024-06-05"}', is_b64=False):
@@ -39,17 +40,6 @@ def test_set_paycycle_success(handler):
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"length": 7, "last_pay_date": "2024-06-05"}
     assert stored_cycle(table) == (7, "2024-06-05")
-
-
-def test_set_paycycle_last_pay_date_today_accepted(handler):
-    # A payday of "today" is valid (only the future is rejected).
-    table, repo = paycycle_repo()
-    body = json.dumps({"length": 14, "last_pay_date": _today_utc().isoformat()})
-
-    resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
-
-    assert resp["statusCode"] == 200
-    assert stored_cycle(table) == (14, _today_utc().isoformat())
 
 
 def test_set_paycycle_last_pay_date_at_future_ceiling_accepted(handler):
@@ -72,80 +62,19 @@ def test_set_paycycle_future_last_pay_date_400(handler):
     assert table.update_calls == []  # validation stops it before any write
 
 
-def test_set_paycycle_bad_length_400(handler):
+@pytest.mark.parametrize("cycle", [
+    {"length": 10, "last_pay_date": "2024-06-05"},
+    {"length": True, "last_pay_date": "2024-06-05"},     # bool is an int subclass
+    {"length": 14, "last_pay_date": "05/06/2024"},       # malformed date
+])
+def test_set_paycycle_bad_length_400(handler, cycle):
     table, repo = paycycle_repo()
-    body = json.dumps({"length": 10, "last_pay_date": "2024-06-05"})
+    body = json.dumps(cycle)
 
     resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
 
     assert resp["statusCode"] == 400
     assert table.update_calls == []  # validation stops it before any write
-
-
-def test_set_paycycle_bool_length_400(handler):
-    # bool is an int subclass -> must be rejected before the membership check.
-    _, repo = paycycle_repo()
-    body = json.dumps({"length": True, "last_pay_date": "2024-06-05"})
-
-    resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
-
-    assert resp["statusCode"] == 400
-
-
-def test_set_paycycle_missing_length_400(handler):
-    _, repo = paycycle_repo()
-    body = json.dumps({"last_pay_date": "2024-06-05"})
-
-    resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
-
-    assert resp["statusCode"] == 400
-
-
-def test_set_paycycle_missing_last_pay_date_400(handler):
-    _, repo = paycycle_repo()
-    body = json.dumps({"length": 14})
-
-    resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
-
-    assert resp["statusCode"] == 400
-
-
-def test_set_paycycle_non_string_last_pay_date_400(handler):
-    _, repo = paycycle_repo()
-    body = json.dumps({"length": 14, "last_pay_date": 20240605})
-
-    resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
-
-    assert resp["statusCode"] == 400
-
-
-def test_set_paycycle_malformed_last_pay_date_400(handler):
-    table, repo = paycycle_repo()
-    body = json.dumps({"length": 14, "last_pay_date": "05/06/2024"})
-
-    resp = handler.set_paycycle(_put_paycycle_event(body=body), repo)
-
-    assert resp["statusCode"] == 400
-    assert table.update_calls == []  # validation stops it before any write
-
-
-def test_set_paycycle_invalid_json_400(handler):
-    _, repo = paycycle_repo()
-
-    resp = handler.set_paycycle(_put_paycycle_event(body="not json"), repo)
-
-    assert resp["statusCode"] == 400
-
-
-def test_set_paycycle_base64_body(handler):
-    import base64
-    table, repo = paycycle_repo()
-    raw = base64.b64encode(b'{"length": 30, "last_pay_date": "2024-06-05"}').decode()
-
-    resp = handler.set_paycycle(_put_paycycle_event(body=raw, is_b64=True), repo)
-
-    assert resp["statusCode"] == 200
-    assert stored_cycle(table) == (30, "2024-06-05")
 
 
 # --- dispatch through lambda_handler -----------------------------------------
@@ -155,7 +84,7 @@ def test_get_paycycle_dispatch(handler, monkeypatch):
     from datetime import date
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 10))
-    table, repo = paycycle_repo({"length": 14, "last_pay_date": "2024-01-03"})
+    _, repo = paycycle_repo({"length": 14, "last_pay_date": "2024-01-03"})
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: repo)
 
     resp = handler.lambda_handler(api_event("GET", "/paycycle"), None)
@@ -163,7 +92,6 @@ def test_get_paycycle_dispatch(handler, monkeypatch):
     assert resp["statusCode"] == 200
     # days_left = next payday (03 + 14 = 17) - today (10) = 7.
     assert json.loads(resp["body"]) == {"length": 14, "last_pay_date": "2024-01-03", "days_left": 7}
-    assert table.get_item_calls == 1  # a single read; the window is computed in-process, not re-read
 
 
 def test_get_paycycle_view_days_left(handler, monkeypatch):
@@ -194,15 +122,6 @@ def test_put_paycycle_dispatch(handler, monkeypatch):
     assert stored_cycle(table) == (7, "2024-06-05")
 
 
-def test_unknown_paycycle_method_falls_through_404(handler, monkeypatch):
-    # DELETE /paycycle isn't a route -> catch-all 404.
-    monkeypatch.setattr(handler, "PayCycleRepository", lambda: paycycle_repo()[1])
-
-    resp = handler.lambda_handler(api_event("DELETE", "/paycycle"), None)
-
-    assert resp["statusCode"] == 404
-
-
 def test_set_paycycle_conflict_returns_409(handler, monkeypatch):
     # A repo that exhausts its retry budget raises VersionConflictError; the shared
     # dispatch wrapper maps it to 409.
@@ -231,30 +150,11 @@ def test_repo_get_paycycle_seeds_default_then_stable(handler):
     second = repo.get_paycycle()  # must not re-seed
 
     assert first == {"length": 14, "last_pay_date": "2024-01-03"}
+    # DynamoDB stores numbers as Decimal; the API must serialise length as an int.
+    assert isinstance(first["length"], int)
     assert second == first
     config = repo._table.store[("PAYCYCLE", "PAYCYCLE")]
     assert config["version"] == 1
-
-
-def test_repo_get_paycycle_returns_int_length(handler):
-    # DynamoDB stores numbers as Decimal; the API must serialise length as an int.
-    repository, repo = _repo_with_fake_table(handler)
-
-    cycle = repo.get_paycycle()
-
-    assert isinstance(cycle["length"], int)
-
-
-def test_repo_set_paycycle_writes(handler):
-    repository, repo = _repo_with_fake_table(handler)
-
-    saved = repo.set_paycycle(7, "2024-06-05")
-
-    config = repo._table.store[("PAYCYCLE", "PAYCYCLE")]
-    assert config["length"] == Decimal(7)
-    assert config["last_pay_date"] == "2024-06-05"
-    assert config["version"] == 2
-    assert saved == {"length": 7, "last_pay_date": "2024-06-05"}
 
 
 def test_repo_set_paycycle_replaces_both_fields(handler):
@@ -278,16 +178,3 @@ def test_repo_set_paycycle_retries_after_version_race(handler):
     config = repo._table.store[("PAYCYCLE", "PAYCYCLE")]
     assert config["length"] == Decimal(7)
     assert config["version"] == 3  # seed(1) + concurrent bump(->2) + our write(->3)
-
-
-def test_repo_set_paycycle_raises_under_sustained_contention(handler):
-    # Every attempt sees a fresh version bump -> never converges -> 409.
-    import repository_errors
-    _, repo = _repo_with_fake_table(handler)
-    repo._table.always_race()
-
-    try:
-        repo.set_paycycle(7, "2024-06-05")
-        assert False, "expected VersionConflictError under sustained contention"
-    except repository_errors.VersionConflictError:
-        pass

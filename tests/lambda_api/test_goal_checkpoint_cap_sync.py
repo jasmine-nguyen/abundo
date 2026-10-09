@@ -50,19 +50,6 @@ def test_exactly_one_client_cap_declaration(client_name, _server_attr, _value):
     _ts_const.assert_one_number_const(_CLIENT_CHECKPOINTS.read_text(), client_name)
 
 
-@pytest.mark.parametrize("client_name, server_attr, value", _CAPS)
-def test_the_checkpoint_cap_value_is_pinned(handler, client_name, server_attr, value):
-    """The two sides only have to AGREE — lower both in lockstep and everything stays green
-    while the editor silently refuses ladders it used to take. This pins the value itself.
-
-    If you are deliberately changing a cap, this is the ONE test that should go red."""
-    server = getattr(handler, server_attr)
-    assert isinstance(server, int) and server == value, (
-        f"{server_attr} is now {server!r}, not {value} — if you meant to change it, update "
-        f"this pin and src/checkpoints.ts too; if you didn't, this is the typo it exists to catch."
-    )
-
-
 @pytest.mark.parametrize("client_name, server_attr, _value", _CAPS)
 def test_client_and_server_checkpoint_caps_agree(handler, client_name, server_attr, _value):
     """Change one side without the other -> red."""

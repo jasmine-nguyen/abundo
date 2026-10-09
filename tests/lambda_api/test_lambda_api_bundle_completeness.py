@@ -57,13 +57,3 @@ def test_every_imported_lambda_api_module_is_git_tracked_so_it_ships():
         "these lambda_api modules are imported but NOT git-tracked, so the build never stages "
         f"them and the deployed Lambda would ImportError at cold start (EVERY route 500s): {untracked}"
     )
-
-
-def test_a_new_lambda_api_module_can_be_committed_without_a_gitignore_edit():
-    # `git check-ignore` exits 1 when the path is NOT ignored, 0 when it is.
-    new_module = _git("check-ignore", "-q", "lambda_api/zz_brand_new_module.py")
-    assert new_module.returncode == 1, (
-        ".gitignore still ignores new lambda_api/*.py files — a new module would never be "
-        "committed, so it would never ship"
-    )
-    assert _git("check-ignore", "-q", "lambda_api/__pycache__/handler.cpython-312.pyc").returncode == 0

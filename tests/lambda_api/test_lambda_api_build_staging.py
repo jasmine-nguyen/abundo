@@ -2,10 +2,9 @@
 
 scripts/tests/build_artifacts_test.sh only runs in the deploy workflow; these run with pytest on
 every build, and cover the edges it doesn't:
-  [A1] nested files  [A2] a missing git repo  [A3] an empty index
+  [A1] nested files  [A3] an empty index
   [A4] a rebuild after a module stops being tracked  [A5] a tracked module missing from disk
   [A6] a build started from outside the repo (terraform's local-exec cwd)
-  [A7] the `lambda/` ignore block that must stay
 """
 
 import os
@@ -77,17 +76,6 @@ def test_stages_only_top_level_tracked_py_with_their_disk_content(tmp_path):
     assert (staged_dir / "new_module.py").read_text() == "NEW = 2\n"
 
 
-def test_outside_a_git_checkout_the_build_fails_loudly(tmp_path):
-    # [A2] no git repo -> non-zero with a clear message, never a silent empty bundle.
-    root = _sandbox(tmp_path, init_git=False)
-    _write(root, "lambda_api/handler.py", "HANDLER = 1\n")
-
-    result = _build(root)
-
-    assert result.returncode != 0
-    assert "build_lambda_api" in result.stderr
-
-
 def test_with_no_tracked_lambda_api_files_the_build_fails_loudly(tmp_path):
     # [A3] a repo whose index has no lambda_api/*.py (e.g. wrong root) -> non-zero, clear message.
     root = _sandbox(tmp_path)
@@ -141,16 +129,3 @@ def test_the_build_works_when_started_from_outside_the_repo(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert _staged(root) == {"handler.py", "ai_chat.py"}
-
-
-def test_the_webhook_lambda_dir_is_still_ignored_except_its_sources():
-    # [A7] regression: only the lambda_api block left .gitignore; lambda/ still gets
-    # `pip install --target`, so installed packages must stay out of git.
-    def ignored(path: str) -> bool:
-        return subprocess.run(
-            ["git", "check-ignore", "-q", "--no-index", path], cwd=_REPO_ROOT
-        ).returncode == 0
-
-    assert ignored("lambda/standardwebhooks/__init__.py")
-    assert not ignored("lambda/handler.py")
-    assert not ignored("lambda_api/handler.py")

@@ -1,4 +1,4 @@
-"""Shared pay-cycle wiring for test_paycycle.py and test_paycycle_parity.py.
+"""Shared pay-cycle wiring for test_paycycle.py.
 
 ``paycycle_repo`` builds the REAL PayCycleRepository over a FakeTable (WHIT-625), so the seed,
 the version lock and the retry run as production wrote them. ``stored_cycle`` reads back what the
