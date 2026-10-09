@@ -47,32 +47,32 @@ describe('selectCategories', () => {
       { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C' },
       { id: 'x', name: 'X', bucket: 'Living' }, // missing icon/color
     ]);
-    // WHIT-320: the display colour is a function of the id, not the server hex — coffee's built-in
-    // base is #ff9e64 (the server's legacy '#E8A87C' is ignored).
-    expect(out[0]).toEqual({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#ff9e64', parent: null });
+    // WHIT-836: the display colour is the Insights palette's, not the server hex — coffee's built-in
+    // ramp colour is #e8a24f (the server's legacy '#E8A87C' is ignored).
+    expect(out[0]).toEqual({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a24f', parent: null });
     expect(out[1].icon).toBe('coffee'); // guaranteed-present fallback glyph
     expect(out[1]).not.toHaveProperty('recent');
-    expect(typeof out[1].color).toBe('string'); // id-derived sibling colour
+    expect(typeof out[1].color).toBe('string'); // id-derived ramp colour
     expect(out[1].parent).toBeNull(); // absent parent normalised to null (top-level)
   });
 
-  it('gives each built-in id its fixed Tokyo Night hue, spread across the wheel', () => {
+  it('gives each built-in id its fixed ramp colour, spread across the wheel', () => {
     const out = selectCategories([
       { ...GROCERIES_RECORD, color: '#7FD49B' },
       { id: 'shopping', name: 'Shopping', bucket: 'Lifestyle', icon: 'bag', color: '#6FD0C9' },
       { id: 'fitness', name: 'Fitness', bucket: 'Lifestyle', icon: 'dumbbell', color: '#8FD46B' },
       { id: 'travel', name: 'Travel', bucket: 'Lifestyle', icon: 'plane', color: '#6FB6D0' },
     ]);
-    // Each built-in id maps to its own base hue: green → teal → sky → cyan, no two alike.
-    expect(out[0].color).toBe('#9ece6a'); // groceries → green
-    expect(out[1].color).toBe('#73daca'); // shopping → teal
-    expect(out[2].color).toBe('#7dcfff'); // fitness → sky
-    expect(out[3].color).toBe('#2ac3de'); // travel → cyan
+    // Each built-in id maps to its own ramp colour: green → teal → sky → cyan, no two alike.
+    expect(out[0].color).toBe('#8ec56f'); // groceries → green
+    expect(out[1].color).toBe('#25cdbd'); // shopping → teal
+    expect(out[2].color).toBe('#47c1f5'); // fitness → sky
+    expect(out[3].color).toBe('#0bcbd3'); // travel → cyan
   });
 
-  it('gives a non-built-in id a deterministic sibling colour, ignoring the server hex', () => {
-    // WHIT-320: a user-created category isn't in CATEGORY_BASE, so it gets a darker sibling keyed
-    // off its id — stable across reads and independent of whatever colour the server stored.
+  it('gives a non-built-in id a deterministic colour, ignoring the server hex', () => {
+    // A user-created category with no slot gets a ramp colour keyed off its id — stable across
+    // reads and independent of whatever colour the server stored.
     const first = selectCategories([{ id: 'wine-club', name: 'Wine', bucket: 'Living', icon: 'cart', color: '#2ac3de' }]);
     const again = selectCategories([{ id: 'wine-club', name: 'Wine', bucket: 'Living', icon: 'cart', color: '#ffffff' }]);
     expect(first[0].color).not.toBe('#2ac3de');       // not the passed-in hex

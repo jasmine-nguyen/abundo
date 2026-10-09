@@ -1,7 +1,8 @@
-// WHIT chart palette — the Insights breakdown selectors, fed the screen's ramp-wrapped category
-// accessor, must recolour the REAL rows the palette touches and leave the synthetic/reserved ones
-// alone. The Insights screen wraps `category` as `{...c, color: chartCategoryColor(id, { slot: c.colorSlot })}` (app/(tabs)/
-// insights.tsx); this file feeds categoryBreakdown / incomeBreakdown that exact wrapper and pins:
+// WHIT chart palette — the Insights breakdown selectors, fed a category accessor whose colours come
+// from the ramp, must recolour the REAL rows the palette touches and leave the synthetic/reserved
+// ones alone. toCategory sets every Category.color to `chartCategoryColor(id, { slot: colorSlot })`
+// (WHIT-836); this file feeds categoryBreakdown / incomeBreakdown a wrapper applying that same rule
+// and pins:
 //   [A4] a "Directly in X" leaf inherits its PARENT's ramp colour (never a hash of `${id}__direct`)
 //   [A5] a refund line takes the refunded MEMBER's ramp colour (never a hash of `${id}__refund`)
 //   [A6] the Uncategorized row stays the hard-coded C.purple (never routed through the ramp)
@@ -9,7 +10,7 @@
 // The real categories below carry a STORED colorSlot deliberately, and each one is pinned to the
 // slot colour AND asserted to differ from its id-derived colour. Without that, the `{ slot: ... }`
 // on the wrapper below would be decorative — every assertion would still pass with the slot dropped,
-// and the file would claim to mirror the screen while proving nothing about the stored slot.
+// and the file would prove nothing about the stored slot.
 import { describe, it, expect } from '@jest/globals';
 import { categoryBreakdown, incomeBreakdown } from '../context';
 import { UNCATEGORIZED_KEY } from '../model';
@@ -18,8 +19,8 @@ import { chartCategoryColor } from '../chartColors';
 import { cat, spend, withRollup } from './factory';
 import type { Category } from '../types';
 
-// A plain id→Category lookup, then the Insights screen's accessor wrapper on top of it
-// (mirrors insights.tsx `chartCategory` verbatim: unknown id → passthrough undefined).
+// A plain id→Category lookup whose colour follows toCategory's colour rule (slot first, id
+// fallback); unknown id → passthrough undefined.
 function chartWrap(cats: Category[]) {
   const byId = new Map(cats.map((c) => [c.id, c]));
   return (id: string) => {

@@ -1,10 +1,10 @@
 // WHIT-762 QA — the shared homes the copies now point at: the date
 // headings (dateLabel via groupTransactionsByDate / transactionGroups) and the one
-// categoryColorHash both colour files use. Pins exact output so a drift in the shared helper
+// categoryColorHash the category palette uses. Pins exact output so a drift in the shared helper
 // shows up here.
 import { describe, it, expect, jest, afterEach } from '@jest/globals';
 import { groupTransactionsByDate, transactionGroups } from '../context';
-import { colorForCategory } from '../categoryColors';
+import { chartCategoryColor } from '../chartColors';
 import { makeState, cat, txn } from './factory';
 
 afterEach(() => {
@@ -41,6 +41,6 @@ describe('transactionGroups (now built on groupTransactionsByDate)', () => {
 describe('custom category colour (shared categoryColorHash)', () => {
   // [A17]
   it("a custom category's colour is unchanged", () => {
-    expect(colorForCategory('my-custom-cat')).toBe('#039db5');
+    expect(chartCategoryColor('my-custom-cat')).toBe('#4ccda3');
   });
 });

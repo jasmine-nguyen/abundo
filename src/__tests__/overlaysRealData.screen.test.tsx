@@ -717,7 +717,7 @@ describe('WHIT-283 GAP — the restored form RE-SELECTS bucket / icon / parent a
 
     // Reopened: the 'Coffee' parent chip reads selected (painted in the category's colour) and the
     // 'None' chip does not.
-    expect(styleOf(screen.getByText('Coffee')).color).toBe('#ff9e64'); // the app's colour for id 'coffee'
+    expect(styleOf(screen.getByText('Coffee')).color).toBe('#e8a24f'); // the app's colour for id 'coffee' (no slot → its ramp colour)
     expect(styleOf(screen.getByText('None')).color).not.toBe(C.accentSofter);
     expect(ctx.readSheetDraft('pickercat:t1')).toMatchObject({ name: 'Beans', parent: 'coffee' });
   });

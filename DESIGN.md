@@ -188,7 +188,7 @@ A cool, low-glare night palette of navy surfaces and lavender ink, lit by one bl
 - **Bad Rose**: over budget, the uncategorised dot, destructive actions.
 
 ### Category palettes
-Categories have their own fixed hues and are not part of the UI palette above. `src/categoryColors.ts` (13 built-in Tokyo Night hues plus darker siblings) colours budgets and transactions. `src/chartColors.ts` (a 20-step even-lightness ramp, plus a neutral grey for "Other") colours the Insights donut. Both are computed sets: never hand-tune one hex.
+Categories have their own fixed hues and are not part of the UI palette above. They come from one palette, `src/chartColors.ts` (a 20-step even-lightness ramp, plus a neutral grey for "Other"), applied in `toCategory`, so a category is the same colour on Budgets, Transactions and Insights. It is a computed set: never hand-tune one hex. `src/categoryColors.ts` now holds only `BUCKET_COLOR`.
 
 ### Named Rules
 **The One Tint Rule.** Tokyo Blue means "you can tap this" or "this is selected". It never decorates. Soft calls-to-action use the Periwinkle Wash instead.
@@ -296,7 +296,7 @@ A confetti burst over the screen when a goal checkpoint is crossed. It never blo
 ## Do's and Don'ts
 
 ### Do:
-- **Do** read every colour from `C`, `BUCKET_COLOR`, `colorForCategory` or the chart palette. Raw hex in a screen is a ratchet-guarded regression.
+- **Do** read every colour from `C`, `BUCKET_COLOR`, `Category.color` or `chartCategoryColor`. Raw hex in a screen is a ratchet-guarded regression.
 - **Do** keep one gradient hero card per screen, carrying that screen's single most important number.
 - **Do** separate surfaces with a lighter navy step plus a 1pt Tokyo Blue hairline.
 - **Do** set money in Inter Tight with negative tracking.
