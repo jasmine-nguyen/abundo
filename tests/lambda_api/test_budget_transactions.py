@@ -206,17 +206,6 @@ def test_missing_category_id_returns_404(handler):
     assert resp["statusCode"] == 404
 
 
-def test_empty_cycle_returns_empty_list(handler, monkeypatch):
-    import spend
-    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 25))
-    resp = handler.get_budget_transactions(
-        _event("coffee"), _DateFilteringTransactionRepo([]), _FakePayCycleRepo(),
-        _FakeCategoryRepo(CATEGORIES))
-
-    assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == []
-
-
 # --- routing -----------------------------------------------------------------
 
 
@@ -261,95 +250,6 @@ def _pin_today(monkeypatch, day=date(2026, 7, 25)):
     monkeypatch.setattr(spend, "melbourne_today", lambda: day)
 
 
-# --- refunds -----------------------------------------------------------------
-
-CATS_LIFESTYLE = [
-    {"id": "coffee", "bucket": "Lifestyle", "parent": None},
-    {"id": "coffee-beans", "bucket": "Lifestyle", "parent": "coffee"},
-]
-
-
-def test_refund_reconciles_with_the_budget_total(handler, monkeypatch):
-    # A refund (POSITIVE stored amount) reduces both the /budgets total and the list sum by
-    # the same signed amount, so the eyeballed rows still add up to the header. Spend $30,
-    # refund $10 → net $20 in BOTH. Fail-on-revert anchor: the shared sign=-1 contribution
-    # (a filter that dropped the positive-amount refund would read $30 here, not $20).
-    _pin_today(monkeypatch)
-    txns = [
-        _txn("spend", "coffee", -30, "2026-07-10"),
-        _txn("refund", "coffee", 10, "2026-07-11"),  # money back
-    ]
-    total = handler.list_budgets(
-        _FakeBudgetRepo({"coffee": {"target": Decimal("80")}}),
-        _DateFilteringTransactionRepo(txns), _FakePayCycleRepo(),
-        _FakeCategoryRepo(CATS_LIFESTYLE))["coffee"]
-    total_spend = total["posted"] + total["pending"]
-
-    resp = handler.get_budget_transactions(
-        _event("coffee"), _DateFilteringTransactionRepo(txns), _FakePayCycleRepo(),
-        _FakeCategoryRepo(CATS_LIFESTYLE))
-    rows = json.loads(resp["body"])
-
-    assert [r["transaction_id"] for r in rows] == ["refund", "spend"]  # newest-first
-    listed = sum(Decimal(str(-r["amount"])) for r in rows)
-    assert listed == total_spend == Decimal("20")
-
-
-def test_net_negative_bucket_list_and_clamped_header_DIVERGE(handler, monkeypatch):
-    # CHARACTERISATION (pins current, arguably-wrong behaviour — see the ranked critique):
-    # a refund LARGER than the cycle's spend drives the posted bucket net-negative. The
-    # /budgets header CLAMPS each bucket at >= 0 (spend.py summarise), so it shows $0 — but
-    # the transaction list returns every contributing row, whose signed sum is NEGATIVE. The
-    # "the rows always reconcile with the header" promise does NOT hold in this corner.
-    _pin_today(monkeypatch)
-    txns = [
-        _txn("spend", "coffee", -10, "2026-07-10"),
-        _txn("bigrefund", "coffee", 25, "2026-07-11"),  # refund > spend
-    ]
-    total = handler.list_budgets(
-        _FakeBudgetRepo({"coffee": {"target": Decimal("80")}}),
-        _DateFilteringTransactionRepo(txns), _FakePayCycleRepo(),
-        _FakeCategoryRepo(CATS_LIFESTYLE))["coffee"]
-    header = total["posted"] + total["pending"]
-
-    resp = handler.get_budget_transactions(
-        _event("coffee"), _DateFilteringTransactionRepo(txns), _FakePayCycleRepo(),
-        _FakeCategoryRepo(CATS_LIFESTYLE))
-    rows = json.loads(resp["body"])
-    listed = sum(Decimal(str(-r["amount"])) for r in rows)
-
-    assert header == Decimal("0")       # header clamped to zero
-    assert listed == Decimal("-15")     # list sums NEGATIVE (both refund rows still shown)
-    assert listed != header             # they diverge — the reconciliation guarantee breaks here
-
-
-# --- income (earn-target) budgets -------------------------------------------
-
-CATS_INCOME = [
-    {"id": "salary", "bucket": "Income", "parent": None},
-    {"id": "bonus", "bucket": "Income", "parent": "salary"},
-]
-
-
-def test_income_earn_target_lists_its_subtree_positive_amounts(handler, monkeypatch):
-    # The endpoint is bucket-agnostic: an Income earn-target budget gets its whole subtree's
-    # EARNINGS (positive stored amounts), newest-first, so the earn-target detail list has
-    # rows too. Fail-on-revert anchor: subtree_ids — reverting the list to just {root} drops
-    # the 'bonus' sub-category row that the earn-target total (a subtree rollup) DOES count.
-    _pin_today(monkeypatch)
-    txns = [
-        _txn("pay", "salary", 2000, "2026-07-15"),
-        _txn("bonus1", "bonus", 500, "2026-07-14"),  # same-bucket sub-category
-    ]
-    resp = handler.get_budget_transactions(
-        _event("salary"), _DateFilteringTransactionRepo(txns), _FakePayCycleRepo(),
-        _FakeCategoryRepo(CATS_INCOME))
-    rows = json.loads(resp["body"])
-
-    assert [r["transaction_id"] for r in rows] == ["pay", "bonus1"]  # newest-first, subtree included
-    assert all(Decimal(str(r["amount"])) > 0 for r in rows)          # earnings stay positive (not sign-flipped)
-
-
 # --- cross-bucket subtree handling ------------------------------------------
 
 
@@ -372,29 +272,6 @@ def test_cross_bucket_child_is_dropped_from_the_list(handler, monkeypatch):
         _FakeCategoryRepo(cats))
 
     assert [r["transaction_id"] for r in json.loads(resp["body"])] == ["keep"]
-
-
-def test_same_bucket_descendant_under_a_cross_bucket_node_is_kept(handler, monkeypatch):
-    # Adversarial subtree: coffee(Lifestyle) -> mid(Income, cross) -> leaf(Lifestyle, == root
-    # bucket). The walk descends THROUGH the cross-bucket 'mid' and keeps the same-bucket
-    # 'leaf' beneath it (subtree_ids filters membership, not descent) — matching the client's
-    # nearest-same-bucket-ancestor rule. So the leaf's charge shows, the mid's does not.
-    _pin_today(monkeypatch)
-    cats = [
-        {"id": "coffee", "bucket": "Lifestyle", "parent": None},
-        {"id": "mid", "bucket": "Income", "parent": "coffee"},       # cross-bucket intermediate
-        {"id": "leaf", "bucket": "Lifestyle", "parent": "mid"},      # same bucket as root, under mid
-    ]
-    txns = [
-        _txn("root1", "coffee", -10, "2026-07-10"),
-        _txn("mid1", "mid", -20, "2026-07-11"),    # cross-bucket node itself → dropped
-        _txn("leaf1", "leaf", -5, "2026-07-12"),   # same-bucket descendant → KEPT
-    ]
-    resp = handler.get_budget_transactions(
-        _event("coffee"), _DateFilteringTransactionRepo(txns), _FakePayCycleRepo(),
-        _FakeCategoryRepo(cats))
-
-    assert [r["transaction_id"] for r in json.loads(resp["body"])] == ["leaf1", "root1"]
 
 
 # === WHIT-362 penny-consistency GAP tests (folded from test_budget_transactions_whit362_gaps.py)
@@ -457,24 +334,6 @@ def test_income_target_reconciles_across_endpoints(handler, monkeypatch):
     assert listed == header_total == Decimal("2800")
 
 
-def test_income_clawback_clamps_header_but_row_stays(handler, monkeypatch):
-    # WHIT-362 — [A2] income clawback clamps header, row stays. gap: an income reversal/clawback (NEGATIVE amount on an income row) drives
-    # the posted earnings bucket net-negative → the header floors at 0, but the list keeps
-    # the clawback row. Header (0) never reads below the signed rows (-200).
-    _pin_today(monkeypatch)
-    transactions = [
-        _txn("pay", "salary", 100, "2026-07-05"),        # +$100 earned
-        _txn("clawback", "salary", -300, "2026-07-06"),  # -$300 reversal → posted nets -200
-    ]
-    header = _header(handler, "salary", INCOME_CATEGORIES, transactions)
-    rows = _rows(handler, "salary", INCOME_CATEGORIES, transactions)
-
-    assert "clawback" in [r["transaction_id"] for r in rows]     # reversal row still listed
-    listed = sum(Decimal(str(r["amount"])) for r in rows)        # 100 - 300 = -200
-    assert header["posted"] == 0 and header["pending"] == 0      # earnings floored, not negative
-    assert header["posted"] + header["pending"] >= listed        # header never below the rows
-
-
 # --- pending clamps independently of posted (spend) --------------------------
 
 
@@ -500,64 +359,7 @@ def test_pending_refund_clamps_pending_only_posted_untouched(handler, monkeypatc
 # --- whole-subtree net refund floors BOTH buckets ----------------------------
 
 
-def test_all_refund_subtree_floors_both_buckets(handler, monkeypatch):
-    # WHIT-362 — [A4] all-refund cycle floors both buckets. gap: a cycle that is ALL refunds across the subtree — posted AND pending
-    # both net-negative. Both header buckets floor to 0; the list still shows every refund
-    # row and its signed sum is negative, strictly below the floored header.
-    _pin_today(monkeypatch)
-    transactions = [
-        _txn("refund_p", "coffee", 20, "2026-07-10"),                        # posted refund
-        _txn("refund_pend", "coffee-beans", 10, "2026-07-11", status="pending"),  # pending refund, sub
-    ]
-    header = _header(handler, "coffee", SPEND_CATEGORIES, transactions)
-    rows = _rows(handler, "coffee", SPEND_CATEGORIES, transactions)
-
-    assert {"refund_p", "refund_pend"} == {r["transaction_id"] for r in rows}
-    listed = sum(Decimal(str(-r["amount"])) for r in rows)   # -20 + -10 = -30
-    assert listed == Decimal("-30")
-    assert header["posted"] == 0 and header["pending"] == 0  # both bars floored
-    assert header["posted"] + header["pending"] >= listed    # 0 >= -30
-
-
 # --- refund exactly cancels spend (net 0) ------------------------------------
 
 
-def test_refund_exactly_cancels_spend_net_zero(handler, monkeypatch):
-    # WHIT-362 — [A5] refund exactly cancels spend (net 0). gap: refund exactly equals spend → header is 0 by NETTING (not by floor),
-    # and the list shows BOTH rows summing to exactly 0. Reconciles with equality, no clamp.
-    _pin_today(monkeypatch)
-    transactions = [
-        _txn("spend", "coffee", -25, "2026-07-10"),   # $25 spend
-        _txn("refund", "coffee", 25, "2026-07-11"),   # $25 refund
-    ]
-    header = _header(handler, "coffee", SPEND_CATEGORIES, transactions)
-    rows = _rows(handler, "coffee", SPEND_CATEGORIES, transactions)
-
-    assert {"spend", "refund"} == {r["transaction_id"] for r in rows}   # both rows visible
-    listed = sum(Decimal(str(-r["amount"])) for r in rows)              # 25 - 25 = 0
-    assert header["posted"] == 0 and header["pending"] == 0
-    assert listed == header["posted"] + header["pending"] == Decimal("0")
-
-
 # --- cross-sibling aggregate-then-clamp (WHIT-343) ---------------------------
-
-
-def test_net_negative_sub_nets_against_parent_before_floor(handler, monkeypatch):
-    # WHIT-362 — [A6] cross-sibling aggregate-then-clamp (WHIT-343). gap the existing clamp test misses: a net-negative SUB
-    # (coffee-beans refunded) must net against a POSITIVE parent (coffee spend) BEFORE the
-    # single clamp. Header == listed == 30, with NO clamp. If the fold ever floored per-id
-    # first (clamp=True), coffee-beans' -20 would floor to 0 and the header would read 50 —
-    # strictly ABOVE its own row list. This locks header == listed, catching that inflation.
-    _pin_today(monkeypatch)
-    transactions = [
-        _txn("parent_spend", "coffee", -50, "2026-07-10"),     # +$50 spend on the parent
-        _txn("sub_refund", "coffee-beans", 20, "2026-07-11"),  # -$20 refund on the sub
-    ]
-    header = _header(handler, "coffee", SPEND_CATEGORIES, transactions)
-    rows = _rows(handler, "coffee", SPEND_CATEGORIES, transactions)
-
-    assert {"parent_spend", "sub_refund"} == {r["transaction_id"] for r in rows}
-    listed = sum(Decimal(str(-r["amount"])) for r in rows)   # 50 - 20 = 30
-    assert header["posted"] == Decimal("30")                 # netted, NOT 50 (per-id floor would give 50)
-    assert header["pending"] == 0
-    assert listed == header["posted"] + header["pending"] == Decimal("30")

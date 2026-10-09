@@ -11,7 +11,7 @@ from decimal import Decimal
 
 from _api_event import api_event
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
-from _transaction_range_fakes import _DateFilteringTransactionRepo
+from _transaction_range_fakes import _AccountTransactionRepo, _DateFilteringTransactionRepo
 
 
 class _NoBudgetsRepo:
@@ -57,8 +57,9 @@ def _event(cycle=None):
     return api_event("GET", "/transactions/cycle", query=query)
 
 
-def _call(handler, monkeypatch, event):
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: _DateFilteringTransactionRepo(TXNS))
+def _call(handler, monkeypatch, event, repo=None):
+    repo = repo or _DateFilteringTransactionRepo(TXNS)
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: _FakePayCycleRepo())
     monkeypatch.setattr(handler, "BudgetRepository", lambda: _NoBudgetsRepo())
     monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo())
@@ -93,5 +94,35 @@ def test_user_can_fetch_every_transaction_in_this_and_last_cycle(handler, monkey
     assert last["end"] == "2026-06-30"
     assert [r["transaction_id"] for r in last["transactions"]] == ["last-end", "last-start"]
 
+    assert _call(handler, monkeypatch, _event("12"))["statusCode"] == 200   # the max look-back
     for bad in ("abc", "-1", "13"):
         assert _call(handler, monkeypatch, _event(bad))["statusCode"] == 400
+
+
+def _on_account(account, txn_id, date_):
+    return {**_txn(txn_id, date_, -1), "account_id": account, "pk": f"ACCOUNT#{account}"}
+
+
+BY_ACCOUNT = {
+    "up-spending": [
+        _on_account("up-spending", "spend-a", "2026-07-02"),
+        _on_account("up-spending", "spend-b", "2026-07-15"),
+        _on_account("up-spending", "spend-c", "2026-07-16"),
+    ],
+    "anz-rewards-black-visa": [_on_account("anz-rewards-black-visa", "card-b", "2026-07-10")],
+    "up-homeloan": [_on_account("up-homeloan", "loan-interest", "2026-07-05")],
+    "westpac-altitude-qantas-black": [_on_account("westpac-altitude-qantas-black", "westpac-c", "2026-07-20")],
+}
+
+
+def test_rows_from_every_account_merge_newest_first(handler, monkeypatch):
+    import spend
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 25))
+    repo = _AccountTransactionRepo([t for rows in BY_ACCOUNT.values() for t in rows])
+
+    response = _call(handler, monkeypatch, _event(), repo)
+
+    assert response["statusCode"] == 200
+    ids = [r["transaction_id"] for r in json.loads(response["body"])["transactions"]]
+    assert ids == ["westpac-c", "spend-c", "spend-b", "card-b", "loan-interest", "spend-a"]
+    assert {c[0] for c in repo.calls} == set(BY_ACCOUNT)

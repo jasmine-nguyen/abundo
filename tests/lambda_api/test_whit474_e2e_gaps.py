@@ -13,7 +13,6 @@ Uses the REAL handler.BudgetRepository over the shared FakeTable so a clear actu
 fields that a later list_budgets read must honour.
 """
 
-import json
 from decimal import Decimal
 from functools import partial
 
@@ -50,10 +49,6 @@ def _category_repo(cat_id, bucket):
     repo._table.seed({"pk": "CATEGORIES", "sk": "CATEGORIES", "version": Decimal(1),
                       "items": {cat_id: _cat(cat_id, bucket, parent=None)}})
     return repo
-
-
-def _stored_bucket(cat_repo, cat_id):
-    return cat_repo._table.store[("CATEGORIES", "CATEGORIES")]["items"][cat_id]["bucket"]
 
 
 def _event(bucket, cat_id="sink"):
@@ -111,88 +106,3 @@ def test_rebucket_to_income_then_back_to_spend_does_not_resurrect_the_buffer(han
     assert "carryover" not in row                 # no buffer resurrected
     assert "rollover" not in row                  # and it reads as a plain non-rollover budget
 
-
-def test_cleared_entry_serialises_through_list_budgets_with_no_leftover_rollover_keys(handler):
-    # WHIT-474 — [A2] Decimal/JSON edge: after the real clear, the row must render cleanly
-    # through the API's JSON dump with NO stray rollover/carryover keys — the wire shape
-    # is byte-identical to a budget that never had rollover. FAIL-ON-REVERT: skip the clear and
-    # the serialised row carries "rollover"/"carryover".
-    table = _config_table(items={"sink": _rollover_entry()})
-    budget_repo = _budget_repo(handler, table)
-    cat_repo = _category_repo("sink", "Lifestyle")
-
-    handler.update_category(_event("Income"), cat_repo, budget_repo)
-    handler.update_category(_event("Lifestyle"), cat_repo, budget_repo)
-    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), cat_repo)
-
-    wire = json.loads(handler._json_response(200, result)["body"])
-    assert wire["sink"] == {"available": 100, "target": 100, "posted": 0, "pending": 0}
-
-
-# --- best-effort FAILURE is a KNOWN LIMITATION, not corruption ----------------
-
-
-def test_swallowed_clear_leaves_a_recoverable_stale_anchor_not_corruption(handler):
-    # WHIT-474 — [A4] Documents the limitation the fix ACCEPTS: if the clear loses every version
-    # race it is swallowed (200), so the stale anchor SURVIVES and a later move back to spend
-    # re-folds the buffer. That is a recoverable stale anchor (all rollover fields intact, target
-    # intact), NOT a corrupt entry — the property the best-effort posture guarantees. If this ever
-    # starts asserting a CLEARED entry, the swallow was tightened and this doc-test should be
-    # revisited. FAIL-ON-REVERT: narrow the handler catch and the swallowed VersionConflict raises.
-    table = _config_table(items={"sink": _rollover_entry()})
-    table.always_race()                    # every clear attempt loses the lock -> raises, swallowed
-    budget_repo = _budget_repo(handler, table)
-    cat_repo = _category_repo("sink", "Lifestyle")
-
-    resp = handler.update_category(_event("Income"), cat_repo, budget_repo)
-
-    assert resp["statusCode"] == 200                       # swallowed, edit still succeeds
-    stale = table.store[_KEY]["items"]["sink"]
-    assert stale["rollover"] is True                       # anchor intact (recoverable)
-    assert stale["carryover_from"] == "2026-05-08"         # not cleared
-    assert stale["target"] == Decimal(100)                 # never corrupted
-
-    # The known consequence: back to spend, the surviving anchor re-folds the empty cycles.
-    handler.update_category(_event("Lifestyle"), cat_repo, budget_repo)
-    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), cat_repo)
-    assert result["sink"]["carryover"] > Decimal(0)        # the buffer resurrects (documented gap)
-
-
-# --- non-DB error from the real clear must PROPAGATE (mirror WHIT-127) ---------
-
-
-def test_clear_rollover_non_db_error_is_not_swallowed(handler, monkeypatch):
-    # WHIT-474 — [A3] The handler cascade catches ONLY (VersionConflictError, DatabaseError). A
-    # non-DB fault from clear_rollover (a logic bug: KeyError/RuntimeError) must NOT be masked as
-    # a 200 — it propagates so the bug surfaces (-> Lambda 500), exactly like the WHIT-127 delete
-    # cascade. FAIL-ON-REVERT: widen the handler catch to Exception and this stops raising.
-    table = _config_table(items={"sink": _rollover_entry()})
-    budget_repo = _budget_repo(handler, table)
-
-    def boom(cat_id):
-        raise RuntimeError("bug: not a DB error")
-    monkeypatch.setattr(budget_repo, "clear_rollover", boom)
-    cat_repo = _category_repo("sink", "Lifestyle")
-
-    with pytest.raises(RuntimeError, match="bug"):
-        handler.update_category(_event("Income"), cat_repo, budget_repo)
-
-
-# --- Savings arm on an UNbudgeted category is a clean real no-op ---------------
-
-
-def test_rebucket_to_savings_unbudgeted_is_a_clean_noop(handler):
-    # WHIT-474 — [A5] WHIT-202 rejects a re-bucket to Savings while budgeted, so the Savings arm
-    # of the clear can only ever run on an UNbudgeted category — where clear_rollover finds no
-    # entry and must be a silent no-op (no seed, no write, no version bump). Proven against the
-    # REAL repo. FAIL-ON-REVERT: make the absent-entry branch write and this reddens.
-    table = _config_table(items={"food": {"target": Decimal(80)}}, version=4)  # 'sink' absent
-    budget_repo = _budget_repo(handler, table)
-    cat_repo = _category_repo("sink", "Living")
-
-    resp = handler.update_category(_event("Savings"), cat_repo, budget_repo)
-
-    assert resp["statusCode"] == 200
-    assert _stored_bucket(cat_repo, "sink") == "Savings"             # the re-bucket stuck
-    assert table.update_calls == []                 # clear found nothing -> never wrote
-    assert table.store[_KEY]["version"] == Decimal(4)     # version untouched

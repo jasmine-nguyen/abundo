@@ -446,6 +446,25 @@ def test_assemble_input_has_no_decimal_values(handler):
     json.dumps(model_input)  # would raise if a Decimal slipped through
 
 
+def test_assemble_insight_input_omits_an_excluded_charge(handler):
+    # WHIT-296: an excluded charge must NOT reach the AI model input at all. Two groceries
+    # charges, one excluded: the Groceries row shows only the kept spend and the excluded
+    # figure appears NOWHERE in the payload.
+    cycle = FakePayCycleRepo().get_paycycle()
+    start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
+    txn_repo = _WindowKeyedTransactionRepo({(start, end): [
+        _txn("groceries", -100),
+        {**_txn("groceries", -500), "budget_excluded": True},
+    ]})
+
+    model_input, _ = handler.assemble_insight_input(
+        FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, FakePayCycleRepo())
+
+    rows = {r["name"]: r for r in model_input["categories"]}
+    assert rows["Groceries"]["posted"] == 100.0     # only the kept charge
+    assert "500" not in json.dumps(model_input)      # the excluded figure is nowhere
+
+
 def test_assemble_prior_window_is_the_cycle_before_start(handler):
     # The prior window must be [start-length, start-1] — contiguous, non-overlapping.
     cycle = FakePayCycleRepo().get_paycycle()

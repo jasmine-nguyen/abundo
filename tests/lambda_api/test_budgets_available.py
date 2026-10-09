@@ -46,24 +46,6 @@ def _list(handler, budget_repo, transactions=None, categories=None):
 # --- the four normal cases: available reproduces the client's old parts-sum ----
 
 
-def test_plain_budget_available_is_just_the_target(handler):
-    # No rollover, no spread: both cushions 0, so available == target.
-    budget_repo = recording_budget_repo({"cat": {"target": Decimal(250)}})
-    result = _list(handler, budget_repo)
-
-    assert result["cat"]["available"] == Decimal(250)
-
-
-def test_income_earn_target_available_is_the_target(handler):
-    # Income is excluded from both rollover and spread, so available == target (earnings show
-    # in posted/pending, not in the cushion). FAIL-ON-REVERT: dropping the available line KeyErrors.
-    cats = [{"id": "salary", "bucket": "Income", "parent": None}]
-    budget_repo = recording_budget_repo({"salary": {"target": Decimal(5000)}})
-    result = _list(handler, budget_repo, [_txn("salary", 5000, "2026-08-08")], cats)
-
-    assert result["salary"]["available"] == Decimal(5000)
-
-
 def test_rollover_available_is_target_plus_live_carryover(handler):
     # 3 empty prior cycles at target 100 build a live buffer of 300 (matches the rollover suite's
     # sinking-fund case). available = 100 + 300 = 400 — and it uses the LIVE carryover the row

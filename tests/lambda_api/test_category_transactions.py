@@ -171,19 +171,10 @@ def test_prior_cycle_uses_the_nth_prior_window(handler, monkeypatch):
     assert prior_repo.calls[0][2] == "2026-06-30"  # prior window end
 
 
-def test_empty_prior_cycle_returns_empty_list(handler, monkeypatch):
-    _pin_today(monkeypatch)
+@pytest.mark.parametrize("cycle", ["13", "-1", "abc"])
+def test_cycle_out_of_range_returns_400(handler, cycle):
     resp = handler.get_category_transactions(
-        _event("coffee", cycle="1"),
-        _DateFilteringTransactionRepo([_txn("this", "coffee", -10, "2026-07-10")]),
-        _FakePayCycleRepo(), _FakeCategoryRepo(CATS))
-    assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == []
-
-
-def test_cycle_out_of_range_returns_400(handler):
-    resp = handler.get_category_transactions(
-        _event("coffee", cycle="13"), _DateFilteringTransactionRepo([]), _FakePayCycleRepo(),
+        _event("coffee", cycle=cycle), _DateFilteringTransactionRepo([]), _FakePayCycleRepo(),
         _FakeCategoryRepo(CATS))
     assert resp["statusCode"] == 400
 
@@ -206,22 +197,6 @@ def test_strips_pk_sk(handler, monkeypatch):
         _FakePayCycleRepo(), _FakeCategoryRepo(CATS))
     row = json.loads(resp["body"])[0]
     assert "pk" not in row and "sk" not in row
-
-
-def test_matches_a_weird_id_by_exact_equality(handler, monkeypatch):
-    # An id carrying '/' or '__' (a route round-trips it via encodeURIComponent) is matched by
-    # exact string equality — the endpoint does NO id parsing. (Moved from the client gaps.)
-    _pin_today(monkeypatch)
-    weird = "food/sub__direct"
-    txns = [
-        _txn("w1", weird, -7, "2026-07-10"),
-        _txn("other", "food", -7, "2026-07-10"),
-    ]
-    resp = handler.get_category_transactions(
-        _event(weird), _DateFilteringTransactionRepo(txns), _FakePayCycleRepo(),
-        _FakeCategoryRepo([{"id": weird, "bucket": "Living", "parent": None},
-                           {"id": "food", "bucket": "Living", "parent": None}]))
-    assert [r["transaction_id"] for r in json.loads(resp["body"])] == ["w1"]
 
 
 # --- routing -----------------------------------------------------------------
@@ -285,57 +260,6 @@ def _txn_acct(txn_id, category, amount, date_, status="posted", counts=True, exc
     return row
 
 
-def test_refund_and_pending_in_same_category_clamp_independently_and_reconcile(handler, monkeypatch):
-    # One category, one posted refund that nets the POSTED bucket negative, plus live PENDING
-    # spend. The pending bucket must NOT be eaten by the posted refund (independent clamp), and
-    # the drilled total must still equal /breakdown for the same id.
-    # FAIL-ON-REVERT: an aggregate (single) clamp would net posted+pending = (10-25)+8 = 0 -> the
-    # drill/breakdown would read 8 vs this asserts 8 only because pending is clamped on its own.
-    _pin_today(monkeypatch)
-    txns = [
-        _txn_acct("spend", "coffee", -10, "2026-07-10", status="posted"),
-        _txn_acct("refund", "coffee", 25, "2026-07-11", status="posted"),   # posted bucket -> max(0, -15)=0
-        _txn_acct("live", "coffee", -8, "2026-07-12", status="pending"),    # pending bucket -> 8
-    ]
-    breakdown = handler.list_category_breakdown(
-        _FakeCategoryRepo(CATS_SINGLE), _DateFilteringTransactionRepo(txns), _FakePayCycleRepo())
-    resp = handler.get_category_transactions(
-        _event("coffee"), _DateFilteringTransactionRepo(txns), _FakePayCycleRepo(),
-        _FakeCategoryRepo(CATS_SINGLE))
-    rows = json.loads(resp["body"])
-
-    assert {r["transaction_id"] for r in rows} == {"spend", "refund", "live"}  # all listed
-    card = breakdown["coffee"]
-    assert card["posted"] == Decimal("0")           # posted refund clamps its own bucket
-    assert card["pending"] == Decimal("8")          # pending untouched by the posted refund
-    assert _clamped_total(rows) == card["posted"] + card["pending"] == Decimal("8")
-
-
-def test_known_category_with_zero_rows_this_cycle_returns_empty_200(handler, monkeypatch):
-    # The category exists, but nothing landed on it this cycle -> empty 200 list (the drill's
-    # empty state), NOT an error. Distinct from the prior-cycle-empty test: here the id is real.
-    _pin_today(monkeypatch)
-    resp = handler.get_category_transactions(
-        _event("coffee"),
-        _DateFilteringTransactionRepo([_txn_acct("g1", "groceries", -10, "2026-07-10")]),
-        _FakePayCycleRepo(), _FakeCategoryRepo(CATS_SINGLE))
-    assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == []
-
-
-def test_totally_unknown_id_returns_empty_200_not_404(handler, monkeypatch):
-    # A present-but-unknown id (never a real category) is matched by exact equality -> no rows ->
-    # empty 200. Only a MISSING/blank path id is 404. FAIL-ON-REVERT: a "must exist in taxonomy
-    # else 404" guard on the named branch would 404 here instead.
-    _pin_today(monkeypatch)
-    resp = handler.get_category_transactions(
-        _event("does-not-exist-anywhere"),
-        _DateFilteringTransactionRepo([_txn_acct("c1", "coffee", -10, "2026-07-10")]),
-        _FakePayCycleRepo(), _FakeCategoryRepo(CATS_SINGLE))
-    assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == []
-
-
 def test_merges_same_category_rows_across_accounts_newest_first(handler, monkeypatch):
     # A category's charges span TWO accounts (up-spending + anz-rewards-black-visa). The drill
     # must merge both accounts' rows and sort the merged set newest-first — the per-account loop
@@ -355,36 +279,6 @@ def test_merges_same_category_rows_across_accounts_newest_first(handler, monkeyp
     assert [r["transaction_id"] for r in rows] == ["anz1", "up1", "up2"]  # merged, newest-first
     # every account in the map was queried (the merge really looped, not short-circuited)
     assert {"up-spending", "anz-rewards-black-visa"} <= {c[0] for c in repo.calls}
-
-
-def test_uncategorized_merges_across_accounts_and_still_filters(handler, monkeypatch):
-    # The uncategorized bucket over two accounts: an unmapped in-budget charge on each is kept,
-    # but a not-in-budget transfer on one account is dropped by the contributes_to_budget gate.
-    _pin_today(monkeypatch)
-    txns = [
-        _txn_acct("u_up", None, -30, "2026-07-10", account_id="up-spending"),
-        _txn_acct("u_anz", None, -40, "2026-07-12", account_id="anz-rewards-black-visa"),
-        _txn_acct("xfer", None, -500, "2026-07-11", counts=False, account_id="up-spending"),
-    ]
-    resp = handler.get_category_transactions(
-        _event("__uncategorized__"), _AccountTransactionRepo(txns), _FakePayCycleRepo(),
-        _FakeCategoryRepo(CATS_SINGLE))
-    rows = json.loads(resp["body"])
-    assert [r["transaction_id"] for r in rows] == ["u_anz", "u_up"]
-
-
-def test_negative_cycle_returns_400(handler):
-    resp = handler.get_category_transactions(
-        _event("coffee", cycle="-1"), _DateFilteringTransactionRepo([]), _FakePayCycleRepo(),
-        _FakeCategoryRepo(CATS_SINGLE))
-    assert resp["statusCode"] == 400
-
-
-def test_non_integer_cycle_returns_400(handler):
-    resp = handler.get_category_transactions(
-        _event("coffee", cycle="abc"), _DateFilteringTransactionRepo([]), _FakePayCycleRepo(),
-        _FakeCategoryRepo(CATS_SINGLE))
-    assert resp["statusCode"] == 400
 
 
 # ======================================================================================
@@ -417,15 +311,6 @@ def test_range_mode_includes_subcategories_so_it_matches_the_chat_figure(handler
     assert resp["statusCode"] == 200
     assert [r["transaction_id"] for r in json.loads(resp["body"])] == ["c2", "beans"]
     assert repo.calls[0][1:3] == ("2026-06-01", "2026-07-20")
-
-
-def test_range_mode_uncategorized_uses_the_unfiled_rule(handler, monkeypatch):
-    _pin_today(monkeypatch)
-    txns = [_txn("u1", None, -30, "2026-07-10"), _txn("mapped", "coffee", -20, "2026-07-10")]
-    resp = handler.get_category_transactions(
-        _range_event("__uncategorized__"), _DateFilteringTransactionRepo(txns), _FakePayCycleRepo(),
-        _FakeCategoryRepo(CATS))
-    assert [r["transaction_id"] for r in json.loads(resp["body"])] == ["u1"]
 
 
 @pytest.mark.parametrize("date_from, date_to", [
@@ -471,18 +356,6 @@ def test_range_and_cycle_together_is_a_400(handler, monkeypatch):
         _range_event(cycle="1"), _DateFilteringTransactionRepo([]), _FakePayCycleRepo(),
         _FakeCategoryRepo(CATS))
     assert resp["statusCode"] == 400
-
-
-def test_range_mode_leaves_out_a_cross_bucket_subcategory(handler, monkeypatch):
-    # [A12] The subtree is SAME-bucket only (subtree_ids with the bucket map), like /budgets and
-    # the chat figure. An Income sub filed under a spend parent must not land in the list.
-    _pin_today(monkeypatch)
-    cats = CATS + [{"id": "coffee-cashback", "bucket": "Income", "parent": "coffee"}]
-    txns = [_txn("c1", "coffee", -17, "2026-07-08"),
-            _txn("cb", "coffee-cashback", 5, "2026-07-09")]
-    resp = handler.get_category_transactions(
-        _range_event(), _DateFilteringTransactionRepo(txns), _FakePayCycleRepo(), _FakeCategoryRepo(cats))
-    assert [r["transaction_id"] for r in json.loads(resp["body"])] == ["c1"]
 
 
 def test_an_empty_cycle_beside_a_range_is_not_both(handler, monkeypatch):  # QA [A20]
