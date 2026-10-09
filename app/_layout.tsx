@@ -3,7 +3,7 @@
 // expo-crypto's before anything that reaches src/auth loads — Cognito captures it at
 // load time, so a later assignment would be too late. No effect in the jest node env.
 import '../src/cryptoPolyfill';
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { Platform, View, StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';

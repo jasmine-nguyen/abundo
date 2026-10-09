@@ -12,7 +12,7 @@ import { UNCATEGORIZED_KEY } from '../model';
 import { C } from '../theme';
 import { CATEGORY_COLORS } from '../chartColors';
 import { queryClient } from '../queryClient';
-import { breakdownKey } from '../queries';
+import { breakdownKey } from '../queryKeys';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, useTestQueryClient, settle, loaded } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';

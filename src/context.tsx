@@ -16,11 +16,11 @@ export type { FilingResult, FilingTarget, FilingWhen } from './filingRun';
 export { APPLY_RULES_MAX_WRITES } from './filingRun';
 import type { Bucket, Category, Transaction } from './types';
 import { loanFactsReady, toCategory, toRule, EMPTY_LOAN_FACTS, UNCATEGORIZED_KEY, EARNED_KEY, INCOME_KEY, ROLLUP_KEY, readRollup, type Budget, type Rule, type RuleWrite, type HomeLoanState } from './model';
-import { cycleName, paydaysPerYear, cycleClock, cycleClockView, elapsedFrac } from './payCycle';
+import { paydaysPerYear, elapsedFrac } from './payCycle';
 import { availableToSpend, contributesToBudget, pacePct, paceTarget, paceWarning, paidInOneGo } from './budgetMath';
 import { breakdownKey, budgetsKey, categoriesKey, filingSuggestionsKey, goalsKey, loanFactsKey, milestonesKey, payCycleKey, rulesKey, transactionsSearchKey } from './queryKeys';
 import { queryClient } from './queryClient';
-import { readTransactionCopies, findTransaction, patchTransactionsCache, patchAllCopies, removeFromAllCopies, optimisticRefile, refreshAfter } from './transactionCache';
+import { readTransactionCopies, findTransaction, patchAllCopies, removeFromAllCopies, optimisticRefile, refreshAfter } from './transactionCache';
 import { runOptimisticSave, type SaveSteps } from './optimisticSave';
 import { useFilingRun, type FilingResult, type FilingTarget, type FilingWhen } from './filingRun';
 import { getStatus, subscribe } from './auth';
@@ -45,8 +45,7 @@ export function ruleFiledLabel(rule: Rule): string {
 }
 export type Sheet =
   // WHIT-324: the detail screen and the Transactions list share ONE categorize flow — picker →
-  // confirm offering "All from this merchant" vs "Just this one". (Pre-324 a detail re-file set a
-  // `refileOnly` flag to collapse the confirm to a single Save; that special case is gone.)
+  // confirm offering "All from this merchant" vs "Just this one".
   | { mode: 'picker'; txId: string }
   | { mode: 'confirm'; txId: string; categoryId: string }
   // WHIT-291: multi-select re-categorise. `pickerMany`/`confirmMany` carry a captured SET of
@@ -615,6 +614,12 @@ function ruleFields(pattern: string, categoryId: string, budgetExcluded: boolean
   };
 }
 
+// Send `parent` only when supplied (server leave-as-is otherwise); explicit null = top-level.
+function categoryInput(form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, name: string) {
+  if ('parent' in form) return { name, bucket: form.bucket, icon: form.icon, parent: form.parent ?? null };
+  return { name, bucket: form.bucket, icon: form.icon };
+}
+
 const Ctx = createContext<AppContext | null>(null);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
@@ -884,15 +889,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }),
     [],
   );
-
-  // WHIT-190a/WHIT-275: optimistic tx edits go straight into the ['transactions'] feed cache
-  // the tab list + budget detail + detail screen read. Maps the row transform over each loaded
-  // feed page (patchTransactionsCache), so an edit to a row on any paged-in batch updates in
-  // place. Guards an evicted/absent cache (gcTime is finite). Lifted out of applyCategory so the
-  // note/tag edit action reuses the exact same cache-patch primitive.
-  const patchTransactions = useCallback((fn: (prev: Transaction[]) => Transaction[]) => {
-    patchTransactionsCache(fn);
-  }, []);
 
   const applyCategory = useCallback(async (scope: 'one' | 'all'): Promise<void> => {
     // This is only ever triggered from the confirm sheet; ignore any other state.
@@ -1347,10 +1343,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }): Promise<Category | null> => {
       const name = form.name.trim();
       if (!name) return null;
-      // Send `parent` only when supplied (server leave-as-is otherwise); explicit null = top-level.
-      const input = 'parent' in form
-        ? { name, bucket: form.bucket, icon: form.icon, parent: form.parent ?? null }
-        : { name, bucket: form.bucket, icon: form.icon };
+      const input = categoryInput(form, name);
       // WHIT-271: after a mid-save sign-out runSave returns null, so callers (the categorise sheet's
       // createAndFile, app/category/edit.tsx) don't act on it, and the non-id-keyed append below
       // never plants this category into the next session's list. It neither toasts nor throws:
@@ -1385,9 +1378,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // link untouched (the server's leave-as-is rule); an explicit null detaches to top-level.
       // WHIT-240: forward `opts` so a silent bulk save stays silent through the create path too.
       if (!editId) return (await createCategoryInline(form, opts)) !== null;
-      const input = 'parent' in form
-        ? { name, bucket: form.bucket, icon: form.icon, parent: form.parent ?? null }
-        : { name, bucket: form.bucket, icon: form.icon };
+      const input = categoryInput(form, name);
       // WHIT-271: runSave returns false after a mid-save sign-out so app/category/edit.tsx doesn't
       // run its summary toast + router.back() in the next session.
       return runSave({
@@ -1670,9 +1661,6 @@ export function useAppContext(): AppContext {
 // ---------------------------------------------------------------------------
 // Derived-value selectors (ported from renderVals). Pure functions over state.
 // ---------------------------------------------------------------------------
-
-// (cycleWindow was removed in WHIT-342: the category drill-in now fetches its window
-// server-side, and it was the last caller — the server owns the cycle window.)
 
 // --- Goals: balance-target progress + pace (WHIT-232) ----------------------
 // The pure math behind a goal card: how full the thermometer is (progress) and how much
@@ -2861,7 +2849,7 @@ export interface BudgetDetailInput {
 export interface BudgetEditInput {
   category: (id: string) => Category | undefined;
   budgets: Budget[];
-  cycleName: () => string;
+  cycleName: string;
 }
 
 export type SpreadEligibility = 'hidden' | 'start' | 'edit';
@@ -3002,7 +2990,7 @@ export function budgetEditInfo(s: BudgetEditInput, categoryId: string) {
   // While a spread is active the Smoothing switch is shown but locked ON — a spread is itself
   // a form of smoothing (see smoothingLocked below).
   const spreadActive = !!existing?.spread;
-  const cn = s.cycleName();
+  const cn = s.cycleName;
   return {
     category: c, existing,
     periodLabel: cn.toUpperCase(),

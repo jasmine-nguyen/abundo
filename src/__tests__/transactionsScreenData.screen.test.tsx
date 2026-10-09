@@ -38,7 +38,8 @@ jest.mock('../context', () =>
 // hook does not import expo-router; it returns refetchStale for the screen to wire to focus).
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
-import { useTransactionsScreenData, useRecentTransactionsScreenData, useTransactionDetailScreenData, accountBalancesKey, transactionsSearchKey } from '../queries';
+import { useTransactionsScreenData, useRecentTransactionsScreenData, useTransactionDetailScreenData } from '../queries';
+import { accountBalancesKey, transactionsSearchKey } from '../queryKeys';
 import Transactions from '../../app/(tabs)/transactions';
 import { GROCERIES_RECORD } from './support/categories';
 

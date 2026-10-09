@@ -200,7 +200,7 @@ it('rolls back every cached budget list when the save fails', async () => {
 
 // [G4] (P0) The exclude must PATCH the ['transactions'] row (budget_excluded:true) and keep it in
 // the list — the detail screen still shows the charge; only budgets drop it. Guards against the
-// removal logic ever bleeding into the transactions cache. FAIL-ON-REVERT: if patchTransactions
+// removal logic ever bleeding into the transactions cache. FAIL-ON-REVERT: if the edit
 // stopped setting budget_excluded, the flag assertion reddens.
 it('exclude keeps the charge in the transactions cache, flagged excluded', async () => {
   const result = mount([txn(), txn({ transaction_id: 't2' })]);

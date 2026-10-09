@@ -10,12 +10,8 @@ import { installFakeServer } from './support/fakeServer';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import {
-  useUncategorizedCount,
-  uncategorizedCountKey,
-  useUncategorizedMerchants,
-  useCategoryCycleTransactionsQuery,
-} from '../queries';
+import { useUncategorizedCount, useUncategorizedMerchants, useCategoryCycleTransactionsQuery } from '../queries';
+import { uncategorizedCountKey } from '../queryKeys';
 
 const server = installFakeServer();
 const COUNT_PATH = '/transactions/uncategorized/count';

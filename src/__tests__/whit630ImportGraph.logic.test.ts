@@ -4,7 +4,6 @@ import { describe, it, expect } from '@jest/globals';
 import fs from 'fs';
 import path from 'path';
 import * as queryKeys from '../queryKeys';
-import * as queries from '../queries';
 
 const SRC = path.join(__dirname, '..');
 const CONTEXT = path.join(SRC, 'context.tsx');
@@ -99,10 +98,5 @@ describe('cache keys', () => {
     }
     const names = entries.map(([, key]) => key[0]);
     expect(new Set(names).size).toBe(names.length);
-  });
-
-  // [A11] The re-exports from queries.ts must be the same objects, not look-alike copies.
-  it.each(entries.map(([name]) => name))('(P0) queries.%s is the queryKeys.ts key itself', (name) => {
-    expect((queries as Record<string, unknown>)[name]).toBe((queryKeys as Record<string, unknown>)[name]);
   });
 });

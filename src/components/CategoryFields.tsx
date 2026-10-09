@@ -1,4 +1,3 @@
-import React from 'react';
 import { View, Text, Pressable, StyleSheet, TextInput, ScrollView } from 'react-native';
 import { C, FONT, tint } from '../theme';
 import { Icon, ICON_KEYS } from '../icons';

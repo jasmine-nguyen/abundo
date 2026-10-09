@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, TextInput, Switch } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,7 +18,7 @@ export default function BudgetEdit() {
   const { categoryId } = useLocalSearchParams<{ categoryId: string; from?: string }>();
   // WHIT-203: the taxonomy + budgets + cycle name feed budgetEditInfo from the query layer.
   const { budgets, category, cycleLen } = useBudgetsScreenData();
-  const info = budgetEditInfo({ budgets, category, cycleName: () => cycleName(cycleLen) }, categoryId);
+  const info = budgetEditInfo({ budgets, category, cycleName: cycleName(cycleLen) }, categoryId);
   const [input, setInput] = useState(info.existing ? String(info.existing.budget) : '');
   // Rollover toggle, seeded from the stored flag. Like the amount, `budgets` may resolve
   // after mount (cold cache), so re-seed when the existing budget arrives.

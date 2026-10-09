@@ -12,7 +12,8 @@ import { refreshInAct } from './support/renderWithQueries';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { useCategoryCycleTransactionsQuery, categoryTransactionsKey } from '../queries';
+import { useCategoryCycleTransactionsQuery } from '../queries';
+import { categoryTransactionsKey } from '../queryKeys';
 
 const server = installFakeServer();
 

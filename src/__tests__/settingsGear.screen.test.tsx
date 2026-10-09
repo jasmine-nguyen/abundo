@@ -27,7 +27,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 // benign useAppContext covering every slice the five screens read.
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({
   openMultiPicker: jest.fn(), showToast: jest.fn(), openGoalBalance: jest.fn(),
-  setSheet: jest.fn(), rules: [], cycleName: () => 'Fortnightly',
+  setSheet: jest.fn(), rules: [], cycleName: 'Fortnightly',
   aiInsights: null, aiInsightsError: false, aiInsightsLoading: false, refreshAiInsights: jest.fn(),
 })));
 

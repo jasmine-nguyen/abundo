@@ -25,7 +25,7 @@ import { tabBarProps } from './support/tabBar';
 import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries, refreshInAct, settle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
-import { uncategorizedCountKey, uncategorizedFeedKey } from '../queries';
+import { uncategorizedCountKey, uncategorizedFeedKey } from '../queryKeys';
 
 const server = installFakeServer();
 useTestQueryClient();

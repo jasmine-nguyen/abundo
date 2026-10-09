@@ -1,4 +1,3 @@
-import React from 'react';
 import { SvgXml } from 'react-native-svg';
 
 // Category glyphs ported verbatim from Whittle.dc.html (inner SVG, drawn with currentColor).
@@ -40,9 +39,8 @@ export const ICON: Record<string, string> = {
   insurance: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v5.5c0 4.3 3 7.4 7 8.8 4-1.4 7-4.5 7-8.8V6l-7-3z"/><path d="m9 11.5 2 2 4-4"/></g>',
 };
 
-// 'tag' is the server's default icon (DEFAULT_CATEGORY_ICON) — include it so a
-// category created without an icon renders and is pickable in the edit form.
-export const ICON_KEYS = ['coffee', 'cart', 'food', 'car', 'health', 'pets', 'bolt', 'bag', 'home', 'film', 'plane', 'gift', 'phone', 'dumbbell', 'book', 'tag', 'briefcase', 'cash', 'bank', 'coins', 'heart', 'star', 'music', 'medical', 'education', 'parking', 'entertainment', 'subscription', 'takeout', 'vet', 'improvement', 'insurance'];
+// Every pickable icon; `q` is only the unknown-icon fallback.
+export const ICON_KEYS = Object.keys(ICON).filter((key) => key !== 'q');
 
 // UI chrome glyphs (chevrons, plus, search, etc.) used outside the category set.
 export const GLYPH: Record<string, string> = {
@@ -54,7 +52,6 @@ export const GLYPH: Record<string, string> = {
   check: '<path d="M5 12.5l4.5 4.5L19 7" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>',
   star: '<path d="M12 3l1.6 5.2L19 9.8l-4.4 3.2L16 19l-4-3.2L8 19l1.4-6L5 9.8l5.4-1.6z" fill="currentColor"/>',
   clock: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></g>',
-  bell: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8.5a6 6 0 0 0-12 0c0 6-2.5 7.5-2.5 7.5h17S18 14.5 18 8.5z"/><path d="M10 19.5a2 2 0 0 0 4 0"/></g>',
   logout: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h2.5A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5H15M11 8l-4 4 4 4M7 12h11"/></g>',
   tag: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5 7.5 3.5 12 8l-4 4zM7.5 12.5l9-9 4 4-9 9z"/><circle cx="6" cy="6" r=".7" fill="currentColor"/></g>',
   sliders: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></g>',

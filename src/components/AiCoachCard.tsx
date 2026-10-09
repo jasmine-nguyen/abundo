@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, AccessibilityInfo } from 'react-native';
 import { C, FONT, tint, agoLabel } from '../theme';
 import { Glyph } from '../icons';
