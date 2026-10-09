@@ -47,6 +47,21 @@ describe('shared query waits (QA)', () => {
     expect(screen.getByText('Groceries')).toBeTruthy();
   });
 
+  // [A4] WHIT-842: settle() called after the read has already ended (the uncategorizedMoreAffordance
+  // flake) must still leave its result drawn on screen, not just "no longer fetching".
+  it('settle() after a read has ended returns with its result already drawn', async () => {
+    server.seed('/categories', [ESSENTIAL_GROCERIES_TOP]);
+    const held = server.hold('/categories');
+    render(<WithQueries><CategoryNames /></WithQueries>);
+    await tick();
+
+    held.release();
+    await queryClient.getQueryCache().find({ queryKey: categoriesKey })!.promise;
+    await settle();
+
+    expect(screen.getByText('Groceries')).toBeTruthy();
+  });
+
   // [A2] loaded(key) must not return while that query is still loading.
   it('loaded(key) keeps waiting while that query is held, and returns once it succeeds', async () => {
     server.seed('/categories', [ESSENTIAL_GROCERIES_TOP]);
