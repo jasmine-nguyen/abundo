@@ -10,13 +10,10 @@ import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient, WithQueries, refreshInAct } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { styleOf } from './support/layout';
+import { generateAiInsights, resetAi, setAi } from './support/insightsScreen';
 
-let mockAi: { summary: string; suggestions: string[]; generated_at: string } | null = null;
-const mockGenerate = jest.fn();
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({
-  aiInsights: mockAi, aiInsightsLoading: false, aiInsightsError: false, generateAiInsights: mockGenerate,
-})));
+jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').useAiInsightsMockModule());
 jest.mock('../chat/ChatContext', () => ({ useChat: () => ({ openChat: jest.fn() }) }));
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
@@ -28,7 +25,7 @@ useTestQueryClient();
 
 beforeEach(() => {
   resetAuth();
-  mockAi = null;
+  resetAi();
 });
 
 const READY_LOAN_FACTS = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 3667, extra: 500 };
@@ -42,7 +39,7 @@ describe('the advice card goal comes from the real loan reads', () => {
 
     expect(screen.getByText(/home-loan figures \(balance, rate, repayments\)/)).toBeTruthy();
     fireEvent.press(screen.getByText('Analyse my spending'));
-    expect(mockGenerate).toHaveBeenCalledWith(expect.objectContaining({ payoff_mode: 'ahead' }));
+    expect(generateAiInsights).toHaveBeenCalledWith(expect.objectContaining({ payoff_mode: 'ahead' }));
   });
 
   // [A2]
@@ -54,19 +51,19 @@ describe('the advice card goal comes from the real loan reads', () => {
     expect(screen.getByText(/Sends your category spend totals to Anthropic/)).toBeTruthy();
     expect(screen.queryByText(/home-loan figures/)).toBeNull();
     fireEvent.press(screen.getByText('Analyse my spending'));
-    expect(mockGenerate).toHaveBeenCalledWith(null);
+    expect(generateAiInsights).toHaveBeenCalledWith(null);
   });
 
   // [A3]
   it('the compact re-analyse forwards the real goal once advice exists', async () => {
-    mockAi = { summary: 'ok', suggestions: ['a'], generated_at: '2026-09-20T00:00:00Z' };
+    setAi({ insights: { summary: 'ok', suggestions: ['a'], generated_at: '2026-09-20T00:00:00Z', cycle_start: null, cached: false } });
     server.seed('/loanfacts', READY_LOAN_FACTS);
     server.seed('/homeloan', { balance: 528000, as_of: null, currency: 'AUD' });
     await renderWithQueries(<AiCoachCard />);
 
     expect(screen.getByText(/Re-analysing sends your category spend totals and home-loan figures/)).toBeTruthy();
     fireEvent.press(screen.getByLabelText('Re-analyse my spending'));
-    expect(mockGenerate).toHaveBeenCalledWith(expect.objectContaining({ payoff_mode: 'ahead' }));
+    expect(generateAiInsights).toHaveBeenCalledWith(expect.objectContaining({ payoff_mode: 'ahead' }));
   });
 });
 

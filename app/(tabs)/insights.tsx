@@ -3,7 +3,8 @@ import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { C, FONT, fmt, tint, breakdownLineStyle } from '../../src/theme';
 import { Icon } from '../../src/icons';
-import { useAppContext, categoryBreakdown, incomeBreakdown } from '../../src/context';
+import { categoryBreakdown, incomeBreakdown } from '../../src/context';
+import { useAiInsights } from '../../src/hooks/useAiInsights';
 import { useInsightsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { HeroGradientFill } from '../../src/components/ui';
@@ -18,7 +19,7 @@ import { chartCategoryColor } from '../../src/chartColors';
 import { toggleIn, visibleTreeRows } from '../../src/setutil';
 
 export default function Insights() {
-  const s = useAppContext(); // the AI-insights slice (aiInsights / generate / refresh) stays on the store
+  const { refresh: refreshAiInsights } = useAiInsights();
   const router = useRouter();
   // WHIT-68: which pay cycle the hero + category rows show — 0 = this (current, partial)
   // cycle, 1 = last (full) cycle. Only the breakdown reads move; the AI coach stays current.
@@ -62,13 +63,13 @@ export default function Insights() {
   // up to exactly one top-level row), so the total sits in the centre.
   const donutSlices = topLevelRows.map((r) => ({ id: r.id, name: r.name, color: r.color, value: r.spent }));
 
-  // Re-pull on focus: breakdown via the query (staleness-gated), AI insights via the
-  // store. Spend depends on the current cycle (rolls over on payday; categorising
+  // Re-pull on focus: breakdown via the query (staleness-gated), AI insights via its
+  // query. Spend depends on the current cycle (rolls over on payday; categorising
   // elsewhere moves the numbers); AI is any insight already cached for this cycle.
   useFocusEffect(useCallback(() => {
     refetchStale();
-    s.refreshAiInsights();
-  }, [refetchStale, s.refreshAiInsights]));
+    refreshAiInsights();
+  }, [refetchStale, refreshAiInsights]));
 
   // Cache-first, error before spinner (mirrors Budgets). The hero + rows depend on
   // breakdown; the AI card does NOT, so it stays visible through a breakdown load/error.

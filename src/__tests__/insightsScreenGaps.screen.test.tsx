@@ -14,7 +14,7 @@ import { breakdownKey } from '../queries';
 import { UNCATEGORIZED_KEY } from '../model';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
+jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').useAiInsightsMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const server = installFakeServer();
@@ -112,7 +112,7 @@ describe('breakdown error does NOT break the AI card', () => {
   it('breakdown in error (rows gone, hero "—") while AI advice exists → AI card still fully renders', async () => {
     server.fail('/breakdown', 500);
     setAi({
-      aiInsights: { summary: 'You are pacing well.', suggestions: ['Trim $20 from Coffee'], generated_at: 't', cycle_start: '2026-06-25', cached: false },
+      insights: { summary: 'You are pacing well.', suggestions: ['Trim $20 from Coffee'], generated_at: 't', cycle_start: '2026-06-25', cached: false },
     });
     await renderInsights();
     // breakdown side is in its error state...
@@ -128,7 +128,7 @@ describe('breakdown error does NOT break the AI card', () => {
 describe('AI error does NOT hide the breakdown rows', () => {
   it('AI generation failed while breakdown has spend → rows + real hero total still show', async () => {
     seedInsights(server, { breakdown: breakdownWire({ spend: { coffee: { posted: 30, pending: 0 } } }), categories: CATS });
-    setAi({ aiInsights: null, aiInsightsError: true });
+    setAi({ insights: null, isError: true });
     await renderInsights();
     // AI side shows its own failure...
     expect(screen.getByText(/Couldn’t generate insights/)).toBeTruthy();

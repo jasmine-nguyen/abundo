@@ -9,7 +9,7 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { resetAuth } from './support/authMock';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
+jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').useAiInsightsMockModule());
 import { resetAi, setAi } from './support/insightsScreen';
 const mockOpenChat = jest.fn();
 jest.mock('../chat/ChatContext', () => ({ useChat: () => ({ openChat: mockOpenChat }) }));
@@ -31,7 +31,7 @@ it('is hidden before there is any advice', async () => {
 });
 
 it('opens the chat seeded with the summary', async () => {
-  setAi({ aiInsights: { summary: 'You are pacing well this cycle.', suggestions: ['Trim coffee'], generated_at: '2026-09-20T00:00:00Z', cycle_start: '2026-09-01', cached: false } });
+  setAi({ insights: { summary: 'You are pacing well this cycle.', suggestions: ['Trim coffee'], generated_at: '2026-09-20T00:00:00Z', cycle_start: '2026-09-01', cached: false } });
   await renderWithQueries(<AiCoachCard />);
   fireEvent.press(screen.getByText('Ask a follow-up →'));
   expect(mockOpenChat).toHaveBeenCalledWith({ seed: 'You are pacing well this cycle.' });

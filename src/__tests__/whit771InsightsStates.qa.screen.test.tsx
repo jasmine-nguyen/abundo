@@ -11,7 +11,7 @@ import { C } from '../theme';
 import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
+jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').useAiInsightsMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const server = installFakeServer();

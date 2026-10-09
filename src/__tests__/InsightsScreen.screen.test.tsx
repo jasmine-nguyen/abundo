@@ -24,7 +24,7 @@ import { GROCERIES_RECORD } from './support/categories';
 import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
+jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').useAiInsightsMockModule());
 
 // The focus callback runs once on mount; fireFocus() fires a later focus by hand. routerSpies.push
 // is the spy the category-row drills call.
@@ -250,7 +250,7 @@ describe('with the loan goal ready', () => {
   });
 
   it('the COMPACT refresh also forwards the goal with loan figures named', async () => {
-    setAi({ aiInsights: { summary: 'ok', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false } });
+    setAi({ insights: { summary: 'ok', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false } });
     await renderInsights();
     expect(screen.getByText(/Re-analysing sends your category spend totals and home-loan figures/)).toBeTruthy();
     fireEvent.press(screen.getByLabelText('Re-analyse my spending'));
@@ -260,7 +260,7 @@ describe('with the loan goal ready', () => {
 
 it('renders the AI summary + each suggestion once generated', async () => {
   setAi({
-    aiInsights: { summary: 'You are pacing well this cycle.', suggestions: ['Trim $20 from Coffee', 'Watch Groceries'], generated_at: 't', cycle_start: '2026-06-25', cached: false },
+    insights: { summary: 'You are pacing well this cycle.', suggestions: ['Trim $20 from Coffee', 'Watch Groceries'], generated_at: 't', cycle_start: '2026-06-25', cached: false },
   });
   await renderInsights();
   expect(screen.getByText('You are pacing well this cycle.')).toBeTruthy();
@@ -272,7 +272,7 @@ it('renders the AI summary + each suggestion once generated', async () => {
 });
 
 it('tapping the compact refresh re-runs generation', async () => {
-  setAi({ aiInsights: { summary: 'ok', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false } });
+  setAi({ insights: { summary: 'ok', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false } });
   await renderInsights();
   fireEvent.press(screen.getByLabelText('Re-analyse my spending'));
   expect(generateAiInsights).toHaveBeenCalled();
@@ -280,15 +280,15 @@ it('tapping the compact refresh re-runs generation', async () => {
 
 it('shows a "generated ago" stamp from the timestamp', async () => {
   const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
-  setAi({ aiInsights: { summary: 'ok', suggestions: [], generated_at: twoDaysAgo, cycle_start: '2026-06-25', cached: true } });
+  setAi({ insights: { summary: 'ok', suggestions: [], generated_at: twoDaysAgo, cycle_start: '2026-06-25', cached: true } });
   await renderInsights();
   expect(screen.getByText('2d ago')).toBeTruthy();
 });
 
 it('keeps the insight visible + swaps the refresh for a spinner while re-running', async () => {
   setAi({
-    aiInsights: { summary: 'still here', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false },
-    aiInsightsLoading: true,
+    insights: { summary: 'still here', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false },
+    isLoading: true,
   });
   await renderInsights();
   expect(screen.getByText('still here')).toBeTruthy();
@@ -298,8 +298,8 @@ it('keeps the insight visible + swaps the refresh for a spinner while re-running
 
 it('surfaces a failed re-analyse without dropping the existing advice', async () => {
   setAi({
-    aiInsights: { summary: 'keep me', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false },
-    aiInsightsError: true,
+    insights: { summary: 'keep me', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false },
+    isError: true,
   });
   await renderInsights();
   expect(screen.getByText('keep me')).toBeTruthy();
@@ -308,7 +308,7 @@ it('surfaces a failed re-analyse without dropping the existing advice', async ()
 });
 
 it('shows a retryable error when generation failed', async () => {
-  setAi({ aiInsights: null, aiInsightsError: true });
+  setAi({ insights: null, isError: true });
   await renderInsights();
   expect(screen.getByText(/Couldn’t generate insights/)).toBeTruthy();
   expect(screen.getByText('Try again')).toBeTruthy();
@@ -326,14 +326,14 @@ describe('AI re-analyse a11y (WHIT-142)', () => {
   afterEach(() => { jest.restoreAllMocks(); });
 
   it('gives the re-analyse busy spinner an accessible name (labelled control is unmounted)', async () => {
-    setAi({ aiInsights: AI, aiInsightsLoading: true });
+    setAi({ insights: AI, isLoading: true });
     await renderInsights();
     expect(screen.getByLabelText('Re-analysing your spending')).toBeTruthy();
     expect(screen.queryByLabelText('Re-analyse my spending')).toBeNull(); // the button is gone while busy
   });
 
   it('gives the first-run generate busy spinner an accessible name', async () => {
-    setAi({ aiInsights: null, aiInsightsLoading: true });
+    setAi({ insights: null, isLoading: true });
     await renderInsights();
     expect(screen.getByLabelText('Analysing your spending')).toBeTruthy();
     expect(screen.getByTestId('ai-generate-busy')).toBeTruthy();
@@ -341,11 +341,11 @@ describe('AI re-analyse a11y (WHIT-142)', () => {
 
   it('announces success on the loading → done edge', async () => {
     const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
-    setAi({ aiInsights: AI, aiInsightsLoading: true });
+    setAi({ insights: AI, isLoading: true });
     const view = await renderInsights();
     expect(announce).not.toHaveBeenCalled(); // still analysing → nothing yet
 
-    setAi({ aiInsights: AI, aiInsightsLoading: false, aiInsightsError: false });
+    setAi({ insights: AI, isLoading: false, isError: false });
     redrawInsights(view);
     expect(announce).toHaveBeenCalledTimes(1);
     expect(announce).toHaveBeenLastCalledWith('Spending analysis ready.');
@@ -356,11 +356,11 @@ describe('AI re-analyse a11y (WHIT-142)', () => {
   // "ready" for a card that's no longer on screen.
   it('does NOT announce when analysis finishes while viewing a past cycle (coach hidden)', async () => {
     const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
-    setAi({ aiInsights: AI, aiInsightsLoading: true });
+    setAi({ insights: AI, isLoading: true });
     const view = await renderInsights();
 
     await showLastCycle(); // move to Last cycle → coach hidden
-    setAi({ aiInsights: AI, aiInsightsLoading: false, aiInsightsError: false });
+    setAi({ insights: AI, isLoading: false, isError: false });
     redrawInsights(view);
 
     expect(announce).not.toHaveBeenCalled(); // withheld while the coach is off-screen
@@ -368,10 +368,10 @@ describe('AI re-analyse a11y (WHIT-142)', () => {
 
   it('announces failure on the loading → done edge when the run errored', async () => {
     const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
-    setAi({ aiInsights: AI, aiInsightsLoading: true });
+    setAi({ insights: AI, isLoading: true });
     const view = await renderInsights();
 
-    setAi({ aiInsights: AI, aiInsightsLoading: false, aiInsightsError: true });
+    setAi({ insights: AI, isLoading: false, isError: true });
     redrawInsights(view);
     expect(announce).toHaveBeenCalledTimes(1);
     expect(announce).toHaveBeenLastCalledWith("Couldn't analyse your spending. Please try again.");
@@ -381,21 +381,21 @@ describe('AI re-analyse a11y (WHIT-142)', () => {
   // analyse/re-analyse completion — not on mount, not on a mid-load mount, not on tab focus.
   it('does NOT announce on a plain mount (never analysing)', async () => {
     const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
-    setAi({ aiInsights: AI, aiInsightsLoading: false });
+    setAi({ insights: AI, isLoading: false });
     await renderInsights(); // useFocusEffect fires refreshAiInsights on mount — must not announce
     expect(announce).not.toHaveBeenCalled();
   });
 
   it('does NOT announce when it mounts already loading (no transition witnessed)', async () => {
     const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
-    setAi({ aiInsights: AI, aiInsightsLoading: true });
+    setAi({ insights: AI, isLoading: true });
     await renderInsights();
     expect(announce).not.toHaveBeenCalled();
   });
 
   it('does NOT announce on a focus re-render while loading stays constant', async () => {
     const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
-    setAi({ aiInsights: AI, aiInsightsLoading: false });
+    setAi({ insights: AI, isLoading: false });
     const view = await renderInsights();
     redrawInsights(view); // a re-render with no loading transition (e.g. focus refetch)
     expect(announce).not.toHaveBeenCalled();
@@ -411,18 +411,18 @@ describe('AI re-analyse a11y — gap tests (WHIT-142)', () => {
   // the ref never re-arms, so the 2nd completion never announces.
   it('announces once per completion across a true→false→true→false sequence', async () => {
     const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
-    setAi({ aiInsights: AI, aiInsightsLoading: true });
+    setAi({ insights: AI, isLoading: true });
     const view = await renderInsights();
 
-    setAi({ aiInsights: AI, aiInsightsLoading: false, aiInsightsError: false });
+    setAi({ insights: AI, isLoading: false, isError: false });
     redrawInsights(view); // 1st completion → announce #1
     expect(announce).toHaveBeenCalledTimes(1);
 
-    setAi({ aiInsights: AI, aiInsightsLoading: true });
+    setAi({ insights: AI, isLoading: true });
     redrawInsights(view); // re-analyse starts again → no announce, re-arm
     expect(announce).toHaveBeenCalledTimes(1);
 
-    setAi({ aiInsights: AI, aiInsightsLoading: false, aiInsightsError: false });
+    setAi({ insights: AI, isLoading: false, isError: false });
     redrawInsights(view); // 2nd completion → announce #2
     expect(announce).toHaveBeenCalledTimes(2);
     expect(announce).toHaveBeenLastCalledWith('Spending analysis ready.');
@@ -434,12 +434,12 @@ describe('AI re-analyse a11y — gap tests (WHIT-142)', () => {
   // (a first-run SUCCESS can't pin it — success populates aiInsights, making hasAi true anyway).
   it('announces failure when a FIRST-RUN generate fails (aiInsights stays null → not gated on hasAi)', async () => {
     const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
-    setAi({ aiInsights: null, aiInsightsLoading: true });
+    setAi({ insights: null, isLoading: true });
     const view = await renderInsights();
     expect(screen.getByTestId('ai-generate-busy')).toBeTruthy(); // first-run busy element
     expect(announce).not.toHaveBeenCalled();
 
-    setAi({ aiInsights: null, aiInsightsLoading: false, aiInsightsError: true });
+    setAi({ insights: null, isLoading: false, isError: true });
     redrawInsights(view);
     expect(announce).toHaveBeenCalledTimes(1);
     expect(announce).toHaveBeenLastCalledWith("Couldn't analyse your spending. Please try again.");
@@ -451,10 +451,10 @@ describe('AI re-analyse a11y — gap tests (WHIT-142)', () => {
   // an identical-deps re-render is otherwise skipped by React, which is itself the correct outcome.
   it('does NOT re-announce on an at-rest re-render after a completion', async () => {
     const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
-    setAi({ aiInsights: AI, aiInsightsLoading: true });
+    setAi({ insights: AI, isLoading: true });
     const view = await renderInsights();
 
-    setAi({ aiInsights: AI, aiInsightsLoading: false, aiInsightsError: false });
+    setAi({ insights: AI, isLoading: false, isError: false });
     redrawInsights(view); // completion → announce once
     expect(announce).toHaveBeenCalledTimes(1);
 

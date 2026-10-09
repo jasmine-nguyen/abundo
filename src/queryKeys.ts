@@ -66,3 +66,6 @@ export const goalsKey = ['goals'] as const;
 // The user's saved home-loan milestone plan (the milestone + mortgage screens) — WHIT-367.
 // Un-windowed flat key; the milestone save updates it.
 export const milestonesKey = ['milestones'] as const;
+// The AI spending insights for this pay cycle (the Insights coach card) — WHIT-833. Flat key;
+// "Analyse my spending" writes its reply straight into it.
+export const aiInsightsKey = ['aiInsights'] as const;

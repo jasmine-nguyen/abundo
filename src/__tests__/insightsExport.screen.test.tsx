@@ -12,7 +12,7 @@ import { shareCycleExport } from '../cycleShare';
 import { COFFEE } from './support/categories';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
+jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').useAiInsightsMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 jest.mock('../cycleShare', () => ({ shareCycleExport: jest.fn() }));
 

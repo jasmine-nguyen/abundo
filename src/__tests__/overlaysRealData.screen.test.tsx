@@ -1,5 +1,5 @@
 // WHIT-459 real-data overlay fold — every <Overlays/> screen test that mounts the REAL
-// <AppProvider> (requests go to the fake server) lives here, one child describe per concern. Folded in (scenarios preserved 1:1, 32 its):
+// <AppProvider> (requests go to the fake server) lives here, one child describe per concern. Folded in (28 its; the AI-insights cases moved to useAiInsights.provider.screen.test.tsx, WHIT-833):
 //   - WHIT-268  anon hard-clear + locked hide/keep    (was overlaysAuthClear)
 //   - WHIT-268  gaps: refresh/epoch/loading/reconcile (was overlaysAuthClearGaps)
 //   - WHIT-277  pop-up sheet drafts survive a lock     (was overlaysSheetDraft)
@@ -62,9 +62,9 @@ function ScreensUnderneath() {
 // privacy cover can never hide them: a toast/sheet showing amounts could outlive a
 // sign-out over the login screen, or sit above the Face ID lock screen. Two behaviours
 // pin the fix:
-//  - sign-out (status 'anon') HARD-CLEARS all overlay state + the server-derived AI
-//    insights (AppProvider's anon subscription), including async writers that settle
-//    AFTER the flip (a late resolve must not re-seat the old account's data);
+//  - sign-out (status 'anon') HARD-CLEARS all overlay state (AppProvider's anon
+//    subscription), including async writers that settle AFTER the flip (a late resolve
+//    must not re-seat the old account's data);
 //  - any not-authed status (e.g. 'locked') merely HIDES the overlay layer (Overlays
 //    render gate) so a half-typed sheet form survives a Face ID resume.
 // The auth store is mocked LIVE (mutable status + real listener set, the
@@ -75,97 +75,23 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
     queryClient.clear();
   });
 
-  // --- sign-out hard-clears the overlay + AI state ---------------------------------
+  // --- sign-out hard-clears the overlay state ----------------------------------------
+  // (The AI insights' sign-out cases live in useAiInsights.provider.screen.test.tsx.)
 
-  it('flipping to anon clears sheet, toast and the AI insights state (fail-on-revert for the anon subscription)', async () => {
-    server.seed('/insights/ai', { summary: 'old account insights' });
+  it('flipping to anon clears sheet and toast (fail-on-revert for the anon subscription)', () => {
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
-    await act(async () => {
+    act(() => {
       result.current.setSheet({ mode: 'paycycle' } as never);
       result.current.showToast('Transaction filed: $123.45');
-      await result.current.generateAiInsights(null);
     });
     expect(result.current.sheet).not.toBeNull();
     expect(result.current.toast).toBe('Transaction filed: $123.45');
-    expect(result.current.aiInsights).not.toBeNull();
 
     act(() => setAuthStatus('anon'));
 
     expect(result.current.sheet).toBeNull();
     expect(result.current.toast).toBeNull();
-    expect(result.current.aiInsights).toBeNull();
-    expect(result.current.aiInsightsError).toBe(false);
-  });
-
-  it('an AI generate that settles AFTER sign-out cannot re-seat the old account data, even if a new session is live (session-epoch guard)', async () => {
-    const held = server.hold('/insights/ai');
-    server.seed('/insights/ai', { summary: 'old account insights' });
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<void>;
-    act(() => {
-      pending = result.current.generateAiInsights(null);
-    });
-    await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(1));
-    act(() => setAuthStatus('anon')); // the session dies while the request is in flight
-    act(() => setAuthStatus('authed')); // …and a NEW session signs in before it settles
-    await act(async () => {
-      held.release();
-      await pending;
-    });
-
-    // A plain status==='authed' check would WRONGLY accept this (status is authed again);
-    // the epoch bumped on the anon flip, so the stale result is dropped.
-    expect(result.current.aiInsights).toBeNull();
-    expect(result.current.aiInsightsError).toBe(false);
-  });
-
-  it('a stale generate settling after re-sign-in does NOT clear the NEW session spinner (epoch-guarded finally)', async () => {
-    // The hold is keyed by path, so each request must reach the server before the next hold is set.
-    const heldA = server.hold('/insights/ai');
-    server.once('POST', '/insights/ai', { body: { summary: 'stale A' } });
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pendingA!: Promise<void>;
-    act(() => { pendingA = result.current.generateAiInsights(null); }); // A in flight (epoch 0)
-    await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(1));
-    act(() => setAuthStatus('anon'));   // sign out → epoch bumps, loading reset
-    act(() => setAuthStatus('authed')); // a NEW session signs in
-    const heldB = server.hold('/insights/ai');
-    act(() => { void result.current.generateAiInsights(null); }); // B in flight → loading true
-    await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(2));
-    expect(result.current.aiInsightsLoading).toBe(true);
-
-    await act(async () => {
-      heldA.release();
-      await pendingA;
-    });
-
-    // A's finally must not touch B's spinner — B is still generating.
-    expect(result.current.aiInsightsLoading).toBe(true);
-    await act(async () => { heldB.release(); });
-  });
-
-  it('an AI generate that settles during a Face ID LOCK (same session) is KEPT, not dropped', async () => {
-    const held = server.hold('/insights/ai');
-    server.seed('/insights/ai', { summary: 'my insights' });
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<void>;
-    act(() => {
-      pending = result.current.generateAiInsights(null);
-    });
-    await waitFor(() => expect(server.sent('POST', '/insights/ai')).toHaveLength(1));
-    act(() => setAuthStatus('locked')); // backgrounded → Face ID seal, SAME session
-    await act(async () => {
-      held.release();
-      await pending;
-    });
-
-    // Epoch unchanged (lock is not sign-out), so the paid result the user is waiting for
-    // survives the lock and is there after unlock. A status!=='authed' guard would lose it.
-    expect(result.current.aiInsights).toEqual({ summary: 'my insights' });
   });
 
   // --- the render gate hides (does NOT clear) while locked --------------------------
@@ -221,11 +147,8 @@ describe('WHIT-268 — overlays live outside the auth gate', () => {
 });
 
 // ===== WHIT-268 (QA gaps) — adversarial complements to the WHIT-268 suite above.
-// That suite locks the anon hard-clear (sheet/toast/AI), the late-settling generate,
-// the toast-timer cancel, and the locked hide/reappear. This one covers what it left:
-//  [A7]  refreshAiInsights (the FREE cache read, fired on every Insights focus) settling
-//        after sign-out is dropped, even when a NEW session is already live (the epoch
-//        semantic) — only the paid generate was covered;
+// That suite locks the anon hard-clear (sheet/toast), the toast-timer cancel, and the
+// locked hide/reappear. This one covers what it left:
 //  [A8]  the real invalidated-biometrics sequence locked → anon clears the kept state,
 //        and a duplicate anon broadcast is harmless (safe to run twice);
 //  [A9]  cold-start 'loading' hides the overlay layer (nothing can float before the
@@ -241,33 +164,6 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
   beforeEach(() => {
     resetAuth();
     queryClient.clear();
-  });
-
-  // WHIT-268 — [A7] the FREE insights cache read (fired on every Insights tab focus)
-  // settling after sign-out must be dropped, exactly like the paid generate.
-  it('a refreshAiInsights that settles AFTER sign-out cannot re-seat the old account insights', async () => {
-    // Phase 1 (control): while authed, a refresh genuinely seats data — so the null
-    // assertion below can't pass vacuously.
-    server.once('GET', '/insights/ai', { body: { summary: 'live session' } });
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-    await act(async () => { await result.current.refreshAiInsights(); });
-    expect(result.current.aiInsights).not.toBeNull();
-
-    // Phase 2: a refresh in flight when the session ends.
-    const held = server.hold('/insights/ai');
-    server.seed('/insights/ai', { summary: 'old account insights' });
-    let pending!: Promise<void>;
-    act(() => { pending = result.current.refreshAiInsights(); });
-    await waitFor(() => expect(server.sent('GET', '/insights/ai')).toHaveLength(2));
-    act(() => setAuthStatus('anon')); // sign-out mid-flight (anon subscription clears state)
-    act(() => setAuthStatus('authed')); // …and a NEW session signs in before it settles
-    await act(async () => {
-      held.release();
-      await pending;
-    });
-
-    // A status==='authed' check would wrongly accept this; the epoch bump must drop it.
-    expect(result.current.aiInsights).toBeNull();
   });
 
   // WHIT-268 — [A8] the invalidated-biometrics path: locked (state kept) → anon (state

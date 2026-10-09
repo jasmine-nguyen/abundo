@@ -28,8 +28,8 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({
   openMultiPicker: jest.fn(), showToast: jest.fn(), openGoalBalance: jest.fn(),
   setSheet: jest.fn(), rules: [], cycleName: () => 'Fortnightly',
-  aiInsights: null, aiInsightsError: false, aiInsightsLoading: false, refreshAiInsights: jest.fn(),
 })));
+jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').useAiInsightsMockModule());
 
 import { SettingsButton } from '../components/SettingsButton';
 import { ScrollChromeHeader } from '../motion/ScrollChromeHeader';

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useMemo, useRef, useState, useCallbac
 import { C, tint, fmt, fmt2, fmtExact, fmtSignedExact, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
 import { writeFailureMessage, ApiError } from './apiError';
 import { formatDayMonth, formatMonthYear, formatWeekdayShort, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, toISODate } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, deleteTransaction as apiDeleteTransaction, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup, type PayCycle } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, deleteTransaction as apiDeleteTransaction, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup, type PayCycle } from './api';
 import * as Crypto from 'expo-crypto';
 import type { QueryKey } from '@tanstack/react-query';
 import { usableEquity as computeUsableEquity } from './milestones';
@@ -485,9 +485,8 @@ export function groupTransactionsByDate(items: Transaction[]): { label: string; 
 // ---------------------------------------------------------------------------
 // WHIT-192: the eager server-data store is gone — every screen reads the TanStack
 // Query layer (src/queries) directly. AppContext now carries only what the query
-// layer can't: ephemeral UI (sheet/toast), the
-// write actions (which source their reads from the query cache), and the AI-insights
-// slice (still store-held pending its own migration).
+// layer can't: ephemeral UI (sheet/toast) and the write actions (which source their reads
+// from the query cache).
 export interface AppContext {
   // ephemeral ui
   sheet: Sheet; toast: string | null;
@@ -542,14 +541,6 @@ export interface AppContext {
   deleteGoal: (id: string) => Promise<boolean>;
   saveLoanFacts: (next: LoanFactsInput) => Promise<boolean>;
   saveMilestones: (next: MilestoneRecord[]) => Promise<boolean>;
-
-	// AI spending insights (WHIT-104) — the last slice still held on the store; its
-	// migration to a query + mutation is tracked separately.
-	aiInsights: AiInsights | null;
-	aiInsightsLoading: boolean;
-	aiInsightsError: boolean;
-	refreshAiInsights: () => Promise<void>;
-	generateAiInsights: (goal?: AiGoalSignal | null) => Promise<void>;
 }
 
 // Bill-spread cycle bounds the app offers, mirroring the server (SPREAD_MIN/MAX_CYCLES,
@@ -703,44 +694,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	const { previewFiling, fileCharges, retryApplyRulesJob, applyRulesJob, applyRulesStalled, endOnLock } =
 		useFilingRun({ sessionEpoch, runSave, prependMintedRule, sheetOpen: sheet !== null });
 
-	// AI spending insights (WHIT-104). `refreshAiInsights` reads the per-cycle cache
-	// (free); `generateAiInsights` is the paid "Analyse my spending" action. Error is
-	// true only when the last GENERATE failed, so the button can show a retry; a
-	// null-summary cache (nothing generated yet) is NOT an error.
-	const [aiInsights, setAiInsights] = useState<AiInsights | null>(null);
-	const [aiInsightsLoading, setAiInsightsLoading] = useState(false);
-	const [aiInsightsError, setAiInsightsError] = useState(false);
-	const refreshAiInsights = useCallback(() => runSave({
-		send: fetchAiInsights,
-		onSaved: setAiInsights,
-		// A failed cache read leaves the current state intact (no error surfaced);
-		// the user can still generate.
-		onFailed: () => {},
-		whenSignedOut: undefined,
-	}), [runSave]);
-	// `goal` is passed IN by the caller (computed from live state at tap time), not
-	// read from a closure here — so this stays a stable useCallback([]) and can never
-	// send a stale goal.
-	const generateAiInsights = useCallback((goal?: AiGoalSignal | null) => {
-		setAiInsightsLoading(true);
-		setAiInsightsError(false);
-		// Only the run that still owns the session may clear the spinner: the runner skips both
-		// callbacks after sign-out, so a stale run (signed out, then a NEW session started its own
-		// generate) can't flip the live run's spinner off and let the new user double-fire.
-		return runSave({
-			send: () => apiGenerateAiInsights(goal),
-			onSaved: (result) => {
-				setAiInsights(result);
-				setAiInsightsLoading(false);
-			},
-			onFailed: () => {
-				setAiInsightsError(true);
-				setAiInsightsLoading(false);
-			},
-			whenSignedOut: undefined,
-		});
-	}, [runSave]);
-
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Clear the toast timer on unmount so it can't fire a setState after teardown (a leak
@@ -752,9 +705,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // WHIT-268: overlays render OUTSIDE the auth gate in app/_layout.tsx, so the gate's
   // privacy cover can never hide them — the session's end must clear them here. Fires
   // on ANY broadcast into 'anon' (sign-out, a failed refresh, invalidated biometrics),
-  // whichever path broadcast it. Also drops the server-derived AI insights (and its
-  // stale error/loading flags), which queryClient.clear() never touches, and bumps the
-  // session epoch so any in-flight AI request settling later is discarded.
+  // whichever path broadcast it. Also bumps the session epoch so any in-flight request
+  // settling later is discarded.
   // WHIT-277: clear stashed drafts whenever the sheet closes — submit AND cancel both route
   // through setSheet(null). Only one sheet is open at a time, so clearing all is correct, and a
   // picker→confirm transition (chooseCategory) never passes through null, so it isn't cleared.
@@ -784,9 +736,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     sheetDrafts.current.clear(); // WHIT-277: wipe any half-typed draft on sign-out (WHIT-268 parity)
     setToast(null);
     setPendingUncategorizedSelect(false); // WHIT-544: don't carry a pending jump into the next session
-    setAiInsights(null);
-    setAiInsightsError(false);
-    setAiInsightsLoading(false);
   }), []);
 
   const showToast = useCallback((m: string) => {
@@ -1628,8 +1577,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     requestUncategorizedSelect, clearUncategorizedSelect,
     setPayCycleLength, setPayday,
     openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewFiling, fileCharges, retryApplyRulesJob, applyRulesJob, applyRulesStalled, applyTransactionEdit, deleteTransaction, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
-    aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [sheet, toast, pendingUncategorizedSelect, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, requestUncategorizedSelect, clearUncategorizedSelect, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewFiling, fileCharges, retryApplyRulesJob, applyRulesJob, applyRulesStalled, applyTransactionEdit, deleteTransaction, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [sheet, toast, pendingUncategorizedSelect, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, requestUncategorizedSelect, clearUncategorizedSelect, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewFiling, fileCharges, retryApplyRulesJob, applyRulesJob, applyRulesStalled, applyTransactionEdit, deleteTransaction, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

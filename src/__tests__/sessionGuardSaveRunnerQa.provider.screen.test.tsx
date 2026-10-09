@@ -160,21 +160,6 @@ describe('WHIT-638 QA — after sign-out, nothing leaks into the NEXT account', 
     expect(invalidatedKeys(spy)).toEqual([]);
     expect(result.current.toast).toBeNull();
   });
-
-  // [A7]
-  it('generateAiInsights: a late failure after sign-out + re-sign-in sets no error on the new session', async () => {
-    const held = server.hold('/insights/ai');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<void>;
-    act(() => { pending = result.current.generateAiInsights(null); });
-    signOut();
-    signInNextAccount();
-    await act(async () => { held.fail('POST'); await pending; });
-
-    expect(result.current.aiInsightsError).toBe(false);
-    expect(result.current.aiInsightsLoading).toBe(false);
-  });
 });
 
 describe('WHIT-638 QA — in-session behaviour is unchanged', () => {
@@ -293,36 +278,5 @@ describe('WHIT-638 QA — in-session behaviour is unchanged', () => {
     await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
     expect(invalidatedKeys(spy)).toEqual(expect.arrayContaining(['budgets', 'budgetTransactions']));
     expect(result.current.toast).toBeNull();
-  });
-
-  // [A15]
-  it('refreshAiInsights failure keeps the insights already shown and raises no error', async () => {
-    server.once('GET', '/insights/ai', { body: { summary: 'shown' } });
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-    await act(async () => { await result.current.refreshAiInsights(); });
-    expect(result.current.aiInsights).toEqual({ summary: 'shown' });
-
-    server.once('GET', '/insights/ai', 'dropped');
-    await act(async () => { await result.current.refreshAiInsights(); });
-
-    expect(result.current.aiInsights).toEqual({ summary: 'shown' });
-    expect(result.current.aiInsightsError).toBe(false);
-  });
-
-  // [A16]
-  it('generateAiInsights: success seats data and clears the spinner; failure flags the error and clears it', async () => {
-    server.once('POST', '/insights/ai', { body: { summary: 'fresh' } });
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    await act(async () => { await result.current.generateAiInsights(null); });
-    expect(result.current.aiInsights).toEqual({ summary: 'fresh' });
-    expect(result.current.aiInsightsLoading).toBe(false);
-    expect(result.current.aiInsightsError).toBe(false);
-
-    server.once('POST', '/insights/ai', 'dropped');
-    await act(async () => { await result.current.generateAiInsights(null); });
-    expect(result.current.aiInsightsError).toBe(true);
-    expect(result.current.aiInsightsLoading).toBe(false);
-    expect(result.current.aiInsights).toEqual({ summary: 'fresh' });
   });
 });
