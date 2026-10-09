@@ -120,21 +120,14 @@ describe('[A13] every request sends the sign-in header, and Content-Type only wi
   });
 });
 
-describe('[A10] every endpoint keeps the byte-identical `API error: N`', () => {
+describe('[A10][A11] every endpoint rejects with an ApiError keeping the byte-identical `API error: N`', () => {
   it.each(NAMES)('%s', async (name) => {
     const error = await CALLS[name]().then(() => null, (e: unknown) => e);
-    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(ApiError);
     // The message must NOT have grown the body. queryClient's /\b40[13]\b/ runs over exactly this.
     expect((error as Error).message).toBe(`API error: ${STATUS}`);
     expect((error as Error).message).not.toContain(LEAK);
-  });
-});
-
-describe('[A11] every failure is an ApiError; only the reason endpoints carry the server reason', () => {
-  it.each(NAMES)('%s', async (name) => {
-    const error = (await CALLS[name]().then(() => null, (e: unknown) => e)) as ApiError;
-    expect(error).toBeInstanceOf(ApiError);
-    expect(error.serverMessage).toBe(REASON_ENDPOINTS.includes(name) ? LEAK : null);
+    expect((error as ApiError).serverMessage).toBe(REASON_ENDPOINTS.includes(name) ? LEAK : null);
   });
 });
 
