@@ -72,7 +72,7 @@ it('[A7] a past-cycle read that FAILS shows inline error + Retry; Retry refetche
 
   await screen.findByText('Cafes & Coffee');
   expect(screen.getByText('LAST PAY CYCLE')).toBeTruthy();    // still on the past cycle after recovery
-  expect(server.sentUnder('GET', '/breakdown').slice(-1)[0].path).toMatch(/&cycle=1$/); // the refetch was for cycle 1
+  expect(server.sentUnder('GET', '/breakdown').slice(-1)[0].path).toBe('/breakdown?cycle=1'); // the refetch was for cycle 1
 });
 
 // [A8] a POPULATED coach must vanish ENTIRELY on the past cycle (summary + suggestion

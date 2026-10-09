@@ -47,13 +47,12 @@ beforeEach(() => {
   server.seed('/paycycle', PAY_CYCLE);
 });
 
-it('renders breakdown rows from the query, fetched in parallel with the pay cycle', async () => {
+it('renders breakdown rows from the query', async () => {
   renderInsights();
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-  // WHIT-72: breakdown fetches in PARALLEL now (flat key, no gate) → fires with the default
-  // length (14); the server derives the window itself, so the rows are correct regardless.
+  // The server derives the window itself (WHIT-840: no length is sent).
   // WHIT-68: the current cycle is 0, which sends no cycle param.
-  expect(server.sent('GET', '/breakdown?days=14')).toHaveLength(1);
+  expect(server.sent('GET', '/breakdown')).toHaveLength(1);
   expect(server.sentUnder('GET', '/breakdown')).toHaveLength(1);
 });
 
@@ -135,7 +134,7 @@ it('the cycle selector reads the prior cycle, relabels the hero, and hides the A
   expect(await screen.findByText('LAST PAY CYCLE')).toBeTruthy();
   // The prior-cycle read fired with cycle=1; the `days` param is inconsequential (the server
   // derives the window) and varies with whether the pay cycle has resolved, so don't pin it.
-  expect(server.sentUnder('GET', '/breakdown').some((request) => request.path.endsWith('&cycle=1'))).toBe(true);
+  expect(server.sent('GET', '/breakdown?cycle=1').length).toBeGreaterThan(0);
   expect(screen.queryByText('Worth a look')).toBeNull();   // AI coach hidden on a past cycle
 
   // back to "This cycle" — served from cache (no new fetch), label + coach return
@@ -194,7 +193,7 @@ describe('focus refetch does not storm', () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(server.sent('GET', '/paycycle')).toHaveLength(1);
+    expect(server.sent('GET', '/paycycle')).toHaveLength(0);
     expect(server.sentUnder('GET', '/breakdown')).toHaveLength(1);
     expect(server.sent('GET', '/categories')).toHaveLength(1);
   });

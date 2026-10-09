@@ -15,7 +15,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const server = installFakeServer();
-const budgetReads = () => server.sentUnder('GET', '/budgets?');
+const budgetReads = () => server.sent('GET', '/budgets');
 
 beforeEach(() => {
   pinToday(new Date('2026-09-18T09:40:00+10:00'));

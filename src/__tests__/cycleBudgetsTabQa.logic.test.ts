@@ -1,5 +1,5 @@
 // WHIT-703 slice 2 QA — Budgets-tab edges the acceptance test doesn't reach: nesting (an
-// unbudgeted parent, a grandchild), a borrowed rollover, a server with no `available`, past
+// unbudgeted parent, a grandchild), a borrowed rollover, past
 // cycles that still carry rollover/spread data, a corrupt parent loop, and what reaches the
 // workbook (target 0 budgets, an empty `budgets`). Expected rows are written by hand.
 import { describe, it, expect } from '@jest/globals';
@@ -101,14 +101,6 @@ describe('buildBudgetRows — the numbers', () => {
       car: { target: 300, posted: 200, pending: 25, rollover: true, carryover: -50, available: 250 },
     }), category, false);
     expect(rows[1]).toEqual(['Car', 'Car', 300, 225, 25, 25, -50, 250]);
-  });
-
-  // [B6] (P1) an older server with no `available` → Available is target + buffer.
-  it('falls back to target + carry-over when the server omits available', () => {
-    const rows = buildBudgetRows(budgets({
-      car: { target: 300, posted: 100, pending: 0, rollover: true, carryover: 40 },
-    }), category, false);
-    expect(rows[1]).toEqual(['Car', 'Car', 300, 100, 0, 240, 40, 340]);
   });
 
   // [B7] (P0) last cycle ignores any rollover/spread figures in the payload: Available = today's

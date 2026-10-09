@@ -17,7 +17,7 @@ export { APPLY_RULES_MAX_WRITES } from './filingRun';
 import type { Bucket, Category, Transaction } from './types';
 import { loanFactsReady, toCategory, toRule, EMPTY_LOAN_FACTS, UNCATEGORIZED_KEY, EARNED_KEY, INCOME_KEY, ROLLUP_KEY, readRollup, type Budget, type Rule, type RuleWrite, type HomeLoanState } from './model';
 import { paydaysPerYear, elapsedFrac } from './payCycle';
-import { availableToSpend, contributesToBudget, pacePct, paceTarget, paceWarning, paidInOneGo } from './budgetMath';
+import { contributesToBudget, pacePct, paceTarget, paceWarning, paidInOneGo } from './budgetMath';
 import { breakdownKey, budgetsKey, categoriesKey, filingSuggestionsKey, goalsKey, loanFactsKey, milestonesKey, payCycleKey, rulesKey, transactionsSearchKey } from './queryKeys';
 import { queryClient } from './queryClient';
 import { readTransactionCopies, findTransaction, patchAllCopies, removeFromAllCopies, optimisticRefile, refreshAfter } from './transactionCache';
@@ -1956,7 +1956,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     // fund adds room; a prior spike's deficit removes it). A bill spread adds its own signed
     // adjustment (a cushion this cycle, a slice in a payback cycle). Rollover XOR spread, so
     // at most one term is non-zero; Non-rollover/non-spend/Income => both 0, available == budget.
-    const available = availableToSpend(b);
+    const available = b.available;
     // Bars/remain divide by `available`, but it can be 0 or negative (a drained/borrowed
     // envelope) — fall back to the base target, then 1, so a percentage is never NaN.
     const den = available > 0 ? available : (b.budget > 0 ? b.budget : 1);
@@ -2797,8 +2797,8 @@ export function budgetSpreadEligibility(
     return { entry: 'hidden', overspend: 0 };
   }
   if (budget.spread) return { entry: 'edit', overspend: 0 };
-  // Matches budgetDetail's spendable envelope exactly (WHIT-549 server value, else the parts-sum).
-  const available = availableToSpend(budget);
+  // Matches budgetDetail's spendable envelope exactly (the WHIT-549 server value).
+  const available = budget.available;
   const spent = budget.posted + budget.pending;
   const overspend = Math.round(Math.max(0, spent - available) * 100) / 100;
   if (budget.rollover) return { entry: 'hidden', overspend };
@@ -2822,7 +2822,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   // Rollover: the spendable envelope this cycle is target + buffer (see budgetViews); a bill
   // spread adds its signed adjustment instead (rollover XOR spread). `den` guards the bar
   // percentages against a 0/negative envelope. No rollover/spend adjustment => available == budget.
-  const available = availableToSpend(b);
+  const available = b.available;
   const den = available > 0 ? available : (b.budget > 0 ? b.budget : 1);
   const postedPct = Math.max(0, Math.min(100, (posted / den) * 100));
   // The server already filters to contributing rows; during the optimistic window an

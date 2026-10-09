@@ -129,9 +129,9 @@ describe('the earned-vs-spent chart is never drawn over an empty/loading/error s
   });
 
   it('first load → no chart, even once the income has arrived', async () => {
-    // The breakdown (with earned) lands; the pay cycle is still loading, so the spinner shows.
+    // The breakdown (with earned) lands; the categories are still loading, so the spinner shows.
     seedBreakdown({ earned: 3000 });
-    const held = server.hold('/paycycle');
+    const held = server.hold('/categories');
     drawInsights();
     expect(await screen.findByTestId('insights-loading')).toBeTruthy();
     await loaded([...breakdownKey, 0]);
@@ -202,17 +202,6 @@ it('shows an inline error + Retry (not a false $0) on a sustained breakdown fail
   await settle();
   expect(breakdownReads()).toBeGreaterThan(before); // Retry re-reads the breakdown
   expect(screen.queryByText('$0')).toBeNull();
-});
-
-it('keeps rows visible while another read is still loading (does not flash the spinner)', async () => {
-  // The pay-cycle read is held, so the screen is still loading — but the breakdown already has a row.
-  seedBreakdown({ spend: { coffee: posted(20) } });
-  const held = server.hold('/paycycle');
-  drawInsights();
-  expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-  expect(screen.queryByTestId('insights-loading')).toBeNull();
-  held.release();
-  await settle();
 });
 
 // --- AI insights (WHIT-104) — unchanged behaviour, still on the context store ---

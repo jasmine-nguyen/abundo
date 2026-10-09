@@ -1,6 +1,6 @@
 // WHIT-650 QA: the rule and category writers through the REAL request step (src/api.ts) on the fake
 // server — the parts the auto-mock could never reach: the sign-in token, the path escaping, the
-// request time limit, and how each error style (plain / statusOnly / withReason) reaches the toast.
+// request time limit, and how a failure (with or without the server's reason) reaches the toast.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';

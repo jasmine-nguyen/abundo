@@ -7,7 +7,7 @@ import { cycleName } from '../payCycle';
 import { MILESTONES } from '../milestones';
 import type { Category, Transaction } from '../types';
 import type { Budget, HomeLoanState, Rule } from '../model';
-import type { AiGoalSignal, BreakdownRollup, CategorySpend, LoanFacts, MilestoneRecord, Repayment } from '../api';
+import type { AiGoalSignal, BreakdownRollup, BudgetRollup, CategorySpend, LoanFacts, MilestoneRecord, Repayment } from '../api';
 import type { GoalScreenData } from '../queries';
 import { COFFEE } from './support/categories';
 
@@ -85,8 +85,21 @@ export function rule(over: Partial<Rule> = {}): Rule {
   return { id: 'r1', pattern: 'COLES', categoryId: 'coffee', isNew: false, field: 'description', operator: 'contains', ...over };
 }
 
+// The server's 'available to spend' (WHIT-549 unified formula), test-side only so fixtures carry
+// the figure the server would send. The app reads it, never computes it (WHIT-840).
+export function serverAvailable(parts: { target: number; rollover?: boolean; carryover?: number; spreadAdjustment?: number }): number {
+  return parts.target + (parts.rollover ? parts.carryover ?? 0 : 0) + (parts.spreadAdjustment ?? 0);
+}
+
 export function budget(over: Partial<Budget> = {}): Budget {
-  return { id: 'coffee', budget: 100, posted: 40, pending: 10, rollover: false, carryover: 0, spreadAdjustment: 0, ...over };
+  const merged = { id: 'coffee', budget: 100, posted: 40, pending: 10, rollover: false, carryover: 0, spreadAdjustment: 0, ...over };
+  return { ...merged, available: over.available ?? serverAvailable({ ...merged, target: merged.budget }) };
+}
+
+// A /budgets wire row with the server's `available` filled in from its target/rollover/spread.
+export function budgetRow(over: Partial<BudgetRollup> = {}): BudgetRollup {
+  const row = { target: 100, posted: 0, pending: 0, ...over };
+  return { ...row, available: over.available ?? serverAvailable({ ...row, spreadAdjustment: row.spread?.adjustment }) };
 }
 
 export function spend(over: Partial<CategorySpend> = {}): CategorySpend {

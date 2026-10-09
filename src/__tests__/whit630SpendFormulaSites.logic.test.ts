@@ -1,9 +1,8 @@
-// WHIT-630 QA: budgetViews, budgetDetail and budgetSpreadEligibility all read the spendable through
-// availableToSpend and the pace through paceTarget — so each screen honours a server `available`
+// WHIT-630 QA: budgetViews, budgetDetail and budgetSpreadEligibility all read the server's `available`
+// and the pace through paceTarget — so each screen honours a server `available`
 // (including a server 0) and keeps pace on the BASE target, not the envelope.
 import { describe, it, expect } from '@jest/globals';
 import { budgetViews, budgetDetail, budgetSpreadEligibility } from '../context';
-import { availableToSpend } from '../budgetMath';
 import { makeState, cat, budget } from './factory';
 
 const food = cat({ id: 'food', name: 'Food', bucket: 'Living' });
@@ -53,7 +52,7 @@ describe('a server 0 is kept, not replaced by the parts-sum', () => {
   });
 });
 
-describe('the three sites agree with availableToSpend', () => {
+describe('the three sites agree with the budget\'s available', () => {
   const cases = [
     { budget: 100, posted: 30, pending: 5, rollover: true, carryover: 50 },
     { budget: 100, posted: 30, pending: 5, rollover: false, carryover: 50 },
@@ -63,7 +62,7 @@ describe('the three sites agree with availableToSpend', () => {
 
   it.each(cases)('[A12] (P1) totals and overspend match for %o', (over) => {
     const b = budget({ id: 'food', ...over });
-    const available = availableToSpend(b);
+    const available = b.available;
     expect(budgetViews(state(over)).totBudget).toBe(available);
     const expectedOver = Math.round(Math.max(0, b.posted + b.pending - available) * 100) / 100;
     expect(budgetDetail(state(over), 'food')?.overspend).toBe(expectedOver);

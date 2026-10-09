@@ -167,6 +167,6 @@ describe('after a lasting failure, a real focus / Retry still asks again', () =>
     await act(async () => { result.current.refetch(); });
     await waitFor(() => expect(server.sent('GET', '/categories')).toHaveLength(2));
     expect(server.sentUnder('GET', '/breakdown')).toHaveLength(2);
-    expect(server.sent('GET', '/paycycle')).toHaveLength(2);
+    expect(server.sent('GET', '/paycycle')).toHaveLength(0);
   });
 });

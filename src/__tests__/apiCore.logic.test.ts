@@ -63,9 +63,9 @@ describe('reads', () => {
 
   it('fetchBudgets GETs /budgets with a url-encoded days param + the Bearer token', async () => {
     fetchMock.mockReturnValue(okJson({ groceries: { target: 100, posted: 0, pending: 0 } }));
-    const out = await fetchBudgets(14);
+    const out = await fetchBudgets();
     const [url, opts] = lastCall();
-    expect(url).toBe(`${API}/budgets?days=14`);
+    expect(url).toBe(`${API}/budgets`);
     expectAuth(opts);
     expect(out).toEqual({ groceries: { target: 100, posted: 0, pending: 0 } });
   });
@@ -74,9 +74,9 @@ describe('reads', () => {
     // WHIT-110: /breakdown had no network test at all — the one most likely to ship
     // gated-but-tokenless and 401 the Insights tab. Lock it.
     fetchMock.mockReturnValue(okJson({ coffee: { posted: 20, pending: 5 } }));
-    const out = await fetchBreakdown(14);
+    const out = await fetchBreakdown();
     const [url, opts] = lastCall();
-    expect(url).toBe(`${API}/breakdown?days=14`);
+    expect(url).toBe(`${API}/breakdown`);
     expectAuth(opts);
     expect(out).toEqual({ coffee: { posted: 20, pending: 5 } });
   });
@@ -234,8 +234,8 @@ describe('every fetcher throws on a not-OK response', () => {
   const cases: [string, () => Promise<unknown>][] = [
     ['fetchTransactions', () => fetchTransactions()],
     ['fetchCategories', () => fetchCategories()],
-    ['fetchBudgets', () => fetchBudgets(14)],
-    ['fetchBreakdown', () => fetchBreakdown(14)],
+    ['fetchBudgets', () => fetchBudgets()],
+    ['fetchBreakdown', () => fetchBreakdown()],
     ['fetchPayCycle', () => fetchPayCycle()],
     ['fetchHomeLoan', () => fetchHomeLoan()],
     ['fetchLoanFacts', () => fetchLoanFacts()],

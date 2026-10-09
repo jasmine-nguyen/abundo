@@ -13,6 +13,7 @@ import { routerSpies, resetRouter } from './support/routerMock';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct } from './support/renderWithQueries';
 import { pinToday } from './support/clock';
+import { budgetRow } from './factory';
 import { pullControl, pullAndSettle } from './support/pull';
 import { styleOf } from './support/layout';
 
@@ -30,9 +31,9 @@ import { COFFEE, SALARY, GROCERIES_RECORD } from './support/categories';
 import { MINUS } from '../theme';
 
 const server = installFakeServer();
-// The Budgets reads. `/budgets?` (with the query mark) counts the rollup read only, never a
-// budget's own transactions list.
-const budgetReads = () => server.sentUnder('GET', '/budgets?');
+// The Budgets reads. The exact `/budgets` path counts the rollup read only, never a budget's
+// own transactions list.
+const budgetReads = () => server.sent('GET', '/budgets');
 const payCycleReads = () => server.sent('GET', '/paycycle');
 const categoryReads = () => server.sent('GET', '/categories');
 
@@ -49,7 +50,7 @@ it('renders budget rows from the queries, fetched in parallel with the pay cycle
   // WHIT-72: budgets fetch in PARALLEL now (flat key, no gate), so they fire with the default
   // length (14) before the cycle resolves — and never refetch to 30. The server ignores the
   // length anyway (it derives the window itself), so the rendered rows are still correct.
-  expect(server.sent('GET', '/budgets?days=14')).toHaveLength(1);
+  expect(server.sent('GET', '/budgets')).toHaveLength(1);
   expect(budgetReads()).toHaveLength(1);
   expect(payCycleReads()).toHaveLength(1);
   expect(categoryReads()).toHaveLength(1);
@@ -195,7 +196,7 @@ describe('partial failure', () => {
     // WHIT-72: budgets fetches in PARALLEL now (not gated on payCycle), so it fires with the
     // DEFAULT length (14) before the cycle resolves — and the flat key means it never
     // refetches to 30. The server ignores the length anyway, so the response is still correct.
-    expect(server.sent('GET', '/budgets?days=14').length).toBeGreaterThan(0);
+    expect(server.sent('GET', '/budgets').length).toBeGreaterThan(0);
     expect(screen.queryByTestId('budgets-loading')).toBeNull();
   });
 
@@ -287,7 +288,7 @@ describe('parallel fetch (no waterfall)', () => {
     renderBudgets();
 
     await waitFor(() => expect(budgetReads().length).toBeGreaterThan(0));
-    expect(server.sent('GET', '/budgets?days=14')).toHaveLength(1); // default length — cycle not yet loaded
+    expect(server.sent('GET', '/budgets')).toHaveLength(1); // default length — cycle not yet loaded
     expect(payCycleReads()).toHaveLength(1);  // fired in parallel, still pending
 
     await act(async () => { heldPayCycle.release(); }); // settle to avoid an act() leak
@@ -526,7 +527,7 @@ describe('WHIT-573 hero over-budget — gaps', () => {
     // carryover -80 → available = 100 + (-80) = 20; spent 50 > 20 → totRemain -30. Modest raw spend,
     // but the borrowed envelope is blown — proves the hero total is built on `available`, not target.
     server.seed('/budgets', {
-      coffee: { target: 100, posted: 50, pending: 0, rollover: true, carryover: -80 },
+      coffee: budgetRow({ target: 100, posted: 50, pending: 0, rollover: true, carryover: -80 }),
     });
     await renderLoadedBudgets();
     expect(screen.getByText('Over budget')).toBeTruthy();

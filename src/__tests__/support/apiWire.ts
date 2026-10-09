@@ -2,6 +2,9 @@
 // (which pins the wire) and fakeServer.logic.test.ts (which checks the fake has a route for each).
 import * as api from '../../api';
 
+// The only endpoints whose failure carries the server's reason (`ApiError.serverMessage`).
+export const REASON_ENDPOINTS = ['createCategory', 'deleteCategory', 'updateCategory'];
+
 export type Wire = [method: string | null, path: string, timeoutMs: number, body: string | undefined];
 
 // [A1][A2][A3] Every endpoint's request, as the pre-WHIT-631 hand-written fetches sent it.
@@ -22,9 +25,9 @@ export const WIRE: Record<string, [() => Promise<unknown>, Wire]> = {
   createCategory: [() => api.createCategory({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }), ['POST', '/categories', 15000, '{"name":"Gym","bucket":"Lifestyle","icon":"dumbbell"}']],
   updateCategory: [() => api.updateCategory('gym', { name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }), ['PATCH', '/categories/gym', 15000, '{"name":"Gym","bucket":"Lifestyle","icon":"dumbbell"}']],
   deleteCategory: [() => api.deleteCategory('gym'), ['DELETE', '/categories/gym', 15000, undefined]],
-  fetchBudgets: [() => api.fetchBudgets(14), [null, '/budgets?days=14', 15000, undefined]],
+  fetchBudgets: [() => api.fetchBudgets(), [null, '/budgets', 15000, undefined]],
   fetchBudgetTransactions: [() => api.fetchBudgetTransactions('groceries'), [null, '/budgets/groceries/transactions', 15000, undefined]],
-  fetchBreakdown: [() => api.fetchBreakdown(14, 1), [null, '/breakdown?days=14&cycle=1', 15000, undefined]],
+  fetchBreakdown: [() => api.fetchBreakdown(1), [null, '/breakdown?cycle=1', 15000, undefined]],
   fetchCategoryTransactions: [() => api.fetchCategoryTransactions('groceries', 0), [null, '/categories/groceries/transactions', 15000, undefined]],
   fetchCycleTransactions: [() => api.fetchCycleTransactions(1), [null, '/transactions/cycle?cycle=1', 15000, undefined]],
   setTransactionCategory: [() => api.setTransactionCategory('t1', 'groceries'), ['PATCH', '/transactions/t1', 15000, '{"category":"groceries"}']],

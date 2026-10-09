@@ -24,14 +24,16 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { COFFEE } from './support/categories';
+import { budgetRow } from './factory';
 
 const SPEND = COFFEE;
 
 const server = installFakeServer();
 useTestQueryClient();
 
-// The server's rollup for a plain $100 coffee budget; a spread plan rides along as `spread`.
-const rollup = (over = {}) => ({ target: 100, posted: 0, pending: 0, rollover: false, carryover: 0, ...over });
+// The server's rollup for a plain $100 coffee budget; a spread plan rides along as `spread`, and
+// `available` carries the cushion like the server's (WHIT-840).
+const rollup = (over = {}) => budgetRow({ rollover: false, carryover: 0, ...over });
 const activePlan = { amount: 300, cycles: 4, index: 1, adjustment: -75 };
 
 function seedBudgets(budgets: Record<string, unknown>) {

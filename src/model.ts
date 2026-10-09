@@ -19,8 +19,8 @@ export interface Budget {
   // is ever non-zero.
   spreadAdjustment: number; spread?: SpreadPlan;
   // The spendable this cycle, computed server-side on the unified Smoothing model (WHIT-549).
-  // Absent on a server that predates it — the screen falls back to the old parts-sum below.
-  available?: number;
+  // Always set: toBudget fills the target when the server omits it (past-cycle rows only).
+  available: number;
 }
 // `pattern` mirrors the server rule's `value`; `field`/`operator` carry the
 // server facts (default description/contains for app-authored rules) so a rule
@@ -88,9 +88,9 @@ export function toBudget(id: string, rollup: BudgetRollup): Budget {
     rollover: rollup.rollover ?? false, carryover: rollup.carryover ?? 0,
     carryoverCycles: rollup.carryover_cycles ?? [], carryoverEarlier: rollup.carryover_earlier ?? 0,
     spreadAdjustment: rollup.spread?.adjustment ?? 0, spread: rollup.spread,
-    // Pass through the server-computed spendable; stays undefined when the server omits it,
-    // so the screens' `?? <parts-sum>` fallback fires (WHIT-549).
-    available: rollup.available,
+    // The server's spendable (WHIT-549). Only past-cycle export rows omit it, and a past cycle
+    // exports the plain target, so that's the fill (WHIT-840).
+    available: rollup.available ?? rollup.target,
   };
 }
 

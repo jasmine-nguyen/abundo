@@ -98,12 +98,12 @@ export function usePayCycleQuery(enabled: boolean) {
   return useQuery({ queryKey: payCycleKey, queryFn: fetchPayCycle, enabled });
 }
 
-// cycleLen is passed to fetchBudgets for the (inert) ?days= arg only — the KEY is flat, so
-// budgets fetches in parallel with the pay cycle and a length change doesn't shift it (WHIT-72).
-export function useBudgetsQuery(cycleLen: number, enabled: boolean) {
+// The server derives the window from the stored pay cycle, so the KEY is flat and budgets
+// fetches in parallel with the pay cycle (WHIT-72).
+export function useBudgetsQuery(enabled: boolean) {
   return useQuery({
     queryKey: budgetsKey,
-    queryFn: () => fetchBudgets(cycleLen),
+    queryFn: () => fetchBudgets(),
     enabled,
     select: selectBudgets,
   });
@@ -141,10 +141,10 @@ export function useCategoryCycleTransactionsQuery(categoryId: string, cycle: num
 // the key is suffixed with `cycle` so each pay cycle's breakdown caches independently;
 // `breakdownKey` stays the flat prefix, so `['breakdown']` invalidations
 // still prefix-match and refresh every cached cycle.
-export function useBreakdownQuery(cycleLen: number, cycle: number, enabled: boolean) {
+export function useBreakdownQuery(cycle: number, enabled: boolean) {
   return useQuery({
     queryKey: [...breakdownKey, cycle],
-    queryFn: () => fetchBreakdown(cycleLen, cycle),
+    queryFn: () => fetchBreakdown(cycle),
     enabled,
   });
 }
@@ -429,16 +429,19 @@ export interface CategoriesData {
 // every consumer's `[categories]`-keyed memo/effect re-fire on every redraw — and in
 // category/edit that turned an effect into an infinite re-render loop (WHIT-244).
 const EMPTY_CATEGORIES: Category[] = [];
-export function useCategories(): CategoriesData {
-  const authed = useIsAuthed();
+// The taxonomy plus its null-tolerant lookup, shared by every composite that labels rows.
+// Takes the already-computed `authed` flag so the composite gates its queries once.
+function useCategoryLookup(authed: boolean) {
   const categoriesQuery = useCategoriesQuery(authed);
   const categories = categoriesQuery.data ?? EMPTY_CATEGORIES;
   const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
   const category = useCallback((id: string | null) => (id == null ? undefined : byId.get(id)), [byId]);
-  const latest = useLatestRef(categoriesQuery);
-  const refetch = useCallback(() => { latest.current.refetch(); }, [latest]);
-  const refetchStale = useCallback(() => { if (latest.current.isStale) latest.current.refetch(); }, [latest]);
-  return { categories, category, isLoading: categoriesQuery.isLoading, isError: categoriesQuery.isError, refetch, refetchStale };
+  return { categoriesQuery, categories, category };
+}
+export function useCategories(): CategoriesData {
+  const { categoriesQuery, categories, category } = useCategoryLookup(useIsAuthed());
+  const { isLoading, isError, refetch, refetchStale } = useCombineScreenQueries([categoriesQuery]);
+  return { categories, category, isLoading, isError, refetch, refetchStale };
 }
 
 // WHIT-203: the shared pay-cycle hook — for the readers that need the cycle name / window
@@ -559,12 +562,8 @@ export function useBudgetsScreenData(): BudgetsScreenData {
   const { cycleLen, daysLeft } = cycleClockView(payCycle);
   const nextPaydayDate = nextPayday(payCycle);
 
-  const budgetsQuery = useBudgetsQuery(cycleLen, authed);
-  const categoriesQuery = useCategoriesQuery(authed);
-
-  const categories = categoriesQuery.data ?? [];
-  const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
-  const category = useCallback((id: string) => byId.get(id), [byId]);
+  const budgetsQuery = useBudgetsQuery(authed);
+  const { categoriesQuery, category } = useCategoryLookup(authed);
 
   const status = useCombineScreenQueries([payCycleQuery, budgetsQuery, categoriesQuery]);
   // WHIT-72: a first-load pay-cycle failure (no cached cycle) → force the error card, else
@@ -605,15 +604,11 @@ export function useBudgetDetailScreenData(categoryId: string): BudgetDetailScree
   const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
   const { cycleLen, daysLeft } = cycleClockView(payCycle);
 
-  const budgetsQuery = useBudgetsQuery(cycleLen, authed); // parallel fetch, flat key (WHIT-72)
+  const budgetsQuery = useBudgetsQuery(authed); // parallel fetch, flat key (WHIT-72)
   // The list is the whole cycle's subtree, computed server-side from the SAME window as
   // the header total, so the rows sum to the number — not the old rolling 7-day feed.
   const budgetTransactionsQuery = useBudgetTransactionsQuery(categoryId, authed);
-  const categoriesQuery = useCategoriesQuery(authed);
-
-  const categories = categoriesQuery.data ?? [];
-  const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
-  const category = useCallback((id: string | null) => (id == null ? undefined : byId.get(id)), [byId]);
+  const { categoriesQuery, category } = useCategoryLookup(authed);
 
   const status = useCombineScreenQueries([payCycleQuery, budgetsQuery, budgetTransactionsQuery, categoriesQuery]);
   const payCycleError = firstLoadError(payCycleQuery); // WHIT-72
@@ -659,26 +654,18 @@ export interface InsightsScreenData {
 
 /**
  * The Insights tab's spend-by-category data, assembled from the auth-gated queries.
- * Breakdown, pay cycle, and categories fetch in PARALLEL on auth (WHIT-72): the breakdown
- * key is flat and the server derives its own window, so it no longer waits for the pay
- * cycle (kills the cold-open waterfall). The AI-insights feature on that screen stays on
- * the old context store — it is NOT here.
+ * Breakdown and categories fetch in PARALLEL on auth (WHIT-72). The server derives the
+ * breakdown window from the stored pay cycle, so Insights never reads the pay cycle and a
+ * pay-cycle failure doesn't blank it. The AI-insights feature on that screen stays on the
+ * old context store — it is NOT here.
  */
 export function useInsightsScreenData(cycle = 0): InsightsScreenData {
   const authed = useIsAuthed();
-  const payCycleQuery = usePayCycleQuery(authed);
-  const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
-  const { cycleLen } = cycleClockView(payCycle);
-
   // WHIT-68: `cycle` (0 = current, n = nth prior) selects the historical breakdown window.
-  const breakdownQuery = useBreakdownQuery(cycleLen, cycle, authed); // parallel fetch, cycle-keyed
-  const categoriesQuery = useCategoriesQuery(authed);
+  const breakdownQuery = useBreakdownQuery(cycle, authed); // parallel fetch, cycle-keyed
+  const { categoriesQuery, category } = useCategoryLookup(authed);
 
-  const categories = categoriesQuery.data ?? [];
-  const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
-  const category = useCallback((id: string) => byId.get(id), [byId]);
-
-  const status = useCombineScreenQueries([payCycleQuery, breakdownQuery, categoriesQuery]);
+  const status = useCombineScreenQueries([breakdownQuery, categoriesQuery]);
   // WHIT-194: see InsightsScreenData.categoriesError. firstLoadError ⇒ the categories read has
   // never succeeded, so there's no taxonomy to label real-category rows (cache-first preserved).
   const categoriesError = firstLoadError(categoriesQuery);
@@ -745,16 +732,8 @@ export interface TransactionsScreenData extends RecentTransactionsScreenData {
 // the tab, dot, and sheets re-fires on each redraw (the WHIT-244 trap).
 const EMPTY_TX: Transaction[] = [];
 
-// Shared plumbing both transaction composites need: the null-tolerant category lookup and the
-// live per-account balances map. Both take the already-computed `authed` flag so the composite
-// gates its queries once.
-function useCategoryLookup(authed: boolean) {
-  const categoriesQuery = useCategoriesQuery(authed);
-  const categories = categoriesQuery.data ?? EMPTY_CATEGORIES;
-  const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
-  const category = useCallback((id: string | null) => (id == null ? undefined : byId.get(id)), [byId]);
-  return { categoriesQuery, category };
-}
+// The live per-account balances map the transaction composites share. Takes the
+// already-computed `authed` flag so the composite gates its queries once.
 function useBalancesMap(authed: boolean) {
   const balancesQuery = useAccountBalancesQuery(authed);
   // Secondary data: a balances failure/empty just means the cards show "—", so it is NOT
@@ -946,11 +925,7 @@ export interface CategoryTransactionsScreenData {
 export function useCategoryTransactionsScreenData(categoryId: string, cycle: number, range?: DateRange): CategoryTransactionsScreenData {
   const authed = useIsAuthed();
   const categoryTransactionsQuery = useCategoryCycleTransactionsQuery(categoryId, cycle, authed, range);
-  const categoriesQuery = useCategoriesQuery(authed);
-
-  const categories = categoriesQuery.data ?? [];
-  const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
-  const category = useCallback((id: string | null) => (id == null ? undefined : byId.get(id)), [byId]);
+  const { categoriesQuery, category } = useCategoryLookup(authed);
 
   const status = useCombineScreenQueries([categoryTransactionsQuery, categoriesQuery]);
 
