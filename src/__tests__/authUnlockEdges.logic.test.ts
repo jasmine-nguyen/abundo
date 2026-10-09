@@ -169,6 +169,26 @@ describe('unlockOrRestore with no stored session', () => {
     expect(seen).not.toContain('locked');
     expect(auth.getStatus()).toBe('anon');
   });
+
+  // [A1] WHIT-835: the pre-WHIT-161 move is gone — a token with no sentinel is restored
+  // as-is, never re-stored, never given a sentinel, never sealed behind the lock.
+  it('a token with NO sentinel goes straight to restore: authed, never locked, nothing re-written', async () => {
+    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
+    mockCanUseBiometric.mockReturnValue(true);
+    mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
+    mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
+    const auth = loadAuth();
+
+    const seen: string[] = [];
+    auth.subscribe(() => seen.push(auth.getStatus()));
+    await auth.unlockOrRestore();
+
+    expect(seen).not.toContain('locked');
+    expect(auth.getStatus()).toBe('authed');
+    expect(refreshReads()).toHaveLength(1);
+    expect(refreshWrites()).toHaveLength(0);
+    expect(mockSetItem.mock.calls.some((c) => c[0] === SENTINEL_KEY)).toBe(false);
+  });
 });
 
 // --- WHIT-172: signInWithGoogle partial-persist rollback (keeps the invariant airtight) ---
