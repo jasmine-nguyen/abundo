@@ -1,8 +1,7 @@
 """Tests for the shared BankSync balance fetch/normalise (shared/balance_fetch.py).
 
-Extracted from the poller so the on-demand refresh API can reuse it. Unlike the poller's
-thin wrapper (which hardcodes its base URL / 30s timeout / UA), the shared `fetch_balance`
-takes them as parameters — so the request it builds is driven entirely by the caller.
+Shared by the poller and the on-demand refresh API. `fetch_balance` takes the timeout and
+UA as parameters, so each caller sets its own; the base URL is the shared BankSync one.
 """
 
 from decimal import Decimal
@@ -36,13 +35,13 @@ def test_fetch_balance_builds_request_from_params(shared, monkeypatch):
 
     out = shared.balance_fetch.fetch_balance(
         "fiskil_9", "acct-1", "the-key",
-        base_url="https://example.test", timeout=7, user_agent="abundo-app-api",
+        timeout=7, user_agent="abundo-app-api",
     )
 
     req = captured["req"]
     assert req.get_method() == "GET"
-    # URL, timeout, and UA all come from the params — not hardcoded.
-    assert req.full_url == "https://example.test/v1/banks/fiskil_9/accounts/acct-1/balances"
+    # Timeout and UA come from the params — not hardcoded.
+    assert req.full_url == "https://api.banksync.io/v1/banks/fiskil_9/accounts/acct-1/balances"
     assert req.get_header("X-api-key") == "the-key"
     assert req.get_header("User-agent") == "abundo-app-api"
     assert captured["timeout"] == 7

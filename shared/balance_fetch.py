@@ -1,12 +1,14 @@
 """BankSync getBalance fetch + normalise, shared by the daily poller and the
 on-demand refresh endpoint (WHIT — live balance refresh).
 
-It imports NO constants: callers pass ``base_url``/``timeout``/``user_agent`` in.
+Callers pass ``timeout``/``user_agent`` in; the base URL is the shared ``BANKSYNC_BASE_URL``.
 """
 
 import json
 import urllib.request
 from decimal import Decimal, InvalidOperation
+
+from constants import BANKSYNC_BASE_URL
 
 
 class BalanceError(Exception):
@@ -16,17 +18,17 @@ class BalanceError(Exception):
 
 
 def banksync_request(
-    url: str,
+    path: str,
     api_key: str,
     *,
     user_agent: str,
     timeout: float,
     data: bytes | None = None,
 ) -> dict:
-    """Send one BankSync request (POST when ``data`` is given, else GET) and return the
-    parsed JSON reply. HTTP errors propagate."""
+    """Send one BankSync request to ``path`` (POST when ``data`` is given, else GET) and
+    return the parsed JSON reply. HTTP errors propagate."""
     req = urllib.request.Request(
-        url,
+        f"{BANKSYNC_BASE_URL}{path}",
         data=data,
         headers={
             "X-API-Key": api_key,
@@ -39,10 +41,10 @@ def banksync_request(
         return json.loads(resp.read())
 
 
-def fetch_balance(bid: str, aid: str, api_key: str, *, base_url: str, timeout: float, user_agent: str) -> dict:
+def fetch_balance(bid: str, aid: str, api_key: str, *, timeout: float, user_agent: str) -> dict:
     """GET /v1/banks/{bid}/accounts/{aid}/balances -> the parsed JSON payload."""
-    url = f"{base_url}/v1/banks/{bid}/accounts/{aid}/balances"
-    return banksync_request(url, api_key, user_agent=user_agent, timeout=timeout)
+    path = f"/v1/banks/{bid}/accounts/{aid}/balances"
+    return banksync_request(path, api_key, user_agent=user_agent, timeout=timeout)
 
 
 def normalise_account_balance(payload: dict) -> dict:

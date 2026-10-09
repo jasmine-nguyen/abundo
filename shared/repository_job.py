@@ -19,7 +19,7 @@ from repository_base import RepositoryBase, db_errors, update_expression
 
 logger = logging.getLogger(__name__)
 
-# Every job row shares this partition so a future list reads them in one Query.
+# Every job row shares this partition.
 _PK = "JOB"
 
 # The running tallies a job carries. update_progress accepts any subset of these; anything else
@@ -42,7 +42,7 @@ def _sk(job_id: str) -> str:
 
 
 class JobRepository(RepositoryBase):
-    """Reads and writes the background apply-rules job records in our own DynamoDB table."""
+    """Reads and writes the background job records (apply-rules and chat) in our own DynamoDB table."""
 
     def create_job(self, job_id: str, kind: str = "apply_rules") -> dict:
         """Create a fresh job row in the ``running`` state with zeroed tallies. Called once, from

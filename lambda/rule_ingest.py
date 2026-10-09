@@ -4,7 +4,7 @@ BankSync used to label every charge at sync time, before it reached us. Once rul
 own store (WHIT-526), our server must do that labelling itself. This is the webhook-side twin of
 the "Apply my rules" sweep (lambda_api.apply_rules_to_uncategorized): both decide a charge's
 category through the SAME shared rule_engine, so incoming and stored-history filing can never
-diverge. No provenance stamp yet — that is WHIT-536.
+diverge. A rule-filed charge is stamped `filed_by_rule` by the shared RuleBook (WHIT-536).
 
 Best-effort on the READ: a failure reading the rules or taxonomy is caught, so every charge lands
 unfiled (the sweep catches up). The per-charge filing itself is not wrapped — but a charge that
@@ -39,9 +39,9 @@ def load_rules(rule_repo, category_repo):
 
 
 def apply(rows: list, *, rule_repo, category_repo,
-          budget_repo, paycycle_repo) -> tuple[list, Optional[Callable]]:
+          budget_repo, paycycle_repo) -> Optional[Callable]:
     """File each unfiled charge in `rows` by the user's rules, in place, and return
-    `(rows, is_unfiled)`.
+    `is_unfiled`.
 
     `is_unfiled` is the taxonomy check the reconcile carry needs (WHIT-545) so a stored raw
     category can't clobber a rule-fill on settlement. It is None when no rules/taxonomy were
@@ -52,13 +52,13 @@ def apply(rows: list, *, rule_repo, category_repo,
     seeded once per delivery via a shared SpreadSeeder.
 
     Reads the rules + taxonomy once for the whole batch. A read failure leaves every charge
-    unfiled (still lands, logged). An empty rule store is a no-op — the rows are returned
+    unfiled (still lands, logged). An empty rule store is a no-op — the rows are left
     untouched."""
     if not rows:
-        return rows, None                # a data-less delivery (summary event) pays for no reads
+        return None                      # a data-less delivery (summary event) pays for no reads
     book = load_rules(rule_repo, category_repo)
     if book is None:
-        return rows, None
+        return None
     seeder = SpreadSeeder(budget_repo, paycycle_repo, rule_repo)
     book.file_charges(rows, seeder, counts_to_budget=counts_to_budget)
-    return rows, book.is_unfiled
+    return book.is_unfiled

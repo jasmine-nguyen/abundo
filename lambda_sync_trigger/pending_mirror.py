@@ -18,7 +18,6 @@ from typing import Any, Callable, Optional
 
 from constants import (
     ACCOUNT_ID_MAP,
-    BANKSYNC_BASE_URL,
     CARRY_DATE_SKEW_DAYS,
     FEED_WINDOW_DAYS,
     PENDING_MIRROR_FETCH_MARGIN_DAYS,
@@ -55,12 +54,11 @@ def fetch_bank_transactions(api_key: str, bid: str, aid: str, date_from: str, da
     """Every row BankSync lists for the account between `date_from` and `date_to` (booking date),
     following `cursor` until `hasMore` is false. Raises MirrorSkip on any sign of a partial list;
     HTTP errors propagate."""
-    base_url = f"{BANKSYNC_BASE_URL}/v1/banks/{bid}/accounts/{aid}/transactions"
     params = {"from": date_from, "to": date_to}
     rows: list[dict] = []
     for _ in range(PENDING_MIRROR_MAX_PAGES):
         body = banksync_request(
-            f"{base_url}?{urllib.parse.urlencode(params)}",
+            f"/v1/banks/{bid}/accounts/{aid}/transactions?{urllib.parse.urlencode(params)}",
             api_key,
             user_agent="abundo-transaction-trigger",
             timeout=PENDING_MIRROR_TIMEOUT_SECONDS,
@@ -139,14 +137,7 @@ def mirror_account(
                 repo, account_id, row, posted_rows, live_pendings, is_unfiled, result,
             )
             continue
-        try:
-            deleted = repo.delete_if_still_pending(row["pk"], row["sk"])
-        except DatabaseError:
-            logger.exception("pending_mirror %s: delete failed txn=%s", account_id, row["transaction_id"])
-            result["failed"] += 1
-            continue
-        if not deleted:
-            result["gone"] += 1
+        if not _delete_pending(repo, account_id, row, result):
             continue
         logger.info(
             "pending_mirror removed account=%s txn=%s date=%s amount=%s description=%s",
@@ -197,14 +188,7 @@ def _carry(
         return posted_rows, live_pendings
     posted_rows = [row for row in posted_rows if row.get("sk") != twin.get("sk")]
     live_pendings = [row for row in live_pendings if row.get("sk") != twin.get("sk")]
-    try:
-        deleted = repo.delete_if_still_pending(pending["pk"], pending["sk"])
-    except DatabaseError:
-        logger.exception("pending_mirror %s: delete after carry failed txn=%s", account_id, transaction_id)
-        result["failed"] += 1
-        return posted_rows, live_pendings
-    if not deleted:
-        result["gone"] += 1
+    if not _delete_pending(repo, account_id, pending, result):
         return posted_rows, live_pendings
     logger.info(
         "pending_mirror carried account=%s pending=%s -> %s=%s",
@@ -224,20 +208,25 @@ def _save_carry(repo: Any, twin: dict, pending: dict, is_unfiled: Callable[[Opti
     return True
 
 
-def _remove_identical(repo: Any, account_id: str, pending: dict, identical: dict, result: dict) -> None:
-    transaction_id = pending["transaction_id"]
+def _delete_pending(repo: Any, account_id: str, row: dict, result: dict) -> bool:
+    """Delete the pending if it's still pending. False → not deleted, counted as failed or gone."""
     try:
-        deleted = repo.delete_if_still_pending(pending["pk"], pending["sk"])
+        deleted = repo.delete_if_still_pending(row["pk"], row["sk"])
     except DatabaseError:
-        logger.exception("pending_mirror %s: delete failed txn=%s", account_id, transaction_id)
+        logger.exception("pending_mirror %s: delete failed txn=%s", account_id, row["transaction_id"])
         result["failed"] += 1
-        return
+        return False
     if not deleted:
         result["gone"] += 1
+    return bool(deleted)
+
+
+def _remove_identical(repo: Any, account_id: str, pending: dict, identical: dict, result: dict) -> None:
+    if not _delete_pending(repo, account_id, pending, result):
         return
     logger.info(
         "pending_mirror replaced account=%s pending=%s by=%s",
-        account_id, transaction_id, identical.get("transaction_id"),
+        account_id, pending["transaction_id"], identical.get("transaction_id"),
     )
     result["removed"] += 1
 

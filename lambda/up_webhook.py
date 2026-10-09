@@ -14,7 +14,6 @@ The Up-specific constants live here (not in shared/constants.py) because only th
 module uses them — same reasoning as push.py's Expo constants.
 """
 
-import base64
 import hashlib
 import hmac
 import http.client
@@ -25,6 +24,7 @@ import urllib.request
 from decimal import Decimal
 
 from constants import MIN_REPAYMENT_NOTIFY
+from event_body import raw_body
 from push import send_push
 from repository_device import DeviceRepository
 from repository_notify import NotifyRepository
@@ -67,29 +67,24 @@ def get_personal_access_token() -> str:
     return get_api_key(UP_PERSONAL_ACCESS_TOKEN_PATH)
 
 
-def extract_raw_body(event: dict) -> bytes:
-    """The exact bytes Up signed — base64-decoded when API Gateway flagged the body
-    as binary, otherwise the UTF-8 body. The signature is over these raw bytes, so
-    they must not be re-serialised before verifying."""
-    body = event.get("body", "")
-    if event.get("isBase64Encoded", False):
-        return base64.b64decode(body, validate=True)
-    return body.encode("utf-8")
-
-
-def verify_signature(raw_body: bytes, signature_header: str) -> bool:
+def verify_signature(body_bytes: bytes, signature_header: str) -> bool:
     secret = get_signing_secret().encode("utf-8")
-    expected = hmac.new(secret, raw_body, hashlib.sha256).hexdigest()
+    expected = hmac.new(secret, body_bytes, hashlib.sha256).hexdigest()
     return hmac.compare_digest(signature_header, expected)
+
+
+def _up_get(url: str) -> dict:
+    """GET an Up API url with the personal access token and return the parsed JSON."""
+    request = urllib.request.Request(url)
+    request.add_header("Authorization", f"Bearer {get_personal_access_token()}")
+    with urllib.request.urlopen(request, timeout=UP_FETCH_TIMEOUT_SECONDS) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 def fetch_transaction(transaction_id: str) -> dict:
     """Fetch the full transaction from Up — the webhook event carries only its id."""
-    request = urllib.request.Request(f"{UP_TRANSACTION_ENDPOINT}{transaction_id}")
-    request.add_header("Authorization", f"Bearer {get_personal_access_token()}")
     try:
-        with urllib.request.urlopen(request, timeout=UP_FETCH_TIMEOUT_SECONDS) as response:
-            body = json.loads(response.read().decode("utf-8"))
+        body = _up_get(f"{UP_TRANSACTION_ENDPOINT}{transaction_id}")
     except urllib.error.HTTPError as error:
         # HTTPError subclasses URLError, so it must be caught first.
         if error.code in UP_TOKEN_REJECTED_STATUSES:
@@ -122,10 +117,7 @@ def get_homeloan_account_id() -> str:
         return _homeloan_account_id
 
     try:
-        request = urllib.request.Request(UP_HOMELOAN_ACCOUNTS_ENDPOINT)
-        request.add_header("Authorization", f"Bearer {get_personal_access_token()}")
-        with urllib.request.urlopen(request, timeout=UP_FETCH_TIMEOUT_SECONDS) as response:
-            body = json.loads(response.read().decode("utf-8"))
+        body = _up_get(UP_HOMELOAN_ACCOUNTS_ENDPOINT)
         account_ids = [account["id"] for account in body["data"]
                        if account["attributes"]["accountType"] == UP_HOME_LOAN_ACCOUNT_TYPE]
     except Exception as error:
@@ -213,8 +205,9 @@ def lambda_handler(event, context) -> dict:
         logger.warning("UP_WEBHOOK_UNAUTHORISED missing signature header")
         return UNAUTHORISED_RESPONSE
 
-    raw_body = extract_raw_body(event)
-    if not verify_signature(raw_body, signature_header):
+    # The signature is over Up's exact bytes, so they must not be re-serialised before verifying.
+    body_bytes = raw_body(event)
+    if not verify_signature(body_bytes, signature_header):
         logger.warning("UP_WEBHOOK_UNAUTHORISED signature mismatch")
         return UNAUTHORISED_RESPONSE
 
@@ -224,7 +217,7 @@ def lambda_handler(event, context) -> dict:
     # dedupe marker (set only after a push reaches Expo) makes the retry safe. Since
     # BankSync no longer backstops this alert, retrying is the reliability net.
     try:
-        payload = json.loads(raw_body)
+        payload = json.loads(body_bytes)
         event_type = payload["data"]["attributes"]["eventType"]
         if event_type != TRANSACTION_CREATED:
             # PING (sent by Up at registration) and any other event: acknowledge only.

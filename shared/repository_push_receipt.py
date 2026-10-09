@@ -3,9 +3,9 @@
 Expo push delivery is async: ``send_push`` (shared/push.py) gets a ticket per
 ACCEPTED message carrying a receipt id, but a token may only be revealed as
 unregistered — or a delivery failure surfaced — LATER, via Expo's receipts endpoint.
-This stash records each ``{receipt_id -> token}`` so a later scheduled sweep can poll
-Expo for the true delivery outcome, prune dead tokens, and alarm on silent failures.
-(The sweep itself is a follow-up; this module is only the write side.)
+This stash records each ``{receipt_id -> token}`` so the scheduled sweep
+(lambda_push_receipts/handler.py) can poll Expo for the true delivery outcome, prune dead
+tokens, and alarm on silent failures.
 
 Layout: one item per receipt id, grouped under a SINGLE partition
 ``pk="PUSHRECEIPT#PENDING"``, ``sk=<receipt_id>``, attr ``token``. The shared partition
