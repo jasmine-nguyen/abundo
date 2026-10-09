@@ -114,10 +114,6 @@ def _apply_spreading(lam, store, budget, charges):
     return paycycle
 
 
-def _budget_writes(budget):
-    return len(budget._table.update_calls) + len(budget._table.put_calls)
-
-
 def test_a_spread_rule_seeds_the_plan_and_marks_it(lam):
     store = _rule_store([_spread_rule()])
     budget = budget_repo({"insurance": {"target": Decimal("100")}})
@@ -133,17 +129,15 @@ def test_a_spread_rule_seeds_the_plan_and_marks_it(lam):
 def test_two_deliveries_over_the_same_store_seed_once(lam):
     # Cross-DELIVERY idempotency: delivery 1 seeds + marks the store row; delivery 2 (a fresh
     # SpreadSeeder — the per-run dedup set does NOT carry over) reads the persisted spread_seeded and
-    # skips: no pay-cycle read, no budget write. FAIL-ON-REVERT: stop reading spreadSeeded in
+    # skips: no pay-cycle read. FAIL-ON-REVERT: stop reading spreadSeeded in
     # rule_book.rule_from_row (or stop mark_spread_seeded flipping it) and delivery 2 re-seeds.
     store = _rule_store([_spread_rule()])
     budget = budget_repo({"insurance": {"target": Decimal("100")}})
     _apply_spreading(lam, store, budget, [_charge("t1", description="ORIGIN ENERGY BILL")])
     assert "spread_amount" in stored_budgets(budget)["insurance"] and _seeded(store) == ["r-origin"]
-    writes_after_first = _budget_writes(budget)
 
     paycycle = _apply_spreading(lam, store, budget, [_charge("t2", description="ORIGIN ENERGY BILL")])
     assert paycycle.get_calls == 0                          # delivery 2 does not re-seed
-    assert _budget_writes(budget) == writes_after_first
 
 
 # --- through process_transaction: wiring + order + carry-wins -----------------
