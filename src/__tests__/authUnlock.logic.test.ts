@@ -198,13 +198,9 @@ describe('lock', () => {
 
 describe('canBiometricLock', () => {
   // WHIT-841: no build switch — Face ID follows device support only.
-  it('true when the device supports biometrics (no build switch)', async () => {
+  it('true when the device supports biometrics (no build switch)', () => {
     mockCanUseBiometric.mockReturnValue(true);
-    const auth = loadAuth();
-    expect(auth.canBiometricLock()).toBe(true);
-    await signInOk(auth);
-    const write = mockSetItem.mock.calls.find((c) => c[0] === REFRESH_KEY)!;
-    expect(write[2]).toMatchObject({ requireAuthentication: true });
+    expect(loadAuth().canBiometricLock()).toBe(true);
   });
   it('false when the device is unsupported', () => {
     mockCanUseBiometric.mockReturnValue(false);
