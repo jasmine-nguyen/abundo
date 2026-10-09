@@ -80,3 +80,17 @@ it('reads nothing while signed out, then reads the summary once signed in', asyn
   act(() => { setAuthStatus('authed'); });
   await waitFor(() => expect(latest.insights?.summary).toBe('mine'));
 });
+
+// [A4] A failed analyse's "Try again" state survives the cycle toggle unmounting the coach card.
+it('the retry state of a failed analyse survives the coach card unmounting and remounting', async () => {
+  const view = render(<Screen showCard />);
+  await settle();
+  server.once('POST', '/insights/ai', { status: 502 });
+  await act(async () => { await latest.generate(null); });
+  await waitFor(() => expect(latest.isError).toBe(true));
+
+  view.rerender(<Screen showCard={false} />);
+  view.rerender(<Screen showCard />);
+  expect(latest.isError).toBe(true);
+  expect(latest.isLoading).toBe(false);
+});
