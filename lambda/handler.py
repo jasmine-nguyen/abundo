@@ -54,7 +54,8 @@ def lambda_handler(event, context) -> dict:
     """Lambda handler: verifies a BankSync webhook delivery and stores its rows.
 
     `event` is the API Gateway request: its signed body holds the transaction rows.
-    Returns 401 when the signature doesn't verify, else a 200 response.
+    Returns 401 when the signature doesn't verify, 500 when processing fails (so BankSync
+    retries), else 200 (including an already-seen event).
     """
     repo = TransactionRepository()
     try:
