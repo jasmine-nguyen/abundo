@@ -975,45 +975,8 @@ def test_is_skewed_next_day_edges(lam):
 
 
 # --- WHIT-331 QA gaps (adversarial) -----------------------------------------
-# Authored by QA on top of the implementer's WHIT-331 section above. These cover only
-# what that section leaves open: calendar boundaries end-to-end, the merchant gate vs
-# the lowest-id tie-break, sign/credit rows, the pending-re-send-in-the-same-payload
-# ordering, the date carry on the LINK tier (not just the skew tier), the skew gate's
-# ragged-input boundaries, account scoping, and the merge log line.
 
-_UP_ACCOUNT_ID = "3zVQJ8Btz_IRmqp78VrQnQ"   # -> "up-spending"
 _ISAN_PEND_DESC = "POS AUTHORISATION         ISAN THAI STREET FOOD     MELBOURNE   AU"
-
-
-def _skew_posted_on_up(lam, **kw):
-    """The same skewed posting, but on the OTHER mapped account."""
-    row = _bank_row(**{"txn_id": "UPPOST", "amount": Decimal("-11.00"),
-                       "authorized_date": "2026-07-21", "date": "2026-07-24",
-                       "pending": False, "category": "FOOD_AND_DRINK",
-                       "description": _SKEW_POST_DESC,
-                       "merchant_name": _SKEW_POST_MERCHANT, **kw})
-    row["accountId"] = _UP_ACCOUNT_ID
-    row["accountName"] = "Up Spending"
-    return lam.banksync.normalise(row)
-
-
-def _seed_pending_on_up(repo, lam, **kw):
-    row = _bank_row(**{"txn_id": "UPPEND", "amount": Decimal("-11.00"),
-                       "authorized_date": "2026-07-22", "date": "2026-07-22",
-                       "pending": True, "category": "coffee",
-                       "description": _SKEW_PEND_DESC, "merchant_name": "", **kw})
-    row["accountId"] = _UP_ACCOUNT_ID
-    row["accountName"] = "Up Spending"
-    txn = lam.banksync.normalise(row)
-    repo.insert_transactions([txn])
-    return txn
-
-
-# [A10] / [A11] calendar boundaries, end to end (the unit test above only checks the
-# _is_skewed_next_day predicate, never the merge + date carry through the repository).
-
-
-# [A12] the merchant gate must beat the lowest-transaction_id tie-break.
 
 
 # [A13] / [A14] sign: the tier keys on EXACT amount equality, so it is sign-agnostic.
@@ -1441,10 +1404,6 @@ def test_reconcile_carries_budget_excluded_onto_posted(lam, repo):
     assert len(repo._table.store) == 1               # no duplicate
 
 
-def _row(txn_id, amount=Decimal("-9.00")):
-    return {"transaction_id": txn_id, "amount": amount, "authorized_date": "2026-06-29"}
-
-
 def test_blank_auth_tie_break_consumes_lowest_transaction_id(lam, repo):
     # WHIT-333 e2e (was test_reconcile_whit333_e2e.py): two indistinguishable blank-auth
     # pendings (same amount, >=2-word merchant, in-window date). Exactly one may die and it
@@ -1675,14 +1634,6 @@ def test_whit545_settlement_unfiled_twin_does_not_clobber_the_rule_fill(lam, rep
 class _QANoTokensDevice:
     def list_tokens(self):
         return []
-
-
-def _qa_real_is_unfiled(taxonomy_ids):
-    """The REAL production taxonomy check the reconcile carry actually receives — NOT the
-    implementer's `_unfiled_check` stand-in, which reimplements it as bare set-membership and
-    silently omits the income exclusion. Using the real one guards that exclusion too."""
-    import rule_engine
-    return lambda category: rule_engine.is_unfiled_category(category, taxonomy_ids)
 
 
 # [A7] End-to-end through process_transaction: the handler must thread the taxonomy check

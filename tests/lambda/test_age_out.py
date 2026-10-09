@@ -15,7 +15,6 @@ from _feed_fakes import FakeCategoryRepo
 # BankSync account ids that resolve via ACCOUNT_ID_MAP to two distinct internal ids.
 _ACCOUNT_A = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"  # -> anz-rewards-black-visa
 _ACCOUNT_B = "3zVQJ8Btz_IRmqp78VrQnQ"                        # -> up-spending
-_ACCOUNT_C = "T6d8ppsYssBDFCwl1qEb0w"                        # -> up-homeloan
 
 # Fixed "today" so the cutoff is deterministic: 2026-07-01 - 10 days -> cutoff 2026-06-21.
 # A pending dated < 2026-06-21 is stale; == 2026-06-21 is the boundary (kept); later is young.

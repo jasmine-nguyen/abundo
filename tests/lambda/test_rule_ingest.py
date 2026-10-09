@@ -14,6 +14,7 @@ from decimal import Decimal
 
 from _dynamo_fakes import FakeTable
 from _feed_fakes import FakeCategoryRepo
+from _category_fakes import budget_repo, stored_budgets
 from _rule_ingest_fakes import FakePaycycle, FakeRuleStore, apply_rules
 
 
@@ -84,8 +85,8 @@ def test_does_not_exclude_when_matching_rules_disagree(lam):
 
 
 # --- auto-spreading (WHIT-559): a spread rule seeds its category's plan once ---------
-# The real RuleRepository runs over the stand-in table, so the spread_seeded mark is the
-# real one; a fake budget + pay-cycle repo record the seed.
+# The real RuleRepository and BudgetRepository run over the stand-in table, so the
+# spread_seeded mark and the stored plan are the real ones.
 
 
 def _rule_store(rules):
@@ -101,50 +102,48 @@ def _seeded(store):
     return [rule["id"] for rule in store.list_rules() if rule.get("spread_seeded")]
 
 
-class FakeBudget:
-    def __init__(self):
-        self.calls = []
-
-    def set_spread_if_absent(self, *args):
-        self.calls.append(args)
-        return {"id": "x"}
-
-
 def _spread_rule():
     return _rule("ORIGIN", "insurance", rule_id="r-origin", spread=True, spread_seeded=False,
                  spread_amount=Decimal("42.50"), spread_gap_days=30)
 
 
-def _apply_spreading(lam, store, charges):
-    budget, paycycle = FakeBudget(), FakePaycycle()
+def _apply_spreading(lam, store, budget, charges):
+    paycycle = FakePaycycle()
     lam.rule_ingest.apply(charges, rule_repo=store, category_repo=FakeCategoryRepo(["insurance"]),
                           budget_repo=budget, paycycle_repo=paycycle)
-    return budget, paycycle
+    return paycycle
+
+
+def _budget_writes(budget):
+    return len(budget._table.update_calls) + len(budget._table.put_calls)
 
 
 def test_a_spread_rule_seeds_the_plan_and_marks_it(lam):
     store = _rule_store([_spread_rule()])
+    budget = budget_repo({"insurance": {"target": Decimal("100")}})
     charge = _charge("t1", description="ORIGIN ENERGY BILL")
-    budget, _ = _apply_spreading(lam, store, [charge])
+    _apply_spreading(lam, store, budget, [charge])
 
     assert charge["category"] == "insurance" and charge["filed_by_rule"] == "r-origin"
-    assert len(budget.calls) == 1
-    cat, amount, cycles, _from, length, _paydate = budget.calls[0]
-    assert (cat, amount, cycles, length) == ("insurance", Decimal("42.50"), 2, 14)
+    plan = stored_budgets(budget)["insurance"]
+    assert (plan["spread_amount"], plan["spread_cycles"], plan["spread_len"]) == (Decimal("42.50"), 2, 14)
     assert _seeded(store) == ["r-origin"]
 
 
 def test_two_deliveries_over_the_same_store_seed_once(lam):
     # Cross-DELIVERY idempotency: delivery 1 seeds + marks the store row; delivery 2 (a fresh
     # SpreadSeeder — the per-run dedup set does NOT carry over) reads the persisted spread_seeded and
-    # skips. FAIL-ON-REVERT: stop reading spreadSeeded in rule_book.rule_from_row (or stop
-    # mark_spread_seeded flipping it) and delivery 2 re-seeds.
+    # skips: no pay-cycle read, no budget write. FAIL-ON-REVERT: stop reading spreadSeeded in
+    # rule_book.rule_from_row (or stop mark_spread_seeded flipping it) and delivery 2 re-seeds.
     store = _rule_store([_spread_rule()])
-    b1, _ = _apply_spreading(lam, store, [_charge("t1", description="ORIGIN ENERGY BILL")])
-    assert len(b1.calls) == 1 and _seeded(store) == ["r-origin"]
+    budget = budget_repo({"insurance": {"target": Decimal("100")}})
+    _apply_spreading(lam, store, budget, [_charge("t1", description="ORIGIN ENERGY BILL")])
+    assert "spread_amount" in stored_budgets(budget)["insurance"] and _seeded(store) == ["r-origin"]
+    writes_after_first = _budget_writes(budget)
 
-    b2, p2 = _apply_spreading(lam, store, [_charge("t2", description="ORIGIN ENERGY BILL")])
-    assert b2.calls == [] and p2.get_calls == 0            # delivery 2 does not re-seed
+    paycycle = _apply_spreading(lam, store, budget, [_charge("t2", description="ORIGIN ENERGY BILL")])
+    assert paycycle.get_calls == 0                          # delivery 2 does not re-seed
+    assert _budget_writes(budget) == writes_after_first
 
 
 # --- through process_transaction: wiring + order + carry-wins -----------------
