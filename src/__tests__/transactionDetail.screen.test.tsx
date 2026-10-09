@@ -40,7 +40,7 @@ import { transactionsKey } from '../queryKeys';
 import { removeFromAllCopies } from '../transactionCache';
 import { COFFEE_RECORD } from './support/categories';
 import { pinToday } from './support/clock';
-import { StyleSheet } from 'react-native';
+import { styleOf } from './support/layout';
 import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 const server = installFakeServer();
@@ -89,7 +89,7 @@ it('the hero amount fits one line and the tag "×" is not clipped by a fixed lin
   await draw();
   const amount = screen.getByText('-$12.50');
   expect(amount.props).toMatchObject({ numberOfLines: 1, adjustsFontSizeToFit: true, maxFontSizeMultiplier: LARGE_TEXT_MAX_SCALE });
-  expect(StyleSheet.flatten(screen.getByText('×').props.style).lineHeight).toBeUndefined();
+  expect(styleOf(screen.getByText('×')).lineHeight).toBeUndefined();
 });
 
 // WHIT-844: the Status field ages a pending charge the same way the list row does.
