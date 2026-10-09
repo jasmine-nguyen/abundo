@@ -145,12 +145,12 @@ Every test you write must:
 - Reference the checklist ID it covers (`# [A3]`).
 - Pass the "Fewest tests that prove it" rule below.
 
-**Then run them — only your new test files, never the whole suite.** The rest of
+**Then run them — only the test files you added or changed, never the whole suite.** The rest of
 the code already passed every check, and the pipeline runs your `test_command` once
 your tests are on the branch, so re-running the suite here only costs time. Point the
 test runner at your files with the same runner the project's checks block uses, e.g.
-`npx jest path/to/new.test.ts` or `<checks python> -m pytest path/to/test_new.py`.
-1. Run your new test files → confirm they pass green.
+`npx jest path/to/thing.test.ts` or `<checks python> -m pytest path/to/test_thing.py`.
+1. Run the test files you added or changed → confirm they pass green.
 2. Red-green proof: break the production value the test depends on → re-run just
    that test file → confirm the test fails → `git checkout -- <path>` and re-run it
    to confirm green. One mutation at a time, each restored before the next.
@@ -189,8 +189,8 @@ Your worktree is deleted when you finish, so hand your tests back as a patch at 
 path you were given. The pipeline applies it to the branch:
 
 ```bash
-git add -N <your new test files>
-git diff HEAD -- <your test files> > <patch path you were given>
+git add -N <test files you created>
+git diff HEAD -- <test files you added or changed> > <patch path you were given>
 ```
 
 - Include only test files and test fixtures. Restore every production-code mutation
@@ -207,7 +207,7 @@ git diff HEAD -- <your test files> > <patch path you were given>
   Only verified **real bugs**; anything here sends the change back for rework.
 - `manual_checks` — the Manual checklist items, one per line.
 - `test_command` — one shell command, run from the repo root of the main checkout,
-  that runs only the test files in your patch (e.g. `npx jest path/to/new.test.ts`).
+  that runs only the test files in your patch (e.g. `npx jest path/to/thing.test.ts`).
   The pipeline runs it before it ships instead of the whole suite. Empty if you
   wrote no tests.
 

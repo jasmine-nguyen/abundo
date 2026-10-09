@@ -45,6 +45,8 @@ each cut, until every remaining piece is needed for the failure.
 - Do not fix the bug. Only write tests, fixtures and scripts.
 - Put every test inside this repo. The pipeline runs only tests here, and
   it rejects test files anywhere else.
+- Put the regression test in the existing test file for the code under test. Create a new test
+  file only when that code has none, named after the code it tests, never after the card.
 - Don't write a test that only proves a removed name is gone: if the name came back,
   nothing would break.
 - If your test searches files for some text (a banned word), make sure it can't find
@@ -71,7 +73,7 @@ a few words.
 - `status` — REPRODUCED or CANNOT_REPRODUCE.
 - `command` — the one command (run from the folder you start in; the pipeline runs your command there) that fails on the bug; empty
   if not reproduced.
-- `test_files` — regression test files you added, relative to the folder you start in.
+- `test_files` — regression test files you added or changed, relative to the folder you start in.
 - `symptom` — the exact symptom your command catches (error text, wrong value).
 - `tried` — what you tried; required for CANNOT_REPRODUCE.
 - `summary` — what the regression test checks, and at which seam, in 2–4 lines.

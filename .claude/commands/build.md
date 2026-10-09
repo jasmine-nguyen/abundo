@@ -371,7 +371,7 @@ the card number for card builds) and check where it is:
 5. Repeat steps 3–4 until the script ends with one of these:
 
    - **PR opened: <url>** — relay the link. The script already committed,
-     pushed and opened the PR, and it ran QA's new tests first if QA added any.
+     pushed and opened the PR, and it ran QA's tests first if QA added or changed any.
    - **BRANCH PUSHED — open the PR** — the build passed and pushed its
      branch, but this session has no working `gh` (a cloud session never
      does), so opening the PR is yours. Open it from the branch into the base
