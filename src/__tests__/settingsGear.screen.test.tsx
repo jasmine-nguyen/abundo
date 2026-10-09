@@ -14,6 +14,7 @@ import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { routerSpies, resetRouter } from './support/routerMock';
+import { screenJson } from './support/pull';
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
@@ -65,12 +66,12 @@ describe('SettingsButton (the header gear)', () => {
 });
 
 it('renders the gear BEFORE the title in the shared header (VoiceOver focus order)', () => {
-  const tree = render(
+  render(
     <ScrollChromeHeader title="TITLE_MARKER" left={<Text>GEAR_MARKER</Text>}>
       <Text>body</Text>
     </ScrollChromeHeader>,
   );
-  const serialized = JSON.stringify(tree.toJSON());
+  const serialized = screenJson();
   expect(serialized.indexOf('GEAR_MARKER')).toBeGreaterThanOrEqual(0);
   expect(serialized.indexOf('GEAR_MARKER')).toBeLessThan(serialized.indexOf('TITLE_MARKER'));
 });

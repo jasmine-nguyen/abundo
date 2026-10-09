@@ -17,6 +17,7 @@ import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { seedHubWith, type GoalsHubSeed } from './support/goalsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
+import { screenJson } from './support/pull';
 import { queryClient } from '../queryClient';
 import type { GoalRecord, LoanFacts } from '../api';
 
@@ -455,7 +456,7 @@ describe('WHIT-296 rich mortgage card — gap boundaries', () => {
     expect(within(screen.getByTestId('mortgage-link')).getByText('PAID DOWN SO FAR')).toBeTruthy();
     expect(screen.getByTestId('goal-card-g1')).toBeTruthy();
     // ordering
-    const tree = JSON.stringify(screen.toJSON());
+    const tree = screenJson();
     expect(tree.indexOf('"mortgage-link"')).toBeGreaterThanOrEqual(0);
     expect(tree.indexOf('"mortgage-link"')).toBeLessThan(tree.indexOf('"goal-card-g1"'));
   });
