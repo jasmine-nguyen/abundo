@@ -12,7 +12,8 @@ import { installFakeServer } from './support/fakeServer';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth, setAuthStatusQuietly } from './support/authMock';
 
-import { useCategories, usePayCycle, useBudgetDetailScreenData, useBudgetsScreenData, useCategoryCycleTransactionsQuery, useCategoryTransactionsScreenData, categoriesKey } from '../queries';
+import { useCategories, usePayCycle, useBudgetDetailScreenData, useBudgetsScreenData, useCategoryCycleTransactionsQuery, useCategoryTransactionsScreenData } from '../queries';
+import { categoriesKey } from '../queryKeys';
 
 const server = installFakeServer();
 const COFFEE_BUDGET_TX = '/budgets/coffee/transactions';
@@ -45,7 +46,7 @@ it('useCategories maps the list + a null-tolerant lookup, and does not fetch bef
 it('usePayCycle derives the cycle name from the fetched length', async () => {
   const { result } = renderHook(() => usePayCycle(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.cycleLen).toBe(30));
-  expect(result.current.cycleName()).toBe('Monthly');
+  expect(result.current.cycleName).toBe('Monthly');
 });
 
 it('useBudgetDetailScreenData assembles the budget list + budgets + categories for the given id', async () => {

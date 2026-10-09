@@ -516,7 +516,7 @@
       }
     ],
     "dos": [
-      "Do read every colour from `C`, `BUCKET_COLOR`, `colorForCategory` or the chart palette. Raw hex in a screen is a ratchet-guarded regression.",
+      "Do read every colour from `C`, `BUCKET_COLOR`, `Category.color` or `chartCategoryColor`. Raw hex in a screen is a ratchet-guarded regression.",
       "Do keep one gradient hero card per screen, carrying that screen's single most important number.",
       "Do separate surfaces with a lighter navy step plus a 1pt Tokyo Blue hairline.",
       "Do set money in Inter Tight with negative tracking.",

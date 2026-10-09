@@ -128,17 +128,6 @@ def wired(lam, monkeypatch):
 
 # --- helper-level ----------------------------------------------------------
 
-def test_extract_raw_body_plain(lam):
-    event = {"body": '{"a": 1}', "isBase64Encoded": False}
-    assert lam.up_webhook.extract_raw_body(event) == b'{"a": 1}'
-
-
-def test_extract_raw_body_base64(lam):
-    encoded = base64.b64encode(b'{"a": 1}').decode("utf-8")
-    event = {"body": encoded, "isBase64Encoded": True}
-    assert lam.up_webhook.extract_raw_body(event) == b'{"a": 1}'
-
-
 def test_verify_signature_success(lam, monkeypatch):
     monkeypatch.setattr(lam.up_webhook, "get_signing_secret", lambda: MOCK_SECRET)
     raw = b'{"hello": "up"}'
@@ -513,7 +502,7 @@ def test_any_positive_credit_over_floor_false_fires(wired, monkeypatch):
 
 
 # [E1] base64 body through the FULL handler.
-# The unit tests extract_raw_body(base64) in isolation but never run the whole handler
+# shared/event_body.raw_body is tested on its own, but never through the whole handler
 # with isBase64Encoded=True — so nothing proves signature-verify + json.loads operate on
 # the DECODED bytes end-to-end. If the base64 branch regressed, verify_signature would run
 # over the still-encoded string and 401 instead of pushing.

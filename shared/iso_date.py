@@ -8,6 +8,9 @@ guard can't drift looser than the write guard again. Bare date.fromisoformat als
 as a date, and the server's review maths would read "2030-W01-1" as a different day than the
 screen shows.
 
+`day_gap` is the one whole-day gap between two dates, shared by settlement matching and the
+pending carry.
+
 Imports only re and datetime.date — no shared constant.
 """
 
@@ -30,3 +33,14 @@ def valid_iso_date(value) -> bool:
     except ValueError:
         return False
     return True
+
+
+def day_gap(earlier: str | None, later: str | None) -> int | None:
+    """Whole days from `earlier` to `later` (negative when `later` is before `earlier`),
+    comparing only the "YYYY-MM-DD" part. None when either is missing or unparseable."""
+    if not earlier or not later:
+        return None
+    try:
+        return (date.fromisoformat(later[:10]) - date.fromisoformat(earlier[:10])).days
+    except ValueError:
+        return None

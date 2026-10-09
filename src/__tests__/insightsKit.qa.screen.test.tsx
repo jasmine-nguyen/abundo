@@ -4,7 +4,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { queryClient } from '../queryClient';
-import { breakdownKey } from '../queries';
+import { breakdownKey } from '../queryKeys';
 import { installFakeServer } from './support/fakeServer';
 import { refreshInAct, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';

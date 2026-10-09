@@ -2,7 +2,8 @@
 // payload, mirroring selectGoals. A non-array must throw so the query rejects and the screen
 // keeps its built-in default plan, rather than a cryptic "milestones.map is not a function".
 import { describe, it, expect } from '@jest/globals';
-import { selectMilestones, milestonesKey } from '../queries';
+import { selectMilestones } from '../queries';
+import { milestonesKey } from '../queryKeys';
 
 // The WHIT-377 editor's save will patch the ['milestones'] cache with a LITERAL key (like the
 // goal writes), so the literal and the exported key can silently drift. Lock them together now.

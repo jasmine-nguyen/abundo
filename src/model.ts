@@ -2,8 +2,7 @@
 // context.tsx so queries.ts can use them without importing the store.
 import type { BreakdownRollup, BudgetRollup, CarryoverCycle, CategorySpend, LoanFacts, LoanFactsInput, RuleCondition, RuleLogic, RuleRecord, SpreadPlan } from './api';
 import type { Category } from './types';
-import { colorForCategory } from './categoryColors';
-import { normalizeColorSlot } from './chartColors';
+import { chartCategoryColor, normalizeColorSlot } from './chartColors';
 
 export interface Budget {
   id: string; budget: number; posted: number; pending: number;
@@ -61,18 +60,19 @@ export function loanFactsReady(f: LoanFacts): f is LoanFactsInput {
  * @returns A fully-populated `Category` safe to store and render.
  */
 export function toCategory(raw: any): Category {
+  // The category's permanent colour slot. Absent or unusable → undefined, so the colour falls
+  // back to the id-derived one. NOT `raw.colorSlot || undefined` (that drops slot 0, a real
+  // slot — Eating Out) and NOT `?? 0` (that would paint every slot-less category one pink, which
+  // reads as a rendering bug rather than a loud failure).
+  const colorSlot = normalizeColorSlot(raw.colorSlot);
   return {
     id: raw.id,
     name: raw.name,
     bucket: raw.bucket,
     icon: raw.icon ?? 'coffee',
-    color: colorForCategory(raw.id),
+    color: chartCategoryColor(raw.id, { slot: colorSlot }),
     parent: raw.parent ?? null,
-    // The Insights chart's permanent colour. Absent or unusable → undefined, so the chart falls
-    // back to the id-derived colour. NOT `raw.colorSlot || undefined` (that drops slot 0, a real
-    // slot — Eating Out) and NOT `?? 0` (that would paint every slot-less category one pink, which
-    // reads as a rendering bug rather than a loud failure).
-    colorSlot: normalizeColorSlot(raw.colorSlot),
+    colorSlot,
   };
 }
 

@@ -23,14 +23,14 @@ def test_banksync_request_sends_key_agent_and_timeout_and_returns_parsed_json(sh
     monkeypatch.setattr(shared.balance_fetch.urllib.request, "urlopen", fake_urlopen)
 
     out = shared.balance_fetch.banksync_request(
-        "https://example.test/v1/sync",
+        "/v1/sync",
         "the-key",
         user_agent="abundo-transaction-trigger",
         timeout=12,
     )
 
     req = captured["req"]
-    assert req.full_url == "https://example.test/v1/sync"
+    assert req.full_url == "https://api.banksync.io/v1/sync"
     assert req.get_header("X-api-key") == "the-key"
     assert req.get_header("User-agent") == "abundo-transaction-trigger"
     assert captured["timeout"] == 12

@@ -2,7 +2,8 @@ import { useCallback } from 'react';
 import { useMutation, useMutationState, useQueryClient } from '@tanstack/react-query';
 import { generateAiInsights, type AiGoalSignal } from '../api';
 import { useAppContext } from '../context';
-import { aiInsightsKey, useAiInsightsQuery, useIsAuthed } from '../queries';
+import { useAiInsightsQuery, useIsAuthed } from '../queries';
+import { aiInsightsKey } from '../queryKeys';
 
 // AI spending insights (WHIT-104, WHIT-833). `refresh` re-reads the per-cycle cache (free, silent on
 // failure — the shown summary stays); `generate` is the paid "Analyse my spending" action. `isError`

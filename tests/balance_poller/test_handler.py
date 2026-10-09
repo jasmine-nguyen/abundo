@@ -1,7 +1,7 @@
 """Unit tests for the balance poller (lambda_balance_poller/handler.py).
 
 Covers:
-    - fetch_balance     : the GET request shape (url, method, headers)
+    - _poll_account_balances : the GET request shape (url, method, headers, timeout)
     - lambda_handler    : stores on success; on ANY failure logs, does NOT raise,
                           does NOT upsert
     - _check_homeloan   : the milestone hook driven by the home-loan delta
@@ -97,29 +97,30 @@ _PAYLOADS_BY_AID = {
 }
 
 
-# --- fetch_balance -----------------------------------------------------------
+# --- _poll_account_balances request shape ------------------------------------
 
 
-def test_fetch_balance_builds_correct_get_request(handler, monkeypatch):
+def test_poll_sends_the_poller_get_request(handler, monkeypatch):
     captured = {}
 
     def fake_urlopen(req, timeout=None):
-        captured["req"] = req
-        captured["timeout"] = timeout
-        return FakeResponse(_OK_PAYLOAD)
+        captured[req.full_url] = (req, timeout)
+        for aid, payload in _PAYLOADS_BY_AID.items():
+            if aid in req.full_url:
+                return FakeResponse(payload)
+        raise AssertionError(f"no stub payload for {req.full_url}")
 
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: _FakeAccountRepo())
     monkeypatch.setattr(handler.urllib.request, "urlopen", fake_urlopen)
 
-    out = handler.fetch_balance("fiskil_3", "T6d8ppsYssBDFCwl1qEb0w", "the-key")
+    handler._poll_account_balances("the-key")
 
-    req = captured["req"]
+    req, timeout = captured["https://api.banksync.io/v1/banks/fiskil_3/accounts/T6d8ppsYssBDFCwl1qEb0w/balances"]
     assert req.get_method() == "GET"
-    assert req.full_url == "https://api.banksync.io/v1/banks/fiskil_3/accounts/T6d8ppsYssBDFCwl1qEb0w/balances"
     # urllib title-cases header keys, so "X-API-Key" is stored as "X-api-key".
     assert req.get_header("X-api-key") == "the-key"
     assert req.get_header("User-agent") == "abundo-homeloan-request"
-    assert captured["timeout"] == handler.BALANCE_POLL_TIMEOUT_SECONDS
-    assert out == _OK_PAYLOAD
+    assert timeout == handler.BALANCE_POLL_TIMEOUT_SECONDS
 
 
 # --- normalise_account_balance (WHIT-212) ------------------------------------
@@ -265,7 +266,7 @@ def test_poll_account_balances_isolates_a_single_account_failure(handler, monkey
     accounts = _FakeAccountRepo()
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
 
-    def fetch(bid, aid, api_key):
+    def fetch(bid, aid, api_key, **_):
         if aid == "T6d8ppsYssBDFCwl1qEb0w":
             raise RuntimeError("mortgage balance timed out")
         return _PAYLOADS_BY_AID[aid]
@@ -318,7 +319,7 @@ def test_poll_account_balances_returns_old_new_deltas(handler, monkeypatch):
     accounts = _FakeAccountRepo(prior={"up-spending": Decimal("90000")})
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     monkeypatch.setattr(handler, "fetch_balance",
-                        lambda bid, aid, key: _PAYLOADS_BY_AID[aid])
+                        lambda bid, aid, key, **_: _PAYLOADS_BY_AID[aid])
 
     stored, deltas = handler._poll_account_balances("key")
     assert stored == len(handler.BALANCE_SOURCES)
@@ -335,7 +336,7 @@ def test_poll_account_balances_reads_prior_balances_in_one_batch(handler, monkey
     accounts = _FakeAccountRepo(prior={"up-spending": Decimal("90000")})
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     monkeypatch.setattr(handler, "fetch_balance",
-                        lambda bid, aid, key: _PAYLOADS_BY_AID[aid])
+                        lambda bid, aid, key, **_: _PAYLOADS_BY_AID[aid])
 
     handler._poll_account_balances("key")
     assert len(accounts.list_balance_calls) == 1
@@ -350,7 +351,7 @@ def test_poll_account_balances_batch_read_failure_degrades_old_but_still_stores(
     accounts = _FakeAccountRepo(prior={"up-spending": Decimal("90000")}, list_raises=True)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     monkeypatch.setattr(handler, "fetch_balance",
-                        lambda bid, aid, key: _PAYLOADS_BY_AID[aid])
+                        lambda bid, aid, key, **_: _PAYLOADS_BY_AID[aid])
 
     stored, deltas = handler._poll_account_balances("key")
     assert stored == len(handler.BALANCE_SOURCES)
@@ -418,7 +419,7 @@ def test_poll_account_balances_zero_prior_keeps_signed_zero_not_none(handler, mo
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     monkeypatch.setattr(
         handler, "fetch_balance",
-        lambda bid, aid, key: _PAYLOADS_BY_AID[aid],
+        lambda bid, aid, key, **_: _PAYLOADS_BY_AID[aid],
     )
 
     _stored, deltas = handler._poll_account_balances("key")
@@ -437,7 +438,7 @@ def test_poll_account_balances_negative_prior_keeps_signed_value(handler, monkey
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     monkeypatch.setattr(
         handler, "fetch_balance",
-        lambda bid, aid, key: _PAYLOADS_BY_AID[aid],
+        lambda bid, aid, key, **_: _PAYLOADS_BY_AID[aid],
     )
 
     _stored, deltas = handler._poll_account_balances("key")
@@ -458,7 +459,7 @@ def test_poll_account_balances_extra_prior_ids_are_harmless_and_dont_leak(handle
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     monkeypatch.setattr(
         handler, "fetch_balance",
-        lambda bid, aid, key: _PAYLOADS_BY_AID[aid],
+        lambda bid, aid, key, **_: _PAYLOADS_BY_AID[aid],
     )
 
     stored, deltas = handler._poll_account_balances("key")
@@ -479,7 +480,7 @@ def test_poll_account_balances_partial_fetch_failure_survivors_keep_batched_old(
     )
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
 
-    def fetch(bid, aid, key):
+    def fetch(bid, aid, key, **_):
         if aid == "T6d8ppsYssBDFCwl1qEb0w":  # mortgage fetch blows up
             raise RuntimeError("mortgage balance timed out")
         return _PAYLOADS_BY_AID[aid]
@@ -506,7 +507,7 @@ def test_batched_delta_drives_a_real_goal_checkpoint_crossing_end_to_end(handler
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     monkeypatch.setattr(
         handler, "fetch_balance",
-        lambda bid, aid, key: _PAYLOADS_BY_AID[aid],
+        lambda bid, aid, key, **_: _PAYLOADS_BY_AID[aid],
     )
 
     goal = {

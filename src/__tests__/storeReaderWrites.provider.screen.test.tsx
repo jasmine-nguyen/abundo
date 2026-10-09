@@ -137,13 +137,13 @@ describe('WHIT-203 live observers (singleton queryClient + real reader hooks)', 
 
     // Let the initial payCycle fetch settle first so it can't overwrite our write late.
     await waitFor(() => expect(queryClient.getQueryData(['payCycle'])).toBeTruthy());
-    expect(result.current.pc.cycleName()).toBe('Fortnightly'); // fetched length 14
+    expect(result.current.pc.cycleName).toBe('Fortnightly'); // fetched length 14
 
     // persistPayCycle now invalidates ['payCycle'] (WHIT-341: refetch the server days_left), so
     // the refetch must reflect the just-saved length — the fake server stores the PUT it gets.
     await act(async () => { result.current.ctx.setPayCycleLength(30); });
 
-    await waitFor(() => expect(result.current.pc.cycleName()).toBe('Monthly'));
+    await waitFor(() => expect(result.current.pc.cycleName).toBe('Monthly'));
     expect(result.current.pc.cycleLen).toBe(30);
   });
 

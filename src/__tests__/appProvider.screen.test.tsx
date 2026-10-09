@@ -502,6 +502,7 @@ it('saveCategory threads a chosen parent through (create + edit); omitting it le
   // must NOT be sent (server leave-as-is) — that's what the two tests above assert.
   server.once('POST', '/categories', { body: { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#f00', parent: 'car' } });
   server.once('PATCH', '/categories/groceries', { body: DELETE_GROCERIES });
+  server.once('PATCH', '/categories/groceries', { body: DELETE_GROCERIES });
   seed();
   const result = mount();
 
@@ -509,7 +510,12 @@ it('saveCategory threads a chosen parent through (create + edit); omitting it le
   expect(bodies(server.sent('POST', '/categories'))).toEqual([{ name: 'Parking', bucket: 'Living', icon: 'car', parent: 'car' }]);
 
   await act(async () => { await result.current.saveCategory('groceries', { name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null }); });
-  expect(bodies(server.sent('PATCH', '/categories/groceries'))).toEqual([{ name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null }]);
+  // A `parent` key that is present but undefined detaches to top-level too.
+  await act(async () => { await result.current.saveCategory('groceries', { name: 'Groceries', bucket: 'Living', icon: 'cart', parent: undefined }); });
+  expect(bodies(server.sent('PATCH', '/categories/groceries'))).toEqual([
+    { name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null },
+    { name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null },
+  ]);
 });
 
 it('saveCategory returns false + toasts on failure', async () => {

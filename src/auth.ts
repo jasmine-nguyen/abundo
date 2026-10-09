@@ -305,11 +305,11 @@ async function hostedUiAuthorize(extraParams?: Record<string, string>): Promise<
         await setSessionSentinel();
       } catch (persistError) {
         // WHIT-172: a partial persist (e.g. the guarded token stored but the sentinel
-        // write threw) would leave a guarded token with NO sentinel — an orphan the
-        // biometric-migration path would later hit as the very iOS-ambiguous guarded
-        // read this scheme avoids. Roll back every stored key so the invariant
-        // "guarded token ⇒ sentinel" always holds, then fall to the outer catch
-        // (signed-out, never crash). Mirrors seatCognitoSession's partial-seat rollback.
+        // write threw) would leave a guarded token with NO sentinel — launch would then
+        // skip the lock and read the guarded item through restore. Roll back every
+        // stored key so the invariant "guarded token ⇒ sentinel" always holds, then fall
+        // to the outer catch (signed-out, never crash). Mirrors seatCognitoSession's
+        // partial-seat rollback.
         await clearStoredSession().catch(() => {});
         throw persistError;
       }
@@ -927,68 +927,14 @@ export function lock(): void {
 }
 
 /**
- * WHIT-172: upgrade a pre-WHIT-161 session to the biometric scheme, in place. A
- * WHIT-160 user has an UNGUARDED refresh token and NO sentinel; once biometrics are
- * active, the normal restore would read that unguarded item with a guarded
- * (`requireAuthentication`) query — undefined behaviour on iOS (may null out → a
- * forced re-login, or read through → the token is never re-protected). Instead,
- * detect the old session with an EXPLICIT UNGUARDED read (`{}` opts — silent,
- * deterministic, no Face ID prompt and none of the guarded-query ambiguity), then
- * re-store the token GUARDED and write the sentinel, so the caller can take the normal
- * Face ID unlock path. Returns whether a session was migrated.
- *
- * Only called from unlockOrRestore, under `canBiometricLock()` and only when the
- * sentinel is absent — so it never touches a WHIT-161 session (which always carries a
- * sentinel). The OTHER unguarded-token shape — sentinel PRESENT but the token stored
- * while the flag was off (a flag-flip, WHIT-267) — is handled inside performUnlock,
- * which re-stores the token guarded after its one read; it can't be handled here
- * because with the sentinel present the launch path never reaches this function.
- * Token → sentinel order (the lockstep landmine): setRefreshToken guarded
- * deletes-then-creates, so a failed create leaves no token, and the sentinel is written
- * LAST, so a partial migration never leaves an orphan sentinel. A write that fails
- * partway rolls back to a clean signed-out state (clearStoredSession → the caller's
- * restoreSession resolves it to 'anon' for a clean re-login). Never throws.
- */
-async function migrateUnguardedSession(): Promise<boolean> {
-  try {
-    const refreshToken = await getUnguardedRefreshToken();
-    if (!refreshToken) return false;
-    // Re-store GUARDED (setRefreshToken uses secureOpts(), guarded here) then write the
-    // sentinel LAST — the same token→sentinel order as every seat path.
-    await setRefreshToken(refreshToken);
-    await setSessionSentinel();
-    return true;
-  } catch {
-    // A partial write (e.g. the guarded re-store threw after its own unguarded delete)
-    // must not leave a half-migrated session. Clear everything → the caller's
-    // restoreSession resolves it to 'anon'. Best-effort; never throws.
-    await clearStoredSession().catch(() => {});
-    return false;
-  }
-}
-
-/**
  * Launch decision for the gate: if biometrics are active and a stored session
  * exists, seal it (`locked`) and prompt to unlock; otherwise take the normal
  * WHIT-160 restore path. Never throws.
- *
- * WHIT-172: when biometrics are active but the sentinel is absent, a pre-WHIT-161
- * session may still exist (unguarded token, no sentinel). Try to migrate it in place
- * first, so an existing user is retroactively biometric-locked instead of hitting the
- * ambiguous guarded-read-of-unguarded-item path in restore. On a successful migration,
- * fall into the normal unlock (Face ID). A fresh install (no token) and a WHIT-161
- * session (sentinel present) both bypass migration untouched.
  */
 export async function unlockOrRestore(): Promise<void> {
-  if (canBiometricLock()) {
-    if (await hasStoredSession()) {
-      await unlock();
-      return;
-    }
-    if (await migrateUnguardedSession()) {
-      await unlock();
-      return;
-    }
+  if (canBiometricLock() && (await hasStoredSession())) {
+    await unlock();
+    return;
   }
   await restoreSession();
 }
@@ -1038,19 +984,6 @@ async function resaveUnguarded(refreshToken: string): Promise<void> {
     // this re-store retries); if the create failed after the delete the item is gone (next
     // launch reads null → a clean silent re-login). Either way, never a hang.
   }
-}
-
-// WHIT-172: read the refresh token with an EXPLICIT UNGUARDED query ({} — NOT
-// secureOpts()). A pre-WHIT-161 item is unguarded, so this reads it silently. NOTE
-// (WHIT-267): the silence comes from the ITEM being unguarded, not the query — iOS
-// ignores JS read options, and a `{}` read of a GUARDED item still pops Face ID (the
-// item's own ACL prompts). So this is only safe where the item is known unguarded or
-// absent, as here. Used
-// only by migrateUnguardedSession to detect + upgrade a pre-biometric session. No
-// try/catch (mirrors getRefreshToken): a throw propagates into migrateUnguardedSession's
-// try → clearStoredSession → return false.
-async function getUnguardedRefreshToken(): Promise<string | null> {
-  return secureStore().getItemAsync(REFRESH_TOKEN_KEY, {});
 }
 
 async function setSessionSentinel(): Promise<void> {

@@ -20,7 +20,8 @@ import { refreshInAct } from './support/renderWithQueries';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
-import { useRulesScreenData, rulesKey } from '../queries';
+import { useRulesScreenData } from '../queries';
+import { rulesKey } from '../queryKeys';
 
 const server = installFakeServer();
 

@@ -18,7 +18,6 @@ import { heroTotals } from './support/budgetsScreen';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
-jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import Accounts from '../../app/(tabs)/accounts';
 import AccountDetail from '../../app/account/[id]';

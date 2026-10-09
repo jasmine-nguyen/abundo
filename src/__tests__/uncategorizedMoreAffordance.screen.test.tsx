@@ -20,7 +20,7 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES_TOP } from './support/categories';
 import { useTestQueryClient, renderWithQueries, WithQueries, settle, loaded } from './support/renderWithQueries';
-import { uncategorizedFeedKey } from '../queries';
+import { uncategorizedFeedKey } from '../queryKeys';
 
 const server = installFakeServer();
 useTestQueryClient();

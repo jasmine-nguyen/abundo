@@ -33,18 +33,8 @@ jest.mock('@react-native-community/datetimepicker', () => {
 
 // safe-area insets: return zero insets so components that read
 // useSafeAreaInsets render without a SafeAreaProvider wrapper.
-jest.mock('react-native-safe-area-context', () => {
-  const React = require('react');
-  const inset = { top: 0, right: 0, bottom: 0, left: 0 };
-  const frame = { x: 0, y: 0, width: 390, height: 844 };
-  return {
-    SafeAreaProvider: ({ children }) => React.createElement(React.Fragment, null, children),
-    SafeAreaView: ({ children }) => React.createElement(React.Fragment, null, children),
-    useSafeAreaInsets: () => inset,
-    useSafeAreaFrame: () => frame,
-    SafeAreaInsetsContext: React.createContext(inset),
-  };
-});
+jest.mock('react-native-safe-area-context', () =>
+  require('./src/__tests__/support/safeAreaMock').safeAreaMockModule());
 
 // react-native-svg draws the category glyphs. It has no JS-only impl, so render
 // its exports as plain Views/no-ops — the tests assert on labels/roles, not paths.

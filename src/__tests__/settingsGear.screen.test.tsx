@@ -14,12 +14,12 @@ import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { routerSpies, resetRouter } from './support/routerMock';
+import { screenJson } from './support/pull';
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 // Real ScrollChromeHeader, rendered on the NavBars default context (no provider) with zero
 // safe-area insets. The header renders left → title → right in JSX order.
-jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -27,7 +27,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 // benign useAppContext covering every slice the five screens read.
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({
   openMultiPicker: jest.fn(), showToast: jest.fn(), openGoalBalance: jest.fn(),
-  setSheet: jest.fn(), rules: [], cycleName: () => 'Fortnightly',
+  setSheet: jest.fn(), rules: [], cycleName: 'Fortnightly',
 })));
 jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').useAiInsightsMockModule());
 
@@ -65,12 +65,12 @@ describe('SettingsButton (the header gear)', () => {
 });
 
 it('renders the gear BEFORE the title in the shared header (VoiceOver focus order)', () => {
-  const tree = render(
+  render(
     <ScrollChromeHeader title="TITLE_MARKER" left={<Text>GEAR_MARKER</Text>}>
       <Text>body</Text>
     </ScrollChromeHeader>,
   );
-  const serialized = JSON.stringify(tree.toJSON());
+  const serialized = screenJson();
   expect(serialized.indexOf('GEAR_MARKER')).toBeGreaterThanOrEqual(0);
   expect(serialized.indexOf('GEAR_MARKER')).toBeLessThan(serialized.indexOf('TITLE_MARKER'));
 });

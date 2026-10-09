@@ -27,7 +27,6 @@ import urllib.request  # noqa: F401 — test seam: tests patch `urllib.request.u
 
 from constants import (
     BANKSYNC_API_KEY_PATH,
-    BANKSYNC_BASE_URL,
     SYNC_FEED_IDS,
     SYNC_TIMEOUT_SECONDS,
 )
@@ -51,11 +50,10 @@ def trigger_sync(feed_id: str, api_key: str) -> None:
     (cursor-based) sync. We never pass ``resetCursors`` here — that is for
     backfills/recovery only, not the scheduled cadence.
     """
-    url = f"{BANKSYNC_BASE_URL}/v1/feeds/{feed_id}/sync"
     try:
         # empty body -> incremental sync; a body (even empty) makes it a POST
         body = banksync_request(
-            url,
+            f"/v1/feeds/{feed_id}/sync",
             api_key,
             user_agent="abundo-transaction-trigger",
             timeout=SYNC_TIMEOUT_SECONDS,

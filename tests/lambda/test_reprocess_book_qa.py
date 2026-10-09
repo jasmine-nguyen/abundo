@@ -38,15 +38,15 @@ def test_reprocess_with_an_unreadable_rule_book_still_recovers_every_row_unfiled
     assert _failed_keys(repo) == []
 
 
-def test_apply_still_returns_rows_and_the_books_taxonomy_check(lam):
-    # [A2] apply()'s (rows, is_unfiled) shape is what handler.py threads into insert_or_reconcile.
+def test_apply_files_in_place_and_returns_the_books_taxonomy_check(lam):
+    # [A2] apply()'s is_unfiled is what handler.py threads into insert_or_reconcile.
     # FAIL-ON-REVERT: return `book` (or None) instead of book.is_unfiled and the check is lost.
     charge = {"transaction_id": "t1", "account_id": "up-spending",
               "description": "SQ *KKV INTERNATIONAL PTY", "category": None, "counts_to_budget": True}
 
-    rows, is_unfiled = apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([KKV_RULE]), category_repo=_Cats())
+    is_unfiled = apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore([KKV_RULE]), category_repo=_Cats())
 
-    assert rows[0]["category"] == "groceries"
+    assert charge["category"] == "groceries"
     assert is_unfiled("FOOD_AND_DRINK") is True
     assert is_unfiled("groceries") is False
 
@@ -56,7 +56,7 @@ def test_apply_with_an_unreadable_rule_book_returns_no_taxonomy_check(lam):
     charge = {"transaction_id": "t1", "account_id": "up-spending",
               "description": "SQ *KKV INTERNATIONAL PTY", "category": None, "counts_to_budget": True}
 
-    rows, is_unfiled = apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore(error=True), category_repo=_Cats())
+    is_unfiled = apply_rules(lam.rule_ingest, [charge], rule_repo=FakeRuleStore(error=True), category_repo=_Cats())
 
-    assert rows[0]["category"] is None
+    assert charge["category"] is None
     assert is_unfiled is None

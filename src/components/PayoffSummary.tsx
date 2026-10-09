@@ -1,4 +1,3 @@
-import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { C, FONT, fmt } from '../theme';
 import { Bar } from './ui';

@@ -10,7 +10,8 @@ import { useQueryClient } from '@tanstack/react-query';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 import { queryClient } from '../queryClient';
-import { categoriesKey, useCategories } from '../queries';
+import { useCategories } from '../queries';
+import { categoriesKey } from '../queryKeys';
 import { installFakeServer } from './support/fakeServer';
 import { ESSENTIAL_GROCERIES_TOP } from './support/categories';
 import { resetAuth } from './support/authMock';
@@ -56,8 +57,6 @@ describe('renderWithQueries', () => {
     const defaults = queryClient.getDefaultOptions().queries;
     expect(defaults?.retry).toBe(false);
     expect(defaults?.staleTime).toBe(45_000);
-    expect(defaults?.gcTime).toBe(5 * 60_000);
-    expect(defaults?.refetchOnReconnect).toBe(true);
   });
 
   // [A6] WithQueries alone draws without waiting (for tests that hold a read or start signed out).

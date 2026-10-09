@@ -20,7 +20,6 @@ jest.mock('../context', () =>
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
-jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import TransactionDetail from '../../app/transaction/[id]';
 import { resetAuth } from './support/authMock';
@@ -28,7 +27,7 @@ import { spyOnAlert } from './support/alertSpy';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, renderWithQueries, refreshInAct } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
-import { transactionsKey } from '../queries';
+import { transactionsKey } from '../queryKeys';
 import { COFFEE_RECORD } from './support/categories';
 
 const server = installFakeServer();

@@ -22,7 +22,8 @@ import { refreshInAct } from './support/renderWithQueries';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
 
-import { useTransactionResolver, useTransactionsSearchQuery, budgetTransactionsKey, categoryTransactionsKey, transactionsKey, transactionsRecentKey, transactionsSearchKey } from '../queries';
+import { useTransactionResolver, useTransactionsSearchQuery } from '../queries';
+import { budgetTransactionsKey, categoryTransactionsKey, transactionsKey, transactionsRecentKey, transactionsSearchKey } from '../queryKeys';
 
 const server = installFakeServer();
 

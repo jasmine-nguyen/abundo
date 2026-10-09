@@ -69,11 +69,11 @@ describe('budgetDetail — narrow BudgetDetailInput', () => {
 });
 
 describe('budgetEditInfo — narrow BudgetEditInput', () => {
-  it('drives from a plain narrow object using the injected cycleName', () => {
+  it('drives from a plain narrow object using the cycle name string', () => {
     const input: BudgetEditInput = {
       category: (id: string) => (id === 'coffee' ? cat() : undefined),
       budgets: [],
-      cycleName: () => 'Monthly',
+      cycleName: 'Monthly',
     };
     const info = budgetEditInfo(input, 'coffee');
     expect(info.category?.id).toBe('coffee');
@@ -85,7 +85,7 @@ describe('budgetEditInfo — narrow BudgetEditInput', () => {
     const cold: BudgetEditInput = {
       category: () => undefined,
       budgets: [],
-      cycleName: () => 'Fortnightly',
+      cycleName: 'Fortnightly',
     };
     const info = budgetEditInfo(cold, 'missing');
     expect(info.category).toBeUndefined();

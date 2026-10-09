@@ -3,7 +3,7 @@
 // pointerEvents="none" so it never blocks taps on the cards beneath, and it honours the OS
 // reduce-motion flag — skipping the confetti and showing the banner alone.
 // WHIT-747: the banner sits on a card surface and names the milestone reached.
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { C, FONT } from '../theme';
 import { useReduceMotion } from '../motion/useReduceMotion';

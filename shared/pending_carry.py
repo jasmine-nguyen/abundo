@@ -4,11 +4,11 @@ the webhook's settlement (lambda/reconcile.py); reachable from the hourly pendin
 so the jobs can never disagree about which pendings hold a user's edit.
 """
 
-from datetime import date
 from typing import Callable, Optional
 
 import rule_engine
 from constants import CARRY_DATE_SKEW_DAYS
+from iso_date import day_gap
 from merchant import merchant_matches_pending
 from models import Transaction
 from spend import counts_to_budget
@@ -56,16 +56,10 @@ def is_filed(pending: dict, is_unfiled) -> bool:
 
 
 def _within_days(date_a: str | None, date_b: str | None, days: int) -> bool:
-    """Whether two bare "YYYY-MM-DD" dates are at most `days` apart (symmetric). A missing or
-    unparseable date is never within — the rescue then finds no twin and reaps as today."""
-    if not date_a or not date_b:
-        return False
-    try:
-        parsed_a = date.fromisoformat(date_a[:10])
-        parsed_b = date.fromisoformat(date_b[:10])
-    except ValueError:
-        return False
-    return abs((parsed_a - parsed_b).days) <= days
+    """Whether two dates are at most `days` apart (symmetric). A missing or unparseable date
+    is never within — the rescue then finds no twin and reaps as today."""
+    gap = day_gap(date_a, date_b)
+    return gap is not None and abs(gap) <= days
 
 
 def _is_carry_twin(pending: dict, posted: dict) -> bool:

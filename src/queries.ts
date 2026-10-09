@@ -1,8 +1,3 @@
-// WHIT-188: server-read hooks backed by TanStack Query — the per-screen, cached,
-// self-healing data layer that replaces the eager "load everything into one store on
-// launch" design (see the WHIT-187 epic). This card wires up the Budgets screen; the
-// other screens migrate in later cards, so the old context store stays intact until
-// the WHIT-192 cleanup.
 import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@tanstack/react-query';
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
@@ -21,7 +16,7 @@ import { getStatus, subscribe } from './auth';
 // Queries must NOT fire before login (the reads throw "Not signed in") and MUST fire
 // the moment auth flips to 'authed' (a login, or a Face-ID unlock). Subscribe to the
 // same auth-status store the gate uses: when status changes, `enabled` flips and the
-// query runs — mirroring the old store's subscribeAuthStatus reload. Gate on the exact
+// query runs. Gate on the exact
 // 'authed' string (not merely "not anon"), so a 'locked' session — whose token read
 // returns undefined — doesn't fire a doomed request.
 const isAuthedSnapshot = (): boolean => getStatus() === 'authed';
@@ -29,9 +24,6 @@ const isAuthedSnapshot = (): boolean => getStatus() === 'authed';
 export function useIsAuthed(): boolean {
   return useSyncExternalStore(subscribe, isAuthedSnapshot, isAuthedSnapshot);
 }
-
-// --- query keys (defined in ./queryKeys; re-exported for existing importers) -----
-export { categoriesKey, payCycleKey, budgetsKey, budgetTransactionsKey, categoryTransactionsKey, breakdownKey, transactionsKey, uncategorizedFeedKey, transactionsRecentKey, transactionsSearchKey, uncategorizedCountKey, uncategorizedMerchantsKey, filingSuggestionsKey, loanFactsKey, homeLoanKey, repaymentKey, accountBalancesKey, rulesKey, goalsKey, milestonesKey, aiInsightsKey } from './queryKeys';
 
 // --- pure selectors over the raw API payloads (unit-tested in the logic project) ---
 // Fail LOUDLY on a malformed list payload (a wrapped or changed shape): the query rejects → the
@@ -69,7 +61,7 @@ export function selectMilestones(raw: unknown): MilestoneRecord[] {
   return expectArray(raw, '/milestones');
 }
 
-// Server default, mirrored from AppProvider's seed (src/context.tsx) — used for the
+// Server default — used for the
 // cycle clock before the payCycle query resolves so the hero shows a sensible "days
 // left" rather than NaN on the very first paint.
 export const DEFAULT_PAY_CYCLE: PayCycle = { length: 14, last_pay_date: '2024-01-03' };
@@ -147,7 +139,7 @@ export function useCategoryCycleTransactionsQuery(categoryId: string, cycle: num
 // Breakdown is already the Record<category id, {posted, pending}> the selector wants,
 // so no `select`. WHIT-189. Flat key + parallel fetch like budgets (WHIT-72). WHIT-68:
 // the key is suffixed with `cycle` so each pay cycle's breakdown caches independently;
-// `breakdownKey` stays the flat prefix, so the store's `['breakdown']` invalidations
+// `breakdownKey` stays the flat prefix, so `['breakdown']` invalidations
 // still prefix-match and refresh every cached cycle.
 export function useBreakdownQuery(cycleLen: number, cycle: number, enabled: boolean) {
   return useQuery({
@@ -456,7 +448,7 @@ export interface PayCycleData {
   payCycle: PayCycle;
   cycleLen: number;
   daysLeft: number;
-  cycleName: () => string;
+  cycleName: string;
   isLoading: boolean;
   isError: boolean;
 }
@@ -465,7 +457,7 @@ export function usePayCycle(): PayCycleData {
   const payCycleQuery = usePayCycleQuery(authed);
   const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
   const { cycleLen, daysLeft } = cycleClockView(payCycle);
-  return { payCycle, cycleLen, daysLeft, cycleName: () => cycleName(cycleLen), isLoading: payCycleQuery.isLoading, isError: payCycleQuery.isError };
+  return { payCycle, cycleLen, daysLeft, cycleName: cycleName(cycleLen), isLoading: payCycleQuery.isLoading, isError: payCycleQuery.isError };
 }
 
 // --- shared screen-composite status plumbing (WHIT-204) ----------------------
@@ -987,10 +979,8 @@ export interface SettingsScreenData {
 
 /**
  * The two Settings rows that read server data — the categories count and whether loan
- * facts are set. Pay-cycle + the profile identity stay on the old store / auth.
- * The rules COUNT also stays on the store: WHIT-195 migrated the Rules *screen* onto the
- * ['rules'] query, but the rule writes double-write the store too, so Settings' count
- * stays consistent without coupling a third query into this composite's loading state.
+ * facts are set. The rules count and pay-cycle name come from their own hooks, so they
+ * don't join this composite's loading state.
  */
 export function useSettingsScreenData(): SettingsScreenData {
   const authed = useIsAuthed();
@@ -1184,9 +1174,7 @@ export interface GoalScreenData {
  * Everything the Goal tab + milestone screen read from the server — the live home-loan
  * balance, the last repayment, and the user's loan facts — assembled from the auth-gated
  * queries. The payoff/equity math (goalView/paydownView/milestoneView) is unchanged; it
- * just reads these instead of the eager store. Insights aiGoalSignal + the loan form stay
- * on the store until the WHIT-192 cleanup, so the loan-facts save's double-write keeps
- * both in sync.
+ * just reads these.
  */
 export function useGoalScreenData(): GoalScreenData {
   const authed = useIsAuthed();

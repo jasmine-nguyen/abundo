@@ -21,7 +21,6 @@ jest.mock('../context', () =>
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
-jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 jest.mock('../motion/NavBarsContext', () => ({ useNavBars: () => ({ visibility: { interpolate: () => 0 } }) }));
 
 import Transactions from '../../app/(tabs)/transactions';
@@ -31,7 +30,7 @@ import { installFakeServer } from './support/fakeServer';
 import { tabBarProps } from './support/tabBar';
 import { useTestQueryClient, renderWithQueries, WithQueries, settle, loaded } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
-import { transactionsKey, uncategorizedFeedKey } from '../queries';
+import { transactionsKey, uncategorizedFeedKey } from '../queryKeys';
 
 const server = installFakeServer();
 useTestQueryClient();

@@ -258,7 +258,8 @@ the card number for card builds) and check where it is:
      critic approved. Don't add to it, shorten it, or pull more in from the
      plan file, except to rewrite a line that isn't plain English. If the user
      asks for the details, show them the parts they ask about, in plain English
-     too.
+     too. A worst case in the plan is the designer's claim: say "the plan says…",
+     never repeat it as fact in your own words.
 
      Then ask the decisions with AskUserQuestion instead of printing them a
      second time, recommended answer first and marked "(Recommended)", and
