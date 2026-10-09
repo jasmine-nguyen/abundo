@@ -8,7 +8,6 @@ import pytest
 
 @pytest.mark.parametrize("event, expected", [
     ({"body": '{"a": 1}', "isBase64Encoded": False}, b'{"a": 1}'),
-    ({"body": '{"a": 1}'}, b'{"a": 1}'),
     ({"body": base64.b64encode(b'{"a": 1}').decode("utf-8"), "isBase64Encoded": True},
      b'{"a": 1}'),
     ({"body": "café"}, "café".encode("utf-8")),

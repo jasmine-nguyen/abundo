@@ -502,7 +502,7 @@ def test_any_positive_credit_over_floor_false_fires(wired, monkeypatch):
 
 
 # [E1] base64 body through the FULL handler.
-# The unit tests extract_raw_body(base64) in isolation but never run the whole handler
+# shared/event_body.raw_body is tested on its own, but never through the whole handler
 # with isBase64Encoded=True — so nothing proves signature-verify + json.loads operate on
 # the DECODED bytes end-to-end. If the base64 branch regressed, verify_signature would run
 # over the still-encoded string and 401 instead of pushing.

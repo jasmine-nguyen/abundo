@@ -97,7 +97,7 @@ _PAYLOADS_BY_AID = {
 }
 
 
-# --- fetch_balance -----------------------------------------------------------
+# --- _poll_account_balances request shape ------------------------------------
 
 
 def test_poll_sends_the_poller_get_request(handler, monkeypatch):
