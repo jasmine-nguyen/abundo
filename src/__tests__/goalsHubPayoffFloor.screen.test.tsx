@@ -14,6 +14,7 @@ import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { seedHubWith, type GoalsHubSeed } from './support/goalsScreen';
 import { resetRouter } from './support/routerMock';
+import { screenJson } from './support/pull';
 import type { LoanFacts } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
@@ -65,7 +66,7 @@ describe('WHIT-391 — Goals-hub card at a sub-0.5% paydown', () => {
     await renderWithQueries(<Goals />);
     const card = within(screen.getByTestId('mortgage-link'));
     expect(card.getByText('1% gone')).toBeTruthy();
-    const tree = JSON.stringify(screen.toJSON());
+    const tree = screenJson();
     expect(tree).toContain('0.15%');
     expect(tree).not.toContain('width":"1%');
   });
