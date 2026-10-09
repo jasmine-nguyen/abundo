@@ -176,6 +176,10 @@ export default function Transactions() {
           </View>
         )}
 
+        {!searchingServer && !showSpinner && !showError && (
+          <StaleDataLine idPrefix="transactions" error={refreshError} updatedAt={updatedAt} showUpdated />
+        )}
+
         {tab === 'uncategorized' && localUncategorized > 0 && !selectionMode && (
           <View style={styles.hint}>
             <Glyph name="star" size={18} color={C.accentSoft} />
@@ -220,7 +224,6 @@ export default function Transactions() {
           </Pressable>
         )}
 
-        {!searchingServer && !showError && <StaleDataLine idPrefix="transactions" error={refreshError} updatedAt={updatedAt} />}
         <ListStates
           showSpinner={showSpinner}
           showError={showError}

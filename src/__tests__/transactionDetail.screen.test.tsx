@@ -39,6 +39,7 @@ import { queryClient } from '../queryClient';
 import { transactionsKey } from '../queryKeys';
 import { removeFromAllCopies } from '../transactionCache';
 import { COFFEE_RECORD } from './support/categories';
+import { pinToday } from './support/clock';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -79,10 +80,16 @@ it('renders the transaction fields (merchant, amount, date, account, category, s
   expect(screen.getByText('Posted')).toBeTruthy();
 });
 
-it('shows Pending for a pending transaction', async () => {
-  seedFeed([txn({ transaction_id: 't1', category: 'coffee', status: 'pending' })]);
-  await draw();
-  expect(screen.getByText('Pending')).toBeTruthy();
+// WHIT-844: the Status field ages a pending charge the same way the list row does.
+it('shows Pending with its age for a pending transaction 7 days old', async () => {
+  pinToday(new Date('2026-07-08T08:00:00+10:00'));
+  try {
+    seedFeed([txn({ transaction_id: 't1', category: 'coffee', status: 'pending', date: '2026-07-01' })]);
+    await draw();
+    expect(screen.getByText('Pending · 7 days')).toBeTruthy();
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 it('finds a row that is only in the recent list (not the feed)', async () => {

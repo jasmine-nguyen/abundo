@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { C, FONT, tint, PRESSED } from '../theme';
 import { Icon, Glyph } from '../icons';
 import { useAppContext, transactionView } from '../context';
+import { pendingLabel } from '../dateutil';
 import type { Transaction, Category } from '../types';
 
 // WHIT-203: the category taxonomy comes in as a prop (from the screen's query composite),
@@ -62,7 +63,7 @@ export function TransactionRow({ t, category, selectable = false, selected = fal
             {v.isPending && (
               <View style={styles.pending}>
                 <Glyph name="clock" size={12} color="#8b8b95" />
-                <Text style={styles.pendingText}>Pending</Text>
+                <Text style={styles.pendingText}>{pendingLabel(t.date)}</Text>
               </View>
             )}
           </View>
