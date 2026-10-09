@@ -1,13 +1,15 @@
 // WHIT-761 — ScrollChromeHeader owns the scroll → nav-bars wiring and the header slide on its own.
 // Rendered inside the real NavBarsProvider (reduce-motion on, so the bars jump instantly)
 // with the global zero safe-area insets → headerHeight = 0 + 58.
-import { it, expect } from '@jest/globals';
+import { it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { ScrollView, Text } from 'react-native';
 import { render } from '@testing-library/react-native';
 import { NavBarsProvider } from '../motion/NavBarsContext';
 import { ScrollChromeHeader } from '../motion/ScrollChromeHeader';
 import { headerMotion, scrollTo } from './support/scrollChromeHeader';
+
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 function renderHeader() {
   return render(

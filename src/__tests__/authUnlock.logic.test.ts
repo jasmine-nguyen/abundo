@@ -43,7 +43,6 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN;
   delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
-  delete process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED;
 });
 
 async function signInOk(auth: typeof import('../auth')) {
@@ -53,7 +52,7 @@ async function signInOk(auth: typeof import('../auth')) {
 }
 
 describe('guarded storage options', () => {
-  it('stores UNGUARDED (no requireAuthentication) when the biometric flag is off', async () => {
+  it('stores UNGUARDED (no requireAuthentication) when the device has no biometrics (never lock out)', async () => {
     const auth = loadAuth();
     await signInOk(auth);
     const write = mockSetItem.mock.calls.find((c) => c[0] === REFRESH_KEY)!;
@@ -63,22 +62,12 @@ describe('guarded storage options', () => {
     expect(mockDeleteItem.mock.calls.filter((c) => c[0] === REFRESH_KEY)).toHaveLength(0);
   });
 
-  it('stores GUARDED (requireAuthentication) when flag on AND device supports biometrics', async () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
+  it('stores GUARDED (requireAuthentication) when the device supports biometrics', async () => {
     mockCanUseBiometric.mockReturnValue(true);
     const auth = loadAuth();
     await signInOk(auth);
     const write = mockSetItem.mock.calls.find((c) => c[0] === REFRESH_KEY)!;
     expect(write[2]).toMatchObject({ requireAuthentication: true, keychainAccessible: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY' });
-  });
-
-  it('stores UNGUARDED when flag on but device cannot use biometrics (never lock out)', async () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
-    mockCanUseBiometric.mockReturnValue(false);
-    const auth = loadAuth();
-    await signInOk(auth);
-    const write = mockSetItem.mock.calls.find((c) => c[0] === REFRESH_KEY)!;
-    expect(write[2]).toEqual({});
   });
 });
 
@@ -106,7 +95,6 @@ describe('sentinel lockstep', () => {
 
 describe('unlock', () => {
   beforeEach(() => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     mockCanUseBiometric.mockReturnValue(true);
   });
 
@@ -196,7 +184,6 @@ describe('unlock', () => {
 
 describe('lock', () => {
   it('drops the in-memory session and re-seals to locked', async () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     mockCanUseBiometric.mockReturnValue(true);
     mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
     mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
@@ -210,23 +197,21 @@ describe('lock', () => {
 });
 
 describe('canBiometricLock', () => {
-  it('false when flag off', () => {
+  // WHIT-841: no build switch — Face ID follows device support only.
+  it('true when the device supports biometrics (no build switch)', async () => {
     mockCanUseBiometric.mockReturnValue(true);
-    expect(loadAuth().canBiometricLock()).toBe(false);
+    const auth = loadAuth();
+    expect(auth.canBiometricLock()).toBe(true);
+    await signInOk(auth);
+    const write = mockSetItem.mock.calls.find((c) => c[0] === REFRESH_KEY)!;
+    expect(write[2]).toMatchObject({ requireAuthentication: true });
   });
-  it('false when flag on but device unsupported', () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
+  it('false when the device is unsupported', () => {
     mockCanUseBiometric.mockReturnValue(false);
     expect(loadAuth().canBiometricLock()).toBe(false);
   });
-  it('true when flag on and device supported', () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
-    mockCanUseBiometric.mockReturnValue(true);
-    expect(loadAuth().canBiometricLock()).toBe(true);
-  });
   // [A9] WHIT-761: the shared secureStore() getter keeps the read inside the swallow-the-throw try.
   it('false when the secure store throws (web/simulator)', () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     mockCanUseBiometric.mockImplementation(() => { throw new Error('no keychain'); });
     expect(loadAuth().canBiometricLock()).toBe(false);
   });
@@ -242,7 +227,6 @@ describe('hasStoredSession', () => {
 
 describe('locked-state guards', () => {
   beforeEach(() => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     mockCanUseBiometric.mockReturnValue(true);
   });
 
@@ -270,7 +254,6 @@ describe('locked-state guards', () => {
 
 describe('unlockOrRestore routing', () => {
   it('takes the biometric UNLOCK path (guarded read) when active + a stored session exists', async () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     mockCanUseBiometric.mockReturnValue(true);
     mockGetItem.mockImplementation(async (k) => (k === SENTINEL_KEY ? '1' : k === REFRESH_KEY ? 'R' : null));
     mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
@@ -289,7 +272,6 @@ describe('unlockOrRestore routing', () => {
     // unlock) and not twice (a double-prompt on a single launch). Fail-on-revert: a
     // performUnlock that reads the guarded key more than once, or an unlockOrRestore that
     // invokes unlock more than once, flips this count off 1.
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     mockCanUseBiometric.mockReturnValue(true);
     mockGetItem.mockImplementation(async (k) => (k === SENTINEL_KEY ? '1' : k === REFRESH_KEY ? 'R' : null));
     mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });

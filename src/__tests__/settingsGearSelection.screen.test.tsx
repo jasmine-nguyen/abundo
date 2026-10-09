@@ -1,9 +1,10 @@
 // WHIT-495 — GAP (plan-noted edge): the header gear stays in the Transactions header while the
-// screen is in multi-select mode (the `left` prop is unconditional). Tapping it must push
-// /settings WITHOUT tearing down the in-progress selection, so returning lands the user back in
-// selection with their picks intact. settingsGear covers the gear in the DEFAULT state only.
-// Fail-on-revert: gate `left={!selectionMode && <SettingsButton/>}` (hide the gear while
-// selecting) → getByLabelText('Settings') throws → this goes RED.
+// screen is in multi-select mode (the shared header draws the gear itself, WHIT-841, so no tab
+// can hide it). Tapping it must push /settings WITHOUT tearing down the in-progress selection, so
+// returning lands the user back in selection with their picks intact. settingsGear covers the
+// gear in the DEFAULT state only.
+// Fail-on-revert: make the header hide the gear while selecting → getByLabelText('Settings')
+// throws → this goes RED.
 // Runs over the fake server: the real useTransactionsScreenData reads the seeded feed.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';

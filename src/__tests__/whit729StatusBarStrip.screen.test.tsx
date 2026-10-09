@@ -3,6 +3,7 @@
 // strip exactly insets.top tall that is NOT inside the animated (sliding) header, so it never
 // hides. Uses the real ScrollChromeHeader geometry with a sentinel inset of 47.
 import { it, expect, jest } from '@jest/globals';
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 import React from 'react';
 import { View, Text, Animated } from 'react-native';
 import { render } from '@testing-library/react-native';

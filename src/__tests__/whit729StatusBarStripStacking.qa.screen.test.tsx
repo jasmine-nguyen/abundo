@@ -2,6 +2,7 @@
 // content, and must never swallow taps. It is the first child, so without a zIndex above the
 // header's it would draw underneath the header body and the ScrollView → content shows under the clock.
 import { it, expect, jest } from '@jest/globals';
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { render } from '@testing-library/react-native';

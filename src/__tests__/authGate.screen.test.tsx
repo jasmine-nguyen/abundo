@@ -283,7 +283,6 @@ describe('WHIT-161 auth gate — biometric lock', () => {
     mockStatus = 'locked';
     mockSegments = ['(tabs)', 'budgets'];
     process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED = 'true';
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, cb) => {
       appStateHandler = cb as unknown as (s: string) => void;
       return { remove: jest.fn() } as never;
@@ -291,7 +290,6 @@ describe('WHIT-161 auth gate — biometric lock', () => {
   });
   afterEach(() => {
     delete process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED;
-    delete process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED;
     jest.restoreAllMocks();
   });
 
@@ -416,12 +414,10 @@ describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', 
     mockSegments = ['(tabs)', 'budgets']; // a deep route — NOT the index
     childMounts = 0;
     process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED = 'true';
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     jest.spyOn(AppState, 'addEventListener').mockImplementation(() => ({ remove: jest.fn() } as never));
   });
   afterEach(() => {
     delete process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED;
-    delete process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED;
     jest.restoreAllMocks();
   });
 
@@ -589,7 +585,6 @@ describe('WHIT-161 auth gate — resume/lifecycle edges', () => {
     mockStatus = 'authed';
     mockSegments = ['(tabs)', 'budgets'];
     process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED = 'true';
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, cb) => {
       appStateHandler = cb as unknown as (s: string) => void;
       return { remove: removeSpy } as never;
@@ -597,7 +592,6 @@ describe('WHIT-161 auth gate — resume/lifecycle edges', () => {
   });
   afterEach(() => {
     delete process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED;
-    delete process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED;
     jest.restoreAllMocks();
   });
 
@@ -694,7 +688,6 @@ describe('WHIT auth gate — timed re-lock grace', () => {
     mockStatus = 'authed';
     mockSegments = ['(tabs)', 'budgets'];
     process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED = 'true';
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, cb) => {
       appStateHandler = cb as unknown as (s: string) => void;
       return { remove: jest.fn() } as never;
@@ -702,7 +695,6 @@ describe('WHIT auth gate — timed re-lock grace', () => {
   });
   afterEach(() => {
     delete process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED;
-    delete process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED;
     jest.restoreAllMocks();
   });
 

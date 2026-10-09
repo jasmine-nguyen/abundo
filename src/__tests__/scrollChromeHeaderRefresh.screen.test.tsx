@@ -9,6 +9,8 @@ import { render } from '@testing-library/react-native';
 import { C } from '../theme';
 import { ScrollChromeHeader } from '../motion/ScrollChromeHeader';
 
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
+
 it('with onRefresh, builds an accent spinner offset below the header that passes refreshing through', () => {
   const onRefresh = jest.fn();
   const r = render(

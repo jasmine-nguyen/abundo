@@ -2,6 +2,7 @@
 // header tests run at top 0, where "insets.top + 58" and "58" can't be told apart.
 // headerHeight = 47 + 58 = 105.
 import { it, expect, jest } from '@jest/globals';
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 import React from 'react';
 import { RefreshControl, Text } from 'react-native';
 import { render } from '@testing-library/react-native';

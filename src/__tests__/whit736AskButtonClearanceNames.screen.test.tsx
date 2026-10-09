@@ -1,6 +1,7 @@
 // WHIT-736 — the Ask-button bottom clearance carries the side it pads in its name, so the bottom
 // gap (last row clears the button) can't be mistaken for anything else.
-import { it, expect } from '@jest/globals';
+import { it, expect, jest } from '@jest/globals';
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 import * as ScrollChromeHeaderModule from '../motion/ScrollChromeHeader';
 import { ASK_BUTTON_BOTTOM_CLEARANCE } from '../motion/ScrollChromeHeader';
 

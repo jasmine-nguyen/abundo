@@ -1,6 +1,7 @@
 // WHIT-736 QA — the renamed bottom clearance still pads the BOTTOM of every tab list, and the
 // right-lane value isn't swapped in. Literal 192 (120 tab bar + 72 Ask button) pins "no change on screen".
-import { it, expect } from '@jest/globals';
+import { it, expect, jest } from '@jest/globals';
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 import React from 'react';
 import { Text } from 'react-native';
 import { render } from '@testing-library/react-native';

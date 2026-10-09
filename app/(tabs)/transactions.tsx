@@ -12,7 +12,6 @@ import { ScrollChromeHeader, ASK_BUTTON_BOTTOM_CLEARANCE } from '../../src/motio
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { EmptyState } from '../../src/components/EmptyState';
-import { SettingsButton } from '../../src/components/SettingsButton';
 import { HeaderTextButton } from '../../src/components/ui';
 import { toggleIn } from '../../src/setutil';
 
@@ -135,7 +134,6 @@ export default function Transactions() {
     <View style={{ flex: 1 }}>
     <ScrollChromeHeader
       title="Transactions"
-      left={<SettingsButton />}
       right={headerRight}
       contentContainerStyle={selectionMode ? styles.contentWithBar : undefined}
       keyboardShouldPersistTaps="handled"
