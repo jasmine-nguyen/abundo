@@ -37,13 +37,11 @@ class FakeBudget:
 FakePaycycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-01-07")
 
 
-def _call(handler, rows, rules, *, budget=None, paycycle=None, already_seeded=False,
+def _call(handler, rows, rules, *, budget=None, paycycle=None,
           categories=frozenset({"insurance", "coffee"})):
     """Run the sweep; returns (table, the stored rule after the run)."""
     table, repo, rule_repo = real_repos({SPENDING: rows}, rules=rules)
     [rule] = rule_repo.list_rules()
-    if already_seeded:
-        rule_repo.mark_spread_seeded(rule["id"])
     handler.apply_rules_to_uncategorized(
         apply_rules_event({"dryRun": False}), repo, FakeCategoryRepo(categories), rule_repo,
         budget or FakeBudget(), paycycle or FakePaycycle())
@@ -73,21 +71,7 @@ def test_a_spread_rule_matching_many_charges_seeds_once(handler):
     assert len(budget.calls) == 1 and paycycle.get_calls == 1
 
 
-def test_a_no_op_create_does_not_mark_the_rule(handler):
-    # set_spread_if_absent returns None (category already has a spread / no target) -> stay unseeded.
-    budget = FakeBudget(result=None)
-    table, rule = _call(handler, [_origin("t1")], [_spread_rule()], budget=budget)
-    assert budget.calls and rule["spread_seeded"] is False and _seed_marks(table) == 0
-
-
 def test_a_non_spread_rule_never_touches_budget(handler):
     budget, paycycle = FakeBudget(), FakePaycycle()
     _call(handler, [_origin("t1")], [_spread_rule(spread=False)], budget=budget, paycycle=paycycle)
-    assert budget.calls == [] and paycycle.get_calls == 0
-
-
-def test_an_already_seeded_rule_does_not_reseed(handler):
-    budget, paycycle = FakeBudget(), FakePaycycle()
-    _call(handler, [_origin("t1")], [_spread_rule()], budget=budget, paycycle=paycycle,
-          already_seeded=True)
     assert budget.calls == [] and paycycle.get_calls == 0

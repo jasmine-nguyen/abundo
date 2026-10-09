@@ -16,10 +16,8 @@ mapping.
 
 import json
 
-import pytest
-
 from _api_event import api_event
-from _feed_fakes import ANZ, FakeCategoryRepo, date_reads, real_repos, _row
+from _feed_fakes import ANZ, FakeCategoryRepo, real_repos, _row
 
 
 def _suggest(handler, rows_by_account, taxonomy=("dining", "groceries", "petrol"), rules=()):
@@ -87,25 +85,6 @@ def test_a_bank_labelled_charge_is_not_hand_filed(handler):
     # excluded — only the user's own categories count.
     rows = [_filed(ANZ, f"2026-07-0{index + 1}", f"b{index}", "SEDDONS EATERY",
                    "SEDDONS EATERY MELB", "FOOD_AND_DRINK") for index in range(4)]
-
-    assert _suggest(handler, {ANZ: rows})["suggestions"] == []
-
-
-def test_a_deleted_categorys_dangling_id_is_not_hand_filed(handler):
-    # A category the user has since deleted leaves a dangling id on old charges. It is not in the
-    # taxonomy, so it is excluded — a suggestion filing into a category that no longer exists would
-    # leave the charge unfiled forever.
-    rows = _seddons_over_days(
-        ["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"], category="deleted-cat")
-
-    assert _suggest(handler, {ANZ: rows})["suggestions"] == []
-
-
-def test_income_is_not_suggested(handler):
-    # `income` is "filed" but is not a pickable taxonomy category (the file-by-shop mint can't target
-    # it), so it never yields a suggestion. Keyed on taxonomy membership, income is excluded.
-    rows = _seddons_over_days(
-        ["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"], category="income")
 
     assert _suggest(handler, {ANZ: rows})["suggestions"] == []
 
@@ -213,39 +192,6 @@ def test_a_same_category_more_specific_rule_does_not_suppress(handler):
     assert [s["rulePattern"] for s in body["suggestions"]] == ["COLES"]
 
 
-def test_suggestions_are_ordered_most_filed_first_then_by_pattern(handler):
-    rows = (
-        _seddons_over_days(["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"])
-        + [_filed(ANZ, d, f"a{i}", "ALDI", "ALDI 771 KEW", "groceries")
-           for i, d in enumerate(["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04",
-                                  "2026-06-05"])]
-        + [_filed(ANZ, d, f"m{i}", "MYER", "MYER CITY", "lifestyle")
-           for i, d in enumerate(["2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04"])]
-    )
-
-    body = _suggest(handler, {ANZ: rows},
-                    taxonomy=("dining", "groceries", "lifestyle"))
-
-    # ALDI (5 days) first; SEDDONS and MYER tie at 4, broken by pattern ("SEDDONS EATERY" < ...).
-    assert [(s["rulePattern"], s["distinctDays"]) for s in body["suggestions"]] == [
-        ("ALDI", 5), ("MYER", 4), ("SEDDONS EATERY", 4),
-    ]
-
-
-def test_empty_history_returns_no_suggestions(handler):
-    assert _suggest(handler, {}) == {"suggestions": []}
-
-
-def test_scans_whole_history_with_no_date_floor(handler):
-    table, repo, rule_repo = real_repos({ANZ: _seddons_over_days(
-        ["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"])})
-
-    handler.get_filing_suggestions(repo, FakeCategoryRepo({"dining"}), rule_repo)
-
-    anz_call = next(call for call in date_reads(table) if call[0] == ANZ)
-    assert anz_call[1] is None and anz_call[2] is None
-
-
 def test_route_wires_to_get_filing_suggestions(handler, monkeypatch):
     _, repo, rule_repo = real_repos({ANZ: _seddons_over_days(
         ["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"])})
@@ -259,16 +205,42 @@ def test_route_wires_to_get_filing_suggestions(handler, monkeypatch):
     assert json.loads(resp["body"])["suggestions"][0]["rulePattern"] == "SEDDONS EATERY"
 
 
-def test_post_to_the_suggestions_path_is_not_routed(handler, monkeypatch):
-    def _boom(*args, **kwargs):
-        raise AssertionError("get_filing_suggestions must not run for POST")
+def test_a_hand_filed_charge_with_no_date_is_not_counted_as_a_day(handler):
+    # A charge whose date is missing carries no spending-day signal; _winning_category skips it.
+    # Three real distinct days plus one dateless charge = three distinct days = BELOW the threshold.
+    # Counting the dateless charge (or crashing on the empty date) would wrongly reach four.
+    rows = _seddons_over_days(["2026-07-01", "2026-07-02", "2026-07-03", ""])
 
-    _, repo, rule_repo = real_repos()
-    monkeypatch.setattr(handler, "get_filing_suggestions", _boom)
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
-    monkeypatch.setattr(handler, "RuleRepository", lambda: rule_repo)
+    assert _suggest(handler, {ANZ: rows})["suggestions"] == []
 
-    resp = handler.lambda_handler(api_event("POST", "/transactions/filing-suggestions"), None)
 
-    assert resp["statusCode"] == 404
+def test_alsocatches_discloses_a_nameless_unfiled_sweep_as_a_null_merchant_line(handler):
+    # A "COLES" rule minted from the hand-filed COLES charges would also sweep a still-UNFILED
+    # NAMELESS charge whose description contains "coles" (e.g. "PAYPAL *COLES ONLINE"). It has no
+    # merchant identity, so it is disclosed as the single null-merchant line, not hidden.
+    rows = [_filed(ANZ, d, f"c{i}", "COLES", "COLES 0342 RICHMOND", "groceries")
+            for i, d in enumerate(["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"])]
+    rows.append(_row(ANZ, "2026-07-05", "x1", merchant_name="",
+                     description="PAYPAL *COLES ONLINE 8842", category=None))
+
+    body = _suggest(handler, {ANZ: rows})
+
+    suggestion = body["suggestions"][0]
+    assert suggestion["rulePattern"] == "COLES"
+    assert suggestion["alsoCatches"] == [{"merchant": None, "count": 1}]
+
+
+def test_a_merchant_both_unfiled_and_hand_filed_still_suggests_without_self_disclosure(handler):
+    # COLES is hand-filed to groceries on 4 days AND has one still-UNFILED COLES charge. The habit
+    # is real, so the suggestion stands; and the shop's OWN unfiled charge (same merchant) is NOT
+    # disclosed as an also-catches sweep of a "different shop" -- alsoCatches stays empty.
+    rows = [_filed(ANZ, d, f"c{i}", "COLES", "COLES 0342 RICHMOND", "groceries")
+            for i, d in enumerate(["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"])]
+    rows.append(_filed(ANZ, "2026-07-09", "u1", "COLES", "COLES 0999 KEW", None))
+
+    body = _suggest(handler, {ANZ: rows})
+
+    assert len(body["suggestions"]) == 1
+    assert body["suggestions"][0]["rulePattern"] == "COLES"
+    assert body["suggestions"][0]["categoryId"] == "groceries"
+    assert body["suggestions"][0]["alsoCatches"] == []

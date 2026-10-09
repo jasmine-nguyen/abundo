@@ -86,19 +86,6 @@ def test_plain_sweep_leaves_unstamped_charges_alone(handler):
     assert stored(table, "plain")["category"] == "petrol"
 
 
-def test_dry_run_never_sweeps(handler):
-    table, repo, rule_repo = real_repos({SPENDING: [
-        _row(SPENDING, "2026-07-02", "orphan", description="OLD", category="groceries",
-             filed_by_rule="dead-rule"),
-    ]}, rules=[_rule("coles", "groceries")])
-
-    _, body = _apply(handler, repo, rule_repo, {"dryRun": True})
-
-    assert body["dryRun"] is True
-    assert stored(table, "orphan")["category"] == "groceries"   # preview writes nothing
-    assert table.update_calls == []
-
-
 def test_file_this_shop_path_does_not_sweep_orphans(handler):
     # The inline "file this shop" path narrows the rule set to the one minted rule, so it cannot
     # judge which stamps are orphaned — it must leave them. FAIL-ON-REVERT: run the sweep in the

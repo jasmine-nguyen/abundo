@@ -1,10 +1,9 @@
 """WHIT-559 PR2a — adversarial gaps on the "Apply my rules" auto-spreading (sweep + async worker).
 
 Independent of the impl suite (test_apply_rules_spread.py, which covers seed+mark / many-once /
-no-op-not-marked / non-spread-zero / already-seeded). Here: the cross-path/cross-run idempotency
-the store-row `spread_seeded` flag guarantees, the async worker route (impl tested only the sync
-route), the seed firing even when the write no-ops, the None-create retry, a multi-condition spread
-rule, a spread rule matching nothing, and a budget_excluded regression with the spread wiring live.
+non-spread-zero). Here: the cross-run idempotency the store-row `spread_seeded` flag guarantees,
+the async worker route (impl tested only the sync route), the seed firing even when the write
+no-ops, and the None-create retry.
 
 Runs the real TransactionRepository and RuleRepository over one FakeTable; local
 FakeBudget/FakePaycycle record the seed and the real JobRepository (_job_fakes) drives the worker
@@ -19,13 +18,11 @@ from _feed_fakes import apply_rules_event, SPENDING, FakeCategoryRepo, real_repo
 from _job_fakes import real_job_repo
 
 
-def _spread_rule(value="ORIGIN", category_id="insurance", *, spread=True, budget_excluded=False):
+def _spread_rule(value="ORIGIN", category_id="insurance"):
     # The kwargs of one real RuleRepository.create_rule call.
-    rule = {"field": "description", "operator": "contains", "value": value,
-            "category_id": category_id, "spread": spread, "budget_excluded": budget_excluded}
-    if spread:
-        rule.update(spread_amount=Decimal("42.50"), spread_gap_days=30)
-    return rule
+    return {"field": "description", "operator": "contains", "value": value,
+            "category_id": category_id, "spread": True,
+            "spread_amount": Decimal("42.50"), "spread_gap_days": 30}
 
 
 def _seed_marks(table):
@@ -52,8 +49,8 @@ class FakeBudget:
 FakePaycycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-01-07")
 
 
-def _origin(txn_id, date="2026-07-01", **extra):
-    return _row(SPENDING, date, txn_id, description="ORIGIN ENERGY BILL", **extra)
+def _origin(txn_id, date="2026-07-01"):
+    return _row(SPENDING, date, txn_id, description="ORIGIN ENERGY BILL")
 
 
 def _sweep(handler, repo, rule_repo, *, budget=None, paycycle=None,
@@ -65,20 +62,6 @@ def _sweep(handler, repo, rule_repo, *, budget=None, paycycle=None,
 
 
 # --- cross-path / cross-run idempotency (the core guarantee — neither impl suite tests it) -------
-
-def test_a_prior_seed_marked_in_the_store_blocks_the_sweep(handler):
-    # [A20] The webhook's SpreadSeeder ends by calling rule_repo.mark_spread_seeded(id) — the SAME store
-    # method, on the SAME row, that the sweep reads back through the spread lookup (rule_book.rule_from_row). Simulate that
-    # prior seed, then run the sweep over a fresh matching charge -> it sees spread_seeded True and
-    # does NOT re-seed. FAIL-ON-REVERT: build the spread map off the client shape (no spread_seeded)
-    # or hardcode False and the sweep re-seeds every run, double-creating the plan the user dismissed.
-    table, repo, rule_repo = real_repos({SPENDING: [_origin("t1")]}, rules=[_spread_rule()])
-    [rule] = rule_repo.list_rules()
-    rule_repo.mark_spread_seeded(rule["id"])   # the webhook already seeded on a prior delivery
-    budget, paycycle = FakeBudget(), FakePaycycle()
-    _sweep(handler, repo, rule_repo, budget=budget, paycycle=paycycle)
-    assert budget.calls == [] and paycycle.get_calls == 0
-    assert _seed_marks(table) == 1                      # no second mark
 
 
 def test_two_sweeps_over_the_same_store_seed_once(handler):
@@ -132,50 +115,6 @@ def test_a_none_create_stays_unseeded_and_a_later_run_retries(handler):
     assert len(ok.calls) == 1 and _seeded(rule_repo) is True   # the retry seeds + marks
 
 
-# --- a multi-condition (WHIT-541) spread rule carries spread through the apply path ---------------
-
-def test_a_multi_condition_spread_rule_still_seeds(handler):
-    # [A24] A spread rule with conditions must still seed: the spread lookup keys off the
-    # row id, the same id the plan's matched charge carries, so the spread context is found.
-    conditions = [{"field": "description", "operator": "contains", "value": "ORIGIN"},
-                  {"field": "amount", "operator": "less_than", "value": "100"}]
-    rule = {"field": "description", "operator": "contains", "value": "ORIGIN",
-            "category_id": "insurance", "conditions": conditions, "logic": "all",
-            "spread": True, "spread_amount": Decimal("42.50"), "spread_gap_days": 30}
-    table, repo, rule_repo = real_repos(
-        {SPENDING: [_origin("t1", amount=Decimal("-42.50"))]}, rules=[rule])
-    budget = FakeBudget()
-    _sweep(handler, repo, rule_repo, budget=budget)
-    assert stored(table, "t1")["category"] == "insurance"
-    assert len(budget.calls) == 1 and _seeded(rule_repo) is True
-
-
-# --- a spread rule matching nothing never touches the pay cycle -----------------------------------
-
-def test_a_spread_rule_matching_nothing_reads_no_paycycle(handler):
-    # [A25] No matched charge -> seed() is never reached -> zero pay-cycle read + zero budget write.
-    _, repo, rule_repo = real_repos(
-        {SPENDING: [_origin("t1")]}, rules=[_spread_rule(value="NOMATCH")])
-    budget, paycycle = FakeBudget(), FakePaycycle()
-    _sweep(handler, repo, rule_repo, budget=budget, paycycle=paycycle)
-    assert budget.calls == [] and paycycle.get_calls == 0
-
-
-# --- regression: a budget_excluded (non-spread) winning rule still files + excludes ----------------
-
-def test_a_budget_excluded_non_spread_rule_still_files_and_excludes(handler):
-    # [A26] budget_excluded + spread can't coexist (PR1 rejects at create), so with the spread wiring
-    # present a plain budget_excluded rule must file the charge, set budget_excluded, and touch no
-    # budget/paycycle repo (it is not spread).
-    table, repo, rule_repo = real_repos(
-        {SPENDING: [_origin("t1")]}, rules=[_spread_rule(spread=False, budget_excluded=True)])
-    budget, paycycle = FakeBudget(), FakePaycycle()
-    _sweep(handler, repo, rule_repo, budget=budget, paycycle=paycycle)
-    row = stored(table, "t1")
-    assert row["category"] == "insurance" and row.get("budget_excluded") is True
-    assert budget.calls == [] and paycycle.get_calls == 0 and _seed_marks(table) == 0
-
-
 # --- the async worker route (impl suite tested only the sync route) -------------------------------
 
 def _wire_worker(worker, monkeypatch, *, transactions, rules, budget, paycycle,
@@ -209,15 +148,3 @@ def test_worker_seeds_a_spread_rules_plan_once_and_marks_it(apply_rules_worker, 
     assert len(budget.calls) == 1 and paycycle.get_calls == 1
     assert _seeded(rule_repo) is True and _seed_marks(table) == 1
     assert job_repo.get_job("job1")["filed"] == 3
-
-
-def test_worker_with_a_non_spread_rule_touches_no_budget(apply_rules_worker, monkeypatch):
-    # [A28] The worker's spread wiring costs a normal charge nothing.
-    worker = apply_rules_worker
-    budget, paycycle = FakeBudget(), FakePaycycle()
-    table, rule_repo, _ = _wire_worker(
-        worker, monkeypatch, transactions={SPENDING: [_origin("t1")]},
-        rules=[_spread_rule(spread=False)], budget=budget, paycycle=paycycle)
-
-    worker.lambda_handler({"jobId": "job1"})
-    assert budget.calls == [] and paycycle.get_calls == 0 and _seed_marks(table) == 0

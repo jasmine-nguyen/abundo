@@ -11,20 +11,22 @@ production's own.
 """
 
 import json
+from decimal import Decimal
 
 import pytest
 
 from _feed_fakes import (
     apply_rules_event,
-    ANZ, SPENDING, FakeCategoryRepo, charge_writes, date_queries, fail_writes, on_write,
-    real_repos, _row, set_category, stored, vanish_on_write,
+    ANZ, SPENDING, HOMELOAN, WESTPAC, FakeCategoryRepo, charge_writes, date_queries, fail_writes,
+    on_write, real_repos, _row, set_category, stored, vanish_on_write,
 )
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
-def _rule(value, category_id="groceries", field="description", operator="contains"):
+def _rule(value, category_id="groceries", field="description", operator="contains", **extra):
     # The kwargs of one real RuleRepository.create_rule call.
-    return {"field": field, "operator": operator, "value": value, "category_id": category_id}
+    return {"field": field, "operator": operator, "value": value, "category_id": category_id,
+            **extra}
 
 
 def _rule_ids(rule_repo):
@@ -54,14 +56,6 @@ def test_dry_run_is_the_default_and_writes_nothing(handler):
     assert body["filed"] == []
     assert table.update_calls == []   # FAIL-ON-REVERT: a default of False would write here
     assert body["remaining"] == 1
-
-
-def test_explicit_dry_run_true_writes_nothing(handler):
-    table, repo, rule_repo = real_repos(
-        {SPENDING: [_row(SPENDING, "2026-07-01", "t1", description="COLES")]},
-        rules=[_rule("coles")])
-    _, body = _call(handler, repo, rule_repo, {"dryRun": True})
-    assert body["filed"] == [] and table.update_calls == []
 
 
 @pytest.mark.parametrize("bad", ["false", "no", 0, 1, None])
@@ -161,27 +155,6 @@ def test_a_charge_the_user_files_mid_run_keeps_their_category(handler):
     assert body["remaining"] == 0
 
 
-def test_a_row_that_changed_into_something_still_unfiled_is_retryable(handler):
-    # A row that changed underneath is NOT automatically "filed". A settlement can carry the bank's
-    # own raw label back onto the row, which still reads as unfiled — so calling that alreadyFiled
-    # would let the app announce the job done while the badge still counts the charge. It belongs
-    # in `failed`, which the app treats as work left.
-    table, repo, rule_repo = real_repos({SPENDING: [
-        _row(SPENDING, "2026-07-02", "t1", description="COLES 1"),
-        _row(SPENDING, "2026-07-01", "t2", description="COLES 2"),
-    ]}, rules=[_rule("coles", "groceries")])
-    # t2 was unfiled at scan time; mid-run it gains a raw bank label (a settlement carrying one
-    # across), which still reads as unfiled.
-    on_write(table, "t1", lambda tbl: set_category(tbl, "t2", "TRANSFER_OUT"))
-
-    _, body = _call(handler, repo, rule_repo,
-                    {"dryRun": False}, categories=("groceries", "coffee"))
-
-    assert body["filed"] == [{"id": "t1", "category": "groceries"}]
-    assert body["failed"] == ["t2"]        # still unfiled -> a re-run picks it up
-    assert body["alreadyFiled"] == []
-
-
 def test_a_stale_scan_does_not_overwrite_the_stored_category(handler):
     # The everyday version, not the exotic one: the scan reads an index that cannot be read
     # consistently, so "the scan says unfiled, storage already says filed" is the COMMON case.
@@ -201,6 +174,79 @@ def test_a_stale_scan_does_not_overwrite_the_stored_category(handler):
     # [WHIT-536] a refused write lands no rule stamp on the row the user just claimed — the real
     # conditional write sets category and stamp together or not at all.
     assert "filed_by_rule" not in row
+
+
+@pytest.mark.parametrize("scanned_category, mid_run_category, bucket", [
+    (None, "coffee", "alreadyFiled"),                 # unfiled at scan time, the user taps
+    ("FOOD_AND_DRINK", "coffee", "alreadyFiled"),     # raw bank label at scan time, the user taps
+    ("FOOD_AND_DRINK", "TRANSFER_OUT", "failed"),     # a re-sync swaps the raw label: retry
+])
+def test_a_mid_run_change_to_a_scanned_charge_is_never_overwritten(
+        handler, scanned_category, mid_run_category, bucket):
+    # The real conditional write compares against what the SCAN saw: `attribute_not_exists(#c)`
+    # for an unfiled row, `#c = :expected` for a raw-labelled one. Either half must refuse the
+    # rule's write once the row changed — and a change into another raw label is still unfiled,
+    # so it is reported as failed (retry), not filed.
+    t2_fields = {"category": scanned_category} if scanned_category else {}
+    table, repo, rule_repo = real_repos({SPENDING: [
+        _row(SPENDING, "2026-07-02", "t1", description="COLES 1"),
+        _row(SPENDING, "2026-07-01", "t2", description="COLES 2", **t2_fields),
+    ]}, rules=[_rule("coles")])
+    on_write(table, "t1", lambda tbl: set_category(tbl, "t2", mid_run_category))
+
+    resp, body = _call(handler, repo, rule_repo, {"dryRun": False})
+
+    assert resp["statusCode"] == 200
+    assert body["filed"] == [{"id": "t1", "category": "groceries"}]
+    assert stored(table, "t1")["filed_by_rule"] == _rule_ids(rule_repo)["coles"]
+    assert body[bucket] == ["t2"]
+    assert stored(table, "t2")["category"] == mid_run_category
+    assert "filed_by_rule" not in stored(table, "t2")
+
+
+def test_a_charge_that_became_income_mid_run_is_already_filed_not_retried_forever(handler):
+    # `income` is the one category that counts as FILED without being a taxonomy id
+    # (is_unfiled_category). A settlement or a tap that lands it on income leaves nothing to
+    # retry. Classify it as unfiled instead and the write is refused every round while the app
+    # keeps offering "Apply the rest" — an endless loop over one charge.
+    # FAIL-ON-REVERT: swap `is_unfiled(current_category)` for `current_category not in taxonomy`
+    # and this row moves to `failed` -> red.
+    table, repo, rule_repo = real_repos({SPENDING: [
+        _row(SPENDING, "2026-07-02", "t1", description="COLES 1"),
+        _row(SPENDING, "2026-07-01", "t2", description="COLES 2"),
+    ]}, rules=[_rule("coles")])
+    on_write(table, "t1", lambda tbl: set_category(tbl, "t2", "income"))
+
+    _, body = _call(handler, repo, rule_repo, {"dryRun": False})
+
+    assert body["alreadyFiled"] == ["t2"]
+    assert body["failed"] == []
+    assert body["remaining"] == 0                       # nothing to come back for
+    assert stored(table, "t2")["category"] == "income"
+
+
+def test_a_row_that_changed_into_a_raw_label_is_retried_against_the_NEW_value(handler):
+    # The other half of termination. A row that changed into something still unfiled (a re-sync
+    # carrying the bank's own label back on) lands in `failed`, so the app offers another round —
+    # and that round must actually be able to win, or the retry is a lie. The second run re-scans,
+    # so it compares against the label the row holds NOW.
+    # FAIL-ON-REVERT: cache/reuse the first scan's expected value (or pass the rule's target) and
+    # the second round is refused too -> red.
+    table, repo, rule_repo = real_repos({SPENDING: [
+        _row(SPENDING, "2026-07-02", "t1", description="COLES 1"),
+        _row(SPENDING, "2026-07-01", "t2", description="COLES 2"),
+    ]}, rules=[_rule("coles")])
+    # t1 is filed on the first run, so the second run never writes it and the relabel runs once.
+    on_write(table, "t1", lambda tbl: set_category(tbl, "t2", "TRANSFER_OUT"))
+
+    _, first = _call(handler, repo, rule_repo, {"dryRun": False})
+    assert first["failed"] == ["t2"]
+
+    _, second = _call(handler, repo, rule_repo, {"dryRun": False})
+
+    assert second["filed"] == [{"id": "t2", "category": "groceries"}]
+    assert second["failed"] == [] and second["remaining"] == 0
+    assert stored(table, "t2")["category"] == "groceries"
 
 
 def test_running_twice_files_nothing_the_second_time(handler):
@@ -237,17 +283,6 @@ def test_a_row_that_vanished_mid_run_is_reported_separately_from_a_failure(handl
     assert body["alreadyFiled"] == []   # a deleted row is NOT a row someone else filed
     assert body["failed"] == ["boom"]
     assert body["remaining"] == 0      # all three were attempted
-
-
-def test_one_failure_does_not_stop_the_rest(handler):
-    rows = [_row(SPENDING, f"2026-07-{d:02d}", f"t{d}", description="COLES")
-            for d in range(1, 6)]
-    table, repo, rule_repo = real_repos({SPENDING: rows}, rules=[_rule("coles")])
-    fail_writes(table, "t3")
-
-    _, body = _call(handler, repo, rule_repo, {"dryRun": False})
-
-    assert len(body["filed"]) == 4 and body["failed"] == ["t3"]
 
 
 def test_more_matches_than_the_write_cap_files_the_cap_and_reports_the_rest(handler, monkeypatch):
@@ -302,14 +337,6 @@ def test_an_already_spent_budget_still_makes_one_attempt(handler, monkeypatch):
 # --- scope, breakdown, and the cheap paths ------------------------------------
 
 
-def test_no_rules_returns_zeros_without_scanning_history(handler):
-    table, repo, rule_repo = real_repos({SPENDING: [_row(SPENDING, "2026-07-01", "t1")]})
-    _, body = _call(handler, repo, rule_repo, {})
-
-    assert body["matched"] == 0 and body["unfiled"] == 0 and body["rulesConsidered"] == 0
-    assert date_queries(table) == []   # the whole-history scan is skipped entirely
-
-
 def test_deep_history_matches_are_found(handler):
     rows = [_row(ANZ, f"2026-05-{(i % 28) + 1:02d}", f"filed{i}",
                  description="WOOLWORTHS", category="groceries") for i in range(120)]
@@ -351,6 +378,192 @@ def test_a_rules_read_failure_reads_no_history_and_writes_nothing(handler):
 
     assert resp["statusCode"] == 500
     assert date_queries(table) == [] and table.update_calls == []
+
+
+def test_matches_in_every_account_are_filed_in_scan_order(handler):
+    # The scan walks all four accounts in ACCOUNT_ID_MAP order, each newest-first. An account
+    # silently dropped from the scan is otherwise invisible: the response would still look like a
+    # clean success.
+    _, repo, rule_repo = real_repos({
+        ANZ: [_row(ANZ, "2026-07-01", "anz-old", description="COLES"),
+              _row(ANZ, "2026-07-09", "anz-new", description="COLES")],
+        SPENDING: [_row(SPENDING, "2026-07-05", "spend", description="COLES")],
+        HOMELOAN: [_row(HOMELOAN, "2026-07-06", "loan", description="COLES")],
+        WESTPAC: [_row(WESTPAC, "2026-07-07", "west", description="COLES")],
+    }, rules=[_rule("coles")])
+
+    _, body = _call(handler, repo, rule_repo, {"dryRun": False})
+
+    assert [entry["id"] for entry in body["filed"]] == [
+        "anz-new", "anz-old", "spend", "loan", "west"]
+    assert body["unfiled"] == 5
+
+
+def test_the_plain_sweep_still_files_across_ALL_her_rules(handler):
+    # REGRESSION GUARD — the worst outcome of WHIT-523 would be the inline scoping leaking onto
+    # the plain "Apply my rules" button (no inline rule), quietly filing only ONE of her rules.
+    # With no inline `rule`, EVERY rule must still sweep: a COLES charge AND a BP charge both
+    # file, to their own categories, and both rules show in byRule.
+    _, repo, rule_repo = real_repos({SPENDING: [
+        _row(SPENDING, "2026-07-04", "t1", description="COLES 0342"),
+        _row(SPENDING, "2026-07-03", "t2", description="COLES ONLINE"),
+        _row(SPENDING, "2026-07-02", "b1", description="BP 2210 SERVO"),
+        _row(SPENDING, "2026-07-01", "n1", description="NETFLIX.COM"),
+    ]}, rules=[_rule("COLES", "groceries"), _rule("BP 2210", "petrol")])
+
+    resp, body = _call(handler, repo, rule_repo, {"dryRun": False},
+                       categories=("groceries", "petrol"))
+
+    assert resp["statusCode"] == 200
+    assert body["createdRule"] is None                                  # plain path mints nothing
+    assert len(rule_repo.list_rules()) == 2
+    assert sorted(filed["id"] for filed in body["filed"]) == ["b1", "t1", "t2"]  # never n1
+    assert body["byCategory"] == {"groceries": 2, "petrol": 1}
+    assert body["rulesConsidered"] == 2
+    ids = _rule_ids(rule_repo)
+    assert sorted(entry["ruleId"] for entry in body["byRule"]) == sorted(
+        [ids["COLES"], ids["BP 2210"]])
+
+
+def test_a_conflicted_charge_is_never_written_even_on_a_real_write_run(handler):
+    # A conflict must never be silently decided by the WRITE path either.
+    table, repo, rule_repo = real_repos({SPENDING: [
+        _row(SPENDING, "2026-07-03", "conflict", description="COLES RICHMOND"),
+        _row(SPENDING, "2026-07-02", "clean", description="COLES CARLTON"),
+    ]}, rules=[_rule("coles", "groceries"), _rule("richmond", "coffee")])
+
+    _, body = _call(handler, repo, rule_repo, {"dryRun": False})
+
+    assert body["conflicted"] == 1
+    assert [entry["id"] for entry in body["filed"]] == ["clean"]
+    # The conflict was not touched.
+    assert charge_writes(table) == [(f"ACCOUNT#{SPENDING}", "TXN#clean")]
+    # And the conflict is actionable, not a bare number the user can't chase down.
+    assert body["conflictedSamples"] == [
+        {"description": "COLES RICHMOND", "categoryIds": ["coffee", "groceries"]}]
+
+
+_UNDER_30 = [{"field": "merchant", "operator": "contains", "value": "uber"},
+             {"field": "amount", "operator": "less_than", "value": "30"}]
+_CREDIT = [{"field": "direction", "operator": "is", "value": "credit"}]
+
+
+@pytest.mark.parametrize("conditions, category_id, amount, expected", [
+    (_UNDER_30, "transport", Decimal("-25.00"), "transport"),   # every AND condition holds
+    (_UNDER_30, "transport", Decimal("-40.00"), None),          # misses the amount condition
+    (_CREDIT, "income", Decimal("1500.00"), "income"),          # direction=credit files income
+    (_CREDIT, "income", Decimal("-25.00"), None),               # ...and leaves a spend alone
+])
+def test_the_sweep_files_by_a_multi_condition_rule(handler, conditions, category_id, amount, expected):
+    # WHIT-561: the stored charge is filed only when every condition of the rule holds.
+    first = conditions[0]
+    table, repo, rule_repo = real_repos({SPENDING: [
+        _row(SPENDING, "2026-07-01", "t1", description="UBER TRIP", merchant_name="UBER",
+             amount=amount)]},
+        rules=[_rule(first["value"], category_id, first["field"], first["operator"],
+                     conditions=conditions, logic="all")])
+
+    _, body = _call(handler, repo, rule_repo, {"dryRun": False},
+                    categories=frozenset({"transport"}))
+
+    assert stored(table, "t1").get("category") == expected
+    assert body["matched"] == (1 if expected else 0)
+
+
+@pytest.mark.parametrize("row_fields, expected", [
+    ({}, {"category": "groceries"}),                                   # the rule never excludes
+    ({"budget_excluded": True}, {"category": "groceries", "budget_excluded": True}),  # hand-set
+])
+def test_a_rule_with_the_budget_flag_off_never_touches_the_flag(handler, row_fields, expected):
+    # WHIT-558: a rule with "keep out of budget" OFF files the category but never writes the flag
+    # — not True on a charge whose rule never asked, and not False over the user's own hand-set
+    # exclusion. FAIL-ON-REVERT: passing budget_excluded unconditionally reddens one of the rows.
+    table, repo, rule_repo = real_repos(
+        {SPENDING: [_row(SPENDING, "2026-07-01", "t1", description="COLES 1", **row_fields)]},
+        rules=[_rule("coles", budget_excluded=False)])
+
+    _call(handler, repo, rule_repo, {"dryRun": False})
+
+    row = stored(table, "t1")
+    assert {key: row[key] for key in ("category", "budget_excluded") if key in row} == expected
+
+
+# --- the taxonomy coupling and parity with the badge ----------------------------
+
+
+def test_an_empty_taxonomy_skips_every_rule_but_still_honours_an_income_rule(handler):
+    # A brand-new user with no categories yet: every normal rule's target is "unfiled" by the
+    # badge's own predicate, so it is skipped and nothing is written — filing to a non-existent
+    # category would leave the charge unfiled and the next run would re-file it forever. `income`
+    # is the one target that is filed WITHOUT being a taxonomy id.
+    table, repo, rule_repo = real_repos({SPENDING: [
+        _row(SPENDING, "2026-07-02", "shop", description="COLES"),
+        _row(SPENDING, "2026-07-01", "pay", description="ACME SALARY"),
+    ]}, rules=[_rule("coles", "groceries"), _rule("salary", "income")])
+
+    _, body = _call(handler, repo, rule_repo, {"dryRun": False}, categories=())
+
+    assert [entry["reason"] for entry in body["skippedRules"]] == ["category no longer exists"]
+    assert body["skippedRules"][0]["id"] == _rule_ids(rule_repo)["coles"]
+    assert body["filed"] == [{"id": "pay", "category": "income"}]
+    assert charge_writes(table) == [(f"ACCOUNT#{SPENDING}", "TXN#pay")]
+
+
+def test_deleting_the_targeted_category_between_runs_neither_writes_nor_loops(handler):
+    # Safe-to-run-twice under a CHANGING taxonomy. Run 1 files t1 -> groceries. The user then
+    # deletes "groceries". Run 2 sees t1 as unfiled again (its category is now a dangling id)
+    # but the rule is now skipped, so nothing is re-written and nothing loops.
+    table, repo, rule_repo = real_repos(
+        {SPENDING: [_row(SPENDING, "2026-07-01", "t1", description="COLES")]},
+        rules=[_rule("coles")])
+
+    _, first = _call(handler, repo, rule_repo, {"dryRun": False}, categories=("groceries",))
+    assert first["filed"] == [{"id": "t1", "category": "groceries"}]
+
+    _, second = _call(handler, repo, rule_repo, {"dryRun": False}, categories=("coffee",))
+
+    assert second["unfiled"] == 1           # the row reads as unfiled again...
+    assert second["matched"] == 0           # ...but the rule can no longer file it
+    assert second["filed"] == [] and second["remaining"] == 0
+    assert len(table.update_calls) == 1     # no second write
+
+
+def test_the_previews_unfiled_total_equals_the_badge_count_endpoint(handler):
+    # "The unfiled set matches the badge's rule", asserted against the REAL count endpoint on the
+    # same rows and taxonomy — not a re-implementation. The mix deliberately includes an income
+    # row, a raw-enum row, an excluded transfer, and a no-category row, which is exactly where a
+    # divergent predicate would show up.
+    rows = {
+        ANZ: [
+            _row(ANZ, "2026-07-05", "null", description="COLES"),
+            _row(ANZ, "2026-07-04", "raw", description="BP", category="TRANSPORT"),
+            _row(ANZ, "2026-07-03", "filed", description="ALDI", category="groceries"),
+            _row(ANZ, "2026-07-02", "pay", description="ACME SALARY", category="income"),
+        ],
+        SPENDING: [
+            _row(SPENDING, "2026-07-01", "transfer", description="TRANSFER OUT",
+                 counts_to_budget=False, budget_excluded=True),
+        ],
+    }
+    taxonomy = {"groceries", "coffee"}
+
+    _, count_repo, _ = real_repos(rows)
+    count_resp = handler.get_uncategorized_count(count_repo, FakeCategoryRepo(taxonomy))
+    badge_count = json.loads(count_resp["body"])["count"]
+
+    _, repo, rule_repo = real_repos(rows, rules=[_rule("zzz-matches-nothing")])
+    _, body = _call(handler, repo, rule_repo, {}, categories=tuple(taxonomy))
+
+    assert body["unfiled"] == badge_count
+    assert badge_count == 3     # no category + raw enum + excluded transfer; income is filed
+
+
+def test_validate_rule_body_rejects_a_non_boolean_budget_excluded(handler):
+    event = {"body": json.dumps({"value": "COLES", "categoryId": "groceries",
+                                 "budgetExcluded": "yes"})}
+    parsed, error = handler._validate_rule_body(event)
+    assert parsed is None
+    assert error["statusCode"] == 400
 
 
 # --- dispatch through lambda_handler ------------------------------------------

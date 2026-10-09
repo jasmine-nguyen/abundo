@@ -7,7 +7,9 @@ the real TransactionRepository, RuleRepository and JobRepository over FakeTables
 the "no cap", progress, failure, and idempotency behaviours are exercised for real.
 """
 
-from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row
+from _feed_fakes import (
+    SPENDING, FakeCategoryRepo, fail_writes, real_repos, _row, stored, vanish_on_write,
+)
 from _job_fakes import progress_writes, real_job_repo
 
 
@@ -141,3 +143,88 @@ def test_worker_succeeds_with_no_rules(apply_rules_worker, monkeypatch):
     result = worker.lambda_handler({"jobId": "job1"})
     assert result["status"] == "succeeded"
     assert job_repo.get_job("job1")["matched"] == 0 and job_repo.get_job("job1")["filed"] == 0
+
+
+def test_worker_inline_run_files_only_that_shop_stamped_with_the_minted_rule(
+        apply_rules_worker, monkeypatch):
+    # A stored "uber -> petrol" rule matches t2, but the inline run is "file COLES" only.
+    # FAIL-ON-REVERT: drop the worker's `book.only(...)` and t2 is filed too; stamp with None
+    # instead of created_rule["id"] and t1 carries no stamp.
+    rows = [_row(SPENDING, "2026-07-01", "t1", description="COLES"),
+            _row(SPENDING, "2026-07-02", "t2", description="UBER")]
+    table, job_repo = _wire(apply_rules_worker, monkeypatch, transactions={SPENDING: rows},
+                            rules=[_rule("uber", "petrol")],
+                            categories=frozenset({"groceries", "petrol"}))
+
+    apply_rules_worker.lambda_handler(
+        {"jobId": "job1", "rule": {"value": "COLES", "categoryId": "groceries",
+                                   "budgetExcluded": False}})
+
+    job = job_repo.get_job("job1")
+    assert job["status"] == "succeeded" and job["filed"] == 1
+    assert stored(table, "t1")["filed_by_rule"] == job["createdRule"]["id"]
+    assert stored(table, "t2").get("category") is None
+
+
+def test_worker_clears_a_500_row_reconcile_tail_the_300_cap_would_leave(apply_rules_worker, monkeypatch):
+    # 500 rows stamped by a rule that no longer exists (orphans). The sync route's 300 cap would
+    # leave 200 stamped; the worker (max_writes=None) clears ALL 500 — the "no cap" promise for
+    # the WHIT-540 reconcile half.
+    worker = apply_rules_worker
+    orphans = [_row(SPENDING, "2026-07-01", f"o{i:04d}", description="MYER",
+                    category="oldcat", filed_by_rule="r_dead") for i in range(500)]
+    # A live rule must exist (else the worker returns before the write phase) but it targets COLES,
+    # so it matches NONE of the MYER orphans — the only writes are reconcile clears.
+    table, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: orphans},
+                            rules=[_rule("COLES")])
+
+    result = worker.lambda_handler({"jobId": "job1"})
+
+    assert result["status"] == "succeeded"
+    # FAIL-ON-REVERT: swap the worker's max_writes=None for APPLY_RULES_MAX_WRITES and this drops to
+    # 300 clears with 200 orphans left stamped.
+    assert len(table.update_calls) == 500
+    remaining_stamps = [r for r in table.store.values() if r.get("filed_by_rule") == "r_dead"]
+    assert remaining_stamps == []          # every orphan stamp cleared, none left behind
+    # The reconcile clears are NOT counted as `filed` (they climb `attempted` only, not the bar).
+    assert job_repo.get_job("job1")["filed"] == 0
+    assert job_repo.get_job("job1")["matched"] == 0
+
+
+def test_worker_counts_filed_vanished_failed_and_alreadyfiled_in_one_sweep(apply_rules_worker, monkeypatch):
+    # One matched set spanning every write outcome, so the job's counts are all real:
+    #   f1,f2  -> written               (filed=2)
+    #   v1     -> row gone since scan   (vanished=1)
+    #   e1     -> write raises          (failed via DatabaseError)
+    #   c1     -> changed to a still-unfiled raw label underneath (failed via changed-unfiled)
+    #   a1     -> changed to a filed category underneath (alreadyFiled=1)
+    worker = apply_rules_worker
+    rows = [
+        _row(SPENDING, "2026-07-01", "f1", description="COLES"),
+        _row(SPENDING, "2026-07-01", "f2", description="COLES"),
+        _row(SPENDING, "2026-07-01", "v1", description="COLES"),
+        _row(SPENDING, "2026-07-01", "e1", description="COLES"),
+        # Store already holds a filed category; the scan is behind and still shows it unfiled.
+        _row(SPENDING, "2026-07-01", "a1", description="COLES", category="coffee"),
+        # Store holds the bank's raw label (still unfiled); the scan is behind and shows None.
+        _row(SPENDING, "2026-07-01", "c1", description="COLES", category="RAW-EFTPOS"),
+    ]
+    table, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: rows},
+                            rules=[_rule("COLES")],
+                            categories=frozenset({"groceries", "coffee"}))
+    vanish_on_write(table, "v1")
+    fail_writes(table, "e1")
+    # Make a1/c1 planned (scan shows them unfiled) while the store holds the changed value.
+    for transaction_id in ("a1", "c1"):
+        table.stale_index(stored(table, transaction_id), category=None)
+
+    result = worker.lambda_handler({"jobId": "job1"})
+
+    assert result["status"] == "succeeded"
+    job = job_repo.get_job("job1")
+    assert job["matched"] == 6
+    assert job["filed"] == 2
+    assert job["vanished"] == 1
+    assert job["failed"] == 2          # e1 (DB error) + c1 (changed but still unfiled)
+    assert job["alreadyFiled"] == 1    # a1 (changed to a real category)
+    assert job["attempted"] == 6 and job["remaining"] == 0
