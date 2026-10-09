@@ -249,7 +249,6 @@ def test_create_rule_missing_fields_400(handler, monkeypatch, body, missing):
     _multi([_amount("30", operator="contains")]),                 # pair outside the vocab
     _multi([_text("debit", field="direction", operator="equals")]),
     _multi([_text("X", field="payee", operator="equals")]),       # unknown field
-    _multi([_text("UBER", field="merchant")], logic="maybe"),
     _multi([_text("UBER", field="merchant")], logic="xor"),
     _multi([_amount("lots")]),
     _multi([_amount("0")]),

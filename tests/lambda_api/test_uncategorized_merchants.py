@@ -301,6 +301,11 @@ def _contains_rule(pattern):
             "categoryId": "groceries"}
 
 
+def _would_file(rule_engine, rows, pattern):
+    """How many rows the rule minted from this group's pattern would really file."""
+    return sum(1 for row in rows if rule_engine.rule_matches(_contains_rule(pattern), row))
+
+
 # A deliberately messy but REALISTIC spread: nested merchants, a merchant that only appears
 # inside another's description, a sub-floor merchant, a nameless charge, a charge whose
 # description never carries its merchant name, a mixed-case description, and one already-filed
@@ -363,10 +368,7 @@ def test_every_group_count_is_what_the_minted_rule_would_really_file(handler, ru
 
     divergences = []
     for group in body["groups"]:
-        would_file = sum(
-            1 for row in eligible
-            if rule_engine.rule_matches(_contains_rule(group["rulePattern"]), row)
-        )
+        would_file = _would_file(rule_engine, eligible, group["rulePattern"])
         if would_file != group["count"]:
             divergences.append((group["rulePattern"], group["count"], would_file))
 
@@ -507,8 +509,7 @@ def test_a_length_changing_fold_never_lets_the_preview_disagree_with_the_rule(
     assert len(body["groups"]) + body["ungrouped"]["count"] == 3
 
     for group in body["groups"]:
-        would_file = sum(1 for row in rows
-                         if rule_engine.rule_matches(_contains_rule(group["rulePattern"]), row))
+        would_file = _would_file(rule_engine, rows, group["rulePattern"])
         assert would_file == group["count"], (
             f"pattern {group['rulePattern']!r} previews {group['count']} but files {would_file}"
         )
@@ -539,8 +540,7 @@ def test_a_double_spaced_charge_is_not_swept_in_by_a_single_spaced_rule(handler,
     group = body["groups"][0]
     assert group["rulePattern"] == "COLES ONLINE"
 
-    would_file = sum(1 for row in rows
-                     if rule_engine.rule_matches(_contains_rule(group["rulePattern"]), row))
+    would_file = _would_file(rule_engine, rows, group["rulePattern"])
     assert group["count"] == would_file == 2, (
         f"pattern {group['rulePattern']!r} previews {group['count']} but files {would_file} "
         "(a whitespace-collapsing fold would sweep in the double-spaced charge and count 3)"
@@ -589,8 +589,7 @@ def test_a_wording_group_and_a_merchant_group_can_both_claim_a_row_without_break
     assert body["ungrouped"] == {"count": 0, "samples": []}
 
     for group in body["groups"]:
-        would_file = sum(1 for r in eligible
-                         if rule_engine.rule_matches(_contains_rule(group["rulePattern"]), r))
+        would_file = _would_file(rule_engine, eligible, group["rulePattern"])
         assert would_file == group["count"], group["rulePattern"]
 
 
@@ -627,8 +626,7 @@ def test_a_double_spaced_stem_mints_a_value_that_literally_matches_its_originals
     assert group["rulePattern"] == "OSKO   PAYMENT"  # the triple space is preserved
     for sample in group["samples"]:
         assert group["rulePattern"].lower() in sample.lower()  # literally findable
-    would_file = sum(1 for r in _account_rows(table, ANZ)
-                     if rule_engine.rule_matches(_contains_rule(group["rulePattern"]), r))
+    would_file = _would_file(rule_engine, _account_rows(table, ANZ), group["rulePattern"])
     assert group["count"] == would_file == 2
 
 
@@ -649,8 +647,7 @@ def test_two_spacing_variants_of_one_stem_stay_separate_groups(handler, rule_eng
     assert sorted(g["rulePattern"] for g in body["groups"]) == ["OSKO  PAYMENT", "OSKO PAYMENT"]
     assert all(g["count"] == 2 for g in body["groups"])
     single = next(g for g in body["groups"] if g["rulePattern"] == "OSKO PAYMENT")
-    would_file = sum(1 for r in _account_rows(table, ANZ)
-                     if rule_engine.rule_matches(_contains_rule(single["rulePattern"]), r))
+    would_file = _would_file(rule_engine, _account_rows(table, ANZ), single["rulePattern"])
     assert would_file == 2
     assert body["ungrouped"]["count"] == 0
 
@@ -700,6 +697,5 @@ def test_interior_reference_digits_are_not_stripped_from_a_stem(handler, rule_en
     assert group["rulePattern"] == "COLES 1111 DIRECT DEBIT"  # interior 1111 preserved
     assert group["groupedBy"] == "description"
     assert group["count"] == 2
-    would_file = sum(1 for r in _account_rows(table, ANZ)
-                     if rule_engine.rule_matches(_contains_rule(group["rulePattern"]), r))
+    would_file = _would_file(rule_engine, _account_rows(table, ANZ), group["rulePattern"])
     assert would_file == 2
