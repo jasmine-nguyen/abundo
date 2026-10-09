@@ -169,195 +169,25 @@ describe('unlockOrRestore with no stored session', () => {
     expect(seen).not.toContain('locked');
     expect(auth.getStatus()).toBe('anon');
   });
-});
 
-// --- WHIT-172: retroactively biometric-lock a pre-WHIT-161 session --------------
-describe('unlockOrRestore migrates a pre-WHIT-161 session (WHIT-172)', () => {
-  it('upgrades an unguarded token with no sentinel: UNGUARDED detection read, GUARDED re-store, sentinel written, then unlock', async () => {
+  // [A1] WHIT-835: the pre-WHIT-161 move is gone — a token with no sentinel is restored
+  // as-is, never re-stored, never given a sentinel, never sealed behind the lock.
+  it('a token with NO sentinel goes straight to restore: authed, never locked, nothing re-written', async () => {
     process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     mockCanUseBiometric.mockReturnValue(true);
-    // Pre-WHIT-161 state: a refresh token exists but NO sentinel.
     mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
-    // The post-migration unlock refresh succeeds and is NON-rotating (no refreshToken
-    // back), so the ONLY guarded REFRESH_KEY write is the migration re-store — a rotated
-    // token would otherwise let restore write REFRESH_KEY guarded on the revert path too.
     mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
     const auth = loadAuth();
 
+    const seen: string[] = [];
+    auth.subscribe(() => seen.push(auth.getStatus()));
     await auth.unlockOrRestore();
 
-    // (a) the detection read was UNGUARDED ({} opts) — this is what sidesteps the iOS
-    //     guarded-read-of-unguarded-item ambiguity the card was deferred on.
-    expect(refreshReads()[0][1]).toEqual({});
-    // (b) the token was re-stored GUARDED (requireAuthentication), preceded by a delete
-    //     (the WHIT-170 silent create path).
-    const guardedWrite = refreshWrites().find(
-      (c) => (c[2] as { requireAuthentication?: boolean } | undefined)?.requireAuthentication,
-    );
-    expect(guardedWrite).toBeTruthy();
-    expect(guardedWrite![1]).toBe('R');
-    expect(mockDeleteItem.mock.calls.some((c) => c[0] === REFRESH_KEY)).toBe(true);
-    // (c) the sentinel was written — restoreSession NEVER writes it, so this binds
-    //     fail-on-revert (the old unlockOrRestore falls straight to restore).
-    expect(mockSetItem.mock.calls.some((c) => c[0] === SENTINEL_KEY)).toBe(true);
-    // (d) ended authed via the unlock path. (Passes on revert too — NOT a binding assert.)
+    expect(seen).not.toContain('locked');
     expect(auth.getStatus()).toBe('authed');
-  });
-
-  it('rolls back cleanly when the guarded re-store FAILS mid-migration: no orphan sentinel, session cleared, not authed', async () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
-    mockCanUseBiometric.mockReturnValue(true);
-    mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
-    // The guarded re-store write throws (a keychain hiccup); the sentinel write, if
-    // reached, would succeed.
-    mockSetItem.mockImplementation(async (k) => {
-      if (k === REFRESH_KEY) throw new Error('keychain write denied');
-    });
-    const auth = loadAuth();
-
-    await auth.unlockOrRestore();
-
-    // No orphan sentinel: it is written only AFTER a successful token re-store.
+    expect(refreshReads()).toHaveLength(1);
+    expect(refreshWrites()).toHaveLength(0);
     expect(mockSetItem.mock.calls.some((c) => c[0] === SENTINEL_KEY)).toBe(false);
-    // Rollback cleared the stored session — clearStoredSession deletes the method key,
-    // which nothing else on this path touches, so it binds the rollback ran.
-    expect(mockDeleteItem.mock.calls.some((c) => c[0] === METHOD_KEY)).toBe(true);
-    // Fell through to restore → 'anon' (a clean re-login), never a half-migrated authed.
-    expect(auth.getStatus()).toBe('anon');
-  });
-
-  it('does NOT migrate when biometrics are OFF: no sentinel write, no guarded re-store (migration is gated on canBiometricLock)', async () => {
-    // Flag OFF (unset by beforeEach); the device is capable but the feature is off.
-    mockCanUseBiometric.mockReturnValue(true);
-    mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
-    mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
-    const auth = loadAuth();
-
-    await auth.unlockOrRestore();
-
-    expect(mockSetItem.mock.calls.some((c) => c[0] === SENTINEL_KEY)).toBe(false);
-    expect(
-      refreshWrites().some((c) => (c[2] as { requireAuthentication?: boolean } | undefined)?.requireAuthentication),
-    ).toBe(false);
-    expect(auth.getStatus()).toBe('authed'); // plain WHIT-160 unguarded restore still works
-  });
-
-  it('does NOT migrate a WHIT-161 session (sentinel present): straight to unlock, first refresh-key read is GUARDED not the {} detection read', async () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
-    mockCanUseBiometric.mockReturnValue(true);
-    // Sentinel present + guarded token = a WHIT-161 session; migration must be skipped.
-    mockGetItem.mockImplementation(async (k) => {
-      if (k === SENTINEL_KEY) return '1';
-      if (k === REFRESH_KEY) return 'R';
-      return null;
-    });
-    mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
-    const auth = loadAuth();
-
-    await auth.unlockOrRestore();
-
-    // The FIRST refresh-key read is unlock()'s GUARDED read, never an unguarded ({})
-    // migration detection read — proving migration was not entered ahead of unlock.
-    expect(refreshReads()[0][1]).toMatchObject({ requireAuthentication: true });
-    expect(auth.getStatus()).toBe('authed');
-  });
-});
-
-// --- WHIT-172 (qa): adversarial migration gaps the implementer's tests leave open --
-// Complements the implementer's happy-path / re-store-throws / biometrics-off / sentinel-
-// present cases. Each either fails on a full revert of the migration code, or is an
-// explicitly-labelled regression guard anchored fail-on-revert by a sentinel-write assert.
-describe('unlockOrRestore migration — adversarial gaps (WHIT-172 qa)', () => {
-  it('fresh install (detection read null, no sentinel): the {} detection read is a pure no-op — no sentinel write, no guarded re-store, no rollback deletes → restore → anon', async () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
-    mockCanUseBiometric.mockReturnValue(true);
-    mockGetItem.mockResolvedValue(null); // genuinely empty store — a first-ever launch
-    const auth = loadAuth();
-
-    await auth.unlockOrRestore();
-
-    // Fail-on-revert: the FIRST refresh-key read is the UNGUARDED ({}) detection read.
-    // The reverted code has no migration, so its first refresh-key read is restore's
-    // GUARDED read (requireAuthentication), and this .toEqual({}) fails.
-    expect(refreshReads()[0][1]).toEqual({});
-    // A null detection must NOT fabricate a session: no sentinel, no guarded re-store...
-    expect(mockSetItem.mock.calls.some((c) => c[0] === SENTINEL_KEY)).toBe(false);
-    expect(
-      refreshWrites().some((c) => (c[2] as { requireAuthentication?: boolean } | undefined)?.requireAuthentication),
-    ).toBe(false);
-    // ...and the `!refreshToken → return false` branch returns BEFORE the catch, so the
-    // rollback (clearStoredSession) never runs — a null detection touches zero keys.
-    expect(mockDeleteItem).not.toHaveBeenCalled();
-    expect(auth.getStatus()).toBe('anon');
-  });
-
-  it('migration succeeds but the post-migration unlock refresh FAILS offline → stays LOCKED with the session preserved, never anon', async () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
-    mockCanUseBiometric.mockReturnValue(true);
-    mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
-    mockRefresh.mockRejectedValue(new Error('offline')); // /oauth2/token unreachable
-    const auth = loadAuth();
-
-    await auth.unlockOrRestore();
-
-    // Migration ran (sentinel written) — the fail-on-revert anchor: the reverted code has
-    // no migration, so no-sentinel + offline flows restoreSession → clearSession → 'anon'.
-    expect(mockSetItem.mock.calls.some((c) => c[0] === SENTINEL_KEY)).toBe(true);
-    // unlock() OWNS the terminal status: a migrated-then-offline refresh keeps the session
-    // LOCKED (retry / sign-in-again) instead of dropping it to anon (WHIT-171 contract).
-    expect(mockRefresh).toHaveBeenCalled();
-    expect(auth.getStatus()).toBe('locked');
-  });
-
-  it('migration does NOT write the auth-method key, preserving the null→OAuth default so a WHIT-160 session refreshes via /oauth2/token', async () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
-    mockCanUseBiometric.mockReturnValue(true);
-    mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
-    // Non-rotating OAuth refresh success. refreshAsync (OAuth) being invoked — not the SRP
-    // InitiateAuth `fetch` — is what proves the route stayed OAuth after migration.
-    mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
-    const auth = loadAuth();
-
-    await auth.unlockOrRestore();
-
-    // Migration ran — fail-on-revert anchor (revert never writes the sentinel).
-    expect(mockSetItem.mock.calls.some((c) => c[0] === SENTINEL_KEY)).toBe(true);
-    // GUARD: a WHIT-160 session is OAuth; migration must not stamp AUTH_METHOD_KEY. Writing
-    // 'srp' here would mis-route every hourly refresh to InitiateAuth. (Holds on revert too
-    // — the regression guard, anchored fail-on-revert by the sentinel assertion above.)
-    expect(mockSetItem.mock.calls.some((c) => c[0] === METHOD_KEY)).toBe(false);
-    expect(mockRefresh).toHaveBeenCalled();
-    expect(auth.getStatus()).toBe('authed');
-  });
-
-  it('SECURITY: sentinel write throws AFTER a successful guarded re-store → the WRITTEN guarded token is rolled back, no guarded-token-without-sentinel orphan survives', async () => {
-    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
-    mockCanUseBiometric.mockReturnValue(true);
-    mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
-    // Unlike the implementer's re-store-THROWS case (no guarded token ever written), here
-    // the guarded re-store SUCCEEDS and only the sentinel write throws — so a guarded token
-    // really exists at the moment of failure and rollback must remove it.
-    mockSetItem.mockImplementation(async (k) => {
-      if (k === SENTINEL_KEY) throw new Error('sentinel write denied');
-    });
-    const auth = loadAuth();
-
-    await auth.unlockOrRestore();
-
-    // The guarded token WAS written (we got past the re-store)...
-    const guardedWrite = refreshWrites().find(
-      (c) => (c[2] as { requireAuthentication?: boolean } | undefined)?.requireAuthentication,
-    );
-    expect(guardedWrite).toBeTruthy();
-    // ...then the migration catch ran clearStoredSession — bound by the METHOD_KEY delete,
-    // which ONLY clearStoredSession performs on this path. Fail-on-revert: the reverted code
-    // has no migration, so it never re-stores a token nor deletes the method key here.
-    expect(mockDeleteItem.mock.calls.some((c) => c[0] === METHOD_KEY)).toBe(true);
-    // The written guarded token and the (thrown) sentinel are both deleted → no orphan.
-    expect(mockDeleteItem.mock.calls.some((c) => c[0] === REFRESH_KEY)).toBe(true);
-    expect(mockDeleteItem.mock.calls.some((c) => c[0] === SENTINEL_KEY)).toBe(true);
-    // Clean signed-out, never a half-migrated authed.
-    expect(auth.getStatus()).not.toBe('authed');
   });
 });
 
