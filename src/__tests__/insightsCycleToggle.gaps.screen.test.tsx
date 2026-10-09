@@ -18,7 +18,7 @@ import { seedInsights, renderInsights, resetAi, setAi } from './support/insights
 import { COFFEE } from './support/categories';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
+jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').useAiInsightsMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 const server = installFakeServer();
@@ -80,7 +80,7 @@ it('[A7] a past-cycle read that FAILS shows inline error + Retry; Retry refetche
 // back — proves it's a conditional render, not a permanent unmount or a header-only hide.
 it('[A8] a populated AI coach (summary + tips) is hidden on last cycle and restored on switch back', async () => {
   setAi({
-    aiInsights: {
+    insights: {
       summary: 'You spent a lot on coffee this cycle.',
       suggestions: ['Brew at home twice a week', 'Skip the afternoon latte'],
       generated_at: '2026-07-08T00:00:00Z',

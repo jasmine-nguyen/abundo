@@ -20,7 +20,7 @@ import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMo
 
 // The shared AI actions are single stable fns (as the real context's useCallbacks are), so the
 // stub itself never rebuilds the screen's focus callback.
-jest.mock('../context', () => require('./support/insightsScreen').contextMockModule());
+jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').useAiInsightsMockModule());
 import { resetAi, refreshAiInsights } from './support/insightsScreen';
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useMemo, useRef, useState, useCallbac
 import { C, tint, fmt, fmt2, fmtExact, fmtSignedExact, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
 import { writeFailureMessage, ApiError } from './apiError';
 import { formatDayMonth, formatMonthYear, formatWeekdayShort, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, toISODate } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, deleteTransaction as apiDeleteTransaction, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup, type PayCycle } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, deleteTransaction as apiDeleteTransaction, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup, type PayCycle } from './api';
 import * as Crypto from 'expo-crypto';
 import type { QueryKey } from '@tanstack/react-query';
 import { usableEquity as computeUsableEquity } from './milestones';
@@ -484,9 +484,8 @@ export function groupTransactionsByDate(items: Transaction[]): { label: string; 
 // ---------------------------------------------------------------------------
 // WHIT-192: the eager server-data store is gone — every screen reads the TanStack
 // Query layer (src/queries) directly. AppContext now carries only what the query
-// layer can't: ephemeral UI (sheet/toast), the
-// write actions (which source their reads from the query cache), and the AI-insights
-// slice (still store-held pending its own migration).
+// layer can't: ephemeral UI (sheet/toast) and the write actions (which source their reads
+// from the query cache).
 export interface AppContext {
   // ephemeral ui
   sheet: Sheet; toast: string | null;
@@ -541,14 +540,6 @@ export interface AppContext {
   deleteGoal: (id: string) => Promise<boolean>;
   saveLoanFacts: (next: LoanFactsInput) => Promise<boolean>;
   saveMilestones: (next: MilestoneRecord[]) => Promise<boolean>;
-
-	// AI spending insights (WHIT-104) — the last slice still held on the store; its
-	// migration to a query + mutation is tracked separately.
-	aiInsights: AiInsights | null;
-	aiInsightsLoading: boolean;
-	aiInsightsError: boolean;
-	refreshAiInsights: () => Promise<void>;
-	generateAiInsights: (goal?: AiGoalSignal | null) => Promise<void>;
 }
 
 // Bill-spread cycle bounds the app offers, mirroring the server (SPREAD_MIN/MAX_CYCLES,
@@ -595,6 +586,41 @@ function stripBudgetId(snapshots: [QueryKey, Record<string, BudgetRollup> | unde
     const { [id]: _removed, ...rest } = data;
     queryClient.setQueryData<Record<string, BudgetRollup>>(key, rest);
   });
+}
+
+// Save a whole cached object: write `next` now, put the old value back on failure, invalidate on
+// success. `empty` stands in for a cold cache (setting undefined is a no-op, so it couldn't undo).
+function wholeObjectSave<T>(key: QueryKey, next: T, empty: T, send: () => Promise<unknown>, onFailed: () => boolean): SaveSteps<unknown, boolean> {
+  const prev = queryClient.getQueryData<T>(key) ?? empty;
+  return {
+    apply: () => {
+      queryClient.setQueryData(key, next);
+      return () => queryClient.setQueryData(key, prev);
+    },
+    send,
+    onSaved: () => {
+      queryClient.invalidateQueries({ queryKey: key });
+      return true;
+    },
+    onFailed,
+    // WHIT-271: no `true` after sign-out, so the form's router.back() doesn't fire post-redirect.
+    whenSignedOut: false,
+  };
+}
+
+// Remove a row from a cached list now; the undo puts it back in front of the row that followed it
+// (WHIT-254 — a saved index would misplace it when two deletes fail at once). Null when the id
+// isn't cached. Both steps no-op on an evicted cache: opening the list fetches fresh.
+function listRemoval<T extends { id: string }>(key: QueryKey, id: string): NonNullable<SaveSteps<unknown, unknown>['apply']> | null {
+  const current = queryClient.getQueryData<T[]>(key) ?? [];
+  const index = current.findIndex((row) => row.id === id);
+  if (index === -1) return null;
+  const removed = current[index];
+  const successorIds = current.slice(index + 1).map((row) => row.id);
+  return () => {
+    queryClient.setQueryData<T[]>(key, (prev) => (prev ? prev.filter((row) => row.id !== id) : prev));
+    return () => queryClient.setQueryData<T[]>(key, (prev) => (prev ? reinsertBefore(prev, removed, successorIds) : prev));
+  };
 }
 
 // WHIT-563: the shared pieces of a rule create/edit. A multi-condition rule has no single pattern —
@@ -673,44 +699,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	const { previewFiling, fileCharges, retryApplyRulesJob, applyRulesJob, applyRulesStalled, endOnLock } =
 		useFilingRun({ sessionEpoch, runSave, prependMintedRule, sheetOpen: sheet !== null });
 
-	// AI spending insights (WHIT-104). `refreshAiInsights` reads the per-cycle cache
-	// (free); `generateAiInsights` is the paid "Analyse my spending" action. Error is
-	// true only when the last GENERATE failed, so the button can show a retry; a
-	// null-summary cache (nothing generated yet) is NOT an error.
-	const [aiInsights, setAiInsights] = useState<AiInsights | null>(null);
-	const [aiInsightsLoading, setAiInsightsLoading] = useState(false);
-	const [aiInsightsError, setAiInsightsError] = useState(false);
-	const refreshAiInsights = useCallback(() => runSave({
-		send: fetchAiInsights,
-		onSaved: setAiInsights,
-		// A failed cache read leaves the current state intact (no error surfaced);
-		// the user can still generate.
-		onFailed: () => {},
-		whenSignedOut: undefined,
-	}), [runSave]);
-	// `goal` is passed IN by the caller (computed from live state at tap time), not
-	// read from a closure here — so this stays a stable useCallback([]) and can never
-	// send a stale goal.
-	const generateAiInsights = useCallback((goal?: AiGoalSignal | null) => {
-		setAiInsightsLoading(true);
-		setAiInsightsError(false);
-		// Only the run that still owns the session may clear the spinner: the runner skips both
-		// callbacks after sign-out, so a stale run (signed out, then a NEW session started its own
-		// generate) can't flip the live run's spinner off and let the new user double-fire.
-		return runSave({
-			send: () => apiGenerateAiInsights(goal),
-			onSaved: (result) => {
-				setAiInsights(result);
-				setAiInsightsLoading(false);
-			},
-			onFailed: () => {
-				setAiInsightsError(true);
-				setAiInsightsLoading(false);
-			},
-			whenSignedOut: undefined,
-		});
-	}, [runSave]);
-
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Clear the toast timer on unmount so it can't fire a setState after teardown (a leak
@@ -722,9 +710,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // WHIT-268: overlays render OUTSIDE the auth gate in app/_layout.tsx, so the gate's
   // privacy cover can never hide them — the session's end must clear them here. Fires
   // on ANY broadcast into 'anon' (sign-out, a failed refresh, invalidated biometrics),
-  // whichever path broadcast it. Also drops the server-derived AI insights (and its
-  // stale error/loading flags), which queryClient.clear() never touches, and bumps the
-  // session epoch so any in-flight AI request settling later is discarded.
+  // whichever path broadcast it. Also bumps the session epoch so any in-flight request
+  // settling later is discarded.
   // WHIT-277: clear stashed drafts whenever the sheet closes — submit AND cancel both route
   // through setSheet(null). Only one sheet is open at a time, so clearing all is correct, and a
   // picker→confirm transition (chooseCategory) never passes through null, so it isn't cleared.
@@ -754,9 +741,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     sheetDrafts.current.clear(); // WHIT-277: wipe any half-typed draft on sign-out (WHIT-268 parity)
     setToast(null);
     setPendingUncategorizedSelect(false); // WHIT-544: don't carry a pending jump into the next session
-    setAiInsights(null);
-    setAiInsightsError(false);
-    setAiInsightsLoading(false);
   }), []);
 
   const showToast = useCallback((m: string) => {
@@ -820,60 +804,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     persistPayCycle((prev) => ({ ...prev, last_pay_date }));
   }, [persistPayCycle]);
 
-  // Save the loan-facts form: optimistically write the ['loanFacts'] cache the Goal +
-  // Settings reads pull from, PUT the whole object, invalidate to reconcile. Roll the
-  // cache back + toast on failure (same optimistic pattern as persistPayCycle/saveBudget).
-  // Returns true on success so the form navigates back only when the save stuck. WHIT-192:
-  // sources prev from the query cache (EMPTY_LOAN_FACTS when cold — the same default the
-  // form shows), not a store useState.
-  const saveLoanFacts = useCallback(async (next: LoanFactsInput): Promise<boolean> => {
-    const prev = queryClient.getQueryData<LoanFacts>(loanFactsKey) ?? EMPTY_LOAN_FACTS;
-    // WHIT-271: a sign-out during the round-trip makes this a no-op — no re-seat of the old mortgage
-    // details, no toast, and no `true` (which would fire the form's router.back() post-redirect).
-    return runSave({
-      apply: () => {
-        queryClient.setQueryData(loanFactsKey, next);
-        return () => queryClient.setQueryData(loanFactsKey, prev);
-      },
-      send: () => apiSetLoanFacts(next),
-      onSaved: () => {
-        queryClient.invalidateQueries({ queryKey: loanFactsKey });
-        return true;
-      },
-      onFailed: () => {
-        showToast('Could not save loan details. Please try again.');
-        return false;
-      },
-      whenSignedOut: false,
-    });
-  }, [showToast, runSave]);
+  // Save the loan-facts form the Goal + Settings reads pull from. Returns true on success so the
+  // form navigates back only when the save stuck (EMPTY_LOAN_FACTS is the form's cold default).
+  const saveLoanFacts = useCallback((next: LoanFactsInput): Promise<boolean> => runSave(wholeObjectSave<LoanFacts | LoanFactsInput>(
+    loanFactsKey, next, EMPTY_LOAN_FACTS, () => apiSetLoanFacts(next),
+    () => { showToast('Could not save loan details. Please try again.'); return false; },
+  )), [showToast, runSave]);
 
-  // Save the milestone editor's plan: optimistically write the ['milestones'] cache the milestone
-  // + mortgage screens read, PUT the whole ordered list, invalidate to reconcile. Roll the cache
-  // back + toast on failure — the same optimistic pattern as saveLoanFacts. The invalidate is
-  // load-bearing: milestones is SECONDARY in useGoalScreenData (out of that composite's refetch),
-  // so this save's own invalidation is what refreshes the screen (WHIT-367 wired it that way).
-  const saveMilestones = useCallback(async (next: MilestoneRecord[]): Promise<boolean> => {
-    const prev = queryClient.getQueryData<MilestoneRecord[]>(milestonesKey) ?? [];
-    // WHIT-271: a sign-out during the round-trip makes this a no-op — no re-seat of the old plan,
-    // no toast, and no `true` (which would fire the editor's router.back() post-redirect).
-    return runSave({
-      apply: () => {
-        queryClient.setQueryData(milestonesKey, next);
-        return () => queryClient.setQueryData(milestonesKey, prev);
-      },
-      send: () => apiSetMilestones(next),
-      onSaved: () => {
-        queryClient.invalidateQueries({ queryKey: milestonesKey });
-        return true;
-      },
-      onFailed: () => {
-        showToast('Could not save milestones. Please try again.');
-        return false;
-      },
-      whenSignedOut: false,
-    });
-  }, [showToast, runSave]);
+  // Save the milestone editor's whole ordered plan. WHIT-367: the invalidate is what refreshes the
+  // screen — milestones sits outside useGoalScreenData's refetch.
+  const saveMilestones = useCallback((next: MilestoneRecord[]): Promise<boolean> => runSave(wholeObjectSave<MilestoneRecord[]>(
+    milestonesKey, next, [], () => apiSetMilestones(next),
+    () => { showToast('Could not save milestones. Please try again.'); return false; },
+  )), [showToast, runSave]);
 
   const openPicker = useCallback((txId: string) => setSheet({ mode: 'picker', txId }), []);
   // WHIT-291: open the picker for a captured set of ids. A no-op on an empty set (nothing to file).
@@ -1453,19 +1396,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     whenSignedOut: false,
   }), [showToast, patchRules, runSave]);
 
-  // Optimistically remove the rule, then delete it in BankSync; on failure put it back in
-  // front of the row that followed it (WHIT-254 — a saved index would misplace it when two
-  // deletes fail at once) and tell the user. A temp-id rule (mid-create) deletes fine too —
-  // the server DELETE is idempotent (unknown id -> 200), and a refresh reconciles any brief
-  // create/delete race.
+  // Optimistically remove the rule, then delete it in BankSync; on failure put it back and tell
+  // the user. A temp-id rule (mid-create) deletes fine too — the server DELETE is idempotent
+  // (unknown id -> 200), and a refresh reconciles any brief create/delete race.
   const deleteRule = useCallback(async (id: string) => {
-    // WHIT-192: source the rules snapshot (for the rollback) from the ['rules'] query cache
-    // the screen reads, not a store useState.
-    const current = queryClient.getQueryData<Rule[]>(rulesKey) ?? [];
-    const index = current.findIndex((r) => r.id === id);
-    if (index === -1) return;
-    const removed = current[index];
-    const successorIds = current.slice(index + 1).map((r) => r.id);
+    const apply = listRemoval<Rule>(rulesKey, id);
+    if (!apply) return;
     // WHIT-540: deleting a rule now UNDOES the fills it left on stored charges (the server clears
     // them back to unfiled), so the server-derived reads DO move — refresh the count, feed, budgets
     // and merchant groups. `skipRules` leaves the ['rules'] cache alone: the optimistic removal
@@ -1474,16 +1410,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // successorIds aren't found, so on the NEXT session's repopulated ['rules'] cache it would
     // plant this rule into that account.
     await runSave({
-      apply: () => {
-        patchRules((prev) => prev.filter((r) => r.id !== id));
-        return () => patchRules((prev) => reinsertBefore(prev, removed, successorIds));
-      },
+      apply,
       send: () => apiDeleteRule(id),
       onSaved: () => refreshAfterApplyRules({ skipRules: true }),
       onFailed: () => showToast('Could not delete rule. Please try again.'),
       whenSignedOut: undefined,
     });
-  }, [showToast, patchRules, refreshAfterApplyRules, runSave]);
+  }, [showToast, refreshAfterApplyRules, runSave]);
 
   // Optimistically add the rule (temp id), create it in BankSync, then swap in the
   // real id — or remove it and warn on failure. Value is sent as typed (trimmed,
@@ -1610,25 +1543,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   }, [showToast, runSave]);
 
-  // Delete a goal. Optimistically remove it from the ['goals'] cache, then DELETE server-side;
-  // on failure put it back in front of the row that followed it (WHIT-254 — a saved index
-  // would misplace it when two deletes fail at once) and warn. The server DELETE is idempotent
-  // (unknown id → 200), so a rollback that races a refresh can't wedge. Unlike deleteRule
-  // (whose patchRules no-ops on an evicted cache), this resurrects the row via `prev ?? []`.
+  // Delete a goal: remove it now, DELETE server-side, put it back and warn on failure. The server
+  // DELETE is idempotent (unknown id → 200), so a rollback that races a refresh can't wedge.
   const deleteGoal = useCallback(async (id: string): Promise<boolean> => {
-    const current = queryClient.getQueryData<GoalRecord[]>(goalsKey) ?? [];
-    const index = current.findIndex((g) => g.id === id);
-    if (index === -1) return false;
-    const removed = current[index];
-    const successorIds = current.slice(index + 1).map((g) => g.id);
-    // WHIT-271: runSave skips the undo after sign-out, so the removed goal is never resurrected
-    // (via `prev ?? []`) into the cleared cache, and returns false so the form's router.back()
-    // doesn't fire.
+    const apply = listRemoval<GoalRecord>(goalsKey, id);
+    if (!apply) return false;
+    // WHIT-271: false after sign-out so the form's router.back() doesn't fire.
     return runSave({
-      apply: () => {
-        queryClient.setQueryData<GoalRecord[]>(goalsKey, (prev) => (prev ?? []).filter((g) => g.id !== id));
-        return () => queryClient.setQueryData<GoalRecord[]>(goalsKey, (prev) => reinsertBefore(prev ?? [], removed, successorIds));
-      },
+      apply,
       send: () => apiDeleteGoal(id),
       onSaved: () => true,
       onFailed: () => {
@@ -1646,8 +1568,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     requestUncategorizedSelect, clearUncategorizedSelect,
     setPayCycleLength, setPayday,
     openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewFiling, fileCharges, retryApplyRulesJob, applyRulesJob, applyRulesStalled, applyTransactionEdit, deleteTransaction, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
-    aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [sheet, toast, pendingUncategorizedSelect, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, requestUncategorizedSelect, clearUncategorizedSelect, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewFiling, fileCharges, retryApplyRulesJob, applyRulesJob, applyRulesStalled, applyTransactionEdit, deleteTransaction, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [sheet, toast, pendingUncategorizedSelect, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, requestUncategorizedSelect, clearUncategorizedSelect, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewFiling, fileCharges, retryApplyRulesJob, applyRulesJob, applyRulesStalled, applyTransactionEdit, deleteTransaction, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

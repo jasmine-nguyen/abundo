@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@tanstack/react-query';
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
-import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchTransactionsSearch, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchFilingSuggestions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listRules } from './api';
+import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchTransactionsSearch, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchFilingSuggestions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, fetchAiInsights, listRules } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, DateRange, RuleRecord, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage, TransactionSearchResult, UncategorizedMerchants, FilingSuggestions } from './api';
 import { cycleClockView, nextPayday, cycleName } from './payCycle';
 import { loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './model';
@@ -9,7 +9,7 @@ import { readTransactionCopies } from './transactionCache';
 import { RECONCILE_EPSILON } from './theme';
 import type { Budget, HomeLoanState, Rule } from './model';
 import type { Category, Transaction } from './types';
-import { categoriesKey, payCycleKey, budgetsKey, budgetTransactionsKey, categoryTransactionsKey, breakdownKey, transactionsKey, uncategorizedFeedKey, transactionsRecentKey, transactionsSearchKey, uncategorizedCountKey, uncategorizedMerchantsKey, filingSuggestionsKey, loanFactsKey, homeLoanKey, repaymentKey, accountBalancesKey, rulesKey, goalsKey, milestonesKey } from './queryKeys';
+import { categoriesKey, payCycleKey, budgetsKey, budgetTransactionsKey, categoryTransactionsKey, breakdownKey, transactionsKey, uncategorizedFeedKey, transactionsRecentKey, transactionsSearchKey, uncategorizedCountKey, uncategorizedMerchantsKey, filingSuggestionsKey, loanFactsKey, homeLoanKey, repaymentKey, accountBalancesKey, rulesKey, goalsKey, milestonesKey, aiInsightsKey } from './queryKeys';
 import { getStatus, subscribe } from './auth';
 
 // --- auth gating -------------------------------------------------------------
@@ -284,6 +284,12 @@ export function useTransactionResolver(): TransactionResolver {
 // WHIT-191a: the user's home-loan facts (un-windowed).
 export function useLoanFactsQuery(enabled: boolean) {
   return useQuery({ queryKey: loanFactsKey, queryFn: fetchLoanFacts, enabled });
+}
+
+// WHIT-833: this cycle's saved AI insights (a free read). Single-shot like the old store read: a
+// failed refresh just keeps the summary already shown.
+export function useAiInsightsQuery(enabled: boolean) {
+  return useQuery({ queryKey: aiInsightsKey, queryFn: fetchAiInsights, enabled, retry: false });
 }
 
 // WHIT-197: the live home-loan balance. The API's `as_of` (snake) maps to the store's
