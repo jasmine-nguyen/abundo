@@ -172,7 +172,9 @@ to say instead (if the project has its own jargon → plain-words list, such as 
   - Safety net: the existing screen tests must pass unchanged, plus new input → output tests.
   ```
 - `files` — every file you'd add or edit, paths only.
-- `risks` — one line each: what could go wrong, and how the plan handles it.
+- `risks` — one line each: what could go wrong, and how the plan handles it. Say how long
+  a worst case lasts and what ends it, in what the user does: "the app may open without
+  Face ID until you sign out and back in", never "until the next sign-in".
 - `door` — `one-way` if the change is hard to undo once merged (a data migration,
   a deletion, a public API or schema change), otherwise `two-way`.
 - `blast_radius` — one line: what could break if this is wrong, and for whom.

@@ -512,6 +512,21 @@ not more tests.
 """
 FEWEST_TESTS_AGENTS = {"test_writer", "implementer", "qa"}
 
+# The plan's risks are where a too-mild guess slips past every reviewer, so the critics and QA check them.
+WORST_CASE_RULE = """
+
+## Worst cases are claims to check
+
+A risk or worst case the plan states is a claim, not a decision already made. Trace it in the code:
+what happens on this run, the next one and the one after (app launches, sign-ins, sessions)? How long
+does it last, and what actually ends it? When the change deletes code in a sensitive area (sign-in,
+Face ID or other auth, money), follow the situation that code used to handle the same way, end to end.
+
+A worst case that's wrong or too mild is must-fix: a [BLOCKER] for the plan critic, a blocking bug
+for the code review, a real bug for QA.
+"""
+WORST_CASE_AGENTS = {"plan_critic", "code_critic", "qa"}
+
 
 def agent_prompt(name: str) -> str:
     prompt = (ROOT / ".claude" / "agents" / AGENTS[name].prompt_file).read_text()
@@ -519,6 +534,8 @@ def agent_prompt(name: str) -> str:
         prompt += FOLD_IN_RULE
     if name in FEWEST_TESTS_AGENTS:
         prompt += FEWEST_TESTS_RULE
+    if name in WORST_CASE_AGENTS:
+        prompt += WORST_CASE_RULE
     if name == "ponytail":
         prompt += ponytail_review_skill()
     return prompt
