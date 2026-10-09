@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, PRESSED } from '../../src/theme';
 import { transactionView, useAppContext, contributesToBudget, budgetSpreadEligibility, ruleFiledLabel, RULE_FILED_FALLBACK } from '../../src/context';
 import type { Transaction } from '../../src/types';
-import { formatDayMonthYear } from '../../src/dateutil';
+import { formatDayMonthYear, pendingLabel } from '../../src/dateutil';
 import { useTransactionDetailScreenData, useTransactionResolver, useBudgetsScreenData, useRulesScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { Icon, Glyph } from '../../src/icons';
@@ -146,7 +146,7 @@ export default function TransactionDetail() {
                   onPress={() => openPicker(transaction.transaction_id)}
                   actionLabel={`Change category, currently ${view.categoryLabel}`}
                 />
-                <Field label="Status" value={view.isPending ? 'Pending' : 'Posted'} last />
+                <Field label="Status" value={view.isPending ? pendingLabel(transaction.date) : 'Posted'} last />
               </View>
 
               {/* WHIT-539: name the rule that auto-filed this category, right under the details

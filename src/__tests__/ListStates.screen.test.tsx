@@ -72,4 +72,23 @@ describe('StaleDataLine (WHIT-713)', () => {
     render(<StaleDataLine idPrefix="accounts" error={new TypeError('Network request failed')} updatedAt={loadedAt} />);
     expect(screen.getByTestId('accounts-stale')).toHaveTextContent('You look offline · showing 9:40am');
   });
+
+  // WHIT-844: the opt-in success version. Without the opt-in a good load still shows nothing
+  // (the first case above).
+  it('with showUpdated, says when a good load happened', () => {
+    render(<StaleDataLine idPrefix="budgets" error={null} updatedAt={loadedAt} showUpdated />);
+    expect(screen.getByTestId('budgets-updated')).toHaveTextContent('Updated 9:40am');
+    expect(screen.queryByTestId('budgets-stale')).toBeNull();
+  });
+
+  it('with showUpdated, a failed refresh still shows only the stale line', () => {
+    render(<StaleDataLine idPrefix="budgets" error={new Error('API error: 503')} updatedAt={loadedAt} showUpdated />);
+    expect(screen.getByTestId('budgets-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am");
+    expect(screen.queryByTestId('budgets-updated')).toBeNull();
+  });
+
+  it('with showUpdated, renders nothing when nothing has loaded yet', () => {
+    render(<StaleDataLine idPrefix="budgets" error={null} updatedAt={0} showUpdated />);
+    expect(screen.queryByTestId('budgets-updated')).toBeNull();
+  });
 });

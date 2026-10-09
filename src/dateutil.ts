@@ -109,6 +109,14 @@ export function wholeDaysBetween(fromMs: number, toMs: number): number {
   return Math.round((toMs - fromMs) / MS_PER_DAY);
 }
 
+// A pending transaction's tag (WHIT-844): "Pending", or "Pending · 7 days" once it's more than 3
+// local calendar days old, so a stuck charge stands out. A bad or future date stays "Pending".
+export function pendingLabel(dateIso: string, now: Date = new Date()): string {
+  const days = wholeDaysBetween(isoToUtcDayMs(dateIso), dateToUtcDayMs(now));
+  if (days > 3) return `Pending · ${days} days`;
+  return 'Pending';
+}
+
 // A balance's `asOf` (a full timestamp, or a date-only "YYYY-MM-DD" for a manual balance) ->
 // "As of today" / "As of yesterday" / "As of 3 Oct", counted on local calendar days. null when
 // there's no usable date.

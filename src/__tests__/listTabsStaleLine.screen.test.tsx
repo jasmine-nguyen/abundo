@@ -71,3 +71,25 @@ it('Transactions: a failed pull after Load More keeps the rows and shows the ori
   fireEvent.changeText(screen.getByPlaceholderText('Search transactions'), 'wool');
   expect(screen.queryByTestId('transactions-stale')).toBeNull();
 });
+
+// WHIT-844: Transactions always says when its list last loaded, quietly, under the search box.
+// A failed refresh swaps it for the "Couldn't refresh" line; the next good refresh brings it back
+// with the new load time.
+it('Transactions: always shows "Updated <time>" after a good load, swapped for the stale line while a refresh fails (WHIT-844)', async () => {
+  server.seed(FEED, { transactions: [LIST_ROW], nextCursor: null });
+  await renderWithApp(<Transactions />);
+  expect(await screen.findByText('-$42.00')).toBeTruthy();
+  expect(screen.getByTestId('transactions-updated')).toHaveTextContent('Updated 9:40am');
+  expect(screen.queryByTestId('transactions-stale')).toBeNull();
+
+  jest.setSystemTime(new Date('2026-09-18T10:00:00+10:00'));
+  server.once('GET', FEED, { status: 503 });
+  await pullAndSettle();
+  await waitFor(() => expect(screen.getByTestId('transactions-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am"));
+  expect(screen.queryByTestId('transactions-updated')).toBeNull();
+
+  jest.setSystemTime(new Date('2026-09-18T10:15:00+10:00'));
+  await pullAndSettle();
+  await waitFor(() => expect(screen.getByTestId('transactions-updated')).toHaveTextContent('Updated 10:15am'));
+  expect(screen.queryByTestId('transactions-stale')).toBeNull();
+});

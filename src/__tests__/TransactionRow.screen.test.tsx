@@ -2,11 +2,12 @@
 // actually renders the label/amount/pending pill from transactionView and that
 // an uncategorized row is tappable (opens the categorize picker) while a
 // categorized one is not. Seeded from the QA "Automatable (UI)" feed scenarios.
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { makeState, cat, txn } from './factory';
+import { pinToday } from './support/clock';
 import type { Category } from '../types';
 
 // WHIT-192: the row reads only openPicker (client-state) from the store now; the
@@ -39,10 +40,22 @@ it('renders merchant, amount and category for a categorized row', () => {
   expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
 });
 
-it('shows a Pending pill for a pending transaction', () => {
-  mockState = stateWith();
-  render(<TransactionRow t={txn({ status: 'pending', category: 'coffee' })} category={mockState.category} />);
-  expect(screen.getByText('Pending')).toBeTruthy();
+// WHIT-844: a pending charge older than 3 days says how long it has been pending, so a stuck
+// one stands out. The age counts local calendar days from the charge's date.
+describe('pending pill shows the age of an old pending charge (WHIT-844)', () => {
+  beforeEach(() => { pinToday(new Date('2026-10-09T08:00:00+11:00')); });
+  afterEach(() => { jest.useRealTimers(); });
+
+  it.each([
+    ['2026-10-09', 'Pending'],
+    ['2026-10-06', 'Pending'],
+    ['2026-10-05', 'Pending · 4 days'],
+    ['2026-10-02', 'Pending · 7 days'],
+  ])('a pending charge dated %s shows "%s"', (date, label) => {
+    mockState = stateWith();
+    render(<TransactionRow t={txn({ status: 'pending', category: 'coffee', date, authorized_date: date })} category={mockState.category} />);
+    expect(screen.getByText(label)).toBeTruthy();
+  });
 });
 
 // WHIT-330: the "Not in budget" tag was removed from all rows. Fail-on-revert: restore the

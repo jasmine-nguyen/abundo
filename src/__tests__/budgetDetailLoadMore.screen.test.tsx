@@ -34,6 +34,7 @@ import { pressAlertButton, spyOnAlert } from './support/alertSpy';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { COFFEE as COFFEE_CATEGORY } from './support/categories';
+import { toISODate } from '../dateutil';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -197,7 +198,8 @@ describe('budgetDetailRefile — related-transaction details arrow', () => {
   });
 
   it('still shows the Pending badge on a pending charge (shared row keeps it)', async () => {
-    server.seed('/budgets/coffee/transactions', [charge({ status: 'pending' })]);
+    // Dated today, so the badge stays plain "Pending" (WHIT-844 ages older ones).
+    server.seed('/budgets/coffee/transactions', [charge({ status: 'pending', date: toISODate(new Date()) })]);
     await renderWithQueries(<BudgetDetail />);
 
     expect(screen.getByText('Pending')).toBeTruthy();
@@ -296,7 +298,7 @@ describe('budgetDetailRowTargets — shared-row integration gaps', () => {
   // and the old row's always-on "Posted" status text did NOT come along with the swap.
   it('shows the Pending badge on exactly the pending row in a mixed list (no stray Posted text)', async () => {
     server.seed('/budgets/coffee/transactions', [
-      charge({ transaction_id: 't1', status: 'pending' }),
+      charge({ transaction_id: 't1', status: 'pending', date: toISODate(new Date()) }),
       charge({ transaction_id: 't2', status: 'posted' }),
       charge({ transaction_id: 't3', status: 'posted' }),
     ]);

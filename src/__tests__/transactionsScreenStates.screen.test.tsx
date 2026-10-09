@@ -124,6 +124,20 @@ it('empty + loading shows the spinner', async () => {
   await waitFor(() => expect(screen.queryByTestId('transactions-loading')).toBeNull());
 });
 
+// WHIT-844: while the Uncategorized list is still cold-loading, the categories' load time alone
+// mustn't read as "Updated <time>" over the spinner.
+it('a cold-loading Uncategorized tab shows the spinner and no "Updated" line', async () => {
+  await draw();
+  expect(screen.getByTestId('transactions-updated')).toBeTruthy();
+  const held = server.hold(UNCATEGORIZED_FEED);
+  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  expect(await screen.findByTestId('transactions-loading')).toBeTruthy();
+  expect(screen.queryByTestId('transactions-updated')).toBeNull();
+  held.release();
+  await settle();
+  expect(await screen.findByTestId('transactions-updated')).toBeTruthy();
+});
+
 it('empty Uncategorized tab (settled) shows the "All caught up" empty state', async () => {
   await draw();
   fireEvent.press(screen.getByText('Uncategorized'));
