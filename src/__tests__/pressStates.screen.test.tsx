@@ -2,8 +2,8 @@
 // implementer's TransactionRow.screen.test.tsx (labels + tap-to-open) never asserts. The row
 // now uses style={({pressed}) => [styles.body, pressed && PRESSED]} (WHIT-717 shared style). We call that
 // style function with pressed true/false and flatten it: a revert that drops the pressed
-// branch (row feels dead again) fails here. Also guards that a NON-tappable row is disabled,
-// so it can never enter the pressed/dim state.
+// branch (row feels dead again) fails here. WHIT-843: a filed row is no longer disabled — it
+// opens details and takes the same pressed look (whit843RowOpensDetails.screen.test.tsx).
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render } from '@testing-library/react-native';
@@ -23,7 +23,7 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import { TransactionRow } from '../components/TransactionRow';
 
-type Node = { props: { style: unknown; disabled?: boolean; onPress?: unknown } };
+type Node = { props: { style: unknown; disabled?: boolean } };
 
 beforeEach(() => {
   mockState = { openPicker: jest.fn(), category: makeState({ categories: [cat()] }).category };
@@ -44,11 +44,4 @@ it('a tappable row takes the shared pressed style on press and is solid at rest'
   const pressed = pressedStyle(row, true);
   expect(pressed.opacity).toBe(PRESSED.opacity);     // pressed: dim
   expect(pressed.transform).toEqual(PRESSED.transform); // pressed: shrink
-});
-
-it('a non-tappable (categorized) row is disabled, so it never dims', () => {
-  const { UNSAFE_root } = render(<TransactionRow t={txn({ transaction_id: 'tx1', category: 'coffee' })} category={mockState.category} />);
-  const row = pressable(UNSAFE_root as unknown as { findAll: (p: (n: Node) => boolean) => Node[] });
-  expect(row.props.disabled).toBe(true);
-  expect(row.props.onPress).toBeUndefined();
 });

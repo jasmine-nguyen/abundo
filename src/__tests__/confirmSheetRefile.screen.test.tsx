@@ -7,7 +7,9 @@
 // categories come from the fake server through the real query hooks (WHIT-670).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, fireEvent } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
 import type { AppContext } from '../context';
+import { C } from '../theme';
 
 let mockState: AppContext;
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
@@ -50,6 +52,15 @@ describe('confirm (re-categorise) — one flow for every entry point', () => {
     expect(screen.getByText('Just this one')).toBeTruthy();
     // The redundant lone "Save" is gone.
     expect(screen.queryByText('Save')).toBeNull();
+  });
+
+  // WHIT-843: the safe single re-file is the first, primary (accent) button; the rule is secondary.
+  it('"Just this one" comes first as the main button', async () => {
+    await openConfirm();
+    const [first, second] = screen.getAllByText(/All from this merchant|Just this one/);
+    expect(first.props.children).toBe('Just this one');
+    expect(StyleSheet.flatten(first.props.style).color).toBe(C.accentInk);
+    expect(StyleSheet.flatten(second.props.style).color).not.toBe(C.accentInk);
   });
 
   it('"All from this merchant" files the whole merchant (applyCategory("all"))', async () => {

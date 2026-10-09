@@ -1,7 +1,7 @@
 // Screen test: the transaction row (feed + budget detail). Verifies the row
 // actually renders the label/amount/pending pill from transactionView and that
-// an uncategorized row is tappable (opens the categorize picker) while a
-// categorized one is not. Seeded from the QA "Automatable (UI)" feed scenarios.
+// an uncategorized row opens the categorize picker (WHIT-843: a categorized one opens
+// details — see whit843RowOpensDetails.screen.test.tsx). Seeded from the QA "Automatable (UI)" feed scenarios.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
@@ -67,13 +67,6 @@ it('an uncategorized row is labelled Uncategorized and opens the picker on tap',
   expect(label).toBeTruthy();
   fireEvent.press(label);
   expect(openPicker).toHaveBeenCalledWith('tx9');
-});
-
-it('a categorized row does not open the picker on tap', () => {
-  mockState = stateWith();
-  render(<TransactionRow t={txn({ transaction_id: 'tx1', category: 'coffee' })} category={mockState.category} />);
-  fireEvent.press(screen.getByText('Cafes & Coffee'));
-  expect(openPicker).not.toHaveBeenCalled();
 });
 
 // WHIT-272: the trailing chevron opens /transaction/[id]. It is a SEPARATE Pressable from the

@@ -2,7 +2,7 @@
 // screen and its data code over the pretend server (WHIT-686), with a seeded transaction;
 // ../context is partially mocked (real selectors, stubbed useAppContext so the edit action is a
 // spy); expo-router + safe-area stubbed. Verifies the note saves via an explicit Save button —
-// not on blur/unmount — tags add on submit/comma, duplicate tags are ignored, and a chip's ✕
+// not on blur (WHIT-843: leaving saves it, see whit843NoteSavedOnLeave) — tags add on submit/comma, duplicate tags are ignored, and a chip's ✕
 // removes it.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import { setParams, resetRouter } from './support/routerMock';
@@ -74,15 +74,6 @@ it('Save note is disabled (a no-op) when the note is unchanged', async () => {
   const save = screen.getByTestId('note-save');
   expect(save.props.accessibilityState).toMatchObject({ disabled: true });
   fireEvent.press(save);
-  expect(mockEdit).not.toHaveBeenCalled();
-});
-
-it('discards an unsaved note edit on unmount (leave-without-Save, like the form screens)', async () => {
-  // No auto-save on blur/unmount anymore: typing then leaving WITHOUT tapping Save must
-  // write nothing — matching the budget/goal/category edit screens.
-  const view = await draw();
-  fireEvent.changeText(screen.getByTestId('note-input'), 'edited');
-  view.unmount();
   expect(mockEdit).not.toHaveBeenCalled();
 });
 
@@ -229,7 +220,7 @@ it('keeps the manual toggle (and no read-only note) on a normal counted charge',
 });
 
 // WHIT-275 adversarial gaps — the edges the suite above misses: whitespace-only / bare-comma tag
-// submits are no-ops; leaving without Save discards an unsaved note; Save trims whitespace.
+// submits are no-ops; Save trims whitespace.
 it('does NOT commit a whitespace-only tag on submit', async () => { // [A16]
   await draw();
   const input = screen.getByTestId('tag-input');
@@ -245,8 +236,6 @@ it('does NOT commit a bare-comma tag input', async () => { // [A17]
   expect(mockEdit).not.toHaveBeenCalled();
 });
 
-// Note [A18]/[A19] (discard-on-unmount) intentionally NOT folded in: the survivor's
-// "discards an unsaved note edit on unmount" test above already covers both (WHIT-459).
 it('Save trims surrounding whitespace before persisting', async () => { // [A20]
   await draw();
   fireEvent.changeText(screen.getByTestId('note-input'), '  padded note  ');

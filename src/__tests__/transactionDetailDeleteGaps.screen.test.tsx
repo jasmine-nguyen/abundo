@@ -9,9 +9,10 @@ import { screen, fireEvent } from '@testing-library/react-native';
 import { txn } from './factory';
 
 const mockDeleteTransaction = jest.fn<(txId: string) => Promise<boolean>>();
+const mockEdit = jest.fn();
 jest.mock('../context', () =>
   require('./support/contextMock').realContextWith(() => ({
-    applyTransactionEdit: jest.fn(),
+    applyTransactionEdit: mockEdit,
     showToast: jest.fn(),
     openPicker: jest.fn(),
     deleteTransaction: mockDeleteTransaction,
@@ -41,6 +42,7 @@ beforeEach(() => {
   server.seed('/categories', [{ ...COFFEE_RECORD, parent: null }]);
   server.seed('/transactions/feed', { transactions: [txn({ transaction_id: 't1', category: 'coffee' })], nextCursor: null });
   mockDeleteTransaction.mockReset();
+  mockEdit.mockClear();
 });
 
 const draw = () => renderWithQueries(<TransactionDetail />);
@@ -125,6 +127,19 @@ it('deleting the ONLY cached charge never flashes the empty/loading states befor
   await refreshInAct(() => finish(true));
   expect(routerSpies.back).toHaveBeenCalledTimes(1);
   await refreshInAct(() => reload.release());
+});
+
+// WHIT-843: leaving saves an edited note, but not after a delete — the charge is gone.
+it('after a successful delete, leaving does not save an edited note', async () => {
+  mockDeleteTransaction.mockResolvedValue(true);
+  const view = await draw();
+  fireEvent.changeText(screen.getByTestId('note-input'), 'edited');
+
+  await refreshInAct(() => { openConfirm().confirm.onPress?.(); });
+  view.unmount();
+
+  expect(routerSpies.back).toHaveBeenCalledTimes(1);
+  expect(mockEdit).not.toHaveBeenCalled();
 });
 
 // [C6]
