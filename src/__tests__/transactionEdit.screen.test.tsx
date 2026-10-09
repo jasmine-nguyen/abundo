@@ -2,7 +2,7 @@
 // screen and its data code over the pretend server (WHIT-686), with a seeded transaction;
 // ../context is partially mocked (real selectors, stubbed useAppContext so the edit action is a
 // spy); expo-router + safe-area stubbed. Verifies the note saves via an explicit Save button —
-// not on blur/unmount — tags add on submit/comma, duplicate tags are ignored, and a chip's ✕
+// not on blur (WHIT-843: leaving the screen saves it) — tags add on submit/comma, duplicate tags are ignored, and a chip's ✕
 // removes it.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import { setParams, resetRouter } from './support/routerMock';
@@ -77,13 +77,25 @@ it('Save note is disabled (a no-op) when the note is unchanged', async () => {
   expect(mockEdit).not.toHaveBeenCalled();
 });
 
-it('discards an unsaved note edit on unmount (leave-without-Save, like the form screens)', async () => {
-  // No auto-save on blur/unmount anymore: typing then leaving WITHOUT tapping Save must
-  // write nothing — matching the budget/goal/category edit screens.
+// WHIT-843 (decision A): leaving saves an edited note once with the LATEST text (typed twice, so a
+// save using the first-render text would fail); an unchanged note writes nothing on leave.
+it.each([
+  { case: 'an edited note is saved once with the latest text', typed: ['first draft', 'latest note'], saved: 'latest note' },
+  { case: 'an unchanged note is not saved', typed: [], saved: null },
+])('leaving the details screen: $case', async ({ typed, saved }) => {
   const view = await draw();
-  fireEvent.changeText(screen.getByTestId('note-input'), 'edited');
+  for (const text of typed) fireEvent.changeText(screen.getByTestId('note-input'), text);
+
   view.unmount();
-  expect(mockEdit).not.toHaveBeenCalled();
+
+  if (saved === null) {
+    expect(mockEdit).not.toHaveBeenCalled();
+    expect(mockToast).not.toHaveBeenCalled();
+    return;
+  }
+  expect(mockEdit).toHaveBeenCalledTimes(1);
+  expect(mockEdit).toHaveBeenCalledWith('t1', { notes: saved });
+  expect(mockToast).toHaveBeenCalledWith('Note saved'); // [A1] sign-off Q1: say it was saved
 });
 
 it('saves the note exactly once per Save tap', async () => {
@@ -229,7 +241,7 @@ it('keeps the manual toggle (and no read-only note) on a normal counted charge',
 });
 
 // WHIT-275 adversarial gaps — the edges the suite above misses: whitespace-only / bare-comma tag
-// submits are no-ops; leaving without Save discards an unsaved note; Save trims whitespace.
+// submits are no-ops; Save trims whitespace.
 it('does NOT commit a whitespace-only tag on submit', async () => { // [A16]
   await draw();
   const input = screen.getByTestId('tag-input');
@@ -245,8 +257,6 @@ it('does NOT commit a bare-comma tag input', async () => { // [A17]
   expect(mockEdit).not.toHaveBeenCalled();
 });
 
-// Note [A18]/[A19] (discard-on-unmount) intentionally NOT folded in: the survivor's
-// "discards an unsaved note edit on unmount" test above already covers both (WHIT-459).
 it('Save trims surrounding whitespace before persisting', async () => { // [A20]
   await draw();
   fireEvent.changeText(screen.getByTestId('note-input'), '  padded note  ');

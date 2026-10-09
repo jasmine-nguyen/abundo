@@ -229,8 +229,7 @@ describe('spread this bill prompt', () => {
     server.seed('/budgets', { coffee: rollup({ target: 100, posted: 130, pending: 0 }) });  // over by 30 → start
     await draw();
 
-    fireEvent.press(screen.getByTestId('transaction-spread'));
-    expect(screen.getByText('Spread a bill in this category')).toBeTruthy();
+    fireEvent.press(screen.getByRole('button', { name: 'Spread a bill in this category' }));
     expect(routerSpies.push).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=30');
   });
 
