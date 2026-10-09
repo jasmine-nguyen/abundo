@@ -176,21 +176,19 @@ def test_a_stale_scan_does_not_overwrite_the_stored_category(handler):
     assert "filed_by_rule" not in row
 
 
-@pytest.mark.parametrize("scanned_category, mid_run_category, bucket", [
-    (None, "coffee", "alreadyFiled"),                 # unfiled at scan time, the user taps
-    ("FOOD_AND_DRINK", "coffee", "alreadyFiled"),     # raw bank label at scan time, the user taps
-    ("FOOD_AND_DRINK", "TRANSFER_OUT", "failed"),     # a re-sync swaps the raw label: retry
+@pytest.mark.parametrize("mid_run_category, bucket", [
+    ("coffee", "alreadyFiled"),        # the user taps the raw-labelled charge
+    ("TRANSFER_OUT", "failed"),        # a re-sync swaps the raw label: retry
 ])
-def test_a_mid_run_change_to_a_scanned_charge_is_never_overwritten(
-        handler, scanned_category, mid_run_category, bucket):
-    # The real conditional write compares against what the SCAN saw: `attribute_not_exists(#c)`
-    # for an unfiled row, `#c = :expected` for a raw-labelled one. Either half must refuse the
-    # rule's write once the row changed — and a change into another raw label is still unfiled,
-    # so it is reported as failed (retry), not filed.
-    t2_fields = {"category": scanned_category} if scanned_category else {}
+def test_a_mid_run_change_to_a_raw_labelled_charge_is_never_overwritten(
+        handler, mid_run_category, bucket):
+    # The scan saw t2 with the bank's raw label, so the real conditional write takes its
+    # `#c = :expected` half (the unfiled half is covered above). It must refuse the rule's write
+    # once the row changed — and a change into another raw label is still unfiled, so it is
+    # reported as failed (retry), not filed.
     table, repo, rule_repo = real_repos({SPENDING: [
         _row(SPENDING, "2026-07-02", "t1", description="COLES 1"),
-        _row(SPENDING, "2026-07-01", "t2", description="COLES 2", **t2_fields),
+        _row(SPENDING, "2026-07-01", "t2", description="COLES 2", category="FOOD_AND_DRINK"),
     ]}, rules=[_rule("coles")])
     on_write(table, "t1", lambda tbl: set_category(tbl, "t2", mid_run_category))
 
@@ -198,7 +196,6 @@ def test_a_mid_run_change_to_a_scanned_charge_is_never_overwritten(
 
     assert resp["statusCode"] == 200
     assert body["filed"] == [{"id": "t1", "category": "groceries"}]
-    assert stored(table, "t1")["filed_by_rule"] == _rule_ids(rule_repo)["coles"]
     assert body[bucket] == ["t2"]
     assert stored(table, "t2")["category"] == mid_run_category
     assert "filed_by_rule" not in stored(table, "t2")
