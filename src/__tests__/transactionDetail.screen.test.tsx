@@ -246,7 +246,7 @@ describe('spread this bill prompt', () => {
   it('active plan → shows "Edit or remove" and routes with NO prefill (never a second plan)', async () => {
     seedSpend();
     server.seed('/budgets', {
-      coffee: rollup(budgetRow({ target: 100, posted: 0, pending: 0, spread: { amount: 200, cycles: 4, index: 1, adjustment: -50 } })),
+      coffee: budgetRow({ target: 100, posted: 0, pending: 0, spread: { amount: 200, cycles: 4, index: 1, adjustment: -50 } }),
     });
     await draw();
 
