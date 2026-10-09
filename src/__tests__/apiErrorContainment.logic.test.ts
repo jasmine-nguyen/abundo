@@ -1,6 +1,6 @@
-// WHIT-437 / WHIT-631 — [A10][A12] containment: `API error: N` stays byte-identical on every
-// endpoint. Which endpoints carry the server's reason (only the three category writes) is swept in
-// apiOneErrorStyle.logic.test.ts (WHIT-840).
+// WHIT-437 / WHIT-631 / WHIT-840 — [A10][A11][A12] containment: every endpoint rejects with an
+// ApiError, `failed()` (the server's reason) reaches only the three category writes, and
+// `API error: N` stays byte-identical on every endpoint.
 //
 // Nothing else stops a later edit from (a) folding the server's words INTO the message — which
 // would feed arbitrary server text to src/queryClient.ts's /\b40[13]\b/ auth-retry match and to
@@ -14,6 +14,7 @@ jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule());
 import { getAuthToken } from '../auth';
 import * as api from '../api';
 import { ApiError } from '../apiError';
+import { REASON_ENDPOINTS } from './support/apiWire';
 
 const mockGetAuthToken = getAuthToken as jest.MockedFunction<typeof getAuthToken>;
 let fetchMock: jest.Mock;
@@ -126,6 +127,14 @@ describe('[A10] every endpoint keeps the byte-identical `API error: N`', () => {
     // The message must NOT have grown the body. queryClient's /\b40[13]\b/ runs over exactly this.
     expect((error as Error).message).toBe(`API error: ${STATUS}`);
     expect((error as Error).message).not.toContain(LEAK);
+  });
+});
+
+describe('[A11] every failure is an ApiError; only the reason endpoints carry the server reason', () => {
+  it.each(NAMES)('%s', async (name) => {
+    const error = (await CALLS[name]().then(() => null, (e: unknown) => e)) as ApiError;
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.serverMessage).toBe(REASON_ENDPOINTS.includes(name) ? LEAK : null);
   });
 });
 

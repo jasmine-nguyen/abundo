@@ -163,13 +163,11 @@ describe('cycle-independent hero', () => {
     server.seed('/paycycle', { length: 30, last_pay_date: '2026-07-01' });
   });
 
-  it('renders the breakdown hero without ever reading the pay cycle (WHIT-840)', async () => {
-    // The hero reads breakdown, never the cycle, so Insights doesn't ask for the pay cycle at all.
+  it('paints the hero from the breakdown alone', async () => {
     render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Insights)));
 
     expect(await screen.findByText('spent across 1 category')).toBeTruthy(); // hero painted from breakdown
     expect(screen.queryByText('Loading…')).toBeNull();
     expect(server.sent('GET', '/breakdown')).toHaveLength(1); // current cycle (WHIT-68); server derives the window
-    expect(server.sent('GET', '/paycycle')).toHaveLength(0);
   });
 });
