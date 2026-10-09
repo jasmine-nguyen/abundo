@@ -20,19 +20,9 @@ from functools import partial
 import pytest
 
 from _api_event import api_event
-from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo, _SpendCategoryRepo, _spend_cat
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo, _SpendCategoryRepo, _put_budget_event, _spend_cat
 from _budget_fakes import recording_budget_repo
 from _transaction_range_fakes import _DateFilteringTransactionRepo, _QueuedTransactionRepo
-
-
-def _put_budget_event(category="coffee", body='{"target": 58}', is_b64=False):
-    return api_event(
-        "PUT",
-        f"/budgets/{category}",
-        raw=body,
-        path_params={"category": category},
-        is_base64=is_b64,
-    )
 
 
 # --- handler-level: PUT /budgets/{category} ----------------------------------

@@ -17,8 +17,7 @@ from functools import partial
 
 import pytest
 
-from _api_event import api_event
-from _budget_endpoint_fakes import CYCLE_START, LENGTH, PAYDATE, _FakeCategoryRepo, _FakePayCycleRepo, pin_cycle_window
+from _budget_endpoint_fakes import CYCLE_START, LENGTH, PAYDATE, _FakeCategoryRepo, _FakePayCycleRepo, _put_budget_event, _spend_cat, pin_cycle_window
 from _budget_fakes import recording_budget_repo
 from _lambda_api_constants import constants_namespace
 from _transaction_range_fakes import _QueuedTransactionRepo
@@ -39,10 +38,6 @@ def _txn(category, amount, date, status="posted", counts=True):
             "date": date, "counts_to_budget": counts}
 
 
-def _spend_cat(cat_id="sink", bucket="Lifestyle", parent=None):
-    return [{"id": cat_id, "bucket": bucket, "parent": parent}]
-
-
 def _entry(target, **extra):
     entry = {"target": Decimal(str(target)), "rollover": True,
              "carryover_len": Decimal(LENGTH), "carryover_paydate": PAYDATE}
@@ -58,7 +53,7 @@ def test_empty_cycles_accumulate_into_the_buffer_and_seal_the_settled_ones(handl
     # older than the 10-day lag -> sealed (200); the most recent completed cycle is still live
     # (+100). Displayed carryover = 300; the seal advances the anchor past the two sealed cycles.
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-08")})
-    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat()))
+    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
     assert result["sink"]["rollover"] is True
     assert result["sink"]["carryover"] == Decimal(300)
@@ -76,7 +71,7 @@ def test_overspend_in_the_live_cycle_carries_as_a_negative_buffer_without_sealin
     # live as a -50 buffer. Nothing seals, so the anchor doesn't move and no settle is written.
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-07-07")})
     txns = _QueuedTransactionRepo([_txn("sink", -150, "2026-07-20")])  # in the completed (unsealed) cycle
-    result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat()))
+    result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
     assert result["sink"]["carryover"] == Decimal(-50)
     # The widened fetch is sliced back to the current cycle for posted/pending: the prior-cycle
@@ -96,7 +91,7 @@ def test_a_pay_cycle_length_change_freezes_the_buffer_and_re_anchors(handler):
         "target": Decimal(100), "rollover": True, "carryover": Decimal(40),
         "carryover_from": "2026-05-08", "carryover_len": Decimal(14), "carryover_paydate": PAYDATE,
     }})
-    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat()))
+    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
     assert result["sink"]["carryover"] == Decimal(40)   # frozen, not re-folded
     assert budget_repo.settle_calls == [("sink", Decimal(40), CYCLE_START, LENGTH, PAYDATE)]
@@ -111,7 +106,7 @@ def test_rollover_flag_on_a_re_bucketed_income_category_is_ignored(handler):
     # nothing is sealed — earnings must never fold into a spend buffer.
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-08")})
     result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(),
-                                  _FakeCategoryRepo(_spend_cat(bucket="Income")))
+                                  _FakeCategoryRepo(_spend_cat("sink", "Income")))
 
     assert "rollover" not in result["sink"]
     assert "carryover" not in result["sink"]
@@ -126,7 +121,7 @@ def test_a_failed_settle_write_never_500s_the_read(handler):
     # still computed and returned (it just re-seals on the next read).
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-05-08")})
     budget_repo._table.fail("update_item")
-    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat()))
+    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
     assert result["sink"]["carryover"] == Decimal(300)   # displayed regardless of the write
     assert budget_repo.settle_calls != []                # it did attempt the write
@@ -138,7 +133,7 @@ def test_settlement_is_bounded_by_the_max_lookback_cap(handler):
     # for the cold-start bound: without the cap this would read 2000.
     old_anchor = "2025-01-09"  # ~20 monthly cycles before 2026-08-06
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from=old_anchor)})
-    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat()))
+    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
     assert result["sink"]["carryover"] == Decimal(1200)
 
@@ -158,7 +153,7 @@ def test_the_lag_cutoff_seals_only_cycles_ending_strictly_before_it(handler, mon
     pin_cycle_window(handler, monkeypatch, "2026-08-06", today)
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-07-07")})
     result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(), FakePayCycleRepo(),
-                                  _FakeCategoryRepo(_spend_cat()))
+                                  _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
     assert result["sink"]["carryover"] == Decimal(100)
     assert budget_repo.settle_calls == settle_calls
@@ -174,7 +169,7 @@ def test_a_parents_sealed_leftover_folds_child_spend_across_the_subtree(handler,
     # window does. Fail-on-revert: sealing on {parent} only would read 100 sealed / carryover 200.
     pin_cycle_window(handler, monkeypatch, "2026-08-06", "2026-08-10")   # cutoff 2026-07-31
     budget_repo = recording_budget_repo({"food": _entry(100, carryover=Decimal(0), carryover_from="2026-06-07")})
-    cats = _FakeCategoryRepo(_spend_cat("food") + _spend_cat("dining", parent="food"))
+    cats = _FakeCategoryRepo(_spend_cat("food", "Lifestyle") + _spend_cat("dining", "Lifestyle", parent="food"))
     # dining spend lands in the sealed cycle [2026-06-07, 2026-07-06]; the live cycle is empty.
     txns = _QueuedTransactionRepo([_txn("dining", -30, "2026-06-20")])
     result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), cats)
@@ -196,7 +191,7 @@ def test_a_refund_in_a_sealed_cycle_cannot_push_leftover_above_target(handler, m
     budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-06-07")})
     # +50 amount with the default spend sign is a refund (negative contribution) in the sealed cycle.
     txns = _QueuedTransactionRepo([_txn("sink", 50, "2026-06-20")])
-    result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat()))
+    result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
     assert result["sink"]["carryover"] == Decimal(200)   # sealed 100 (capped) + live 100, NOT 250
     assert budget_repo.settle_calls == [("sink", Decimal(100), "2026-07-07", LENGTH, PAYDATE)]
@@ -220,7 +215,7 @@ def test_a_transaction_dated_exactly_on_cycle_start_is_current_not_sealed(handle
         _txn("sink", -25, "2026-06-20"),   # sealed cycle [2026-06-07, 2026-07-06]
         _txn("sink", -40, "2026-08-06"),   # exactly cycle_start -> current
     ])
-    result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat()))
+    result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), _FakeCategoryRepo(_spend_cat("sink", "Lifestyle")))
 
     assert result["sink"]["posted"] == Decimal(40)       # ONLY the cycle_start spend, not the past 25
     # sealed cycle leftover 100-25=75, live cycle empty +100 -> carryover 175.
@@ -231,16 +226,6 @@ def test_a_transaction_dated_exactly_on_cycle_start_is_current_not_sealed(handle
 # --- PUT /budgets rollover: anchor + validation gaps -------------------------
 
 
-def _put_budget_event(category="coffee", body=None):
-    return api_event(
-        "PUT",
-        f"/budgets/{category}",
-        raw=body if body is not None else '{"target": 60}',
-        path_params={"category": category},
-        is_base64=False,
-    )
-
-
 def test_turning_rollover_on_for_an_existing_budget_re_anchors_to_the_current_cycle(handler, monkeypatch):
     # OFF -> ON must (re)start accumulation at the current cycle: set_budget receives an anchor
     # carrying the CURRENT cycle_start + the live pay-cycle length/payday. Fail-on-revert:
@@ -248,7 +233,7 @@ def test_turning_rollover_on_for_an_existing_budget_re_anchors_to_the_current_cy
     pin_cycle_window(handler, monkeypatch, "2026-08-06", "2026-08-10")
     repo = recording_budget_repo({"coffee": {"target": Decimal(50)}})   # exists, rollover OFF/unset
     resp = handler.set_budget(_put_budget_event(body='{"target": 60, "rollover": true}'),
-                              repo, _FakeCategoryRepo(_spend_cat("coffee")), FakePayCycleRepo())
+                              repo, _FakeCategoryRepo(_spend_cat("coffee", "Lifestyle")), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert repo.set_kwargs["rollover"] is True
@@ -264,7 +249,7 @@ def test_an_amount_edit_while_rollover_already_on_does_not_re_anchor(handler, mo
     pin_cycle_window(handler, monkeypatch, "2026-08-06", "2026-08-10")
     repo = recording_budget_repo({"coffee": {"target": Decimal(50), "rollover": True}})
     resp = handler.set_budget(_put_budget_event(body='{"target": 75, "rollover": true}'),
-                              repo, _FakeCategoryRepo(_spend_cat("coffee")), FakePayCycleRepo())
+                              repo, _FakeCategoryRepo(_spend_cat("coffee", "Lifestyle")), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert repo.set_kwargs["rollover"] is True
@@ -275,7 +260,7 @@ def test_rollover_true_on_an_income_category_is_rejected_400(handler):
     # Rollover is spend-only: rollover:true on an Income earn-target is a 400 and is never written.
     repo = recording_budget_repo({})
     resp = handler.set_budget(_put_budget_event(body='{"target": 60, "rollover": true}'),
-                              repo, _FakeCategoryRepo(_spend_cat("coffee", bucket="Income")), FakePayCycleRepo())
+                              repo, _FakeCategoryRepo(_spend_cat("coffee", "Income")), FakePayCycleRepo())
 
     assert resp["statusCode"] == 400
     assert repo.set_calls == []
@@ -285,7 +270,7 @@ def test_a_non_boolean_rollover_is_rejected_before_any_taxonomy_read(handler):
     # rollover must be a real bool — a truthy string like "yes" must 400, not be stored as-is.
     # The type check runs before the bucket read, so the taxonomy is never fetched.
     repo = recording_budget_repo({})
-    cats = _FakeCategoryRepo(_spend_cat("coffee"))
+    cats = _FakeCategoryRepo(_spend_cat("coffee", "Lifestyle"))
     resp = handler.set_budget(_put_budget_event(body='{"target": 60, "rollover": "yes"}'),
                               repo, cats, FakePayCycleRepo())
 
@@ -299,7 +284,7 @@ def test_explicit_rollover_false_is_forwarded_and_freezes_without_an_anchor(hand
     # wouldn't flip off.
     repo = recording_budget_repo({"coffee": {"target": Decimal(50), "rollover": True, "carryover": Decimal(40)}})
     resp = handler.set_budget(_put_budget_event(body='{"target": 50, "rollover": false}'),
-                              repo, _FakeCategoryRepo(_spend_cat("coffee")), FakePayCycleRepo())
+                              repo, _FakeCategoryRepo(_spend_cat("coffee", "Lifestyle")), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert repo.set_kwargs["rollover"] is False
