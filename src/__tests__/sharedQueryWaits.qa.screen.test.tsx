@@ -44,7 +44,7 @@ describe('shared query waits (QA)', () => {
     await waiting;
     expect(done).toBe(true);
     expect(queryClient.isFetching()).toEqual(0);
-    expect(await screen.findByText('Groceries')).toBeTruthy();
+    expect(screen.getByText('Groceries')).toBeTruthy();
   });
 
   // [A2] loaded(key) must not return while that query is still loading.
