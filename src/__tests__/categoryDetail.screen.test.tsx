@@ -18,7 +18,6 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 jest.mock('../context', () =>
   require('./support/contextMock').realContextWith(() => ({ openPicker: jest.fn(), category: () => undefined })),
 );
-jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import CategoryDetail from '../../app/category/[id]';
 import { COFFEE_RECORD } from './support/categories';

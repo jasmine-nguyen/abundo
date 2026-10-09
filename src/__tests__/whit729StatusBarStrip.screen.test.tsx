@@ -9,7 +9,7 @@ import { render } from '@testing-library/react-native';
 import { C } from '../theme';
 import { styleOf } from './support/layout';
 
-jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 47, right: 0, bottom: 34, left: 0 }) }));
+jest.mock('react-native-safe-area-context', () => require('./support/safeAreaMock').safeAreaMockModule({ top: 47, bottom: 34 }));
 
 import { ScrollChromeHeader } from '../motion/ScrollChromeHeader';
 
