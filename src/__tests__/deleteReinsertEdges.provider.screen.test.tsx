@@ -3,7 +3,7 @@
 // failed goal deletes; a MIX of one succeeding + one failing (successful one stays gone,
 // failed one lands in the right slot AND the boolean returns are honoured); a failed delete
 // of the only element restores [x]; deleteGoal false-on-failure; a toast surfaces on failure;
-// and the deleteRule cache-evicted-mid-flight asymmetry vs deleteGoal's `prev ?? []`.
+// and a cache evicted mid-flight stays empty for both deleteGoal and deleteRule (WHIT-833).
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
@@ -82,40 +82,36 @@ describe('deleteGoal — failure edges', () => {
     expect(goalIds()).toEqual(['g1']);
     expect(result.current.toast).toBe('Could not delete goal. Please try again.');
   });
-
-  it('restores the removed goal even if the goals cache is EVICTED mid-flight (prev ?? [])', async () => {
-    // Held reply so we can wipe the cache between the optimistic remove and the rollback.
-    const held = server.hold('/goals/g1');
-    queryClient.setQueryData<GoalRecord[]>(['goals'], [goal('g1'), goal('g2')]);
-    const result = mountAppContext();
-    let p!: Promise<boolean>;
-    act(() => { p = result.current.deleteGoal('g1'); });      // optimistic remove -> [g2]
-    await refreshInAct(() => queryClient.removeQueries({ queryKey: ['goals'] })); // cache evicted mid-flight
-    await act(async () => {
-      held.fail('DELETE', { status: 500 });
-      await p;
-    });
-    // deleteGoal's `prev ?? []` still rebuilds a list holding the removed goal.
-    expect(goalIds()).toEqual(['g1']);
-  });
 });
 
-describe('deleteRule — cache evicted mid-flight is a NO-OP (asymmetry vs deleteGoal)', () => {
-  it('patchRules drops the rollback when the rules cache was evicted, losing the rule', async () => {
-    // Documents the current behaviour: patchRules is `prev ? fn(prev) : prev`, so a rollback
-    // against an evicted (undefined) cache is silently skipped — the failed rule delete is NOT
-    // restored. deleteGoal recovers here; deleteRule does not. Flagged in the critique.
-    const held = server.hold('/rules/r1');
-    queryClient.setQueryData<Rule[]>(['rules'], [rule('r1'), rule('r2')]);
+// WHIT-833 decision A: one shared delete-with-rollback. If the list's cache was evicted
+// mid-delete, a failed delete does NOT rebuild a partial list — the cache stays empty and
+// the list reloads fresh from the server next time it's opened. Same for goals and rules.
+describe('failed delete with the cache EVICTED mid-flight leaves the cache empty', () => {
+  it.each([
+    {
+      name: 'deleteGoal', path: '/goals/g1', key: ['goals'], ids: goalIds,
+      seed: () => queryClient.setQueryData<GoalRecord[]>(['goals'], [goal('g1'), goal('g2')]),
+      run: (ctx: ReturnType<typeof useAppContext>) => ctx.deleteGoal('g1'),
+    },
+    {
+      name: 'deleteRule', path: '/rules/r1', key: ['rules'], ids: ruleIds,
+      seed: () => queryClient.setQueryData<Rule[]>(['rules'], [rule('r1'), rule('r2')]),
+      run: (ctx: ReturnType<typeof useAppContext>) => ctx.deleteRule('r1'),
+    },
+  ])('$name does not put the item back into an evicted cache', async ({ path, key, ids, seed, run }) => {
+    // Held reply so we can wipe the cache between the optimistic remove and the rollback.
+    const held = server.hold(path);
+    seed();
     const result = mountAppContext();
-    let p!: Promise<void>;
-    act(() => { p = result.current.deleteRule('r1'); });
-    await refreshInAct(() => queryClient.removeQueries({ queryKey: ['rules'] }));
+    let p!: Promise<unknown>;
+    act(() => { p = run(result.current); });
+    await refreshInAct(() => queryClient.removeQueries({ queryKey: key }));
     await act(async () => {
       held.fail('DELETE', { status: 500 });
       await p;
     });
-    expect(ruleIds()).toBeUndefined(); // rule NOT restored — cache stays evicted
+    expect(ids()).toBeUndefined();
   });
 });
 
