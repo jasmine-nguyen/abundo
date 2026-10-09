@@ -79,6 +79,7 @@ module.exports = {
       // `logic` project keeps the 5s default. Fail-on-revert: drop/lower the setup line and the
       // heavy screen suites red under the sharded coverage run
       // (scripts/coverage-run-local.sh: `jest --selectProjects screen --shard=… --coverage`).
+      // WHIT-842: the 5s default for waitFor/findBy* (asyncUtilTimeout) also lives in jest.setup.js.
     },
   ],
 };

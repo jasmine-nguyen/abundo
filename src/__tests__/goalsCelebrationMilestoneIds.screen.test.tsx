@@ -102,7 +102,7 @@ describe('Goals celebrations remember which milestones were reached (WHIT-811)',
 
     expect(await screen.findByTestId('checkpoint-celebration-label')).toHaveTextContent(/^Holiday · /);
     // The banner stays 2.4s, then the queued one shows.
-    expect(await screen.findByText(/Bike · goal reached/, {}, { timeout: 4000 })).toBeTruthy();
+    expect(await screen.findByText(/Bike · goal reached/)).toBeTruthy();
   }, 10000);
 
   it('an old count-style saved copy switches over silently (all currently reached counts as seen)', async () => {

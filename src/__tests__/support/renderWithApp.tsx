@@ -5,7 +5,7 @@
 import React, { useEffect } from 'react';
 import { render } from '@testing-library/react-native';
 import { AppProvider, useAppContext, type Sheet } from '../../context';
-import { WithQueries, refreshInAct, settle } from './renderWithQueries';
+import { WithQueries, settle } from './renderWithQueries';
 
 let toasts: string[] = [];
 let sheet: Sheet = null;
@@ -48,6 +48,5 @@ export function WithApp({ children }: { children: React.ReactNode }) {
 export async function renderWithApp(ui: React.ReactElement) {
   const view = render(<WithApp>{ui}</WithApp>);
   await settle();
-  await refreshInAct(() => undefined);
   return view;
 }

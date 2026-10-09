@@ -183,7 +183,7 @@ it('swaps the button for a spinner while the next page is loading', async () => 
   expect(screen.queryByTestId('transactions-load-more')).toBeNull(); // button hidden while loading
   held.release();
   await settle();
-  expect(await screen.findByText('-$7.00', {}, { timeout: 3000 })).toBeTruthy(); // page 2 is in
+  expect(await screen.findByText('-$7.00')).toBeTruthy(); // page 2 is in
   expect(screen.queryByTestId('transactions-load-more-spinner')).toBeNull();
 });
 

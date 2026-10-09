@@ -40,7 +40,7 @@ describe('shared query waits (QA)', () => {
     expect(done).toBe(false);
     expect(queryClient.isFetching()).toBeGreaterThan(0);
 
-    await refreshInAct(() => held.release());
+    held.release(); // settle() flushes the redraw itself; a second act here would overlap it (WHIT-842)
     await waiting;
     expect(done).toBe(true);
     expect(queryClient.isFetching()).toEqual(0);

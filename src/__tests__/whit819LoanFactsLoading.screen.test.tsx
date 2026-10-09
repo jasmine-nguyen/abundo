@@ -94,7 +94,6 @@ it('Retry after a failed facts read brings back the real Home loan card and the 
   const mortgage = await renderWithQueries(<Mortgage />);
   await act(async () => { fireEvent.press(screen.getByTestId('hero-facts-retry')); });
   await settle();
-  await refreshInAct(() => undefined);
   expect(screen.queryByTestId('hero-facts-retry')).toBeNull();
   expect(screen.getByText("We'll show your payoff progress once your balance loads.")).toBeTruthy();
   mortgage.unmount();
