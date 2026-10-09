@@ -1,19 +1,19 @@
-import { useCallback, useEffect } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useCallback } from 'react';
+import { useMutation, useMutationState, useQueryClient } from '@tanstack/react-query';
 import { generateAiInsights, type AiGoalSignal } from '../api';
-import { getStatus, subscribe } from '../auth';
 import { useAppContext } from '../context';
 import { aiInsightsKey, useAiInsightsQuery, useIsAuthed } from '../queries';
 
 // AI spending insights (WHIT-104, WHIT-833). `refresh` re-reads the per-cycle cache (free, silent on
 // failure — the shown summary stays); `generate` is the paid "Analyse my spending" action. `isError`
 // is true only when the last GENERATE failed, so the button can offer a retry. `goal` is passed in at
-// tap time, so it's never stale. queryClient.clear() wipes the summary on sign-out.
+// tap time, so it's never stale. queryClient.clear() on sign-out wipes the summary AND the runs.
 export function useAiInsights() {
   const queryClient = useQueryClient();
   const query = useAiInsightsQuery(useIsAuthed());
   const { getSessionEpoch } = useAppContext();
-  const mutation = useMutation({
+  const { mutateAsync } = useMutation({
+    mutationKey: aiInsightsKey,
     mutationFn: (goal?: AiGoalSignal | null) => generateAiInsights(goal),
     onMutate: () => getSessionEpoch(),
     // WHIT-268: a reply landing after sign-out is dropped, even if a new session is already live.
@@ -23,15 +23,14 @@ export function useAiInsights() {
       queryClient.setQueryData(aiInsightsKey, result);
     },
   });
-
-  // Sign-out drops the spinner / retry state; a late settle of the old run can't touch it after.
-  const { reset } = mutation;
-  useEffect(() => subscribe(() => { if (getStatus() === 'anon') reset(); }), [reset]);
+  // The spinner / retry state is read from the shared run list, not this component's own run, so it
+  // survives the coach card unmounting (the cycle toggle) mid-analyse.
+  const statuses = useMutationState({ filters: { mutationKey: aiInsightsKey }, select: (mutation) => mutation.state.status });
+  const lastStatus = statuses[statuses.length - 1];
 
   const { refetch } = query;
   const refresh = useCallback(() => refetch({ cancelRefetch: false }), [refetch]);
-  const { mutateAsync } = mutation;
   const generate = useCallback((goal?: AiGoalSignal | null) => mutateAsync(goal).then(() => {}, () => {}), [mutateAsync]);
 
-  return { insights: query.data ?? null, isLoading: mutation.isPending, isError: mutation.isError, generate, refresh };
+  return { insights: query.data ?? null, isLoading: lastStatus === 'pending', isError: lastStatus === 'error', generate, refresh };
 }
