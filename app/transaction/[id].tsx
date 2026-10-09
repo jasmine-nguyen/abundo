@@ -362,7 +362,7 @@ function NoteAndTagsEditor({ transaction, deleting }: { transaction: Transaction
             <Text style={styles.tagText}>{tag}</Text>
             <Pressable
               onPress={() => removeTag(tag)}
-              hitSlop={14}
+              hitSlop={{ top: 14, bottom: 14, left: 17, right: 17 }}
               accessibilityRole="button"
               accessibilityLabel={`Remove tag ${tag}`}
             >
