@@ -9,16 +9,42 @@ never checks IAM, so nothing in the suite noticed.
 Static: parses terraform/iam.tf and AST-scans lambda_sync_trigger/pending_mirror.py and
 shared/repository_transaction.py. Imports neither (they need env + boto3 at load).
 
-The category repository is left out on purpose: the mirror only reads categories, and the
-read path never writes.
+The category repository is left out of the scan on purpose: the mirror only reads categories,
+and the read path never writes.
+
+Below the scan, the WHIT-678 live incident (Cettire + SP RUSHFASTERAU) is replayed through a
+FakeTable that enforces the trigger policy statement by statement.
 """
 
 import ast
+import importlib
 import pathlib
 import re
+from decimal import Decimal
 
-from _terraform import DYNAMODB_VERB_TO_ACTION, TERRAFORM_DIR, granted_dynamodb_actions, leading_keys, tf_block
+import pytest
+from _dynamo_fakes import FakeTable, _client_error
+from _pending_mirror_fakes import (
+    CETTIRE_NEW,
+    CETTIRE_OLD,
+    REISSUE_TODAY,
+    RUSH_NEW,
+    RUSH_OLD,
+    WESTPAC,
+    reissue_bank_rows,
+    run_mirror,
+    unfiled_except,
+)
+from _terraform import (
+    DYNAMODB_VERB_TO_ACTION,
+    TERRAFORM_DIR,
+    allows,
+    granted_dynamodb_actions,
+    policy_statements,
+    tf_block,
+)
 
+POLICY = "transaction_trigger_dynamodb"
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _IAM = TERRAFORM_DIR / "iam.tf"
 _MIRROR = _REPO_ROOT / "lambda_sync_trigger" / "pending_mirror.py"
@@ -30,7 +56,7 @@ _INDIRECT_METHODS = {"get_transactions_by_date_range"}
 
 
 def _policy_block() -> str:
-    return tf_block(_IAM.read_text(), "aws_iam_role_policy", "transaction_trigger_dynamodb")
+    return tf_block(_IAM.read_text(), "aws_iam_role_policy", POLICY)
 
 
 def _repository_methods() -> dict[str, ast.FunctionDef]:
@@ -101,17 +127,13 @@ def _needed_actions() -> tuple[set[str], set[str]]:
     return called, needed
 
 
-def test_the_scan_finds_the_trigger_call_sites():
+def test_every_dynamodb_action_the_pending_mirror_needs_is_granted():
     called, needed = _needed_actions()
     assert len(called) >= 3, f"resolved too few repository methods: {sorted(called)}"
     assert {"UpdateItem", "DeleteItem", "BatchWriteItem", "Query"} <= needed, (
         f"the scan stopped seeing the mirror's DynamoDB calls: {sorted(needed)}"
     )
-
-
-def test_every_dynamodb_action_the_pending_mirror_needs_is_granted():
     granted = granted_dynamodb_actions(_policy_block())
-    _, needed = _needed_actions()
     missing = sorted(needed - granted)
     assert missing == [], (
         "the pending mirror's repository calls use DynamoDB actions the "
@@ -120,8 +142,97 @@ def test_every_dynamodb_action_the_pending_mirror_needs_is_granted():
     )
 
 
-def test_update_item_is_scoped_to_transaction_rows():
-    block = _policy_block()
-    assert leading_keys(block) == ["ACCOUNT#*"], (
-        "transaction_trigger_dynamodb has no dynamodb:LeadingKeys condition on UpdateItem")
-    assert '"ForAllValues:StringLike"' in block, "the ACCOUNT#* wildcard only matches under StringLike"
+# --- the trigger policy enforced against the mirror's real calls (WHIT-678 live incident) -------
+# A FakeTable that refuses, with AccessDenied, any call the trigger policy would refuse, including
+# the LeadingKeys scope.
+
+
+def _pk_of(operation, subject):
+    if operation == "query":
+        return None
+    return subject.get("pk")
+
+
+def _access_denied():
+    return _client_error("AccessDeniedException", "not authorized (trigger role)")
+
+
+def _enforce_trigger_policy(table: FakeTable) -> FakeTable:
+    statements = policy_statements(POLICY)
+    for operation, action in DYNAMODB_VERB_TO_ACTION.items():
+        table.fail(
+            operation,
+            error=_access_denied(),
+            when=lambda subject, operation=operation, action=action: not allows(
+                statements, action, _pk_of(operation, subject)),
+        )
+    return table
+
+
+@pytest.fixture
+def repo(layer):
+    repository = layer[0].TransactionRepository()
+    repository._table = _enforce_trigger_policy(FakeTable())
+    return repository
+
+
+def _row(transaction_id, description, amount, day="2026-09-30", **fields):
+    return {
+        "pk": f"ACCOUNT#{WESTPAC}",
+        "sk": f"TXN#{transaction_id}",
+        "transaction_id": transaction_id,
+        "account_id": WESTPAC,
+        "date": day,
+        "amount": Decimal(amount),
+        "description": description,
+        "merchant_name": "",
+        "status": "pending",
+        "category": "Unfiled",
+        **fields,
+    }
+
+
+_is_unfiled = unfiled_except("shopping", "clothing")
+
+
+def _seed_rush_and_cettire(repo, merchant):
+    rows = [
+        _row("old_cettire", CETTIRE_OLD, "-260.36", category="shopping", notes="The North Face Jacket"),
+        _row("new_cettire", CETTIRE_NEW, "-260.36", category="shopping", filed_by_rule="rule-1"),
+        _row("old_rush", RUSH_OLD, "-192.00", day="2026-09-29", category="shopping", notes="Patagonia Backpack"),
+        _row("new_rush", RUSH_NEW, "-192.00", category="shopping", filed_by_rule="rule-1"),
+    ]
+    for row in rows:
+        row["merchant_name"] = merchant.clean_merchant(row["description"], "")
+    repo._table.seed(*rows)
+
+
+def test_the_rush_and_cettire_doubles_are_removed_with_notes_kept_under_the_trigger_policy(layer, repo):
+    _, mirror = layer
+    _seed_rush_and_cettire(repo, importlib.import_module("merchant"))
+    bank = reissue_bank_rows("new_cettire", "new_rush")
+
+    result = run_mirror(mirror, repo, bank, _is_unfiled, REISSUE_TODAY)
+
+    assert result["failed"] == 0, f"a call was refused by the trigger policy (AccessDenied): {result}"
+    assert result["carried"] == 2
+    keys = {key[1] for key in repo._table.store}
+    assert keys == {"TXN#new_cettire", "TXN#new_rush"}
+    assert repo._table.store[(f"ACCOUNT#{WESTPAC}", "TXN#new_cettire")]["notes"] == "The North Face Jacket"
+    assert repo._table.store[(f"ACCOUNT#{WESTPAC}", "TXN#new_rush")]["notes"] == "Patagonia Backpack"
+
+
+def test_the_category_read_succeeds_under_the_trigger_policy_without_writing(layer):
+    repository_category = importlib.import_module("repository_category")
+    pending_carry = importlib.import_module("pending_carry")
+    category_repo = repository_category.CategoryRepository()
+    table = _enforce_trigger_policy(FakeTable())
+    table.seed({"pk": "CATEGORIES", "sk": "CATEGORIES",
+                "items": dict(repository_category.SEED_CATEGORIES), "version": Decimal(1)})
+    category_repo._table = table
+
+    is_unfiled = pending_carry.load_is_unfiled(category_repo)
+
+    assert table.update_keys == [], "a category read must not write"
+    assert is_unfiled("not-a-category")
+    assert not is_unfiled(next(iter(repository_category.SEED_CATEGORIES)))
