@@ -32,13 +32,17 @@ KKV_RULE = {"id": "r-kkv", "field": "description", "operator": "contains",
 SubscriptionCategories = partial(_FakeCategoryRepo, [{"id": "subscriptions"}])
 
 
-def multi_condition_rule(conditions, logic="all", category_id="transport", rule_id="m1"):
-    first = conditions[0]
-    return {"id": rule_id, "field": first["field"], "operator": first["operator"],
-            "value": first["value"], "category_id": category_id,
-            "conditions": conditions, "logic": logic}
-
 FakePaycycle = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-01-07")
+
+_MAPPED_ACCOUNT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
+
+
+def raw_charge(txn_id, *, description="COLES 123", category="FOOD_AND_DRINK", pending=False):
+    """A raw BankSync charge on the webhook's mapped ANZ account, as process_transaction receives it."""
+    return {"id": txn_id, "date": "2026-06-29", "authorizedDate": "2026-06-29",
+            "description": description, "merchantName": description, "amount": -12.50,
+            "accountId": _MAPPED_ACCOUNT, "accountName": "ANZ Rewards", "category": category,
+            "pending": pending, "type": "PAYMENT", "pendingTransactionId": None}
 
 
 def apply_rules(rule_ingest, rows, *, rule_repo, category_repo):
@@ -56,3 +60,13 @@ def apply_rules_to_uncategorized(handler, event, transaction_repo, category_repo
     """The API's rules sweep with idle spread stores, for tests that don't look at spreading."""
     return handler.apply_rules_to_uncategorized(
         event, transaction_repo, category_repo, rule_repo, budget_repo(), FakePaycycle())
+
+
+def wire_rule_filing(lam, monkeypatch, rules, categories):
+    """The webhook handler with these rules and categories, and the budget-alert snapshot
+    neutralised so a test sees only rule filing and reconcile."""
+    handler = lam.handler
+    monkeypatch.setattr(handler, "RuleRepository", lambda: FakeRuleStore(rules))
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(categories))
+    monkeypatch.setattr(handler.budget_alerts, "capture_pre_write", lambda *a, **k: None)
+    return handler

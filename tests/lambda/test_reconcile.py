@@ -76,6 +76,9 @@ def test_twin_under_the_posted_rows_own_key_is_kept_not_deleted(lam, repo):
     # deleting the "stale" twin would delete the settled charge itself.
     _seed_pending(repo, lam, txn_id="SAME", amount=Decimal("-5.50"), pending=True, category="coffee")
     posted = _norm(lam, txn_id="SAME", amount=Decimal("-5.50"), pending=False)
+    # A stale read misses the stored row, so the twin comes from the pending pool and
+    # reaches the settle step instead of an in-place update.
+    repo.get_transaction = lambda pk, sk, consistent=False: None
 
     repo.insert_or_reconcile([posted])
 

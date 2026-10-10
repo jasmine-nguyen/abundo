@@ -15,7 +15,7 @@ from decimal import Decimal
 from _dynamo_fakes import FakeTable
 from _feed_fakes import FakeCategoryRepo
 from _category_fakes import budget_repo, stored_budgets
-from _rule_ingest_fakes import FakePaycycle, FakeRuleStore, apply_rules
+from _rule_ingest_fakes import FakePaycycle, FakeRuleStore, apply_rules, raw_charge, wire_rule_filing
 
 
 def _rule(value, category_id="groceries", *, field="description", operator="contains", rule_id=None,
@@ -143,16 +143,6 @@ def test_two_deliveries_over_the_same_store_seed_once(lam):
 # --- through process_transaction: wiring + order + carry-wins -----------------
 
 
-_MAPPED_ACCOUNT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
-
-
-def _raw(txn_id, *, description="COLES 123", category="FOOD_AND_DRINK", pending=False):
-    return {"id": txn_id, "date": "2026-06-29", "authorizedDate": "2026-06-29",
-            "description": description, "merchantName": description, "amount": -12.50,
-            "accountId": _MAPPED_ACCOUNT, "accountName": "ANZ Rewards", "category": category,
-            "pending": pending, "type": "PAYMENT", "pendingTransactionId": None}
-
-
 def _stored(repo, txn_id):
     for (pk, sk), item in repo._table.store.items():
         if sk == f"TXN#{txn_id}":
@@ -160,19 +150,9 @@ def _stored(repo, txn_id):
     return None
 
 
-def _wire(lam, monkeypatch, rules, categories):
-    handler = lam.handler
-    monkeypatch.setattr(handler, "RuleRepository", lambda: FakeRuleStore(rules))
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(categories))
-    # Budget-alert snapshot reads real repos; neutralise it (best-effort path) so the test
-    # exercises only rule filing + reconcile.
-    monkeypatch.setattr(handler.budget_alerts, "capture_pre_write", lambda *a, **k: None)
-    return handler
-
-
 def test_process_transaction_files_a_fresh_charge(lam, repo, monkeypatch):
-    handler = _wire(lam, monkeypatch, [_rule("COLES", "groceries")], ["groceries"])
-    handler.process_transaction({"id": "evt1", "data": [_raw("t1", description="COLES 9")]}, repo)
+    handler = wire_rule_filing(lam, monkeypatch, [_rule("COLES", "groceries")], ["groceries"])
+    handler.process_transaction({"id": "evt1", "data": [raw_charge("t1", description="COLES 9")]}, repo)
     assert _stored(repo, "t1")["category"] == "groceries"
 
 
@@ -181,15 +161,15 @@ def test_process_transaction_resend_keeps_the_users_stored_category(lam, repo, m
     # and a rule matches. rule_ingest sets "groceries" on the incoming row, but the reconcile carry
     # must win, so the stored row keeps the user's "eating-out". (Regression guard for the
     # Option-A accepted behaviour: the carry protects a hand-filed choice.)
-    handler = _wire(lam, monkeypatch, [_rule("COLES", "groceries")], ["groceries", "eating-out"])
+    handler = wire_rule_filing(lam, monkeypatch, [_rule("COLES", "groceries")], ["groceries", "eating-out"])
     # Seed the stored pending with the user's choice. Build it via normalise so its account key
     # matches what the re-send will normalise to, then override the category to the hand-filed one.
-    seed = lam.banksync.normalise(_raw("t9", description="COLES 123", pending=True))
+    seed = lam.banksync.normalise(raw_charge("t9", description="COLES 123", pending=True))
     seed["category"] = "eating-out"
     seed["counts_to_budget"] = True
     repo.insert_or_reconcile([seed])
     assert _stored(repo, "t9")["category"] == "eating-out"
 
     handler.process_transaction(
-        {"id": "evt2", "data": [_raw("t9", description="COLES 123", pending=True)]}, repo)
+        {"id": "evt2", "data": [raw_charge("t9", description="COLES 123", pending=True)]}, repo)
     assert _stored(repo, "t9")["category"] == "eating-out"    # carry wins over the rule's groceries
