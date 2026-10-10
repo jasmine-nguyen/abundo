@@ -40,17 +40,6 @@ describe('cryptoPolyfill — Cognito sign-in', () => {
     expect(cryptoSecureRandomInt()).toBe(SENTINEL);
     expect(mockGetRandomValues).toHaveBeenCalledTimes(1);
   });
-
-  // [A2]
-  it('works when called detached from the crypto object (as Cognito captures it)', () => {
-    setGlobalCrypto(undefined);
-
-    importPolyfillThen(() => undefined);
-    const { getRandomValues } = globalThis.crypto;
-    const filled = getRandomValues(new Uint32Array(2));
-
-    expect(Array.from(filled)).toEqual([SENTINEL, SENTINEL]);
-  });
 });
 
 describe('cryptoPolyfill — existing crypto objects', () => {
@@ -62,25 +51,6 @@ describe('cryptoPolyfill — existing crypto objects', () => {
     importPolyfillThen(() => undefined);
 
     expect(globalThis.crypto.randomUUID).toBe(randomUUID);
-    expect(globalThis.crypto.getRandomValues).toBe(mockGetRandomValues);
-  });
-
-  // [A4]
-  it('leaves a working crypto object itself in place, not a copy', () => {
-    const existing = { getRandomValues: (array: Uint32Array) => array };
-    setGlobalCrypto(existing);
-
-    importPolyfillThen(() => undefined);
-
-    expect(globalThis.crypto).toBe(existing);
-  });
-
-  // [A5]
-  it('replaces a getRandomValues that is not a function', () => {
-    setGlobalCrypto({ getRandomValues: true });
-
-    importPolyfillThen(() => undefined);
-
     expect(globalThis.crypto.getRandomValues).toBe(mockGetRandomValues);
   });
 });

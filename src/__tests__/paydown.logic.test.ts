@@ -94,11 +94,63 @@ describe('paydownView (monthly loan schedule)', () => {
     expect(v.interestDodged).toBeNull();
   });
 
-  it('projects an earlier payoff WITH the extra than without it', () => {
-    const withExtra = paydownView(makeState({ loanFacts: M, homeLoan: { balance: 528000, asOf: null } }), TODAY);
-    const noExtra = paydownView(makeState({ loanFacts: { ...M, extra: 0 }, homeLoan: { balance: 528000, asOf: null } }), TODAY);
-    // Nov 2042 (with extra) is well before Dec 2046 (scheduled only).
-    expect(withExtra.freedomLabel).toBe('Nov 2042');
-    expect(noExtra.freedomLabel).toBe('Dec 2046');
+  it('gives the SAME payoff whatever the pay cycle (7, 14 or 30 day)', () => {
+    // The loan is a fixed monthly direct debit; the user's pay cycle must not move
+    // the mortgage-free date. All three land on the identical month.
+    const weekly = paydownView(makeState({ loanFacts: M, homeLoan: { balance: 528000, asOf: null }, cycleLen: 7 }), TODAY);
+    const fortnightly = paydownView(makeState({ loanFacts: M, homeLoan: { balance: 528000, asOf: null }, cycleLen: 14 }), TODAY);
+    const monthly = paydownView(makeState({ loanFacts: M, homeLoan: { balance: 528000, asOf: null }, cycleLen: 30 }), TODAY);
+    expect(weekly.freedomLabel).toBe('Nov 2042');
+    expect(fortnightly.freedomLabel).toBe('Nov 2042');
+    expect(monthly.freedomLabel).toBe('Nov 2042');
+    expect(weekly.aheadLabel).toBe('4y 1m');
+    expect(monthly.aheadLabel).toBe('4y 1m');
+  });
+
+  it("returns 'partial' just BELOW it (extra clears, 3667-only still diverges)", () => {
+    // The convergence boundary: 4167 == B·i at ~871,150. At 871,000 the 4167 payment creeps the
+    // balance down, but 3667 alone still loses to the monthly interest → date alone.
+    const v = paydownView(makeState({ loanFacts: M, homeLoan: { balance: 871000, asOf: null } }), TODAY);
+    expect(v.mode).toBe('partial');
+    expect(v.freedomLabel).toBe('Dec 2177');
+    expect(v.aheadLabel).toBeNull();
+    expect(v.interestDodged).toBeNull();
+  });
+
+  it("carries a months-rounds-to-12 delta into the year ('1y 0m', never '0y 12m')", () => {
+    // B=246000: the saved delta's fractional year rounds to 12 months. Without the carry the label
+    // would collapse to '0y 0m' and the (y>0||m>0) guard would flip the mode to 'flat'.
+    const v = paydownView(makeState({ loanFacts: M, homeLoan: { balance: 246000, asOf: null } }), TODAY);
+    expect(v.mode).toBe('ahead');
+    expect(v.aheadLabel).toBe('1y 0m');
+    expect(v.aheadLabel).not.toContain('12m');
+    expect(v.freedomLabel).toBe('May 2032');
+  });
+
+  it("is 'flat' when the extra saves time but $0 interest (a 0% loan)", () => {
+    // ratePct 0 → zero interest on BOTH schedules, so nothing to dodge even though the extra
+    // reaches payoff sooner. Math.round(dodged)===0 → 'flat', not 'ahead'.
+    const v = paydownView(makeState({ loanFacts: { ...M, ratePct: 0 }, homeLoan: { balance: 528000, asOf: null } }), TODAY);
+    expect(v.mode).toBe('flat');
+    expect(v.freedomLabel).toBe('Feb 2037');
+    expect(v.aheadLabel).toBeNull();
+    expect(v.interestDodged).toBeNull();
+  });
+
+  it('lands on the right month from a month-end start (no setMonth day-overflow)', () => {
+    // 1240 + 200 on B=100000 clears in 85 months. Stepping 85 calendar months off Jan 31 must land
+    // Feb 2033 — a raw setMonth would roll "Feb 31" into Mar 2033.
+    const facts = { ...M, baseRepay: 1240, extra: 200 };
+    const v = paydownView(makeState({ loanFacts: facts, homeLoan: { balance: 100000, asOf: null } }), new Date(2026, 0, 31));
+    expect(v.mode).toBe('ahead');
+    expect(v.freedomLabel).toBe('Feb 2033');
+    expect(v.aheadLabel).toBe('1y 6m');
+    expect(v.interestDodgedLabel).toBe('$4,810');
+  });
+
+  it("treats a NaN balance as 'unready' (not an 'undefined NaN' card)", () => {
+    const v = paydownView(makeState({ loanFacts: M, homeLoan: { balance: NaN, asOf: null } }), TODAY);
+    expect(v.mode).toBe('unready');
+    expect(v.freedomLabel).toBe('');
   });
 });

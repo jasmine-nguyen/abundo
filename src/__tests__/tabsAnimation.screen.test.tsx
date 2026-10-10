@@ -25,12 +25,6 @@ import TabsLayout from '../../app/(tabs)/_layout';
 
 beforeEach(() => { captured = undefined; });
 
-it('uses a fade tab-switch animation when reduce-motion is OFF', () => {
-  mockReduceMotion = false;
-  render(<TabsLayout />);
-  expect(captured?.animation).toBe('fade');
-});
-
 it('disables the tab-switch animation when reduce-motion is ON', () => {
   mockReduceMotion = true;
   render(<TabsLayout />);

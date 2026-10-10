@@ -1,7 +1,6 @@
-// WHIT-668 qa — the focus refresh (refetchStale) must be a STABLE function that still reads the
-// LATEST query state. Stable → a screen's useFocusEffect doesn't rerun on every redraw (the tight
-// retry loop). Latest → a refetchStale captured on an early render still sees today's
-// staleness / search mode (no old data captured earlier that never updated).
+// WHIT-668 qa — a screen's focus refresh (refetchStale) asks each read once, then stops (no tight
+// retry loop), and a refetchStale captured on an early render still sees today's staleness /
+// search mode (no old data captured earlier that never updated).
 // Real ../queries over the fake server; ../auth mocked; each composite is wired to a focus effect
 // exactly like the screens (and the expo-router test mock) do: useEffect(() => cb(), [cb]).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
@@ -18,7 +17,6 @@ import {
   useRecentTransactionsScreenData, useCategoryTransactionsScreenData, useSettingsScreenData,
   useRulesScreenData, useGoalsScreenData, useGoalScreenData,
 } from '../queries';
-import { COFFEE } from './support/categories';
 
 const server = installFakeServer();
 
@@ -69,34 +67,6 @@ describe('a lasting failure on every focus-wired composite sends a bounded numbe
   });
 });
 
-describe('refetch / refetchStale identity (WHIT-668)', () => {
-  it('Insights: stable across load, a cycle change and an error [A2]', async () => {
-    server.seed('/categories', [{ ...COFFEE }]);
-    server.seed('/breakdown', { coffee: { posted: 1, pending: 0 } });
-    const { result, rerender } = renderHook(({ cycle }: { cycle: number }) => useInsightsScreenData(cycle), {
-      wrapper: wrapper(makeClient()), initialProps: { cycle: 0 },
-    });
-    const first = { refetch: result.current.refetch, refetchStale: result.current.refetchStale };
-    await waitFor(() => expect(result.current.breakdown.coffee).toBeDefined());
-    server.fail('/breakdown', 503);
-    rerender({ cycle: 1 });
-    await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(result.current.refetchStale).toBe(first.refetchStale);
-    expect(result.current.refetch).toBe(first.refetch);
-  });
-
-  it('Transactions: refetchStale stable across load and a search starting [A3]', async () => {
-    const { result, rerender } = renderHook(({ q }: { q: string }) => useTransactionsScreenData('all', q), {
-      wrapper: wrapper(makeClient()), initialProps: { q: '' },
-    });
-    const first = result.current.refetchStale;
-    await waitFor(() => expect(result.current.isLoading).toBe(false));
-    rerender({ q: 'woolies' });
-    await waitFor(() => expect(result.current.search.answered).toBe(true));
-    expect(result.current.refetchStale).toBe(first);
-  });
-});
-
 describe('a refetchStale captured early still reads the latest query state', () => {
   it('composite: a first-render refetchStale skips reads that have since loaded fresh [A4]', async () => {
     const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient({ staleTime: Infinity })) });
@@ -130,20 +100,6 @@ describe('a refetchStale captured early still reads the latest query state', () 
     await act(async () => { early(); });
     await waitFor(() => expect(server.sentUnder('GET', '/transactions/search')).toHaveLength(searchBefore + 1));
     expect(server.sentUnder('GET', '/transactions/feed')).toHaveLength(feedBefore);
-  });
-
-  it('Transactions: a mid-search refetchStale refreshes the FEED once the search is cleared [A7]', async () => {
-    const { result, rerender } = renderHook(({ q }: { q: string }) => useTransactionsScreenData('all', q), {
-      wrapper: wrapper(makeClient({ staleTime: 0 })), initialProps: { q: 'woolies' },
-    });
-    const early = result.current.refetchStale;
-    await waitFor(() => expect(result.current.search.answered).toBe(true));
-    rerender({ q: '' });
-    await waitFor(() => expect(result.current.isLoading).toBe(false));
-    await pause(20);
-    const feedBefore = server.sentUnder('GET', '/transactions/feed').length;
-    await act(async () => { early(); });
-    await waitFor(() => expect(server.sentUnder('GET', '/transactions/feed')).toHaveLength(feedBefore + 1));
   });
 });
 

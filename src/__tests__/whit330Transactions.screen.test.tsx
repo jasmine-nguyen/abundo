@@ -3,8 +3,6 @@
 //             the transfer row is listed and the badge is non-zero (was empty/caught-up pre-330).
 //   [A-file]  the transfer is now reachable + bulk-fileable FROM the Uncategorized tab in
 //             selection mode — the only escape hatch for its grey, non-tappable row on that tab.
-// The existing whit328SelectGap covers the ALL tab only (and its comment that the transfer is
-// "NOT on the Uncategorized tab" is stale under WHIT-330 — see critique).
 // WHIT-686: both screens run their real data code over the pretend server.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import { setParams, resetRouter } from './support/routerMock';

@@ -29,9 +29,11 @@ describe('lastRepaymentView', () => {
     expect(v.splitLabel).toBeNull();
   });
 
-  it('requires BOTH amount and date to be present (a lone amount is still empty)', () => {
-    const v = lastRepaymentView(makeState({ repayment: { amount: 1440, date: null, principal: null, interest: null } }));
-    expect(v.present).toBe(false);
+  it('treats amount === 0 as present (0 is not the null sentinel) and labels it "$0"', () => {
+    const v = lastRepaymentView(makeState({ repayment: { amount: 0, date: '2020-01-15', principal: null, interest: null } }));
+    expect(v.present).toBe(true);
+    expect(v.amountLabel).toBe('$0');
+    expect(v.splitLabel).toBeNull();
   });
 
   it('flags a partial payload (amount XOR date) as malformed, not genuinely empty (WHIT-121)', () => {

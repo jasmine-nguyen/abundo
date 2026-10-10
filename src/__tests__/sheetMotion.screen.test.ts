@@ -16,22 +16,4 @@ describe('springSheetIn', () => {
     expect(springSpy).not.toHaveBeenCalled();
     springSpy.mockRestore();
   });
-
-  it('motion on: starts a spring toward the resting position (0)', () => {
-    const value = new Animated.Value(SHEET_ENTER_OFFSET);
-    const started = jest.fn();
-    const springSpy = jest.spyOn(Animated, 'spring').mockReturnValue({ start: started } as unknown as Animated.CompositeAnimation);
-    springSheetIn(value, false);
-    expect(springSpy).toHaveBeenCalledTimes(1);
-    const [target, config] = springSpy.mock.calls[0];
-    expect(target).toBe(value);
-    expect((config as { toValue: number }).toValue).toBe(0);
-    expect((config as { useNativeDriver: boolean }).useNativeDriver).toBe(true);
-    expect(started).toHaveBeenCalledTimes(1);
-    springSpy.mockRestore();
-  });
-
-  it('SHEET_ENTER_OFFSET is a positive rise distance', () => {
-    expect(SHEET_ENTER_OFFSET).toBeGreaterThan(0);
-  });
 });

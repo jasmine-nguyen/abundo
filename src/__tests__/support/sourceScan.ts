@@ -9,8 +9,8 @@
 // The shadowed-folder guard (themeLayout.logic.test.ts) is the fourth consumer: it drives walkSrc
 // (below) to catch a file and a same-named folder sitting side by side.
 //
-// The cache-in-act guard (cacheRefreshInAct.logic.test.ts) uses stripComments and matchingBrace
-// to read each act(...) body whole.
+// The router-mock scan (support/routerMockScan.ts) uses stripComments and matchingBrace to read
+// each jest.mock(...) call whole.
 //
 // The shared-wait guard (sharedQueryWaits.screen) hands its line rule to findOffenders.
 import { readdirSync, readFileSync, statSync } from 'fs';
@@ -22,11 +22,11 @@ const SCAN_DIRS = ['app', 'src'];
 const EXCLUDE = /(^|[\\/])(__tests__|node_modules)([\\/]|$)/;
 
 // Repo-relative, forward-slashed, so keys read the same on any platform.
-export const repoPath = (abs: string): string => relative(ROOT, abs).split(sep).join('/');
+const repoPath =(abs: string): string => relative(ROOT, abs).split(sep).join('/');
 
 // Every .ts/.tsx file that actually ships — tests excluded, since they legitimately contain the
 // literals the guards are hunting for.
-export function shippedSourceFiles(): string[] {
+function shippedSourceFiles(): string[] {
   const out: string[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir)) {
@@ -41,7 +41,7 @@ export function shippedSourceFiles(): string[] {
 }
 
 // Every .ts/.tsx file under `dir`, relative to `root` and forward-slashed — the test-tree guards
-// (noAutoMockApi, noQueriesMock, cacheRefreshInAct) scan this.
+// scan this.
 export function testFiles(root: string, dir: string = root): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
@@ -81,24 +81,6 @@ export function stripComments(src: string): string {
 // repo-relative path -> its code with comments stripped.
 export function shippedCode(): Map<string, string> {
   return new Map(shippedSourceFiles().map((abs) => [repoPath(abs), stripComments(readFileSync(abs, 'utf8'))]));
-}
-
-// WHIT-423 — read every `name: { … }` style block by balancing braces, so a nested value
-// (shadowOffset: { … }, transform: [{ … }]) sitting before the props of interest no longer
-// truncates the read the way a `[^}]*` regex does — it stops at the first `}`. String literals
-// are skipped so a brace inside a quoted value (a template `${…}`, a `'}'`) can't unbalance the
-// count. Comments are stripped first, as the other scanners do, so a commented brace can't fool it.
-export function styleBlocks(src: string): { name: string; body: string }[] {
-  const code = stripComments(src);
-  const opener = /([A-Za-z_$][\w$]*)\s*:\s*\{/g;
-  const blocks: { name: string; body: string }[] = [];
-  for (let match = opener.exec(code); match; match = opener.exec(code)) {
-    const open = match.index + match[0].length - 1; // index of the block's '{'
-    const close = matchingBrace(code, open);
-    if (close === -1) continue; // no matching '}' — a real style block always closes
-    blocks.push({ name: match[1], body: code.slice(open + 1, close) });
-  }
-  return blocks;
 }
 
 // Index of the closing character that matches the opening one at `open`, or -1. Works for any
@@ -168,9 +150,3 @@ export function walkSrc(root: string): { shadowPairs: string[]; visited: string[
   walk(root, '');
   return { shadowPairs, visited };
 }
-
-// Any quoted colour a human typed by hand: rgb()/rgba() with numeric channels, or a #hex in all
-// four lengths React Native accepts. Longest hex first — #[0-9a-f]{6}\b can neither match nor
-// backtrack out of an 8-digit hex, so without the {8} branch '#7c8cffcc' slips through entirely.
-export const RAW_COLOR_SOURCE =
-  String.raw`['"\`](?:rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+|#[0-9a-fA-F]{8}\b|#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{4}\b|#[0-9a-fA-F]{3}\b)`;

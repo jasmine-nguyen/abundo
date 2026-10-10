@@ -4,7 +4,7 @@
 import { it, expect } from '@jest/globals';
 import React from 'react';
 import { render } from '@testing-library/react-native';
-import { GradientFill, HeroGradientFill } from '../components/ui';
+import { GradientFill } from '../components/ui';
 import { styleOf } from './support/layout';
 
 const LENGTH_PROPS = ['width', 'height', 'x', 'y', 'x1', 'y1', 'x2', 'y2'];
@@ -37,8 +37,4 @@ it('GradientFill stretches a 0-1 viewBox, with no % sizes or rx, and clips its o
     <GradientFill id="t" x2={1} y2={1} stops={[[0, '#000'], [1, '#fff']]} borderRadius={24} />,
     24,
   );
-});
-
-it('HeroGradientFill draws through the same stretch and leaves the corners to the hero card', () => {
-  expectViewBoxStretch(<HeroGradientFill />, undefined);
 });

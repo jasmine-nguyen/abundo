@@ -48,7 +48,6 @@ describe('shared query waits', () => {
     const allowed = new Set([
       'support/renderWithQueries.tsx',
       'budgetsQuery.screen.test.tsx', // waits on its own separate client
-      'renderWithQueries.screen.test.tsx', // a plain assertion, not a wait
       path.basename(__filename),
     ]);
 

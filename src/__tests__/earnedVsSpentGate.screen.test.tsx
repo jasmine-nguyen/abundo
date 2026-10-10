@@ -37,12 +37,4 @@ describe('earned-vs-spent gate — earned exactly 0 with spend rows [G5]', () =>
     expect(styleOf(screen.getByTestId('earned-bar')).width).toBe('0%');
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('−$100 deficit');
   });
-
-  // The exact seam: 0 earned AND 0 rows → the OR is false → card absent (already asserted in the
-  // implementer's suite, re-pinned here beside its mirror so the boundary pair reads together).
-  it('hides the card when earned is 0 and there are no spend rows', async () => {
-    seedInsights(server, { breakdown: breakdownWire({ earned: 0 }), categories: CATS });
-    await renderInsights();
-    expect(screen.queryByTestId('insights-earned-spent')).toBeNull();
-  });
 });

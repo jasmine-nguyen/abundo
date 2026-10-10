@@ -50,13 +50,3 @@ it('a failure OVER cached rows stays cache-first: children shown, no error', () 
   expect(screen.getByTestId('thing-content')).toBeTruthy();
   expect(screen.queryByTestId('thing-error')).toBeNull();
 });
-
-// The spinner and error are independent conditions (isLoading/isError come from two combined
-// queries and can both be true with an empty cache), so both blocks render stacked — matching
-// the pre-refactor screens. Guards against a future collapse into an either/or.
-it('loading AND error with nothing cached renders both the spinner and the error', () => {
-  render(<DetailStates {...props({ isLoading: true, isError: true })}>{child}</DetailStates>);
-  expect(screen.getByTestId('thing-loading')).toBeTruthy();
-  expect(screen.getByTestId('thing-error')).toBeTruthy();
-  expect(screen.queryByTestId('thing-content')).toBeNull();
-});

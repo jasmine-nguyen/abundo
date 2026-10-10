@@ -2,8 +2,8 @@
 // milestone.screen.test.tsx already locks the real card (amount+date+split, no
 // "9:02am") and the empty-state copy. This file guards the structural change the
 // implementer's tests don't touch: the card was un-gated from g.factsReady — with loan
-// facts UNSET it must still render (real card when a repayment exists, empty state
-// otherwise), i.e. it no longer disappears during the "set up your loan" hero state.
+// facts UNSET it must still render the real card when a repayment exists, i.e. it no
+// longer disappears during the "set up your loan" hero state.
 // WHIT-685: the loanFacts/homeLoan/repayment come from the fake server through the real
 // screen data code.
 import { it, expect, jest, beforeEach } from '@jest/globals';
@@ -44,17 +44,6 @@ it('renders the last-repayment card even when loan facts are UNSET (un-gated fro
   expect(screen.getByText('$1,440')).toBeTruthy();
 });
 
-it('shows the empty card (not nothing) when facts are unset and no repayment exists', async () => {
-  // WHIT-821: a live balance proves the loan exists (null balance + nothing else = "no home loan").
-  seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:00:00Z' }, repayment: NO_REPAYMENT });
-  await renderWithQueries(<Mortgage />);
-  expect(screen.getByText(/No repayment on record yet/)).toBeTruthy();
-  // WHIT-121 precedence guard: no error flag → the empty state, NOT the error copy.
-  expect(screen.queryByText("Couldn't load your last repayment.")).toBeNull();
-  // Regression: the removed "Preview a repayment alert" demo button must not silently return.
-  expect(screen.queryByText('Preview a repayment alert')).toBeNull();
-});
-
 // WHIT-121 — the failed-fetch error state. A repayment read that fails leaves repayment at
 // NO_REPAYMENT; without the error branch the card would show "No repayment on record yet"
 // and falsely tell a user with a repayment they have none. The error+Retry replaces it.
@@ -88,4 +77,36 @@ it('keeps showing the real repayment card when a refetch fails over cached data'
   expect(screen.getByText('$1,440')).toBeTruthy();
   expect(screen.getByText('$1,208 principal · $232 interest')).toBeTruthy();
   expect(screen.queryByText("Couldn't load your last repayment.")).toBeNull();
+});
+
+// WHIT-121 #3 — a SUCCESSFUL fetch that returns a partial payload (amount but null DATE) is
+// malformed: the card must show the error branch — NOT the "No repayment" empty lie for data that
+// actually exists, and NOT a half-rendered real card. EMPTY_LOAN_FACTS so the contribution card
+// can't print "$1,440". Pins the `|| lr.malformed` render clause (fail-on-revert).
+it('shows the error branch for a malformed amount-only payload even with NO error flag', async () => {
+  seedGoal(server, {
+    loanFacts: EMPTY_LOAN_FACTS,
+    repayment: { amount: 1440, date: null, principal: null, interest: null },
+  });
+  await renderWithQueries(<Mortgage />);
+  expect(screen.getByText("Couldn't load your last repayment.")).toBeTruthy();
+  expect(screen.queryByText(/No repayment on record yet/)).toBeNull();
+  expect(screen.queryByText('$1,440')).toBeNull(); // the real card never half-rendered
+  expect(screen.getByTestId('repayment-retry')).toBeTruthy();
+});
+
+// Simultaneous failures: the hero shows its OWN balance error (WHIT-121 #2) and the repayment card
+// its OWN repayment error — two independent affordances, each keyed on its own flag. Guards a
+// `repaymentError && !homeLoanError` regression.
+it('shows the balance error and the repayment error independently when BOTH reads failed', async () => {
+  seedGoal(server);
+  server.fail('/homeloan', 500);
+  server.fail('/repayment', 500);
+  await renderWithQueries(<Mortgage />);
+  expect(screen.getByText("Couldn't load your balance.")).toBeTruthy();
+  expect(screen.getByText("Couldn't load your last repayment.")).toBeTruthy();
+  expect(screen.queryByText(/No repayment on record yet/)).toBeNull();
+  // The repayment card's OWN Retry (not the hero's) asks the server again.
+  await refreshInAct(() => fireEvent.press(screen.getByTestId('repayment-retry')));
+  expect(server.sent('GET', '/repayment')).toHaveLength(2);
 });

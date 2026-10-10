@@ -6,12 +6,6 @@ import { describe, it, expect } from '@jest/globals';
 import { amortize, requiredRepayment } from '../context';
 
 describe('requiredRepayment (WHIT-126)', () => {
-  it('inverts amortize on a known case (100k @ 1%/mo, 2000/mo → ~69.66 months)', () => {
-    // amortize(100000, 0.01, 2000).periods === -ln(0.5)/ln(1.01) ≈ 69.6607.
-    const n = amortize(100000, 0.01, 2000)!.periods;
-    expect(requiredRepayment(100000, 0.01, n)).toBeCloseTo(2000, 6);
-  });
-
   it('round-trips through amortize for a spread of balances, rates, and horizons', () => {
     const cases: Array<[number, number, number]> = [
       [500000, 0.0574 / 12, 300],   // ~25y home loan

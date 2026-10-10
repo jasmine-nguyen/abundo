@@ -6,6 +6,8 @@ type Job = { status: 'running' | 'succeeded' | 'failed'; step?: string };
 
 const DELAY = 1000;
 
+const isRunning = (job: Job) => job.status === 'running';
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
@@ -31,7 +33,7 @@ describe('pollJob', () => {
     const cb = callbacks();
 
     const handle = pollJob<Job>({
-      jobId: 'job-1', check, isRunning: (job) => job.status === 'running',
+      jobId: 'job-1', check, isRunning,
       delayMs: DELAY, maxNetErrors: 3, ...cb,
     });
 
@@ -85,7 +87,6 @@ describe('pollJob', () => {
   });
 
   it('gives up when the job is gone, the connection keeps dropping or the time limit passes, and stops cleanly', async () => {
-    const isRunning = (job: Job) => job.status === 'running';
 
     // 404 → the job is gone.
     const gone = callbacks();
@@ -157,5 +158,64 @@ describe('pollJob', () => {
     await jest.advanceTimersByTimeAsync(DELAY * 10);
     expect(earlyCheck).not.toHaveBeenCalled();
     expect(early.onDone).not.toHaveBeenCalled();
+  });
+});
+
+// WHIT-629 QA — 404 vs other errors, a rejected check after stop(), and terminal finality.
+describe('pollJob edges', () => {
+
+  it('[A2] a 404 after some dropped connections is "expired", not "network", and ends at once', async () => {
+    const cb = callbacks();
+    const check = jest.fn<(id: string) => Promise<Job>>()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockRejectedValueOnce(new ApiError(404, null))
+      .mockResolvedValue({ status: 'running' });
+    pollJob<Job>({ jobId: 'j', check, isRunning, delayMs: DELAY, maxNetErrors: 5, ...cb });
+    await jest.advanceTimersByTimeAsync(DELAY * 10);
+    expect(cb.onFail).toHaveBeenCalledTimes(1);
+    expect(cb.onFail).toHaveBeenCalledWith('expired');
+    expect(check).toHaveBeenCalledTimes(3);
+    expect(cb.onProgress).not.toHaveBeenCalled();
+  });
+
+  it('[A3] a non-404 server error counts as a dropped connection, not a gone job', async () => {
+    const cb = callbacks();
+    const check = jest.fn<(id: string) => Promise<Job>>()
+      .mockRejectedValueOnce(new ApiError(500, null))
+      .mockResolvedValueOnce({ status: 'succeeded' });
+    const handle = pollJob<Job>({ jobId: 'j', check, isRunning, delayMs: DELAY, maxNetErrors: 5, ...cb });
+    await jest.advanceTimersByTimeAsync(DELAY);
+    expect(cb.onFail).not.toHaveBeenCalled();
+    expect(handle.netErrors()).toBe(1);
+    await jest.advanceTimersByTimeAsync(DELAY);
+    expect(cb.onDone).toHaveBeenCalledWith({ status: 'succeeded' });
+    expect(cb.onFail).not.toHaveBeenCalled();
+  });
+
+  it('[A4] a check that REJECTS after stop() fires no callback and does not count or re-arm', async () => {
+    const cb = callbacks();
+    const inFlight = deferred<Job>();
+    const check = jest.fn(() => inFlight.promise);
+    const handle = pollJob<Job>({ jobId: 'j', check, isRunning, delayMs: DELAY, maxNetErrors: 1, ...cb });
+    await jest.advanceTimersByTimeAsync(DELAY);
+    handle.stop();
+    inFlight.reject(new ApiError(404, null));
+    await jest.advanceTimersByTimeAsync(DELAY * 10);
+    expect(cb.onFail).not.toHaveBeenCalled();
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(handle.netErrors()).toBe(0);
+  });
+
+  it('[A9] a terminal job calls onDone once and never onProgress for that answer', async () => {
+    const cb = callbacks();
+    const check = jest.fn(() => Promise.resolve<Job>({ status: 'failed' }));
+    pollJob<Job>({ jobId: 'j', check, isRunning, delayMs: DELAY, maxNetErrors: 5, ...cb });
+    await jest.advanceTimersByTimeAsync(DELAY * 10);
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(cb.onDone).toHaveBeenCalledTimes(1);
+    expect(cb.onDone).toHaveBeenCalledWith({ status: 'failed' });
+    expect(cb.onProgress).not.toHaveBeenCalled();
+    expect(cb.onFail).not.toHaveBeenCalled();
   });
 });

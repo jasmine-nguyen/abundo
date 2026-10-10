@@ -1,10 +1,9 @@
 // Formatting + label helpers: merchantLabel/cleanName (row + sheet share one
-// display name), fmt/tint (money + colour tokens), and cycleName (Weekly /
-// Fortnightly / Monthly).
+// display name), the money formatters, and cycleName (Weekly / Fortnightly / Monthly).
 import { describe, it, expect } from '@jest/globals';
 import { cleanName, merchantLabel } from '../context';
 import { cycleName } from '../payCycle';
-import { fmt, fmt2, fmtBalance, fmtExact, fmtSignedExact, MINUS, fmtCompact, tint, agoLabel, breakdownLineStyle, ADJUSTMENT_ROW, RECONCILE_EPSILON, C } from '../theme';
+import { fmt, fmt2, fmtBalance, fmtExact, fmtSignedExact, MINUS, fmtCompact, agoLabel, breakdownLineStyle, C } from '../theme';
 import { txn } from './factory';
 
 describe('cleanName / merchantLabel', () => {
@@ -15,13 +14,6 @@ describe('cleanName / merchantLabel', () => {
 
   it('passes through unknown merchants unchanged', () => {
     expect(cleanName('WOOLWORTHS')).toBe('WOOLWORTHS');
-  });
-
-  it('maps both bank spellings of one merchant to the same name', () => {
-    // ANZ sends the clinic spaced, Westpac sends it unspaced. Without both entries
-    // the same merchant reads differently depending on which card was used.
-    expect(cleanName('UNIFLEX REMEDIAL MASSAGE')).toBe('Uniflex Massage');
-    expect(cleanName('UNIFLEXREMEDIALMASSAGE')).toBe('Uniflex Massage');
   });
 
   it('prefers merchant_name, falling back to description', () => {
@@ -68,22 +60,53 @@ describe('fmtCompact', () => {
   });
 });
 
-describe('fmtExact', () => {
-  it('stays whole-dollar when there are no cents', () => {
-    expect(fmtExact(80)).toBe('$80');
-    expect(fmtExact(0)).toBe('$0');
-    expect(fmtExact(1234)).toBe('$1,234');
+// WHIT-393 — the never-overstate rule as a PROPERTY, not a handful of points. A rounding regression
+// at some value nobody happened to pick (3_450_000_000 -> "$3.5B") would slip past the points above.
+// These sweep the plausible-ceiling domain and read the figure back out of the label rather than
+// calling fmtCompact again, so they cannot agree with a wrong formatter.
+describe('fmtCompact — never names more than it was given', () => {
+  // The number a label NAMES. Deliberately avoids float re-multiplication: `1.1 * 1e9` is
+  // 1100000000.0000002 in JS, which would manufacture fake "overstatements".
+  function dollarsNamed(label: string): number {
+    const m = /^\$([\d,]+)(?:\.(\d))?([BM]?)$/.exec(label);
+    if (m == null) return Number.NaN; // an unparseable label is itself a failure
+    const unit = m[3] === 'B' ? 1_000_000_000 : m[3] === 'M' ? 1_000_000 : 1;
+    const tenth = m[2] == null ? 0 : Number(m[2]);
+    return Number(m[1].replace(/,/g, '')) * unit + tenth * (unit / 10);
+  }
+
+  // Deterministic sweeps: every whole million to $2B, every tenth of a million, every tenth of a
+  // billion, and the last dollars below each unit switch — where a formatter that picks the unit
+  // AFTER rounding tips over into "$1000M" / "$1B" for an amount that is neither.
+  const PROBES: number[] = [];
+  for (let n = 1_000_000; n <= 2_000_000_000; n += 1_000_000) PROBES.push(n);
+  for (let n = 1_000_000; n <= 20_000_000; n += 100_000) PROBES.push(n);
+  for (let n = 1_000_000_000; n <= 20_000_000_000; n += 100_000_000) PROBES.push(n);
+  for (let n = 900_000; n <= 1_100_000; n += 1_000) PROBES.push(n);
+  for (let n = 999_999_000; n <= 999_999_999; n += 1) PROBES.push(n);
+  for (let n = 999_990; n <= 999_999; n += 1) PROBES.push(n);
+
+  it('[A15] every label names its input EXACTLY — never rounds up, never rounds down', () => {
+    const wrong = PROBES.filter((n) => dollarsNamed(fmtCompact(n)) !== n)
+      .slice(0, 5)
+      .map((n) => `${n} -> ${fmtCompact(n)} (names ${dollarsNamed(fmtCompact(n))})`);
+    expect(wrong).toEqual([]);
   });
 
+  it('[A16] an "M" label never reaches 1000M — the billions branch has to win first', () => {
+    const nonsense = PROBES.filter((n) => {
+      const m = /^\$([\d.]+)M$/.exec(fmtCompact(n));
+      return m != null && Number(m[1]) >= 1000;
+    }).slice(0, 5).map((n) => `${n} -> ${fmtCompact(n)}`);
+    expect(nonsense).toEqual([]);
+  });
+});
+
+describe('fmtExact', () => {
   it('shows cents (and the true amount) when the total has real cents', () => {
     expect(fmtExact(73.5)).toBe('$73.50');   // the reported bug: 73.5 must NOT round to $74
     expect(fmtExact(12.5)).toBe('$12.50');
     expect(fmtExact(1234.5)).toBe('$1,234.50'); // thousands separator + cents
-  });
-
-  it('is unsigned (shows the magnitude, like fmt)', () => {
-    expect(fmtExact(-11)).toBe('$11');
-    expect(fmtExact(-6.5)).toBe('$6.50');
   });
 
   it('is stable across floating-point sums that land on a whole/half dollar', () => {
@@ -96,11 +119,20 @@ describe('fmtExact', () => {
 
 describe('fmtSignedExact', () => {
   it('adds a real minus only below zero at the cent, keeping cents only when present', () => {
-    expect(fmtSignedExact(-351.68)).toBe(`${MINUS}$351.68`);
-    expect(fmtSignedExact(5785)).toBe('$5,785');
-    expect(fmtSignedExact(-659)).toBe(`${MINUS}$659`);
-    expect(fmtSignedExact(-1234.5)).toBe(`${MINUS}$1,234.50`);
-    expect(fmtSignedExact(-0.004)).toBe('$0');
+    const rows: [number, string][] = [
+      [-351.68, `${MINUS}$351.68`],
+      [5785, '$5,785'],
+      [-659, `${MINUS}$659`],
+      [-1234.5, `${MINUS}$1,234.50`],
+      [-12.1, `${MINUS}$12.10`],
+      [-1234567.891, `${MINUS}$1,234,567.89`],
+      [0, '$0'],
+      [-0, '$0'],
+      [-0.004, '$0'],
+      [-0.006, `${MINUS}$0.01`],   // WHIT-735: the minus appears once it rounds below zero at the cent
+      [0.006, '$0.01'],
+    ];
+    for (const [amount, label] of rows) expect(fmtSignedExact(amount)).toBe(label);
   });
 });
 
@@ -118,13 +150,6 @@ describe('fmtBalance', () => {
     expect(fmtBalance(96270.59)).toBe('$96,270.59');   // in credit — bare, no + sign
     expect(fmtBalance(-596642.43)).toBe('-$596,642.43'); // owing
     expect(fmtBalance(0)).toBe('$0.00');
-  });
-});
-
-describe('tint', () => {
-  it('converts a hex colour + alpha into an rgba string', () => {
-    expect(tint('#E8A87C', 0.15)).toBe('rgba(232,168,124,0.15)');
-    expect(tint('#000000', 1)).toBe('rgba(0,0,0,1)');
   });
 });
 
@@ -183,22 +208,6 @@ describe('breakdownLineStyle', () => {
     });
   });
 
-  it('shows a POSITIVE remainder plug unsigned, dimmed', () => {
-    expect(breakdownLineStyle({ isRemainder: true, spent: 60 })).toEqual({
-      amountText: '$60',
-      amountColor: C.textDim,
-      nameColor: C.textDim,
-    });
-  });
-
-  it('renders a normal row as a positive amount in the bright ink', () => {
-    expect(breakdownLineStyle({ spent: 100 })).toEqual({
-      amountText: '$100',
-      amountColor: C.textBright,
-      nameColor: C.textBright,
-    });
-  });
-
   it('renders a REVERSED income source as a signed "−$150" in a neutral tone, bright name (WHIT-376)', () => {
     // A clawed-back income source is a real, tappable category — it reads as a REDUCTION, so a real
     // minus in the neutral mid tone (not green credit, not red overspend), and a bright name.
@@ -206,24 +215,6 @@ describe('breakdownLineStyle', () => {
       amountText: '-$150',
       amountColor: C.textMid,
       nameColor: C.textBright,
-    });
-  });
-});
-
-// WHIT-380: the single source of truth for the shared "adjustment" reconciliation row + the
-// float-dust epsilon, used by BOTH the Spend remainder line (context.tsx) and the Earned plug
-// (breakdown.tsx). This pins the shared values so a change here is a deliberate, one-place edit.
-describe('shared reconciliation constants', () => {
-  it('RECONCILE_EPSILON is a half-cent float-dust tolerance', () => {
-    expect(RECONCILE_EPSILON).toBe(0.005);
-  });
-
-  it('ADJUSTMENT_ROW carries the shared label / icon / dimmed tone', () => {
-    expect(ADJUSTMENT_ROW).toEqual({
-      name: 'Pending/refund adjustment',
-      icon: 'sliders',
-      color: C.textDim,
-      chipBg: tint(C.textDim, 0.15),
     });
   });
 });

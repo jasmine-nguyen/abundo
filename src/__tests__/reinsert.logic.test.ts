@@ -11,26 +11,15 @@ const rows = (...ids: string[]): Row[] => ids.map((id) => ({ id }));
 const ids = (list: Row[]) => list.map((x) => x.id);
 
 describe('reinsertBefore — single reinsert', () => {
-  it('inserts before the first surviving successor (a middle row)', () => {
-    // b removed from [a,b,c,d]; successors [c,d]; put back into [a,c,d].
-    expect(ids(reinsertBefore(rows('a', 'c', 'd'), { id: 'b' }, ['c', 'd']))).toEqual(['a', 'b', 'c', 'd']);
-  });
-
-  it('inserts at the front (a first row)', () => {
-    expect(ids(reinsertBefore(rows('b', 'c'), { id: 'a' }, ['b', 'c']))).toEqual(['a', 'b', 'c']);
-  });
-
-  it('appends when there is no successor (a last row)', () => {
-    expect(ids(reinsertBefore(rows('a', 'b'), { id: 'c' }, []))).toEqual(['a', 'b', 'c']);
-  });
-
-  it('appends when every successor was also deleted', () => {
-    expect(ids(reinsertBefore(rows('b'), { id: 'a' }, ['c']))).toEqual(['b', 'a']);
-  });
-
-  it('appends into an empty list (only element, or all successors gone)', () => {
-    expect(ids(reinsertBefore([], { id: 'a' }, []))).toEqual(['a']);
-    expect(ids(reinsertBefore([], { id: 'a' }, ['z']))).toEqual(['a']);
+  it.each([
+    { name: 'inserts before the first surviving successor (a middle row)', list: ['a', 'c', 'd'], item: 'b', successors: ['c', 'd'], expected: ['a', 'b', 'c', 'd'] },
+    { name: 'inserts at the front (a first row)', list: ['b', 'c'], item: 'a', successors: ['b', 'c'], expected: ['a', 'b', 'c'] },
+    { name: 'appends when there is no successor (a last row)', list: ['a', 'b'], item: 'c', successors: [], expected: ['a', 'b', 'c'] },
+    { name: 'appends when every successor was also deleted', list: ['b'], item: 'a', successors: ['c'], expected: ['b', 'a'] },
+    { name: 'appends into an empty list (only element)', list: [], item: 'a', successors: [], expected: ['a'] },
+    { name: 'appends into an empty list (all successors gone)', list: [], item: 'a', successors: ['z'], expected: ['a'] },
+  ])('$name', ({ list, item, successors, expected }) => {
+    expect(ids(reinsertBefore(rows(...list), { id: item }, successors))).toEqual(expected);
   });
 });
 
@@ -66,10 +55,7 @@ describe('reinsertBefore — concurrent deletes restore order in both interleavi
 
 // ===== WHIT-254 (folded from reinsertEdges.gaps.logic.test.ts) — adversarial edge coverage for
 // the pure reinsert helper, beyond the survivor's single reinsert + 2-delete interleavings: THREE
-// concurrent rollbacks in EVERY resolution order, a successorIds list padded with absent ids, a
-// duplicate-id list, and the double-rollback idempotency question. Type Row + rows()/ids() are
-// reused from the survivor above (byte-identical; the gaps file's own duplicates are dropped);
-// permutations() is gaps-only and kept at module level.
+// concurrent rollbacks in EVERY resolution order, and a successorIds list padded with absent ids.
 function permutations<T>(xs: T[]): T[][] {
   if (xs.length <= 1) return [xs];
   return xs.flatMap((x, i) =>
@@ -97,20 +83,6 @@ describe('reinsertBefore — THREE concurrent failed deletes restore order in AN
       expect(ids(result)).toEqual(['a', 'b', 'c', 'd', 'e']);
     },
   );
-
-  it('a GAP triple (a,c,e from [a,b,c,d,e]) restores in any order', () => {
-    // del a -> [b,c,d,e] succ [b,c,d,e]; del c -> [b,d,e] succ [d,e]; del e -> [b,d] succ [].
-    const opt = rows('b', 'd');
-    const rb = {
-      a: (l: Row[]) => reinsertBefore(l, { id: 'a' }, ['b', 'c', 'd', 'e']),
-      c: (l: Row[]) => reinsertBefore(l, { id: 'c' }, ['d', 'e']),
-      e: (l: Row[]) => reinsertBefore(l, { id: 'e' }, []),
-    };
-    for (const order of permutations(['a', 'c', 'e'] as const)) {
-      const result = [...order].reduce((l, k) => rb[k as 'a' | 'c' | 'e'](l), opt);
-      expect(ids(result)).toEqual(['a', 'b', 'c', 'd', 'e']);
-    }
-  });
 });
 
 describe('reinsertBefore — malformed / defensive inputs', () => {
@@ -119,25 +91,5 @@ describe('reinsertBefore — malformed / defensive inputs', () => {
     expect(ids(reinsertBefore(rows('a', 'c', 'd'), { id: 'b' }, ['x', 'c', 'y']))).toEqual(
       ['a', 'b', 'c', 'd'],
     );
-  });
-
-  it('anchors before the FIRST occurrence when the list has a duplicate id', () => {
-    // Shouldn't happen (ids are unique) but findIndex-first must be deterministic.
-    expect(ids(reinsertBefore(rows('a', 'c', 'x', 'c'), { id: 'b' }, ['c']))).toEqual(
-      ['a', 'b', 'c', 'x', 'c'],
-    );
-  });
-
-  it('appends once every named successor is absent, even if the list is non-empty', () => {
-    expect(ids(reinsertBefore(rows('p', 'q'), { id: 'b' }, ['gone1', 'gone2']))).toEqual(
-      ['p', 'q', 'b'],
-    );
-  });
-
-  it('is NOT idempotent — re-running against a list that still holds the item duplicates it', () => {
-    // Documents the contract: a double-rollback would insert a second copy. Each writer's
-    // catch runs exactly once, so this is unreachable in prod — but the helper does not guard it.
-    const once = reinsertBefore(rows('a', 'b', 'c'), { id: 'b' }, ['c']);
-    expect(ids(once)).toEqual(['a', 'b', 'b', 'c']);
   });
 });

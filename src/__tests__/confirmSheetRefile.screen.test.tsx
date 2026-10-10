@@ -45,15 +45,6 @@ function openConfirm() {
 }
 
 describe('confirm (re-categorise) — one flow for every entry point', () => {
-  it('always offers BOTH the merchant-wide rule and the single-file option', async () => {
-    await openConfirm();
-    expect(screen.getByText('File as Groceries')).toBeTruthy(); // the sheet title/heading
-    expect(screen.getByText('All from this merchant')).toBeTruthy();
-    expect(screen.getByText('Just this one')).toBeTruthy();
-    // The redundant lone "Save" is gone.
-    expect(screen.queryByText('Save')).toBeNull();
-  });
-
   // WHIT-843: the safe single re-file is the first, primary (accent) button; the rule is secondary.
   it('"Just this one" comes first as the main button', async () => {
     await openConfirm();

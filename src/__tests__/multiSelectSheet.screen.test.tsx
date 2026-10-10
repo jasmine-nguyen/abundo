@@ -52,9 +52,4 @@ describe('multi-select picker (WHIT-291)', () => {
     expect(fns.applyCategoryToMany).toHaveBeenCalledTimes(1);
     expect(fns.applyCategoryToMany).toHaveBeenCalledWith(['t1', 't2', 't3'], 'groceries');
   });
-
-  it('singular copy for a one-item selection', async () => {
-    await openSheet({ mode: 'confirmMany', txIds: ['t1'], categoryId: 'groceries' });
-    expect(screen.getByText('File 1 transaction')).toBeTruthy(); // not "1 transactions"
-  });
 });

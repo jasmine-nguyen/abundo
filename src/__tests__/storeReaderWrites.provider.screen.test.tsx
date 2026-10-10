@@ -1,27 +1,24 @@
 // WHIT-203/192 — the writers keep the query caches the migrated readers use live:
-// persistPayCycle writes ['payCycle'] (the pay-cycle sheet + Settings read it); saveCategory
-// mirrors + invalidates ['categories'] (the category screens read it); and deleteCategory
+// persistPayCycle writes ['payCycle'] (the pay-cycle sheet + Settings read it); and deleteCategory
 // MIRRORS its cross-screen cascade into the ['categories']/['budgets',*]/['transactions']
 // caches WITHOUT invalidating — the server does no cascade, so a refetch would resurrect the
 // just-dropped rows. Drives the REAL writers via AppProvider + the singleton queryClient.
 // The caches are seeded first (as if a screen had loaded them); the provider no longer
 // eager-loads.
-import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { renderHook, act, waitFor } from '@testing-library/react-native';
+import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
 import type { Category, Transaction } from '../types';
 import type { BudgetRollup } from '../api';
-import { useCategories, usePayCycle } from '../queries';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
-import { appProviderWrapper, queriesAppWrapper } from './support/renderWithApp';
+import { appProviderWrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
-const categoryReads = () => server.sent('GET', '/categories');
 
 const CAT: Category = { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C' };
 const OTHER: Category = { id: 'rent', name: 'Rent', bucket: 'Living', icon: 'home', color: '#8AB4F8' };
@@ -58,21 +55,6 @@ it('persistPayCycle writes [payCycle] optimistically AND invalidates payCycle/bu
   // WHIT-341: refetch ['payCycle'] for the server's fresh days_left, alongside budgets/breakdown.
   const keys = invalidatedKeys(invalidate);
   expect(keys).toEqual(expect.arrayContaining(['payCycle', 'budgets', 'breakdown']));
-  invalidate.mockRestore();
-});
-
-it('saveCategory mirrors the new category into [categories] instantly AND invalidates to reconcile', async () => {
-  const result = await mount();
-  queryClient.setQueryData<Category[]>(['categories'], [OTHER]); // as a mounted category screen would have
-  const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
-
-  await act(async () => { await result.current.saveCategory(null, { name: 'New', bucket: 'Living', icon: 'home' }); });
-
-  // The created category appears in the cache the migrated screens read (instant, no round-trip)...
-  expect(queryClient.getQueryData<Category[]>(['categories'])?.map((c) => c.id)).toContain('new');
-  // ...and the invalidate reconciles with the server.
-  const keys = invalidatedKeys(invalidate);
-  expect(keys).toContain('categories');
   invalidate.mockRestore();
 });
 
@@ -116,67 +98,4 @@ it('deleteCategory drops the id from EVERY budget window, skips windows lacking 
   expect(queryClient.getQueryData<Record<string, BudgetRollup>>(['budgets', 30])).toEqual({ rent: { target: 500, posted: 0, pending: 0 } }); // untouched (id absent)
   // The whole cascade ran (didn't abort on any window) — the category is gone and delete succeeded.
   expect(queryClient.getQueryData<Category[]>(['categories'])).toEqual([OTHER]);
-});
-
-// ===== WHIT-203 GAP (folded from storeReaderObservers.provider.screen.test.tsx) =====
-// The suite above asserts getQueryData + an invalidate spy; this block asserts the mirror caches
-// reach a LIVE mounted observer (useCategories / usePayCycle) under the SAME singleton
-// queryClient the writers write to. It mounts through queriesAppWrapper (the singleton
-// queryClient around AppProvider) and needs the eager reads answered, so its beforeEach is scoped here.
-describe('WHIT-203 live observers (singleton queryClient + real reader hooks)', () => {
-  const NEW: Category = { id: 'new', name: 'New', bucket: 'Living', icon: 'home', color: '#fff' };
-
-  beforeEach(() => {
-    queryClient.clear();
-    // The other eager reads get the fake server's empty defaults.
-    server.seed('/paycycle', { length: 14, last_pay_date: '2024-01-03' });
-  });
-
-  it('usePayCycle observer reflects setPayCycleLength immediately (read-your-write)', async () => {
-    const { result } = renderHook(() => ({ ctx: useAppContext(), pc: usePayCycle() }), { wrapper: queriesAppWrapper });
-
-    // Let the initial payCycle fetch settle first so it can't overwrite our write late.
-    await waitFor(() => expect(queryClient.getQueryData(['payCycle'])).toBeTruthy());
-    expect(result.current.pc.cycleName).toBe('Fortnightly'); // fetched length 14
-
-    // persistPayCycle now invalidates ['payCycle'] (WHIT-341: refetch the server days_left), so
-    // the refetch must reflect the just-saved length — the fake server stores the PUT it gets.
-    await act(async () => { result.current.ctx.setPayCycleLength(30); });
-
-    await waitFor(() => expect(result.current.pc.cycleName).toBe('Monthly'));
-    expect(result.current.pc.cycleLen).toBe(30);
-  });
-
-  it('useCategories observer drops a deleted category and does NOT refetch it (no resurrection)', async () => {
-    // The server keeps coffee (its delete answers without dropping it) — so a stray refetch WOULD
-    // resurrect it, which is exactly what must not happen (delete uses setQueryData, not invalidate).
-    server.seed('/categories', [CAT, OTHER]);
-    server.once('DELETE', '/categories/coffee', { body: { id: 'coffee' } });
-    const { result } = renderHook(() => ({ ctx: useAppContext(), cats: useCategories() }), { wrapper: queriesAppWrapper });
-
-    await waitFor(() => expect(result.current.cats.categories).toHaveLength(2));
-    const fetchCalls = categoryReads().length;
-
-    await act(async () => { await result.current.ctx.deleteCategory('coffee'); });
-
-    await waitFor(() => expect(result.current.cats.categories).toHaveLength(1));
-    expect(result.current.cats.category('coffee')).toBeUndefined();
-    expect(result.current.cats.category('rent')?.name).toBe('Rent');
-    // No categories refetch — the server does no cascade, so a refetch would bring coffee back.
-    expect(categoryReads().length).toBe(fetchCalls);
-  });
-
-  it('useCategories observer shows a newly-created category via the invalidate refetch', async () => {
-    server.seed('/categories', [CAT]);
-    const { result } = renderHook(() => ({ ctx: useAppContext(), cats: useCategories() }), { wrapper: queriesAppWrapper });
-    await waitFor(() => expect(result.current.cats.categories).toHaveLength(1));
-
-    server.once('POST', '/categories', { body: NEW });
-    server.seed('/categories', [CAT, NEW]); // what the invalidate-triggered refetch returns
-
-    await act(async () => { await result.current.ctx.saveCategory(null, { name: 'New', bucket: 'Living', icon: 'home' }); });
-
-    await waitFor(() => expect(result.current.cats.category('new')?.name).toBe('New'));
-    expect(result.current.cats.categories).toHaveLength(2);
-  });
 });

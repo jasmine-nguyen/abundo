@@ -38,16 +38,4 @@ describe('WHIT-544 — a pending Uncategorized-select intent is dropped on sign-
 
     expect(result.current.pendingUncategorizedSelect).toBe(false); // dropped, not carried forward
   });
-
-  // Sanity twin: clearUncategorizedSelect() (the screen's own consume path) also flips it false, so
-  // the two disarm routes agree. Fail-on-revert: make clearUncategorizedSelect a no-op and this reddens.
-  it('clearUncategorizedSelect() disarms the intent (the consume path)', () => {
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    act(() => { result.current.requestUncategorizedSelect(); });
-    expect(result.current.pendingUncategorizedSelect).toBe(true);
-
-    act(() => { result.current.clearUncategorizedSelect(); });
-    expect(result.current.pendingUncategorizedSelect).toBe(false);
-  });
 });

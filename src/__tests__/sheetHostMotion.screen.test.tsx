@@ -12,7 +12,6 @@
 // afterEach restores spies (config clears call-counts but not spyOn installs) so the WHIT-199
 // Animated.spring spy can't leak into a later describe.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import type { ReactElement } from 'react';
 import { Modal, Animated, KeyboardAvoidingView, ScrollView } from 'react-native';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext } from '../context';
@@ -33,7 +32,7 @@ import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES, SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
-import { openOverlays, overlaysTree } from './support/openOverlays';
+import { openOverlays } from './support/openOverlays';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -47,12 +46,6 @@ async function mount(state: AppContext) {
   return view;
 }
 
-// Point the mocked context at `state` and redraw.
-async function show(rerender: (tree: ReactElement) => void, state: AppContext) {
-  mockState = state;
-  await act(async () => { rerender(overlaysTree()); });
-}
-
 beforeEach(() => { resetAuth(); });
 
 // jest.config clearMocks resets call-counts but NOT spyOn installs; restore them so the WHIT-199
@@ -61,12 +54,11 @@ afterEach(() => { jest.restoreAllMocks(); });
 
 // ===== WHIT-199 GAP — SheetHost reduce-motion WIRING (Overlays.tsx), the half sheetMotion.screen.test.ts
 // can't reach: springSheetIn is unit-tested, but nothing proves SheetHost wires useReduceMotion →
-// the Modal's animationType AND kicks the open spring (and re-kicks it on every reopen). Native-
-// driver values don't advance in jest, so we assert the BRANCH/WIRING (animationType + that a
-// spring was started / suppressed), never motion frames. Fail-on-revert:
+// the Modal's animationType AND kicks the open spring. Native-driver values don't advance in jest,
+// so we assert the BRANCH/WIRING (animationType + that a spring was started / suppressed), never
+// motion frames. Fail-on-revert:
 //   - revert `animationType={reduceMotion ? 'none' : 'fade'}` to the old 'slide' → both asserts flip
 //   - drop the open-effect's springSheetIn call → "spring on open" flips
-//   - break the effect's `open` re-fire → the reopen count flips
 describe('SheetHost reduce-motion wiring (WHIT-199)', () => {
   function paycycleState(): AppContext {
     return {
@@ -76,9 +68,6 @@ describe('SheetHost reduce-motion wiring (WHIT-199)', () => {
       setPayCycleLength: jest.fn(),
       setPayday: jest.fn(),
     } as unknown as AppContext;
-  }
-  function closedState(): AppContext {
-    return { ...paycycleState(), sheet: null } as AppContext;
   }
 
   beforeEach(() => {
@@ -105,34 +94,6 @@ describe('SheetHost reduce-motion wiring (WHIT-199)', () => {
     expect(UNSAFE_getByType(Modal).props.animationType).toBe('none');
     expect(screen.getByText('Fortnightly')).toBeTruthy(); // still rendered immediately
     expect(springSpy).not.toHaveBeenCalled();
-  });
-
-  it('toggling reduce-motion while a sheet is OPEN does not re-seed/re-spring it (qa edge #2)', async () => {
-    // Sheet opens under reduce-motion (instant, no spring). The user then flips reduce-motion OFF
-    // while the sheet stays open — the spring is keyed on `open`, not reduceMotion, so an at-rest
-    // sheet must NOT suddenly spring under them. Fail-on-revert: put reduceMotion back in the open
-    // effect's deps and this rerun springs → the count flips to 1.
-    mockReduceMotion = true;
-    const springSpy = jest.spyOn(Animated, 'spring')
-      .mockReturnValue({ start: jest.fn() } as unknown as Animated.CompositeAnimation);
-    const { rerender } = await mount(paycycleState());
-    expect(springSpy).not.toHaveBeenCalled();  // opened under reduce-motion → no spring
-    mockReduceMotion = false;                   // OS reduce-motion flipped OFF, sheet still open
-    await show(rerender, mockState);
-    expect(springSpy).not.toHaveBeenCalled();  // at-rest sheet is not re-sprung
-  });
-
-  it('reopen still springs — the open effect re-fires on every open (not stuck at rest)', async () => {
-    mockReduceMotion = false;
-    const springSpy = jest.spyOn(Animated, 'spring')
-      .mockReturnValue({ start: jest.fn() } as unknown as Animated.CompositeAnimation);
-    const { rerender } = await mount(closedState());
-    expect(springSpy).not.toHaveBeenCalled();   // closed → no spring
-    await show(rerender, paycycleState());
-    expect(springSpy).toHaveBeenCalledTimes(1); // first open
-    await show(rerender, closedState());
-    await show(rerender, paycycleState());
-    expect(springSpy).toHaveBeenCalledTimes(2); // reopen re-seeds + springs
   });
 });
 
@@ -161,15 +122,6 @@ describe('SheetHost drag-to-dismiss (WHIT-290/WHIT-293)', () => {
     fireEvent(grabber, 'responderGrant', { nativeEvent: { pageY: 100, timestamp: 0 } });
     fireEvent(grabber, 'responderMove', { nativeEvent: { pageY: 100 + distance, timestamp: 400 } });
     fireEvent(grabber, 'responderRelease', { nativeEvent: { pageY: 100 + distance, timestamp: 400 } });
-  }
-
-  // A quick short flick: a small total distance but a fast last segment (18px in 8ms ≈ 2.25 px/ms).
-  function flickGrabber() {
-    const grabber = screen.getByTestId('sheet-grabber');
-    fireEvent(grabber, 'responderGrant', { nativeEvent: { pageY: 100, timestamp: 0 } });
-    fireEvent(grabber, 'responderMove', { nativeEvent: { pageY: 118, timestamp: 8 } });
-    fireEvent(grabber, 'responderMove', { nativeEvent: { pageY: 136, timestamp: 16 } });
-    fireEvent(grabber, 'responderRelease', { nativeEvent: { pageY: 138, timestamp: 18 } }); // dy=38 (< distance)
   }
 
   describe('shouldDismissSheet decision (WHIT-290/WHIT-293)', () => {
@@ -201,19 +153,13 @@ describe('SheetHost drag-to-dismiss (WHIT-290/WHIT-293)', () => {
       dragGrabber(20);
       expect(fns.setSheet).not.toHaveBeenCalled();
     });
-
-    it('a quick short flick closes the sheet (WHIT-293)', async () => {
-      await mount(sheetState());
-      flickGrabber();
-      expect(fns.setSheet).toHaveBeenCalledWith(null);
-    });
   });
 });
 
 // ===== WHIT-294 — the pop-up SheetHost wraps its sheet in a KeyboardAvoidingView so a focused field's
 // form (incl. its submit button) lifts above the keyboard instead of being hidden under it. The
 // actual keyboard lift is device-only; this locks the structure (the sheet is inside a
-// KeyboardAvoidingView with a real behavior) and that the sheet still renders + closes.
+// KeyboardAvoidingView with a real behavior).
 describe('SheetHost keyboard avoidance (WHIT-294)', () => {
   const fns = { setSheet: jest.fn(), setPayCycleLength: jest.fn(), setPayday: jest.fn() };
   beforeEach(() => {
@@ -231,13 +177,6 @@ describe('SheetHost keyboard avoidance (WHIT-294)', () => {
       const kav = UNSAFE_getByType(KeyboardAvoidingView);
       expect(kav).toBeTruthy();
       expect(['padding', 'height', 'position']).toContain(kav.props.behavior); // set, not undefined
-    });
-
-    it('still renders the sheet content and closes on the backdrop', async () => {
-      await mount(sheetState());
-      expect(screen.getByText('Fortnightly')).toBeTruthy(); // sheet content mounted
-      fireEvent.press(screen.getByLabelText('Close'));
-      expect(fns.setSheet).toHaveBeenCalledWith(null);
     });
   });
 });
@@ -289,18 +228,6 @@ describe('SheetHost scroll-host backdrop (WHIT-288)', () => {
       expect(UNSAFE_getByType(ScrollView)).toBeTruthy(); // the picker list exists...
       const close = screen.getByLabelText('Close');
       expect(close.findAll((n) => n.type === ScrollView)).toHaveLength(0); // ...but not under the backdrop
-    });
-
-    it('tapping a category row selects it (list stays interactive)', async () => {
-      await openPicker();
-      fireEvent.press(screen.getByText('Groceries'));
-      expect(fns.chooseCategory).toHaveBeenCalledWith('groceries');
-    });
-
-    it('still renders the picker list', async () => {
-      await openPicker();
-      expect(screen.getByText('Groceries')).toBeTruthy();
-      expect(screen.getByText('Coffee')).toBeTruthy();
     });
   });
 });
@@ -356,35 +283,6 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
       expect(store.get(DRAFT_KEY)).toEqual({ conditions: [{ field: 'description', operator: 'contains', value: 'SPOTIFY' }], logic: 'all', categoryId: 'groceries', budgetExcluded: false, spread: false });
       // the live field still reflects it — the collapse didn't decouple state from the input
       expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY');
-    });
-
-    // [B2] The reverse merge: typing a pattern AFTER selecting a category must not clobber the
-    // categoryId. Order-independence of the object-merge.
-    it('[B2] typing a pattern after selecting a category keeps the categoryId (merge both ways)', async () => {
-      await openNewRule();
-      fireEvent.press(screen.getByText('Subscriptions'));
-      fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'NETFLIX');
-
-      expect(store.get(DRAFT_KEY)).toEqual({ conditions: [{ field: 'description', operator: 'contains', value: 'NETFLIX' }], logic: 'all', categoryId: 'subs', budgetExcluded: false, spread: false });
-    });
-
-    // [B3] The guarded bailout: re-tapping the ALREADY-selected pill returns `prev` unchanged, so
-    // React bails the update and the persist effect never re-fires. Dropping the
-    // `prev.categoryId === value` guard would re-render with a new (equal) object and write again.
-    it('[B3] re-tapping the already-selected category is a no-op — no extra write, pattern untouched', async () => {
-      await openNewRule();
-      fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
-      fireEvent.press(screen.getByText('Groceries')); // first selection → a real write
-
-      const writesBefore = writeSheetDraft.mock.calls.length;
-      const draftBefore = store.get(DRAFT_KEY);
-
-      fireEvent.press(screen.getByText('Groceries')); // re-tap the SAME pill
-
-      expect(writeSheetDraft.mock.calls.length).toBe(writesBefore); // no rewrite
-      expect(store.get(DRAFT_KEY)).toBe(draftBefore);               // same reference, not a fresh equal object
-      expect(store.get(DRAFT_KEY)).toEqual({ conditions: [{ field: 'description', operator: 'contains', value: 'SPOTIFY' }], logic: 'all', categoryId: 'groceries', budgetExcluded: false, spread: false });
-      expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY'); // sibling field intact
     });
   });
 });

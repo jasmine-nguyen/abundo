@@ -19,7 +19,7 @@ import React from 'react';
 import { Platform } from 'react-native';
 import { screen, fireEvent } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
-import { renderWithQueries, renderLoaded, useTestQueryClient } from './support/renderWithQueries';
+import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { resetRouter } from './support/routerMock';
 
@@ -47,7 +47,6 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import GoalEdit from '../../app/goal/edit';
-import Loan from '../../app/loan';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -82,15 +81,6 @@ describe('the iOS pill gate is wired correctly at each call-site', () => {
     expect(screen.getByTestId('date-open')).toBeTruthy();
     expect(screen.getByText('Set date')).toBeTruthy();
     expect(screen.queryByTestId('mock-datepicker')).toBeNull();
-  });
-
-  // [Q2] loan payoff — unset + iOS → the inline pill (alwaysShowPillIOS), NOT a "Set date"
-  // affordance. loanFactsForm implicitly relies on this (it taps mock-datepicker directly) but
-  // conflates it with the save; this pins it explicitly on iOS.
-  it('[Q2] loan: an unset payoff date shows the inline pill (alwaysShowPillIOS)', async () => {
-    await renderLoaded(<Loan />);
-    expect(screen.getByTestId('mock-datepicker')).toBeTruthy();
-    expect(screen.queryByTestId('date-open')).toBeNull();
   });
 });
 

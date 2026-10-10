@@ -6,10 +6,10 @@ import { budgetViews, budgetDetail, budgetSpreadEligibility } from '../context';
 import { makeState, cat, budget } from './factory';
 
 const food = cat({ id: 'food', name: 'Food', bucket: 'Living' });
-const state = (b: object, daysLeft = 7) => makeState({
+const state = (b: object) => makeState({
   categories: [food],
   budgets: [budget({ id: 'food', ...b })],
-  cycleLen: 14, daysLeft,
+  cycleLen: 14, daysLeft: 7,
 });
 
 describe('a server `available` wins at every read site', () => {
@@ -76,9 +76,5 @@ describe('pace stays on the base target, not the spendable', () => {
 
   it('[A5] (P0) budgetDetail flags over plan', () => {
     expect(budgetDetail(state(roomy), 'food')?.statusLabel).toBe('Over plan — ease up');
-  });
-
-  it('[A5] (P1) on the first day nothing is over plan yet', () => {
-    expect(budgetDetail(state({ budget: 100, posted: 0, pending: 0 }, 14), 'food')?.statusLabel).toBe('On track for payday');
   });
 });

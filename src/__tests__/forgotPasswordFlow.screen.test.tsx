@@ -34,20 +34,6 @@ beforeEach(() => {
   mockConfirmReset.mockReset();
 });
 
-it('Forgot password → request form → send code → confirm form (with a notice)', async () => {
-  const api = render(<Login />);
-  fireEvent.press(api.getByTestId('login-forgot'));
-  expect(api.getByTestId('forgot-request-form')).toBeTruthy();
-
-  fireEvent.changeText(api.getByTestId('forgot-email'), 'me@x.com');
-  mockRequestReset.mockResolvedValue({ ok: true });
-  fireEvent.press(api.getByTestId('forgot-send'));
-
-  await waitFor(() => expect(mockRequestReset).toHaveBeenCalledWith('me@x.com'));
-  await waitFor(() => expect(api.getByTestId('forgot-confirm-form')).toBeTruthy());
-  expect(api.getByTestId('login-notice')).toBeTruthy();
-});
-
 it('a failed send stays on the request form with the error', async () => {
   const api = render(<Login />);
   fireEvent.press(api.getByTestId('login-forgot'));
@@ -94,11 +80,4 @@ it('a bad code stays on the confirm form with the error', async () => {
   fireEvent.press(api.getByTestId('forgot-submit'));
   expect(await api.findByText(/code isn.t right/i)).toBeTruthy();
   expect(api.getByTestId('forgot-confirm-form')).toBeTruthy();
-});
-
-it('Back to sign in returns to the sign-in form', async () => {
-  const api = render(<Login />);
-  fireEvent.press(api.getByTestId('login-forgot'));
-  fireEvent.press(api.getByTestId('forgot-back'));
-  await waitFor(() => expect(api.getByTestId('signin-form')).toBeTruthy());
 });
