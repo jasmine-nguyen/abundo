@@ -217,12 +217,11 @@ it('tapping the toggle when on requests re-inclusion', async () => {
 });
 
 // WHIT-846: money coming in (a refund or transfer in) gets its own exclude wording; spend keeps
-// "Exclude from budgets". Both the manual switch and the bank's read-only note.
+// "Exclude from budgets" (covered by the toggle and read-only note tests). Both the manual switch
+// and the bank's read-only note.
 it.each([
   { case: 'money in, manual switch', over: { amount: 25 }, shown: 'Leave this money out', hidden: 'Exclude from budgets' },
-  { case: 'money out, manual switch', over: { amount: -25 }, shown: 'Exclude from budgets', hidden: 'Leave this money out' },
   { case: 'money in, bank-excluded', over: { amount: 25, counts_to_budget: false }, shown: 'This looks like a transfer in, so it doesn\'t count toward budgets or insights.', hidden: 'This looks like a transfer or card payment, so it doesn\'t count toward budgets or insights.' },
-  { case: 'money out, bank-excluded', over: { amount: -25, counts_to_budget: false }, shown: 'This looks like a transfer or card payment, so it doesn\'t count toward budgets or insights.', hidden: 'This looks like a transfer in, so it doesn\'t count toward budgets or insights.' },
 ])('exclude wording: $case', async ({ over, shown, hidden }) => {
   seedRow(over);
   await draw();
