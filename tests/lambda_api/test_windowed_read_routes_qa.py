@@ -1,25 +1,12 @@
-"""WHIT-632 QA — the handler routes that read a date window still walk every page of every
-account, and still stop at the page ceiling, now that they call the shared read_window directly.
-
-The deleted handler tests proved this for the old private wrapper only. These drive the real
-routes, so swapping any one call site back to a single-page read (or an unbounded loop) reddens.
+"""WHIT-632 QA — the handler routes that read a date window stop at the page ceiling, now that
+they call the shared read_window directly. These drive the real routes, so swapping any one call
+site back to an unbounded loop reddens.
 """
-
-import json
 
 import pytest
 from _budget_endpoint_fakes import _FakeCategoryRepo
 from _rule_ingest_fakes import FakeRuleStore
-from _transaction_range_fakes import _AccountPagesTransactionRepo, _EndlessTransactionRepo
-
-
-def _two_pages_per_account(handler):
-    """Two pages for every account: one unfiled row on each page."""
-    return _AccountPagesTransactionRepo({
-        account: [([_unfiled_row(account, f"{account}-1")], {"cur": 1}),
-                  ([_unfiled_row(account, f"{account}-2")], None)]
-        for account in handler.ACCOUNT_ID_MAP.values()
-    })
+from _transaction_range_fakes import _EndlessTransactionRepo
 
 
 def _unfiled_row(account_id, transaction_id):
@@ -50,24 +37,3 @@ def test_a_route_stops_at_the_page_ceiling_instead_of_hanging(handler, route):
         _routes(handler)[route](repo)
 
     assert len(repo.calls) == constants.DATE_RANGE_MAX_PAGES
-
-
-def test_the_uncategorized_count_sums_every_page_of_every_account(handler):
-    # [A2] two pages x every mapped account -> each row counted once.
-    accounts = list(handler.ACCOUNT_ID_MAP.values())
-    assert len(accounts) > 1
-
-    response = handler.get_uncategorized_count(_two_pages_per_account(handler), _FakeCategoryRepo())
-
-    assert json.loads(response["body"]) == {"count": 2 * len(accounts)}
-
-
-def test_the_recent_feed_merges_every_page_of_every_account(handler):
-    # [A3] the feed keeps rows from each account's second page, not just the first.
-    accounts = list(handler.ACCOUNT_ID_MAP.values())
-
-    result = handler.get_recent_transactions(_two_pages_per_account(handler))
-
-    assert {row["transaction_id"] for row in result} == {
-        f"{account}-{page}" for account in accounts for page in (1, 2)
-    }

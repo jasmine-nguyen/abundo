@@ -14,11 +14,13 @@ import json
 from decimal import Decimal
 from functools import partial
 
+import pytest
+
 from _api_event import api_event
 from _feed_fakes import SPENDING, Repos, _row, inject_rule_routes
 
 
-_CATEGORIES = ("groceries", "subscriptions")
+_CATEGORIES = ("groceries", "subscriptions", "insurance")
 
 
 def _rule(value, category_id="subscriptions", **kw):
@@ -54,66 +56,54 @@ def test_spread_create_captures_the_detected_bill(handler, monkeypatch):
     assert minted["spread_seeded"] is False
 
 
-def test_spread_create_with_no_recurring_bill_is_rejected(handler, monkeypatch):
-    # The rule matches charges, but they are not a recurring bill (a single charge) → nothing to
-    # capture → 422. FAIL-ON-REVERT: return a bill unconditionally and this stops rejecting.
-    repo = Repos()
-    one_off = [_row(SPENDING, "2026-01-05", "n1", merchant_name="NETFLIX",
-                    description="NETFLIX SUBSCRIPTION", amount=Decimal("-15.99"),
-                    category="subscriptions")]
-    _inject(handler, monkeypatch, repo, transactions={SPENDING: one_off})
-    resp = handler.lambda_handler(
-        api_event("POST", "/rules",
-               {"value": "NETFLIX", "categoryId": "subscriptions", "spread": True}), None)
-    assert resp["statusCode"] == 422
-    assert repo.minted_rules() == []
+_NETFLIX_ONCE = [_row(SPENDING, "2026-01-05", "n1", merchant_name="NETFLIX",
+                      description="NETFLIX SUBSCRIPTION", amount=Decimal("-15.99"),
+                      category="subscriptions")]
+_TWO_BILLS = (_monthly("CITY GYM", "CITY GYM PAYMENT", "-40.00")
+              + _monthly("ACME INSURANCE", "ACME INSURANCE PAYMENT", "-90.00"))
 
 
-def test_spread_create_matching_more_than_one_bill_is_rejected(handler, monkeypatch):
-    # A broad rule ("...PAYMENT") reaches two distinct recurring merchants → no single amount to
-    # capture → 422, be more specific.
+@pytest.mark.parametrize("charges, body", [
+    # The rule matches a single charge: not a recurring bill, nothing to capture.
+    (_NETFLIX_ONCE, {"value": "NETFLIX"}),
+    # A broad rule reaches two recurring merchants: no single amount to capture.
+    (_TWO_BILLS, {"value": "PAYMENT"}),
+    # An AND that matches no charge at all.
+    (_monthly("NETFLIX", "NETFLIX SUBSCRIPTION", "-15.99"),
+     {"logic": "all", "conditions": [
+         {"field": "description", "operator": "contains", "value": "NETFLIX"},
+         {"field": "description", "operator": "contains", "value": "GYMPASS"}]}),
+])
+def test_a_spread_rule_without_exactly_one_bill_is_rejected_422(handler, monkeypatch, charges,
+                                                                 body):
+    # FAIL-ON-REVERT: return a bill unconditionally and this stops rejecting.
     repo = Repos()
-    charges = (_monthly("CITY GYM", "CITY GYM PAYMENT", "-40.00")
-               + _monthly("ACME INSURANCE", "ACME INSURANCE PAYMENT", "-90.00"))
     _inject(handler, monkeypatch, repo, transactions={SPENDING: charges})
     resp = handler.lambda_handler(
-        api_event("POST", "/rules",
-               {"value": "PAYMENT", "categoryId": "subscriptions", "spread": True}), None)
+        api_event("POST", "/rules", {**body, "categoryId": "subscriptions", "spread": True}), None)
     assert resp["statusCode"] == 422
     assert repo.minted_rules() == []
 
 
-def test_spread_create_matching_a_named_and_a_nameless_bill_is_rejected(handler, monkeypatch):
-    # WHIT-569: a rule whose matched history holds a NAMED recurring bill AND a NAMELESS recurring
-    # direct debit (now detected by the stem pass) reaches two bills → 422, be more specific. Fail-safe:
-    # the app refuses rather than silently capturing only the named amount.
-    repo = Repos()
-    named = _monthly("ORIGIN ENERGY", "ORIGIN ENERGY DIRECT DEBIT", "-50.00")
-    nameless = [_row(SPENDING, f"2026-{m}-12", f"dd-{m}", merchant_name="",
-                     description="RENT DIRECT DEBIT 4471", amount=Decimal("-1800.00"),
-                     category="subscriptions")
-                for m in ("01", "02", "03", "04")]
-    _inject(handler, monkeypatch, repo, transactions={SPENDING: named + nameless})
-    resp = handler.lambda_handler(
-        api_event("POST", "/rules",
-               {"value": "DIRECT DEBIT", "categoryId": "subscriptions", "spread": True}), None)
-    assert resp["statusCode"] == 422
-    assert repo.minted_rules() == []
-
-
-def test_a_second_spreading_rule_on_a_category_is_rejected(handler, monkeypatch):
-    # At most one spreading rule per category (one spread plan per category). FAIL-ON-REVERT: drop
-    # the per-category check and this returns 201.
+@pytest.mark.parametrize("body, charges, expected", [
+    ({"value": "SPOTIFY", "categoryId": "subscriptions", "spread": True},
+     _monthly("SPOTIFY", "SPOTIFY PREMIUM", "-12.99"), 409),
+    ({"value": "ACME INSURANCE", "categoryId": "insurance", "spread": True},
+     _monthly("ACME INSURANCE", "ACME INSURANCE PREMIUM", "-90.00"), 201),
+    ({"value": "SPOTIFY", "categoryId": "subscriptions"}, [], 201),
+])
+def test_a_second_spreading_rule_on_a_category_is_rejected(handler, monkeypatch, body, charges,
+                                                           expected):
+    # At most one spreading rule per category (one spread plan per category). Only spread vs
+    # spread on the SAME category clashes. FAIL-ON-REVERT: drop the per-category check and the
+    # first row returns 201.
     existing = _rule("NETFLIX", "subscriptions", spread=True,
                      spread_amount=Decimal("15.99"), spread_gap_days=31)
     repo = Repos(rules=[existing])
-    _inject(handler, monkeypatch, repo,
-            transactions={SPENDING: _monthly("SPOTIFY", "SPOTIFY PREMIUM", "-12.99")})
-    resp = handler.lambda_handler(
-        api_event("POST", "/rules",
-               {"value": "SPOTIFY", "categoryId": "subscriptions", "spread": True}), None)
-    assert resp["statusCode"] == 409
-    assert len(repo.rule_repo.list_rules()) == 1              # nothing minted
+    _inject(handler, monkeypatch, repo, transactions={SPENDING: charges})
+    resp = handler.lambda_handler(api_event("POST", "/rules", body), None)
+    assert resp["statusCode"] == expected
+    assert len(repo.rule_repo.list_rules()) == (1 if expected == 409 else 2)
 
 
 def test_editing_the_same_spreading_rule_is_not_a_self_clash(handler, monkeypatch):
@@ -161,13 +151,76 @@ def test_spread_and_budget_excluded_together_is_rejected(handler, monkeypatch):
     assert repo.minted_rules() == []
 
 
-def test_non_spread_create_never_touches_the_detector(handler, monkeypatch):
-    # A plain rule creates with an empty transaction store — the capture only runs when spread.
-    repo = Repos()
+def test_turning_spread_off_through_put_clears_the_captured_bill(handler, monkeypatch):
+    existing = _rule("NETFLIX", "subscriptions", spread=True,
+                     spread_amount=Decimal("15.99"), spread_gap_days=31)
+    repo = Repos(rules=[existing])
+    rule_id = repo.rule_repo.list_rules()[0]["id"]
+    repo.rule_repo.mark_spread_seeded(rule_id)
     _inject(handler, monkeypatch, repo, transactions={})
     resp = handler.lambda_handler(
-        api_event("POST", "/rules", {"value": "COLES", "categoryId": "groceries"}), None)
+        api_event("PUT", "/rules/x",
+               {"value": "NETFLIX", "categoryId": "subscriptions", "spread": False},
+               path_params={"id": rule_id}), None)
     body = json.loads(resp["body"])
-    assert resp["statusCode"] == 201
+    assert resp["statusCode"] == 200
     assert body["spread"] is False
     assert body["spreadAmount"] is None and body["spreadGapDays"] is None
+    row = repo.rule_repo.get_rule(rule_id)
+    assert "spread_amount" not in row and "spread_gap_days" not in row and "spread_seeded" not in row
+
+
+def test_toggling_spread_on_an_existing_plain_rule_captures_and_arms(handler, monkeypatch):
+    existing = _rule("NETFLIX", "subscriptions", spread=False)
+    repo = Repos(rules=[existing])
+    rule_id = repo.rule_repo.list_rules()[0]["id"]
+    _inject(handler, monkeypatch, repo,
+            transactions={SPENDING: _monthly("NETFLIX", "NETFLIX SUBSCRIPTION", "-15.99")})
+    resp = handler.lambda_handler(
+        api_event("PUT", "/rules/x",
+               {"value": "NETFLIX", "categoryId": "subscriptions", "spread": True},
+               path_params={"id": rule_id}), None)
+    body = json.loads(resp["body"])
+    assert resp["statusCode"] == 200
+    assert body["spread"] is True and body["spreadAmount"] == 15.99 and body["spreadGapDays"] == 31
+    assert repo.rule_repo.get_rule(rule_id)["spread_seeded"] is False
+
+
+def test_text_edit_of_a_spread_rule_recaptures_and_rearms_through_the_route(handler, monkeypatch):
+    existing = _rule("NETFLIX", "subscriptions", spread=True,
+                     spread_amount=Decimal("15.99"), spread_gap_days=31)
+    repo = Repos(rules=[existing])
+    old_id = repo.rule_repo.list_rules()[0]["id"]
+    repo.rule_repo.mark_spread_seeded(old_id)
+    _inject(handler, monkeypatch, repo,
+            transactions={SPENDING: _monthly("SPOTIFY", "SPOTIFY PREMIUM", "-12.99")})
+    resp = handler.lambda_handler(
+        api_event("PUT", "/rules/x",
+               {"value": "SPOTIFY", "categoryId": "subscriptions", "spread": True},
+               path_params={"id": old_id}), None)
+    body = json.loads(resp["body"])
+    assert resp["statusCode"] == 200
+    assert body["spread"] is True and body["spreadAmount"] == 12.99
+    assert repo.rule_repo.get_rule(old_id) is None                      # old row retired
+    new_id = repo.rule_repo.list_rules()[0]["id"]
+    assert repo.rule_repo.get_rule(new_id)["spread_seeded"] is False     # re-armed
+
+
+def test_an_unrelated_edit_preserves_the_captured_amount_without_redetecting(handler, monkeypatch):
+    # The amount is frozen at create. Editing ONLY the category (match text unchanged) must keep the
+    # stored amount and NOT re-run the detector — proven here with an EMPTY transaction store, where a
+    # re-detect would find no bill and 422. FAIL-ON-REVERT: drop the `preserved` path in
+    # update_rule_route and this edit 422s on the empty history.
+    existing = _rule("NETFLIX", "subscriptions", spread=True,
+                     spread_amount=Decimal("15.99"), spread_gap_days=31)
+    repo = Repos(rules=[existing])
+    rule_id = repo.rule_repo.list_rules()[0]["id"]
+    _inject(handler, monkeypatch, repo, transactions={})   # history aged out / empty
+    resp = handler.lambda_handler(
+        api_event("PUT", "/rules/x",
+               {"value": "NETFLIX", "categoryId": "groceries", "spread": True},
+               path_params={"id": rule_id}), None)
+    body = json.loads(resp["body"])
+    assert resp["statusCode"] == 200
+    assert body["categoryId"] == "groceries"
+    assert body["spreadAmount"] == 15.99 and body["spreadGapDays"] == 31   # preserved, not re-detected

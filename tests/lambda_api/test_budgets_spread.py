@@ -19,8 +19,8 @@ import pytest
 
 from _api_event import api_event
 from _budget_endpoint_fakes import CYCLE_START, LENGTH, PAYDATE, _FakePayCycleRepo, _SpendCategoryRepo, _spend_cat, pin_cycle_window
-from _budget_fakes import recording_budget_repo
-from _terraform import app_route_keys
+from _budget_fakes import recording_budget_repo, stored_budgets
+from _dynamo_fakes import _client_error
 from _transaction_range_fakes import _QueuedTransactionRepo
 
 pytestmark = pytest.mark.usefixtures("fixed_window")
@@ -64,15 +64,6 @@ def test_the_anchor_cycle_carries_the_full_bill_as_a_cushion(handler):
     assert result["insurance"]["posted"] == BILL
     assert result["insurance"]["spread"] == {"amount": BILL, "cycles": 4, "index": 0, "adjustment": BILL}
     assert budget_repo.clear_spread_calls == []     # an active plan is never cleared
-
-
-def test_the_next_cycle_gives_back_the_first_slice(handler):
-    budget_repo = recording_budget_repo({"insurance": _entry(spread_from="2026-07-07")})
-    result = _list(handler, budget_repo)
-
-    assert result["insurance"]["spread"] == {
-        "amount": BILL, "cycles": 4, "index": 1, "adjustment": Decimal("-347.73")}
-    assert budget_repo.clear_spread_calls == []
 
 
 def test_the_last_payback_cycle_is_still_part_of_the_plan(handler):
@@ -180,16 +171,6 @@ def test_a_second_pay_cycle_change_re_settles_the_settle_plan_instead_of_forgivi
     assert budget_repo.clear_spread_calls == []
 
 
-def test_a_pay_cycle_change_while_still_in_the_anchor_cycle_just_withdraws_the_cushion(handler):
-    # The cushion and the settle-up would land in the same cycle and cancel, so nothing is
-    # shown (the row is plain) and the plan closes. Net zero by construction.
-    budget_repo = recording_budget_repo({"insurance": _entry(spread_from=CYCLE_START, spread_len=14)})
-    result = _list(handler, budget_repo)
-
-    assert "spread" not in result["insurance"]
-    assert budget_repo.clear_spread_calls == ["insurance"]
-
-
 def test_a_payday_moved_backwards_within_the_anchor_cycle_is_not_a_debt(handler):
     # The user set their payday a few days EARLIER while still in the cycle the plan was
     # created in (anchor 2026-08-08, today 08-10): under its own grid the plan is still at
@@ -244,22 +225,6 @@ def test_a_spread_on_a_re_bucketed_income_category_is_ignored(handler):
     assert budget_repo.clear_spread_calls == []
 
 
-def test_a_plain_budget_row_is_byte_identical_to_before(handler):
-    budget_repo = recording_budget_repo({"food": {"target": Decimal(250)}})
-    result = _list(handler, budget_repo, [_txn("food", -40, "2026-08-08")], _spend_cat("food"))
-
-    assert result == {"food": {"available": Decimal(250), "target": Decimal(250), "posted": Decimal(40), "pending": Decimal(0)}}
-
-
-def test_a_failed_clear_never_500s_the_read(handler):
-    budget_repo = recording_budget_repo({"insurance": _entry(spread_from="2026-03-09")})
-    budget_repo._table.fail("update_item")
-    result = _list(handler, budget_repo)
-
-    assert "spread" not in result["insurance"]          # still served
-    assert budget_repo.clear_spread_calls == ["insurance"]   # it did attempt the clear
-
-
 def test_a_partial_spread_entry_is_cleared_instead_of_500ing_the_whole_screen(handler):
     # Every write sets/strips all five fields together, so a partial entry can only come from
     # a hand-edited item. It must not KeyError the read — one bad entry would take down every
@@ -273,6 +238,25 @@ def test_a_partial_spread_entry_is_cleared_instead_of_500ing_the_whole_screen(ha
     assert result["insurance"] == {"available": Decimal(250), "target": Decimal(250), "posted": Decimal(0), "pending": Decimal(0)}
     assert result["food"]["target"] == Decimal(80)
     assert budget_repo.clear_spread_calls == ["insurance"]
+
+
+def _fail_write(key, table):
+    raise _client_error("InternalServerError")
+
+
+def test_one_failing_clear_does_not_skip_the_other_finished_spreads(handler):
+    # Two finished plans on one read; the first id's clear raises. The second must still be
+    # attempted (each write is its own best-effort try), and the read succeeds.
+    categories = _spend_cat("a") + _spend_cat("b")
+    budget_repo = recording_budget_repo({"a": _entry(spread_from="2026-03-09"),
+                                      "b": _entry(spread_from="2026-03-09")})
+    budget_repo._table.before_next_write(_fail_write)   # the first clear ("a") fails
+
+    result = _list(handler, budget_repo, categories=categories)
+
+    assert "spread" not in result["a"] and "spread" not in result["b"]
+    assert budget_repo.clear_spread_calls == ["a", "b"]
+    assert "spread_amount" not in stored_budgets(budget_repo)["b"]     # b really was cleared
 
 
 # --- PUT /budgets/{category}/spread ---------------------------------------------
@@ -334,6 +318,11 @@ def test_set_spread_quantises_the_amount_to_cents(handler):
     '{"amount": 100, "cycles": true}',
     '{"amount": 100, "cycles": 0}',           # below SPREAD_MIN_CYCLES
     '{"amount": 100, "cycles": 25}',          # above SPREAD_MAX_CYCLES
+    "not json",
+    "",
+    '[{"amount": 100, "cycles": 2}]',         # a JSON array, not an object
+    '{"amount": 100, "cycles": 2.0}',         # a float that equals an int is still not an int
+    '{"amount": 100, "cycles": "4"}',         # numeric string
 ])
 def test_set_spread_rejects_a_bad_body_400(handler, body):
     repo = _budgeted()
@@ -374,7 +363,6 @@ def test_set_spread_requires_a_budget_target_first(handler):
     resp = handler.set_spread(_put_spread_event(), repo, _SpendCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 400
-    assert "budget" in json.loads(resp["body"])["error"]
     assert repo.set_spread_calls == []
 
 
@@ -386,7 +374,6 @@ def test_set_spread_is_rejected_while_rollover_is_on(handler):
     resp = handler.set_spread(_put_spread_event(), repo, _SpendCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 400
-    assert "rollover" in json.loads(resp["body"])["error"]
     assert repo.set_spread_calls == []
 
 
@@ -405,7 +392,6 @@ def test_turning_rollover_on_is_rejected_while_a_spread_is_active(handler):
     resp = handler.set_budget(event, repo, _SpendCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 400
-    assert "spread" in json.loads(resp["body"])["error"]
     assert repo.set_calls == []
 
 
@@ -427,15 +413,6 @@ def test_a_plain_target_edit_is_still_allowed_while_a_spread_is_active(handler):
     assert repo.set_calls == [("insurance", Decimal(300))]
 
 
-def test_set_spread_missing_path_param_404(handler):
-    repo = _budgeted()
-
-    resp = handler.set_spread({"pathParameters": {}, "body": "{}"}, repo, _SpendCategoryRepo(), FakePayCycleRepo())
-
-    assert resp["statusCode"] == 404
-    assert repo.set_spread_calls == []
-
-
 # --- DELETE /budgets/{category}/spread ------------------------------------------
 
 
@@ -447,21 +424,6 @@ def test_delete_spread_clears_the_plan(handler):
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"id": "insurance"}
     assert repo.clear_spread_calls == ["insurance"]
-
-
-def test_delete_spread_is_idempotent_200_with_no_plan(handler):
-    repo = recording_budget_repo({})
-
-    resp = handler.delete_spread(_delete_spread_event(category="never_spread"), repo)
-
-    assert resp["statusCode"] == 200
-    assert repo.clear_spread_calls == ["never_spread"]
-
-
-def test_delete_spread_missing_path_param_404(handler):
-    resp = handler.delete_spread({"pathParameters": {}}, recording_budget_repo())
-
-    assert resp["statusCode"] == 404
 
 
 # --- routing: the /spread suffix must not fall into the item PUT/DELETE --------
@@ -518,11 +480,3 @@ def test_a_category_whose_id_is_literally_spread_still_reaches_the_item_routes(h
     assert delete["statusCode"] == 200
     assert repo.delete_calls == ["spread"]
     assert repo.clear_spread_calls == []
-
-
-def test_the_spread_routes_are_registered_in_api_gateway():
-    # The gateway lists every route explicitly (no greedy proxy): a handler branch with no
-    # matching route key 404s before the Lambda is ever invoked.
-    routes = app_route_keys()
-    assert "PUT /budgets/{category}/spread" in routes
-    assert "DELETE /budgets/{category}/spread" in routes

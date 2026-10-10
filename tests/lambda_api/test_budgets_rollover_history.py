@@ -11,7 +11,7 @@ from decimal import Decimal
 
 import pytest
 
-from _budget_endpoint_fakes import LENGTH, PAYDATE, _FakeCategoryRepo, _FakePayCycleRepo, _txn
+from _budget_endpoint_fakes import CYCLE_START, LENGTH, PAYDATE, _FakeCategoryRepo, _FakePayCycleRepo, _txn
 from _transaction_range_fakes import _DateFilteringTransactionRepo
 from _budget_fakes import recording_budget_repo, stored_budgets
 
@@ -66,3 +66,71 @@ def test_rollover_row_lists_the_cycles_behind_its_carryover_and_saves_the_sealed
         {"start": "2026-05-08", "end": "2026-06-06", "target": Decimal(100), "spent": Decimal(150),
          "leftover": Decimal(-50)},
     ]
+
+
+CATEGORIES = _FakeCategoryRepo([{"id": "sink", "bucket": "Lifestyle", "parent": None}])
+
+
+def _record(start, end, spent, leftover):
+    return {"start": start, "end": end, "target": Decimal(100), "spent": Decimal(spent),
+            "leftover": Decimal(leftover)}
+
+
+def _entry(**extra):
+    return {"target": Decimal(100), "rollover": True, "carryover_len": Decimal(LENGTH),
+            "carryover_paydate": PAYDATE, **extra}
+
+
+def _list(handler, budget_repo, transactions, length=LENGTH):
+    return handler.list_budgets(budget_repo, _DateFilteringTransactionRepo(transactions),
+                                _FakePayCycleRepo(length, PAYDATE), CATEGORIES)
+
+
+def _adds_up(row):
+    return sum(c["leftover"] for c in row["carryover_cycles"]) + row["carryover_earlier"] == row["carryover"]
+
+
+SPEND = [_txn("t1", "sink", -150, "2026-05-20"), _txn("t2", "sink", -30, "2026-07-20")]
+
+
+# [A3] (P0) A second read after the seal returns the same list from the saved history, with no
+# extra write and nothing counted twice.
+def test_a_second_read_lists_the_same_cycles_from_the_saved_history_without_writing(handler):
+    budget_repo = recording_budget_repo({"sink": _entry(carryover=Decimal(40), carryover_from="2026-05-08")})
+
+    first = _list(handler, budget_repo, SPEND)["sink"]
+    second = _list(handler, budget_repo, SPEND)["sink"]
+
+    assert second == first
+    assert second["carryover"] == Decimal(160)
+    assert _adds_up(second)
+    assert len(budget_repo.settle_calls) == 1
+
+
+# [A4] (P1) A pay-cycle change re-anchors: the saved cycles stay listed and still add up.
+def test_a_pay_cycle_change_keeps_the_saved_cycles_and_they_still_add_up(handler):
+    old = _record("2026-05-08", "2026-05-21", 150, -50)
+    budget_repo = recording_budget_repo({"sink": _entry(
+        carryover=Decimal(-10), carryover_from="2026-05-22", carryover_len=Decimal(14), carryover_history=[old])})
+
+    row = _list(handler, budget_repo, [])["sink"]
+
+    assert row["carryover"] == Decimal(-10)
+    assert row["carryover_cycles"] == [{**old, "settling": False}]
+    assert row["carryover_earlier"] == Decimal(40)
+    assert _adds_up(row)
+    saved = stored_budgets(budget_repo)["sink"]
+    assert saved["carryover_history"] == [old]
+    assert saved["carryover_from"] == CYCLE_START
+
+
+# [A7] (P1) A long gap is capped at the lookback; the cycles that are folded are the ones listed.
+def test_a_long_gap_lists_only_the_folded_cycles_and_still_adds_up(handler):
+    budget_repo = recording_budget_repo({"sink": _entry(carryover=Decimal(-25), carryover_from="2024-01-01")})
+
+    row = _list(handler, budget_repo, [])["sink"]
+
+    assert _adds_up(row)
+    assert row["carryover_earlier"] == Decimal(-25)
+    saved = stored_budgets(budget_repo)["sink"]
+    assert sum(r["leftover"] for r in saved["carryover_history"]) + Decimal(-25) == saved["carryover"]

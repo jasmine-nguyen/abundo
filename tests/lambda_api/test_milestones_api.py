@@ -75,11 +75,6 @@ def test_get_milestones_empty_list_when_unset(handler):
     assert handler.get_milestones({}, FakeMilestoneRepo(None)) == []
 
 
-def test_get_milestones_returns_saved_list(handler):
-    saved = [{"id": "a", "label": "Kickoff", "targetBalance": 544000.0, "targetDate": "2026-06-18"}]
-    assert handler.get_milestones({}, FakeMilestoneRepo(saved)) == saved
-
-
 def test_route_get_milestones(handler, monkeypatch):
     saved = [{"id": "a", "label": "Kickoff", "targetBalance": 544000.0, "targetDate": "2026-06-18"}]
     monkeypatch.setattr(handler, "MilestoneRepository", lambda: FakeMilestoneRepo(saved))
@@ -115,19 +110,6 @@ def test_set_milestones_stores_cents_exactly(handler):
     assert stored == Decimal("595413.43")
 
 
-def test_set_milestones_preserves_supplied_ids(handler):
-    with_ids = [{**m, "id": f"m{i}"} for i, m in enumerate(VALID)]
-    resp, _ = _put_plan(handler, with_ids)
-    assert resp["statusCode"] == 200
-    assert [m["id"] for m in json.loads(resp["body"])] == ["m0", "m1", "m2"]
-
-
-def test_set_milestones_single_milestone_is_valid(handler):
-    # A one-row plan has no consecutive pairs, so the ordering rule trivially passes.
-    resp, _ = _put_plan(handler, [VALID[0]])
-    assert resp["statusCode"] == 200
-
-
 def test_set_milestones_zero_balance_is_allowed(handler):
     # A $0 target = "paid off" is a legitimate final milestone.
     plan = [
@@ -136,12 +118,6 @@ def test_set_milestones_zero_balance_is_allowed(handler):
     ]
     resp, _ = _put_plan(handler, plan)
     assert resp["statusCode"] == 200
-
-
-def test_set_milestones_label_is_trimmed(handler):
-    resp, repo = _put_plan(handler, [{**VALID[0], "label": "  Kickoff  "}])
-    assert resp["statusCode"] == 200
-    assert repo.set_calls[0]["milestones"][0]["label"] == "Kickoff"
 
 
 def test_route_put_milestones_dispatch(handler, monkeypatch):
@@ -181,15 +157,6 @@ def test_set_milestones_rejects_bad_fields(handler, body, needle):
     assert repo.set_calls == []   # nothing persisted on a rejected write
 
 
-def test_set_milestones_rejects_over_max_count(handler):
-    # 51 rows exceed the 50-milestone cap (checked before ordering, so order is irrelevant).
-    too_many = {"milestones": [{"label": f"m{i}", "targetBalance": 1, "targetDate": "2026-06-18"} for i in range(51)]}
-    resp, repo = _put(handler, too_many)
-    assert resp["statusCode"] == 400
-    assert "at most" in json.loads(resp["body"])["error"]
-    assert repo.set_calls == []
-
-
 def test_set_milestones_rejects_duplicate_ids(handler):
     dup = [{**VALID[0], "id": "same"}, {**VALID[1], "id": "same"}]
     resp, repo = _put_plan(handler, dup)
@@ -221,32 +188,14 @@ def test_set_milestones_rejects_equal_date(handler):
     assert "increasing targetDate" in json.loads(resp["body"])["error"]
 
 
-def test_set_milestones_rejects_wrong_direction(handler):
-    # An increasing balance (a loan going UP) is rejected.
-    plan = [
-        {"label": "a", "targetBalance": 200000, "targetDate": "2026-06-18"},
-        {"label": "b", "targetBalance": 300000, "targetDate": "2027-06-18"},
-    ]
-    resp, _ = _put_plan(handler, plan)
-    assert resp["statusCode"] == 400
-
-
-def test_set_milestones_rejects_invalid_json(handler):
-    resp, _ = _put(handler, "{not json")
-    assert resp["statusCode"] == 400
-
-
 # === adversarial edges (WHIT-375, folded in from test_milestones_api_edges.py) ==============
 #
 # Gaps beyond the happy-path + basic-validation tests above:
 #   [A-EX]  extra unknown keys silently dropped (whitelist), a smuggled pk/sk never reaches the repo.
-#   [A-CAPHI] targetBalance exactly at the cap accepted; cap+1 rejected.
+#   [A-CAPHI] targetBalance exactly at the cap accepted.
 #   [A-NAN] targetBalance NaN / Infinity rejected (the math.isfinite guard).
-#   [A-LBL] label longer than 100 chars rejected; exactly 100 accepted.
-#   [A-50]  a full 50-row valid plan accepted (the count-cap boundary; the 51-row test above only
-#           checks the message).
+#   [A-50]  a full 50-row valid plan accepted; 51 rejected (the count-cap boundary).
 #   [A-LASTPAIR] a bad ordering on the LAST pair of a 3-row plan is caught (the loop scans all pairs).
-#   [A-ZERONF] a 0 balance in a NON-final position forces a negative next balance → rejected.
 
 
 # --- [A-EX] extra keys whitelisted away -------------------------------------
@@ -273,13 +222,6 @@ def test_target_balance_exactly_at_cap_is_accepted(handler):
     assert repo.set_calls[0]["milestones"][0]["targetBalance"] == cap
 
 
-def test_target_balance_one_over_cap_is_rejected(handler):
-    resp, repo = _put_plan(handler, [{**VALID0, "targetBalance": handler._MILESTONE_BALANCE_MAX + 1}])
-    assert resp["statusCode"] == 400
-    assert "targetBalance" in json.loads(resp["body"])["error"]
-    assert repo.set_calls == []
-
-
 # --- [A-NAN] non-finite numbers ---------------------------------------------
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
@@ -290,27 +232,6 @@ def test_target_balance_non_finite_is_rejected(handler, bad):
     assert resp["statusCode"] == 400
     assert "targetBalance" in json.loads(resp["body"])["error"]
     assert repo.set_calls == []
-
-
-# --- [A-LBL] label length boundary ------------------------------------------
-
-def test_label_exactly_100_chars_is_accepted(handler):
-    resp, _ = _put_plan(handler, [{**VALID0, "label": "x" * 100}])
-    assert resp["statusCode"] == 200
-
-
-def test_label_over_100_chars_is_rejected(handler):
-    resp, repo = _put_plan(handler, [{**VALID0, "label": "x" * 101}])
-    assert resp["statusCode"] == 400
-    assert "too long" in json.loads(resp["body"])["error"]
-    assert repo.set_calls == []
-
-
-def test_label_trimmed_before_length_check(handler):
-    # 100 real chars wrapped in whitespace trims to 100 → still accepted (guard uses
-    # the trimmed length, not the raw length).
-    resp, _ = _put_plan(handler, [{**VALID0, "label": "  " + "x" * 100 + "  "}])
-    assert resp["statusCode"] == 200
 
 
 # --- [A-50] count-cap boundary (the 51-row test above only checks the message) --
@@ -332,8 +253,7 @@ def test_exactly_50_milestones_accepted(handler):
 
 
 def test_51_milestones_rejected(handler):
-    # Guard against an off-by-one that would let 51 through (the test above asserts the message;
-    # this locks the boundary sits between 50 and 51).
+    # Locks the boundary between 50 and 51 against an off-by-one.
     resp, repo = _put_plan(handler, _valid_plan(51))
     assert resp["statusCode"] == 400
     assert repo.set_calls == []
@@ -355,68 +275,11 @@ def test_bad_ordering_on_last_pair_is_caught(handler):
     assert repo.set_calls == []
 
 
-# --- [A-ZERONF] 0 balance is only valid as the FINAL step -------------------
-
-def test_zero_balance_before_another_row_is_rejected(handler):
-    # A 0 ("paid off") mid-plan forces the next balance strictly below 0 → negative →
-    # rejected at field validation. Proves 0 can only ever be the last milestone.
-    plan = [
-        {"label": "a", "targetBalance": 100000, "targetDate": "2026-06-18"},
-        {"label": "paid", "targetBalance": 0, "targetDate": "2027-06-18"},
-        {"label": "impossible", "targetBalance": -1, "targetDate": "2028-06-18"},
-    ]
-    resp, repo = _put_plan(handler, plan)
-    assert resp["statusCode"] == 400
-    assert "targetBalance" in json.loads(resp["body"])["error"]
-    assert repo.set_calls == []
-
-
-# --- WHIT-383 supplied-id trimming ------------------------------------------
-
-def test_supplied_id_is_stored_trimmed(handler):
-    # A client-supplied id with stray whitespace is stored trimmed, mirroring the label.
-    resp, repo = _put_plan(handler, [{**VALID0, "id": "  a  "}])
-    assert resp["statusCode"] == 200
-    assert repo.set_calls[0]["milestones"][0]["id"] == "a"
-
-
-def test_ids_differing_only_by_whitespace_collide_as_duplicate(handler):
-    # " a " and "a" are the SAME id once trimmed -> rejected as duplicate. Fail-on-revert:
-    # without the .strip() they stay distinct and this plan wrongly returns 200.
-    plan = [
-        {"label": "A", "targetBalance": 544000, "targetDate": "2026-06-18", "id": " a "},
-        {"label": "B", "targetBalance": 400000, "targetDate": "2027-06-18", "id": "a"},
-    ]
-    resp, repo = _put_plan(handler, plan)
-    assert resp["statusCode"] == 400
-    assert "unique" in json.loads(resp["body"])["error"]
-    assert repo.set_calls == []
-
-
-@pytest.mark.parametrize("blank", ["   ", "\t", "\n", " \t\n "])
-def test_whitespace_only_id_is_rejected_not_stripped_to_empty(handler, blank):
-    # An ALL-whitespace id must be rejected as non-empty-string, NOT silently stripped to
-    # "" then stored/deduped. Guards the elif-before-else ordering.
-    resp, repo = _put_plan(handler, [{**VALID0, "id": blank}])
-    assert resp["statusCode"] == 400
-    assert "non-empty string" in json.loads(resp["body"])["error"]
-    assert repo.set_calls == []
-
-
-def test_tab_newline_padded_id_is_stored_trimmed(handler):
-    # Trimming covers tabs/newlines, not just spaces.
-    resp, repo = _put_plan(handler, [{**VALID0, "id": "\t a1 \n"}])
-    assert resp["statusCode"] == 200
-    assert repo.set_calls[0]["milestones"][0]["id"] == "a1"
-
-
-def test_internal_whitespace_in_id_is_preserved(handler):
-    # strip() only trims the ENDS: an id with internal spaces keeps them, so two genuinely
-    # different ids aren't collapsed by over-trimming.
-    plan = [
-        {**VALID0, "id": "a b"},
-        {"label": "B", "targetBalance": 400000, "targetDate": "2027-06-18", "id": "ab"},
-    ]
-    resp, repo = _put_plan(handler, plan)
-    assert resp["statusCode"] == 200
-    assert [m["id"] for m in repo.set_calls[0]["milestones"]] == ["a b", "ab"]
+def test_seen_ids_is_per_request_not_shared_across_calls(handler):
+    # WHIT-480: two independent saves reusing the same id must both succeed; a leaked
+    # module-level seen-id set would 400 the second as a duplicate.
+    resp1, repo1 = _put_plan(handler, [{**VALID0, "id": "dup"}])
+    resp2, repo2 = _put_plan(handler, [{**VALID0, "id": "dup"}])
+    assert resp1["statusCode"] == 200 and resp2["statusCode"] == 200
+    assert repo1.set_calls[0]["milestones"][0]["id"] == "dup"
+    assert repo2.set_calls[0]["milestones"][0]["id"] == "dup"

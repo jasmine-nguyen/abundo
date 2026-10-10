@@ -8,7 +8,10 @@ them. The marker is what stops a BankSync re-send bringing the charge back.
 import json
 import time
 
+import pytest
+
 from _api_event import api_event
+from _dynamo_fakes import _client_error
 from _feed_fakes import WESTPAC, Repos, _row
 
 _DUPLICATE_ID = "westpac-claude-sub-pending"
@@ -62,3 +65,32 @@ def test_user_can_delete_a_charge_and_it_is_marked_so_a_resend_cannot_bring_it_b
         {**api_event("PATCH", f"/transactions/{_SIBLING_ID}", path_params={"id": _SIBLING_ID}),
          "body": json.dumps({"notes": "kept"})}, None)
     assert patch["statusCode"] == 200
+
+
+@pytest.fixture
+def store(handler, monkeypatch):
+    repos = Repos({WESTPAC: [_row(WESTPAC, "2026-09-27", _DUPLICATE_ID, description="ANTHROPIC* CLAUDE SUB",
+                                  amount="-170.01", pending=True)]})
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: repos.transaction_repo)
+    return repos
+
+
+def test_marker_write_failure_does_not_delete_the_row(handler, store):
+    store.table.fail("put_item", _client_error("AccessDeniedException", "denied"))
+    with pytest.raises(Exception) as err:
+        _delete(handler, _DUPLICATE_ID)
+    assert type(err.value).__name__ == "DatabaseError"
+    assert (f"ACCOUNT#{WESTPAC}", f"TXN#{_DUPLICATE_ID}") in store.table.store
+
+
+def test_marker_is_per_account(handler, store):
+    assert _delete(handler, _DUPLICATE_ID)["statusCode"] == 200
+    repo = store.transaction_repo
+    assert repo.is_deleted(WESTPAC, _DUPLICATE_ID) is True
+    assert repo.is_deleted("some-other-account", _DUPLICATE_ID) is False
+
+
+def test_marker_ttl_outlives_the_resend_and_age_out_windows(handler):
+    import constants
+    assert constants.DELETED_TRANSACTION_TTL_SECONDS > constants.FEED_WINDOW_DAYS * 24 * 3600
+    assert constants.DELETED_TRANSACTION_TTL_SECONDS > constants.PENDING_AGE_OUT_DAYS * 24 * 3600

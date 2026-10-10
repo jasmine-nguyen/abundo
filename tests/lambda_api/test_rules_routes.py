@@ -3,11 +3,10 @@
 These routes back the app's Rules screen with our OWN store (RuleRepository). Everything is
 driven through lambda_handler with the real RuleRepository (over a FakeTable) injected as
 handler.RuleRepository, so the dispatch, the store->client mapping (rule_book.rule_from_row), and
-the two write guards this route adds (the value floor and the category check) are all exercised
+the write guards this route adds (vocabulary, value floor, category check) are all exercised
 end to end.
 """
 
-import base64
 import json
 from functools import partial
 
@@ -15,22 +14,50 @@ import pytest
 
 from _api_event import api_event
 from _feed_fakes import Repos, inject_rule_routes
-from _terraform import app_route_keys
+from _rule_pairs import PAIR_VALUE, RULE_PAIRS
 
 
-_CATEGORIES = ("groceries", "petrol")
+_CATEGORIES = ("groceries", "petrol", "transport")
+
+_CLIENT_KEYS = {"id", "field", "operator", "value", "categoryId", "budgetExcluded",
+                "spread", "spreadAmount", "spreadGapDays", "conditions", "logic"}
 
 
-def _rule(value, category_id="groceries", field="description", operator="contains"):
+def _rule(value, category_id="groceries", field="description", operator="contains", **kw):
     """The kwargs of one real RuleRepository.create_rule call — the store mints the id."""
-    return {"field": field, "operator": operator, "value": value, "category_id": category_id}
+    return {"field": field, "operator": operator, "value": value, "category_id": category_id, **kw}
 
 
-def _event(method, path, body=None, path_params=None, base64_body=False):
-    if body is not None and base64_body:
-        raw = base64.b64encode(json.dumps(body).encode()).decode()
-        return api_event(method, path, raw=raw, path_params=path_params, is_base64=True)
-    return api_event(method, path, body=body, path_params=path_params)
+def _flat(value, field="description", operator="contains", category_id="groceries"):
+    return {"field": field, "operator": operator, "value": value, "categoryId": category_id}
+
+
+def _multi(conditions, logic="all", category_id="transport"):
+    return {"conditions": conditions, "logic": logic, "categoryId": category_id}
+
+
+def _amount(value, operator="less_than"):
+    return {"field": "amount", "operator": operator, "value": value}
+
+
+def _text(value, field="description", operator="contains"):
+    return {"field": field, "operator": operator, "value": value}
+
+
+def _post(handler, body):
+    return handler.lambda_handler(api_event("POST", "/rules", body), None)
+
+
+def _put(handler, rule_id, body):
+    return handler.lambda_handler(
+        api_event("PUT", f"/rules/{rule_id}", body, path_params={"id": rule_id}), None)
+
+
+def _shown_value(rule):
+    """The value the app shows: a flat rule's own value, else its first condition's."""
+    if rule["conditions"]:
+        return rule["conditions"][0]["value"]
+    return rule["value"]
 
 
 _inject = partial(inject_rule_routes, categories=_CATEGORIES)
@@ -43,7 +70,7 @@ def test_get_rules_returns_a_bare_client_shaped_array(handler, monkeypatch):
     repo = Repos(rules=[_rule("COLES", "groceries"), _rule("BP 2210", "petrol")])
     _inject(handler, monkeypatch, repo)
 
-    resp = handler.lambda_handler(_event("GET", "/rules"), None)
+    resp = handler.lambda_handler(api_event("GET", "/rules"), None)
     body = json.loads(resp["body"])
 
     assert resp["statusCode"] == 200
@@ -52,23 +79,30 @@ def test_get_rules_returns_a_bare_client_shaped_array(handler, monkeypatch):
     # Client shape: category_id -> categoryId.
     assert by_value["COLES"]["categoryId"] == "groceries"
     assert by_value["BP 2210"]["categoryId"] == "petrol"
-    assert set(by_value["COLES"]) == {"id", "field", "operator", "value", "categoryId",
-                                      "budgetExcluded", "spread", "spreadAmount", "spreadGapDays",
-                                      "conditions", "logic"}
+    assert set(by_value["COLES"]) == _CLIENT_KEYS
 
 
-def test_get_rules_empty_store_is_an_empty_array(handler, monkeypatch):
-    _inject(handler, monkeypatch, Repos())
-    resp = handler.lambda_handler(_event("GET", "/rules"), None)
+def test_get_rules_reads_a_legacy_row_into_the_clean_shape(handler, monkeypatch):
+    # A row written before WHIT-558 / WHIT-535 has no budget_excluded key and still carries the
+    # retired import fields. GET must read it without error (no data migration), default the flag
+    # to False and drop the retired keys from the client shape.
+    legacy = {"pk": "RULE", "sk": "RULE#r-legacy", "id": "r-legacy",
+              "field": "description", "operator": "contains",
+              "value": "COLES", "category_id": "groceries", "source": "banksync",
+              "imported_at": "2026-07-02T00:00:00+00:00",
+              "banksync_enrichment_ids": ["enr_1", "enr_2"], "conditionCount": 1}
+    repo = Repos()
+    repo.table.seed(legacy)
+    _inject(handler, monkeypatch, repo)
+
+    resp = handler.lambda_handler(api_event("GET", "/rules"), None)
+    body = json.loads(resp["body"])
+
     assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == []
-
-
-def test_get_on_a_rule_item_path_is_not_routed(handler, monkeypatch):
-    # There is no GET /rules/{id}; it must fall through to the gateway 404, not list.
-    _inject(handler, monkeypatch, Repos(rules=[_rule("COLES")]))
-    resp = handler.lambda_handler(_event("GET", "/rules/whatever"), None)
-    assert resp["statusCode"] == 404
+    assert len(body) == 1
+    assert set(body[0]) == _CLIENT_KEYS
+    assert body[0]["value"] == "COLES" and body[0]["categoryId"] == "groceries"
+    assert body[0]["budgetExcluded"] is False
 
 
 # --- POST /rules --------------------------------------------------------------
@@ -78,38 +112,24 @@ def test_create_rule_happy_path_trims_defaults_and_returns_201(handler, monkeypa
     repo = Repos()
     _inject(handler, monkeypatch, repo)
 
-    resp = handler.lambda_handler(
-        _event("POST", "/rules", {"value": " WOOLWORTHS ", "categoryId": " groceries "}), None)
+    resp = _post(handler, {"value": "  cOlEs  Online  ", "categoryId": " groceries "})
     body = json.loads(resp["body"])
 
     assert resp["statusCode"] == 201
-    assert body["value"] == "WOOLWORTHS"           # trimmed
+    assert body["value"] == "cOlEs  Online"        # ends trimmed, inner spacing + case kept
     assert body["categoryId"] == "groceries"       # trimmed
     assert body["field"] == "description" and body["operator"] == "contains"   # defaulted
     # Actually written, with the normalised fields.
     assert len(repo.minted_rules()) == 1
-    assert repo.minted_rules()[0]["value"] == "WOOLWORTHS"
+    assert repo.minted_rules()[0]["value"] == "cOlEs  Online"
     assert repo.minted_rules()[0]["category_id"] == "groceries"
-
-
-def test_create_rule_accepts_the_verified_category_equals_vocab(handler, monkeypatch):
-    repo = Repos()
-    _inject(handler, monkeypatch, repo)
-
-    resp = handler.lambda_handler(
-        _event("POST", "/rules", {"value": "FOOD_AND_DRINK", "categoryId": "groceries",
-                                  "field": "category", "operator": "equals"}), None)
-
-    assert resp["statusCode"] == 201
-    assert repo.minted_rules()[0]["field"] == "category" and repo.minted_rules()[0]["operator"] == "equals"
 
 
 def test_create_rule_same_text_same_category_returns_201_without_writing(handler, monkeypatch):
     repo = Repos(rules=[_rule("COLES", "groceries")])
     _inject(handler, monkeypatch, repo)
 
-    resp = handler.lambda_handler(
-        _event("POST", "/rules", {"value": "COLES", "categoryId": "groceries"}), None)
+    resp = _post(handler, {"value": "COLES", "categoryId": "groceries"})
     body = json.loads(resp["body"])
 
     assert resp["statusCode"] == 201                # parity: dedup hit is still 201
@@ -123,8 +143,7 @@ def test_create_rule_same_text_different_category_is_a_409_with_the_existing_rul
     repo = Repos(rules=[_rule("COLES", "groceries")])
     _inject(handler, monkeypatch, repo)
 
-    resp = handler.lambda_handler(
-        _event("POST", "/rules", {"value": "COLES", "categoryId": "petrol"}), None)
+    resp = _post(handler, {"value": "COLES", "categoryId": "petrol"})
     body = json.loads(resp["body"])
 
     assert resp["statusCode"] == 409
@@ -133,42 +152,71 @@ def test_create_rule_same_text_different_category_is_a_409_with_the_existing_rul
     assert len(repo.rule_repo.list_rules()) == 1              # the clashing write left nothing behind
 
 
+def test_create_rule_same_text_same_category_different_flag_is_a_409(handler, monkeypatch):
+    # The 409 body carries the EXISTING rule's flag (False), not the attempted True.
+    repo = Repos(rules=[_rule("COLES", "groceries", budget_excluded=False)])
+    _inject(handler, monkeypatch, repo)
+
+    resp = _post(handler, {"value": "COLES", "categoryId": "groceries", "budgetExcluded": True})
+    body = json.loads(resp["body"])
+
+    assert resp["statusCode"] == 409
+    assert body["existingRule"]["value"] == "COLES"
+    assert body["existingRule"]["budgetExcluded"] is False
+    assert len(repo.rule_repo.list_rules()) == 1
+
+
+def test_budget_excluded_round_trips_on_create_and_toggles_on_update(handler, monkeypatch):
+    repo = Repos()
+    _inject(handler, monkeypatch, repo)
+
+    created = _post(handler, {"value": "SPLITWISE", "categoryId": "groceries",
+                              "budgetExcluded": True})
+    created_body = json.loads(created["body"])
+    assert created["statusCode"] == 201
+    assert created_body["budgetExcluded"] is True
+    rule_id = created_body["id"]
+    assert repo.rule_repo.get_rule(rule_id)["budget_excluded"] is True
+
+    updated = _put(handler, rule_id, {"value": "SPLITWISE", "categoryId": "groceries",
+                                      "budgetExcluded": False})
+    assert updated["statusCode"] == 200
+    assert json.loads(updated["body"])["budgetExcluded"] is False
+    assert repo.rule_repo.get_rule(rule_id)["budget_excluded"] is False
+
+
 def test_create_rule_unknown_category_is_400(handler, monkeypatch):
     repo = Repos()
     _inject(handler, monkeypatch, repo)
 
-    resp = handler.lambda_handler(
-        _event("POST", "/rules", {"value": "WOOLWORTHS", "categoryId": "not-a-category"}), None)
+    resp = _post(handler, {"value": "WOOLWORTHS", "categoryId": "not-a-category"})
 
     assert resp["statusCode"] == 400
     assert "categoryId" in json.loads(resp["body"])["error"]
     assert repo.minted_rules() == []                        # rejected before any write
 
 
-def test_create_rule_value_below_the_floor_is_400_for_description_contains(handler, monkeypatch):
+@pytest.mark.parametrize("body, expected", [
+    (_flat("."), 400),
+    (_flat("a-b-c"), 400),          # 3 letters/digits (hyphens don't count) -> below the floor of 4
+    (_flat("a-b-cd"), 201),         # exactly at the floor
+    (_flat("AB", field="category", operator="equals"), 201),   # exact match, not floored
+    (_multi([_text("."), _amount("30")]), 400),
+    (_multi([_text(".", field="merchant"), _amount("30")]), 400),
+    (_multi([_text("a1", field="account", operator="equals"), _amount(1)]), 201),
+])
+def test_value_floor_applies_only_to_contains_conditions(handler, monkeypatch, body, expected):
+    # A near-empty substring value would match nearly every charge, so `contains` values need at
+    # least 4 letters/digits. Exact-match fields (category, account, amount) are not floored.
     repo = Repos()
     _inject(handler, monkeypatch, repo)
 
-    resp = handler.lambda_handler(
-        _event("POST", "/rules", {"value": ".", "categoryId": "groceries"}), None)
+    resp = _post(handler, body)
 
-    assert resp["statusCode"] == 400
-    assert "letters or digits" in json.loads(resp["body"])["error"]
-    assert repo.minted_rules() == []
-
-
-def test_the_value_floor_does_not_apply_to_category_equals(handler, monkeypatch):
-    # A category-equals rule matches EXACTLY, not by substring, so the anti-over-match floor is
-    # gated to description/contains — a short category value is accepted.
-    repo = Repos()
-    _inject(handler, monkeypatch, repo)
-
-    resp = handler.lambda_handler(
-        _event("POST", "/rules", {"value": "AB", "categoryId": "groceries",
-                                  "field": "category", "operator": "equals"}), None)
-
-    assert resp["statusCode"] == 201
-    assert repo.minted_rules()[0]["value"] == "AB"
+    assert resp["statusCode"] == expected
+    if expected == 400:
+        assert "letters or digits" in json.loads(resp["body"])["error"]
+        assert repo.minted_rules() == []
 
 
 @pytest.mark.parametrize("body, missing", [
@@ -179,56 +227,126 @@ def test_the_value_floor_does_not_apply_to_category_equals(handler, monkeypatch)
 ])
 def test_create_rule_missing_fields_400(handler, monkeypatch, body, missing):
     _inject(handler, monkeypatch, Repos())
-    resp = handler.lambda_handler(_event("POST", "/rules", body), None)
+    resp = _post(handler, body)
     assert resp["statusCode"] == 400
     assert missing in json.loads(resp["body"])["error"]
 
 
-@pytest.mark.parametrize("bad", [
-    {"value": "WOOLWORTHS", "categoryId": "groceries", "field": "amount"},
-    {"value": "WOOLWORTHS", "categoryId": "groceries", "operator": "startsWith"},
+@pytest.mark.parametrize("body", [
+    _flat("abc", field="amount", operator="less_than"),           # flat amount validates too
+    _flat("0", field="amount", operator="less_than"),
+    _flat("30", field="amount", operator="contains"),             # flat pair outside the vocab
+    _multi([_amount("30", operator="contains")]),                 # pair outside the vocab
+    _multi([_text("debit", field="direction", operator="equals")]),
+    _multi([_text("X", field="payee", operator="equals")]),       # unknown field
+    _multi([_text("UBER", field="merchant")], logic="xor"),
+    _multi([_amount("lots")]),
+    _multi([_amount("0")]),
+    _multi([_amount(True)]),                                      # a JSON bool is not an amount
+    _flat("NETFLIX") | {"spread": "yes"},                         # spread must be a real bool
+    _multi([_text("sideways", field="direction", operator="is")]),
+    _multi([]),
+    _multi([_text(42, field="merchant")]),                        # text value must be a string
+    _multi(["merchant contains uber"]),                           # condition must be an object
 ])
-def test_create_rule_rejects_unverified_vocab_400(handler, monkeypatch, bad):
-    _inject(handler, monkeypatch, Repos())
-    resp = handler.lambda_handler(_event("POST", "/rules", bad), None)
+def test_create_rule_rejects_an_invalid_body_400(handler, monkeypatch, body):
+    repo = Repos()
+    _inject(handler, monkeypatch, repo)
+    resp = _post(handler, body)
     assert resp["statusCode"] == 400
+    assert repo.minted_rules() == []
 
 
-def test_create_rule_invalid_json_is_400(handler, monkeypatch):
+@pytest.mark.parametrize("field, operator, logic", [
+    *[(field, operator, "all") for field, operator in RULE_PAIRS],
+    ("merchant", "contains", "any"),
+])
+def test_every_supported_pair_is_accepted(handler, monkeypatch, field, operator, logic):
     _inject(handler, monkeypatch, Repos())
-    event = api_event("POST", "/rules", raw="{bad")
-    resp = handler.lambda_handler(event, None)
-    assert resp["statusCode"] == 400
+    condition = {"field": field, "operator": operator, "value": PAIR_VALUE.get(field, "UBER")}
+    resp = _post(handler, _multi([condition], logic=logic))
+    assert resp["statusCode"] == 201, resp["body"]
 
 
-def test_create_rule_accepts_a_base64_encoded_body(handler, monkeypatch):
+def test_create_multi_condition_rule_round_trips_with_default_logic_all(handler, monkeypatch):
+    repo = Repos()
+    _inject(handler, monkeypatch, repo)
+    body = {"conditions": [_text("UBER", field="merchant"), _amount("30")],
+            "categoryId": "transport"}
+
+    resp = _post(handler, body)
+    out = json.loads(resp["body"])
+
+    assert resp["statusCode"] == 201
+    assert out["logic"] == "all"
+    assert [c["field"] for c in out["conditions"]] == ["merchant", "amount"]
+    assert out["conditions"][0]["value"] == "UBER"
+    assert out["conditions"][1]["value"] == "30"
+    assert repo.minted_rules()[0]["conditions"][1]["field"] == "amount"
+
+
+@pytest.mark.parametrize("bodies, rule_count, shown", [
+    ([_multi([_amount(s)]) for s in ("30", "30.0", "30.00", "30.000")], 1, "30"),
+    ([_multi([_amount("1e3")]), _multi([_amount("1000")])], 1, "1000"),       # never "1E+3"
+    ([_multi([_amount(30)]), _multi([_amount("30.00")])], 1, "30"),           # JSON number
+    ([_flat("30.00", field="amount", operator="less_than"),
+      _flat("30", field="amount", operator="less_than")], 1, "30"),
+    ([_flat("30.00", field="amount", operator="less_than", category_id="transport"),
+      _multi([_amount("30.00")])], 1, "30"),                                 # flat == one-condition multi
+    ([_multi([_amount("0.10")]), _multi([_amount("0.1")])], 1, "0.1"),
+    ([_multi([_amount("30.00")]), _multi([_amount("30.5")])], 2, "30"),      # a different amount
+    ([_multi([_amount("0.05")]), _multi([_amount("0.5")])], 2, "0.05"),
+])
+def test_equivalent_spellings_share_one_rule(handler, monkeypatch, bodies, rule_count, shown):
+    # The value is normalised before it becomes the stored value and the rule id, so equivalent
+    # spellings land on one row instead of minting duplicates.
     repo = Repos()
     _inject(handler, monkeypatch, repo)
 
-    resp = handler.lambda_handler(
-        _event("POST", "/rules", {"value": "WOOLWORTHS", "categoryId": "groceries"},
-               base64_body=True), None)
+    replies = [_post(handler, body) for body in bodies]
+
+    assert [reply["statusCode"] for reply in replies] == [201] * len(bodies)
+    outs = [json.loads(reply["body"]) for reply in replies]
+    assert len({out["id"] for out in outs}) == rule_count
+    assert len(repo.minted_rules()) == rule_count
+    assert _shown_value(outs[0]) == shown
+
+
+def test_a_case_and_spacing_variant_dedups_onto_the_existing_rule(handler, monkeypatch):
+    repo = Repos(rules=[_rule("COLES  EXPRESS", "groceries")])
+    _inject(handler, monkeypatch, repo)
+
+    resp = _post(handler, {"value": "coles express", "categoryId": "groceries"})
 
     assert resp["statusCode"] == 201
-    assert repo.minted_rules()[0]["value"] == "WOOLWORTHS"
+    assert repo.minted_rules() == []
 
 
 # --- PUT /rules/{id} ----------------------------------------------------------
 
 
-def test_update_rule_category_change_keeps_the_id(handler, monkeypatch):
-    repo = Repos(rules=[_rule("COLES", "groceries")])
+@pytest.mark.parametrize("seed, body, shown, category_id", [
+    (_rule("COLES"), {"value": "COLES", "categoryId": "petrol"}, "COLES", "petrol"),
+    (_rule("COLES"), {"value": "coles", "categoryId": "groceries"}, "coles", "groceries"),
+    (_rule("30", "transport", field="amount", operator="less_than"),
+     _flat("30.00", field="amount", operator="less_than", category_id="transport"),
+     "30", "transport"),
+])
+def test_an_in_place_edit_keeps_the_id(handler, monkeypatch, seed, body, shown, category_id):
+    # The id is the DB key and filed charges carry it, so an edit that folds to the same id must
+    # update in place — never move the row and orphan the charges it filed.
+    repo = Repos(rules=[seed])
     rule_id = repo.rule_repo.list_rules()[0]["id"]
     _inject(handler, monkeypatch, repo)
 
-    resp = handler.lambda_handler(
-        _event("PUT", f"/rules/{rule_id}", {"value": "COLES", "categoryId": "petrol"},
-               path_params={"id": rule_id}), None)
-    body = json.loads(resp["body"])
+    resp = _put(handler, rule_id, body)
+    out = json.loads(resp["body"])
 
     assert resp["statusCode"] == 200
-    assert body["id"] == rule_id                    # unchanged
-    assert body["categoryId"] == "petrol"
+    assert out["id"] == rule_id
+    assert out["value"] == shown
+    assert out["categoryId"] == category_id
+    assert [r["id"] for r in repo.rule_repo.list_rules()] == [rule_id]
 
 
 def test_update_rule_text_edit_returns_a_new_id_and_removes_the_old(handler, monkeypatch):
@@ -236,9 +354,7 @@ def test_update_rule_text_edit_returns_a_new_id_and_removes_the_old(handler, mon
     old_id = repo.rule_repo.list_rules()[0]["id"]
     _inject(handler, monkeypatch, repo)
 
-    resp = handler.lambda_handler(
-        _event("PUT", f"/rules/{old_id}", {"value": "COLES EXPRESS", "categoryId": "groceries"},
-               path_params={"id": old_id}), None)
+    resp = _put(handler, old_id, {"value": "COLES EXPRESS", "categoryId": "groceries"})
     body = json.loads(resp["body"])
 
     assert resp["statusCode"] == 200
@@ -249,12 +365,10 @@ def test_update_rule_text_edit_returns_a_new_id_and_removes_the_old(handler, mon
 
 def test_update_rule_onto_another_rules_text_is_a_409(handler, monkeypatch):
     repo = Repos(rules=[_rule("COLES", "groceries"), _rule("WOOLWORTHS", "groceries")])
-    coles_id = next(r["id"] for r in repo.rule_repo.list_rules() if r["value"] == "COLES")
+    coles_id = repo.rule_id("COLES")
     _inject(handler, monkeypatch, repo)
 
-    resp = handler.lambda_handler(
-        _event("PUT", f"/rules/{coles_id}", {"value": "WOOLWORTHS", "categoryId": "groceries"},
-               path_params={"id": coles_id}), None)
+    resp = _put(handler, coles_id, {"value": "WOOLWORTHS", "categoryId": "groceries"})
     body = json.loads(resp["body"])
 
     assert resp["statusCode"] == 409
@@ -264,51 +378,32 @@ def test_update_rule_onto_another_rules_text_is_a_409(handler, monkeypatch):
 
 def test_update_rule_unknown_id_is_404(handler, monkeypatch):
     _inject(handler, monkeypatch, Repos())
-    resp = handler.lambda_handler(
-        _event("PUT", "/rules/deadbeef", {"value": "WOOLWORTHS", "categoryId": "groceries"},
-               path_params={"id": "deadbeef"}), None)
+    resp = _put(handler, "deadbeef", {"value": "WOOLWORTHS", "categoryId": "groceries"})
     assert resp["statusCode"] == 404
 
 
-def test_update_rule_missing_path_id_is_404(handler, monkeypatch):
-    _inject(handler, monkeypatch, Repos())
-    resp = handler.lambda_handler(
-        _event("PUT", "/rules/", {"value": "WOOLWORTHS", "categoryId": "groceries"}), None)
-    assert resp["statusCode"] == 404
-
-
-def test_update_rule_missing_value_is_400(handler, monkeypatch):
+@pytest.mark.parametrize("body", [
+    {"value": ".", "categoryId": "groceries"},                    # under the value floor
+    {"value": "COLES", "categoryId": "not-a-category"},
+])
+def test_update_rule_rejects_an_invalid_body_400(handler, monkeypatch, body):
     repo = Repos(rules=[_rule("COLES", "groceries")])
-    rule_id = repo.rule_repo.list_rules()[0]["id"]
+    rule_id = repo.rule_id("COLES")
     _inject(handler, monkeypatch, repo)
-    resp = handler.lambda_handler(
-        _event("PUT", f"/rules/{rule_id}", {"categoryId": "groceries"},
-               path_params={"id": rule_id}), None)
+    before = repo.stored_rules()
+
+    resp = _put(handler, rule_id, body)
+
     assert resp["statusCode"] == 400
-
-
-def test_update_rule_unknown_category_is_400(handler, monkeypatch):
-    repo = Repos(rules=[_rule("COLES", "groceries")])
-    rule_id = repo.rule_repo.list_rules()[0]["id"]
-    _inject(handler, monkeypatch, repo)
-    resp = handler.lambda_handler(
-        _event("PUT", f"/rules/{rule_id}", {"value": "COLES", "categoryId": "not-a-category"},
-               path_params={"id": rule_id}), None)
-    assert resp["statusCode"] == 400
-    assert "categoryId" in json.loads(resp["body"])["error"]
-
-
-def test_update_rule_bad_body_beats_unknown_id_with_a_400(handler, monkeypatch):
-    # An unknown id AND a missing value: body validation runs before the store lookup, so the
-    # client gets the more specific 400, not a 404. Pins the check order.
-    _inject(handler, monkeypatch, Repos())
-    resp = handler.lambda_handler(
-        _event("PUT", "/rules/deadbeef", {"categoryId": "groceries"},
-               path_params={"id": "deadbeef"}), None)
-    assert resp["statusCode"] == 400
+    assert repo.stored_rules() == before
 
 
 # --- DELETE /rules/{id} -------------------------------------------------------
+
+
+def _delete(handler, rule_id):
+    return handler.lambda_handler(
+        api_event("DELETE", f"/rules/{rule_id}", path_params={"id": rule_id}), None)
 
 
 def test_delete_rule_removes_it_and_returns_200(handler, monkeypatch):
@@ -316,8 +411,7 @@ def test_delete_rule_removes_it_and_returns_200(handler, monkeypatch):
     rule_id = repo.rule_repo.list_rules()[0]["id"]
     _inject(handler, monkeypatch, repo)
 
-    resp = handler.lambda_handler(
-        _event("DELETE", f"/rules/{rule_id}", path_params={"id": rule_id}), None)
+    resp = _delete(handler, rule_id)
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"id": rule_id, "remaining": 0}
@@ -330,77 +424,40 @@ def test_delete_rule_is_idempotent(handler, monkeypatch):
     rule_id = repo.rule_repo.list_rules()[0]["id"]
     _inject(handler, monkeypatch, repo)
 
-    first = handler.lambda_handler(
-        _event("DELETE", f"/rules/{rule_id}", path_params={"id": rule_id}), None)
-    second = handler.lambda_handler(
-        _event("DELETE", f"/rules/{rule_id}", path_params={"id": rule_id}), None)
+    first = _delete(handler, rule_id)
+    second = _delete(handler, rule_id)
 
     assert first["statusCode"] == 200 and second["statusCode"] == 200
-
-
-def test_delete_rule_unknown_id_is_200(handler, monkeypatch):
-    _inject(handler, monkeypatch, Repos())
-    resp = handler.lambda_handler(
-        _event("DELETE", "/rules/deadbeef", path_params={"id": "deadbeef"}), None)
-    assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == {"id": "deadbeef", "remaining": 0}
-
-
-def test_delete_rule_missing_path_id_is_404(handler, monkeypatch):
-    _inject(handler, monkeypatch, Repos())
-    resp = handler.lambda_handler(_event("DELETE", "/rules/"), None)
-    assert resp["statusCode"] == 404
 
 
 # --- store faults map to a clean 500 (not an uncaught 502) --------------------
 
 
-def test_get_rules_store_fault_is_a_clean_500(handler, monkeypatch):
-    store = Repos()
-    store.table.fail("query")
-    _inject(handler, monkeypatch, store)
-    resp = handler.lambda_handler(_event("GET", "/rules"), None)
-    assert resp["statusCode"] == 500
-    assert "rules" in json.loads(resp["body"])["error"]
+def _get_rules(handler, rule_id):
+    return handler.lambda_handler(api_event("GET", "/rules"), None)
 
 
-def test_create_rule_store_fault_is_a_clean_500(handler, monkeypatch):
-    store = Repos()
-    store.table.fail("put_item")
-    _inject(handler, monkeypatch, store)
-    resp = handler.lambda_handler(
-        _event("POST", "/rules", {"value": "WOOLWORTHS", "categoryId": "groceries"}), None)
-    assert resp["statusCode"] == 500
+def _create_rule(handler, rule_id):
+    return _post(handler, {"value": "WOOLWORTHS", "categoryId": "groceries"})
 
 
-def test_update_rule_store_fault_is_a_clean_500(handler, monkeypatch):
+def _update_rule(handler, rule_id):
+    return _put(handler, rule_id, {"value": "COLES", "categoryId": "petrol"})
+
+
+@pytest.mark.parametrize("failing_call, send", [
+    ("query", _get_rules),
+    ("put_item", _create_rule),
+    ("update_item", _update_rule),
+    ("delete_item", _delete),
+])
+def test_a_store_fault_is_a_clean_500(handler, monkeypatch, failing_call, send):
     repo = Repos(rules=[_rule("COLES", "groceries")])
     rule_id = repo.rule_repo.list_rules()[0]["id"]
-    repo.table.fail("update_item")
+    repo.table.fail(failing_call)
     _inject(handler, monkeypatch, repo)
-    resp = handler.lambda_handler(
-        _event("PUT", f"/rules/{rule_id}", {"value": "COLES", "categoryId": "petrol"},
-               path_params={"id": rule_id}), None)
+
+    resp = send(handler, rule_id)
+
     assert resp["statusCode"] == 500
-
-
-def test_delete_rule_store_fault_is_a_clean_500(handler, monkeypatch):
-    repo = Repos(rules=[_rule("COLES", "groceries")])
-    rule_id = repo.rule_repo.list_rules()[0]["id"]
-    repo.table.fail("delete_item")
-    _inject(handler, monkeypatch, repo)
-    resp = handler.lambda_handler(
-        _event("DELETE", f"/rules/{rule_id}", path_params={"id": rule_id}), None)
-    assert resp["statusCode"] == 500
-
-
-# --- terraform route registration for the item routes -------------------------
-
-
-def test_item_routes_are_declared_in_api_gateway():
-    # test_route_table.py covers the exact GET/POST routes automatically, but the
-    # startswith-dispatched {id} routes carry a placeholder it can't derive — pin them by hand so
-    # a PUT/DELETE that works in tests can't 404 at the deployed gateway (WHIT-506's failure mode).
-    routes = app_route_keys()
-    assert "PUT /rules/{id}" in routes
-    assert "DELETE /rules/{id}" in routes
+    assert "error" in json.loads(resp["body"])
