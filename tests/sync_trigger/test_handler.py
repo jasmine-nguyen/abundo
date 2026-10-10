@@ -80,13 +80,7 @@ def test_trigger_sync_happy_path_builds_correct_request(monkeypatch):
     assert captured["timeout"] == handler.SYNC_TIMEOUT_SECONDS
 
 
-
-
-
-
 # --- lambda_handler ----------------------------------------------------------
-
-
 
 
 def test_lambda_handler_all_feeds_succeed(monkeypatch):

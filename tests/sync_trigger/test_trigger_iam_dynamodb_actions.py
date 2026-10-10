@@ -176,43 +176,16 @@ def repo(layer):
     return repository
 
 
-def _row(transaction_id, description, amount, day="2026-09-30", **fields):
-    return {
-        "pk": f"ACCOUNT#{WESTPAC}",
-        "sk": f"TXN#{transaction_id}",
-        "transaction_id": transaction_id,
-        "account_id": WESTPAC,
-        "date": day,
-        "amount": Decimal(amount),
-        "description": description,
-        "merchant_name": "",
-        "status": "pending",
-        "category": "Unfiled",
-        **fields,
-    }
-
-
-_is_unfiled = unfiled_except("shopping", "clothing")
-
-
-def _seed_rush_and_cettire(repo, merchant):
-    rows = [
-        _row("old_cettire", CETTIRE_OLD, "-260.36", category="shopping", notes="The North Face Jacket"),
-        _row("new_cettire", CETTIRE_NEW, "-260.36", category="shopping", filed_by_rule="rule-1"),
-        _row("old_rush", RUSH_OLD, "-192.00", day="2026-09-29", category="shopping", notes="Patagonia Backpack"),
-        _row("new_rush", RUSH_NEW, "-192.00", category="shopping", filed_by_rule="rule-1"),
-    ]
-    for row in rows:
-        row["merchant_name"] = merchant.clean_merchant(row["description"], "")
-    repo._table.seed(*rows)
-
-
-def test_the_rush_and_cettire_doubles_are_removed_with_notes_kept_under_the_trigger_policy(layer, repo):
-    _, mirror = layer
-    _seed_rush_and_cettire(repo, importlib.import_module("merchant"))
+def test_the_rush_and_cettire_doubles_are_removed_with_notes_kept_under_the_trigger_policy(mirror, repo, row):
+    repo._table.seed(
+        row("old_cettire", CETTIRE_OLD, "-260.36", category="shopping", notes="The North Face Jacket"),
+        row("new_cettire", CETTIRE_NEW, "-260.36", category="shopping", filed_by_rule="rule-1"),
+        row("old_rush", RUSH_OLD, "-192.00", day="2026-09-29", category="shopping", notes="Patagonia Backpack"),
+        row("new_rush", RUSH_NEW, "-192.00", category="shopping", filed_by_rule="rule-1"),
+    )
     bank = reissue_bank_rows("new_cettire", "new_rush")
 
-    result = run_mirror(mirror, repo, bank, _is_unfiled, REISSUE_TODAY)
+    result = run_mirror(mirror, repo, bank, unfiled_except("shopping", "clothing"), REISSUE_TODAY)
 
     assert result["failed"] == 0, f"a call was refused by the trigger policy (AccessDenied): {result}"
     assert result["carried"] == 2
