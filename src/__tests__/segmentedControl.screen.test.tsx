@@ -6,9 +6,10 @@
 // the component in isolation.
 import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { render, screen, fireEvent, within } from '@testing-library/react-native';
 import { SegmentedControl } from '../components/SegmentedControl';
-import { styleOf } from './support/layout';
+import { C, tint } from '../theme';
+import { hostParent, styleOf } from './support/layout';
 
 // Synthetic colours on purpose (WHIT-398): these are fixtures for the generic component, not
 // production values, so they must not read as a second copy of a real theme colour.
@@ -58,5 +59,26 @@ describe('SegmentedControl', () => {
     // inactive segment: no active tint, muted default weight
     expect(styleOf(screen.getByTestId('seg-spending')).backgroundColor).toBeUndefined();
     expect(styleOf(screen.getByText('Spending')).fontWeight).toBe('600');
+  });
+});
+
+// WHIT-846: the optional count bubble and per-segment width the Transactions tabs use.
+describe('SegmentedControl count bubble and width', () => {
+  const BADGED = [{ ...STR_OPTIONS[0], flex: 1.45, badge: 0 }, STR_OPTIONS[1]];
+
+  // [A2] a rose bubble, the same whether its segment is selected or not; a zero count still shows.
+  it.each(['spending', 'earning'] as const)('the bubble is rose with %s selected', (value) => {
+    render(<SegmentedControl value={value} onChange={jest.fn()} options={BADGED} />);
+    const count = within(screen.getByTestId('seg-spending')).getByText('0');
+    expect(styleOf(count)).toMatchObject({ color: C.badBright, fontWeight: '700' });
+    expect(styleOf(hostParent(count)).backgroundColor).toBe(tint(C.bad, 0.2));
+  });
+
+  // [A3] no badge → no bubble; flex defaults to 1 so the Insights toggles stay even.
+  it('draws no bubble without a badge and defaults a segment to flex 1', () => {
+    render(<SegmentedControl value="earning" onChange={jest.fn()} options={BADGED} />);
+    expect(within(screen.getByTestId('seg-earning')).queryAllByText(/\d/)).toHaveLength(0);
+    expect(styleOf(screen.getByTestId('seg-earning')).flex).toBe(1);
+    expect(styleOf(screen.getByTestId('seg-spending')).flex).toBe(1.45);
   });
 });
