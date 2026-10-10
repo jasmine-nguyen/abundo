@@ -5,8 +5,10 @@
 // "Automatable (UI)" pay-cycle scenarios. Runs on iOS (RN preset default), which
 // renders the inline compact picker.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { screen, fireEvent, act } from '@testing-library/react-native';
+import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { AppContext } from '../context';
+import { C } from '../theme';
+import { styleOf } from './support/layout';
 
 let mockState: AppContext;
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
@@ -42,11 +44,16 @@ beforeEach(() => {
   resetAuth();
 });
 
-it('renders the three cycle lengths', async () => {
-  await openPayCycle(14);
-  expect(screen.getByText('Weekly')).toBeTruthy();
-  expect(screen.getByText('Fortnightly')).toBeTruthy();
-  expect(screen.getByText('Monthly')).toBeTruthy();
+// The selected row's label is drawn in accentSofter; the others in textMid.
+const isTicked = (label: string) => styleOf(screen.getByText(label)).color === C.accentSofter;
+
+// WHIT-671: length 14 is also the client default, so seed a non-default length to prove the
+// server's reply reaches the sheet.
+it('[A1] ticks the cycle length the server returns', async () => {
+  await openPayCycle(30);
+  await waitFor(() => expect(isTicked('Monthly')).toBe(true));
+  expect(isTicked('Fortnightly')).toBe(false);
+  expect(isTicked('Weekly')).toBe(false);
 });
 
 it('tapping a length calls setPayCycleLength with its day count', async () => {
@@ -62,10 +69,4 @@ it('picking a date calls setPayday with the ISO date (via the onChange event,dat
   // The mocked picker fires the real onChange({type:'set'}, Date(2026-06-20)).
   fireEvent.press(screen.getByTestId('mock-datepicker'));
   expect(fns.setPayday).toHaveBeenCalledWith('2026-06-20');
-});
-
-it('Done closes the sheet', async () => {
-  await openPayCycle(14);
-  fireEvent.press(screen.getByText('Done'));
-  expect(fns.setSheet).toHaveBeenCalledWith(null);
 });

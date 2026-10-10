@@ -25,11 +25,14 @@ jest.mock('expo-file-system', () => ({
 jest.mock('expo-sharing', () => ({ shareAsync: jest.fn(async () => undefined) }));
 
 import { unzipSync, strFromU8 } from 'fflate';
+import { SaxesParser } from 'saxes';
 import * as Sharing from 'expo-sharing';
 import { Paths } from 'expo-file-system';
-import { buildCycleWorkbook } from '../cycleExport';
+import { buildBudgetRows, buildCycleWorkbook, buildTransactionRows } from '../cycleExport';
+import { buildXlsx } from '../xlsx';
 import { shareCycleExport } from '../cycleShare';
-import type { CycleTransaction } from '../api';
+import { toBudget } from '../model';
+import type { BudgetRollup, CycleTransaction, CycleTransactions } from '../api';
 import { cat, txn } from './factory';
 import type { Category } from '../types';
 
@@ -147,6 +150,19 @@ function values(grid: (ReadCell | null)[][]): (string | number | null)[][] {
   return grid.map((row) => row.map((cell) => (cell ? cell.value : null)));
 }
 
+// Every part of the package as text, keyed by its path in the zip.
+function parts(bytes: Uint8Array): Record<string, string> {
+  return Object.fromEntries(Object.entries(unzipSync(bytes)).map(([path, data]) => [path, strFromU8(data)]));
+}
+
+function assertWellFormed(xml: string) {
+  const parser = new SaxesParser({ xmlns: true });
+  let error: Error | null = null;
+  parser.on('error', (e) => { error = error ?? e; });
+  parser.write(xml).close();
+  if (error) throw error;
+}
+
 // ---- fixtures -------------------------------------------------------------------------
 
 const CATS: Category[] = [
@@ -219,6 +235,246 @@ describe('buildCycleWorkbook', () => {
   });
 });
 
+// WHIT-703 slice 1 QA: Excel refuses a file that isn't strict well-formed XML or whose package
+// wiring is incomplete, and text that looks like a number must stay text.
+describe('buildCycleWorkbook package', () => {
+  const NASTY: CycleTransaction[] = [
+    row({ date: '2026-07-25', amount: -12.5, category: 'food', merchant_name: 'Tom & Jerry\'s <"Bar">',
+      account_name: 'Every & day', status: 'pending' }),
+    row({ date: '2026-07-24', amount: 0, category: null, merchant_name: '  padded  ', account_name: 'A', status: 'posted' }),
+    row({ date: '2026-07-23', amount: -0.07, category: 'food', merchant_name: 'Café ☕ 🍩 — 東京',
+      account_name: 'B', status: 'posted' }),
+    row({ date: '2026-07-22', amount: 1234567.89, category: 'food', merchant_name: '007',
+      account_name: '1e5', status: 'posted', counts_to_budget_effective: false }),
+    row({ date: '2026-07-21', amount: -5, category: 'food', merchant_name: 'Ctrl\u0000\u0007\u001Fchars\ttab\r\nline',
+      account_name: 'C', status: 'posted' }),
+  ];
+
+  it('every part of the workbook is well-formed XML', () => {
+    const files = parts(buildCycleWorkbook({ start: 's', end: 'e', transactions: NASTY }, category, false));
+    for (const [path, xml] of Object.entries(files)) {
+      expect(() => assertWellFormed(xml)).not.toThrow();
+      expect(path).toMatch(/\.(xml|rels)$/);
+    }
+  });
+
+  it('content types and relationships cover every part, and every target exists', () => {
+    const files = parts(buildCycleWorkbook({ start: 's', end: 'e', transactions: [] }, category, false));
+    expect(Object.keys(files).sort()).toEqual([
+      '[Content_Types].xml', '_rels/.rels', 'xl/_rels/workbook.xml.rels', 'xl/styles.xml',
+      'xl/workbook.xml', 'xl/worksheets/sheet1.xml', 'xl/worksheets/sheet2.xml',
+    ]);
+
+    const types = files['[Content_Types].xml'];
+    expect(types).toContain('PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"');
+    expect(types).toContain('PartName="/xl/styles.xml"');
+    expect(types).toContain('PartName="/xl/worksheets/sheet1.xml"');
+    expect(types).toContain('PartName="/xl/worksheets/sheet2.xml"');
+
+    expect(files['_rels/.rels']).toContain('Target="xl/workbook.xml"');
+    const rels = files['xl/_rels/workbook.xml.rels'];
+    const targets = [...rels.matchAll(/Target="([^"]+)"/g)].map((m) => m[1]);
+    expect(targets.sort()).toEqual(['styles.xml', 'worksheets/sheet1.xml', 'worksheets/sheet2.xml']);
+    for (const target of targets) expect(files[`xl/${target}`]).toBeDefined();
+    const ids = [...rels.matchAll(/Id="([^"]+)"/g)].map((m) => m[1]);
+    expect(new Set(ids).size).toBe(ids.length);
+
+    // Every r:id the workbook names resolves to a worksheet relationship.
+    for (const [, id] of files['xl/workbook.xml'].matchAll(/r:id="([^"]+)"/g)) {
+      expect(rels).toMatch(new RegExp(`Id="${id}" [^>]*/worksheet" Target="worksheets/`));
+    }
+  });
+
+  it('only the Amount column is numeric; number-like text stays text', () => {
+    const sheet = readWorkbook(buildCycleWorkbook({ start: 's', end: 'e', transactions: NASTY }, category, false))
+      .sheets.Transactions;
+    for (const dataRow of sheet.slice(1)) {
+      dataRow.forEach((cell, index) => {
+        if (index === 1) expect(cell).toMatchObject({ numeric: true, twoDecimals: true });
+        else if (cell) expect(cell.numeric).toBe(false);
+      });
+    }
+    expect(sheet[4][4]?.value).toBe('007');
+    expect(sheet[4][5]?.value).toBe('1e5');
+    expect(sheet[1][0]?.value).toBe('2026-07-25');
+  });
+
+  it('a null description becomes a blank cell, not "null"', () => {
+    const transactions = [row({ merchant_name: '', description: null as unknown as string })];
+    const [, dataRow] = values(readWorkbook(buildCycleWorkbook({ start: 's', end: 'e', transactions }, category, false))
+      .sheets.Transactions);
+    expect(dataRow[4]).toBeNull();
+    expect(dataRow[5]).not.toBeNull();
+  });
+});
+
+describe('buildTransactionRows', () => {
+  const dataRows = (rows: CycleTransaction[], cats: Category[] = []) =>
+    buildTransactionRows(rows, (id) => cats.find((c) => c.id === id)).slice(1);
+
+  it('falls back to the description when merchant_name is null or empty', () => {
+    const rows = dataRows([
+      row({ merchant_name: null as unknown as string, description: 'DIRECT DEBIT' }),
+      row({ merchant_name: '', description: 'ATM' }),
+    ]);
+    expect(rows.map((r) => r[4])).toEqual(['DIRECT DEBIT', 'ATM']);
+  });
+
+  // A parent loop (a → b → a) can't hang the export; it still produces a named row.
+  it('a parent loop terminates', () => {
+    const cats = [cat({ id: 'a', name: 'A', parent: 'b' }), cat({ id: 'b', name: 'B', parent: 'a' })];
+    const [cells] = dataRows([row({ category: 'a' })], cats);
+    expect(['A', 'B']).toContain(cells[2]);
+    expect(cells[3]).toBe('A');
+  });
+});
+
+describe('buildXlsx', () => {
+  it('lays out cells past column Z with the right letters and leaves blank cells out', () => {
+    const cells = Array.from({ length: 28 }, (_, i) => (i === 1 ? null : i));
+    const sheet = readWorkbook(buildXlsx([{ name: 'S', rows: [cells] }])).sheets.S;
+    expect(values(sheet)).toEqual([cells]);
+    expect(sheet[0][27]).toMatchObject({ numeric: true, twoDecimals: true });
+  });
+});
+
+// WHIT-703 slice 2 — the Budgets tab is filled from the server's `budgets`, in Budgets-screen
+// order (Savings and unknown categories last). Spent = posted + pending, Left to spend =
+// Available − Spent, Carry-over = rollover buffer or spread adjustment; last cycle →
+// 'Budget (current)', blank carry-over, Available = today's target.
+describe('buildCycleWorkbook — Budgets tab', () => {
+  const PAST_BUDGET_HEADER = [
+    'Parent category', 'Category', 'Budget (current)', 'Spent', 'Pending', 'Left to spend', 'Carry-over', 'Available',
+  ];
+  const BUDGET_CATS: Category[] = [
+    cat({ id: 'food', name: 'Food', bucket: 'Lifestyle', parent: null }),
+    cat({ parent: 'food' }),
+    cat({ id: 'groceries', name: 'Groceries', bucket: 'Living', parent: null }),
+    cat({ id: 'salary', name: 'Salary', bucket: 'Income', parent: null }),
+    cat({ id: 'nest_egg', name: 'Nest egg', bucket: 'Savings', parent: null }),
+    cat({ id: 'unbudgeted', name: 'Fun', bucket: 'Lifestyle', parent: null }),
+  ];
+  const budgetCategory = (id: string) => BUDGET_CATS.find((c) => c.id === id);
+
+  // Server order deliberately differs from the Budgets screen: the child comes before its
+  // parent, and the Savings budget sits in the middle.
+  const BUDGETS: Record<string, BudgetRollup> = {
+    coffee: { target: 50, posted: 40, pending: 15 },                                           // over by 5
+    groceries: { target: 100, posted: 100, pending: 0, rollover: true, carryover: 30, available: 130 },
+    nest_egg: { target: 300, posted: 0, pending: 0 },                                           // Savings → last
+    food: { target: 500, posted: 300.5, pending: 15, available: 700,
+      spread: { amount: 800, cycles: 4, index: 0, adjustment: 200 } },
+    mystery: { target: 20, posted: 5, pending: 0 },                                             // unknown category → last
+    salary: { target: 4000, posted: 4100, pending: 0 },                                         // Income earn-target
+  };
+
+  const data = (budgets?: Record<string, BudgetRollup>): CycleTransactions =>
+    ({ start: '2026-07-01', end: '2026-07-25', transactions: [], ...(budgets ? { budgets } : {}) });
+
+  it('user can export each budget, its category and its spend in Budgets-screen order, for this and last cycle', () => {
+    const current = readWorkbook(buildCycleWorkbook(data(BUDGETS), budgetCategory, false));
+    expect(current.names).toEqual(['Transactions', 'Budgets']);
+    expect(values(current.sheets.Budgets)).toEqual([
+      BUDGET_HEADER,
+      // Parent category, Category, Budget, Spent, Pending, Left to spend, Carry-over, Available
+      ['Groceries', 'Groceries', 100, 100, 0, 30, 30, 130],
+      ['Food', 'Food', 500, 315.5, 15, 384.5, 200, 700],
+      ['Food', 'Cafes & Coffee', 50, 55, 15, -5, 0, 50],
+      ['Salary', 'Salary', 4000, 4100, 0, -100, 0, 4000],
+      ['Nest egg', 'Nest egg', 300, 0, 0, 300, 0, 300],
+      ['Uncategorised', 'Uncategorised', 20, 5, 0, 15, 0, 20],
+    ]);
+    // Amounts are real numbers shown to 2 decimals, so Excel can sum them.
+    for (const dataRow of current.sheets.Budgets.slice(1)) {
+      expect(dataRow[0]?.numeric).toBe(false);
+      expect(dataRow[1]?.numeric).toBe(false);
+      for (const index of [2, 3, 4, 5, 6, 7]) {
+        expect(dataRow[index]).toMatchObject({ numeric: true, twoDecimals: true });
+      }
+    }
+
+    // Last cycle: past budgets aren't saved, so today's target is used and carry-over is blank.
+    const past = readWorkbook(buildCycleWorkbook(data(BUDGETS), budgetCategory, true));
+    expect(values(past.sheets.Budgets)).toEqual([
+      PAST_BUDGET_HEADER,
+      ['Groceries', 'Groceries', 100, 100, 0, 0, null, 100],
+      ['Food', 'Food', 500, 315.5, 15, 184.5, null, 500],
+      ['Food', 'Cafes & Coffee', 50, 55, 15, -5, null, 50],
+      ['Salary', 'Salary', 4000, 4100, 0, -100, null, 4000],
+      ['Nest egg', 'Nest egg', 300, 0, 0, 300, null, 300],
+      ['Uncategorised', 'Uncategorised', 20, 5, 0, 15, null, 20],
+    ]);
+
+    // An old server sends no `budgets` → the Budgets tab is its titles only.
+    const oldServer = readWorkbook(buildCycleWorkbook(data(), budgetCategory, false));
+    expect(values(oldServer.sheets.Budgets)).toEqual([BUDGET_HEADER]);
+  });
+});
+
+// WHIT-703 slice 2 QA — Budgets-tab nesting, a corrupt parent loop and what reaches the workbook.
+describe('buildBudgetRows', () => {
+  const TREE: Category[] = [
+    cat({ id: 'home', name: 'Home', bucket: 'Living', parent: null }),
+    cat({ id: 'utilities', name: 'Utilities', bucket: 'Living', parent: 'home' }),
+    cat({ id: 'power', name: 'Power', bucket: 'Living', parent: 'utilities' }),
+    cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
+    cat({ id: 'rego', name: 'Rego', bucket: 'Living', parent: 'car' }),
+    cat({ id: 'salary', name: 'Salary', bucket: 'Income', parent: null }),
+    // A corrupt parent loop: each names the other as its parent.
+    cat({ id: 'loop_a', name: 'Loop A', bucket: 'Lifestyle', parent: 'loop_b' }),
+    cat({ id: 'loop_b', name: 'Loop B', bucket: 'Lifestyle', parent: 'loop_a' }),
+  ];
+  const treeCategory = (id: string) => TREE.find((c) => c.id === id);
+  const budgets = (rollups: Record<string, BudgetRollup>) =>
+    Object.entries(rollups).map(([id, rollup]) => toBudget(id, rollup));
+
+  // A budgeted grandchild follows its budgeted grandparent (server sends it first), and its
+  // Parent category is the top-level name, not the unbudgeted middle category.
+  it('a grandchild follows its budgeted grandparent and names the top level', () => {
+    const rows = buildBudgetRows(budgets({
+      power: { target: 80, posted: 20, pending: 0 },
+      car: { target: 300, posted: 0, pending: 0 },
+      home: { target: 900, posted: 20, pending: 0 },
+    }), treeCategory, false);
+    expect(rows.slice(1).map((r) => [r[0], r[1]])).toEqual([
+      ['Car', 'Car'],
+      ['Home', 'Home'],
+      ['Home', 'Power'],
+    ]);
+  });
+
+  // WHIT-707: the screen lists Spending before Earning.
+  it('an income budget follows the spend budgets, as on the screen', () => {
+    const rows = buildBudgetRows(budgets({
+      salary: { target: 5000, posted: 1000, pending: 0 },
+      car: { target: 300, posted: 0, pending: 0 },
+    }), treeCategory, false);
+    expect(rows.slice(1).map((r) => r[1])).toEqual(['Car', 'Salary']);
+  });
+
+  it('a parent loop never drops or repeats a budget', () => {
+    const rows = buildBudgetRows(budgets({
+      loop_a: { target: 10, posted: 1, pending: 0 },
+      loop_b: { target: 20, posted: 2, pending: 0 },
+    }), treeCategory, false);
+    expect(rows.slice(1).map((r) => r[1]).sort()).toEqual(['Loop A', 'Loop B']);
+  });
+
+  it('the past-cycle header does not leak into the next export', () => {
+    buildBudgetRows([], treeCategory, true);
+    expect(buildBudgetRows([], treeCategory, false)).toEqual([BUDGET_HEADER]);
+  });
+
+  // As on the Budgets screen.
+  it('a zero target is left out', () => {
+    const bytes = buildCycleWorkbook({
+      start: '2026-07-01', end: '2026-07-25', transactions: [],
+      budgets: { car: { target: 0, posted: 5, pending: 0 }, rego: { target: 100, posted: 10, pending: 0 } },
+    }, treeCategory, false);
+    expect(values(readWorkbook(bytes).sheets.Budgets).map((r) => r[1])).toEqual(['Category', 'Rego']);
+  });
+});
+
 describe('shareCycleExport', () => {
   it('user can share last cycle as an .xlsx file with the Excel file type', async () => {
     const fetchMock = jest.fn(async () => ({
@@ -247,5 +503,14 @@ describe('shareCycleExport', () => {
     const [uri, options] = shareAsync.mock.calls[0];
     expect(uri).toBe(file.uri);
     expect(options).toMatchObject({ mimeType: XLSX_MIME, UTI: XLSX_UTI });
+  });
+
+  it('a failed fetch rejects without writing or sharing', async () => {
+    (globalThis as unknown as { fetch: unknown }).fetch = jest.fn(async () => ({
+      ok: false, status: 500, json: async () => ({ error: 'boom' }),
+    }));
+    await expect(shareCycleExport(0, category)).rejects.toBeTruthy();
+    expect(fileInstances).toHaveLength(0);
+    expect(shareAsync).not.toHaveBeenCalled();
   });
 });

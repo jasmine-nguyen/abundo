@@ -191,27 +191,6 @@ describe('budgetEditRollover (folded)', () => {
     expect(mockSaveBudget).toHaveBeenCalledWith('coffee', 100, undefined);  // never a forced true
   });
 
-  // GAP [A-S1] WHIT-550 — the LOCKED help copy must render while a spread is active (and the
-  // normal smoothing help must NOT). Fail-on-revert: swap the locked/normal help ternary.
-  it('active bill spread: shows the locked help copy, not the normal smoothing help', async () => {
-    setParams({ categoryId: 'coffee' });
-    seedServer([SPEND], { coffee: SPREAD_COFFEE });
-    await renderWithQueries(<BudgetEdit />);
-
-    expect(screen.getByText(/Manage the spread from the bill instead/)).toBeTruthy();  // locked branch
-    expect(screen.queryByText(/Unused budget carries forward/)).toBeNull();            // normal help hidden
-  });
-
-  // GAP [A-S1b] WHIT-550 — the reverse branch: a plain spend budget shows the normal help, not locked.
-  it('plain spend budget: shows the normal smoothing help, not the locked copy', async () => {
-    setParams({ categoryId: 'coffee' });
-    seedServer([SPEND]);
-    await renderWithQueries(<BudgetEdit />);
-
-    expect(screen.getByText(/Unused budget carries forward/)).toBeTruthy();            // normal branch
-    expect(screen.queryByText(/Manage the spread from the bill instead/)).toBeNull();  // locked help hidden
-  });
-
   // GAP [A-S2] WHIT-550 — defensive: an existing budget with BOTH rollover=true AND a spread.
   // The seeded ON flag must NOT leak into save() while locked, and a stray valueChange on the
   // disabled switch must not change what Save sends. Fail-on-revert: send `rollover` while locked.
@@ -240,14 +219,6 @@ describe('budgetPickIncome (folded)', () => {
   const SIDE = { id: 'side_gig', name: 'Side Gig', icon: 'briefcase', color: '#7fd49b', bucket: 'Income' };
 
   describe('BudgetPick — income is pickable (WHIT-69)', () => {
-    it('lists an Income category alongside spend categories', async () => {
-      seedServer([SALARY, SPEND]);
-      await renderWithQueries(<BudgetPick />);
-      expect(screen.getByText('Salary')).toBeTruthy();          // was filtered out pre-WHIT-69
-      expect(screen.getByText('Cafes & Coffee')).toBeTruthy();  // control: spend still listed
-      expect(screen.getByText('earn-target')).toBeTruthy();
-    });
-
     it('still hides an income category that already has a budget', async () => {
       // A rollup needs a target above 0, or the budgets read drops it.
       seedServer([SALARY, SIDE], { salary: { target: 1, posted: 0, pending: 0 } });

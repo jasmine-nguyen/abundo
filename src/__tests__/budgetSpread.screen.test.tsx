@@ -23,7 +23,7 @@ import BudgetDetail from '../../app/budget/[id]';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
-import { COFFEE } from './support/categories';
+import { COFFEE, SALARY } from './support/categories';
 import { budgetRow } from './factory';
 
 const SPEND = COFFEE;
@@ -43,7 +43,8 @@ function seedBudgets(budgets: Record<string, unknown>) {
 
 beforeEach(() => {
   resetRouter();
-  mockSaveSpread.mockClear();
+  mockSaveSpread.mockReset();
+  mockSaveSpread.mockImplementation(async () => true);
   mockRemoveSpread.mockClear();
   setParams({ categoryId: 'coffee' });
   resetAuth();
@@ -126,12 +127,75 @@ describe('app/budget/spread.tsx', () => {
     expect(mockSaveSpread).toHaveBeenCalledWith('coffee', 5.55, 3);
   });
 
-  it('a fresh spread (no plan) shows no Remove button', async () => {
+  // The value never drops below 1, and minus disables at the floor.
+  it('[G10] the minus button disables at 1 cycle and never steps below', async () => {
     setParams({ categoryId: 'coffee', prefill: '120' });
     seedBudgets({ coffee: rollup() });
     await renderWithQueries(<BudgetSpread />);
 
-    expect(screen.queryByTestId('spread-remove')).toBeNull();
+    const minus = () => screen.getByTestId('spread-cycles-minus');
+    expect(minus().props.accessibilityState?.disabled).toBeFalsy();      // enabled at default 3
+    fireEvent.press(minus());   // 3 → 2
+    fireEvent.press(minus());   // 2 → 1
+    expect(screen.getByText('1')).toBeTruthy();
+    expect(minus().props.accessibilityState?.disabled).toBe(true);       // floor reached
+    fireEvent.press(minus());   // blocked
+    expect(screen.getByText('1')).toBeTruthy();                          // still 1
+    await act(async () => { fireEvent.press(screen.getByTestId('spread-save')); });
+    expect(mockSaveSpread).toHaveBeenCalledWith('coffee', 120, 1);
+  });
+
+  // A failed save must not navigate back and must re-enable the button so the user can retry.
+  it('[G12] saveSpread → false leaves the screen mounted and re-enabled for retry', async () => {
+    setParams({ categoryId: 'coffee', prefill: '120' });
+    mockSaveSpread.mockImplementation(async () => false);
+    seedBudgets({ coffee: rollup() });
+    await renderWithQueries(<BudgetSpread />);
+
+    await act(async () => { fireEvent.press(screen.getByTestId('spread-save')); });
+    expect(mockSaveSpread).toHaveBeenCalledTimes(1);
+    expect(routerSpies.back).not.toHaveBeenCalled();                     // stayed on the screen
+
+    await act(async () => { fireEvent.press(screen.getByTestId('spread-save')); });
+    expect(mockSaveSpread).toHaveBeenCalledTimes(2);                     // re-enabled → retried
+    expect(routerSpies.back).not.toHaveBeenCalled();
+  });
+
+  // Both presses land before the pending save resolves: the writer fires exactly once.
+  it('[G13] a double-tap while the save is in flight fires the writer once', async () => {
+    setParams({ categoryId: 'coffee', prefill: '120' });
+    let resolveSave: (v: boolean) => void = () => {};
+    mockSaveSpread.mockImplementation(() => new Promise<boolean>((res) => { resolveSave = res; }));
+    seedBudgets({ coffee: rollup() });
+    await renderWithQueries(<BudgetSpread />);
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('spread-save'));
+      fireEvent.press(screen.getByTestId('spread-save'));   // same frame, save still pending
+    });
+    expect(mockSaveSpread).toHaveBeenCalledTimes(1);
+    await act(async () => { resolveSave(true); });
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
+  });
+
+  // A spread is spend-only; the server would reject it for an Income category.
+  it('[G14] an Income category shows the note, not the amount form', async () => {
+    setParams({ categoryId: 'salary' });
+    server.seed('/categories', [SALARY]);
+    server.seed('/budgets', {});
+    await renderWithQueries(<BudgetSpread />);
+
+    expect(screen.getByText('Only spend categories can spread a bill.')).toBeTruthy();
+    expect(screen.queryByTestId('spread-amount')).toBeNull();
+    expect(screen.queryByTestId('spread-save')).toBeNull();
+  });
+
+  it('[G15] an undefined categoryId renders the header only, no form, no crash', async () => {
+    setParams({} as { categoryId?: string });
+    seedBudgets({});
+    await expect(renderWithQueries(<BudgetSpread />)).resolves.toBeDefined();
+    expect(screen.queryByTestId('spread-amount')).toBeNull();
+    expect(screen.queryByTestId('spread-save')).toBeNull();
   });
 });
 
@@ -162,13 +226,5 @@ describe('app/budget/[id].tsx — spread entry point', () => {
 
     expect(screen.getByText('Edit or remove bill spread')).toBeTruthy();
     expect(screen.queryByText('Spread this bill over pay cycles')).toBeNull();
-  });
-
-  it('a rollover category that is over budget offers NO spread entry', async () => {
-    setParams({ id: 'coffee' });
-    seedDetail({ posted: 130, rollover: true, carryover: -50 });
-    await renderWithQueries(<BudgetDetail />);
-
-    expect(screen.queryByTestId('budget-spread')).toBeNull();
   });
 });

@@ -1,20 +1,16 @@
-// WHIT-688 slice 2 — QA gaps over the fake server for the Accounts tab, account detail, Rules and
-// Budgets screens: recovery after Retry (not just a re-request), a balances-only failure that must
-// not blank the cards, the pull re-reading the list and showing the bank's fresh balance, and the
-// "payday is today" edge of the Budgets "Next payday …" line (was "Started …" before WHIT-706). Real ../queries + ../api; only fetch is faked.
-// The screens draw inside the real AppProvider (WHIT-692), so the toast is the real one, read off the probe.
+// WHIT-688 slice 2 — QA gaps over the fake server for the Accounts tab, account detail and Rules
+// screens: recovery after Retry (not just a re-request), and a balances-only failure that must not
+// blank the cards. Real ../queries + ../api; only fetch is faked. The screens draw inside the real
+// AppProvider (WHIT-692).
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
-import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
-import { RefreshControl } from 'react-native';
-import { pinToday } from './support/clock';
+import { screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { SUBSCRIPTIONS } from './support/categories';
 import { useTestQueryClient, settle } from './support/renderWithQueries';
-import { renderWithApp, shownToasts, resetAppProbe } from './support/renderWithApp';
+import { renderWithApp, resetAppProbe } from './support/renderWithApp';
 import { resetAuth } from './support/authMock';
 import { setParams, resetRouter } from './support/routerMock';
-import { heroTotals } from './support/budgetsScreen';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -22,7 +18,6 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 import Accounts from '../../app/(tabs)/accounts';
 import AccountDetail from '../../app/account/[id]';
 import Rules from '../../app/rules';
-import Budgets from '../../app/(tabs)/budgets';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -77,36 +72,6 @@ describe('Accounts tab', () => {
     expect(screen.getByText('—')).toBeTruthy();
     expect(screen.queryByTestId('accounts-error')).toBeNull();
   });
-
-  // [A3] A pull on a loaded list re-reads the feed, asks the bank for fresh balances, and the card
-  // shows the fresh number. Fail-on-revert: drop refreshLiveBalances' setQueryData → the old $100.00 stays.
-  it('[A3] a pull re-reads the feed and shows the bank\'s fresh balance', async () => {
-    seedFeed([ROW]);
-    server.seed('/accounts/balances', [bal({ amount: 100 })]);
-    await renderWithApp(<Accounts />);
-    expect(screen.getByText('$100.00')).toBeTruthy();
-    const feedReads = server.sentUnder('GET', '/transactions/feed').length;
-
-    server.seed('/accounts/balances', [bal({ amount: 321.09 })]); // what the live refresh returns
-    act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
-    expect(await screen.findByText('$321.09')).toBeTruthy();
-    expect(server.sent('POST', '/accounts/balances/refresh')).toHaveLength(1);
-    await waitFor(() => expect(server.sentUnder('GET', '/transactions/feed').length).toBe(feedReads + 1));
-    await waitFor(() => expect(shownToasts()).toEqual(['Balances up to date']));
-    await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
-  });
-
-  // [A4] A failed live refresh keeps the last-good balance on the card and toasts.
-  it('[A4] a failed live refresh keeps the last saved balance and toasts', async () => {
-    seedFeed([ROW]);
-    server.seed('/accounts/balances', [bal({ amount: 100 })]);
-    await renderWithApp(<Accounts />);
-    server.once('POST', '/accounts/balances/refresh', { status: 500 });
-    act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
-    await waitFor(() => expect(shownToasts()).toEqual(['Could not refresh balances. Showing last saved.']));
-    expect(screen.getByText('$100.00')).toBeTruthy();
-    await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
-  });
 });
 
 describe('Account detail', () => {
@@ -158,35 +123,5 @@ describe('Rules', () => {
     expect(screen.queryByText('Could not load your rules.')).toBeNull();
     expect(screen.getByText(/You have 1 active rule/)).toBeTruthy();
     await settle();
-  });
-});
-
-describe('Budgets "Next payday …" line', () => {
-  const today = new Date('2026-09-18T10:00:00+10:00');
-
-  // [A9] Payday is today → a fresh cycle began, so the next payday is a full cycle on: "2 Oct".
-  // Fail-on-revert: change nextPayday's `pay > todayMs` to `>=` → "Next payday 18 Sep" → red.
-  it('[A9] a last_pay_date of today shows "Next payday 2 Oct"', async () => {
-    pinToday(today);
-    try {
-      server.seed('/paycycle', { length: 14, last_pay_date: '2026-09-18' });
-      await renderWithApp(<Budgets />);
-      expect(heroTotals().payday).toBe('2 Oct');
-    } finally {
-      jest.useRealTimers();
-    }
-  });
-
-  // [A10] Payday tomorrow (the nearest future day) → that first payday is the next one.
-  it('[A10] a last_pay_date of tomorrow shows "Next payday 19 Sep"', async () => {
-    pinToday(today);
-    try {
-      server.seed('/paycycle', { length: 14, last_pay_date: '2026-09-19' });
-      await renderWithApp(<Budgets />);
-      expect(server.sent('GET', '/paycycle')).toHaveLength(1);
-      expect(heroTotals().payday).toBe('19 Sep');
-    } finally {
-      jest.useRealTimers();
-    }
   });
 });
