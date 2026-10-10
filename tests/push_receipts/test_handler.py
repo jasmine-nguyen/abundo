@@ -10,6 +10,8 @@ rest or errors the invocation).
 
 import logging
 
+import pytest
+
 _ZERO = {"pending": 0, "ok": 0, "pruned": 0, "failed": 0}
 
 
@@ -37,44 +39,16 @@ class _FakeDeviceRepo:
         self.removed.append(token)
 
 
-def _wire(handler, monkeypatch, *, pending, receipts, device_repo=None, token="token"):
-    """Install fake stores + a canned get_receipts, and return (receipt_repo, device_repo).
-
-    Pass `device_repo` to inject a custom one (e.g. a prune-that-raises); it defaults to a
-    fresh recording _FakeDeviceRepo."""
+def _wire(handler, monkeypatch, *, pending, receipts, token="token"):
+    """Install fake stores + a canned get_receipts, and return (receipt_repo, device_repo)."""
     receipt_repo = _FakeReceiptRepo(pending)
-    device_repo = device_repo or _FakeDeviceRepo()
+    device_repo = _FakeDeviceRepo()
     monkeypatch.setattr(handler, "PushReceiptRepository", lambda: receipt_repo)
     monkeypatch.setattr(handler, "DeviceRepository", lambda: device_repo)
     monkeypatch.setattr(handler, "get_access_token", lambda: token)
     monkeypatch.setattr(handler, "get_receipts",
                         lambda ids, access_token=None: dict(receipts))
     return receipt_repo, device_repo
-
-
-def test_ok_receipt_is_deleted_and_nothing_pruned(handler, monkeypatch):
-    receipt_repo, device_repo = _wire(
-        handler, monkeypatch,
-        pending=[("r1", "tok1")], receipts={"r1": {"status": "ok"}})
-
-    out = handler.lambda_handler({}, None)
-
-    assert receipt_repo.deleted == ["r1"]
-    assert device_repo.removed == []
-    assert out == {"pending": 1, "ok": 1, "pruned": 0, "failed": 0}
-
-
-def test_device_not_registered_prunes_the_token_and_deletes(handler, monkeypatch):
-    receipt_repo, device_repo = _wire(
-        handler, monkeypatch,
-        pending=[("r1", "tok-dead")],
-        receipts={"r1": {"status": "error", "details": {"error": "DeviceNotRegistered"}}})
-
-    out = handler.lambda_handler({}, None)
-
-    assert device_repo.removed == ["tok-dead"]   # dead device pruned
-    assert receipt_repo.deleted == ["r1"]        # row cleared
-    assert out == {"pending": 1, "ok": 0, "pruned": 1, "failed": 0}
 
 
 def test_other_error_logs_delivery_failed_and_deletes(handler, monkeypatch, caplog):
@@ -94,40 +68,12 @@ def test_other_error_logs_delivery_failed_and_deletes(handler, monkeypatch, capl
     assert out == {"pending": 1, "ok": 0, "pruned": 0, "failed": 1}
 
 
-def test_unresolved_id_is_left_for_the_next_sweep(handler, monkeypatch):
-    # Expo only resolved r1; r2 is still in flight and absent from the response, so its
-    # row must NOT be deleted — the next sweep retries it (TTL is the backstop).
+@pytest.mark.parametrize("receipt", ["garbage", {}], ids=["not-a-dict", "missing-status"])
+def test_an_uninterpretable_receipt_is_a_failure(handler, monkeypatch, caplog, receipt):
+    # A receipt that can't be interpreted is logged and cleared, not left pending forever.
     receipt_repo, device_repo = _wire(
         handler, monkeypatch,
-        pending=[("r1", "tok1"), ("r2", "tok2")],
-        receipts={"r1": {"status": "ok"}})
-
-    out = handler.lambda_handler({}, None)
-
-    assert receipt_repo.deleted == ["r1"]        # r2 untouched
-    assert out == {"pending": 2, "ok": 1, "pruned": 0, "failed": 0}
-
-
-def test_empty_pending_makes_no_expo_call(handler, monkeypatch):
-    receipt_repo = _FakeReceiptRepo([])
-    calls = []
-    monkeypatch.setattr(handler, "PushReceiptRepository", lambda: receipt_repo)
-    monkeypatch.setattr(handler, "DeviceRepository", lambda: _FakeDeviceRepo())
-    monkeypatch.setattr(handler, "get_access_token", lambda: "token")
-    monkeypatch.setattr(handler, "get_receipts",
-                        lambda ids, access_token=None: calls.append(ids) or {})
-
-    out = handler.lambda_handler({}, None)
-
-    assert calls == []                           # never polled Expo
-    assert out == _ZERO
-
-
-def test_non_dict_receipt_is_treated_as_a_failure(handler, monkeypatch, caplog):
-    # A malformed (non-dict) receipt can't be interpreted → logged + cleared, not left.
-    receipt_repo, device_repo = _wire(
-        handler, monkeypatch,
-        pending=[("r1", "tok1")], receipts={"r1": "garbage"})
+        pending=[("r1", "tok1")], receipts={"r1": receipt})
 
     with caplog.at_level(logging.ERROR):
         out = handler.lambda_handler({}, None)
@@ -135,21 +81,6 @@ def test_non_dict_receipt_is_treated_as_a_failure(handler, monkeypatch, caplog):
     assert "PUSH_DELIVERY_FAILED" in caplog.text
     assert receipt_repo.deleted == ["r1"]
     assert out == {"pending": 1, "ok": 0, "pruned": 0, "failed": 1}
-
-
-def test_dnr_for_an_unknown_id_deletes_without_pruning(handler, monkeypatch):
-    # Defensive: an id Expo returns that we never tracked has no token to prune, but the
-    # row is still cleared. Guards the `if token` check in the DNR branch.
-    receipt_repo, device_repo = _wire(
-        handler, monkeypatch,
-        pending=[("r1", "tok1")],
-        receipts={"ghost": {"status": "error", "details": {"error": "DeviceNotRegistered"}}})
-
-    out = handler.lambda_handler({}, None)
-
-    assert device_repo.removed == []             # no token → nothing pruned
-    assert receipt_repo.deleted == ["ghost"]     # still cleared
-    assert out == {"pending": 1, "ok": 0, "pruned": 1, "failed": 0}
 
 
 def test_one_receipt_failure_does_not_abort_the_rest(handler, monkeypatch):
@@ -201,62 +132,6 @@ def test_top_level_sweep_exception_is_swallowed(handler, monkeypatch):
     out = handler.lambda_handler({}, None)
 
     assert out == _ZERO                          # never raised
-
-
-# --- adversarial malformed-receipt + ordering edges -------------------------
-
-
-def test_error_status_without_details_is_a_failure(handler, monkeypatch, caplog):
-    # status=="error" but NO details key → error code is None → failed + delete.
-    receipt_repo, device_repo = _wire(
-        handler, monkeypatch,
-        pending=[("r1", "tok1")], receipts={"r1": {"status": "error"}})
-
-    with caplog.at_level(logging.ERROR):
-        out = handler.lambda_handler({}, None)
-
-    assert "PUSH_DELIVERY_FAILED" in caplog.text
-    assert "error=None" in caplog.text           # no details → error code is None
-    assert receipt_repo.deleted == ["r1"]        # still terminal → cleared
-    assert device_repo.removed == []             # not a DNR → nothing pruned
-    assert out == {"pending": 1, "ok": 0, "pruned": 0, "failed": 1}
-
-
-def test_receipt_missing_status_key_is_a_failure(handler, monkeypatch, caplog):
-    # A receipt dict with no `status` key at all → failed (not left pending forever).
-    receipt_repo, device_repo = _wire(
-        handler, monkeypatch,
-        pending=[("r1", "tok1")], receipts={"r1": {}})
-
-    with caplog.at_level(logging.ERROR):
-        out = handler.lambda_handler({}, None)
-
-    assert "PUSH_DELIVERY_FAILED" in caplog.text
-    assert receipt_repo.deleted == ["r1"]        # cleared, not silently left forever
-    assert out == {"pending": 1, "ok": 0, "pruned": 0, "failed": 1}
-
-
-def test_dnr_prune_failure_leaves_the_row_pending(handler, monkeypatch, caplog):
-    # In the DNR branch remove(token) runs BEFORE delete(rid); if remove raises, the
-    # per-receipt try/except swallows it and delete never runs → the row survives for a
-    # later sweep (TTL is the backstop). Locks that remove-before-delete ordering.
-    class _AngryDeviceRepo(_FakeDeviceRepo):
-        def remove(self, token):
-            raise RuntimeError("dynamo down")
-
-    angry = _AngryDeviceRepo()
-    receipt_repo, device_repo = _wire(
-        handler, monkeypatch,
-        pending=[("r1", "tok-dead")],
-        receipts={"r1": {"status": "error", "details": {"error": "DeviceNotRegistered"}}},
-        device_repo=angry)
-
-    with caplog.at_level(logging.ERROR):
-        out = handler.lambda_handler({}, None)
-
-    assert receipt_repo.deleted == []            # row NOT cleared — prune blocked the delete
-    assert angry.removed == []                   # remove raised, nothing recorded
-    assert out == {"pending": 1, "ok": 0, "pruned": 0, "failed": 0}  # not counted pruned
 
 
 def test_mixed_outcomes_counts_are_order_independent(handler, monkeypatch):

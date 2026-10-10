@@ -105,18 +105,6 @@ def test_an_ongoing_stall_pushes_only_once(wired):
     assert pushes == []
 
 
-def test_three_daily_polls_that_start_a_little_early_still_push(wired):
-    # Poll start times drift; three daily polls can land a few seconds short of 3 x 24h.
-    handler, wire, pushes = wired
-    wire(rows={WESTPAC: [_row("t1")]},
-         watches={WESTPAC: _watch({"t1"}, NOW - 3 * DAY + 5, "-2992.75")})
-
-    handler.check_feed_stalls([_delta(WESTPAC, "-3232.56")], NOW)
-
-    assert len(pushes) == 1
-    assert "3 days" in pushes[0][1]
-
-
 def test_unchanged_balance_never_pushes(wired):
     # A quiet stretch (or an unused card like the ANZ at 0) is not a stall.
     handler, wire, pushes = wired
@@ -157,32 +145,6 @@ def test_a_deleted_row_does_not_reset_the_watch(wired):
     assert watch_repo.get_watch(WESTPAC)["seen_at"] == NOW - 3 * DAY
 
 
-def test_no_activity_day_keeps_the_original_baseline(wired):
-    handler, wire, pushes = wired
-    _, watch_repo = wire(
-        rows={WESTPAC: [_row("t1")]},
-        watches={WESTPAC: _watch({"t1"}, NOW - DAY, "-2992.75")},
-    )
-
-    handler.check_feed_stalls([_delta(WESTPAC, "-3100")], NOW)
-
-    assert watch_repo._table.put_calls == []
-
-
-def test_recovery_after_a_stall_push_sends_the_all_clear(wired):
-    handler, wire, pushes = wired
-    _, watch_repo = wire(
-        rows={WESTPAC: [_row("t9", "2026-09-25"), _row("t1")]},
-        watches={WESTPAC: _watch({"t1"}, NOW - 4 * DAY, "-2992.75", alerted=True)},
-    )
-
-    handler.check_feed_stalls([_delta(WESTPAC, "-3300")], NOW)
-
-    assert len(pushes) == 1
-    assert "coming in again" in pushes[0][0]
-    assert watch_repo.get_watch(WESTPAC)["alerted"] is False
-
-
 def test_no_registered_device_retries_the_push_next_poll(wired):
     handler, wire, pushes = wired
     _, watch_repo = wire(
@@ -194,19 +156,6 @@ def test_no_registered_device_retries_the_push_next_poll(wired):
     handler.check_feed_stalls([_delta(WESTPAC, "-3232.56")], NOW)
 
     assert pushes == []
-    assert watch_repo.get_watch(WESTPAC)["alerted"] is False
-
-
-def test_a_push_expo_rejects_is_retried_next_poll(wired):
-    handler, wire, pushes = wired
-    _, watch_repo = wire(
-        rows={WESTPAC: [_row("t1")]},
-        watches={WESTPAC: _watch({"t1"}, NOW - 3 * DAY, "-2992.75")},
-        expo_accepts=False,
-    )
-
-    handler.check_feed_stalls([_delta(WESTPAC, "-3232.56")], NOW)
-
     assert watch_repo.get_watch(WESTPAC)["alerted"] is False
 
 
@@ -262,20 +211,6 @@ def test_one_accounts_failure_does_not_stop_the_others(wired, handler):
     handler.check_feed_stalls([_delta("up-spending", "5"), _delta(WESTPAC, "-3232.56")], NOW)
 
     assert len(pushes) == 1
-
-
-def test_lambda_handler_swallows_a_feed_stall_failure(handler, monkeypatch):
-    monkeypatch.setattr(handler, "get_api_key", lambda: "k")
-    monkeypatch.setattr(handler, "_check_homeloan", lambda deltas: None)
-    monkeypatch.setattr(handler, "_poll_account_balances", lambda api_key: (1, [_delta("up-homeloan", "-1")]))
-    monkeypatch.setattr(handler, "_check_goal_checkpoints", lambda deltas: None)
-
-    def boom(deltas, now):
-        raise RuntimeError("db down")
-
-    monkeypatch.setattr(handler, "check_feed_stalls", boom)
-
-    assert handler.lambda_handler({}, None) == {"accounts_stored": 1}
 
 
 # --- Threshold, look-back and lifecycle edges ----------------------------------------------

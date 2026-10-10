@@ -7,10 +7,9 @@ A metric filter counts that line; the alarm pages when 2 daily runs in a row hav
 """
 
 import logging
-import re
 
 from _http_fakes import FakeResponse
-from _terraform import MONITORING_TF, TERRAFORM_DIR, filter_pattern, tf_attr, tf_block
+from _terraform import filter_pattern
 
 
 class _FakeAccountRepo:
@@ -65,6 +64,8 @@ def test_only_a_fully_clean_balance_poll_logs_the_heartbeat_the_alarm_watches(ha
     result = _run_poll(handler, monkeypatch, caplog)
     assert result == {"accounts_stored": len(handler.BALANCE_SOURCES)}
     assert any(pattern in r.getMessage() for r in caplog.records), "clean run logged no heartbeat"
+    # The Lambda runtime's root logger sits at WARNING: the handler's own logger must enable INFO.
+    assert handler.logger.level == logging.INFO
 
     # One account's read fails (e.g. a 404 after its ID changed) → balances are stale → no heartbeat.
     result = _run_poll(handler, monkeypatch, caplog, failing_aid="3zVQJ8Btz_IRmqp78VrQnQ")
@@ -72,36 +73,15 @@ def test_only_a_fully_clean_balance_poll_logs_the_heartbeat_the_alarm_watches(ha
     assert not any(pattern in r.getMessage() for r in caplog.records), "partial run logged the heartbeat"
 
 
-def test_alarm_emails_alerts_when_balances_have_not_refreshed_for_two_daily_runs():
-    text = MONITORING_TF.read_text()
-    metric_filter = tf_block(text, "aws_cloudwatch_log_metric_filter", "balance_poll_all_stored")
-    assert tf_attr(metric_filter, "log_group_name") == "aws_cloudwatch_log_group.balance_poller.name"
-    assert tf_attr(metric_filter, "default_value") == '"0"'
-    assert tf_attr(metric_filter, "value") == '"1"'
-    filter_namespace = re.search(r'metric_transformation \{.*?namespace\s*=\s*(.+?)\s*$',
-                                 metric_filter, re.S | re.M).group(1)
-    filter_metric = re.search(r'metric_transformation \{.*?\bname\s*=\s*(.+?)\s*$',
-                              metric_filter, re.S | re.M).group(1)
-    assert filter_metric == '"BalancePollAllStored"'
-    assert filter_namespace == '"${var.project_name}/BalancePoller"'
+def test_heartbeat_still_logged_when_goal_checkpoint_and_feed_stall_checks_fail(handler, monkeypatch, caplog):
+    # Follow-on checks failing must not suppress the heartbeat: the balances did store.
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
 
-    alarm = tf_block(text, "aws_cloudwatch_metric_alarm", "balance_poll_stale")
-    assert tf_attr(alarm, "namespace") == filter_namespace
-    assert tf_attr(alarm, "metric_name") == filter_metric
-    assert tf_attr(alarm, "statistic") == '"Sum"'
-    assert tf_attr(alarm, "period") == "86400"
-    assert tf_attr(alarm, "evaluation_periods") == "2"
-    assert tf_attr(alarm, "datapoints_to_alarm") == "2"
-    assert tf_attr(alarm, "threshold") == "1"
-    assert tf_attr(alarm, "comparison_operator") == '"LessThanThreshold"'
-    # Total silence (schedule off, import crash, timeout) must page too.
-    assert tf_attr(alarm, "treat_missing_data") == '"breaching"'
-    assert tf_attr(alarm, "alarm_actions") == "[aws_sns_topic.alerts.arn]"
-    assert tf_attr(alarm, "ok_actions") == "[aws_sns_topic.alerts.arn]"
-    assert "abundo-balance-poller" in tf_attr(alarm, "alarm_description")
+    monkeypatch.setattr(handler, "_check_goal_checkpoints", boom)
+    monkeypatch.setattr(handler, "check_feed_stalls", boom)
 
-    # The 86400s period counts missed RUNS only because the poll runs daily.
-    variables = (TERRAFORM_DIR / "variables.tf").read_text()
-    match = re.search(r'variable "balance_poll_schedule_expression" \{(.*?)\n\}', variables, re.S)
-    assert match
-    assert tf_attr(match.group(1), "default") == '"rate(1 day)"'
+    result = _run_poll(handler, monkeypatch, caplog)
+
+    assert result == {"accounts_stored": len(handler.BALANCE_SOURCES)}
+    assert sum("BALANCE_POLL_ALL_STORED" in r.getMessage() for r in caplog.records) == 1

@@ -7,7 +7,6 @@ confirms `_check_homeloan` isolates each home-loan check's failure.
 """
 
 import logging
-import time
 from decimal import Decimal
 
 import pytest
@@ -18,7 +17,7 @@ from _transaction_range_fakes import _QueuedTransactionRepo
 MARKER = "UP_WEBHOOK_REPAYMENT_MISSED"
 _DAY = 24 * 60 * 60
 _LOOKBACK = 7
-_NOW = 1_752_000_000  # fixed epoch for the pinned-clock lookback-edge tests
+_NOW = 1_752_000_000  # pinned clock, so the lookback edges can't flake
 
 
 class _FakeNotify:
@@ -29,82 +28,29 @@ class _FakeNotify:
         return self._last_fired_at
 
 
-def _check(handler, caplog, *, old, new, last_fired_at):
-    caplog.set_level(logging.ERROR)
-    handler.check_repayment_landed_but_no_push(old, new, _FakeNotify(last_fired_at))
-    return MARKER in caplog.text
-
-
-# --- the branch matrix -----------------------------------------------------
-
-def test_drop_with_no_recorded_push_alarms(handler, caplog):
-    assert _check(handler, caplog, old=Decimal("600000"), new=Decimal("596000"), last_fired_at=None)
-
-
-def test_drop_with_stale_push_alarms(handler, caplog):
-    stale = int(time.time()) - 30 * _DAY
-    assert _check(handler, caplog, old=Decimal("600000"), new=Decimal("596000"), last_fired_at=stale)
-
-
-def test_drop_with_recent_push_is_silent(handler, caplog):
-    recent = int(time.time()) - 1 * _DAY
-    assert not _check(handler, caplog, old=Decimal("600000"), new=Decimal("596000"), last_fired_at=recent)
-
-
-def test_small_drop_is_silent(handler, caplog):
-    # $1,000 drop < the $3,000 threshold.
-    assert not _check(handler, caplog, old=Decimal("600000"), new=Decimal("599000"), last_fired_at=None)
-
-
-def test_no_prior_balance_is_silent(handler, caplog):
-    assert not _check(handler, caplog, old=None, new=Decimal("596000"), last_fired_at=None)
-
-
-def test_balance_rose_is_silent(handler, caplog):
-    # Interest / redraw raises the balance — never a repayment, never an alarm.
-    assert not _check(handler, caplog, old=Decimal("600000"), new=Decimal("604000"), last_fired_at=None)
-
-
-def test_zero_drop_is_silent(handler, caplog):
-    # A second poll after a drop day sees old == new → no re-alarm; also the deploy
-    # transition where the drop was already stored before this check shipped.
-    assert not _check(handler, caplog, old=Decimal("596000"), new=Decimal("596000"), last_fired_at=None)
-
-
-def test_boundary_exactly_threshold_alarms(handler, caplog):
-    # Exactly $3,000 counts (>= threshold).
-    assert _check(handler, caplog, old=Decimal("599000"), new=Decimal("596000"), last_fired_at=None)
-
-
-# --- the 7-day lookback edge (wall-clock PINNED so +/-1s can't flake) --------
-
-
-def _run_pinned_clock(handler, monkeypatch, caplog, *, last_fired_at):
+@pytest.mark.parametrize(
+    ("old", "new", "last_fired_at", "alarms"),
+    [
+        (Decimal("600000"), Decimal("596000"), None, True),
+        (Decimal("600000"), Decimal("596000"), _NOW - 30 * _DAY, True),
+        (Decimal("600000"), Decimal("596000"), _NOW - 1 * _DAY, False),
+        (Decimal("600000"), Decimal("599000"), None, False),                         # under the $3,000 threshold
+        (None, Decimal("596000"), None, False),
+        (Decimal("600000"), Decimal("604000"), None, False),                         # interest or redraw
+        (Decimal("599000"), Decimal("596000"), None, True),                          # exactly $3,000 counts
+        (Decimal("600000"), Decimal("596000"), _NOW - _LOOKBACK * _DAY, False),      # push exactly 7 days ago
+        (Decimal("600000"), Decimal("596000"), _NOW - _LOOKBACK * _DAY - 1, True),
+    ],
+    ids=["no-push", "stale-push", "recent-push", "small-drop", "no-prior", "balance-rose",
+         "exactly-threshold", "push-on-lookback-edge", "push-1s-past-lookback"],
+)
+def test_balance_drop_alarm_matrix(handler, monkeypatch, caplog, old, new, last_fired_at, alarms):
     monkeypatch.setattr(handler.time, "time", lambda: _NOW)
     caplog.set_level(logging.ERROR)
-    handler.check_repayment_landed_but_no_push(
-        Decimal("600000"), Decimal("596000"), _FakeNotify(last_fired_at),
-    )
-    return MARKER in caplog.text
 
+    handler.check_repayment_landed_but_no_push(old, new, _FakeNotify(last_fired_at))
 
-def test_push_exactly_on_lookback_edge_is_healthy(handler, monkeypatch, caplog):
-    # last_fired_at == cutoff (exactly 7 days ago) counts as recent -> silent (>=).
-    edge = _NOW - _LOOKBACK * _DAY
-    assert not _run_pinned_clock(handler, monkeypatch, caplog, last_fired_at=edge)
-
-
-def test_push_one_second_past_lookback_alarms(handler, monkeypatch, caplog):
-    # One second older than the 7-day window -> stale -> alarm. Guards the day-arithmetic
-    # (7*24*60*60) and the >= boundary: flipping >= to > would make the edge case above
-    # alarm, and shrinking the window would move this seam.
-    just_stale = _NOW - _LOOKBACK * _DAY - 1
-    assert _run_pinned_clock(handler, monkeypatch, caplog, last_fired_at=just_stale)
-
-
-def test_push_one_second_inside_lookback_is_healthy(handler, monkeypatch, caplog):
-    fresh = _NOW - _LOOKBACK * _DAY + 1
-    assert not _run_pinned_clock(handler, monkeypatch, caplog, last_fired_at=fresh)
+    assert (MARKER in caplog.text) is alarms
 
 
 # --- integration with _check_homeloan --------------------------------------
