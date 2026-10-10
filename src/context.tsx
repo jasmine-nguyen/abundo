@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
-import { C, tint, fmt, fmt2, fmtExact, fmtSignedExact, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
+import { C, tint, fmt, fmt2, fmtExact, fmtSignedExact, MINUS, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
 import { writeFailureMessage, ApiError } from './apiError';
 import { formatDayMonth, formatMonthYear, formatWeekdayShort, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, toISODate } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, deleteTransaction as apiDeleteTransaction, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, AiGoalSignal, ApplyRulesJob, CreatedRule, UncategorizedMerchantGroup, type PayCycle } from './api';
@@ -2619,7 +2619,30 @@ export function transactionGroups(s: TransactionListInput, tab: 'all' | 'uncateg
   // WHIT-330: the Uncategorized tab lists every unmapped charge, transfers included, so it
   // matches the badge and the row's "Uncategorized" label. Budget math still drops transfers.
   const tabFilter = (t: Transaction) => (tab === 'uncategorized' ? isUncategorized(s, t) : true);
-  return groupTransactionsByDate(s.transactions.filter(tabFilter));
+  return groupTransactionsByDate(s.transactions.filter(tabFilter))
+    .map((g) => ({ ...g, dayTotal: dayTotalLabel(daySpend(s, g.items)) }));
+}
+
+// WHIT-847: a day's spend counted like Insights "Spent" — pending and posted charges, refunds
+// netting; income, savings, budget-excluded charges and transfers left out. Null when nothing counts.
+export function daySpend(s: Pick<TransactionListInput, 'category'>, items: Transaction[]): number | null {
+  let sum = 0;
+  let counted = false;
+  for (const t of items) {
+    if (!contributesToBudget(t) || t.category === 'income') continue;
+    const bucket = s.category(t.category ?? '')?.bucket;
+    if (bucket === 'Income' || bucket === 'Savings') continue;
+    sum -= t.amount;
+    counted = true;
+  }
+  if (!counted || Math.round(sum * 100) === 0) return null;
+  return sum;
+}
+
+export function dayTotalLabel(spend: number | null): string | null {
+  if (spend === null) return null;
+  if (spend > 0) return MINUS + fmtExact(spend);
+  return '+' + fmtExact(spend);
 }
 
 export function countUncategorized(s: TransactionListInput) {

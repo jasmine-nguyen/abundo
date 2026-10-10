@@ -42,6 +42,7 @@ import { useTransactionsScreenData, useRecentTransactionsScreenData, useTransact
 import { accountBalancesKey, transactionsSearchKey } from '../queryKeys';
 import Transactions from '../../app/(tabs)/transactions';
 import { GROCERIES_RECORD } from './support/categories';
+import { MINUS } from '../theme';
 
 const server = installFakeServer();
 const FEED = '/transactions/feed';
@@ -365,6 +366,11 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
     expect(await screen.findByText('-$42.00')).toBeTruthy(); // the query-fed row rendered
     expect(feedReads()).toHaveLength(1);
     expect(categoryReads()).toHaveLength(1);
+  });
+
+  it("each date heading shows that day's total (WHIT-847)", async () => {
+    renderTransactions();
+    expect(await screen.findByText(new RegExp(` · ${MINUS}\\$42$`))).toBeTruthy();
   });
 
   it('shows a spinner first, then the rows (cache-first)', async () => {
