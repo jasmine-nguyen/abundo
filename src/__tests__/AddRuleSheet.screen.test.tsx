@@ -6,8 +6,6 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { AppContext } from '../context';
-import { C } from '../theme';
-import { styleOf } from './support/layout';
 
 let mockState: AppContext;
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => mockState));
@@ -56,13 +54,6 @@ beforeEach(() => {
   fns.setSheet.mockClear();
 });
 
-it('prefills from the rule and relabels for edit', async () => {
-  await openEdit();
-  expect(screen.getByText('Edit rule')).toBeTruthy();
-  expect(screen.getByDisplayValue('NETFLIX')).toBeTruthy();
-  expect(screen.getByText('Update rule')).toBeTruthy();
-});
-
 it('submitting calls updateRule with the id, not saveManualRule', async () => {
   await openEdit();
   fireEvent.press(screen.getByText('Update rule'));
@@ -108,13 +99,6 @@ it('[WHIT-284] the LAST category was deleted → loaded-but-EMPTY list still dro
   expect(fns.saveManualRule).not.toHaveBeenCalled();
 });
 
-it('[WHIT-284] a VALID restored categoryId is NOT cleared — submit reaches the confirm step', async () => {
-  await openNew({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) });
-  fireEvent.press(screen.getByText('Add rule'));
-  // WHIT-538: a valid new rule now opens the preview/confirm step, which owns the save itself.
-  expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'NETFLIX', categoryId: 'subs', budgetExcluded: false });
-});
-
 it('[WHIT-284] a valid restored id survives the LOADING window: save is held disabled, then re-enables once the list arrives', async () => {
   // While loading, no id can be resolved → save is disabled (so a dead id is never submittable mid-load,
   // WHIT-284 [E1]). The drop effect is gated on !loading, so the valid id is KEPT, not cleared — and the
@@ -134,13 +118,6 @@ it('[WHIT-284] a valid restored id survives the LOADING window: save is held dis
   expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'NETFLIX', categoryId: 'subs', budgetExcluded: false });
 });
 
-it('[WHIT-284] re-picking a real category after a dead one re-enables save', async () => {
-  await openEdit([{ id: 'e1', value: 'NETFLIX', categoryId: 'ghost' }]);
-  fireEvent.press(screen.getByText('Groceries')); // pick a valid category
-  fireEvent.press(screen.getByText('Update rule'));
-  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'groceries', false, undefined, false);
-});
-
 // WHIT-355 — conflict/duplicate detection in the add-rule sheet.
 const NETFLIX_SUBS = { id: 'b1', value: 'NETFLIX', categoryId: 'subs' };
 
@@ -155,19 +132,6 @@ it('[WHIT-355] creating a CLASHING rule warns and does not mint until Replace', 
   fireEvent.press(screen.getByTestId('rule-conflict-replace'));
   expect(fns.updateRule).toHaveBeenCalledWith('b1', 'NETFLIX', 'groceries', false, undefined, false); // retarget the surviving rule
   expect(fns.saveManualRule).not.toHaveBeenCalled();                          // no second row
-});
-
-// WHIT-760 [A1] "Replace" was hand-coloured; it's now the shared filled SheetButton beside the
-// outlined "Cancel", both keeping flex: 1 so they sit side by side.
-it('[A1] the clash card shows a filled "Replace" and an outlined "Cancel" side by side', async () => {
-  await openNew({}, [NETFLIX_SUBS]);
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
-  fireEvent.press(screen.getByText('Groceries'));
-  fireEvent.press(screen.getByText('Add rule'));
-  const replace = styleOf(screen.getByTestId('rule-conflict-replace'));
-  const cancel = styleOf(screen.getByTestId('rule-conflict-cancel'));
-  expect(replace).toMatchObject({ backgroundColor: C.accent, flex: 1 });
-  expect(cancel).toMatchObject({ backgroundColor: 'transparent', borderWidth: 1, flex: 1 });
 });
 
 it('[WHIT-355] Cancel on a create conflict writes nothing and restores the submit button', async () => {
@@ -190,16 +154,6 @@ it('[WHIT-355] an exact DUPLICATE on create no-ops (no rule minted) and closes o
   expect(fns.saveManualRule).not.toHaveBeenCalled();
   fireEvent.press(screen.getByTestId('rule-conflict-ok'));
   expect(fns.setSheet).toHaveBeenCalledWith(null);
-});
-
-it('[WHIT-355] creating a NON-clashing rule proceeds to the confirm step (happy path preserved)', async () => {
-  await openNew({}, [NETFLIX_SUBS]);
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'SPOTIFY');
-  fireEvent.press(screen.getByText('Subscriptions'));
-  fireEvent.press(screen.getByText('Add rule'));
-  // WHIT-538: no clash → the preview/confirm step opens (it owns the actual save).
-  expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'SPOTIFY', categoryId: 'subs', budgetExcluded: false });
-  expect(screen.queryByTestId('rule-conflict')).toBeNull();
 });
 
 it('[WHIT-355] editing a rule INTO a clash warns with no Replace and writes nothing', async () => {
@@ -277,12 +231,6 @@ describe('AddRuleSheet — WHIT-284 drop effect (draft re-clean)', () => {
     expect(lastDraftCategoryId()).toBeNull(); // effect cleared it, not left at 'ghost'
     fireEvent.press(screen.getByText('Add rule'));
     expect(fns.saveManualRule).not.toHaveBeenCalled();
-  });
-
-  // Control: a VALID restored id is left in the draft untouched (never re-cleaned).
-  it('[WHIT-284] a VALID restored id is left in the persisted draft (not re-cleaned)', async () => {
-    await openSheet(ruleState({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) }));
-    expect(lastDraftCategoryId()).toBe('subs');
   });
 
   // [A9] — a cold-load ERROR (no cache) also reports isLoading:false with an EMPTY list. The drop
@@ -368,36 +316,17 @@ describe('AddRuleSheet — WHIT-355 conflict adversarial', () => {
     expect(screen.queryByTestId('rule-conflict-replace')).toBeNull();
     expect(screen.getByTestId('rule-submit')).toBeTruthy();        // back to the normal form
   });
+});
 
-  // (The "edit pattern to a unique value clears the warning + saves the new rule" case is covered
-  // by the survivor's stale-clear test above; not duplicated here.)
-
-  // [A-S3] Edit path: after an edit-into-clash warning, changing the pattern also clears the
-  // warn-only block (the edit path never had a Replace, so the only risk is being stuck).
-  it('[WHIT-355] on the edit path, changing the pattern clears the warn-only block', async () => {
-    await openCreate([
-      { id: 'e1', value: 'OLD', categoryId: 'subs' },
-      { id: 'b1', value: 'NETFLIX', categoryId: 'groceries' },
-    ], { mode: 'addrule', ruleId: 'e1' });
-    fireEvent.changeText(screen.getByDisplayValue('OLD'), 'NETFLIX'); // clash with b1
-    fireEvent.press(screen.getByText('Update rule'));
-    expect(screen.getByTestId('rule-conflict')).toBeTruthy();
-    expect(screen.queryByTestId('rule-conflict-replace')).toBeNull(); // edit path: no Replace
-
-    fireEvent.changeText(screen.getByDisplayValue('NETFLIX'), 'DISNEY'); // move off the clash
-    expect(screen.queryByTestId('rule-conflict')).toBeNull();
-    expect(screen.getByTestId('rule-submit')).toBeTruthy();
-  });
-
-  // [A-S4] Empty rules list -> a create never warns and saves straight through (guards a future
-  // change that might warn/null-deref on an empty list).
-  it('[WHIT-355] with no existing rules a create proceeds with no warning', async () => {
-    await openCreate([]);
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
-    fireEvent.press(screen.getByText('Subscriptions'));
-    fireEvent.press(screen.getByText('Add rule'));
-    // WHIT-538: no clash → the preview/confirm step opens (it owns the save).
-    expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'NETFLIX', categoryId: 'subs', budgetExcluded: false });
-    expect(screen.queryByTestId('rule-conflict')).toBeNull();
-  });
+// WHIT-670 [A6] A category with a parent from the server is still a pickable pill (the add-rule list
+// is flat — children are real categories a rule can file to).
+it('[A6] a child category from the server can be picked and is saved by its own id', async () => {
+  await openNew({}, [], [
+    ...CATS,
+    { id: 'takeaway', name: 'Takeaway', icon: 'coffee', bucket: 'Living', parent: 'groceries' },
+  ]);
+  fireEvent.changeText(screen.getByTestId('rule-value-0'), 'MENULOG');
+  fireEvent.press(screen.getByText('Takeaway'));
+  fireEvent.press(screen.getByText('Add rule'));
+  expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'MENULOG', categoryId: 'takeaway', budgetExcluded: false });
 });

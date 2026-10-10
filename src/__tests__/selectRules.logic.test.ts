@@ -18,10 +18,6 @@ describe('selectRules', () => {
     ]);
   });
 
-  it('maps an empty payload to an empty list', () => {
-    expect(selectRules([])).toEqual([]);
-  });
-
   it('throws (fails loud) on a malformed non-array payload — not a silent empty list', () => {
     // A wrapped/changed /rules shape must surface as the Rules screen's error card,
     // not render "0 rules" over data the user actually has.

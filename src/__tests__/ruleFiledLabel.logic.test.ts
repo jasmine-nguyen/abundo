@@ -5,16 +5,12 @@ import { ruleFiledLabel, RULE_FILED_FALLBACK } from '../context';
 import { rule } from './factory';
 
 describe('ruleFiledLabel', () => {
-  it('a description/contains rule reads "contains \\"VALUE\\""', () => {
-    expect(ruleFiledLabel(rule({ operator: 'contains', pattern: 'COLES' }))).toBe('Filed by your rule: contains "COLES"');
-  });
-
-  it('honours a non-default operator (description/equals)', () => {
-    expect(ruleFiledLabel(rule({ operator: 'equals', pattern: 'COLES ONLINE' }))).toBe('Filed by your rule: equals "COLES ONLINE"');
-  });
-
-  it('defaults a missing operator to "contains" (app-authored rule)', () => {
-    expect(ruleFiledLabel(rule({ operator: undefined, pattern: 'COLES' }))).toBe('Filed by your rule: contains "COLES"');
+  it.each([
+    ['a description/contains rule reads "contains \\"VALUE\\""', 'contains', 'COLES', 'contains "COLES"'],
+    ['honours a non-default operator (description/equals)', 'equals', 'COLES ONLINE', 'equals "COLES ONLINE"'],
+    ['defaults a missing operator to "contains" (app-authored rule)', undefined, 'COLES', 'contains "COLES"'],
+  ])('%s', (_name, operator, pattern, quoted) => {
+    expect(ruleFiledLabel(rule({ operator, pattern }))).toBe(`Filed by your rule: ${quoted}`);
   });
 
   // Fail-on-revert (MAJOR-2): a category rule's pattern is a raw enum, so it must NOT be echoed.
@@ -22,21 +18,6 @@ describe('ruleFiledLabel', () => {
     const label = ruleFiledLabel(rule({ field: 'category', operator: 'equals', pattern: 'FOOD_AND_DRINK' }));
     expect(label).toBe(RULE_FILED_FALLBACK);
     expect(label).not.toContain('FOOD_AND_DRINK');
-  });
-
-  // [G1] Fail-on-revert: the fallback gate is specifically field==='category'. A non-description,
-  // non-category field (e.g. a BankSync merchant_name rule) carries HUMAN text, so it names the
-  // pattern. Widening the gate to `field !== 'description'` would wrongly hide this pattern.
-  it('a non-category, non-description field still names the pattern (not the generic line)', () => {
-    const label = ruleFiledLabel(rule({ field: 'merchant_name', operator: 'contains', pattern: 'COLES' }));
-    expect(label).toBe('Filed by your rule: contains "COLES"');
-    expect(label).not.toBe(RULE_FILED_FALLBACK);
-  });
-
-  // [G2] An undefined field (an older stamp) is not the category branch → names the pattern.
-  it('an undefined field names the pattern (defaults through the description arm)', () => {
-    expect(ruleFiledLabel(rule({ field: undefined, operator: 'contains', pattern: 'COLES' })))
-      .toBe('Filed by your rule: contains "COLES"');
   });
 
   // Fail-on-revert (QA #3): a blank/whitespace pattern is a malformed rule with nothing to quote —

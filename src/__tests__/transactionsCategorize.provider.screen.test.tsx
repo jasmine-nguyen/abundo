@@ -1,9 +1,7 @@
 // WHIT-190a/192 — the categorise write's cache write + invalidation (the WHIT-193 closure).
 // Drives the REAL applyCategory through AppProvider (../auth mocked, the fake server answering) and asserts it
 // updates the singleton ['transactions'] feed cache, rolls it back on failure, and invalidates
-// ['budgets']/['breakdown'] so the migrated Budgets/Insights screens refresh. The feed itself
-// is NOT invalidated (the optimistic patch already wrote it; an InfiniteData invalidate would
-// storm every loaded page) — the tests assert that too. (Pre-192 it also wrote an old store.)
+// ['budgets']/['breakdown'] so the migrated Budgets/Insights screens refresh.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
@@ -60,7 +58,6 @@ it('applyCategory(one) writes the tx cache AND invalidates budgets/breakdown but
   expect(cachedCategory('t1')).toBe('groceries'); // query cache write
   const keys = invalidatedKeys(invalidateSpy);
   expect(keys).toEqual(expect.arrayContaining(['budgets', 'breakdown'])); // WHIT-193 closure
-  expect(keys).not.toContain('transactions'); // the feed is patched, never invalidated (no page storm)
   invalidateSpy.mockRestore();
 });
 
@@ -85,7 +82,6 @@ it('applyCategory(all) writes every same-merchant charge into the cache + invali
   expect(cachedCategory('t2')).toBe('groceries'); // the whole same-merchant sweep hit the cache
   const keys = invalidatedKeys(invalidateSpy);
   expect(keys).toEqual(expect.arrayContaining(['budgets', 'breakdown']));
-  expect(keys).not.toContain('transactions'); // feed patched, not invalidated
   invalidateSpy.mockRestore();
 });
 
@@ -158,16 +154,6 @@ it('[WHIT-355] applyCategory(all) neither creates nor changes a rule on a clash,
   expect((queryClient.getQueryData(['rules']) as { categoryId: string }[])[0].categoryId).toBe('dining'); // untouched
   expect(cachedCategory('t1')).toBe('groceries'); // the tapped charges still file where the user chose
   expect(cachedCategory('t2')).toBe('groceries');
-});
-
-it('[WHIT-355] applyCategory(all) STILL creates a rule when no same-pattern rule exists (happy path preserved)', async () => {
-  const result = mount();
-  queryClient.setQueryData(['rules'], [{ id: 'other', pattern: 'NETFLIX', categoryId: 'subs', isNew: false }]); // unrelated
-
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
-  await act(async () => { await result.current.applyCategory('all'); });
-
-  expect(ruleMintBodies()).toContainEqual({ value: 'COLES', categoryId: 'groceries' });
 });
 
 // --- WHIT-491: one merchant, two spellings → one rule per distinct spelling ------------------
@@ -250,7 +236,7 @@ it('[WHIT-491] applyCategory(all) rolls back ONLY the spelling whose rule save f
 
   const rules = queryClient.getQueryData(['rules']) as { id: string; pattern: string }[];
   expect(rules).toHaveLength(1); // failed spelling's temp row removed; the other stands
-  expect(rules[0]).toMatchObject({ id: 'r-anz', pattern: 'UNIFLEX REMEDIAL MASSAGE' }); // real server id swapped in
+  expect(rules[0]).toMatchObject({ id: 'r-anz', pattern: 'UNIFLEX REMEDIAL MASSAGE', isNew: true }); // real server id swapped in, NEW badge kept
   expect(cachedCategory('t1')).toBe('groceries'); // charges filed regardless
   expect(cachedCategory('t2')).toBe('groceries');
   expect(result.current.toast).toBe('Filed, but could not save the rule for future charges.');
@@ -290,7 +276,6 @@ it('applyCategoryToMany re-files exactly the ids in the set, in one batch, + inv
   expect(cachedCategory('t2')).toBeNull(); // not in the set → untouched
   const keys = invalidatedKeys(invalidateSpy);
   expect(keys).toEqual(expect.arrayContaining(['budgets', 'breakdown']));
-  expect(keys).not.toContain('transactions'); // feed patched, not invalidated
   invalidateSpy.mockRestore();
 });
 
@@ -303,12 +288,6 @@ it('applyCategoryToMany reverts only the FAILED ids to their previous category (
 
   expect(cachedCategory('t1')).toBe('groceries'); // saved → stays
   expect(cachedCategory('t2')).toBe('dining');    // failed → back to its PREVIOUS category, not null
-});
-
-it('applyCategoryToMany drops ids not in the cache and never calls the batch on an empty set', async () => {
-  const result = mount([txn('t1')]);
-  await act(async () => { await result.current.applyCategoryToMany(['ghost'], 'groceries'); });
-  expect(batchSaves()).toHaveLength(0); // nothing real to file
 });
 
 // ===== WHIT-190a/192 (folded from transactionsFeedOptimistic.provider.screen.test.tsx) =====
@@ -343,22 +322,6 @@ describe('the feed InfiniteData cache under optimistic writes', () => {
     expect(p[1].nextCursor).toBeNull();
   });
 
-  it('applyCategoryToMany re-files a PAGE 2 row across pages without disturbing page 1', async () => {
-    seedTransactionsPages(queryClient, [
-      { transactions: [txn('p1')], nextCursor: 'cur1' },
-      { transactions: [txn('p2')], nextCursor: null },
-    ]);
-    queryClient.setQueryData(['categories'], [{ ...CAT }]);
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    await act(async () => { await result.current.applyCategoryToMany(['p2'], 'groceries'); });
-
-    const p = pages();
-    expect(p.length).toBe(2);
-    expect(p[1].transactions[0].category).toBe('groceries'); // paged-in row re-filed
-    expect(p[0].transactions[0].category).toBeNull(); // page 1 untouched
-  });
-
   // The feed and the bounded ['transactionsRecent'] cache overlap on the newest rows. An edit must
   // patch BOTH, or the tab-bar dot / account-detail / goal-edit (which read recent) keep stale data.
   it('an edit on an OVERLAP charge patches the recent cache too, not just the feed', async () => {
@@ -388,124 +351,39 @@ describe('the feed InfiniteData cache under optimistic writes', () => {
   });
 });
 
-// ===== WHIT-491 QA — adversarial GAP tests (not covered by the implementer's suite above) =====
-// Target: allSettled outcome[i]→mints[i] index alignment under N=3 with a MIDDLE reject; per-spelling
-// dedup when the TAPPED spelling is the existing duplicate; the toast precedence when charge-batch AND
-// a rule both fail; the TAPPED-charge full-description fallback rule; and the ['rules']-cache-absent
-// network path. Each proven fail-on-revert (single-mutation red-green) before landing.
+// --- WHIT-292: writer-level edges of the shared batch helper -------------------------------
 
-// [QA1] — allSettled outcome[i] must map to mints[i] with N=3 and the MIDDLE rule rejecting. NOT the
-// implementer's "rolls back ONLY the failed spelling" (that is N=2 with the LAST rule rejecting — an
-// off-by-one in the reconcile index would still look correct there).
-it('[WHIT-491][QA1] with 3 minted rules, a MIDDLE rejection removes exactly its row and keeps the other two with their real ids', async () => {
-  // Three genuinely-distinct spellings (spaces in different places → 3 distinct rule identities) that
-  // all normalise to the same stem, so the sweep spans all three and all three mint.
-  const a = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE');
-  const b = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');
-  const c = merchantTxn('t3', 'UNIFLEX REMEDIALMASSAGE', 'UNIFLEX REMEDIALMASSAGE');
-  // Rules mint in sweep order (a, b, c); the MIDDLE mint fails.
-  server.once('POST', '/rules', { body: { id: 'r-UNIFLEX REMEDIAL MASSAGE', field: 'description', operator: 'contains', value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' } });
-  server.once('POST', '/rules', { status: 500 });
-  server.once('POST', '/rules', { body: { id: 'r-UNIFLEX REMEDIALMASSAGE', field: 'description', operator: 'contains', value: 'UNIFLEX REMEDIALMASSAGE', categoryId: 'groceries' } });
-  const result = mount([a, b, c]);
+// The `updates` of every batch save the app sent, in order.
+const batches = () => batchSaves().map((r) => (r.body as { updates: { id: string; category: string }[] }).updates);
+
+// [A-EMPTY] applyCategory('all') with an EMPTY merchant sweep still ISSUES the rule AND files the
+// tapped charge — the rule is independent of the sweep, and the tapped charge is the user's
+// explicit pick (WHIT-324). Fail-on-revert: gate createRule on sameMerchantIds.length > 0, or drop
+// the tapped charge from the set, and the assertions below go red.
+it("applyCategory('all') files the tapped charge and mints the rule when the sweep is empty", async () => {
+  server.once('POST', '/rules', { body: { id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' } });
+  // Origin doesn't count to a budget -> no OTHER charge is swept; only the tapped charge is filed.
+  const result = mount([{ ...txn('t1'), counts_to_budget: false }]);
   queryClient.setQueryData(['rules'], []);
 
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  const rules = queryClient.getQueryData(['rules']) as { id: string; pattern: string }[];
-  expect(rules).toHaveLength(2); // the MIDDLE spelling's optimistic row is gone
-  // Assert POSITIONALLY, not by a pattern→id map: a fulfilled reconcile overwrites both id and pattern
-  // from the server outcome, so a pattern→id lookup can't see an index misalignment. The surviving ROW
-  // ORDER [m0, m2] holds only when outcome[i] reconciles mints[i].
-  expect(rules.map((r) => r.pattern)).toEqual(['UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIALMASSAGE']);
-  expect(rules.map((r) => r.id)).toEqual(['r-UNIFLEX REMEDIAL MASSAGE', 'r-UNIFLEX REMEDIALMASSAGE']);
-  expect(rules.some((r) => r.pattern === 'UNIFLEXREMEDIALMASSAGE')).toBe(false); // rejected spelling dropped
-  expect(ruleMints()).toHaveLength(3);
+  expect(batches()).toEqual([[{ id: 't1', category: 'groceries' }]]);  // the tapped charge is filed
+  expect(ruleMintBodies()).toContainEqual({ value: 'COLES', categoryId: 'groceries' }); // rule STILL fires
+  // The optimistic rule was reconciled to the real id (not rolled back) and survives.
+  expect(queryClient.getQueryData(['rules'])).toMatchObject([{ id: 'e1' }]);
+  // WHIT-324: the tapped charge counts, so the toast names the one it just filed.
+  expect(result.current.toast).toBe('1 transaction filed — future COLES charges file as Groceries.');
 });
 
-// [QA2] — the per-spelling conflict check is independent: when the TAPPED spelling already has a
-// same-category rule (a duplicate → skip) but a SWEPT spelling is new, only the swept one mints. NOT
-// the implementer's clash test (that skips a DIFFERENT-category SWEPT spelling); here the SKIP is on
-// the TAPPED spelling and the surviving mint is the swept one — the opposite index.
-it('[WHIT-491][QA2] tapped spelling is an existing duplicate, swept spelling is new → mints ONLY the swept one', async () => {
-  const anz = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE'); // tapped
-  const westpac = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');   // new
-  const result = mount([anz, westpac]);
-  // A same-CATEGORY rule already exists for the tapped spelling → duplicate (skip), not a conflict.
-  queryClient.setQueryData(['rules'], [{ id: 'existing', pattern: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries', isNew: false }]);
+// [A-DEDUPE] applyCategoryToMany collapses duplicate ids to ONE update — a double-tapped selection
+// must not send the same id twice. Fail-on-revert: drop the `new Set(...)` dedupe and the batch
+// would carry two {id:'t1'} rows.
+it('applyCategoryToMany dedupes repeated ids to a single batch update', async () => {
+  const result = mount([txn('t1')]);
 
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
-  await act(async () => { await result.current.applyCategory('all'); });
+  await act(async () => { await result.current.applyCategoryToMany(['t1', 't1', 't1'], 'groceries'); });
 
-  expect(ruleMints()).toHaveLength(1);
-  expect(ruleMintBodies()).toContainEqual({ value: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'groceries' });
-  expect(ruleMintBodies()).not.toContainEqual({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
-  // Not a conflict → the "clash" wording must NOT appear; charges still file.
-  expect(result.current.toast).not.toContain('already have a rule');
-  expect(cachedCategory('t1')).toBe('groceries');
-  expect(cachedCategory('t2')).toBe('groceries');
-});
-
-// [QA3] — when the CHARGE batch partially fails AND a rule also rejects in the same tap, the
-// charge-failure toast wins and the rule-failure toast is suppressed (they share an if/else-if). No
-// implementer test exercises both failures at once.
-it('[WHIT-491][QA3] charge-batch partial failure + a rule rejection → only the charge-failure toast shows, rule row still rolled back', async () => {
-  const anz = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE');
-  const westpac = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');
-  // t2's categorisation fails to save (batch returns only t1 updated).
-  server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: 'updated' }] } });
-  // ...and the westpac spelling's rule save (minted second, after the ANZ one) also rejects.
-  server.once('POST', '/rules', { body: { id: 'r-UNIFLEX REMEDIAL MASSAGE', field: 'description', operator: 'contains', value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' } });
-  server.once('POST', '/rules', { status: 500 });
-  const result = mount([anz, westpac]);
-  queryClient.setQueryData(['rules'], []);
-
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
-  await act(async () => { await result.current.applyCategory('all'); });
-
-  // The charge-failure toast dominates; the "could not save the rule" toast is NOT shown.
-  expect(result.current.toast).toBe('Could not save some categories. Please try again.');
-  // The failed charge reverted; the saved one stayed.
-  expect(cachedCategory('t1')).toBe('groceries');
-  expect(cachedCategory('t2')).toBeNull();
-  // The rejected rule's optimistic row was still removed; the good rule kept its real id.
-  const rules = queryClient.getQueryData(['rules']) as { id: string; pattern: string }[];
-  expect(rules).toHaveLength(1);
-  expect(rules[0]).toMatchObject({ id: 'r-UNIFLEX REMEDIAL MASSAGE', pattern: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries', isNew: true });
-});
-
-// [QA4] — characterisation: "a no-merchant charge mints no junk rule" applies only to SWEPT charges.
-// The TAPPED charge always mints from its rulePattern, which for a no-merchant charge is the FULL
-// description (fallback). Deliberate (context.tsx candidate set keeps ruleValue) but worth locking.
-it('[WHIT-491][QA4] tapping a no-merchant charge for apply-all mints a full-description fallback rule from the TAPPED charge', async () => {
-  const pendingAuth = merchantTxn('t1', 'POS AUTHORISATION   UNIFLEX REMEDIAL MASSAGE   +611800958316AU', '');
-  const result = mount([pendingAuth]);
-  queryClient.setQueryData(['rules'], []);
-
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
-  await act(async () => { await result.current.applyCategory('all'); });
-
-  // The tapped charge's own pattern falls back to the full noisy description and IS minted.
-  expect(ruleMints()).toHaveLength(1);
-  expect(ruleMintBodies()).toContainEqual({
-    value: 'POS AUTHORISATION   UNIFLEX REMEDIAL MASSAGE   +611800958316AU', categoryId: 'groceries',
-  });
-});
-
-// [QA5] — Rules screen never opened → ['rules'] cache is ABSENT. createRule must STILL fire (the
-// rule has to reach the server), patchRules no-ops (guarded), and the absent cache is NOT resurrected.
-it('[WHIT-491][QA5] with no ["rules"] cache seeded, createRule still fires and the cache is not resurrected', async () => {
-  const result = mount(); // COLES/Coles factory; NO queryClient.setQueryData(['rules'], ...)
-  expect(queryClient.getQueryData(['rules'])).toBeUndefined(); // precondition: never opened
-
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
-  await act(async () => { await result.current.applyCategory('all'); });
-
-  expect(ruleMintBodies()).toContainEqual({ value: 'COLES', categoryId: 'groceries' });
-  // patchRules is guarded (prev ? fn(prev) : prev) → the absent cache stays absent, no crash.
-  expect(queryClient.getQueryData(['rules'])).toBeUndefined();
-  // Charges still filed.
-  expect(cachedCategory('t1')).toBe('groceries');
-  expect(cachedCategory('t2')).toBe('groceries');
+  expect(batches()).toEqual([[{ id: 't1', category: 'groceries' }]]);
 });

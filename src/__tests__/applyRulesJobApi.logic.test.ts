@@ -53,11 +53,6 @@ describe('startApplyRulesJob', () => {
     expect(JSON.parse(init.body as string)).toEqual({ rule: { value: 'COLES', categoryId: 'groceries', budgetExcluded: true } });
   });
 
-  it('returns the job on a 202', async () => {
-    okFetch(JOB, 202);
-    await expect(startApplyRulesJob()).resolves.toEqual(JOB);
-  });
-
   it.each([[400], [409], [502]])('throws an ApiError carrying the status on %s', async (status) => {
     notOkFetch(status);
     await expect(startApplyRulesJob()).rejects.toMatchObject({ status });

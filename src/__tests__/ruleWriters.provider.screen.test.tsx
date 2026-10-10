@@ -11,6 +11,7 @@ import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
+import { invalidatedKeys } from './support/queryClient';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
@@ -102,4 +103,135 @@ it('deleteRule restores the rule at its position when the delete fails', async (
   expect(rules()).toHaveLength(1);
   expect(rules()[0].id).toBe('e1');
   expect(result.current.toast).toBe('Could not delete rule. Please try again.');
+});
+
+// WHIT-558: the "keep out of budget" flag threads through both writers into the API call and
+// the ['rules'] cache row.
+it.each([
+  {
+    name: 'saveManualRule passes budgetExcluded to createRule and into the cache',
+    write: (ctx: ReturnType<typeof useAppContext>) => ctx.saveManualRule('splitwise', 'subs', true),
+    sent: { method: 'POST', path: '/rules', body: { value: 'splitwise', categoryId: 'subs', budgetExcluded: true, spread: false } },
+  },
+  {
+    name: 'updateRule passes budgetExcluded to the rules API and into the cache',
+    write: (ctx: ReturnType<typeof useAppContext>) => ctx.updateRule('e1', 'NETFLIX', 'subs', true),
+    sent: { method: 'PUT', path: '/rules/e1', body: { value: 'NETFLIX', categoryId: 'subs', field: 'description', operator: 'contains', budgetExcluded: true, spread: false } },
+  },
+])('$name', async ({ write, sent }) => {
+  server.once('POST', '/rules', { body: { id: 'e9', field: 'description', operator: 'contains', value: 'splitwise', categoryId: 'subs', budgetExcluded: true } });
+  seed([{ ...NETFLIX }]);
+  const { result } = renderHook(() => useAppContext(), { wrapper });
+
+  await act(async () => { await write(result.current); });
+
+  expect(server.requests()).toContainEqual(sent);
+  expect(rules()[0].budgetExcluded).toBe(true);
+});
+
+// WHIT-559: the spread flag threads through createRule and the server's captured amount/gap land in
+// the ['rules'] cache row (via toRule), so the edit sheet can prefill them.
+it('saveManualRule passes spread to createRule and the captured bill lands in the cache', async () => {
+  server.once('POST', '/rules', { body: { id: 'e9', field: 'description', operator: 'contains', value: 'origin', categoryId: 'subs', spread: true, spreadAmount: 4250, spreadGapDays: 30 } });
+  seed([{ ...NETFLIX }]);
+  const { result } = renderHook(() => useAppContext(), { wrapper });
+
+  await act(async () => { await result.current.saveManualRule('origin', 'subs', false, undefined, true); });
+
+  expect(server.requests()).toContainEqual({ method: 'POST', path: '/rules', body: { value: 'origin', categoryId: 'subs', budgetExcluded: false, spread: true } });
+  expect(rules()[0]).toMatchObject({ spread: true, spreadAmount: 4250, spreadGapDays: 30 });
+});
+
+it('a create while the Rules screen was never opened is a no-op on the (absent) cache — no crash, no phantom cache', async () => {
+  // No ['rules'] seed: the query was never mounted, so getQueryData is undefined.
+  queryClient.setQueryData(['categories'], []);
+  server.once('POST', '/rules', { body: { id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' } });
+  const { result } = renderHook(() => useAppContext(), { wrapper });
+
+  await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
+
+  // The server write still happened, but patchRules' `prev ? fn(prev) : prev` guard left the cache
+  // untouched — no crash from spreading undefined, and no half-built ['rules'] cache.
+  expect(server.requests()).toContainEqual({ method: 'POST', path: '/rules', body: { value: 'spotify', categoryId: 'subs', budgetExcluded: false, spread: false } });
+  expect(queryClient.getQueryData(['rules'])).toBeUndefined();
+});
+
+// WHIT-540: editing the text mints a NEW id (the id IS the text). The optimistic map swaps r1 -> the
+// saved id; skipRules must NOT invalidate ['rules'], or a refetch would race that swap.
+// FAIL-ON-REVERT: drop skipRules and 'rules' shows up in the invalidated keys.
+it('a successful text edit swaps the rule id in the cache and skipRules leaves it standing', async () => {
+  seed([{ id: 'r1', pattern: 'COLES', categoryId: 'groceries', isNew: false, field: 'description', operator: 'contains' }]);
+  const { result } = renderHook(() => useAppContext(), { wrapper });
+  server.once('PUT', '/rules/r1', { body: {
+    id: 'coles-sydney', value: 'COLES SYDNEY', categoryId: 'groceries',
+    field: 'description', operator: 'contains',
+  } });
+  const spy = jest.spyOn(queryClient, 'invalidateQueries');
+
+  await act(async () => { await result.current.updateRule('r1', 'COLES SYDNEY', 'groceries'); });
+
+  const keys = invalidatedKeys(spy);
+  expect(keys).toContain('uncategorizedCount');    // re-file moved the tally
+  expect(keys).not.toContain('rules');             // skipRules: the id-swap is not clobbered
+  expect(rules()[0]).toMatchObject({ id: 'coles-sydney', pattern: 'COLES SYDNEY' });
+  spy.mockRestore();
+});
+
+// WHIT-762: the exact optimistic row and API body for a multi-condition write, and for an edit that
+// turns a multi rule back into a classic one.
+const MULTI = {
+  conditions: [
+    { field: 'merchant', operator: 'equals', value: 'Coles' },
+    { field: 'description', operator: 'contains', value: 'EXPRESS' },
+  ],
+  logic: 'all' as const,
+};
+const CLASSIC_R1 = { id: 'r1', pattern: 'OLD', categoryId: 'groceries', isNew: false, field: 'description', operator: 'contains' };
+const MULTI_R1 = {
+  id: 'r1', pattern: 'OLD', categoryId: 'groceries', isNew: false, budgetExcluded: false, spread: false,
+  field: 'merchant', operator: 'equals', conditions: MULTI.conditions, logic: 'all',
+};
+
+it.each([
+  {
+    name: 'multi: the temp row carries the first condition + conditions/logic, and POSTs the conditions body',
+    seeded: [],
+    write: (ctx: ReturnType<typeof useAppContext>) => ctx.saveManualRule('ignored', 'groceries', false, MULTI, true),
+    method: 'POST' as const, path: '/rules',
+    row: {
+      id: expect.stringMatching(/^tmp-/), isNew: true, pattern: 'Coles', categoryId: 'groceries', budgetExcluded: false, spread: true,
+      field: 'merchant', operator: 'equals', conditions: MULTI.conditions, logic: 'all',
+    },
+    body: { conditions: MULTI.conditions, logic: 'all', categoryId: 'groceries', budgetExcluded: false, spread: true },
+  },
+  {
+    name: 'multi: takes field/operator from the first condition and PUTs the conditions body (no field/operator)',
+    seeded: [CLASSIC_R1],
+    write: (ctx: ReturnType<typeof useAppContext>) => ctx.updateRule('r1', 'ignored', 'groceries', false, MULTI, false),
+    method: 'PUT' as const, path: '/rules/r1',
+    row: {
+      ...CLASSIC_R1, pattern: 'Coles', budgetExcluded: false, spread: false,
+      field: 'merchant', operator: 'equals', conditions: MULTI.conditions, logic: 'all',
+    },
+    body: { conditions: MULTI.conditions, logic: 'all', categoryId: 'groceries', budgetExcluded: false, spread: false },
+  },
+  {
+    name: "classic: keeps the rule's field/operator, nulls conditions/logic, and PUTs them through",
+    seeded: [MULTI_R1],
+    write: (ctx: ReturnType<typeof useAppContext>) => ctx.updateRule('r1', ' NEW ', 'subs', true, undefined, true),
+    method: 'PUT' as const, path: '/rules/r1',
+    row: { ...MULTI_R1, pattern: 'NEW', categoryId: 'subs', budgetExcluded: true, spread: true, conditions: null, logic: null },
+    body: { value: 'NEW', categoryId: 'subs', budgetExcluded: true, spread: true, field: 'merchant', operator: 'equals' },
+  },
+])('$name', async ({ seeded, write, method, path, row, body }) => {
+  seed(seeded as Rule[]);
+  const held = server.hold(path);
+  const { result } = renderHook(() => useAppContext(), { wrapper });
+
+  let pending!: Promise<void>;
+  act(() => { pending = write(result.current); });
+  expect(rules()).toEqual([row]);
+
+  await act(async () => { held.fail(method); await pending; });
+  expect(server.sent(method, path).map((r) => r.body)).toEqual([body]);
 });

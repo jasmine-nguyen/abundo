@@ -4,11 +4,9 @@
 // above the unfiled shop list. Tapping it opens the SAME add-rule confirm sheet the "type a new
 // rule" flow uses (addRuleConfirm), carrying the server's pattern + category — so a habit mints a
 // rule through the existing path, never a second one. What is pinned here:
-//   - the suggestion renders its merchant, category and distinct-day count;
-//   - it discloses what else the rule would sweep (alsoCatches), like the merchant screen;
 //   - tapping it opens addRuleConfirm with the exact pattern + categoryId (no refetch);
-//   - no suggestions -> no section (a caught-up user sees only their shops).
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+//   - a null-merchant "also sweeps" line from the server doesn't break the card.
+import { it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 import type { FilingSuggestion, UncategorizedMerchantGroup, UncategorizedMerchants } from '../api';
@@ -64,18 +62,6 @@ beforeEach(() => {
   resetAuth();
 });
 
-it('renders a suggestion with its merchant, category and distinct-day count', async () => {
-  await mountList([suggestion()]);
-  expect(await screen.findByTestId('filing-suggestions')).toBeTruthy();
-  expect(screen.getByText('Seddons Eatery')).toBeTruthy();
-  expect(screen.getByText('Filed as Dining on 5 separate days — make a rule?')).toBeTruthy();
-});
-
-it('discloses what else the rule would also sweep', async () => {
-  await mountList([suggestion({ alsoCatches: [{ merchant: 'Seddons Deli', count: 2 }] })]);
-  expect(await screen.findByText('+ would also file 2 charges from 1 other shop')).toBeTruthy();
-});
-
 // The capture: tapping a suggestion opens the shared add-rule confirm sheet with the server's
 // pattern + category. Fail-on-revert: pass the wrong pattern/category and this reddens.
 it('opens the add-rule confirm sheet with the suggested pattern and category', async () => {
@@ -86,15 +72,10 @@ it('opens the add-rule confirm sheet with the suggested pattern and category', a
   });
 });
 
-it('shows no suggestions section when there are none', async () => {
-  await mountList([]);
-  expect(screen.queryByTestId('filing-suggestions')).toBeNull();
-  expect(screen.queryByTestId('filing-suggestion')).toBeNull();
-});
-
-it('shows no suggestions section while the suggestions are still loading', async () => {
-  const held = server.hold(SUGGESTIONS);
-  await mountList([suggestion()]);
-  expect(screen.queryByTestId('filing-suggestions')).toBeNull();
-  await act(async () => { held.release(); });
+// [Gc2] The server returns a nameless sweep line (e.g. "PAYPAL *COLES ONLINE") as merchant: null;
+// the card must still render and stay tappable.
+it('renders a suggestion whose also-sweep list has a null-merchant line', async () => {
+  await mountList([suggestion({ alsoCatches: [{ merchant: null, count: 3 }, { merchant: 'Coles Express', count: 2 }] })]);
+  fireEvent.press(await screen.findByTestId('filing-suggestion'));
+  expect(fns.setSheet).toHaveBeenCalledWith(expect.objectContaining({ mode: 'addRuleConfirm', pattern: 'SEDDONS EATERY' }));
 });

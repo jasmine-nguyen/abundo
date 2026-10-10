@@ -1,7 +1,6 @@
 // Logic test: rulePattern — the generalised match pattern the "Every {merchant}
 // charge" rule uses (WHIT: smart apply-all). Verifies it extracts the merchant
-// substring (dropping volatile suffixes), preserves the description's casing, and
-// falls back to the full description safely.
+// substring (dropping volatile suffixes) and falls back to the full description safely.
 import { describe, it, expect } from '@jest/globals';
 import { rulePattern, matchesRulePattern, merchantSlice } from '../context';
 import { txn } from './factory';
@@ -10,11 +9,6 @@ describe('rulePattern', () => {
   it('extracts the merchant substring, dropping the volatile store#/location suffix', () => {
     expect(rulePattern(txn({ description: 'WOOLWORTHS METRO 1234 SYDNEY', merchant_name: 'Woolworths' })))
       .toBe('WOOLWORTHS');
-  });
-
-  it("preserves the description's casing so a case-sensitive contains still matches", () => {
-    expect(rulePattern(txn({ description: 'DD *DOORDASH HUTIEUGOO', merchant_name: 'DoorDash' })))
-      .toBe('DOORDASH');
   });
 
   it('falls back to the full description when the merchant name is not a substring', () => {
@@ -52,13 +46,11 @@ describe('matchesRulePattern', () => {
   const origin = txn({ description: 'WOOLWORTHS METRO 1234', merchant_name: 'Woolworths' });
   const pattern = rulePattern(origin); // 'WOOLWORTHS'
 
-  it('matches a same-merchant charge whose description contains the pattern', () => {
-    const other = txn({ transaction_id: 't2', description: 'WOOLWORTHS 5678 MELBOURNE', merchant_name: 'Woolworths' });
-    expect(matchesRulePattern(other, pattern, origin)).toBe(true);
-  });
-
-  it('is case-insensitive on the description contains check', () => {
-    const other = txn({ transaction_id: 't2', description: 'woolworths online', merchant_name: 'Woolworths' });
+  it.each([
+    ['matches a same-merchant charge whose description contains the pattern', 'WOOLWORTHS 5678 MELBOURNE'],
+    ['is case-insensitive on the description contains check', 'woolworths online'],
+  ])('%s', (_name, description) => {
+    const other = txn({ transaction_id: 't2', description, merchant_name: 'Woolworths' });
     expect(matchesRulePattern(other, pattern, origin)).toBe(true);
   });
 

@@ -1,6 +1,6 @@
 // WHIT-517/WHIT-557 — [A29] the FileByShop off-screen 409-CLASH toast. fileByShopSheetGaps covers a
 // success ([A24]) and a non-clash failure ([A24b]) settling after the sheet is dismissed, but NOT a
-// clash. addRulePreviewGaps covers the AddRule side of this ([A36]); the FileByShop side is the
+// clash. addRulePreview covers the AddRule side of this ([A36]); the FileByShop side is the
 // asymmetric gap the shell refactor should lock — its `clashToast` closure is otherwise exercised by
 // no test at all (the on-screen clash uses setPhase('clash'), a different path). Fail-on-revert: drop
 // the `else clashToast()` on the shell's clash branch and a clash landing off screen is dropped

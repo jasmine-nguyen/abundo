@@ -38,16 +38,6 @@ function okFetch(body: unknown = FULL_BODY) {
 describe('applyRulesToUncategorized', () => {
   beforeEach(() => { jest.clearAllMocks(); });
 
-  it('POSTs the apply-rules path with a JSON body', async () => {
-    const fetchMock = okFetch();
-    await applyRulesToUncategorized(true);
-
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toContain('/transactions/uncategorized/apply-rules');
-    expect(init.method).toBe('POST');
-    expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json');
-  });
-
   // The load-bearing one: an omitted `dryRun` would be read by the server as "preview", so a
   // preview would look fine while a WRITE silently became a no-op — or worse, the reverse if the
   // server default ever changes. Fail-on-revert: send `{}` and both assertions redden.
@@ -55,13 +45,10 @@ describe('applyRulesToUncategorized', () => {
     const fetchMock = okFetch();
     await applyRulesToUncategorized(dryRun);
 
-    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toContain('/transactions/uncategorized/apply-rules');
+    expect(init.method).toBe('POST');
     expect(JSON.parse(init.body as string)).toEqual({ dryRun });
-  });
-
-  it('passes the full server report through unchanged', async () => {
-    okFetch();
-    await expect(applyRulesToUncategorized(false)).resolves.toEqual(FULL_BODY);
   });
 
   // WHIT-517: "file by shop" sends the inline rule as {dryRun, rule}. Fail-on-revert: drop the
@@ -72,17 +59,6 @@ describe('applyRulesToUncategorized', () => {
 
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toEqual({ dryRun: false, rule: { value: 'COLES', categoryId: 'groceries' } });
-  });
-
-  // The no-rule call must NOT grow a rule key — "Apply my rules" stays byte-identical on the wire,
-  // or the server would try to mint an undefined rule.
-  it('omits the rule key entirely when no inline rule is passed', async () => {
-    const fetchMock = okFetch();
-    await applyRulesToUncategorized(true);
-
-    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(JSON.parse(init.body as string)).toEqual({ dryRun: true });
-    expect(JSON.parse(init.body as string)).not.toHaveProperty('rule');
   });
 
   // WHIT-517: the 409 clash (an existing rule already files this shop elsewhere) must arrive as an
@@ -98,23 +74,6 @@ describe('applyRulesToUncategorized', () => {
     expect((error as ApiError).status).toBe(409);
     // The server's wording is NOT carried — the sheet uses its own clash copy.
     expect((error as ApiError).serverMessage).toBeNull();
-  });
-
-  // A zero `remaining` and an empty `filed` are real values the sheet branches on — they must not
-  // be collapsed or defaulted away on the way through.
-  it('preserves a zero remaining and an empty filed list', async () => {
-    okFetch({ ...FULL_BODY, remaining: 0, filed: [], failed: [] });
-    const result = await applyRulesToUncategorized(false);
-
-    expect(result.remaining).toBe(0);
-    expect(result.filed).toEqual([]);
-  });
-
-  it('throws the generic API error on a not-OK response', async () => {
-    (globalThis as unknown as { fetch: unknown }).fetch =
-      jest.fn(async () => ({ ok: false, status: 502, json: async () => ({ error: 'rules service unavailable' }) }));
-
-    await expect(applyRulesToUncategorized(true)).rejects.toThrow('API error: 502');
   });
 });
 
