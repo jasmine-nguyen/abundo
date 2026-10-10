@@ -7,7 +7,7 @@
 // cached rows" case surface the error.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
+import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react-native';
 import { RefreshControl } from 'react-native';
 
 const mockOpenMultiPicker = jest.fn();
@@ -32,6 +32,7 @@ import { queryClient } from '../queryClient';
 import { transactionsKey, uncategorizedCountKey } from '../queryKeys';
 import { COFFEE_RECORD, GROCERIES_TOP } from './support/categories';
 import { textOf } from './support/layout';
+import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -236,6 +237,8 @@ it('keeps Load More on the uncategorized tab when there ARE uncategorized rows',
   expect(await screen.findByText('-$42.00')).toBeTruthy();
   expect(screen.queryByText('All caught up')).toBeNull();
   expect(screen.getByTestId('transactions-load-more')).toBeTruthy();
+  // WHIT-845: the badge number caps at 2× text, like the rest of the row.
+  expect(within(screen.getByTestId('tab-uncategorized')).getByText('1').props.maxFontSizeMultiplier).toBe(LARGE_TEXT_MAX_SCALE);
 });
 });
 

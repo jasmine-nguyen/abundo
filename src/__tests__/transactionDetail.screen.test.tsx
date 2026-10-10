@@ -40,6 +40,8 @@ import { transactionsKey } from '../queryKeys';
 import { removeFromAllCopies } from '../transactionCache';
 import { COFFEE_RECORD } from './support/categories';
 import { pinToday } from './support/clock';
+import { styleOf } from './support/layout';
+import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -78,6 +80,16 @@ it('renders the transaction fields (merchant, amount, date, account, category, s
   expect(screen.getByText('Everyday')).toBeTruthy();
   expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
   expect(screen.getByText('Posted')).toBeTruthy();
+});
+
+// WHIT-845: at big text the hero amount stays on one line (shrinking to fit, capped at 2×), and the
+// tag "×" has no fixed line height to clip it.
+it('the hero amount fits one line and the tag "×" is not clipped by a fixed line height', async () => {
+  seedFeed([txn({ transaction_id: 't1', category: 'coffee', tags: ['work'] })]);
+  await draw();
+  const amount = screen.getByText('-$12.50');
+  expect(amount.props).toMatchObject({ numberOfLines: 1, adjustsFontSizeToFit: true, maxFontSizeMultiplier: LARGE_TEXT_MAX_SCALE });
+  expect(styleOf(screen.getByText('×')).lineHeight).toBeUndefined();
 });
 
 // WHIT-844: the Status field ages a pending charge the same way the list row does.

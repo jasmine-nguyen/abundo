@@ -11,6 +11,7 @@ import { Header } from '../../src/components/Header';
 import { Icon, Glyph } from '../../src/icons';
 import { DetailStates } from '../../src/components/DetailStates';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
+import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
 
 // WHIT-272 / WHIT-275: the per-transaction detail screen. Reached by tapping a TransactionRow
 // or its chevron; the id in the route is the transaction_id. The transaction comes from the
@@ -126,7 +127,7 @@ export default function TransactionDetail() {
                   <Icon name={view.icon} size={30} color={view.iconColor} />
                 </View>
                 <Text style={styles.merchant} numberOfLines={2}>{view.merchant}</Text>
-                <Text style={[styles.amount, { color: view.amountColor }]}>{view.amountLabel}</Text>
+                <Text style={[styles.amount, { color: view.amountColor }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{view.amountLabel}</Text>
               </View>
 
               <View style={styles.card}>
@@ -450,7 +451,7 @@ const styles = StyleSheet.create({
   tagsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   tagChip: { flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.cardAlt, borderWidth: 1, borderColor: C.hairlineStrong, borderRadius: 999, paddingVertical: 6, paddingLeft: 12, paddingRight: 9 },
   tagText: { fontFamily: FONT.body, fontSize: 13, color: C.textBright },
-  tagRemove: { fontFamily: FONT.body, fontSize: 17, lineHeight: 18, color: C.textDim, fontWeight: '600' },
+  tagRemove: { fontFamily: FONT.body, fontSize: 17, color: C.textDim, fontWeight: '600' },
   tagInput: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 12, paddingVertical: 11, paddingHorizontal: 14, marginTop: 10, fontFamily: FONT.body, fontSize: 14, color: C.textBright },
 
   spreadBtn: { marginTop: 12, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), backgroundColor: tint(C.accentAlt, 0.1), alignItems: 'center' },
