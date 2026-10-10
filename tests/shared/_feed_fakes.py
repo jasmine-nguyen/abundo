@@ -181,6 +181,12 @@ def apply_rules_job_get_event(job_id):
     return api_event("GET", f"/transactions/uncategorized/apply-rules/jobs/{job_id}", path_params={"id": job_id})
 
 
+def _rule(value, category_id="groceries", field="description", operator="contains", **extra):
+    """The kwargs of one real RuleRepository.create_rule call — the store mints the id."""
+    return {"field": field, "operator": operator, "value": value, "category_id": category_id,
+            **extra}
+
+
 def rule_put_event(rule_id, value, category_id, field="description", operator="contains", **extra):
     body = {"value": value, "categoryId": category_id, "field": field, "operator": operator, **extra}
     return api_event("PUT", f"/rules/{rule_id}", body=body, path_params={"id": rule_id})

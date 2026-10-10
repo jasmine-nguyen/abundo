@@ -8,15 +8,9 @@ the "no cap", progress, failure, and idempotency behaviours are exercised for re
 """
 
 from _feed_fakes import (
-    SPENDING, FakeCategoryRepo, fail_writes, _row, stored, vanish_on_write,
+    SPENDING, FakeCategoryRepo, fail_writes, _row, _rule, stored, vanish_on_write,
 )
 from _job_fakes import progress_writes, wire_apply_rules_worker
-
-
-def _rule(value, category_id="groceries"):
-    # The kwargs of one real RuleRepository.create_rule call.
-    return {"field": "description", "operator": "contains", "value": value,
-            "category_id": category_id}
 
 
 def test_worker_files_the_whole_backlog_past_the_300_cap(apply_rules_worker, monkeypatch):

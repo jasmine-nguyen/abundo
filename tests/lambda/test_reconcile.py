@@ -1036,10 +1036,6 @@ def test_pending_resend_and_its_skewed_posting_in_one_payload_leave_one_row(lam,
     assert store[(acc, "TXN#POST")]["category"] == "coffee"
 
 
-# [A16] the date carry is gated on the skew SHAPE, not on the tier — so a LINKED twin
-# that is one day ahead must move the settled row to the Melbourne day too.
-
-
 # [A17] ragged inputs to the skew gate — names longer than the description, empty and
 # whitespace-only names — must return False rather than raise.
 
@@ -1059,14 +1055,6 @@ def test_skew_gate_index_boundaries(lam):
     assert g("", "", "") is False
     # a truncated column is NOT a prefix match any more — the whole point of WHIT-336
     assert g("KKV INTERNATIONAL PTY LTD", "", _SKEW_PEND_DESC) is False
-
-
-# [A18] the pending pool is per account: an identical skew-eligible pending on another
-# card must not be consumed by this account's settlement.
-
-
-# [A19] the merge is otherwise invisible (it DELETES a row), so the INFO log is the only
-# operational trace — lock it.
 
 
 # --- Single-word merchants across the Melbourne/UTC split ---------------------

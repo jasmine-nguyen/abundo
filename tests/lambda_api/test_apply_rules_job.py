@@ -11,14 +11,8 @@ import json
 
 import pytest
 
-from _feed_fakes import apply_rules_job_get_event, apply_rules_job_post_event, FakeCategoryRepo, real_repos
+from _feed_fakes import apply_rules_job_get_event, apply_rules_job_post_event, FakeCategoryRepo, real_repos, _rule
 from _job_fakes import created_jobs, real_job_repo
-
-
-def _rule(value, category_id="groceries"):
-    # The kwargs of one real RuleRepository.create_rule call.
-    return {"field": "description", "operator": "contains", "value": value,
-            "category_id": category_id}
 
 
 class FakeLambdaClient:

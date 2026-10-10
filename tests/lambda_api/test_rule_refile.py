@@ -19,16 +19,11 @@ import json
 from _api_event import api_event
 from _feed_fakes import (
     ANZ, SPENDING, FakeCategoryRepo, charge_writes, real_repos, rule_delete_event, rule_put_event,
-    _row, stored,
+    _row, _rule, stored,
 )
 
 
 _CATEGORIES = frozenset({"groceries", "petrol", "eatingout", "transport"})
-
-
-def _rule(value, category_id="groceries", field="description", operator="contains", **extra):
-    return {"field": field, "operator": operator, "value": value, "category_id": category_id,
-            **extra}
 
 
 def _seed_rule(value, category_id="groceries", field="description", operator="contains", **extra):

@@ -13,7 +13,7 @@ from functools import partial
 import pytest
 
 from _api_event import api_event
-from _feed_fakes import Repos, inject_rule_routes
+from _feed_fakes import Repos, _rule, inject_rule_routes
 from _rule_pairs import PAIR_VALUE, RULE_PAIRS
 
 
@@ -21,11 +21,6 @@ _CATEGORIES = ("groceries", "petrol", "transport")
 
 _CLIENT_KEYS = {"id", "field", "operator", "value", "categoryId", "budgetExcluded",
                 "spread", "spreadAmount", "spreadGapDays", "conditions", "logic"}
-
-
-def _rule(value, category_id="groceries", field="description", operator="contains", **kw):
-    """The kwargs of one real RuleRepository.create_rule call — the store mints the id."""
-    return {"field": field, "operator": operator, "value": value, "category_id": category_id, **kw}
 
 
 def _flat(value, field="description", operator="contains", category_id="groceries"):

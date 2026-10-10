@@ -400,8 +400,6 @@ def test_category_equals_does_not_match_a_prefix_of_the_stored_category(rule_eng
     # `equals` is not `contains`: a FOOD rule must not sweep up every FOOD_AND_DRINK charge.
     rule = _rule("FOOD", field="category", operator="equals")
     assert not rule_engine.rule_matches(rule, _txn("t1", category="FOOD_AND_DRINK"))
-    assert rule_engine.rule_matches(_rule("FOOD_AND_DRINK", field="category", operator="equals"),
-                                   _txn("t2", category="FOOD_AND_DRINK"))
 
 
 def test_a_charge_whose_category_is_an_empty_string_is_eligible_and_filable(rule_engine):

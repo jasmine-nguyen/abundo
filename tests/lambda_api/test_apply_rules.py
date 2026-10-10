@@ -18,15 +18,9 @@ import pytest
 from _feed_fakes import (
     apply_rules_event,
     ANZ, SPENDING, HOMELOAN, WESTPAC, FakeCategoryRepo, charge_writes, date_queries, fail_writes,
-    on_write, real_repos, _row, set_category, stored, vanish_on_write,
+    on_write, real_repos, _row, _rule, set_category, stored, vanish_on_write,
 )
 from _rule_ingest_fakes import apply_rules_to_uncategorized
-
-
-def _rule(value, category_id="groceries", field="description", operator="contains", **extra):
-    # The kwargs of one real RuleRepository.create_rule call.
-    return {"field": field, "operator": operator, "value": value, "category_id": category_id,
-            **extra}
 
 
 def _rule_ids(rule_repo):

@@ -246,6 +246,25 @@ def test_sweep_stops_at_the_write_cap_and_reports_the_unreached(rule_book, rule_
     assert matched_remaining == 1
 
 
+def test_reconcile_does_not_spend_the_cap_on_charges_already_on_target(rule_book, rule_repo, repo, load):
+    rule, _ = rule_repo.create_rule("description", "contains", "COLES", "groceries")
+    # History reads newest first: the on-target charges come before the older orphan.
+    for transaction_id in ("a1", "a2", "a3"):
+        _store_charge(repo, transaction_id, "COLES", category="groceries", filed_by_rule=rule["id"],
+                      date="2026-09-05")
+    orphan = _store_charge(repo, "z9", "WOOLWORTHS", category="groceries",
+                           filed_by_rule="a-deleted-rule", date="2026-08-01")
+    book = load()
+    transactions, plan = _plan(book, repo)
+    assert plan["matched"] == []
+
+    book.sweep(repo, transactions, plan, run_reconcile=True,
+               limit=rule_book.WriteLimit(max_writes=1, time_budget=60, started=time.monotonic()))
+
+    assert "filed_by_rule" not in repo._table.store[orphan]
+    assert "category" not in repo._table.store[orphan]
+
+
 def test_reconcile_shares_the_cap_without_eating_matched_remaining(rule_book, rule_repo, repo, load):
     rule_repo.create_rule("description", "contains", "COLES", "groceries")
     _store_charge(repo, "t1", "COLES")

@@ -16,15 +16,11 @@ NOT in the store.
 
 import json
 
-from _feed_fakes import apply_rules_event, SPENDING, FakeCategoryRepo, charge_writes, real_repos, _row, stored
+from _feed_fakes import apply_rules_event, SPENDING, FakeCategoryRepo, charge_writes, real_repos, _row, _rule, stored
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 _CATEGORIES = frozenset({"groceries", "petrol"})
-
-
-def _rule(value, category_id="groceries", field="description", operator="contains"):
-    return {"field": field, "operator": operator, "value": value, "category_id": category_id}
 
 
 def _apply(handler, repo, rule_repo, body, categories=_CATEGORIES):

@@ -173,8 +173,11 @@ def test_the_inline_rule_files_only_its_own_shop_not_her_other_rules(handler):
         _row(SPENDING, "2026-07-01", "t2", description="BP 2210 SERVO"),
     ], existing=[_existing("BP 2210", "petrol")])
 
-    _, body, _ = _call(handler, {"dryRun": False, "rule": _COLES}, run=run)
+    resp, body, _ = _call(handler, {"dryRun": False, "rule": _COLES}, run=run)
 
+    # Only the SAME target text clashes, so another shop's rule filing elsewhere is no clash.
+    assert resp["statusCode"] == 200
+    assert run.minted() == [("description", "contains", "COLES", "groceries")]
     assert body["byCategory"] == {"groceries": 1}          # never petrol
     assert body["filed"] == [{"id": "t1", "category": "groceries"}]  # BP charge left unfiled
     assert body["rulesConsidered"] == 1                    # only the inline rule was swept
@@ -423,23 +426,6 @@ def test_an_existing_rule_to_the_SAME_category_is_not_a_clash(handler):
 
     assert resp["statusCode"] == 200
     assert sorted(filed["id"] for filed in body["filed"]) == ["t1", "t2"]
-
-
-def test_a_rule_for_a_different_shop_is_not_a_clash(handler):
-    # Only the SAME target text clashes. A rule for another shop filing elsewhere is normal —
-    # refusing on category alone would make the screen unusable after the first few shops.
-    run = _Run(existing=[_existing("NETFLIX", "petrol")])
-
-    resp, body, _ = _call(handler, {"dryRun": False, "rule": _COLES}, run=run)
-
-    assert resp["statusCode"] == 200
-    assert run.minted() == [("description", "contains", "COLES", "groceries")]
-    # A different shop's rule is no clash, so the COLES rule is minted and swept — but ONLY it
-    # (WHIT-523). The NETFLIX charge (t3) her existing rule covers is left unfiled; filing COLES
-    # files just COLES.
-    assert sorted((filed["id"], filed["category"]) for filed in body["filed"]) == [
-        ("t1", "groceries"), ("t2", "groceries"),
-    ]
 
 
 def test_a_NESTED_existing_rule_is_refused_too_not_just_an_exact_repeat(handler):
