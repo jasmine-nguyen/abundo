@@ -118,6 +118,20 @@ def test_caps_results_and_flags_truncated(handler, transaction_search):
     assert dates == sorted(dates, reverse=True)
 
 
+def test_match_count_and_total_cover_every_match_past_the_cap(handler, transaction_search):
+    limit = transaction_search.SEARCH_RESULT_LIMIT
+    rows = [_row(ANZ, f"2026-{1 + index // 28 % 12:02d}-{1 + index % 28:02d}", f"a{index}",
+                 description="STEVEN", amount=-1.25) for index in range(limit + 1)]
+    rows.append(_row(ANZ, "2026-07-10", "refund", description="STEVEN REFUND", amount=0.4))
+    rows.append(_row(ANZ, "2026-07-10", "other", description="COLES", amount=-99))
+
+    body = _body(_search(handler, real_repos({ANZ: rows})[1], {"q": "steven"}))
+
+    assert body["truncated"] is True
+    assert body["matchCount"] == limit + 2
+    assert body["matchTotal"] == round((limit + 1) * -1.25 + 0.4, 2)
+
+
 def test_exactly_the_limit_is_not_truncated(handler, transaction_search):
     limit = transaction_search.SEARCH_RESULT_LIMIT
     rows = [_row(ANZ, "2026-07-10", f"a{index}", description="STEVEN", amount=-1) for index in range(limit)]

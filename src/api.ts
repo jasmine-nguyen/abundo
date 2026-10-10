@@ -259,10 +259,13 @@ export const fetchUncategorizedFeed = endpoint(
 );
 
 /** The Transactions-tab search over ALL history (WHIT-576): the newest matches, and whether the
- *  server's result cap cut any off. */
+ *  server's result cap cut any off. `matchCount` / `matchTotal` (signed dollars) cover EVERY
+ *  match, cut-off ones included (WHIT-848). */
 export interface TransactionSearchResult {
   transactions: Transaction[];
   truncated: boolean;
+  matchCount: number;
+  matchTotal: number;
 }
 
 /**

@@ -32,7 +32,7 @@ const SEARCH_KEY = ['transactionsSearch', 'all', 'steven'];
 const txn = (over: Partial<Transaction> = {}) => stevenTxn({ transaction_id: 'deep1', ...over });
 
 function seedSearch(transactions: Transaction[]) {
-  queryClient.setQueryData<TransactionSearchResult>(SEARCH_KEY, { transactions, truncated: false });
+  queryClient.setQueryData<TransactionSearchResult>(SEARCH_KEY, { transactions, truncated: false, matchCount: transactions.length, matchTotal: 0 });
 }
 function searchRow(id = 'deep1'): Transaction | undefined {
   return queryClient.getQueryData<TransactionSearchResult>(SEARCH_KEY)?.transactions.find((t) => t.transaction_id === id);

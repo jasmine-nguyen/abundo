@@ -92,7 +92,7 @@ const ROUTES: [Method, string, (call: Call) => unknown][] = [
   })],
   ['GET', '/transactions/feed', readSeeded({ transactions: [], nextCursor: null })],
   ['GET', '/transactions/uncategorized/feed', readSeeded({ transactions: [], nextCursor: null })],
-  ['GET', '/transactions/search', readSeeded({ transactions: [], truncated: false })],
+  ['GET', '/transactions/search', readSeeded({ transactions: [], truncated: false, matchCount: 0, matchTotal: 0 })],
   ['GET', '/transactions/cycle', readSeeded({ start: '2026-07-01', end: '2026-07-08', transactions: [], budgets: {} })],
   ['GET', '/transactions/uncategorized/count', readSeeded({ count: 0 })],
   ['GET', '/transactions/uncategorized/merchants', readSeeded({ unfiled: 0, groups: [], ungrouped: { count: 0, samples: [] } })],

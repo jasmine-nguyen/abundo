@@ -711,6 +711,8 @@ export interface TransactionsSearchState {
   results: Transaction[];
   answered: boolean; // the server has answered the CURRENT query (not a placeholder)
   truncated: boolean; // the server's result cap cut off older matches
+  matchCount: number; // every match, cut-off ones included (0 until answered)
+  matchTotal: number; // signed dollar total of every match (0 until answered)
   isError: boolean;
   retry: () => void;
 }
@@ -854,15 +856,18 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
   }, [latest]);
 
   const { data: searchData, isPlaceholderData: searchIsPlaceholder, isError: searchIsError, isFetching: searchIsFetching, refetch: refetchSearch } = searchQueryResult;
+  const searchAnswered = searchActive && !!searchData && !searchIsPlaceholder;
   const search = useMemo<TransactionsSearchState>(() => ({
     active: searchActive,
     results: (searchActive && searchData?.transactions) || EMPTY_TX,
-    answered: searchActive && !!searchData && !searchIsPlaceholder,
-    truncated: searchActive && !searchIsPlaceholder && !!searchData?.truncated,
+    answered: searchAnswered,
+    truncated: searchAnswered && !!searchData?.truncated,
+    matchCount: (searchAnswered && searchData?.matchCount) || 0,
+    matchTotal: (searchAnswered && searchData?.matchTotal) || 0,
     // A manual Retry keeps the error flag set while it runs; report it as searching again instead.
     isError: searchActive && searchIsError && !searchIsFetching,
     retry: () => { refetchSearch(); },
-  }), [searchActive, searchData, searchIsPlaceholder, searchIsError, searchIsFetching, refetchSearch]);
+  }), [searchActive, searchAnswered, searchData, searchIsError, searchIsFetching, refetchSearch]);
 
   // Balances stay out, as with isError: a balances hiccup isn't a list refresh failure.
   const { refreshError, updatedAt } = refreshStatus([feedQuery, categoriesQuery]);

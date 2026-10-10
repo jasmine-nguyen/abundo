@@ -28,7 +28,7 @@ beforeEach(() => {
   queryClient.clear();
   resetAuth();
   queryClient.setQueryData(['categories'], [{ ...CAT }]);
-  queryClient.setQueryData<TransactionSearchResult>(SEARCH_KEY, { transactions: [txn('deep1'), txn('deep2'), txn('deep3')], truncated: false });
+  queryClient.setQueryData<TransactionSearchResult>(SEARCH_KEY, { transactions: [txn('deep1'), txn('deep2'), txn('deep3')], truncated: false, matchCount: 3, matchTotal: 0 });
 });
 afterEach(() => { queryClient.clear(); });
 
