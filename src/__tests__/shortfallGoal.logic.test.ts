@@ -82,12 +82,13 @@ describe('paydownView goalTooAggressive flag (WHIT-215)', () => {
   });
 });
 
+const STATE = (balance: number, payoffGoalDate: string | null, over: Partial<typeof M> = {}) =>
+  makeState({ loanFacts: { ...M, ...over, payoffGoalDate }, homeLoan: { balance, asOf: null } });
+
 // The exact 10× flip and the $1M cap. requiredRepay is independent of the current repayment, so
 // hold the figure fixed (900k, 24 months out → ~$39,783, under the cap) and slide currentRepay
 // one dollar either side of R/10.
 describe('paydownView goalTooAggressive — 10× flip and $1M cap (WHIT-215 / WHIT-218)', () => {
-  const stateWith = (over: Partial<typeof M> & { payoffGoalDate?: string | null }, balance: number) =>
-    makeState({ loanFacts: { ...M, ...over }, homeLoan: { balance, asOf: null } });
   // monthsUntil(2026-07-04 → 2028-07-01) = 24; keep this in sync with the date below.
   const R = requiredRepayment(900000, 5.74 / 100 / 12, 24)!;
 
@@ -95,7 +96,7 @@ describe('paydownView goalTooAggressive — 10× flip and $1M cap (WHIT-215 / WH
     // the boundary is real, not luck: R sits strictly between 3978×10 and 3979×10.
     expect(R).toBeGreaterThan(3978 * 10);
     expect(R).toBeLessThan(3979 * 10);
-    const pv = paydownView(stateWith({ baseRepay: 3478, extra: 500, payoffGoalDate: '2028-07-01' }, 900000), TODAY);
+    const pv = paydownView(STATE(900000, '2028-07-01', { baseRepay: 3478 }), TODAY);
     expect(pv.mode).toBe('none');
     expect(pv.requiredRepay).not.toBeNull();          // under the $1M cap → figure shown
     expect(pv.requiredRepay!).toBeCloseTo(R, 6);
@@ -103,20 +104,20 @@ describe('paydownView goalTooAggressive — 10× flip and $1M cap (WHIT-215 / WH
   });
 
   it('does NOT flag one dollar ABOVE the 10× line (10×3979 > required)', () => {
-    const pv = paydownView(stateWith({ baseRepay: 3479, extra: 500, payoffGoalDate: '2028-07-01' }, 900000), TODAY);
+    const pv = paydownView(STATE(900000, '2028-07-01', { baseRepay: 3479 }), TODAY);
     expect(pv.mode).toBe('none');
     expect(pv.requiredRepay).not.toBeNull();
     expect(pv.goalTooAggressive).toBe(false);         // same date, same figure — only the multiple changed
   });
 
   it('just OVER the cap: figure suppressed but still flagged (same too-soon date)', () => {
-    const pv = paydownView(stateWith({ payoffGoalDate: '2026-08-01' }, 995300), TODAY); // R ≈ 1,000,060
+    const pv = paydownView(STATE(995300, '2026-08-01'), TODAY); // R ≈ 1,000,060
     expect(pv.requiredRepay).toBeNull();               // over $1M → hidden (WHIT-126 behaviour intact)
     expect(pv.goalTooAggressive).toBe(true);           // WHIT-215: the hint replaces the static copy
   });
 
   it('under-cap "too aggressive" now SUPPRESSES the signal (real figure, but emit null)', () => {
-    const s = stateWith({ payoffGoalDate: '2027-01-01' }, 900000); // 6 months → ~150k, flagged
+    const s = STATE(900000, '2027-01-01'); // 6 months → ~150k, flagged
     const pv = paydownView(s, TODAY);
     expect(pv.goalTooAggressive).toBe(true);
     expect(pv.requiredRepay).not.toBeNull();     // the figure IS solved (under the $1M cap)…
@@ -127,9 +128,6 @@ describe('paydownView goalTooAggressive — 10× flip and $1M cap (WHIT-215 / WH
 // WHIT-126 adversarial gaps — the shortfall solver's HORIZON math and cross-layer seams: a
 // malformed stored goal date, the year boundary, month-granularity (day-of-month ignored), and a
 // required repayment that overshoots the server's $1M sanitise cap.
-const STATE = (balance: number, payoffGoalDate: string | null) =>
-  makeState({ loanFacts: { ...M, payoffGoalDate }, homeLoan: { balance, asOf: null } });
-
 describe('shortfall solver — malformed / unparseable goal date (WHIT-126)', () => {
   // monthsUntil splits on "-" and requires 3 finite parts; anything else -> null ->
   // paydownView must fall back to the static copy, never crash or emit a figure. A

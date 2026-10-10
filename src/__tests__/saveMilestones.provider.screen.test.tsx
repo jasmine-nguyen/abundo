@@ -21,7 +21,7 @@ const server = installFakeServer();
 
 const cached = () => queryClient.getQueryData<MilestoneRecord[]>(['milestones']);
 
-beforeEach(() => { resetAuth(); queryClient.clear(); });
+beforeEach(() => { resetAuth(); });
 afterEach(() => { queryClient.clear(); });
 
 function mount() {
