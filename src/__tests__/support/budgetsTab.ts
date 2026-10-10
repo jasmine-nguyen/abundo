@@ -41,6 +41,3 @@ export const budgetRowFor = (b: Partial<Budget>, c = cat()) => budgetRowsFor([c]
 // A budget's detail (coffee by default, no pending unless given), halfway through a 14-day cycle by default.
 export const budgetDetailFor = (b: Partial<Budget>, clock = { cycleLen: 14, daysLeft: 7 }, c = cat()) =>
   budgetDetail(makeState({ categories: [c], budgets: [budget({ id: c.id, pending: 0, ...b })], ...clock }), c.id)!;
-
-// Every text field of a budget row, joined, for "no row says X" checks.
-export const rowText = (row: object) => Object.values(row).filter((v) => typeof v === 'string').join(' | ');

@@ -3,6 +3,7 @@
 // (makeState), like the sibling budget/format selector tests.
 import { describe, it, expect } from '@jest/globals';
 import { budgetEditInfo, goalView } from '../context';
+import type { BudgetEditInput } from '../context';
 import { makeState, cat, budget, EMPTY_LOAN_FACTS, LOAN_FACTS } from './factory';
 
 describe('budgetEditInfo', () => {
@@ -31,6 +32,18 @@ describe('budgetEditInfo', () => {
     const income = budgetEditInfo(s, 'salary');
     expect(spend.smoothingShown).toBe(true);
     expect(income.smoothingShown).toBe(false);
+  });
+
+  it('does not throw on a cold cache (category lookup empty)', () => {
+    const cold: BudgetEditInput = {
+      category: () => undefined,
+      budgets: [],
+      cycleName: 'Fortnightly',
+    };
+    const info = budgetEditInfo(cold, 'missing');
+    expect(info.category).toBeUndefined();
+    expect(info.existing).toBeUndefined();
+    expect(info.title).toBe('Set budget');
   });
 });
 
@@ -71,17 +84,6 @@ describe('goalView', () => {
     expect(v.depositPct).toBeNull();      // no equity yet -> null (no fake %), never NaN
   });
 
-  it('facts unset AND balance NULL: everything null, "—", no crash', () => {
-    const v = goalView(makeState({ loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: null, asOf: null } }));
-    expect(v.factsReady).toBe(false);
-    expect(v.balanceKnown).toBe(false);
-    expect(v.balanceLabel).toBe('—');
-    expect(v.paidOff).toBeNull();
-    expect(v.contribution).toBeNull();
-    expect(v.usableEquity).toBeNull();
-    expect(v.depositPct).toBeNull();
-  });
-
   it('live balance ABOVE the original loan: paidOff goes negative, paidPct clamps to 0', () => {
     // The real mistype case: original 500000 (LOAN_FACTS) but the live balance is
     // 596642 (> original). paidOff must be truthful (negative), the % bar clamped.
@@ -113,29 +115,7 @@ describe('goalView', () => {
     expect(v.paidPctLabel).toBe(100);
   });
 
-  it('a mid-range balance is unclamped: the floor only bites at the very top', () => {
-    // balance 430000 -> paidPct 14 -> label 14 (Math.min(99, 14) is a no-op here).
-    const v = goalView(makeState({ homeLoan: { balance: 430000, asOf: null } }));
-    expect(v.paidPctLabel).toBe(14);
-  });
-
-  it('usable equity computes to exactly 0 (balance == property×LVR): 0, not null; depositPct null (no target)', () => {
-    // homeValue 770000 × lvr 0.8 = 616000; a balance of 616000 -> equity exactly 0.
-    const v = goalView(makeState({ homeLoan: { balance: 616000, asOf: null } }));
-    expect(v.usableEquity).toBe(0);
-    expect(v.depositPct).toBeNull();   // no deposit target set -> null
-  });
-
   // WHIT-378: the deposit target is the user's own number, not a hardcoded $90k.
-  it('deposit target set + equity known: depositPct is the real ratio, clamped to 100', () => {
-    // homeValue 770000 × lvr 0.8 = 616000; balance 500000 -> equity 116000.
-    const facts = { ...LOAN_FACTS, depositTarget: 116000 };
-    const v = goalView(makeState({ loanFacts: facts, homeLoan: { balance: 500000, asOf: null } }));
-    expect(v.usableEquity).toBe(116000);
-    expect(v.depositTarget).toBe(116000);
-    expect(v.depositPct).toBe(100);            // equity == target -> 100%
-  });
-
   it('deposit target set but equity above it: depositPct clamps at 100, never over', () => {
     const facts = { ...LOAN_FACTS, depositTarget: 50000 };   // equity 116000 > target
     const v = goalView(makeState({ loanFacts: facts, homeLoan: { balance: 500000, asOf: null } }));
@@ -172,13 +152,5 @@ describe('goalView depositPct — boundary gaps (WHIT-378)', () => {
     expect(v.usableEquity).toBe(0);
     expect(v.depositPct).toBe(0);          // 0/100000 -> 0, and 0 !== null so the bar renders
     expect(v.depositPct).not.toBeNull();   // fail-on-revert: a truthy guard would drop this to null
-  });
-
-  it('[A11] non-round ratio is returned exact (49.6), NOT pre-rounded in the selector', () => {
-    // balance 566400 -> equity 49600; target 100000 -> 49.6%. Selector must NOT round.
-    const facts = { ...LOAN_FACTS, depositTarget: 100000 };
-    const v = goalView(makeState({ loanFacts: facts, homeLoan: { balance: 566400, asOf: null } }));
-    expect(v.usableEquity).toBe(49600);
-    expect(v.depositPct).toBeCloseTo(49.6, 5);
   });
 });

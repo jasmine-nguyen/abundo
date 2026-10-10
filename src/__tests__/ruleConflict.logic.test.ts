@@ -26,13 +26,11 @@ describe('ruleConflict', () => {
     expect(ruleConflict([NETFLIX], 'SPOTIFY', 'subs')).toBeNull();
   });
 
-  it('matches case-insensitively', () => {
-    expect(ruleConflict([NETFLIX], 'netflix', 'subs')?.kind).toBe('duplicate');
-  });
-
-  it('folds surrounding and internal whitespace', () => {
-    const kkv = rule('b3', 'KKV INTERNATIONAL PTY', 'coffee');
-    expect(ruleConflict([kkv], '  kkv   international    pty  ', 'coffee')?.kind).toBe('duplicate');
+  it.each([
+    ['matches case-insensitively', NETFLIX, 'netflix'],
+    ['folds surrounding and internal whitespace', rule('b3', 'KKV INTERNATIONAL PTY', 'subs'), '  kkv   international    pty  '],
+  ])('%s', (_name, existing, pattern) => {
+    expect(ruleConflict([existing], pattern, 'subs')?.kind).toBe('duplicate');
   });
 
   it('excludes the rule being edited (a rule never conflicts with itself)', () => {

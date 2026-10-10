@@ -6,7 +6,7 @@
 import { describe, it, expect } from '@jest/globals';
 import fs from 'fs';
 import path from 'path';
-import { RULE_FIELD_OPERATORS, RULE_LOGIC, RULE_DIRECTIONS, MIN_RULE_VALUE_ALPHANUMERICS } from '../ruleVocabulary';
+import { RULE_FIELD_OPERATORS, RULE_LOGIC, RULE_DIRECTIONS, MIN_RULE_VALUE_ALPHANUMERICS, ruleValueIsSafe } from '../ruleVocabulary';
 
 const readServer = (rel: string) => fs.readFileSync(path.join(__dirname, '../../', rel), 'utf8');
 const quoted = (block: string) => [...block.matchAll(/"([^"]+)"/g)].map((m) => m[1]).sort();
@@ -43,5 +43,26 @@ describe('the client rule vocabulary mirrors the server', () => {
     const match = source.match(/^MIN_RULE_VALUE_ALPHANUMERICS\s*=\s*(\d+)/m);
     expect(match).not.toBeNull();
     expect(MIN_RULE_VALUE_ALPHANUMERICS).toBe(Number(match![1]));
+  });
+});
+
+// ruleValueIsSafe is the client mirror of the server's contains-value floor
+// (merchant_groups.rule_value_is_safe: characters where str.isalnum() is true, >= the floor).
+// The count is of unicode letters/digits; punctuation, whitespace and emoji don't count.
+describe('ruleValueIsSafe counts letters/digits against the floor', () => {
+  it.each([
+    ['ABCD', true],
+    ['ABC', false],
+    ['1234', true],
+    ['', false],
+    ['a.b.c', false], // 3 letters, dots do not count
+    ['  A B C D  ', true], // 4 letters, spaces do not count
+    ['....', false],
+    ['café', true], // 4 unicode letters (server isalnum is unicode-aware)
+    ['caf', false],
+    ['東京都港', true], // 4 CJK letters
+    ['🎉🎉🎉🎉', false], // emoji are not letters or digits
+  ])('%j → %s', (value, safe) => {
+    expect(ruleValueIsSafe(value)).toBe(safe);
   });
 });

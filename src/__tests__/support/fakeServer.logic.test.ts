@@ -361,7 +361,7 @@ describe('WHIT-639 fake server one-shot replies (once)', () => {
     });
   });
 
-  // The preview-then-commit pattern filingRunEdges [A15] and filingRunSaveRunner.qa [A3] rely on.
+  // The preview-then-commit pattern filingRun.provider [A15] relies on.
   it('two held requests on one path take the queued replies in the order they were sent', async () => {
     server.once('POST', '/categories', { status: 409, reason: 'first' });
     server.once('POST', '/categories', { body: ESSENTIAL_GROCERIES });
@@ -469,7 +469,7 @@ describe('WHIT-652 fake server request counts (sent / sentUnder)', () => {
     expect(server.sent('PUT', '/rules/e1')).toEqual([{ method: 'PUT', path: '/rules/e1', body: COLES }]);
   });
 
-  // sentUnder('/rules') catches /rules and /rules/:id — ruleWriterRecursionGuard relies on it.
+  // sentUnder('/rules') catches /rules and /rules/:id.
   it('sentUnder matches the prefix itself and paths below it, filtered by method', async () => {
     server.seed('/rules', [{ id: 'e1', ...COLES }]);
     await api.createRule(COLES);

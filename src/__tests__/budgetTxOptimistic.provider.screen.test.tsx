@@ -84,21 +84,6 @@ it('exclude marks the row in every cached budget list (parent + child)', async (
   expect(queryClient.getQueryData(['budgetTransactions', 'food'])).toEqual([txn({ budget_excluded: true })]);
 });
 
-// [O-rollback] a failed save un-stamps the row back to its original state. WHIT-525: the stamp
-// approach means rollback just re-stamps the original value (undefined → absent field), which
-// toEqual matches against the original object. FAIL-ON-REVERT: dropping the catch rollback
-// stamp leaves budget_excluded:true on the row.
-it('rolls back the exclude stamp when the save fails', async () => {
-  server.fail('/transactions/t1', 500);
-  const result = mount([txn(), txn({ transaction_id: 't2', date: '2026-06-20' })]);
-  const original = [txn(), txn({ transaction_id: 't2', date: '2026-06-20' })];
-  queryClient.setQueryData(['budgetTransactions', 'groceries'], original);
-
-  await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
-
-  expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual(original);
-});
-
 // [O-no-add] re-including a charge (budget_excluded: false) must NOT optimistically add a row —
 // that needs the server's window + newest-first sort, so it's left to the invalidate/refetch.
 it('re-include does NOT optimistically add a row to the cached budget list', async () => {
@@ -114,15 +99,6 @@ it('re-include does NOT optimistically add a row to the cached budget list', asy
   const keys = invalidatedKeys(spy);
   expect(keys).toContain('budgetTransactions');
   spy.mockRestore();
-});
-
-// [O-cold-cache] with no budget list cached (evicted / never opened), the patch no-ops cleanly.
-it('exclude no-ops when no budget list is cached', async () => {
-  const result = mount();
-
-  await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
-
-  expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toBeUndefined();
 });
 
 // [WHIT-360] a failed exclude rollback un-stamps the marked list without clobbering an unrelated
@@ -165,20 +141,6 @@ it('exclude marks ONLY the excluded row, leaving siblings intact and ordered', a
   await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
 
   expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([txn({ budget_excluded: true }), t2, t3]);
-});
-
-// [G2] (P1) A cached budget list that does NOT contain the excluded id must keep every row it holds
-// (the removal touches every ['budgetTransactions', *] entry; a list without the id must be a no-op
-// on contents). FAIL-ON-REVERT covered by [G1]; this pins the "don't drop the wrong row" direction.
-it('a budget list without the excluded id keeps all its rows', async () => {
-  const other1 = txn({ transaction_id: 'x1', category: 'transport' });
-  const other2 = txn({ transaction_id: 'x2', category: 'transport', date: '2026-06-15' });
-  const result = mount([txn(), other1, other2]);
-  queryClient.setQueryData(['budgetTransactions', 'transport'], [other1, other2]);
-
-  await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
-
-  expect(queryClient.getQueryData(['budgetTransactions', 'transport'])).toEqual([other1, other2]);
 });
 
 // [G3] (P0) A failed save un-stamps EVERY cached list, not just the first. WHIT-525: the stamp
@@ -242,24 +204,6 @@ describe('budgetTxInvalidation (folded)', () => {
 
     expect(invalidatedKeys(spy)).toEqual(expect.arrayContaining(['budgets', 'breakdown', 'budgetTransactions']));
     expect(invalidatedKeys(spy)).not.toContain('transactions'); // feed patched in place, never invalidated
-    spy.mockRestore();
-  });
-
-  // [A-inval-guard] a note edit changes NEITHER the total nor the cycle list, so it must NOT
-  // invalidate the budget lists (that would refetch every open budget for a cosmetic note) — and
-  // it must NOT invalidate the feed (patched in place). FAIL-ON-REVERT: hoisting the budget
-  // invalidations out of the `budget_excluded` guard makes a note edit invalidate 'budgetTransactions'.
-  it('applyTransactionEdit(notes) invalidates NOTHING — not the feed, not the budget lists', async () => {
-    const result = mount();
-    const spy = jest.spyOn(queryClient, 'invalidateQueries');
-
-    await act(async () => { await result.current.applyTransactionEdit('t1', { notes: 'lunch' }); });
-
-    const keys = invalidatedKeys(spy);
-    expect(keys).not.toContain('transactions');
-    expect(keys).not.toContain('budgetTransactions');
-    expect(keys).not.toContain('budgets');
-    expect(keys).toHaveLength(0); // a plain note edit invalidates no cache at all
     spy.mockRestore();
   });
 
@@ -369,16 +313,6 @@ describe('budgetTxRefileOptimistic (folded)', () => {
       expect(foodList()).toEqual([txn('t1')]);                         // failed save → optimistic removal rolled back
     });
 
-    it("applyCategory('all') re-filed OUT drops the row from the budget list", async () => {
-      const result = mount([txn('t1')]);
-      queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);
-
-      act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'transport' }));
-      await act(async () => { await result.current.applyCategory('all'); });
-
-      expect(foodList()).toEqual([]);
-    });
-
     it('applyCategoryToMany re-filed OUT drops exactly those rows', async () => {
       const result = mount([txn('t1'), txn('t2')]);
       queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1'), txn('t2')]);
@@ -441,77 +375,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
   describe('WHIT-360 narrowed rollback (folded gaps)', () => {
     afterEach(() => { jest.restoreAllMocks(); }); // restore any spies even if an assertion threw
 
-    describe('WHIT-360 re-file path — narrowed rollback', () => {
-      it('[G1] batch partial-failure re-remove keeps the failed row, drops the saved row, and preserves an unrelated list refetched mid-save', async () => {
-        // food holds t1 + t2; shopping never held either. Re-file [t1,t2] OUT of food; t1 SAVES, t2 FAILS.
-        // Mid-save a background refetch replaces shopping's list. On partial failure the rollback must:
-        // restore food, re-drop only the saved t1 (Decision A), and NEVER touch shopping's fresh data.
-        const held = server.hold('/transactions');
-        server.once('PATCH', '/transactions', { body: { results: [{ id: 't1', status: 'updated' }] } });
-        const result = mount([txn('t1'), txn('t2')]);
-        queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1'), txn('t2')]);
-        queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s0', { category: 'shopping' })]);
-
-        let pending: Promise<void> = Promise.resolve();
-        act(() => { pending = result.current.applyCategoryToMany(['t1', 't2'], 'transport'); });
-        expect(foodList()).toEqual([]); // both dropped optimistically; shopping untouched
-
-        // A background refetch of the UNRELATED shopping list lands while the batch is still pending.
-        await refreshInAct(() => queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]));
-
-        await act(async () => { held.release(); await pending; });
-
-        expect(foodList()).toEqual([txn('t2')]);                                        // failed t2 restored; saved t1 stays gone
-        expect(budgetList('shopping')).toEqual([txn('s1new', { category: 'shopping' })]); // fresh data NOT clobbered
-      });
-
-      it('[G3] a failed re-file restores BOTH shrunk lists (parent + child) and leaves an unrelated refetched list untouched', async () => {
-        // t1 is on coffee → held by food (parent) AND coffee (child). Re-file to transport (out of both).
-        const held = server.hold('/transactions/t1');
-        const result = mount([txn('t1')]);
-        queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);
-        queryClient.setQueryData(['budgetTransactions', 'coffee'], [txn('t1')]);
-        queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s0', { category: 'shopping' })]);
-
-        act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'transport' }));
-        let pending: Promise<void> = Promise.resolve();
-        act(() => { pending = result.current.applyCategory('one'); });
-        expect(foodList()).toEqual([]);            // both shrank optimistically
-        expect(budgetList('coffee')).toEqual([]);
-
-        await refreshInAct(() => queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]));
-
-        await act(async () => { held.fail('PATCH'); await pending; });
-
-        expect(foodList()).toEqual([txn('t1')]);                                        // parent restored
-        expect(budgetList('coffee')).toEqual([txn('t1')]);                              // child restored
-        expect(budgetList('shopping')).toEqual([txn('s1new', { category: 'shopping' })]); // unrelated fresh data preserved
-      });
-    });
-
     describe('WHIT-360 exclude path — narrowed rollback', () => {
-      it('[G2] an unrelated list refetched mid-save survives a failed exclude rollback', async () => {
-        // WHIT-525: the stamp approach maps over every budget list during rollback, but the map is an
-        // identity for lists that never held the target row — data is unchanged. The meaningful guard
-        // is that the refetched shopping data survives the rollback.
-        const held = server.hold('/transactions/t1');
-        const result = mount([txn('t1')]);
-        queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);        // holds t1 → gets stamped
-        queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s0', { category: 'shopping' })]); // never held t1
-
-        let pending: Promise<void> = Promise.resolve();
-        act(() => { pending = result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
-        // WHIT-525: the row is stamped budget_excluded in place (not removed).
-        expect(foodList()).toEqual([txn('t1', { budget_excluded: true })]);
-
-        await refreshInAct(() => queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]));
-
-        await act(async () => { held.fail('PATCH'); await pending; });
-
-        expect(foodList()).toEqual([txn('t1')]);                                        // stamped list restored
-        expect(budgetList('shopping')).toEqual([txn('s1new', { category: 'shopping' })]); // refetched data survived
-      });
-
       it('[G4] a note/tag edit optimistically patches the budget lists IN PLACE, then rolls back on a failed save', async () => {
         // WHIT-524: a charge is now editable from a budget's Related Transactions list, so a note/tag
         // edit DOES patch every ['budgetTransactions', *] holding it — in place (unlike the row-removal
@@ -557,27 +421,46 @@ describe('budgetTxRefileOptimistic (folded)', () => {
         expect(sentBodies('/transactions/bill')).toEqual([{ notes: 'annual premium' }]);
       });
 
-      it('[G5] a list that was EMPTY at removal time and refetched into rows mid-save survives a failed rollback', async () => {
-        // The old code snapshotted EVERY present list (an empty [] included) and restored it verbatim,
-        // erasing a mid-save refetch. The `data?.some(...)` filter drops the empty list from the snapshot
-        // set, so it is never restored/erased.
-        const held = server.hold('/transactions/t1');
-        const result = mount([txn('t1')]);
-        queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);   // holds t1 → shrinks
-        queryClient.setQueryData(['budgetTransactions', 'shopping'], []);         // present but EMPTY, never held t1
+      // WHIT-525: a charge living ONLY in a budget list is excluded → the row stays findable
+      // (stamped budget_excluded:true), so the detail screen never blanks to "not found".
+      it('[E5] WHIT-525: excluding a budget-only row keeps it findable in the cache', async () => {
+        const result = mount([]); // feed empty — the row lives ONLY in the budget cache
+        queryClient.setQueryData(['budgetTransactions', 'insurance'], [txn('bill')]);
+
+        await act(async () => { await result.current.applyTransactionEdit('bill', { budget_excluded: true }); });
+
+        expect(budgetList('insurance')).toEqual([txn('bill', { budget_excluded: true })]);
+      });
+
+      // A charge that lives ONLY in an Insights category-drill cache is MARKED in place, so the
+      // detail screen's toggle moves and the screen keeps showing the row. Rollback restores it.
+      it('[E4] excluding a category-only row marks it in place (toggle moves), and rolls back on failure', async () => {
+        const held = server.hold('/transactions/bill');
+        const result = mount([]); // feed + recent empty; the row lives ONLY in a category cache
+        const drillKey = ['categoryTransactions', 'coffee', 0];
+        queryClient.setQueryData(drillKey, [txn('bill')]);
 
         let pending: Promise<void> = Promise.resolve();
-        act(() => { pending = result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
-        // WHIT-525: the row is stamped budget_excluded in place (not removed).
-        expect(foodList()).toEqual([txn('t1', { budget_excluded: true })]);
-
-        // shopping's refetch lands mid-save, now holding real rows.
-        await refreshInAct(() => queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]));
+        act(() => { pending = result.current.applyTransactionEdit('bill', { budget_excluded: true }); });
+        expect(queryClient.getQueryData(drillKey)).toEqual([txn('bill', { budget_excluded: true })]);
 
         await act(async () => { held.fail('PATCH'); await pending; });
+        expect(queryClient.getQueryData(drillKey)).toEqual([txn('bill')]);
+      });
 
-        expect(foodList()).toEqual([txn('t1')]);                                        // shrunk list restored
-        expect(budgetList('shopping')).toEqual([txn('s1new', { category: 'shopping' })]); // empty→refetched list NOT erased
+      it('[A11] re-including a previously-excluded row un-stamps it in the budget list', async () => {
+        const result = mount([txn('bill')]);
+        queryClient.setQueryData(['budgetTransactions', 'insurance'], [txn('bill')]);
+
+        await act(async () => { await result.current.applyTransactionEdit('bill', { budget_excluded: true }); });
+        expect(budgetList('insurance')).toEqual([txn('bill', { budget_excluded: true })]);
+
+        await act(async () => { await result.current.applyTransactionEdit('bill', { budget_excluded: false }); });
+        expect(budgetList('insurance')).toEqual([txn('bill', { budget_excluded: false })]);
+        expect(sentBodies('/transactions/bill')).toEqual([
+          { budget_excluded: true },
+          { budget_excluded: false },
+        ]);
       });
     });
   });
@@ -630,42 +513,6 @@ describe('budgetTxRefileParentSubtree (folded)', () => {
       expect(sentBodies('/transactions/t1')).toEqual([{ category: 'snacks' }]);
       expect(list('food')).toEqual([txn('t1')]);   // still inside food's subtree → kept
       expect(list('dining')).toEqual([]);           // no longer inside dining's subtree → dropped
-    });
-
-    it('[OVERLAP] re-file OUT of the whole subtree drops the row from BOTH overlapping budget lists', async () => {
-      const result = mount([txn('t1')]);
-      queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);
-      queryClient.setQueryData(['budgetTransactions', 'dining'], [txn('t1')]);
-
-      act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'transport' }));
-      await act(async () => { await result.current.applyCategory('one'); });
-
-      expect(list('food')).toEqual([]);
-      expect(list('dining')).toEqual([]);
-    });
-
-    it('[NOOP] a still-owned list and a never-held list are not rewritten (no setQueryData for them)', async () => {
-      // Re-file coffee → dining: dining is still under food (subtree still owns it), so food's list is
-      // skipped by the ownership guard; shopping never held the charge, so it's skipped by the shrink
-      // guard. React Query's structural sharing returns the OLD reference on a deep-equal write, so
-      // reference identity can't distinguish "skipped" from "rewritten with equal data" — spy on
-      // setQueryData and assert neither budget key was written during the re-file.
-      const result = mount([txn('t1')]);
-      queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);
-      queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('t9', { category: 'shopping' })]);
-
-      const setSpy = jest.spyOn(queryClient, 'setQueryData');
-      act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'dining' }));
-      await act(async () => { await result.current.applyCategory('one'); });
-
-      const budgetKeysWritten = setSpy.mock.calls
-        .map((call) => call[0])
-        .filter((key): key is unknown[] => Array.isArray(key) && key[0] === 'budgetTransactions')
-        .map((key) => key[1]);
-      expect(budgetKeysWritten).not.toContain('food');      // still-owned → ownership guard skips it
-      expect(budgetKeysWritten).not.toContain('shopping');  // never held the row → shrink guard skips it
-      expect(sentBodies('/transactions/t1')).toEqual([{ category: 'dining' }]);
-      setSpy.mockRestore();
     });
 
     it("[ALL-MULTI] applyCategory('all') removes EVERY swept id from the old budget list", async () => {

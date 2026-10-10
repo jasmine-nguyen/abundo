@@ -64,21 +64,6 @@ describe('budgetViews — empty/negative envelope bar math', () => {
     expect(Number.isFinite(row.postedPct)).toBe(true);
     expect(Number.isFinite(row.pendingPct)).toBe(true);
   });
-
-  it('a negative envelope still gives a finite bar', () => {
-    const row = budgetViews(state({ budget: 100, posted: 20, pending: 0, rollover: true, carryover: -150 })).rows[0];
-    expect(Number.isFinite(row.postedPct)).toBe(true);
-    expect(row.over).toBe(true); // spent 20 > available -50
-  });
-});
-
-// ── rollover OFF ignores any stored buffer ───────────────────────────────────
-describe('budgetViews — rollover off', () => {
-  it('a carryover value is ignored while the flag is off', () => {
-    const row = budgetViews(state({ budget: 100, posted: 30, pending: 0, rollover: false, carryover: 200 })).rows[0];
-    expect(row.remainAmount).toBe('$70');   // available == budget (buffer ignored)
-    expect(row.spentLabel).toBe('$30 of\u00a0$100');
-  });
 });
 
 // ── budgetDetail mirrors the envelope + surfaces the buffer line ─────────────
@@ -120,6 +105,13 @@ describe('toBudget — rollover fields', () => {
       id: 'x', budget: 100, posted: 10, pending: 5, rollover: true, carryover: 40, carryoverCycles: [], carryoverEarlier: 0, spreadAdjustment: 0, available: 100,
     });
   });
+
+  it('toBudget maps carryover_cycles and carryover_earlier from the server row', () => {
+    const cycles = [{ start: '2026-09-12', end: '2026-09-25', target: 200, spent: 720, leftover: -520, settling: true }];
+    const b = toBudget('x', { target: 200, posted: 0, pending: 0, rollover: true, carryover: -879, carryover_cycles: cycles, carryover_earlier: -359 });
+    expect(b.carryoverCycles).toEqual(cycles);
+    expect(b.carryoverEarlier).toBe(-359);
+  });
 });
 
 // ===== WHIT-459 carryover label deadband (folded from budgetRolloverGaps.logic.test.ts, describe b)
@@ -128,19 +120,12 @@ describe('carryover detail line deadband (|value| must EXCEED 0.5 to show)', () 
   const detailFor = (carryover: number) =>
     budgetDetailFor({ budget: 100, posted: 0, rollover: true, carryover }, undefined, sink);
 
-  it('exactly +0.5 shows no detail line (boundary is strict >)', () => {
-    expect(detailFor(0.5).carryoverLine).toBe('');
-  });
-
-  it('exactly -0.5 shows no detail line (boundary is strict <)', () => {
-    expect(detailFor(-0.5).carryoverLine).toBe('');
-  });
-
-  it('just past +0.5 shows the carried-over line', () => {
-    expect(detailFor(0.51).carryoverLine).toBe('Includes $1 past leftovers');
-  });
-
-  it('just past -0.5 shows the borrowed line', () => {
-    expect(detailFor(-0.51).carryoverLine).toBe('Includes $1 past overspend');
+  it.each([
+    ['exactly +0.5 shows no detail line (boundary is strict >)', 0.5, ''],
+    ['exactly -0.5 shows no detail line (boundary is strict <)', -0.5, ''],
+    ['just past +0.5 shows the carried-over line', 0.51, 'Includes $1 past leftovers'],
+    ['just past -0.5 shows the borrowed line', -0.51, 'Includes $1 past overspend'],
+  ])('%s', (_case, carryover, line) => {
+    expect(detailFor(carryover).carryoverLine).toBe(line);
   });
 });

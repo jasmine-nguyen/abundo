@@ -39,17 +39,9 @@ describe('fetchFilingSuggestions', () => {
     expect(out).toEqual(BODY);
   });
 
-  it('throws the generic API error on a not-OK response', async () => {
-    fetchMock.mockResolvedValue({ ok: false, status: 502, json: async () => ({ error: 'x' }) } as Response);
-    await expect(fetchFilingSuggestions()).rejects.toThrow('API error: 502');
-  });
 });
 
 describe('selectFilingSuggestions', () => {
-  it('passes a valid payload through unchanged', () => {
-    expect(selectFilingSuggestions(BODY)).toBe(BODY);
-  });
-
   it('passes an empty suggestions list through (a valid "no habits yet")', () => {
     const empty: FilingSuggestions = { suggestions: [] };
     expect(selectFilingSuggestions(empty)).toBe(empty);

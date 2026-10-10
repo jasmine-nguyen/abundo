@@ -127,14 +127,47 @@ describe('ruleOverlap — gating', () => {
     const self = multi('self', 'dining', [c('description', 'contains', 'COLES'), c('amount', 'less_than', '40')]);
     expect(ruleOverlap([self], [c('description', 'contains', 'COLES')], 'all', 'groceries', 'self')).toBeNull();
   });
+});
 
-  it('returns the FIRST fighting rule when several overlap', () => {
-    const a = classic('a', 'COLES', 'groceries');
-    const b = classic('b', 'COLES', 'transport');
-    expect(ruleOverlap([a, b], [c('description', 'contains', 'COLES')], 'all', 'dining')?.existing.id).toBe('a');
+describe('ruleOverlap — edges that mirror the engine (shared/rule_engine.py)', () => {
+  it('does NOT flag AND[contains ALDI, contains COLES] vs an ALDI rule (no value is a superstring)', () => {
+    const existing = classic('g', 'ALDI', 'groceries');
+    const candidate = [c('description', 'contains', 'ALDI'), c('description', 'contains', 'COLES')];
+    expect(ruleOverlap([existing], candidate, 'all', 'dining')).toBeNull();
   });
 
-  it('returns null against an empty rule list', () => {
-    expect(ruleOverlap([], [c('description', 'contains', 'COLES')], 'all', 'dining')).toBeNull();
+  it('does NOT flag when text overlaps but ACCOUNTS differ [A21]', () => {
+    const existing = multi('g', 'groceries', [c('description', 'contains', 'COLES'), c('account', 'equals', 'acc-2')]);
+    const candidate = [c('description', 'contains', 'COLES'), c('account', 'equals', 'acc-1')];
+    expect(ruleOverlap([existing], candidate, 'all', 'dining')).toBeNull();
+  });
+
+  // Mirror _amount_matches fail-closed: a threshold the engine can't use matches nothing.
+  it.each([
+    ['a non-numeric threshold — the engine matches nothing [A25]', 'less_than', 'abc', undefined],
+    ['a negative less_than threshold (magnitude is never < -5) [A26]', 'less_than', '-5', undefined],
+    ['less_than 0 (empty magnitude interval) [A27]', 'less_than', '0', undefined],
+    ['greater_than a negative value — magnitude>=0 always clears it, so bands still overlap [A28]', 'greater_than', '-5', 'overlap'],
+    ['a BLANK threshold — Number("") is 0 but the engine Decimal("") matches nothing [A26b]', 'greater_than', '', undefined],
+  ])('unusable or empty amount thresholds: %s', (_name, op, value, expected) => {
+    const coles = classic('g', 'COLES', 'groceries');
+    const candidate = [c('description', 'contains', 'COLES'), c('amount', op, value)];
+    expect(overlapKind(ruleOverlap([coles], candidate, 'all', 'dining'))).toBe(expected);
+  });
+
+  it('does NOT flag "COLES  ONLINE" (two spaces) vs "COLES ONLINE" (one space)', () => {
+    const existing = multi('g', 'groceries', [c('description', 'contains', 'COLES ONLINE')]);
+    const candidate = [c('description', 'contains', 'COLES  ONLINE')];
+    expect(ruleOverlap([existing], candidate, 'all', 'dining')).toBeNull();
+  });
+
+  // The engine's _condition_matches returns False for a (field, operator) it can't evaluate, so the
+  // clause can never match. Without the guard the bad condition is silently dropped and falsely overlaps.
+  it.each([
+    ['does NOT flag against an existing rule carrying an unsupported FIELD [A33]', [c('note', 'contains', 'COLES')]],
+    ['does NOT flag a known field with an unsupported OPERATOR [A33b]', [c('description', 'contains', 'COLES'), c('description', 'less_than', '5')]],
+  ])('%s', (_name, conditions) => {
+    const existing = multi('g', 'groceries', conditions);
+    expect(ruleOverlap([existing], [c('description', 'contains', 'COLES')], 'all', 'dining')).toBeNull();
   });
 });

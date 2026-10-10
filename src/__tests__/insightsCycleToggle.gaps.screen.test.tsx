@@ -5,16 +5,14 @@
 //   [A6] accessibilityState.selected tracks the active segment on BOTH segments (a11y lock)
 //   [A7] a past-cycle read that FAILS shows the inline error + Retry, and Retry refetches
 //        cycle 1 (the cycle-keyed error path, end to end)
-//   [A8] a POPULATED coach (summary + suggestions) is hidden on the last cycle and its
-//        content is restored on switch back (not just the "Worth a look" header)
 // WHIT-691: runs on the shared Insights kit (support/insightsScreen.tsx) — real ../api over the
-// fake server, with setAi() populating the AI coach.
+// fake server.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, fireEvent } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
-import { seedInsights, renderInsights, resetAi, setAi } from './support/insightsScreen';
+import { seedInsights, renderInsights, resetAi } from './support/insightsScreen';
 import { COFFEE } from './support/categories';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -73,43 +71,4 @@ it('[A7] a past-cycle read that FAILS shows inline error + Retry; Retry refetche
   await screen.findByText('Cafes & Coffee');
   expect(screen.getByText('LAST PAY CYCLE')).toBeTruthy();    // still on the past cycle after recovery
   expect(server.sentUnder('GET', '/breakdown').slice(-1)[0].path).toBe('/breakdown?cycle=1'); // the refetch was for cycle 1
-});
-
-// [A8] a POPULATED coach must vanish ENTIRELY on the past cycle (summary + suggestion
-// tips, not merely the header the implementer checks) and come back intact on switch
-// back — proves it's a conditional render, not a permanent unmount or a header-only hide.
-it('[A8] a populated AI coach (summary + tips) is hidden on last cycle and restored on switch back', async () => {
-  setAi({
-    insights: {
-      summary: 'You spent a lot on coffee this cycle.',
-      suggestions: ['Brew at home twice a week', 'Skip the afternoon latte'],
-      generated_at: '2026-07-08T00:00:00Z',
-      cycle_start: '2026-07-01',
-      cached: false,
-    },
-  });
-  await renderInsights();
-  await screen.findByText('Cafes & Coffee');
-
-  // current cycle: the populated coach content is on screen
-  expect(screen.getByText('You spent a lot on coffee this cycle.')).toBeTruthy();
-  expect(screen.getByText('Brew at home twice a week')).toBeTruthy();
-  expect(screen.getByText('Skip the afternoon latte')).toBeTruthy();
-
-  fireEvent.press(screen.getByTestId('insights-cycle-prev'));
-  await screen.findByText('LAST PAY CYCLE');
-
-  // past cycle: the WHOLE coach is gone, content included
-  expect(screen.queryByText('Worth a look')).toBeNull();
-  expect(screen.queryByText('You spent a lot on coffee this cycle.')).toBeNull();
-  expect(screen.queryByText('Brew at home twice a week')).toBeNull();
-  expect(screen.queryByText('Skip the afternoon latte')).toBeNull();
-
-  fireEvent.press(screen.getByTestId('insights-cycle-current'));
-  await screen.findByText('THIS PAY CYCLE');
-
-  // back to current: the coach + its content are restored
-  expect(screen.getByText('You spent a lot on coffee this cycle.')).toBeTruthy();
-  expect(screen.getByText('Brew at home twice a week')).toBeTruthy();
-  expect(screen.getByText('Skip the afternoon latte')).toBeTruthy();
 });

@@ -27,32 +27,21 @@ function mount() {
   return renderHook(() => useAppContext(), { wrapper }).result;
 }
 
-it('a 422 on create shows the "no recurring bill" copy and rolls back', async () => {
-  server.fail('/rules', 422);
+// The spread copy is gated on the write actually REQUESTING spread ([A-G0]), so a non-spread 409
+// stays generic. Fail-on-revert: drop the `spread &&` gate in ruleWriteErrorMessage and that row reddens.
+it.each([
+  ['a 422 on create shows the "no recurring bill" copy', 422, true, "We couldn't find a recurring bill matching this rule"],
+  ['a 409 on create shows the "already has a spread rule" copy', 409, true, 'This category already has a spread rule'],
+  ['a non-spread failure keeps the generic create toast', 400, true, 'Could not save rule. Please try again.'],
+  ['[A-G0] a 409 on a NON-spread save keeps the generic toast', 409, false, 'Could not save rule. Please try again.'],
+])('%s and rolls back', async (_name, status, spread, toast) => {
+  server.fail('/rules', status);
   const result = mount();
 
-  await act(async () => { await result.current.saveManualRule('ORIGIN', 'subs', false, undefined, true); });
+  await act(async () => { await result.current.saveManualRule('ORIGIN', 'subs', false, undefined, spread); });
 
-  expect(result.current.toast).toBe("We couldn't find a recurring bill matching this rule");
+  expect(result.current.toast).toBe(toast);
   expect(rules()).toEqual([RULE_E1]);   // the optimistic row is rolled back
-});
-
-it('a 409 on create shows the "already has a spread rule" copy', async () => {
-  server.fail('/rules', 409);
-  const result = mount();
-
-  await act(async () => { await result.current.saveManualRule('ORIGIN', 'subs', false, undefined, true); });
-
-  expect(result.current.toast).toBe('This category already has a spread rule');
-});
-
-it('a non-spread failure keeps the generic create toast', async () => {
-  server.fail('/rules', 400);
-  const result = mount();
-
-  await act(async () => { await result.current.saveManualRule('ORIGIN', 'subs', false, undefined, true); });
-
-  expect(result.current.toast).toBe('Could not save rule. Please try again.');
 });
 
 it('a 422 on an edit that turns spread on shows the specific copy too', async () => {
