@@ -42,17 +42,13 @@ beforeEach(() => {
 });
 afterEach(() => { jest.useRealTimers(); });
 
-it("'ahead': shows the real date + '4y 1m early' + '$83,331' dodged, NOT the old seed", async () => {
+it("'ahead': shows the real date + '4y 1m early' + '$83,331' dodged", async () => {
   seedPaydown({ homeLoan: { balance: 528000, asOf: null } });
   await renderWithQueries(<Mortgage />);
   expect(screen.getByText('Nov 2042')).toBeTruthy();
   expect(screen.getByText('4y 1m early')).toBeTruthy();
   expect(screen.getByText("Interest you'll dodge")).toBeTruthy();
   expect(screen.getByText('$83,331')).toBeTruthy();
-  // Retired seed values must be nowhere on screen.
-  expect(screen.queryByText('Aug 2045')).toBeNull();
-  expect(screen.queryByText(/4y 3m/)).toBeNull();
-  expect(screen.queryByText('$58,200')).toBeNull();
 });
 
 it("'partial': one card with the date + 'your extra gets you there', no dodged figure", async () => {

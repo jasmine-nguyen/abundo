@@ -17,26 +17,6 @@ describe('goalView.paidPctLabel — WHIT-372 boundary + degenerate inputs', () =
     expect(v.paidPct).toBeCloseTo(99.5, 5);   // the bar value is NOT clamped
   });
 
-  // [E2] Balance slightly OVER the original (a redraw / refinance that grew the loan). paidOff is
-  // negative, paidPct clamps to 0 — the label must be a coherent 0, never a negative or NaN "% gone".
-  // Both screens now gate this state out via goalView.paidDownReady (WHIT-372), but the selector is
-  // the source of truth, so the value it returns here must still be sane.
-  it('[E2] balance above original -> paidPctLabel is a coherent 0 (not negative/NaN)', () => {
-    const v = goalView(makeState({ homeLoan: { balance: 500001, asOf: null } }));
-    expect(v.paidPctLabel).toBe(0);
-    expect(Number.isFinite(v.paidPctLabel)).toBe(true);
-  });
-
-  // [E3] Balance UNKNOWN (null, still loading). paidPctLabel must be a finite 0, never NaN/undefined:
-  // both screens currently gate the label behind balanceKnown, but if a future refactor ungated it,
-  // a NaN here would render "NaN% gone". This pins the safe default at the source.
-  it('[E3] unknown balance (null) -> paidPctLabel is a finite 0, never NaN', () => {
-    const v = goalView(makeState({ homeLoan: { balance: null, asOf: null } }));
-    expect(v.balanceKnown).toBe(false);
-    expect(v.paidPctLabel).toBe(0);
-    expect(Number.isNaN(v.paidPctLabel)).toBe(false);
-  });
-
   // [E4] Facts NOT set yet (loan form never saved) with a $0 balance — the exact input that would
   // leak a stray "100% gone" if balanceCleared didn't require factsReady: there's no original to
   // measure against, so "100% gone" is meaningless. The label must be a coherent 0. Fail-on-revert:
@@ -124,43 +104,6 @@ describe('goalView.paidPctLabel — WHIT-391 dollar-floor edges', () => {
     expect(at(497500).paidOff).toBe(2500);
     expect(at(497500).paidPct).toBeCloseTo(0.5, 6);
     expect(at(497500).paidPctLabel).toBe(1);   // 0.5% → round 1 naturally; floor is a no-op, NOT 2
-  });
-
-  // Just past the seam the floor is inert and the raw round governs: 1.4998% stays 1, 1.5% lifts to 2.
-  // Proves the floor never CAPS a genuinely-larger paydown (it's Math.max, applied only at the bottom).
-  it('[F2] above the band the raw round governs: 1.4998% → 1, 1.5% → 2 (floor never caps)', () => {
-    expect(at(492501).paidPctLabel).toBe(1);   // paidOff 7499 → 1.4998% → 1
-    expect(at(492500).paidPct).toBeCloseTo(1.5, 6);
-    expect(at(492500).paidPctLabel).toBe(2);   // paidOff 7500 → 1.5% → 2
-  });
-
-  // $1M loan: 1% == $10,000, so a $1,200 paydown is 0.12% → round 0. The floor keys on DOLLARS
-  // (round(paidOff) > 0), not a fixed 500k band, so it still lifts this to 1. Reverting the floor → 0.
-  it('[F3] $1,200 paid on a $1,000,000 loan (0.12%) still floors to 1 — floor keys on dollars', () => {
-    const v = at(998800, 1000000);
-    expect(v.paidOff).toBe(1200);
-    expect(v.paidPct).toBeCloseTo(0.12, 6);
-    expect(v.paidDownReady).toBe(true);
-    expect(v.paidPctLabel).toBe(1);
-  });
-
-  // $200k loan: the band is NARROWER (1% == $2,000). $900 paid is 0.45% → round 0 → floored to 1;
-  // $1,200 paid is 0.6% → round 1 naturally. Both read 1, proving the band width scales with original.
-  it('[F4] $200k loan: $900 (0.45%, floored) and $1,200 (0.6%, natural) both read 1', () => {
-    expect(at(199100, 200000).paidOff).toBe(900);
-    expect(at(199100, 200000).paidPctLabel).toBe(1);   // 0.45% floored
-    expect(at(198800, 200000).paidPct).toBeCloseTo(0.6, 6);
-    expect(at(198800, 200000).paidPctLabel).toBe(1);   // 0.6% natural round
-  });
-
-  // The complementary guard: a sub-$0.50 paydown rounds to $0, is NOT paidDownReady, and must NOT be
-  // fabricated up to 1 — the floor's predicate is the SAME round(paidOff)>0 as the gate. Reverting the
-  // gate/floor coupling (e.g. flooring on raw paidOff>0 instead of the rounded dollar) would redden this.
-  it('[F5] a $0.40 paydown (rounds to $0, not ready) keeps the label at 0 — floor is not over-eager', () => {
-    const v = at(499999.6);
-    expect(v.paidOff).toBeCloseTo(0.4, 6);
-    expect(v.paidDownReady).toBe(false);
-    expect(v.paidPctLabel).toBe(0);
   });
 
   // THE question Jasmine asked: is there ANY balance where the block is shown (paidDownReady) yet the

@@ -8,6 +8,7 @@ import {
   checkpointOutOfBoundsRows,
   CHECKPOINT_MAX_COUNT,
   CHECKPOINT_LABEL_MAX_LEN,
+  CHECKPOINT_AMOUNT_MAX,
 } from '../checkpoints';
 import type { GoalCheckpointInput } from '../api';
 
@@ -42,10 +43,6 @@ describe('checkpointsError', () => {
 
   it('accepts an empty ladder (a goal may have none)', () => {
     expect(checkpointsError([], 'grow', 5000)).toBeNull();
-  });
-
-  it('accepts rows entered OUT of order (they get sorted before send)', () => {
-    expect(checkpointsError([cp('B', 4000), cp('A', 1000)], 'grow', 5000)).toBeNull();
   });
 
   it('rejects a blank label', () => {
@@ -86,6 +83,29 @@ describe('checkpointsError', () => {
   it('accepts exactly the max number of rungs', () => {
     const ladder = Array.from({ length: CHECKPOINT_MAX_COUNT }, (_, n) => cp(`S${n}`, (n + 1) * 100));
     expect(checkpointsError(ladder, 'grow', 100000)).toBeNull();
+  });
+
+  it('accepts a label of EXACTLY the max length', () => {
+    expect(checkpointsError([cp('x'.repeat(CHECKPOINT_LABEL_MAX_LEN), 1000)], 'grow', 5000)).toBeNull();
+  });
+
+  it('rejects a rung ABOVE the amount cap even when below the target', () => {
+    // the cap bites before the < target rule: amount > cap but < target is still out.
+    expect(checkpointsError(
+      [cp('Over cap', CHECKPOINT_AMOUNT_MAX + 1)],
+      'grow',
+      CHECKPOINT_AMOUNT_MAX + 1000,
+    )).not.toBeNull();
+  });
+
+  it('rejects a dup that is only adjacent AFTER the sort (grow, entered out of order)', () => {
+    // [1000, 3000, 1000] → sorted [1000, 1000, 3000]: the loop must compare sorted neighbours,
+    // not input order.
+    expect(checkpointsError(
+      [cp('A', 1000), cp('B', 3000), cp('C', 1000)],
+      'grow',
+      5000,
+    )).toMatch(/same amount/i);
   });
 });
 

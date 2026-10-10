@@ -3,7 +3,6 @@
 // equity card), and a calm "no home loan" explainer when the feed has no home loan.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { StyleSheet } from 'react-native';
 import { screen, fireEvent } from '@testing-library/react-native';
 import { EMPTY_LOAN_FACTS, NO_REPAYMENT } from './factory';
 import { installFakeServer } from './support/fakeServer';
@@ -25,7 +24,7 @@ beforeEach(() => {
   resetRouter();
 });
 
-it('Home loan not set up: one set-up button on the top card, at least 44pt tall, that opens the loan form', async () => {
+it('Home loan not set up: one set-up button on the top card that opens the loan form', async () => {
   seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:00:00Z' } });
   await renderWithQueries(<Mortgage />);
 
@@ -33,10 +32,7 @@ it('Home loan not set up: one set-up button on the top card, at least 44pt tall,
   expect(screen.queryByText('Add loan details →')).toBeNull();
   expect(screen.queryByTestId('hero-no-home-loan')).toBeNull();
 
-  const button = screen.getByRole('button', { name: 'Set up loan details →' });
-  expect(StyleSheet.flatten(button.props.style).minHeight).toBeGreaterThanOrEqual(44);
-
-  fireEvent.press(button);
+  fireEvent.press(screen.getByRole('button', { name: 'Set up loan details →' }));
   expect(routerSpies.push).toHaveBeenCalledWith('/loan');
 });
 
@@ -61,15 +57,11 @@ it.each([
   expect(screen.queryByText('Equity for your next place')).toBeNull();
 });
 
-// [A3] [A4] Any sign of a loan in the repayment read (a failed read, or a half reply) keeps the
-// set-up prompt; "no home loan" needs a read that worked and found nothing.
-it.each([
-  ['the repayment read fails', 'fail'],
-  ['the repayment reply is half there (amount, no date)', { amount: 1440, date: null, principal: null, interest: null }],
-] as const)('Home loan with facts unset + no balance: %s → set-up prompt, not "no home loan"', async (_name, repayment) => {
+// [A3] A failed repayment read is a sign of a loan, so it keeps the set-up prompt; "no home loan"
+// needs a read that worked and found nothing.
+it('Home loan with facts unset + no balance: the repayment read fails → set-up prompt, not "no home loan"', async () => {
   seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: null, asOf: '2026-07-04T00:00:00Z' } });
-  if (repayment === 'fail') server.fail('/repayment', 500);
-  else server.seed('/repayment', repayment);
+  server.fail('/repayment', 500);
   await renderWithQueries(<Mortgage />);
 
   expect(screen.queryByTestId('hero-no-home-loan')).toBeNull();

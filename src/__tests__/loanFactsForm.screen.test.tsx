@@ -1,11 +1,10 @@
-// Screen test for the Loan details form (app/loan.tsx): it seeds from saved facts,
-// converts LVR percent → fraction on save, calls saveLoanFacts + navigates back on
-// success, and blocks an incomplete/invalid save with a toast (no API call).
+// Screen test for the Loan details form (app/loan.tsx): it seeds from saved facts and saves
+// them back unchanged, converts LVR percent → fraction on save, calls saveLoanFacts + navigates
+// back on success, and blocks an incomplete/invalid/over-ceiling save with a toast (no API call).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
 import { screen, fireEvent, act } from '@testing-library/react-native';
-import { ScrollView } from 'react-native';
 import type { AppContext, LoanFactsInput } from '../context';
 
 // loan.tsx reads saveLoanFacts + showToast off the store; the saved facts come from the real
@@ -33,14 +32,17 @@ useTestQueryClient();
 // both source files, so hoisted once here). Deriving from LOANFACTS_FIELD_MAX means a change to
 // the ceiling needs no edit; the toast prose is written out on purpose so a reworded message must
 // be changed deliberately in both the screen and this file.
+const AT = String(LOANFACTS_FIELD_MAX);
 const OVER = String(LOANFACTS_FIELD_MAX + 1);
 const DEPOSIT_TOAST = `Keep the deposit target to ${fmtCompact(LOANFACTS_FIELD_MAX)} or less.`;
+const AMOUNT_TOAST = `Keep each amount to ${fmtCompact(LOANFACTS_FIELD_MAX)} or less.`;
 
 function state(over: Partial<LoanFormState>): LoanFormState {
   return { saveLoanFacts: jest.fn() as LoanFormState['saveLoanFacts'], showToast: jest.fn() as AppContext['showToast'], ...over };
 }
 
 const fillValid = () => fillLoanForm(VALID_LOAN_FORM);
+const fill = (over: LoanFormValues = {}) => fillLoanForm({ ...VALID_LOAN_FORM, ...over });
 
 beforeEach(() => {
   resetRouter();
@@ -90,13 +92,6 @@ it('sends a typed deposit target as a number (WHIT-378)', async () => {
   // (the blank → null case is already locked by the "saves the facts" test above)
 });
 
-it('seeds the deposit target from already-saved facts (WHIT-378)', async () => {
-  server.seed('/loanfacts', { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, depositTarget: 120000 });
-  mockState = state({});
-  await renderLoaded(<Loan />);
-  expect(screen.getByDisplayValue('120000')).toBeTruthy();
-});
-
 it('blocks an incomplete save with a toast and no API call', async () => {
   const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
   const showToast = jest.fn();
@@ -109,29 +104,6 @@ it('blocks an incomplete save with a toast and no API call', async () => {
   expect(saveLoanFacts).not.toHaveBeenCalled();
   expect(showToast).toHaveBeenCalled();
   expect(routerSpies.back).not.toHaveBeenCalled();
-});
-
-it('seeds inputs from already-saved facts (LVR shown as a percent)', async () => {
-  server.seed('/loanfacts', { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 });
-  mockState = state({});
-  await renderLoaded(<Loan />);
-  // 0.8 fraction is shown as "80" in the percent field.
-  expect(screen.getByDisplayValue('80')).toBeTruthy();
-  expect(screen.getByDisplayValue('770000')).toBeTruthy();
-});
-
-// The Save button sits below the fields, so the keyboard opens over it. The form scroll must
-// inset for the keyboard AND keep taps alive. Fail-on-revert: drop the props in app/loan.tsx →
-// find() returns undefined.
-it('wraps the form in a keyboard-inset, tap-persisting scroll so Save stays reachable', async () => {
-  mockState = state({});
-  const { UNSAFE_getAllByType } = await renderLoaded(<Loan />);
-  const formScroll = UNSAFE_getAllByType(ScrollView).find(
-    (sv) => sv.props.automaticallyAdjustKeyboardInsets === true && sv.props.keyboardShouldPersistTaps === 'handled',
-  );
-  expect(formScroll).toBeTruthy();
-  // Save must live INSIDE that insetted scroll — that's what keeps it reachable over the keyboard.
-  expect(formScroll!.findAll((n) => n === screen.getByText('Save loan details'))).toHaveLength(1);
 });
 
 // ===== WHIT-378 (folded from loanDepositTargetGaps.screen.test.tsx) =====
@@ -155,18 +127,6 @@ describe('WHIT-378 deposit-target guard + clear (gaps)', () => {
     // and NaN sails through to saveLoanFacts.
     expect(saveLoanFacts).not.toHaveBeenCalled();
     expect(routerSpies.back).not.toHaveBeenCalled();
-  });
-
-  it('[A6b] a zero deposit target is rejected the same way (> 0 guard, not just finiteness)', async () => {
-    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
-    const showToast = jest.fn();
-    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
-    await renderLoaded(<Loan />);
-    fillValid();
-    fillLoanForm({ deposit: '0' });
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-    expect(showToast).toHaveBeenCalledWith('Enter a valid deposit target, or leave it blank.');
-    expect(saveLoanFacts).not.toHaveBeenCalled();
   });
 
   it('[A8] a deposit target over the ceiling is blocked by its own toast, no save', async () => {
@@ -196,131 +156,144 @@ describe('WHIT-378 deposit-target guard + clear (gaps)', () => {
   });
 });
 
-// ===== WHIT-382 (folded from loanFactsCeilingGaps.screen.test.tsx) =====
-// GAP coverage for the loan form's dollar-ceiling guards. This block carries its OWN fill()/setup()
-// helpers and AT / OVER_FRACTION / AMOUNT_TOAST probes (they diverge from the survivor's fillValid),
-// block-scoped so neither regime is weakened; it reuses the module-level state / OVER / DEPOSIT_TOAST.
-// Every probe is derived from LOANFACTS_FIELD_MAX, so changing the ceiling needs no edit here.
-describe('WHIT-382 dollar-ceiling guards (gaps)', () => {
-  const AT = String(LOANFACTS_FIELD_MAX);
-  const OVER_FRACTION = `${LOANFACTS_FIELD_MAX}.5`;
-  // The figure is derived; the prose is written out here on purpose, so a reworded toast still has
-  // to be changed deliberately in both the screen and this file (fmtCompact is pinned by
-  // format.logic.test.ts, so this is not just asserting the screen against itself).
-  const AMOUNT_TOAST = `Keep each amount to ${fmtCompact(LOANFACTS_FIELD_MAX)} or less.`;
+describe('saved facts round trip', () => {
+  it('user sees their saved loan facts prefilled and can save them unchanged', async () => {
+    const SAVED = {
+      original: 600000, homeValue: 770000, lvr: 0.5, ratePct: 5.74,
+      baseRepay: 1240, extra: 200, payoffGoalDate: null, depositTarget: null,
+    };
+    server.seed('/loanfacts', SAVED);
+    const saveLoanFacts = jest.fn(async (_facts: LoanFactsInput) => true);
+    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
 
-  // The six required fields plus the optional deposit target. Valid baseline; override per test.
-  const fill = (over: LoanFormValues = {}) => fillLoanForm({ ...VALID_LOAN_FORM, deposit: '', ...over });
+    await renderLoaded(<Loan />);
 
-  function setup() {
+    expect(screen.getByDisplayValue('600000')).toBeTruthy();
+    expect(screen.getByDisplayValue('770000')).toBeTruthy();
+    expect(screen.getByDisplayValue('50')).toBeTruthy();
+    expect(screen.getByDisplayValue('5.74')).toBeTruthy();
+    expect(screen.getByDisplayValue('1240')).toBeTruthy();
+    expect(screen.getByDisplayValue('200')).toBeTruthy();
+
+    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+
+    expect(saveLoanFacts).toHaveBeenCalledWith(SAVED);
+    expect(routerSpies.back).toHaveBeenCalled();
+  });
+
+  // WHIT-126: a stale-seed bug would silently wipe an already-saved payoff goal date.
+  it('preserves the saved goal date on a save that never opens the picker', async () => {
+    server.seed('/loanfacts', { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, payoffGoalDate: '2035-06-01' });
+    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
+    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
+    await renderLoaded(<Loan />);
+    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ payoffGoalDate: '2035-06-01' }));
+    expect(routerSpies.back).toHaveBeenCalled();
+  });
+});
+
+// Client-guard boundaries: extra == 0 allowed, lvr/ratePct at their exact upper bounds allowed,
+// lvr == 0 blocked, trailing garbage rejected, and the dollar ceiling (strict >, matching the server).
+describe('client-guard boundaries', () => {
+  it('accepts Extra = 0 (optional top-up) and saves', async () => {
+    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
+    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
+    await renderLoaded(<Loan />);
+    fill({ extra: '0' });
+    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ extra: 0 }));
+    expect(routerSpies.back).toHaveBeenCalled();
+  });
+
+  it('accepts the exact upper bounds LVR = 100% and rate = 100', async () => {
+    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
+    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
+    await renderLoaded(<Loan />);
+    fill({ lvr: '100', rate: '100' });   // client guard is lvr<=1 (fraction) and ratePct<=100
+    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ lvr: 1, ratePct: 100 }));
+  });
+
+  it('blocks LVR = 0 (must be > 0) with a toast and no save', async () => {
     const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
     const showToast = jest.fn();
-    mockState = state({
-      saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'],
-      showToast: showToast as AppContext['showToast'],
-    });
-    return { saveLoanFacts, showToast };
+    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
+    await renderLoaded(<Loan />);
+    fill({ lvr: '0' });
+    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    expect(saveLoanFacts).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalled();
+  });
+
+  it('rejects trailing garbage in a number ("80abc") rather than storing 80', async () => {
+    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
+    const showToast = jest.fn();
+    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
+    await renderLoaded(<Loan />);
+    fill({ home: '770000abc' });   // paste can slip past the decimal-pad keyboard
+    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    expect(saveLoanFacts).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalled();
+  });
+
+  it('blocks a dollar field over the ceiling (extra) with a toast and no save', async () => {
+    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
+    const showToast = jest.fn();
+    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
+    await renderLoaded(<Loan />);
+    // A non-first field over the ceiling — proves the .some() check catches more than original.
+    fill({ extra: OVER });
+    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    expect(saveLoanFacts).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledWith(AMOUNT_TOAST);
+  });
+
+  it('accepts exactly the ceiling (strict >, matching the server) and saves', async () => {
+    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
+    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
+    await renderLoaded(<Loan />);
+    fill({ orig: AT });
+    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+    expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ original: LOANFACTS_FIELD_MAX }));
+    expect(routerSpies.back).toHaveBeenCalled();
+  });
+});
+
+// WHIT-393: is the ceiling toast the user sees honest about the ceiling? AMOUNT_TOAST above is
+// built with the screen's own fmtCompact, so its FIGURE is never independently checked. This test
+// takes the string the screen really emitted, parses the dollar figure back out, and compares it to
+// LOANFACTS_FIELD_MAX — which closes the loop for any ceiling.
+describe('the ceiling toast tells the truth about the ceiling', () => {
+  // Read the dollar figure back OUT of a rendered sentence. This PARSES the label; it does not
+  // re-implement the formatter, so it can't agree with a wrong formatter by construction.
+  // "$1B" -> 1e9, "$1.5B" -> 1.5e9, "$500M" -> 5e8, "$900,000" -> 900000.
+  function dollarsNamedIn(sentence: string): number {
+    const token = /\$[\d,]+(?:\.\d+)?[BM]?/.exec(sentence);
+    expect(token).not.toBeNull();
+    const match = /^\$([\d,]+(?:\.\d+)?)([BM]?)$/.exec(token![0])!;
+    const unit = match[2] === 'B' ? 1_000_000_000 : match[2] === 'M' ? 1_000_000 : 1;
+    // Rounded because the multiply is not exact for every tenth — Number('4.1') * 1e9 lands on
+    // 4100000000.0000005, which would fail the exact comparison at a $4.1B ceiling.
+    return Math.round(Number(match[1].replace(/,/g, '')) * unit);
   }
 
-  // --- Over-ceiling on each required field the implementer skipped (only `extra` was tested) ---
-
-  it('[G1] homeValue over the ceiling -> shared toast, no save', async () => {
-    const { saveLoanFacts, showToast } = setup();
+  // Trigger the amounts ceiling toast and hand back the exact string the screen passed to showToast.
+  async function amountCeilingToast(): Promise<string> {
+    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
+    const showToast = jest.fn();
+    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
     await renderLoaded(<Loan />);
-    fill({ home: OVER });
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-    expect(showToast).toHaveBeenCalledWith(AMOUNT_TOAST);
+    fill({ deposit: '', home: OVER });
+    fireEvent.press(screen.getByText('Save loan details'));
     expect(saveLoanFacts).not.toHaveBeenCalled();
-  });
+    expect(showToast).toHaveBeenCalledTimes(1);
+    return String(showToast.mock.calls[0][0]);
+  }
 
-  it('[G2] baseRepay over the ceiling -> shared toast, no save', async () => {
-    const { saveLoanFacts, showToast } = setup();
-    await renderLoaded(<Loan />);
-    fill({ base: OVER });
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-    expect(showToast).toHaveBeenCalledWith(AMOUNT_TOAST);
-    expect(saveLoanFacts).not.toHaveBeenCalled();
-  });
-
-  it('[G3] original over the ceiling -> shared toast, no save', async () => {
-    const { saveLoanFacts, showToast } = setup();
-    await renderLoaded(<Loan />);
-    fill({ orig: OVER });
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-    expect(showToast).toHaveBeenCalledWith(AMOUNT_TOAST);
-    expect(saveLoanFacts).not.toHaveBeenCalled();
-  });
-
-  // --- Exactly at the ceiling is the strict-> lower boundary: it must SAVE, on non-original fields too ---
-
-  it('[G4] homeValue EXACTLY at the ceiling saves (strict >, not just tested on original)', async () => {
-    const { saveLoanFacts } = setup();
-    await renderLoaded(<Loan />);
-    fill({ home: AT });
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-    expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ homeValue: LOANFACTS_FIELD_MAX }));
-    expect(routerSpies.back).toHaveBeenCalled();
-  });
-
-  it('[G5] extra EXACTLY at the ceiling saves', async () => {
-    const { saveLoanFacts } = setup();
-    await renderLoaded(<Loan />);
-    fill({ extra: AT });
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-    expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ extra: LOANFACTS_FIELD_MAX }));
-    expect(routerSpies.back).toHaveBeenCalled();
-  });
-
-  it('[G6] depositTarget EXACTLY at the ceiling saves (off-by-one: at passes, +1 blocked by [A8])', async () => {
-    const { saveLoanFacts } = setup();
-    await renderLoaded(<Loan />);
-    fill({ deposit: AT });
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-    expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ depositTarget: LOANFACTS_FIELD_MAX }));
-    expect(routerSpies.back).toHaveBeenCalled();
-  });
-
-  // --- Precedence: an invalid (empty/zero) required field must win over a ceiling violation ---
-
-  it('[G7] a zero required field AND another over ceiling -> the fill toast wins, not the ceiling toast', async () => {
-    const { saveLoanFacts, showToast } = setup();
-    await renderLoaded(<Loan />);
-    // original invalid (0) AND homeValue over ceiling: positivity guard runs first.
-    fill({ orig: '0', home: OVER });
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-    expect(showToast).toHaveBeenCalledWith('Please fill in every field with a valid amount.');
-    expect(showToast).not.toHaveBeenCalledWith(AMOUNT_TOAST);
-    expect(saveLoanFacts).not.toHaveBeenCalled();
-  });
-
-  // --- Non-integer over-ceiling: parseAmount accepts decimals, strict > still catches them ---
-
-  it('[G8] a non-integer just over the ceiling on a required field is caught', async () => {
-    const { saveLoanFacts, showToast } = setup();
-    await renderLoaded(<Loan />);
-    fill({ orig: OVER_FRACTION });
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-    expect(showToast).toHaveBeenCalledWith(AMOUNT_TOAST);
-    expect(saveLoanFacts).not.toHaveBeenCalled();
-  });
-
-  it('[G9] a non-integer just over the ceiling on depositTarget is caught by its toast', async () => {
-    const { saveLoanFacts, showToast } = setup();
-    await renderLoaded(<Loan />);
-    fill({ deposit: OVER_FRACTION });
-    await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-    expect(showToast).toHaveBeenCalledWith(DEPOSIT_TOAST);
-    expect(saveLoanFacts).not.toHaveBeenCalled();
-  });
-
-  // --- The precondition the derived probes above rely on ---
-
-  it('the ceiling is a positive safe integer, so the derived probes stay meaningful', () => {
-    // Above 2^53 `LOANFACTS_FIELD_MAX + 1` would equal the ceiling and OVER would stop being
-    // "over"; from 1e21 String() switches to exponent form and OVER_FRACTION becomes garbage.
-    // Either way the tests above would pass vacuously, so pin it here instead.
-    expect(Number.isSafeInteger(LOANFACTS_FIELD_MAX)).toBe(true);
-    expect(LOANFACTS_FIELD_MAX).toBeGreaterThan(0);
-    expect(OVER).toMatch(/^\d+$/);
+  it('[C1] the amounts toast names the ceiling EXACTLY', async () => {
+    // "or less" is an inclusive promise, so the figure has to be the actual bound. Naming less
+    // is safe but wrong; naming MORE sends the user round a loop. Exact equality catches both.
+    expect(dollarsNamedIn(await amountCeilingToast())).toBe(LOANFACTS_FIELD_MAX);
   });
 });

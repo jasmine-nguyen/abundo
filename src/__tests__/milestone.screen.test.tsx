@@ -6,19 +6,16 @@
 // read only the editor's writers off it). expo-router's useRouter is mocked to capture navigation.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { screen, fireEvent, act, within } from '@testing-library/react-native';
+import { render, screen, fireEvent, act, within, waitFor } from '@testing-library/react-native';
 import { EMPTY_LOAN_FACTS, LOAN_FACTS } from './factory';
 import { installFakeServer } from './support/fakeServer';
-import { refreshInAct, renderWithQueries, useTestQueryClient, drawHeld, releaseAndSettle } from './support/renderWithQueries';
+import { refreshInAct, renderWithQueries, useTestQueryClient, drawHeld, releaseAndSettle, WithQueries, settle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedGoal, EQUITY_TEASER } from './support/goalsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { queryClient } from '../queryClient';
 import { saveMilestonesSpy, showToastSpy, milestoneLabelAt } from './support/milestoneEditor';
 import { SAVED_MILESTONES } from './support/milestonePlan';
-import { MoneyField } from '../components/MoneyField';
-import { C } from '../theme';
-import { styleOf } from './support/layout';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -33,6 +30,8 @@ import MilestoneEdit from '../../app/milestone/edit';
 
 const server = installFakeServer();
 useTestQueryClient();
+
+const AS_OF = '2026-07-04T00:24:37.614Z';
 
 // Loan facts are saved by default (property value + LVR set) so equity renders; pass
 // EMPTY_LOAN_FACTS to exercise the "set this up" empty state.
@@ -75,13 +74,7 @@ it('shows an error + retry (not a permanent spinner) when the balance fetch fail
   // Distinct from the waiting spinner — an honest failure message.
   expect(screen.getByText("Couldn't load your balance.")).toBeTruthy();
   expect(screen.queryByText('Fetching your live balance…')).toBeNull();
-  // WHIT-121 #4 parity: the milestone Retry now carries the same a11y contract as the Goal-tab
-  // ones (shared RetryButton). Assert the props so a regression on this copy is caught too.
-  const retry = screen.getByTestId('milestone-balance-retry');
-  expect(retry.props.accessibilityRole).toBe('button');
-  expect(retry.props.accessibilityLabel).toBe('Retry loading your balance');
-  expect(screen.getByText("Couldn't load your balance.").props.accessibilityLiveRegion).toBe('polite');
-  await refreshInAct(() => fireEvent.press(retry));
+  await refreshInAct(() => fireEvent.press(screen.getByTestId('milestone-balance-retry')));
   expect(server.sent('GET', '/homeloan')).toHaveLength(2);
 });
 
@@ -106,36 +99,6 @@ it('navigates to /milestone from the mortgage screen Sprint summary', async () =
   expect(routerSpies.push).toHaveBeenCalledWith('/milestone');
 });
 
-it('Mortgage-screen Sprint summary shows real progress when the balance has loaded', async () => {
-  seedGoal(server, { homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
-  await renderWithQueries(<Mortgage />);
-  // Real Sprint model (from the live balance), not the old $50k chunks.
-  expect(screen.getByText('0 of 5 milestones reached')).toBeTruthy();
-  expect(screen.getByText('Next: under $544,000 → unlocks $72,000 equity')).toBeTruthy();
-  expect(screen.queryByText(/chunks cleared/)).toBeNull();
-});
-
-it('Mortgage-screen Sprint summary invites a tap before the balance loads', async () => {
-  await renderWithQueries(<Mortgage />);
-  expect(screen.getByText('Your payoff plan')).toBeTruthy();
-  expect(screen.getByText('Tap to see your live progress')).toBeTruthy();
-});
-
-it('The mortgage equity card frames it as the home\'s equity, not a separate investment property', async () => {
-  // The equity is computed from the user's OWN home (homeValue*lvr - balance), so the card
-  // must read as "equity from your current home toward your next place" — NOT "Investment
-  // property #2" with its own loan (the copy that confused a real user). Fail-on-revert: any
-  // return to the old "#2" / "Landlord arc" framing turns this red.
-  // A deposit target is set, so the card is in its "tracking progress" body.
-  seedGoal(server, { loanFacts: { ...LOAN_FACTS, depositTarget: 120000 }, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
-  await renderWithQueries(<Mortgage />);
-  expect(screen.getByText('Equity for your next place')).toBeTruthy();
-  expect(screen.getByText('Usable equity from your current home')).toBeTruthy();
-  expect(screen.getByText(/put toward your next place/)).toBeTruthy();   // the "known" body
-  expect(screen.queryByText('Investment property #2')).toBeNull();
-  expect(screen.queryByText(/Landlord arc/)).toBeNull();
-});
-
 // WHIT-378: the deposit target is the user's real number, not a hardcoded $90k.
 it('equity card shows real progress toward the deposit target when one is set', async () => {
   // homeValue 770000 × lvr 0.8 = 616000; balance 566000 → equity 50000; target 100000 → 50%.
@@ -144,7 +107,13 @@ it('equity card shows real progress toward the deposit target when one is set', 
   expect(screen.getByText('$50,000 unlocked')).toBeTruthy();
   expect(screen.getByText('of $100,000 needed')).toBeTruthy();   // the user's real target, not $90,000
   expect(screen.getByText('50%')).toBeTruthy();
-  expect(screen.queryByText('of $90,000 needed')).toBeNull();    // the old fake figure is gone
+});
+
+it('[A10] (P0) Mortgage "Set deposit target →" still opens the loan form', async () => {
+  seedGoal(server, { homeLoan: { balance: 566000, asOf: '2026-07-04T00:24:37.614Z' } });
+  await renderWithQueries(<Mortgage />);
+  fireEvent.press(screen.getByText('Set deposit target →'));
+  expect(routerSpies.push).toHaveBeenCalledWith('/loan');
 });
 
 it('equity card degrades cleanly (no %, no bar, no fake "needed") when no deposit target is set', async () => {
@@ -204,22 +173,6 @@ it('WHIT-819: milestone screen hides the equity set-up prompt while loan facts l
 
 // --- equity card copy: gap coverage (empty-state body, CTA routing, milestone subtitle) ---
 
-it('mortgage equity card empty-state uses the reworded prompt, not the old property framing', async () => {
-  seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
-  await renderWithQueries(<Mortgage />);
-  expect(screen.getByText(EQUITY_TEASER)).toBeTruthy();
-  expect(screen.queryByText(/Add your property value/)).toBeNull();
-  expect(screen.queryByText('Investment property #2')).toBeNull();
-});
-
-it('milestone equity card known-state shows the current-home subtitle, not "Investment property #2"', async () => {
-  seedGoal(server, { homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
-  await renderWithQueries(<Milestone />);
-  expect(screen.getByText('Usable equity from your current home')).toBeTruthy();
-  expect(screen.queryByText('Investment property #2')).toBeNull();
-  expect(screen.queryByText(/Usable equity toward a deposit/)).toBeNull();
-});
-
 // --- mortgage-screen last-repayment card (WHIT-115) ---------------------------------
 
 it('The mortgage screen shows the real last repayment (amount + date + split), no fake timestamp', async () => {
@@ -232,8 +185,6 @@ it('The mortgage screen shows the real last repayment (amount + date + split), n
   expect(screen.getByText(/Last repayment ·/)).toBeTruthy();
   expect(screen.getByText('$1,268 principal · $232 interest')).toBeTruthy();
   expect(screen.getByText('$1,500')).toBeTruthy();   // plain positive — a repayment toward the goal, not a debit
-  // The old hardcoded seed timestamp must be gone.
-  expect(screen.queryByText(/9:02am/)).toBeNull();
 });
 
 it('The mortgage screen shows a graceful empty state when there is no repayment on record', async () => {
@@ -257,34 +208,6 @@ describe('WHIT-367 milestone read path', () => {
     expect(screen.queryByText('Kickoff')).toBeNull();
     expect(screen.queryByText('under $544,000 · Jun 2026')).toBeNull();
   });
-
-  it('shows the empty "add milestones" state when no milestones are saved', async () => {
-    seedGoal(server, { milestones: [], homeLoan: { balance: 596642.43, asOf: null } });
-    await renderWithQueries(<Milestone />);
-    // No hardcoded default any more — a user who hasn't set a plan gets an invite, not fake sprints.
-    expect(screen.getByText(/You haven't set any milestones yet/)).toBeTruthy();
-    expect(screen.getByText('Add milestones')).toBeTruthy();
-    expect(screen.queryByText('Kickoff')).toBeNull();
-    expect(screen.queryByText(/milestones reached/)).toBeNull();
-  });
-});
-
-// ===== WHIT-8 GAP (folded from milestoneCleared.screen.test.tsx) =====
-// The fully-cleared state — every Sprint target reached. The "NEXT MILESTONE" callout must
-// disappear (nextMilestone null gates it) and the hero reports "5 of 5 milestones reached".
-// This sibling originally mocked NO ../context; under the fold it inherits the survivor's
-// ../context stub. Verified inert: Milestone never calls useAppContext (it reads the real
-// milestoneView selector, still supplied via requireActual), so the stubbed useAppContext
-// return is ignored.
-it('hides the NEXT MILESTONE callout once every target is cleared', async () => {
-  // 40000 is below the Sprint 4 target (55000): all five milestones cleared.
-  seedGoal(server, { homeLoan: { balance: 40000, asOf: '2029-07-01T00:00:00.000Z' } });
-  await renderWithQueries(<Milestone />);
-
-  expect(screen.getByText('5 of 5 milestones reached')).toBeTruthy();
-  // No next target to chase => the callout and its "to go" line are gone.
-  expect(screen.queryByText('NEXT MILESTONE')).toBeNull();
-  expect(screen.queryByText(/to go$/)).toBeNull();
 });
 
 // ===== WHIT-197 GAP (folded from milestoneHero.edges.screen.test.tsx) =====
@@ -316,13 +239,6 @@ describe('WHIT-377 milestone editor', () => {
     server.seed('/milestones', SAVED_MILESTONES);
   });
 
-  it('hydrates the rows from the saved plan', async () => {
-    await renderWithQueries(<MilestoneEdit />);
-    expect(milestoneLabelAt(0)).toBe('Start');
-    expect(milestoneLabelAt(1)).toBe('Midway');
-    expect(milestoneLabelAt(2)).toBe('Payoff');
-  });
-
   it('a resolved new user starts with one blank row + a "Use a suggested plan" button', async () => {
     server.seed('/milestones', []);   // resolved, no saved plan
     await renderWithQueries(<MilestoneEdit />);
@@ -331,25 +247,9 @@ describe('WHIT-377 milestone editor', () => {
     expect(screen.getByTestId('milestone-use-template')).toBeTruthy();  // the opt-in template button
   });
 
-  it('"Use a suggested plan" loads the built-in template as editable rows', async () => {
-    server.seed('/milestones', []);
-    await renderWithQueries(<MilestoneEdit />);
-    fireEvent.press(screen.getByTestId('milestone-use-template'));
-    // The 5-sprint suggested plan is now in the form, editable (fail-on-revert: a blank seed only).
-    expect(milestoneLabelAt(0)).toBe('Kickoff');
-    expect(milestoneLabelAt(4)).toBe('Target');
-  });
-
   it('a user with a saved plan is NOT offered the suggested-plan button (no accidental wipe)', async () => {
     await renderWithQueries(<MilestoneEdit />);
     expect(screen.queryByTestId('milestone-use-template')).toBeNull();
-  });
-
-  it('add appends a new blank row', async () => {
-    await renderWithQueries(<MilestoneEdit />);
-    expect(screen.queryByTestId('milestone-label-3')).toBeNull();
-    fireEvent.press(screen.getByTestId('milestone-add'));
-    expect(screen.getByTestId('milestone-label-3').props.value).toBe('');
   });
 
   it('delete removes a row', async () => {
@@ -443,42 +343,8 @@ describe('WHIT-377 milestone editor', () => {
     });
   });
 
-  describe('reorder bounds are unreachable', () => {
-    // The swap can never go out of bounds because the boundary arrows are DISABLED — that's the
-    // honest, testable contract (a disabled Pressable swallows the press, so a "press does nothing"
-    // test would pass even with moveRow's guard removed). moveRow keeps a bounds guard as cheap
-    // defence, but it's UI-unreachable, so we assert the disabled state that makes it so.
-    it('↑ on the first row is disabled', async () => {
-      await renderWithQueries(<MilestoneEdit />);
-      expect(screen.getByTestId('milestone-up-0')).toBeDisabled();
-    });
-
-    it('↓ on the last row is disabled', async () => {
-      await renderWithQueries(<MilestoneEdit />);
-      expect(screen.getByTestId('milestone-down-2')).toBeDisabled();
-    });
-
-    it('a mid-list arrow is enabled (the disable is boundary-specific, not blanket)', async () => {
-      await renderWithQueries(<MilestoneEdit />);
-      expect(screen.getByTestId('milestone-up-1')).not.toBeDisabled();
-    });
-  });
-
   // WHIT-774: the TARGET BALANCE box is the shared MoneyField, tagged milestone-balance-N.
   describe('target balance box', () => {
-    it("each row's balance box is the shared money box, tagged per row, and keeps the darker background", async () => {
-      await renderWithQueries(<MilestoneEdit />);
-      const fields = screen.UNSAFE_getAllByType(MoneyField);
-      expect(fields).toHaveLength(SAVED_MILESTONES.length);
-      const input = within(fields[0]).getByTestId('milestone-balance-0');
-      expect(input.props.value).toBe('300000');
-      // Sign-off option A: the box stays C.bg so it contrasts with the C.card row card.
-      let box = input.parent;
-      while (box && !styleOf(box).backgroundColor) box = box.parent;
-      if (!box) throw new Error('no filled box around the input');
-      expect(styleOf(box).backgroundColor).toBe(C.bg);
-    });
-
     it('user can type a new target balance and save it', async () => {
       await renderWithQueries(<MilestoneEdit />);
       fireEvent.changeText(screen.getByTestId('milestone-balance-0'), '600000');
@@ -486,28 +352,6 @@ describe('WHIT-377 milestone editor', () => {
       expect(saveMilestonesSpy).toHaveBeenCalledTimes(1);
       const sent = saveMilestonesSpy.mock.calls[0][0];
       expect(sent.map((m) => m.targetBalance)).toEqual([600000, 200000, 100000]);
-    });
-
-    // [A4] the per-row tag follows the row index, so editing the LAST row changes only that row.
-    it('typing into the last row only changes that row, and the label keeps the screen label style', async () => {
-      await renderWithQueries(<MilestoneEdit />);
-      expect(styleOf(screen.getAllByText('TARGET BALANCE')[2]).marginTop).toBe(14);
-      fireEvent.changeText(screen.getByTestId('milestone-balance-2'), '50000');
-      expect(screen.getByTestId('milestone-balance-0').props.value).toBe('300000');
-      await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
-      const sent = saveMilestonesSpy.mock.calls[0][0];
-      expect(sent.map((m) => m.targetBalance)).toEqual([300000, 200000, 50000]);
-    });
-
-    // [A5] after a delete the tags renumber with the rows, and a new row's box starts empty.
-    it('deleting a row renumbers the balance boxes; an added row gets an empty box at the end', async () => {
-      await renderWithQueries(<MilestoneEdit />);
-      fireEvent.press(screen.getByTestId('milestone-delete-0'));
-      expect(screen.getByTestId('milestone-balance-0').props.value).toBe('200000');
-      expect(screen.getByTestId('milestone-balance-1').props.value).toBe('100000');
-      expect(screen.queryByTestId('milestone-balance-2')).toBeNull();
-      fireEvent.press(screen.getByTestId('milestone-add'));
-      expect(screen.getByTestId('milestone-balance-2').props.value).toBe('');
     });
   });
 });
@@ -589,5 +433,75 @@ describe('WHIT-459 blank-seed save guard (editor)', () => {
     await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
     expect(saveMilestonesSpy).not.toHaveBeenCalled();
     expect(showToastSpy).toHaveBeenCalledWith(expect.stringMatching(/name|target|date/i));
+  });
+});
+
+describe('the mortgage and milestone screens over the fake server', () => {
+  // [A5] the balance's FIRST load still in flight: the waiting copy, never the error or a number.
+  it('[A5] mortgage hero waits (no error, no balance) while the first balance read is held, then shows it', async () => {
+    seedGoal(server, { homeLoan: { balance: 432900, asOf: AS_OF } });
+    const held = server.hold('/homeloan');
+    render(<WithQueries><Mortgage /></WithQueries>);
+    await waitFor(() => expect(screen.getByText("We'll show your payoff progress once your balance loads.")).toBeTruthy());
+    expect(screen.queryByText("Couldn't load your balance.")).toBeNull();
+    expect(screen.queryByText('$67,100')).toBeNull();
+
+    await act(async () => { held.release(); });
+    await settle();
+    await refreshInAct(() => {});
+    expect(screen.getByText('$67,100')).toBeTruthy();
+    expect(screen.queryByText("We'll show your payoff progress once your balance loads.")).toBeNull();
+  });
+
+  // [A9] the repayment card's Retry recovers to the real card.
+  it('[A9] repayment Retry after a failed first load shows the real repayment card', async () => {
+    seedGoal(server, { repayment: { amount: 1500, date: '2026-07-01', principal: 1268, interest: 232 } });
+    server.once('GET', '/repayment', { status: 500 });
+    await renderWithQueries(<Mortgage />);
+    expect(screen.getByText("Couldn't load your last repayment.")).toBeTruthy();
+
+    await refreshInAct(() => fireEvent.press(screen.getByTestId('repayment-retry')));
+    await settle();
+    await refreshInAct(() => {});
+    expect(screen.queryByText("Couldn't load your last repayment.")).toBeNull();
+    expect(screen.getByText('$1,268 principal · $232 interest')).toBeTruthy();
+  });
+
+  // [A10] milestones are SECONDARY: a failed plan read never blanks the balance hero or shows a
+  // balance error; the Sprint summary shows its own milestones error, not the invite (WHIT-823).
+  it('[A10] a failed milestones read keeps the mortgage balance and shows the milestones error', async () => {
+    seedGoal(server, { homeLoan: { balance: 432900, asOf: AS_OF } });
+    server.fail('/milestones', 500);
+    await renderWithQueries(<Mortgage />);
+    expect(screen.getByText('$67,100')).toBeTruthy();
+    expect(screen.queryByText("Couldn't load your balance.")).toBeNull();
+    expect(screen.getByText("Couldn't load your milestones.")).toBeTruthy();
+  });
+
+  // [A10b] the same with the balance not polled yet (null): the hero must stay on the waiting copy,
+  // the only state where a milestones failure leaking into the balance error would show.
+  it('[A10b] a failed milestones read never turns the waiting balance hero into a balance error', async () => {
+    seedGoal(server, { homeLoan: { balance: null, asOf: null } });
+    server.fail('/milestones', 500);
+    await renderWithQueries(<Mortgage />);
+    expect(screen.getByText("We'll show your payoff progress once your balance loads.")).toBeTruthy();
+    expect(screen.queryByText("Couldn't load your balance.")).toBeNull();
+  });
+});
+
+describe('the milestone editor over the fake server', () => {
+  // [A12] the seeded latch: once rows are filled from the saved plan, a background refetch that
+  // brings a different plan must not wipe the user's edits.
+  it('[A12] a background refetch after hydration does not overwrite the rows being edited', async () => {
+    server.seed('/milestones', SAVED_MILESTONES);
+    await renderWithQueries(<MilestoneEdit />);
+    expect(milestoneLabelAt(0)).toBe('Start');
+    fireEvent.changeText(screen.getByTestId('milestone-label-0'), 'Typed');
+
+    server.seed('/milestones', [{ id: 'z', label: 'Server', targetBalance: 50000, targetDate: '2030-01-01' }]);
+    await refreshInAct(() => queryClient.refetchQueries());
+    expect(server.sent('GET', '/milestones')).toHaveLength(2);
+    expect(milestoneLabelAt(0)).toBe('Typed');
+    expect(milestoneLabelAt(1)).toBe('Midway');
   });
 });

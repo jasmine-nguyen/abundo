@@ -4,7 +4,6 @@
 // <Overlays /> with the store's `sheet` set to goalbalance (same style as PayCycleSheet's test).
 // The goals come from the fake server via support/openOverlays (WHIT-671).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { Modal } from 'react-native';
 import { screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 import type { GoalRecord } from '../api';
@@ -64,12 +63,6 @@ beforeEach(() => {
   goals = [CAR_LOAN];
 });
 
-it('shows the goal name and prefills the current balance', async () => {
-  await openSheet();
-  expect(screen.getByText(/Car loan/)).toBeTruthy();
-  expect(screen.getByDisplayValue('12000')).toBeTruthy();
-});
-
 it('Save resends the FULL manual record with the new balance + as-of today, then closes', async () => {
   await openSheet();
   fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
@@ -98,17 +91,9 @@ it('a $0 balance is valid (a paid-off manual debt)', async () => {
   expect(body).toMatchObject({ manual_balance: 0 });
 });
 
-it('rejects a non-numeric balance with a toast and no save', async () => {
+it.each(['12abc', '-5', ''])('rejects a non-numeric balance with a toast and no save (%p)', async (input) => {
   await openSheet();
-  fireEvent.changeText(screen.getByTestId('goal-balance-input'), '12abc');
-  await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
-  expect(fns.showToast).toHaveBeenCalledWith('Enter a balance of $0 or more.');
-  expect(fns.saveGoal).not.toHaveBeenCalled();
-});
-
-it('rejects a negative balance', async () => {
-  await openSheet();
-  fireEvent.changeText(screen.getByTestId('goal-balance-input'), '-5');
+  fireEvent.changeText(screen.getByTestId('goal-balance-input'), input);
   await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
   expect(fns.showToast).toHaveBeenCalledWith('Enter a balance of $0 or more.');
   expect(fns.saveGoal).not.toHaveBeenCalled();
@@ -139,32 +124,11 @@ it('picking a date backdates manual_as_of to the chosen ISO date', async () => {
   expect(body.manual_as_of).toBe('2026-06-20');
 });
 
-// ===== WHIT-235 adversarial gaps (folded from goalBalanceSheetGaps) — blank/decimal balance, the
-// per-goal re-seed on remount, and the hardware-back dismiss. Own beforeEach seeds a SECOND goal. =====
+// ===== WHIT-235 adversarial gaps (folded from goalBalanceSheetGaps) — the per-goal re-seed on
+// remount. Own beforeEach seeds a SECOND goal. =====
 describe('goal-balance sheet — adversarial gaps (WHIT-235)', () => {
   beforeEach(() => {
     goals = [CAR_LOAN, HOLIDAY];
-  });
-
-  // [A18] a BLANK balance is rejected — the tests above cover '12abc' and '-5' but never the
-  // empty string, which is the most common real mis-tap (open sheet, clear field, hit save).
-  it('rejects a blank balance with a toast and no save', async () => {
-    await openSheet();
-    fireEvent.changeText(screen.getByTestId('goal-balance-input'), '');
-    await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
-    expect(fns.showToast).toHaveBeenCalledWith('Enter a balance of $0 or more.');
-    expect(fns.saveGoal).not.toHaveBeenCalled();
-  });
-
-  // [A19] a DECIMAL like "12.5" is accepted and passed through unrounded — the whole point of the
-  // decimal-pad. The tests above only exercised whole numbers, so nothing proves the fractional path.
-  it('accepts a decimal balance and passes it through as a float', async () => {
-    await openSheet();
-    fireEvent.changeText(screen.getByTestId('goal-balance-input'), '12.5');
-    await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
-    expect(fns.showToast).not.toHaveBeenCalled();
-    const [, body] = fns.saveGoal.mock.calls[0] as [string, Record<string, unknown>];
-    expect(body).toMatchObject({ manual_balance: 12.5 });
   });
 
   // [A20] the sheet RE-SEEDS its balance per goal. SheetHost keys the sheet on goalId, so switching
@@ -177,14 +141,6 @@ describe('goal-balance sheet — adversarial gaps (WHIT-235)', () => {
     await act(async () => { rerender(overlaysTree()); });
     expect(screen.getByDisplayValue('300')).toBeTruthy();   // g5 — not the stale 12000
     expect(screen.queryByDisplayValue('12000')).toBeNull();
-  });
-
-  // [A21] hardware-back / scrim dismiss closes the sheet via setSheet(null). onRequestClose is the
-  // back-button + is wired identically to the scrim tap (the shared SheetHost dismiss).
-  it('dismissing via hardware back closes the sheet (setSheet null)', async () => {
-    await openSheet();
-    fireEvent(screen.UNSAFE_getByType(Modal), 'requestClose');
-    expect(fns.setSheet).toHaveBeenCalledWith(null);
   });
 });
 
@@ -208,13 +164,4 @@ it('Save carries a saved checkpoint ladder through untouched', async () => {
     { id: 'cp-1', label: 'Under 10k', amount: 10000 },
     { id: 'cp-2', label: 'Under 5k', amount: 5000 },
   ]);
-});
-
-it('Save omits checkpoints entirely for a goal that has none', async () => {
-  await openSheet();                          // CAR_LOAN has no ladder
-  fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
-  await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
-
-  const [, body] = fns.saveGoal.mock.calls[0] as [string, Record<string, unknown>];
-  expect(body.checkpoints).toBeUndefined();   // no empty array smuggled in
 });

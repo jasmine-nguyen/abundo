@@ -8,7 +8,6 @@ import { MILESTONES } from '../milestones';
 import type { Category, Transaction } from '../types';
 import type { Budget, HomeLoanState, Rule } from '../model';
 import type { AiGoalSignal, BreakdownRollup, BudgetRollup, CategorySpend, LoanFacts, MilestoneRecord, Repayment } from '../api';
-import type { GoalScreenData } from '../queries';
 import { COFFEE } from './support/categories';
 
 // A saved-plan fixture (the suggested template as MilestoneRecord rows, with ids). The default
@@ -137,34 +136,6 @@ interface StateOver {
   milestones?: MilestoneRecord[];
   cycleLen?: number;
   daysLeft?: number;
-}
-
-// The Goal tab + milestone screen composite (WHIT-197). Typed off the REAL
-// GoalScreenData so a screen test's mocked useGoalScreenData can't silently drift from
-// the production shape (a drift fails to compile here). Defaults: fully-set loan facts,
-// an un-loaded balance, no repayment, no error. Override per test via `over`.
-export function makeGoalData(over: Partial<GoalScreenData> = {}): GoalScreenData {
-  return {
-    loanFacts: LOAN_FACTS,
-    homeLoan: { balance: null, asOf: null },
-    homeLoanLoaded: false,
-    repayment: NO_REPAYMENT,
-    // A default saved plan so milestone view-math tests that don't pass one still exercise a real
-    // plan (the hardcoded default was removed). Empty-state tests pass `milestones: []` explicitly.
-    milestones: DEFAULT_MILESTONES,
-    isLoading: false,
-    isError: false,
-    homeLoanError: false,
-    repaymentError: false,
-    loanFactsLoaded: true,
-    loanFactsError: false,
-    milestonesLoaded: true,
-    milestonesError: false,
-    refetchMilestones: () => {},
-    refetch: () => Promise.resolve(),
-    refetchStale: () => {},
-    ...over,
-  };
 }
 
 // Build the exact slice the pure selectors read — a category() lookup, cycleName,

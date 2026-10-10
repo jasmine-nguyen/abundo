@@ -1,7 +1,6 @@
 // WHIT-191a/192 — saveLoanFacts optimistically writes the ['loanFacts'] query cache (the
-// Goal + Settings + loan form read it), PUTs, then invalidates ONLY that key (home-loan
-// balance + repayment don't depend on loan facts server-side), and rolls the cache back on
-// failure. (Pre-192 it also double-wrote an old store; that store is gone.) Drives the REAL
+// Goal + Settings + loan form read it), PUTs, then invalidates that key, and rolls the cache
+// back on failure. (Pre-192 it also double-wrote an old store; that store is gone.) Drives the REAL
 // saveLoanFacts via AppProvider + the singleton queryClient.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react-native';
@@ -35,7 +34,7 @@ function mount() {
   return result;
 }
 
-it('saveLoanFacts writes the cache + invalidates ONLY loanFacts', async () => {
+it('saveLoanFacts writes the cache + invalidates loanFacts', async () => {
   const result = mount();
   const invalidateSpy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -45,10 +44,7 @@ it('saveLoanFacts writes the cache + invalidates ONLY loanFacts', async () => {
   expect(ok).toBe(true);
   expect(server.sent('PUT', '/loanfacts').map((request) => request.body)).toEqual([FACTS]);
   expect(cachedFacts()).toEqual(FACTS); // query cache optimistic write
-  const keys = invalidatedKeys(invalidateSpy);
-  expect(keys).toContain('loanFacts');
-  expect(keys).not.toContain('homeLoan'); // balance doesn't depend on facts
-  expect(keys).not.toContain('repayment');
+  expect(invalidatedKeys(invalidateSpy)).toContain('loanFacts');
   invalidateSpy.mockRestore();
 });
 

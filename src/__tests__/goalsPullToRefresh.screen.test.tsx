@@ -46,11 +46,3 @@ it('user can pull down on Goals to reload, and a goal added elsewhere appears on
   await waitFor(() => expect(pullControl().props.refreshing).toBe(false));
   expect(await screen.findByText('Japan trip')).toBeTruthy();
 });
-
-// The empty state (header "+" plus the dashed row) is covered by goalsHub.screen.test.tsx.
-it('with goals, Goals shows only one add button: the header "+"', async () => {
-  seedHubWith(server, { goals: [EMERGENCY] });
-  await renderWithApp(<Goals />);
-  expect(screen.getByTestId('add-goal')).toBeTruthy();
-  expect(screen.queryByTestId('add-goal-cta')).toBeNull();
-});

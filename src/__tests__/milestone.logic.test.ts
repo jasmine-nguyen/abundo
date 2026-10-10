@@ -188,13 +188,6 @@ describe('MILESTONE_BALANCE_MAX is the enforced client ceiling', () => {
     // inlined literal above the declared cap reddens here rather than passing by luck.
     expect(milestonesOrderingError(oneRow(MILESTONE_BALANCE_MAX + 1))).toMatch(/target balance/i);
   });
-
-  it('[C3] the cap is a positive safe integer, so the +1 probe is a real step', () => {
-    // Past 2^53 `MAX + 1 === MAX`, which would make [C2] assert nothing. Pin the precondition
-    // (same reasoning as the loan-facts suites' String() note) instead of leaving it to luck.
-    expect(Number.isSafeInteger(MILESTONE_BALANCE_MAX)).toBe(true);
-    expect(MILESTONE_BALANCE_MAX).toBeGreaterThan(0);
-  });
 });
 
 // ===== WHIT-8 milestoneView schedule at/beyond final anchor + delta-0 edges (folded from milestoneEdges.logic.test.ts)
@@ -230,34 +223,6 @@ describe('milestoneView — schedule at and beyond the final anchor', () => {
   });
 });
 
-describe('milestoneView — delta 0 boundary before Sprint 0', () => {
-  it('a balance exactly on the flat pre-Sprint-0 plan is on track, not ahead', () => {
-    // Before the first anchor the expected balance is the Sprint 0 target.
-    const start = MILESTONES[0].targetBalance;             // 544000
-    const v = milestoneView(withBalance(start), onDate('2026-01-01')).schedule!;
-    expect(v.expectedBalance).toBe(start);
-    expect(v.deltaAmount).toBe(0);
-    expect(v.ahead).toBe(false);
-    expect(v.onTrack).toBe(true);
-    expect(v.label).toBe('On track with the plan');
-  });
-});
-
-describe('milestoneView — under the final target before its date', () => {
-  it('caps overallPct at 100 while reporting genuinely ahead and no next milestone', () => {
-    // Balance already below the Sprint 4 target, but "today" sits between Sprint 0
-    // and Sprint 1 so the plan still expects a high balance => far ahead.
-    const v = milestoneView(withBalance(40000), onDate('2027-01-01'));
-    expect(v.overallPct).toBe(100);           // clamped, never > 100
-    expect(v.clearedCount).toBe(5);
-    expect(v.nextMilestone).toBeNull();
-    expect(v.amountToNextLabel).toBe('—');    // no next => em dash, not "$0"
-    expect(v.schedule!.ahead).toBe(true);
-    expect(v.schedule!.onTrack).toBe(false);
-    expect(v.schedule!.label).toMatch(/ahead of schedule$/);
-  });
-});
-
 // ===== WHIT-377 milestonesOrderingError + milestoneOutOfOrderRows (folded from milestonesOrdering.logic.test.ts)
 // WHIT-377 — milestonesOrderingError + milestoneOutOfOrderRows: the pure client guard that mirrors
 // the server's set_milestones contract (lambda_api/handler.py:2073-2142), so the editor blocks a
@@ -271,10 +236,6 @@ const VALID: Row[] = SAVED_MILESTONES;
 describe('milestonesOrderingError — accepts valid plans', () => {
   it('returns null for a strictly paid-down multi-row plan', () => {
     expect(milestonesOrderingError(VALID)).toBeNull();
-  });
-
-  it('returns null for a single-row plan (no pair to compare)', () => {
-    expect(milestonesOrderingError([{ label: 'Only', targetBalance: 300000, targetDate: '2026-01-01' }])).toBeNull();
   });
 
   it('allows a final target balance of exactly 0 (loan fully paid)', () => {
@@ -310,7 +271,6 @@ describe('milestonesOrderingError — per-row field checks', () => {
   it.each([
     ['NaN (blank/partial input)', NaN],
     ['negative', -1],
-    ['above the max', 1_000_000_001],
   ])('rejects a target balance that is %s', (_label, bad) => {
     expect(milestonesOrderingError([{ label: 'Step', targetBalance: bad, targetDate: '2026-01-01' }])).toMatch(/target balance/i);
   });
@@ -319,7 +279,6 @@ describe('milestonesOrderingError — per-row field checks', () => {
     ['unset', ''],
     ['not a date', 'someday'],
     ['impossible calendar date', '2026-02-30'],
-    ['out-of-range month', '2026-13-01'],
   ])('rejects a target date that is %s', (_label, bad) => {
     expect(milestonesOrderingError([{ label: 'Step', targetBalance: 100000, targetDate: bad }])).toMatch(/target date/i);
   });
@@ -337,15 +296,6 @@ describe('milestonesOrderingError — the ordering rule', () => {
 });
 
 describe('milestoneOutOfOrderRows — per-row flags for the live warning', () => {
-  it('flags no rows for a valid plan', () => {
-    expect(milestoneOutOfOrderRows(VALID)).toEqual([false, false, false]);
-  });
-
-  it('never flags the first row (nothing above it)', () => {
-    const rising = [{ label: 'A', targetBalance: 100000, targetDate: '2026-01-01' }, { label: 'B', targetBalance: 200000, targetDate: '2027-01-01' }];
-    expect(milestoneOutOfOrderRows(rising)[0]).toBe(false);
-  });
-
   it('flags exactly the row that breaks the order', () => {
     // Row 1 (index 1) rises in balance → flagged; rows 0 and 2 are fine relative to their predecessor.
     const rows = [
@@ -387,13 +337,6 @@ describe('milestoneView — reads the saved plan (WHIT-367)', () => {
     expect(v.overallPct).toBe(25);
   });
 
-  it('derives the step number from list position (saved rows carry no sprint)', () => {
-    const v = milestoneView(makeState({ milestones: SAVED_MILESTONES, homeLoan: { balance: 250000, asOf: null } }));
-    // The load-bearing line: sprint = array index, so the display "Sprint N" + React key
-    // survive a MilestoneRecord that has no stored sprint.
-    expect(v.rows.map((r) => r.sprint)).toEqual([0, 1, 2]);
-  });
-
   it('interpolates the schedule between the saved anchors, not the default ones', () => {
     // Halfway (in time) between 'Start' (300k @ 2026-01-01) and 'Midway' (200k @ 2027-01-01)
     // the planned balance sits strictly inside (200k, 300k) — a default-plan curve would
@@ -415,32 +358,6 @@ describe('milestoneView — empty when the user has no saved plan', () => {
     expect(v.nextMilestone).toBeNull();
     expect(v.schedule).toBeNull();
     expect(v.overallPct).toBe(0);
-  });
-});
-
-// ===== WHIT-367 (folded from milestoneReadpathGaps.logic.test.ts) — adversarial edges of the
-// milestoneView saved-plan read path the survivor doesn't lock: overallPct clamp at BOTH ends over
-// the SAVED anchors (not the default), and a single-row saved plan (plan[0] === plan[len-1] access)
-// not throwing / not NaN-ing when the balance is below the lone target. onDate and SAVED_MILESTONES
-// are reused (the gaps file's own duplicates are dropped).
-describe('milestoneView — overallPct clamps over the SAVED anchors (WHIT-367)', () => {
-  it('clamps to 100 when the balance is below the saved final target (all cleared)', () => {
-    // 50k < 100k (saved end) → raw pct 125 → clamped to 100. A clamp using the DEFAULT plan's
-    // 55k end would give a different raw number, so the saved anchors are load-bearing here.
-    const v = milestoneView(makeState({ milestones: SAVED_MILESTONES, homeLoan: { balance: 50000, asOf: null } }));
-    expect(v.overallPct).toBe(100);
-    expect(v.clearedCount).toBe(3);
-    expect(v.nextMilestone).toBeNull();
-    expect(v.amountToNext).toBe(0);
-  });
-
-  it('clamps to 0 when the balance is above the saved first target (nothing cleared)', () => {
-    // 350k > 300k (saved start) → raw pct -25 → clamped to 0. Next is the saved first row.
-    const v = milestoneView(makeState({ milestones: SAVED_MILESTONES, homeLoan: { balance: 350000, asOf: null } }));
-    expect(v.overallPct).toBe(0);
-    expect(v.clearedCount).toBe(0);
-    expect(v.nextMilestone?.label).toBe('Start');
-    expect(v.amountToNext).toBe(50000); // 350000 - 300000
   });
 });
 

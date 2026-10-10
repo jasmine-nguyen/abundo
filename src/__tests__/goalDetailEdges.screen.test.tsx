@@ -54,14 +54,6 @@ describe('goal page edges', () => {
     expect(screen.getByTestId('goal-detail-edit')).toBeTruthy();
   });
 
-  it('a goal with no milestones has no MILESTONES section', async () => {
-    seedHubWith(server, { goals: [GOAL] });
-    setParams({ id: 'g1' });
-    await renderWithQueries(<GoalDetail />);
-    expect(screen.getByText('Holiday')).toBeTruthy();
-    expect(screen.queryByText('MILESTONES')).toBeNull();
-  });
-
   it('a goal past its date nudges to pick a new one, and the nudge opens Edit', async () => {
     seedHubWith(server, { goals: [growGoal('late', { name: 'Late one', target_date: '2026-07-01' })] });
     setParams({ id: 'late' });

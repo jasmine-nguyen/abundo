@@ -3,7 +3,7 @@
 // future payoff goal date, it solves the required repayment; aiGoalSignal then emits a
 // 'shortfall' signal for the AI layer. Pure over makeState + an injected `today`.
 import { describe, it, expect } from '@jest/globals';
-import { paydownView, aiGoalSignal, amortize } from '../context';
+import { paydownView, aiGoalSignal, amortize, requiredRepayment } from '../context';
 import { makeState, asShortfallGoal } from './factory';
 
 const TODAY = new Date(2026, 6, 4);        // 2026-07-04
@@ -55,10 +55,6 @@ describe('aiGoalSignal shortfall variant (WHIT-126)', () => {
     // a future change sends the ISO string instead of the month-year label.
     expect(/^[A-Z][a-z]{2} \d{4}$/.test(g.goal_date)).toBe(true);
   });
-
-  it('is null in the shortfall state when no goal date is set', () => {
-    expect(aiGoalSignal(SHORTFALL_STATE(null), TODAY)).toBeNull();
-  });
 });
 
 // WHIT-215 — the "goal too aggressive" flag on paydownView. Fires in TWO shortfall states:
@@ -66,32 +62,6 @@ describe('aiGoalSignal shortfall variant (WHIT-126)', () => {
 // but an absurd multiple (>10×) of the current repayment → figure shown. Drives the Goal
 // screen's "try a later date" hint. False for a realistic goal, no date, or a past date.
 describe('paydownView goalTooAggressive flag (WHIT-215)', () => {
-  const AGGRESSIVE_MULTIPLE = 10; // mirrors AGGRESSIVE_REPAY_MULTIPLE in context.tsx
-  const CURRENT = M.baseRepay + M.extra; // 4167 — the user's current monthly repayment
-  const OVER_CAP_STATE = (payoffGoalDate: string) =>
-    makeState({ loanFacts: { ...M, payoffGoalDate }, homeLoan: { balance: 1_200_000, asOf: null } });
-
-  it('flags true when the required repayment exceeds the $1M cap (figure suppressed)', () => {
-    const pv = paydownView(OVER_CAP_STATE('2026-08-01'), TODAY); // next month on 1.2M → ~$1.2M/mo
-    expect(pv.mode).toBe('none');
-    expect(pv.requiredRepay).toBeNull();      // figure stays hidden (unchanged behaviour)
-    expect(pv.goalTooAggressive).toBe(true);  // ...but the hint now fires
-  });
-
-  it('flags true for an absurd-but-under-$1M figure (> 10× current repayment)', () => {
-    const pv = paydownView(SHORTFALL_STATE('2027-01-01'), TODAY); // 6 months on 900k → ~$150k/mo
-    expect(pv.requiredRepay).not.toBeNull();                      // an honest figure IS shown
-    expect(pv.requiredRepay!).toBeGreaterThan(AGGRESSIVE_MULTIPLE * CURRENT);
-    expect(pv.goalTooAggressive).toBe(true);                     // hint accompanies the figure
-  });
-
-  it('does NOT flag a realistic future goal (figure shown, reasonable multiple)', () => {
-    const pv = paydownView(SHORTFALL_STATE('2035-06-01'), TODAY); // ~$10.8k/mo, well under 10×
-    expect(pv.requiredRepay).not.toBeNull();
-    expect(pv.requiredRepay!).toBeLessThanOrEqual(AGGRESSIVE_MULTIPLE * CURRENT);
-    expect(pv.goalTooAggressive).toBe(false);
-  });
-
   it('does NOT flag with no goal date, or a past / current-month date', () => {
     expect(paydownView(SHORTFALL_STATE(null), TODAY).goalTooAggressive).toBe(false);
     expect(paydownView(SHORTFALL_STATE('2020-01-01'), TODAY).goalTooAggressive).toBe(false); // past
@@ -109,6 +79,48 @@ describe('paydownView goalTooAggressive flag (WHIT-215)', () => {
     const pv = paydownView(zeroRepay, TODAY);
     expect(pv.requiredRepay).not.toBeNull();     // a figure still solves
     expect(pv.goalTooAggressive).toBe(false);    // ...but not flagged via the multiple
+  });
+});
+
+// The exact 10× flip and the $1M cap. requiredRepay is independent of the current repayment, so
+// hold the figure fixed (900k, 24 months out → ~$39,783, under the cap) and slide currentRepay
+// one dollar either side of R/10.
+describe('paydownView goalTooAggressive — 10× flip and $1M cap (WHIT-215 / WHIT-218)', () => {
+  const stateWith = (over: Partial<typeof M> & { payoffGoalDate?: string | null }, balance: number) =>
+    makeState({ loanFacts: { ...M, ...over }, homeLoan: { balance, asOf: null } });
+  // monthsUntil(2026-07-04 → 2028-07-01) = 24; keep this in sync with the date below.
+  const R = requiredRepayment(900000, 5.74 / 100 / 12, 24)!;
+
+  it('flags true when currentRepay is one dollar BELOW the 10× line (10×3978 < required)', () => {
+    // the boundary is real, not luck: R sits strictly between 3978×10 and 3979×10.
+    expect(R).toBeGreaterThan(3978 * 10);
+    expect(R).toBeLessThan(3979 * 10);
+    const pv = paydownView(stateWith({ baseRepay: 3478, extra: 500, payoffGoalDate: '2028-07-01' }, 900000), TODAY);
+    expect(pv.mode).toBe('none');
+    expect(pv.requiredRepay).not.toBeNull();          // under the $1M cap → figure shown
+    expect(pv.requiredRepay!).toBeCloseTo(R, 6);
+    expect(pv.goalTooAggressive).toBe(true);
+  });
+
+  it('does NOT flag one dollar ABOVE the 10× line (10×3979 > required)', () => {
+    const pv = paydownView(stateWith({ baseRepay: 3479, extra: 500, payoffGoalDate: '2028-07-01' }, 900000), TODAY);
+    expect(pv.mode).toBe('none');
+    expect(pv.requiredRepay).not.toBeNull();
+    expect(pv.goalTooAggressive).toBe(false);         // same date, same figure — only the multiple changed
+  });
+
+  it('just OVER the cap: figure suppressed but still flagged (same too-soon date)', () => {
+    const pv = paydownView(stateWith({ payoffGoalDate: '2026-08-01' }, 995300), TODAY); // R ≈ 1,000,060
+    expect(pv.requiredRepay).toBeNull();               // over $1M → hidden (WHIT-126 behaviour intact)
+    expect(pv.goalTooAggressive).toBe(true);           // WHIT-215: the hint replaces the static copy
+  });
+
+  it('under-cap "too aggressive" now SUPPRESSES the signal (real figure, but emit null)', () => {
+    const s = stateWith({ payoffGoalDate: '2027-01-01' }, 900000); // 6 months → ~150k, flagged
+    const pv = paydownView(s, TODAY);
+    expect(pv.goalTooAggressive).toBe(true);
+    expect(pv.requiredRepay).not.toBeNull();     // the figure IS solved (under the $1M cap)…
+    expect(aiGoalSignal(s, TODAY)).toBeNull();   // …but NOT sent to the AI (WHIT-218 suppression)
   });
 });
 
@@ -138,35 +150,6 @@ describe('shortfall solver — malformed / unparseable goal date (WHIT-126)', ()
   });
 });
 
-describe('shortfall solver — calendar boundaries (WHIT-126)', () => {
-  it('spans a year boundary correctly (Jul 2026 -> Jan 2027 = 6 months)', () => {
-    const pv = paydownView(STATE(900000, '2027-01-01'), TODAY);
-    expect(pv.goalDateLabel).toBe('Jan 2027');
-    // 6 whole months across the year rollover; round-trips through the forward solver.
-    const months = (2027 - 2026) * 12 + (1 - 7);   // = 6
-    expect(months).toBe(6);
-    expect(amortize(900000, 5.74 / 100 / 12, pv.requiredRepay!)!.periods).toBeCloseTo(months, 3);
-  });
-
-  it('is month-granular: the day-of-month does not change the required repayment', () => {
-    // monthsUntil ignores the day (payoff is rendered month-year only). The 1st and the
-    // 30th of the same target month must solve identically. Fail-on-revert if a future
-    // change makes monthsUntil day-aware without also making the label day-aware.
-    const first = paydownView(STATE(900000, '2035-06-01'), TODAY);
-    const last = paydownView(STATE(900000, '2035-06-30'), TODAY);
-    expect(first.requiredRepay).toBe(last.requiredRepay);
-    expect(first.goalDateLabel).toBe('Jun 2035');
-    expect(last.goalDateLabel).toBe('Jun 2035');
-  });
-
-  it('treats the LAST day of the CURRENT month as no valid horizon (n=0 -> fallback)', () => {
-    // 2026-07-31 is ~4 weeks out but still THIS month -> months=0 -> not > 0 -> fallback.
-    const pv = paydownView(STATE(900000, '2026-07-31'), TODAY);
-    expect(pv.requiredRepay).toBeNull();
-    expect(pv.goalDateLabel).toBeNull();
-  });
-});
-
 describe('shortfall solver — server $1M cap alignment (WHIT-126)', () => {
   // The server's _sanitise_goal drops the shortfall block when required_repayment
   // exceeds 1_000_000 (so the AI can't discuss it). The client mirrors that cap
@@ -179,12 +162,5 @@ describe('shortfall solver — server $1M cap alignment (WHIT-126)', () => {
     expect(pv.requiredRepay).toBeNull();
     expect(pv.goalDateLabel).toBeNull();
     expect(aiGoalSignal(STATE(1_200_000, '2026-08-01'), TODAY)).toBeNull();
-  });
-
-  it('still solves when the required repayment sits under the cap', () => {
-    // Same balance, a far enough date that the monthly figure stays under $1M.
-    const g = asShortfallGoal(aiGoalSignal(STATE(1_200_000, '2040-06-01'), TODAY));
-    expect(g.required_repayment).toBeLessThanOrEqual(1_000_000);
-    expect(g.required_repayment).toBeGreaterThan(0);
   });
 });

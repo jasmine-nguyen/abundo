@@ -5,7 +5,7 @@ import type { GoalRecord } from '../../api';
 import { balanceGoalView, BalanceGoal } from '../../context';
 import { GOALS_HUB_CYCLE, seedHubWith } from './goalsScreen';
 
-export const GOAL_CYCLE = GOALS_HUB_CYCLE;
+const GOAL_CYCLE = GOALS_HUB_CYCLE;
 export const GOAL_TODAY = new Date(2026, 6, 11); // Sat 11 Jul 2026
 export const GOAL_START = { start_date: '2026-06-06', target_date: '2026-08-15' };
 

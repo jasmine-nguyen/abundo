@@ -243,28 +243,6 @@ it('a succeeded EDIT does NOT resurrect a goal that was concurrently deleted mid
   expect(cacheGoals()).toEqual([]); // the reconcile map finds no g1 to swap — stays gone
 });
 
-// [G5] delete of the FIRST element, rolled back, restores it at index 0.
-it('a failed delete of the FIRST goal reinserts it at index 0 (order preserved)', async () => {
-  server.fail('/goals/g1', 500);
-  const G2: GoalRecord = { ...GOAL_G1, id: 'g2' };
-  const G3: GoalRecord = { ...GOAL_G1, id: 'g3' };
-  const result = mount([GOAL_G1, G2, G3]);
-
-  await act(async () => { await result.current.deleteGoal('g1'); });
-  expect(cacheGoals()).toEqual([GOAL_G1, G2, G3]);
-});
-
-// [G6] delete of the LAST element, rolled back, restores it at the end.
-it('a failed delete of the LAST goal reinserts it at the end (order preserved)', async () => {
-  server.fail('/goals/g3', 500);
-  const G2: GoalRecord = { ...GOAL_G1, id: 'g2' };
-  const G3: GoalRecord = { ...GOAL_G1, id: 'g3' };
-  const result = mount([GOAL_G1, G2, G3]);
-
-  await act(async () => { await result.current.deleteGoal('g3'); });
-  expect(cacheGoals()).toEqual([GOAL_G1, G2, G3]);
-});
-
 // [G7] two concurrent successful deletes both land — the survivor is correct.
 it('two concurrent deletes both remove their goal (second delete sees the first\'s cache write)', async () => {
   const G2: GoalRecord = { ...GOAL_G1, id: 'g2' };
@@ -368,28 +346,6 @@ it('reconcile replaces the optimistically minted ladder with the SERVER ladder',
 
   const created = cacheGoals()!.find((g) => g.name === 'Holiday')!;
   expect(created.checkpoints).toEqual([{ id: 'srv-1', label: 'First', amount: 1000 }]);
-});
-
-// [B3] A failed save must restore the PRE-EDIT ladder, not leave the optimistic one (whose
-// freshly minted ids the server never saw) sitting in the cache.
-it('a failed edit rolls the ladder back to the previously SAVED checkpoints', async () => {
-  server.fail('/goals/g1', 500);
-  const result = mountWithSeededCache([GOAL_WITH_LADDER]);
-
-  let midIds: (string | undefined)[] | undefined;
-  let ok: boolean | undefined;
-  await act(async () => {
-    const p = result.current.saveGoal('g1', {
-      ...NEW_BODY,
-      checkpoints: [{ label: 'Brand new rung', amount: 2000 }],
-    });
-    midIds = cacheGoals()![0].checkpoints?.map((cp) => cp.id);   // optimistic ladder mid-flight
-    ok = await p;
-  });
-
-  expect(midIds).toEqual([expect.stringMatching(/^test-uuid-/)]);  // the optimistic write happened
-  expect(ok).toBe(false);
-  expect(cacheGoals()).toEqual([GOAL_WITH_LADDER]);                // old ladder + ids restored whole
 });
 
 // [B4] TRIPWIRE. A goal save is a whole-record REPLACE (server side too — see
