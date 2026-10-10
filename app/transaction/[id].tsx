@@ -163,7 +163,7 @@ export default function TransactionDetail() {
               {transaction.counts_to_budget ? (
                 <BudgetExcludeToggle transaction={transaction} />
               ) : (
-                <BudgetExcludedNote />
+                <BudgetExcludedNote transaction={transaction} />
               )}
 
               {/* WHIT-556: spread a bill in this (over-budget) category over pay cycles. Same shared
@@ -234,21 +234,41 @@ function RuleFiledNote({ text }: { text: string }) {
 // updates the screen immediately and rolls back on a failed save. When ON, the charge
 // drops from budget bars, the breakdown, and Insights (server honours the flag). Reads
 // straight from the cached row (undefined = not excluded), so no local state to reseed.
+// WHIT-846: money coming in (a refund, a transfer in) gets its own wording — "exclude from
+// budgets" reads as spend.
+const EXCLUDE_COPY = {
+  out: {
+    title: 'Exclude from budgets',
+    sub: "Mark as a transfer — won't count toward budgets or insights.",
+    hint: "Marks this as a transfer so it doesn't count toward budgets or insights",
+    note: "This looks like a transfer or card payment, so it doesn't count toward budgets or insights.",
+  },
+  in: {
+    title: 'Leave this money out',
+    sub: "For a transfer in, not real income or a refund. Won't count toward budgets or insights.",
+    hint: "Leaves this money out of budgets and insights",
+    note: "This looks like a transfer in, so it doesn't count toward budgets or insights.",
+  },
+};
+
+const excludeCopy = (transaction: Transaction) => (transaction.amount > 0 ? EXCLUDE_COPY.in : EXCLUDE_COPY.out);
+
 function BudgetExcludeToggle({ transaction }: { transaction: Transaction }) {
   const { applyTransactionEdit } = useAppContext();
   const excluded = transaction.budget_excluded ?? false;
+  const copy = excludeCopy(transaction);
   return (
     <Pressable
       onPress={() => applyTransactionEdit(transaction.transaction_id, { budget_excluded: !excluded })}
       accessibilityRole="switch"
       accessibilityState={{ checked: excluded }}
-      accessibilityLabel="Exclude from budgets"
-      accessibilityHint="Marks this as a transfer so it doesn't count toward budgets or insights"
+      accessibilityLabel={copy.title}
+      accessibilityHint={copy.hint}
       style={({ pressed }) => [styles.toggleRow, pressed && PRESSED]}
     >
       <View style={styles.toggleText}>
-        <Text style={styles.toggleTitle}>Exclude from budgets</Text>
-        <Text style={styles.toggleSub}>Mark as a transfer — won't count toward budgets or insights.</Text>
+        <Text style={styles.toggleTitle}>{copy.title}</Text>
+        <Text style={styles.toggleSub}>{copy.sub}</Text>
       </View>
       <View style={[styles.switchTrack, excluded && styles.switchTrackOn]}>
         <View style={[styles.switchKnob, excluded && styles.switchKnobOn]} />
@@ -260,15 +280,16 @@ function BudgetExcludeToggle({ transaction }: { transaction: Transaction }) {
 // WHIT-298: shown in place of the manual toggle when the BANK doesn't count the charge
 // (counts_to_budget falsy). Read-only, because the manual toggle can't un-exclude a bank
 // transfer — so we explain the auto-exclusion rather than offer an inert switch.
-function BudgetExcludedNote() {
+function BudgetExcludedNote({ transaction }: { transaction: Transaction }) {
+  const { note } = excludeCopy(transaction);
   return (
     <View
       style={styles.excludedNote}
       accessible
-      accessibilityLabel="Excluded from budgets. This looks like a transfer or card payment, so it doesn't count toward budgets or insights."
+      accessibilityLabel={`Excluded from budgets. ${note}`}
     >
       <Text style={styles.toggleTitle}>Excluded (transfer)</Text>
-      <Text style={styles.toggleSub}>This looks like a transfer or card payment, so it doesn't count toward budgets or insights.</Text>
+      <Text style={styles.toggleSub}>{note}</Text>
     </View>
   );
 }
@@ -286,7 +307,7 @@ function NoteAndTagsEditor({ transaction, deleting }: { transaction: Transaction
   const [tagInput, setTagInput] = useState('');
 
   // The note saves on an explicit Save tap (not on blur). `noteDirty` gates the button — it's
-  // live only when the trimmed text differs from what's stored. Tags/category/exclude keep saving
+  // shown only when the trimmed text differs from what's stored. Tags/category/exclude keep saving
   // instantly (direct-manipulation chips/picker/toggle). WHIT-843: leaving the screen also saves
   // an unsaved note edit (unlike the form screens), except while the transaction is being deleted.
   const noteDirty = noteText.trim() !== savedNote;
@@ -344,17 +365,17 @@ function NoteAndTagsEditor({ transaction, deleting }: { transaction: Transaction
         multiline
         maxLength={NOTE_MAX_LEN}
       />
-      <Pressable
-        testID="note-save"
-        onPress={saveNote}
-        disabled={!noteDirty}
-        accessibilityRole="button"
-        accessibilityLabel="Save note"
-        accessibilityState={{ disabled: !noteDirty }}
-        style={[styles.noteSaveBtn, { backgroundColor: noteDirty ? C.accent : tint(C.accentAlt, 0.25) }]}
-      >
-        <Text style={[styles.noteSaveText, { color: noteDirty ? C.accentInk : '#6a6a90' }]}>Save note</Text>
-      </Pressable>
+      {noteDirty && (
+        <Pressable
+          testID="note-save"
+          onPress={saveNote}
+          accessibilityRole="button"
+          accessibilityLabel="Save note"
+          style={({ pressed }) => [styles.noteSaveBtn, pressed && PRESSED]}
+        >
+          <Text style={styles.noteSaveText}>Save note</Text>
+        </Pressable>
+      )}
 
       <Text style={styles.sectionLabel}>TAGS</Text>
       <View style={styles.tagsWrap}>
@@ -446,8 +467,8 @@ const styles = StyleSheet.create({
 
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 22, marginBottom: 8, marginHorizontal: 4 },
   noteInput: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, padding: 14, minHeight: 88, fontFamily: FONT.body, fontSize: 14.5, color: C.textBright, textAlignVertical: 'top' },
-  noteSaveBtn: { marginTop: 10, paddingVertical: 13, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  noteSaveText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700' },
+  noteSaveBtn: { marginTop: 10, paddingVertical: 13, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: C.accent },
+  noteSaveText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.accentInk },
   tagsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   tagChip: { flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.cardAlt, borderWidth: 1, borderColor: C.hairlineStrong, borderRadius: 999, paddingVertical: 6, paddingLeft: 12, paddingRight: 9 },
   tagText: { fontFamily: FONT.body, fontSize: 13, color: C.textBright },

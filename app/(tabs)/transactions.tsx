@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { C, FONT, tint, PRESSED } from '../../src/theme';
@@ -13,6 +13,8 @@ import { TransactionRow } from '../../src/components/TransactionRow';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { EmptyState } from '../../src/components/EmptyState';
 import { SegmentedControl } from '../../src/components/SegmentedControl';
+import { SearchField } from '../../src/components/SearchField';
+import { useFirstFilingSeen } from '../../src/hooks/useFirstFilingSeen';
 import { HeaderTextButton } from '../../src/components/ui';
 import { toggleIn } from '../../src/setutil';
 
@@ -39,7 +41,15 @@ export default function Transactions() {
   const debouncedQuery = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
   const serverQuery = needsServerSearch(debouncedQuery) ? debouncedQuery : '';
   const insets = useSafeAreaInsets();
-  const { openMultiPicker, showToast, setSheet, pendingUncategorizedSelect, clearUncategorizedSelect } = useAppContext();
+  const { openMultiPicker, showToast, sheet, setSheet, pendingUncategorizedSelect, clearUncategorizedSelect } = useAppContext();
+  // WHIT-846: the Uncategorised hint hides for good once the user reaches a category pick's
+  // confirm step (one charge, a selection, or File by shop).
+  const { seen: firstFilingSeen, markSeen: markFirstFilingSeen } = useFirstFilingSeen();
+  const sheetMode = sheet?.mode;
+  useEffect(() => {
+    if (firstFilingSeen !== false) return;
+    if (sheetMode === 'confirm' || sheetMode === 'confirmMany' || sheetMode === 'fileByShopConfirm') markFirstFilingSeen();
+  }, [sheetMode, firstFilingSeen, markFirstFilingSeen]);
   // WHIT-190a: transactions now come from the cached, auth-gated query layer — an all-accounts
   // cursor feed, so `loadMore` pages older history in and `hasMore` is false at end-of-history.
   const { transactions, category, isLoading, isError, error, refreshError, updatedAt, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore, search: serverSearch } = useTransactionsScreenData(tab, serverQuery);
@@ -161,33 +171,20 @@ export default function Transactions() {
         />
 
         {!selectionMode && (
-          <View style={styles.search}>
-            <Glyph name="search" size={18} color={C.placeholder} />
-            <TextInput
-              value={search}
-              onChangeText={setSearch}
-              placeholder="Search transactions"
-              placeholderTextColor={C.placeholder}
-              style={styles.searchInput}
-              autoCapitalize="none"
-              autoCorrect={false}
-              returnKeyType="search"
-              maxLength={SEARCH_QUERY_MAX_LEN}
-              accessibilityLabel="Search transactions"
-            />
-            {search.length > 0 && (
-              <Pressable onPress={() => setSearch('')} hitSlop={10} accessibilityRole="button" accessibilityLabel="Clear search">
-                <Text style={styles.searchClear}>✕</Text>
-              </Pressable>
-            )}
-          </View>
+          <SearchField
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search transactions"
+            accessibilityLabel="Search transactions"
+            maxLength={SEARCH_QUERY_MAX_LEN}
+          />
         )}
 
         {!searchingServer && !showSpinner && !showError && (
           <StaleDataLine idPrefix="transactions" error={refreshError} updatedAt={updatedAt} showUpdated />
         )}
 
-        {tab === 'uncategorized' && localUncategorized > 0 && !selectionMode && (
+        {tab === 'uncategorized' && localUncategorized > 0 && !selectionMode && firstFilingSeen === false && (
           <View style={styles.hint}>
             <Glyph name="star" size={18} color={C.accentSoft} />
             <Text style={styles.hintText}>
@@ -195,23 +192,6 @@ export default function Transactions() {
               <Text style={styles.hintBold}>just that one</Text> or <Text style={styles.hintBold}>every charge</Text> from that merchant.
             </Text>
           </View>
-        )}
-
-        {/* WHIT-508: rules only run as a charge ARRIVES, so history never gets re-labelled. This
-            sweeps it. Gated on the WHOLE-history count (the badge's number), not the loaded-page
-            count: after a capped run the loaded page can be empty while hundreds remain deeper in
-            history, and that is exactly when the button is still needed. Hidden behind the cold
-            spinner and the load error like every other control on this screen. */}
-        {tab === 'uncategorized' && !selectionMode && !showSpinner && !showError && uncategorizedCount > 0 && (
-          <Pressable
-            testID="transactions-apply-rules"
-            onPress={() => setSheet({ mode: 'applyRules' })}
-            accessibilityRole="button"
-            accessibilityLabel="Apply my rules to your unfiled charges"
-            style={styles.applyRules}
-          >
-            <Text style={styles.applyRulesText}>Apply my rules</Text>
-          </Pressable>
         )}
 
         {/* WHIT-517: the rest of the backlog — shops with NO rule yet. "Apply my rules" can't touch
@@ -228,6 +208,23 @@ export default function Transactions() {
             style={styles.fileByShop}
           >
             <Text style={styles.fileByShopText}>File by shop</Text>
+          </Pressable>
+        )}
+
+        {/* WHIT-508: rules only run as a charge ARRIVES, so history never gets re-labelled. This
+            sweeps it. Gated on the WHOLE-history count (the badge's number), not the loaded-page
+            count: after a capped run the loaded page can be empty while hundreds remain deeper in
+            history, and that is exactly when the link is still needed. Hidden behind the cold
+            spinner and the load error like every other control on this screen. */}
+        {tab === 'uncategorized' && !selectionMode && !showSpinner && !showError && uncategorizedCount > 0 && (
+          <Pressable
+            testID="transactions-apply-rules"
+            onPress={() => setSheet({ mode: 'applyRules' })}
+            accessibilityRole="button"
+            accessibilityLabel="Apply my rules to your unfiled charges"
+            style={({ pressed }) => [styles.applyRulesLink, pressed && PRESSED]}
+          >
+            <Text style={styles.applyRulesLinkText}>Apply my rules</Text>
           </Pressable>
         )}
 
@@ -377,11 +374,6 @@ const styles = StyleSheet.create({
   actionBtnText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentInk },
   actionBtnTextDisabled: { color: C.textDisabled },
 
-  search: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 13, paddingVertical: 4, paddingHorizontal: 14 },
-  // The input carries its own vertical padding so the row height matches the old placeholder box.
-  searchInput: { flex: 1, fontFamily: FONT.body, fontSize: 14, color: C.textBright, paddingVertical: 8, padding: 0 },
-  searchClear: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.placeholder, paddingHorizontal: 2 },
-
   hint: { flexDirection: 'row', gap: 11, alignItems: 'flex-start', backgroundColor: tint(C.accentAlt, 0.1), borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), borderRadius: 16, padding: 13, paddingHorizontal: 14, marginTop: 10 },
   hintText: { flex: 1, fontFamily: FONT.body, fontSize: 12.5, color: C.accentSofter, lineHeight: 18 },
   hintBold: { color: C.textBright, fontWeight: '700' },
@@ -399,11 +391,10 @@ const styles = StyleSheet.create({
   searchStatusText: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, textAlign: 'center', marginTop: 12 },
   searchRetry: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.accentSoft, marginTop: 12 },
 
-  // "Apply my rules" (WHIT-508): the Load More treatment, sitting under the hint.
-  applyRules: { marginTop: 10, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.hairline, alignItems: 'center' },
-  applyRulesText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSoft },
-  // WHIT-517: filled accent (primary) — this clears the bulk of the backlog, so it reads louder
-  // than the outlined "Apply my rules" above it.
+  // WHIT-517 / WHIT-846: filled accent — the tab's one main button.
   fileByShop: { marginTop: 10, paddingVertical: 12, borderRadius: 13, backgroundColor: C.accent, alignItems: 'center' },
   fileByShopText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentInk },
+  // "Apply my rules" (WHIT-508): a quiet text link under File by shop.
+  applyRulesLink: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  applyRulesLinkText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSoft },
 });

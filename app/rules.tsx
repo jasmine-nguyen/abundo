@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, SectionList, ActivityIndicator, TextInput } from 'react-native';
+import { View, Text, Pressable, StyleSheet, SectionList, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { C, FONT, tint } from '../src/theme';
@@ -10,6 +10,7 @@ import type { Rule } from '../src/model';
 import { useRulesScreenData, useCategories } from '../src/queries';
 import { useDebouncedValue } from '../src/hooks/useDebouncedValue';
 import { Header } from '../src/components/Header';
+import { SearchField } from '../src/components/SearchField';
 import { RetryButton, HeaderIconButton } from '../src/components/ui';
 
 // How long typing must settle before the filter recomputes. The text box stays instant;
@@ -142,25 +143,7 @@ export default function Rules() {
           box never flickers away mid-clear while the filtered list catches up. */}
       {(rules.length > 0 || query.length > 0) && (
         <View style={styles.searchWrap}>
-          <View style={styles.search}>
-            <Glyph name="search" size={18} color="#6e6e78" />
-            <TextInput
-              value={query}
-              onChangeText={setQuery}
-              placeholder="Search rules"
-              placeholderTextColor="#6e6e78"
-              style={styles.searchInput}
-              autoCapitalize="none"
-              autoCorrect={false}
-              returnKeyType="search"
-              accessibilityLabel="Search rules"
-            />
-            {query.length > 0 && (
-              <Pressable onPress={() => setQuery('')} hitSlop={10} accessibilityRole="button" accessibilityLabel="Clear search">
-                <Text style={styles.searchClear}>✕</Text>
-              </Pressable>
-            )}
-          </View>
+          <SearchField value={query} onChangeText={setQuery} placeholder="Search rules" accessibilityLabel="Search rules" />
         </View>
       )}
 
@@ -184,9 +167,6 @@ export default function Rules() {
 
 const styles = StyleSheet.create({
   searchWrap: { paddingHorizontal: 18, paddingTop: 6, paddingBottom: 4 },
-  search: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 13, paddingVertical: 4, paddingHorizontal: 14 },
-  searchInput: { flex: 1, fontFamily: FONT.body, fontSize: 14, color: C.textBright, paddingVertical: 8, padding: 0 },
-  searchClear: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: '#6e6e78', paddingHorizontal: 2 },
   // marginBottom 4 (not 14): the section header's marginTop 16 supplies the gap below the
   // intro, so first-section spacing (4 + 16 = 20) matches the pre-SectionList layout.
   intro: { flexDirection: 'row', gap: 12, alignItems: 'flex-start', backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 14, marginTop: 6, marginBottom: 4 },

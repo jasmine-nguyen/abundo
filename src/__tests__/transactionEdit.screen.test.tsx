@@ -69,12 +69,12 @@ it('does NOT save on blur — the note commits only via Save', async () => {
   expect(mockEdit).not.toHaveBeenCalled();
 });
 
-it('Save note is disabled (a no-op) when the note is unchanged', async () => {
+// WHIT-846: no dim, always-there button — Save note shows only once the note has been edited.
+it('Save note only shows once the note is edited', async () => {
   await draw();
-  const save = screen.getByTestId('note-save');
-  expect(save.props.accessibilityState).toMatchObject({ disabled: true });
-  fireEvent.press(save);
-  expect(mockEdit).not.toHaveBeenCalled();
+  expect(screen.queryByTestId('note-save')).toBeNull();
+  fireEvent.changeText(screen.getByTestId('note-input'), 'new note');
+  expect(screen.getByTestId('note-save')).toBeTruthy();
 });
 
 // WHIT-843 (decision A): leaving saves an edited note once with the LATEST text (typed twice, so a
@@ -214,6 +214,20 @@ it('tapping the toggle when on requests re-inclusion', async () => {
   await draw();
   fireEvent.press(screen.getByRole('switch', { name: 'Exclude from budgets' }));
   expect(mockEdit).toHaveBeenCalledWith('t1', { budget_excluded: false });
+});
+
+// WHIT-846: money coming in (a refund or transfer in) gets its own exclude wording; spend keeps
+// "Exclude from budgets". Both the manual switch and the bank's read-only note.
+it.each([
+  { case: 'money in, manual switch', over: { amount: 25 }, shown: 'Leave this money out', hidden: 'Exclude from budgets' },
+  { case: 'money out, manual switch', over: { amount: -25 }, shown: 'Exclude from budgets', hidden: 'Leave this money out' },
+  { case: 'money in, bank-excluded', over: { amount: 25, counts_to_budget: false }, shown: 'This looks like a transfer in, so it doesn\'t count toward budgets or insights.', hidden: 'This looks like a transfer or card payment, so it doesn\'t count toward budgets or insights.' },
+  { case: 'money out, bank-excluded', over: { amount: -25, counts_to_budget: false }, shown: 'This looks like a transfer or card payment, so it doesn\'t count toward budgets or insights.', hidden: 'This looks like a transfer in, so it doesn\'t count toward budgets or insights.' },
+])('exclude wording: $case', async ({ over, shown, hidden }) => {
+  seedRow(over);
+  await draw();
+  expect(screen.getByText(shown)).toBeTruthy();
+  expect(screen.queryByText(hidden)).toBeNull();
 });
 
 // WHIT-298 — a BANK-excluded charge (counts_to_budget false) shows a read-only note IN PLACE
