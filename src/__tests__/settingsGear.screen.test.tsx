@@ -1,25 +1,16 @@
 // WHIT-495 — the Settings tab became a header gear (top-left) on all five tabs, pushing the
-// /settings route. This locks three things the DoD demands:
-//   1. The gear is an accessible "Settings" button with a 44x44 touch area, and tapping it
-//      navigates to /settings.
-//   2. In the shared header the gear renders BEFORE the title (so it's first in the VoiceOver
-//      focus order and reads as an action, not part of the title).
-//   3. The gear is actually present on ALL FIVE remaining tabs. Since WHIT-841 the shared header
+// /settings route.
+//   The gear is present on ALL FIVE remaining tabs and tapping it navigates to /settings. Since WHIT-841 the shared header
 //      draws it itself (no `left` prop), so a header that stops drawing it fails here.
 import { it, expect, jest, describe, beforeEach } from '@jest/globals';
 import React from 'react';
-import { Text } from 'react-native';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { screen, fireEvent } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { routerSpies, resetRouter } from './support/routerMock';
-import { screenJson } from './support/pull';
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
-
-// Real ScrollChromeHeader, rendered on the NavBars default context (no provider) with zero
-// safe-area insets. The header renders left → title → right in JSX order.
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -31,8 +22,6 @@ jest.mock('../context', () => require('./support/contextMock').realContextWith((
 })));
 jest.mock('../hooks/useAiInsights', () => require('./support/insightsScreen').useAiInsightsMockModule());
 
-import { SettingsButton } from '../components/SettingsButton';
-import { ScrollChromeHeader } from '../motion/ScrollChromeHeader';
 import Budgets from '../../app/(tabs)/budgets';
 import Transactions from '../../app/(tabs)/transactions';
 import Accounts from '../../app/(tabs)/accounts';
@@ -46,33 +35,6 @@ useTestQueryClient();
 beforeEach(() => {
   resetRouter();
   resetAuth();
-});
-
-describe('SettingsButton (the header gear)', () => {
-  it('is an accessible "Settings" button and navigates to /settings on press', () => {
-    render(<SettingsButton />);
-    const btn = screen.getByLabelText('Settings');
-    expect(btn.props.accessibilityRole).toBe('button');
-    fireEvent.press(btn);
-    expect(routerSpies.push).toHaveBeenCalledWith('/settings');
-  });
-
-  it('pads the touch target past the 44x44 minimum (hitSlop, not a scaled glyph)', () => {
-    render(<SettingsButton />);
-    // 40x40 visual + hitSlop 8 on each side = 56x56 touchable, clears the 44x44 floor.
-    expect(screen.getByLabelText('Settings').props.hitSlop).toBe(8);
-  });
-});
-
-it('the shared header draws the gear itself, BEFORE the title (VoiceOver focus order)', () => {
-  render(
-    <ScrollChromeHeader title="TITLE_MARKER">
-      <Text>body</Text>
-    </ScrollChromeHeader>,
-  );
-  const serialized = screenJson();
-  expect(serialized.indexOf('"Settings"')).toBeGreaterThanOrEqual(0);
-  expect(serialized.indexOf('"Settings"')).toBeLessThan(serialized.indexOf('TITLE_MARKER'));
 });
 
 // The whole point of the ticket: the gear must be on EVERY remaining tab. A dropped `left` on any

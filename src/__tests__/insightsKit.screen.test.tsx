@@ -50,17 +50,16 @@ describe('the Insights tab drawn over the fake server with the shared kit', () =
 const SCREEN_DATA_MOCK = new RegExp(String.raw`^\s*jest\.(mock|doMock)\(\s*['"](\.\./)+(src/)?` + 'quer' + `ies['"]`, 'm');
 const read = (file: string) => readFileSync(join(__dirname, file), 'utf8');
 
-describe('the four smaller Insights tests use the real screen data code', () => {
-  it('none of them fakes the screen data code, and the three screen tests draw over the fake server', () => {
+describe('the three smaller Insights tests use the real screen data code', () => {
+  it('none of them fakes the screen data code, and the two screen tests draw over the fake server', () => {
     const files = [
       'earnedVsSpentGate.screen.test.tsx',
-      'insightsIncomePalette.screen.test.tsx',
       'insightsScreenGaps.screen.test.tsx',
       'insightsSegmentedControl.gaps.screen.test.tsx',
     ];
     expect(files.filter((file) => SCREEN_DATA_MOCK.test(read(file)))).toEqual([]);
 
-    const moved = files.slice(0, 3);
+    const moved = files.slice(0, 2);
     expect(moved.filter((file) => !/installFakeServer\(\)/.test(read(file)))).toEqual([]);
     expect(moved.filter((file) => !read(file).includes('./support/insightsScreen'))).toEqual([]);
   });

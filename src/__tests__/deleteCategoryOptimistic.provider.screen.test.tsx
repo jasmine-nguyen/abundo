@@ -1,15 +1,18 @@
 // WHIT-628 slice 2 — deleting a category is instant, undoes on failure, and reaches every copy of
-// its charges: the main copies AND the budget / category charge lists (which also reload).
+// its charges (main + scoped, every cycle) and drops its rules. Sign-out mid-delete must re-seat
+// nothing, and the undo puts back exactly what it changed.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react-native';
 import type { InfiniteData, QueryKey } from '@tanstack/react-query';
+
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
+import { setAuthStatus, resetAuth } from './support/authMock';
+
 import { useAppContext } from '../context';
 import type { Transaction, Category } from '../types';
 import type { Rule } from '../model';
-import type { TransactionFeedPage } from '../api';
+import type { TransactionFeedPage, TransactionSearchResult } from '../api';
 import { queryClient } from '../queryClient';
-
-jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
 import {
@@ -18,76 +21,164 @@ import {
 
 const server = installFakeServer();
 
-// A parent budget's charge list holding a Dining charge, and the Insights drill-in for Dining.
 const BUDGET_KEY = ['budgetTransactions', 'parentBudget'];
+const OTHER_BUDGET_KEY = ['budgetTransactions', 'otherBudget'];
 const CATEGORY_KEY = ['categoryTransactions', 'dining', 0];
+const PREV_CYCLE_CATEGORY_KEY = ['categoryTransactions', 'dining', 1];
 const BUDGETS_KEY = ['budgets', 14];
+const BUDGETS_KEY_28 = ['budgets', 28];
+const SEARCH_KEY = ['transactionsSearch', 'coles'];
 
+// t1 is in Dining; t2 in Groceries; t3 was already uncategorised (must never become Dining on undo).
 function seed() {
   queryClient.setQueryData(['categories'], [DELETE_DINING, DELETE_GROCERIES]);
   queryClient.setQueryData(['rules'], [DELETE_DINING_RULE, DELETE_GROCERIES_RULE]);
   queryClient.setQueryData(BUDGETS_KEY, { dining: DELETE_DINING_BUDGET, groceries: DELETE_GROCERIES_BUDGET });
-  queryClient.setQueryData(['transactions'], page([tx('t1'), tx('t2', { category: 'groceries' })]));
+  queryClient.setQueryData(BUDGETS_KEY_28, { dining: DELETE_DINING_BUDGET });
+  queryClient.setQueryData(['transactions'], page([tx('t1'), tx('t2', { category: 'groceries' }), tx('t3', { category: null })]));
+  queryClient.setQueryData(['uncategorizedFeed'], page([tx('t3', { category: null })]));
+  queryClient.setQueryData(['transactionsRecent'], [tx('t1'), tx('t3', { category: null })]);
+  queryClient.setQueryData<TransactionSearchResult>(SEARCH_KEY, { transactions: [tx('t1')] } as TransactionSearchResult);
   queryClient.setQueryData(BUDGET_KEY, [tx('t1'), tx('t2', { category: 'groceries' })]);
+  queryClient.setQueryData(OTHER_BUDGET_KEY, [tx('t3', { category: null }), tx('t4', { category: 'groceries' })]);
   queryClient.setQueryData(CATEGORY_KEY, [tx('t1')]);
+  // A charge that only lives in an older cycle's drill-in list (never loaded in the feed).
+  queryClient.setQueryData(PREV_CYCLE_CATEGORY_KEY, [tx('t9')]);
 }
 
 const categoryOf = (rows: Transaction[] | undefined) =>
   Object.fromEntries((rows ?? []).map((t) => [t.transaction_id, t.category]));
-const feedRows = () =>
-  queryClient.getQueryData<InfiniteData<TransactionFeedPage>>(['transactions'])?.pages.flatMap((p) => p.transactions);
+const feedRows = (key: QueryKey) =>
+  queryClient.getQueryData<InfiniteData<TransactionFeedPage>>(key)?.pages.flatMap((p) => p.transactions);
 const listRows = (key: QueryKey) => queryClient.getQueryData<Transaction[]>(key);
-const categoryIds = () => queryClient.getQueryData<Category[]>(['categories'])?.map((c) => c.id);
-const ruleIds = () => queryClient.getQueryData<Rule[]>(['rules'])?.map((r) => r.id);
+const searchRows = () => queryClient.getQueryData<TransactionSearchResult>(SEARCH_KEY)?.transactions;
 const invalidated = (key: QueryKey) => queryClient.getQueryState(key)?.isInvalidated;
 
-beforeEach(() => { queryClient.clear(); });
+// Production order: clearSession() wipes the cache, THEN broadcasts anon (the epoch bump).
+function signOut() {
+  act(() => { queryClient.clear(); setAuthStatus('anon'); });
+}
+
+// The delete waits on the server until resolve() (it succeeds) or reject(reply) (it gets `reply`).
+async function startDelete(result: { current: ReturnType<typeof useAppContext> }) {
+  const held = server.hold('/categories/dining');
+  let pending!: Promise<boolean>;
+  act(() => { pending = result.current.deleteCategory('dining'); });
+  const request = {
+    resolve: () => held.release(),
+    reject: (reply: Parameters<typeof server.once>[2]) => held.fail('DELETE', reply),
+  };
+  return { request, pending };
+}
+
+beforeEach(() => {
+  resetAuth();
+  queryClient.clear();
+});
 afterEach(() => { queryClient.clear(); });
 
-it('deleting a category unfiles its charges on screen instantly, undoes on failure, and on success leaves every charge list showing them uncategorised', async () => {
+// [A1]
+it('unfiles the charge in every copy — main copies, every budget list, every cycle of the drill-in — before the server replies', async () => {
   seed();
   const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { request, pending } = await startDelete(result);
 
-  // 1. A failed delete: the screen changes before the server replies, then everything is put back.
-  const failing = server.hold('/categories/dining');
-  let failedOk: boolean | undefined;
-  let failedDelete!: Promise<void>;
-  act(() => { failedDelete = result.current.deleteCategory('dining').then((ok) => { failedOk = ok; }); });
-
-  expect(categoryIds()).toEqual(['groceries']);
-  expect(ruleIds()).toEqual(['r2']);
+  expect(categoryOf(feedRows(['transactions']))).toEqual({ t1: null, t2: 'groceries', t3: null });
+  expect(categoryOf(listRows(['transactionsRecent']))).toEqual({ t1: null, t3: null });
+  expect(categoryOf(searchRows())).toEqual({ t1: null });
+  expect(categoryOf(listRows(BUDGET_KEY))).toEqual({ t1: null, t2: 'groceries' });
+  expect(categoryOf(listRows(OTHER_BUDGET_KEY))).toEqual({ t3: null, t4: 'groceries' });
+  expect(categoryOf(listRows(CATEGORY_KEY))).toEqual({ t1: null });
+  expect(categoryOf(listRows(PREV_CYCLE_CATEGORY_KEY))).toEqual({ t9: null });
+  // Both budget cycles lose the Dining budget.
   expect(queryClient.getQueryData(BUDGETS_KEY)).toEqual({ groceries: DELETE_GROCERIES_BUDGET });
-  expect(categoryOf(feedRows())).toEqual({ t1: null, t2: 'groceries' });
-  expect(categoryOf(listRows(BUDGET_KEY))).toEqual({ t1: null, t2: 'groceries' });
-  expect(categoryOf(listRows(CATEGORY_KEY))).toEqual({ t1: null });
+  expect(queryClient.getQueryData(BUDGETS_KEY_28)).toEqual({});
 
-  await act(async () => {
-    failing.fail('DELETE');
-    await failedDelete;
-  });
+  await act(async () => { request.resolve(); await pending; });
+});
 
-  expect(failedOk).toBe(false);
-  expect(categoryIds()).toEqual(['dining', 'groceries']);
-  expect(ruleIds()).toEqual(['r1', 'r2']);
+// [A2]
+it('a failed delete puts back exactly what it changed: only Dining charges return to Dining, every budget cycle is restored', async () => {
+  seed();
+  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { request, pending } = await startDelete(result);
+
+  let ok!: boolean;
+  await act(async () => { request.reject('dropped'); ok = await pending; });
+
+  expect(ok).toBe(false);
+  // t3 was uncategorised before — the undo must not stamp Dining onto it.
+  expect(categoryOf(feedRows(['transactions']))).toEqual({ t1: 'dining', t2: 'groceries', t3: null });
+  expect(categoryOf(feedRows(['uncategorizedFeed']))).toEqual({ t3: null });
+  expect(categoryOf(listRows(['transactionsRecent']))).toEqual({ t1: 'dining', t3: null });
+  expect(categoryOf(searchRows())).toEqual({ t1: 'dining' });
+  expect(categoryOf(listRows(OTHER_BUDGET_KEY))).toEqual({ t3: null, t4: 'groceries' });
+  // t9 lived only in a scoped list — it must still come back.
+  expect(categoryOf(listRows(PREV_CYCLE_CATEGORY_KEY))).toEqual({ t9: 'dining' });
   expect(queryClient.getQueryData(BUDGETS_KEY)).toEqual({ dining: DELETE_DINING_BUDGET, groceries: DELETE_GROCERIES_BUDGET });
-  expect(categoryOf(feedRows())).toEqual({ t1: 'dining', t2: 'groceries' });
-  expect(categoryOf(listRows(BUDGET_KEY))).toEqual({ t1: 'dining', t2: 'groceries' });
-  expect(categoryOf(listRows(CATEGORY_KEY))).toEqual({ t1: 'dining' });
-  expect(result.current.toast).toBe('Could not delete category. Please try again.');
+  expect(queryClient.getQueryData(BUDGETS_KEY_28)).toEqual({ dining: DELETE_DINING_BUDGET });
+  expect(queryClient.getQueryData<Rule[]>(['rules'])).toEqual([DELETE_DINING_RULE, DELETE_GROCERIES_RULE]);
+  expect(queryClient.getQueryData<Category[]>(['categories'])).toEqual([DELETE_DINING, DELETE_GROCERIES]);
+  // Nothing refreshes on failure.
+  for (const key of [BUDGET_KEY, CATEGORY_KEY, ['uncategorizedCount'], ['breakdown']]) {
+    expect([key, invalidated(key) ?? false]).toEqual([key, false]);
+  }
+});
+
+// [A4]
+it('signing out mid-delete then failing re-seats nothing into the cleared cache and shows no toast', async () => {
+  seed();
+  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { request, pending } = await startDelete(result);
+
+  signOut();
+  let ok!: boolean;
+  await act(async () => { request.reject('dropped'); ok = await pending; });
+
+  expect(ok).toBe(false);
+  expect(result.current.toast).toBeNull();
+  for (const key of [['categories'], ['rules'], BUDGETS_KEY, BUDGETS_KEY_28, BUDGET_KEY, CATEGORY_KEY, PREV_CYCLE_CATEGORY_KEY, ['transactions']]) {
+    expect([key, queryClient.getQueryData(key)]).toEqual([key, undefined]);
+  }
+});
+
+// [A5]
+it('signing out mid-delete then succeeding returns false (no navigate-back), no toast, no refresh', async () => {
+  seed();
+  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { request, pending } = await startDelete(result);
+
+  signOut();
+  // The next session loads its own charge lists before the old delete settles.
+  queryClient.setQueryData(BUDGET_KEY, [tx('n1', { category: 'dining' })]);
+  let ok!: boolean;
+  await act(async () => { request.resolve(); ok = await pending; });
+
+  expect(ok).toBe(false);
+  expect(result.current.toast).toBeNull();
   expect(invalidated(BUDGET_KEY)).toBe(false);
-  expect(invalidated(CATEGORY_KEY)).toBe(false);
+  expect(categoryOf(listRows(BUDGET_KEY))).toEqual({ n1: 'dining' });
+});
 
-  // 2. A successful delete: every copy shows the charge uncategorised, and the charge lists reload.
-  let savedOk: boolean | undefined;
-  await act(async () => { savedOk = await result.current.deleteCategory('dining'); });
+// [A7]
+it('a successful delete refreshes every cycle of the charge lists but never the budgets or the feed', async () => {
+  seed();
+  const { result } = renderHook(() => useAppContext(), { wrapper });
+  const { request, pending } = await startDelete(result);
 
-  expect(savedOk).toBe(true);
-  expect(categoryOf(feedRows())).toEqual({ t1: null, t2: 'groceries' });
-  expect(categoryOf(listRows(BUDGET_KEY))).toEqual({ t1: null, t2: 'groceries' });
-  expect(categoryOf(listRows(CATEGORY_KEY))).toEqual({ t1: null });
+  let ok!: boolean;
+  await act(async () => { request.resolve(); ok = await pending; });
+
+  expect(ok).toBe(true);
   expect(result.current.toast).toBe('Category deleted.');
-  expect(invalidated(BUDGET_KEY)).toBe(true);
-  expect(invalidated(CATEGORY_KEY)).toBe(true);
-  // Budgets are cascaded by hand; a refetch would resurrect the dropped budget.
+  for (const key of [BUDGET_KEY, OTHER_BUDGET_KEY, CATEGORY_KEY, PREV_CYCLE_CATEGORY_KEY, SEARCH_KEY, ['uncategorizedFeed']]) {
+    expect([key, invalidated(key)]).toEqual([key, true]);
+  }
   expect(invalidated(BUDGETS_KEY)).toBe(false);
+  expect(invalidated(BUDGETS_KEY_28)).toBe(false);
+  expect(invalidated(['transactions'])).toBe(false);
+  expect(invalidated(['rules'])).toBe(false);
+  // The dropped rule and budget stay dropped after success.
+  expect(queryClient.getQueryData<Rule[]>(['rules'])).toEqual([DELETE_GROCERIES_RULE]);
+  expect(queryClient.getQueryData(BUDGETS_KEY_28)).toEqual({});
 });

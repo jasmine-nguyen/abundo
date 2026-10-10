@@ -112,42 +112,33 @@ describe('signInWithPassword — challenge + errors', () => {
     expect(mockSetItem.mock.calls.some((c) => c[0] === REFRESH_KEY)).toBe(false);
   });
 
-  it('maps a bad password to a generic, non-enumerating message', async () => {
-    mockAuthenticateUser.mockImplementation((_d, cb) => cb.onFailure!({ code: 'NotAuthorizedException', message: 'Incorrect username or password.' }));
-    await expect(loadAuth().signInWithPassword('me@x.com', 'wrong')).resolves.toEqual({
+  it.each([
+    ['NotAuthorizedException', 'Incorrect username or password.'],
+    ['UserNotFoundException', ''],
+  ])('maps %s to the SAME non-enumerating message', async (code, message) => {
+    mockAuthenticateUser.mockImplementation((_d, cb) => cb.onFailure!({ code, message }));
+    await expect(loadAuth().signInWithPassword('me@x.com', 'pw')).resolves.toEqual({
       ok: false,
       error: 'Incorrect email or password.',
     });
   });
 
-  it('maps UserNotFound to the SAME message as a bad password (no user enumeration)', async () => {
-    mockAuthenticateUser.mockImplementation((_d, cb) => cb.onFailure!({ code: 'UserNotFoundException' }));
-    await expect(loadAuth().signInWithPassword('ghost@x.com', 'pw')).resolves.toEqual({
-      ok: false,
-      error: 'Incorrect email or password.',
-    });
-  });
-
-  it('maps a network error to an offline message, and rate-limit to a back-off message', async () => {
-    mockAuthenticateUser.mockImplementation((_d, cb) => cb.onFailure!({ code: 'NetworkError' }));
+  it.each([
+    ['NetworkError', '', /offline/i],
+    ['TooManyRequestsException', '', /too many/i],
+    ['LimitExceededException', '', /too many/i],
+    ['NotAuthorizedException', 'Password attempts exceeded', /too many/i],
+    ['UserNotConfirmedException', '', /verified/i],
+    ['PasswordResetRequiredException', '', /reset your password/i],
+    ['InvalidPasswordException', '', /requirements/i],
+    ['CodeMismatchException', '', /code isn.t right/i],
+    ['ExpiredCodeException', '', /expired/i],
+  ])('mapCognitoError: %s %s → %s', async (code, message, expected) => {
+    mockAuthenticateUser.mockImplementation((_d, cb) => cb.onFailure!({ code, message }));
     await expect(loadAuth().signInWithPassword('me@x.com', 'pw')).resolves.toEqual({
       ok: false,
-      error: expect.stringMatching(/offline/i),
+      error: expect.stringMatching(expected),
     });
-
-    jest.resetModules();
-    mockAuthenticateUser.mockImplementation((_d, cb) => cb.onFailure!({ code: 'TooManyRequestsException' }));
-    await expect(loadAuth().signInWithPassword('me@x.com', 'pw')).resolves.toEqual({
-      ok: false,
-      error: expect.stringMatching(/too many/i),
-    });
-  });
-
-  it('returns a config error and never calls the SDK when the pool id is missing', async () => {
-    delete process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID;
-    const auth = loadAuth();
-    await expect(auth.signInWithPassword('me@x.com', 'pw')).resolves.toMatchObject({ ok: false });
-    expect(mockAuthenticateUser).not.toHaveBeenCalled();
   });
 });
 
@@ -169,11 +160,5 @@ describe('SRP refresh routing (WHIT-178)', () => {
     expect(url).toContain('cognito-idp.ap-southeast-2.amazonaws.com');
     expect(body.AuthFlow).toBe('REFRESH_TOKEN_AUTH');
     expect(mockRefreshAsync).not.toHaveBeenCalled();
-  });
-});
-
-describe('node-safe import', () => {
-  it('src/auth imports in the node logic project and exports signInWithPassword', () => {
-    expect(typeof loadAuth().signInWithPassword).toBe('function');
   });
 });

@@ -19,7 +19,6 @@ import {
 } from '../api';
 
 const mockGetAuthToken = getAuthToken as jest.MockedFunction<typeof getAuthToken>;
-const API = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
 
 function okJson(body: unknown) {
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
@@ -73,17 +72,11 @@ describe('every fetcher fails loudly with no Cognito session (WHIT-162)', () => 
   );
 });
 
-describe('the ID token is read per-call, not frozen at module load', () => {
-  it('uses the CURRENT token getAuthToken returns on each call', async () => {
-    fetchMock.mockReturnValue(okJson([]));
-
-    mockGetAuthToken.mockResolvedValueOnce('token-A');
-    await fetchTransactions();
-    expect((fetchMock.mock.calls[0][1] as any).headers.Authorization).toBe('Bearer token-A');
-    expect(fetchMock.mock.calls[0][0]).toBe(`${API}/transactions`);
-
-    mockGetAuthToken.mockResolvedValueOnce('token-B');
-    await fetchTransactions();
-    expect((fetchMock.mock.calls[1][1] as any).headers.Authorization).toBe('Bearer token-B');
-  });
+it('each call reads a fresh token and calls never share headers', async () => {
+  fetchMock.mockReturnValue(okJson([]));
+  mockGetAuthToken.mockResolvedValueOnce('first').mockResolvedValueOnce('second');
+  await createCategory({ name: 'Gym', bucket: 'Lifestyle' as any, icon: 'dumbbell' });
+  await fetchCategories();
+  expect((fetchMock.mock.calls[0][1] as any).headers).toEqual({ Authorization: 'Bearer first', 'Content-Type': 'application/json' });
+  expect((fetchMock.mock.calls[1][1] as any).headers).toEqual({ Authorization: 'Bearer second' });
 });

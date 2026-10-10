@@ -8,15 +8,14 @@
 // fail the count route so the local count over the seeded recent rows drives the dot.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { screen, within } from '@testing-library/react-native';
+import { render, screen, within, waitFor } from '@testing-library/react-native';
 import { txn } from './factory';
 import { installFakeServer } from './support/fakeServer';
 import { tabBarProps, TAB_ROUTES } from './support/tabBar';
-import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
+import { WithQueries, refreshInAct, renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { COFFEE_SHORT } from './support/categories';
-import { styleOf } from './support/layout';
-import { ChatProvider } from '../chat/ChatContext';
+import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../motion/NavBarsContext', () => ({ useNavBars: () => ({ visibility: { interpolate: () => 0 } }) }));
@@ -50,16 +49,13 @@ describe('the dot falls back to the local recent-window count when the server co
 
   // WHIT-203: the dot comes from the tab bar's own recent-transactions read. Reverting the tab bar
   // off that read (or breaking countUncategorized's input) fails these.
-  it('renders the dot when the recent list has an uncategorized, budget-counting txn', async () => {
-    server.seed('/transactions', [txn({ category: null, counts_to_budget: true })]);
+  it.each([
+    ['an uncategorized, budget-counting txn', null, true],
+    ['none uncategorized', 'coffee', false],
+  ])('the dot shows when the recent list has %s → %s', async (_case, category, shown) => {
+    server.seed('/transactions', [txn({ category, counts_to_budget: true })]);
     await renderWithQueries(<TabBar {...singleTab} />);
-    expect(screen.getByTestId('tab-uncat-dot')).toBeTruthy();
-  });
-
-  it('renders no dot when the recent list has none uncategorized', async () => {
-    server.seed('/transactions', [txn({ category: 'coffee', counts_to_budget: true })]);
-    await renderWithQueries(<TabBar {...singleTab} />);
-    expect(screen.queryByTestId('tab-uncat-dot')).toBeNull();
+    expect(screen.queryByTestId('tab-uncat-dot') !== null).toBe(shown);
   });
 
   // WHIT-330: a transfers-only account (every unfiled charge is a not-in-budget transfer) lights
@@ -82,43 +78,65 @@ describe('the dot falls back to the local recent-window count when the server co
     expect(tabItem('Accounts').queryByTestId('tab-uncat-dot')).toBeNull();
   });
 
-  it('no dot on any tab when nothing is uncategorized (Accounts tab stays clean too)', async () => {
+  // [A3] WHIT-203: the fallback reads the BOUNDED recent list (GET /transactions), not the paged
+  // feed. Fail-on-revert: drive the dot from useTransactionsScreenData (the feed) → dot shows.
+  it('[A3] the fallback ignores an unfiled charge that is only in the feed, not the recent list', async () => {
+    server.seed('/transactions/feed', { transactions: [txn({ transaction_id: 'old', category: null, counts_to_budget: true })], nextCursor: null });
     server.seed('/transactions', [txn({ category: 'coffee', counts_to_budget: true })]);
-    await renderWithQueries(<TabBar {...fiveTabs} />);
+    await renderWithQueries(<TabBar {...singleTab} />);
+    expect(server.sent('GET', '/transactions')).toHaveLength(1);
     expect(screen.queryByTestId('tab-uncat-dot')).toBeNull();
+  });
+
+  // [A5] The local fallback resolves the category through the seeded taxonomy: a row filed to a
+  // category the taxonomy no longer has counts as unfiled. Fail-on-revert: count only null
+  // categories (ignore the taxonomy lookup) → no dot.
+  it('[A5] the fallback counts a row filed to a category missing from the taxonomy', async () => {
+    server.seed('/transactions', [txn({ category: 'deleted-cat', counts_to_budget: true })]);
+    await renderWithQueries(<TabBar {...singleTab} />);
+    expect(screen.getByTestId('tab-uncat-dot')).toBeTruthy();
   });
 });
 
-// WHIT-501: older history can hold an unfiled charge the recent window doesn't show; the server's
-// whole-history count must light the dot anyway.
-it('lights the dot from the server count when the recent list has nothing unfiled', async () => {
-  server.seed(COUNT, { count: 2 });
-  await renderWithQueries(<TabBar {...singleTab} />);
-  expect(screen.getByTestId('tab-uncat-dot')).toBeTruthy();
-});
+describe('the dot trusts the server count once it resolves', () => {
+  beforeEach(() => { server.seed('/categories', [COFFEE_SHORT]); });
 
-// WHIT-495: the Settings tab became a header gear, so the bar renders exactly the five remaining
-// tabs and never a "Settings" item, even when the navigator still passes a settings route.
-// Fail-on-revert: re-add `{ name: 'settings', label: 'Settings', icon: 'navSettings' }` to TABS
-// → the settings route renders a "Settings" tab.
-it('renders the five remaining tabs and never a Settings tab, even when a settings route is present', async () => {
-  const withSettings = tabBarProps([...TAB_ROUTES, 'settings']);
-  await renderWithQueries(<TabBar {...withSettings} />);
-  for (const label of ['Budgets', 'Transactions', 'Accounts', 'Insights', 'Goals']) {
-    expect(screen.getByText(label)).toBeTruthy();
-  }
-  expect(screen.queryByText('Settings')).toBeNull();
-});
+  // WHIT-501: older history can hold an unfiled charge the recent window doesn't show; the server's
+  // whole-history count must light the dot anyway.
+  it('lights the dot from the server count when the recent list has nothing unfiled', async () => {
+    server.seed(COUNT, { count: 2 });
+    await renderWithQueries(<TabBar {...singleTab} />);
+    expect(screen.getByTestId('tab-uncat-dot')).toBeTruthy();
+  });
 
-describe('WHIT-735 tab labels', () => {
-  // [A6] (P0) every tab label is at least Apple's 11pt, and still shrinks to fit on one line.
-  it('[A6] all five tab labels are 11pt or more and keep their one-line shrink-to-fit', async () => {
-    await renderWithQueries(<ChatProvider><TabBar {...tabBarProps()} /></ChatProvider>);
+  // [A1] WHIT-501: a RESOLVED server 0 is trusted over the recent window. Fail-on-revert: make the
+  // dot fall back on a falsy count (`serverCount || local`) or take the max → dot shows.
+  it('[A1] hides the dot on a resolved server count of 0 even when the recent list has an unfiled charge', async () => {
+    server.seed(COUNT, { count: 0 });
+    server.seed('/transactions', [txn({ category: null, counts_to_budget: true })]);
+    await renderWithQueries(<TabBar {...singleTab} />);
+    expect(server.sent('GET', COUNT)).toHaveLength(1);
+    expect(screen.queryByTestId('tab-uncat-dot')).toBeNull();
+  });
 
-    for (const label of ['Budgets', 'Transactions', 'Accounts', 'Insights', 'Goals']) {
-      const text = screen.getByText(label);
-      expect(styleOf(text).fontSize).toBeGreaterThanOrEqual(11);
-      expect(text.props).toMatchObject({ numberOfLines: 1, adjustsFontSizeToFit: true, maxFontSizeMultiplier: 1.2 });
-    }
+  // [A2] WHIT-501: while the server count is still loading, the dot falls back to the local count
+  // (never to 0). Fail-on-revert: `serverCount ?? 0` → no dot while loading.
+  it('[A2] lights the dot from the recent list while the server count is still loading', async () => {
+    const held = server.hold(COUNT);
+    server.seed('/transactions', [txn({ category: null, counts_to_budget: true })]);
+    render(<WithQueries><TabBar {...singleTab} /></WithQueries>);
+    // Every read but the held count settles; read the dot, then release before asserting so a
+    // failure never leaves the held request open.
+    await waitFor(() => expect(queryClient.isFetching()).toBe(1));
+    const dotWhileLoading = screen.queryByTestId('tab-uncat-dot');
+    // The server answers 0 (default) → the resolved value now wins and the dot goes away.
+    // The held reply resolves over a few promise hops, so wait for the read to land inside act.
+    await refreshInAct(async () => {
+      held.release();
+      while (queryClient.isFetching() > 0) await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(dotWhileLoading).not.toBeNull();
+    expect(server.sent('GET', COUNT)).toHaveLength(1);
+    expect(screen.queryByTestId('tab-uncat-dot')).toBeNull();
   });
 });

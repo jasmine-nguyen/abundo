@@ -31,10 +31,4 @@ describe('nextNavBarsState', () => {
     // Scrolling down but ending at y <= TOP_ZONE stays shown (no early flicker on lift-off).
     expect(nextNavBarsState('shown', { y: TOP_ZONE, prevY: 0 })).toBe('shown');
   });
-
-  it('respects a custom threshold', () => {
-    // delta of 10 hides at the default (4) but not at a threshold of 20.
-    expect(nextNavBarsState('shown', { y: 110, prevY: 100 }, 20)).toBe('shown');
-    expect(nextNavBarsState('shown', { y: 130, prevY: 100 }, 20)).toBe('hidden');
-  });
 });

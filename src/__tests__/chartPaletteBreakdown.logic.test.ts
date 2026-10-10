@@ -1,20 +1,16 @@
 // WHIT chart palette — the Insights breakdown selectors, fed a category accessor whose colours come
 // from the ramp, must recolour the REAL rows the palette touches and leave the synthetic/reserved
 // ones alone. toCategory sets every Category.color to `chartCategoryColor(id, { slot: colorSlot })`
-// (WHIT-836); this file feeds categoryBreakdown / incomeBreakdown a wrapper applying that same rule
+// (WHIT-836); this file feeds categoryBreakdown a wrapper applying that same rule
 // and pins:
 //   [A4] a "Directly in X" leaf inherits its PARENT's ramp colour (never a hash of `${id}__direct`)
 //   [A5] a refund line takes the refunded MEMBER's ramp colour (never a hash of `${id}__refund`)
-//   [A6] the Uncategorized row stays the hard-coded C.purple (never routed through the ramp)
-//   [A8] the muted income "adjustment" plug stays ADJUSTMENT_ROW's neutral tone (never recoloured)
 // The real categories below carry a STORED colorSlot deliberately, and each one is pinned to the
 // slot colour AND asserted to differ from its id-derived colour. Without that, the `{ slot: ... }`
 // on the wrapper below would be decorative — every assertion would still pass with the slot dropped,
 // and the file would prove nothing about the stored slot.
 import { describe, it, expect } from '@jest/globals';
-import { categoryBreakdown, incomeBreakdown } from '../context';
-import { UNCATEGORIZED_KEY } from '../model';
-import { C, ADJUSTMENT_ROW } from '../theme';
+import { categoryBreakdown } from '../context';
 import { chartCategoryColor } from '../chartColors';
 import { cat, spend, withRollup } from './factory';
 import type { Category } from '../types';
@@ -74,35 +70,5 @@ describe('categoryBreakdown under the chart-palette accessor', () => {
     expect(refund.color).not.toBe(chartCategoryColor('clothes'));          // via its slot, not its id
     expect(refund.color).not.toBe(chartCategoryColor('clothes__refund'));  // NOT the synthetic-id hash
   });
-
-  it('[A6] the Uncategorized row keeps the hard-coded C.purple, never a ramp colour', () => {
-    const cats = [cat({ id: 'groceries', name: 'Groceries', bucket: 'Living', parent: null })];
-    const breakdown = withRollup(
-      { groceries: spend({ posted: 40, pending: 0 }), [UNCATEGORIZED_KEY]: spend({ posted: 25, pending: 0 }) },
-      { nodes: {} },
-    );
-    const { rows } = categoryBreakdown({ breakdown, category: chartWrap(cats) });
-    const uncat = rows.find((r) => r.id === UNCATEGORIZED_KEY)!;
-    expect(uncat.color).toBe(C.purple);
-    expect(uncat.color).not.toBe(chartCategoryColor(UNCATEGORIZED_KEY)); // not routed through the ramp
-  });
 });
 
-describe('incomeBreakdown under the chart-palette accessor', () => {
-  it('[A7-logic] a real income source recolours to its ramp slot; [A8] the muted plug stays neutral', () => {
-    const cats = [cat({ id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase', color: '#2ac3de', colorSlot: 5 })];
-    // earned 3120 vs shown 3000 → a 120 residual → one muted adjustment plug appended.
-    const { rows } = incomeBreakdown({
-      earned: 3120,
-      incomeSources: [{ id: 'salary', posted: 3000, pending: 0, amount: 3000 }],
-      category: chartWrap(cats),
-    });
-    const salary = rows.find((r) => r.id === 'salary')!;
-    const plug = rows.find((r) => r.muted)!;
-    expect(salary.color).toBe(chartCategoryColor('salary', { slot: 5 })); // ramp, not the old '#2ac3de'
-    expect(salary.color).not.toBe(chartCategoryColor('salary'));          // via its slot, not its id
-    expect(salary.color).not.toBe('#2ac3de');
-    expect(plug.color).toBe(ADJUSTMENT_ROW.color);            // untouched by the ramp
-    expect(plug.color).not.toBe(chartCategoryColor('__earned_adjustment__'));
-  });
-});

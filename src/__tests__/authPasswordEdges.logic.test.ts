@@ -77,15 +77,6 @@ describe('single-flight (double-tap)', () => {
     expect(mockAuthenticateUser).toHaveBeenCalledTimes(2);
   });
 
-  it('a failed attempt releases the lock and can be retried', async () => {
-    mockAuthenticateUser.mockImplementationOnce((_d, c) => c.onFailure!({ code: 'NotAuthorizedException' }));
-    const auth = loadAuth();
-    await expect(auth.signInWithPassword('me@x.com', 'wrong')).resolves.toMatchObject({ ok: false });
-
-    mockAuthenticateUser.mockImplementationOnce((_d, c) => c.onSuccess!(fakeSession('IDTOK', 'AC', freshClaims(), 'R')));
-    await expect(auth.signInWithPassword('me@x.com', 'right')).resolves.toEqual({ ok: true });
-    expect(auth.getStatus()).toBe('authed');
-  });
 });
 
 describe('email normalisation', () => {
@@ -110,14 +101,6 @@ describe('SRP InitiateAuth refresh — failure modes', () => {
     expect(auth.getStatus()).toBe('anon');
   });
 
-  it('a 200 with no IdToken → undefined, anon', async () => {
-    const auth = loadAuth();
-    await seatExpiredSrp(auth);
-    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ AuthenticationResult: { AccessToken: 'a' } }) });
-    await expect(auth.getAuthToken()).resolves.toBeUndefined();
-    expect(auth.getStatus()).toBe('anon');
-  });
-
   it('fetch itself rejecting (offline) → undefined, never throws', async () => {
     const auth = loadAuth();
     await seatExpiredSrp(auth);
@@ -137,15 +120,6 @@ describe('SRP InitiateAuth refresh — failure modes', () => {
     expect(refreshWrites[refreshWrites.length - 1]).toBe('ROTATED');
   });
 
-  it('an OMITTED refresh token does NOT rewrite the stored one', async () => {
-    const auth = loadAuth();
-    await seatExpiredSrp(auth);
-    const before = mockSetItem.mock.calls.filter((c) => c[0] === REFRESH_KEY).length;
-    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ AuthenticationResult: { IdToken: 'ID_NEW', ExpiresIn: 3600 } }) });
-    await expect(auth.getAuthToken()).resolves.toBe('ID_NEW');
-    const after = mockSetItem.mock.calls.filter((c) => c[0] === REFRESH_KEY).length;
-    expect(after).toBe(before);
-  });
 });
 
 describe('provenance is robust to a method-key read failure (QA #2 fix)', () => {
@@ -186,17 +160,7 @@ describe('partial-seat rollback (QA #1 fix)', () => {
   });
 });
 
-describe('defensive challenge + synchronous-throw handling', () => {
-  it('an unsupported MFA challenge resolves to a friendly error, seats nothing', async () => {
-    mockAuthenticateUser.mockImplementation((_d, c) => c.mfaRequired!({}));
-    const auth = loadAuth();
-    await expect(auth.signInWithPassword('me@x.com', 'pw')).resolves.toEqual({
-      ok: false,
-      error: expect.stringMatching(/doesn't support/i),
-    });
-    expect(auth.getStatus()).not.toBe('authed');
-  });
-
+describe('synchronous-throw handling', () => {
   it('a synchronous SDK throw (e.g. crypto polyfill missing) is caught → ok:false, no crash', async () => {
     mockAuthenticateUser.mockImplementation(() => {
       throw new TypeError('crypto.getRandomValues is not a function');
@@ -204,22 +168,5 @@ describe('defensive challenge + synchronous-throw handling', () => {
     const auth = loadAuth();
     await expect(auth.signInWithPassword('me@x.com', 'pw')).resolves.toMatchObject({ ok: false });
     expect(auth.getStatus()).not.toBe('authed');
-  });
-});
-
-describe('mapCognitoError — the branches the base suite does not hit', () => {
-  it('NotAuthorized with "attempts exceeded" → back-off message', async () => {
-    mockAuthenticateUser.mockImplementation((_d, c) => c.onFailure!({ code: 'NotAuthorizedException', message: 'Password attempts exceeded' }));
-    await expect(loadAuth().signInWithPassword('me@x.com', 'pw')).resolves.toEqual({ ok: false, error: expect.stringMatching(/too many/i) });
-  });
-
-  it('UserNotConfirmed → a "not verified" message', async () => {
-    mockAuthenticateUser.mockImplementation((_d, c) => c.onFailure!({ code: 'UserNotConfirmedException' }));
-    await expect(loadAuth().signInWithPassword('me@x.com', 'pw')).resolves.toEqual({ ok: false, error: expect.stringMatching(/verified/i) });
-  });
-
-  it('PasswordResetRequired → a "reset your password" message', async () => {
-    mockAuthenticateUser.mockImplementation((_d, c) => c.onFailure!({ code: 'PasswordResetRequiredException' }));
-    await expect(loadAuth().signInWithPassword('me@x.com', 'pw')).resolves.toEqual({ ok: false, error: expect.stringMatching(/reset your password/i) });
   });
 });

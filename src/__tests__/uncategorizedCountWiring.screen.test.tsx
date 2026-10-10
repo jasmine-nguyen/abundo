@@ -11,7 +11,7 @@
 // undefined" is the count request held open.
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, within } from '@testing-library/react-native';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react-native';
 import { txn } from './factory';
 
 // Real selectors (countUncategorized / transactionGroups); only useAppContext is stubbed.
@@ -28,9 +28,10 @@ import { TabBar } from '../../app/(tabs)/_layout';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { tabBarProps } from './support/tabBar';
-import { useTestQueryClient, renderWithQueries, WithQueries, settle, loaded } from './support/renderWithQueries';
+import { useTestQueryClient, renderWithQueries, WithQueries, settle, loaded, refreshInAct } from './support/renderWithQueries';
+import { GROCERIES_TOP } from './support/categories';
 import { queryClient } from '../queryClient';
-import { transactionsKey, uncategorizedFeedKey } from '../queryKeys';
+import { transactionsKey, uncategorizedFeedKey, uncategorizedCountKey } from '../queryKeys';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -41,7 +42,8 @@ const RECENT = '/transactions';
 const COUNT = '/transactions/uncategorized/count';
 
 // No categories are seeded, so every row resolves to Uncategorized.
-const seedFeed = (path: string, transactions: unknown[]) => server.seed(path, { transactions, nextCursor: null });
+const seedFeed = (path: string, transactions: unknown[], nextCursor: string | null = null) =>
+  server.seed(path, { transactions, nextCursor });
 
 const barProps = tabBarProps(['transactions']);
 
@@ -133,12 +135,128 @@ describe('nav-bar tab dot', () => {
     held.release();
     await settle();
   });
+});
 
-  // The tab bar keeps the Transactions feed warm, so the tab opens on loaded rows.
-  it('reads the full feed in the background while the tab bar is up', async () => {
-    seedFeed(FEED, [txn({ transaction_id: 't1' })]);
-    await renderWithQueries(<TabBar {...barProps} />);
-    expect(server.sentUnder('GET', '/transactions/feed')).toHaveLength(1);
-    expect(queryClient.getQueryState(transactionsKey)?.status).toBe('success');
+// WHIT-552 / WHIT-686 — the filing buttons ("Apply my rules", "File by shop") and the shops request
+// read the same `serverCount ?? local` count the badge does, and follow it live.
+describe('filing buttons and the shops gate', () => {
+  const MERCHANTS = '/transactions/uncategorized/merchants';
+  const FILE_BY_SHOP = 'transactions-file-by-shop';
+  const APPLY_RULES = 'transactions-apply-rules';
+  const merchants = {
+    unfiled: 20,
+    groups: [{ merchant: 'Coles', rulePattern: 'coles', groupedBy: 'merchant', count: 20, samples: ['COLES 1'], firstDate: null, lastDate: null, alsoCatches: [] }],
+    ungrouped: { count: 0, samples: [] },
+  };
+  const countFailed = () => waitFor(() => expect(queryClient.getQueryState(uncategorizedCountKey)?.status).toBe('error'));
+
+  async function renderUncategorizedTab() {
+    await renderWithQueries(<Transactions />);
+    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    await settle();
+  }
+
+  async function setCount(count: number) {
+    server.seed(COUNT, { count });
+    await refreshInAct(() => queryClient.invalidateQueries({ queryKey: uncategorizedCountKey }));
+    await settle();
+  }
+
+  beforeEach(() => {
+    server.seed('/categories', [GROCERIES_TOP]);
+    server.seed(MERCHANTS, merchants);
+  });
+
+  // [G1] caught-up user: resolved server 0. The walk must NOT run, and the button hides.
+  it('[G1] resolved server 0 → no shops request AND button hidden', async () => {
+    server.seed(COUNT, { count: 0 });
+    await renderUncategorizedTab();
+    expect(server.sentUnder('GET', MERCHANTS)).toHaveLength(0);         // the walk is gated OFF for a caught-up user
+    expect(screen.queryByTestId(FILE_BY_SHOP)).toBeNull(); // and the button agrees
+  });
+
+  // [G2] backlog: resolved server count > 0 → walk runs, button shows.
+  it('[G2] resolved server count > 0 → shops requested AND button shown', async () => {
+    server.seed(COUNT, { count: 5 });
+    await renderUncategorizedTab();
+    expect(server.sentUnder('GET', MERCHANTS)).toHaveLength(1);
+    expect(screen.getByTestId(FILE_BY_SHOP)).toBeTruthy();
+  });
+
+  // [A3] The shops gate and the buttons read the same fallback. Fail-on-revert: gate the shops
+  // request on the server count alone → no shops request, no "File by shop".
+  it('[A3] with unfiled rows loaded, the shops are fetched and both filing buttons show', async () => {
+    server.fail(COUNT, 500);
+    seedFeed(UNCATEGORIZED_FEED, [txn({ transaction_id: 't1', category: null })]);
+    await renderUncategorizedTab();
+    await countFailed();
+    expect(server.sentUnder('GET', MERCHANTS)).toHaveLength(1);
+    expect(screen.getByTestId(APPLY_RULES)).toBeTruthy();
+    expect(await screen.findByTestId(FILE_BY_SHOP)).toBeTruthy();
+  });
+
+  // [A5] A failed shops request leaves "File by shop" hidden, but "Apply my rules" stays.
+  it('[A5] a failed shops request hides only "File by shop"', async () => {
+    server.seed(COUNT, { count: 5 });
+    server.fail(MERCHANTS, 500);
+    seedFeed(UNCATEGORIZED_FEED, [txn({ transaction_id: 't1', category: null })]);
+    await renderUncategorizedTab();
+    expect(server.sentUnder('GET', MERCHANTS)).toHaveLength(1);
+    expect(screen.getByTestId(APPLY_RULES)).toBeTruthy();
+    expect(screen.queryByTestId(FILE_BY_SHOP)).toBeNull();
+  });
+
+  // [A6] Mid-session the count drops to 0 while the loaded page was already empty (the rows sat
+  // deeper in history). Both buttons go. Fail-on-revert: drop `uncategorizedCount > 0` from the
+  // "Apply my rules" gate → it stays up over "All caught up".
+  it('[A6] both buttons hide when the count drops to 0 mid-session', async () => {
+    server.seed(COUNT, { count: 4 });
+    seedFeed(UNCATEGORIZED_FEED, [], 'c1');
+    await renderUncategorizedTab();
+    expect(screen.getByTestId(APPLY_RULES)).toBeTruthy();
+    expect(screen.getByTestId(FILE_BY_SHOP)).toBeTruthy();
+
+    await setCount(0);
+    expect(await screen.findByText('All caught up')).toBeTruthy();
+    expect(screen.queryByTestId(APPLY_RULES)).toBeNull();
+    expect(screen.queryByTestId(FILE_BY_SHOP)).toBeNull();
+  });
+
+  // [A7] Mid-session the count goes 0 → 3 with an empty loaded page. "Apply my rules" appears on
+  // the server number alone. Fail-on-revert: gate it on the loaded rows → it never shows.
+  it('[A7] "Apply my rules" appears when the count rises above 0 with nothing loaded', async () => {
+    server.seed(COUNT, { count: 0 });
+    await renderUncategorizedTab();
+    expect(screen.queryByTestId(APPLY_RULES)).toBeNull();
+
+    await setCount(3);
+    expect(await screen.findByTestId(APPLY_RULES)).toBeTruthy();
+    expect(screen.queryByText('All caught up')).toBeNull();
+  });
+});
+
+// WHIT-501 — the "two-scan skew": the badge says there ARE unfiled charges but the loaded pages
+// show none, so the tab explains itself rather than going blank.
+describe('Uncategorized tab more-state', () => {
+  // [C4a] badge>0, empty first page but a live cursor -> "More to load" (deep rows a Load More away).
+  it('shows "More to load" when the loaded page is empty but the cursor says more history', async () => {
+    server.seed(COUNT, { count: 639 });
+    server.seed(UNCATEGORIZED_FEED, { transactions: [], nextCursor: 'deep-cursor' });
+    await renderWithQueries(<Transactions />);
+    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+
+    expect(await screen.findByText('More to load')).toBeTruthy();
+    expect(screen.queryByText('All caught up')).toBeNull();            // NOT the caught-up claim
+  });
+
+  // [C4b] badge>0, empty page AND no more pages (stale/skewed badge) -> "Nothing to show yet".
+  it('shows "Nothing to show yet" when the badge is ahead but there are no more pages', async () => {
+    server.seed(COUNT, { count: 3 });
+    server.seed(UNCATEGORIZED_FEED, { transactions: [], nextCursor: null }); // history exhausted, list empty
+    await renderWithQueries(<Transactions />);
+    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+
+    expect(await screen.findByText('Nothing to show yet')).toBeTruthy();
+    expect(screen.queryByText('More to load')).toBeNull();
   });
 });

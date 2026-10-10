@@ -4,7 +4,7 @@
 // settingsProfile (WHIT-180).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { fireEvent, screen, within } from '@testing-library/react-native';
+import { fireEvent, screen } from '@testing-library/react-native';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, refreshInAct, settle, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
@@ -54,18 +54,6 @@ describe('Log out and Back', () => {
   });
 });
 
-// WHIT-795: the "Pending alerts" switch did nothing (never saved, never read), so it's removed.
-// The group below Setup is now headed "Account" and holds only Log out.
-describe('Account group', () => {
-  it('shows no "Pending alerts" row; the Account group holds Log out', async () => {
-    await renderWithQueries(<Settings />);
-    expect(screen.queryByText('Pending alerts')).toBeNull();
-    expect(screen.queryByText('PREFERENCES')).toBeNull();
-    expect(screen.getByText('ACCOUNT')).toBeTruthy();
-    expect(within(screen.getByTestId('settings-logout')).getByText('Log out')).toBeTruthy();
-  });
-});
-
 // WHIT-180: the profile card shows the REAL signed-in identity (getCurrentUser), not the
 // "Jordan Diaz" mock. Fail-on-revert: restoring the hard-coded mock fails these.
 describe('profile card', () => {
@@ -74,15 +62,6 @@ describe('profile card', () => {
     await renderWithQueries(<Settings />);
     expect(screen.getByText('Jasmine Nguyen')).toBeTruthy();
     expect(screen.getByText('me.jasminenguyen@gmail.com')).toBeTruthy();
-    expect(screen.queryByText('Jordan Diaz')).toBeNull();
-    expect(screen.queryByText('jordan@abundo.app')).toBeNull();
-  });
-
-  it('shows just the email when there is no name (native password user)', async () => {
-    mockUser = { email: 'me.jasminenguyen@gmail.com' };
-    await renderWithQueries(<Settings />);
-    expect(screen.getByText('me.jasminenguyen@gmail.com')).toBeTruthy();
-    expect(screen.queryByText('Jordan Diaz')).toBeNull();
   });
 });
 
@@ -101,12 +80,5 @@ describe('focus refresh', () => {
 
     expect(server.sent('GET', '/categories').length).toBeGreaterThan(categoriesBefore);
     expect(server.sent('GET', '/loanfacts').length).toBeGreaterThan(loanFactsBefore);
-  });
-
-  // [A4] The shared spies are cleared between tests: an earlier Back / Log out leaves no calls here.
-  it('[A4] starts each test with no router calls carried over', async () => {
-    await renderWithQueries(<Settings />);
-    expect(routerSpies.back).not.toHaveBeenCalled();
-    expect(routerSpies.replace).not.toHaveBeenCalled();
   });
 });

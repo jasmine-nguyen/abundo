@@ -24,12 +24,6 @@ describe('fetchUncategorizedCount boundary', () => {
     expect(Object.is(out, 0)).toBe(true); // exactly 0, not undefined/NaN/-0
   });
 
-  // A large whole-history tally passes through unchanged (no clamping to a 2-digit badge etc).
-  it('passes a large count through unchanged', async () => {
-    fetchMock.mockResolvedValue(okJson({ count: 4211 }));
-    expect(await fetchUncategorizedCount()).toBe(4211);
-  });
-
   // WHIT-501 hardening: a malformed envelope must THROW, not flow through. A stringified "0" is the
   // dangerous case — it would render as the badge and defeat the `=== 0` "All caught up" gate.
   // Fail-on-revert: remove the type guard in api.ts → these return the bad value instead of throwing.

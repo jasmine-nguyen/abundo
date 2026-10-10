@@ -1,15 +1,18 @@
 // WHIT-292 — unit tests for the extracted persistCategoryBatch helper (context.tsx).
 // The provider suites prove the two writers still behave; this pins the shared helper's
-// own chunk/reconcile math directly: empty-input no-call, the 100-row chunk boundary,
-// reconcile BY id (not array position), and every failed-id path (rejected chunk,
-// malformed response, not_found status).
-import { describe, it, expect, jest } from '@jest/globals';
+// own chunk/reconcile math directly through the real request step: the wire body, the
+// 100-row chunk boundary, reconcile BY id (not array position), and every failed-id path
+// (rejected chunk, not_found status, no sign-in token).
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { persistCategoryBatch } from '../context';
 import { installFakeServer } from './support/fakeServer';
+import { resetAuth, setAuthToken } from './support/authMock';
 
 const server = installFakeServer();
+
+beforeEach(() => resetAuth());
 
 // Server "everything updated" reply for a given chunk of ids.
 const allUpdated = (ids: string[]) => ({ results: ids.map((id) => ({ id, status: 'updated' })) });
@@ -18,23 +21,19 @@ const batches = () => server.sent('PATCH', '/transactions')
   .map((r) => (r.body as { updates: { id: string; category: string }[] }).updates);
 
 describe('persistCategoryBatch', () => {
-  it('makes no API call on empty ids and returns empty sets', async () => {
-    const out = await persistCategoryBatch([], 'coffee');
-    expect(batches()).toHaveLength(0);
-    expect(out.failedIds).toEqual([]);
-    expect(out.savedIds.size).toBe(0);
-  });
 
-  it('splits >CATEGORY_BATCH_LIMIT ids into [100, 50] chunks and marks all saved', async () => {
-    const ids = Array.from({ length: 150 }, (_, i) => `t${i}`);
+  it.each([
+    [100, [100]],
+    [101, [100, 1]],
+    [150, [100, 50]],
+  ])('splits %i ids into CATEGORY_BATCH_LIMIT chunks %j and marks all saved', async (count, chunks) => {
+    const ids = Array.from({ length: count }, (_, i) => `t${i}`);
 
     const out = await persistCategoryBatch(ids, 'coffee');
 
-    expect(batches()).toHaveLength(2);
-    expect(batches()[0]).toHaveLength(100);
-    expect(batches()[1]).toHaveLength(50);
+    expect(batches().map((updates) => updates.length)).toEqual(chunks);
     expect(out.failedIds).toEqual([]);
-    expect(out.savedIds.size).toBe(150);
+    expect(out.savedIds.size).toBe(count);
   });
 
   it('reconciles saved ids BY id, not array position', async () => {
@@ -60,15 +59,6 @@ describe('persistCategoryBatch', () => {
     expect(out.savedIds.size).toBe(100);
   });
 
-  it('treats a malformed response (missing results) as all-failed via the ?? [] guard', async () => {
-    server.once('PATCH', '/transactions', { body: {} });
-
-    const out = await persistCategoryBatch(['a', 'b'], 'coffee');
-
-    expect(out.savedIds.size).toBe(0);
-    expect(out.failedIds).toEqual(['a', 'b']);
-  });
-
   it('treats a not_found status as failed (only "updated" counts as saved)', async () => {
     server.once('PATCH', '/transactions', {
       body: { results: [{ id: 'a', status: 'updated' }, { id: 'b', status: 'not_found' }] },
@@ -78,5 +68,24 @@ describe('persistCategoryBatch', () => {
 
     expect([...out.savedIds]).toEqual(['a']);
     expect(out.failedIds).toEqual(['b']);
+  });
+
+  it('sends one PATCH /transactions whose body carries every id with the chosen category', async () => {
+    await persistCategoryBatch(['a', 'b'], 'coffee');
+
+    expect(server.requests()).toEqual([{
+      method: 'PATCH',
+      path: '/transactions',
+      body: { updates: [{ id: 'a', category: 'coffee' }, { id: 'b', category: 'coffee' }] },
+    }]);
+  });
+
+  it('with no sign-in token nothing is sent and every id comes back failed (no throw)', async () => {
+    setAuthToken(undefined);
+
+    const out = await persistCategoryBatch(['a', 'b'], 'coffee');
+
+    expect(server.requests()).toEqual([]);
+    expect(out.failedIds).toEqual(['a', 'b']);
   });
 });

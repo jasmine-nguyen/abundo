@@ -1,9 +1,10 @@
-// WHIT-271 — a save/toast that settles AFTER sign-out must be a no-op: it must not re-seat the
-// old account's data into the freshly-cleared query cache, nor toast into the next session. The
-// four rollback writers (persistPayCycle, saveLoanFacts, saveGoal, deleteGoal) and the late
-// toasts were unguarded; this pins the session-epoch guard reused from WHIT-268. Harness mirrors
-// overlaysAuthClearGaps [A10]: live miniature auth store, the fake server, the real queryClient.
-import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
+// WHIT-271 / WHIT-638 — a save/toast that settles AFTER sign-out must be a no-op: it must not
+// write the old account's data into the next account's cache, toast into the next session, or
+// return success (the edit screens toast + navigate on a truthy return). Every row signs out,
+// lets the NEXT account load its own data, and only then settles the stale save — so only the
+// session-epoch guard (not a `prev ? … : prev` updater) can keep that data untouched.
+// Harness: live miniature auth store, the fake server, the real queryClient.
+import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react-native';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -11,8 +12,8 @@ import { setAuthStatus, resetAuth } from './support/authMock';
 
 import { useAppContext } from '../context';
 import type { Bucket } from '../types';
+import type { Method } from './support/fakeServer';
 import { queryClient } from '../queryClient';
-import { ApiError } from '../apiError';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 import { installFakeServer } from './support/fakeServer';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
@@ -20,19 +21,17 @@ import { appProviderWrapper as wrapper } from './support/renderWithApp';
 const server = installFakeServer();
 
 // Sign out in PRODUCTION order: clearSession() wipes the cache, THEN broadcasts anon (which the
-// context's subscription turns into the epoch bump). Matches [A10]:175.
+// context's subscription turns into the epoch bump).
 function signOut() {
   act(() => { queryClient.clear(); setAuthStatus('anon'); });
 }
 
-// ----- module-level helpers hoisted from the folded gaps files -----
-// From sessionGuardRollbacksGaps: a category factory and a two-microtask flush.
 const cat = (id: string, name: string) => ({ id, name, bucket: 'Living', icon: 'tag', color: '#fff' });
-const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
-// From categorySilentContractGaps: the 50-sub-category cap message, a reusable form, and the silent opt.
-const CAP = 'a category can have at most 50 sub-categories';
 const FORM = { name: 'Gym', bucket: 'Lifestyle' as Bucket, icon: 'dumbbell' };
 const SILENT = { silent: true };
+// setPayCycleLength returns void, so wait one macrotask for its request and catch to settle.
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+const categoryIds = () => readTransactionsCache(queryClient).map((t) => t.category);
 
 beforeEach(() => {
   resetAuth();
@@ -40,491 +39,233 @@ beforeEach(() => {
 });
 afterEach(() => {
   queryClient.clear();
-  jest.useRealTimers();
 });
 
-describe('WHIT-271 — a writer settling after sign-out re-seats nothing and shows no toast', () => {
-  // persistPayCycle is internal; setPayCycleLength/setPayday are the public entry points. Since
-  // they return void (not the promise), wait one macrotask so the whole request and its catch settle.
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+type Ctx = ReturnType<typeof useAppContext>;
+type SignOutRow = {
+  name: string;
+  seed?: () => void; // the signed-out account's cache (and any extra server replies)
+  send: [Method, string];
+  fail?: true; // the server drops the request
+  before?: (c: Ctx) => void;
+  run: (c: Ctx) => unknown;
+  next?: () => void; // the next account's freshly loaded data
+  read?: () => unknown;
+  expected?: unknown;
+  returns?: unknown;
+};
 
-  it('persistPayCycle failure after sign-out does not re-seat the old cycle or toast', async () => {
-    queryClient.setQueryData(['payCycle'], { length: 14, last_pay_date: '2026-06-06' });
-    const held = server.hold('/paycycle');
-    server.once('PUT', '/paycycle', 'dropped');
+const SIGN_OUT_ROWS: SignOutRow[] = [
+  {
+    name: 'setPayCycleLength',
+    seed: () => queryClient.setQueryData(['payCycle'], { length: 14, last_pay_date: '2026-06-06' }),
+    send: ['PUT', '/paycycle'], fail: true,
+    run: (c) => c.setPayCycleLength(30),
+    next: () => queryClient.setQueryData(['payCycle'], { length: 7, last_pay_date: '2026-07-10' }),
+    read: () => queryClient.getQueryData(['payCycle']),
+    expected: { length: 7, last_pay_date: '2026-07-10' },
+  },
+  {
+    name: 'saveLoanFacts',
+    seed: () => queryClient.setQueryData(['loanFacts'], { balance: 111, rate: 5 }),
+    send: ['PUT', '/loanfacts'], fail: true,
+    run: (c) => c.saveLoanFacts({ balance: 222, rate: 6 } as never),
+    next: () => queryClient.setQueryData(['loanFacts'], { balance: 333, rate: 7 }),
+    read: () => queryClient.getQueryData(['loanFacts']),
+    expected: { balance: 333, rate: 7 },
+    returns: false,
+  },
+  {
+    name: 'saveGoal (success)',
+    seed: () => queryClient.setQueryData(['goals'], [{ id: 'g1', target: 100 }]),
+    send: ['PUT', '/goals/g1'],
+    run: (c) => c.saveGoal('g1', { target: 200 } as never),
+    next: () => queryClient.setQueryData(['goals'], [{ id: 'g1', target: 999 }]),
+    read: () => queryClient.getQueryData(['goals']),
+    expected: [{ id: 'g1', target: 999 }],
+  },
+  {
+    name: 'deleteGoal',
+    seed: () => queryClient.setQueryData(['goals'], [{ id: 'g1', target: 100 }]),
+    send: ['DELETE', '/goals/g1'], fail: true,
+    run: (c) => c.deleteGoal('g1'),
+    next: () => queryClient.setQueryData(['goals'], [{ id: 'g2', target: 50 }]),
+    read: () => queryClient.getQueryData(['goals']),
+    expected: [{ id: 'g2', target: 50 }],
+    returns: false,
+  },
+  {
+    // The success toast would name the OLD account's category and dollar figure.
+    name: 'saveBudget (success)',
+    seed: () => queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]),
+    send: ['PUT', '/budgets/c1'],
+    run: (c) => c.saveBudget('c1', 500),
+    returns: false,
+  },
+  {
+    name: 'saveCategory (success)',
+    seed: () => queryClient.setQueryData(['categories'], [cat('c1', 'Old')]),
+    send: ['PATCH', '/categories/c1'],
+    run: (c) => c.saveCategory('c1', { name: 'New', bucket: 'Living' as never, icon: 'tag' }),
+    next: () => queryClient.setQueryData(['categories'], [cat('c1', 'Account B')]),
+    read: () => queryClient.getQueryData(['categories']),
+    expected: [cat('c1', 'Account B')],
+    returns: false,
+  },
+  {
+    name: 'createCategoryInline (success)',
+    seed: () => {
+      queryClient.setQueryData(['categories'], [cat('cA', 'Account A only')]);
+      server.once('POST', '/categories', { body: { id: 'cNew', name: 'New', bucket: 'Living' } });
+    },
+    send: ['POST', '/categories'],
+    run: (c) => c.createCategoryInline({ name: 'New', bucket: 'Living' as never, icon: 'tag' }),
+    next: () => queryClient.setQueryData(['categories'], [cat('cB', 'Account B only')]),
+    read: () => queryClient.getQueryData(['categories']),
+    expected: [cat('cB', 'Account B only')],
+    returns: null,
+  },
+  {
+    name: 'deleteCategory',
+    seed: () => queryClient.setQueryData(['categories'], [cat('c1', 'Old')]),
+    send: ['DELETE', '/categories/c1'], fail: true,
+    run: (c) => c.deleteCategory('c1'),
+    returns: false,
+  },
+  {
+    name: 'deleteRule',
+    seed: () => queryClient.setQueryData(['rules'], [{ id: 'rA', pattern: 'COLES', categoryId: 'cA', isNew: false }]),
+    send: ['DELETE', '/rules/rA'], fail: true,
+    run: (c) => c.deleteRule('rA'),
+    next: () => queryClient.setQueryData(['rules'], [{ id: 'rB', pattern: 'WOOLIES', categoryId: 'cB', isNew: false }]),
+    read: () => queryClient.getQueryData(['rules']),
+    expected: [{ id: 'rB', pattern: 'WOOLIES', categoryId: 'cB', isNew: false }],
+  },
+  {
+    name: 'saveManualRule',
+    seed: () => {
+      queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
+      queryClient.setQueryData(['rules'], []);
+    },
+    send: ['POST', '/rules'], fail: true,
+    run: (c) => c.saveManualRule('COLES', 'c1'),
+    next: () => queryClient.setQueryData(['rules'], [{ id: 'rB', pattern: 'WOOLIES', categoryId: 'cB', isNew: false }]),
+    read: () => queryClient.getQueryData(['rules']),
+    expected: [{ id: 'rB', pattern: 'WOOLIES', categoryId: 'cB', isNew: false }],
+  },
+  {
+    name: 'updateRule',
+    seed: () => {
+      queryClient.setQueryData(['rules'], [{ id: 'r1', pattern: 'OLD', categoryId: 'c1', isNew: false, field: 'description', operator: 'contains' }]);
+      queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
+    },
+    send: ['PUT', '/rules/r1'], fail: true,
+    run: (c) => c.updateRule('r1', 'NEW', 'c1'),
+  },
+  {
+    name: 'applyTransactionEdit',
+    seed: () => seedTransactionsCache(queryClient, [{ transaction_id: 't1', notes: 'old', category: null, counts_to_budget: true, description: 'X' }]),
+    send: ['PATCH', '/transactions/t1'], fail: true,
+    run: (c) => c.applyTransactionEdit('t1', { notes: 'new' }),
+    next: () => seedTransactionsCache(queryClient, [{ transaction_id: 't1', notes: 'next account', category: null, counts_to_budget: true, description: 'X' }]),
+    read: () => readTransactionsCache(queryClient).map((t) => t.notes),
+    expected: ['next account'],
+  },
+  {
+    name: "applyCategory('one')",
+    seed: () => {
+      seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: null, counts_to_budget: true, description: 'X' }]);
+      queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
+    },
+    send: ['PATCH', '/transactions/t1'], fail: true,
+    before: (c) => c.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'c1' } as never),
+    run: (c) => c.applyCategory('one'),
+    next: () => seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: 'fresh', counts_to_budget: true, description: 'X' }]),
+    read: categoryIds,
+    expected: ['fresh'],
+  },
+  {
+    name: "applyCategory('all')",
+    seed: () => {
+      seedTransactionsCache(queryClient, [
+        { transaction_id: 't1', category: null, counts_to_budget: true, description: 'COLES' },
+        { transaction_id: 't2', category: null, counts_to_budget: true, description: 'COLES' },
+      ]);
+      queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
+      queryClient.setQueryData(['rules'], []);
+      server.once('POST', '/rules', { body: { id: 'r9', value: 'COLES', categoryId: 'c1' } });
+    },
+    send: ['PATCH', '/transactions'], fail: true,
+    before: (c) => c.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'c1' } as never),
+    run: (c) => c.applyCategory('all'),
+    next: () => {
+      seedTransactionsCache(queryClient, [
+        { transaction_id: 't1', category: 'fresh', counts_to_budget: true, description: 'COLES' },
+        { transaction_id: 't2', category: 'fresh', counts_to_budget: true, description: 'COLES' },
+      ]);
+      queryClient.setQueryData(['rules'], [{ id: 'rX', pattern: 'NEXT', categoryId: 'fresh', isNew: false }]);
+    },
+    read: () => [categoryIds(), queryClient.getQueryData(['rules'])],
+    expected: [['fresh', 'fresh'], [{ id: 'rX', pattern: 'NEXT', categoryId: 'fresh', isNew: false }]],
+  },
+  {
+    name: 'applyCategoryToMany',
+    seed: () => {
+      seedTransactionsCache(queryClient, [
+        { transaction_id: 't1', category: 'old', counts_to_budget: true, description: 'X' },
+        { transaction_id: 't2', category: 'old', counts_to_budget: true, description: 'Y' },
+      ]);
+      queryClient.setQueryData(['categories'], [cat('old', 'Old'), cat('c1', 'Groceries')]);
+    },
+    send: ['PATCH', '/transactions'], fail: true,
+    run: (c) => c.applyCategoryToMany(['t1', 't2'], 'c1'),
+    next: () => seedTransactionsCache(queryClient, [
+      { transaction_id: 't1', category: 'fresh', counts_to_budget: true, description: 'X' },
+      { transaction_id: 't2', category: 'fresh', counts_to_budget: true, description: 'Y' },
+    ]),
+    read: categoryIds,
+    expected: ['fresh', 'fresh'],
+  },
+];
+
+it.each(SIGN_OUT_ROWS)(
+  "$name: a save settling after sign-out, with the next account already loaded, leaves that account's cache untouched, shows no toast, and returns its signed-out value",
+  async (row) => {
+    row.seed?.();
+    const [method, path] = row.send;
+    const held = server.hold(path);
+    if (row.fail) server.once(method, path, 'dropped');
     const { result } = renderHook(() => useAppContext(), { wrapper });
+    if (row.before) act(() => row.before!(result.current));
 
-    act(() => { result.current.setPayCycleLength(30); });
+    let pending: unknown;
+    act(() => { pending = row.run(result.current); });
     signOut();
-    await act(async () => { held.release(); await settle(); });
-
-    expect(server.sent('PUT', '/paycycle')).toHaveLength(1);
-    expect(queryClient.getQueryData(['payCycle'])).toBeUndefined(); // old cycle NOT re-seated
-    expect(result.current.toast).toBeNull();
-  });
-
-  it('epoch beats the freshness window: a stale payCycle failure cannot overwrite the NEXT account', async () => {
-    queryClient.setQueryData(['payCycle'], { length: 14, last_pay_date: '2026-06-06' });
-    const held = server.hold('/paycycle');
-    server.once('PUT', '/paycycle', 'dropped');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    act(() => { result.current.setPayCycleLength(30); });
-    signOut();
-    // A NEW account signs in and loads its own cycle BEFORE the stale failure lands.
     act(() => setAuthStatus('authed'));
-    queryClient.setQueryData(['payCycle'], { length: 7, last_pay_date: '2026-07-10' });
-    await act(async () => { held.release(); await settle(); });
+    row.next?.();
+    let returned: unknown;
+    await act(async () => { held.release(); returned = await pending; await settle(); });
 
-    // The new account's cycle must survive — a guarded-updater (prev ? prev-value : prev) would
-    // have overwritten it with the old length; only the epoch drops the write entirely.
-    expect(server.sent('PUT', '/paycycle')).toHaveLength(1);
-    expect(queryClient.getQueryData(['payCycle'])).toEqual({ length: 7, last_pay_date: '2026-07-10' });
-  });
-
-  it('saveLoanFacts failure after sign-out does not re-seat the old facts, toast, or return true', async () => {
-    queryClient.setQueryData(['loanFacts'], { balance: 111, rate: 5 });
-    const held = server.hold('/loanfacts');
-    server.once('PUT', '/loanfacts', 'dropped');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<boolean>;
-    act(() => { pending = result.current.saveLoanFacts({ balance: 222, rate: 6 } as never); });
-    signOut();
-    let returned!: boolean;
-    await act(async () => { held.release(); returned = await pending; });
-
-    expect(queryClient.getQueryData(['loanFacts'])).toBeUndefined(); // old facts NOT re-seated
+    expect(server.sent(method, path)).toHaveLength(1);
+    if (row.read) expect(row.read()).toEqual(row.expected);
     expect(result.current.toast).toBeNull();
-    expect(returned).toBe(false); // no stray router.back() after the login redirect
+    if ('returns' in row) expect(returned).toBe(row.returns);
+  },
+);
+
+// [A21][A22] Guarded BEFORE the try, so a blank name can't reach the request or the throw.
+// Overlays/QuickCreateCategory trim independently of edit.tsx's canSave.
+it.each([
+  ['createCategoryInline({ name: "   " })', (c: Ctx) => c.createCategoryInline({ ...FORM, name: '   ' }, SILENT), null, 'POST', '/categories'],
+  ['saveCategory(null, { name: "" })', (c: Ctx) => c.saveCategory(null, { ...FORM, name: '' }, SILENT), false, 'POST', '/categories'],
+  ['saveCategory("gym", { name: "   " })', (c: Ctx) => c.saveCategory('gym', { ...FORM, name: '   ' }, SILENT), false, 'PATCH', '/categories/gym'],
+] as const)('%s with { silent: true } resolves %s and never calls the API', async (_name, call, expected, method, path) => {
+  const { result } = renderHook(() => useAppContext(), { wrapper });
+  let returned: unknown = 'unset';
+  await act(async () => {
+    returned = await call(result.current).then((v) => v, (e: unknown) => ({ threw: e }));
   });
-
-  it('saveGoal SUCCESS after sign-out does not seed a stale goals list or toast', async () => {
-    queryClient.setQueryData(['goals'], [{ id: 'g1', target: 100 }]);
-    const held = server.hold('/goals/g1');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<boolean>;
-    act(() => { pending = result.current.saveGoal('g1', { target: 200 } as never); });
-    signOut();
-    // Even a SUCCESS re-seat launders `(prev ?? []).map(...)` = [] into the cleared cache.
-    await act(async () => { held.release(); await pending; });
-
-    expect(queryClient.getQueryData(['goals'])).toBeUndefined();
-    expect(result.current.toast).toBeNull();
-  });
-
-  it('deleteGoal failure after sign-out does not resurrect the removed goal or toast', async () => {
-    queryClient.setQueryData(['goals'], [{ id: 'g1', target: 100 }]);
-    const held = server.hold('/goals/g1');
-    server.once('DELETE', '/goals/g1', 'dropped');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<boolean>;
-    act(() => { pending = result.current.deleteGoal('g1'); });
-    signOut();
-    await act(async () => { held.release(); await pending; });
-
-    // reinsertBefore(prev ?? [], removed, …) would re-plant the old goal into the wiped cache.
-    expect(queryClient.getQueryData(['goals'])).toBeUndefined();
-    expect(result.current.toast).toBeNull();
-  });
-
-  it('saveBudget SUCCESS after sign-out shows no toast (the leak: old category name + dollar figure)', async () => {
-    queryClient.setQueryData(['categories'], [{ id: 'c1', name: 'Groceries', bucket: 'Living', icon: 'tag', color: '#fff' }]);
-    const held = server.hold('/budgets/c1');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<boolean>;
-    act(() => { pending = result.current.saveBudget('c1', 500); });
-    signOut();
-    await act(async () => { held.release(); await pending; });
-
-    // The success toast renders `${c.name} … ${fmt(saved.target)}` — the OLD account's data.
-    expect(result.current.toast).toBeNull();
-  });
-
-  it('applyCategory failure after sign-out shows no toast', async () => {
-    seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: null, counts_to_budget: true, description: 'X' }]);
-    queryClient.setQueryData(['categories'], [{ id: 'c1', name: 'Groceries', bucket: 'Living', icon: 'tag', color: '#fff' }]);
-    const held = server.hold('/transactions/t1');
-    server.once('PATCH', '/transactions/t1', 'dropped');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    act(() => { result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'c1' } as never); });
-    let pending!: Promise<void>;
-    act(() => { pending = result.current.applyCategory('one'); });
-    signOut();
-    await act(async () => { held.release(); await pending; });
-
-    expect(result.current.toast).toBeNull();
-  });
-
-  // F1 (from QA + code-critic): the value-returning writers must return their FAILURE sentinel
-  // after sign-out, so the edit SCREENS (which toast + router.back() on a truthy return) don't
-  // fire into the next session. These lock the return value, not just the writer's own toast.
-  it('saveBudget SUCCESS after sign-out returns false (so budget/edit does not navigate)', async () => {
-    queryClient.setQueryData(['categories'], [{ id: 'c1', name: 'Groceries', bucket: 'Living', icon: 'tag', color: '#fff' }]);
-    const held = server.hold('/budgets/c1');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<boolean>;
-    act(() => { pending = result.current.saveBudget('c1', 500); });
-    signOut();
-    let returned!: boolean;
-    await act(async () => { held.release(); returned = await pending; });
-    expect(returned).toBe(false);
-  });
-
-  it('saveCategory SUCCESS after sign-out returns false (so category/edit does not toast + navigate)', async () => {
-    queryClient.setQueryData(['categories'], [{ id: 'c1', name: 'Old', bucket: 'Living', icon: 'tag', color: '#fff' }]);
-    const held = server.hold('/categories/c1');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<boolean>;
-    act(() => { pending = result.current.saveCategory('c1', { name: 'New', bucket: 'Living' as never, icon: 'tag' }); });
-    signOut();
-    let returned!: boolean;
-    await act(async () => { held.release(); returned = await pending; });
-    expect(returned).toBe(false);
-  });
-
-  it('createCategoryInline SUCCESS after sign-out returns null (so callers do not act on it)', async () => {
-    queryClient.setQueryData(['categories'], [{ id: 'c1', name: 'Old', bucket: 'Living', icon: 'tag', color: '#fff' }]);
-    const held = server.hold('/categories');
-    server.once('POST', '/categories', { body: { id: 'c2', name: 'New', bucket: 'Living' } });
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<unknown>;
-    act(() => { pending = result.current.createCategoryInline({ name: 'New', bucket: 'Living' as never, icon: 'tag' }); });
-    signOut();
-    let returned!: unknown;
-    await act(async () => { held.release(); returned = await pending; });
-    expect(returned).toBeNull();
-  });
-
-  it('deleteRule failure cannot append the old rule into the NEXT account (freshness window)', async () => {
-    // The bug code-critic found: patchRules' `prev ? … : prev` only no-ops on the CLEARED cache.
-    // Once account B has re-loaded ['rules'], a stale reinsertBefore (successorIds absent) APPENDS
-    // account A's rule into B's list. Only the epoch guard drops the write.
-    queryClient.setQueryData(['rules'], [{ id: 'rA', pattern: 'COLES', categoryId: 'cA', isNew: false }]);
-    const held = server.hold('/rules/rA');
-    server.once('DELETE', '/rules/rA', 'dropped');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<void>;
-    act(() => { pending = result.current.deleteRule('rA'); });
-    signOut();
-    act(() => setAuthStatus('authed'));
-    queryClient.setQueryData(['rules'], [{ id: 'rB', pattern: 'WOOLIES', categoryId: 'cB', isNew: false }]);
-    await act(async () => { held.release(); await pending; });
-
-    expect(queryClient.getQueryData<{ id: string }[]>(['rules'])?.map((r) => r.id)).toEqual(['rB']);
-  });
-
-  it('deleteGoal SUCCESS after sign-out returns false (so goal/edit does not navigate)', async () => {
-    queryClient.setQueryData(['goals'], [{ id: 'g1', target: 100 }]);
-    const held = server.hold('/goals/g1');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<boolean>;
-    act(() => { pending = result.current.deleteGoal('g1'); });
-    signOut();
-    let returned!: boolean;
-    await act(async () => { held.release(); returned = await pending; });
-    expect(returned).toBe(false);
-  });
-});
-
-// ===== WHIT-271 (folded from sessionGuardRollbacksGaps.provider.screen.test.tsx) =====
-describe('WHIT-271 gaps — toast-only writers settling AFTER sign-out show no toast + touch no cache', () => {
-  it('[A-CCI] createCategoryInline SUCCESS after sign-out does not toast or re-seat categories', async () => {
-    queryClient.setQueryData(['categories'], [cat('c1', 'Old')]);
-    const held = server.hold('/categories');
-    server.once('POST', '/categories', { body: { id: 'c2', name: 'New', bucket: 'Living' } });
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<unknown>;
-    act(() => { pending = result.current.createCategoryInline({ name: 'New', bucket: 'Living' as never, icon: 'tag' }); });
-    signOut();
-    await act(async () => { held.release(); await pending; });
-
-    expect(result.current.toast).toBeNull();                       // no 'Category created.' into the next session
-    expect(queryClient.getQueryData(['categories'])).toBeUndefined(); // guarded write no-ops on cleared cache
-  });
-
-  it('[A-SC] saveCategory (edit) FAILURE after sign-out does not toast or re-seat categories', async () => {
-    queryClient.setQueryData(['categories'], [cat('c1', 'Old')]);
-    const held = server.hold('/categories/c1');
-    server.once('PATCH', '/categories/c1', 'dropped');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<boolean>;
-    act(() => { pending = result.current.saveCategory('c1', { name: 'New', bucket: 'Living' as never, icon: 'tag' }); });
-    signOut();
-    let returned!: boolean;
-    await act(async () => { held.release(); returned = await pending; });
-
-    expect(result.current.toast).toBeNull();
-    expect(returned).toBe(false);
-    expect(queryClient.getQueryData(['categories'])).toBeUndefined();
-  });
-
-  it('[A-DC] deleteCategory FAILURE after sign-out does not toast', async () => {
-    queryClient.setQueryData(['categories'], [cat('c1', 'Old')]);
-    const held = server.hold('/categories/c1');
-    server.once('DELETE', '/categories/c1', 'dropped');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<boolean>;
-    act(() => { pending = result.current.deleteCategory('c1'); });
-    signOut();
-    let returned!: boolean;
-    await act(async () => { held.release(); returned = await pending; });
-
-    expect(result.current.toast).toBeNull();
-    expect(returned).toBe(false);
-  });
-
-  it('[A-DR] deleteRule FAILURE after sign-out shows no toast and does not resurrect the rule', async () => {
-    queryClient.setQueryData(['rules'], [{ id: 'r1', pattern: 'COLES', categoryId: 'c1', isNew: false }]);
-    const held = server.hold('/rules/r1');
-    server.once('DELETE', '/rules/r1', 'dropped');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<void>;
-    act(() => { pending = result.current.deleteRule('r1'); });
-    signOut();
-    await act(async () => { held.release(); await pending; });
-
-    expect(result.current.toast).toBeNull();
-    // reinsertBefore(prev, removed, …) would re-plant r1 — the guarded patchRules no-ops instead.
-    expect(queryClient.getQueryData(['rules'])).toBeUndefined();
-  });
-
-  it('[A-SMR] saveManualRule FAILURE after sign-out shows no toast and seeds no rules list', async () => {
-    queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
-    queryClient.setQueryData(['rules'], []);
-    const held = server.hold('/rules');
-    server.once('POST', '/rules', 'dropped');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<void>;
-    act(() => { pending = result.current.saveManualRule('COLES', 'c1'); });
-    signOut();
-    await act(async () => { held.release(); await pending; });
-
-    expect(result.current.toast).toBeNull(); // the pre-await 'Rule added…' was cleared by sign-out; the catch toast is gated
-    expect(queryClient.getQueryData(['rules'])).toBeUndefined();
-  });
-
-  it('[A-UR] updateRule FAILURE after sign-out shows no toast', async () => {
-    queryClient.setQueryData(['rules'], [{ id: 'r1', pattern: 'OLD', categoryId: 'c1', isNew: false, field: 'description', operator: 'contains' }]);
-    queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
-    const held = server.hold('/rules/r1');
-    server.once('PUT', '/rules/r1', 'dropped');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<void>;
-    act(() => { pending = result.current.updateRule('r1', 'NEW', 'c1'); });
-    signOut();
-    await act(async () => { held.release(); await pending; });
-
-    expect(result.current.toast).toBeNull();
-  });
-
-  it('[A-ATE] applyTransactionEdit FAILURE after sign-out shows no toast and re-seats no transactions', async () => {
-    seedTransactionsCache(queryClient, [{ transaction_id: 't1', notes: 'old', tags: ['a'], category: null, counts_to_budget: true, description: 'X' }]);
-    const held = server.hold('/transactions/t1');
-    server.once('PATCH', '/transactions/t1', 'dropped');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<void>;
-    act(() => { pending = result.current.applyTransactionEdit('t1', { notes: 'new' }); });
-    signOut();
-    await act(async () => { held.release(); await pending; });
-
-    expect(result.current.toast).toBeNull();
-    expect(queryClient.getQueryData(['transactions'])).toBeUndefined();
-  });
-
-  it('[A-ACALL] applyCategory("all") FAILURE after sign-out shows no toast (the :701 leak)', async () => {
-    seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: null, counts_to_budget: true, description: 'COLES' }]);
-    queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
-    server.once('POST', '/rules', { body: { id: 'r1', value: 'COLES', categoryId: 'c1' } });
-    const held = server.hold('/transactions');
-    server.once('PATCH', '/transactions', 'dropped');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    act(() => { result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'c1' } as never); });
-    let pending!: Promise<void>;
-    act(() => { pending = result.current.applyCategory('all'); });
-    signOut();
-    // The batch rejects → every swept id is "failed" → the :701 'Could not save some…' toast branch.
-    await act(async () => { held.release(); await pending; });
-
-    expect(result.current.toast).toBeNull();
-  });
-});
-
-// In-session CONTROL / regression: with NO sign-out the epoch never changes, so every guard
-// (`epoch === sessionEpoch.current`) must be TRUE — the toast STILL fires and the cache STILL
-// writes. Proves WHIT-271 did not silently kill the happy path. Fake timers tame showToast's
-// 3400ms auto-dismiss so the asserted toast is still present.
-describe('WHIT-271 gaps — in-session control: the guard does not break the happy path', () => {
-  it('[A-CTRL-CCI] createCategoryInline success (no sign-out) toasts AND appends to the cache', async () => {
-    jest.useFakeTimers();
-    queryClient.setQueryData(['categories'], [cat('c1', 'Old')]);
-    server.once('POST', '/categories', { body: { id: 'c2', name: 'New', bucket: 'Living' } });
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    await act(async () => { await result.current.createCategoryInline({ name: 'New', bucket: 'Living' as never, icon: 'tag' }); });
-
-    expect(result.current.toast).toBe('Category created.');
-    const cats = queryClient.getQueryData<{ id: string }[]>(['categories']) ?? [];
-    expect(cats.map((c) => c.id)).toEqual(['c1', 'c2']);
-  });
-
-  it('[A-CTRL-DR] deleteRule failure (no sign-out) toasts AND reinserts the rule', async () => {
-    jest.useFakeTimers();
-    queryClient.setQueryData(['rules'], [{ id: 'r1', pattern: 'COLES', categoryId: 'c1', isNew: false }]);
-    server.once('DELETE', '/rules/r1', 'dropped');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    await act(async () => { await result.current.deleteRule('r1'); await flush(); });
-
-    expect(result.current.toast).toBe('Could not delete rule. Please try again.');
-    expect(queryClient.getQueryData<{ id: string }[]>(['rules'])?.map((r) => r.id)).toEqual(['r1']);
-  });
-
-  it('[A-CTRL-ATE] applyTransactionEdit failure (no sign-out) toasts AND rolls the field back', async () => {
-    jest.useFakeTimers();
-    seedTransactionsCache(queryClient, [{ transaction_id: 't1', notes: 'old', tags: ['a'], category: null, counts_to_budget: true, description: 'X' }]);
-    server.once('PATCH', '/transactions/t1', 'dropped');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    await act(async () => { await result.current.applyTransactionEdit('t1', { notes: 'new' }); await flush(); });
-
-    expect(result.current.toast).toBe('Could not save. Please try again.');
-    const tx = readTransactionsCache(queryClient)[0];
-    expect(tx?.notes).toBe('old'); // rolled back to the snapshot
-  });
-});
-
-// ===== WHIT-437 (folded from categorySilentContractGaps.provider.screen.test.tsx) =====
-describe('[A20] saveCategory delegates a CREATE — the reason must survive the hop', () => {
-  // saveCategory(null, form, opts) is `return (await createCategoryInline(form, opts)) !== null`.
-  // The `!== null` reads like a swallow; it is not — the await re-throws. Pinned because the
-  // obvious "fix" (wrapping the delegation in its own try) would silently drop the reason.
-  it('rejects with the server\'s ApiError, reason intact, and fires no toast', async () => {
-    server.once('POST', '/categories', { status: 400, reason: CAP });
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let caught: unknown = 'never rejected';
-    await act(async () => {
-      caught = await result.current.saveCategory(null, FORM, SILENT).then(() => 'resolved', (e: unknown) => e);
-    });
-    expect(caught).toBeInstanceOf(ApiError);            // the request's own error, not a re-wrap
-    expect(caught).toMatchObject({ status: 400, serverMessage: CAP, message: 'API error: 400' });
-    expect((caught as ApiError).serverMessage).toBe(CAP);
-    expect(result.current.toast).toBeNull();            // WHIT-240: silent still means silent
-  });
-
-  it('rejects on the NON-silent create path only by returning false + toasting the reason', async () => {
-    server.once('POST', '/categories', { status: 409, reason: 'category already exists' });
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let returned: unknown = 'unset';
-    await act(async () => {
-      returned = await result.current.saveCategory(null, FORM).then((v) => v, (e: unknown) => e);
-    });
-    expect(returned).toBe(false);                       // no throw escapes the default path
-    expect(result.current.toast).toBe('Category already exists.');
-  });
-});
-
-describe('[A21][A22] a blank name is a validation bail, never a rejection', () => {
-  // Guarded BEFORE the try, so it can't reach the new `throw`. edit.tsx's canSave blocks this
-  // today, but Overlays/QuickCreateCategory trim independently — a regression here would surface
-  // as a red console.error from useInFlightGuard on a whitespace name.
-  it('createCategoryInline({ name: "   " }, { silent: true }) resolves null and never calls the API', async () => {
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-    let returned: unknown = 'unset';
-    await act(async () => {
-      returned = await result.current.createCategoryInline({ ...FORM, name: '   ' }, SILENT)
-        .then((v) => v, (e: unknown) => ({ threw: e }));
-    });
-    expect(returned).toBeNull();
-    expect(server.sent('POST', '/categories')).toHaveLength(0);
-    expect(result.current.toast).toBeNull();
-  });
-
-  it('saveCategory(null, { name: "" }, { silent: true }) resolves false and never calls the API', async () => {
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-    let returned: unknown = 'unset';
-    await act(async () => {
-      returned = await result.current.saveCategory(null, { ...FORM, name: '' }, SILENT)
-        .then((v) => v, (e: unknown) => ({ threw: e }));
-    });
-    expect(returned).toBe(false);
-    expect(server.sent('POST', '/categories')).toHaveLength(0);
-  });
-
-  it('saveCategory("gym", { name: "   " }, { silent: true }) resolves false and never calls the API', async () => {
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-    let returned: unknown = 'unset';
-    await act(async () => {
-      returned = await result.current.saveCategory('gym', { ...FORM, name: '   ' }, SILENT)
-        .then((v) => v, (e: unknown) => ({ threw: e }));
-    });
-    expect(returned).toBe(false);
-    expect(server.sent('PATCH', '/categories/gym')).toHaveLength(0);
-  });
-});
-
-describe('[A23] a SIGN-OUT mid-flight keeps the falsy return — it must not become a rejection', () => {
-  // The epoch check sits ABOVE the `if (opts?.silent) throw error`. If the order were swapped,
-  // signing out during a bulk save would reject → edit.tsx's catch runs → the WHIT-282 guard
-  // there catches it, but a NULL-reason network error would ALSO be re-thrown into
-  // console.error. Order matters; pin it.
-  it('createCategoryInline silent + failed + signed out → resolves null, no toast, no throw', async () => {
-    const held = server.hold('/categories');
-    server.once('POST', '/categories', { status: 400, reason: CAP });
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<unknown>;
-    act(() => { pending = result.current.createCategoryInline(FORM, SILENT).then((v) => v, (e: unknown) => ({ threw: e })); });
-    signOut();
-    let returned: unknown = 'unset';
-    await act(async () => { held.release(); returned = await pending; });
-
-    expect(returned).toBeNull();
-    expect(result.current.toast).toBeNull();
-  });
-
-  it('saveCategory (update) silent + failed + signed out → resolves false, no toast, no throw', async () => {
-    const held = server.hold('/categories/gym');
-    server.once('PATCH', '/categories/gym', { status: 400, reason: CAP });
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<unknown>;
-    act(() => { pending = result.current.saveCategory('gym', FORM, SILENT).then((v) => v, (e: unknown) => ({ threw: e })); });
-    signOut();
-    let returned: unknown = 'unset';
-    await act(async () => { held.release(); returned = await pending; });
-
-    expect(returned).toBe(false);
-    expect(result.current.toast).toBeNull();
-  });
-});
-
-describe('[A26] a silent SUCCESS is unchanged', () => {
-  it('createCategoryInline silent returns the created row with no toast', async () => {
-    server.once('POST', '/categories', { body: { id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#fff' } });
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-    let created: unknown = 'unset';
-    await act(async () => { created = await result.current.createCategoryInline(FORM, SILENT); });
-    expect(created).toMatchObject({ id: 'gym', name: 'Gym' });
-    expect(result.current.toast).toBeNull();
-  });
+  expect(returned).toBe(expected);
+  expect(server.sent(method, path)).toHaveLength(0);
+  expect(result.current.toast).toBeNull();
 });
