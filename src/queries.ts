@@ -862,8 +862,9 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
     results: (searchActive && searchData?.transactions) || EMPTY_TX,
     answered: searchAnswered,
     truncated: searchAnswered && !!searchData?.truncated,
-    matchCount: (searchAnswered && searchData?.matchCount) || 0,
-    matchTotal: (searchAnswered && searchData?.matchTotal) || 0,
+    // 0 while re-asking, so a re-file or delete never shows the old figures.
+    matchCount: (searchAnswered && !searchIsFetching && searchData?.matchCount) || 0,
+    matchTotal: (searchAnswered && !searchIsFetching && searchData?.matchTotal) || 0,
     // A manual Retry keeps the error flag set while it runs; report it as searching again instead.
     isError: searchActive && searchIsError && !searchIsFetching,
     retry: () => { refetchSearch(); },

@@ -16,7 +16,8 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, renderWithQueries } from './support/renderWithQueries';
+import { refreshAfter } from '../transactionCache';
+import { useTestQueryClient, renderWithQueries, refreshInAct } from './support/renderWithQueries';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -191,6 +192,22 @@ describe('match summary', () => {
 
     fireEvent.press(screen.getByLabelText('Clear search'));
     expect(screen.queryByTestId('transactions-search-summary')).toBeNull();
+  });
+
+  it('a delete while cut off re-asks the server, hiding the old figures until the new ones land', async () => {
+    server.seed(SEARCH, { transactions: [STEVEN_DEEP], truncated: true, matchCount: 340, matchTotal: -18302 });
+    await draw();
+    type('steven');
+    await pauseTyping();
+    expect(await screen.findByTestId('transactions-search-summary')).toHaveTextContent('340 matches · −⁠$18,302');
+
+    server.seed(SEARCH, { transactions: [STEVEN_DEEP], truncated: true, matchCount: 339, matchTotal: -18290 });
+    const held = server.hold(SEARCH);
+    await refreshInAct(() => refreshAfter('transactionDeleted'));
+    expect(screen.queryByTestId('transactions-search-summary')).toBeNull();
+
+    await act(async () => { held.release(); });
+    expect(await screen.findByTestId('transactions-search-summary')).toHaveTextContent('339 matches · −⁠$18,290');
   });
 
   // [A7] a net-zero list reads "$0" (no "+"); [A9] a cut-off reply from a server without the
