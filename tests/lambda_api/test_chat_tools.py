@@ -260,6 +260,12 @@ def test_safe_row_is_an_allow_list_and_redacts_numbers(chat_tools):
     assert row["description"] == "Card xx••• transfer •••"
 
 
+def test_safe_row_names_an_unfiled_charge_once(chat_tools):
+    # WHIT-846: search matches both spellings, but the model sees one plain label.
+    row = chat_tools.safe_row(_txn("u1", None, -9, "2026-09-05"), _data(chat_tools))
+    assert row["category"] in ("Uncategorised", "Uncategorized")
+
+
 # --- budgets, pay cycles, categories ---------------------------------------------------------
 
 

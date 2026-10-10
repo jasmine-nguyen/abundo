@@ -45,7 +45,7 @@ describe('transactionView', () => {
     ['unknown id', { category: 'RAW_ENUM', counts_to_budget: true }],
   ])('renders an uncategorized row (%s) as tappable with the Uncategorized label', (_case, over) => {
     const v = transactionView(state(), txn(over));
-    expect(v.categoryLabel).toBe('Uncategorized');
+    expect(v.categoryLabel).toBe('Uncategorised');
     expect(v.tappable).toBe(true);
     expect(v.categoryWeight).toBe('700');
   });

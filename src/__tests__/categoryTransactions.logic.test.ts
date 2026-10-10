@@ -72,7 +72,7 @@ describe('categoryTransactions', () => {
       ],
     });
     const detail = categoryTransactions(s, UNCATEGORIZED_KEY)!;
-    expect(detail.name).toBe('Uncategorized');
+    expect(detail.name).toBe('Uncategorised');
     expect(detail.groups.flatMap((g) => g.items.map((t) => t.transaction_id)).sort()).toEqual(['u1', 'u2']);
     expect(detail.total).toBe(38); // 30 posted + 8 pending
   });

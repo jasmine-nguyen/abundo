@@ -43,6 +43,6 @@ it('a not-in-budget uncategorized transfer is still bulk-selectable on the All t
   fireEvent.press(screen.getByText('Select'));
   fireEvent.press(screen.getByLabelText('Select Internal Transfer'));
   expect(screen.getByText('1 selected')).toBeTruthy();
-  fireEvent.press(screen.getByLabelText('Re-categorize selected transactions'));
+  fireEvent.press(screen.getByLabelText('Re-categorise selected transactions'));
   expect(mockOpenMultiPicker).toHaveBeenCalledWith(['xfer1']);
 });

@@ -29,6 +29,9 @@ SEARCH_RESULT_LIMIT = 300
 # Longest query accepted; the app's search box has the same maxLength.
 SEARCH_QUERY_MAX_LEN = 100
 
+# WHIT-846: an unfiled row matches either spelling. Mirrors the app's UNCATEGORISED_SEARCH_LABEL.
+UNFILED_SEARCH_LABEL = "Uncategorised Uncategorized"
+
 
 def _merchant_label(transaction: dict) -> str:
     merchant = transaction.get("merchant_name") or transaction.get("description") or ""
@@ -49,10 +52,16 @@ def transaction_matches_search(transaction: dict, query: str, category_names: di
     normalised_query = query.strip().lower()
     if normalised_query == "":
         return True
+    category = transaction.get("category")
+    category_label = (
+        UNFILED_SEARCH_LABEL
+        if is_unfiled_category(category, category_names)
+        else _category_label(category, category_names)
+    )
     parts = [
         _merchant_label(transaction),
         transaction.get("description") or "",
-        _category_label(transaction.get("category"), category_names),
+        category_label,
         f"{abs(float(transaction.get('amount') or 0)):.2f}",
         transaction.get("notes") or "",
         " ".join(transaction.get("tags") or []),

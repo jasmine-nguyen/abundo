@@ -52,7 +52,7 @@ describe('categoryBreakdown', () => {
     });
     const uncat = categoryBreakdown(s).rows.find((r) => r.id === UNCATEGORIZED_KEY)!;
     expect(uncat).toBeTruthy();
-    expect(uncat.name).toBe('Uncategorized');
+    expect(uncat.name).toBe('Uncategorised');
     expect(uncat.uncategorized).toBe(true);
     expect(uncat.icon).toBe('q');
     expect(uncat.color).toBe(C.purple);

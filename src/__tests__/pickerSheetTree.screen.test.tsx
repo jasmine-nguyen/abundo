@@ -80,7 +80,7 @@ describe('picker category tree', () => {
       rerender(overlaysTree());
     });
 
-    expect(screen.getByText('Categorize')).toBeTruthy();
+    expect(screen.getByText('Categorise')).toBeTruthy();
     expect(screen.queryByText('Dining')).toBeNull();
     expect((screen.getByTestId('pickerCat-toggle-food').props as any).accessibilityState.expanded).toBe(false);
     expect(fns.chooseCategory).not.toHaveBeenCalled();

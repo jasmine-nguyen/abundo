@@ -270,7 +270,7 @@ function PickerSheet() {
 
   return (
     <View>
-      <Text style={styles.sheetTitle}>Categorize</Text>
+      <Text style={styles.sheetTitle}>Categorise</Text>
       <Text style={styles.sheetMerchant}>{headerLabel}</Text>
       {/* Sign-aware: an income transaction is positive, so a hardcoded "-$" would
           misread it as spend once income categories are pickable (WHIT-158). A multi-select
@@ -724,7 +724,7 @@ function AddRuleSheet() {
           testID="rule-submit"
           style={[styles.btn, { marginTop: 16, backgroundColor: canSave ? C.accent : tint(C.accentAlt, 0.25) }]}
         >
-          <Text style={[styles.btnPrimaryText, { color: canSave ? C.accentInk : '#6a6a90' }]}>{editing ? 'Update rule' : 'Add rule'}</Text>
+          <Text style={[styles.btnPrimaryText, { color: canSave ? C.accentInk : C.textDisabled }]}>{editing ? 'Update rule' : 'Add rule'}</Text>
         </Pressable>
       )}
     </View>
@@ -1913,10 +1913,10 @@ function ApplyRulesDetail({ report, category }: {
 const styles = StyleSheet.create({
   // toast
   toastWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 200 },
-  toast: { maxWidth: '88%', backgroundColor: '#26262f', borderWidth: 1, borderColor: 'rgba(255,255,255,.1)', paddingVertical: 11, paddingHorizontal: 16, borderRadius: 14 },
+  toast: { maxWidth: '88%', backgroundColor: C.toast, borderWidth: 1, borderColor: C.borderLight, paddingVertical: 11, paddingHorizontal: 16, borderRadius: 14 },
   toastText: { fontFamily: FONT.body, color: C.textBright, fontSize: 13.5, textAlign: 'center' },
   // sheet
-  scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,.55)', justifyContent: 'flex-end', alignItems: 'center' },
+  scrim: { flex: 1, backgroundColor: C.scrim, justifyContent: 'flex-end', alignItems: 'center' },
   // Wraps the sheet so the spring transform (translateY) doesn't disturb its bottom-anchored,
   // horizontally-centred layout (WHIT-199).
   sheetLift: { width: '100%', alignItems: 'center' },
@@ -1926,13 +1926,13 @@ const styles = StyleSheet.create({
   sheetShrink: { flexShrink: 1 },
   // WHIT-293: paddingTop trimmed (20 → 12) to offset the taller grab strip above, so the grabber
   // bar stays put visually while its touch target grows up toward the sheet's top edge.
-  sheet: { width: '100%', maxWidth: 440, backgroundColor: '#161620', borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 20, paddingTop: 12, paddingBottom: 34, borderTopWidth: 1, borderColor: 'rgba(255,255,255,.08)' },
+  sheet: { width: '100%', maxWidth: 440, backgroundColor: C.sheet, borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 20, paddingTop: 12, paddingBottom: 34, borderTopWidth: 1, borderColor: C.fieldBorder },
   // WHIT-290/WHIT-293: the grabber's drag target — a full-width strip across the top of the sheet
   // so a pull-down anywhere up here dismisses. Enlarged vertically (WHIT-293) so a pull that starts
   // a little off the thin bar still lands on the target instead of missing. The extra paddingTop
   // is absorbed by trimming the sheet's own top padding below, so the bar doesn't visibly shift.
   grabHandle: { alignSelf: 'stretch', alignItems: 'center', paddingTop: 14, paddingBottom: 16 },
-  grabber: { width: 38, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,.18)' },
+  grabber: { width: 38, height: 4, borderRadius: 2, backgroundColor: C.grabber },
   sheetTitle: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', color: C.text, letterSpacing: -0.3 },
   sheetMerchant: { fontFamily: FONT.body, fontSize: 14, color: C.textMid, marginTop: 8 },
   // The inline "New category" form: the title/subtitle stay fixed while the form scrolls. flexShrink
@@ -1948,13 +1948,13 @@ const styles = StyleSheet.create({
   btn: { paddingVertical: 15, borderRadius: 15, alignItems: 'center', marginTop: 10 },
   btnPrimary: { backgroundColor: C.accent },
   btnPrimaryText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.accentInk },
-  btnGhost: { backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,.1)' },
-  btnGhostText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: '#e2e2e8' },
+  btnGhost: { backgroundColor: 'transparent', borderWidth: 1, borderColor: C.borderLight },
+  btnGhostText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
   // WHIT-560: the async apply-rules progress bar.
   jobProgressTrack: { height: 8, borderRadius: 4, backgroundColor: C.progressTrack, marginTop: 16, overflow: 'hidden' },
   jobProgressFill: { height: 8, borderRadius: 4, backgroundColor: C.accent },
   fieldLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 16, marginBottom: 7 },
-  input: { backgroundColor: C.card, borderWidth: 1, borderColor: 'rgba(255,255,255,.08)', borderRadius: 14, paddingVertical: 14, paddingHorizontal: 16, color: '#fff', fontFamily: FONT.body, fontSize: 15 },
+  input: { backgroundColor: C.card, borderWidth: 1, borderColor: C.fieldBorder, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 16, color: C.textBright, fontFamily: FONT.body, fontSize: 15 },
   ruleCatWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   ruleCatPill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 11, borderWidth: 1 },
   ruleCatText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600' },

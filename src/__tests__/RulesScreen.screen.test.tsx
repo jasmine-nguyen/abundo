@@ -145,7 +145,7 @@ it('degrades gracefully when the taxonomy is cold: rules list under Uncategorize
   server.fail('/categories', 500); // categories outage
   server.seed('/rules', [NETFLIX]);
   await renderWithApp(<Rules />);
-  expect(screen.getByText('Uncategorized')).toBeTruthy();
+  expect(screen.getByText('Uncategorised')).toBeTruthy();
   expect(screen.getByText('NETFLIX')).toBeTruthy();
   // still editable + deletable
   fireEvent.press(screen.getByTestId('edit-rule-e1'));

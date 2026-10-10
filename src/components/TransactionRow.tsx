@@ -68,7 +68,7 @@ export function TransactionRow({ t, category, selectable = false, selected = fal
             <Text style={[styles.category, { color: v.categoryColor, fontWeight: v.categoryWeight }]} numberOfLines={1} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{v.categoryLabel}</Text>
             {v.isPending && (
               <View style={styles.pending}>
-                <Glyph name="clock" size={12} color="#8b8b95" />
+                <Glyph name="clock" size={12} color={C.textDim} />
                 <Text style={styles.pendingText} numberOfLines={1} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{pendingLabel(t.date)}</Text>
               </View>
             )}
@@ -107,8 +107,8 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 },
   metaRowWrap: { flexWrap: 'wrap' },
   category: { fontFamily: FONT.body, fontSize: 12.5, flexShrink: 1 },
-  pending: { flexShrink: 1, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(255,255,255,.06)', paddingVertical: 2, paddingLeft: 5, paddingRight: 7, borderRadius: 6 },
-  pendingText: { fontFamily: FONT.body, fontSize: 11, color: '#8b8b95', flexShrink: 1 },
+  pending: { flexShrink: 1, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: C.neutralWash, paddingVertical: 2, paddingLeft: 5, paddingRight: 7, borderRadius: 6 },
+  pendingText: { fontFamily: FONT.body, fontSize: 11, color: C.textDim, flexShrink: 1 },
   amount: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', letterSpacing: -0.3 },
   amountStacked: { marginTop: 6 },
 });

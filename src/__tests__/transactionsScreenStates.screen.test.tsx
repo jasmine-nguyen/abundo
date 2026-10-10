@@ -31,7 +31,8 @@ import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries, settl
 import { queryClient } from '../queryClient';
 import { transactionsKey, uncategorizedCountKey } from '../queryKeys';
 import { COFFEE_RECORD, GROCERIES_TOP } from './support/categories';
-import { textOf } from './support/layout';
+import { textOf, styleOf } from './support/layout';
+import { C, tint } from '../theme';
 import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 const server = installFakeServer();
@@ -147,15 +148,36 @@ it('[A3] the "Updated" line renders above the Uncategorized hint', async () => {
   seedUncategorizedFeed([{ ...ROW, category: null }]);
   await draw();
   fireEvent.press(screen.getByTestId('tab-uncategorized'));
-  expect(await screen.findByText(/Tap a transaction to categorize it/)).toBeTruthy();
+  expect(await screen.findByText(/Tap a transaction to categorise it/)).toBeTruthy();
   const text = textOf(screen.root);
   expect(text.indexOf('Updated ')).toBeGreaterThan(-1);
-  expect(text.indexOf('Updated ')).toBeLessThan(text.indexOf('Tap a transaction to categorize it'));
+  expect(text.indexOf('Updated ')).toBeLessThan(text.indexOf('Tap a transaction to categorise it'));
+});
+
+// WHIT-846: the tabs are the shared soft-tint switch (not a solid white pill), 44pt tall, with a
+// rose count bubble; on-screen words use Australian spelling; an unfiled row's label is rose.
+it('the tabs use the soft tint, Australian spelling and a rose Uncategorised row', async () => {
+  seedFeed([{ ...ROW, category: null }]);
+  server.seed(COUNT, { count: 1 });
+  await draw();
+  const allTab = screen.getByTestId('tab-all');
+  expect(allTab.props.accessibilityState.selected).toBe(true);
+  expect(styleOf(allTab).backgroundColor).toBe(tint(C.accentAlt, 0.16));
+  expect(styleOf(within(allTab).getByText('All'))).toMatchObject({ color: C.accentSoft, fontWeight: '700' });
+  const uncategorisedTab = screen.getByTestId('tab-uncategorized');
+  for (const tab of [allTab, uncategorisedTab]) expect(styleOf(tab).minHeight).toBeGreaterThanOrEqual(44);
+  expect(within(uncategorisedTab).getByText('Uncategorised')).toBeTruthy();
+  expect(await within(uncategorisedTab).findByText('1')).toBeTruthy();
+  const rowLabel = (await screen.findAllByText('Uncategorised'))
+    .find((node) => uncategorisedTab.findAll((candidate) => candidate === node).length === 0);
+  expect(rowLabel).toBeTruthy();
+  expect(styleOf(rowLabel!).color).toBe(C.bad);
+  expect(screen.queryByText(/Uncategorized|categorize/)).toBeNull();
 });
 
 it('empty Uncategorized tab (settled) shows the "All caught up" empty state', async () => {
   await draw();
-  fireEvent.press(screen.getByText('Uncategorized'));
+  fireEvent.press(screen.getByText('Uncategorised'));
   expect(await screen.findByText('All caught up')).toBeTruthy();
 });
 
@@ -515,14 +537,14 @@ it('Select enters selection mode; toggling rows updates the count; Re-categorize
   fireEvent.press(screen.getByLabelText('Select Coles')); // untoggle one
   expect(screen.getByText('1 selected')).toBeTruthy();
 
-  fireEvent.press(screen.getByLabelText('Re-categorize selected transactions'));
+  fireEvent.press(screen.getByLabelText('Re-categorise selected transactions'));
   expect(mockOpenMultiPicker).toHaveBeenCalledWith(['t1']);
 });
 
 it('Re-categorize does nothing with an empty selection (disabled)', async () => {
   await draw();
   fireEvent.press(screen.getByText('Select'));
-  fireEvent.press(screen.getByLabelText('Re-categorize selected transactions'));
+  fireEvent.press(screen.getByLabelText('Re-categorise selected transactions'));
   expect(mockOpenMultiPicker).not.toHaveBeenCalled();
 });
 

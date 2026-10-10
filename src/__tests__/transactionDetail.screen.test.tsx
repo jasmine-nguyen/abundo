@@ -216,7 +216,7 @@ describe('re-categorize is offered regardless of the current category', () => {
   it('an uncategorized transaction is re-filable', async () => {
     seedFeed([txn({ transaction_id: 't1', category: null })]);
     await draw();
-    fireEvent.press(screen.getByLabelText('Change category, currently Uncategorized'));
+    fireEvent.press(screen.getByLabelText('Change category, currently Uncategorised'));
     expect(mockOpenPicker).toHaveBeenCalledWith('t1');
   });
 

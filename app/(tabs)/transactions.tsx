@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { C, FONT, tint, PRESSED, fmtExact, fmtSignedExact } from '../../src/theme';
@@ -7,12 +7,14 @@ import { Glyph } from '../../src/icons';
 import { transactionGroups, transactionMatchesSearch, countUncategorized, unionById, useAppContext, SEARCH_QUERY_MAX_LEN } from '../../src/context';
 import { useTransactionsScreenData, useUncategorizedCount, useUncategorizedMerchants } from '../../src/queries';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
-import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
 import { useDebouncedValue } from '../../src/hooks/useDebouncedValue';
 import { ScrollChromeHeader, ASK_BUTTON_BOTTOM_CLEARANCE } from '../../src/motion/ScrollChromeHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { EmptyState } from '../../src/components/EmptyState';
+import { SegmentedControl } from '../../src/components/SegmentedControl';
+import { SearchField } from '../../src/components/SearchField';
+import { useFirstFilingSeen } from '../../src/hooks/useFirstFilingSeen';
 import { HeaderTextButton } from '../../src/components/ui';
 import { toggleIn } from '../../src/setutil';
 
@@ -20,6 +22,9 @@ type Tab = 'all' | 'uncategorized';
 
 // WHIT-576: how long typing must pause before the full-history search asks the server.
 const SEARCH_DEBOUNCE_MS = 300;
+
+// The selected tab's soft tint — the Insights cycle toggle's recipe (DESIGN.md › Segmented control).
+const TAB_TINT = tint(C.accentAlt, 0.16);
 
 // A query of only `$` / `,` matches every row locally, so asking the server would just return the
 // newest few hundred rows of everything.
@@ -36,7 +41,15 @@ export default function Transactions() {
   const debouncedQuery = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
   const serverQuery = needsServerSearch(debouncedQuery) ? debouncedQuery : '';
   const insets = useSafeAreaInsets();
-  const { openMultiPicker, showToast, setSheet, pendingUncategorizedSelect, clearUncategorizedSelect } = useAppContext();
+  const { openMultiPicker, showToast, sheet, setSheet, pendingUncategorizedSelect, clearUncategorizedSelect } = useAppContext();
+  // WHIT-846: the Uncategorised hint hides for good once the user reaches a category pick's
+  // confirm step (one charge, a selection, or File by shop).
+  const { seen: firstFilingSeen, markSeen: markFirstFilingSeen } = useFirstFilingSeen();
+  const sheetMode = sheet?.mode;
+  useEffect(() => {
+    if (firstFilingSeen !== false) return;
+    if (sheetMode === 'confirm' || sheetMode === 'confirmMany' || sheetMode === 'fileByShopConfirm') markFirstFilingSeen();
+  }, [sheetMode, firstFilingSeen, markFirstFilingSeen]);
   // WHIT-190a: transactions now come from the cached, auth-gated query layer — an all-accounts
   // cursor feed, so `loadMore` pages older history in and `hasMore` is false at end-of-history.
   const { transactions, category, isLoading, isError, error, refreshError, updatedAt, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore, search: serverSearch } = useTransactionsScreenData(tab, serverQuery);
@@ -159,33 +172,23 @@ export default function Transactions() {
       refreshing={pulling && (listSource.length > 0 || showUncategorizedMore)}
       onRefresh={onRefresh}
     >
-        {/* segmented control */}
-        <View style={styles.seg}>
-          <Seg label="All" active={tab === 'all'} onPress={() => changeTab('all')} flex={1} />
-          <Seg label="Uncategorized" active={tab === 'uncategorized'} onPress={() => changeTab('uncategorized')} flex={1.45} badge={uncategorizedCount} />
-        </View>
+        <SegmentedControl
+          value={tab}
+          onChange={changeTab}
+          options={[
+            { value: 'all', label: 'All', testID: 'tab-all', activeTint: TAB_TINT, activeTextColor: C.accentSoft },
+            { value: 'uncategorized', label: 'Uncategorised', testID: 'tab-uncategorized', activeTint: TAB_TINT, activeTextColor: C.accentSoft, flex: 1.45, badge: uncategorizedCount },
+          ]}
+        />
 
         {!selectionMode && (
-          <View style={styles.search}>
-            <Glyph name="search" size={18} color="#6e6e78" />
-            <TextInput
-              value={search}
-              onChangeText={setSearch}
-              placeholder="Search transactions"
-              placeholderTextColor="#6e6e78"
-              style={styles.searchInput}
-              autoCapitalize="none"
-              autoCorrect={false}
-              returnKeyType="search"
-              maxLength={SEARCH_QUERY_MAX_LEN}
-              accessibilityLabel="Search transactions"
-            />
-            {search.length > 0 && (
-              <Pressable onPress={() => setSearch('')} hitSlop={10} accessibilityRole="button" accessibilityLabel="Clear search">
-                <Text style={styles.searchClear}>✕</Text>
-              </Pressable>
-            )}
-          </View>
+          <SearchField
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search transactions"
+            accessibilityLabel="Search transactions"
+            maxLength={SEARCH_QUERY_MAX_LEN}
+          />
         )}
 
         {!searchingServer && !showSpinner && !showError && (
@@ -196,31 +199,14 @@ export default function Transactions() {
           <Text testID="transactions-search-summary" style={[styles.searchStatusText, styles.searchSummary]}>{matchSummary}</Text>
         )}
 
-        {tab === 'uncategorized' && localUncategorized > 0 && !selectionMode && (
+        {tab === 'uncategorized' && localUncategorized > 0 && !selectionMode && firstFilingSeen === false && (
           <View style={styles.hint}>
             <Glyph name="star" size={18} color={C.accentSoft} />
             <Text style={styles.hintText}>
-              Tap a transaction to categorize it — and choose whether the call applies to{' '}
+              Tap a transaction to categorise it — and choose whether the call applies to{' '}
               <Text style={styles.hintBold}>just that one</Text> or <Text style={styles.hintBold}>every charge</Text> from that merchant.
             </Text>
           </View>
-        )}
-
-        {/* WHIT-508: rules only run as a charge ARRIVES, so history never gets re-labelled. This
-            sweeps it. Gated on the WHOLE-history count (the badge's number), not the loaded-page
-            count: after a capped run the loaded page can be empty while hundreds remain deeper in
-            history, and that is exactly when the button is still needed. Hidden behind the cold
-            spinner and the load error like every other control on this screen. */}
-        {tab === 'uncategorized' && !selectionMode && !showSpinner && !showError && uncategorizedCount > 0 && (
-          <Pressable
-            testID="transactions-apply-rules"
-            onPress={() => setSheet({ mode: 'applyRules' })}
-            accessibilityRole="button"
-            accessibilityLabel="Apply my rules to your unfiled charges"
-            style={styles.applyRules}
-          >
-            <Text style={styles.applyRulesText}>Apply my rules</Text>
-          </Pressable>
         )}
 
         {/* WHIT-517: the rest of the backlog — shops with NO rule yet. "Apply my rules" can't touch
@@ -237,6 +223,23 @@ export default function Transactions() {
             style={styles.fileByShop}
           >
             <Text style={styles.fileByShopText}>File by shop</Text>
+          </Pressable>
+        )}
+
+        {/* WHIT-508: rules only run as a charge ARRIVES, so history never gets re-labelled. This
+            sweeps it. Gated on the WHOLE-history count (the badge's number), not the loaded-page
+            count: after a capped run the loaded page can be empty while hundreds remain deeper in
+            history, and that is exactly when the link is still needed. Hidden behind the cold
+            spinner and the load error like every other control on this screen. */}
+        {tab === 'uncategorized' && !selectionMode && !showSpinner && !showError && uncategorizedCount > 0 && (
+          <Pressable
+            testID="transactions-apply-rules"
+            onPress={() => setSheet({ mode: 'applyRules' })}
+            accessibilityRole="button"
+            accessibilityLabel="Apply my rules to your unfiled charges"
+            style={({ pressed }) => [styles.applyRulesLink, pressed && PRESSED]}
+          >
+            <Text style={styles.applyRulesLinkText}>Apply my rules</Text>
           </Pressable>
         )}
 
@@ -298,7 +301,7 @@ export default function Transactions() {
           <EmptyState
             testID="transactions-no-results"
             icon={<Glyph name="search" size={30} color={C.textDim} />}
-            iconBackground="rgba(255,255,255,.06)"
+            iconBackground={C.neutralWash}
             title="No matches"
             sub={<>No transactions match “{query}”.</>}
           />
@@ -308,12 +311,12 @@ export default function Transactions() {
             is the WHOLE-history "server says 0" signal, which can briefly disagree with the loaded
             rows — a cross-device or server-side re-tag drops the server count to 0 while the feed
             cache (never invalidated on that path) still holds those rows. Without this gate the screen
-            would show "Every transaction is categorized" ABOVE a visible list of uncategorized rows. */}
+            would show "Every transaction is categorised" ABOVE a visible list of uncategorized rows. */}
         {allCaughtUp && groups.length === 0 && !showSpinner && !showError && (
           <EmptyState
             icon={<Glyph name="check" size={32} color={C.good} />}
             title="All caught up"
-            sub="Every transaction is categorized. New ones matching your rules file themselves automatically."
+            sub="Every transaction is categorised. New ones matching your rules file themselves automatically."
           />
         )}
 
@@ -363,27 +366,14 @@ export default function Transactions() {
           onPress={onRecategorize}
           disabled={selected.size === 0}
           accessibilityRole="button"
-          accessibilityLabel="Re-categorize selected transactions"
+          accessibilityLabel="Re-categorise selected transactions"
           style={[styles.actionBtn, selected.size === 0 && styles.actionBtnDisabled]}
         >
-          <Text style={[styles.actionBtnText, selected.size === 0 && styles.actionBtnTextDisabled]}>Re-categorize</Text>
+          <Text style={[styles.actionBtnText, selected.size === 0 && styles.actionBtnTextDisabled]}>Re-categorise</Text>
         </Pressable>
       </View>
     )}
     </View>
-  );
-}
-
-function Seg({ label, active, onPress, flex, badge }: { label: string; active: boolean; onPress: () => void; flex: number; badge?: number }) {
-  return (
-    <Pressable testID={`tab-${label.toLowerCase()}`} onPress={onPress} style={({ pressed }) => [styles.segBtn, { flex, backgroundColor: active ? '#fff' : 'transparent' }, pressed && PRESSED]}>
-      <Text style={[styles.segText, { color: active ? C.accentInk : C.textMid }]}>{label}</Text>
-      {badge !== undefined && (
-        <View style={[styles.badge, { backgroundColor: active ? tint(C.accentInk, 0.18) : tint(C.bad, 0.2) }]}>
-          <Text style={[styles.badgeText, { color: active ? C.accentInk : C.badBright }]} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{badge}</Text>
-        </View>
-      )}
-    </Pressable>
   );
 }
 
@@ -392,27 +382,16 @@ const styles = StyleSheet.create({
   // Extra bottom padding so the last rows can scroll clear of the floating action bar and the
   // Ask pill (card 609).
   contentWithBar: { paddingBottom: 108 + ASK_BUTTON_BOTTOM_CLEARANCE },
-  actionBar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingTop: 12, paddingHorizontal: 18, backgroundColor: '#161620', borderTopWidth: 1, borderTopColor: C.hairline },
+  actionBar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingTop: 12, paddingHorizontal: 18, backgroundColor: C.sheet, borderTopWidth: 1, borderTopColor: C.hairline },
   actionCount: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: C.textMid },
   actionBtn: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 13, backgroundColor: C.accent },
   actionBtnDisabled: { backgroundColor: tint(C.accentAlt, 0.22) },
   actionBtnText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentInk },
-  actionBtnTextDisabled: { color: '#6a6a90' },
-
-  seg: { flexDirection: 'row', gap: 4, padding: 4, backgroundColor: C.card, borderRadius: 14, marginBottom: 8 },
-  segBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 9, borderRadius: 10 },
-  segText: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600' },
-  badge: { minWidth: 18, minHeight: 18, borderRadius: 999, paddingHorizontal: 5, alignItems: 'center', justifyContent: 'center' },
-  badgeText: { fontFamily: FONT.body, fontSize: 11, fontWeight: '700' },
-
-  search: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 13, paddingVertical: 4, paddingHorizontal: 14, marginTop: 8 },
-  // The input carries its own vertical padding so the row height matches the old placeholder box.
-  searchInput: { flex: 1, fontFamily: FONT.body, fontSize: 14, color: C.textBright, paddingVertical: 8, padding: 0 },
-  searchClear: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: '#6e6e78', paddingHorizontal: 2 },
+  actionBtnTextDisabled: { color: C.textDisabled },
 
   hint: { flexDirection: 'row', gap: 11, alignItems: 'flex-start', backgroundColor: tint(C.accentAlt, 0.1), borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), borderRadius: 16, padding: 13, paddingHorizontal: 14, marginTop: 10 },
   hintText: { flex: 1, fontFamily: FONT.body, fontSize: 12.5, color: C.accentSofter, lineHeight: 18 },
-  hintBold: { color: '#fff', fontWeight: '700' },
+  hintBold: { color: C.textBright, fontWeight: '700' },
 
   groupLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, letterSpacing: 0.2, marginHorizontal: 4, marginBottom: 4 },
 
@@ -428,11 +407,10 @@ const styles = StyleSheet.create({
   searchSummary: { color: C.textMid, fontWeight: '600' },
   searchRetry: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.accentSoft, marginTop: 12 },
 
-  // "Apply my rules" (WHIT-508): the Load More treatment, sitting under the hint.
-  applyRules: { marginTop: 10, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.hairline, alignItems: 'center' },
-  applyRulesText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSoft },
-  // WHIT-517: filled accent (primary) — this clears the bulk of the backlog, so it reads louder
-  // than the outlined "Apply my rules" above it.
+  // WHIT-517 / WHIT-846: filled accent — the tab's one main button.
   fileByShop: { marginTop: 10, paddingVertical: 12, borderRadius: 13, backgroundColor: C.accent, alignItems: 'center' },
   fileByShopText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentInk },
+  // "Apply my rules" (WHIT-508): a quiet text link under File by shop.
+  applyRulesLink: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  applyRulesLinkText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSoft },
 });

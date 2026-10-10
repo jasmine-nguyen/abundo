@@ -146,13 +146,13 @@ it('does NOT show the error when a background refetch fails over cached rows (ca
 });
 
 // WHIT-688 — drill-in edges over the real query hooks.
-// [A1] (P0) The "?" bucket drill reads its own endpoint and titles itself "Uncategorized".
-it('the Uncategorized drill asks for the sentinel id and titles the screen "Uncategorized"', async () => {
+// [A1] (P0) The "?" bucket drill reads its own endpoint and titles itself "Uncategorised".
+it('the Uncategorized drill asks for the sentinel id and titles the screen "Uncategorised"', async () => {
   setParams({ id: '__uncategorized__', cycle: '0' });
   server.seed('/categories/__uncategorized__/transactions', [{ ...ROW, category: null, amount: -20 }]);
   await renderWithQueries(<CategoryDetail />);
   expect(server.sent('GET', '/categories/__uncategorized__/transactions')).toHaveLength(1);
-  expect(screen.getAllByText('Uncategorized')).toHaveLength(2); // the header + the row's label
+  expect(screen.getAllByText('Uncategorised')).toHaveLength(2); // the header + the row's label
   expect(screen.getByText('$20')).toBeTruthy();
   expect(screen.getByText('Spent this cycle')).toBeTruthy();
 });

@@ -2344,8 +2344,8 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
     }
   }
   if (uncategorized) {
-    rowById.set(UNCATEGORIZED_KEY, mk(UNCATEGORIZED_KEY, 'Uncategorized', C.purple, 'q',
-      'rgba(160,130,240,.16)', uncategorized.posted, uncategorized.pending, 0, null, false, true, UNCATEGORIZED_KEY));
+    rowById.set(UNCATEGORIZED_KEY, mk(UNCATEGORIZED_KEY, 'Uncategorised', C.purple, 'q',
+      tint(C.purple, 0.16), uncategorized.posted, uncategorized.pending, 0, null, false, true, UNCATEGORIZED_KEY));
     pushEmit(null, UNCATEGORIZED_KEY);
   }
 
@@ -2480,7 +2480,7 @@ export function categoryTreeRows(categories: Category[]): CategoryTreeRow[] {
 
 // Header label for rules whose category no longer exists (deleted category, or the
 // taxonomy still cold-loading). Such rules are kept and grouped here, never dropped.
-export const UNCATEGORIZED_RULE_GROUP = 'Uncategorized';
+export const UNCATEGORIZED_RULE_GROUP = 'Uncategorised';
 
 // One category's rules on the Rules screen. `category` is null for the orphan group
 // (rules whose categoryId matches no known category).
@@ -2593,19 +2593,20 @@ export function transactionView(s: Pick<TransactionListInput, 'category'>, t: Tr
     isPending: t.status === 'pending',
   };
 
-  // Every uncategorized charge is the actionable purple "Uncategorized" to-do — tap to file —
+  // Every uncategorized charge is the actionable rose "Uncategorised" to-do — tap to file —
   // regardless of budget status. Transfers are uncategorized too, so they're counted, listed,
-  // and tappable like any other unfiled charge (WHIT-330).
+  // and tappable like any other unfiled charge (WHIT-330). Rose matches the tab's count bubble
+  // and the tab-bar dot (WHIT-846, DESIGN.md › Bad Rose).
   if (uncategorized) {
     return {
-      ...base, icon: 'q', iconColor: C.purple, chipBg: 'rgba(160,130,240,.16)',
-      categoryLabel: 'Uncategorized', categoryColor: C.purple, categoryWeight: '700', tappable: true,
+      ...base, icon: 'q', iconColor: C.bad, chipBg: tint(C.bad, 0.16),
+      categoryLabel: 'Uncategorised', categoryColor: C.bad, categoryWeight: '700', tappable: true,
     };
   }
   if (isIncome) {
     return {
-      ...base, icon: 'home', iconColor: '#9aa2b5', chipBg: 'rgba(154,162,181,.14)',
-      categoryLabel: 'Income', categoryColor: '#9aa2b5', categoryWeight: '500', tappable: false,
+      ...base, icon: 'home', iconColor: C.textDim, chipBg: tint(C.textDim, 0.14),
+      categoryLabel: 'Income', categoryColor: C.textDim, categoryWeight: '500', tappable: false,
     };
   }
   const c = s.category(t.category)!;
@@ -2650,7 +2651,7 @@ export function countUncategorized(s: TransactionListInput) {
 }
 
 // Whether a transaction matches the Transactions-tab search box. Matches the text the user
-// SEES on the row — the merchant label + raw description + the category label (Uncategorized /
+// SEES on the row — the merchant label + raw description + the category label (Uncategorised /
 // Income / the category name) — plus the amount, so "coffee", "eating out" and "42" all work,
 // plus the user's own notes and tags.
 // Case-insensitive substring; `$` and `,` are stripped from the query so "$42" / "1,234" match.
@@ -2658,10 +2659,13 @@ export function countUncategorized(s: TransactionListInput) {
 // WHIT-576: the server runs the same match over ALL history (lambda_api/transaction_search.py);
 // tests/fixtures/transaction_search_parity.json and a crosslang drift test keep the two in step.
 export const SEARCH_QUERY_MAX_LEN = 100;
+// WHIT-846: an unfiled row matches either spelling. Mirrored as UNFILED_SEARCH_LABEL in
+// lambda_api/transaction_search.py.
+export const UNCATEGORISED_SEARCH_LABEL = 'Uncategorised Uncategorized';
 export function transactionMatchesSearch(s: Pick<TransactionListInput, 'category'>, t: Transaction, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (q === '') return true;
-  const categoryLabel = t.category === 'income' ? 'Income' : isUncategorized(s, t) ? 'Uncategorized' : (s.category(t.category)?.name ?? '');
+  const categoryLabel = t.category === 'income' ? 'Income' : isUncategorized(s, t) ? UNCATEGORISED_SEARCH_LABEL : (s.category(t.category)?.name ?? '');
   const parts = [merchantLabel(t), t.description || '', categoryLabel, Math.abs(t.amount || 0).toFixed(2), t.notes ?? '', (t.tags ?? []).join(' ')];
   const haystack = parts.join(' ').toLowerCase();
   return haystack.includes(q) || haystack.includes(q.replace(/[$,]/g, ''));
@@ -2766,7 +2770,7 @@ export function categoryTransactions(s: TransactionListInput, drillId: string) {
 
   return {
     id: drillId,
-    name: isUncat ? 'Uncategorized' : (s.category(drillId)?.name ?? 'Category'),
+    name: isUncat ? 'Uncategorised' : (s.category(drillId)?.name ?? 'Category'),
     groups: transactionGroups({ transactions: txns, category: s.category }, 'all'),
     count: txns.length,
     total: posted + pending, posted, pending,
