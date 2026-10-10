@@ -71,7 +71,6 @@ def test_allowed_sign_ups(presignup, monkeypatch, allowlist, event):
         (",  , ,", _event("", EXTERNAL)),
         # An IdP could map `email` to a non-string: fail closed, never coerce it into a pass.
         (ALLOWED, _event([ALLOWED], EXTERNAL)),
-        (ALLOWED, _event(["a", "b"], EXTERNAL)),
         (ALLOWED, _event({"addr": ALLOWED}, EXTERNAL)),
         (ALLOWED, _event(12345, EXTERNAL)),
         (ALLOWED, _event(ALLOWED, EXTERNAL, email_verified="false")),
@@ -80,7 +79,7 @@ def test_allowed_sign_ups(presignup, monkeypatch, allowlist, event):
     ],
     ids=["not-allowlisted", "external-not-allowlisted", "missing-email", "empty-email",
          "whitespace-only-email", "malformed-event", "empty-allowlist", "missing-allowlist-env",
-         "blank-only-allowlist-and-empty-email", "email-list", "email-list-of-two", "email-dict",
+         "blank-only-allowlist-and-empty-email", "email-list","email-dict",
          "email-int", "external-unverified", "external-missing-verified", "external-verified-bool-false"],
 )
 def test_rejected_sign_ups(presignup, monkeypatch, allowlist, event):

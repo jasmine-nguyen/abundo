@@ -59,8 +59,6 @@ def test_repayment_with_no_push_alarms(handler, caplog):
     assert MARKER in text
 
 
-# --- the four false-negative edges the card names --------------------------
-
 def test_interest_same_day_still_alarms(handler, caplog):
     # A repayment credit + a same-day interest debit. The balance-drop check nets these;
     # this one keys on the credit alone, so a missed push on the credit still alarms — and

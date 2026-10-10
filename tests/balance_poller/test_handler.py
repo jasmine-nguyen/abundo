@@ -234,12 +234,6 @@ def test_poll_account_balances_batch_read_failure_degrades_old_but_still_stores(
     assert len(accounts.calls) == len(handler.BALANCE_SOURCES)  # ...but every balance stored
 
 
-# --- WHIT-482 (QA additions): batched prior-read gaps -------------------------
-# Card: WHIT-482 — hoist the per-account prior-balance read into one batched read.
-# These cover gaps the 3 existing/new cases leave open. They exercise the REAL
-# handler._poll_account_balances / _check_goal_checkpoints — no re-implemented math.
-
-
 class _FakeNotifyRepo:
     """Records fired goal-checkpoint markers; starts with none fired."""
 
