@@ -9,12 +9,12 @@ import { makeState, asShortfallGoal } from './factory';
 const TODAY = new Date(2026, 6, 4);        // 2026-07-04
 // B=900000 with these facts is a 'none' case: baseRepay+extra (4167) < interest (≈4305).
 const M = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 3667, extra: 500 };
-const SHORTFALL_STATE = (payoffGoalDate: string | null) =>
-  makeState({ loanFacts: { ...M, payoffGoalDate }, homeLoan: { balance: 900000, asOf: null } });
+const STATE = (balance: number, payoffGoalDate: string | null, over: Partial<typeof M> = {}) =>
+  makeState({ loanFacts: { ...M, ...over, payoffGoalDate }, homeLoan: { balance, asOf: null } });
 
 describe('paydownView shortfall solver (WHIT-126)', () => {
   it('solves the required repayment for a valid future goal date', () => {
-    const pv = paydownView(SHORTFALL_STATE('2035-06-01'), TODAY);
+    const pv = paydownView(STATE(900000,'2035-06-01'), TODAY);
     expect(pv.mode).toBe('none');
     expect(pv.goalDateLabel).toBe('Jun 2035');
     expect(pv.requiredRepay).not.toBeNull();
@@ -29,7 +29,7 @@ describe('paydownView shortfall solver (WHIT-126)', () => {
   });
 
   it('leaves the shortfall fields null with no goal date (falls back to static copy)', () => {
-    const pv = paydownView(SHORTFALL_STATE(null), TODAY);
+    const pv = paydownView(STATE(900000,null), TODAY);
     expect(pv.mode).toBe('none');
     expect(pv.requiredRepay).toBeNull();
     expect(pv.requiredExtra).toBeNull();
@@ -37,15 +37,15 @@ describe('paydownView shortfall solver (WHIT-126)', () => {
   });
 
   it('ignores a past / current-month goal date (no absurd figure from n ≤ 0)', () => {
-    expect(paydownView(SHORTFALL_STATE('2020-01-01'), TODAY).requiredRepay).toBeNull(); // past
-    expect(paydownView(SHORTFALL_STATE('2026-07-15'), TODAY).requiredRepay).toBeNull(); // this month → n=0
+    expect(paydownView(STATE(900000,'2020-01-01'), TODAY).requiredRepay).toBeNull(); // past
+    expect(paydownView(STATE(900000,'2026-07-15'), TODAY).requiredRepay).toBeNull(); // this month → n=0
   });
 });
 
 describe('aiGoalSignal shortfall variant (WHIT-126)', () => {
   it('emits a shortfall signal carrying the required repayment for a future goal date', () => {
-    const pv = paydownView(SHORTFALL_STATE('2035-06-01'), TODAY);
-    const g = asShortfallGoal(aiGoalSignal(SHORTFALL_STATE('2035-06-01'), TODAY));
+    const pv = paydownView(STATE(900000,'2035-06-01'), TODAY);
+    const g = asShortfallGoal(aiGoalSignal(STATE(900000,'2035-06-01'), TODAY));
     expect(g.goal_date).toBe('Jun 2035');
     expect(g.required_repayment).toBe(pv.requiredRepay);
     expect(g.required_extra).toBe(pv.requiredExtra);
@@ -63,27 +63,20 @@ describe('aiGoalSignal shortfall variant (WHIT-126)', () => {
 // screen's "try a later date" hint. False for a realistic goal, no date, or a past date.
 describe('paydownView goalTooAggressive flag (WHIT-215)', () => {
   it('does NOT flag with no goal date, or a past / current-month date', () => {
-    expect(paydownView(SHORTFALL_STATE(null), TODAY).goalTooAggressive).toBe(false);
-    expect(paydownView(SHORTFALL_STATE('2020-01-01'), TODAY).goalTooAggressive).toBe(false); // past
-    expect(paydownView(SHORTFALL_STATE('2026-07-15'), TODAY).goalTooAggressive).toBe(false); // n=0
+    expect(paydownView(STATE(900000,null), TODAY).goalTooAggressive).toBe(false);
+    expect(paydownView(STATE(900000,'2020-01-01'), TODAY).goalTooAggressive).toBe(false); // past
+    expect(paydownView(STATE(900000,'2026-07-15'), TODAY).goalTooAggressive).toBe(false); // n=0
   });
 
   it('does NOT flag on a $0 current repayment (the multiple guard prevents a false positive)', () => {
     // With base+extra === 0, "> 10× current" would trip on ANY positive figure — the
     // currentRepay > 0 guard keeps the multiple-based hint off (the real problem there is
     // a $0 repayment, not the date).
-    const zeroRepay = makeState({
-      loanFacts: { ...M, baseRepay: 0, extra: 0, payoffGoalDate: '2035-06-01' },
-      homeLoan: { balance: 900000, asOf: null },
-    });
-    const pv = paydownView(zeroRepay, TODAY);
+    const pv = paydownView(STATE(900000, '2035-06-01', { baseRepay: 0, extra: 0 }), TODAY);
     expect(pv.requiredRepay).not.toBeNull();     // a figure still solves
     expect(pv.goalTooAggressive).toBe(false);    // ...but not flagged via the multiple
   });
 });
-
-const STATE = (balance: number, payoffGoalDate: string | null, over: Partial<typeof M> = {}) =>
-  makeState({ loanFacts: { ...M, ...over, payoffGoalDate }, homeLoan: { balance, asOf: null } });
 
 // The exact 10× flip and the $1M cap. requiredRepay is independent of the current repayment, so
 // hold the figure fixed (900k, 24 months out → ~$39,783, under the cap) and slide currentRepay
