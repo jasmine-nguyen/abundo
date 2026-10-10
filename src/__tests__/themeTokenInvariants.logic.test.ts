@@ -465,7 +465,6 @@ const RAW_COLOR = new RegExp(RAW_COLOR_SOURCE, 'g');
 const BASELINE: Record<string, number> = {
   'app/(tabs)/insights.tsx': 2,
   'app/settings.tsx': 1,
-  'app/(tabs)/transactions.tsx': 8,
   'app/budget/[id].tsx': 4,
   'app/budget/edit.tsx': 3,
   'app/budget/spread.tsx': 6,
@@ -478,10 +477,8 @@ const BASELINE: Record<string, number> = {
   'src/AuthGate.tsx': 1,
   'src/components/CategoryFields.tsx': 8,
   'src/components/EarnedVsSpent.tsx': 1,
-  'src/components/Overlays.tsx': 20,
+  'src/components/Overlays.tsx': 9,
   'src/components/QuickCreateCategory.tsx': 3,
-  'src/components/TransactionRow.tsx': 3,
-  'src/context.tsx': 5,
   'src/icons.tsx': 2,
 };
 

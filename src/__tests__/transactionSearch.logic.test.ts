@@ -30,7 +30,8 @@ describe('transactionMatchesSearch', () => {
     expect(match(t, 'st ali')).toBe(true);  // and still the merchant
   });
 
-  it('matches the "Uncategorized" and "Income" pseudo-labels', () => {
+  it('matches the "Uncategorised" (either spelling) and "Income" pseudo-labels', () => {
+    expect(match(txn({ merchant_name: 'Mystery', category: null }), 'uncategorised')).toBe(true);
     expect(match(txn({ merchant_name: 'Mystery', category: null }), 'uncategorized')).toBe(true);
     expect(match(txn({ merchant_name: 'Payroll', category: 'income' }), 'income')).toBe(true);
   });

@@ -318,7 +318,7 @@ describe('budgetDetailRowTargets — shared-row integration gaps', () => {
     await renderWithQueries(<BudgetDetail />);
 
     // Body: pressing the Uncategorized label opens the picker for THIS transaction.
-    fireEvent.press(screen.getByText('Uncategorized'));
+    fireEvent.press(screen.getByText('Uncategorised'));
     expect(mockOpenPicker).toHaveBeenCalledWith('tx9');
 
     // Arrow: still present and routes to the detail page, without a second picker call.
@@ -337,7 +337,7 @@ describe('budgetDetailRowTargets — shared-row integration gaps', () => {
     // Assert "Uncategorized" is absent anywhere: an empty category lookup would make the row read
     // "Uncategorized", so its absence proves the screen passed the real taxonomy. (The header shows the
     // category name "Cafes & Coffee", not "Uncategorized", so a global absence check is safe here.)
-    expect(screen.queryByText('Uncategorized')).toBeNull();
+    expect(screen.queryByText('Uncategorised')).toBeNull();
     fireEvent.press(screen.getByText('Cafe'));                   // press the row body (unique merchant)
     expect(mockOpenPicker).not.toHaveBeenCalled();               // body tap does nothing on a filed row
 

@@ -76,7 +76,7 @@ it('renders a row per spent category with the pending portion visible', async ()
 it('shows the Uncategorized bucket as a row', async () => {
   seedBreakdown({ spend: { coffee: posted(40), [UNCATEGORIZED_KEY]: posted(25) } });
   await renderInsights();
-  expect(screen.getByText('Uncategorized')).toBeTruthy();
+  expect(screen.getByText('Uncategorised')).toBeTruthy();
 });
 
 it('shows an empty state when there is no spend', async () => {

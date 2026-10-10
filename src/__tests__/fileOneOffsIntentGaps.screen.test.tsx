@@ -108,7 +108,7 @@ describe('WHIT-544 GAP — the landed selection is functional (regression guard)
     fireEvent.press(screen.getByRole('checkbox'));           // tick the one leftover row (t1)
     expect(screen.getByText('1 selected')).toBeTruthy();
 
-    fireEvent.press(screen.getByLabelText('Re-categorize selected transactions'));
+    fireEvent.press(screen.getByLabelText('Re-categorise selected transactions'));
     expect(mockOpenMultiPicker).toHaveBeenCalledWith(['t1']); // exactly the picked id, batched
     expect(screen.getByText('Select')).toBeTruthy();          // selection exited (back to normal header)
     expect(screen.queryByText('1 selected')).toBeNull();

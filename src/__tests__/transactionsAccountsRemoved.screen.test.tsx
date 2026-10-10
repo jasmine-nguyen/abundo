@@ -45,7 +45,7 @@ it('renders only the "All" and "Uncategorized" segments — the "Accounts" segme
   await renderWithQueries(<Transactions />);
   expect(screen.getByText('-$42.00')).toBeTruthy();
   expect(screen.getByText('All')).toBeTruthy();
-  expect(screen.getByText('Uncategorized')).toBeTruthy();
+  expect(screen.getByText('Uncategorised')).toBeTruthy();
   expect(screen.queryByText('Accounts')).toBeNull(); // the segment was moved to its own tab
 });
 
@@ -70,6 +70,6 @@ it('an empty transactions list on Transactions shows NO "No accounts yet" (that 
 it('the "Select" header button shows on BOTH remaining segments (All and Uncategorized)', async () => {
   await renderWithQueries(<Transactions />);
   expect(screen.getByText('Select')).toBeTruthy();      // visible on the default "All" segment
-  fireEvent.press(screen.getByText('Uncategorized'));
+  fireEvent.press(screen.getByText('Uncategorised'));
   expect(screen.getByText('Select')).toBeTruthy();      // still visible after switching segment
 });

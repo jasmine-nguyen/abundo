@@ -202,7 +202,7 @@ it('degrades gracefully when the taxonomy is cold: rules list under Uncategorize
   server.fail('/categories', 500); // categories outage
   server.seed('/rules', [NETFLIX]);
   await renderWithApp(<Rules />);
-  expect(screen.getByText('Uncategorized')).toBeTruthy();
+  expect(screen.getByText('Uncategorised')).toBeTruthy();
   expect(screen.getByText('NETFLIX')).toBeTruthy();
   // still editable + deletable
   fireEvent.press(screen.getByTestId('edit-rule-e1'));
@@ -239,10 +239,10 @@ it('[A25] intro count stays the total (2) even when the filter hides one rule', 
 // [A26] A user-named "Uncategorized" category plus a genuinely orphaned rule renders TWO
 // separate headers with that label — documents the collision the grouping doesn't merge.
 it('[A26] renders two "Uncategorized" headers when a real category collides with orphans', async () => {
-  server.seed('/categories', [{ id: 'real', name: 'Uncategorized', icon: 'tag', color: '#abc', bucket: 'Lifestyle' }]);
+  server.seed('/categories', [{ id: 'real', name: 'Uncategorised', icon: 'tag', color: '#abc', bucket: 'Lifestyle' }]);
   server.seed('/rules', [rule('r1', 'REALONE', 'real'), rule('r2', 'GHOST', 'deleted')]);
   await renderWithApp(<Rules />);
-  expect(screen.getAllByText('Uncategorized')).toHaveLength(2);
+  expect(screen.getAllByText('Uncategorised')).toHaveLength(2);
   expect(screen.getByText('REALONE')).toBeTruthy();
   expect(screen.getByText('GHOST')).toBeTruthy();
 });
@@ -271,7 +271,7 @@ it('[G1] a large (60-rule) list still renders the first row, its header, the int
 it('[G4] an orphan-only list renders under exactly one Uncategorized section and stays actionable', async () => {
   server.seed('/rules', [rule('o1', 'GHOSTA', 'gone'), rule('o2', 'GHOSTB', 'alsogone')]);
   await renderWithApp(<Rules />);
-  expect(screen.getAllByText('Uncategorized')).toHaveLength(1);
+  expect(screen.getAllByText('Uncategorised')).toHaveLength(1);
   expect(screen.getByText('GHOSTA')).toBeTruthy();
   expect(screen.getByText('GHOSTB')).toBeTruthy();
   await deleteRule('o2');

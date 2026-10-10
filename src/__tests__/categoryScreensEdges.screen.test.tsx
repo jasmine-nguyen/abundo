@@ -53,7 +53,7 @@ describe('category drill-in edges', () => {
     server.seed('/categories/__uncategorized__/transactions', [{ ...ROW, category: null, amount: -20 }]);
     await renderWithApp(<CategoryDetail />);
     expect(server.sent('GET', '/categories/__uncategorized__/transactions')).toHaveLength(1);
-    expect(screen.getAllByText('Uncategorized')).toHaveLength(2); // the header + the row's label
+    expect(screen.getAllByText('Uncategorised')).toHaveLength(2); // the header + the row's label
     expect(screen.getByText('$20')).toBeTruthy();
     expect(screen.getByText('Spent this cycle')).toBeTruthy();
   });

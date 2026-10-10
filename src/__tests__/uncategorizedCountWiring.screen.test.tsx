@@ -108,7 +108,7 @@ describe('Transactions screen "All caught up"', () => {
     expect(screen.queryByText('All caught up')).toBeNull();     // no false empty state over real rows
     // The "tap a transaction" hint keys off the LOCAL loaded-page count (not the server tally), so it
     // stays visible while unfiled rows are on screen — the contrast the plan intends.
-    expect(screen.getByText(/Tap a transaction to categorize it/)).toBeTruthy();
+    expect(screen.getByText(/Tap a transaction to categorise it/)).toBeTruthy();
     await settle();
   });
 });

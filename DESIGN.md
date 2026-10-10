@@ -179,13 +179,14 @@ A cool, low-glare night palette of navy surfaces and lavender ink, lit by one bl
 - **Ink Bright → Ink → Ink Mid → Ink Dim → Ink Faint → Ink Faintest**: a six-step lavender-grey text ramp. Bright for amounts and merchant names, Ink for body copy, Mid for section labels, Dim for secondary meta, Faint for placeholders and inactive tabs, Faintest for disabled.
 - **Ink Info**: a muted lavender for the budget detail screen's status line (over plan, income met).
 - **Hairline**: Tokyo Blue at 10% (16% for the strong variant). Every card border and row divider.
+- **Sheet frame** (`sheet`, `toast`, `scrim`, `borderLight`, `fieldBorder`, `grabber`, `textDisabled`): the pop-up sheet and selection bar surface, the toast, the dark backdrop, light borders, the text-field border, the drag handle and greyed-out button text.
 
 ### Status
 - **Good Cyan**: on track, under budget, a refund credit, the Income bucket.
 - **Surplus Green**: the Earned-vs-Spent surplus headline only.
 - **Under Green**: under-budget deltas in the Ask Abundo chat.
 - **Warn Amber**: heads-ups outside budgets: behind schedule on Mortgage, stale Goals data, checkpoint warnings. Budgets have no amber state.
-- **Bad Rose**: over budget, the uncategorised dot, destructive actions.
+- **Bad Rose**: over budget, uncategorised rows and dot, destructive actions.
 
 ### Category palettes
 Categories have their own fixed hues and are not part of the UI palette above. They come from one palette, `src/chartColors.ts` (a 20-step even-lightness ramp, plus a neutral grey for "Other"), applied in `toCategory`, so a category is the same colour on Budgets, Transactions and Insights. It is a computed set: never hand-tune one hex. `src/categoryColors.ts` now holds only `BUCKET_COLOR`.
@@ -257,7 +258,7 @@ Soft, wide and confident.
 - **Icon button:** a 40×40pt square, 12pt radius, `tint(C.accentAlt, 0.16)` fill (header actions such as the settings gear).
 
 ### Segmented control
-Pill-shaped switch for "This cycle / Last cycle" and "Spending / Earning". A Night Card container (14pt radius, 3pt inset, hairline border) holds segments with an 11pt radius. Inactive text is Ink Dim 600; the active segment takes a tint fill passed by the caller and bolds to 700.
+Pill-shaped switch for "This cycle / Last cycle", "Spending / Earning" and the Transactions "All / Uncategorised" tabs. A Night Card container (14pt radius, 3pt inset, hairline border) holds segments with an 11pt radius, each at least 44pt tall. Inactive text is Ink Dim 600; the active segment takes a tint fill passed by the caller and bolds to 700. A segment can carry a count bubble after its label: Bad Rose at 20% with a brighter rose (`badBright`) 11pt 700 count, the same whether active or not.
 
 ### Cards / Containers
 - **Corner style:** 18pt (detail cards), 20pt (budget and insight rows), 14pt (list rows).

@@ -77,7 +77,7 @@ describe('categoriesError: first-load taxonomy failure surfaces the error, not a
     await renderInsights();
     expect(screen.getByTestId('insights-error')).toBeTruthy();   // error surfaces
     expect(screen.getByText("Couldn't load")).toBeTruthy();      // hero says so
-    expect(screen.queryByText('Uncategorized')).toBeNull();      // partial row suppressed by !showError gate
+    expect(screen.queryByText('Uncategorised')).toBeNull();      // partial row suppressed by !showError gate
     expect(screen.queryByText('$25')).toBeNull();                // no partial total
   });
 });
@@ -93,7 +93,7 @@ describe('cache-first: an errored refetch over good cached rows keeps the rows, 
     // shows the error here.
     seedInsights(server, { breakdown: UNCAT_ONLY, categories: CATS });
     await renderInsights();
-    expect(screen.getByText('Uncategorized')).toBeTruthy();
+    expect(screen.getByText('Uncategorised')).toBeTruthy();
 
     server.fail('/breakdown', 500);
     await refreshInAct(() => queryClient.refetchQueries({ queryKey: breakdownKey }).catch(() => {}));
@@ -101,7 +101,7 @@ describe('cache-first: an errored refetch over good cached rows keeps the rows, 
 
     expect(screen.queryByTestId('insights-error')).toBeNull();     // no error card over cached rows
     expect(screen.queryByText("Couldn't load")).toBeNull();        // hero keeps its number, not "—"
-    expect(screen.getByText('Uncategorized')).toBeTruthy();        // the cached row survives
+    expect(screen.getByText('Uncategorised')).toBeTruthy();        // the cached row survives
     expect(screen.getAllByText('$25').length).toBeGreaterThanOrEqual(1); // hero + row total intact
   });
 });

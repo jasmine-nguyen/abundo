@@ -90,6 +90,16 @@ export const C = {
   // The "today" target tick on budget bars.
   progressTick: 'rgba(255,255,255,.85)',
 
+  // Pop-up sheet frame (WHIT-846): the sheet + selection action bar surface, toast, dark backdrop,
+  // light borders, field border, drag handle, and greyed-out button text.
+  sheet: '#161620',
+  toast: '#26262f',
+  scrim: 'rgba(0,0,0,.55)',
+  borderLight: 'rgba(255,255,255,.1)',
+  fieldBorder: 'rgba(255,255,255,.08)',
+  grabber: 'rgba(255,255,255,.18)',
+  textDisabled: '#6a6a90',
+
   // Card 609 — Ask Abundo chat (the design handoff's Tokyo Night values).
   chatSheet: '#1a1b26',
   chatControl: '#24283b', // close button, highlighted prompt, stop/idle send, dividers

@@ -7,12 +7,12 @@ import { Glyph } from '../../src/icons';
 import { transactionGroups, transactionMatchesSearch, countUncategorized, unionById, useAppContext, SEARCH_QUERY_MAX_LEN } from '../../src/context';
 import { useTransactionsScreenData, useUncategorizedCount, useUncategorizedMerchants } from '../../src/queries';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
-import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
 import { useDebouncedValue } from '../../src/hooks/useDebouncedValue';
 import { ScrollChromeHeader, ASK_BUTTON_BOTTOM_CLEARANCE } from '../../src/motion/ScrollChromeHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { ListStates, StaleDataLine } from '../../src/components/ListStates';
 import { EmptyState } from '../../src/components/EmptyState';
+import { SegmentedControl } from '../../src/components/SegmentedControl';
 import { HeaderTextButton } from '../../src/components/ui';
 import { toggleIn } from '../../src/setutil';
 
@@ -20,6 +20,9 @@ type Tab = 'all' | 'uncategorized';
 
 // WHIT-576: how long typing must pause before the full-history search asks the server.
 const SEARCH_DEBOUNCE_MS = 300;
+
+// The selected tab's soft tint — the Insights cycle toggle's recipe (DESIGN.md › Segmented control).
+const TAB_TINT = tint(C.accentAlt, 0.16);
 
 // A query of only `$` / `,` matches every row locally, so asking the server would just return the
 // newest few hundred rows of everything.
@@ -148,20 +151,23 @@ export default function Transactions() {
       refreshing={pulling && (listSource.length > 0 || showUncategorizedMore)}
       onRefresh={onRefresh}
     >
-        {/* segmented control */}
-        <View style={styles.seg}>
-          <Seg label="All" active={tab === 'all'} onPress={() => changeTab('all')} flex={1} />
-          <Seg label="Uncategorized" active={tab === 'uncategorized'} onPress={() => changeTab('uncategorized')} flex={1.45} badge={uncategorizedCount} />
-        </View>
+        <SegmentedControl
+          value={tab}
+          onChange={changeTab}
+          options={[
+            { value: 'all', label: 'All', testID: 'tab-all', activeTint: TAB_TINT, activeTextColor: C.accentSoft },
+            { value: 'uncategorized', label: 'Uncategorised', testID: 'tab-uncategorized', activeTint: TAB_TINT, activeTextColor: C.accentSoft, flex: 1.45, badge: uncategorizedCount },
+          ]}
+        />
 
         {!selectionMode && (
           <View style={styles.search}>
-            <Glyph name="search" size={18} color="#6e6e78" />
+            <Glyph name="search" size={18} color={C.placeholder} />
             <TextInput
               value={search}
               onChangeText={setSearch}
               placeholder="Search transactions"
-              placeholderTextColor="#6e6e78"
+              placeholderTextColor={C.placeholder}
               style={styles.searchInput}
               autoCapitalize="none"
               autoCorrect={false}
@@ -185,7 +191,7 @@ export default function Transactions() {
           <View style={styles.hint}>
             <Glyph name="star" size={18} color={C.accentSoft} />
             <Text style={styles.hintText}>
-              Tap a transaction to categorize it — and choose whether the call applies to{' '}
+              Tap a transaction to categorise it — and choose whether the call applies to{' '}
               <Text style={styles.hintBold}>just that one</Text> or <Text style={styles.hintBold}>every charge</Text> from that merchant.
             </Text>
           </View>
@@ -283,7 +289,7 @@ export default function Transactions() {
           <EmptyState
             testID="transactions-no-results"
             icon={<Glyph name="search" size={30} color={C.textDim} />}
-            iconBackground="rgba(255,255,255,.06)"
+            iconBackground={C.neutralWash}
             title="No matches"
             sub={<>No transactions match “{query}”.</>}
           />
@@ -293,12 +299,12 @@ export default function Transactions() {
             is the WHOLE-history "server says 0" signal, which can briefly disagree with the loaded
             rows — a cross-device or server-side re-tag drops the server count to 0 while the feed
             cache (never invalidated on that path) still holds those rows. Without this gate the screen
-            would show "Every transaction is categorized" ABOVE a visible list of uncategorized rows. */}
+            would show "Every transaction is categorised" ABOVE a visible list of uncategorized rows. */}
         {allCaughtUp && groups.length === 0 && !showSpinner && !showError && (
           <EmptyState
             icon={<Glyph name="check" size={32} color={C.good} />}
             title="All caught up"
-            sub="Every transaction is categorized. New ones matching your rules file themselves automatically."
+            sub="Every transaction is categorised. New ones matching your rules file themselves automatically."
           />
         )}
 
@@ -348,27 +354,14 @@ export default function Transactions() {
           onPress={onRecategorize}
           disabled={selected.size === 0}
           accessibilityRole="button"
-          accessibilityLabel="Re-categorize selected transactions"
+          accessibilityLabel="Re-categorise selected transactions"
           style={[styles.actionBtn, selected.size === 0 && styles.actionBtnDisabled]}
         >
-          <Text style={[styles.actionBtnText, selected.size === 0 && styles.actionBtnTextDisabled]}>Re-categorize</Text>
+          <Text style={[styles.actionBtnText, selected.size === 0 && styles.actionBtnTextDisabled]}>Re-categorise</Text>
         </Pressable>
       </View>
     )}
     </View>
-  );
-}
-
-function Seg({ label, active, onPress, flex, badge }: { label: string; active: boolean; onPress: () => void; flex: number; badge?: number }) {
-  return (
-    <Pressable testID={`tab-${label.toLowerCase()}`} onPress={onPress} style={({ pressed }) => [styles.segBtn, { flex, backgroundColor: active ? '#fff' : 'transparent' }, pressed && PRESSED]}>
-      <Text style={[styles.segText, { color: active ? C.accentInk : C.textMid }]}>{label}</Text>
-      {badge !== undefined && (
-        <View style={[styles.badge, { backgroundColor: active ? tint(C.accentInk, 0.18) : tint(C.bad, 0.2) }]}>
-          <Text style={[styles.badgeText, { color: active ? C.accentInk : C.badBright }]} maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{badge}</Text>
-        </View>
-      )}
-    </Pressable>
   );
 }
 
@@ -377,27 +370,21 @@ const styles = StyleSheet.create({
   // Extra bottom padding so the last rows can scroll clear of the floating action bar and the
   // Ask pill (card 609).
   contentWithBar: { paddingBottom: 108 + ASK_BUTTON_BOTTOM_CLEARANCE },
-  actionBar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingTop: 12, paddingHorizontal: 18, backgroundColor: '#161620', borderTopWidth: 1, borderTopColor: C.hairline },
+  actionBar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingTop: 12, paddingHorizontal: 18, backgroundColor: C.sheet, borderTopWidth: 1, borderTopColor: C.hairline },
   actionCount: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: C.textMid },
   actionBtn: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 13, backgroundColor: C.accent },
   actionBtnDisabled: { backgroundColor: tint(C.accentAlt, 0.22) },
   actionBtnText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentInk },
-  actionBtnTextDisabled: { color: '#6a6a90' },
+  actionBtnTextDisabled: { color: C.textDisabled },
 
-  seg: { flexDirection: 'row', gap: 4, padding: 4, backgroundColor: C.card, borderRadius: 14, marginBottom: 8 },
-  segBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 9, borderRadius: 10 },
-  segText: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600' },
-  badge: { minWidth: 18, minHeight: 18, borderRadius: 999, paddingHorizontal: 5, alignItems: 'center', justifyContent: 'center' },
-  badgeText: { fontFamily: FONT.body, fontSize: 11, fontWeight: '700' },
-
-  search: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 13, paddingVertical: 4, paddingHorizontal: 14, marginTop: 8 },
+  search: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 13, paddingVertical: 4, paddingHorizontal: 14 },
   // The input carries its own vertical padding so the row height matches the old placeholder box.
   searchInput: { flex: 1, fontFamily: FONT.body, fontSize: 14, color: C.textBright, paddingVertical: 8, padding: 0 },
-  searchClear: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: '#6e6e78', paddingHorizontal: 2 },
+  searchClear: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.placeholder, paddingHorizontal: 2 },
 
   hint: { flexDirection: 'row', gap: 11, alignItems: 'flex-start', backgroundColor: tint(C.accentAlt, 0.1), borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), borderRadius: 16, padding: 13, paddingHorizontal: 14, marginTop: 10 },
   hintText: { flex: 1, fontFamily: FONT.body, fontSize: 12.5, color: C.accentSofter, lineHeight: 18 },
-  hintBold: { color: '#fff', fontWeight: '700' },
+  hintBold: { color: C.textBright, fontWeight: '700' },
 
   groupLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, letterSpacing: 0.2, marginHorizontal: 4, marginBottom: 4 },
 

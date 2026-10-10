@@ -50,9 +50,9 @@ beforeEach(() => {
   server.seed('/categories', []);
 });
 
-// The segmented control label 'Uncategorized' AND the transfer row's category label are both
-// 'Uncategorized'; the seg renders first in tree order, so index [0] is the tab button.
-const pressUncategorizedTab = () => fireEvent.press(screen.getAllByText('Uncategorized')[0]);
+// The segmented control label 'Uncategorised' AND the transfer row's category label are both
+// 'Uncategorised'; the seg renders first in tree order, so index [0] is the tab button.
+const pressUncategorizedTab = () => fireEvent.press(screen.getAllByText('Uncategorised')[0]);
 
 describe('WHIT-330 on the Transactions tab', () => {
   // The shop groups stay loading (as before this moved to the pretend server), so the
@@ -82,7 +82,7 @@ describe('WHIT-330 on the Transactions tab', () => {
   it('[A-empty] lists the transfer on the Uncategorized tab and hides the caught-up empty state', async () => {
     await openUncategorizedTab();
     expect(screen.queryByText('All caught up')).toBeNull();
-    // The transfer row is present (merchant label is unique, unlike 'Uncategorized').
+    // The transfer row is present (merchant label is unique, unlike 'Uncategorised').
     expect(screen.getByText('Internal Transfer')).toBeTruthy();
   });
 
@@ -93,7 +93,7 @@ describe('WHIT-330 on the Transactions tab', () => {
     fireEvent.press(screen.getByText('Select'));
     fireEvent.press(screen.getByLabelText('Select Internal Transfer'));
     expect(screen.getByText('1 selected')).toBeTruthy();
-    fireEvent.press(screen.getByLabelText('Re-categorize selected transactions'));
+    fireEvent.press(screen.getByLabelText('Re-categorise selected transactions'));
     expect(mockOpenMultiPicker).toHaveBeenCalledWith(['xfer1']);
   });
 });
@@ -116,8 +116,8 @@ describe('WHIT-328 — detail screen re-file for an uncategorized charge', () =>
   // row, which is now quiet + non-tappable.) Documents the intentional divergence; see critique.
   it('detail screen labels the Category "Uncategorized" and re-opens the picker on tap', async () => {
     await renderWithQueries(<TransactionDetail />);
-    expect(screen.getByText('Uncategorized')).toBeTruthy();
-    fireEvent.press(screen.getByLabelText('Change category, currently Uncategorized'));
+    expect(screen.getByText('Uncategorised')).toBeTruthy();
+    fireEvent.press(screen.getByLabelText('Change category, currently Uncategorised'));
     expect(mockOpenPicker).toHaveBeenCalledWith('t1');
   });
 });

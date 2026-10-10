@@ -52,5 +52,5 @@ it('keeps the gear reachable in selection mode: tapping it pushes /settings and 
   expect(routerSpies.push).toHaveBeenCalledWith('/settings');
   // Selection survives the navigation away (component is not unmounted on a root push).
   expect(screen.getByText('1 selected')).toBeTruthy();
-  expect(screen.getByLabelText('Re-categorize selected transactions')).toBeTruthy();
+  expect(screen.getByLabelText('Re-categorise selected transactions')).toBeTruthy();
 });

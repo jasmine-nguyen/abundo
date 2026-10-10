@@ -61,7 +61,7 @@ export default function Rules() {
     <View style={styles.intro}>
       <View style={styles.introIcon}><Glyph name="sliders" size={22} color={C.accentSoft} /></View>
       <Text style={styles.introText}>
-        Rules categorize matching merchants the moment a transaction lands — <Text style={styles.introBold}>posted or pending</Text>. You have {rules.length} active {rules.length === 1 ? 'rule' : 'rules'}.
+        Rules categorise matching merchants the moment a transaction lands — <Text style={styles.introBold}>posted or pending</Text>. You have {rules.length} active {rules.length === 1 ? 'rule' : 'rules'}.
       </Text>
     </View>
   );

@@ -110,7 +110,7 @@ it('Transactions: after a failed pull on All, switching to Uncategorized hides t
   server.once('GET', FEED, { status: 503 });
   await pullAndSettle();
   await waitFor(() => expect(screen.getByTestId('transactions-stale')).toBeTruthy());
-  fireEvent.press(screen.getByText('Uncategorized'));
+  fireEvent.press(screen.getByText('Uncategorised'));
   await settle();
   expect(screen.queryByTestId('transactions-stale')).toBeNull();
 });

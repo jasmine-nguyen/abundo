@@ -48,7 +48,7 @@ describe('picker resolves the tapped charge from the real caches', () => {
     server.seed('/transactions', [TX]);
     await openOverlays(stateFor({ mode: 'picker', txId: 't1' }), setMockState);
 
-    expect(screen.getByText('Categorize')).toBeTruthy();
+    expect(screen.getByText('Categorise')).toBeTruthy();
     expect(screen.getByText('-$12.00')).toBeTruthy();
     expect(pickerNames()).toEqual(['Food', 'Dining', 'Transport']);
   });
@@ -68,7 +68,7 @@ describe('picker resolves the tapped charge from the real caches', () => {
     server.seed('/transactions', [TX]);
     await openOverlays(stateFor({ mode: 'picker', txId: 'gone' }), setMockState);
 
-    expect(screen.queryByText('Categorize')).toBeNull();
+    expect(screen.queryByText('Categorise')).toBeNull();
     expect(pickerNames()).toEqual([]);
   });
 });
@@ -127,7 +127,7 @@ describe('picker stays open across a context redraw', () => {
       rerender(overlaysTree());
     });
 
-    expect(screen.getByText('Categorize')).toBeTruthy();
+    expect(screen.getByText('Categorise')).toBeTruthy();
     expect(screen.queryByText('Dining')).toBeNull();
     expect((screen.getByTestId('pickerCat-toggle-food').props as any).accessibilityState.expanded).toBe(false);
     expect(fns.chooseCategory).not.toHaveBeenCalled();

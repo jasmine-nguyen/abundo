@@ -64,7 +64,7 @@ it('tapping a "Directly in X" row drills into the PARENT id (no __direct in the 
 
 it('tapping Uncategorized drills into the uncategorized bucket', async () => {
   renderInsights();
-  fireEvent.press(await screen.findByText('Uncategorized'));
+  fireEvent.press(await screen.findByText('Uncategorised'));
   expect(routerSpies.push).toHaveBeenCalledWith('/category/__uncategorized__?cycle=0');
 });
 
@@ -77,8 +77,8 @@ it('tapping a PARENT row expands it instead of navigating', async () => {
 
 it('carries the selected cycle: on "Last cycle" the drill pushes cycle=1', async () => {
   renderInsights();
-  await screen.findByText('Uncategorized');
+  await screen.findByText('Uncategorised');
   fireEvent.press(screen.getByTestId('insights-cycle-prev')); // switch to last cycle
-  fireEvent.press(await screen.findByText('Uncategorized'));
+  fireEvent.press(await screen.findByText('Uncategorised'));
   expect(routerSpies.push).toHaveBeenCalledWith('/category/__uncategorized__?cycle=1');
 });

@@ -5,7 +5,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { isUncategorized, countUncategorized, transactionView, transactionGroups, transactionMatchesSearch, categoryTransactions } from '../context';
 import { UNCATEGORIZED_KEY } from '../model';
-import { C, MINUS } from '../theme';
+import { C, MINUS, tint } from '../theme';
 import type { Transaction } from '../types';
 import { makeState, cat, txn } from './factory';
 import { GROCERIES, SALARY, SAVINGS } from './support/categories';
@@ -60,7 +60,7 @@ describe('countUncategorized', () => {
 describe('transactionView', () => {
   it('renders an uncategorized row as tappable with the Uncategorized label', () => {
     const v = transactionView(state(), txn({ category: null }));
-    expect(v.categoryLabel).toBe('Uncategorized');
+    expect(v.categoryLabel).toBe('Uncategorised');
     expect(v.tappable).toBe(true);
     expect(v.categoryWeight).toBe('700');
   });
@@ -201,8 +201,8 @@ describe('WHIT-330 — badge/tab count every uncategorized charge, transfers inc
   it('a NOT-IN-BUDGET uncategorized transfer is actionable everywhere: tappable, counted, listed', () => {
     const s = oneUncat({ counts_to_budget: false });
     const v = transactionView(s, s.transactions[0]);
-    expect(v.categoryLabel).toBe('Uncategorized');
-    expect(v.tappable).toBe(true);                  // purple, tap-to-file (WHIT-330 option A)
+    expect(v.categoryLabel).toBe('Uncategorised');
+    expect(v.tappable).toBe(true);                  // rose, tap-to-file (WHIT-330 option A)
     expect(countUncategorized(s)).toBe(1);          // counted
     expect(transactionGroups(s, 'uncategorized').flatMap((g) => g.items.map((t) => t.transaction_id))).toEqual(['x']); // and listed
   });
@@ -220,36 +220,36 @@ describe('WHIT-330 — badge/tab count every uncategorized charge, transfers inc
 });
 
 // ===== WHIT-330/WHIT-328 (folded from whit328Gaps.logic.test.ts) — the Uncategorized badge/tab
-// count EVERY unmapped charge, transfers included, with WHIT-328's row styling. Locks: the purple,
+// count EVERY unmapped charge, transfers included, with WHIT-328's row styling. Locks: the rose,
 // tappable to-do styling of every uncategorized row (in/out of budget), a not-in-budget row with a
 // NON-NULL unknown id counted + listed, an IN-BUDGET unknown-id charge staying actionable, and
 // search surfacing such a transfer under "uncategorized". transactionMatchesSearch import merged
 // above. state() is reused from the survivor above (byte-identical; the gaps duplicate is dropped).
 
-// [A-style] WHIT-330 (option A): EVERY uncategorized row is the actionable purple "Uncategorized"
-// to-do — purple icon/label, weight 700, purple chip, tappable — regardless of budget status. A
+// [A-style] WHIT-330 (option A): EVERY uncategorized row is the actionable rose "Uncategorised"
+// to-do (rose since WHIT-846) — rose icon/label, weight 700, rose chip, tappable — regardless of budget status. A
 // not-in-budget transfer looks and behaves exactly like an in-budget unfiled charge. Fail-on-revert:
 // re-gate the row on inBudget (the old WHIT-328 quiet treatment) → the not-in-budget row flips to
 // grey/non-tappable and this fails.
-describe('WHIT-330 [A-style] — every uncategorized row is the purple, tappable to-do', () => {
-  it('a not-in-budget uncategorized row is purple, weight 700, tappable (same as in-budget)', () => {
+describe('WHIT-330 [A-style] — every uncategorized row is the rose, tappable to-do', () => {
+  it('a not-in-budget uncategorized row is rose, weight 700, tappable (same as in-budget)', () => {
     const v = transactionView(state(), txn({ category: null, counts_to_budget: false }));
     expect(v.icon).toBe('q');
-    expect(v.iconColor).toBe(C.purple);
-    expect(v.categoryColor).toBe(C.purple);
+    expect(v.iconColor).toBe(C.bad);
+    expect(v.categoryColor).toBe(C.bad);
     expect(v.categoryWeight).toBe('700');
-    expect(v.chipBg).toBe('rgba(160,130,240,.16)');
+    expect(v.chipBg).toBe(tint(C.bad, 0.16));
     expect(v.tappable).toBe(true);
   });
 
-  it('an in-budget uncategorized row is the same purple to-do', () => {
+  it('an in-budget uncategorized row is the same rose to-do', () => {
     const v = transactionView(state(), txn({ category: null, counts_to_budget: true }));
-    expect(v.iconColor).toBe(C.purple);
+    expect(v.iconColor).toBe(C.bad);
     expect(v.categoryWeight).toBe('700');
     expect(v.tappable).toBe(true);
   });
 
-  it('a row with counts_to_budget undefined is still the purple, tappable to-do', () => {
+  it('a row with counts_to_budget undefined is still the rose, tappable to-do', () => {
     const v = transactionView(state(), txn({ category: null, counts_to_budget: undefined }));
     expect(v.tappable).toBe(true);
   });
@@ -265,12 +265,12 @@ describe('WHIT-330 [A-unmapped] — a not-in-budget UNKNOWN-id charge is counted
     transactions: [txn({ transaction_id: 'x', category: 'FOOD_AND_DRINK', counts_to_budget: false })],
   });
 
-  it('renders labelled Uncategorized, purple, tappable', () => {
+  it('renders labelled Uncategorised, rose, tappable', () => {
     const st = s();
     const v = transactionView(st, st.transactions[0]);
-    expect(v.categoryLabel).toBe('Uncategorized');
+    expect(v.categoryLabel).toBe('Uncategorised');
     expect(v.tappable).toBe(true);
-    expect(v.categoryColor).toBe(C.purple);
+    expect(v.categoryColor).toBe(C.bad);
   });
 
   it('counts toward the badge and is listed in the uncategorized tab (WHIT-330)', () => {
@@ -289,7 +289,7 @@ describe('WHIT-328 [A-unmapped-in] — an in-budget unknown-id charge stays acti
       transactions: [txn({ transaction_id: 'x', category: 'RAW_ENUM', counts_to_budget: true })],
     });
     const v = transactionView(st, st.transactions[0]);
-    expect(v.categoryLabel).toBe('Uncategorized');
+    expect(v.categoryLabel).toBe('Uncategorised');
     expect(v.tappable).toBe(true);
     expect(countUncategorized(st)).toBe(1);
     expect(transactionGroups(st, 'uncategorized').flatMap((g) => g.items.map((t) => t.transaction_id))).toEqual(['x']);

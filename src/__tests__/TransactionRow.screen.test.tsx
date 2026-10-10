@@ -82,7 +82,7 @@ it('shows no "Not in budget" tag on a user-excluded (budget_excluded) row', () =
 it('an uncategorized row is labelled Uncategorized and opens the picker on tap', () => {
   mockState = stateWith();
   render(<TransactionRow t={txn({ transaction_id: 'tx9', category: null })} category={mockState.category} />);
-  const label = screen.getByText('Uncategorized');
+  const label = screen.getByText('Uncategorised');
   expect(label).toBeTruthy();
   fireEvent.press(label);
   expect(openPicker).toHaveBeenCalledWith('tx9');

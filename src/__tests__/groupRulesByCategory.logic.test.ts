@@ -45,7 +45,7 @@ describe('groupRulesByCategory', () => {
   it('groups an orphan rule (deleted category) under Uncategorized, pinned last', () => {
     const rules = [rule('1', 'MYSTERY', 'ghostcat'), rule('2', 'STARBUCKS', 'coffee')];
     const groups = groupRulesByCategory(rules, [COFFEE]);
-    expect(groups.map((g) => g.category?.name ?? UNCATEGORIZED_RULE_GROUP)).toEqual(['Cafes & Coffee', 'Uncategorized']);
+    expect(groups.map((g) => g.category?.name ?? UNCATEGORIZED_RULE_GROUP)).toEqual(['Cafes & Coffee', 'Uncategorised']);
     expect(groups[1].category).toBeNull();
     expect(groups[1].rules.map((r) => r.pattern)).toEqual(['MYSTERY']);
   });
