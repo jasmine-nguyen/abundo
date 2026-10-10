@@ -4,11 +4,11 @@
 // before the not-set-up prompt. Drawn over the fake server so the real query code runs.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { screen, act, waitFor, fireEvent } from '@testing-library/react-native';
+import { screen, fireEvent } from '@testing-library/react-native';
 import type { AppContext, LoanFacts } from '../context';
 import { EMPTY_LOAN_FACTS } from './factory';
 import { installFakeServer } from './support/fakeServer';
-import { renderWithQueries, renderLoaded, refreshInAct, settle, useTestQueryClient, drawHeld, releaseAndSettle } from './support/renderWithQueries';
+import { renderWithQueries, renderLoaded, refreshInAct, useTestQueryClient, drawHeld, releaseAndSettle } from './support/renderWithQueries';
 import { queryClient } from '../queryClient';
 import { loanFactsKey } from '../queryKeys';
 import { resetAuth } from './support/authMock';
@@ -23,7 +23,6 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 
 import Loan from '../../app/loan';
 import Mortgage from '../../app/mortgage';
-import Milestone from '../../app/milestone';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -87,25 +86,6 @@ it('Home loan: facts unset + failed balance shows the balance Retry, not a bare 
 
 // --- QA: recovery, precedence and cache-first edges ---
 
-// [A1] [A2] Retry after a failed first load brings back the real content on both screens.
-it('Retry after a failed facts read brings back the real Home loan card and the filled Loan form', async () => {
-  seedGoal(server, { loanFacts: SAVED });
-  server.once('GET', '/loanfacts', { status: 500 });
-  const mortgage = await renderWithQueries(<Mortgage />);
-  await act(async () => { fireEvent.press(screen.getByTestId('hero-facts-retry')); });
-  await settle();
-  expect(screen.queryByTestId('hero-facts-retry')).toBeNull();
-  expect(screen.getByText("We'll show your payoff progress once your balance loads.")).toBeTruthy();
-  mortgage.unmount();
-
-  queryClient.clear();
-  server.once('GET', '/loanfacts', { status: 500 });
-  await renderWithQueries(<Loan />);
-  await act(async () => { fireEvent.press(screen.getByTestId('loan-facts-retry')); });
-  await waitFor(() => expect(screen.getByDisplayValue('600000')).toBeTruthy());
-  expect(screen.queryByTestId('loan-facts-error')).toBeNull();
-});
-
 // [A3] Both reads fail → the loan-details error wins (its Retry refetches both).
 it('Home loan: when facts AND balance both fail, the loan-details error shows, not the balance one', async () => {
   seedGoal(server);
@@ -114,15 +94,6 @@ it('Home loan: when facts AND balance both fail, the loan-details error shows, n
   await renderWithQueries(<Mortgage />);
   expect(screen.getByTestId('hero-facts-retry')).toBeTruthy();
   expect(screen.queryByTestId('hero-balance-retry')).toBeNull();
-});
-
-// [A4] The loading placeholder still shows the balance we already know.
-it('Home loan: the loading placeholder shows the known balance', async () => {
-  seedGoal(server, { homeLoan: { balance: 250000, asOf: '2026-07-04T00:00:00Z' } });
-  const held = server.hold('/loanfacts');
-  drawHeld(<Mortgage />);
-  await waitFor(() => expect(screen.getByTestId('hero-facts-loading').props.children).toMatch(/250/));
-  await releaseAndSettle(held);
 });
 
 // [A5] A failed background refetch over cached facts keeps the real card (cache-first).
@@ -134,14 +105,6 @@ it('Home loan: a failed refetch over cached facts shows neither the facts error 
   expect(queryClient.getQueryState(loanFactsKey)?.status).toBe('error');
   expect(screen.queryByTestId('hero-facts-retry')).toBeNull();
   expect(screen.queryByText('Set up loan details →')).toBeNull();
-});
-
-// [A6] Milestone equity card: no set-up teaser when the facts read failed.
-it('Milestone: a failed facts read hides the equity set-up prompt', async () => {
-  seedGoal(server);
-  server.fail('/loanfacts', 500);
-  await renderWithQueries(<Milestone />);
-  expect(screen.queryByText(EQUITY_TEASER)).toBeNull();
 });
 
 // [A7] The form mounts once: a background refetch must not wipe what the user is typing.

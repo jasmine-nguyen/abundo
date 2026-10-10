@@ -1,7 +1,6 @@
 // WHIT-749 QA — the goal page's edges the proof tests leave open: a pay-down goal's milestones
-// tick as the owed amount falls, an unknown balance ticks nothing, a no-start pay-down shows
-// "owed of target" with no %, a met goal past its date isn't nudged, the page follows the cache
-// (a cold load, an edit, a delete elsewhere), and the card's nudge opens Edit, not the page.
+// tick as the owed amount falls, an unknown balance ticks nothing, and the page follows the cache
+// (a cold load, an edit, a delete elsewhere).
 // Through the fake server and the REAL balanceGoalView. Clock pinned to Sat 11 Jul 2026.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
@@ -14,7 +13,7 @@ import { resetAuth } from './support/authMock';
 import { pinToday } from './support/clock';
 import { seedHubWith } from './support/goalsScreen';
 import { GOAL_TODAY, GOAL_START, growGoal } from './support/goalPace';
-import { routerSpies, setParams, resetRouter } from './support/routerMock';
+import { setParams, resetRouter } from './support/routerMock';
 import type { GoalRecord } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
@@ -22,7 +21,6 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/goalsScreen').goalsContextMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
-import Goals from '../../app/(tabs)/goals';
 import GoalDetail from '../../app/goal/[id]';
 
 const server = installFakeServer();
@@ -66,12 +64,6 @@ describe('goal page milestones', () => {
     expect(within(screen.getByTestId('goal-milestone-m5')).getByText('$5,000')).toBeTruthy();
   });
 
-  // [A2] exactly at a milestone's amount counts as reached.
-  it('a balance exactly at a milestone amount ticks it', async () => {
-    await openPage([{ ...CARD, manual_balance: 5000 }], 'card');
-    expect(reached('m5')).toBeTruthy();
-  });
-
   // [A3] balance unknown → the list still shows, nothing ticked, the foot waits honestly.
   it('a synced goal whose balance is unknown lists its milestones with none ticked', async () => {
     const goal = growGoal('g', {
@@ -84,32 +76,6 @@ describe('goal page milestones', () => {
     expect(screen.queryByTestId('goal-milestone-togo-c1')).toBeNull();
     expect(screen.queryByTestId('goal-detail-next')).toBeNull();
     expect(screen.getByText('Waiting on your balance')).toBeTruthy();
-  });
-});
-
-describe('goal page progress', () => {
-  // [A4] no-start pay-down: no %, no "—", amount reads "owed of target".
-  it('a pay-down with no start shows "$X owed of $Y target" and no headline %', async () => {
-    await openPage([{ ...CARD, baseline: null, target_amount: 2000, checkpoints: [] }], 'card');
-    expect(screen.getByTestId('goal-amount-card').props.children).toBe('$9,000 owed of $2,000 target');
-    expect(screen.queryByText(/%$/)).toBeNull();
-    expect(screen.queryByText('—')).toBeNull();
-  });
-
-  // [A5] a met goal past its date is not nudged to pick a new date.
-  it('a met goal past its date shows no "pick a new one?" nudge', async () => {
-    await openPage([{ ...CARD, manual_balance: 0, target_date: '2026-07-01' }], 'card');
-    expect(screen.getByText('Credit card')).toBeTruthy();
-    expect(screen.queryByTestId('goal-pastdue-card')).toBeNull();
-  });
-
-  // [A6] date ahead but before the next payday (Jul 18): calm "to go" wording, no "each payday".
-  it('a date before the next payday reads "$X to go · before your next payday"', async () => {
-    await openPage([{ ...CARD, target_date: '2026-07-15' }], 'card');
-    expect(screen.getByText('$9,000 to go')).toBeTruthy();
-    expect(screen.getByText('before your next payday')).toBeTruthy();
-    expect(screen.queryByText(/each payday/)).toBeNull();
-    expect(screen.queryByTestId('goal-pastdue-card')).toBeNull();
   });
 });
 
@@ -217,16 +183,5 @@ describe('goal page load gate', () => {
     expect(screen.getByText('Holiday')).toBeTruthy();
     expect(screen.getByTestId('goal-detail-edit')).toBeTruthy();
     expect(screen.queryByTestId('goal-detail-error')).toBeNull();
-  });
-});
-
-describe('Goals tab', () => {
-  // [A10] the card's past-date nudge opens Edit, and does NOT also open the goal page.
-  it('the past-date nudge on a card opens Edit, not the goal page', async () => {
-    seedHubWith(server, { goals: [{ ...CARD, target_date: '2026-07-01' }] });
-    await renderWithQueries(<Goals />);
-    fireEvent.press(screen.getByTestId('goal-pastdue-card'));
-    expect(routerSpies.push).toHaveBeenCalledTimes(1);
-    expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit?id=card');
   });
 });

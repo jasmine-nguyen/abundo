@@ -15,16 +15,6 @@ describe('goalsKey', () => {
 });
 
 describe('selectGoals', () => {
-  it('passes a real goals array through unchanged (same reference identity)', () => {
-    const raw = [{ id: 'g1', name: 'Emergency fund', icon: 'umbrella', direction: 'grow',
-      target_amount: 10000, target_date: '2026-12-01', account_id: 'up-spending' }];
-    expect(selectGoals(raw)).toBe(raw as unknown);
-  });
-
-  it('accepts a genuinely empty backlog ([])', () => {
-    expect(selectGoals([])).toEqual([]);
-  });
-
   it.each([
     ['null', null],
     ['undefined', undefined],

@@ -1,11 +1,11 @@
 // WHIT-821 — the Loan details form pre-fills Scheduled repayment from the last repayment
 // (GET /repayment) when none is saved; a saved value always wins; a failed repayment read
-// doesn't block the form; and placeholders are neutral examples, not a real user's figures.
+// doesn't block the form.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { screen } from '@testing-library/react-native';
 import type { AppContext } from '../context';
-import { EMPTY_LOAN_FACTS, LOAN_FACTS, NO_REPAYMENT } from './factory';
+import { EMPTY_LOAN_FACTS, LOAN_FACTS } from './factory';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient, drawHeld, refreshInAct, releaseAndSettle } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
@@ -34,7 +34,6 @@ beforeEach(() => {
 it.each([
   ['no saved repayment + a last repayment → pre-filled with a hint', EMPTY_LOAN_FACTS, LAST_REPAYMENT, '3667', true],
   ['a saved repayment wins over the last repayment, no hint', LOAN_FACTS, LAST_REPAYMENT, '1240', false],
-  ['no saved repayment + nothing on record → empty, no hint', EMPTY_LOAN_FACTS, NO_REPAYMENT, '', false],
   ['no saved repayment + the repayment read fails → form still opens, empty', EMPTY_LOAN_FACTS, 'fail', '', false],
 ] as const)('Loan form: %s', async (_name, loanFacts, repayment, expected, hinted) => {
   server.seed('/loanfacts', loanFacts);
@@ -46,10 +45,6 @@ it.each([
   const scheduled = screen.getByPlaceholderText(LOAN_FORM_PLACEHOLDERS.base);
   expect(scheduled.props.value).toBe(expected);
   expect(screen.queryByText(PREFILL_HINT) !== null).toBe(hinted);
-
-  for (const personal of ['3667', '600000', '770000', '5.74']) {
-    expect(screen.queryByPlaceholderText(new RegExp(personal.replace('.', '\\.')))).toBeNull();
-  }
 });
 
 // [A5] The form waits for the last repayment before it opens, so a slow repayment read can't

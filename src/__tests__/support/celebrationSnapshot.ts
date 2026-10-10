@@ -1,9 +1,6 @@
-// WHIT-811: read and write the celebration's saved copy on the phone (the in-memory AsyncStorage stand-in),
-// and render the celebration hook against it.
+// WHIT-811: read and write the celebration's saved copy on the phone (the in-memory AsyncStorage stand-in).
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { renderHook } from '@testing-library/react-native';
-import { CHECKPOINT_SNAPSHOT_KEY, GoalSteps } from '../../checkpointCelebration';
-import { useCheckpointCelebration } from '../../hooks/useCheckpointCelebration';
+import { CHECKPOINT_SNAPSHOT_KEY } from '../../checkpointCelebration';
 import { REPAYMENT_SEEN_KEY } from '../../repaymentLanded';
 
 export const savedCelebrationSnapshot = async () =>
@@ -17,8 +14,3 @@ export const savedFromEarlierLaunch = (snapshot: unknown) =>
 export const savedRepaymentNote = () => AsyncStorage.getItem(REPAYMENT_SEEN_KEY);
 
 export const repaymentSeenEarlier = (note: string) => AsyncStorage.setItem(REPAYMENT_SEEN_KEY, note);
-
-// The celebration hook, ready from the start, rerenderable with new steps as `{ c }`.
-export function renderCelebrationHook(initial: GoalSteps[]) {
-  return renderHook(({ c }: { c: GoalSteps[] }) => useCheckpointCelebration(c, true), { initialProps: { c: initial } });
-}

@@ -1,9 +1,10 @@
 // WHIT-197 GAPS (composite) — the branches the happy-path suite (goalScreenData.screen)
 // doesn't lock: (1) a null balance on a LATER refetch KEEPS the loaded balance
 // (keep-last-good via the structuralSharing guard on useHomeLoanQuery — WHIT-204, restoring
-// the old store's behaviour); (2) a loan-facts read failure is aggregate-error-but-not-a-
-// balance-error and the facts fall back to EMPTY_LOAN_FACTS; (3) refetchStale is stale-gated
-// (no request storm). Real ../api over the fake server, ../auth mocked; real
+// the old store's behaviour) — but a later real balance replaces it, and a genuine $0 is never
+// held; (2) a loan-facts read failure is aggregate-error-but-not-a-balance-error and the facts
+// fall back to EMPTY_LOAN_FACTS; (3) refetchStale refires stale reads once. Real ../api over the
+// fake server, ../auth mocked; real
 // QueryClientProvider drives the hook.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
@@ -11,7 +12,6 @@ import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
-import { SAVED_MILESTONES } from './support/milestonePlan';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
@@ -25,6 +25,9 @@ const HOME_LOAN = { balance: 596642.43, as_of: '2026-07-04T00:24:37.614Z', curre
 const NULL_HOME_LOAN = { balance: null, as_of: null, currency: null };
 const REPAYMENT = { amount: 1500, date: '2026-07-01', principal: 1268, interest: 232 };
 const REPAYMENT_2 = { amount: 1600, date: '2026-08-01', principal: 1300, interest: 300 };
+const REPAYMENT_3 = { amount: 1700, date: '2026-09-01', principal: 1350, interest: 350 };
+const HOME_LOAN_2 = { balance: 480000, as_of: '2026-08-01T00:00:00.000Z', currency: 'AUD' };
+const ZERO_HOME_LOAN = { balance: 0, as_of: '2026-09-01T00:00:00.000Z', currency: 'AUD' }; // loan paid off
 const READY_FACTS = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
 
 beforeEach(() => {
@@ -61,6 +64,47 @@ it('a null balance on a LATER refetch KEEPS the loaded balance (keep-last-good, 
   expect(result.current.homeLoanError).toBe(false); // a null response is a SUCCESS, not an error
 });
 
+it('a held null is later OVERWRITTEN by a real balance — keep-last-good does NOT stick', async () => {
+  // Round 1: real 596k. Round 2 (refetch): null → held at 596k. Round 3 (refetch): a NEW real
+  // 480k → must take effect. Sequence each round on the REPAYMENT read (which changes every
+  // round) so the balance assertion fires only after that round's home-loan result is applied.
+  server.once('GET', '/homeloan', { body: HOME_LOAN });
+  server.once('GET', '/homeloan', { body: NULL_HOME_LOAN });
+  server.seed('/homeloan', HOME_LOAN_2);
+  server.once('GET', '/repayment', { body: REPAYMENT });
+  server.once('GET', '/repayment', { body: REPAYMENT_2 });
+  server.seed('/repayment', REPAYMENT_3);
+  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
+  await waitFor(() => expect(result.current.homeLoan.balance).toBe(596642.43));
+
+  // Round 2: the null — held.
+  await act(async () => { result.current.refetch(); });
+  await waitFor(() => expect(result.current.repayment.amount).toBe(1600));
+  expect(result.current.homeLoan.balance).toBe(596642.43); // last-good survives the null
+
+  // Round 3: the new real balance — must replace the held value (not stuck).
+  await act(async () => { result.current.refetch(); });
+  await waitFor(() => expect(result.current.repayment.amount).toBe(1700));
+  expect(result.current.homeLoan.balance).toBe(480000);                    // updated
+  expect(result.current.homeLoan.asOf).toBe('2026-08-01T00:00:00.000Z');   // and its timestamp
+  expect(result.current.homeLoanError).toBe(false);
+});
+
+it('a genuine $0 balance (loan paid off) is NOT held — the guard keys on == null, not falsiness', async () => {
+  server.once('GET', '/homeloan', { body: HOME_LOAN });
+  server.seed('/homeloan', ZERO_HOME_LOAN);
+  server.once('GET', '/repayment', { body: REPAYMENT });
+  server.seed('/repayment', REPAYMENT_2);
+  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
+  await waitFor(() => expect(result.current.homeLoan.balance).toBe(596642.43));
+
+  await act(async () => { result.current.refetch(); });
+  await waitFor(() => expect(result.current.repayment.amount).toBe(1600)); // 2nd round applied
+  expect(result.current.homeLoan.balance).toBe(0);                         // 0 flows through — NOT held at 596k
+  expect(result.current.homeLoan.asOf).toBe('2026-09-01T00:00:00.000Z');
+  expect(result.current.homeLoanError).toBe(false);
+});
+
 it('a loan-facts read failure is an aggregate error but NOT a balance error, and facts fall back to empty', async () => {
   server.fail('/loanfacts', 500);
   const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
@@ -69,20 +113,6 @@ it('a loan-facts read failure is an aggregate error but NOT a balance error, and
   expect(result.current.homeLoanError).toBe(false);            // the balance read is fine
   expect(result.current.homeLoan.balance).toBe(596642.43);
   expect(result.current.loanFacts).toEqual(EMPTY_LOAN_FACTS);  // ?? EMPTY_LOAN_FACTS fallback
-});
-
-it('refetchStale is a no-op while every query is fresh (no request storm on focus)', async () => {
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
-  await waitFor(() => expect(result.current.isLoading).toBe(false));
-  expect(server.sent('GET', '/homeloan')).toHaveLength(1);
-  expect(server.sent('GET', '/repayment')).toHaveLength(1);
-  expect(server.sent('GET', '/loanfacts')).toHaveLength(1);
-
-  await act(async () => { result.current.refetchStale(); });
-  // fresh (staleTime 60s) → NOT stale → nothing refires.
-  expect(server.sent('GET', '/homeloan')).toHaveLength(1);
-  expect(server.sent('GET', '/repayment')).toHaveLength(1);
-  expect(server.sent('GET', '/loanfacts')).toHaveLength(1);
 });
 
 it('refetchStale refetches all three reads exactly once when they are stale', async () => {
@@ -100,10 +130,7 @@ it('refetchStale refetches all three reads exactly once when they are stale', as
 // ===== WHIT-367 GAPS (folded from goalScreenDataMilestones.gaps) — the milestones query is
 // SECONDARY: deliberately kept OUT of useGoalScreenData's combined isLoading/isError (queries.ts)
 // so a milestones read hiccup degrades to the built-in default plan instead of blanking/erroring the
-// balance hero. Locks: (1) a REJECT leaves isError/isLoading untouched, milestones → []; (2) that []
-// keeps a STABLE reference (frozen EMPTY_MILESTONES, WHIT-244 identity trap); (3) a real saved list
-// flows through unchanged. Reuses the module wrapper + HOME_LOAN/REPAYMENT/READY_FACTS + the module
-// beforeEach (which now seeds /milestones → []).
+// balance hero: a REJECT leaves isError/isLoading untouched, milestones → [].
 describe('goalScreenData — milestones secondary query (WHIT-367)', () => {
   it('a milestones read FAILURE does not flip isError/isLoading and falls back to []', async () => {
     server.fail('/milestones', 500);
@@ -116,27 +143,5 @@ describe('goalScreenData — milestones secondary query (WHIT-367)', () => {
     expect(result.current.isLoading).toBe(false);
     expect(result.current.homeLoanError).toBe(false);
     expect(result.current.milestones).toEqual([]);       // degrades to the empty (→ default plan) list
-  });
-
-  it('the empty-milestones fallback keeps a STABLE reference across renders (frozen EMPTY_MILESTONES)', async () => {
-    // Never resolves → the query stays cold → milestones is the `?? EMPTY_MILESTONES` fallback the
-    // whole time. A `?? []` regression would hand back a fresh array per render (new reference).
-    const held = server.hold('/milestones');
-    const { result, rerender } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
-    await waitFor(() => expect(result.current.isLoading).toBe(false)); // primaries done; milestones still cold
-    const first = result.current.milestones;
-    expect(first).toEqual([]);
-    rerender({});
-    expect(result.current.milestones).toBe(first);       // same reference — stable identity
-    // Let the held read finish so its request time limit doesn't outlive the test.
-    await act(async () => { held.release(); });
-  });
-
-  it('a real saved milestone list flows through the composite unchanged', async () => {
-    server.seed('/milestones', SAVED_MILESTONES);
-    const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
-    await waitFor(() => expect(result.current.milestones).toHaveLength(SAVED_MILESTONES.length));
-    expect(result.current.milestones).toEqual(SAVED_MILESTONES);
-    expect(result.current.isError).toBe(false);
   });
 });

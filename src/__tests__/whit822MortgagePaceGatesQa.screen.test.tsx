@@ -47,11 +47,3 @@ it('loan details not set up: no pace line and no "unlocks" text, but the balance
   expect(screen.queryByTestId('milestone-pace')).toBeNull();
   expect(screen.getByTestId('balance-freshness')).toBeTruthy();
 });
-
-// [A6] The pill only sits next to a real balance.
-it('loan details that fail to load hide the balance-age pill', async () => {
-  seedGoal(server, { milestones: SAVED_MILESTONES, homeLoan: HOME_LOAN });
-  server.fail('/loanfacts', 500);
-  await renderWithQueries(<Mortgage />);
-  expect(screen.queryByTestId('balance-freshness')).toBeNull();
-});

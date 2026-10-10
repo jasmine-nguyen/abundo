@@ -5,7 +5,6 @@ import type { GoalRecord } from '../../api';
 import { balanceGoalView, BalanceGoal } from '../../context';
 import { GOALS_HUB_CYCLE, seedHubWith } from './goalsScreen';
 
-export const GOAL_CYCLE = GOALS_HUB_CYCLE;
 export const GOAL_TODAY = new Date(2026, 6, 11); // Sat 11 Jul 2026
 export const GOAL_START = { start_date: '2026-06-06', target_date: '2026-08-15' };
 
@@ -13,7 +12,7 @@ export function goal(over: Partial<BalanceGoal> = {}): BalanceGoal {
   return { direction: 'grow', target_amount: 10000, target_date: '2026-08-15', account_id: 'up-spending', ...over };
 }
 export const view = (g: BalanceGoal, balance: number | null = null) =>
-  balanceGoalView({ goal: g, balance, payCycle: GOAL_CYCLE }, GOAL_TODAY);
+  balanceGoalView({ goal: g, balance, payCycle: GOALS_HUB_CYCLE }, GOAL_TODAY);
 
 export const growGoal = (id: string, over: Partial<GoalRecord> = {}): GoalRecord => ({
   id, name: `Grow ${id}`, icon: 'wallet', direction: 'grow', target_amount: 10000, target_date: '2026-08-15', account_id: `acct-${id}`, ...over,

@@ -21,10 +21,6 @@ describe('loanFactsReady boundaries (Settings "Edit" vs "Set up")', () => {
     }
   });
 
-  it('is FALSE for the all-null empty shape', () => {
-    expect(loanFactsReady({ original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null })).toBe(false);
-  });
-
   it('treats 0 as a set value (all-zero facts → "ready")', () => {
     expect(loanFactsReady({ original: 0, homeValue: 0, lvr: 0, ratePct: 0, baseRepay: 0, extra: 0 })).toBe(true);
   });

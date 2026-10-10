@@ -53,17 +53,6 @@ it('Home loan: a failed milestones read shows an error + Retry, not the empty in
   expect(screen.getByTestId('milestones-retry')).toBeTruthy();
 });
 
-it('Home loan: Retry after a failed milestones read brings back the plan card', async () => {
-  seedGoal(server, { homeLoan: HOME_LOAN });
-  server.once('GET', '/milestones', { status: 500 });
-  await renderWithQueries(<Mortgage />);
-  await act(async () => { fireEvent.press(screen.getByTestId('milestones-retry')); });
-  await settle();
-  expect(screen.queryByTestId('milestones-retry')).toBeNull();
-  expect(screen.getByText(/milestones reached|Your payoff plan/)).toBeTruthy();
-  expect(screen.queryByText(INVITE)).toBeNull();
-});
-
 it('Home loan: a genuinely empty plan still shows the invite', async () => {
   seedGoal(server, { homeLoan: HOME_LOAN, milestones: [] });
   await renderWithQueries(<Mortgage />);

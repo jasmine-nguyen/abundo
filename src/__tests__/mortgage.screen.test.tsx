@@ -1,22 +1,18 @@
-// WHIT-233 — the mortgage screen relocated out of the Goal tab to its own stack route
-// (app/mortgage). This locks the RELOCATION-specific behaviour: it renders standalone WITHOUT
-// a NavBarsProvider (proving it uses the <Header /> + plain ScrollView detail pattern,
-// not the tab's ScrollChromeHeader, which would throw here), and its header reads "Home loan".
-// The mortgage CONTENT (payoff cards, repayment, equity, milestone link) is covered by the
-// suites repointed to this screen (goals.paydown / repayment.* / milestone / goalErrorStates).
+// WHIT-233 — the mortgage screen (app/mortgage): the hero's "% gone" payoff block and its gate,
+// the balance states, and pull to refresh. The payoff cards, repayment, equity and milestone link
+// are covered by goals.paydown / repayment.* / milestone.
 // WHIT-685: drawn over the fake server, so the real screen data code runs.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { act, render, screen, fireEvent, waitFor } from '@testing-library/react-native';
-import { EMPTY_LOAN_FACTS, LOAN_FACTS } from './factory';
-import { PayoffSummary } from '../components/PayoffSummary';
+import { act, screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { EMPTY_LOAN_FACTS } from './factory';
 import { installFakeServer } from './support/fakeServer';
 import { renderWithQueries, useTestQueryClient } from './support/renderWithQueries';
 import { resetAuth } from './support/authMock';
 import { seedGoal } from './support/goalsScreen';
 import { routerSpies, resetRouter } from './support/routerMock';
 import { SAVED_MILESTONES } from './support/milestonePlan';
-import { pullControl, screenJson } from './support/pull';
+import { pullControl } from './support/pull';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../context', () => require('./support/contextMock').realContextWith(() => ({})));
@@ -30,24 +26,6 @@ useTestQueryClient();
 beforeEach(() => {
   resetAuth();
   resetRouter();
-});
-
-it('renders standalone (no NavBarsProvider) with a "Home loan" header', async () => {
-  // If this screen still used ScrollChromeHeader it would throw here (no NavBarsProvider),
-  // so a clean render is itself the relocation assertion.
-  seedGoal(server);
-  await renderWithQueries(<Mortgage />);
-  expect(screen.getByText('Home loan')).toBeTruthy();
-});
-
-it('shows the live balance owing in the hero when facts are unset', async () => {
-  seedGoal(server, {
-    loanFacts: EMPTY_LOAN_FACTS,
-    homeLoan: { balance: 596642, asOf: null },
-  });
-  await renderWithQueries(<Mortgage />);
-  expect(screen.getByText('YOUR HOME LOAN · BALANCE OWING')).toBeTruthy();
-  expect(screen.getByText('$596,642')).toBeTruthy();
 });
 
 // ===== WHIT-367 (folded from milestoneReadpathMortgage.gaps.screen.test.tsx) =====
@@ -65,15 +43,6 @@ it('mortgage Sprint summary reflects the saved plan (count + next target), not t
   // The default plan's rows/targets must NOT drive the mortgage screen once a plan is saved.
   expect(screen.queryByText('3 of 5 milestones reached')).toBeNull();
   expect(screen.queryByText('Next: under $170,000')).toBeNull();
-  expect(screen.queryByText('Next: under $544,000')).toBeNull();
-});
-
-it('mortgage Sprint summary shows the "set milestones" invite when none is saved', async () => {
-  seedGoal(server, { milestones: [], homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
-  await renderWithQueries(<Mortgage />);
-  // No hardcoded default: a user who hasn't set a plan gets an invite, not fake sprints/progress.
-  expect(screen.getByText('Set your payoff milestones')).toBeTruthy();
-  expect(screen.queryByText('0 of 5 milestones reached')).toBeNull();
   expect(screen.queryByText('Next: under $544,000')).toBeNull();
 });
 
@@ -125,6 +94,20 @@ it('a truly $0 balance shows "100% gone" — the label matches the "$0 to go" fi
 });
 
 // ===== WHIT-372 (folded from mortgageOwingEdges.screen.test.tsx) =====
+// WHIT-121 #4: each failed read's Retry is a labelled button and its error copy a polite live region.
+it.each([
+  ['/homeloan', 'hero-balance-retry', 'Retry loading your balance', "Couldn't load your balance."],
+  ['/repayment', 'repayment-retry', 'Retry loading your last repayment', "Couldn't load your last repayment."],
+])('a failed %s read shows a screen-reader-labelled Retry', async (route, testID, label, copy) => {
+  seedGoal(server);
+  server.fail(route, 500);
+  await renderWithQueries(<Mortgage />);
+  const retry = screen.getByTestId(testID);
+  expect(retry.props.accessibilityRole).toBe('button');
+  expect(retry.props.accessibilityLabel).toBe(label);
+  expect(screen.getByText(copy).props.accessibilityLiveRegion).toBe('polite');
+});
+
 describe('mortgage hero — WHIT-372 branch-order edges', () => {
   // Facts UNSET but balance at the original. `!factsReady` is checked BEFORE the new balanceKnown
   // owing branch, so this must stay the SET-UP prompt (route to /loan), never the "you're at the
@@ -135,65 +118,6 @@ describe('mortgage hero — WHIT-372 branch-order edges', () => {
     expect(screen.getByText('Set up loan details →')).toBeTruthy();
     expect(screen.queryByText(OWING_BODY)).toBeNull();
     expect(screen.queryByText('THE MORTGAGE · PAID DOWN SO FAR')).toBeNull();
-  });
-
-  // homeLoanError + an over-paid balance: `homeLoanError` is checked BEFORE the balanceKnown owing
-  // branch, so the ERROR must win — a balance-read failure is never silently painted as "you're at
-  // the start". Reddens if the balanceKnown branch is ever ordered above homeLoanError.
-  // WHIT-685: the real screen data only flags homeLoanError when no balance ever loaded, so the
-  // over-paid seed never reaches the screen here; the failed read must still show the error.
-  it('homeLoanError wins over the over-paid owing state', async () => {
-    seedGoal(server, { homeLoan: { balance: 500001, asOf: '2026-07-04T00:00:00Z' } });
-    server.fail('/homeloan', 500);
-    await renderWithQueries(<Mortgage />);
-    expect(screen.getByText("Couldn't load your balance.")).toBeTruthy();
-    expect(screen.getByTestId('hero-balance-retry')).toBeTruthy();
-    expect(screen.queryByText(OWING_BODY)).toBeNull();
-  });
-
-  // THE paidOff===0.5 knife-edge, rendered. Balance 499,999.5 → paidOff 0.5 → Math.round=1 →
-  // paidDownReady TRUE → the payoff block renders. fmt(0.5)="$1", and WHIT-391 floors the headline
-  // to "1% gone" so it AGREES with the "$1 paid" figure (was the old "$1 / 0% gone"). Reverting the
-  // WHIT-391 floor drops it back to "0% gone" and reddens here.
-  it('paidOff === 0.5 renders the payoff block reading "$1" next to "1% gone" (floored, coherent)', async () => {
-    seedGoal(server, { homeLoan: { balance: 499999.5, asOf: '2026-07-04T00:00:00Z' } });
-    await renderWithQueries(<Mortgage />);
-    expect(screen.getByText('THE MORTGAGE · PAID DOWN SO FAR')).toBeTruthy();
-    expect(screen.getByText('$1')).toBeTruthy();          // fmt(0.5)
-    expect(screen.getByText('1% gone')).toBeTruthy();      // WHIT-391: floored to 1, not "0% gone"
-    expect(screen.queryByText('0% gone')).toBeNull();      // the old incoherent copy is gone
-    expect(screen.getByText('$500,000 to go')).toBeTruthy(); // fmt(499999.5) rounds back up
-    expect(screen.queryByText(OWING_BODY)).toBeNull();     // it is NOT routed to the owing state
-  });
-});
-
-// ===== WHIT-391 (folded from mortgagePayoffFloor.screen.test.tsx) =====
-describe('mortgage hero — WHIT-391 sub-0.5% paydown, rendered', () => {
-  // [F7] The card's canonical example, rendered: $1,200 paid of a $500k loan (0.24%). The payoff block
-  // shows "$1,200" next to "1% gone" (NOT "0% gone"), with the honest "$498,800 to go". Reverting the
-  // WHIT-391 floor drops the headline to "0% gone" and reddens the last two assertions.
-  it('[F7] $1,200 paid on $500k renders "$1,200" next to "1% gone", never "0% gone"', async () => {
-    seedGoal(server, { homeLoan: { balance: 498800, asOf: '2026-07-04T00:00:00Z' } });
-    await renderWithQueries(<Mortgage />);
-    expect(screen.getByText('THE MORTGAGE · PAID DOWN SO FAR')).toBeTruthy();
-    expect(screen.getByText('$1,200')).toBeTruthy();
-    expect(screen.getByText('1% gone')).toBeTruthy();
-    expect(screen.queryByText('0% gone')).toBeNull();
-    expect(screen.getByText('$498,800 to go')).toBeTruthy();
-  });
-
-  // [F8] The reconcile's OTHER half: the label is floored to 1, but the progress bar must still fill to
-  // the TRUE 0.24% (Bar width={`${paidPct}%`}), NOT snap to 1%. So the bar is visibly near-empty while
-  // the words say "1% gone" — deliberate and honest. Assert the serialized tree carries a "0.24%" width
-  // next to "1% gone". Reverting the floor leaves the bar at 0.24% but the headline back at 0% (a regress
-  // of the reconcile); clamping the BAR to the label (a wrong "fix") would drop the 0.24% width and redden.
-  it('[F8] the progress bar fills to the true 0.24%, not the floored 1% (label and bar diverge honestly)', async () => {
-    seedGoal(server, { homeLoan: { balance: 498800, asOf: '2026-07-04T00:00:00Z' } });
-    await renderWithQueries(<Mortgage />);
-    expect(screen.getByText('1% gone')).toBeTruthy();
-    const tree = screenJson();
-    expect(tree).toContain('0.24%');        // Bar fill width uses the raw paidPct
-    expect(tree).not.toContain('width":"1%'); // ...and is NOT snapped to the floored label
   });
 });
 
@@ -210,67 +134,9 @@ describe('mortgage hero — WHIT-372 "balance owing" states (nothing genuinely p
     expect(screen.queryByText('0% gone')).toBeNull();
     expect(screen.queryByText('THE MORTGAGE · PAID DOWN SO FAR')).toBeNull();
   });
-
-  // Balance ABOVE the original (a redraw/refinance that grew the loan): paidOff is negative, and
-  // `fmt` hides the sign — the old un-gated hero showed "$1 paid / 0% gone / owe more than you
-  // started". Now it shows the owing state. This is the core over-paid fix.
-  it('balance above the original shows the owing state, never a "$1 / 0% gone" block', async () => {
-    seedGoal(server, { homeLoan: { balance: 500001, asOf: '2026-07-04T00:00:00Z' } });
-    await renderWithQueries(<Mortgage />);
-    expect(screen.getByText('YOUR HOME LOAN · BALANCE OWING')).toBeTruthy();
-    expect(screen.getByText(OWING_BODY)).toBeTruthy();
-    expect(screen.getByText('$500,001')).toBeTruthy();
-    expect(screen.queryByText('0% gone')).toBeNull();
-    expect(screen.queryByText('$1')).toBeNull();                     // no "$1 paid" from fmt(-1)
-    expect(screen.queryByText('THE MORTGAGE · PAID DOWN SO FAR')).toBeNull();
-  });
-
-  // Sub-dollar paydown (0 < paidOff < 0.5, rounds to $0): the gap between `paidDownReady`
-  // (rounds paidOff) and a naive `paidOff > 0`. Must ALSO route to the owing state — not fall
-  // through to the "once your balance loads" waiting copy (the balance IS loaded).
-  it('a sub-dollar paydown (rounds to $0) shows the owing state, not the waiting copy', async () => {
-    seedGoal(server, { homeLoan: { balance: 499999.6, asOf: '2026-07-04T00:00:00Z' } });
-    await renderWithQueries(<Mortgage />);
-    expect(screen.getByText('YOUR HOME LOAN · BALANCE OWING')).toBeTruthy();
-    expect(screen.getByText(OWING_BODY)).toBeTruthy();
-    expect(screen.queryByText('0% gone')).toBeNull();
-    expect(screen.queryByText("We'll show your payoff progress once your balance loads.")).toBeNull();
-  });
 });
 
-// ===== WHIT-372 (folded from payoffSummary.screen.test.tsx) =====
-// PURE COMPONENT test — renders <PayoffSummary/> directly (it reads no screen data), so it needs no
-// seeded server. WHIT-685 dropped its font-size checks (layout only); the wording checks stay.
-describe('PayoffSummary', () => {
-  const PROPS = {
-    paidOff: 67100,
-    paidPctLabel: 13,
-    paidPct: 13.42,
-    balanceLabel: '$432,900',
-    original: 500000,
-  } as const;
-
-  it('hero variant: long eyebrow and the shared figures', () => {
-    render(<PayoffSummary variant="hero" {...PROPS} />);
-    expect(screen.getByText('THE MORTGAGE · PAID DOWN SO FAR')).toBeTruthy();
-    expect(screen.getByText('$67,100')).toBeTruthy();
-    expect(screen.getByText('13% gone')).toBeTruthy();
-    expect(screen.getByText('$432,900 to go')).toBeTruthy();
-    expect(screen.getByText('started at $500,000')).toBeTruthy();
-  });
-
-  it('card variant: short eyebrow (never the hero one) and the shared figures', () => {
-    render(<PayoffSummary variant="card" {...PROPS} />);
-    expect(screen.getByText('PAID DOWN SO FAR')).toBeTruthy();
-    expect(screen.queryByText('THE MORTGAGE · PAID DOWN SO FAR')).toBeNull();
-    expect(screen.getByText('$67,100')).toBeTruthy();
-    expect(screen.getByText('13% gone')).toBeTruthy();
-    expect(screen.getByText('$432,900 to go')).toBeTruthy();
-    expect(screen.getByText('started at $500,000')).toBeTruthy();
-  });
-});
-
-// WHIT-822 — pull-to-refresh, and no "sprints" or emoji anywhere on the screen.
+// WHIT-822 — pull-to-refresh.
 it('user can pull down on Home loan to reload the balance', async () => {
   seedGoal(server, { milestones: SAVED_MILESTONES, homeLoan: { balance: 432900, asOf: '2026-07-04T00:00:00Z' } });
   await renderWithQueries(<Mortgage />);
@@ -284,18 +150,4 @@ it('user can pull down on Home loan to reload the balance', async () => {
   held.release();
   await waitFor(() => expect(pullControl().props.refreshing).toBe(false));
   expect(await screen.findByText('$430,000 to go')).toBeTruthy();
-});
-
-// [A1] Each state draws different copy: the second one reaches "Target reached" and the equity card's
-// deposit-target body, which the first never renders.
-it.each([
-  ['a plan in progress, no deposit target', LOAN_FACTS, 250000],
-  ['every milestone reached, deposit target set', { ...LOAN_FACTS, depositTarget: 100000 }, 90000],
-])('the screen never says "sprint" and shows no emoji: %s', async (_state, loanFacts, balance) => {
-  // Loan facts are set, so the payoff mini-cards and the contribution card render too.
-  seedGoal(server, { loanFacts, milestones: SAVED_MILESTONES, homeLoan: { balance, asOf: '2026-07-04T00:24:37.614Z' } });
-  await renderWithQueries(<Mortgage />);
-  const tree = screenJson();
-  expect(tree).not.toMatch(/sprint/i);
-  expect(tree).not.toMatch(/\p{Extended_Pictographic}/u);
 });

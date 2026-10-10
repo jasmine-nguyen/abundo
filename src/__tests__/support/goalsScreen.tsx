@@ -1,5 +1,5 @@
-// WHIT-685 — fill the fake server with Goals / mortgage / milestone data from the app-shaped values
-// the old makeGoalData fakes used, so the real screen data code (../queries) runs. Usage in a suite
+// WHIT-685 — fill the fake server with Goals / mortgage / milestone data from app-shaped values,
+// so the real screen data code (../queries) runs. Usage in a suite
 // (the jest.mock calls must stay in the test file, for hoisting):
 //
 //   jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -36,7 +36,7 @@ interface GoalSeed {
   milestones?: MilestoneRecord[];
 }
 
-/** The mortgage / milestone screens' reads. Defaults match makeGoalData. */
+/** The mortgage / milestone screens' reads. Defaults: fully-set loan facts, an un-loaded balance, no repayment, the default saved plan. */
 export function seedGoal(
   server: FakeServer,
   { loanFacts = LOAN_FACTS, homeLoan = { balance: null, asOf: null }, repayment = NO_REPAYMENT, milestones = DEFAULT_MILESTONES }: GoalSeed = {},

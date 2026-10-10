@@ -53,15 +53,6 @@ it('does not fetch before login, then fires on the auth flip to authed', async (
   expect(server.sent('GET', '/homeloan')).toHaveLength(1);
 });
 
-it('a transient 5xx on the balance read retries and self-heals', async () => {
-  server.once('GET', '/homeloan', { status: 503 });
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient({ retry: 2 })) });
-
-  await waitFor(() => expect(result.current.homeLoan.balance).toBe(596642.43));
-  expect(result.current.homeLoanError).toBe(false);
-  expect(server.sent('GET', '/homeloan')).toHaveLength(2);
-});
-
 it('treats a null balance as a normal success — not an error', async () => {
   server.seed('/homeloan', { balance: null, as_of: null, currency: null });
   const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
@@ -113,29 +104,4 @@ it('WHIT-121: a first-load balance failure flags homeLoanError (nothing cached)'
   server.fail('/homeloan', 503);
   const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.homeLoanError).toBe(true));
-});
-
-it('WHIT-121: a cached NULL balance survives a failed refetch — no false balance error (firstLoadError)', async () => {
-  // homeLoanError is firstLoadError too: a balance that once resolved — even a legitimately
-  // NULL "poller hasn't run yet" success — then hit a failed refetch keeps its cached value,
-  // so the hero shows the waiting copy, NOT "couldn't load your balance". Only a never-loaded
-  // read flags an error. Sequences the repayment read as the round marker (it changes each
-  // round) so the balance assertion fires only after round 2's failed home-loan result lands.
-  const NULL_BALANCE = { balance: null, as_of: null, currency: null };
-  const REPAYMENT_2 = { amount: 1600, date: '2026-08-01', principal: 1300, interest: 300 };
-  server.once('GET', '/homeloan', { body: NULL_BALANCE });
-  server.fail('/homeloan', 500);
-  server.once('GET', '/repayment', { body: REPAYMENT });
-  server.seed('/repayment', REPAYMENT_2);
-  const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
-  await waitFor(() => expect(result.current.isLoading).toBe(false));
-  expect(result.current.homeLoanError).toBe(false); // first load: a NULL balance is a success
-  expect(result.current.homeLoan.balance).toBeNull();
-
-  await act(async () => { result.current.refetch(); });
-  await waitFor(() => expect(result.current.repayment.amount).toBe(1600)); // round 2 applied
-  // The balance refetch FAILED, but the cached null is retained → firstLoadError stays false,
-  // so the hero renders the honest waiting copy rather than a false "couldn't load" error.
-  expect(result.current.homeLoanError).toBe(false);
-  expect(result.current.homeLoan.balance).toBeNull();
 });

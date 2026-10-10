@@ -10,9 +10,7 @@ import { renderWithQueries, useTestQueryClient } from './support/renderWithQueri
 import { resetAuth } from './support/authMock';
 import { resetRouter } from './support/routerMock';
 import { pinToday } from './support/clock';
-import { styleOf } from './support/layout';
 import { GOAL_START, GOAL_TODAY, growGoal, seedPaceHub } from './support/goalPace';
-import { C } from '../theme';
 import type { GoalRecord } from '../api';
 
 jest.mock('../motion/ScrollChromeHeader', () => require('./support/scrollChromeHeaderMock').scrollChromeHeaderMockModule());
@@ -32,6 +30,10 @@ const DEBT: GoalRecord = {
   id: 'debt', name: 'Car loan', icon: 'car', direction: 'paydown', target_amount: 0, baseline: 20000,
   manual_balance: 12000, manual_as_of: '2026-07-01', account_id: null, ...GOAL_START, start_balance: 20000,
 };
+// A start but no balance polled yet → no dollars, no pill.
+const UNPOLLED = growGoal('unpolled', { ...GOAL_START, start_balance: 2000 });
+// WHIT-747: start 2000 and past the target → would read "Ahead", but a reached goal drops the pill.
+const DONE = growGoal('done', { ...GOAL_START, start_balance: 2000 });
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -40,7 +42,7 @@ beforeEach(() => {
   resetAuth();
   resetRouter();
   pinToday(GOAL_TODAY);
-  seedPaceHub(server, [PLAIN, AHEAD, ON_PACE, DEBT], { 'acct-plain': 4000, 'acct-ahead': 8000, 'acct-onpace': 6000 });
+  seedPaceHub(server, [PLAIN, AHEAD, ON_PACE, DEBT, UNPOLLED, DONE], { 'acct-plain': 4000, 'acct-ahead': 8000, 'acct-onpace': 6000, 'acct-done': 12000 });
 });
 afterEach(() => { jest.useRealTimers(); });
 
@@ -50,9 +52,7 @@ describe('goal card pace pill + dollars (WHIT-748)', () => {
 
     expect(within(screen.getByTestId('goal-pace-ahead')).getByText('Ahead by $2,000')).toBeTruthy();
     expect(within(screen.getByTestId('goal-pace-onpace')).getByText('On pace')).toBeTruthy();
-    const behind = within(screen.getByTestId('goal-pace-debt')).getByText('A little behind');
-    expect(styleOf(behind).color).toBe(C.warn);
-    expect(styleOf(behind).color).not.toBe(C.bad);
+    expect(within(screen.getByTestId('goal-pace-debt')).getByText('A little behind')).toBeTruthy();
     expect(screen.queryByTestId('goal-pace-plain')).toBeNull();
 
     expect(screen.getByTestId('goal-amount-plain')).toHaveTextContent('$4,000 of $10,000');
@@ -63,5 +63,18 @@ describe('goal card pace pill + dollars (WHIT-748)', () => {
     expect(card.getByText('40%')).toBeTruthy();
     expect(card.getByText('Set aside $2,000 each payday')).toBeTruthy();
     expect(card.getByText('3 paydays left')).toBeTruthy();
+  });
+
+  it('[A14] a goal waiting on its balance shows no dollars line and no pill', async () => {
+    await renderWithQueries(<Goals />);
+    expect(within(screen.getByTestId('goal-card-unpolled')).getByText('Waiting on your balance')).toBeTruthy();
+    expect(screen.queryByTestId('goal-amount-unpolled')).toBeNull();
+    expect(screen.queryByTestId('goal-pace-unpolled')).toBeNull();
+  });
+
+  it('a reached goal shows "Goal reached" and no pace pill, even when it is ahead', async () => {
+    await renderWithQueries(<Goals />);
+    expect(screen.getByTestId('goal-reached-done')).toBeTruthy();
+    expect(screen.queryByTestId('goal-pace-done')).toBeNull();
   });
 });

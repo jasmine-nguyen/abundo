@@ -50,6 +50,7 @@ describe('goal card: past its date', () => {
     expect(card.getByText('40%')).toBeTruthy();
 
     fireEvent.press(screen.getByTestId('goal-pastdue-od'));
+    expect(routerSpies.push).toHaveBeenCalledTimes(1);
     expect(routerSpies.push).toHaveBeenCalledWith('/goal/edit?id=od');
   });
 
@@ -57,8 +58,19 @@ describe('goal card: past its date', () => {
     const goal: GoalRecord = { id: 'met', name: 'Holiday', icon: 'wallet', direction: 'grow', target_amount: 3000, target_date: '2026-06-01', account_id: 'up-spending' };
     seedHub({ goals: [goal] });
     await renderWithQueries(<Goals />);
+    const card = within(screen.getByTestId('goal-card-met'));
     expect(screen.queryByTestId('goal-pastdue-met')).toBeNull();
-    expect(within(screen.getByTestId('goal-card-met')).queryByText('Past your date — pick a new one?')).toBeNull();
+    expect(card.queryByText('Past your date — pick a new one?')).toBeNull();
+    expect(card.queryByText('before your next payday')).toBeNull();
+  });
+
+  it('[A13] a manual goal past its date keeps the Update balance row', async () => {
+    const goal: GoalRecord = { id: 'man', name: 'Credit card', icon: 'cash', direction: 'paydown', target_amount: 2000, target_date: '2026-06-01', account_id: null, manual_balance: 9000, manual_as_of: '2026-07-01' };
+    seedHub({ goals: [goal] });
+    await renderWithQueries(<Goals />);
+    const card = within(screen.getByTestId('goal-card-man'));
+    expect(card.getByText('Past your date — pick a new one?')).toBeTruthy();
+    expect(card.getByText('Update balance')).toBeTruthy();
   });
 });
 
@@ -87,14 +99,12 @@ describe('goal card: pay-down with no start balance', () => {
     expect(card.getByText('Set aside $2,333 each payday')).toBeTruthy(); // (9000 − 2000) / 3 paydays, whole dollars
   });
 
-  it('with a $0 target the line just reads "$X owed"', async () => {
-    const goal: GoalRecord = { id: 'nz', name: 'Credit card', icon: 'cash', direction: 'paydown', target_amount: 0, target_date: '2026-08-15', account_id: null, manual_balance: 9000 };
-    seedHub({ goals: [goal] });
+  // a synced loan stores what's owed as a negative balance; the card shows it positive.
+  it('[A17] a synced no-start paydown shows the owed amount as a positive', async () => {
+    const goal: GoalRecord = { id: 'sync', name: 'Car loan', icon: 'cash', direction: 'paydown', target_amount: 2000, target_date: '2026-08-15', account_id: 'acct-sync' };
+    seedHub({ goals: [goal], balances: { 'acct-sync': -4500.4 } });
     await renderWithQueries(<Goals />);
-    const card = within(screen.getByTestId('goal-card-nz'));
-    expect(card.getByText('$9,000 owed')).toBeTruthy();
-    expect(card.queryByText(/target/)).toBeNull();
-    expect(card.queryByText('—')).toBeNull();
+    expect(screen.getByTestId('goal-amount-sync')).toHaveTextContent('$4,500 owed of $2,000 target');
   });
 });
 

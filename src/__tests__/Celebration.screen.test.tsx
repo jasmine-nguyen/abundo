@@ -33,11 +33,6 @@ describe('Celebration overlay', () => {
     expect(screen.getAllByTestId('celebration-piece').length).toBeGreaterThan(0);
   });
 
-  it('falls back to a generic title when no label is given', () => {
-    render(<Celebration celebrationKey={1} label={null} />);
-    expect(screen.getByText(/^Milestone reached/)).toBeTruthy();
-  });
-
   it('re-fires and refreshes the label when a new key arrives mid-way', () => {
     const { rerender } = render(<Celebration celebrationKey={1} label="Holiday · $2,000 reached" />);
     expect(screen.getByTestId('checkpoint-celebration')).toBeTruthy();

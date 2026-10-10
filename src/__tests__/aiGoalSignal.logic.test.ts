@@ -43,4 +43,17 @@ describe('aiGoalSignal (WHIT-134)', () => {
     expect(g.current_extra_monthly).toBe(0);
     expect(g.months_sooner_per_100_extra).toBe(12);
   });
+
+  it('sends the goal but a NULL sensitivity when +$100 moves the payoff < half a month', () => {
+    // A near-cleared balance clears in weeks; an extra $100/mo can't shift a whole
+    // month, so the exact sensitivity is omitted (null) — never 0, never a fabricated
+    // ">=1 month". The goal itself (mode + date) still goes.
+    const g = asPayoffGoal(aiGoalSignal(makeState({ loanFacts: M, homeLoan: { balance: 100, asOf: null } }), TODAY));
+    expect(['partial', 'flat', 'ahead']).toContain(g.payoff_mode);
+    expect(g.months_sooner_per_100_extra).toBeNull();
+  });
+
+  it('is null when the live balance is NaN (never leaks a junk date into the goal)', () => {
+    expect(aiGoalSignal(makeState({ loanFacts: M, homeLoan: { balance: NaN, asOf: null } }), TODAY)).toBeNull();
+  });
 });

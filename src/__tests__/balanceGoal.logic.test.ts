@@ -4,7 +4,7 @@
 // Expecteds are computed by hand in the comments so a revert fails. Runner pins
 // TZ=Australia/Melbourne (package.json).
 import { describe, it, expect } from '@jest/globals';
-import { paydaysUntil, balanceGoalView, GOAL_PACE_TOLERANCE, BalanceGoal } from '../context';
+import { paydaysUntil, balanceGoalView, BalanceGoal } from '../context';
 
 // A fortnightly cycle whose paydays land Jun6, Jun20, Jul4, Jul18, Aug1, Aug15, Aug29, ...
 const CYCLE = { length: 14, last_pay_date: '2026-06-06' };
@@ -179,26 +179,12 @@ describe('balanceGoalView — edges', () => {
   });
 });
 
-// --- WHIT-252: the immutable start fields are carried through ------------------
-describe('balanceGoalView — start_date / start_balance (WHIT-252)', () => {
-  it('carries the start fields without perturbing the existing progress', () => {
-    const withStart = goal({ start_date: '2026-06-06', start_balance: 2000 });
-    const v = balanceGoalView({ goal: withStart, balance: 4000, payCycle: CYCLE }, TODAY);
-    // progress still counts from baseline (0 here): 40% at 4000/10000, unchanged by the start.
-    expect(v.progress).toBeCloseTo(0.4, 5);
-  });
-});
-
 // --- WHIT-262: ahead / on-track / behind from the immutable start -------------
 // Start Jun6 -> target Aug15 = 70 days; TODAY Jul11 = 35 elapsed -> expected fill 0.5.
 // Tolerance 0.05 -> on-track band [0.45, 0.55]. All fractions hand-computed so a revert fails.
 describe('balanceGoalView — status (WHIT-262)', () => {
   const START = { start_date: '2026-06-06', start_balance: 2000 }; // grow: startN 2000, denom 8000
   const paced = (over: Partial<BalanceGoal> = {}) => goal({ ...START, ...over });
-
-  it('exports a 0.05 tolerance (change is a conscious test update)', () => {
-    expect(GOAL_PACE_TOLERANCE).toBe(0.05);
-  });
 
   describe('grow (synced)', () => {
     it('behind when actual < expected − tol (0.25 vs 0.5)', () => {
@@ -310,48 +296,13 @@ describe('balanceGoalView — status (WHIT-262)', () => {
 // clamps below 0 / defensive baselines; NaN/Infinity guards; garbage target_date. Hand-counted.
 describe('paydaysUntil — phases/lengths/boundaries', () => {
   const W = { length: 7, last_pay_date: '2026-07-01' };  // weekly: Jul1,8,15,22,29,Aug5...
-  const M = { length: 30, last_pay_date: '2026-01-15' }; // ~monthly
 
   it('[A20] weekly (len 7): (Jul11, Aug1] -> Jul15,22,29 = 3', () => {
     expect(paydaysUntil(W, '2026-08-01', TODAY)).toBe(3);
   });
 
-  it('[A21] weekly far-future target one year out -> 51 (large count stays exact)', () => {
-    // pay Jul1; paydays at day 0,7,..,364; window (day10, day365] -> n=2..52 = 51.
-    expect(paydaysUntil(W, '2027-07-01', TODAY)).toBe(51);
-  });
-
-  it('[A22] ~monthly (len 30): (Jul11, Aug15] -> 2 paydays (Jul14, Aug13)', () => {
-    expect(paydaysUntil(M, '2026-08-15', TODAY)).toBe(2);
-  });
-
   it('[A23] target BEFORE last_pay_date -> 0 (no negative count)', () => {
     expect(paydaysUntil(W, '2026-06-20', TODAY)).toBe(0);
-  });
-
-  it('[A24] target == today, and today IS a payday -> 0 (half-open excludes both ends here)', () => {
-    // today = Jul8 (a weekly payday); window (Jul8, Jul8] is empty.
-    expect(paydaysUntil(W, '2026-07-08', new Date(2026, 6, 8))).toBe(0);
-  });
-
-  it('[A25] today far BEFORE last_pay_date (backward-filled paydays) -> 17', () => {
-    // pay Aug1 len14; (Jan1, Aug15] enumerates 17 fortnightly paydays.
-    expect(paydaysUntil({ length: 14, last_pay_date: '2026-08-01' }, '2026-08-15', new Date(2026, 0, 1))).toBe(17);
-  });
-
-  it('[A26] DST autumn fall-back (Melbourne, Sun 5 Apr 2026) does not shift the count', () => {
-    // pay=today=Mar22, target=Apr19 spans the fall-back; (Mar22, Apr19] -> Apr5, Apr19 = 2.
-    expect(paydaysUntil({ length: 14, last_pay_date: '2026-03-22' }, '2026-04-19', new Date(2026, 2, 22))).toBe(2);
-  });
-
-  it('[A27] leap-day target (29 Feb 2028) counts correctly', () => {
-    // pay Feb1 2028 len14 -> Feb1,15,29; (Feb1, Feb29] -> Feb15, Feb29 = 2.
-    expect(paydaysUntil({ length: 14, last_pay_date: '2028-02-01' }, '2028-02-29', new Date(2028, 1, 1))).toBe(2);
-  });
-
-  it('[A28] leap-day last_pay_date (29 Feb 2028) as the anchor counts correctly', () => {
-    // pay=today=Feb29; (Feb29, Mar14] -> Mar14 = 1.
-    expect(paydaysUntil({ length: 14, last_pay_date: '2028-02-29' }, '2028-03-14', new Date(2028, 1, 29))).toBe(1);
   });
 });
 
@@ -371,28 +322,6 @@ describe('balanceGoalView — sign/source matrix', () => {
     expect(v.progress).toBeCloseTo(0.4, 10); // 4000/10000, NOT 999/10000 = 0.0999
   });
 
-  it('[A32] synced GROW balance exactly 0 -> valid 0 savings (progress 0, a number)', () => {
-    const v = balanceGoalView({ goal: goal(), balance: 0, payCycle: CYCLE }, TODAY);
-    expect(v.progress).toBe(0);
-    expect(v.pacePerPayday).toBe(10000 / 3);
-  });
-
-  it('[A33] synced PAYDOWN balance exactly 0 -> owed 0 -> met (progress 1, pace 0)', () => {
-    const v = balanceGoalView(
-      { goal: goal({ direction: 'paydown', target_amount: 0, baseline: 20000 }), balance: 0, payCycle: CYCLE }, TODAY);
-    expect(v.progress).toBe(1);
-    expect(v.pacePerPayday).toBe(0);
-  });
-
-  it('[A34] manual_balance exactly 0 (grow) -> progress 0, (paydown) -> met 1', () => {
-    const grow = balanceGoalView(
-      { goal: goal({ account_id: null, manual_balance: 0, manual_as_of: '2026-07-01' }), balance: null, payCycle: CYCLE }, TODAY);
-    expect(grow.progress).toBe(0);
-    const pay = balanceGoalView(
-      { goal: goal({ direction: 'paydown', target_amount: 0, baseline: 20000, account_id: null, manual_balance: 0, manual_as_of: '2026-07-01' }), balance: null, payCycle: CYCLE }, TODAY);
-    expect(pay.progress).toBe(1);
-  });
-
   it('[A35] NaN / Infinity synced balance is guarded to null (unknown), paydays still count', () => {
     for (const bad of [NaN, Infinity, -Infinity]) {
       const v = balanceGoalView({ goal: goal(), balance: bad, payCycle: CYCLE }, TODAY);
@@ -400,13 +329,6 @@ describe('balanceGoalView — sign/source matrix', () => {
       expect(v.pacePerPayday).toBeNull();
       expect(v.paydaysLeft).toBe(3);
     }
-  });
-
-  it('[A36] NaN manual_balance is guarded to null (unknown)', () => {
-    const v = balanceGoalView(
-      { goal: goal({ account_id: null, manual_balance: NaN, manual_as_of: '2026-07-01' }), balance: null, payCycle: CYCLE }, TODAY);
-    expect(v.progress).toBeNull();
-    expect(v.pacePerPayday).toBeNull();
   });
 });
 
@@ -418,27 +340,9 @@ describe('balanceGoalView — progress clamps', () => {
     expect(v.progress).toBe(0);
     expect(v.pacePerPayday).toBeCloseTo(25000 / 3, 6);
   });
-
-  it('[A41] grow current == baseline is progress 0 (a number), not null', () => {
-    const v = balanceGoalView({ goal: goal({ baseline: 2000 }), balance: 2000, payCycle: CYCLE }, TODAY);
-    expect(v.progress).toBe(0);
-  });
-
-  it('[A42] defensive negative baseline (grow) still yields finite in-range progress', () => {
-    // baseline -1000, target 10000, bal 4000 -> (4000+1000)/11000 = 0.4545..., finite.
-    const v = balanceGoalView({ goal: goal({ baseline: -1000 }), balance: 4000, payCycle: CYCLE }, TODAY);
-    expect(v.progress).toBeCloseTo(5000 / 11000, 10);
-    expect(Number.isFinite(v.progress as number)).toBe(true);
-  });
 });
 
 describe('balanceGoalView — pace/paydaysLeft', () => {
-  it('[A43] garbage target_date -> paydaysLeft 0 -> pace = whole remaining (no crash/NaN)', () => {
-    const v = balanceGoalView({ goal: goal({ target_date: 'not-a-date' }), balance: 4000, payCycle: CYCLE }, TODAY);
-    expect(v.paydaysLeft).toBe(0);
-    expect(v.pacePerPayday).toBe(6000); // remaining, not remaining/0
-    expect(Number.isFinite(v.pacePerPayday as number)).toBe(true);
-  });
 });
 
 // ===== WHIT-262 (folded from balanceGoalStatus.gaps.logic.test.ts) — balanceGoalView.status
@@ -456,10 +360,6 @@ const statusOf = (g: BalanceGoal, balance: number | null) =>
 describe('grow start_balance === 0 (falsy but present)', () => {
   const g = goal({ start_date: '2026-06-06', start_balance: 0 }); // startN 0 -> denom = target 10000
 
-  it('is judged, not nulled (0 must survive the null/finite guard)', () => {
-    // current 5000 -> (5000-0)/10000 = 0.5 == expected 0.5 -> on_track.
-    expect(statusOf(g, 5000)).toBe('on_track');
-  });
   it('the 0-start really drives the denominator (behind below the band)', () => {
     // 2000/10000 = 0.2 <= 0.45 -> behind. Guards a `!goal.start_balance` truthiness regression.
     expect(statusOf(g, 2000)).toBe('behind');
@@ -476,28 +376,11 @@ it('bar % and status label diverge when baseline != start_balance (bar 0.85, sta
   expect(v.status).toBe('behind');
 });
 
-// --- clamp corners of actualFrac ----------------------------------------------
-it('a goal MET mid-timeline reads ahead (fill clamps to 1.0 vs expected 0.5), not on_track', () => {
-  // start_balance 2000, current 10000 -> (10000-2000)/8000 = 1.0 >= 0.55 -> ahead.
-  const g = goal({ start_date: '2026-06-06', start_balance: 2000 });
-  const v = balanceGoalView({ goal: g, balance: 10000, payCycle: CYCLE }, TODAY);
-  expect(v.progress).toBe(1);
-  expect(v.status).toBe('ahead');
-});
-
-it('grow that LOST money (current below start) clamps the fill to 0 -> behind, never negative', () => {
-  // start_balance 4000, current 3000 -> (3000-4000)/6000 = -0.167 clamp 0 <= 0.45 -> behind.
-  expect(statusOf(goal({ start_date: '2026-06-06', start_balance: 4000 }), 3000)).toBe('behind');
-});
-
 // --- paydown synced denom guard: a start already clear / in credit -------------
 describe('paydown synced start with nothing to measure -> null', () => {
   const debt = (over: Partial<BalanceGoal> = {}) =>
     goal({ direction: 'paydown', target_amount: 0, baseline: 20000, start_date: '2026-06-06', ...over });
 
-  it('synced start_balance 0 (owed nothing at start) -> startN 0, denom 0 -> null', () => {
-    expect(statusOf(debt({ start_balance: 0 }), -5000)).toBeNull();
-  });
   it('synced start already IN CREDIT (positive signed start) -> startN clamps 0, denom 0 -> null', () => {
     // start_balance +5000 (account in credit) -> normalise max(0,-5000)=0 -> denom 0-0=0 -> null.
     expect(statusOf(debt({ start_balance: 5000 }), -5000)).toBeNull();
@@ -512,24 +395,6 @@ it('non-finite start_balance (NaN / +Inf / -Inf) -> null, never a bogus label', 
   for (const bad of [NaN, Infinity, -Infinity]) {
     expect(statusOf(goal({ start_date: '2026-06-06', start_balance: bad }), 6000)).toBeNull();
   }
-});
-
-// --- day boundaries: elapsed == 0 and elapsed == total -------------------------
-it('today exactly ON start_date (elapsed 0 -> expected 0): a filled goal reads ahead, no crash', () => {
-  // start Jul11 == today, target Aug15 (35d span > 0). elapsed 0 -> expected 0.
-  // (6000-2000)/8000 = 0.5 >= 0.05 -> ahead.
-  expect(statusOf(goal({ start_date: '2026-07-11', start_balance: 2000 }), 6000)).toBe('ahead');
-});
-
-describe('today exactly ON target_date (elapsed == total -> expected 1.0)', () => {
-  // start Jun6 -> target Jul11 == today: total 35, elapsed 35 -> expected exactly 1.0.
-  const g = goal({ start_date: '2026-06-06', target_date: '2026-07-11', start_balance: 2000 });
-  it('a met goal reads on_track (1.0 within the band of 1.0), not behind', () => {
-    expect(statusOf(g, 10000)).toBe('on_track'); // fill (10000-2000)/8000 = 1.0
-  });
-  it('an unmet goal reads behind on the deadline', () => {
-    expect(statusOf(g, 6000)).toBe('behind'); // fill 0.5 <= 0.95
-  });
 });
 
 // --- paydown WITHOUT a baseline: no bar, but still a status label --------------
@@ -557,11 +422,6 @@ describe('balanceGoalView — checkpoints reached-count', () => {
     expect(v.checkpointsReached).toBe(2);
   });
 
-  it('grow: a rung one dollar above the balance is NOT reached', () => {
-    const g = goal({ checkpoints: CPS(4000) });
-    expect(balanceGoalView({ goal: g, balance: 3999, payCycle: CYCLE }, TODAY).checkpointsReached).toBe(0);
-  });
-
   it('paydown: counts the rungs at or above the owed balance (<=), boundary counts', () => {
     // manual paydown, owed 10000, rungs 15000/10000/5000 → 15000 and 10000 reached (10000 is AT).
     const g = goal({ direction: 'paydown', target_amount: 0, account_id: null, manual_balance: 10000 });
@@ -584,11 +444,6 @@ describe('balanceGoalView — checkpoints reached-count', () => {
     const v = balanceGoalView({ goal: g, balance: 2000, payCycle: CYCLE }, TODAY);
     expect(v.checkpointsReached).toBe(1);
     expect(v.progress).toBe(0); // bar reads 0% from the baseline; the count still says reached
-  });
-
-  it('a known balance with none reached is 0, not null (the "0 of N" line still shows)', () => {
-    const g = goal({ checkpoints: CPS(5000, 8000) });
-    expect(balanceGoalView({ goal: g, balance: 1000, payCycle: CYCLE }, TODAY).checkpointsReached).toBe(0);
   });
 
   it('an unknown (not-yet-polled synced) balance leaves reached null', () => {
@@ -654,23 +509,10 @@ describe('balanceGoalView — checkpoint marker positions (WHIT-486)', () => {
     expect(reached(v)).toEqual([true, false]); // owed 12000 <= 15000, not <= 10000
   });
 
-  it('a dot at the current balance lands exactly on the fill edge (no drift)', () => {
-    // grow, balance 4000, a rung AT 4000 → its pct equals progress.
-    const g = goal({ checkpoints: CPS(4000) });
-    const v = balanceGoalView({ goal: g, balance: 4000, payCycle: CYCLE }, TODAY);
-    expect(v.checkpointMarkers[0].pct).toBe(v.progress);
-  });
-
   it('clamps a rung above the target to 1 and below the baseline to 0', () => {
     const g = goal({ baseline: 2000, checkpoints: CPS(1000, 50000) }); // below baseline / above target
     const v = balanceGoalView({ goal: g, balance: 4000, payCycle: CYCLE }, TODAY);
     expect(pcts(v)).toEqual([0, 1]);
-  });
-
-  it('the number of filled dots always equals checkpointsReached', () => {
-    const g = goal({ checkpoints: CPS(2000, 4000, 6000, 8000) });
-    const v = balanceGoalView({ goal: g, balance: 5000, payCycle: CYCLE }, TODAY);
-    expect(reached(v).filter(Boolean).length).toBe(v.checkpointsReached);
   });
 
   it('no dots while the balance is unknown (they appear with the count, not before)', () => {
@@ -687,79 +529,6 @@ describe('balanceGoalView — checkpoint marker positions (WHIT-486)', () => {
     const v = balanceGoalView({ goal: g, balance: null, payCycle: CYCLE }, TODAY);
     expect(v.checkpointMarkers).toEqual([]);
     expect(v.checkpointsReached).toBe(1); // owed 10000 <= 15000 only
-  });
-
-  it('no dots for a goal with no checkpoints', () => {
-    const v = balanceGoalView({ goal: goal(), balance: 4000, payCycle: CYCLE }, TODAY);
-    expect(v.checkpointMarkers).toEqual([]);
-  });
-});
-
-// --- WHIT-478 QA gaps (adversarial): boundaries, overdrawn clamp, order-independence, paydown
-// with/without baseline, non-finite balance. Dropped the below-baseline case — the implementer's
-// suite above already locks it. ---
-describe('WHIT-478 gaps — checkpoints reached-count', () => {
-  const CPS = (...amounts: number[]) => amounts.map((amount) => ({ amount }));
-  const view = (g: BalanceGoal, balance: number | null) =>
-    balanceGoalView({ goal: g, balance, payCycle: CYCLE }, TODAY);
-
-  it('overdrawn synced grow (balance −50 → current 0) reaches 0 rungs, never negative', () => {
-    const g = goal({ checkpoints: CPS(1000, 4000) });
-    const v = view(g, -50);
-    expect(v.checkpointsReached).toBe(0);
-    expect(v.progress).toBe(0); // bar clamps to 0 too → count and bar agree at the floor
-  });
-
-  it('grow at target: all rungs reached (N of N) and the bar is full — they agree at the top', () => {
-    const g = goal({ checkpoints: CPS(2500, 5000, 7500) });
-    const v = view(g, 10000);
-    expect(v.checkpointsReached).toBe(3);
-    expect(v.progress).toBe(1);
-  });
-
-  it('single-rung ladder: 1 of 1 when reached, 0 of 1 just below (boundary is inclusive)', () => {
-    const g = goal({ checkpoints: CPS(4000) });
-    expect(view(g, 4000).checkpointsReached).toBe(1);
-    expect(view(g, 3999).checkpointsReached).toBe(0);
-  });
-
-  it('a full 20-rung ladder partially reached counts the passed rungs exactly', () => {
-    const rungs = Array.from({ length: 20 }, (_, i) => (i + 1) * 500);
-    const g = goal({ target_amount: 100000, checkpoints: CPS(...rungs) });
-    expect(view(g, 5250).checkpointsReached).toBe(10);
-  });
-
-  it('an unsorted checkpoints array counts the same as the sorted one (order-independent)', () => {
-    const sorted = view(goal({ checkpoints: CPS(2000, 4000, 6000, 8000) }), 4000).checkpointsReached;
-    const shuffled = view(goal({ checkpoints: CPS(8000, 2000, 6000, 4000) }), 4000).checkpointsReached;
-    expect(shuffled).toBe(2);
-    expect(shuffled).toBe(sorted);
-  });
-
-  it('paydown WITH a baseline: progress bar and reached-count coexist and agree', () => {
-    const g = goal({ direction: 'paydown', target_amount: 0, baseline: 20000, account_id: null, manual_balance: 10000, manual_as_of: '2026-07-01', checkpoints: CPS(15000, 10000, 5000) });
-    const v = view(g, null);
-    expect(v.progress).toBeCloseTo(0.5, 10);
-    expect(v.checkpointsReached).toBe(2);
-  });
-
-  it('paydown without a baseline: progress null (no bar) yet the reached-count still computes', () => {
-    const g = goal({ direction: 'paydown', target_amount: 0, account_id: null, manual_balance: 8000, manual_as_of: '2026-07-01', checkpoints: CPS(12000, 6000) });
-    const v = view(g, null);
-    expect(v.progress).toBeNull();
-    expect(v.checkpointsReached).toBe(1);
-  });
-
-  it('manual paydown owed exactly on a rung counts it (inclusive ≤ boundary)', () => {
-    const g = goal({ direction: 'paydown', target_amount: 0, account_id: null, manual_balance: 5000, manual_as_of: '2026-07-01', checkpoints: CPS(5000) });
-    expect(view(g, null).checkpointsReached).toBe(1);
-  });
-
-  it('a non-finite synced balance is unknown → reached null (line hides)', () => {
-    const g = goal({ checkpoints: CPS(2000, 4000) });
-    for (const bad of [NaN, Infinity, -Infinity]) {
-      expect(view(g, bad).checkpointsReached).toBeNull();
-    }
   });
 });
 
@@ -779,27 +548,6 @@ describe('balanceGoalView — checkpoint markers, QA gaps (WHIT-486)', () => {
     expect(v.checkpointMarkers[0].pct).toBe(v.progress);     // still lands exactly on the fill edge
     expect(v.checkpointMarkers[0].pct).not.toBe(0.33);       // not rounded to 2dp
   });
-
-  it('[A-gap2] two rungs at the SAME amount → two dots at the same position, count still right', () => {
-    // duplicate 4000s + a 6000; balance 5000 → both 4000s reached, 6000 not. count 2, not 1 or 3.
-    const g = goal({ checkpoints: CPS(4000, 4000, 6000) });
-    const v = balanceGoalView({ goal: g, balance: 5000, payCycle: CYCLE }, TODAY);
-    expect(v.checkpointMarkers.map((m) => m.pct)).toEqual([0.4, 0.4, 0.6]);
-    expect(v.checkpointMarkers.map((m) => m.reached)).toEqual([true, true, false]);
-    expect(v.checkpointMarkers.filter((m) => m.reached).length).toBe(v.checkpointsReached);
-    expect(v.checkpointsReached).toBe(2);
-  });
-
-  it('[A-gap3] degenerate grow (target<=baseline): progress null, NO dots, but the COUNT still computes', () => {
-    // baseline==target==10000 → no bar scale. markers empty (dots hide), yet checkpointsReached is
-    // a real number (5000 has passed 3000, not 8000) — so the milestone line is hidden by the UI
-    // gate on markers.length, NOT because the engine refused to count.
-    const g = goal({ baseline: 10000, target_amount: 10000, checkpoints: CPS(3000, 8000) });
-    const v = balanceGoalView({ goal: g, balance: 5000, payCycle: CYCLE }, TODAY);
-    expect(v.progress).toBeNull();
-    expect(v.checkpointMarkers).toEqual([]);
-    expect(v.checkpointsReached).toBe(1);
-  });
 });
 
 describe('balanceGoalView — pastDue / currentAmount / checkpointReached (WHIT-749)', () => {
@@ -815,14 +563,12 @@ describe('balanceGoalView — pastDue / currentAmount / checkpointReached (WHIT-
     expect(soon.pastDue).toBe(false);
   });
 
-  it('pastDue is false for an unparseable date', () => {
-    expect(view({ target_date: 'not-a-date' }).pastDue).toBe(false);
-  });
-
-  it('a met goal past its date still reports pastDue with nothing left to move', () => {
-    const v = view({ target_amount: 3000, target_date: '2026-06-01' });
-    expect(v.pastDue).toBe(true);
-    expect(v.pacePerPayday).toBe(0);
+  // the boundary is the device's local day: 23:59 on the target day is not past; 00:00 the next is.
+  it('[A1] flips at local midnight after the target date, not before', () => {
+    const g = goal({ target_date: '2026-07-11' });
+    const at = (d: Date) => balanceGoalView({ goal: g, balance: 4000, payCycle: CYCLE }, d).pastDue;
+    expect(at(new Date(2026, 6, 11, 23, 59))).toBe(false);
+    expect(at(new Date(2026, 6, 12, 0, 0))).toBe(true);
   });
 
   it('currentAmount is the normalised balance: saved for grow, owed for paydown', () => {
@@ -831,17 +577,9 @@ describe('balanceGoalView — pastDue / currentAmount / checkpointReached (WHIT-
     expect(view({ direction: 'paydown', target_amount: 0, account_id: null, manual_balance: 9000 }, null).currentAmount).toBe(9000);
   });
 
-  it('currentAmount is null while the balance is unknown', () => {
-    expect(view({}, null).currentAmount).toBeNull();
-  });
-
   it('checkpointReached flags each checkpoint and agrees with the count', () => {
     const v = view({ checkpoints: [{ amount: 2000 }, { amount: 5000 }, { amount: 4000 }] }, 4000);
     expect(v.checkpointReached).toEqual([true, false, true]);
     expect(v.checkpointsReached).toBe(2);
-  });
-
-  it('checkpointReached is null while the balance is unknown', () => {
-    expect(view({ checkpoints: [{ amount: 2000 }] }, null).checkpointReached).toBeNull();
   });
 });

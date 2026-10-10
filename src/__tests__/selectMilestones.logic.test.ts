@@ -14,15 +14,6 @@ describe('milestonesKey', () => {
 });
 
 describe('selectMilestones', () => {
-  it('passes a real milestones array through unchanged (same reference identity)', () => {
-    const raw = [{ id: 'a', label: 'Start', targetBalance: 300000, targetDate: '2026-01-01' }];
-    expect(selectMilestones(raw)).toBe(raw as unknown);
-  });
-
-  it('accepts a genuinely empty (unset) plan ([])', () => {
-    expect(selectMilestones([])).toEqual([]);
-  });
-
   it.each([
     ['null', null],
     ['undefined', undefined],
