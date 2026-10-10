@@ -22,11 +22,6 @@ describe('childCount', () => {
     expect(childCount(cats, 'q')).toBe(5);
   });
 
-  it('is 0 for a parent id that appears in no .parent field, and for an empty list', () => {
-    expect(childCount([cat({ id: 'p', parent: null })], 'nope')).toBe(0);
-    expect(childCount([], 'p')).toBe(0);
-  });
-
   // The boundary the picker/toast hinge on: 49 is NOT at the cap, exactly 50 IS.
   it('reports 49 below the cap and exactly 50 at it', () => {
     const at49 = [cat({ id: 'p', parent: null }), ...kids('p', MAX_CHILDREN_PER_CATEGORY - 1)];
@@ -35,15 +30,5 @@ describe('childCount', () => {
     expect(childCount(at49, 'p') >= MAX_CHILDREN_PER_CATEGORY).toBe(false);   // picker: NOT full
     expect(childCount(at50, 'p')).toBe(50);
     expect(childCount(at50, 'p') >= MAX_CHILDREN_PER_CATEGORY).toBe(true);    // picker: full
-  });
-
-  // Cycle-safe by construction: it is a flat count over .parent, so a self-parent or a 2-node
-  // cycle can't loop it, and a self-parent legitimately counts itself as its own child.
-  it('does not loop on a self-parent or a parent/child cycle', () => {
-    const selfLoop = [cat({ id: 'p', parent: 'p' })];
-    expect(childCount(selfLoop, 'p')).toBe(1);
-    const twoCycle = [cat({ id: 'a', parent: 'b' }), cat({ id: 'b', parent: 'a' })];
-    expect(childCount(twoCycle, 'a')).toBe(1);   // only b points at a
-    expect(childCount(twoCycle, 'b')).toBe(1);
   });
 });

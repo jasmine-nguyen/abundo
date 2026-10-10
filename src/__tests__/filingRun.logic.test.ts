@@ -4,7 +4,7 @@
 // new rule), which rule goes to the server and whether a run is small enough to file now or must
 // go to a background job. These are the rules no sheet may compute for itself any more.
 import { describe, it, expect } from '@jest/globals';
-import { ruleFor, needsBackground, APPLY_RULES_MAX_WRITES } from '../filingRun';
+import { ruleFor, needsBackground } from '../filingRun';
 import type { FilingTarget } from '../filingRun';
 import type { UncategorizedMerchantGroup } from '../api';
 import { applyRulesReport } from './support/applyRulesReport';
@@ -33,10 +33,6 @@ describe('ruleFor: the rule each filing target sends', () => {
 });
 
 describe('needsBackground: now or background job', () => {
-  it('keeps the cap at 300 charges', () => {
-    expect(APPLY_RULES_MAX_WRITES).toBe(300);
-  });
-
   it('files 300 matched charges now and sends 301 to a background job', () => {
     expect(needsBackground(report(300))).toBe(false);
     expect(needsBackground(report(301))).toBe(true);

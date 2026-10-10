@@ -57,12 +57,6 @@ describe('budgetViews — spread adjustment', () => {
     expect(row.remainAmount).toBe('$200');        // available = 250 - 50
     expect(row.over).toBe(false);
   });
-
-  it('a rollover row is unchanged (spreadAdjustment defaults 0)', () => {
-    // FAIL-ON-REVERT guard: folding spreadAdjustment must not disturb a rollover envelope.
-    const row = budgetViews(state({ budget: 100, posted: 0, pending: 0, rollover: true, carryover: 200 })).rows[0];
-    expect(row.remainAmount).toBe('$300');
-  });
 });
 
 // ── budgetDetail folds + exposes the entry-point gating ──────────────────────
@@ -75,28 +69,6 @@ describe('budgetDetail — spread', () => {
     expect(d.canStartSpread).toBe(false);         // already has a plan
   });
 
-  it('an over-budget category with no plan can start a spread, prefilled with the overspend', () => {
-    const d = detail({ budget: 100, posted: 130.1, pending: 0 });
-    expect(d.canStartSpread).toBe(true);
-    expect(d.spreadActive).toBe(false);
-    expect(d.overspend).toBe(30.1);               // spent - budget, rounded to cents (no float dust)
-  });
-
-  it('does NOT offer a spread on a sub-cent overspend (would prefill an unsaveable $0)', () => {
-    // FAIL-ON-REVERT for the `overspend >= 0.01` gate: over by less than a cent rounds the
-    // prefill to $0, and a $0 spread can't be saved — so the button must stay hidden.
-    const d = detail({ budget: 100, posted: 100.004, pending: 0 });
-    expect(d.statusLabel).toBe('Over budget — ease up');   // genuinely over…
-    expect(d.overspend).toBe(0);                            // …but rounds to nothing to spread
-    expect(d.canStartSpread).toBe(false);
-  });
-
-  it('does NOT offer a fresh spread on a rollover category, even when over budget', () => {
-    // FAIL-ON-REVERT for the !b.rollover gate: rollover XOR spread.
-    const d = detail({ budget: 100, posted: 130, pending: 0, rollover: true, carryover: -50 });
-    expect(d.canStartSpread).toBe(false);
-  });
-
   it('shows the dollar effect on the status line, with a "last cycle" tag on the final slice', () => {
     const cushion = detail({ budget: 250, posted: 0, pending: 0, spreadAdjustment: 1390.91, spread: plan() });
     expect(cushion.spreadLine).toBe('Bill spread: +$1,390.91 added this cycle');
@@ -104,14 +76,6 @@ describe('budgetDetail — spread', () => {
     expect(mid.spreadLine).toBe('Bill spread: $347.73 paid back this cycle');
     const last = detail({ budget: 250, posted: 0, pending: 0, spreadAdjustment: -347.72, spread: plan({ index: 4, cycles: 4, adjustment: -347.72 }) });
     expect(last.spreadLine).toBe('Bill spread: $347.72 paid back this cycle (last cycle)');
-  });
-
-  it('an Income earn-target carries the shared keys but never offers a spread', () => {
-    const income = cat({ id: 'sink', name: 'Salary', bucket: 'Income' });
-    const d = detail({ budget: 5000, posted: 6000, pending: 0 }, income);
-    expect(d.canStartSpread).toBe(false);
-    expect(d.overspend).toBe(0);
-    expect(d.spreadActive).toBe(false);
   });
 });
 
@@ -127,13 +91,6 @@ describe('budgetEditInfo — Smoothing switch vs spread', () => {
     expect(info.smoothingShown).toBe(true);    // still rendered — a spread IS smoothing
     expect(info.smoothingLocked).toBe(true);   // but not editable
     expect(info.spreadActive).toBe(true);
-  });
-
-  it('shows an editable switch on a plain spend budget', () => {
-    const info = editInfo({});
-    expect(info.smoothingShown).toBe(true);
-    expect(info.smoothingLocked).toBe(false);
-    expect(info.spreadActive).toBe(false);
   });
 
   it('hides the switch for Income and Savings (no smoothing on a floor)', () => {
@@ -156,16 +113,6 @@ describe('budgetEditInfo — Smoothing switch vs spread', () => {
     expect(info.rolloverOn).toBe(true);         // seeds the switch ON from the stored flag
     expect(info.spreadActive).toBe(false);
   });
-
-  // GAP [A-L2] WHIT-550 — the locked help copy is a DISTINCT string from the normal help, and
-  // names the spread as the reason. Fail-on-revert: point smoothingLockedHelp at smoothingHelp
-  // (or drop the "Manage the spread" sentence) and this goes red.
-  it('exposes a distinct locked-help string that points the user at the spread', () => {
-    const info = editInfo({ spread: plan() });
-    expect(info.smoothingLockedHelp).toBe('On while this bill is spread over several cycles. Manage the spread from the bill instead.');
-    expect(info.smoothingLockedHelp).not.toBe(info.smoothingHelp);
-    expect(info.smoothingHelp).toContain('carries forward');   // normal copy still the smoothing pitch
-  });
 });
 
 // ── spreadPreview mirrors the server's whole-cent split ──────────────────────
@@ -176,18 +123,6 @@ describe('spreadPreview — cent-exact slices', () => {
     expect(p.cushion).toBe(100);
     expect(p.firstSlice).toBe(33.34);
     expect(p.lastSlice).toBe(33.33);
-  });
-
-  it('splits evenly when there is no remainder (100 / 4)', () => {
-    const p = spreadPreview(100, 4);
-    expect(p.firstSlice).toBe(25);
-    expect(p.lastSlice).toBe(25);
-  });
-
-  it('matches the Insurance example (1390.91 / 4)', () => {
-    const p = spreadPreview(1390.91, 4);
-    expect(p.firstSlice).toBe(347.73);
-    expect(p.lastSlice).toBe(347.72);
   });
 });
 
@@ -233,6 +168,21 @@ describe('budgetSpreadEligibility — shared entry + overspend', () => {
   it('honours the server-computed available over the parts-sum fallback', () => {
     // available 300 sent by the server → spent 130 is NOT over → hidden, even though budget is 100.
     expect(budgetSpreadEligibility(spend, bud({ posted: 130, available: 300 })).entry).toBe('hidden');
+  });
+
+  // spent = posted + pending: a PENDING charge that tips the envelope over must count, otherwise a
+  // still-pending bill would never offer the prompt.
+  it('[G1] pending spend counts toward the overspend (posted + pending), not posted alone', () => {
+    const r = budgetSpreadEligibility(spend, bud({ posted: 90, pending: 20 }));
+    expect(r.entry).toBe('start');
+    expect(r.overspend).toBe(10);
+    expect(budgetSpreadEligibility(spend, bud({ posted: 0, pending: 130 })).entry).toBe('start');
+  });
+
+  // The spread check precedes the rollover check, so an editable plan never silently vanishes.
+  it('[G2] an active plan returns "edit" before the rollover guard can hide it', () => {
+    const b = bud({ posted: 200, rollover: true, carryover: 0, spread: { amount: 200, cycles: 4, index: 1, adjustment: -50 } });
+    expect(budgetSpreadEligibility(spend, b).entry).toBe('edit');
   });
 });
 

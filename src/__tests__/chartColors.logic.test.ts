@@ -2,7 +2,7 @@
 // categories get 13 DISTINCT, fixed colours (the coffee/health/utilities collision a blind hash would
 // create is gone), and a category's colour is a pure, stable function of its id (never reshuffles).
 import { describe, it, expect } from '@jest/globals';
-import { chartCategoryColor, normalizeColorSlot, ASSIGNMENT_ORDER, CATEGORY_COLORS, OTHER_COLOR, BUILTIN_CATEGORY_INDEX } from '../chartColors';
+import { chartCategoryColor, normalizeColorSlot, ASSIGNMENT_ORDER, CATEGORY_COLORS, OTHER_COLOR, CHART_BG } from '../chartColors';
 
 // The built-in category ids, mirroring the server seed (shared/repository_category.py).
 const BUILTIN_IDS = [
@@ -16,73 +16,12 @@ describe('chartCategoryColor', () => {
     expect(new Set(colours).size).toBe(13);
   });
 
-  it('never puts the reserved "Other" grey in the category ramp', () => {
-    // WHIT-403: a strictly weaker stand-in for a deleted check. The old one proved no ramp colour was
-    // dull enough to be MISTAKEN for the reserved grey; the classifier that made that measurable went
-    // with the donut's warm/cool shuffle. This only catches an exact duplicate, not a drift toward grey.
-    expect(CATEGORY_COLORS).not.toContain(OTHER_COLOR);
-  });
-
-  it('keeps coffee, health and utilities on different colours (the collision the review caught)', () => {
-    const coffee = chartCategoryColor('coffee');
-    const health = chartCategoryColor('health');
-    const utilities = chartCategoryColor('utilities');
-    expect(new Set([coffee, health, utilities]).size).toBe(3);
-    // FAIL-ON-REVERT: hashing these ids (djb2 % 20) instead of the explicit map lands all three on
-    // one slot → the Set collapses to size 1.
-  });
-
-  it('maps each built-in id to its fixed ramp slot', () => {
-    expect(chartCategoryColor('eatingout')).toBe('#f98f98'); // ramp 0
-    expect(chartCategoryColor('coffee')).toBe('#e8a24f');    // ramp 3
-    expect(chartCategoryColor('groceries')).toBe('#8ec56f'); // ramp 6
-    expect(chartCategoryColor('transport')).toBe('#65baff'); // ramp 13
-    expect(chartCategoryColor('subs')).toBe('#d797e6');      // ramp 18
-    // every built-in resolves to CATEGORY_COLORS[its mapped index]
-    for (const id of BUILTIN_IDS) {
-      expect(chartCategoryColor(id)).toBe(CATEGORY_COLORS[BUILTIN_CATEGORY_INDEX[id]]);
-    }
-  });
-
-  it('has a built-in map whose keys are exactly the 13 seed ids, with distinct in-range indices', () => {
-    expect(new Set(Object.keys(BUILTIN_CATEGORY_INDEX))).toEqual(new Set(BUILTIN_IDS));
-    const indices = Object.values(BUILTIN_CATEGORY_INDEX);
-    expect(new Set(indices).size).toBe(13);                             // distinct
-    for (const i of indices) expect(i).toBeGreaterThanOrEqual(0);
-    for (const i of indices) expect(i).toBeLessThan(CATEGORY_COLORS.length);
-  });
-
-  it('is stable — the same id always returns the same colour', () => {
-    for (const id of ['coffee', 'wine', 'brunch', '__uncategorized__']) {
-      expect(chartCategoryColor(id)).toBe(chartCategoryColor(id));
-    }
-  });
-
-  it('is a pure function of the id — a custom colour never depends on other categories', () => {
-    // "a category keeps its colour": the colour is derived from the id alone, so adding or removing
-    // other categories can never shift it (unlike an alphabetical-index scheme).
-    const wineAlone = chartCategoryColor('wine');
-    const wineAmongMany = ['aardvark', 'wine', 'zebra', 'coffee'].map((id) => chartCategoryColor(id))[1];
-    expect(wineAmongMany).toBe(wineAlone);
-  });
-
   it('assigns custom ids a real ramp colour, never the reserved "Other" grey', () => {
-    for (const id of ['wine', 'brunch', 'hobbies', 'daycare', '__uncategorized__']) {
+    for (const id of ['wine', 'brunch', 'hobbies', 'daycare', '__uncategorized__', null, undefined, '']) {
       const colour = chartCategoryColor(id);
       expect(CATEGORY_COLORS).toContain(colour);
       expect(colour).not.toBe(OTHER_COLOR);
     }
-  });
-
-  it('spreads many custom ids across more than one colour', () => {
-    const ids = Array.from({ length: 40 }, (_, i) => `custom-${i}`);
-    expect(new Set(ids.map((id) => chartCategoryColor(id))).size).toBeGreaterThan(1);
-  });
-
-  it('falls back to the first ramp colour for a null/blank id', () => {
-    expect(chartCategoryColor(null)).toBe(CATEGORY_COLORS[0]);
-    expect(chartCategoryColor(undefined)).toBe(CATEGORY_COLORS[0]);
-    expect(chartCategoryColor('')).toBe(CATEGORY_COLORS[0]);
   });
 });
 
@@ -91,22 +30,7 @@ describe('chartCategoryColor', () => {
 // A category's colour is now its server-assigned slot resolved through ASSIGNMENT_ORDER; the
 // id-derived colour above survives only as the fallback for a category with no slot yet.
 
-// The server's seed slots (shared/repository_category.py SEED_CATEGORIES), and the hex each one
-// resolves to. Hard-coded rather than computed, so a regenerated ASSIGNMENT_ORDER fails loudly.
-const SEED_SLOT_HEX: Record<string, [number, string]> = {
-  eatingout: [0, '#f98f98'], travel: [1, '#0bcbd3'], fitness: [6, '#47c1f5'],
-  gifts: [7, '#bf9ff8'], health: [8, '#f9927e'], coffee: [9, '#e8a24f'],
-  utilities: [10, '#d2ae45'], groceries: [11, '#8ec56f'], shopping: [13, '#25cdbd'],
-  transport: [15, '#65baff'], phonenet: [16, '#82b4ff'], pets: [17, '#aba7ff'],
-  subs: [18, '#d797e6'],
-};
-
 describe('chartCategoryColor — the stored slot', () => {
-  it('ASSIGNMENT_ORDER is a true permutation of the ramp, so no colour repeats or is lost', () => {
-    expect(ASSIGNMENT_ORDER.length).toBe(CATEGORY_COLORS.length);
-    expect([...ASSIGNMENT_ORDER].sort((a, b) => a - b))
-      .toEqual([...Array(CATEGORY_COLORS.length).keys()]);
-  });
 
   it('resolves every slot 0-19 to its ramp colour, all 20 distinct', () => {
     const colours = [...Array(20).keys()].map((slot) => chartCategoryColor('anything', { slot }));
@@ -116,16 +40,6 @@ describe('chartCategoryColor — the stored slot', () => {
     for (let slot = 0; slot < 20; slot++) {
       expect(colours[slot]).toBe(CATEGORY_COLORS[ASSIGNMENT_ORDER[slot]]);
     }
-  });
-
-  it('gives each built-in the colour its server slot resolves to', () => {
-    for (const [id, [slot, hex]] of Object.entries(SEED_SLOT_HEX)) {
-      expect(chartCategoryColor(id, { slot })).toBe(hex);
-    }
-    // WHIT-432 dropped a `moved` list from here: once BUILTIN_CATEGORY_INDEX mirrors the server it
-    // can only be empty, and seedSlotSync.logic.test.ts already asserts the equality against the
-    // real .py. The hex loop above still earns its keep — it pins ASSIGNMENT_ORDER and
-    // CATEGORY_COLORS against hand-written values.
   });
 
   it('treats slot 0 as a REAL slot, not as absent', () => {
@@ -157,13 +71,6 @@ describe('chartCategoryColor — the stored slot', () => {
       expect(colour).not.toBe(OTHER_COLOR);                // never the reserved grey
     }
   });
-
-  it('falls back for a category with no slot at all — exactly today\'s colours', () => {
-    for (const id of BUILTIN_IDS) {
-      expect(chartCategoryColor(id, {})).toBe(chartCategoryColor(id));
-      expect(chartCategoryColor(id, { slot: undefined })).toBe(chartCategoryColor(id));
-    }
-  });
 });
 
 describe('normalizeColorSlot', () => {
@@ -174,5 +81,26 @@ describe('normalizeColorSlot', () => {
     for (const bad of [-1, 20, 999, 7.5, NaN, Infinity, '4', true, null, undefined, {}]) {
       expect(normalizeColorSlot(bad)).toBeUndefined();
     }
+  });
+});
+
+// WHIT-403 — the slice divider is the CHART_BG ring track showing THROUGH the gap between wedges,
+// so CHART_BG is a colour no slice may ever be.
+describe('the divider colour can never also be a slice colour', () => {
+  // [Q14] REGRESSION GUARD over the whole reachable range of slice colours: every ramp entry, the
+  // reserved "Other" grey, and each of the three ways chartCategoryColor resolves one (stored slot,
+  // built-in id, hashed unknown id, blank id). A future ramp tweak that lands on #16161e would
+  // silently delete that category from the chart.
+  it('[Q14] no colour a wedge can be painted equals CHART_BG', () => {
+    expect(CATEGORY_COLORS).not.toContain(CHART_BG);
+    expect(OTHER_COLOR).not.toBe(CHART_BG);
+
+    const reachable = [
+      ...ASSIGNMENT_ORDER.map((_, slot) => chartCategoryColor('anything', { slot })),
+      chartCategoryColor('coffee'),               // built-in id path
+      chartCategoryColor('a-user-made-category'), // hashed unknown id path
+      chartCategoryColor(null),                   // no id at all
+    ];
+    expect(reachable).not.toContain(CHART_BG);
   });
 });

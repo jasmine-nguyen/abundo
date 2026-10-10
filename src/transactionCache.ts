@@ -176,6 +176,14 @@ export function refreshAfter(kind: ChangeKind, opts?: { skipRules?: boolean }): 
     if (opts?.skipRules && queryKey[0] === rulesKey[0]) continue;
     queryClient.invalidateQueries({ queryKey });
   }
+  // WHIT-848: a cut-off search's count and total come from the server, so the in-place patch
+  // can't keep them right — re-ask for those searches only.
+  if (kind === 'refile' || kind === 'transactionDeleted') {
+    queryClient.invalidateQueries({
+      queryKey: transactionsSearchKey,
+      predicate: (query) => !!(query.state.data as TransactionSearchResult | undefined)?.truncated,
+    });
+  }
 }
 
 // Does the budget on `budgetId` own `categoryId`? — the client mirror of the server's

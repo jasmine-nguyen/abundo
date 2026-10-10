@@ -1466,7 +1466,9 @@ def get_transactions_search(
 
     Reads every transaction once (like get_uncategorized_count), keeps the ones matching `q` the
     way the app's search box does, and returns the newest SEARCH_RESULT_LIMIT of them:
-    {"transactions": [...], "truncated": bool}. `tab=uncategorized` keeps only unfiled charges.
+    {"transactions": [...], "truncated": bool, "matchCount": int, "matchTotal": float}, where
+    matchCount and matchTotal (signed dollars) cover every match, cut-off ones included.
+    `tab=uncategorized` keeps only unfiled charges.
     A blank or over-long `q`, or an unknown `tab`, → 400.
     """
     params = event.get("queryStringParameters") or {}
@@ -1482,13 +1484,15 @@ def get_transactions_search(
     started = time.monotonic()
     category_names = {category["id"]: category["name"] for category in category_repo.list_categories()}
     transactions = read_window(transaction_repo, None, None)
-    matches, truncated = search_transactions(
+    matches, truncated, match_count, match_total = search_transactions(
         transactions, query, category_names, unfiled_only=tab == "uncategorized")
     _shape_feed_rows(matches)
     logger.info(
         "transactions search: tab=%s scanned=%d returned=%d truncated=%s elapsed_ms=%d",
         tab, len(transactions), len(matches), truncated, (time.monotonic() - started) * 1000)
-    return _json_response(200, {"transactions": matches, "truncated": truncated})
+    return _json_response(200, {
+        "transactions": matches, "truncated": truncated, "matchCount": match_count, "matchTotal": match_total,
+    })
 
 
 def _rule_clash_response(existing: dict) -> dict:

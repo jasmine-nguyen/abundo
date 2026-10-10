@@ -7,16 +7,12 @@
 // throw, which the poll loop tolerates). fetch + auth mocked.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { startApplyRulesJob, getApplyRulesJob } from '../api';
-import type { ApplyRulesJob } from '../api';
 import { ApiError } from '../apiError';
+import { applyRulesJob } from './support/applyRulesReport';
 
 jest.mock('../auth', () => require('./support/authMock').authTokenSpyModule('test-token'));
 
-const JOB: ApplyRulesJob = {
-  jobId: 'abc123', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,
-  failed: 0, alreadyFiled: 0, remaining: 0, createdRule: null, error: null,
-  createdAt: 't0', updatedAt: 't0', completedAt: null,
-};
+const JOB = applyRulesJob({ jobId: 'abc123' });
 
 function okFetch(body: unknown = JOB, status = 202) {
   const mock = jest.fn(async () => ({ ok: true, status, json: async () => body }));
@@ -51,11 +47,6 @@ describe('startApplyRulesJob', () => {
 
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toEqual({ rule: { value: 'COLES', categoryId: 'groceries', budgetExcluded: true } });
-  });
-
-  it('returns the job on a 202', async () => {
-    okFetch(JOB, 202);
-    await expect(startApplyRulesJob()).resolves.toEqual(JOB);
   });
 
   it.each([[400], [409], [502]])('throws an ApiError carrying the status on %s', async (status) => {

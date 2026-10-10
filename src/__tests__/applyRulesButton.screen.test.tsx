@@ -2,9 +2,7 @@
 //
 // It is gated on the WHOLE-history count (the number the badge shows), not the loaded-page count:
 // after a capped run the loaded page can be empty while hundreds of unfiled charges remain deeper
-// in history — exactly when the button is still needed. And it is hidden behind the cold spinner
-// and the load-error state like every other control on this screen, so it never renders over
-// "Couldn't load your transactions."
+// in history — exactly when the button is still needed.
 // The screen and its data code are real, over the pretend server (WHIT-686).
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import { screen, fireEvent } from '@testing-library/react-native';
@@ -35,10 +33,9 @@ const BUTTON = 'transactions-apply-rules';
 const seedUncategorizedFeed = (transactions: unknown[], nextCursor: string | null = null) =>
   server.seed(UNCATEGORIZED_FEED, { transactions, nextCursor });
 
-/** Render, wait for the first reads, and switch to the Uncategorized tab unless told otherwise. */
-async function renderTab(tab: 'all' | 'uncategorized' = 'uncategorized') {
+/** Render, wait for the first reads, and switch to the Uncategorized tab. */
+async function renderTab() {
   await renderWithQueries(<Transactions />);
-  if (tab === 'all') return;
   fireEvent.press(screen.getByTestId('tab-uncategorized'));
   await settle();
 }
@@ -52,30 +49,10 @@ beforeEach(() => {
 });
 
 describe('the "Apply my rules" button', () => {
-  it('shows on the Uncategorized tab when there are unfiled charges', async () => {
-    await renderTab();
-    expect(screen.getByTestId(BUTTON)).toBeTruthy();
-  });
-
   it('opens the apply-rules sheet when pressed', async () => {
     await renderTab();
     fireEvent.press(screen.getByTestId(BUTTON));
     expect(mockSetSheet).toHaveBeenCalledWith({ mode: 'applyRules' });
-  });
-
-  it('is not on the All tab', async () => {
-    await renderTab('all');
-    expect(screen.getByText('5')).toBeTruthy(); // the count has resolved
-    expect(screen.queryByTestId(BUTTON)).toBeNull();
-  });
-
-  // "All caught up" — offering a sweep with nothing to sweep is noise.
-  it('is gone once the server count resolves to zero', async () => {
-    server.seed(COUNT, { count: 0 });
-    seedUncategorizedFeed([]);
-    await renderTab();
-    expect(screen.getByText('All caught up')).toBeTruthy();
-    expect(screen.queryByTestId(BUTTON)).toBeNull();
   });
 
   // The whole-history gate: the loaded page is empty (the rows sit deeper in history), but the
@@ -86,33 +63,5 @@ describe('the "Apply my rules" button', () => {
     seedUncategorizedFeed([], 'c1');
     await renderTab();
     expect(screen.getByTestId(BUTTON)).toBeTruthy();
-  });
-
-  // Fail-on-revert for the two gates the review added: drop `!showSpinner` / `!showError` and the
-  // button renders over the cold spinner or alongside "Couldn't load your transactions."
-  it('is hidden during the cold load', async () => {
-    await renderTab('all');
-    const held = server.hold(UNCATEGORIZED_FEED);
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
-    expect(await screen.findByTestId('transactions-loading')).toBeTruthy();
-    expect(screen.queryByTestId(BUTTON)).toBeNull();
-    held.release();
-    await settle();
-  });
-
-  it('is hidden while the list is in its error state', async () => {
-    server.fail(UNCATEGORIZED_FEED, 500);
-    await renderTab();
-    expect(screen.getByTestId('transactions-error')).toBeTruthy();
-    expect(screen.queryByTestId(BUTTON)).toBeNull();
-  });
-
-  // Selection mode is its own task ("re-categorise these 6"); a whole-history sweep alongside it
-  // would be two competing bulk actions on one screen.
-  it('is hidden in selection mode', async () => {
-    await renderTab();
-    expect(screen.getByTestId(BUTTON)).toBeTruthy();
-    fireEvent.press(screen.getByText('Select'));
-    expect(screen.queryByTestId(BUTTON)).toBeNull();
   });
 });

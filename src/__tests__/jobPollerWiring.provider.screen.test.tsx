@@ -6,7 +6,7 @@ import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { renderHook, act, render } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAppContext, APPLY_RULES_MAX_WRITES } from '../context';
-import type { ApplyRulesJob, FilingTarget, FilingWhen } from '../context';
+import type { FilingTarget, FilingWhen } from '../context';
 import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
@@ -15,6 +15,7 @@ import { installFakeServer } from './support/fakeServer';
 import { CHAT_ERROR_TEXT, CHAT_MAX_WAIT_MS, CHAT_POLL_DELAY_MS, ChatProvider, useChat } from '../chat/ChatContext';
 import type { ChatContextValue } from '../chat/ChatContext';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
+import { applyRulesJob } from './support/applyRulesReport';
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
 
@@ -24,12 +25,6 @@ const gets = (prefix: string) => server.sentUnder('GET', prefix).length;
 const drop = (path: string, times: number) => {
   for (let i = 0; i < times; i++) server.once('GET', path, 'dropped');
 };
-
-const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
-  jobId: 'job-1', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,
-  failed: 0, alreadyFiled: 0, remaining: 0, createdRule: null, error: null,
-  createdAt: 't0', updatedAt: 't0', completedAt: null, ...over,
-});
 
 const POLL = 2500; // APPLY_RULES_JOB_POLL_DELAY_MS
 
@@ -82,7 +77,7 @@ it('[A11] a new job after a network give-up starts its dropped-connection count 
 
 it('[A12] a dismiss after a good check carries zero drops, not a stale count', async () => {
   drop(jobPath('job-1'), 3);
-  server.once('GET', jobPath('job-1'), { body: job({ matched: 10, attempted: 1 }) }); // resets the count
+  server.once('GET', jobPath('job-1'), { body: applyRulesJob({ matched: 10, attempted: 1 }) }); // resets the count
   drop(jobPath('job-1'), 5);
 
   const r = renderHook(() => useAppContext(), { wrapper }).result;

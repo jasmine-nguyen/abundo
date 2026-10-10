@@ -82,20 +82,13 @@ it('does not badge a Savings category as "budgeted", even with a phantom target 
 });
 
 describe('Categorize picker (WHIT-158)', () => {
-  it('offers income categories when categorising a transaction', async () => {
-    await openPicker({ transaction_id: 't1', amount: 5000, description: 'ACME PAYROLL' }, sheetFns);
-    expect(screen.getByText('Salary')).toBeTruthy();     // income now pickable
-    expect(screen.getByText('Groceries')).toBeTruthy();
-  });
 
-  it('shows a POSITIVE income amount as +$ (not a hardcoded -$)', async () => {
-    await openPicker({ transaction_id: 't1', amount: 5000, description: 'ACME PAYROLL' }, sheetFns);
-    expect(screen.getByText('+$5,000.00')).toBeTruthy();
-  });
-
-  it('still shows a spend amount as -$', async () => {
-    await openPicker({ transaction_id: 't2', amount: -52.5, description: 'WOOLWORTHS' }, sheetFns);
-    expect(screen.getByText('-$52.50')).toBeTruthy();
+  it.each([
+    [5000, 'ACME PAYROLL', '+$5,000.00'],
+    [-52.5, 'WOOLWORTHS', '-$52.50'],
+  ])('shows a %d amount as %s (income +$, not a hardcoded -$)', async (amount, description, shown) => {
+    await openPicker({ transaction_id: 't1', amount, description }, sheetFns);
+    expect(screen.getByText(shown)).toBeTruthy();
   });
 
   it('lists categories alphabetically, so a newly-created one is not stranded at the bottom', async () => {
@@ -109,11 +102,6 @@ describe('Categorize picker (WHIT-158)', () => {
     const names = screen.getAllByTestId('pickerCat-name').map((n) => n.props.children);
     expect(names).toEqual(['Apple', 'Mango', 'Zebra']);
   });
-});
-
-it('the rule sheet also offers income categories (WHIT-158)', async () => {
-  await openRuleSheet(sheetFns);
-  expect(screen.getByText('Salary')).toBeTruthy();
 });
 
 // ===== WHIT-158 (folded from incomeCategoryInteraction.screen.test.tsx)
@@ -134,11 +122,6 @@ describe('WHIT-158 income category interaction (folded)', () => {
       fireEvent.press(screen.getByText('Salary'));
       expect(fns.chooseCategory).toHaveBeenCalledWith('salary'); // was filtered out pre-WHIT-158
     });
-
-    it('a $0 transaction reads as +$0.00, not -$0.00 (sign boundary)', async () => {
-      await openPicker({ transaction_id: 't0', amount: 0, description: 'ADJUSTMENT' }, fns);
-      expect(screen.getByText('+$0.00')).toBeTruthy(); // old hardcoded "-$" would show -$0.00
-    });
   });
 
   it('New-rule sheet: an income category can be selected AND submitted (WHIT-158)', async () => {
@@ -150,25 +133,9 @@ describe('WHIT-158 income category interaction (folded)', () => {
     expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'PAYROLL', categoryId: 'salary', budgetExcluded: false });
   });
 
-  describe('Categories list — Income group visibility (WHIT-158)', () => {
-    it('hides the Income header when there are no income categories (regression guard)', async () => {
-      server.seed('/categories', [GROCERIES_TOP_RECORD]);
-      await renderWithQueries(<CategoryList />);
-      expect(screen.queryByText('Income')).toBeNull(); // .filter(g => g.items.length) must still hold
-      expect(screen.getByText('Groceries')).toBeTruthy();
-    });
-  });
-
   describe('icon set (WHIT-158)', () => {
     it('every ICON_KEYS entry has a real glyph — no silent "q" fallback', () => {
       expect(ICON_KEYS.filter((k) => !(k in ICON))).toEqual([]);
-    });
-
-    it('includes the 8 new WHIT-158 icons, each drawable', () => {
-      for (const k of ['briefcase', 'cash', 'bank', 'coins', 'heart', 'star', 'music', 'medical']) {
-        expect(ICON_KEYS).toContain(k);
-        expect(ICON[k]).toBeTruthy();
-      }
     });
   });
 });

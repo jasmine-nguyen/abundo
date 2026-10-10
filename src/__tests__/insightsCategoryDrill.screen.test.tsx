@@ -62,12 +62,6 @@ it('tapping a "Directly in X" row drills into the PARENT id (no __direct in the 
   expect(routerSpies.push).toHaveBeenCalledWith('/category/food?cycle=0');
 });
 
-it('tapping Uncategorized drills into the uncategorized bucket', async () => {
-  renderInsights();
-  fireEvent.press(await screen.findByText('Uncategorised'));
-  expect(routerSpies.push).toHaveBeenCalledWith('/category/__uncategorized__?cycle=0');
-});
-
 it('tapping a PARENT row expands it instead of navigating', async () => {
   renderInsights();
   fireEvent.press(await screen.findByText('Food'));

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
-import { C, FONT, tint, PRESSED } from '../../src/theme';
+import { C, FONT, tint, PRESSED, fmtExact, fmtSignedExact } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { transactionGroups, transactionMatchesSearch, countUncategorized, unionById, useAppContext, SEARCH_QUERY_MAX_LEN } from '../../src/context';
 import { useTransactionsScreenData, useUncategorizedCount, useUncategorizedMerchants } from '../../src/queries';
@@ -120,6 +120,17 @@ export default function Transactions() {
 
   const showError = isError && transactions.length === 0;
   const showSpinner = !showError && isLoading && transactions.length === 0;
+  // WHIT-848: "N matches · ±$X" for an answered search. A complete answer sums the rows shown, so
+  // it always agrees with the list; a cut-off one uses the server's figures over every match.
+  const shownMatches = groups.flatMap((g) => g.items);
+  let matchCount = shownMatches.length;
+  let matchTotal = shownMatches.reduce((sum, t) => sum + Math.round((t.amount || 0) * 100), 0) / 100;
+  if (serverSearch.truncated) {
+    matchCount = serverSearch.matchCount;
+    matchTotal = serverSearch.matchTotal;
+  }
+  const showMatchSummary = !showSpinner && !showError && searchAnswered && matchCount > 0;
+  const matchSummary = `${matchCount} ${matchCount === 1 ? 'match' : 'matches'} · ${matchTotal > 0 ? '+' + fmtExact(matchTotal) : fmtSignedExact(matchTotal)}`;
   // The uncategorized feed is paged: when the badge says there ARE unfiled charges but none are
   // in the loaded pages yet, they sit deeper in history (a "Load More" away) — or a cross-device
   // re-tag left the badge briefly ahead of the list. Either way, show an explanatory state instead
@@ -182,6 +193,10 @@ export default function Transactions() {
 
         {!searchingServer && !showSpinner && !showError && (
           <StaleDataLine idPrefix="transactions" error={refreshError} updatedAt={updatedAt} showUpdated />
+        )}
+
+        {showMatchSummary && (
+          <Text testID="transactions-search-summary" style={[styles.searchStatusText, styles.searchSummary]}>{matchSummary}</Text>
         )}
 
         {tab === 'uncategorized' && localUncategorized > 0 && !selectionMode && firstFilingSeen === false && (
@@ -389,6 +404,7 @@ const styles = StyleSheet.create({
   // WHIT-576: the full-history search's status line (searching / failed / cut off).
   searchStatus: { flexDirection: 'row', gap: 10, alignItems: 'center', justifyContent: 'center', marginTop: 18, paddingVertical: 8 },
   searchStatusText: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, textAlign: 'center', marginTop: 12 },
+  searchSummary: { color: C.textMid, fontWeight: '600' },
   searchRetry: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.accentSoft, marginTop: 12 },
 
   // WHIT-517 / WHIT-846: filled accent — the tab's one main button.

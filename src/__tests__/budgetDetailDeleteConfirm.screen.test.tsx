@@ -59,6 +59,17 @@ it('user must confirm before a budget is deleted; Delete removes it once and goe
   await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
 });
 
+it('a failed delete stays on the screen (no navigation) so the user can retry', async () => {
+  mockDeleteBudget.mockResolvedValue(false);
+  await renderWithQueries(<BudgetDetail />);
+
+  const { button } = openConfirm();
+  await act(async () => { await button('Delete').onPress!(); });
+
+  expect(mockDeleteBudget).toHaveBeenCalledTimes(1);
+  expect(routerSpies.back).not.toHaveBeenCalled();
+});
+
 it('user can cancel the confirm and the budget is kept', async () => {
   await renderWithQueries(<BudgetDetail />);
 

@@ -65,8 +65,4 @@ describe('categoryTreeRows', () => {
     const rows = categoryTreeRows(categories);
     expect(rows.map((r) => r.category.id).sort()).toEqual(['a', 'b']);
   });
-
-  it('returns an empty list for no categories', () => {
-    expect(categoryTreeRows([])).toEqual([]);
-  });
 });

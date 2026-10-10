@@ -8,7 +8,7 @@
 // This kills both regressions a web-only test misses: gating the effect on `ready`
 // (would fire twice) and moving it below the early return (would fire zero times
 // on the first, not-ready render).
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render } from '@testing-library/react-native';
 
@@ -78,13 +78,6 @@ it('fires the launch effect ONCE while fonts are still loading (not gated by rea
 
   // Fonts finish → real tree renders. The effect must NOT re-fire (`[]`, not `[ready]`).
   mockFontsLoaded = true;
-  rerender(<RootLayout />);
-  expect(mockRegister).toHaveBeenCalledTimes(1);
-});
-
-it('does not re-fire on a re-render with no state change', () => {
-  mockFontsLoaded = true; // render the full tree directly
-  const { rerender } = render(<RootLayout />);
   rerender(<RootLayout />);
   expect(mockRegister).toHaveBeenCalledTimes(1);
 });

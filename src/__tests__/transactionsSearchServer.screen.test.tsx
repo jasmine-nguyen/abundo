@@ -16,7 +16,8 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient, renderWithQueries } from './support/renderWithQueries';
+import { refreshAfter } from '../transactionCache';
+import { useTestQueryClient, renderWithQueries, refreshInAct } from './support/renderWithQueries';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -157,6 +158,78 @@ describe('what the list shows', () => {
   });
 });
 
+describe('match summary', () => {
+  it('shows the count and total once answered — hidden while pending, the server\'s exact figures when cut off', async () => {
+    const refund = row('steven-refund', 'Steven Nguyen', 2.5, '2026-06-01');
+    server.seed(SEARCH, { transactions: [STEVEN_LOADED, refund, STEVEN_DEEP], truncated: false, matchCount: 3, matchTotal: -85.5 });
+    await draw();
+
+    type('steven');
+    expect(screen.getByText('-$11.00')).toBeTruthy();
+    expect(screen.queryByTestId('transactions-search-summary')).toBeNull();
+
+    await pauseTyping();
+    expect(await screen.findByTestId('transactions-search-summary')).toHaveTextContent('3 matches · −⁠$85.50');
+
+    server.seed(SEARCH, { transactions: [STEVEN_DEEP], truncated: true, matchCount: 340, matchTotal: -18302 });
+    type('steve');
+    expect(screen.queryByTestId('transactions-search-summary')).toBeNull();
+    await pauseTyping();
+    expect(await screen.findByTestId('transactions-search-truncated')).toBeTruthy();
+    expect(screen.getByTestId('transactions-search-summary')).toHaveTextContent('340 matches · −⁠$18,302');
+  });
+
+  it('follows the rows shown: a net credit on All, only the unfiled match on Uncategorized, gone with an empty box', async () => {
+    const pay = { ...row('steven-pay', 'Steven Nguyen', 100, '2026-06-01'), category: 'income' };
+    seedSearch([pay, STEVEN_DEEP]);
+    await draw();
+    type('steven');
+    await pauseTyping();
+    expect(await screen.findByTestId('transactions-search-summary')).toHaveTextContent('2 matches · +$23');
+
+    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    await waitFor(() => expect(screen.getByTestId('transactions-search-summary')).toHaveTextContent('1 match · −⁠$77'));
+
+    fireEvent.press(screen.getByLabelText('Clear search'));
+    expect(screen.queryByTestId('transactions-search-summary')).toBeNull();
+  });
+
+  it('a delete while cut off re-asks the server, hiding the old figures until the new ones land', async () => {
+    server.seed(SEARCH, { transactions: [STEVEN_DEEP], truncated: true, matchCount: 340, matchTotal: -18302 });
+    await draw();
+    type('steven');
+    await pauseTyping();
+    expect(await screen.findByTestId('transactions-search-summary')).toHaveTextContent('340 matches · −⁠$18,302');
+
+    server.seed(SEARCH, { transactions: [STEVEN_DEEP], truncated: true, matchCount: 339, matchTotal: -18290 });
+    const held = server.hold(SEARCH);
+    await refreshInAct(() => refreshAfter('transactionDeleted'));
+    expect(screen.queryByTestId('transactions-search-summary')).toBeNull();
+
+    await act(async () => { held.release(); });
+    expect(await screen.findByTestId('transactions-search-summary')).toHaveTextContent('339 matches · −⁠$18,290');
+  });
+
+  // [A7] a net-zero list reads "$0" (no "+"); [A9] a cut-off reply from a server without the
+  // figures hides the line rather than showing "0 matches".
+  it.each([
+    ['nets to zero', { transactions: [STEVEN_DEEP, row('steven-back', 'Steven Nguyen', 77)], truncated: false }, '2 matches · $0'],
+    ['cut off, no figures', { transactions: [STEVEN_DEEP], truncated: true }, null],
+  ])('%s', async (_name, answer, expected) => {
+    server.seed(SEARCH, answer);
+    await draw();
+    type('steven');
+    await pauseTyping();
+    await waitFor(() => expect(screen.getByText('-$77.00')).toBeTruthy());
+    if (expected === null) {
+      expect(await screen.findByTestId('transactions-search-truncated')).toBeTruthy();
+      expect(screen.queryByTestId('transactions-search-summary')).toBeNull();
+      return;
+    }
+    expect(await screen.findByTestId('transactions-search-summary')).toHaveTextContent(expected);
+  });
+});
+
 describe('when the server search fails', () => {
   it('says so with a Retry — never "No matches", even when nothing loaded matches', async () => {
     seedFeed([COLES]);
@@ -180,6 +253,7 @@ describe('when the server search fails', () => {
     await pauseTyping();
     expect(await screen.findByTestId('transactions-search-error')).toBeTruthy();
     expect(screen.getByText('-$11.00')).toBeTruthy();
+    expect(screen.queryByTestId('transactions-search-summary')).toBeNull();
   });
 
   it('an earlier query\'s failure does not show while the next query waits to be sent', async () => {

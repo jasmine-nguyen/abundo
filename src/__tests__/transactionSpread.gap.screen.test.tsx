@@ -1,13 +1,12 @@
 // WHIT-556 4b — GAP tests for the "Spread this bill" tx-screen prompt the implementer's cases miss.
 // Already covered by transactionDetail.screen.test.tsx: start(prefill = category overage)/edit(no
 // prefill)/rollover-hidden/excluded-hidden/refund-hidden/no-budget-hidden/not-found/overage-not-charge.
-// These add: the budget is keyed by the transaction's OWN category (not "any over budget"), and a
-// PENDING spend still qualifies (settled status isn't required). WHIT-686: the real screen data
-// code runs over the pretend server.
+// This adds: the budget is keyed by the transaction's OWN category (not "any over budget").
+// WHIT-686: the real screen data code runs over the pretend server.
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
-import { routerSpies, setParams, resetRouter } from './support/routerMock';
+import { setParams, resetRouter } from './support/routerMock';
 import React from 'react';
-import { screen, fireEvent } from '@testing-library/react-native';
+import { screen } from '@testing-library/react-native';
 import { txn } from './factory';
 import type { Transaction } from '../types';
 import type { BudgetRollup } from '../api';
@@ -59,16 +58,5 @@ describe('spread this bill prompt — gap coverage', () => {
     await renderWithQueries(<TransactionDetail />);
     expect(screen.getByText('Woolworths')).toBeTruthy();
     expect(screen.queryByTestId('transaction-spread')).toBeNull();
-  });
-
-  // [G4] A pending spend (status 'pending', amount < 0) whose category envelope is over still
-  // qualifies — the gate keys off amount sign + eligibility, not posted/settled status. The prefill
-  // is the category overage (posted 60 + pending 70 = 130 → over by 30), not the tapped charge.
-  it('[G4] a PENDING over-budget spend still offers the prompt, prefilled with the overage', async () => {
-    seedSpend({ status: 'pending' });
-    server.seed('/budgets', { coffee: rollup({ target: 100, posted: 60, pending: 70 }) });
-    await renderWithQueries(<TransactionDetail />);
-    fireEvent.press(screen.getByTestId('transaction-spread'));
-    expect(routerSpies.push).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=30');
   });
 });

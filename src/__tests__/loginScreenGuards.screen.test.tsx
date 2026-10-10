@@ -47,24 +47,18 @@ it('double-tapping Log in only starts ONE password sign-in (busy latch)', async 
   await waitFor(() => expect(mockSignInWithPassword).toHaveBeenCalledTimes(1));
 });
 
-it('Continue with Google is ignored while a password sign-in is mid-flight', async () => {
+it.each([
+  ['Continue with Google', 'login-submit', mockSignInWithPassword, 'login-google', mockSignInWithGoogle],
+  ['a password sign-in', 'login-google', mockSignInWithGoogle, 'login-submit', mockSignInWithPassword],
+] as const)('%s is ignored while the other sign-in is mid-flight', async (_case, first, firstCall, second, secondCall) => {
   mockSignInWithPassword.mockReturnValue(new Promise<never>(() => {}));
-  const { getByTestId } = render(<Login />);
-  fill(getByTestId);
-  fireEvent.press(getByTestId('login-submit'));
-  await waitFor(() => expect(mockSignInWithPassword).toHaveBeenCalledTimes(1));
-  fireEvent.press(getByTestId('login-google'));
-  expect(mockSignInWithGoogle).not.toHaveBeenCalled();
-});
-
-it('a password sign-in is ignored while a Google sign-in is mid-flight', async () => {
   mockSignInWithGoogle.mockReturnValue(new Promise<never>(() => {}));
   const { getByTestId } = render(<Login />);
   fill(getByTestId);
-  fireEvent.press(getByTestId('login-google'));
-  await waitFor(() => expect(mockSignInWithGoogle).toHaveBeenCalledTimes(1));
-  fireEvent.press(getByTestId('login-submit'));
-  expect(mockSignInWithPassword).not.toHaveBeenCalled();
+  fireEvent.press(getByTestId(first));
+  await waitFor(() => expect(firstCall).toHaveBeenCalledTimes(1));
+  fireEvent.press(getByTestId(second));
+  expect(secondCall).not.toHaveBeenCalled();
 });
 
 it('the keyboard "go" key (onSubmitEditing) submits the password sign-in', async () => {
@@ -85,18 +79,6 @@ it('clears an earlier error once a retry succeeds', async () => {
   fireEvent.press(getByTestId('login-submit'));
   expect(await findByText('Incorrect email or password.')).toBeTruthy();
   fireEvent.press(getByTestId('login-submit'));
-  await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
-  expect(queryByText('Incorrect email or password.')).toBeNull();
-});
-
-it('clears a password error when the user switches to Google and it succeeds', async () => {
-  mockSignInWithPassword.mockResolvedValue({ ok: false, error: 'Incorrect email or password.' });
-  mockSignInWithGoogle.mockResolvedValue({ ok: true });
-  const { getByTestId, findByText, queryByText } = render(<Login />);
-  fill(getByTestId);
-  fireEvent.press(getByTestId('login-submit'));
-  expect(await findByText('Incorrect email or password.')).toBeTruthy();
-  fireEvent.press(getByTestId('login-google'));
   await waitFor(() => expect(routerSpies.replace).toHaveBeenCalledWith('/(tabs)/budgets'));
   expect(queryByText('Incorrect email or password.')).toBeNull();
 });

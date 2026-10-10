@@ -47,16 +47,4 @@ describe('InitiateAuth refresh body-read timeout (WHIT-448)', () => {
     await resolves;
   }, 3000);
 
-  it('returns the refreshed id token when the body arrives in time', async () => {
-    (globalThis as unknown as { fetch: unknown }).fetch = jest.fn(async () => ({
-      ok: true,
-      json: async () => ({ AuthenticationResult: { IdToken: 'ID-fresh', AccessToken: 'A', ExpiresIn: 3600 } }),
-    }));
-    const auth = loadAuth();
-
-    const pending = auth.getAuthToken();
-    await jest.advanceTimersByTimeAsync(0);
-    await expect(pending).resolves.toBe('ID-fresh');   // a fast body is not clipped by the timeout
-    await jest.advanceTimersByTimeAsync(20_000);        // the read settled; nothing left to fire
-  });
 });

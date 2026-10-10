@@ -77,8 +77,8 @@ describe('signInWithGoogle (Hosted UI PKCE flow)', () => {
     expect(auth.getStatus()).toBe('authed');
   });
 
-  it('resolves silently (no error) and stores nothing when the user cancels', async () => {
-    mockPromptAsync.mockResolvedValue({ type: 'cancel' });
+  it.each(['cancel', 'dismiss'])('resolves silently (no error) and stores nothing when the prompt returns %s', async (type) => {
+    mockPromptAsync.mockResolvedValue({ type });
     const auth = loadAuth();
 
     await expect(auth.signInWithGoogle()).resolves.toEqual({ ok: false });
@@ -86,13 +86,16 @@ describe('signInWithGoogle (Hosted UI PKCE flow)', () => {
     expect(mockStore.size).toBe(0);
   });
 
-  it('never throws when promptAsync rejects — surfaces the generic failure', async () => {
-    mockPromptAsync.mockRejectedValue(new Error('boom'));
+  it('returns the generic failure and stores nothing when exchangeCodeAsync rejects', async () => {
+    mockPromptAsync.mockResolvedValue({ type: 'success', params: { code: 'C' } });
+    mockExchange.mockRejectedValue(new Error('token endpoint 500'));
     const auth = loadAuth();
     await expect(auth.signInWithGoogle()).resolves.toEqual({
       ok: false,
       error: "Couldn't complete Google sign-in. Please try again.",
     });
+    expect(mockStore.size).toBe(0);
+    await expect(auth.getAuthToken()).resolves.toBeUndefined();
   });
 
   it('bails with a "not set up" error (no browser) when config is missing', async () => {
@@ -143,6 +146,23 @@ describe('getAuthToken', () => {
     const auth = loadAuth();
     await expect(auth.getAuthToken()).resolves.toBeUndefined();
     expect(mockRefresh).not.toHaveBeenCalled();
+  });
+
+  it('does NOT return an undefined idToken; falls through to a refresh', async () => {
+    const auth = await signInWith({ accessToken: 'ACC', refreshToken: 'R', issuedAt: nowSec(), expiresIn: 3600 });
+    mockRefresh.mockResolvedValue({ idToken: 'RECOVERED_ID', accessToken: 'a2', issuedAt: nowSec(), expiresIn: 3600 });
+    await expect(auth.getAuthToken()).resolves.toBe('RECOVERED_ID');
+    expect(mockRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('a later getAuthToken retries after the first refresh fails', async () => {
+    mockStore.set(REFRESH_KEY, 'R');
+    mockRefresh.mockRejectedValueOnce(new Error('network'));
+    mockRefresh.mockResolvedValueOnce({ idToken: 'SECOND_TRY', accessToken: 'a', issuedAt: nowSec(), expiresIn: 3600 });
+    const auth = loadAuth();
+    await expect(auth.getAuthToken()).resolves.toBeUndefined();
+    await expect(auth.getAuthToken()).resolves.toBe('SECOND_TRY');
+    expect(mockRefresh).toHaveBeenCalledTimes(2);
   });
 
   it('returns undefined when the refresh fails', async () => {
@@ -289,40 +309,19 @@ describe('refresh-failure clears the query cache (WHIT-205 choke point)', () => 
     expect(queryClient.getQueryData(['homeLoan'])).toBeUndefined(); // …and A's rows are gone
     expect(queryClient.getQueryData(['budgets', 14])).toBeUndefined();
   });
-
-  it('restoreSession takes the SAME path — a failed launch refresh empties the cache', async () => {
-    mockStore.set(REFRESH_KEY, 'STORED_REFRESH');
-    mockRefresh.mockRejectedValue(new Error('offline'));
-    const auth = loadAuth();
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { queryClient } = require('../queryClient') as typeof import('../queryClient');
-    queryClient.setQueryData(['transactions'], [{ transaction_id: 't1' }]);
-
-    await expect(auth.restoreSession()).resolves.toBe(false);
-
-    expect(auth.getStatus()).toBe('anon');
-    expect(queryClient.getQueryData(['transactions'])).toBeUndefined();
-  });
 });
 
 describe('gateRedirect (pure)', () => {
   const auth = loadAuth();
-  it('does nothing before the navigator is mounted', () => {
-    expect(auth.gateRedirect({ navReady: false, status: 'anon', onIndex: false })).toBeNull();
-  });
-  it('does nothing while loading', () => {
-    expect(auth.gateRedirect({ navReady: true, status: 'loading', onIndex: false })).toBeNull();
-  });
-  it('kicks an anon user off a protected route to the login screen', () => {
-    expect(auth.gateRedirect({ navReady: true, status: 'anon', onIndex: false })).toBe('/');
-  });
-  it('leaves an anon user on the login screen (no loop)', () => {
-    expect(auth.gateRedirect({ navReady: true, status: 'anon', onIndex: true })).toBeNull();
-  });
-  it('forwards an authed user off the login screen into the app', () => {
-    expect(auth.gateRedirect({ navReady: true, status: 'authed', onIndex: true })).toBe('/(tabs)/budgets');
-  });
-  it('leaves an authed user inside the app alone', () => {
-    expect(auth.gateRedirect({ navReady: true, status: 'authed', onIndex: false })).toBeNull();
+  it.each([
+    ['before the navigator is mounted', { navReady: false, status: 'anon', onIndex: false }, null],
+    ['while loading', { navReady: true, status: 'loading', onIndex: false }, null],
+    ['anon on a protected route', { navReady: true, status: 'anon', onIndex: false }, '/'],
+    ['anon on the login screen', { navReady: true, status: 'anon', onIndex: true }, null],
+    ['authed on the login screen', { navReady: true, status: 'authed', onIndex: true }, '/(tabs)/budgets'],
+    ['authed inside the app', { navReady: true, status: 'authed', onIndex: false }, null],
+    ['locked', { navReady: true, status: 'locked', onIndex: false }, null],
+  ] as const)('%s → %j', (_case, opts, expected) => {
+    expect(auth.gateRedirect(opts)).toBe(expected);
   });
 });

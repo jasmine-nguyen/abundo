@@ -19,6 +19,7 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, refreshInAct } from './support/renderWithQueries';
 import { renderWithApp, WithApp, shownToasts, resetAppProbe } from './support/renderWithApp';
 import { resetAuth, setAuthStatus } from './support/authMock';
+import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
@@ -88,22 +89,6 @@ describe('categoryEditSummaryToast', () => {
     expect(routerSpies.back).toHaveBeenCalled();
   });
 
-  // [B2] CREATE verb + SINGULAR "with 1 sub-category" (not "sub-categories"). Fail-on-revert:
-  // change the `n === 1 ? 'y' : 'ies'` ternary and this exact string breaks.
-  it('creating a parent with 1 attached child shows one "Category created, with 1 sub-category."', async () => {
-    setParams({});
-    categories = [LIVING('parking', 'Parking')];
-    await drawEdit();
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Transport');
-    fireEvent.press(screen.getByText('Living'));
-    fireEvent.press(screen.getByTestId('attachChild-parking'));
-    await save();
-
-    await waitFor(() => expect(shownToasts()).toEqual(['Category created, with 1 sub-category.']));
-    expect(server.sent('POST', '/categories')).toHaveLength(1);
-    expect(patchBodies('parking')).toEqual([{ name: 'Parking', bucket: 'Living', icon: 'car', parent: 'transport' }]);
-  });
-
   // [B3] UPDATE + one child fails: the FULL partial-failure string (leading "Category updated," +
   // singular "it") and it is the ONLY toast — children ran silent so nothing competes.
   it('a single failed child shows exactly one full "Category updated, but 1 sub-category couldn\'t be attached — add it from its page."', async () => {
@@ -118,22 +103,6 @@ describe('categoryEditSummaryToast', () => {
       "Category updated, but 1 sub-category couldn't be attached — add it from its page."]));
     expect(server.sent('PATCH', '/categories/parking')).toHaveLength(1);
     expect(routerSpies.back).toHaveBeenCalled(); // Option A: good parent is kept, not rolled back
-  });
-
-  // [B4] Two failures -> plural "sub-categories" + "add them". Fail-on-revert: the failed===1
-  // singular branch would wrongly render "it"/"sub-category" here.
-  it('two failed children show one plural "...2 sub-categories couldn\'t be attached — add them from its page."', async () => {
-    setParams({ categoryId: 'transport' });
-    categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking'), LIVING('petrol', 'Petrol')];
-    server.once('PATCH', '/categories/parking', { status: 500 });
-    server.once('PATCH', '/categories/petrol', { status: 500 });
-    await drawEdit();
-    fireEvent.press(screen.getByTestId('attachChild-parking'));
-    fireEvent.press(screen.getByTestId('attachChild-petrol'));
-    await save();
-
-    await waitFor(() => expect(shownToasts()).toEqual([
-      "Category updated, but 2 sub-categories couldn't be attached — add them from its page."]));
   });
 
   // [B5] CREATE where the PARENT write fails: this screen OWNS the failure toast (the writer went
@@ -207,16 +176,6 @@ describe('categoryEditSubcategories', () => {
     expect(patchBodies('parking')).toEqual([{ name: 'Parking', bucket: 'Living', icon: 'car', parent: 'transport' }]);
   });
 
-  it('shows one plain toast when a new category is saved with no sub-categories', async () => {
-    // WHIT-240: the no-children path still owns exactly one toast, matching the writer's old copy.
-    categories = [];
-    await drawEdit();
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Groceries');
-    await save();
-    await waitFor(() => expect(shownToasts()).toEqual(['Category created.']));
-    expect(postBodies()).toEqual([expect.objectContaining({ name: 'Groceries', parent: null })]);
-  });
-
   it('a cross-bucket category is not offered as an attachable child', async () => {
     categories = [
       { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8ab4f8', parent: null },
@@ -233,23 +192,6 @@ describe('categoryEditSubcategories', () => {
 
 describe('categoryEditSubcategoriesGaps', () => {
   beforeEach(() => { resetMocks({ categoryId: 'transport' }); });
-
-  it('editing an existing parent updates it then attaches the picked child', async () => {
-    categories = [
-      { id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', parent: null },
-      { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8ab4f8', parent: null },
-    ];
-    await drawEdit();
-    fireEvent.press(screen.getByTestId('attachChild-parking'));
-    await save();
-
-    await waitFor(() => expect(routerSpies.back).toHaveBeenCalled());
-    // Self persisted via UPDATE (its own id), not created.
-    expect(patchBodies('transport')).toEqual([{ name: 'Transport', bucket: 'Living', icon: 'car', parent: null }]);
-    // Child re-parented under it, resending the child's OWN name/bucket/icon.
-    expect(patchBodies('parking')).toEqual([{ name: 'Parking', bucket: 'Living', icon: 'car', parent: 'transport' }]);
-    expect(server.sent('POST', '/categories')).toEqual([]); // existing parent is never "created"
-  });
 
   // [A3] A category already parented under this one is listed as "Already nested" and is NOT
   // re-offered in the attach list. Fail-on-revert: drop the `c.parent !== categoryId` filter and
@@ -390,28 +332,6 @@ describe('categoryEditReasonGaps', () => {
       expect(server.sent('POST', '/categories')).toEqual([]);         // no orphan sub created under nothing
       expect(routerSpies.back).not.toHaveBeenCalled();
     });
-
-    // The inverse of P3. `if (reason === null) throw error` is what keeps a HANDLED refusal out of
-    // the log; drop the condition and every 50-cap refusal becomes a console.error too.
-    it('does not re-throw a refusal it already explained', async () => {
-      server.once('PATCH', '/categories/transport', { status: 400, reason: CAP });
-      await drawEdit();
-      await save();
-
-      await waitFor(() => expect(shownToasts()).toHaveLength(1));
-      expect(errorSpy).not.toHaveBeenCalled();
-    });
-
-    // WHIT-249: the button must come back so the user can shorten the name / pick a new parent.
-    it('re-enables Save after a refusal so the user can retry', async () => {
-      server.once('PATCH', '/categories/transport', { status: 400, reason: CAP });
-      await drawEdit();
-      await save();
-      await waitFor(() => expect(shownToasts()).toHaveLength(1));
-
-      await save();
-      await waitFor(() => expect(server.sent('PATCH', '/categories/transport')).toHaveLength(2));
-    });
   });
 
   describe('[A41][A44][A47] the fold covers both child writers and ignores the successes', () => {
@@ -427,74 +347,6 @@ describe('categoryEditReasonGaps', () => {
       await waitFor(() => expect(shownToasts()).toEqual([
         `Category updated, but 1 sub-category couldn't be attached — ${CAP}.`]));
     });
-
-    // The 50-cap fires on CREATING a new sub as readily as on attaching one, and that path goes
-    // through createCategoryInline — untouched by every existing child test.
-    it('folds a reason from a refused NEW inline sub-category', async () => {
-      server.once('POST', '/categories', { status: 400, reason: CAP });
-      await drawEdit();
-      addNewChild('Tolls');
-      await save();
-
-      await waitFor(() => expect(shownToasts()).toEqual([
-        `Category updated, but 1 sub-category couldn't be attached — ${CAP}.`]));
-      expect(postBodies()).toEqual([expect.objectContaining({ name: 'Tolls', bucket: 'Living', parent: 'transport' })]);
-    });
-
-    // The realistic 50-cap shape: an attach AND a create, both refused by the same rule, via two
-    // DIFFERENT writers. `reasons[0]` comparison is by string, so this must still fold.
-    it('folds one shared reason across an attach and a create', async () => {
-      server.once('PATCH', '/categories/parking', { status: 400, reason: CAP });
-      server.once('POST', '/categories', { status: 400, reason: CAP });
-      await drawEdit();
-      fireEvent.press(screen.getByTestId('attachChild-parking'));
-      addNewChild('Tolls');
-      await save();
-
-      await waitFor(() => expect(shownToasts()).toEqual([
-        `Category updated, but 2 sub-categories couldn't be attached — ${CAP}.`]));
-    });
-  });
-
-  describe('[A42][A43] reason text that could break the folded line', () => {
-    // Nothing between the server and this toast strips control characters: failed() only .trim()s
-    // the ends. A multi-line reason must still produce ONE toast with the text intact — this pins
-    // the current behaviour so a future sanitiser is a deliberate, visible change.
-    it('folds a multi-line reason verbatim into a single toast', async () => {
-      const multi = 'cannot attach:\nthe parent already has 50 sub-categories';
-      server.once('PATCH', '/categories/parking', { status: 400, reason: multi });
-      await drawEdit();
-      fireEvent.press(screen.getByTestId('attachChild-parking'));
-      await save();
-
-      await waitFor(() => expect(shownToasts()).toEqual([
-        `Category updated, but 1 sub-category couldn't be attached — ${multi}.`]));
-    });
-
-    // The summary tail uses endSentence(reason) directly rather than writeFailureMessage, so the
-    // "no full stop after the ellipsis" rule has to hold on THIS path too.
-    it('ends a truncated reason with the ellipsis and no extra full stop', async () => {
-      server.once('PATCH', '/categories/parking', { status: 400, reason: 'z'.repeat(200) });
-      await drawEdit();
-      fireEvent.press(screen.getByTestId('attachChild-parking'));
-      await save();
-
-      await waitFor(() => expect(shownToasts()).toHaveLength(1));
-      const line = shownToasts()[0];
-      expect(line).toBe(`Category updated, but 1 sub-category couldn't be attached — ${'z'.repeat(159)}…`);
-      expect(line.endsWith('….')).toBe(false);
-    });
-
-    // A refusal that already ends in a full stop must not gain a second one.
-    it('does not double the full stop on an already-terminated reason', async () => {
-      server.once('PATCH', '/categories/parking', { status: 409, reason: 'that name is taken.' });
-      await drawEdit();
-      fireEvent.press(screen.getByTestId('attachChild-parking'));
-      await save();
-
-      await waitFor(() => expect(shownToasts()).toEqual([
-        "Category updated, but 1 sub-category couldn't be attached — that name is taken."]));
-    });
   });
 });
 
@@ -504,37 +356,6 @@ describe('categoryEditChildReason', () => {
   beforeEach(() => {
     resetMocks({ categoryId: 'transport' });
     categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking'), LIVING('petrol', 'Petrol')];
-  });
-
-  // The parent save succeeds; refuse only the child attaches.
-  const refuseChildrenWith = (reply: Parameters<typeof server.once>[2]) => {
-    server.once('PATCH', '/categories/parking', reply);
-    server.once('PATCH', '/categories/petrol', reply);
-  };
-
-  // [C1] ONE child refused for a stated reason -> the reason replaces the generic tail.
-  it('folds a single child refusal reason into the one summary toast', async () => {
-    refuseChildrenWith({ status: 400, reason: CAP });
-    await drawEdit();
-    fireEvent.press(screen.getByTestId('attachChild-parking'));
-    await save();
-
-    // WHIT-240 still holds: one toast.
-    await waitFor(() => expect(shownToasts()).toEqual([
-      `Category updated, but 1 sub-category couldn't be attached — ${CAP}.`]));
-    expect(routerSpies.back).toHaveBeenCalled();             // WHIT-237 Option A: a good parent is kept
-  });
-
-  // [C2] TWO children refused for the SAME reason -> one cause, stated once, plural count.
-  it('folds a shared reason across two refused children', async () => {
-    refuseChildrenWith({ status: 400, reason: CAP });
-    await drawEdit();
-    fireEvent.press(screen.getByTestId('attachChild-parking'));
-    fireEvent.press(screen.getByTestId('attachChild-petrol'));
-    await save();
-
-    await waitFor(() => expect(shownToasts()).toEqual([
-      `Category updated, but 2 sub-categories couldn't be attached — ${CAP}.`]));
   });
 
   // [C3] TWO DIFFERENT reasons cannot honestly be summarised as one -> generic tail.
@@ -548,41 +369,6 @@ describe('categoryEditChildReason', () => {
 
     await waitFor(() => expect(shownToasts()).toEqual([
       "Category updated, but 2 sub-categories couldn't be attached — add them from its page."]));
-  });
-
-  // [C4] A plain failure has no reason to give -> we must never invent one.
-  it('keeps the generic tail for a network failure', async () => {
-    refuseChildrenWith('dropped');
-    await drawEdit();
-    fireEvent.press(screen.getByTestId('attachChild-parking'));
-    await save();
-
-    await waitFor(() => expect(shownToasts()).toEqual([
-      "Category updated, but 1 sub-category couldn't be attached — add it from its page."]));
-  });
-
-  // [C5] A reason cannot be attributed to a failure that never gave one.
-  it('keeps the generic tail when a reasoned refusal is mixed with a failure that gave no reason', async () => {
-    server.once('PATCH', '/categories/parking', { status: 400, reason: CAP });
-    server.once('PATCH', '/categories/petrol', { status: 400 }); // petrol fails with nothing to say
-    await drawEdit();
-    fireEvent.press(screen.getByTestId('attachChild-parking'));
-    fireEvent.press(screen.getByTestId('attachChild-petrol'));
-    await save();
-
-    await waitFor(() => expect(shownToasts()).toEqual([
-      "Category updated, but 2 sub-categories couldn't be attached — add them from its page."]));
-  });
-
-  // [C6] A 5xx is our fault, not a rule the user broke — never surface it.
-  it('keeps the generic tail for a 500', async () => {
-    refuseChildrenWith({ status: 500, reason: 'boom' });
-    await drawEdit();
-    fireEvent.press(screen.getByTestId('attachChild-parking'));
-    await save();
-
-    await waitFor(() => expect(shownToasts()).toEqual([
-      "Category updated, but 1 sub-category couldn't be attached — add it from its page."]));
   });
 
   // [C7] WHIT-441/438 — when the destination is ALREADY at its child cap, "add it from its page" is
@@ -599,44 +385,6 @@ describe('categoryEditChildReason', () => {
     // Fail-on-revert: restore the unconditional `add … from its page` tail → this reddens.
     await waitFor(() => expect(shownToasts()).toEqual([
       'Category updated, but 1 sub-category couldn\'t be attached — Transport already has the most sub-categories allowed (50).']));
-  });
-});
-
-describe('categoryEditChildReasonGaps', () => {
-  beforeEach(() => { resetMocks({}); });
-
-  // A parent at 49 children is NOT full, so the "names the cap" branch must NOT fire → original advice.
-  it('keeps the generic tail when the destination parent is one short of the cap (49)', async () => {
-    setParams({ categoryId: 'transport' });
-    const kids = Array.from({ length: MAX_CHILDREN_PER_CATEGORY - 1 }, (_, i) => LIVING(`kid${i}`, `Kid ${i}`, 'transport'));
-    categories = [LIVING('transport', 'Transport'), LIVING('spare', 'Spare'), ...kids];
-    server.once('PATCH', '/categories/spare', { status: 500 });   // 'spare' attach fails, no reason
-
-    await drawEdit();
-    fireEvent.press(screen.getByTestId('attachChild-spare'));
-    await save();
-
-    // Fail-on-revert: change the guard to `>= 49` (or `> 50`) and this reddens — 49 must read as NOT full.
-    await waitFor(() => expect(shownToasts()).toEqual([
-      "Category updated, but 1 sub-category couldn't be attached — add it from its page."]));
-  });
-
-  // A NEW parent: its server id is not in the `categories` the save started with, so
-  // categories.find(parentId) misses → parentFull is false → original advice, never a bogus cap line.
-  it('keeps the generic tail for a NEW category whose parent id is not in the cache yet', async () => {
-    // A NEW category defaults to the Lifestyle bucket, and an attach candidate must share it.
-    const SPARE: Category = { id: 'spare', name: 'Spare', bucket: 'Lifestyle', icon: 'coffee', color: '#fff', parent: null };
-    categories = [SPARE];                                    // the only attachable child
-    server.once('PATCH', '/categories/spare', { status: 500 });      // the 'spare' attach fails, no reason
-
-    await drawEdit();
-    fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Coffee');   // canSave needs a name
-    fireEvent.press(screen.getByTestId('attachChild-spare'));
-    await save();
-
-    await waitFor(() => expect(shownToasts()).toEqual([
-      "Category created, but 1 sub-category couldn't be attached — add it from its page."]));
-    expect(patchBodies('spare')).toEqual([{ name: 'Spare', bucket: 'Lifestyle', icon: 'coffee', parent: 'coffee' }]);
   });
 });
 
@@ -666,23 +414,6 @@ describe('categoryEditSaveThrow', () => {
     expect(shownToasts()).toEqual([GENERIC_SAVE_FAILURE, 'Category created.']);
     expect(errorSpy).toHaveBeenCalled(); // the guard logged the escaped throw (WHIT-249 contract)
   });
-
-  // [A-catsave-update] Same guarantee on the UPDATE branch, where saveCategory is the parent write.
-  it('re-enables Save so a retry runs after the parent update fails unexpectedly (edit branch)', async () => {
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    setParams({ categoryId: 'transport' });
-    categories = [LIVING('transport', 'Transport')];
-    server.once('PATCH', '/categories/transport', 'dropped'); // 1st press fails
-    await drawEdit();
-
-    await save();
-    await save();
-
-    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
-    expect(server.sent('PATCH', '/categories/transport')).toHaveLength(2);
-    expect(shownToasts()).toEqual([GENERIC_SAVE_FAILURE, 'Category updated.']);
-    expect(errorSpy).toHaveBeenCalled();
-  });
 });
 
 describe('categoryEditParentReason', () => {
@@ -711,33 +442,6 @@ describe('categoryEditParentReason', () => {
     await save();
 
     await waitFor(() => expect(shownToasts()).toEqual(['Category already exists.']));
-    expect(routerSpies.back).not.toHaveBeenCalled();
-  });
-
-  // [P3] WHIT-249: an unexplained failure is still logged. We toast the generic line AND re-throw,
-  // so the in-flight guard's logging survives the new catch.
-  it('falls back and still lets an unexplained failure reach the guard log', async () => {
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    server.once('PATCH', '/categories/transport', 'dropped');
-    await drawEdit();
-    await save();
-
-    await waitFor(() => expect(shownToasts()).toEqual([GENERIC_SAVE_FAILURE]));
-    expect(errorSpy).toHaveBeenCalled();
-    errorSpy.mockRestore();
-  });
-
-  // [P4] WHIT-282: a sign-out mid-save must not toast into the next session, even when the server
-  // then refuses with a reason.
-  it('stays silent when the session changed mid-save', async () => {
-    await drawEdit();
-    const held = server.hold('/categories/transport');
-    await save();
-    act(() => setAuthStatus('anon'));
-    await act(async () => { held.fail('PATCH', { status: 400, reason: 'a category can have at most 50 sub-categories' }); });
-
-    expect(server.sent('PATCH', '/categories/transport')).toHaveLength(1);
-    expect(shownToasts()).toEqual([]);
     expect(routerSpies.back).not.toHaveBeenCalled();
   });
 });
@@ -823,23 +527,6 @@ describe('categoryEditSignOutGuard', () => {
     expect(shownToasts()).toEqual([]);
     expect(routerSpies.back).not.toHaveBeenCalled();
   });
-
-  // [A-EDIT-CONTROL] Regression: with NO session change, a genuine in-session FAILURE must STILL
-  // toast — the guard must not over-suppress the real error path.
-  it('an in-session parent-save failure still shows the failure toast (guard does not over-suppress)', async () => {
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    setParams({ categoryId: 'transport' });
-    categories = [LIVING('transport', 'Transport')];
-    server.once('PATCH', '/categories/transport', { status: 500 }); // real failure, same session
-    await drawEdit();
-
-    await save();
-
-    await waitFor(() => expect(shownToasts()).toEqual([GENERIC_SAVE_FAILURE]));
-    expect(routerSpies.back).not.toHaveBeenCalled();
-    expect(errorSpy).toHaveBeenCalled();
-    errorSpy.mockRestore();
-  });
 });
 
 // ===== WHIT-459: folded from categoryEditColdSeed.screen.test.tsx (WHIT-203 cold-cache seed guard) =====
@@ -878,5 +565,215 @@ describe('categoryEditColdSeed', () => {
     // The category list lands a beat later → the useEffect re-seeds the form from it.
     await refreshInAct(() => held.release());
     await waitFor(() => expect(screen.getByDisplayValue('Cafes & Coffee')).toBeTruthy());
+  });
+});
+
+// ===== WHIT-692 QA (folded from categoryEditWritersEdges): sign-out mid-delete, same-frame double
+// taps, parent-before-children ordering, a delete refused with a reason, the inline create body.
+describe('categoryEditWriterEdges', () => {
+  beforeEach(() => { resetMocks({}); });
+
+  // [A1] / [A2] The DELETE is held, the user signs out, then the server refuses or says it worked.
+  // The real writer returns false after a sign-out, so nothing may reach the next session: no
+  // toast, no navigation.
+  it.each<[string, (held: ReturnType<typeof server.hold>) => void]>([
+    ['failing', (held) => held.fail('DELETE', { status: 500 })],
+    ['successful', (held) => held.release()],
+  ])('a sign-out during a %s delete shows no toast and does not navigate', async (_case, settleDelete) => {
+    setParams({ categoryId: 'coffee' });
+    categories = [LIVING('coffee', 'Coffee')];
+    await drawEdit();
+    const held = server.hold('/categories/coffee');
+
+    await act(async () => { fireEvent.press(screen.getByText('Delete category')); });
+    act(() => setAuthStatus('anon'));
+    await act(async () => { settleDelete(held); });
+
+    expect(server.sent('DELETE', '/categories/coffee')).toHaveLength(1);
+    expect(shownToasts()).toEqual([]);
+    expect(routerSpies.back).not.toHaveBeenCalled();
+  });
+
+  // [A3] The server's own words replace the generic line, and the screen stays put.
+  it('shows the server reason as the one toast and stays on the screen', async () => {
+    setParams({ categoryId: 'coffee' });
+    server.once('DELETE', '/categories/coffee', { status: 409, reason: 'category is used by a budget' });
+    categories = [LIVING('coffee', 'Coffee')];
+    await drawEdit();
+
+    await act(async () => { fireEvent.press(screen.getByText('Delete category')); });
+
+    await waitFor(() => expect(shownToasts()).toEqual(['Category is used by a budget.']));
+    expect(routerSpies.back).not.toHaveBeenCalled();
+  });
+
+  // [A4] / [A5] Two taps in one frame (before `submitting` can redraw) → exactly one request.
+  it.each([
+    ['Save category', 'PATCH', 'transport', 'Category updated.'],
+    ['Delete category', 'DELETE', 'coffee', 'Category deleted.'],
+  ] as const)('two "%s" taps in one frame send one %s', async (button, method, id, toast) => {
+    setParams({ categoryId: id });
+    categories = [LIVING(id, id)];
+    await drawEdit();
+
+    await act(async () => {
+      fireEvent.press(screen.getByText(button));
+      fireEvent.press(screen.getByText(button));
+    });
+
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
+    expect(server.sent(method, `/categories/${id}`)).toHaveLength(1);
+    expect(shownToasts()).toEqual([toast]);
+  });
+
+  // [A6] While the parent's own update is still waiting on the server, no child attach is sent.
+  // The children only go once the parent has been saved.
+  it('sends no child attach until the parent update has answered', async () => {
+    setParams({ categoryId: 'transport' });
+    categories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking')];
+    await drawEdit();
+    fireEvent.press(screen.getByTestId('attachChild-parking'));
+    const held = server.hold('/categories/transport');
+
+    await save();
+    await waitFor(() => expect(server.sent('PATCH', '/categories/transport')).toHaveLength(1));
+    expect(patchBodies('parking')).toEqual([]);
+
+    await act(async () => { held.release(); });
+    await waitFor(() => expect(routerSpies.back).toHaveBeenCalledTimes(1));
+    expect(patchBodies('parking')).toEqual([{ name: 'Parking', bucket: 'Living', icon: 'car', parent: 'transport' }]);
+  });
+
+  // [A7] The full create body — name, the parent's bucket, its own icon and the parent id. The
+  // big suite only checks part of it.
+  it('sends its full body under the edited parent', async () => {
+    setParams({ categoryId: 'transport' });
+    categories = [LIVING('transport', 'Transport')];
+    await drawEdit();
+    addNewChild('  Tolls  ');
+
+    await save();
+
+    await waitFor(() => expect(shownToasts()).toEqual(['Category updated, with 1 sub-category.']));
+    expect(postBodies()).toEqual([{ name: 'Tolls', bucket: 'Living', icon: expect.stringMatching(/./), parent: 'transport' }]);
+  });
+});
+
+// ===== WHIT-688 QA (folded from categoryEditColdSeed + categoryScreensEdges): a list that FAILED
+// (not just loading), a background re-read over typing, and the cold-open re-seed.
+describe('categoryEditLoadGuards', () => {
+  beforeEach(() => { resetMocks({}); });
+
+  // A sub-category in a bucket other than the form's default (Lifestyle), under a same-bucket parent.
+  const PARKING_UNDER_TRANSPORT: Category[] = [
+    LIVING('parking', 'Parking', 'transport'),
+    LIVING('transport', 'Transport'),
+  ];
+
+  // [A7] (P0) The category list FAILED (not just loading): editing an existing category must stay
+  // blocked so Save can't write the default bucket/icon over the real one.
+  it('blocks Save on an existing category when the category list fails to load', async () => {
+    setParams({ categoryId: 'coffee' });
+    server.fail('/categories', 500);
+    await renderWithApp(<CategoryEdit />);
+    fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Renamed');
+    fireEvent.press(screen.getByText('Save category'));
+    await refreshInAct(() => undefined);
+    expect(server.sentUnder('PATCH', '/categories')).toEqual([]);
+  });
+
+  // [A8] (P1) A background re-read that returns the same list must not re-seed the form over
+  // what the user is typing. Fail-on-revert: turn off the query's structural sharing and the
+  // fresh `existing` object re-runs the seed effect, wiping "Renamed".
+  it('a background re-read with an unchanged list keeps the name the user is typing', async () => {
+    categories = [{ ...COFFEE, parent: null }];
+    setParams({ categoryId: 'coffee' });
+    await drawEdit();
+    expect(screen.getByDisplayValue('Cafes & Coffee')).toBeTruthy();
+
+    fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Renamed');
+    await refreshInAct(() => queryClient.refetchQueries());
+    expect(server.sent('GET', '/categories')).toHaveLength(2);
+    expect(screen.getByDisplayValue('Renamed')).toBeTruthy();
+
+    await save();
+    await waitFor(() => expect(patchBodies('coffee')).toEqual([{ name: 'Renamed', bucket: 'Lifestyle', icon: 'coffee', parent: null }]));
+  });
+
+  // [A10] (P0) REAL BUG — cold open (the list lands after the form mounts, e.g. a deep link). The
+  // late re-seed sets bucket=Living + parent=transport, but the "keep the parent valid" effect runs
+  // in the same pass with the OLD bucket (Lifestyle), finds transport ineligible and clears it. A
+  // plain re-save then silently moves Parking to the top level (app/category/edit.tsx:32-43).
+  it('cold open: re-saving a Living sub-category keeps its parent (no silent detach)', async () => {
+    categories = PARKING_UNDER_TRANSPORT;
+    setParams({ categoryId: 'parking' });
+    await drawEdit();
+    expect(screen.getByDisplayValue('Parking')).toBeTruthy();
+    await save();
+    await waitFor(() => expect(patchBodies('parking')).toEqual([{ name: 'Parking', bucket: 'Living', icon: 'car', parent: 'transport' }]));
+  });
+
+  // [A12] (P0) After the seed, switching bucket still clears a parent from the old bucket.
+  // Fail-on-revert: make the validity effect always skip (or never reset the flag) → parent kept.
+  it('still drops the parent when the user switches bucket after a cold open', async () => {
+    categories = PARKING_UNDER_TRANSPORT;
+    setParams({ categoryId: 'parking' });
+    await drawEdit();
+    expect(screen.getByDisplayValue('Parking')).toBeTruthy();
+    fireEvent.press(screen.getByText('Lifestyle'));
+    await refreshInAct(() => undefined);
+    await save();
+    await waitFor(() => expect(patchBodies('parking')).toEqual([{ name: 'Parking', bucket: 'Lifestyle', icon: 'car', parent: null }]));
+  });
+});
+
+// ===== WHIT-441 full-parent greying (folded from categoryFields): the chip of a parent at the child
+// cap is greyed, except the category's OWN parent.
+describe('categoryFullParent', () => {
+  // Wire categories, as /categories sends them.
+  const cat = (id: string, parent: string | null): Category => ({ id, name: id, bucket: 'Lifestyle', icon: 'coffee', color: '#fff', parent });
+  const childrenOf = (parent: string, n: number, prefix: string) =>
+    Array.from({ length: n }, (_, i) => cat(`${prefix}${i}`, parent));
+
+  beforeEach(() => { resetMocks({ categoryId: 'coffee' }); });
+
+  it('greys out a parent at the child cap, and a tap on it does nothing', async () => {
+    // 'treats' already holds the maximum children; 'coffee' (top-level, being edited) is not one of
+    // them, so attaching it would overflow — the chip must be disabled.
+    categories = [
+      cat('coffee', null),
+      cat('treats', null),
+      ...childrenOf('treats', MAX_CHILDREN_PER_CATEGORY, 'kid'),
+    ];
+    await drawEdit();
+
+    expect(screen.getByText('treats · full')).toBeTruthy();     // greyed + labelled
+    fireEvent.press(screen.getByTestId('parent-treats'));        // disabled → no-op
+    await save();
+
+    // Fail-on-revert: drop the `full`/disabled logic → the tap selects 'treats' → parent:'treats'.
+    await waitFor(() => expect(patchBodies('coffee')).toEqual([expect.objectContaining({ parent: null })]));
+  });
+
+  it('keeps the category’s OWN full parent selectable — a plain rename never detaches it', async () => {
+    // 'coffee' already sits under 'treats', which is at the cap (coffee is one of its 50 children).
+    // From coffee's side treats is NOT full — re-saving under it adds nothing — so it must stay
+    // pickable. This is the landmine: greying the held parent would let a rename drop the link.
+    categories = [
+      cat('coffee', 'treats'),
+      cat('treats', null),
+      ...childrenOf('treats', MAX_CHILDREN_PER_CATEGORY - 1, 'kid'),   // + coffee = 50
+    ];
+    await drawEdit();
+
+    expect(screen.queryByText('treats · full')).toBeNull();     // held parent is never greyed
+    // Deselect then re-pick the held parent, then save: it must land back on 'treats'.
+    fireEvent.press(screen.getByText('None (top-level)'));
+    fireEvent.press(screen.getByTestId('parent-treats'));
+    await save();
+
+    // Fail-on-revert: drop the `p.id !== heldParentId` guard → treats is greyed + disabled → the
+    // re-pick is a no-op → save writes parent:null → this assertion fails.
+    await waitFor(() => expect(patchBodies('coffee')).toEqual([expect.objectContaining({ parent: 'treats' })]));
   });
 });

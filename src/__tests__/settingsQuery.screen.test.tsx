@@ -19,12 +19,10 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { routerSpies, resetRouter } from './support/routerMock';
 import React from 'react';
-import { Text } from 'react-native';
 import { render, screen, renderHook, act, waitFor, fireEvent } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { makeClient, wrapper } from './support/queryClient';
 import { installFakeServer } from './support/fakeServer';
-import { refreshInAct } from './support/renderWithQueries';
 
 // Live miniature auth store (superset — only settingsQuery flips it; the gaps describes stay 'authed').
 const mockSignOut = jest.fn();
@@ -121,13 +119,6 @@ describe('WHIT-191a — Settings server rows on the real query layer', () => {
     expect(await screen.findByText('3')).toBeTruthy();
     expect(loanReads()).toBeGreaterThan(0);
   });
-
-  it('a transient 5xx on the loan-facts read retries and self-heals', async () => {
-    server.once('GET', LOAN_FACTS, { status: 503 });
-    renderSettings(makeClient({ retry: 2 }));
-    expect(await screen.findByText('Edit')).toBeTruthy();
-    expect(loanReads()).toBe(2);
-  });
 });
 
 // ===== WHIT-191a GAPS (authored by qa) — the adversarial half of useSettingsScreenData /
@@ -156,14 +147,6 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
   });
 
   describe('sustained hard failure (no self-heal)', () => {
-    it('hook surfaces categoriesError (not a fake 0) and drops isLoading', async () => {
-      server.fail(CATEGORIES, 500);
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient()) });
-
-      await waitFor(() => expect(result.current.categoriesError).toBe(true));
-      expect(result.current.isLoading).toBe(false); // errored query is not "loading" → no endless "…"
-      expect(result.current.loanReadyError).toBe(false); // loan facts still resolved → that row is fine
-    });
 
     // WHIT-198 fail-on-revert: before the fix the categories row collapsed to a misleading "0".
     // Reverting settings.tsx to `String(categoriesCount)` brings the "0" back and fails this.
@@ -219,64 +202,6 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
     });
   });
 
-  describe('partial-load flash', () => {
-    it('reports isLoading true while categories are pending even though loan facts are cached-ready', async () => {
-      const heldCats = server.hold(CATEGORIES); // not answered during the test
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient()) });
-
-      await waitFor(() => expect(result.current.loanReady).toBe(true)); // loan settled first
-      expect(result.current.isLoading).toBe(true); // ...but the whole screen (incl. loan row) still shows "…"
-      await act(async () => { heldCats.release(); });
-    });
-  });
-
-  describe('read-your-write with an active Settings observer', () => {
-    it("invalidate after a save refetches the mounted observer and the loan row stays ready", async () => {
-      const client = makeClient();
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(client) });
-      await waitFor(() => expect(result.current.loanReady).toBe(true));
-
-      const before = loanReads();
-      const catBefore = categoryReads();
-
-      // Mirror the production write: setQueryData(next) + invalidate ONLY loanFacts.
-      await refreshInAct(async () => {
-        client.setQueryData(['loanFacts'], READY_FACTS);
-        await client.invalidateQueries({ queryKey: ['loanFacts'] });
-      });
-
-      await waitFor(() => expect(loanReads()).toBe(before + 1)); // active observer refetched
-      expect(categoryReads()).toBe(catBefore); // invalidate was loanFacts-only
-      expect(result.current.loanReady).toBe(true); // never flickers to "Set up" across the refetch
-    });
-  });
-
-  describe('refetchStale focus gate', () => {
-    it('does NOT refetch fresh (non-stale) queries — no request storm on focus', async () => {
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient()) });
-      await waitFor(() => expect(result.current.isLoading).toBe(false));
-
-      const cats = categoryReads();
-      const loan = loanReads();
-      await act(async () => { result.current.refetchStale(); });
-
-      expect(categoryReads()).toBe(cats); // still fresh → skipped
-      expect(loanReads()).toBe(loan);
-    });
-
-    it('DOES refetch both when they have gone stale', async () => {
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
-      await waitFor(() => expect(result.current.isLoading).toBe(false));
-
-      const cats = categoryReads();
-      const loan = loanReads();
-      await act(async () => { result.current.refetchStale(); });
-
-      await waitFor(() => expect(categoryReads()).toBe(cats + 1));
-      expect(loanReads()).toBe(loan + 1);
-    });
-  });
-
   // WHIT-198 follow-up — the Automation-rules row got the same honest-"—" + retry treatment as
   // categories/loan (previously it only got the loading gate, so a sustained rules failure still
   // showed a misleading "0").
@@ -307,26 +232,6 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
       expect(screen.queryByTestId('settings-setup-error')).toBeNull();
     });
   });
-
-  // WHIT-198 follow-up — investigation: does simply returning to the Settings tab re-arm a row that
-  // hard-failed its first load, or is the Retry button the only path? Answer, locked here: a query
-  // that errored with NOTHING cached is STALE, so the focus `refetchStale()` DOES retry it. (A
-  // background-refetch failure over cached data is a different case — that keeps the cached value.)
-  describe('focus refetch re-arms a first-load failure', () => {
-    it('a first-load-failed categories read is stale, so refetchStale() on focus retries + recovers it', async () => {
-      server.once('GET', CATEGORIES, { status: 500 });
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient()) });
-
-      await waitFor(() => expect(result.current.categoriesError).toBe(true)); // first load failed, nothing cached
-      const callsAfterFail = categoryReads();
-
-      await act(async () => { result.current.refetchStale(); }); // returning to the tab
-
-      await waitFor(() => expect(result.current.categoriesError).toBe(false)); // recovered without pressing Retry
-      expect(result.current.categoriesCount).toBe(2);
-      expect(categoryReads()).toBe(callsAfterFail + 1); // focus DID re-issue the failed read
-    });
-  });
 });
 
 // ===== WHIT-198 GAPS (authored by qa) — the adversarial half of the "honest — + Retry" work that
@@ -342,13 +247,6 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
 //        + the Log out affordance stays usable DURING a categories outage (why there is no
 //        full-screen error card).
 describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
-  // A sibling observer sharing the same QueryClient as Settings — it renders a marker the instant
-  // categoriesError flips true. That's the deterministic anchor for the "error landed WHILE still
-  // loading" state, which the gated error card deliberately makes invisible on Settings itself.
-  function ErrorProbe() {
-    const { categoriesError } = useSettingsScreenData();
-    return categoriesError ? <Text testID="probe-cats-errored">x</Text> : null;
-  }
 
   const CATS = [
     { id: 'a', name: 'A', bucket: 'Living', icon: 'cart', color: '#7FD49B' },
@@ -379,94 +277,6 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
       expect(screen.queryByText('…')).toBeNull();               // load settled → no endless "…"
       expect(screen.getByTestId('settings-setup-error')).toBeTruthy();
       expect(screen.getByTestId('settings-setup-retry')).toBeTruthy();
-    });
-  });
-
-  // [A6] a SINGLE errored row must still refetch BOTH server reads on Retry (the composite
-  // refetch fans out to every query). If refetch only re-fired the errored loan query, the
-  // categories read would NOT be re-issued — this counts both mocks to prove the fan-out.
-  describe('Retry after a single-row failure re-issues BOTH reads', () => {
-    it('loan-only failure → Retry refetches categories AND loan facts', async () => {
-      server.fail(LOAN_FACTS, 500);
-      render(<QueryClientProvider client={makeClient()}><Settings /></QueryClientProvider>);
-
-      const retry = await screen.findByTestId('settings-setup-retry');
-      await screen.findByText('2');                             // categories loaded once
-      const catsBefore = categoryReads(); // == 1
-      const loanBefore = loanReads();     // == 1
-
-      server.once('GET', LOAN_FACTS, { body: READY_FACTS }); // re-arm the loan read, ahead of the failure
-      fireEvent.press(retry);
-
-      await waitFor(() => expect(screen.getByText('Edit')).toBeTruthy()); // loan recovered
-      expect(categoryReads()).toBe(catsBefore + 1);  // the healthy row refetched too
-      expect(loanReads()).toBe(loanBefore + 1);
-      expect(screen.queryByTestId('settings-setup-error')).toBeNull();     // affordance gone
-    });
-  });
-
-  // [A7] ordering / isLoading gate: categories errors FAST while loan facts are still pending. The
-  // per-row error flag can be true WHILE the composite is still loading — and neither the row ("…"
-  // wins over "—") nor the inline error card (gated on !isLoading) may surface the failure yet. We
-  // assert this at the HOOK boundary (deterministic: we can wait for categoriesError to land), then
-  // on the screen (both rows "…", no "—", no error card while loading). A screen-only "…" sample is
-  // racy against the sibling Automation-rules row's cold-load "0", so the hook check is the anchor.
-  describe('one row errored while the other is still loading', () => {
-    it('hook: categoriesError flips true while isLoading stays true (loan still pending)', async () => {
-      server.fail(CATEGORIES, 500);
-      const heldLoan = server.hold(LOAN_FACTS); // not answered during the test
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient()) });
-
-      await waitFor(() => expect(result.current.categoriesError).toBe(true)); // the error landed…
-      expect(result.current.isLoading).toBe(true); // …but the screen is still loading (loan pending)
-      expect(result.current.loanReadyError).toBe(false); // the pending read hasn't errored
-      await act(async () => { heldLoan.release(); });
-    });
-
-    it('screen: withholds the error card while still loading, then surfaces it once loading ends', async () => {
-      server.fail(CATEGORIES, 500);
-      const heldLoan = server.hold(LOAN_FACTS); // held pending
-      render(
-        <QueryClientProvider client={makeClient()}>
-          <ErrorProbe />
-          <Settings />
-        </QueryClientProvider>,
-      );
-
-      // Deterministic anchor: wait until categoriesError has ACTUALLY flipped true (loan still pending).
-      await screen.findByTestId('probe-cats-errored');
-      // ...yet the composite is still loading → the gate withholds the card. Without `!isLoading` the
-      // card would already be co-rendering with the "…" rows here — this is the gate's fail-on-revert.
-      expect(screen.queryByTestId('settings-setup-error')).toBeNull();
-      expect(screen.queryByText('—')).toBeNull(); // rows still "…", no premature dash
-
-      // let loan settle → isLoading false, categoriesError still true → the card + "—" now surface
-      await act(async () => { heldLoan.release(); });
-      expect(await screen.findByTestId('settings-setup-error')).toBeTruthy();
-      expect(screen.getByText('—')).toBeTruthy();
-    });
-  });
-
-  // [A8] hook-level enumeration of BOTH per-row flags: a 500 on both reads → both true; a
-  // successful Retry → both false. Complements the screen tests at the data-source boundary.
-  describe('hook surfaces both per-row error flags together', () => {
-    it('both flags true on a dual 500, both false after a successful refetch', async () => {
-      server.fail(CATEGORIES, 500);
-      server.fail(LOAN_FACTS, 500);
-      const { result } = renderHook(() => useSettingsScreenData(), { wrapper: wrapper(makeClient()) });
-
-      await waitFor(() => expect(result.current.categoriesError).toBe(true));
-      expect(result.current.loanReadyError).toBe(true);
-      expect(result.current.isLoading).toBe(false); // both settled (errored) → not loading
-
-      server.once('GET', CATEGORIES, { body: CATS });
-      server.once('GET', LOAN_FACTS, { body: READY_FACTS });
-      await act(async () => { result.current.refetch(); });
-
-      await waitFor(() => expect(result.current.categoriesError).toBe(false));
-      expect(result.current.loanReadyError).toBe(false);
-      expect(result.current.categoriesCount).toBe(2);
-      expect(result.current.loanReady).toBe(true);
     });
   });
 

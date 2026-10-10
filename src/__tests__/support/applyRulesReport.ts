@@ -1,7 +1,7 @@
 // WHIT-828 — the fake "apply rules" report the server returns, shared by the filing tests.
 // The base is an empty dry run; `alreadyFiled` and `createdRule` are optional on the wire, so
 // they stay out unless a preset or the caller sets them.
-import type { ApplyRulesResult, CreatedRule } from '../../api';
+import type { ApplyRulesJob, ApplyRulesResult, CreatedRule } from '../../api';
 
 export function applyRulesReport(over: Partial<ApplyRulesResult> = {}): ApplyRulesResult {
   return {
@@ -31,4 +31,11 @@ export const shopPreviewReport = (over: Partial<ApplyRulesResult> = {}) => apply
 export const filedReport = (over: Partial<ApplyRulesResult> = {}) => applyRulesReport({
   dryRun: false, rulesConsidered: 2, unfiled: 3, matched: 1, byCategory: { groceries: 1 },
   filed: [{ id: 't1', category: 'groceries' }], ...over,
+});
+
+/** A background job, running with nothing done yet. */
+export const applyRulesJob = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
+  jobId: 'job-1', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,
+  failed: 0, alreadyFiled: 0, remaining: 0, createdRule: null, error: null,
+  createdAt: 't0', updatedAt: 't0', completedAt: null, ...over,
 });

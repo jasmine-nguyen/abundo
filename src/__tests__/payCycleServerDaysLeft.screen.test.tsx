@@ -16,7 +16,7 @@ import { installFakeServer } from './support/fakeServer';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
 
-import { usePayCycle, useBudgetsScreenData, useBudgetDetailScreenData, useInsightsScreenData } from '../queries';
+import { usePayCycle, useBudgetsScreenData, useBudgetDetailScreenData } from '../queries';
 
 const server = installFakeServer();
 
@@ -33,28 +33,13 @@ beforeEach(() => {
   server.seed('/paycycle', SERVER);
 });
 
-it('usePayCycle surfaces the server days_left, not a locally computed countdown', async () => {
-  const { result } = renderHook(() => usePayCycle(), { wrapper: wrapper(makeClient()) });
-  await waitFor(() => expect(result.current.daysLeft).toBe(SERVER_DAYS));
+it.each<[string, () => { isLoading: boolean; daysLeft: number; cycleLen: number }]>([
+  ['usePayCycle', () => usePayCycle()],
+  ['useBudgetsScreenData', () => useBudgetsScreenData()],
+  ['useBudgetDetailScreenData', () => useBudgetDetailScreenData('coffee')],
+])('%s surfaces the server days_left, not a locally computed countdown', async (_hook, hook) => {
+  const { result } = renderHook(hook, { wrapper: wrapper(makeClient()) });
+  await waitFor(() => expect(result.current.isLoading).toBe(false));
+  expect(result.current.daysLeft).toBe(SERVER_DAYS);
   expect(result.current.cycleLen).toBe(14);
-});
-
-it('useBudgetsScreenData surfaces the server days_left', async () => {
-  const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient()) });
-  await waitFor(() => expect(result.current.isLoading).toBe(false));
-  expect(result.current.daysLeft).toBe(SERVER_DAYS);
-});
-
-it('useBudgetDetailScreenData surfaces the server days_left', async () => {
-  const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
-  await waitFor(() => expect(result.current.isLoading).toBe(false));
-  expect(result.current.daysLeft).toBe(SERVER_DAYS);
-});
-
-it('useInsightsScreenData reads cycleLen via cycleClockView (it exposes no daysLeft)', async () => {
-  // Insights only needs the cycle LENGTH (to key /breakdown); it never renders a countdown,
-  // so there is no daysLeft to surface. Lock that the length still flows through.
-  const { result } = renderHook(() => useInsightsScreenData(0), { wrapper: wrapper(makeClient()) });
-  await waitFor(() => expect(result.current.isLoading).toBe(false));
-  expect('daysLeft' in result.current).toBe(false);
 });

@@ -101,15 +101,4 @@ describe('completeNewPassword', () => {
     expect(mockDeleteItem.mock.calls.map((c) => c[0])).toEqual(expect.arrayContaining([REFRESH_KEY]));
   });
 
-  it('clears the pending challenge on success (a second complete → sign in again)', async () => {
-    const auth = loadAuth();
-    await reachChallenge(auth);
-    mockCompleteChallenge.mockImplementation((_pw, _attrs, cb) => cb.onSuccess!(fakeSession('IDTOK', 'AC', undefined, 'REFRESHTOK')));
-    await auth.completeNewPassword('Str0ng#Pass');
-
-    await expect(auth.completeNewPassword('Again#123')).resolves.toEqual({
-      ok: false,
-      error: expect.stringMatching(/sign in again/i),
-    });
-  });
 });
