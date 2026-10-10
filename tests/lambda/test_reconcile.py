@@ -780,7 +780,6 @@ def test_both_consecutive_day_purchases_settle_without_losing_a_row(lam, repo):
     repo.insert_or_reconcile([_skew_posted(lam, txn_id="POST22", authorized_date="2026-07-22")])
 
     store = repo._table.store
-    acc = _acc(_skew_posted(lam))
     assert {k[1] for k in store} == {"TXN#POST21", "TXN#POST22"}
     assert len(store) == 2                          # nothing lost, nothing duplicated
 
@@ -1466,7 +1465,6 @@ def test_settlement_re_reads_twin_with_consistent_read(lam, repo):
     # close the race window between pool scan and carry.
     pending = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
                             authorized_date="2026-06-29", pending=True, category="coffee")
-    acc = _acc(pending)
 
     table = repo._table
     consistent_reads = []
