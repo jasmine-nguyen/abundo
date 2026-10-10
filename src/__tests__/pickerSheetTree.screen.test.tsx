@@ -38,11 +38,10 @@ function openPicker(categories: unknown[], fns: Record<string, unknown>) {
 }
 
 const COFFEE = { id: 'coffee', name: 'Coffee', icon: 'coffee', bucket: 'Lifestyle', parent: null };
+const cat = (id: string, name: string, parent: string | null = null) =>
+  ({ id, name, icon: 'tag', bucket: 'Lifestyle', parent });
 
 describe('picker category tree', () => {
-  const cat = (id: string, name: string, parent: string | null = null) =>
-    ({ id, name, icon: 'tag', bucket: 'Lifestyle', parent });
-
   const fns = { chooseCategory: jest.fn(), setSheet: jest.fn(), readSheetDraft: () => undefined, writeSheetDraft: () => {} };
 
   // Food [Dining, Groceries] + a top-level Transport. Siblings/roots supplied out of A–Z order.
@@ -120,11 +119,8 @@ describe('picker category tree', () => {
 });
 
 // ===== WHIT-273 adversarial gaps (folded from pickerSheetTreeGaps):
-// chevron a11y. Own block-scoped cat. =====
+// chevron a11y. =====
 describe('picker tree — gaps (WHIT-273)', () => {
-  const cat = (id: string, name: string, parent: string | null = null) =>
-    ({ id, name, icon: 'tag', bucket: 'Lifestyle', parent });
-
   const fns = { chooseCategory: jest.fn(), setSheet: jest.fn(), readSheetDraft: () => undefined, writeSheetDraft: () => {} };
 
   beforeEach(() => { fns.chooseCategory.mockClear(); });
@@ -225,8 +221,6 @@ describe('picker create&file throw re-enable (WHIT-249)', () => {
 // ===== WHIT-670 QA (folded from whit670PickerConfirmQa): the confirm pop-up resolves the charge
 // from the real caches. =====
 describe('confirm pop-up', () => {
-  const cat = (id: string, name: string, parent: string | null = null) =>
-    ({ id, name, icon: 'tag', bucket: 'Lifestyle', parent });
   const fns = { applyCategory: jest.fn(), setSheet: jest.fn(), readSheetDraft: () => undefined, writeSheetDraft: () => {} };
 
   // [A10] (P1)

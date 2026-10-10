@@ -51,20 +51,6 @@ beforeEach(() => {
   server.seed(COFFEE_ROWS, [ROW]);
 });
 
-// The total-card label must reflect WHICH cycle was drilled (matching the Insights hero's
-// "THIS / LAST PAY CYCLE"), not hard-code "this cycle".
-it('labels the total "this cycle" for cycle 0 and "last cycle" for cycle 1', async () => {
-  const { unmount } = await renderWithQueries(<CategoryDetail />);
-  expect(screen.getByText('Spent this cycle')).toBeTruthy();
-  expect(screen.queryByText('Spent last cycle')).toBeNull();
-  unmount();
-
-  setParams({ id: 'coffee', cycle: '1' });
-  await renderWithQueries(<CategoryDetail />);
-  expect(screen.getByText('Spent last cycle')).toBeTruthy();
-  expect(screen.queryByText('Spent this cycle')).toBeNull();
-});
-
 // WHIT-366 — an Income-bucket category reached from the Earned drill reads "Earned", not "Spent".
 it('labels the total "Earned" for an Income-bucket category', async () => {
   server.seed('/categories/salary/transactions', [SALARY_ROW]);
@@ -102,9 +88,12 @@ it('keeps the detail visible during a background refetch once the taxonomy is lo
 });
 
 // WHIT-309 — ?cycle= is clamped to 0..1 (floored; non-numeric → the current cycle) before the
-// fetch, so a stale/hand-edited deep link can't request an older cycle or send NaN.
+// fetch, so a stale/hand-edited deep link can't request an older cycle or send NaN. The total-card
+// label reflects WHICH cycle was drilled (matching the Insights hero's "THIS / LAST PAY CYCLE").
 it.each([
-  ['2', `${COFFEE_ROWS}?cycle=1`, 'Spent last cycle'],
+  ['0', COFFEE_ROWS, 'Spent this cycle'],
+  ['1', `${COFFEE_ROWS}?cycle=1`, 'Spent last cycle'],
+  ['2',`${COFFEE_ROWS}?cycle=1`, 'Spent last cycle'],
   ['1e9', `${COFFEE_ROWS}?cycle=1`, 'Spent last cycle'],
   ['-1', COFFEE_ROWS, 'Spent this cycle'],
   ['0.5', COFFEE_ROWS, 'Spent this cycle'],

@@ -1,11 +1,10 @@
-// WHIT-501 — the Transactions screen + nav-bar tab dot now read the WHOLE-history server tally
-// (useUncategorizedCount) instead of only the loaded/recent rows. These lock the wiring:
+// WHIT-501 — the Transactions screen reads the WHOLE-history server tally (useUncategorizedCount)
+// instead of only the loaded rows. These lock the wiring:
 //   - the tab badge shows the SERVER number when it has resolved (even when it differs from the
 //     rows on screen), and falls back to the LOCAL count only while the server value is undefined
 //     (loading / errored) — never to 0, which would flash a false empty state;
-//   - "All caught up" shows ONLY on a RESOLVED server 0, never while the server value is undefined;
-//   - the nav-bar dot hides on a resolved server 0 even if the recent window still has an unfiled
-//     charge, and falls back to the recent-window count while the server value is undefined.
+//   - "All caught up" shows ONLY on a RESOLVED server 0, never while the server value is undefined.
+// The nav-bar dot's version of these lives in tabBarDot.screen.test.tsx.
 // Fail-on-revert: rewire any of these back to the local count and the matching test fails.
 // The screens and their data code are real, over the pretend server (WHIT-686): "server value
 // undefined" is the count request held open.
@@ -24,10 +23,8 @@ jest.mock('expo-router', () => require('./support/routerMock').routerMockModule(
 jest.mock('../motion/NavBarsContext', () => ({ useNavBars: () => ({ visibility: { interpolate: () => 0 } }) }));
 
 import Transactions from '../../app/(tabs)/transactions';
-import { TabBar } from '../../app/(tabs)/_layout';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
-import { tabBarProps } from './support/tabBar';
 import { useTestQueryClient, renderWithQueries, WithQueries, settle, loaded, refreshInAct } from './support/renderWithQueries';
 import { GROCERIES_TOP } from './support/categories';
 import { queryClient } from '../queryClient';
@@ -38,14 +35,17 @@ useTestQueryClient();
 
 const FEED = '/transactions/feed';
 const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
-const RECENT = '/transactions';
 const COUNT = '/transactions/uncategorized/count';
 
 // No categories are seeded, so every row resolves to Uncategorized.
 const seedFeed = (path: string, transactions: unknown[], nextCursor: string | null = null) =>
   server.seed(path, { transactions, nextCursor });
 
-const barProps = tabBarProps(['transactions']);
+async function renderUncategorizedTab() {
+  await renderWithQueries(<Transactions />);
+  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  await settle();
+}
 
 beforeEach(() => {
   resetAuth();
@@ -115,28 +115,6 @@ describe('Transactions screen "All caught up"', () => {
   });
 });
 
-describe('nav-bar tab dot', () => {
-  // The recent window still shows an unfiled charge, but the server tally is a resolved 0 →
-  // the whole history is filed → hide the dot. Fail-on-revert: drive the dot off the local recent
-  // count → it shows the dot here.
-  it('hides the dot on a resolved server 0 even when the recent window has an unfiled charge', async () => {
-    server.seed(COUNT, { count: 0 });
-    server.seed(RECENT, [txn({ category: null, counts_to_budget: true })]);
-    await renderWithQueries(<TabBar {...barProps} />);
-    expect(screen.queryByTestId('tab-uncat-dot')).toBeNull();
-  });
-
-  // Server value undefined (loading) → fall back to the recent-window count, which has one → dot shows.
-  it('falls back to the recent-window count while the server value is undefined', async () => {
-    const held = server.hold(COUNT);
-    server.seed(RECENT, [txn({ category: null, counts_to_budget: true })]);
-    render(<WithQueries><TabBar {...barProps} /></WithQueries>);
-    expect(await screen.findByTestId('tab-uncat-dot')).toBeTruthy();
-    held.release();
-    await settle();
-  });
-});
-
 // WHIT-552 / WHIT-686 — the filing buttons ("Apply my rules", "File by shop") and the shops request
 // read the same `serverCount ?? local` count the badge does, and follow it live.
 describe('filing buttons and the shops gate', () => {
@@ -150,12 +128,6 @@ describe('filing buttons and the shops gate', () => {
   };
   const countFailed = () => waitFor(() => expect(queryClient.getQueryState(uncategorizedCountKey)?.status).toBe('error'));
 
-  async function renderUncategorizedTab() {
-    await renderWithQueries(<Transactions />);
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
-    await settle();
-  }
-
   async function setCount(count: number) {
     server.seed(COUNT, { count });
     await refreshInAct(() => queryClient.invalidateQueries({ queryKey: uncategorizedCountKey }));
@@ -167,20 +139,16 @@ describe('filing buttons and the shops gate', () => {
     server.seed(MERCHANTS, merchants);
   });
 
-  // [G1] caught-up user: resolved server 0. The walk must NOT run, and the button hides.
-  it('[G1] resolved server 0 → no shops request AND button hidden', async () => {
-    server.seed(COUNT, { count: 0 });
+  // [G1] a caught-up user (resolved server 0) skips the whole-history walk and the button hides;
+  // [G2] a backlog (count > 0) runs the walk and shows the button.
+  it.each([
+    [0, 0, false],
+    [5, 1, true],
+  ])('a resolved server count of %i sends %i shops request(s); button shown: %s', async (count, requests, shown) => {
+    server.seed(COUNT, { count });
     await renderUncategorizedTab();
-    expect(server.sentUnder('GET', MERCHANTS)).toHaveLength(0);         // the walk is gated OFF for a caught-up user
-    expect(screen.queryByTestId(FILE_BY_SHOP)).toBeNull(); // and the button agrees
-  });
-
-  // [G2] backlog: resolved server count > 0 → walk runs, button shows.
-  it('[G2] resolved server count > 0 → shops requested AND button shown', async () => {
-    server.seed(COUNT, { count: 5 });
-    await renderUncategorizedTab();
-    expect(server.sentUnder('GET', MERCHANTS)).toHaveLength(1);
-    expect(screen.getByTestId(FILE_BY_SHOP)).toBeTruthy();
+    expect(server.sentUnder('GET', MERCHANTS)).toHaveLength(requests);
+    expect(screen.queryByTestId(FILE_BY_SHOP) !== null).toBe(shown);
   });
 
   // [A3] The shops gate and the buttons read the same fallback. Fail-on-revert: gate the shops
@@ -236,27 +204,15 @@ describe('filing buttons and the shops gate', () => {
 });
 
 // WHIT-501 — the "two-scan skew": the badge says there ARE unfiled charges but the loaded pages
-// show none, so the tab explains itself rather than going blank.
-describe('Uncategorized tab more-state', () => {
-  // [C4a] badge>0, empty first page but a live cursor -> "More to load" (deep rows a Load More away).
-  it('shows "More to load" when the loaded page is empty but the cursor says more history', async () => {
-    server.seed(COUNT, { count: 639 });
-    server.seed(UNCATEGORIZED_FEED, { transactions: [], nextCursor: 'deep-cursor' });
-    await renderWithQueries(<Transactions />);
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
-
-    expect(await screen.findByText('More to load')).toBeTruthy();
-    expect(screen.queryByText('All caught up')).toBeNull();            // NOT the caught-up claim
-  });
-
-  // [C4b] badge>0, empty page AND no more pages (stale/skewed badge) -> "Nothing to show yet".
-  it('shows "Nothing to show yet" when the badge is ahead but there are no more pages', async () => {
-    server.seed(COUNT, { count: 3 });
-    server.seed(UNCATEGORIZED_FEED, { transactions: [], nextCursor: null }); // history exhausted, list empty
-    await renderWithQueries(<Transactions />);
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
-
-    expect(await screen.findByText('Nothing to show yet')).toBeTruthy();
-    expect(screen.queryByText('More to load')).toBeNull();
-  });
+// show none, so the tab explains itself rather than going blank. A live cursor → "More to load"
+// (deep rows a Load More away); no more pages (stale/skewed badge) → "Nothing to show yet".
+it.each([
+  [639, 'deep-cursor', 'More to load', 'All caught up'],
+  [3, null, 'Nothing to show yet', 'More to load'],
+])('an empty page with a badge of %i and cursor %j shows "%s", not "%s"', async (count, cursor, shown, absent) => {
+  server.seed(COUNT, { count });
+  seedFeed(UNCATEGORIZED_FEED, [], cursor);
+  await renderUncategorizedTab();
+  expect(await screen.findByText(shown)).toBeTruthy();
+  expect(screen.queryByText(absent)).toBeNull();
 });
