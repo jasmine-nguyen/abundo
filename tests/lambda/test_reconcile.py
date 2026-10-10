@@ -1463,8 +1463,8 @@ def test_posted_resync_preserves_category_via_partial_update(lam, repo):
 def test_settlement_re_reads_twin_with_consistent_read(lam, repo):
     # The first-time settlement path re-reads the twin with ConsistentRead=True to
     # close the race window between pool scan and carry.
-    pending = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
-                            authorized_date="2026-06-29", pending=True, category="coffee")
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
 
     table = repo._table
     consistent_reads = []
