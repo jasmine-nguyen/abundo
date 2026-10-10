@@ -26,7 +26,7 @@ export function TransactionRow({ t, category, selectable = false, selected = fal
   // WHIT-845: from 1.5× text the amount stacks under the merchant + Pending instead of squeezing beside them.
   const large = useLargeText();
   const amount = (
-    <Text style={[styles.amount, large ? styles.amountStacked : styles.amountSide, { color: v.amountColor }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{v.amountLabel}</Text>
+    <Text style={[styles.amount, large && styles.amountStacked, { color: v.amountColor }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{v.amountLabel}</Text>
   );
   const openDetail = () => router.push(`/transaction/${t.transaction_id}`);
   const onPress = () => {
@@ -107,9 +107,8 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 },
   metaRowWrap: { flexWrap: 'wrap' },
   category: { fontFamily: FONT.body, fontSize: 12.5, flexShrink: 1 },
-  pending: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(255,255,255,.06)', paddingVertical: 2, paddingLeft: 5, paddingRight: 7, borderRadius: 6 },
-  pendingText: { fontFamily: FONT.body, fontSize: 11, color: '#8b8b95' },
+  pending: { flexShrink: 1, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(255,255,255,.06)', paddingVertical: 2, paddingLeft: 5, paddingRight: 7, borderRadius: 6 },
+  pendingText: { fontFamily: FONT.body, fontSize: 11, color: '#8b8b95', flexShrink: 1 },
   amount: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', letterSpacing: -0.3 },
-  amountSide: { flexShrink: 0 },
   amountStacked: { marginTop: 6 },
 });

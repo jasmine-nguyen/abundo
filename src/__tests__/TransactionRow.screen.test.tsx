@@ -143,13 +143,14 @@ describe('large text never lets the amount overlap the Pending tag (WHIT-845)', 
     }
   });
 
-  // [A1] below 1.5× the amount stays beside the column, and only the category may shrink.
-  it('normal text: the category shrinks first; Pending and the amount beside it never shrink', () => {
+  // [A1] below 1.5× the amount stays beside the column; the category and a long "Pending · 12 days"
+  // tag shrink inside the column instead of spilling under the amount.
+  it('normal text: the category and the Pending tag shrink to fit beside the amount', () => {
     const { merchant, category, pending, amount } = pendingRow();
     expect(sharedHost(merchant, amount)).not.toBe(hostParent(merchant));
     expect(styleOf(category).flexShrink).toBe(1);
-    expect(styleOf(hostParent(pending)).flexShrink).toBe(0);
-    expect(styleOf(amount).flexShrink).toBe(0);
+    expect(styleOf(hostParent(pending)).flexShrink).toBe(1);
+    expect(styleOf(pending).flexShrink).toBe(1);
   });
 
   it('large text: the amount stacks under Pending, inside the merchant column', () => {
