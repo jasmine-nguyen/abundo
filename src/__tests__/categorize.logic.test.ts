@@ -5,8 +5,10 @@
 import { describe, it, expect } from '@jest/globals';
 import { isUncategorized, countUncategorized, transactionView, transactionGroups, transactionMatchesSearch, categoryTransactions } from '../context';
 import { UNCATEGORIZED_KEY } from '../model';
-import { C } from '../theme';
+import { C, MINUS } from '../theme';
+import type { Transaction } from '../types';
 import { makeState, cat, txn } from './factory';
+import { GROCERIES, SALARY, SAVINGS } from './support/categories';
 
 const state = () => makeState({ categories: [cat()] });
 
@@ -126,6 +128,59 @@ describe('transactionGroups', () => {
     });
     const groups = transactionGroups(s, 'all');
     expect(groups).toHaveLength(2); // two distinct dates
+  });
+
+  // WHIT-847: each date heading's total counts what Insights "Spent" counts — pending and
+  // posted charges in Living/Lifestyle + uncategorized, refunds netting; income, savings,
+  // budget-excluded charges and transfers (counts_to_budget: false) are left out.
+  const day = (over: Partial<Transaction>) => txn({ date: '2026-05-01', ...over });
+  it.each<[string, Partial<Transaction>[], string | null]>([
+    ['two charges, with cents', [{ amount: -20 }, { amount: -12.5 }], `${MINUS}$32.50`],
+    ['a pending charge counts', [{ amount: -10, status: 'pending' }, { amount: -5 }], `${MINUS}$15`],
+    ['a budget-excluded charge is left out', [{ amount: -100, budget_excluded: true }, { amount: -10 }], `${MINUS}$10`],
+    ['a transfer (counts_to_budget false) is left out', [{ amount: -100, counts_to_budget: false }, { amount: -10 }], `${MINUS}$10`],
+    ["the 'income' row is left out", [{ amount: 1000, category: 'income' }, { amount: -10 }], `${MINUS}$10`],
+    ['an Income-bucket category row is left out', [{ amount: 500, category: SALARY.id }, { amount: -10 }], `${MINUS}$10`],
+    ['a Savings-bucket category row is left out', [{ amount: -50, category: SAVINGS.id }, { amount: -10 }], `${MINUS}$10`],
+    ['a refund nets against a charge', [{ amount: 5 }, { amount: -20 }], `${MINUS}$15`],
+    ['a refund-only day reads as money back', [{ amount: 7.25 }], '+$7.25'],
+    ['an uncategorized charge counts', [{ amount: -9, category: null }], `${MINUS}$9`],
+    ['an income-only day has no total', [{ amount: 1000, category: 'income' }], null],
+    ['a day that nets to zero has no total', [{ amount: 10 }, { amount: -10 }], null],
+    // [A2] float dust below a cent is zero, not "−$0"
+    ['a day that nets to under a cent has no total', [{ amount: -0.1 }, { amount: -0.2 }, { amount: 0.3 }], null],
+  ])('dayTotal: %s', (_name, rows, expected) => {
+    const s = makeState({
+      categories: [cat(), GROCERIES, SALARY, SAVINGS],
+      transactions: rows.map((over, i) => day({ transaction_id: String(i), ...over })),
+    });
+    const groups = transactionGroups(s, 'all');
+    expect(groups).toHaveLength(1);
+    expect(groups[0].dayTotal ?? null).toBe(expected);
+  });
+
+  // [A3] each heading totals only its own day, not the running list
+  it('dayTotal is per day: each date heading sums only its own rows', () => {
+    const s = makeState({
+      categories: [cat(), GROCERIES],
+      transactions: [
+        day({ transaction_id: '1', amount: -10, date: '2026-05-02' }),
+        day({ transaction_id: '2', amount: -3, date: '2026-05-01' }),
+        day({ transaction_id: '3', amount: 1000, category: 'income', date: '2026-04-30' }),
+      ],
+    });
+    expect(transactionGroups(s, 'all').map((g) => g.dayTotal)).toEqual([`${MINUS}$10`, `${MINUS}$3`, null]);
+  });
+
+  it('dayTotal on the uncategorized tab totals only the uncategorized rows', () => {
+    const s = makeState({
+      categories: [cat(), GROCERIES],
+      transactions: [
+        day({ transaction_id: '1', amount: -10, category: GROCERIES.id }),
+        day({ transaction_id: '2', amount: -9, category: null }),
+      ],
+    });
+    expect(transactionGroups(s, 'uncategorized')[0].dayTotal).toBe(`${MINUS}$9`);
   });
 });
 

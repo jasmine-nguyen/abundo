@@ -235,21 +235,24 @@ export default function Transactions() {
           error={error}
         />
 
-        {!showSpinner && !showError && groups.map((g) => (
-          <View key={g.label} style={{ marginTop: 18 }}>
-            <Text style={styles.groupLabel}>{g.label}</Text>
-            {g.items.map((t) => (
-              <TransactionRow
-                key={t.transaction_id}
-                t={t}
-                category={category}
-                selectable={selectionMode}
-                selected={selected.has(t.transaction_id)}
-                onToggleSelect={() => toggleSelect(t.transaction_id)}
-              />
-            ))}
-          </View>
-        ))}
+        {!showSpinner && !showError && groups.map((g) => {
+          const heading = g.dayTotal ? `${g.label} · ${g.dayTotal}` : g.label;
+          return (
+            <View key={g.label} style={{ marginTop: 18 }}>
+              <Text style={styles.groupLabel}>{heading}</Text>
+              {g.items.map((t) => (
+                <TransactionRow
+                  key={t.transaction_id}
+                  t={t}
+                  category={category}
+                  selectable={selectionMode}
+                  selected={selected.has(t.transaction_id)}
+                  onToggleSelect={() => toggleSelect(t.transaction_id)}
+                />
+              ))}
+            </View>
+          );
+        })}
 
         {!showSpinner && !showError && searchPending && (
           <View testID="transactions-searching" style={styles.searchStatus}>
