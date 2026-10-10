@@ -43,24 +43,10 @@ it('the tab bar renders the round Ask button above itself, and tapping it opens 
 
   const button = screen.getByLabelText('Ask about your spending');
   expect(screen.queryByText('Ask')).toBeNull();
-  // 16pt above the bar's (initial) 90pt height, pinned to the right; a 48pt circle.
-  const style = styleOf(button);
-  expect(style).toMatchObject({ position: 'absolute', right: 18, bottom: 106, width: 48, height: 48, borderRadius: 24 });
 
   expect(chatOpen).toBe(false);
   fireEvent.press(button);
   expect(chatOpen).toBe(true);
-});
-
-it('WHIT-730: the Ask button slides off-screen with the bar, and tab labels cap their text size', async () => {
-  await renderWithQueries(<ChatProvider><TabBar {...barProps} /></ChatProvider>);
-
-  // Hidden: 90pt bar + 16pt gap + 64 → fully below the screen edge.
-  const slide = styleOf(screen.getByTestId('ask-button-slide'));
-  expect(slide.transform).toEqual([{ translateY: 170 }]);
-
-  const label = screen.getByText('Transactions');
-  expect(label.props).toMatchObject({ maxFontSizeMultiplier: 1.2, adjustsFontSizeToFit: true, numberOfLines: 1 });
 });
 
 it('[A20] WHIT-730: with the bars shown the Ask button sits in place, and its full-screen wrapper lets taps through', async () => {

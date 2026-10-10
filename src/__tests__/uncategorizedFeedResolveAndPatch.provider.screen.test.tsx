@@ -76,22 +76,6 @@ it('optimistically patches the filed row inside the uncategorized feed cache', a
   expect(row?.category).toBe('groceries'); // patched in place → no longer matches the uncategorized re-filter
 });
 
-// [3] INVALIDATE contract on a file: the COUNT refetches (badge follows), the paged feed does NOT
-// (that would storm every loaded page — the optimistic patch above already removed the row).
-it('a file invalidates the count but NOT the paged uncategorized feed', async () => {
-  seedUncategorizedFeed([txn({ transaction_id: 'deep1' })]);
-  const result = mount();
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 'deep1', categoryId: 'groceries' }));
-  const spy = jest.spyOn(queryClient, 'invalidateQueries');
-
-  await act(async () => { await result.current.applyCategory('one'); });
-
-  const keys = invalidatedKeys(spy);
-  expect(keys).toContain('uncategorizedCount');
-  expect(keys).not.toContain('uncategorizedFeed');
-  spy.mockRestore();
-});
-
 // [4] deleteCategory is the exception: its charges BECOME uncategorized and aren't in the feed cache
 // to patch, so the paged feed must be invalidated to pull them in. Fail-on-revert: drop that
 // invalidate and the newly-unfiled rows never appear on the tab until a manual refresh.

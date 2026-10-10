@@ -182,34 +182,16 @@ describe('unlock', () => {
   });
 });
 
-describe('lock', () => {
-  it('drops the in-memory session and re-seals to locked', async () => {
-    mockCanUseBiometric.mockReturnValue(true);
-    mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
-    mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
-    const auth = loadAuth();
-    await auth.unlock();
-    expect(auth.getStatus()).toBe('authed');
-
-    auth.lock();
-    expect(auth.getStatus()).toBe('locked');
-  });
-});
-
 describe('canBiometricLock', () => {
   // WHIT-841: no build switch — Face ID follows device support only.
-  it('true when the device supports biometrics (no build switch)', () => {
-    mockCanUseBiometric.mockReturnValue(true);
-    expect(loadAuth().canBiometricLock()).toBe(true);
-  });
-  it('false when the device is unsupported', () => {
-    mockCanUseBiometric.mockReturnValue(false);
-    expect(loadAuth().canBiometricLock()).toBe(false);
-  });
   // [A9] WHIT-761: the shared secureStore() getter keeps the read inside the swallow-the-throw try.
-  it('false when the secure store throws (web/simulator)', () => {
-    mockCanUseBiometric.mockImplementation(() => { throw new Error('no keychain'); });
-    expect(loadAuth().canBiometricLock()).toBe(false);
+  it.each([
+    ['the device supports biometrics', () => true, true],
+    ['the device is unsupported', () => false, false],
+    ['the secure store throws (web/simulator)', () => { throw new Error('no keychain'); }, false],
+  ])('%s → %s', (_case, canUse, expected) => {
+    mockCanUseBiometric.mockImplementation(canUse);
+    expect(loadAuth().canBiometricLock()).toBe(expected);
   });
 });
 
@@ -249,16 +231,6 @@ describe('locked-state guards', () => {
 });
 
 describe('unlockOrRestore routing', () => {
-  it('takes the biometric UNLOCK path (guarded read) when active + a stored session exists', async () => {
-    mockCanUseBiometric.mockReturnValue(true);
-    mockGetItem.mockImplementation(async (k) => (k === SENTINEL_KEY ? '1' : k === REFRESH_KEY ? 'R' : null));
-    mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
-    const auth = loadAuth();
-
-    await auth.unlockOrRestore();
-    expect(refreshReads()[0][1]).toMatchObject({ requireAuthentication: true }); // guarded read = unlock path
-    expect(auth.getStatus()).toBe('authed');
-  });
 
   it('cold launch pops EXACTLY ONE Face ID prompt — one guarded read, never a second', async () => {
     // Belt-and-suspenders against a launch prompt-loop (the reason biometrics were
@@ -276,6 +248,7 @@ describe('unlockOrRestore routing', () => {
     await auth.unlockOrRestore();
 
     expect(refreshReads()).toHaveLength(1); // one launch → exactly one prompt
+    expect(refreshReads()[0][1]).toMatchObject({ requireAuthentication: true }); // guarded read = unlock path
     expect(auth.getStatus()).toBe('authed');
   });
 

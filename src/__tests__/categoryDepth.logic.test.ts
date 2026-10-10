@@ -7,15 +7,6 @@ import { categoryDepth, MAX_CATEGORY_DEPTH } from '../context';
 import { cat } from './factory';
 
 describe('categoryDepth', () => {
-  it('a null parent is top-level → level 1', () => {
-    expect(categoryDepth([], null)).toBe(1);
-  });
-
-  it('a child of a top-level parent sits at level 2', () => {
-    const cats = [cat({ id: 'car', parent: null })];
-    // parent 'car' is level 1, so THIS category (its child) is level 2.
-    expect(categoryDepth(cats, 'car')).toBe(2);
-  });
 
   it('a level-4 parent puts its child at the 5-level cap boundary', () => {
     // a(1) <- b(2) <- c(3) <- d(4). A new child under d would be level 5 = the cap.

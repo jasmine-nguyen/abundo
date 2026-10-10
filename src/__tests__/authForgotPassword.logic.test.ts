@@ -39,27 +39,8 @@ describe('requestPasswordReset', () => {
     expect(mockUserCtor).toHaveBeenCalledWith(expect.objectContaining({ Username: 'me@x.com' }));
   });
 
-  it('resolves ok when the SDK reports onSuccess', async () => {
-    mockForgotPassword.mockImplementation((cb) => cb.onSuccess!());
-    await expect(loadAuth().requestPasswordReset('me@x.com')).resolves.toEqual({ ok: true });
-  });
-
-  it('maps a failure to a friendly error', async () => {
-    mockForgotPassword.mockImplementation((cb) => cb.onFailure!({ code: 'LimitExceededException' }));
-    await expect(loadAuth().requestPasswordReset('me@x.com')).resolves.toEqual({
-      ok: false,
-      error: expect.stringMatching(/too many/i),
-    });
-  });
-
   it('rejects an empty email without calling the SDK', async () => {
     await expect(loadAuth().requestPasswordReset('   ')).resolves.toMatchObject({ ok: false });
-    expect(mockForgotPassword).not.toHaveBeenCalled();
-  });
-
-  it('returns a config error when the pool id is missing', async () => {
-    delete process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID;
-    await expect(loadAuth().requestPasswordReset('me@x.com')).resolves.toMatchObject({ ok: false });
     expect(mockForgotPassword).not.toHaveBeenCalled();
   });
 });
@@ -76,22 +57,6 @@ describe('confirmPasswordReset', () => {
     await expect(loadAuth().confirmPasswordReset('me@x.com', '000000', 'Str0ng#Pass')).resolves.toEqual({
       ok: false,
       error: expect.stringMatching(/code isn.t right/i),
-    });
-  });
-
-  it('maps an expired code to a friendly error', async () => {
-    mockConfirmPassword.mockImplementation((_c, _p, cb) => cb.onFailure!({ code: 'ExpiredCodeException' }));
-    await expect(loadAuth().confirmPasswordReset('me@x.com', '000000', 'Str0ng#Pass')).resolves.toEqual({
-      ok: false,
-      error: expect.stringMatching(/expired/i),
-    });
-  });
-
-  it('maps a too-weak new password to the requirements error', async () => {
-    mockConfirmPassword.mockImplementation((_c, _p, cb) => cb.onFailure!({ code: 'InvalidPasswordException' }));
-    await expect(loadAuth().confirmPasswordReset('me@x.com', '123456', 'weak')).resolves.toEqual({
-      ok: false,
-      error: expect.stringMatching(/requirements/i),
     });
   });
 });

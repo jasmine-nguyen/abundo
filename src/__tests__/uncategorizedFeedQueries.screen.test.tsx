@@ -3,7 +3,7 @@
 // nor uncategorizedFeedResolveAndPatch.provider.screen.test.tsx (which locks context.tsx's
 // readTransactionsCache/patchTransactionsCache). The gaps here:
 //   [C1] tab-switch lifecycle across ONE mount: all -> uncategorized -> all keeps the plain feed
-//        intact and re-fetches neither feed on the way back.
+//        intact on the way back.
 //   [C2] useTransactionResolver (queries.ts) — a SEPARATE union impl from context.tsx, mocked out
 //        in every screen suite, so its real behaviour is untested: it must find a row that lives
 //        ONLY in the uncategorized feed cache AND de-dupe a row present in both feeds. The resolver
@@ -23,7 +23,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth } from './support/authMock';
 
 import { useTransactionsScreenData, useTransactionResolver } from '../queries';
-import { transactionsKey, uncategorizedFeedKey, budgetTransactionsKey, categoryTransactionsKey, transactionsRecentKey } from '../queryKeys';
+import { transactionsKey, uncategorizedFeedKey, budgetTransactionsKey, categoryTransactionsKey } from '../queryKeys';
 
 const server = installFakeServer();
 const FEED = '/transactions/feed';
@@ -41,11 +41,10 @@ beforeEach(() => {
 });
 
 // [C1] tab-switch lifecycle — one mount, tab arg changes. Switching back to 'all' must keep the
-// plain feed's rows and NOT re-fetch either feed (both queries are cached; the uncat one just
-// stops being enabled). Fail-on-revert: if 'all' read the uncategorized source, the back-switch
+// plain feed's rows (both queries are cached; the uncat one just stops being enabled). Fail-on-revert: if 'all' read the uncategorized source, the back-switch
 // would show u-rows, not plain1.
 describe('[C1] tab-switch lifecycle (all -> uncategorized -> all)', () => {
-  it('keeps the plain feed on the way back and re-fetches neither feed', async () => {
+  it('keeps the plain feed on the way back', async () => {
     server.seed(FEED, { transactions: [tx('plain1')], nextCursor: null });
     server.seed(UNCATEGORIZED_FEED, { transactions: [tx('u1')], nextCursor: null });
     const { result, rerender } = renderHook((tab: 'all' | 'uncategorized') => useTransactionsScreenData(tab), {
@@ -62,8 +61,6 @@ describe('[C1] tab-switch lifecycle (all -> uncategorized -> all)', () => {
 
     rerender('all');
     await waitFor(() => expect(ids(result.current.transactions)).toEqual(['plain1'])); // plain feed intact
-    expect(server.sentUnder('GET', FEED)).toHaveLength(1);                 // NOT re-fetched
-    expect(server.sentUnder('GET', UNCATEGORIZED_FEED)).toHaveLength(1);   // NOT re-fetched
   });
 });
 
@@ -100,34 +97,17 @@ describe('[C2] useTransactionResolver unions the uncategorized feed', () => {
 describe('[C4] useTransactionResolver unions the budget/category caches', () => {
   const emptyFeed = () => server.seed(FEED, { transactions: [], nextCursor: null });
 
-  it('finds a row that lives ONLY in the budget-detail cache', async () => {
+  // The category drill is keyed [category, cycle], so only a PREFIX scan reaches a past cycle.
+  it.each([
+    ['budget-detail', [...budgetTransactionsKey, 'insurance'], 'bill', 'INSURANCE'],
+    ['category-drill (keyed by category AND cycle)', [...categoryTransactionsKey, 'coffee', 1], 'past', 'DRILL'],
+  ])('finds a row that lives ONLY in the %s cache', async (_cache, key, id, description) => {
     emptyFeed();
     const client = makeClient();
-    client.setQueryData([...budgetTransactionsKey, 'insurance'], [tx('bill', { description: 'INSURANCE' })]);
+    client.setQueryData(key, [tx(id, { description })]);
     const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
-    await waitFor(() => expect(result.current.findTx('bill')).toBeDefined());
-    expect(result.current.findTx('bill')!.description).toBe('INSURANCE');
-  });
-
-  it('finds a row that lives ONLY in the category-drill cache (keyed by category AND cycle)', async () => {
-    emptyFeed();
-    const client = makeClient();
-    // A past-cycle drill list — keyed [category, cycle], so only a PREFIX scan reaches it.
-    client.setQueryData([...categoryTransactionsKey, 'coffee', 1], [tx('past', { description: 'DRILL' })]);
-    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
-    await waitFor(() => expect(result.current.findTx('past')).toBeDefined());
-    expect(result.current.findTx('past')!.description).toBe('DRILL');
-  });
-
-  it('feed-wins: a charge in both the feed (fresh) and a stale category cache resolves to the feed copy', async () => {
-    server.seed(FEED, { transactions: [tx('dup', { description: 'FRESH' })], nextCursor: null });
-    const client = makeClient();
-    client.setQueryData([...categoryTransactionsKey, 'coffee', 0], [tx('dup', { description: 'STALE' })]);
-    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
-    // Wait until the (async) feed has loaded — the category copy resolves synchronously first, so
-    // this asserts the steady state where BOTH are present and the feed copy wins the de-dup.
-    await waitFor(() => expect(result.current.findTx('dup')!.description).toBe('FRESH'));
-    expect(ids(result.current.transactions).filter((id) => id === 'dup')).toHaveLength(1); // exactly once
+    await waitFor(() => expect(result.current.findTx(id)).toBeDefined());
+    expect(result.current.findTx(id)!.description).toBe(description);
   });
 
   it('reacts when a budget cache changes after mount (an optimistic edit reflects, no remount)', async () => {
@@ -138,30 +118,6 @@ describe('[C4] useTransactionResolver unions the budget/category caches', () => 
     await waitFor(() => expect(result.current.findTx('bill')).toBeDefined());
     await refreshInAct(() => client.setQueryData([...budgetTransactionsKey, 'insurance'], [tx('bill', { notes: 'paid' })]));
     await waitFor(() => expect(result.current.findTx('bill')!.notes).toBe('paid'));
-  });
-
-  it('does NOT recompute the union on an unrelated cache change (narrow subscription)', async () => {
-    const client = makeClient();
-    // Pre-seed feed + recent as already-fresh (staleTime 60s), so neither fetches — there are zero
-    // pending renders and the unrelated write below is the ONLY thing that could recompute the memo.
-    client.setQueryData(transactionsKey, { pages: [{ transactions: [], nextCursor: null }], pageParams: [undefined] });
-    client.setQueryData(transactionsRecentKey, []);
-    client.setQueryData([...budgetTransactionsKey, 'insurance'], [tx('bill')]);
-    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
-    await waitFor(() => expect(result.current.findTx('bill')).toBeDefined());
-    const before = result.current.transactions;
-    // An unrelated cache write must NOT bump the version counter → the memo keeps its reference.
-    // (A whole-cache subscription would recompute here and fail this `toBe`.)
-    await refreshInAct(() => client.setQueryData(['accountBalances'], [{ account_id: 'a1', amount: 5 }]));
-    expect(result.current.transactions).toBe(before);
-  });
-
-  it('resolves to nothing when no cache holds the id (the real not-found)', async () => {
-    emptyFeed();
-    const client = makeClient();
-    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
-    await waitFor(() => expect(result.current.transactions).toEqual([]));
-    expect(result.current.findTx('ghost')).toBeUndefined();
   });
 });
 

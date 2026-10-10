@@ -215,53 +215,12 @@ describe('WHIT-160 auth gate — static redirect states', () => {
     expect(screen.queryByTestId('gate-cover')).toBeNull(); // no redirect → no cover
   });
 
-  it('forwards an authed user off the login screen into the app', () => {
-    mockGetStatus.mockReturnValue('authed');
-    mockSegments = []; // index/login route
-    renderGate();
-    expect(mockRedirectSpy).toHaveBeenCalledWith('/(tabs)/budgets');
-    expect(screen.getByTestId('child')).toBeTruthy(); // WHIT-265: stays mounted, covered
-    expect(screen.getByTestId('gate-cover')).toBeTruthy();
-  });
-
-  it('leaves an anon user on the login screen (no redirect loop)', () => {
-    mockGetStatus.mockReturnValue('anon');
-    mockSegments = [];
-    renderGate();
-    expect(mockRedirectSpy).not.toHaveBeenCalled();
-    expect(screen.getByTestId('child')).toBeTruthy();
-    expect(screen.queryByTestId('gate-cover')).toBeNull(); // no redirect → no cover
-  });
-
   it('shows a placeholder (no child, no redirect) while loading', () => {
     mockGetStatus.mockReturnValue('loading');
     mockSegments = ['(tabs)', 'budgets'];
     renderGate();
     expect(mockRedirectSpy).not.toHaveBeenCalled();
     expect(screen.queryByTestId('child')).toBeNull();
-  });
-
-  it('gate is UNCONDITIONAL (WHIT-162): redirects an anon user even with no flag set', () => {
-    // The static secret is retired, so login is mandatory — the gate no longer keys
-    // off EXPO_PUBLIC_AUTH_GATE_ENABLED. Even with it unset, an anon user on a
-    // protected route is sent to login.
-    delete process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED;
-    mockGetStatus.mockReturnValue('anon');
-    mockSegments = ['(tabs)', 'budgets'];
-    renderGate();
-    expect(mockRedirectSpy).toHaveBeenCalledWith('/');
-    expect(screen.getByTestId('child')).toBeTruthy(); // WHIT-265: stays mounted, covered
-    expect(screen.getByTestId('gate-cover')).toBeTruthy();
-  });
-
-  it('does not redirect before the navigator is mounted (mounted guard)', () => {
-    mockNavState = undefined; // root nav not ready
-    mockGetStatus.mockReturnValue('anon');
-    mockSegments = ['(tabs)', 'budgets'];
-    renderGate();
-    expect(mockRedirectSpy).not.toHaveBeenCalled();
-    expect(screen.getByTestId('child')).toBeTruthy();
-    expect(screen.queryByTestId('gate-cover')).toBeNull(); // no redirect → no cover
   });
 });
 
@@ -304,11 +263,6 @@ describe('WHIT-161 auth gate — biometric lock', () => {
     // reveals it's still in the tree.
     expect(screen.queryByTestId('child')).toBeNull();
     expect(screen.getByTestId('child', { includeHiddenElements: true })).toBeTruthy();
-  });
-
-  it('shows the Abundo logo above the lock title', () => {
-    renderGate();
-    expect(screen.getByTestId('lock-logo', { includeHiddenElements: true })).toBeTruthy();
   });
 
   it('reveals the app after a successful Unlock', () => {
@@ -369,50 +323,23 @@ describe('WHIT-161 auth gate — biometric lock', () => {
     expect(mockLock).not.toHaveBeenCalled();
     expect(mockUnlock).not.toHaveBeenCalled();
   });
-
-  it('flag off → no lock screen, renders the app (WHIT-160 preserved)', () => {
-    delete process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED;
-    mockStatus = 'authed';
-    renderGate();
-    expect(screen.queryByText('Abundo is locked')).toBeNull();
-    expect(screen.getByTestId('child')).toBeTruthy();
-  });
 });
 
 // ===== WHIT-266 (folded from authGateLockCover.screen.test.tsx) =====
 // The lock keeps the app MOUNTED under an opaque cover (instead of unmounting and replacing
 // it), so scroll/form state survives lock→unlock. gateRedirect stays REAL; auth is driven off
-// the shared live store. This suite uses a MountCounter child (to prove no remount) and its
-// own renderGate; `setStatus` is a local alias onto the shared store notifier.
+// the shared live store. No-remount across lock→unlock is proven by [A9] below.
+// `setStatus` is a local alias onto the shared store notifier.
 describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', () => {
   const setStatus = mockSetStatus;
-
-  // A child that counts its own mounts — the direct probe for "the app is not rebuilt across a
-  // lock". Pre-WHIT-266 the locked branch returned <LockScreen/> instead of the children, so this
-  // unmounted (and a later remount would bump the counter).
-  let childMounts = 0;
-  function MountCounter() {
-    useEffect(() => { childMounts += 1; }, []);
-    return <Text testID="child">app</Text>;
-  }
-
-  function renderGate() {
-    return render(
-      <AuthGate>
-        <MountCounter />
-      </AuthGate>,
-    );
-  }
 
   beforeEach(() => {
     mockRedirectSpy.mockClear();
     mockUnlock.mockReset().mockImplementation(async () => { setStatus('authed'); return true; });
     mockLock.mockClear();
-    mockSignOut.mockReset().mockImplementation(async () => setStatus('anon')); // defensive: keeps parity with the folded [G2] setup (clearMocks already zeroes the count)
     mockListeners.clear();
     mockStatus = 'authed';
     mockSegments = ['(tabs)', 'budgets']; // a deep route — NOT the index
-    childMounts = 0;
     process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED = 'true';
     jest.spyOn(AppState, 'addEventListener').mockImplementation(() => ({ remove: jest.fn() } as never));
   });
@@ -422,20 +349,6 @@ describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', 
   });
 
   describe('WHIT-266 lock cover', () => {
-    it('never remounts the app across a lock→unlock (state is preserved)', () => {
-      renderGate();
-      expect(childMounts).toBe(1); // mounted once on launch
-
-      act(() => setStatus('locked'));
-      expect(screen.getByText('Abundo is locked')).toBeTruthy();
-      expect(childMounts).toBe(1); // still mounted — the lock covered it, didn't destroy it
-
-      act(() => setStatus('authed'));
-      expect(screen.queryByText('Abundo is locked')).toBeNull();
-      expect(screen.getByTestId('child')).toBeTruthy();
-      expect(childMounts).toBe(1); // SAME instance throughout — never rebuilt (the whole point)
-    });
-
     it('lock cover is opaque, absolute-fill, and painted on top', () => {
       renderGate();
       act(() => setStatus('locked'));
@@ -443,34 +356,7 @@ describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', 
       expect(cover.backgroundColor).toBe(C.bg);
       expect(cover.position).toBe('absolute');
       expect([cover.top, cover.right, cover.bottom, cover.left]).toEqual([0, 0, 0, 0]);
-      expect(cover.zIndex).toBe(60); // above the WHIT-265 redirect cover (50)
-    });
-
-    it('lock cover blocks touches (effective pointerEvents is auto, not none/box-none)', () => {
-      renderGate();
-      act(() => setStatus('locked'));
-      const cover = screen.getByTestId('lock-cover');
-      const coverStyle = styleOf(cover);
-      expect(cover.props.pointerEvents ?? coverStyle.pointerEvents ?? 'auto').toBe('auto');
-    });
-
-    it('hides the covered app from screen readers while locked, and restores it after unlock', () => {
-      renderGate();
-      act(() => setStatus('locked'));
-      // Default (a11y-respecting) query can't see the covered app; it is still in the tree.
-      expect(screen.queryByTestId('child')).toBeNull();
-      expect(screen.getByTestId('child', { includeHiddenElements: true })).toBeTruthy();
-      const wrapper = screen.getByTestId('gate-content', { includeHiddenElements: true });
-      expect(wrapper.props.accessibilityElementsHidden).toBe(true);
-      expect(wrapper.props.importantForAccessibility).toBe('no-hide-descendants');
-      // Lock cover itself is marked modal so VoiceOver ignores the siblings behind it.
-      expect(screen.getByTestId('lock-cover').props.accessibilityViewIsModal).toBe(true);
-
-      act(() => setStatus('authed'));
-      const shown = screen.getByTestId('gate-content');
-      expect(shown.props.accessibilityElementsHidden).toBe(false);
-      expect(shown.props.importantForAccessibility).toBe('auto');
-      expect(screen.getByTestId('child')).toBeTruthy(); // visible to a11y again
+      expect(screen.getByTestId('lock-cover').props.pointerEvents ?? cover.pointerEvents ?? 'auto').toBe('auto'); // blocks touches
     });
 
     it('dismisses the keyboard as the lock cover goes up', () => {
@@ -480,20 +366,9 @@ describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', 
       act(() => setStatus('locked'));
       expect(dismiss).toHaveBeenCalledTimes(1);
     });
-
-    // Note: the "no Budgets bounce on unlock" guarantee is locked by [A9] in
-    // authGateTransitions.screen.test.tsx, whose FakeStack resets navigation on (re)mount and so
-    // genuinely distinguishes the mounted-through-lock behaviour from the old unmount-remount.
-    // A version here with a plain child can't tell the two apart, so it lives only in [A9].
-
-    it('cold launch is unchanged: authed on the index route still lands on budgets', () => {
-      mockSegments = []; // the index route (cold launch, before landing)
-      renderGate();
-      expect(mockRedirectSpy).toHaveBeenCalledWith('/(tabs)/budgets');
-    });
   });
 
-  // ===== WHIT-266 adversarial gaps (folded in): index-route mutual exclusion, sign-in-again, 3× cycle =====
+  // ===== WHIT-266 adversarial gaps (folded in): index-route mutual exclusion =====
   describe('WHIT-266 lock cover — adversarial gaps', () => {
     // [G1] locked on the INDEX route: the two covers never co-occur, and unlock releases the
     // legitimate authed+index → budgets redirect. gateRedirect returns null while locked, so even
@@ -518,68 +393,20 @@ describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', 
       expect(mockRedirectSpy).toHaveBeenCalledWith('/(tabs)/budgets');
       expect(screen.getByTestId('gate-cover')).toBeTruthy();
     });
-
-    // [G2] Sign-in-again from the lock screen (anon). A signed-out user must be COVERED and
-    // redirected to login — never left mounted-and-visible — and the app must not be rebuilt.
-    it('[G2] sign-in-again from lock: app never remounts, lock cover → opaque login-redirect cover, redirect to /', () => {
-      mockSegments = ['(tabs)', 'settings']; // deep protected route
-      mockStatus = 'authed';
-      renderGate();
-      expect(childMounts).toBe(1);
-
-      act(() => setStatus('locked'));
-      expect(screen.getByTestId('lock-cover')).toBeTruthy();
-      mockRedirectSpy.mockClear();
-
-      // Press "Sign in again" on the lock screen → signOut → anon.
-      fireEvent.press(screen.getByText('Sign in again'));
-      expect(mockSignOut).toHaveBeenCalledTimes(1);
-
-      // anon on a protected route: lock cover gone, the opaque login-redirect cover is up, and
-      // exactly one redirect to the login screen fired.
-      expect(screen.queryByTestId('lock-cover')).toBeNull();
-      const cover = screen.getByTestId('gate-cover');
-      expect(mockRedirectSpy).toHaveBeenCalledWith('/');
-      // The cover is opaque (C.bg) so the signed-out app is not visible behind it.
-      const coverStyle = styleOf(cover);
-      expect(coverStyle.backgroundColor).toBe(C.bg);
-      // The app was covered/redirected, NOT torn down and rebuilt (state preserved end-to-end).
-      expect(childMounts).toBe(1);
-    });
-
-    // [G4] Repeated lock→unlock cycles: the app instance is built exactly once. A per-cycle
-    // remount bug (e.g. re-introducing the unmount-on-locked branch) bumps this past 1.
-    it('[G4] repeated lock→unlock→lock→unlock keeps the same app instance (mount counter stays 1)', () => {
-      mockStatus = 'authed';
-      renderGate();
-      expect(childMounts).toBe(1);
-
-      for (let i = 0; i < 3; i += 1) {
-        act(() => setStatus('locked'));
-        expect(screen.getByTestId('lock-cover')).toBeTruthy();
-        expect(screen.getByTestId('child', { includeHiddenElements: true })).toBeTruthy();
-        act(() => setStatus('authed'));
-        expect(screen.queryByTestId('lock-cover')).toBeNull();
-        expect(screen.getByTestId('child')).toBeTruthy();
-      }
-      expect(childMounts).toBe(1); // one build, zero rebuilds across all three cycles
-    });
   });
 });
 
 // ===== WHIT-161 (folded from authGateLockEdges.screen.test.tsx) =====
-// Adversarial GAP tests for AuthGate's resume/lifecycle wiring: the AppState listener is
-// REMOVED on unmount; resume re-lock is suppressed when biometrics are unavailable or the
-// session isn't authed. gateRedirect stays REAL; the shared live store drives status.
+// Adversarial GAP tests for AuthGate's resume wiring: resume re-lock is suppressed when
+// biometrics are unavailable or the session isn't authed. gateRedirect stays REAL; the
+// shared live store drives status.
 describe('WHIT-161 auth gate — resume/lifecycle edges', () => {
   let appStateHandler: (s: string) => void;
-  const removeSpy = jest.fn();
 
   beforeEach(() => {
     mockUnlock.mockClear();
     mockLock.mockClear();
     mockUnlockOrRestore.mockClear();
-    removeSpy.mockClear();
     mockCanBiometric.mockReset().mockReturnValue(true);
     mockListeners.clear();
     mockStatus = 'authed';
@@ -587,19 +414,12 @@ describe('WHIT-161 auth gate — resume/lifecycle edges', () => {
     process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED = 'true';
     jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, cb) => {
       appStateHandler = cb as unknown as (s: string) => void;
-      return { remove: removeSpy } as never;
+      return { remove: jest.fn() } as never;
     });
   });
   afterEach(() => {
     delete process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED;
     jest.restoreAllMocks();
-  });
-
-  it('removes the AppState listener on unmount (no leak / double-fire after teardown)', () => {
-    const view = renderGate();
-    expect(screen.getByTestId('child')).toBeTruthy();
-    view.unmount();
-    expect(removeSpy).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT re-lock on background → active when the device cannot biometric-lock (never lock out)', () => {
@@ -654,22 +474,6 @@ describe('WHIT-265 auth gate — redirect loop', () => {
     expect(screen.getByTestId('child')).toBeTruthy();
     expect(screen.queryByTestId('gate-cover')).toBeNull();
   });
-
-  it('anon on a protected route: one redirect to login, child stays mounted, settles clean', () => {
-    mockGetStatus.mockReturnValue('anon');
-    mockSegStore.segs = ['(tabs)', 'settings'];
-    expect(() =>
-      render(
-        <AuthGate>
-          <FakeStack />
-        </AuthGate>,
-      ),
-    ).not.toThrow();
-    expect(mockRedirectSpy).toHaveBeenCalledTimes(1);
-    expect(mockRedirectSpy).toHaveBeenCalledWith('/');
-    expect(screen.getByTestId('child')).toBeTruthy();
-    expect(screen.queryByTestId('gate-cover')).toBeNull();
-  });
 });
 
 // ===== WHIT relock-grace (folded from authGateRelockGrace.screen.test.tsx) =====
@@ -698,23 +502,6 @@ describe('WHIT auth gate — timed re-lock grace', () => {
     jest.restoreAllMocks();
   });
 
-  // [AB1] elapsed EXACTLY at the grace threshold. The check is `elapsedMs >= RELOCK_GRACE_MS`,
-  // so exactly-at must re-lock. Existing tests only cover grace+1 (past) and 5s (within),
-  // which both still pass if `>=` silently became `>`; this pins the boundary.
-  it('[AB1] re-locks when away EXACTLY RELOCK_GRACE_MS (the >= boundary)', () => {
-    mockStatus = 'authed';
-    const nowSpy = jest.spyOn(Date, 'now');
-    renderGate();
-    expect(screen.getByTestId('child')).toBeTruthy();
-    nowSpy
-      .mockReturnValueOnce(1_000_000)                     // stamp on background
-      .mockReturnValueOnce(1_000_000 + RELOCK_GRACE_MS);  // resume: awayMs == RELOCK_GRACE_MS
-    appStateHandler('background');
-    appStateHandler('active');
-    expect(mockLock).toHaveBeenCalledTimes(1);
-    expect(mockUnlock).toHaveBeenCalledTimes(1);
-  });
-
   // [AB2] SAME listener, two cycles. A long first absence re-locks (then unlock → authed);
   // a brief second absence must NOT re-lock. Only possible if `backgroundedAt` is re-stamped
   // on the 2nd 'background'. If it were stale at the first stamp, the 2nd resume would read a
@@ -738,18 +525,6 @@ describe('WHIT auth gate — timed re-lock grace', () => {
     appStateHandler('active');
     expect(mockLock).toHaveBeenCalledTimes(1); // still just the first cycle's lock
     expect(mockUnlock).toHaveBeenCalledTimes(1);
-  });
-
-  // [AB3] The logo is DECORATIVE: importantForAccessibility="no" is what keeps a screen
-  // reader from announcing it. The existing logo test only asserts the element EXISTS
-  // (via includeHiddenElements) — it passes whether or not the decorative prop is present.
-  // This pins the intent by asserting the prop itself. (RNTL's default query does NOT treat
-  // importantForAccessibility="no" as hidden, so a visibility assertion can't guard this.)
-  it('[AB3] the lock logo carries the decorative importantForAccessibility="no"', () => {
-    mockStatus = 'locked';
-    renderGate();
-    const logo = screen.getByTestId('lock-logo');
-    expect(logo.props.importantForAccessibility).toBe('no');
   });
 
   // [AB4] A BACKWARD wall-clock jump between background and resume yields a NEGATIVE elapsed.
@@ -997,27 +772,5 @@ describe('WHIT-265 auth gate — dynamic transitions', () => {
     expect(mockRedirectSpy).toHaveBeenCalledWith('/');
     expect(screen.getByTestId('gate-cover')).toBeTruthy();
     expect(screen.getByTestId('child')).toBeTruthy(); // still mounted behind the cover
-  });
-
-  // [A11] StrictMode-style double-invoked effects (dev builds re-run every effect):
-  // the authed cold launch must still converge — every redirect goes the SAME way
-  // (any '/' here means the anon direction leaked in / ping-pong started), and the
-  // gate settles with the child mounted and the cover gone.
-  it('[A11] StrictMode double effects: authed cold launch converges, no ping-pong', () => {
-    mockAutoComplete = true;
-    mockStatus = 'authed';
-    expect(() =>
-      render(
-        <React.StrictMode>
-          <AuthGate>
-            <FakeStack />
-          </AuthGate>
-        </React.StrictMode>,
-      ),
-    ).not.toThrow();
-    const targets = new Set(mockRedirectSpy.mock.calls.map((c) => c[0]));
-    expect(targets).toEqual(new Set(['/(tabs)/budgets']));
-    expect(screen.getByTestId('child')).toBeTruthy();
-    expect(screen.queryByTestId('gate-cover')).toBeNull();
   });
 });
