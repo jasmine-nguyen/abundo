@@ -192,6 +192,25 @@ describe('match summary', () => {
     fireEvent.press(screen.getByLabelText('Clear search'));
     expect(screen.queryByTestId('transactions-search-summary')).toBeNull();
   });
+
+  // [A7] a net-zero list reads "$0" (no "+"); [A9] a cut-off reply from a server without the
+  // figures hides the line rather than showing "0 matches".
+  it.each([
+    ['nets to zero', { transactions: [STEVEN_DEEP, row('steven-back', 'Steven Nguyen', 77)], truncated: false }, '2 matches · $0'],
+    ['cut off, no figures', { transactions: [STEVEN_DEEP], truncated: true }, null],
+  ])('%s', async (_name, answer, expected) => {
+    server.seed(SEARCH, answer);
+    await draw();
+    type('steven');
+    await pauseTyping();
+    await waitFor(() => expect(screen.getByText('-$77.00')).toBeTruthy());
+    if (expected === null) {
+      expect(await screen.findByTestId('transactions-search-truncated')).toBeTruthy();
+      expect(screen.queryByTestId('transactions-search-summary')).toBeNull();
+      return;
+    }
+    expect(await screen.findByTestId('transactions-search-summary')).toHaveTextContent(expected);
+  });
 });
 
 describe('when the server search fails', () => {

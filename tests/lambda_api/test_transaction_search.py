@@ -132,6 +132,19 @@ def test_match_count_and_total_cover_every_match_past_the_cap(handler, transacti
     assert body["matchTotal"] == round((limit + 1) * -1.25 + 0.4, 2)
 
 
+def test_match_total_is_summed_in_whole_cents_over_the_tabs_matches(handler):
+    # [A6] 0.1 + 0.2 summed as floats is 0.30000000000000004; the filed row isn't on this tab.
+    _, repo, _ = real_repos({ANZ: [
+        _row(ANZ, "2026-07-10", "a", description="STEVEN", amount=0.1, category=None),
+        _row(ANZ, "2026-07-09", "b", description="STEVEN", amount=0.2, category=None),
+        _row(ANZ, "2026-07-08", "filed", description="STEVEN", amount=-5, category="groceries"),
+    ]})
+
+    body = _body(_search(handler, repo, {"q": "steven", "tab": "uncategorized"}))
+
+    assert (body["truncated"], body["matchCount"], body["matchTotal"]) == (False, 2, 0.3)
+
+
 def test_exactly_the_limit_is_not_truncated(handler, transaction_search):
     limit = transaction_search.SEARCH_RESULT_LIMIT
     rows = [_row(ANZ, "2026-07-10", f"a{index}", description="STEVEN", amount=-1) for index in range(limit)]
