@@ -42,6 +42,7 @@ def test_set_budget_success(handler):
     ('{"target": 0}', Decimal("0")),
     # Decimal(str(12.34)) stores exactly, never binary-float drift.
     ('{"target": 12.34}', Decimal("12.34")),
+    ('{"target": 1000000000}', Decimal("1000000000")),      # exactly the cap
 ])
 def test_set_budget_stores_exact_target(handler, body, stored):
     repo = recording_budget_repo()
@@ -66,6 +67,7 @@ def test_set_budget_stores_exact_target(handler, body, stored):
     pytest.param('{"target": Infinity}', id="infinity"),
     # past the sane ceiling is bad input (400), not a write-time 500.
     pytest.param('{"target": 1e40}',     id="too_large"),
+    pytest.param('{"target": 1000000001}', id="one_over_the_cap"),
     pytest.param("not json",             id="invalid_json"),
 ])
 def test_set_budget_bad_target_400(handler, body):

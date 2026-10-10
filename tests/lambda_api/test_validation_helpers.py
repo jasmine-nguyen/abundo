@@ -13,6 +13,7 @@ import pytest
     ("x" * 100, "x" * 100),         # exactly the max length
     ("x" * 101, None),              # one over
     ("   ", None),                  # whitespace only
+    (42, None),                     # not a string
 ])
 def test_validate_label(handler, raw, expected):
     label, error = handler._validate_label(raw, 100, "milestone")
@@ -36,6 +37,7 @@ def test_id_mints_uuid_when_absent(handler):
     (set(), "   ", None),           # blank
     ({"abc"}, "abc", None),         # duplicate
     ({"a"}, " a ", None),           # trims to an id already seen (WHIT-383)
+    (set(), 7, None),               # not a string
 ])
 def test_validate_id(handler, seen, raw, expected):
     seen = set(seen)

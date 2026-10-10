@@ -90,7 +90,7 @@ def test_marker_is_per_account(handler, store):
     assert repo.is_deleted("some-other-account", _DUPLICATE_ID) is False
 
 
-def test_marker_ttl_outlives_the_resend_and_age_out_windows():
+def test_marker_ttl_outlives_the_resend_and_age_out_windows(handler):
     import constants
     assert constants.DELETED_TRANSACTION_TTL_SECONDS > constants.FEED_WINDOW_DAYS * 24 * 3600
     assert constants.DELETED_TRANSACTION_TTL_SECONDS > constants.PENDING_AGE_OUT_DAYS * 24 * 3600

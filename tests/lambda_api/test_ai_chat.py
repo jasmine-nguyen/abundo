@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import pytest
 from _anthropic_fakes import ScriptedModel, tool_reply, tool_use_block
-from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _budget_endpoint_fakes import _FakeBudgetRepo, _FakeCategoryRepo, _FakePayCycleRepo
 from _job_fakes import FakeChatJobRepo
 from _transaction_range_fakes import _AccountTransactionRepo, _DateFilteringTransactionRepo
 
@@ -276,8 +276,10 @@ def test_a_budget_line_no_tool_returned_drops_the_card(ai_chat):
     (_card(series=_bars(31.11), delta={"vs": "previous"}), None),
     (_card(budget_line=60, series=_bars(33.34, 31.11), delta={"vs": "average"}), None),
     (_card(budget_line=60, series=_bars(33.34, 31.11), delta={"amount": -28.89}), None),
+    (_card(series=_bars(*([60] * 13), 31.11), delta={"vs": "previous"}), None),
 ], ids=["under-budget", "over-budget", "ai-wrong-sign", "zero-budget-line", "float-noise", "zero-delta",
-        "no-budget-line", "vs-previous", "value-not-last-bar", "single-bar", "unknown-vs", "no-vs"])
+        "no-budget-line", "vs-previous", "value-not-last-bar", "single-bar", "unknown-vs", "no-vs",
+        "thirteen-bar-cap"])
 def test_the_server_works_out_the_delta(ai_chat, card, delta):
     # Card 613: the AI only says what to compare against; every amount comes from the card's figures.
     reply = ai_chat.validate_reply({"text": "ok", "card": card}, _data(ai_chat), TOOL_NUMBERS)
@@ -415,7 +417,8 @@ def _load_chat_data(ai_chat, monkeypatch, transaction_repo, budget_repo):
 
 def test_load_chat_data_fetches_back_to_the_lookback_floor(ai_chat, monkeypatch):
     transaction_repo = _DateFilteringTransactionRepo([])
-    data = _load_chat_data(ai_chat, monkeypatch, transaction_repo, RolloverBudgetRepo())
+    data = _load_chat_data(ai_chat, monkeypatch, transaction_repo, _FakeBudgetRepo({}))
+    assert data.budgets == {}
     assert data.floor == "2025-09-01" and data.today == TODAY
     assert transaction_repo.calls[0][1:3] == ("2025-09-01", TODAY)
 
@@ -511,3 +514,21 @@ def test_too_little_time_left_fails_before_calling_the_model(ai_chat, monkeypatc
     with pytest.raises(ai_chat.ChatError):
         ai_chat.run_chat("job1", EVENT["messages"], _data(ai_chat), FakeChatJobRepo(), lambda: 19.9)
     assert model.requests == []
+
+
+def test_exactly_the_minimum_time_left_still_calls_the_model(ai_chat, monkeypatch):
+    model = ScriptedModel([tool_reply(tool_use_block("respond", GOOD_ANSWER))])
+    monkeypatch.setattr(ai_chat, "post_messages", model)
+    exactly = ai_chat.CHAT_DEADLINE_MARGIN_SECONDS + ai_chat.CHAT_MIN_CALL_SECONDS
+    ai_chat.run_chat("job1", EVENT["messages"], _data(ai_chat), FakeChatJobRepo(), lambda: exactly)
+    assert [request["timeout"] for request in model.requests] == [ai_chat.CHAT_MIN_CALL_SECONDS]
+
+
+@pytest.mark.parametrize("rule", [
+    "copied exactly",
+    "No investment, tax or credit advice",
+    "Don't mention tools or internal ids",
+    "Always finish by calling `respond`",
+])
+def test_the_chat_prompt_keeps_its_safety_rules(ai_chat, rule):
+    assert rule in ai_chat.system_prompt("2026-09-20")

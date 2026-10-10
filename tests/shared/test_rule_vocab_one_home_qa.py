@@ -9,23 +9,19 @@ import pathlib
 import subprocess
 import sys
 
-SHARED_DIR = pathlib.Path(__file__).resolve().parents[2] / "shared"
+from _ast_bindings import _top_level_binding_list
+from _rule_pairs import PAIR_VALUE, RULE_PAIRS
 
-_PAIRS = [
-    ("description", "contains"), ("description", "equals"),
-    ("merchant", "contains"), ("merchant", "equals"),
-    ("category", "equals"),
-    ("account", "equals"),
-    ("amount", "less_than"), ("amount", "less_than_or_equal"),
-    ("amount", "greater_than"), ("amount", "greater_than_or_equal"),
-    ("direction", "is"),
-]
-_VALUE = {"amount": "30", "direction": "debit"}
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+SHARED_DIR = ROOT / "shared"
+
+_RULE_VOCAB_NAMES = {"RULE_FIELD_OPERATORS", "RULE_FIELDS", "RULE_OPERATORS", "RULE_LOGIC",
+                     "RULE_DIRECTIONS", "_FIELD_OPERATORS", "_LOGIC"}
 
 
 def _rule(field, operator):
     return {"id": "r1", "categoryId": "transport", "field": field, "operator": operator,
-            "value": _VALUE.get(field, "UBER")}
+            "value": PAIR_VALUE.get(field, "UBER")}
 
 
 # [A3] (P0) the engine's vocabulary IS the shared constants object — no private copy.
@@ -40,9 +36,17 @@ def test_engine_vocabulary_is_the_shared_constants_object():
     assert result.stdout.split() == ["True", "True"], result.stdout + result.stderr
 
 
+def test_no_other_server_file_keeps_a_copy_of_the_rule_vocabulary():
+    server_files = [path for folder in ROOT.glob("lambda*/") for path in folder.glob("*.py")]
+    server_files += [path for path in SHARED_DIR.glob("*.py") if path.name != "constants.py"]
+    copies = [f"{path.relative_to(ROOT)}: {name}" for path in sorted(server_files)
+              for name in sorted(set(_top_level_binding_list(path)) & _RULE_VOCAB_NAMES)]
+    assert copies == [], f"import the rule vocabulary from constants instead: {copies}"
+
+
 # [A4] (P0) every supported pair is still applicable by the engine.
 def test_engine_accepts_every_supported_pair(rule_engine):
-    skipped = {pair: rule_engine._skip_reason(_rule(*pair), lambda _id: False) for pair in _PAIRS}
+    skipped = {pair: rule_engine._skip_reason(_rule(*pair), lambda _id: False) for pair in RULE_PAIRS}
     assert {pair: reason for pair, reason in skipped.items() if reason} == {}
 
 

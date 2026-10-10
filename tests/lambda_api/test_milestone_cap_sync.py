@@ -26,7 +26,9 @@ _CLIENT_MILESTONES = _ROOT / "src" / "milestones.ts"
 
 def _client_cap() -> int:
     """The MILESTONE_BALANCE_MAX const parsed out of src/milestones.ts."""
-    return _ts_const.number_const(_CLIENT_MILESTONES.read_text(), "MILESTONE_BALANCE_MAX")
+    text = _CLIENT_MILESTONES.read_text()
+    _ts_const.assert_one_number_const(text, "MILESTONE_BALANCE_MAX")
+    return _ts_const.number_const(text, "MILESTONE_BALANCE_MAX")
 
 
 def test_client_and_server_milestone_caps_agree(handler):

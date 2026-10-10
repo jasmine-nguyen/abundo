@@ -296,17 +296,19 @@ def _range_event(category_id="coffee", date_from="2026-06-01", date_to="2026-07-
 
 def test_range_mode_includes_subcategories_so_it_matches_the_chat_figure(handler, monkeypatch):
     # FAIL-ON-REVERT: the exact match cycle mode uses would drop 'beans' and the list would no
-    # longer add up to the chat's folded figure.
+    # longer add up to the chat's folded figure. The subtree is same-bucket only, like the chat.
     _pin_today(monkeypatch)
+    cats = CATS + [{"id": "coffee-cashback", "bucket": "Income", "parent": "coffee"}]
     txns = [
         _txn("c1", "coffee", -11, "2026-07-21"),              # after `to` -> out
         _txn("c2", "coffee", -17, "2026-07-08"),
         _txn("beans", "coffee-beans", -9, "2026-06-09"),       # sub-category -> in
+        _txn("cb", "coffee-cashback", 5, "2026-07-09"),        # different-bucket sub -> out
         _txn("old", "coffee", -5, "2026-05-31"),               # before `from` -> out
     ]
     repo = _DateFilteringTransactionRepo(txns)
     resp = handler.get_category_transactions(
-        _range_event(), repo, _FakePayCycleRepo(), _FakeCategoryRepo(CATS))
+        _range_event(), repo, _FakePayCycleRepo(), _FakeCategoryRepo(cats))
 
     assert resp["statusCode"] == 200
     assert [r["transaction_id"] for r in json.loads(resp["body"])] == ["c2", "beans"]

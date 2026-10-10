@@ -37,7 +37,9 @@ def _server_ceiling() -> int:
 
 def _client_ceiling() -> int:
     """The LOANFACTS_FIELD_MAX const parsed out of src/loanLimits.ts."""
-    return _ts_const.number_const(_CLIENT_LIMITS.read_text(), "LOANFACTS_FIELD_MAX")
+    text = _CLIENT_LIMITS.read_text()
+    _ts_const.assert_one_number_const(text, "LOANFACTS_FIELD_MAX")
+    return _ts_const.number_const(text, "LOANFACTS_FIELD_MAX")
 
 
 def test_client_and_server_loanfacts_ceilings_agree():

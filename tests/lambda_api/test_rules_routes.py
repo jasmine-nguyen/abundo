@@ -14,23 +14,13 @@ import pytest
 
 from _api_event import api_event
 from _feed_fakes import Repos, inject_rule_routes
+from _rule_pairs import PAIR_VALUE, RULE_PAIRS
 
 
 _CATEGORIES = ("groceries", "petrol", "transport")
 
 _CLIENT_KEYS = {"id", "field", "operator", "value", "categoryId", "budgetExcluded",
                 "spread", "spreadAmount", "spreadGapDays", "conditions", "logic"}
-
-_PAIRS = [
-    ("description", "contains"), ("description", "equals"),
-    ("merchant", "contains"), ("merchant", "equals"),
-    ("category", "equals"),
-    ("account", "equals"),
-    ("amount", "less_than"), ("amount", "less_than_or_equal"),
-    ("amount", "greater_than"), ("amount", "greater_than_or_equal"),
-    ("direction", "is"),
-]
-_PAIR_VALUE = {"amount": "30", "direction": "debit"}
 
 
 def _rule(value, category_id="groceries", field="description", operator="contains", **kw):
@@ -252,6 +242,8 @@ def test_create_rule_missing_fields_400(handler, monkeypatch, body, missing):
     _multi([_text("UBER", field="merchant")], logic="xor"),
     _multi([_amount("lots")]),
     _multi([_amount("0")]),
+    _multi([_amount(True)]),                                      # a JSON bool is not an amount
+    _flat("NETFLIX") | {"spread": "yes"},                         # spread must be a real bool
     _multi([_text("sideways", field="direction", operator="is")]),
     _multi([]),
     _multi([_text(42, field="merchant")]),                        # text value must be a string
@@ -266,12 +258,12 @@ def test_create_rule_rejects_an_invalid_body_400(handler, monkeypatch, body):
 
 
 @pytest.mark.parametrize("field, operator, logic", [
-    *[(field, operator, "all") for field, operator in _PAIRS],
+    *[(field, operator, "all") for field, operator in RULE_PAIRS],
     ("merchant", "contains", "any"),
 ])
 def test_every_supported_pair_is_accepted(handler, monkeypatch, field, operator, logic):
     _inject(handler, monkeypatch, Repos())
-    condition = {"field": field, "operator": operator, "value": _PAIR_VALUE.get(field, "UBER")}
+    condition = {"field": field, "operator": operator, "value": PAIR_VALUE.get(field, "UBER")}
     resp = _post(handler, _multi([condition], logic=logic))
     assert resp["statusCode"] == 201, resp["body"]
 
@@ -388,6 +380,22 @@ def test_update_rule_unknown_id_is_404(handler, monkeypatch):
     _inject(handler, monkeypatch, Repos())
     resp = _put(handler, "deadbeef", {"value": "WOOLWORTHS", "categoryId": "groceries"})
     assert resp["statusCode"] == 404
+
+
+@pytest.mark.parametrize("body", [
+    {"value": ".", "categoryId": "groceries"},                    # under the value floor
+    {"value": "COLES", "categoryId": "not-a-category"},
+])
+def test_update_rule_rejects_an_invalid_body_400(handler, monkeypatch, body):
+    repo = Repos(rules=[_rule("COLES", "groceries")])
+    rule_id = repo.rule_id("COLES")
+    _inject(handler, monkeypatch, repo)
+    before = repo.stored_rules()
+
+    resp = _put(handler, rule_id, body)
+
+    assert resp["statusCode"] == 400
+    assert repo.stored_rules() == before
 
 
 # --- DELETE /rules/{id} -------------------------------------------------------

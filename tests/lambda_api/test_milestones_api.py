@@ -253,8 +253,7 @@ def test_exactly_50_milestones_accepted(handler):
 
 
 def test_51_milestones_rejected(handler):
-    # Guard against an off-by-one that would let 51 through (the test above asserts the message;
-    # this locks the boundary sits between 50 and 51).
+    # Locks the boundary between 50 and 51 against an off-by-one.
     resp, repo = _put_plan(handler, _valid_plan(51))
     assert resp["statusCode"] == 400
     assert repo.set_calls == []
