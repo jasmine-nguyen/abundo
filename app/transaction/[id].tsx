@@ -1,19 +1,20 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, PRESSED } from '../../src/theme';
 import { transactionView, useAppContext, contributesToBudget, budgetSpreadEligibility, ruleFiledLabel, RULE_FILED_FALLBACK } from '../../src/context';
 import type { Transaction } from '../../src/types';
-import { formatDayMonthYear } from '../../src/dateutil';
+import { formatDayMonthYear, pendingLabel } from '../../src/dateutil';
 import { useTransactionDetailScreenData, useTransactionResolver, useBudgetsScreenData, useRulesScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { Icon, Glyph } from '../../src/icons';
 import { DetailStates } from '../../src/components/DetailStates';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
+import { LARGE_TEXT_MAX_SCALE } from '../../src/hooks/useLargeText';
 
-// WHIT-272 / WHIT-275: the per-transaction detail screen. Reached by the trailing chevron on
-// a TransactionRow; the id in the route is the transaction_id. The transaction comes from the
+// WHIT-272 / WHIT-275: the per-transaction detail screen. Reached by tapping a TransactionRow
+// or its chevron; the id in the route is the transaction_id. The transaction comes from the
 // SAME cached query the lists use (no new endpoint) — we find it by id. Shows the read-only
 // fields (WHIT-272) plus an editable note + tags (WHIT-275) that save optimistically and roll
 // back on failure via applyTransactionEdit.
@@ -126,7 +127,7 @@ export default function TransactionDetail() {
                   <Icon name={view.icon} size={30} color={view.iconColor} />
                 </View>
                 <Text style={styles.merchant} numberOfLines={2}>{view.merchant}</Text>
-                <Text style={[styles.amount, { color: view.amountColor }]}>{view.amountLabel}</Text>
+                <Text style={[styles.amount, { color: view.amountColor }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={LARGE_TEXT_MAX_SCALE}>{view.amountLabel}</Text>
               </View>
 
               <View style={styles.card}>
@@ -146,7 +147,7 @@ export default function TransactionDetail() {
                   onPress={() => openPicker(transaction.transaction_id)}
                   actionLabel={`Change category, currently ${view.categoryLabel}`}
                 />
-                <Field label="Status" value={view.isPending ? 'Pending' : 'Posted'} last />
+                <Field label="Status" value={view.isPending ? pendingLabel(transaction.date) : 'Posted'} last />
               </View>
 
               {/* WHIT-539: name the rule that auto-filed this category, right under the details
@@ -171,6 +172,7 @@ export default function TransactionDetail() {
               {showSpread && (
                 <Pressable
                   testID="transaction-spread"
+                  accessibilityRole="button"
                   onPress={() => router.push(
                     spreadElig.entry === 'edit'
                       ? `/budget/spread?categoryId=${transaction.category}`
@@ -185,7 +187,7 @@ export default function TransactionDetail() {
               )}
 
               {/* Keyed by id so switching transactions reseeds the local note text. */}
-              <NoteAndTagsEditor key={transaction.transaction_id} transaction={transaction} />
+              <NoteAndTagsEditor key={transaction.transaction_id} transaction={transaction} deleting={deleting} />
 
               <Pressable
                 testID="transaction-delete"
@@ -275,7 +277,7 @@ function BudgetExcludedNote() {
 // so local note state seeds cleanly from the loaded row. Tags are derived straight from the
 // cache (the single source of truth) — every add/remove goes through applyTransactionEdit,
 // which patches the cache optimistically, so the chips reflect the change immediately.
-function NoteAndTagsEditor({ transaction }: { transaction: Transaction }) {
+function NoteAndTagsEditor({ transaction, deleting }: { transaction: Transaction; deleting: boolean }) {
   const { applyTransactionEdit, showToast } = useAppContext();
   const txId = transaction.transaction_id;
   const savedNote = transaction.notes ?? '';
@@ -283,11 +285,10 @@ function NoteAndTagsEditor({ transaction }: { transaction: Transaction }) {
   const [noteText, setNoteText] = useState(savedNote);
   const [tagInput, setTagInput] = useState('');
 
-  // The note saves on an explicit Save tap (not auto-save on blur), so this screen
-  // has a Save button like every other edit screen. `noteDirty` gates the button — it's live
-  // only when the trimmed text differs from what's stored. Tags/category/exclude keep saving
-  // instantly (direct-manipulation chips/picker/toggle, nothing ambiguous to "save"). Like the
-  // form screens, leaving without tapping Save discards an unsaved note edit.
+  // The note saves on an explicit Save tap (not on blur). `noteDirty` gates the button — it's
+  // live only when the trimmed text differs from what's stored. Tags/category/exclude keep saving
+  // instantly (direct-manipulation chips/picker/toggle). WHIT-843: leaving the screen also saves
+  // an unsaved note edit (unlike the form screens), except while the transaction is being deleted.
   const noteDirty = noteText.trim() !== savedNote;
 
   const saveNote = () => {
@@ -296,6 +297,11 @@ function NoteAndTagsEditor({ transaction }: { transaction: Transaction }) {
     applyTransactionEdit(txId, { notes: trimmed });
     showToast('Note saved');
   };
+
+  // Refreshed every render so the unmount cleanup sees the latest text, not the first render's.
+  const saveOnLeave = useRef<(() => void) | null>(null);
+  saveOnLeave.current = deleting ? null : saveNote;
+  useEffect(() => () => saveOnLeave.current?.(), []);
 
   const commitTag = (candidate: string) => {
     const trimmed = candidate.trim();
@@ -357,7 +363,7 @@ function NoteAndTagsEditor({ transaction }: { transaction: Transaction }) {
             <Text style={styles.tagText}>{tag}</Text>
             <Pressable
               onPress={() => removeTag(tag)}
-              hitSlop={8}
+              hitSlop={{ top: 14, bottom: 14, left: 17, right: 17 }}
               accessibilityRole="button"
               accessibilityLabel={`Remove tag ${tag}`}
             >
@@ -445,7 +451,7 @@ const styles = StyleSheet.create({
   tagsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   tagChip: { flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.cardAlt, borderWidth: 1, borderColor: C.hairlineStrong, borderRadius: 999, paddingVertical: 6, paddingLeft: 12, paddingRight: 9 },
   tagText: { fontFamily: FONT.body, fontSize: 13, color: C.textBright },
-  tagRemove: { fontFamily: FONT.body, fontSize: 17, lineHeight: 18, color: C.textDim, fontWeight: '600' },
+  tagRemove: { fontFamily: FONT.body, fontSize: 17, color: C.textDim, fontWeight: '600' },
   tagInput: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 12, paddingVertical: 11, paddingHorizontal: 14, marginTop: 10, fontFamily: FONT.body, fontSize: 14, color: C.textBright },
 
   spreadBtn: { marginTop: 12, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), backgroundColor: tint(C.accentAlt, 0.1), alignItems: 'center' },

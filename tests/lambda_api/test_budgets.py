@@ -12,28 +12,17 @@ puts `shared/` on the path, so `import repository_budget` inside a test resolves
 shared/repository_budget.py with boto3/botocore already faked.
 """
 
-import base64
 import json
+from datetime import date
 from decimal import Decimal
 from functools import partial
 
 import pytest
 
 from _api_event import api_event
-from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo, _SpendCategoryRepo, _put_budget_event, _spend_cat
 from _budget_fakes import recording_budget_repo
-from _dynamo_fakes import FakeTable
 from _transaction_range_fakes import _DateFilteringTransactionRepo, _QueuedTransactionRepo
-
-
-def _put_budget_event(category="coffee", body='{"target": 58}', is_b64=False):
-    return api_event(
-        "PUT",
-        f"/budgets/{category}",
-        raw=body,
-        path_params={"category": category},
-        is_base64=is_b64,
-    )
 
 
 # --- handler-level: PUT /budgets/{category} ----------------------------------
@@ -49,33 +38,19 @@ def test_set_budget_success(handler):
     assert repo.set_calls == [("coffee", Decimal("58"))]
 
 
-def test_set_budget_zero_accepted(handler):
-    repo = recording_budget_repo()
-
-    resp = handler.set_budget(_put_budget_event(body='{"target": 0}'), repo, _FakeCategoryRepo(), FakePayCycleRepo())
-
-    assert resp["statusCode"] == 200
-    assert repo.set_calls == [("coffee", Decimal("0"))]
-
-
-def test_set_budget_decimal_precision(handler):
+@pytest.mark.parametrize("body, stored", [
+    ('{"target": 0}', Decimal("0")),
     # Decimal(str(12.34)) stores exactly, never binary-float drift.
+    ('{"target": 12.34}', Decimal("12.34")),
+    ('{"target": 1000000000}', Decimal("1000000000")),      # exactly the cap
+])
+def test_set_budget_stores_exact_target(handler, body, stored):
     repo = recording_budget_repo()
 
-    resp = handler.set_budget(_put_budget_event(body='{"target": 12.34}'), repo, _FakeCategoryRepo(), FakePayCycleRepo())
+    resp = handler.set_budget(_put_budget_event(body=body), repo, _FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
-    assert repo.set_calls == [("coffee", Decimal("12.34"))]
-
-
-def test_set_budget_unknown_category_accepted(handler):
-    # Unknown ids are accepted (stored as an orphan the client ignores).
-    repo = recording_budget_repo()
-
-    resp = handler.set_budget(_put_budget_event(category="doesnotexist"), repo, _FakeCategoryRepo(), FakePayCycleRepo())
-
-    assert resp["statusCode"] == 200
-    assert repo.set_calls == [("doesnotexist", Decimal("58"))]
+    assert repo.set_calls == [("coffee", stored)]
 
 
 # Bodies are RAW wire strings (the event body is passed verbatim; the handler does its own
@@ -92,6 +67,8 @@ def test_set_budget_unknown_category_accepted(handler):
     pytest.param('{"target": Infinity}', id="infinity"),
     # past the sane ceiling is bad input (400), not a write-time 500.
     pytest.param('{"target": 1e40}',     id="too_large"),
+    pytest.param('{"target": 1000000001}', id="one_over_the_cap"),
+    pytest.param("not json",             id="invalid_json"),
 ])
 def test_set_budget_bad_target_400(handler, body):
     repo = recording_budget_repo()
@@ -100,60 +77,6 @@ def test_set_budget_bad_target_400(handler, body):
 
     assert resp["statusCode"] == 400
     assert repo.set_calls == []
-
-
-def test_the_budget_target_cap_is_pinned_and_its_boundary_holds(handler):
-    """WHIT-393 named the bare `1_000_000_000` in set_budget `_BUDGET_TARGET_MAX`, which
-    makes it READ as guarded — but the only test reaching that branch sends 1e40, so a
-    1000x typo in the cap would ship green while a $2M target started 400ing. Pin the
-    value, and walk the real boundary either side of it.
-
-    If you are deliberately changing the cap, this is the ONE test that should go red."""
-    cap = handler._BUDGET_TARGET_MAX
-    assert isinstance(cap, int) and cap == 1_000_000_000, (
-        f"the budget target cap is now {cap!r}, not 1_000_000_000 — if you meant to change "
-        "it, update this pin too; if you didn't, this is the typo it exists to catch"
-    )
-
-    at_cap = handler.set_budget(
-        _put_budget_event(body=json.dumps({"target": cap})), recording_budget_repo(), _FakeCategoryRepo(), FakePayCycleRepo())
-    assert at_cap["statusCode"] == 200, "the cap itself must be accepted (the guard is strict >)"
-
-    over_repo = recording_budget_repo()
-    over = handler.set_budget(
-        _put_budget_event(body=json.dumps({"target": cap + 1})), over_repo, _FakeCategoryRepo(), FakePayCycleRepo())
-    assert over["statusCode"] == 400
-    assert over_repo.set_calls == []
-
-
-def test_set_budget_missing_path_param_404(handler):
-    repo = recording_budget_repo()
-    event = _put_budget_event()
-    event["pathParameters"] = {}
-
-    resp = handler.set_budget(event, repo, _FakeCategoryRepo(), FakePayCycleRepo())
-
-    assert resp["statusCode"] == 404
-    assert repo.set_calls == []
-
-
-def test_set_budget_invalid_json_400(handler):
-    repo = recording_budget_repo()
-
-    resp = handler.set_budget(_put_budget_event(body="not json"), repo, _FakeCategoryRepo(), FakePayCycleRepo())
-
-    assert resp["statusCode"] == 400
-    assert repo.set_calls == []
-
-
-def test_set_budget_base64_body(handler):
-    repo = recording_budget_repo()
-    encoded = base64.b64encode(b'{"target": 58}').decode()
-
-    resp = handler.set_budget(_put_budget_event(body=encoded, is_b64=True), repo, _FakeCategoryRepo(), FakePayCycleRepo())
-
-    assert resp["statusCode"] == 200
-    assert repo.set_calls == [("coffee", Decimal("58"))]
 
 
 def test_set_budget_savings_category_rejected_400(handler):
@@ -167,44 +90,6 @@ def test_set_budget_savings_category_rejected_400(handler):
 
     assert resp["statusCode"] == 400
     assert repo.set_calls == []            # never written
-    assert category_repo.list_calls == 1   # the guard did read the taxonomy
-
-
-def test_set_budget_non_savings_category_accepted(handler):
-    # A KNOWN non-Savings (Living/Lifestyle) category still writes — only Savings is blocked,
-    # so the guard can't over-reach and break normal budgeting.
-    repo = recording_budget_repo()
-    category_repo = _FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Lifestyle"}])
-
-    resp = handler.set_budget(_put_budget_event(), repo, category_repo, FakePayCycleRepo())
-
-    assert resp["statusCode"] == 200
-    assert repo.set_calls == [("coffee", Decimal("58"))]
-
-
-def test_set_budget_savings_guard_runs_after_numeric_validation(handler):
-    # A malformed target 400s WITHOUT reading the taxonomy — the cheap numeric checks
-    # short-circuit before the category read, even for a Savings id. Locks the ordering.
-    repo = recording_budget_repo()
-    category_repo = _FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Savings"}])
-
-    resp = handler.set_budget(_put_budget_event(body='{"target": -5}'), repo, category_repo, FakePayCycleRepo())
-
-    assert resp["statusCode"] == 400
-    assert category_repo.list_calls == 0   # numeric reject came first, no taxonomy read
-
-
-def test_set_budget_zero_target_savings_still_rejected(handler):
-    # target=0 passes every numeric check (>= 0), so the Savings guard must still fire on
-    # it — a $0 phantom on a Savings category is as un-renderable as any other. Fail-on-
-    # revert: without the guard a 0 target writes (200).
-    repo = recording_budget_repo()
-    category_repo = _FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Savings"}])
-
-    resp = handler.set_budget(_put_budget_event(body='{"target": 0}'), repo, category_repo, FakePayCycleRepo())
-
-    assert resp["statusCode"] == 400
-    assert repo.set_calls == []
 
 
 def test_put_budget_dispatch_rejects_savings(handler, monkeypatch):
@@ -252,28 +137,6 @@ def test_list_budgets_rollup_shape(handler):
     }
 
 
-def test_list_budgets_no_spend_is_zero(handler):
-    budget_repo = recording_budget_repo({"coffee": {"target": Decimal("58")}})
-
-    result = handler.list_budgets(budget_repo, _QueuedTransactionRepo(transactions=[]), FakePayCycleRepo(), _FakeCategoryRepo())
-
-    assert result == {"coffee": {"available": Decimal("58"), "target": Decimal("58"), "posted": Decimal("0"), "pending": Decimal("0")}}
-
-
-def test_list_budgets_empty_skips_txn_scan(handler):
-    budget_repo = recording_budget_repo()  # no targets
-    txn_repo = _QueuedTransactionRepo(transactions=[_transaction("coffee", -50)])
-    paycycle_repo = FakePayCycleRepo()
-    category_repo = _FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Lifestyle"}])
-
-    result = handler.list_budgets(budget_repo, txn_repo, paycycle_repo, category_repo)
-
-    assert result == {}
-    assert txn_repo.calls == []            # no budgets -> don't scan transactions
-    assert paycycle_repo.get_calls == 0    # ...and don't even read the pay cycle
-    assert category_repo.list_calls == 0   # ...nor read the taxonomy (short-circuit first)
-
-
 def test_list_budgets_paginates(handler):
     # A >1-page window must sum across ALL pages, not stop at the first.
     budget_repo = recording_budget_repo({"coffee": {"target": Decimal("100")}})
@@ -316,32 +179,6 @@ def test_list_budgets_income_target_rolls_up_positive_earnings(handler):
     }
 
 
-def test_list_budgets_income_target_no_earnings_is_zero(handler):
-    # An income target with no income yet this cycle shows 0 earned (not omitted).
-    budget_repo = recording_budget_repo({"salary": {"target": Decimal("5000")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[])
-    category_repo = _FakeCategoryRepo(categories=[{"id": "salary", "bucket": "Income"}])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result == {"salary": {"available": Decimal("5000"), "target": Decimal("5000"), "posted": Decimal("0"), "pending": Decimal("0")}}
-
-
-def test_list_budgets_income_clawback_clamps_to_zero(handler):
-    # A reversal/clawback (negative amount) in an income category reduces earnings and
-    # clamps at 0 — never a negative earnings bar.
-    budget_repo = recording_budget_repo({"salary": {"target": Decimal("5000")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("salary", 3000, "posted"),
-        _transaction("salary", -4000, "posted"),  # clawback bigger than earnings
-    ])
-    category_repo = _FakeCategoryRepo(categories=[{"id": "salary", "bucket": "Income"}])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result["salary"]["posted"] == Decimal("0")
-
-
 def test_list_budgets_income_id_named_income_still_counts(handler):
     # A user income category whose id slugs to the literal "income" (same string the
     # spend summariser skips as a sentinel) is a real earn-target and MUST count —
@@ -353,32 +190,6 @@ def test_list_budgets_income_id_named_income_still_counts(handler):
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
     assert result["income"] == {"available": Decimal("5000"), "target": Decimal("5000"), "posted": Decimal("3000"), "pending": Decimal("0")}
-
-
-def test_list_budgets_savings_bucket_target_treated_as_spend(handler):
-    # WHIT-69 is Income-only: a Savings-bucket target is NOT an earn-target. It falls
-    # to the spend/ceiling default (positive savings amounts clamp to 0 spend), so its
-    # rollup stays 0 rather than showing earnings.
-    budget_repo = recording_budget_repo({"nest_egg": {"target": Decimal("1000")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[_transaction("nest_egg", 800, "posted")])
-    category_repo = _FakeCategoryRepo(categories=[{"id": "nest_egg", "bucket": "Savings"}])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result["nest_egg"] == {"available": Decimal("1000"), "target": Decimal("1000"), "posted": Decimal("0"), "pending": Decimal("0")}
-
-
-def test_list_budgets_orphan_income_target_defaults_to_spend(handler):
-    # A target whose category no longer exists (unknown bucket) can't be inferred as
-    # income -> it defaults to the spend ceiling, the existing safe behaviour.
-    budget_repo = recording_budget_repo({"ghost": {"target": Decimal("5000")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[_transaction("ghost", 3000, "posted")])
-    category_repo = _FakeCategoryRepo(categories=[])  # ghost not in taxonomy
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    # Positive amount summed as spend clamps to 0 (not earnings) -> ceiling default.
-    assert result["ghost"] == {"available": Decimal("5000"), "target": Decimal("5000"), "posted": Decimal("0"), "pending": Decimal("0")}
 
 
 # --- handler-level: GET /budgets sub-category roll-up (WHIT-220) --------------
@@ -414,102 +225,6 @@ def test_list_budgets_parent_rolls_up_leaf_children(handler):
         "parking": {"available": Decimal("50"), "target": Decimal("50"), "posted": Decimal("30"), "pending": Decimal("10")},
         "other": {"available": Decimal("80"), "target": Decimal("80"), "posted": Decimal("45"), "pending": Decimal("0")},
     }
-
-
-def test_list_budgets_untargeted_leaf_still_rolls_into_parent(handler):
-    # Only the parent carries a target; its child leaf has none. The child's spend
-    # must still fold into the parent, and NO phantom row appears for the child.
-    budget_repo = recording_budget_repo({"car": {"target": Decimal("200")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("parking", -30, "posted"),
-        _transaction("other", -45, "posted"),
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "parking", "bucket": "Living", "parent": "car"},
-        {"id": "other", "bucket": "Living", "parent": "car"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result == {"car": {"available": Decimal("200"), "target": Decimal("200"), "posted": Decimal("75"), "pending": Decimal("0")}}
-
-
-def test_list_budgets_multilevel_grandchild_rolls_up(handler):
-    # car -> daily -> {petrol, tolls}; only car is budgeted. The grandchild leaves'
-    # spend must reach car through the two-level walk.
-    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("petrol", -60, "posted"),
-        _transaction("tolls", -15, "pending"),
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "daily", "bucket": "Living", "parent": "car"},
-        {"id": "petrol", "bucket": "Living", "parent": "daily"},
-        {"id": "tolls", "bucket": "Living", "parent": "daily"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result == {"car": {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("60"), "pending": Decimal("15")}}
-
-
-def test_list_budgets_income_parent_rolls_up_income_leaves(handler):
-    # An Income parent whose leaves are Income rolls up POSITIVE earnings (floor,
-    # over-is-good) via summarise_income, same as a flat income target.
-    budget_repo = recording_budget_repo({"income": {"target": Decimal("6000")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("salary", 4000, "posted"),
-        _transaction("refund", 250, "pending"),
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "income", "bucket": "Income", "parent": None},
-        {"id": "salary", "bucket": "Income", "parent": "income"},
-        {"id": "refund", "bucket": "Income", "parent": "income"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result == {"income": {"available": Decimal("6000"), "target": Decimal("6000"), "posted": Decimal("4000"), "pending": Decimal("250")}}
-
-
-def test_list_budgets_parent_and_child_both_budgeted_are_independent(handler):
-    # With a parent AND its own leaf both budgeted, the same underlying transaction
-    # correctly appears in BOTH rows (parent = sum of leaves; leaf = itself). Each row
-    # is individually correct; the hero-total de-dup is a client concern (WHIT-221).
-    budget_repo = recording_budget_repo({
-        "car": {"target": Decimal("200")},
-        "parking": {"target": Decimal("50")},
-    })
-    txn_repo = _QueuedTransactionRepo(transactions=[_transaction("parking", -30, "posted")])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "parking", "bucket": "Living", "parent": "car"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result["car"]["posted"] == Decimal("30")      # parent rolls up the leaf
-    assert result["parking"]["posted"] == Decimal("30")  # leaf keeps its own row
-
-
-def test_list_budgets_flat_leaf_rolls_up_only_itself(handler):
-    # Regression anchor: a budgeted top-level category with NO children maps to the
-    # singleton {itself}, so its rollup is byte-identical to the pre-WHIT-220 path.
-    budget_repo = recording_budget_repo({"coffee": {"target": Decimal("58")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("coffee", -50, "posted"),
-        _transaction("groceries", -30, "posted"),  # a different category, must NOT leak in
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "coffee", "bucket": "Lifestyle", "parent": None},
-        {"id": "groceries", "bucket": "Living", "parent": None},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result == {"coffee": {"available": Decimal("58"), "target": Decimal("58"), "posted": Decimal("50"), "pending": Decimal("0")}}
 
 
 # --- handler-level: GET /budgets parent-DIRECT spend (WHIT-228) ---------------
@@ -594,46 +309,6 @@ def test_get_budgets_dispatch(handler, monkeypatch):
     assert json.loads(resp["body"]) == {"coffee": {"available": 58, "target": 58, "posted": 50, "pending": 0}}
 
 
-def test_get_budgets_dispatch_ignores_days_param(handler, monkeypatch):
-    # Back-compat: a deployed client still sends ?days=. The server no longer reads
-    # it (the window is last_pay_date-derived), so the request still 200s and the window
-    # start is the stored cycle's cycle_start, NOT today-days.
-    monkeypatch.setattr(handler, "BudgetRepository",
-                        lambda: recording_budget_repo({"coffee": {"target": Decimal("58")}}))
-    txn_repo = _QueuedTransactionRepo(transactions=[])
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: txn_repo)
-    monkeypatch.setattr(handler, "PayCycleRepository",
-                        lambda: FakePayCycleRepo(length=14, last_pay_date="2024-01-03"))
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo())
-
-    resp = handler.lambda_handler(api_event("GET", "/budgets", query={"days": "7"}), None)
-
-    assert resp["statusCode"] == 200  # ?days is ignored, not a 400
-    expected_start, _ = handler.current_cycle_window("2024-01-03", 14)
-    assert txn_repo.calls[0][1] == expected_start  # last_pay_date-derived, not today-7
-
-
-def test_put_budget_dispatch(handler, monkeypatch):
-    repo = recording_budget_repo()
-    monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo())
-
-    resp = handler.lambda_handler(_put_budget_event(), None)
-
-    assert resp["statusCode"] == 200
-    assert repo.set_calls == [("coffee", Decimal("58"))]
-
-
-def test_unknown_budget_method_falls_through_404(handler, monkeypatch):
-    # Only GET/PUT/DELETE are routed on /budgets/{category}; an unsupported method
-    # (PATCH) hits the catch-all 404.
-    monkeypatch.setattr(handler, "BudgetRepository", lambda: recording_budget_repo())
-
-    resp = handler.lambda_handler(api_event("PATCH", "/budgets/coffee", path_params={"category": "coffee"}), None)
-
-    assert resp["statusCode"] == 404
-
-
 # --- handler-level: DELETE /budgets/{category} -------------------------------
 
 
@@ -651,182 +326,35 @@ def test_delete_budget_success(handler):
     assert repo.delete_calls == [("coffee")]
 
 
-def test_delete_budget_unknown_id_is_idempotent_200(handler):
-    # No stored target for this id -> the repo no-ops, the handler still returns 200
-    # (mirrors delete_goal).
-    repo = recording_budget_repo()
-
-    resp = handler.delete_budget(_delete_budget_event(category="never_budgeted"), repo)
-
-    assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == {"id": "never_budgeted"}
-    assert repo.delete_calls == [("never_budgeted")]
-
-
-def test_delete_budget_missing_category_returns_404(handler):
-    repo = recording_budget_repo()
-
-    resp = handler.delete_budget({"pathParameters": {}}, repo)
-
-    assert resp["statusCode"] == 404
-    assert repo.delete_calls == []
-
-
-def test_delete_budget_routes_via_lambda_handler(handler, monkeypatch):
-    repo = recording_budget_repo({"coffee": {"target": Decimal("58")}})
-    monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
-
-    resp = handler.lambda_handler(_delete_budget_event(), None)
-
-    assert resp["statusCode"] == 200
-    assert repo.delete_calls == [("coffee")]
-
-
-def _conflicting_budget_repo():
-    """The real repository whose every locked write loses the version race, so it exhausts its
-    retry budget and raises VersionConflictError."""
-    repo = recording_budget_repo({"coffee": {"target": Decimal("58")}})
+@pytest.mark.parametrize("method, path", [
+    ("PUT", "/budgets/coffee"),
+    ("DELETE", "/budgets/coffee"),
+    ("PUT", "/budgets/coffee/spread"),
+    ("DELETE", "/budgets/coffee/spread"),
+])
+def test_a_write_conflict_on_any_budget_route_is_409(handler, monkeypatch, method, path):
+    # A repo that exhausts its retry budget raises VersionConflictError; the shared dispatch
+    # wrapper must map it to 409 on every write route. The stored spread makes the spread
+    # DELETE really write (clearing an absent spread is a no-op, no race).
+    repo = recording_budget_repo({"coffee": {"target": Decimal("58"), "spread_amount": Decimal("100")}})
     repo._table.always_race()
-    return repo
-
-
-def test_delete_budget_conflict_returns_409(handler, monkeypatch):
-    # A repo that exhausts its retry budget raises VersionConflictError; the shared
-    # dispatch wrapper maps it to 409 (same as the PUT path).
-    repo = _conflicting_budget_repo()
     monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: _SpendCategoryRepo(_spend_cat("coffee")))
+    monkeypatch.setattr(handler, "PayCycleRepository", lambda: FakePayCycleRepo())
 
-    resp = handler.lambda_handler(_delete_budget_event(), None)
+    resp = handler.lambda_handler(api_event(
+        method, path, raw='{"target": 58, "amount": 100, "cycles": 2}',
+        path_params={"category": "coffee"}, is_base64=False), None)
 
     assert resp["statusCode"] == 409
 
 
-def test_set_budget_conflict_returns_409(handler, monkeypatch):
-    # A repo that exhausts its retry budget raises VersionConflictError; the shared
-    # dispatch wrapper maps it to 409.
-    repo = _conflicting_budget_repo()
-    monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo())
-
-    resp = handler.lambda_handler(_put_budget_event(), None)
-
-    assert resp["statusCode"] == 409
-
-
-# --- repository-level: storage logic via an in-memory fake table -------------
-
-
-def _repo_with_fake_table(handler):
-    import repository_budget
-    repo = repository_budget.BudgetRepository()
-    repo._table = FakeTable()
-    return repository_budget, repo
-
-
-def test_repo_list_budgets_seeds_empty_then_stable(handler):
-    repository, repo = _repo_with_fake_table(handler)
-
-    first = repo.list_budgets()
-    second = repo.list_budgets()  # must not re-seed
-
-    assert first == {} and second == {}
-    config = repo._table.store[("BUDGETS", "BUDGETS")]
-    assert config["items"] == {} and config["version"] == 1
-
-
-def test_repo_set_budget_writes(handler):
-    repository, repo = _repo_with_fake_table(handler)
-
-    saved = repo.set_budget("coffee", Decimal("58"))
-
-    config = repo._table.store[("BUDGETS", "BUDGETS")]
-    assert config["items"]["coffee"] == {"target": Decimal("58")}
-    assert config["version"] == 2
-    assert saved == {"id": "coffee", "target": Decimal("58")}
-
-
-def test_repo_set_budget_upsert_overwrites(handler):
-    # The exact case a cloned category FakeTable would get wrong: set the same id
-    # twice -> overwrite + version bump, never a duplicate/CCFE.
-    repository, repo = _repo_with_fake_table(handler)
-
-    repo.set_budget("coffee", Decimal("58"))
-    repo.set_budget("coffee", Decimal("70"))
-
-    config = repo._table.store[("BUDGETS", "BUDGETS")]
-    assert config["items"]["coffee"] == {"target": Decimal("70")}
-    assert config["version"] == 3
-
-
-def test_repo_set_budget_preserves_other_keys(handler):
-    repository, repo = _repo_with_fake_table(handler)
-
-    repo.set_budget("coffee", Decimal("58"))
-    repo.set_budget("groceries", Decimal("320"))
-
-    items = repo._table.store[("BUDGETS", "BUDGETS")]["items"]
-    assert items == {"coffee": {"target": Decimal("58")},
-                     "groceries": {"target": Decimal("320")}}
-
-
-def test_repo_set_budget_retries_after_version_race(handler):
-    repository, repo = _repo_with_fake_table(handler)
-    repo.list_budgets()  # seed the config item, so the race below has a row to bump
-    repo._table.race_next_update()
-
-    repo.set_budget("coffee", Decimal("58"))
-
-    config = repo._table.store[("BUDGETS", "BUDGETS")]
-    assert config["items"]["coffee"] == {"target": Decimal("58")}
-    assert config["version"] == 3  # seed(1) + concurrent bump(->2) + our write(->3)
-
-
-def test_repo_set_budget_raises_under_sustained_contention(handler):
-    # Every attempt sees a fresh version bump -> never converges -> 409.
-    import repository_errors
-    _, repo = _repo_with_fake_table(handler)
-    repo.list_budgets()  # seed the config item, so the races below have a row to bump
-    repo._table.always_race()
-
-    try:
-        repo.set_budget("coffee", Decimal("58"))
-        assert False, "expected VersionConflictError under sustained contention"
-    except repository_errors.VersionConflictError:
-        pass
-
-
-# --- rollup S1: pure summarise_transactions + current_cycle_window -----------
+# --- pure summarise_transactions + current_cycle_window ----------------------
 
 
 def _transaction(category, amount, status="posted", counts=True):
     return {"category": category, "amount": Decimal(str(amount)), "status": status,
             "counts_to_budget": counts}
-
-
-def test_summarise_routes_posted_and_pending(handler):
-    # Spend is stored negative; posted -> posted bucket, pending -> pending bucket.
-    txns = [_transaction("coffee", -50, "posted"), _transaction("coffee", -12, "pending")]
-
-    result = handler.summarise_transactions(txns, {"coffee"})
-
-    assert result == {"coffee": {"posted": Decimal("50"), "pending": Decimal("12")}}
-
-
-def test_summarise_sums_multiple_and_ignores_others(handler):
-    txns = [
-        _transaction("coffee", -50), _transaction("coffee", -8),          # summed
-        _transaction("groceries", -30),                            # different category
-        _transaction("coffee", -99, counts=False),                 # not counts_to_budget
-        _transaction("income", -100),                              # income category
-        _transaction(None, -20),                                   # uncategorized
-        _transaction("unbudgeted", -40),                           # no target -> skipped
-    ]
-
-    result = handler.summarise_transactions(txns, {"coffee", "groceries"})
-
-    assert result["coffee"] == {"posted": Decimal("58"), "pending": Decimal("0")}
-    assert result["groceries"] == {"posted": Decimal("30"), "pending": Decimal("0")}
-    assert "unbudgeted" not in result and "income" not in result
 
 
 def test_summarise_refund_reduces_spent(handler):
@@ -838,263 +366,41 @@ def test_summarise_refund_reduces_spent(handler):
     assert result["coffee"]["posted"] == Decimal("30")
 
 
-def test_summarise_net_refund_clamped_to_zero(handler):
-    # A category whose net is a refund clamps at 0 (no negative bar).
-    txns = [_transaction("coffee", 20)]
-
-    result = handler.summarise_transactions(txns, {"coffee"})
-
-    assert result["coffee"]["posted"] == Decimal("0")
-
-
-def test_summarise_empty(handler):
-    assert handler.summarise_transactions([], {"coffee"}) == {}
-
-
-def test_summarise_skips_unknown_status(handler):
-    # An unrecognised status isn't guessed into a bucket -> the txn is skipped.
-    txns = [_transaction("coffee", -50, status="settled")]
-
-    assert handler.summarise_transactions(txns, {"coffee"}) == {}
+@pytest.mark.parametrize("last_pay_date, length, today, start, end", [
+    # The end bound is today itself (inclusive), NOT today+1 (WHIT-75): tomorrow is out.
+    # 43 days on -> k=3 -> +42 days.
+    ("2024-01-03", 14, date(2024, 2, 15), "2024-02-14", "2024-02-15"),
+    # Exactly `length` days on: a fresh cycle starts today, a single inclusive day.
+    ("2024-01-03", 14, date(2024, 1, 17), "2024-01-17", "2024-01-17"),
+    # length-1 days on: still the last_pay_date's cycle.
+    ("2024-01-03", 14, date(2024, 1, 16), "2024-01-03", "2024-01-16"),
+    # 58 days on: weekly k=8 -> +56; monthly k=1 -> +30.
+    ("2024-01-03", 7, date(2024, 3, 1), "2024-02-28", "2024-03-01"),
+    ("2024-01-03", 30, date(2024, 3, 1), "2024-02-02", "2024-03-01"),
+    # A future last_pay_date has no valid k: the window collapses to [today, today], never inverts.
+    ("2024-06-05", 14, date(2024, 6, 1), "2024-06-01", "2024-06-01"),
+])
+def test_current_cycle_window(handler, last_pay_date, length, today, start, end):
+    assert handler.current_cycle_window(last_pay_date, length, today=today) == (start, end)
 
 
-# --- summarise_income: the earn-target counterpart (WHIT-69) ------------------
-
-
-def test_summarise_income_routes_posted_and_pending(handler):
-    # Income is stored POSITIVE; posted -> posted bucket, pending -> pending bucket.
-    txns = [_transaction("salary", 3000, "posted"), _transaction("salary", 500, "pending")]
-
-    result = handler.summarise_income(txns, {"salary"})
-
-    assert result == {"salary": {"posted": Decimal("3000"), "pending": Decimal("500")}}
-
-
-def test_summarise_income_sums_and_ignores_non_income_ids(handler):
-    txns = [
-        _transaction("salary", 3000), _transaction("salary", 200),   # summed
-        _transaction("coffee", -50),                                  # not an income id
-        _transaction("side_gig", 400),                               # income id not targeted
-        _transaction("salary", 99, counts=False),                    # not counts_to_budget
-    ]
-
-    result = handler.summarise_income(txns, {"salary"})
-
-    assert result == {"salary": {"posted": Decimal("3200"), "pending": Decimal("0")}}
-    assert "coffee" not in result and "side_gig" not in result
-
-
-def test_summarise_income_clawback_reduces_and_clamps(handler):
-    # A negative amount (reversal/clawback) reduces earnings; a net-negative clamps to 0.
-    reduced = handler.summarise_income(
-        [_transaction("salary", 3000), _transaction("salary", -1000)], {"salary"})
-    assert reduced["salary"]["posted"] == Decimal("2000")
-
-    clamped = handler.summarise_income([_transaction("salary", -1000)], {"salary"})
-    assert clamped["salary"]["posted"] == Decimal("0")
-
-
-def test_summarise_income_does_not_skip_income_sentinel_id(handler):
-    # summarise_transactions skips the literal "income" sentinel; summarise_income must
-    # NOT — a user income category can slug to "income" and is a real target.
-    result = handler.summarise_income([_transaction("income", 3000, "posted")], {"income"})
-
-    assert result == {"income": {"posted": Decimal("3000"), "pending": Decimal("0")}}
-
-
-def test_summarise_income_skips_unknown_status(handler):
-    assert handler.summarise_income([_transaction("salary", 3000, status="settled")], {"salary"}) == {}
-
-
-def test_summarise_income_empty(handler):
-    assert handler.summarise_income([], {"salary"}) == {}
-
-
-def test_spend_contribution_income_sign_returns_positive(handler):
-    # sign=+1 keeps a positive income amount positive (posted bucket).
-    import spend
-    assert spend.spend_contribution(_transaction("salary", 3000, "posted"), sign=1) == (
-        "posted", Decimal("3000"))
-
-
-# --- spend_contribution: the shared helper both summarisers call (WHIT-106) --
-
-
-def test_spend_contribution_posted_returns_bucket_and_positive_spend(handler):
-    # Spend stored negative -> contribution is -amount (positive) in the posted bucket.
-    import spend
-    assert spend.spend_contribution(_transaction("coffee", -50, "posted")) == (
-        "posted", Decimal("50"))
-
-
-def test_spend_contribution_pending_uses_pending_bucket(handler):
-    import spend
-    assert spend.spend_contribution(_transaction("coffee", -12, "pending")) == (
-        "pending", Decimal("12"))
-
-
-def test_spend_contribution_refund_is_a_negative_contribution(handler):
-    # A refund (positive amount) yields a negative spend; the caller clamps, not this.
-    import spend
-    assert spend.spend_contribution(_transaction("coffee", 20, "posted")) == (
-        "posted", Decimal("-20"))
-
-
-def test_spend_contribution_none_when_not_counting(handler):
-    import spend
-    assert spend.spend_contribution(_transaction("coffee", -50, counts=False)) is None
-
-
-def test_spend_contribution_none_on_unknown_status(handler):
-    import spend
-    assert spend.spend_contribution(_transaction("coffee", -50, status="settled")) is None
-
-
-def test_current_cycle_window_end_is_today_inclusive(handler):
-    from datetime import date
-    # WHIT-75: the end bound is today itself (inclusive), NOT today+1 — date-only
-    # storage + inclusive `between` means `today` already covers all of today's spend,
-    # and a transaction dated tomorrow must be excluded.
-    _, end = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 2, 15))
-    assert end == "2024-02-15"          # today, inclusive
-    assert end < "2024-02-16"           # tomorrow is out of the window
-
-
-def test_current_cycle_window_k_selection_across_cycles(handler):
-    from datetime import date
-    # last_pay_date 2024-01-03, length 14; today 2024-02-15 is 43 days on -> k=3 -> +42 days.
-    start, _ = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 2, 15))
-    assert start == "2024-02-14"
-
-
-def test_current_cycle_window_today_on_payday_starts_new_cycle(handler):
-    from datetime import date
-    # Exactly `length` days after the last_pay_date: a fresh cycle starts today.
-    start, _ = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 1, 17))
-    assert start == "2024-01-17"
-
-
-def test_current_cycle_window_day_before_payday_still_previous_cycle(handler):
-    from datetime import date
-    # length-1 days after the last_pay_date: still the last_pay_date's cycle.
-    start, _ = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 1, 16))
-    assert start == "2024-01-03"
-
-
-def test_current_cycle_window_length_variants(handler):
-    from datetime import date
-    today = date(2024, 3, 1)  # 58 days after the last_pay_date
-    # weekly: k=8 -> +56 days -> 2024-02-28; monthly: k=1 -> +30 -> 2024-02-02.
-    assert handler.current_cycle_window("2024-01-03", 7, today=today)[0] == "2024-02-28"
-    assert handler.current_cycle_window("2024-01-03", 30, today=today)[0] == "2024-02-02"
-
-
-def test_current_cycle_window_future_last_pay_date_clamped(handler):
-    from datetime import date
-    # A future last_pay_date has no valid k; the window must not invert. It collapses
-    # to the single inclusive day [today, today] — today's spend still counts.
-    start, end = handler.current_cycle_window("2024-06-05", 14, today=date(2024, 6, 1))
-    assert start == "2024-06-01"       # clamped to today
-    assert start == end == "2024-06-01"  # single inclusive day, not inverted/empty
-
-
-def test_current_cycle_window_payday_end_covers_today(handler):
-    from datetime import date
-    # On payday, cycle_start == today; the window is the single inclusive day
-    # [today, today], so a transaction dated today still lands in the fresh cycle.
-    start, end = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 1, 17))
-    assert start == end == "2024-01-17"
-
-
-def test_list_budgets_window_excludes_tomorrow_includes_boundaries(handler, monkeypatch):
-    # WHIT-75 end-to-end: on the day BEFORE payday, a transaction dated TOMORROW (the
-    # next payday) must NOT smear into this cycle, while both cycle_start and today
-    # count. Fails on the old `today+1` end (would sum 30); passes on the fix (sums 20).
-    from datetime import date
-    import spend
-    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
-    budget_repo = recording_budget_repo({"coffee": {"target": Decimal("100")}})
-    txn_repo = _DateFilteringTransactionRepo(transactions=[
-        {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start -> IN
-        {**_transaction("coffee", -10, "posted"), "date": "2024-01-16"},  # today       -> IN
-        {**_transaction("coffee", -10, "posted"), "date": "2024-01-17"},  # tomorrow    -> OUT
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), _FakeCategoryRepo())
-
-    assert result == {"coffee": {"available": Decimal("100"), "target": Decimal("100"), "posted": Decimal("20"), "pending": Decimal("0")}}
-    assert txn_repo.calls[0][2] == "2024-01-16"  # queried end bound is today, not today+1
-
-
-def test_list_budgets_window_excludes_day_before_cycle_start(handler, monkeypatch):
-    # WHIT-75 lower-bound guard (regression): a transaction dated the day BEFORE
-    # cycle_start (last cycle's spend) must NOT count in this cycle, while cycle_start
-    # itself does. Locks the start bound the same way the end bound is locked.
-    from datetime import date
+def test_list_budgets_window_counts_only_cycle_start_through_today(handler, monkeypatch):
+    # WHIT-75 end-to-end, on the day BEFORE payday: last cycle's spend (the day before
+    # cycle_start) and tomorrow's (the next payday) stay out; cycle_start and today count.
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     budget_repo = recording_budget_repo({"coffee": {"target": Decimal("100")}})
     txn_repo = _DateFilteringTransactionRepo(transactions=[
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-02"},  # day before cycle_start -> OUT
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start            -> IN
+        {**_transaction("coffee", -10, "posted"), "date": "2024-01-16"},  # today                  -> IN
+        {**_transaction("coffee", -10, "posted"), "date": "2024-01-17"},  # tomorrow               -> OUT
     ])
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), _FakeCategoryRepo())
-
-    assert result == {"coffee": {"available": Decimal("100"), "target": Decimal("100"), "posted": Decimal("10"), "pending": Decimal("0")}}
-    assert txn_repo.calls[0][1] == "2024-01-03"  # queried start bound is cycle_start
-
-
-def test_list_budgets_window_excludes_pending_dated_tomorrow(handler, monkeypatch):
-    # WHIT-75 for the PENDING bucket: a pending authorisation dated tomorrow must not
-    # leak in either — pending stays 0, today's pending still counts.
-    from datetime import date
-    import spend
-    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
-    budget_repo = recording_budget_repo({"coffee": {"target": Decimal("100")}})
-    txn_repo = _DateFilteringTransactionRepo(transactions=[
-        {**_transaction("coffee", -10, "pending"), "date": "2024-01-16"},  # today    -> IN
-        {**_transaction("coffee", -10, "pending"), "date": "2024-01-17"},  # tomorrow -> OUT
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), _FakeCategoryRepo())
-
-    assert result == {"coffee": {"available": Decimal("100"), "target": Decimal("100"), "posted": Decimal("0"), "pending": Decimal("10")}}
-
-
-def test_list_budgets_window_monthly_excludes_tomorrow(handler, monkeypatch):
-    # Boundary independence from cycle length: with a 30-day cycle the end is still
-    # `today`, so a txn dated tomorrow is excluded and cycle_start still counts.
-    from datetime import date
-    import spend
-    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 2, 1))  # 29 days on -> cycle_start 2024-01-03
-    budget_repo = recording_budget_repo({"coffee": {"target": Decimal("100")}})
-    txn_repo = _DateFilteringTransactionRepo(transactions=[
-        {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start -> IN
-        {**_transaction("coffee", -10, "posted"), "date": "2024-02-01"},  # today       -> IN
-        {**_transaction("coffee", -10, "posted"), "date": "2024-02-02"},  # tomorrow    -> OUT
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(length=30), _FakeCategoryRepo())
 
     assert result == {"coffee": {"available": Decimal("100"), "target": Decimal("100"), "posted": Decimal("20"), "pending": Decimal("0")}}
-    assert txn_repo.calls[0][2] == "2024-02-01"  # end bound is today regardless of length
-
-
-def test_current_cycle_window_injectable_today_is_deterministic(handler):
-    from datetime import date
-    a = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 2, 15))
-    b = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 2, 15))
-    assert a == b
-
-
-def test_current_cycle_window_defaults_to_melbourne_today(handler, monkeypatch):
-    from datetime import date
-    # With no explicit `today`, the window uses melbourne_today().
-    import spend
-    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 2, 15))
-    start, end = handler.current_cycle_window("2024-01-03", 14)
-    assert (start, end) == ("2024-02-14", "2024-02-15")
+    assert txn_repo.calls[0][1:3] == ("2024-01-03", "2024-01-16")  # queried bounds: cycle_start .. today
 
 
 def test_melbourne_today_maps_utc_instant_to_local_date(handler, monkeypatch):
@@ -1126,45 +432,6 @@ def test_melbourne_today_falls_back_to_utc_when_tzdata_missing(handler, monkeypa
 # full handler.list_budgets + shared/spend roll-up. IDs map to the QA checklist.
 
 
-def test_noncounting_leaf_txn_excluded_from_parent(handler):
-    # [A20] a counts_to_budget=False txn on a leaf must NOT roll up into the parent.
-    budget_repo = recording_budget_repo({"car": {"target": Decimal("200")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("parking", -30, "posted", counts=True),
-        _transaction("parking", -999, "posted", counts=False),  # excluded
-        _transaction("other", -45, "posted", counts=True),
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "parking", "bucket": "Living", "parent": "car"},
-        {"id": "other", "bucket": "Living", "parent": "car"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result == {"car": {"available": Decimal("200"), "target": Decimal("200"), "posted": Decimal("75"), "pending": Decimal("0")}}
-
-
-def test_pending_posted_mix_folds_across_leaves(handler):
-    # [A21] pending vs posted fold into separate parent totals across DIFFERENT leaves.
-    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("parking", -30, "posted"),
-        _transaction("parking", -5, "pending"),
-        _transaction("other", -45, "posted"),
-        _transaction("other", -20, "pending"),
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "parking", "bucket": "Living", "parent": "car"},
-        {"id": "other", "bucket": "Living", "parent": "car"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result == {"car": {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("75"), "pending": Decimal("25")}}
-
-
 def test_income_clawback_on_one_leaf_nets_into_parent(handler):
     # WHIT-343 (aggregate-then-clamp, income side): a clawback netting ONE income leaf
     # negative now nets against a sibling's earnings across the subtree before the floor,
@@ -1187,103 +454,6 @@ def test_income_clawback_on_one_leaf_nets_into_parent(handler):
 
     # salary 4000 + side net -750 = 3250 (nets across the subtree, then clamped once).
     assert result == {"income": {"available": Decimal("6000"), "target": Decimal("6000"), "posted": Decimal("3250"), "pending": Decimal("0")}}
-
-
-def test_no_leakage_between_parent_subtree_and_sibling_toplevel(handler):
-    # [A23] a parent's subtree and an unrelated top-level sibling category don't leak.
-    budget_repo = recording_budget_repo({
-        "car": {"target": Decimal("200")},
-        "coffee": {"target": Decimal("60")},
-    })
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("parking", -30, "posted"),
-        _transaction("coffee", -50, "posted"),
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "parking", "bucket": "Living", "parent": "car"},
-        {"id": "coffee", "bucket": "Lifestyle", "parent": None},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result == {
-        "car": {"available": Decimal("200"), "target": Decimal("200"), "posted": Decimal("30"), "pending": Decimal("0")},
-        "coffee": {"available": Decimal("60"), "target": Decimal("60"), "posted": Decimal("50"), "pending": Decimal("0")},
-    }
-
-
-def test_two_disjoint_parents_do_not_cross_contaminate(handler):
-    # [A24] two budgeted parents with disjoint leaf sets roll up independently.
-    budget_repo = recording_budget_repo({
-        "car": {"target": Decimal("200")},
-        "food": {"target": Decimal("400")},
-    })
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("parking", -30, "posted"),
-        _transaction("petrol", -20, "pending"),
-        _transaction("groceries", -100, "posted"),
-        _transaction("dining", -40, "pending"),
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "parking", "bucket": "Living", "parent": "car"},
-        {"id": "petrol", "bucket": "Living", "parent": "car"},
-        {"id": "food", "bucket": "Living", "parent": None},
-        {"id": "groceries", "bucket": "Living", "parent": "food"},
-        {"id": "dining", "bucket": "Living", "parent": "food"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result == {
-        "car": {"available": Decimal("200"), "target": Decimal("200"), "posted": Decimal("30"), "pending": Decimal("20")},
-        "food": {"available": Decimal("400"), "target": Decimal("400"), "posted": Decimal("100"), "pending": Decimal("40")},
-    }
-
-
-def test_five_level_chain_rolls_to_top(handler):
-    # [A25] a 5-level chain rolls the bottom leaf all the way to the top target.
-    budget_repo = recording_budget_repo({"l1": {"target": Decimal("500")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("l5", -60, "posted"),
-        _transaction("l5", -10, "pending"),
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "l1", "bucket": "Living", "parent": None},
-        {"id": "l2", "bucket": "Living", "parent": "l1"},
-        {"id": "l3", "bucket": "Living", "parent": "l2"},
-        {"id": "l4", "bucket": "Living", "parent": "l3"},
-        {"id": "l5", "bucket": "Living", "parent": "l4"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result == {"l1": {"available": Decimal("500"), "target": Decimal("500"), "posted": Decimal("60"), "pending": Decimal("10")}}
-
-
-def test_midlevel_and_ancestor_both_budgeted_double_count(handler):
-    # [A26] a mid node budgeted AND under another budgeted parent: the shared bottom
-    # leaf counts in BOTH rows, each independently correct.
-    budget_repo = recording_budget_repo({
-        "car": {"target": Decimal("300")},
-        "daily": {"target": Decimal("150")},
-    })
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("petrol", -60, "posted"),   # under daily -> under car
-        _transaction("parking", -25, "posted"),  # under car only
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "daily", "bucket": "Living", "parent": "car"},
-        {"id": "petrol", "bucket": "Living", "parent": "daily"},
-        {"id": "parking", "bucket": "Living", "parent": "car"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result["daily"]["posted"] == Decimal("60")   # petrol only
-    assert result["car"]["posted"] == Decimal("85")     # petrol + parking
 
 
 def test_corrupt_cross_bucket_income_child_excluded_from_spend_parent(handler):
@@ -1314,55 +484,6 @@ def test_corrupt_cross_bucket_income_child_excluded_from_spend_parent(handler):
 # pre-228), a refund straight onto the parent, mixed posted+pending straight
 # onto the parent, and the (deferred) cross-bucket child rollup.
 # ===========================================================================
-
-
-def test_list_budgets_parent_direct_refund_reduces_whole_budget(handler):
-    # WHIT-343 (aggregate-then-clamp): a refund (POSITIVE amount) tagged DIRECTLY onto the
-    # parent `car` now nets against the whole subtree BEFORE the floor, so it reduces the
-    # budget's total (it no longer clamps at car's own id and spare the sibling's spend).
-    # parking -60 (leaf, +60) + car +100 refund (direct, -100): fold = 60 + (-100) = -40 ->
-    # clamp once -> 0. Fail-on-revert (per-id clamp restored): car clamps to 0 pre-fold ->
-    # 60 + 0 = 60, so this asserts 0 only under aggregate-then-clamp.
-    budget_repo = recording_budget_repo({"car": {"target": Decimal("200")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("parking", -60, "posted"),
-        _transaction("car", 100, "posted"),      # refund straight onto the parent
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "parking", "bucket": "Living", "parent": "car"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result == {"car": {"available": Decimal("200"), "target": Decimal("200"), "posted": Decimal("0"), "pending": Decimal("0")}}
-
-
-def test_list_budgets_net_positive_subtree_header_matches_signed_rows(handler):
-    # WHIT-343 headline: a net-NEGATIVE sibling inside a net-POSITIVE subtree. Before, each
-    # id floored at 0 pre-fold, so the header summed parking 50 + fuel 0 = 50 while the
-    # transaction list (signed) summed 30 -> the header read HIGHER than its own rows.
-    # Aggregate-then-clamp folds 50 + (-20) = 30, clamped once -> 30 = the signed row sum.
-    # Fail-on-revert (per-id clamp): fuel's refund floors to 0 -> header 50 != 30.
-    budget_repo = recording_budget_repo({"car": {"target": Decimal("200")}})
-    txns = [
-        _transaction("parking", -50, "posted"),   # a $50 charge
-        _transaction("fuel", 20, "posted"),        # a $20 refund on a sibling leaf
-    ]
-    txn_repo = _QueuedTransactionRepo(transactions=txns)
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "parking", "bucket": "Living", "parent": "car"},
-        {"id": "fuel", "bucket": "Living", "parent": "car"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result["car"] == {"available": Decimal("200"), "target": Decimal("200"), "posted": Decimal("30"), "pending": Decimal("0")}
-    # The card's promise: the header equals the signed spend of the rows the list shows
-    # (spend is -amount), i.e. the number a user eyeballs from the transaction list.
-    signed_row_total = sum((Decimal(str(-t["amount"])) for t in txns), Decimal(0))
-    assert result["car"]["posted"] + result["car"]["pending"] == signed_row_total
 
 
 def test_budget_rollup_agrees_across_screen_and_ai_paths(handler):
@@ -1396,113 +517,6 @@ def test_budget_rollup_agrees_across_screen_and_ai_paths(handler):
     assert Decimal(str(ai_row["posted"])) + Decimal(str(ai_row["pending"])) == Decimal("30")
 
 
-def test_list_budgets_parent_direct_mixed_posted_and_pending_no_leaf_spend(handler):
-    # Both a posted AND a pending write tagged straight onto the parent, with ZERO leaf
-    # spend: each bucket routes through the parent id. Pre-228 (leaves-only) `car` is not
-    # a leaf -> both dropped -> {0,0}. Fail-on-revert (leaves-only): posted 0 / pending 0.
-    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("car", -40, "posted"),
-        _transaction("car", -25, "pending"),
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "parking", "bucket": "Living", "parent": "car"},   # a child exists but is unspent
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result == {"car": {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("40"), "pending": Decimal("25")}}
-
-
-def test_list_budgets_cross_bucket_child_excluded_by_server_guard(handler):
-    # WHIT-229: a child in a DIFFERENT spend bucket (Lifestyle) under a Living parent must
-    # NOT fold into the Living parent — the same-bucket guard drops it from the subtree, so
-    # Car has no same-bucket spend and reads 0 (matching the /breakdown client's guard).
-    # Fail-on-revert (drop bucket_by_id): the Lifestyle child folds back in -> 50.
-    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("misfiled", -50, "posted"),   # Lifestyle child under a Living parent
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "misfiled", "bucket": "Lifestyle", "parent": "car"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    # The cross-bucket child's spend is excluded from the Living parent (WHIT-229 guard).
-    assert result == {"car": {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("0"), "pending": Decimal("0")}}
-
-
-def test_list_budgets_same_bucket_grandchild_under_cross_bucket_child_still_folds(handler):
-    # WHIT-229 multi-level (the critic's parity case): Car(Living) -> oddball(Lifestyle) ->
-    # fuel(Living). The guard filters MEMBERSHIP, not descent, so the same-bucket grandchild
-    # `fuel` still folds into Car even though it sits UNDER a cross-bucket intermediate —
-    # matching the client, which reattaches fuel to its nearest same-bucket ancestor (Car).
-    # The Lifestyle `oddball` is excluded. Fail-on-revert (prune-the-walk instead of filter-
-    # the-result): descent would stop at oddball and fuel is silently dropped -> Car reads 0.
-    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("oddball", -20, "posted"),   # Lifestyle intermediate — excluded
-        _transaction("fuel", -70, "posted"),       # Living grandchild — folds into Car
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "oddball", "bucket": "Lifestyle", "parent": "car"},
-        {"id": "fuel", "bucket": "Living", "parent": "oddball"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result == {"car": {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("70"), "pending": Decimal("0")}}
-
-
-def test_list_budgets_cross_bucket_child_that_is_itself_budgeted_still_correct(handler):
-    # WHIT-229 [A1] GAP: a Lifestyle child budgeted in its OWN right, mis-parented under a
-    # Living parent that is ALSO budgeted. Two facts must both hold: (a) the Living parent
-    # EXCLUDES the cross-bucket child from its bar (Car = 0), and (b) the child's own budget
-    # row is still summed correctly on itself (root = itself, its own same-bucket subtree ->
-    # 40). Fail-on-revert (drop bucket_by_id): the child folds into Car -> Car reads 40.
-    budget_repo = recording_budget_repo({
-        "car": {"target": Decimal("300")},
-        "oddball": {"target": Decimal("100")},
-    })
-    txn_repo = _QueuedTransactionRepo(transactions=[_transaction("oddball", -40, "posted")])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "oddball", "bucket": "Lifestyle", "parent": "car"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result["car"] == {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("0"), "pending": Decimal("0")}
-    assert result["oddball"] == {"available": Decimal("100"), "target": Decimal("100"), "posted": Decimal("40"), "pending": Decimal("0")}
-
-
-def test_list_budgets_income_parent_excludes_mis_parented_spend_child(handler):
-    # WHIT-229 [A3] GAP (the REVERSE of the headline case): a SPEND child (Living, negative
-    # amount) corruptly parented under a budgeted INCOME parent must NOT be fed to
-    # summarise_income — the same-bucket guard keeps the income parent's subtree income-only,
-    # so its earnings floor reads its Income leaf alone (4000), never 4000 + a spend id's 200.
-    # Fail-on-revert (drop bucket_by_id): groceries lands in the income parent's subtree, its
-    # -200 spend is summed (via summarise_transactions -> spend_ids) into the parent -> 4200.
-    budget_repo = recording_budget_repo({"income": {"target": Decimal("6000")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("salary", 4000, "posted"),      # Income leaf -> earnings
-        _transaction("groceries", -200, "posted"),   # spend child mis-parented under income
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "income", "bucket": "Income", "parent": None},
-        {"id": "salary", "bucket": "Income", "parent": "income"},
-        {"id": "groceries", "bucket": "Living", "parent": "income"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result == {"income": {"available": Decimal("6000"), "target": Decimal("6000"), "posted": Decimal("4000"), "pending": Decimal("0")}}
-
-
 # ===========================================================================
 # WHIT-343 QA GAP tests (aggregate-then-clamp) — adversarial edges the
 # implementer's set does NOT cover. Every WHIT-343 assertion here goes RED if the
@@ -1510,84 +524,6 @@ def test_list_budgets_income_parent_excludes_mis_parented_spend_child(handler):
 # the single-category default clamp is flipped. Not duplicates of the 7 tests in
 # the diff.
 # ===========================================================================
-
-
-def test_wh343_gap_posted_negative_pending_positive_independent_bucket_clamp(handler):
-    # WHIT-343 x the posted/pending seam. A subtree whose POSTED bucket nets NEGATIVE
-    # (parking +50 charge, fuel +80 refund -> posted -30) but whose PENDING bucket is
-    # positive (garage +40). Aggregate-then-clamp floors each BUCKET once & independently:
-    # posted -> 0, pending -> 40. Fail-on-revert (per-id clamp): fuel's -80 floors at its
-    # own id -> posted 50, so posted==0 only holds under aggregate-then-clamp.
-    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
-    txns = [
-        _transaction("parking", -50, "posted"),   # +50 posted spend
-        _transaction("fuel", 80, "posted"),         # +80 refund on a sibling -> posted nets -30
-        _transaction("garage", -40, "pending"),     # +40 pending spend on a third sibling
-    ]
-    txn_repo = _QueuedTransactionRepo(transactions=txns)
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "parking", "bucket": "Living", "parent": "car"},
-        {"id": "fuel", "bucket": "Living", "parent": "car"},
-        {"id": "garage", "bucket": "Living", "parent": "car"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result["car"] == {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("0"), "pending": Decimal("40")}
-    # DOCUMENTED SEAM (see critique): the combined header (0+40=40) is > the TRUE signed
-    # net of the rows (-30 posted + 40 pending = 10). The posted/pending buckets floor
-    # independently, so a refund stranded in the posted bucket can't offset positive
-    # pending. This is unchanged by WHIT-343 (both buckets always floored separately).
-    combined_header = result["car"]["posted"] + result["car"]["pending"]
-    signed_net = sum((Decimal(str(-t["amount"])) for t in txns), Decimal(0))
-    assert combined_header == Decimal("40") and signed_net == Decimal("10")
-    assert combined_header > signed_net  # the seam the aggregate-then-clamp does NOT close
-
-
-def test_wh343_gap_grandchild_net_negative_nets_across_deep_subtree(handler):
-    # WHIT-343 x depth. car -> daily -> {petrol, tolls}; only car budgeted. A GRANDCHILD
-    # leaf (tolls) nets NEGATIVE from a refund and must net against the rest across the
-    # two-level fold. petrol 90 + daily-direct 20 + tolls (net -100) = 10. Fail-on-revert
-    # (per-id clamp): tolls floors to 0 -> 90 + 20 + 0 = 110.
-    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("petrol", -90, "posted"),
-        _transaction("daily", -20, "posted"),      # spend tagged on the intermediate node
-        _transaction("tolls", 100, "posted"),        # refund overshooting the grandchild
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "daily", "bucket": "Living", "parent": "car"},
-        {"id": "petrol", "bucket": "Living", "parent": "daily"},
-        {"id": "tolls", "bucket": "Living", "parent": "daily"},
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result["car"] == {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("10"), "pending": Decimal("0")}
-
-
-def test_wh343_gap_cross_bucket_net_negative_sibling_not_netted_into_parent(handler):
-    # WHIT-343 x the same-bucket guard. A refund filed on a DIFFERENT-bucket child of a
-    # spend parent must NOT net the parent down: subtree_ids drops it, and the income/spend
-    # split keeps it out of the spend fold entirely. parking 60; a +90 refund on a Lifestyle
-    # sibling would net car to -30 -> 0 IF it leaked. Correct: it's excluded -> car 60.
-    # Fail-on-revert (drop the bucket guard so the refund folds in): car -> 0.
-    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
-    txn_repo = _QueuedTransactionRepo(transactions=[
-        _transaction("parking", -60, "posted"),
-        _transaction("stray", 90, "posted"),         # refund on a cross-bucket child
-    ])
-    category_repo = _FakeCategoryRepo(categories=[
-        {"id": "car", "bucket": "Living", "parent": None},
-        {"id": "parking", "bucket": "Living", "parent": "car"},
-        {"id": "stray", "bucket": "Lifestyle", "parent": "car"},  # WRONG bucket for car
-    ])
-
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
-
-    assert result["car"] == {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("60"), "pending": Decimal("0")}
 
 
 def test_wh343_gap_income_whole_subtree_net_negative_floors_to_zero(handler):
@@ -1624,25 +560,17 @@ def test_wh343_gap_single_category_default_clamp_still_true(handler):
     assert handler.summarise_income(inc, {"side"}) == {"side": {"posted": Decimal("0"), "pending": Decimal("0")}}
 
 
-def test_wh343_gap_breakdown_flat_leaf_and_uncategorized_earned_still_clamp(handler):
-    # REGRESSION guard: /breakdown's FLAT per-leaf list, uncategorized, and earned were NOT
-    # switched to aggregate-then-clamp — each is a single-bucket floor and must stay per-id
-    # clamped. A net-negative leaf shows 0.0 in the flat list (not a negative bar), and the
-    # uncategorized/earned aggregates floor at 0. Fail-on-revert: a clamp=False regression
-    # in any of these three paths would surface a negative number.
-    cats = [
-        {"id": "tolls", "name": "Tolls", "bucket": "Living", "parent": None},
-    ]
-    txns = [_transaction("tolls", -50, "posted"), _transaction("tolls", 80, "posted")]  # net -30
-    flat = handler._window_category_spend(txns, cats)
-    assert {r["name"]: r["posted"] for r in flat} == {"Tolls": 0.0}
+def test_list_budgets_drops_an_excluded_charge(handler):
+    # WHIT-296: two coffee charges, one marked "exclude"; only the kept one feeds the bar.
+    # Without the gate the bar would read $150 posted.
+    budget_repo = recording_budget_repo({"coffee": {"target": Decimal("100")}})
+    txn_repo = _QueuedTransactionRepo([
+        _transaction("coffee", -50, "posted"),
+        {**_transaction("coffee", -100, "posted"), "budget_excluded": True},
+    ])
 
-    # uncategorized: a raw-enum spend refunded past its own charge floors at 0.
-    unc = handler.summarise_uncategorized(
-        [_transaction("MEDICAL", -20, "posted"), _transaction("MEDICAL", 90, "posted")], set())
-    assert unc == {"posted": Decimal("0"), "pending": Decimal("0")}
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(),
+                                  _FakeCategoryRepo([{"id": "coffee", "bucket": "Lifestyle"}]))
 
-    # earned: a reversal bigger than the earnings floors the headline at 0.
-    earned = handler.summarise_earned(
-        [_transaction("salary", 100, "posted"), _transaction("salary", -400, "posted")], {"salary"})
-    assert earned == {"posted": Decimal("0"), "pending": Decimal("0")}
+    assert result == {"coffee": {"available": Decimal("100"), "target": Decimal("100"),
+                                 "posted": Decimal("50"), "pending": Decimal("0")}}

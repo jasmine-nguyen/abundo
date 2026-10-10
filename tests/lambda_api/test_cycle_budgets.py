@@ -162,3 +162,18 @@ def test_user_can_export_each_budgets_numbers_for_this_and_last_cycle(handler, w
     assert numbers("insurance") == (Decimal("100"), Decimal("0"), Decimal("0"))
     assert all(repo.settle_calls == [] for repo in wired["budget"][before:])
 
+
+
+def test_budget_spend_matches_budget_standing_for_plain_budgets(handler, monkeypatch):
+    # A past cycle's export maths (budget_spend) must equal the Budgets screen's
+    # (budget_standing) for plain targets, parent rollup included.
+    import spend
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 25))
+    from budget_standing import budget_spend, budget_standing, standing_window
+    targets = {"food": {"target": Decimal("500")}, "coffee": {"target": Decimal("50")}}
+    window = standing_window(targets, {"length": LENGTH, "last_pay_date": PAYDATE})
+    current = [t for t in TXNS if window.cycle_start <= t["date"] <= window.today]
+    rows, _ = budget_standing(targets, window, CATEGORIES, current)
+    spend_by_id = budget_spend(targets, CATEGORIES, current)
+    for cat_id in targets:
+        assert spend_by_id[cat_id] == {"posted": rows[cat_id]["posted"], "pending": rows[cat_id]["pending"]}

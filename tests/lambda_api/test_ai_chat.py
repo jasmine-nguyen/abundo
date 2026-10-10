@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import pytest
 from _anthropic_fakes import ScriptedModel, tool_reply, tool_use_block
-from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
+from _budget_endpoint_fakes import _FakeBudgetRepo, _FakeCategoryRepo, _FakePayCycleRepo
 from _job_fakes import FakeChatJobRepo
 from _transaction_range_fakes import _AccountTransactionRepo, _DateFilteringTransactionRepo
 
@@ -130,6 +130,69 @@ def test_a_bad_tool_argument_goes_back_as_is_error(ai_chat, monkeypatch):
     assert result["is_error"] is True and "get_categories" in result["content"]
 
 
+def test_an_unknown_tool_name_goes_back_as_is_error_and_the_loop_continues(ai_chat, monkeypatch):
+    reply, model, job_repo = _run(ai_chat, monkeypatch, [
+        tool_reply(tool_use_block("delete_everything", {})),
+        tool_reply(tool_use_block("respond", {"text": "Sorry, I can't do that."}, "c2")),
+    ])
+    assert reply == {"text": "Sorry, I can't do that."}
+    result = model.requests[1]["messages"][-1]["content"][0]
+    assert result["is_error"] is True and result["tool_use_id"] == "c1"
+    assert job_repo.statuses == ["Working on it…"]
+
+
+def test_a_bad_status_line_argument_still_runs_the_tool(ai_chat, monkeypatch):
+    # last_n "three" breaks the status line AND the tool; the job must not crash on either.
+    _, model, job_repo = _run(ai_chat, monkeypatch, [
+        tool_reply(tool_use_block("query_transactions", {"filters": {"months": {"last_n": "three"}}, "metric": "sum"})),
+        tool_reply(tool_use_block("respond", {"text": "ok"}, "c2")),
+    ])
+    assert job_repo.statuses == ["Working on it…"]
+    assert model.requests[1]["messages"][-1]["content"][0]["is_error"] is True
+
+
+def test_a_plain_text_reply_with_no_tool_call_fails_the_job(ai_chat, monkeypatch):
+    with pytest.raises(ai_chat.ChatError):
+        _run(ai_chat, monkeypatch, [tool_reply({"type": "text", "text": "Here you go"}, stop_reason="end_turn")])
+
+
+THINKING = {"type": "thinking", "thinking": "Look up the categories first.", "signature": "sig-1"}
+
+
+def test_last_round_asks_for_an_answer_and_thinking_blocks_go_back_unchanged(ai_chat, monkeypatch):
+    # WHIT-807: no forced tool_choice; the last round adds a system turn telling the model to respond.
+    rounds = ai_chat.CHAT_MAX_TOOL_ROUNDS
+    first_content = [THINKING, tool_use_block("get_categories", {}, "c0")]
+    replies = [{"content": first_content, "stop_reason": "tool_use"}]
+    replies += [tool_reply(tool_use_block("get_categories", {}, f"c{i}")) for i in range(1, rounds - 1)]
+    replies.append(tool_reply(tool_use_block("respond", {"text": "You have one category."}, "last")))
+
+    reply, model, _ = _run(ai_chat, monkeypatch, replies)
+
+    assert reply == {"text": "You have one category."}
+    assert len(model.requests) == rounds
+    for request in model.requests[:-1]:
+        assert all(message["role"] != "system" for message in request["messages"])
+    last_messages = model.requests[-1]["messages"]
+    assert last_messages[-1]["role"] == "system"
+    assert "respond" in last_messages[-1]["content"]
+    assert last_messages[-2]["role"] == "user"
+    # The first assistant turn is replayed exactly as the model sent it, thinking block included.
+    assistant_turns = [m for m in model.requests[1]["messages"] if m["role"] == "assistant"]
+    assert assistant_turns == [{"role": "assistant", "content": first_content}]
+
+
+def test_chat_tool_result_renders_decimals_as_numbers(ai_chat, monkeypatch):
+    # WHIT-765: a chat tool's Decimal output reaches the model as plain JSON numbers.
+    monkeypatch.setitem(ai_chat.TOOL_FUNCTIONS, "qa_tool", lambda data, args: {"spent": Decimal("60.5")})
+
+    block = ai_chat._run_tool({"name": "qa_tool", "id": "call-1"}, None, set())
+
+    assert block["type"] == "tool_result"
+    assert block["tool_use_id"] == "call-1"
+    assert json.loads(block["content"]) == {"spent": 60.5}
+
+
 # --- reply validation ------------------------------------------------------------------------
 
 
@@ -162,6 +225,7 @@ def test_a_made_up_ai_delta_amount_is_ignored(ai_chat, monkeypatch):
     {"kind": "deeplink", "label": "x", "category_id": "eatingout", "date_from": "2020-01-01", "date_to": "2026-08-31"},
     {"kind": "deeplink", "label": "x", "category_id": "eatingout", "date_from": "2026-08-01", "date_to": "2026-12-31"},
     {"kind": "deeplink", "label": "x", "category_id": "eatingout", "date_from": "2026-02-30", "date_to": "2026-08-31"},
+    {"kind": "deeplink", "label": "x", "category_id": "eatingout", "date_from": "2026-09-10", "date_to": None},
     {"kind": "prompt", "label": "x", "text": ""},
     {"kind": "teleport", "label": "x"},
 ])
@@ -170,10 +234,56 @@ def test_bad_actions_are_dropped(ai_chat, action):
     assert "actions" not in reply
 
 
-def test_at_most_two_actions(ai_chat):
-    prompt = {"kind": "prompt", "label": "Ask", "text": "More?"}
-    reply = ai_chat.validate_reply({"text": "Hi", "actions": [prompt] * 4}, _data(ai_chat), set())
-    assert len(reply["actions"]) == 2
+def test_a_deeplink_to_uncategorized_is_kept(ai_chat):
+    action = {"kind": "deeplink", "label": "See them", "category_id": "__uncategorized__",
+              "date_from": "2026-09-10", "date_to": "2026-09-20"}
+    reply = ai_chat.validate_reply({"text": "ok", "actions": [action]}, _data(ai_chat), set())
+    assert reply["actions"][0]["categoryId"] == "__uncategorized__"
+
+
+TOOL_NUMBERS = {Decimal("31.11"), Decimal("60.00"), Decimal("0.00"), Decimal("33.34")}
+
+
+def _card(**overrides):
+    return {"type": "metric_bars", "label": "Eating Out", "value": 31.11, "series": [], **overrides}
+
+
+def _bars(*values):
+    return [{"label": f"p{index}", "value": value} for index, value in enumerate(values)]
+
+
+def test_a_card_value_with_float_noise_still_matches_to_the_cent(ai_chat):
+    reply = ai_chat.validate_reply({"text": "ok", "card": _card(value=31.110000001)}, _data(ai_chat), TOOL_NUMBERS)
+    assert reply["card"]["value"] == 31.11
+
+
+def test_a_budget_line_no_tool_returned_drops_the_card(ai_chat):
+    reply = ai_chat.validate_reply({"text": "ok", "card": _card(budget_line=75)}, _data(ai_chat), TOOL_NUMBERS)
+    assert "card" not in reply
+    assert reply["text"] == "ok"
+
+
+@pytest.mark.parametrize(("card", "delta"), [
+    (_card(budget_line=60, delta={"vs": "budget"}), {"amount": -28.89, "vs": "budget"}),
+    (_card(value=60, budget_line=31.11, delta={"vs": "budget"}), {"amount": 28.89, "vs": "budget"}),
+    (_card(budget_line=60, delta={"amount": 28.89, "vs": "budget"}), {"amount": -28.89, "vs": "budget"}),
+    (_card(budget_line=0, delta={"vs": "budget"}), {"amount": 31.11, "vs": "budget"}),
+    (_card(value=31.110000001, budget_line=59.999999, delta={"vs": "budget"}), {"amount": -28.89, "vs": "budget"}),
+    (_card(budget_line=31.11, delta={"vs": "budget"}), None),
+    (_card(delta={"vs": "budget"}), None),
+    (_card(series=_bars(60, 33.34, 31.11), delta={"vs": "previous"}), {"amount": -2.23, "vs": "previous"}),
+    (_card(series=_bars(31.11, 33.34, 60), delta={"vs": "previous"}), None),
+    (_card(series=_bars(31.11), delta={"vs": "previous"}), None),
+    (_card(budget_line=60, series=_bars(33.34, 31.11), delta={"vs": "average"}), None),
+    (_card(budget_line=60, series=_bars(33.34, 31.11), delta={"amount": -28.89}), None),
+    (_card(series=_bars(*([60] * 13), 31.11), delta={"vs": "previous"}), None),
+], ids=["under-budget", "over-budget", "ai-wrong-sign", "zero-budget-line", "float-noise", "zero-delta",
+        "no-budget-line", "vs-previous", "value-not-last-bar", "single-bar", "unknown-vs", "no-vs",
+        "thirteen-bar-cap"])
+def test_the_server_works_out_the_delta(ai_chat, card, delta):
+    # Card 613: the AI only says what to compare against; every amount comes from the card's figures.
+    reply = ai_chat.validate_reply({"text": "ok", "card": card}, _data(ai_chat), TOOL_NUMBERS)
+    assert reply["card"].get("delta") == delta
 
 
 def test_empty_text_fails_the_answer(ai_chat):
@@ -269,57 +379,72 @@ def test_worker_marks_any_other_failure_failed(ai_chat, monkeypatch, worker):
     assert worker.finished[0]["error"] == "could not answer"
 
 
-def test_load_chat_data_fetches_back_to_the_lookback_floor(ai_chat, monkeypatch):
+class RolloverBudgetRepo:
+    """Groceries $100 with rollover on, anchored on the 2026-08-27 cycle; records any write."""
+
+    def __init__(self):
+        self.writes = []
+
+    def list_budgets(self):
+        return {"groceries": {
+            "target": Decimal("100"), "rollover": True, "carryover": Decimal("0"),
+            "carryover_from": "2026-08-27", "carryover_len": Decimal("14"),
+            "carryover_paydate": "2026-09-10",
+        }}
+
+    def settle_carryover(self, *args):
+        self.writes.append(("settle_carryover", args))
+
+    def clear_spread(self, *args):
+        self.writes.append(("clear_spread", args))
+
+    def set_spread(self, *args):
+        self.writes.append(("set_spread", args))
+
+
+def _groceries_row(txn_id, amount, day):
+    return {"transaction_id": txn_id, "account_id": "up-spending", "category": "groceries",
+            "amount": Decimal(amount), "status": "posted", "counts_to_budget": True, "date": day}
+
+
+def _load_chat_data(ai_chat, monkeypatch, transaction_repo, budget_repo):
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: __import__("datetime").date(2026, 9, 20))
+    return ai_chat.load_chat_data(
+        transaction_repo, _FakeCategoryRepo(CATEGORIES), budget_repo,
+        _FakePayCycleRepo(length=14, last_pay_date="2026-09-10"))
 
-    class BudgetRepo:
-        def list_budgets(self):
-            return {}
 
+def test_load_chat_data_fetches_back_to_the_lookback_floor(ai_chat, monkeypatch):
     transaction_repo = _DateFilteringTransactionRepo([])
-    data = ai_chat.load_chat_data(
-        transaction_repo, _FakeCategoryRepo(CATEGORIES), BudgetRepo(), _FakePayCycleRepo(length=14, last_pay_date="2026-09-10"))
+    data = _load_chat_data(ai_chat, monkeypatch, transaction_repo, _FakeBudgetRepo({}))
+    assert data.budgets == {}
     assert data.floor == "2025-09-01" and data.today == TODAY
     assert transaction_repo.calls[0][1:3] == ("2025-09-01", TODAY)
+
+
+def test_rollover_history_older_than_the_chat_floor_still_counts(ai_chat, monkeypatch):
+    # WHIT-622: if the chat's floor ever sits later than the rollover read start, the read still
+    # reaches back for the carryover, but the chat's own transactions stop at the floor.
+    # Prior cycle 2026-08-27..09-09 spent $60 of $100 → carryover $40.
+    monkeypatch.setattr(ai_chat, "lookback_floor", lambda cycle_start, length, today: cycle_start)
+    rows = [_groceries_row("prior", "-60", "2026-08-30"), _groceries_row("now", "-25", "2026-09-15")]
+    data = _load_chat_data(ai_chat, monkeypatch, _AccountTransactionRepo(rows), RolloverBudgetRepo())
+
+    assert data.floor == "2026-09-10"
+    assert data.budgets["groceries"]["carryover"] == Decimal("40")
+    assert data.budgets["groceries"]["available"] == Decimal("140")
+    assert [t["transaction_id"] for t in data.transactions] == ["now"]
 
 
 def test_load_chat_data_works_out_budgets_from_its_own_read_without_saving(ai_chat, monkeypatch):
     # WHIT-622: the chat shows the same budget rows as /budgets (rollover included) from its one
     # transaction read, and never writes the settlements — only GET /budgets saves those.
-    import spend
-    monkeypatch.setattr(spend, "melbourne_today", lambda: __import__("datetime").date(2026, 9, 20))
+    stored = [_groceries_row("old", "-500", "2025-10-01"), _groceries_row("prior", "-60", "2026-08-30"),
+              _groceries_row("now", "-25", "2026-09-15")]
 
-    class BudgetRepo:
-        def __init__(self):
-            self.writes = []
-
-        def list_budgets(self):
-            return {"groceries": {
-                "target": Decimal("100"), "rollover": True, "carryover": Decimal("0"),
-                "carryover_from": "2026-08-27", "carryover_len": Decimal("14"),
-                "carryover_paydate": "2026-09-10",
-            }}
-
-        def settle_carryover(self, *args):
-            self.writes.append(("settle_carryover", args))
-
-        def clear_spread(self, *args):
-            self.writes.append(("clear_spread", args))
-
-        def set_spread(self, *args):
-            self.writes.append(("set_spread", args))
-
-    def row(txn_id, amount, day):
-        return {"transaction_id": txn_id, "account_id": "up-spending", "category": "groceries",
-                "amount": Decimal(amount), "status": "posted", "counts_to_budget": True, "date": day}
-
-    stored = [row("old", "-500", "2025-10-01"), row("prior", "-60", "2026-08-30"),
-              row("now", "-25", "2026-09-15")]
-
-    budget_repo = BudgetRepo()
-    data = ai_chat.load_chat_data(
-        _AccountTransactionRepo(stored), _FakeCategoryRepo(CATEGORIES), budget_repo, _FakePayCycleRepo(length=14, last_pay_date="2026-09-10"))
+    budget_repo = RolloverBudgetRepo()
+    data = _load_chat_data(ai_chat, monkeypatch, _AccountTransactionRepo(stored), budget_repo)
 
     assert data.budgets == {"groceries": {
         "target": Decimal("100"), "posted": Decimal("25"), "pending": Decimal("0"),
@@ -389,3 +514,21 @@ def test_too_little_time_left_fails_before_calling_the_model(ai_chat, monkeypatc
     with pytest.raises(ai_chat.ChatError):
         ai_chat.run_chat("job1", EVENT["messages"], _data(ai_chat), FakeChatJobRepo(), lambda: 19.9)
     assert model.requests == []
+
+
+def test_exactly_the_minimum_time_left_still_calls_the_model(ai_chat, monkeypatch):
+    model = ScriptedModel([tool_reply(tool_use_block("respond", GOOD_ANSWER))])
+    monkeypatch.setattr(ai_chat, "post_messages", model)
+    exactly = ai_chat.CHAT_DEADLINE_MARGIN_SECONDS + ai_chat.CHAT_MIN_CALL_SECONDS
+    ai_chat.run_chat("job1", EVENT["messages"], _data(ai_chat), FakeChatJobRepo(), lambda: exactly)
+    assert [request["timeout"] for request in model.requests] == [ai_chat.CHAT_MIN_CALL_SECONDS]
+
+
+@pytest.mark.parametrize("rule", [
+    "copied exactly",
+    "No investment, tax or credit advice",
+    "Don't mention tools or internal ids",
+    "Always finish by calling `respond`",
+])
+def test_the_chat_prompt_keeps_its_safety_rules(ai_chat, rule):
+    assert rule in ai_chat.system_prompt("2026-09-20")

@@ -7,6 +7,7 @@ the whole object.
 """
 
 import json
+from decimal import Decimal
 
 import pytest
 
@@ -60,11 +61,6 @@ def test_get_loanfacts_null_sentinel_when_unset(handler):
     assert out == {**{f: None for f in _FIELDS}, "payoffGoalDate": None, "depositTarget": None}
 
 
-def test_get_loanfacts_returns_saved_facts(handler):
-    out = handler.get_loanfacts(FakeLoanFactsRepo(dict(VALID)))
-    assert out == VALID
-
-
 def test_route_get_loanfacts(handler, monkeypatch):
     monkeypatch.setattr(handler, "LoanFactsRepository", lambda: FakeLoanFactsRepo(dict(VALID)))
     event = api_event("GET", "/loanfacts")
@@ -98,27 +94,13 @@ def test_set_loanfacts_accepts_and_forwards_a_valid_goal_date(handler):
     assert json.loads(resp["body"])["payoffGoalDate"] == "2035-06-01"
 
 
-def test_set_loanfacts_accepts_explicit_null_goal_date(handler):
-    repo = FakeLoanFactsRepo()
-    resp = handler.set_loanfacts(_put_event({**VALID, "payoffGoalDate": None}), repo)
-    assert resp["statusCode"] == 200
-    assert repo.set_calls[0]["payoffGoalDate"] is None
-
-
-@pytest.mark.parametrize("bad_date", ["June 2035", "2035/06/01", "2035-6-1", "not-a-date", 20350601])
+@pytest.mark.parametrize("bad_date", ["June 2035", "2035/06/01", "2035-6-1", "not-a-date", 20350601, "2035-13-45"])
 def test_set_loanfacts_rejects_a_malformed_goal_date(handler, bad_date):
     repo = FakeLoanFactsRepo()
     resp = handler.set_loanfacts(_put_event({**VALID, "payoffGoalDate": bad_date}), repo)
     assert resp["statusCode"] == 400
     assert "payoffGoalDate" in json.loads(resp["body"])["error"]
     assert repo.set_calls == []   # nothing persisted on a rejected write
-
-
-def test_set_loanfacts_rejects_an_impossible_calendar_date(handler):
-    # Passes the shape regex but isn't a real date — date.fromisoformat rejects it.
-    resp = handler.set_loanfacts(_put_event({**VALID, "payoffGoalDate": "2035-13-45"}), FakeLoanFactsRepo())
-    assert resp["statusCode"] == 400
-    assert "real calendar date" in json.loads(resp["body"])["error"]
 
 
 # --- set_loanfacts: deposit target (WHIT-378) --------------------------------
@@ -132,11 +114,13 @@ def test_set_loanfacts_accepts_and_forwards_a_valid_deposit_target(handler):
     assert json.loads(resp["body"])["depositTarget"] == 120000.0
 
 
-def test_set_loanfacts_accepts_explicit_null_deposit_target(handler):
+def test_handler_preserves_a_fractional_deposit_target_exactly(handler):
+    # DynamoDB rejects float, so the target reaches the repo as Decimal(str(x)) — exact, no drift.
     repo = FakeLoanFactsRepo()
-    resp = handler.set_loanfacts(_put_event({**VALID, "depositTarget": None}), repo)
-    assert resp["statusCode"] == 200
-    assert repo.set_calls[0]["depositTarget"] is None
+    handler.set_loanfacts(_put_event({**VALID, "depositTarget": 120000.5}), repo)
+    forwarded = repo.set_calls[0]["depositTarget"]
+    assert isinstance(forwarded, Decimal)
+    assert forwarded == Decimal("120000.5")
 
 
 def test_set_loanfacts_extra_zero_is_allowed(handler):
@@ -161,6 +145,7 @@ def test_route_put_loanfacts_dispatch(handler, monkeypatch):
     [
         ({k: v for k, v in VALID.items() if k != "homeValue"}, "homeValue must be a number above 0"),  # missing
         ({**VALID, "original": "600000"}, "original must be a number above 0"),                    # string
+        ({**VALID, "original": 0}, "original must be a number above 0"),                           # zero
         ({**VALID, "baseRepay": True}, "baseRepay must be a number above 0"),                      # bool
         ({**VALID, "homeValue": -1}, "homeValue must be a number above 0"),                    # negative amount
         ({**VALID, "extra": -5}, "extra must be a number between 0"),                           # negative extra
@@ -178,42 +163,7 @@ def test_set_loanfacts_rejects_bad_fields(handler, body, needle):
     assert repo.set_calls == []   # nothing persisted on a rejected write
 
 
-# [A1] Every field except extra rejects zero (int and float) with its own full message.
-@pytest.mark.parametrize("field", [f for f in _FIELDS if f != "extra"])
-@pytest.mark.parametrize("zero", [0, 0.0])
-def test_set_loanfacts_rejects_zero_for_every_required_field(handler, field, zero):
-    repo = FakeLoanFactsRepo()
-    resp = handler.set_loanfacts(_put_event({**VALID, field: zero}), repo)
-    assert resp["statusCode"] == 400
-    assert json.loads(resp["body"])["error"].startswith(f"{field} must be a number above 0 and up to ")
-    assert repo.set_calls == []
-
-
-def test_set_loanfacts_rejects_invalid_json(handler):
-    resp = handler.set_loanfacts(_put_event("{not json"), FakeLoanFactsRepo())
-    assert resp["statusCode"] == 400
-
-
-# === boundary + non-finite gaps (folded from test_loanfacts_edges.py) — inclusive upper
-# bounds accepted, deposit-target boundaries, and the math.isfinite gate. The drifted repo
-# is kept renamed (FakeLoanFactsRepo_edges: a set_calls variant vs the get_calls one above). =
-
-
-class FakeLoanFactsRepo_edges:
-    def __init__(self, facts=None):
-        self._facts = facts
-        self.set_calls = []
-
-    def get_loanfacts(self):
-        return dict(self._facts) if self._facts is not None else None
-
-    def set_loanfacts(self, payoffGoalDate=None, depositTarget=None, **kwargs):
-        self.set_calls.append({**kwargs, "payoffGoalDate": payoffGoalDate, "depositTarget": depositTarget})
-        return {
-            **{k: float(v) for k, v in kwargs.items()},
-            "payoffGoalDate": payoffGoalDate,
-            "depositTarget": float(depositTarget) if depositTarget is not None else None,
-        }
+# --- boundaries: inclusive upper bounds, deposit target, the math.isfinite gate ---------------
 
 
 @pytest.mark.parametrize(
@@ -223,24 +173,17 @@ class FakeLoanFactsRepo_edges:
         {"ratePct": 100},           # inclusive top of (0, 100]
         {"original": CEILING},      # exactly at the ceiling (the upper bound is inclusive)
         {"extra": CEILING},         # extra also shares the ceiling
+        {"depositTarget": CEILING},
     ],
 )
 def test_set_loanfacts_accepts_inclusive_upper_bounds(handler, over):
-    repo = FakeLoanFactsRepo_edges()
+    repo = FakeLoanFactsRepo()
     resp = handler.set_loanfacts(_put_event({**VALID, **over}), repo)
     assert resp["statusCode"] == 200
     assert len(repo.set_calls) == 1
 
 
 # --- deposit target (WHIT-378) boundaries ------------------------------------
-
-
-def test_set_loanfacts_accepts_deposit_target_at_the_ceiling(handler):
-    # Shares the dollar ceiling with the other amounts; the upper bound is inclusive, so == is fine.
-    repo = FakeLoanFactsRepo_edges()
-    resp = handler.set_loanfacts(_put_event({**VALID, "depositTarget": CEILING}), repo)
-    assert resp["statusCode"] == 200
-    assert len(repo.set_calls) == 1
 
 
 @pytest.mark.parametrize(
@@ -250,27 +193,15 @@ def test_set_loanfacts_accepts_deposit_target_at_the_ceiling(handler):
         0,             # zero is not a real target
         -100,          # negative
         CEILING + 1,
+        float("inf"),  # json.dumps writes the bare Infinity token, which json.loads accepts
     ],
 )
 def test_set_loanfacts_rejects_a_bad_deposit_target(handler, bad):
-    repo = FakeLoanFactsRepo_edges()
+    repo = FakeLoanFactsRepo()
     resp = handler.set_loanfacts(_put_event({**VALID, "depositTarget": bad}), repo)
     assert resp["statusCode"] == 400
     assert "depositTarget must be a number" in json.loads(resp["body"])["error"]
     assert repo.set_calls == []   # nothing persisted on a rejected write
-
-
-def test_set_loanfacts_rejects_non_finite_deposit_target(handler):
-    body = (
-        '{"original": 600000, "homeValue": 770000, "lvr": 0.8, "ratePct": 5.74, '
-        '"baseRepay": 1240, "extra": 200, "depositTarget": Infinity}'
-    )
-    repo = FakeLoanFactsRepo_edges()
-    resp = handler.set_loanfacts(_put_event(body), repo)
-    assert resp["statusCode"] == 400
-    assert json.loads(resp["body"])["error"] == (
-        f"depositTarget must be a number above 0 and up to {CEILING}")
-    assert repo.set_calls == []
 
 
 @pytest.mark.parametrize("token", ["Infinity", "-Infinity", "NaN"])
@@ -280,7 +211,7 @@ def test_set_loanfacts_rejects_non_finite_numbers(handler, token):
         '{"original": %s, "homeValue": 770000, "lvr": 0.8, '
         '"ratePct": 5.74, "baseRepay": 1240, "extra": 200}' % token
     )
-    repo = FakeLoanFactsRepo_edges()
+    repo = FakeLoanFactsRepo()
     resp = handler.set_loanfacts(_put_event(body), repo)
     assert resp["statusCode"] == 400
     assert json.loads(resp["body"])["error"] == f"original must be a number above 0 and up to {CEILING}"

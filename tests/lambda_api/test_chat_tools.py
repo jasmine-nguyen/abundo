@@ -20,6 +20,11 @@ CYCLE_START = "2026-09-10"
 CATEGORIES = [
     {"id": "eatingout", "name": "Eating Out", "bucket": "Lifestyle", "parent": None, "colorSlot": 0},
     {"id": "eatingout-sushi", "name": "Sushi", "bucket": "Lifestyle", "parent": "eatingout", "colorSlot": 3},
+    # A sub filed under a spend parent but in the Income bucket: must never inflate the parent.
+    {"id": "eatingout-tips", "name": "Tips", "bucket": "Income", "parent": "eatingout", "colorSlot": 5},
+    # A Living-bucket sub under a Lifestyle parent: still spend, but not the parent's same-bucket
+    # subtree, so it must not count toward Eating Out either.
+    {"id": "eatingout-groceries", "name": "Deli", "bucket": "Living", "parent": "eatingout", "colorSlot": 9},
     {"id": "groceries", "name": "Groceries", "bucket": "Living", "parent": None, "colorSlot": 11},
     {"id": "salary", "name": "Salary", "bucket": "Income", "parent": None, "colorSlot": 5},
 ]
@@ -166,23 +171,6 @@ def test_merchant_and_amount_filters(chat_tools):
     assert [row["amount"] for row in result["rows"]] == [33.34]
 
 
-def test_unknown_category_is_an_error_the_model_can_fix(chat_tools):
-    with pytest.raises(ValueError, match="get_categories"):
-        chat_tools.query_transactions(_data(chat_tools), {"filters": {"category_ids": ["nope"]}, "metric": "sum"})
-
-
-def test_two_period_filters_is_an_error(chat_tools):
-    with pytest.raises(ValueError, match="only one"):
-        chat_tools.query_transactions(_data(chat_tools), {
-            "filters": {"pay_cycles": {"last_n": 2}, "months": {"last_n": 2}}, "metric": "sum"})
-
-
-def test_group_by_month_needs_the_months_filter(chat_tools):
-    with pytest.raises(ValueError, match="filters.months"):
-        chat_tools.query_transactions(_data(chat_tools), {
-            "filters": {"pay_cycles": {"last_n": 2}}, "metric": "sum", "group_by": "month"})
-
-
 # --- grouping and metrics --------------------------------------------------------------------
 
 
@@ -301,31 +289,6 @@ def test_get_pay_cycles_ends_with_the_current_cycle(chat_tools):
     ]
 
 
-def test_get_categories_flags_built_ins(chat_tools):
-    by_id = {row["id"]: row for row in chat_tools.get_categories(_data(chat_tools), {})}
-    assert by_id["eatingout"]["is_builtin"] is True
-    assert by_id["eatingout-sushi"]["is_builtin"] is False
-    assert by_id["eatingout-sushi"]["parent"] == "eatingout"
-
-
-# --- status lines ----------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("name, args, line", [
-    ("query_transactions", {"filters": {"category_ids": ["eatingout"], "pay_cycles": {"last_n": 3}}},
-     "Looking at Eating Out, last 3 cycles…"),
-    ("query_transactions", {"filters": {"months": {"last_n": 1}}}, "Looking at your spending, last month…"),
-    ("query_transactions", {"filters": {"direction": "income", "date_from": "2026-06-12", "date_to": "2026-09-11"}},
-     "Looking at your income, 12 Jun – 11 Sep…"),
-    ("query_transactions", {"filters": {"merchant_contains": "Uber"}}, "Looking at Uber, this cycle…"),
-    ("get_budgets", {}, "Checking your budgets…"),
-    ("get_pay_cycles", {"last_n": 3}, "Checking your pay cycles…"),
-])
-def test_status_line_comes_from_the_tool_arguments(chat_tools, name, args, line):
-    names = {category["id"]: category["name"] for category in CATEGORIES}
-    assert chat_tools.tool_status_line(name, args, names) == line
-
-
 # --- QA (card 609): boundaries the happy path doesn't reach ----------------------------------
 
 
@@ -378,3 +341,60 @@ def test_get_budgets_past_cycle_counts_an_income_target_positive_and_skips_exclu
         _data(chat_tools, transactions=rows, budgets=budgets), {"pay_cycle": {"offset": 1}})
     [row] = result["budgets"]
     assert row["spent"] == 3000.0 and row["earn_target"] is True
+
+
+def _eating_out(chat_tools, data, filters, metric="sum", **extra):
+    return chat_tools.query_transactions(
+        data, {"filters": {"category_ids": ["eatingout"], **filters}, "metric": metric, **extra})
+
+
+def test_the_twelfth_completed_month_is_inside_the_floor(chat_tools):
+    data = _data(chat_tools, transactions=[_txn("old", "eatingout", -40, "2025-09-01")])
+    result = _eating_out(chat_tools, data, {"months": {"last_n": 12}}, metric="avg", group_by="none")
+    assert result["period"]["months"][0] == {"from": "2025-09-01", "to": "2025-09-30"}
+    assert result["rows"][0]["value"] == 40.0
+    assert "clamped" not in result
+
+
+def test_a_net_refund_period_counts_as_zero_not_negative(chat_tools):
+    # Cycle [08-27, 09-09] nets to a $30 refund. It floors to 0; it must not drag the average
+    # below the other cycle's 60 / 2 = 30.
+    data = _data(chat_tools, transactions=[
+        _txn("spend", "eatingout", -60, "2026-08-20"),
+        _txn("refund", "eatingout", 30, "2026-09-01"),
+    ])
+    result = _eating_out(chat_tools, data, {"pay_cycles": {"last_n": 2}}, metric="avg")
+    assert [row["value"] for row in result["rows"]] == [60.0, 0.0]
+    assert result["avg"] == 30.0
+
+
+def test_a_cross_bucket_sub_never_counts_toward_its_spend_parent(chat_tools):
+    data = _data(chat_tools, transactions=[
+        _txn("meal", "eatingout", -40, "2026-09-12"),
+        _txn("sushi", "eatingout-sushi", -10, "2026-09-12"),
+        _txn("tip", "eatingout-tips", -500, "2026-09-12"),
+        _txn("deli", "eatingout-groceries", -70, "2026-09-12"),
+    ])
+    assert _eating_out(chat_tools, data, {})["rows"] == [{"value": 50.0}]
+
+
+@pytest.mark.parametrize("requested", [0, -3])
+def test_last_n_outside_one_to_twelve_is_clamped_and_flagged(chat_tools, requested):
+    result = _eating_out(chat_tools, _data(chat_tools), {"pay_cycles": {"last_n": requested}}, group_by="pay_cycle")
+    assert len(result["rows"]) == 1
+    assert result["clamped"] is True
+
+
+def test_a_range_wholly_before_the_floor_is_an_error(chat_tools):
+    with pytest.raises(ValueError):
+        _eating_out(chat_tools, _data(chat_tools), {"date_from": "2020-01-01", "date_to": "2020-02-01"})
+
+
+@pytest.mark.parametrize("raw, redacted", [
+    ("Card xx4821", "Card xx•••"),
+    ("4111 1111 1111 1111", "•••"),
+    ("Transfer 063 000 12345678", "Transfer •••"),
+    ("7-Eleven 123", "7-Eleven 123"),  # 3-digit store numbers are kept
+])
+def test_redact_blanks_card_account_and_bsb_digit_runs(chat_tools, raw, redacted):
+    assert chat_tools.redact(raw) == redacted

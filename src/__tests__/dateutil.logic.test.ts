@@ -3,7 +3,7 @@
 // an ISO date must parse/format on the LOCAL day, never shifted by a timezone. The
 // runner pins TZ=Australia/Melbourne (UTC+10/+11), so a UTC parse would surface here.
 import { describe, it, expect } from '@jest/globals';
-import { parseISODate, toISODate, formatDayMonthYear, formatWeekdayShort, formatTimeOfDay } from '../dateutil';
+import { parseISODate, toISODate, formatDayMonthYear, formatWeekdayShort, formatTimeOfDay, pendingLabel } from '../dateutil';
 
 describe('formatTimeOfDay (WHIT-713)', () => {
   const now = new Date(2026, 8, 18, 15, 0);
@@ -78,5 +78,18 @@ describe('formatTimeOfDay edges', () => {
     const dstDay = new Date(2026, 9, 4, 12, 0);
     expect(formatTimeOfDay(Date.parse('2026-10-04T03:30:00+11:00'), dstDay)).toBe('3:30am');
     expect(formatTimeOfDay(Date.parse('2026-10-04T01:30:00+10:00'), dstDay)).toBe('1:30am');
+  });
+});
+
+// WHIT-844 — the edges the row's 0/3/4/7-day table (TransactionRow.screen.test.tsx) skips.
+describe('pendingLabel edges', () => {
+  it.each([
+    ['a future date stays plain', '2026-10-12', new Date(2026, 9, 9, 8, 0), 'Pending'],
+    ['an unparseable date stays plain', '', new Date(2026, 9, 9, 8, 0), 'Pending'],
+    // 12:30am 9 Oct Melbourne is still 8 Oct UTC: counts the LOCAL day, so 4 days, not 3.
+    ['counts the local day just after midnight', '2026-10-05', new Date(2026, 9, 9, 0, 30), 'Pending · 4 days'],
+    ['counts the local day just before midnight', '2026-10-05', new Date(2026, 9, 8, 23, 59), 'Pending'],
+  ])('%s', (_name, dateIso, now, expected) => {
+    expect(pendingLabel(dateIso, now)).toBe(expected);
   });
 });

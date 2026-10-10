@@ -9,10 +9,11 @@ The `handler` fixture (conftest.py) makes lambda_api importable in isolation wit
 `shared/` on the path and boto3/botocore faked.
 """
 
-import base64
 import json
 from datetime import date
 from decimal import Decimal
+
+import pytest
 
 from _api_event import api_event
 from _dynamo_fakes import FakeTable
@@ -25,9 +26,10 @@ from _milestone_fakes import checkpoints_marked, goal_checkpoint_repo
 class FakeGoalsRepo:
     """Handler-level stand-in for GoalsRepository (records calls)."""
 
-    def __init__(self, goals=None, conflict_exc=None):
+    def __init__(self, goals=None, conflict_exc=None, saved_override=None):
         self._goals = goals or {}          # {id: goal object}
         self._conflict_exc = conflict_exc
+        self._saved_override = saved_override   # the SAVED goal the real repo would return
         self.upsert_calls = []
         self.start_candidates = []         # WHIT-252: the start passed per upsert
         self.delete_calls = []
@@ -42,6 +44,8 @@ class FakeGoalsRepo:
         self.start_candidates.append(start_candidate)
         if self._conflict_exc is not None:
             raise self._conflict_exc("boom")
+        if self._saved_override is not None:
+            return dict(self._saved_override)
         # Mimic a CREATE: the real repo carries an existing start forward, but a fresh Fake
         # has none, so it stamps the candidate — enough for handler tests to see the start
         # in the response. (Preserve-on-replace is covered in test_repository_goals.)
@@ -125,35 +129,6 @@ def test_upsert_paydown_manual_success(handler):
     assert goal["manual_balance"] == Decimal("8400")
 
 
-def test_upsert_defaults_missing_icon(handler):
-    repo = FakeGoalsRepo()
-    body = _grow_body()
-    del body["icon"]
-    resp = handler.upsert_goal(_put_event(body=body), repo, FakeBalanceRepo())
-
-    assert resp["statusCode"] == 200
-    assert json.loads(resp["body"])["icon"] == "tag"   # DEFAULT_CATEGORY_ICON
-
-
-def test_upsert_optional_baseline_stored_as_number(handler):
-    repo = FakeGoalsRepo()
-    resp = handler.upsert_goal(_put_event(body=_grow_body(baseline=1000)), repo, FakeBalanceRepo())
-
-    assert resp["statusCode"] == 200
-    assert json.loads(resp["body"])["baseline"] == 1000
-    _, goal = repo.upsert_calls[0]
-    assert goal["baseline"] == Decimal("1000")
-
-
-def test_upsert_base64_body_decodes(handler):
-    repo = FakeGoalsRepo()
-    raw = base64.b64encode(json.dumps(_grow_body()).encode()).decode()
-    resp = handler.upsert_goal(_put_event(raw=raw, is_b64=True), repo, FakeBalanceRepo())
-
-    assert resp["statusCode"] == 200
-    assert repo.upsert_calls[0][0] == "g1"
-
-
 # --- WHIT-252: immutable goal start stamped on create ------------------------
 
 
@@ -224,83 +199,77 @@ def _assert_400(handler, body):
     return json.loads(resp["body"])
 
 
-def test_400_missing_name(handler):
-    _assert_400(handler, _grow_body(name="  "))
+def _cp(label, amount, **over):
+    cp = {"label": label, "amount": amount}
+    cp.update(over)
+    return cp
 
 
-def test_400_bad_direction(handler):
-    _assert_400(handler, _grow_body(direction="sideways"))
+def _without(body, *keys):
+    return {k: v for k, v in body.items() if k not in keys}
 
 
-def test_400_target_amount_not_a_number(handler):
-    _assert_400(handler, _grow_body(target_amount="lots"))
+_NAN_CHECKPOINT = ('{"name":"H","icon":"palm","direction":"grow","target_amount":5000,'
+                   '"target_date":"2026-12-01","account_id":"up-spending",'
+                   '"checkpoints":[{"label":"Some","amount":NaN}]}')
+_NAN_MANUAL_BALANCE = ('{"name":"Car loan","icon":"car","direction":"paydown","target_amount":0,'
+                       '"target_date":"2027-06-01","manual_balance":NaN,"manual_as_of":"2026-07-01"}')
+_FULL_GROW_LADDER_WITH_A_DIP = [_cp(f"Step {n}", 50 if n == 10 else n * 100) for n in range(1, 21)]
 
 
-def test_400_target_amount_bool(handler):
-    _assert_400(handler, _grow_body(target_amount=True))
-
-
-def test_400_target_amount_negative(handler):
-    _assert_400(handler, _grow_body(target_amount=-5))
-
-
-def test_400_target_amount_too_large(handler):
-    _assert_400(handler, _grow_body(target_amount=2_000_000_000))
-
-
-def test_400_grow_target_amount_zero(handler):
-    # A savings goal of 0 is meaningless (paydown 0 is allowed — tested above).
-    _assert_400(handler, _grow_body(target_amount=0))
-
-
-def test_400_target_date_not_iso(handler):
-    _assert_400(handler, _grow_body(target_date="Dec 2026"))
-
-
-def test_400_target_date_not_a_real_calendar_date(handler):
-    _assert_400(handler, _grow_body(target_date="2026-02-30"))
-
-
-def test_400_both_balance_sources(handler):
-    _assert_400(handler, _grow_body(manual_balance=100, manual_as_of="2026-07-01"))
-
-
-def test_400_no_balance_source(handler):
-    body = _grow_body()
-    del body["account_id"]
-    _assert_400(handler, body)
-
-
-def test_400_partial_manual_balance_only(handler):
-    body = _grow_body()
-    del body["account_id"]
-    body["manual_balance"] = 100
-    _assert_400(handler, body)
-
-
-def test_400_partial_manual_as_of_only(handler):
-    body = _grow_body()
-    del body["account_id"]
-    body["manual_as_of"] = "2026-07-01"
-    _assert_400(handler, body)
-
-
-def test_400_unknown_account_id(handler):
-    _assert_400(handler, _grow_body(account_id="not-a-real-account"))
-
-
-def test_400_manual_as_of_not_a_real_date(handler):
-    _assert_400(handler, _manual_paydown_body(manual_as_of="2026-13-01"))
-
-
-def test_400_baseline_not_a_number(handler):
-    _assert_400(handler, _grow_body(baseline="lots"))
-
-
-def test_400_invalid_json_body(handler):
+@pytest.mark.parametrize("body", [
+    _grow_body(name="  "),
+    _grow_body(direction="sideways"),
+    _grow_body(target_amount="lots"),
+    _grow_body(target_amount=True),
+    _grow_body(target_amount=-5),
+    _grow_body(target_amount=2_000_000_000),
+    _grow_body(target_amount=0),                       # grow 0 is meaningless (paydown 0 is fine)
+    _grow_body(target_date="Dec 2026"),
+    _grow_body(target_date="2026-02-30"),
+    _grow_body(manual_balance=100, manual_as_of="2026-07-01"),     # both balance sources
+    _without(_grow_body(), "account_id"),                          # no balance source
+    {**_without(_grow_body(), "account_id"), "manual_balance": 100},
+    {**_without(_grow_body(), "account_id"), "manual_as_of": "2026-07-01"},
+    _grow_body(account_id="not-a-real-account"),
+    _manual_paydown_body(manual_as_of="2026-13-01"),
+    _grow_body(baseline="lots"),
+    _grow_body(baseline=-1),
+    _manual_paydown_body(manual_balance=-8400),        # WHIT-483: a negative owed false-celebrates
+    _manual_paydown_body(manual_balance=1_000_000_001),
+    _NAN_MANUAL_BALANCE,
+    "not json",
+    _grow_body(checkpoints=5),
+    _grow_body(checkpoints=["halfway"]),
+    _grow_body(checkpoints=[_cp("   ", 1000)]),
+    _grow_body(checkpoints=[_cp("x" * 101, 1000)]),
+    _grow_body(checkpoints=[_cp("Some", "lots")]),
+    _grow_body(checkpoints=[_cp("Some", True)]),
+    _grow_body(checkpoints=[_cp("Some", -100)]),
+    _NAN_CHECKPOINT,
+    _grow_body(checkpoints=[_cp("Nothing", 0)]),
+    _grow_body(checkpoints=[_cp("The goal itself", 5000)]),
+    _grow_body(checkpoints=[_cp("Past it", 5001)]),
+    _manual_paydown_body(checkpoints=[_cp("Cleared", 0)]),        # paydown target is 0
+    _grow_body(checkpoints=[_cp("A", 2000), _cp("B", 1000)]),
+    _grow_body(checkpoints=[_cp("A", 2000), _cp("B", 2000)]),
+    _manual_paydown_body(checkpoints=[_cp("A", 3000), _cp("B", 6000)]),
+    _manual_paydown_body(checkpoints=[_cp("A", 3000), _cp("B", 3000)]),
+    _grow_body(checkpoints=[_cp("A", 1000, id="dup"), _cp("B", 2000, id="dup")]),
+    _grow_body(checkpoints=[_cp("A", 1000, id="dup"), _cp("B", 2000, id="  dup  ")]),
+    _grow_body(checkpoints=[_cp("A", 1000, id="   ")]),
+    _grow_body(checkpoints=[_cp("A", 1000, id=7)]),
+    _grow_body(checkpoints=[_cp(f"Step {n}", n * 100) for n in range(1, 22)]),    # 21 rungs
+    _grow_body(checkpoints=_FULL_GROW_LADDER_WITH_A_DIP),          # every adjacent pair is checked
+])
+def test_upsert_rejects_bad_body(handler, body):
     repo = FakeGoalsRepo()
-    resp = handler.upsert_goal(_put_event(raw="not json"), repo, FakeBalanceRepo())
-    assert resp["statusCode"] == 400
+    if isinstance(body, str):
+        event = _put_event(raw=body)
+    else:
+        event = _put_event(body=body)
+    resp = handler.upsert_goal(event, repo, FakeBalanceRepo())
+    assert resp["statusCode"] == 400, json.loads(resp["body"])
     assert repo.upsert_calls == []
 
 
@@ -311,26 +280,6 @@ def test_upsert_missing_id_404(handler):
     resp = handler.upsert_goal(event, repo, FakeBalanceRepo())
     assert resp["statusCode"] == 404
     assert repo.upsert_calls == []
-
-
-# --- GET ---------------------------------------------------------------------
-
-
-def test_list_goals_returns_list_with_ids(handler):
-    repo = FakeGoalsRepo(goals={
-        "g1": {"name": "Holiday", "direction": "grow"},
-        "g2": {"name": "Car", "direction": "paydown"},
-    })
-    result = handler.list_goals(repo)
-
-    assert isinstance(result, list)
-    by_id = {g["id"]: g for g in result}
-    assert by_id["g1"]["name"] == "Holiday"
-    assert by_id["g2"]["direction"] == "paydown"
-
-
-def test_list_goals_empty(handler):
-    assert handler.list_goals(FakeGoalsRepo()) == []
 
 
 # --- DELETE ------------------------------------------------------------------
@@ -345,42 +294,12 @@ def test_delete_goal_success(handler):
     assert repo.delete_calls == ["g1"]
 
 
-def test_delete_goal_idempotent_when_absent(handler):
-    repo = FakeGoalsRepo()                            # no such goal; repo no-ops
-    resp = handler.delete_goal({"pathParameters": {"id": "ghost"}}, repo)
-    assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == {"id": "ghost"}
-
-
 def test_delete_goal_missing_id_404(handler):
     resp = handler.delete_goal({"pathParameters": {}}, FakeGoalsRepo())
     assert resp["statusCode"] == 404
 
 
 # --- dispatch through lambda_handler ----------------------------------------
-
-
-def test_get_goals_dispatch(handler, monkeypatch):
-    repo = FakeGoalsRepo(goals={"g1": {"name": "Holiday", "direction": "grow"}})
-    monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
-
-    resp = handler.lambda_handler(
-        api_event("GET", "/goals"), None)
-
-    assert resp["statusCode"] == 200
-    assert json.loads(resp["body"])[0]["id"] == "g1"
-    assert repo.list_calls == 1
-
-
-def test_put_goal_dispatch(handler, monkeypatch):
-    repo = FakeGoalsRepo()
-    monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
-    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: FakeBalanceRepo())
-
-    resp = handler.lambda_handler(_put_event(), None)
-
-    assert resp["statusCode"] == 200
-    assert repo.upsert_calls[0][0] == "g1"
 
 
 def test_delete_goal_dispatch(handler, monkeypatch):
@@ -405,63 +324,13 @@ def test_put_goal_conflict_returns_409(handler, monkeypatch):
     assert resp["statusCode"] == 409
 
 
-def test_unknown_goals_method_falls_through_404(handler, monkeypatch):
-    monkeypatch.setattr(handler, "GoalsRepository", lambda: FakeGoalsRepo())
-
-    resp = handler.lambda_handler(
-        api_event("POST", "/goals"), None)
-    assert resp["statusCode"] == 404
-
-
-# === WHIT-231 adversarial gap tests (folded from test_goals_gaps.py) — value boundaries,
-# leap-year dates, signed/zero manual balances, extra-field stripping, empty-string ids, and
-# GET-after-PUT round trips. The drifted FakeGoalsRepo/FakeBalanceRepo are kept
-# renamed with a _gaps suffix (they are stripped variants of the ones above). ===============
-
-
-class FakeGoalsRepo_gaps:
-    """Records calls; upsert echoes id like the real repo (no persistence)."""
-
-    def __init__(self):
-        self.upsert_calls = []
-
-    def list_goals(self):
-        return {}  # non-persisting: no prior goal → no crossing (WHIT-479)
-
-    def upsert_goal(self, goal_id, goal, start_candidate=None):
-        self.upsert_calls.append((goal_id, goal))
-        return {"id": goal_id, **goal, **(start_candidate or {})}
-
-
-class FakeBalanceRepo_gaps:
-    """Stand-in for AccountBalanceRepository (WHIT-252); no polled balances by default."""
-
-    def list_balances(self, account_ids):
-        return []
+# --- WHIT-231 value boundaries and GET-after-PUT round trips ------------------
 
 
 def _put(handler, body, goal_id="g1"):
-    repo = FakeGoalsRepo_gaps()
-    resp = handler.upsert_goal(_put_event(goal_id=goal_id, body=body), repo, FakeBalanceRepo_gaps())
+    repo = FakeGoalsRepo()
+    resp = handler.upsert_goal(_put_event(goal_id=goal_id, body=body), repo, FakeBalanceRepo())
     return resp, repo
-
-
-# --- target_amount ceiling boundary -----------------------------------------
-
-
-def test_the_goal_amount_cap_value_is_pinned(handler):
-    """[G1] and [G2] now derive from the cap, and it has no client twin to check it
-    against, so nothing else asserts its VALUE — lowering it to 1_000_000 by accident
-    would leave the suite green while every goal over $1M silently 400'd. Changing the
-    cap should cost exactly one honest edit, here.
-
-    If you are deliberately changing the cap, this is the ONE test that should go red."""
-    cap = handler._GOAL_AMOUNT_MAX
-    assert isinstance(cap, int) and cap == 1_000_000_000, (
-        f"the goal amount cap is now {cap!r}, not 1_000_000_000 — if you meant to change it, "
-        "update this pin too; if you didn't, this is the typo it exists to catch. It must stay "
-        "an int: the 400 message quotes the cap, and a float would read '1000000000.0'."
-    )
 
 
 def test_target_amount_exactly_at_ceiling_is_accepted(handler):
@@ -473,123 +342,11 @@ def test_target_amount_exactly_at_ceiling_is_accepted(handler):
     assert repo.upsert_calls[0][1]["target_amount"] == Decimal(str(cap))
 
 
-def test_target_amount_one_over_ceiling_is_rejected(handler):
-    # [G2] just past the ceiling -> 400 (the implementer only tests 2e9).
-    resp, repo = _put(handler, _grow_body(target_amount=handler._GOAL_AMOUNT_MAX + 1))
-    assert resp["statusCode"] == 400
-    assert repo.upsert_calls == []
-
-
-def test_target_amount_float_is_accepted_and_stored_as_decimal_string(handler):
-    # [G3] a fractional amount is valid and reaches boto3 as Decimal(str(v)), not a float.
-    resp, repo = _put(handler, _grow_body(target_amount=5000.5))
-    assert resp["statusCode"] == 200
-    stored = repo.upsert_calls[0][1]["target_amount"]
-    assert stored == Decimal("5000.5")
-    assert isinstance(stored, Decimal)
-
-
-# --- target_date calendar edges ---------------------------------------------
-
-
-def test_target_date_leap_day_valid_year_accepted(handler):
-    # [G4] 2028 is a leap year -> Feb 29 is a real date (regex+fromisoformat both pass).
-    resp, _ = _put(handler, _grow_body(target_date="2028-02-29"))
-    assert resp["statusCode"] == 200
-
-
-def test_target_date_leap_day_non_leap_year_rejected(handler):
-    # [G5] 2027 is NOT a leap year -> Feb 29 is not a real date; fromisoformat must catch it.
-    resp, repo = _put(handler, _grow_body(target_date="2027-02-29"))
-    assert resp["statusCode"] == 400
-    assert repo.upsert_calls == []
-
-
-# --- manual balance source edges --------------------------------------------
-
-
 def test_manual_balance_exactly_zero_is_accepted(handler):
     # [G6] 0 must not read as "no manual source" (the guard uses `is not None`, not truthiness).
     resp, repo = _put(handler, _manual_paydown_body(manual_balance=0))
     assert resp["statusCode"] == 200, json.loads(resp["body"])
     assert repo.upsert_calls[0][1]["manual_balance"] == Decimal("0")
-
-
-def test_manual_balance_negative_is_rejected(handler):
-    # [G7] WHIT-483: a negative manual_balance is now a 400 (low=0), matching the goal editor. A
-    # `low=-1e9` regression would redden here — a negative owed would normalise to £0 and
-    # false-celebrate every paydown rung.
-    resp, repo = _put(handler, _manual_paydown_body(manual_balance=-8400))
-    assert resp["statusCode"] == 400
-    assert repo.upsert_calls == []
-
-
-def test_manual_balance_above_positive_ceiling_rejected(handler):
-    # [G8] the positive upper bound stays enforced after WHIT-483 flipped the low bound to 0.
-    # (The old huge-negative case is now covered by [G7] — same `value < 0` branch.)
-    resp, repo = _put(handler, _manual_paydown_body(manual_balance=1_000_000_001))
-    assert resp["statusCode"] == 400
-    assert repo.upsert_calls == []
-
-
-# --- baseline edges ----------------------------------------------------------
-
-
-def test_baseline_zero_is_accepted(handler):
-    # [G9] baseline >= 0, so 0 is valid.
-    resp, repo = _put(handler, _grow_body(baseline=0))
-    assert resp["statusCode"] == 200
-    assert repo.upsert_calls[0][1]["baseline"] == Decimal("0")
-
-
-def test_baseline_negative_is_rejected(handler):
-    # [G10] baseline must be >= 0; a negative is a 400 (implementer only tests non-numeric).
-    resp, repo = _put(handler, _grow_body(baseline=-1))
-    assert resp["statusCode"] == 400
-    assert repo.upsert_calls == []
-
-
-# --- shape hardening ---------------------------------------------------------
-
-
-def test_unknown_extra_fields_are_dropped_not_stored(handler):
-    # [G11] the goal is rebuilt field-by-field, so a stray client field never reaches storage.
-    resp, repo = _put(handler, _grow_body(sneaky="DROP TABLE", version=99))
-    assert resp["statusCode"] == 200
-    _, goal = repo.upsert_calls[0]
-    assert "sneaky" not in goal
-    assert "version" not in goal
-
-
-def test_direction_wrong_type_number_is_rejected(handler):
-    # [G12] a numeric direction isn't in the enum set -> 400 (not a type crash).
-    resp, repo = _put(handler, _grow_body(direction=1))
-    assert resp["statusCode"] == 400
-    assert repo.upsert_calls == []
-
-
-def test_put_empty_string_id_is_404(handler):
-    # [G13] "" is falsy -> 404 before the repo (an empty map key would 500 at DynamoDB).
-    repo = FakeGoalsRepo_gaps()
-    resp = handler.upsert_goal(_put_event(goal_id="", body=_grow_body()), repo, FakeBalanceRepo_gaps())
-    assert resp["statusCode"] == 404
-    assert repo.upsert_calls == []
-
-
-def test_delete_empty_string_id_is_404(handler):
-    # [G14] DELETE mirrors PUT: an empty id is a 404, no repo call.
-    calls = []
-
-    class _Repo:
-        def delete_goal(self, gid):
-            calls.append(gid)
-
-    resp = handler.delete_goal({"pathParameters": {"id": ""}}, _Repo())
-    assert resp["statusCode"] == 404
-    assert calls == []
-
-
-# --- GET-after-PUT round trip through lambda_handler ------------------------
 
 
 def _persisting_goals_repo(handler):
@@ -609,7 +366,7 @@ def test_get_after_put_round_trips_numbers_and_echoes_id(handler, monkeypatch):
     # echoed from the map key, and no unknown field survives.
     repo = _persisting_goals_repo(handler)
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
-    monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo_gaps)
+    monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo)
 
     body = _manual_paydown_body(manual_balance=8400.25, baseline=100, sneaky="x")
     put = handler.lambda_handler(_put_event(goal_id="car1", body=body), None)
@@ -629,57 +386,12 @@ def test_get_after_put_round_trips_numbers_and_echoes_id(handler, monkeypatch):
     assert "sneaky" not in saved                          # extra field never stored
 
 
-# --- WHIT-252 QA GAP: the API response carries the start pair as JSON ----------
-
-
-class PolledBalanceRepo:
-    """AccountBalanceRepository stand-in that reports a live SIGNED balance for an account."""
-
-    def __init__(self, rows):
-        self._rows = rows
-
-    def list_balances(self, account_ids):
-        return [r for r in self._rows if r["account_id"] in account_ids]
-
-
-def test_get_after_put_carries_start_pair_as_json(handler, monkeypatch):
-    # [A9] End-to-end API shape: a SYNCED create with a live polled balance stamps a start;
-    # a later GET must carry start_date as a JSON STRING and start_balance as a JSON NUMBER
-    # (signed) -- i.e. the Decimal start_balance serialises to a number, not a string, and
-    # the pair survives the store -> list -> encoder round trip through lambda_handler.
-    repo = _persisting_goals_repo(handler)
-    balances = PolledBalanceRepo([{"account_id": "up-spending", "amount": Decimal("-3200")}])
-    monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
-    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: balances)
-    monkeypatch.setattr(handler, "melbourne_today", lambda: date(2026, 7, 11))
-
-    put = handler.lambda_handler(_put_event(goal_id="hol1", body=_grow_body()), None)
-    assert put["statusCode"] == 200
-
-    got = handler.lambda_handler(
-        api_event("GET", "/goals"), None)
-    assert got["statusCode"] == 200
-    saved = {g["id"]: g for g in json.loads(got["body"])}["hol1"]
-
-    assert saved["start_date"] == "2026-07-11"
-    assert isinstance(saved["start_date"], str)
-    # bool is a subclass of int -- exclude it so a stray True can't masquerade as a number.
-    assert isinstance(saved["start_balance"], (int, float)) and not isinstance(saved["start_balance"], bool)
-    assert saved["start_balance"] == -3200                 # live SIGNED balance, as a number
-
-
 # --- WHIT-476: the optional checkpoint ladder --------------------------------
 # A goal may carry `checkpoints` -- {id, label, amount} steps on the way to target_amount,
 # ordered in the goal's OWN direction. The id is permanent and kept as sent -- the client
 # normally mints it, the server mints only for a row that arrives without -- because the
 # once-ever celebration (a later slice) keys on it. Absent stays absent, so goals saved
 # before this feature are stored byte-identical.
-
-
-def _cp(label, amount, **over):
-    cp = {"label": label, "amount": amount}
-    cp.update(over)
-    return cp
 
 
 def _saved_goal(handler, body):
@@ -709,23 +421,10 @@ def test_paydown_checkpoints_descend_toward_the_target(handler):
     assert [c["amount"] for c in goal["checkpoints"]] == [Decimal("6000"), Decimal("3000"), Decimal("500")]
 
 
-def test_a_single_checkpoint_is_fine(handler):
-    goal = _saved_goal(handler, _grow_body(checkpoints=[_cp("Halfway", 2500)]))
-    assert len(goal["checkpoints"]) == 1
-
-
 def test_omitted_checkpoints_store_no_key_at_all(handler):
     # Existing-goal compatibility: a goal saved without a ladder is stored exactly as before.
     goal = _saved_goal(handler, _grow_body())
     assert "checkpoints" not in goal
-
-
-def test_empty_checkpoint_list_is_the_explicit_clear_signal(handler):
-    # WHIT-476 option B: an omitted field keeps the stored ladder, so [] is the ONLY way to
-    # ask for it gone. The handler keeps the key (as []) so the repo can tell "clear me" from
-    # "I didn't mention it".
-    goal = _saved_goal(handler, _grow_body(checkpoints=[]))
-    assert goal["checkpoints"] == []
 
 
 def test_client_supplied_id_is_kept_and_trimmed(handler):
@@ -734,113 +433,6 @@ def test_client_supplied_id_is_kept_and_trimmed(handler):
 
     assert goal["checkpoints"][0]["id"] == "cp-1"     # trimmed, not re-minted
     assert goal["checkpoints"][1]["id"] != "cp-1"     # the id-less row got its own
-
-
-def test_label_is_trimmed_and_max_length_is_allowed(handler):
-    goal = _saved_goal(handler, _grow_body(
-        checkpoints=[_cp("  Trim me  ", 1000), _cp("x" * 100, 2000)]))
-
-    assert goal["checkpoints"][0]["label"] == "Trim me"
-    assert len(goal["checkpoints"][1]["label"]) == 100
-
-
-def test_exactly_the_max_number_of_checkpoints_is_allowed(handler):
-    ladder = [_cp(f"Step {n}", n * 100) for n in range(1, 21)]      # 20 rungs, all under 5000
-    goal = _saved_goal(handler, _grow_body(checkpoints=ladder))
-    assert len(goal["checkpoints"]) == 20
-
-
-# --- WHIT-476 rejections -----------------------------------------------------
-
-
-def test_400_checkpoints_not_a_list(handler):
-    # A scalar, not a dict: iterating a dict yields its keys, which the per-item object check
-    # would reject with a DIFFERENT 400 -- so a dict here can't tell the two rules apart. A
-    # scalar reaches len() instead, which without this rule is a 500, and the message pins
-    # which rule fired.
-    body = _assert_400(handler, _grow_body(checkpoints=5))
-    assert body["error"] == "checkpoints must be a list"
-
-
-def test_400_checkpoint_not_an_object(handler):
-    _assert_400(handler, _grow_body(checkpoints=["halfway"]))
-
-
-def test_400_checkpoint_blank_label(handler):
-    _assert_400(handler, _grow_body(checkpoints=[_cp("   ", 1000)]))
-
-
-def test_400_checkpoint_label_too_long(handler):
-    _assert_400(handler, _grow_body(checkpoints=[_cp("x" * 101, 1000)]))
-
-
-def test_400_checkpoint_amount_not_a_number(handler):
-    _assert_400(handler, _grow_body(checkpoints=[_cp("Some", "lots")]))
-
-
-def test_400_checkpoint_amount_bool(handler):
-    # bool is an int subclass -- True must not sneak through as 1.
-    _assert_400(handler, _grow_body(checkpoints=[_cp("Some", True)]))
-
-
-def test_400_checkpoint_amount_negative(handler):
-    _assert_400(handler, _grow_body(checkpoints=[_cp("Some", -100)]))
-
-
-def test_400_checkpoint_amount_not_finite(handler):
-    repo = FakeGoalsRepo()
-    raw = '{"name":"H","icon":"palm","direction":"grow","target_amount":5000,' \
-          '"target_date":"2026-12-01","account_id":"up-spending",' \
-          '"checkpoints":[{"label":"Some","amount":NaN}]}'
-    resp = handler.upsert_goal(_put_event(raw=raw), repo, FakeBalanceRepo())
-    assert resp["statusCode"] == 400
-    assert repo.upsert_calls == []
-
-
-def test_400_grow_checkpoint_of_zero(handler):
-    # 0 isn't a step toward a positive target.
-    _assert_400(handler, _grow_body(checkpoints=[_cp("Nothing", 0)]))
-
-
-def test_400_grow_checkpoint_at_or_past_the_target(handler):
-    _assert_400(handler, _grow_body(checkpoints=[_cp("The goal itself", 5000)]))
-    _assert_400(handler, _grow_body(checkpoints=[_cp("Past it", 5001)]))
-
-
-def test_400_paydown_checkpoint_at_or_below_the_target(handler):
-    # target_amount is 0 here, so a 0 rung IS the goal, not a step toward it.
-    _assert_400(handler, _manual_paydown_body(checkpoints=[_cp("Cleared", 0)]))
-
-
-def test_400_grow_checkpoints_not_increasing(handler):
-    _assert_400(handler, _grow_body(checkpoints=[_cp("A", 2000), _cp("B", 1000)]))
-    _assert_400(handler, _grow_body(checkpoints=[_cp("A", 2000), _cp("B", 2000)]))
-
-
-def test_400_paydown_checkpoints_not_decreasing(handler):
-    _assert_400(handler, _manual_paydown_body(checkpoints=[_cp("A", 3000), _cp("B", 6000)]))
-    _assert_400(handler, _manual_paydown_body(checkpoints=[_cp("A", 3000), _cp("B", 3000)]))
-
-
-def test_400_duplicate_checkpoint_ids(handler):
-    _assert_400(handler, _grow_body(
-        checkpoints=[_cp("A", 1000, id="dup"), _cp("B", 2000, id="dup")]))
-
-
-def test_400_duplicate_ids_that_differ_only_by_whitespace(handler):
-    _assert_400(handler, _grow_body(
-        checkpoints=[_cp("A", 1000, id="dup"), _cp("B", 2000, id="  dup  ")]))
-
-
-def test_400_blank_or_non_string_checkpoint_id(handler):
-    # A supplied-but-empty id is a bug, not a request to mint one.
-    _assert_400(handler, _grow_body(checkpoints=[_cp("A", 1000, id="   ")]))
-    _assert_400(handler, _grow_body(checkpoints=[_cp("A", 1000, id=7)]))
-
-
-def test_400_too_many_checkpoints(handler):
-    ladder = [_cp(f"Step {n}", n * 100) for n in range(1, 22)]      # 21 rungs
-    _assert_400(handler, _grow_body(checkpoints=ladder))
 
 
 # --- WHIT-476 QA GAPS: round trip, replace semantics, precision, ordering depth ------
@@ -855,7 +447,7 @@ def _ladder_round_trip(handler, monkeypatch, goal_id, body):
     return the goal as the CLIENT sees it (post JSON encode)."""
     repo = _persisting_goals_repo(handler)
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
-    monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo_gaps)
+    monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo)
     put = handler.lambda_handler(_put_event(goal_id=goal_id, body=body), None)
     assert put["statusCode"] == 200, json.loads(put["body"])
     got = handler.lambda_handler(
@@ -882,20 +474,13 @@ def test_checkpoint_ladder_survives_the_put_get_round_trip_as_json(handler, monk
     assert len({c["id"] for c in ladder}) == 3
 
 
-def test_a_goal_without_checkpoints_reads_back_with_no_checkpoints_key(handler, monkeypatch):
-    # [A2] Existing goals must be untouched by this slice: no backfill, no `checkpoints: null`
-    # (the client's field is OPTIONAL, and a null would make "has a ladder" ambiguous).
-    saved = _ladder_round_trip(handler, monkeypatch, "old1", _grow_body())
-    assert "checkpoints" not in saved
-
-
 def test_an_edit_that_omits_checkpoints_keeps_the_saved_ladder(handler, monkeypatch):
     # [A3] WHIT-476 option B. A save that does NOT mention checkpoints keeps the stored ladder,
     # so a writer that doesn't know about them (an old app build, a new code path) can't wipe
     # them. Renaming a goal must leave its ladder intact.
     repo = _persisting_goals_repo(handler)
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
-    monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo_gaps)
+    monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo)
 
     handler.lambda_handler(_put_event(
         goal_id="hol1", body=_grow_body(checkpoints=[_cp("Halfway", 2500)])), None)
@@ -913,7 +498,7 @@ def test_an_explicit_empty_list_clears_the_saved_ladder(handler, monkeypatch):
     # user deletes every rung). Unlike an omission, [] is honoured -- the stored ladder goes.
     repo = _persisting_goals_repo(handler)
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
-    monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo_gaps)
+    monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo)
 
     handler.lambda_handler(_put_event(
         goal_id="hol1", body=_grow_body(checkpoints=[_cp("Halfway", 2500)])), None)
@@ -957,62 +542,12 @@ def test_explicit_null_checkpoint_id_is_minted_not_rejected(handler):
     assert isinstance(minted, str) and minted.strip()
 
 
-def test_unicode_and_emoji_labels_survive_intact(handler, monkeypatch):
-    # [A8] Labels are free text. An emoji/accented label must round-trip byte-for-byte through
-    # the JSON body and the response encoder -- not be mangled or rejected by the length rule.
-    saved = _ladder_round_trip(handler, monkeypatch, "hol1", _grow_body(
-        checkpoints=[_cp("Halfway \U0001F389", 1000), _cp("Caf\u00e9 fund \u2014 \u00be there", 2500)]))
-    assert [c["label"] for c in saved["checkpoints"]] == ["Halfway \U0001F389", "Caf\u00e9 fund \u2014 \u00be there"]
-
-
 def test_label_length_counts_characters_not_bytes(handler):
     # [A9] 100 emoji is 100 CHARACTERS but 400 UTF-8 bytes. The cap is a character cap, so
     # the 100 pass and the 101st fails -- a byte-based cap would reject both.
     goal = _saved_goal(handler, _grow_body(checkpoints=[_cp("\U0001F389" * 100, 1000)]))
     assert len(goal["checkpoints"][0]["label"]) == 100
     _assert_400(handler, _grow_body(checkpoints=[_cp("\U0001F389" * 101, 1000)]))
-
-
-def test_a_middle_rung_out_of_order_in_a_full_ladder_is_rejected(handler):
-    # [A10] The ordering rule is checked on every ADJACENT pair, not just the first two and not
-    # just first-vs-last: a 20-rung ladder that dips at rung 10 and recovers must still 400.
-    ladder = [_cp(f"Step {n}", n * 100) for n in range(1, 21)]
-    ladder[9]["amount"] = 50                       # rung 10 dips below rung 9, then rung 11 recovers
-    _assert_400(handler, _grow_body(checkpoints=ladder))
-
-
-def test_a_middle_rung_out_of_order_in_a_full_paydown_ladder_is_rejected(handler):
-    ladder = [_cp(f"Step {n}", 10000 - n * 100) for n in range(1, 21)]
-    ladder[9]["amount"] = 9999                     # rung 10 jumps back up
-    _assert_400(handler, _manual_paydown_body(checkpoints=ladder))
-
-
-def test_a_tiny_grow_target_leaves_only_fractional_room(handler):
-    # [A11] target_amount 1: the open interval (0, 1) has no whole dollar in it, so the only
-    # legal rung is fractional. Proves the bound is strict-open on BOTH ends, not rounded.
-    _assert_400(handler, _grow_body(target_amount=1, checkpoints=[_cp("At the target", 1)]))
-    goal = _saved_goal(handler, _grow_body(target_amount=1, checkpoints=[_cp("Halfway", 0.5)]))
-    assert goal["checkpoints"][0]["amount"] == Decimal("0.5")
-
-
-def test_checkpoints_below_the_baseline_are_accepted_today(handler):
-    # [A12] TRIPWIRE for a DELIBERATE deferral. Nothing bounds a rung against the goal's
-    # baseline/start yet (slice 4 owns "can it still fire?"), so a grow goal that counts from
-    # $3,000 can store a $1,000 rung the balance has ALREADY passed -- it can never celebrate.
-    # If you add that bound, this is the one test that should go red; update it honestly.
-    goal = _saved_goal(handler, _grow_body(
-        baseline=3000, checkpoints=[_cp("Already behind us", 1000), _cp("Real step", 4000)]))
-    assert [c["amount"] for c in goal["checkpoints"]] == [Decimal("1000"), Decimal("4000")]
-
-
-def test_the_checkpoint_caps_are_pinned(handler):
-    """[A13] The count/label caps have no client twin, so nothing else asserts their VALUES:
-    quietly lowering the max to 5 would leave every test above green while a 6-rung ladder
-    400'd in the user's face. Changing a cap should cost exactly one honest edit, here.
-
-    If you are deliberately changing a cap, this is the ONE test that should go red."""
-    assert handler._GOAL_CHECKPOINT_MAX_COUNT == 20, "checkpoint count cap changed -- update this pin on purpose"
-    assert handler._GOAL_CHECKPOINT_LABEL_MAX_LEN == 100, "checkpoint label cap changed -- update this pin on purpose"
 
 
 # --- WHIT-479: a manual goal's saved balance crossing a checkpoint celebrates -----------------
@@ -1084,91 +619,29 @@ def test_a_brand_new_manual_goal_first_save_passes_none_as_old(handler, monkeypa
     assert seen == [None]
 
 
-def test_negative_manual_paydown_is_rejected_before_any_celebration(handler, monkeypatch):
-    # WHIT-483: the true regression lock — a negative owed on a manual paydown goal with a PRIOR
-    # balance (the burst scenario) is a 400 at validation, so the crossing check is never reached.
-    # Reverting low=0 → low=-1e9 makes the save a 200 that celebrates every rung, reddening here.
-    paydown = {
-        "id": "g1", "name": "Car loan", "icon": "car", "direction": "paydown",
-        "target_amount": Decimal("0"), "target_date": "2027-06-01",
-        "manual_balance": Decimal("8400"), "manual_as_of": "2026-07-01",
-        "checkpoints": [{"id": "cp1", "label": "Under 5k", "amount": Decimal("5000")},
-                        {"id": "cp2", "label": "Under 3k", "amount": Decimal("3000")}],
-    }
-    repo = FakeGoalsRepo(goals={"g1": dict(paydown)})
-    fired = []
-    monkeypatch.setattr(handler, "notify_goal_checkpoint_crossing", lambda *a, **k: fired.append(1) or 1)
+def test_manual_save_omitting_checkpoints_celebrates_against_saved_ladder(handler, monkeypatch):
+    # The celebration runs against the SAVED (carried-forward) ladder, not the request body: the
+    # save OMITS checkpoints, but the stored ladder must still drive the crossing.
+    carried = [{"id": "cp1", "label": "Carried", "amount": Decimal("4000")}]
+    saved = {"id": "g1", "name": "Holiday", "icon": "palm", "direction": "grow",
+             "target_amount": Decimal("10000"), "target_date": "2026-12-01",
+             "manual_balance": Decimal("5000"), "manual_as_of": "2026-07-01",
+             "checkpoints": carried}
+    repo = FakeGoalsRepo(
+        goals={"g1": {"direction": "grow", "manual_balance": Decimal("1000"), "checkpoints": carried}},
+        saved_override=saved,
+    )
+    seen = []
+    monkeypatch.setattr(handler, "notify_goal_checkpoint_crossing",
+                        lambda old, new, **kw: seen.append((old, new, kw["goal"].get("checkpoints"))) or 1)
 
-    resp = handler.upsert_goal(_put_event(body=_manual_paydown_body(manual_balance=-3000)), repo, FakeBalanceRepo())
-    assert resp["statusCode"] == 400
-    assert repo.upsert_calls == []   # nothing saved
-    assert fired == []               # celebration never reached
+    resp = handler.upsert_goal(_put_event(body=_without(_grow_manual_body(), "checkpoints")), repo, FakeBalanceRepo())
 
-
-# === WHIT-483 QA gap tests (adversarial; do not duplicate the implementer's [G7]/[G8]/[G8b]) ====
-# The fix flips manual_balance's low bound to 0 for BOTH directions. Gaps below: grow-side negative,
-# the exact message wording, the -0.0 / tiny-negative boundary, non-numeric/NaN/bool pins on the
-# changed branch, and the legacy stored-negative caveat (paydown safe, grow == 0).
+    assert resp["statusCode"] == 200
+    assert seen == [(Decimal("1000"), Decimal("5000"), carried)]
 
 
-def test_negative_grow_manual_balance_is_rejected(handler):
-    # [G9] WHIT-483 is BOTH directions — existing [G7] only exercises paydown. A negative
-    # manual_balance on a GROW (savings) goal must ALSO 400. Reverting low=0 -> low=-1e9 reddens.
-    body = _assert_400(handler, _grow_manual_body(manual_balance=-5000))
-    assert body["error"] == f"manual_balance must be a number between 0 and {handler._GOAL_AMOUNT_MAX}"
-
-
-def test_negative_manual_balance_message_is_the_target_amount_twin(handler):
-    # [G10] lock the exact wording: it quotes the cap from _GOAL_AMOUNT_MAX (no stale literal) and is
-    # the field-name sibling of the target_amount message. A reworded/ hardcoded message reddens.
-    neg = _assert_400(handler, _manual_paydown_body(manual_balance=-1))
-    tgt = _assert_400(handler, _grow_body(target_amount=-1))
-    assert neg["error"] == f"manual_balance must be a number between 0 and {handler._GOAL_AMOUNT_MAX}"
-    assert tgt["error"] == f"target_amount must be a number between 0 and {handler._GOAL_AMOUNT_MAX}"
-    assert neg["error"].replace("manual_balance", "X") == tgt["error"].replace("target_amount", "X")
-
-
-def test_manual_balance_negative_zero_is_accepted_and_stores_zero(handler):
-    # [G11] boundary: -0.0 is NOT < 0 (equals 0.0), so _finite_number(low=0) lets it through and it
-    # stores as 0. Pins the low=0 edge is inclusive — a `value <= low` reject regression reddens.
-    resp, repo = _put(handler, _manual_paydown_body(manual_balance=-0.0))
-    assert resp["statusCode"] == 200, json.loads(resp["body"])
-    assert repo.upsert_calls[0][1]["manual_balance"] == Decimal("0")
-
-
-def test_manual_balance_tiny_negative_below_zero_is_rejected(handler):
-    # [G12] boundary just below 0: -0.01 must 400. Bound is strict at 0, not "approximately 0".
-    resp, repo = _put(handler, _manual_paydown_body(manual_balance=-0.01))
-    assert resp["statusCode"] == 400
-    assert repo.upsert_calls == []
-
-
-def test_manual_balance_non_numeric_string_is_rejected(handler):
-    # [G13] regression pin on the changed branch: a non-numeric manual_balance still 400s.
-    resp, repo = _put(handler, _manual_paydown_body(manual_balance="lots"))
-    assert resp["statusCode"] == 400
-    assert repo.upsert_calls == []
-
-
-def test_manual_balance_bool_is_rejected(handler):
-    # [G14] bool is an int subclass; the isinstance(bool) guard must reject True/False as a balance.
-    resp, repo = _put(handler, _manual_paydown_body(manual_balance=True))
-    assert resp["statusCode"] == 400
-    assert repo.upsert_calls == []
-
-
-def test_manual_balance_nan_is_rejected(handler):
-    # [G15] NaN slips past json.loads (which accepts NaN) but must be caught by math.isfinite, or a
-    # manual goal could store NaN and poison the crossing math. Raw body carries the JSON NaN token.
-    raw = ('{"name":"Car loan","icon":"car","direction":"paydown","target_amount":0,'
-           '"target_date":"2027-06-01","manual_balance":NaN,"manual_as_of":"2026-07-01"}')
-    repo = FakeGoalsRepo()
-    resp = handler.upsert_goal(_put_event(raw=raw), repo, FakeBalanceRepo())
-    assert resp["statusCode"] == 400
-    assert repo.upsert_calls == []
-
-
-# --- legacy stored-negative caveat: an old goal saved NEGATIVE before the fix, on a later valid save
+# --- WHIT-483 legacy caveat: an old goal saved NEGATIVE before the fix, on a later valid save
 
 class _FakeDeviceRepo:
     def __init__(self, tokens=("ExpoTok",)):

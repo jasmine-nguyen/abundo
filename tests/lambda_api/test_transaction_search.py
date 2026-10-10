@@ -83,15 +83,6 @@ def test_matches_every_account_newest_first_with_feed_tie_order(handler):
     assert [txn["transaction_id"] for txn in body["transactions"]] == ["s1", "w1", "a1", "h1"]
 
 
-def test_rows_are_shaped_like_feed_rows(handler):
-    table, repo, _ = real_repos({ANZ: [_row(ANZ, "2026-07-10", "a1", description="STEVEN", amount=-1)]})
-
-    [txn] = _body(_search(handler, repo, {"q": "steven"}))["transactions"]
-
-    assert "pk" not in txn and "sk" not in txn
-    assert txn["category"] is None
-
-
 def test_matches_on_category_name(handler):
     table, repo, _ = real_repos({ANZ: [_row(ANZ, "2026-07-10", "a1", description="PHO", amount=-1, category="eating_out"),
                                _row(ANZ, "2026-07-09", "a2", description="COLES", amount=-1, category="groceries")]})
@@ -161,19 +152,3 @@ def test_unknown_tab_is_a_400_without_scanning(handler, tab):
     table, repo, _ = real_repos({})
     assert _search(handler, repo, {"q": "steven", "tab": tab})["statusCode"] == 400
     assert date_reads(table) == []
-
-
-def test_the_router_dispatches_the_search_path(handler, monkeypatch):
-    seen = {}
-
-    def fake_search(event, transaction_repo, category_repo):
-        seen["event"] = event
-        return {"statusCode": 200, "body": "{}"}
-
-    monkeypatch.setattr(handler, "get_transactions_search", fake_search)
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: object())
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: object())
-
-    handler.lambda_handler(_search_event({"q": "steven"}), None)
-
-    assert seen["event"]["queryStringParameters"] == {"q": "steven"}

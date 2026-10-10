@@ -18,7 +18,7 @@
 #              ├→ next_slice → test_writer                      more slices to build
 #              └→ ship → END                                    both reviews passed
 #                 (END instead, with BUILD FAILED, when rounds run out)
-# next_slice / ship ─→ implementer                               QA's new tests fail the checks, rounds left
+# next_slice / ship ─→ implementer                               QA's tests fail the checks, rounds left
 import argparse
 import asyncio
 import contextlib
@@ -505,7 +505,11 @@ the first step that holds:
 2. Is it already covered? Search the existing tests, not just this change, for the behaviour. If
    one covers it, don't write another: name it (path:line) in your `summary`, if your output has one.
 3. Can one test cover several inputs? One test with a table of cases beats one test per input.
-4. Only then: the smallest new test, importing shared setup instead of copying it.
+4. Only then: the smallest test you can add, importing shared setup instead of copying it.
+
+Where tests go: add a test to the existing test file for the code under test. Create a new test
+file only when that code has none, named after the code it tests. Never name a test file after a
+card or ticket, QA, gaps or edges.
 
 The shortest set of tests that proves the card wins. "Thorough" means no behaviour left untested,
 not more tests.
@@ -666,11 +670,11 @@ def running_message(name: str, state: BuildState) -> str | None:
         "test_writer": "Writing the tests that define done",
         "implementer": f"Implementer is {verb} the code (round {round_number})",
         "checks": "Running typecheck and tests",
-        "ponytail": "Ponytail: checking QA's new tests for what to cut" if state.get("qa_test_files")
+        "ponytail": "Ponytail: checking QA's tests for what to cut" if state.get("qa_test_files")
         else "Ponytail: looking for what the change could cut",
         "code_critic": "Code review: hunting for bugs and checking your standards",
         "qa": None if qa_passed_last_round(state) else "QA: checking it does what the card asked, then testing the edge cases",
-        "ship": "Opening the PR (after running QA's new tests and the typecheck, if it added any)",
+        "ship": "Opening the PR (after running QA's tests and the typecheck, if it added or changed any)",
     }
     return messages.get(name)
 
@@ -744,7 +748,7 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
             return "❌ Final checks failed, nothing pushed" + ("" if update["failed"] else ", back to the implementer")
         return "❌ Couldn't push or open the PR"
     if name == "next_slice" and update.get("checks_feedback"):
-        return "❌ QA's new tests fail the checks" + ("" if update["failed"] else ", back to the implementer")
+        return "❌ QA's tests fail the checks" + ("" if update["failed"] else ", back to the implementer")
     if name == "implementer":
         if update.get("escalation"):
             return "❓ Implementer needs a decision from you"
@@ -2007,8 +2011,10 @@ async def ponytail(state: BuildState):
     extra = ""
     if state.get("qa_test_files"):
         extra = (
-            "## QA's new tests\nThe rest of the change already passed this review. QA has just added these tests "
-            f"(on the branch, not committed yet), so check only them:\n{bullets(state['qa_test_files'])}"
+            "## QA's tests\nThe rest of the change already passed this review. QA has just added or changed tests "
+            "in these files (on the branch, not committed yet; `git diff` shows edits to existing files, "
+            "new files are untracked so read them whole), so check only QA's changes:\n"
+            f"{bullets(state['qa_test_files'])}"
         )
     result = await run_agent("ponytail", review_block(state, "ponytail", extra), PONYTAIL_OUTPUT)
     cuts = result.output["cuts"]

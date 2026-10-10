@@ -7,7 +7,7 @@
 // cached rows" case surface the error.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
+import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react-native';
 import { RefreshControl } from 'react-native';
 
 const mockOpenMultiPicker = jest.fn();
@@ -31,6 +31,8 @@ import { useTestQueryClient, renderWithQueries, refreshInAct, WithQueries, settl
 import { queryClient } from '../queryClient';
 import { transactionsKey, uncategorizedCountKey } from '../queryKeys';
 import { COFFEE_RECORD, GROCERIES_TOP } from './support/categories';
+import { textOf } from './support/layout';
+import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -97,6 +99,8 @@ it('empty + error shows the inline retry, and Retry re-reads the list and the st
   server.fail(FEED, 500);
   await draw();
   expect(screen.getByTestId('transactions-error')).toBeTruthy();
+  // WHIT-844: not "Updated <time>" from the categories' load alone (the feed never loaded).
+  expect(screen.queryByTestId('transactions-updated')).toBeNull();
   const feedBefore = gets(FEED);
   const balancesBefore = gets(BALANCES);
   fireEvent.press(screen.getByTestId('transactions-retry'));
@@ -122,6 +126,31 @@ it('empty + loading shows the spinner', async () => {
   held.release();
   await settle();
   await waitFor(() => expect(screen.queryByTestId('transactions-loading')).toBeNull());
+});
+
+// WHIT-844: while the Uncategorized list is still cold-loading, the categories' load time alone
+// mustn't read as "Updated <time>" over the spinner.
+it('a cold-loading Uncategorized tab shows the spinner and no "Updated" line', async () => {
+  await draw();
+  expect(screen.getByTestId('transactions-updated')).toBeTruthy();
+  const held = server.hold(UNCATEGORIZED_FEED);
+  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  expect(await screen.findByTestId('transactions-loading')).toBeTruthy();
+  expect(screen.queryByTestId('transactions-updated')).toBeNull();
+  held.release();
+  await settle();
+  expect(await screen.findByTestId('transactions-updated')).toBeTruthy();
+});
+
+// [A3] The line sits directly under the search box: above the Uncategorized hint, not below it.
+it('[A3] the "Updated" line renders above the Uncategorized hint', async () => {
+  seedUncategorizedFeed([{ ...ROW, category: null }]);
+  await draw();
+  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  expect(await screen.findByText(/Tap a transaction to categorize it/)).toBeTruthy();
+  const text = textOf(screen.root);
+  expect(text.indexOf('Updated ')).toBeGreaterThan(-1);
+  expect(text.indexOf('Updated ')).toBeLessThan(text.indexOf('Tap a transaction to categorize it'));
 });
 
 it('empty Uncategorized tab (settled) shows the "All caught up" empty state', async () => {
@@ -208,6 +237,8 @@ it('keeps Load More on the uncategorized tab when there ARE uncategorized rows',
   expect(await screen.findByText('-$42.00')).toBeTruthy();
   expect(screen.queryByText('All caught up')).toBeNull();
   expect(screen.getByTestId('transactions-load-more')).toBeTruthy();
+  // WHIT-845: the badge number caps at 2× text, like the rest of the row.
+  expect(within(screen.getByTestId('tab-uncategorized')).getByText('1').props.maxFontSizeMultiplier).toBe(LARGE_TEXT_MAX_SCALE);
 });
 });
 

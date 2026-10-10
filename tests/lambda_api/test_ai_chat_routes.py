@@ -29,8 +29,9 @@ def lambda_client(handler, monkeypatch):
 
 
 def _post(handler, job_repo, body):
-    event = api_event("POST", "/ai/chat", body=body)
-    return handler.start_ai_chat_job(event, job_repo)
+    if isinstance(body, str):
+        return handler.start_ai_chat_job(api_event("POST", "/ai/chat", raw=body), job_repo)
+    return handler.start_ai_chat_job(api_event("POST", "/ai/chat", body=body), job_repo)
 
 
 def _get_event(job_id):
@@ -65,6 +66,8 @@ def test_post_starts_a_chat_job_and_async_invokes_the_worker(handler, lambda_cli
     {"messages": [{"role": "user", "text": ""}]},
     {"messages": [{"role": "user", "text": "x" * 2001}]},
     {"messages": [_user(), {"role": "assistant", "text": "An answer"}]},
+    {"messages": [_user("   \n ")]},
+    "[]",
 ])
 def test_post_rejects_a_bad_history_without_starting_a_job(handler, lambda_client, body):
     job_repo = real_job_repo()
@@ -144,8 +147,8 @@ def test_post_accepts_a_message_of_exactly_the_max_length(handler, lambda_client
     assert resp["statusCode"] == 202
 
 
-def test_post_rejects_a_whitespace_only_message(handler, lambda_client):
-    # [A11] "   " is not a question — no job, no paid model call.
-    job_repo = real_job_repo()
-    resp = _post(handler, job_repo, {"messages": [_user("   ")]})
-    assert resp["statusCode"] == 400 and created_jobs(job_repo) == [] and lambda_client.calls == []
+def test_only_role_and_text_reach_the_worker(handler, lambda_client):
+    resp = _post(handler, real_job_repo(), {"messages": [
+        {"role": "user", "text": "hi", "account_id": "acct-1", "raw": {"bsb": "062-123"}}]})
+    assert resp["statusCode"] == 202
+    assert json.loads(lambda_client.calls[0]["Payload"])["messages"] == [{"role": "user", "text": "hi"}]

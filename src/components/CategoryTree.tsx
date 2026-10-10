@@ -56,7 +56,7 @@ export function CategoryTree({ categories, onPick, testID }: {
 export const pickStyles = StyleSheet.create({
   pickRow: { flexDirection: 'row', alignItems: 'center', gap: 13, paddingVertical: 11 },
   pickNameHit: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 13 },
-  pickToggle: { padding: 6 },
+  pickToggle: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   pickChip: { width: 38, height: 38, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   pickName: { flex: 1, fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
 });

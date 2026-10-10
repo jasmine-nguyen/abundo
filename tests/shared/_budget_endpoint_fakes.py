@@ -48,6 +48,16 @@ def _spend_cat(cat_id="insurance", bucket="Living", parent=None):
     return [{"id": cat_id, "bucket": bucket, "parent": parent}]
 
 
+def _put_budget_event(category="coffee", body='{"target": 58}'):
+    return api_event(
+        "PUT",
+        f"/budgets/{category}",
+        raw=body,
+        path_params={"category": category},
+        is_base64=False,
+    )
+
+
 class _SpendCategoryRepo(_FakeCategoryRepo):
     """The spread suites' taxonomy: one spendable `insurance` category unless told otherwise."""
 

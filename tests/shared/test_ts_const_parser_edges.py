@@ -7,9 +7,8 @@ that ordinary tests do not: green is its normal state, so a reader that returns 
 mis-parses, or reads the wrong declaration looks exactly like a healthy run.
 
 Driven against FABRICATED text (never the real files), so they keep meaning after a
-legitimate ceiling/cap change. `test_loanfacts_ceiling_sync_guard.py` still drives the
-loan-facts guard's OWN functions ([D4]-[D6]) to prove that guard stays WIRED to this
-reader; these cover the reader's parsing behaviour once, for both guards.
+legitimate ceiling/cap change. They cover the reader's parsing behaviour once, for both
+guards.
 
 Covers, by checklist id:
   [T1] a plain declaration parses to its int

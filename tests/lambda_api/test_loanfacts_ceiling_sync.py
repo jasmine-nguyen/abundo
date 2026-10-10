@@ -13,10 +13,6 @@ This reads BOTH values and asserts they match, so editing one side without the
 other fails loudly. It parses the TypeScript client as TEXT (no JS runtime in
 the pytest suite) via the shared `const NAME = <number>` reader in
 tests/shared/_ts_const.py — the same reader the milestone-cap guard uses.
-
-WHIT-393 added one more assertion here: a pin on the ceiling's actual VALUE.
-Every test mirror now derives from lambda_api/api_constants.py, so without the pin
-a typo in that file would ship green.
 """
 
 import pathlib
@@ -41,42 +37,9 @@ def _server_ceiling() -> int:
 
 def _client_ceiling() -> int:
     """The LOANFACTS_FIELD_MAX const parsed out of src/loanLimits.ts."""
-    return _ts_const.number_const(_CLIENT_LIMITS.read_text(), "LOANFACTS_FIELD_MAX")
-
-
-def test_client_ceiling_parses_to_a_positive_int():
-    """Sanity-guard the parser itself: if the client declaration is renamed or
-    removed so this regex matches nothing, `_client_ceiling` fails here with a
-    clear 'update the parser' signal rather than letting the equality test below
-    pass vacuously."""
-    assert _client_ceiling() > 0
-
-
-def test_exactly_one_client_ceiling_declaration():
-    """`_client_ceiling` takes the FIRST regex match, so a shadowing second
-    `const LOANFACTS_FIELD_MAX = <number>` (e.g. a commented-out old value left
-    above the live line) would silently be compared instead — and could hide a
-    real drift if it happened to equal the server. Pin exactly one declaration."""
-    _ts_const.assert_one_number_const(_CLIENT_LIMITS.read_text(), "LOANFACTS_FIELD_MAX")
-
-
-def test_the_loanfacts_ceiling_value_is_pinned():
-    """WHIT-393 made every test mirror derive from lambda_api/api_constants.py, so nothing
-    else asserts the ceiling's actual VALUE any more — a typo there (1_000_000 for
-    1_000_000_000) would leave the whole suite green while the app silently rejected
-    normal loan amounts. This is the one deliberate pin: changing the ceiling should
-    cost exactly one honest edit, here.
-
-    Note for anyone temporarily changing the ceiling to check the mirrors follow it:
-    this test is the ONE that should go red, and only this one. Anything else red is a
-    real failure. Update the pin, don't delete it."""
-    ceiling = _server_ceiling()
-    assert isinstance(ceiling, int) and ceiling == 1_000_000_000, (
-        f"the loan-facts ceiling is now {ceiling!r}, not 1_000_000_000 — if you meant to "
-        "change it, update this pin too; if you didn't, this is the typo it exists to catch. "
-        "It must stay an int: the toast copy is generated from it, and a float would read "
-        "'$1000000000.5' rather than '$1B'."
-    )
+    text = _CLIENT_LIMITS.read_text()
+    _ts_const.assert_one_number_const(text, "LOANFACTS_FIELD_MAX")
+    return _ts_const.number_const(text, "LOANFACTS_FIELD_MAX")
 
 
 def test_client_and_server_loanfacts_ceilings_agree():

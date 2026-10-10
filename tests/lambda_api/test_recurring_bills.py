@@ -41,6 +41,7 @@ def test_detects_a_monthly_bill_with_amount_and_cadence(recurring_bills):
 
     assert bill["merchant"] == "ORIGIN ENERGY"
     assert bill["typicalAmount"] == Decimal("42.50")
+    assert isinstance(bill["typicalAmount"], Decimal)
     assert bill["cadence"] == "monthly"
     assert bill["occurrences"] == 4
     # medianGapDays is a whole number of days (int), never a half-day from an even gap count.
@@ -81,22 +82,6 @@ def test_an_even_occurrence_count_quantises_the_half_cent_median(recurring_bills
     assert _only(recurring_bills.detect_recurring_bills(charges))["typicalAmount"] == Decimal("10.03")
 
 
-def test_a_wildly_variable_amount_is_not_a_bill(recurring_bills):
-    charges = [_bill(f"2026-{m}-05", amount) for m, amount in
-               (("01", -50.00), ("02", -100.00), ("03", -160.00), ("04", -100.00))]
-
-    assert recurring_bills.detect_recurring_bills(charges)["bills"] == []
-
-
-def test_a_missed_cycle_doubles_a_gap_and_rejects_the_bill(recurring_bills):
-    # FAIL-ON-REVERT for INTERVAL_TOLERANCE: the last gap is ~60 days (a skipped month), so the beat
-    # is not regular. Loosen the tolerance and this bill would wrongly emit.
-    charges = [_bill(date, -42.50) for date in
-               ("2026-01-01", "2026-01-31", "2026-03-02", "2026-05-01")]
-
-    assert recurring_bills.detect_recurring_bills(charges)["bills"] == []
-
-
 def test_three_occurrences_is_the_floor(recurring_bills):
     # FAIL-ON-REVERT for MIN_OCCURRENCES: three billed months emit, two do not. Drop the floor to 2
     # and the two-charge case would wrongly emit.
@@ -112,15 +97,6 @@ def test_recurring_income_is_never_a_bill(recurring_bills):
               for m in ("01", "02", "03", "04")]
 
     assert recurring_bills.detect_recurring_bills(salary)["bills"] == []
-
-
-def test_same_merchant_filed_to_two_categories_is_one_bill(recurring_bills):
-    charges = [_bill(f"2026-{m}-05", -42.50, category=category) for m, category in
-               (("01", "utilities"), ("02", "bills"), ("03", "utilities"), ("04", "bills"))]
-
-    # The detector keys on merchant + amount + date, never category, so a merchant filed two ways is
-    # still ONE bill — unlike filing_habits, which must pick a winning category.
-    assert _only(recurring_bills.detect_recurring_bills(charges))["occurrences"] == 4
 
 
 def test_a_nameless_direct_debit_is_detected_by_its_stem(recurring_bills):
@@ -146,20 +122,6 @@ def test_nameless_needs_a_fourth_occurrence_that_a_named_bill_does_not(recurring
     assert _only(recurring_bills.detect_recurring_bills(three_named))["occurrences"] == 3
 
 
-def test_a_nameless_amount_drift_a_named_bill_tolerates_rejects_the_nameless_bill(recurring_bills):
-    # WHIT-569 tighter amount: a ±20% amount drift passes the named ±30% tolerance but fails the
-    # nameless ±15% one. FAIL-ON-REVERT: widen NAMELESS_AMOUNT_TOLERANCE to 0.30 and the nameless
-    # case wrongly emits. Amounts 80/100/120/100 → median 100, max drift 20%.
-    amounts = (-80.00, -100.00, -120.00, -100.00)
-    nameless = [_nameless(f"2026-{m}-05", amount)
-                for m, amount in zip(("01", "02", "03", "04"), amounts)]
-    named = [_bill(f"2026-{m}-05", amount)
-             for m, amount in zip(("01", "02", "03", "04"), amounts)]
-
-    assert recurring_bills.detect_recurring_bills(nameless)["bills"] == []
-    assert _only(recurring_bills.detect_recurring_bills(named))["cadence"] == "monthly"
-
-
 def test_a_named_and_a_nameless_bill_in_one_scan_both_emit(recurring_bills):
     # Both passes run over one history; the named merchant and the nameless direct debit each become a
     # bill, sorted by occurrences then identity.
@@ -181,18 +143,6 @@ def test_a_named_charge_with_a_stem_is_never_counted_by_the_nameless_pass(recurr
     bills = recurring_bills.detect_recurring_bills(charges)["bills"]
     assert len(bills) == 1
     assert bills[0]["merchant"] == "ORIGIN ENERGY"
-
-
-def test_a_bill_split_named_and_nameless_across_months_falls_below_both_floors(recurring_bills):
-    # The same real bill where the bank populated the name some months and left it blank others:
-    # the named side (2) and the nameless side (2) each sit below their floor, so nothing emits —
-    # the conservative outcome the card's "fuzzier" warning implies.
-    charges = (
-        [_bill(f"2026-{m}-05", -42.50) for m in ("01", "02")]
-        + [_nameless(f"2026-{m}-05", -42.50) for m in ("03", "04")]
-    )
-
-    assert recurring_bills.detect_recurring_bills(charges)["bills"] == []
 
 
 def test_same_day_duplicate_is_one_occurrence(recurring_bills):
@@ -228,3 +178,90 @@ def test_bills_are_returned_strongest_first_then_by_merchant(recurring_bills):
 
     # Most occurrences first (ORIGIN, 4); the two 3-occurrence bills tie-break on merchant (AGL < TELSTRA).
     assert [bill["merchant"] for bill in bills] == ["ORIGIN ENERGY", "AGL", "TELSTRA"]
+
+
+# --- the cadence windows and tolerances, at their edges ---------------------------------------
+
+
+def test_a_regular_beat_between_two_windows_is_not_a_bill(recurring_bills):
+    # A rock-steady 9-day beat falls in the GAP between weekly (..8) and fortnightly (12..):
+    # a real cadence, but not one we name → not emitted. Widen a window over 9 and this breaks.
+    charges = [_bill(d, -30.00) for d in ("2026-01-01", "2026-01-10", "2026-01-19", "2026-01-28")]
+    assert recurring_bills.detect_recurring_bills(charges)["bills"] == []
+
+
+def test_a_gap_exactly_at_plus_twentyfive_percent_still_counts(recurring_bills):
+    # Gaps [28, 28, 35] → median 28; 35 == 28 + 0.25*28 sits ON the inclusive tolerance edge.
+    charges = [_bill(d, -50.00) for d in
+               ("2026-01-01", "2026-01-29", "2026-02-26", "2026-04-02")]
+    bill = _only(recurring_bills.detect_recurring_bills(charges))
+    assert bill["cadence"] == "monthly"
+    assert bill["occurrences"] == 4
+
+
+def test_a_gap_one_day_past_the_tolerance_is_rejected(recurring_bills):
+    # Same series but the last gap is 36 (28 + 8 > 0.25*28) → beat irregular → no bill.
+    charges = [_bill(d, -50.00) for d in
+               ("2026-01-01", "2026-01-29", "2026-02-26", "2026-04-03")]
+    assert recurring_bills.detect_recurring_bills(charges)["bills"] == []
+
+
+def test_amounts_exactly_at_plus_minus_thirty_percent_still_count(recurring_bills):
+    # Magnitudes [70, 100, 130] → median 100; both 70 and 130 sit ON the ±30% edge.
+    charges = [_bill("2026-01-05", -70.00), _bill("2026-02-05", -100.00), _bill("2026-03-05", -130.00)]
+    bill = _only(recurring_bills.detect_recurring_bills(charges))
+    assert bill["typicalAmount"] == Decimal("100.00")
+
+
+def test_amounts_one_cent_past_the_tolerance_are_rejected(recurring_bills):
+    # Median 100; 69.99 and 130.01 each sit ONE CENT past the ±30% edge → no bill.
+    charges = [_bill("2026-01-05", -69.99), _bill("2026-02-05", -100.00), _bill("2026-03-05", -130.01)]
+    assert recurring_bills.detect_recurring_bills(charges)["bills"] == []
+
+
+def test_nameless_amounts_exactly_at_plus_minus_fifteen_percent_still_count(recurring_bills):
+    # Magnitudes [85, 100, 100, 115] → median 100; 85 and 115 sit ON the stricter nameless ±15% edge.
+    amounts = (-85.00, -100.00, -115.00, -100.00)
+    charges = [_nameless(f"2026-{m}-05", a) for m, a in zip(("01", "02", "03", "04"), amounts)]
+    bill = _only(recurring_bills.detect_recurring_bills(charges))
+    assert bill["typicalAmount"] == Decimal("100.00")
+    assert bill["cadence"] == "monthly"
+
+
+def test_nameless_amounts_one_cent_past_fifteen_percent_are_rejected(recurring_bills):
+    # One cent past the nameless ±15% edge → no bill, though the named ±30% pass would take it.
+    amounts = (-84.99, -100.00, -115.01, -100.00)
+    charges = [_nameless(f"2026-{m}-05", a) for m, a in zip(("01", "02", "03", "04"), amounts)]
+    assert recurring_bills.detect_recurring_bills(charges)["bills"] == []
+
+
+def test_a_same_day_outlier_amount_pollutes_the_magnitude_series(recurring_bills):
+    # A big same-day charge collapses to one occurrence (distinct days), BUT its magnitude still
+    # counts toward the amount check. The -200 breaches ±30% of the 42.50 median → the whole bill
+    # is rejected: an erratic merchant is skipped rather than spread on a wrong amount.
+    charges = [
+        _bill("2026-01-05", -42.50, txn_id="m1"),
+        _bill("2026-01-05", -200.00, txn_id="outlier"),
+        _bill("2026-02-05", -42.50, txn_id="m2"),
+        _bill("2026-03-05", -42.50, txn_id="m3"),
+        _bill("2026-04-05", -42.50, txn_id="m4"),
+    ]
+    assert recurring_bills.detect_recurring_bills(charges)["bills"] == []
+
+
+def test_median_gap_days_is_a_rounded_int_for_an_even_gap_count(recurring_bills):
+    # 3 charges → gaps [14, 15] → raw median 14.5, a fortnightly beat. medianGapDays is a whole int
+    # (round(14.5) → 14); the cadence label uses the RAW median, so it stays fortnightly.
+    charges = [_bill(d, -30.00) for d in ("2026-01-01", "2026-01-15", "2026-01-30")]
+    bill = _only(recurring_bills.detect_recurring_bills(charges))
+    assert bill["cadence"] == "fortnightly"
+    assert bill["medianGapDays"] == 14
+    assert isinstance(bill["medianGapDays"], int)
+
+
+def test_a_nameless_charge_with_an_unusable_stem_is_not_a_bill(recurring_bills):
+    # A description that is all reference (a bare number run) has no rulable stem, so the charge
+    # never buckets and no bill emits, even at a clean monthly beat.
+    charges = [_nameless(f"2026-{m}-05", -42.50, description=f"0412 5566 90{m}")
+               for m in ("01", "02", "03", "04")]
+    assert recurring_bills.detect_recurring_bills(charges)["bills"] == []

@@ -6,9 +6,17 @@ whole feature rests on: only unfiled charges are eligible, and filing one remove
 unfiled set (so a second run files nothing new).
 """
 
+import pathlib
 from decimal import Decimal
 
 import pytest
+from _ast_bindings import _top_level_binding_list
+from _rule_pairs import PAIR_VALUE, RULE_PAIRS
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+SHARED_DIR = ROOT / "shared"
+_RULE_VOCAB_NAMES = {"RULE_FIELD_OPERATORS", "RULE_FIELDS", "RULE_OPERATORS", "RULE_LOGIC",
+                     "RULE_DIRECTIONS", "_FIELD_OPERATORS", "_LOGIC"}
 
 
 def _rule(value, category_id="groceries", field="description", operator="contains", rule_id="r1"):
@@ -611,25 +619,21 @@ def test_skip_reason_empty_text_condition_in_a_multi_rule(rule_engine):
     assert rule_engine._skip_reason(rule, lambda _id: False) == "empty rule value"
 
 
-_SUPPORTED_PAIRS = [
-    ("description", "contains"), ("description", "equals"),
-    ("merchant", "contains"), ("merchant", "equals"),
-    ("category", "equals"),
-    ("account", "equals"),
-    ("amount", "less_than"), ("amount", "less_than_or_equal"),
-    ("amount", "greater_than"), ("amount", "greater_than_or_equal"),
-    ("direction", "is"),
-]
-_PAIR_VALUE = {"amount": "30", "direction": "debit"}
-
-
 def _pair_rule(field, operator):
-    return _rule(_PAIR_VALUE.get(field, "UBER"), "transport", field, operator)
+    return _rule(PAIR_VALUE.get(field, "UBER"), "transport", field, operator)
+
+
+def test_no_other_server_file_keeps_a_copy_of_the_rule_vocabulary():
+    server_files = [path for folder in ROOT.glob("lambda*/") for path in folder.glob("*.py")]
+    server_files += [path for path in SHARED_DIR.glob("*.py") if path.name != "constants.py"]
+    copies = [f"{path.relative_to(ROOT)}: {name}" for path in sorted(server_files)
+              for name in sorted(set(_top_level_binding_list(path)) & _RULE_VOCAB_NAMES)]
+    assert copies == [], f"import the rule vocabulary from constants instead: {copies}"
 
 
 def test_engine_accepts_every_supported_pair(rule_engine):
     skipped = {pair: rule_engine._skip_reason(_pair_rule(*pair), lambda _id: False)
-               for pair in _SUPPORTED_PAIRS}
+               for pair in RULE_PAIRS}
     assert {pair: reason for pair, reason in skipped.items() if reason} == {}
 
 

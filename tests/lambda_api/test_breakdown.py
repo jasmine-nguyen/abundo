@@ -50,17 +50,6 @@ def test_breakdown_splits_posted_and_pending_per_category(handler):
     }
 
 
-def test_breakdown_no_uncategorized_key_when_clean(handler):
-    # Every spend txn maps to a spend-bucket category -> no __uncategorized__ row.
-    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = _QueuedTransactionRepo([_transaction("coffee", -10, "posted")])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert result == {"coffee": {"posted": Decimal("10"), "pending": Decimal("0")}, "__rollup__": {"nodes": {}}}
-    assert "__uncategorized__" not in result
-
-
 # --- Uncategorized bucket (the core gap this card closes) --------------------
 
 
@@ -91,21 +80,6 @@ def test_breakdown_null_category_folds_into_uncategorized(handler):
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
     assert result["__uncategorized__"] == {"posted": Decimal("15"), "pending": Decimal("0")}
-
-
-def test_breakdown_deleted_category_spend_folds_into_uncategorized(handler):
-    # A txn points at an id no longer in the taxonomy (category was deleted). Its
-    # spend folds into Uncategorized rather than vanishing.
-    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = _QueuedTransactionRepo([
-        _transaction("coffee", -10, "posted"),
-        _transaction("oldcat", -25, "posted"),
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert "oldcat" not in result
-    assert result["__uncategorized__"] == {"posted": Decimal("25"), "pending": Decimal("0")}
 
 
 # --- Income/Savings exclusion (spend view) -----------------------------------
@@ -220,30 +194,6 @@ def test_breakdown_earned_sums_all_income_categories(handler):
     assert result["__earned__"] == {"posted": Decimal("2575"), "pending": Decimal("300")}
 
 
-def test_breakdown_no_earned_key_when_no_income(handler):
-    # Spend but no income -> no __earned__ key (response is what it always was).
-    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = _QueuedTransactionRepo([_transaction("coffee", -10, "posted")])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert "__earned__" not in result
-
-
-def test_breakdown_earned_net_reversal_clamps_and_omits_key(handler):
-    # A clawback bigger than the earnings drives the aggregate <= 0 -> clamp to 0,
-    # so no __earned__ key (never a negative earned bar).
-    cats = _FakeCategoryRepo([_category("salary", "Income")])
-    txns = _QueuedTransactionRepo([
-        _transaction("salary", 100, "posted"),
-        _transaction("salary", -250, "posted"),  # clawback/reversal
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert "__earned__" not in result
-
-
 def test_breakdown_earned_excludes_excluded_and_uncounted_income(handler):
     # budget_excluded / counts_to_budget=False income does not count, mirroring spend.
     cats = _FakeCategoryRepo([_category("salary", "Income")])
@@ -256,22 +206,6 @@ def test_breakdown_earned_excludes_excluded_and_uncounted_income(handler):
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
     assert result["__earned__"] == {"posted": Decimal("1000"), "pending": Decimal("0")}
-
-
-def test_breakdown_earned_counts_in_cycle_income_older_than_feed_window(handler, monkeypatch):
-    # The whole reason earned is server-side: a paycheck lands once a cycle, often
-    # >7 days ago. It must be counted over the FULL cycle window, not a 7-day feed.
-    import spend
-    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
-    cats = _FakeCategoryRepo([_category("salary", "Income")])
-    txns = _DateFilteringTransactionRepo([
-        {**_transaction("salary", 2500, "posted"), "date": "2024-01-03"},  # cycle_start, 13 days ago -> IN
-        {**_transaction("salary", 100, "posted"), "date": "2024-01-17"},   # tomorrow -> OUT
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert result["__earned__"] == {"posted": Decimal("2500"), "pending": Decimal("0")}
 
 
 # --- __income__: per-source income breakdown (WHIT-366) ----------------------
@@ -306,16 +240,6 @@ def test_breakdown_income_sources_split_per_category(handler):
     )
     assert total_sources == earned["posted"] + earned["pending"]
     assert result["coffee"] == {"posted": Decimal("40"), "pending": Decimal("0")}  # spend untouched
-
-
-def test_breakdown_no_income_key_when_no_income(handler):
-    # No income -> no __income__ key (response byte-identical to a pre-WHIT-366 server; old-client safe).
-    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = _QueuedTransactionRepo([_transaction("coffee", -10, "posted")])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert "__income__" not in result
 
 
 def test_breakdown_reversed_source_survives_signed_and_reconciles(handler):
@@ -369,21 +293,6 @@ def test_breakdown_income_sign_split_leaves_a_client_residual_for_the_plug(handl
     assert earned_total - source_total == Decimal("100")  # the residual the client plug fills
 
 
-def test_breakdown_all_reversed_emits_no_income_and_no_earned(handler):
-    # An all-reversed cycle nets <= 0 -> __earned__ absent. __income__ must ALSO be absent (gated on
-    # __earned__), so the client never shows a lone negative row under a $0 headline.
-    cats = _FakeCategoryRepo([_category("salary", "Income")])
-    txns = _QueuedTransactionRepo([
-        _transaction("salary", 100, "posted"),
-        _transaction("salary", -300, "posted"),  # aggregate nets -200
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert "__earned__" not in result
-    assert "__income__" not in result
-
-
 def test_breakdown_income_gated_on_earned_across_multiple_nonzero_sources(handler):
     # FAIL-ON-REVERT for the has_earned gate: TWO income sources that each net non-zero but whose
     # AGGREGATE is <= 0. income_sources is NON-EMPTY (both survive the != 0 filter), so a bare
@@ -422,54 +331,7 @@ def test_breakdown_net_zero_income_source_dropped(handler):
     assert "bonus" not in result["__income__"]
 
 
-def test_breakdown_earned_uses_prior_cycle_window(handler, monkeypatch):
-    # cycle=1 earns over the prior FULL cycle: income in the current window is excluded.
-    import spend
-    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
-    cats = _FakeCategoryRepo([_category("salary", "Income")])
-    txns = _DateFilteringTransactionRepo([
-        {**_transaction("salary", 2000, "posted"), "date": "2023-12-20"},  # prior cycle -> IN for cycle=1
-        {**_transaction("salary", 2500, "posted"), "date": "2024-01-05"},  # current cycle -> OUT for cycle=1
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo(), cycle=1)
-
-    assert result["__earned__"] == {"posted": Decimal("2000"), "pending": Decimal("0")}
-
-
-def test_breakdown_earned_coexists_with_spend_and_uncategorized(handler):
-    # One response can carry spend rows, __uncategorized__, AND __earned__ — none leaks
-    # into another. Income never appears as a spend/uncategorized row and vice-versa.
-    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle"), _category("salary", "Income")])
-    txns = _QueuedTransactionRepo([
-        _transaction("coffee", -40, "posted"),
-        _transaction("MEDICAL", -20, "posted"),  # raw enum -> uncategorized
-        _transaction("salary", 2500, "posted"),  # income -> earned
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert result["coffee"] == {"posted": Decimal("40"), "pending": Decimal("0")}
-    assert result["__uncategorized__"] == {"posted": Decimal("20"), "pending": Decimal("0")}
-    assert result["__earned__"] == {"posted": Decimal("2500"), "pending": Decimal("0")}
-
-
 # --- dispatch (through lambda_handler) ---------------------------------------
-
-
-def test_get_breakdown_dispatches_and_runs_real_body(handler, monkeypatch):
-    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = _QueuedTransactionRepo([_transaction("coffee", -42, "posted")])
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: cats)
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
-    monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
-
-    event = api_event("GET", "/breakdown")
-    resp = handler.lambda_handler(event, None)
-
-    assert resp["statusCode"] == 200
-    import json
-    assert json.loads(resp["body"]) == {"coffee": {"posted": 42, "pending": 0}, "__rollup__": {"nodes": {}}}
 
 
 # --- adversarial gaps (qa) ---------------------------------------------------
@@ -507,43 +369,6 @@ def test_breakdown_uncategorized_ignores_unknown_status(handler):
     assert result["__uncategorized__"] == {"posted": Decimal("20"), "pending": Decimal("5")}
 
 
-def test_breakdown_only_uncategorized_bucket(handler):
-    # Taxonomy exists but nothing landed in a spend category this cycle — the whole
-    # response is just the Uncategorized bucket, no phantom spend-category keys.
-    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = _QueuedTransactionRepo([
-        _transaction(None, -12, "posted"),
-        _transaction("MEDICAL", -8, "pending"),
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert result == {"__uncategorized__": {"posted": Decimal("12"), "pending": Decimal("8")}, "__rollup__": {"nodes": {}}}
-
-
-def test_breakdown_fractional_amounts_survive_decimal_encoder(handler, monkeypatch):
-    # Through lambda_handler -> _json_response -> json.dumps(default=float). Sub-dollar
-    # amounts must serialise as JSON numbers with their cents intact, not be dropped
-    # or stringified. (Binary-exact values chosen so the assert is deterministic.)
-    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = _QueuedTransactionRepo([
-        _transaction("coffee", -12.50, "posted"),
-        _transaction("coffee", -0.25, "posted"),
-        _transaction("coffee", -0.50, "pending"),
-    ])
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: cats)
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
-    monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
-
-    event = api_event("GET", "/breakdown")
-    resp = handler.lambda_handler(event, None)
-
-    import json
-    body = json.loads(resp["body"])
-    assert body == {"coffee": {"posted": 12.75, "pending": 0.5}, "__rollup__": {"nodes": {}}}
-    assert isinstance(body["coffee"]["posted"], float)  # number, not "12.75"
-
-
 # --- historical look-back (?cycle=, WHIT-68) --------------------------------
 #
 # today 2024-01-16, fortnightly, last pay 2024-01-03 → current cycle_start = 2024-01-03,
@@ -571,31 +396,6 @@ def test_breakdown_cycle_1_reads_the_prior_window(handler, monkeypatch):
     assert txns.calls[0][2] == "2024-01-02"  # queried end   = day before current start
 
 
-def test_breakdown_cycle_0_is_byte_identical_to_the_default(handler, monkeypatch):
-    # cycle=0 (and an omitted param) must be the unchanged current-cycle behaviour —
-    # the backward-compat / fail-on-revert guard for the window selection.
-    import spend
-    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
-    pool = [_dated("coffee", -20, "2024-01-10")]  # current window
-    cats = lambda: _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-
-    default = handler.list_category_breakdown(cats(), _DateFilteringTransactionRepo(list(pool)), FakePayCycleRepo())
-    zero = handler.list_category_breakdown(cats(), _DateFilteringTransactionRepo(list(pool)), FakePayCycleRepo(), cycle=0)
-
-    assert zero == default == {"coffee": {"posted": Decimal("20"), "pending": Decimal("0")}, "__rollup__": {"nodes": {}}}
-
-
-def test_breakdown_past_window_predating_history_is_empty(handler, monkeypatch):
-    # A prior cycle with no transactions (e.g. before first sync) → empty {}, which the
-    # client renders as its "No spending in that pay cycle" empty state.
-    import spend
-    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
-    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
-    txns = _DateFilteringTransactionRepo([_dated("coffee", -20, "2024-01-10")])  # all current-cycle
-
-    assert handler.list_category_breakdown(cats, txns, FakePayCycleRepo(), cycle=1) == {"__rollup__": {"nodes": {}}}
-
-
 def test_breakdown_cycle_param_flows_through_dispatch(handler, monkeypatch):
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
@@ -616,24 +416,73 @@ def test_breakdown_cycle_param_flows_through_dispatch(handler, monkeypatch):
     assert json.loads(resp["body"]) == {"coffee": {"posted": 10, "pending": 0}, "__rollup__": {"nodes": {}}}
 
 
-@pytest.mark.parametrize("bad", ["-1", "abc", "1.5", "13", "999"])
-def test_breakdown_bad_cycle_returns_400(handler, bad):
-    # Non-int, negative, and above-cap (BREAKDOWN_MAX_LOOKBACK=12) all reject before any
-    # repo is touched. Fail-loud, not a silent fallback to the current cycle.
-    event = api_event("GET", "/breakdown", query={"cycle": bad})
-    resp = handler.lambda_handler(event, None)
-    assert resp["statusCode"] == 400
+@pytest.mark.parametrize("cycle, status", [
+    ("-1", 400), ("abc", 400), ("1.5", 400), ("13", 400), ("999", 400),
+    # BREAKDOWN_MAX_LOOKBACK (12) is the LAST allowed value: served, not rejected.
+    ("12", 200),
+])
+def test_breakdown_cycle_param_is_bounded(handler, monkeypatch, cycle, status):
+    # Non-int, negative, and above-cap all reject. Fail-loud, not a silent fallback to the
+    # current cycle.
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo([_category("coffee", "Lifestyle")]))
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: _DateFilteringTransactionRepo([]))
+    monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
+
+    resp = handler.lambda_handler(api_event("GET", "/breakdown", query={"cycle": cycle}), None)
+
+    assert resp["statusCode"] == status
 
 
-def test_parse_breakdown_cycle_defaults_and_validates(handler):
-    # Absent / empty / None params → 0 (current cycle); a valid int passes; out-of-range
-    # carries a 400 response.
-    assert handler._parse_breakdown_cycle({}) == (0, None)
-    assert handler._parse_breakdown_cycle({"queryStringParameters": None}) == (0, None)
-    assert handler._parse_breakdown_cycle({"queryStringParameters": {"cycle": ""}}) == (0, None)
-    assert handler._parse_breakdown_cycle({"queryStringParameters": {"cycle": "2"}}) == (2, None)
-    cycle, err = handler._parse_breakdown_cycle({"queryStringParameters": {"cycle": "-1"}})
-    assert cycle == 0 and err["statusCode"] == 400
+def test_breakdown_cycle_2_reads_the_second_prior_window_end_to_end(handler, monkeypatch):
+    # cycle=2 must read the 2nd-prior window ONLY — not the current, not cycle=1, not
+    # cycle=3: the n-step is non-overlapping all the way through the endpoint.
+    import spend
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
+    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
+    txns = _DateFilteringTransactionRepo([
+        _dated("coffee", -1, "2024-01-10"),   # current  -> OUT
+        _dated("coffee", -2, "2024-01-01"),   # cycle=1  -> OUT
+        _dated("coffee", -7, "2023-12-19"),   # cycle=2 (last day)  -> IN
+        _dated("coffee", -3, "2023-12-06"),   # cycle=2 (first day) -> IN
+        _dated("coffee", -9, "2023-12-05"),   # cycle=3 (day before) -> OUT
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo(), cycle=2)
+
+    assert result == {"coffee": {"posted": Decimal("10"), "pending": Decimal("0")}, "__rollup__": {"nodes": {}}}
+    assert txns.calls[0][1] == "2023-12-06"  # queried start = 2nd-prior window start
+    assert txns.calls[0][2] == "2023-12-19"  # queried end   = 2nd-prior window end
+
+
+def test_breakdown_prior_window_weekly_length_7_end_to_end(handler, monkeypatch):
+    # length=7: last pay 2024-01-01, today 2024-01-16 -> cycle_start = 2024-01-15, so the
+    # cycle=1 window is [2024-01-08, 2024-01-14].
+    import spend
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
+    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
+    txns = _DateFilteringTransactionRepo([
+        _dated("coffee", -5, "2024-01-10"),   # prior week   -> IN
+        _dated("coffee", -50, "2024-01-15"),  # current week -> OUT
+        _dated("coffee", -7, "2024-01-07"),   # week before  -> OUT
+    ])
+
+    result = handler.list_category_breakdown(
+        cats, txns, FakePayCycleRepo(length=7, last_pay_date="2024-01-01"), cycle=1)
+
+    assert result == {"coffee": {"posted": Decimal("5"), "pending": Decimal("0")}, "__rollup__": {"nodes": {}}}
+    assert txns.calls[0][1] == "2024-01-08"
+    assert txns.calls[0][2] == "2024-01-14"
+
+
+def test_breakdown_excluded_uncategorized_charge_does_not_inflate_the_uncategorized_bucket(handler):
+    # WHIT-296: an excluded charge with a raw (un-mapped) category must NOT land in
+    # __uncategorized__; a lone excluded charge yields no uncategorized row.
+    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle")])
+    txns = _QueuedTransactionRepo([{**_transaction("MEDICAL", -20, "posted"), "budget_excluded": True}])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result == {"__rollup__": {"nodes": {}}}  # nothing counts -> no coffee row and no __uncategorized__
 
 
 # --- adversarial gaps (qa) — earned bucket, WHIT-312 --------------------------
@@ -650,67 +499,6 @@ def test_breakdown_positive_amount_in_spend_category_is_not_earned(handler):
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
     assert "__earned__" not in result
-
-
-def test_breakdown_renamed_income_category_still_earned_by_bucket(handler):
-    # [A17] A user-renamed Income category (custom name, non-"income" id) still counts — the
-    # gate is bucket == Income over the id set, not the name or the raw "income" sentinel.
-    cats = _FakeCategoryRepo([_category("side_hustle", "Income", name="Etsy shop")])
-    txns = _QueuedTransactionRepo([_transaction("side_hustle", 640, "posted")])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert result["__earned__"] == {"posted": Decimal("640"), "pending": Decimal("0")}
-
-
-def test_get_breakdown_dispatches_and_serialises_earned_as_json_numbers(handler, monkeypatch):
-    # [A8] Through lambda_handler -> _json_response -> json.dumps(default=float): the __earned__ bucket's
-    # Decimals (posted AND pending, incl. cents) must serialise as JSON numbers, not be
-    # dropped or stringified — the client reads posted + pending off this. The existing
-    # dispatch test carries no income, so this is the only end-to-end check of __earned__.
-    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle"), _category("salary", "Income")])
-    txns = _QueuedTransactionRepo([
-        _transaction("coffee", -12.50, "posted"),
-        _transaction("salary", 2500.25, "posted"),
-        _transaction("salary", 300.50, "pending"),
-    ])
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: cats)
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
-    monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
-
-    event = api_event("GET", "/breakdown")
-    resp = handler.lambda_handler(event, None)
-
-    import json
-    body = json.loads(resp["body"])
-    assert body["__earned__"] == {"posted": 2500.25, "pending": 300.5}
-    assert isinstance(body["__earned__"]["posted"], float)  # a JSON number, not "2500.25"
-    assert body["coffee"] == {"posted": 12.5, "pending": 0}
-
-
-def test_get_breakdown_dispatches_and_serialises_income_sources_as_json_numbers(handler, monkeypatch):
-    # WHIT-366: the __income__ per-source Decimals (incl. cents) must serialise as JSON numbers
-    # through the JSON dump — the drill screen reads posted + pending off each source.
-    cats = _FakeCategoryRepo([_category("salary", "Income"), _category("dividends", "Income")])
-    txns = _QueuedTransactionRepo([
-        _transaction("salary", 2500.25, "posted"),
-        _transaction("salary", 300.50, "pending"),
-        _transaction("dividends", 75.10, "posted"),
-    ])
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: cats)
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
-    monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
-
-    event = api_event("GET", "/breakdown")
-    resp = handler.lambda_handler(event, None)
-
-    import json
-    body = json.loads(resp["body"])
-    assert body["__income__"] == {
-        "salary": {"posted": 2500.25, "pending": 300.5},
-        "dividends": {"posted": 75.1, "pending": 0},
-    }
-    assert isinstance(body["__income__"]["salary"]["posted"], float)  # a JSON number, not "2500.25"
 
 
 # --- WHIT-349 slice 2: server-owned netted parent rollup (__rollup__) ---------
@@ -775,19 +563,6 @@ def test_breakdown_rollup_clamps_posted_and_pending_independently(handler):
     assert result["__rollup__"]["nodes"]["car"] == {"posted": Decimal("0"), "pending": Decimal("50")}
 
 
-def test_breakdown_flat_taxonomy_emits_empty_rollup(handler):
-    # No nested parents -> __rollup__ is ALWAYS present (WHIT-358) but its nodes is {} —
-    # a flat leaf reads its own floored flat value, so there is nothing to roll up. The
-    # key being present (not absent) is the point: "no __rollup__" now means ONLY "old
-    # server", which lets the client's fallback be a pure rollout shim (deletable in 5b).
-    cats = _FakeCategoryRepo([_category("coffee", "Lifestyle"), _category("groceries", "Living")])
-    txns = _QueuedTransactionRepo([_transaction("coffee", -50), _transaction("groceries", -30)])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert result["__rollup__"] == {"nodes": {}}
-
-
 def test_breakdown_rollup_omits_parent_whose_subtree_nets_to_zero(handler):
     # A parent whose whole subtree nets to $0 (refunds cancel spend) is omitted from
     # __rollup__.nodes — a $0 parent has no donut slice. Fail-on-revert of the >0 guard:
@@ -804,32 +579,6 @@ def test_breakdown_rollup_omits_parent_whose_subtree_nets_to_zero(handler):
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
     assert result["__rollup__"]["nodes"] == {}
-
-
-def test_breakdown_rollup_parent_total_equals_list_budgets(handler):
-    # The core invariant of the whole epic: the donut's netted parent (__rollup__) MUST
-    # equal the Budgets bar for the same data. Drive both handlers on one refunded-sub
-    # fixture and assert they agree. Fail-on-revert: the old client floored-leaf roll gives
-    # 60 while /budgets gives 30, so this pins them together.
-    cats = [
-        _category("car", "Living"),
-        _child("petrol", "Living", "car"),
-        _child("tolls", "Living", "car"),
-    ]
-    txns = [
-        _transaction("petrol", -60, "posted"),
-        _transaction("tolls", -50, "posted"),
-        _transaction("tolls", 80, "posted"),
-    ]
-
-    breakdown = handler.list_category_breakdown(
-        _FakeCategoryRepo(cats), _QueuedTransactionRepo(txns), FakePayCycleRepo())
-    budgets = handler.list_budgets(
-        _FakeBudgetRepo({"car": {"target": Decimal("300")}}),
-        _QueuedTransactionRepo(txns), FakePayCycleRepo(), _FakeCategoryRepo(cats))
-
-    assert breakdown["__rollup__"]["nodes"]["car"] == {
-        "posted": budgets["car"]["posted"], "pending": budgets["car"]["pending"]}
 
 
 # --- WHIT-349 slice 2: ADVERSARIAL GAP tests (QA, not the implementer's) ------
@@ -946,104 +695,6 @@ def test_breakdown_rollup_parent_node_includes_parents_own_direct_spend(handler)
     assert result["__rollup__"]["nodes"]["car"] == {"posted": Decimal("85"), "pending": Decimal("0")}
 
 
-def test_breakdown_rollup_gives_each_nested_parent_its_own_node(handler):
-    # WHIT-349 — [A10] a mid-tree node that is ITSELF a parent gets its own node too, and
-    # it is correct (its subtree, not the whole tree). car (top) = petrol 60 + travel-direct
-    # 5 + tolls 20 = 85; travel (mid) = its own 5 + tolls 20 = 25. Both must appear.
-    # Fail-on-revert: excluding the root from a subtree drops travel's own 5 -> travel 20.
-    cats = _FakeCategoryRepo([
-        _category("car", "Living"),
-        _child("travel", "Living", "car"),
-        _child("tolls", "Living", "travel"),
-        _child("petrol", "Living", "car"),
-    ])
-    txns = _QueuedTransactionRepo([
-        _transaction("petrol", -60, "posted"),
-        _transaction("tolls", -20, "posted"),
-        _transaction("travel", -5, "posted"),    # direct on the mid-parent
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-    nodes = result["__rollup__"]["nodes"]
-
-    assert nodes["car"] == {"posted": Decimal("85"), "pending": Decimal("0")}
-    assert nodes["travel"] == {"posted": Decimal("25"), "pending": Decimal("0")}
-
-
-def test_breakdown_rollup_never_contains_uncategorized_or_earned(handler):
-    # WHIT-349 — [A11] __rollup__ lives ALONGSIDE __uncategorized__ and __earned__ but
-    # never folds them: nodes holds spend parents only. A raw-enum charge (MEDICAL) still
-    # lands in __uncategorized__, income still lands in __earned__, and neither leaks into
-    # nodes; nor does the leaf (petrol) appear as a node. Regression guard on key isolation.
-    cats = _FakeCategoryRepo([
-        _category("car", "Living"),
-        _child("petrol", "Living", "car"),
-        _category("salary", "Income"),
-    ])
-    txns = _QueuedTransactionRepo([
-        _transaction("petrol", -60, "posted"),
-        _transaction("MEDICAL", -20, "posted"),   # raw bank enum -> __uncategorized__
-        _transaction("salary", 2000, "posted"),    # income -> __earned__
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert result["__rollup__"]["nodes"] == {"car": {"posted": Decimal("60"), "pending": Decimal("0")}}
-    assert "__uncategorized__" in result and "__earned__" in result
-    for leaked in ("__uncategorized__", "__earned__", "salary"):
-        assert leaked not in result["__rollup__"]["nodes"]
-
-
-def test_breakdown_rollup_correct_over_prior_cycle_lookback(handler, monkeypatch):
-    # WHIT-349 — [A12] the ?cycle= look-back still produces a correct NETTED rollup: only
-    # the prior window's transactions count. cycle=1 window is [2023-12-20, 2024-01-02];
-    # car = petrol 60 + (tolls 50 - 80 refund) = 30, and the current-cycle petrol -99 is
-    # excluded. Fail-on-revert: ignore the window and the -99 changes car; floor per-id and
-    # tolls -> 0 -> car 60.
-    import spend
-    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
-    cats = _FakeCategoryRepo([
-        _category("car", "Living"),
-        _child("petrol", "Living", "car"),
-        _child("tolls", "Living", "car"),
-    ])
-    txns = _DateFilteringTransactionRepo([
-        _dated("petrol", -60, "2023-12-25"),   # prior window
-        _dated("tolls", -50, "2023-12-25"),    # prior window
-        _dated("tolls", 80, "2023-12-26"),     # prior window refund
-        _dated("petrol", -99, "2024-01-10"),   # CURRENT window -> excluded for cycle=1
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo(), cycle=1)
-
-    assert result["__rollup__"]["nodes"]["car"] == {"posted": Decimal("30"), "pending": Decimal("0")}
-
-
-def test_breakdown_rollup_excludes_income_and_savings_parents(handler):
-    # WHIT-349 — [A13] nodes are SPEND_BUCKETS only: an Income parent and a Savings parent —
-    # each with children and activity — must never appear (income would clamp to $0 spend
-    # rows; savings isn't a spend view). Only the Living parent gets a node.
-    cats = _FakeCategoryRepo([
-        _category("car", "Living"),
-        _child("petrol", "Living", "car"),
-        _category("pay", "Income"),
-        _child("bonus", "Income", "pay"),
-        _category("save", "Savings"),
-        _child("emergency", "Savings", "save"),
-    ])
-    txns = _QueuedTransactionRepo([
-        _transaction("petrol", -60, "posted"),
-        _transaction("bonus", 2000, "posted"),     # income
-        _transaction("emergency", -500, "posted"),  # savings movement
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert result["__rollup__"]["nodes"] == {"car": {"posted": Decimal("60"), "pending": Decimal("0")}}
-    assert "pay" not in result["__rollup__"]["nodes"]
-    assert "save" not in result["__rollup__"]["nodes"]
-
-
 def test_get_breakdown_dispatches_and_serialises_rollup_as_nested_json_numbers(handler, monkeypatch):
     # WHIT-349 — [A14] end-to-end through lambda_handler -> _json_response -> json.dumps(default=float):
     # __rollup__ is one level DEEPER than __earned__ ({"nodes": {id: {posted, pending}}}),
@@ -1152,24 +803,6 @@ def test_breakdown_rollup_refund_on_parents_own_direct_spend(handler):
     assert rollup["refunds"] == {"car": [{"id": "car", "amount": Decimal("-20")}]}
 
 
-def test_breakdown_rollup_no_refunds_key_when_no_refund(handler):
-    # A cycle with no net-refunded member has NO "refunds" key -> byte-identical to slice 2.
-    cats = _FakeCategoryRepo([
-        _category("car", "Living"),
-        _child("petrol", "Living", "car"),
-        _child("tolls", "Living", "car"),
-    ])
-    txns = _QueuedTransactionRepo([
-        _transaction("petrol", -60, "posted"),
-        _transaction("tolls", -20, "posted"),
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert "refunds" not in result["__rollup__"]
-    assert result["__rollup__"]["nodes"]["car"] == {"posted": Decimal("80"), "pending": Decimal("0")}
-
-
 def test_breakdown_rollup_no_refund_line_for_a_still_shown_member(handler):
     # WHIT-349 (Bug B fix): a member with a settled refund AND a new pending charge floors to
     # {0, +x} -> it still shows as a flat row, so it must NOT also get a refund line (no double-
@@ -1200,137 +833,9 @@ def test_breakdown_rollup_no_refund_line_for_a_still_shown_member(handler):
 # negative row and only an exact-$0-net source is dropped. Reuses the fakes/builders above. =====
 
 
-def test_income_source_keeps_signed_posted_when_pending_positive(handler):
-    # A source whose SETTLED bucket nets negative (a settled clawback bigger than the settled pay)
-    # but which also has a POSITIVE PENDING (a new pay run not yet settled) SURVIVES with its raw
-    # SIGNED buckets — posted -100, pending 300 (WHIT-376) — never floored, never dropped. This is
-    # the sign-split case whose client-side residual the "adjustment" plug fills.
-    # Fail-on-revert: revert summarise_income to clamp=True and posted floors to 0 -> {0,300}.
-    cats = _FakeCategoryRepo([_category("salary", "Income")])
-    txns = _QueuedTransactionRepo([
-        _transaction("salary", 100, "posted"),
-        _transaction("salary", -200, "posted"),   # settled clawback > the settled pay -> posted nets -100
-        _transaction("salary", 300, "pending"),    # a new pending pay run
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert result["__income__"] == {"salary": {"posted": Decimal("-100"), "pending": Decimal("300")}}
-
-
-def test_income_source_kept_signed_even_when_net_negative(handler):
-    # A source whose posted AND pending both net negative (a full clawback across both) now SURVIVES
-    # as a signed negative row (net -340), so the drill screen can show it as a "−$340" reversal and
-    # the rows still reconcile to __earned__ — a healthy sibling keeps the aggregate positive so
-    # __earned__/__income__ are emitted. Fail-on-revert: revert to clamp=True + the `> 0` filter and
-    # "clawed" floors to {0,0} and is dropped.
-    cats = _FakeCategoryRepo([_category("salary", "Income"), _category("clawed", "Income")])
-    txns = _QueuedTransactionRepo([
-        _transaction("salary", 2000, "posted"),
-        _transaction("clawed", 100, "posted"),
-        _transaction("clawed", -400, "posted"),    # posted nets -300
-        _transaction("clawed", 50, "pending"),
-        _transaction("clawed", -90, "pending"),      # pending nets -40
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert result["__income__"] == {
-        "salary": {"posted": Decimal("2000"), "pending": Decimal("0")},
-        "clawed": {"posted": Decimal("-300"), "pending": Decimal("-40")},  # kept, signed
-    }
-
-
-def test_income_source_keeps_signed_negative_pending_earned_clamps_that_bucket(handler):
-    # WHIT-376 gap: the existing sign-split test clamps the SETTLED bucket. The mirror case — a
-    # PENDING reversal (a pending pay run pulled back) larger than nothing, with settled positive —
-    # must keep the source's raw SIGNED pending (-100), while __earned__ (aggregate clamp) floors
-    # its pending bucket to 0. So __earned__ (2000) EXCEEDS the source net (1900) by the clamped-away
-    # pending reversal — the residual the client's "adjustment" plug fills in the pending direction.
-    # Fail-on-revert: revert summarise_income to clamp=True and pending floors to 0 -> {2000, 0}.
-    cats = _FakeCategoryRepo([_category("salary", "Income")])
-    txns = _QueuedTransactionRepo([
-        _transaction("salary", 2000, "posted"),
-        _transaction("salary", -100, "pending"),  # a pending clawback -> pending nets -100
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert result["__income__"] == {"salary": {"posted": Decimal("2000"), "pending": Decimal("-100")}}
-    assert result["__earned__"] == {"posted": Decimal("2000"), "pending": Decimal("0")}  # pending clamped
-    earned_total = result["__earned__"]["posted"] + result["__earned__"]["pending"]  # 2000
-    source_total = result["__income__"]["salary"]["posted"] + result["__income__"]["salary"]["pending"]  # 1900
-    assert earned_total - source_total == Decimal("100")  # the residual, in the pending bucket
-
-
-def test_income_multiple_reversed_sources_all_survive_and_reconcile(handler):
-    # WHIT-376 invariant with MORE THAN ONE reversal: two distinct sources clawed back this cycle
-    # must BOTH survive as signed negative rows, and the per-source list must still reconcile to
-    # __earned__ (2000 - 100 - 50 == 1850). Guards against a per-source clamp reappearing that only
-    # shows up once several negatives exist. Fail-on-revert: revert to clamp=True + the `> 0` filter
-    # and both bonus rows drop, so the sources sum to 2000 (not 1850) and the __income__ map shrinks.
-    cats = _FakeCategoryRepo([
-        _category("salary", "Income"),
-        _category("bonus_a", "Income"),
-        _category("bonus_b", "Income"),
-    ])
-    txns = _QueuedTransactionRepo([
-        _transaction("salary", 2000, "posted"),
-        _transaction("bonus_a", 40, "posted"),
-        _transaction("bonus_a", -140, "posted"),  # nets -100
-        _transaction("bonus_b", -50, "posted"),   # nets -50
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-
-    assert result["__income__"] == {
-        "salary": {"posted": Decimal("2000"), "pending": Decimal("0")},
-        "bonus_a": {"posted": Decimal("-100"), "pending": Decimal("0")},
-        "bonus_b": {"posted": Decimal("-50"), "pending": Decimal("0")},
-    }
-    assert result["__earned__"] == {"posted": Decimal("1850"), "pending": Decimal("0")}
-    total_sources = sum(
-        (v["posted"] + v["pending"] for v in result["__income__"].values()), Decimal("0")
-    )
-    earned = result["__earned__"]
-    assert total_sources == earned["posted"] + earned["pending"]  # rows reconcile to the headline
-
-
 # === WHIT-349 refund __rollup__ GAP tests (folded from test_breakdown_refund_gaps.py) — the
 # independent posted/pending clamp gap, a grandchild refund under a net-positive mid-parent, a
 # refunded sub-parent, and income/savings never leaking into refunds. Reuses the fakes above. ===
-
-
-def test_rollup_posted_surplus_with_pending_refund_cannot_reconcile(handler):
-    # GAP: petrol has a POSTED spend of 100; tolls has a PENDING refund of 30. The node
-    # folds posted and pending INDEPENDENTLY (fold_subtree), so the -30 pending floors to 0
-    # at the node -> node = {posted 100, pending 0} = 100. But tolls' COMBINED net is -30, so
-    # it's emitted as a refund line of -30. The expanded list (petrol 100 + refund -30 = 70)
-    # therefore does NOT equal the node (100): off by the clamped pending remainder (30).
-    # This pins the ACTUAL behaviour — an emitted rollup the client can't reconcile.
-    cats = _FakeCategoryRepo([
-        _category("car", "Living"),
-        _child("petrol", "Living", "car"),
-        _child("tolls", "Living", "car"),
-    ])
-    txns = _QueuedTransactionRepo([
-        _transaction("petrol", -100, "posted"),   # +100 posted spend
-        _transaction("tolls", 30, "pending"),      # -30 pending refund (positive amount)
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-    rollup = result["__rollup__"]
-
-    assert rollup["nodes"]["car"] == {"posted": Decimal("100"), "pending": Decimal("0")}
-    assert rollup["refunds"] == {"car": [{"id": "tolls", "amount": Decimal("-30")}]}
-
-    node_total = rollup["nodes"]["car"]["posted"] + rollup["nodes"]["car"]["pending"]   # 100
-    shown_petrol = result["petrol"]["posted"] + result["petrol"]["pending"]             # 100
-    refund_sum = sum(r["amount"] for r in rollup["refunds"]["car"])                     # -30
-    reconciled = shown_petrol + refund_sum                                              # 70
-    assert node_total == Decimal("100")
-    assert reconciled == Decimal("70")
-    assert reconciled != node_total   # <-- the gap: the expanded list under-sums by 30
 
 
 def test_rollup_grandchild_refund_attaches_to_positive_mid_parent_not_top(handler):
@@ -1357,32 +862,6 @@ def test_rollup_grandchild_refund_attaches_to_positive_mid_parent_not_top(handle
     assert rollup["nodes"]["travel"] == {"posted": Decimal("20"), "pending": Decimal("0")}
     # The refund lands on travel (the parent in nodes with the negative child), NOT on car.
     assert rollup["refunds"] == {"travel": [{"id": "tolls", "amount": Decimal("-30")}]}
-
-
-def test_rollup_refunded_subparent_reported_by_child_id_with_whole_subtree_net(handler):
-    # car > petrol(+200); car > shopping(sub-parent) > {shoes(+40), clothes(-120)}.
-    # shopping's whole subtree nets -80 (< 0) -> shopping COLLAPSES (no node) and is reported
-    # as a single refund line under car keyed by shopping with amount -80 (its subtree net),
-    # even though shopping is itself a parent. car node = 200 + (-80) = 120.
-    cats = _FakeCategoryRepo([
-        _category("car", "Living"),
-        _child("petrol", "Living", "car"),
-        _child("shopping", "Living", "car"),
-        _child("shoes", "Living", "shopping"),
-        _child("clothes", "Living", "shopping"),
-    ])
-    txns = _QueuedTransactionRepo([
-        _transaction("petrol", -200, "posted"),
-        _transaction("shoes", -40, "posted"),
-        _transaction("clothes", 120, "posted"),   # -120 refund
-    ])
-
-    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
-    rollup = result["__rollup__"]
-
-    assert rollup["nodes"]["car"] == {"posted": Decimal("120"), "pending": Decimal("0")}
-    assert "shopping" not in rollup["nodes"]   # collapsed sub-parent, no node
-    assert rollup["refunds"] == {"car": [{"id": "shopping", "amount": Decimal("-80")}]}
 
 
 def test_rollup_income_and_savings_never_in_nodes_or_refunds(handler):

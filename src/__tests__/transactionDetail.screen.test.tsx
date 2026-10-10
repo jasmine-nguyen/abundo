@@ -39,6 +39,9 @@ import { queryClient } from '../queryClient';
 import { transactionsKey } from '../queryKeys';
 import { removeFromAllCopies } from '../transactionCache';
 import { COFFEE_RECORD } from './support/categories';
+import { pinToday } from './support/clock';
+import { styleOf } from './support/layout';
+import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -79,10 +82,26 @@ it('renders the transaction fields (merchant, amount, date, account, category, s
   expect(screen.getByText('Posted')).toBeTruthy();
 });
 
-it('shows Pending for a pending transaction', async () => {
-  seedFeed([txn({ transaction_id: 't1', category: 'coffee', status: 'pending' })]);
+// WHIT-845: at big text the hero amount stays on one line (shrinking to fit, capped at 2×), and the
+// tag "×" has no fixed line height to clip it.
+it('the hero amount fits one line and the tag "×" is not clipped by a fixed line height', async () => {
+  seedFeed([txn({ transaction_id: 't1', category: 'coffee', tags: ['work'] })]);
   await draw();
-  expect(screen.getByText('Pending')).toBeTruthy();
+  const amount = screen.getByText('-$12.50');
+  expect(amount.props).toMatchObject({ numberOfLines: 1, adjustsFontSizeToFit: true, maxFontSizeMultiplier: LARGE_TEXT_MAX_SCALE });
+  expect(styleOf(screen.getByText('×')).lineHeight).toBeUndefined();
+});
+
+// WHIT-844: the Status field ages a pending charge the same way the list row does.
+it('shows Pending with its age for a pending transaction 7 days old', async () => {
+  pinToday(new Date('2026-07-08T08:00:00+10:00'));
+  try {
+    seedFeed([txn({ transaction_id: 't1', category: 'coffee', status: 'pending', date: '2026-07-01' })]);
+    await draw();
+    expect(screen.getByText('Pending · 7 days')).toBeTruthy();
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 it('finds a row that is only in the recent list (not the feed)', async () => {
@@ -229,8 +248,7 @@ describe('spread this bill prompt', () => {
     server.seed('/budgets', { coffee: rollup({ target: 100, posted: 130, pending: 0 }) });  // over by 30 → start
     await draw();
 
-    fireEvent.press(screen.getByTestId('transaction-spread'));
-    expect(screen.getByText('Spread a bill in this category')).toBeTruthy();
+    fireEvent.press(screen.getByRole('button', { name: 'Spread a bill in this category' }));
     expect(routerSpies.push).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=30');
   });
 

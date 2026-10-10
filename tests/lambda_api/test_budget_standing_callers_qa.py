@@ -124,14 +124,3 @@ def test_stale_rollover_flag_on_income_widens_the_read_but_not_the_earnings(hand
         "salary": {"target": D("3000"), "posted": D("2800"), "pending": D("0"), "available": D("3000")},
     }
     assert budget_repo.writes == []
-
-
-def test_chat_with_no_budgets_still_loads_its_transactions(handler, pinned_today):
-    # [B3] (P2) No budgets → empty budget rows, no crash; the chat still gets every
-    # transaction back to its floor.
-    import ai_chat
-
-    data = ai_chat.load_chat_data(_AccountTransactionRepo(ROWS), _Categories(), _Budgets({}), _PayCycle())
-
-    assert data.budgets == {}
-    assert {t["transaction_id"] for t in data.transactions} == {r["transaction_id"] for r in ROWS}

@@ -12,7 +12,7 @@ import { formatTimeOfDay } from '../dateutil';
 //
 // WHIT-713: the optional `error` adds an offline-vs-server reason line under the error copy.
 // This file also holds the shared quiet "Couldn't refresh · showing 9:40am" line (StaleDataLine),
-// used by Budgets as well as the list tabs.
+// used by Budgets as well as the list tabs, and its opt-in "Updated 9:40am" version (WHIT-844).
 export function ListStates({
   showSpinner, showError, idPrefix, errorText, retryLabel, onRetry, error,
 }: {
@@ -43,11 +43,21 @@ export function ListStates({
 }
 
 // A refresh failed but the screen still shows its last good data: say so quietly, with when that
-// data loaded. Nothing when the last refresh worked or nothing has loaded yet.
-export function StaleDataLine({ idPrefix, error, updatedAt }: { idPrefix: string; error: unknown; updatedAt: number }) {
-  if (error == null || updatedAt === 0) return null;
-  const lead = readFailureIsOffline(error) ? 'You look offline' : "Couldn't refresh";
-  return <Text testID={`${idPrefix}-stale`} style={styles.staleText}>{`${lead} · showing ${formatTimeOfDay(updatedAt)}`}</Text>;
+// data loaded. With `showUpdated` (WHIT-844), a good load says "Updated 9:40am" instead of
+// nothing. Nothing when nothing has loaded yet.
+export function StaleDataLine({ idPrefix, error, updatedAt, showUpdated }: {
+  idPrefix: string;
+  error: unknown;
+  updatedAt: number;
+  showUpdated?: boolean;
+}) {
+  if (updatedAt === 0) return null;
+  if (error != null) {
+    const lead = readFailureIsOffline(error) ? 'You look offline' : "Couldn't refresh";
+    return <Text testID={`${idPrefix}-stale`} style={styles.staleText}>{`${lead} · showing ${formatTimeOfDay(updatedAt)}`}</Text>;
+  }
+  if (!showUpdated) return null;
+  return <Text testID={`${idPrefix}-updated`} style={styles.staleText}>{`Updated ${formatTimeOfDay(updatedAt)}`}</Text>;
 }
 
 const styles = StyleSheet.create({
