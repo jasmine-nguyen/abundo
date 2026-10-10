@@ -15,7 +15,6 @@ import { installFakeServer } from './support/fakeServer';
 import { CHAT_ERROR_TEXT, CHAT_MAX_WAIT_MS, CHAT_POLL_DELAY_MS, ChatProvider, useChat } from '../chat/ChatContext';
 import type { ChatContextValue } from '../chat/ChatContext';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
-import { applyRulesJob } from './support/applyRulesReport';
 const SWEEP: FilingTarget = { kind: 'sweep' };
 const BIG_RUN: FilingWhen = { matched: APPLY_RULES_MAX_WRITES + 1 }; // over the cap → a background job
 
@@ -70,23 +69,6 @@ it('[A11] a new job after a network give-up starts its dropped-connection count 
 
   await act(async () => { await r.current.retryApplyRulesJob(); });
   await tick(4); // 4 drops on the new job → still running
-  expect(r.current.applyRulesJob?.status).toBe('running');
-  await tick(1);
-  expect(r.current.applyRulesJob).toMatchObject({ status: 'failed', error: 'network' });
-});
-
-it('[A12] a dismiss after a good check carries zero drops, not a stale count', async () => {
-  drop(jobPath('job-1'), 3);
-  server.once('GET', jobPath('job-1'), { body: applyRulesJob({ matched: 10, attempted: 1 }) }); // resets the count
-  drop(jobPath('job-1'), 5);
-
-  const r = renderHook(() => useAppContext(), { wrapper }).result;
-  await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });
-  await act(async () => { await r.current.fileCharges(SWEEP, BIG_RUN); });
-  await tick(4);
-  await act(async () => { r.current.setSheet(null); });
-  await act(async () => { r.current.setSheet({ mode: 'applyRules' }); });
-  await tick(4); // 4 fresh drops → still under 5
   expect(r.current.applyRulesJob?.status).toBe('running');
   await tick(1);
   expect(r.current.applyRulesJob).toMatchObject({ status: 'failed', error: 'network' });

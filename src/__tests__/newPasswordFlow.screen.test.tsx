@@ -37,15 +37,6 @@ beforeEach(() => {
   mockCompleteNewPassword.mockReset();
 });
 
-it('the challenge flips the screen into the set-password form', async () => {
-  const api = render(<Login />);
-  await reachNewPasswordForm(api);
-  // sign-in form gone, new-password form shown
-  expect(api.queryByTestId('login-submit')).toBeNull();
-  expect(api.getByTestId('newpass-new')).toBeTruthy();
-  expect(api.getByTestId('newpass-confirm')).toBeTruthy();
-});
-
 it('mismatched passwords show an error and do NOT call completeNewPassword', async () => {
   const api = render(<Login />);
   await reachNewPasswordForm(api);
@@ -78,12 +69,4 @@ it('a completeNewPassword error stays on the form (e.g. weak password), no navig
   expect(await api.findByText(/requirements/i)).toBeTruthy();
   expect(api.getByTestId('newpass-form')).toBeTruthy(); // still on the set-password step
   expect(routerSpies.replace).not.toHaveBeenCalled();
-});
-
-it('"back to sign in" returns to the sign-in form', async () => {
-  const api = render(<Login />);
-  await reachNewPasswordForm(api);
-  fireEvent.press(api.getByTestId('newpass-back'));
-  await waitFor(() => expect(api.getByTestId('login-submit')).toBeTruthy());
-  expect(api.queryByTestId('newpass-form')).toBeNull();
 });

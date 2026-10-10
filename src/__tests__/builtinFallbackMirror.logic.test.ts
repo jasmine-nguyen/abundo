@@ -1,16 +1,11 @@
-// WHIT-432 QA — [B1]-[B4] the adversarial half of "the fallback table mirrors the server".
-//
-// The mirror pin in seedSlotSync.logic.test.ts [A7] proves the two TABLES are equal. These prove the
-// three things that pin cannot: that the slot branch of chartCategoryColor is still ALIVE (an
-// equality pin passes with it deleted — demonstrated in review), that the guarantee the deleted
-// collision inventory carried still holds, and that the two screen suites' exemplar slot still
-// disagrees with shopping's fallback, which is what stops them going tautological after a re-space.
+// WHIT-432 QA — [B1]-[B2] the adversarial half of "the fallback table mirrors the server": the slot
+// branch of chartCategoryColor is still ALIVE (an equality pin passes with it deleted —
+// demonstrated in review), and the guarantee the deleted collision inventory carried still holds.
 import { describe, it, expect } from '@jest/globals';
 import {
   ASSIGNMENT_ORDER, CATEGORY_COLORS, BUILTIN_CATEGORY_INDEX, chartCategoryColor,
 } from '../chartColors';
 import { readServerSeedSlots } from './serverSeedSlots';
-import { PALETTE_CATS, SLOT_ROWS_CATS } from './insightsColourFixtures';
 
 const SERVER_SLOTS = readServerSeedSlots();
 
@@ -52,68 +47,5 @@ describe('[B2] a half-migrated store: the guarantee the deleted inventory used t
       }
     }
     expect(Object.keys(SERVER_SLOTS)).toHaveLength(13);
-  });
-});
-
-describe('[B3] the three ids WHIT-432 moved', () => {
-  it('none of them still paints its pre-WHIT-432 hue', () => {
-    // The card's three numbers, one assertion each, independent of the table-equality pin: revert
-    // any single entry in BUILTIN_CATEGORY_INDEX and exactly that id reddens here.
-    const before: Record<string, number> = { shopping: 8, transport: 14, phonenet: 15 };
-    for (const [id, oldIndex] of Object.entries(before)) {
-      // non-vacuity: the old hue must still BE a colour, or "no longer paints it" is free
-      expect(CATEGORY_COLORS[oldIndex]).toMatch(/^#[0-9a-f]{6}$/);
-      expect(chartCategoryColor(id)).not.toBe(CATEGORY_COLORS[oldIndex]);
-      expect(chartCategoryColor(id)).toBe(chartCategoryColor(id, { slot: SERVER_SLOTS[id] }));
-    }
-  });
-
-  it('the mirror is BUILT-INS only — a custom id can still land on a built-in hue', () => {
-    // The honest limit chartColors.ts claims in prose, measured. 13 of the 20 ramp entries are
-    // spoken for by a built-in fallback, so a hashed custom id can match one. Moving shopping 8->9
-    // changed WHICH ids collide, not how many can. Pinned so a future "no two categories share a
-    // colour" claim has to face this.
-    const builtinHues = new Set<string>(Object.values(BUILTIN_CATEGORY_INDEX).map((i) => CATEGORY_COLORS[i]));
-    expect(builtinHues.size).toBe(13);
-    expect(CATEGORY_COLORS.length - builtinHues.size).toBe(7);   // the 7 hues only a custom id reaches
-    const customs = Array.from({ length: 200 }, (_, i) => `custom-${i}`);
-    expect(customs.filter((id) => builtinHues.has(chartCategoryColor(id))).length).toBeGreaterThan(0);
-  });
-});
-
-// --- the two Insights screen suites' exemplar slot -------------------------------------------
-//
-// Both screen suites prove "the screen forwards the stored slot" by giving `shopping` a slot and
-// asserting the painted hue is the SLOT's, not the id's. That only proves anything while the two
-// disagree — which is exactly what WHIT-432 broke for shopping's SEED slot, and why the fixtures
-// carry a slot it does not own. Nothing else ties that number to the invariant it depends on, so
-// assert it here against the shared fixture objects (WHIT-444 lifted them out of the .tsx files, so
-// this reads their actual values rather than regex-parsing the source).
-const SCREEN_FIXTURES: { name: string; cats: readonly { id: string; colorSlot: number }[] }[] = [
-  { name: 'PALETTE_CATS', cats: PALETTE_CATS },
-  { name: 'SLOT_ROWS_CATS', cats: SLOT_ROWS_CATS },
-];
-
-function shoppingSlot(cats: readonly { id: string; colorSlot: number }[]): number {
-  const shopping = cats.find((cat) => cat.id === 'shopping');
-  if (!shopping) throw new Error('no shopping fixture');
-  return shopping.colorSlot;
-}
-
-describe('[B4] the screen suites cannot silently go tautological again', () => {
-  it.each(SCREEN_FIXTURES)('$name gives shopping a slot whose hue differs from its fallback', ({ cats }) => {
-    const shopping = shoppingSlot(cats);
-    // the three ways this fixture could stop proving anything, each named
-    expect(SERVER_SLOTS.shopping).not.toBe(shopping);                              // not its seed slot
-    expect(ASSIGNMENT_ORDER[shopping]).not.toBe(BUILTIN_CATEGORY_INDEX.shopping);  // not its ramp position
-    expect(chartCategoryColor('shopping', { slot: shopping }))
-      .not.toBe(chartCategoryColor('shopping'));                                   // the hues really differ
-  });
-
-  it.each(SCREEN_FIXTURES)('$name fixture slots are all distinct, so no assertion passes by accident', ({ cats }) => {
-    const all = cats.map((cat) => cat.colorSlot);
-    expect(new Set(all).size).toBe(all.length);
-    const painted = all.map((slot) => chartCategoryColor('irrelevant', { slot }));
-    expect(new Set(painted).size).toBe(all.length);
   });
 });

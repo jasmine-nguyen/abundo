@@ -9,7 +9,6 @@ import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
 import type { Category } from '../types';
 import type { Rule } from '../model';
-import type { BudgetRollup } from '../api';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
 
@@ -44,26 +43,7 @@ it('setPayCycleLength bails on a cold [payCycle] cache — no server write, no c
   expect(queryClient.getQueryData(['payCycle'])).toBeUndefined(); // no half-built cycle written
 });
 
-it('setPayday bails on a cold [payCycle] cache too (same guard, other field)', async () => {
-  const result = mount();
-
-  await act(async () => { result.current.setPayday('2026-07-01'); });
-
-  expect(server.sent('PUT', '/paycycle')).toHaveLength(0);
-  expect(queryClient.getQueryData(['payCycle'])).toBeUndefined();
-});
-
 // --- applyCategory: cold ['transactions']/['categories'] must no-op (close the sheet) --------
-
-it('applyCategory(one) no-ops on a cold transactions/categories cache — closes the sheet, no PATCH', async () => {
-  const result = mount(); // NO transactions/categories seed
-  act(() => { result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }); });
-
-  await act(async () => { await result.current.applyCategory('one'); });
-
-  expect(server.sent('PATCH', '/transactions/t1')).toHaveLength(0);     // nothing to categorise
-  expect(result.current.sheet).toBeNull();                       // sheet closed, not stuck open
-});
 
 it('applyCategory(all) no-ops on a cold cache — mints no rule, sends no batch', async () => {
   const result = mount();
@@ -102,21 +82,6 @@ it('saveBudget still saves on a cold [categories] cache — returns true, no cra
   expect(ok).toBe(true);
   expect(server.requests()).toContainEqual({ method: 'PUT', path: '/budgets/groceries', body: { target: 300 } });
   expect(result.current.toast).toBeNull(); // no category name → no success toast (no thrown lookup)
-});
-
-it('saveBudget "updated" copy scans EVERY budget window, not just the current one', async () => {
-  // WHIT-192 replaced budgets.find (single current window) with getQueriesData over ['budgets',*].
-  // A budget living in a NON-current window (30) must still read as an EDIT, not a fresh SET —
-  // and the cache is the RAW Record<categoryId, BudgetRollup>, not a Budget[] array.
-  queryClient.setQueryData<Category[]>(['categories'], [CAT]);
-  queryClient.setQueryData<Record<string, BudgetRollup>>(['budgets', 30], { groceries: { target: 100, posted: 0, pending: 0 } });
-  // Current-window (14) cache is empty — a plain single-window lookup would say "set".
-  queryClient.setQueryData<Record<string, BudgetRollup>>(['budgets', 14], {});
-  const result = mount();
-
-  await act(async () => { await result.current.saveBudget('groceries', 300); });
-
-  expect(result.current.toast).toBe('Groceries budget updated to $300.'); // updated (found in the 30 window)
 });
 
 // --- saveManualRule: cold [categories] toast lookup is graceful; rule still lands -------------

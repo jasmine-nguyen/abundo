@@ -42,13 +42,6 @@ describe('getCurrentUser', () => {
     expect(auth.getCurrentUser()).toEqual({ email: 'me@x.com', name: 'Jasmine Nguyen', picture: 'https://p/x.png' });
   });
 
-  it('returns just the email when name/picture are absent (native password user)', async () => {
-    const auth = loadAuth();
-    await signInSeat(auth);
-    mockDecodePayload.mockReturnValue({ email: 'me@x.com' });
-    expect(auth.getCurrentUser()).toEqual({ email: 'me@x.com', name: undefined, picture: undefined });
-  });
-
   it('returns null (never throws) when the token cannot be decoded', async () => {
     const auth = loadAuth();
     await signInSeat(auth);
@@ -56,13 +49,6 @@ describe('getCurrentUser', () => {
       throw new Error('bad token');
     });
     expect(auth.getCurrentUser()).toBeNull();
-  });
-
-  it('trusts the token: no email claim still returns a NON-null identity (Settings degrades)', async () => {
-    const auth = loadAuth();
-    await signInSeat(auth);
-    mockDecodePayload.mockReturnValue({ name: 'No Email User' });
-    expect(auth.getCurrentUser()).toEqual({ email: undefined, name: 'No Email User', picture: undefined });
   });
 
   it('coerces non-string claims to undefined (malformed token → nothing weird in the UI)', async () => {

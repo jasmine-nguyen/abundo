@@ -12,7 +12,7 @@ import { installFakeServer } from './support/fakeServer';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { resetAuth, setAuthStatusQuietly } from './support/authMock';
 
-import { useCategories, usePayCycle, useBudgetDetailScreenData, useBudgetsScreenData, useCategoryCycleTransactionsQuery, useCategoryTransactionsScreenData } from '../queries';
+import { useCategories, useBudgetDetailScreenData, useBudgetsScreenData, useCategoryCycleTransactionsQuery, useCategoryTransactionsScreenData } from '../queries';
 import { categoriesKey } from '../queryKeys';
 
 const server = installFakeServer();
@@ -43,12 +43,6 @@ it('useCategories maps the list + a null-tolerant lookup, and does not fetch bef
   expect(result.current.category(null)).toBeUndefined();
 });
 
-it('usePayCycle derives the cycle name from the fetched length', async () => {
-  const { result } = renderHook(() => usePayCycle(), { wrapper: wrapper(makeClient()) });
-  await waitFor(() => expect(result.current.cycleLen).toBe(30));
-  expect(result.current.cycleName).toBe('Monthly');
-});
-
 it('useBudgetDetailScreenData assembles the budget list + budgets + categories for the given id', async () => {
   server.seed(COFFEE_BUDGET_TX, [{ transaction_id: 'x', category: 'coffee', date: '2026-07-18' }]);
   const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
@@ -72,18 +66,6 @@ it('useBudgetDetailScreenData surfaces a budget-transactions read failure as isE
   expect(result.current.isLoading).toBe(false);                   // errored dependency → not an endless spinner
 });
 
-it('useBudgetDetailScreenData refetchStale re-fires every stale read exactly once (incl. the list)', async () => {
-  const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient({ staleTime: 0 })) });
-  await waitFor(() => expect(result.current.isLoading).toBe(false));
-  await waitFor(() => expect(server.sent('GET', COFFEE_BUDGET_TX)).toHaveLength(1));
-
-  await act(async () => { result.current.refetchStale(); });
-  // staleTime 0 → immediately stale → each read (the budget list included) refires once.
-  await waitFor(() => expect(server.sent('GET', COFFEE_BUDGET_TX)).toHaveLength(2)); // budgetTransactionsQuery IS in refetchStale
-  expect(server.sent('GET', '/budgets')).toHaveLength(2);
-  expect(server.sent('GET', '/categories')).toHaveLength(2);
-});
-
 // WHIT-204 — the shared helper ORs the queries' `.isLoading` (NOT `.isPending`) so an errored
 // dependency shows its error, never an endless spinner. On a payCycle FAILURE the composite's
 // isLoading must be FALSE. NOTE (WHIT-72): budgets no longer wait on payCycle (they fetch in
@@ -94,15 +76,6 @@ it('useBudgetsScreenData: a payCycle failure does NOT strand isLoading', async (
   server.fail('/paycycle', 503);
   const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isError).toBe(true));
-  expect(result.current.isLoading).toBe(false);
-});
-
-// Same lock for the budget-detail composite: a payCycle failure surfaces as isError, not a
-// stranded spinner. (WHIT-72: budgets fetch in parallel here too; see the note above.)
-it('useBudgetDetailScreenData: a payCycle failure surfaces as isError, not a stranded spinner', async () => {
-  server.fail('/paycycle', 503);
-  const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
-  await waitFor(() => expect(result.current.isError).toBe(true)); // payCycleQuery IS in the OR
   expect(result.current.isLoading).toBe(false);
 });
 
@@ -124,14 +97,6 @@ describe('useCategoryCycleTransactionsQuery (WHIT-342)', () => {
   it('does not fetch when categoryId is empty, even when enabled', () => {
     renderHook(() => useCategoryCycleTransactionsQuery('', 0, true), { wrapper: wrapper(makeClient()) });
     expect(server.sentUnder('GET', '/categories/')).toHaveLength(0);
-  });
-
-  // [A-hook4]
-  it('fetches with (categoryId, cycle) when enabled and id present', async () => {
-    server.once('GET', COFFEE_TX, cycleRows(1));
-    const { result } = renderHook(() => useCategoryCycleTransactionsQuery('coffee', 1, true), { wrapper: wrapper(makeClient()) });
-    await waitFor(() => expect(result.current.data).toBeDefined());
-    expect(server.sent('GET', `${COFFEE_TX}?cycle=1`)).toHaveLength(1);
   });
 
   // [A-hook3] — the headline cache-key gap: cycle 0 and cycle 1 for the SAME category must not

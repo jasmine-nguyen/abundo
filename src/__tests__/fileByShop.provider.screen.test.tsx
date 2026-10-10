@@ -182,15 +182,30 @@ it('surfaces a 409 clash from the preview (distinct from a generic failure)', as
   expect(outcome).toEqual({ status: 'clash', error: expect.any(ApiError), background: false });
 });
 
-it('returns { clash: null } when the preview fails for any other reason', async () => {
-  seedTransactionsCache(queryClient, [txn()]);
-  server.fail(APPLY_RULES, 502);
+// --- "Apply my rules" (the plain sweep) shares the same api call ---------------
 
+// [A30] "Apply my rules" must stay a plain sweep on the wire — no inline rule. Fail-on-revert: pass
+// a rule through applyRulesToHistory and the exact-args match reddens.
+it('[A30] applyRulesToHistory calls the api with dryRun false and NO inline rule', async () => {
+  seedTransactionsCache(queryClient, []);
+  server.seed(APPLY_RULES, filedReport());
   const result = mount();
-  let outcome: FilingResult | null = null;
-  await act(async () => { outcome = await result.current.previewFiling({ kind: 'shop', group: GROUP, categoryId: 'groceries' }); });
+  await act(async () => { await result.current.fileCharges(SWEEP, { now: true }); });
+  expect(server.requests()).toContainEqual({ method: 'POST', path: APPLY_RULES, body: { dryRun: false } });
+});
 
-  expect(outcome).toEqual({ status: 'failed', background: false });
+// [A32] "Apply my rules" does NOT distinguish a 409 clash — it returns a plain failure and still
+// refreshes (unknown outcome). Fail-on-revert: grow a clash branch and the equality reddens.
+it('[A32] a 409 from applyRulesToHistory returns bare null and still refreshes', async () => {
+  seedTransactionsCache(queryClient, []);
+  server.fail(APPLY_RULES, 409);
+  const result = mount();
+  const spy = jest.spyOn(queryClient, 'invalidateQueries');
+  let out: FilingResult | undefined;
+  await act(async () => { out = await result.current.fileCharges(SWEEP, { now: true }); });
+  expect(out).toEqual({ status: 'failed', background: false });
+  expect(invalidatedKeys(spy)).toContain('uncategorizedCount');
+  spy.mockRestore();
 });
 
 // --- session safety -----------------------------------------------------------

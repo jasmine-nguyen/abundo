@@ -1,5 +1,4 @@
-// Every endpoint's request (method, path, time limit, body), shared by apiRequestContract.logic.test.ts
-// (which pins the wire) and fakeServer.logic.test.ts (which checks the fake has a route for each).
+// Every endpoint's request (method, path, time limit, body), pinned by apiRequestContract.logic.test.ts.
 import * as api from '../../api';
 
 // The only endpoints whose failure carries the server's reason (`ApiError.serverMessage`).

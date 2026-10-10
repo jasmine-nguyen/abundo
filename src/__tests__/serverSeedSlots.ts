@@ -40,24 +40,3 @@ export function readServerSeedSlots(): Record<string, number> {
   }
   return slots;
 }
-
-/** The server's `_COLOR_SLOT_COUNT` — how many slots it will ever hand out. */
-export function readServerSlotCount(): number {
-  const match = /^_COLOR_SLOT_COUNT = (\d+)$/m.exec(SEED_SOURCE_TEXT);
-  if (!match) throw new Error(`_COLOR_SLOT_COUNT not found in ${SEED_SOURCE}`);
-  return Number(match[1]);
-}
-
-/** Ids sitting on NEIGHBOURING ramp entries, grouped, warm end first. Runs of 1 are dropped. */
-export function neighbouringRuns(ramp: Record<string, number>): string[][] {
-  type Entry = [id: string, position: number];
-  const ordered: Entry[] = Object.entries(ramp).sort((a, b) => a[1] - b[1]);
-  const runs: Entry[][] = [];
-  let current: Entry[] = [ordered[0]];
-  for (let i = 1; i < ordered.length; i++) {
-    if (ordered[i][1] === ordered[i - 1][1] + 1) current.push(ordered[i]);
-    else { runs.push(current); current = [ordered[i]]; }
-  }
-  runs.push(current);
-  return runs.filter((run) => run.length > 1).map((run) => run.map(([id]) => id));
-}

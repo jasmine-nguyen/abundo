@@ -1,10 +1,10 @@
 // WHIT-544 — the Transactions screen consumes the "File one-offs" intent set by the File-by-shop
 // sheet: when `pendingUncategorizedSelect` is true it lands on the Uncategorized tab in selection
 // mode, then CLEARS the flag so a later normal visit is not stuck selecting. The sheet-side button
-// is covered in fileByShopSheetGaps ([A28d]/[A28e]); this file covers the screen-side consume.
+// is covered in fileByShopSheet ([A28d]); this file covers the screen-side consume.
 // The screen and its data code are real, over the pretend server (WHIT-686).
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
-import { screen } from '@testing-library/react-native';
+import { screen, fireEvent } from '@testing-library/react-native';
 
 // A STATEFUL flag so the one-shot lifecycle is real: the consume effect calls clearUncategorizedSelect,
 // which flips the module flag false, exactly as the real provider would. mockClearSpy asserts it fired.
@@ -22,7 +22,7 @@ import Transactions from '../../app/(tabs)/transactions';
 import { resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { GROCERIES_TOP } from './support/categories';
-import { useTestQueryClient, renderWithQueries } from './support/renderWithQueries';
+import { useTestQueryClient, renderWithQueries, WithQueries, settle } from './support/renderWithQueries';
 import { colesTxn } from './factory';
 
 const server = installFakeServer();
@@ -42,26 +42,6 @@ beforeEach(() => {
 });
 
 describe('WHIT-544 Transactions consumes the File-one-offs intent', () => {
-  // [I1] flag set → the screen enters selection mode (Cancel header + "0 selected" bar) AND clears
-  // the flag. Selection mode is the marker that we landed on the Uncategorized tab ready to pick.
-  // Fail-on-revert: drop the consume effect and the screen stays on "Select" (no Cancel), no clear.
-  it('[I1] lands in selection mode and clears the flag when the intent is set', async () => {
-    mockPendingFlag = true;
-    await renderWithQueries(<Transactions />);
-    expect(screen.getByText('Cancel')).toBeTruthy();      // selection-mode header (not "Select")
-    expect(screen.getByText('0 selected')).toBeTruthy();   // the selection action bar is up
-    expect(mockClearSpy).toHaveBeenCalledTimes(1);             // one-shot: consumed and cleared
-  });
-
-  // [I2] flag NOT set → normal screen: the "Select" button shows, no selection bar. Guards that the
-  // effect doesn't arm selection on every mount.
-  it('[I2] a normal visit (flag false) is NOT in selection mode', async () => {
-    mockPendingFlag = false;
-    await renderWithQueries(<Transactions />);
-    expect(screen.getByText('Select')).toBeTruthy();
-    expect(screen.queryByText('0 selected')).toBeNull();
-  });
-
   // [I3] one-shot proof across a remount: consuming CLEARS the flag, so a fresh mount of the screen
   // does NOT re-enter selection. Fail-on-revert: remove clearUncategorizedSelect() from the effect →
   // the stateful flag stays true → the remount re-arms selection and "Select" is not found.
@@ -75,5 +55,39 @@ describe('WHIT-544 Transactions consumes the File-one-offs intent', () => {
     await renderWithQueries(<Transactions />);             // fresh mount; flag was cleared
     expect(screen.getByText('Select')).toBeTruthy();       // NOT re-armed
     expect(screen.queryByText('0 selected')).toBeNull();
+  });
+
+  // [G1] The sheet is an overlay, so Transactions stays mounted while the flag flips true. The effect
+  // must react to that CHANGE. Fail-on-revert: gut the effect deps to [] and the mount-time false
+  // value means it never re-fires.
+  it('[G1] enters selection mode when the flag flips true on an already-mounted screen', async () => {
+    const { rerender } = await renderWithQueries(<Transactions />);
+    expect(screen.getByText('Select')).toBeTruthy();       // normal: not selecting
+    expect(screen.queryByText('0 selected')).toBeNull();
+
+    mockPendingFlag = true;                                 // the sheet armed the jump
+    rerender(<WithQueries><Transactions /></WithQueries>);  // the overlay-driven re-render
+
+    expect(screen.getByText('Cancel')).toBeTruthy();        // now in selection mode
+    expect(screen.getByText('0 selected')).toBeTruthy();     // the action bar is up
+    expect(mockClearSpy).toHaveBeenCalledTimes(1);              // consumed and cleared
+    await settle();
+  });
+
+  // [G2] A query typed before the jump must NOT survive it, or cancelling selection leaves the list
+  // silently filtered. Fail-on-revert: remove `setSearch('')` from the effect → after Cancel the box
+  // shows 'coles' again.
+  it('[G2] resets the search box so a pre-jump query does not linger after Cancel', async () => {
+    const { rerender } = await renderWithQueries(<Transactions />);
+    fireEvent.changeText(screen.getByLabelText('Search transactions'), 'coles');
+    expect(screen.getByLabelText('Search transactions').props.value).toBe('coles'); // sanity: it stuck
+
+    mockPendingFlag = true;                                 // jump armed
+    rerender(<WithQueries><Transactions /></WithQueries>);
+    expect(screen.getByText('Cancel')).toBeTruthy();         // selection mode → search box hidden
+
+    fireEvent.press(screen.getByText('Cancel'));             // leave selection → search box returns
+    expect(screen.getByLabelText('Search transactions').props.value).toBe(''); // NOT 'coles'
+    await settle();
   });
 });

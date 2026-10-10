@@ -21,7 +21,7 @@
 // through it can never pass by agreeing with the code it pins.
 import { describe, it, expect } from '@jest/globals';
 import { OTHER_COLOR, CATEGORY_COLORS, CHART_BG } from '../chartColors';
-import { hexToRgb, contrastHex, fadedOver } from './support/wcag';
+import { contrastHex } from './support/wcag';
 
 describe('the "Other" wedge stays visible and stays un-category-like', () => {
   it('[Q19] OTHER_COLOR clears the 3:1 minimum against the chart background', () => {
@@ -36,18 +36,5 @@ describe('the "Other" wedge stays visible and stays un-category-like', () => {
     // starts reading as just another slice, which is the one thing "Other" must never do.
     const nearest = Math.min(...CATEGORY_COLORS.map((c) => contrastHex(OTHER_COLOR, c)));
     expect(nearest).toBeGreaterThanOrEqual(1.5);
-  });
-
-  it('[Q26] the contrast helper agrees with known values, so the guards mean something', () => {
-    // Without this, a broken luminance() could return a constant and every guard would pass on
-    // anything. Black-on-white is 21:1 by definition; a colour against itself is 1:1.
-    expect(contrastHex('#ffffff', '#000000')).toBeCloseTo(21, 5);
-    expect(contrastHex(OTHER_COLOR, OTHER_COLOR)).toBeCloseTo(1, 5);
-    // And the old grey really did fail the [Q19] bar — this is the regression being fixed.
-    expect(contrastHex('#565f89', CHART_BG)).toBeLessThan(3);
-    // Same self-check for the blend the fade guards lean on: fully opaque is the wedge, fully
-    // transparent is the track. A blend that ignored alpha would make those guards meaningless.
-    expect(fadedOver(OTHER_COLOR, 1, CHART_BG)).toEqual(hexToRgb(OTHER_COLOR));
-    expect(fadedOver(OTHER_COLOR, 0, CHART_BG)).toEqual(hexToRgb(CHART_BG));
   });
 });

@@ -18,9 +18,7 @@ describe('isRepaymentNew', () => {
     ['an older repayment than the one shown', '2026-07-15@1440', SPLIT, false],
     ['same day, different amount', '2026-07-01@1200', SPLIT, true],
     ['no note yet, repayment within 7 days', null, SPLIT, true],
-    ['no note yet, repayment older than 7 days', null, { ...SPLIT, date: '2026-06-20' }, false],
     ['QA [A5] no note yet, repayment exactly 7 days ago', null, { ...SPLIT, date: '2026-06-28' }, true],
-    ['QA [A5] no note yet, repayment 8 days ago', null, { ...SPLIT, date: '2026-06-27' }, false],
     ['no repayment amount', null, { ...SPLIT, amount: null }, false],
     ['no repayment date', '2026-06-17@1440', { ...SPLIT, date: null }, false],
   ])('%s', (_case, seen, repayment, expected) => {

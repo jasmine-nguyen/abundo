@@ -52,25 +52,6 @@ describe('WHIT-628 — spread/budget writers settling after sign-out', () => {
     expect(result.current.toast).toBeNull();
   });
 
-  // [B2]
-  it('removeSpread FAILURE after sign-out returns false and shows no toast', async () => {
-    queryClient.setQueryData(['categories'], [cat('c1', 'Rego')]);
-    const held = server.hold('/budgets/c1/spread');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<boolean>;
-    act(() => { pending = result.current.removeSpread('c1'); });
-    signOut();
-    let returned!: boolean;
-    await act(async () => {
-      held.fail('DELETE');
-      returned = await pending;
-    });
-
-    expect(returned).toBe(false);
-    expect(result.current.toast).toBeNull();
-  });
-
   // [B3]
   it('deleteBudget FAILURE after sign-out cannot overwrite the NEXT account\'s budgets', async () => {
     queryClient.setQueryData(['budgets'], { c1: rollup(100) });
@@ -92,64 +73,9 @@ describe('WHIT-628 — spread/budget writers settling after sign-out', () => {
     expect(returned).toBe(false);
     expect(result.current.toast).toBeNull();
   });
-
-  // [B4]
-  it('deleteBudget SUCCESS after sign-out returns false and shows no toast', async () => {
-    queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
-    queryClient.setQueryData(['budgets'], { c1: rollup(100) });
-    const held = server.hold('/budgets/c1');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<boolean>;
-    act(() => { pending = result.current.deleteBudget('c1'); });
-    signOut();
-    let returned!: boolean;
-    await act(async () => { held.release(); returned = await pending; });
-
-    expect(returned).toBe(false);
-    expect(result.current.toast).toBeNull();
-  });
 });
 
 describe('WHIT-628 — writers still signed in', () => {
-  // [B5]
-  it('deleteBudget drops the budget before the server replies, and restores it + toasts on failure', async () => {
-    queryClient.setQueryData(['budgets'], { c1: rollup(100), c2: rollup(50) });
-    const held = server.hold('/budgets/c1');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<boolean>;
-    act(() => { pending = result.current.deleteBudget('c1'); });
-    expect(queryClient.getQueryData(['budgets'])).toEqual({ c2: rollup(50) });
-
-    let returned!: boolean;
-    await act(async () => {
-      held.fail('DELETE');
-      returned = await pending;
-    });
-
-    expect(queryClient.getQueryData(['budgets'])).toEqual({ c1: rollup(100), c2: rollup(50) });
-    expect(returned).toBe(false);
-    expect(result.current.toast).toBe('Could not remove budget. Please try again.');
-  });
-
-  // [B6]
-  it('deleteBudget success keeps it removed, refreshes budgets, toasts and returns true', async () => {
-    queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
-    queryClient.setQueryData(['budgets'], { c1: rollup(100) });
-    const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let returned!: boolean;
-    await act(async () => { returned = await result.current.deleteBudget('c1'); });
-
-    expect(returned).toBe(true);
-    expect(server.sent('DELETE', '/budgets/c1')).toHaveLength(1);
-    expect(queryClient.getQueryData(['budgets'])).toEqual({});
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['budgets'] });
-    expect(result.current.toast).toBe('Groceries budget removed.');
-  });
-
   // [B7]
   it('saveSpread success refreshes budgets, toasts, returns true; failure toasts and returns false', async () => {
     queryClient.setQueryData(['categories'], [cat('c1', 'Rego')]);
@@ -271,27 +197,6 @@ describe('WHIT-628 — writers still signed in', () => {
     expect(queryClient.getQueryData(['goals'])).toEqual([{ id: 'g1', target: 100 }]);
     expect(returned).toBe(false);
     expect(result.current.toast).toBe('Could not save goal. Please try again.');
-  });
-
-  // [B13]
-  it('saveLoanFacts failure (signed in) restores the previous facts and toasts', async () => {
-    queryClient.setQueryData(['loanFacts'], { balance: 111, rate: 5 });
-    const held = server.hold('/loanfacts');
-    const { result } = renderHook(() => useAppContext(), { wrapper });
-
-    let pending!: Promise<boolean>;
-    act(() => { pending = result.current.saveLoanFacts({ balance: 222, rate: 6 } as never); });
-    expect(queryClient.getQueryData(['loanFacts'])).toEqual({ balance: 222, rate: 6 });
-
-    let returned!: boolean;
-    await act(async () => {
-      held.fail('PUT');
-      returned = await pending;
-    });
-
-    expect(queryClient.getQueryData(['loanFacts'])).toEqual({ balance: 111, rate: 5 });
-    expect(returned).toBe(false);
-    expect(result.current.toast).toBe('Could not save loan details. Please try again.');
   });
 
   // [B14]

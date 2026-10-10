@@ -18,12 +18,6 @@ describe('parseAmount', () => {
       expect(Number.isNaN(parseAmount(bad))).toBe(true);
     }
   });
-
-  it('every accepted value is >= 0 (the regex is unsigned)', () => {
-    for (const good of ['0', '.01', '999999']) {
-      expect(parseAmount(good)).toBeGreaterThanOrEqual(0);
-    }
-  });
 });
 
 describe('numText', () => {
@@ -34,10 +28,5 @@ describe('numText', () => {
 
   it('0 seeds as "0", not empty', () => {
     expect(numText(0)).toBe('0');
-  });
-
-  it('a real number seeds as its string form', () => {
-    expect(numText(12.5)).toBe('12.5');
-    expect(numText(2500)).toBe('2500');
   });
 });

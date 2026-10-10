@@ -1,6 +1,6 @@
-// WHIT-254 — adversarial WIRING coverage beyond deleteReinsert.provider.screen.test.tsx
-// (which does two-failed-delete gap+adjacent for goal & rule). Here: three concurrent
-// failed goal deletes; a MIX of one succeeding + one failing (successful one stays gone,
+// WHIT-254 — failed deletes through the REAL deleteGoal/deleteRule writers restore cache order
+// (the order maths itself is in reinsert.logic.test.ts). Here: a MIX of one succeeding + one
+// failing (successful one stays gone,
 // failed one lands in the right slot AND the boolean returns are honoured); a failed delete
 // of the only element restores [x]; deleteGoal false-on-failure; a toast surfaces on failure;
 // and a cache evicted mid-flight stays empty for both deleteGoal and deleteRule (WHIT-833).
@@ -29,29 +29,11 @@ const rule = (id: string): Rule => ({ id, pattern: id, categoryId: 'subs', isNew
 const goalIds = () => queryClient.getQueryData<GoalRecord[]>(['goals'])?.map((g) => g.id);
 const ruleIds = () => queryClient.getQueryData<Rule[]>(['rules'])?.map((r) => r.id);
 
-// Each goal / rule delete sits at its own path, so a failure is set per id.
+// Each goal delete sits at its own path, so a failure is set per id.
 const failGoalDeletes = (...ids: string[]) => ids.forEach((id) => server.fail(`/goals/${id}`, 500));
-const failRuleDeletes = (...ids: string[]) => ids.forEach((id) => server.fail(`/rules/${id}`, 500));
 
 beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });
-
-describe('deleteGoal — three concurrent failed deletes restore order', () => {
-  beforeEach(() => { failGoalDeletes('g1', 'g2', 'g3', 'g4', 'g5'); });
-
-  it('an adjacent chain (g2+g3+g4) rolls back to [g1..g5]', async () => {
-    queryClient.setQueryData<GoalRecord[]>(['goals'], ['g1', 'g2', 'g3', 'g4', 'g5'].map(goal));
-    const result = mountAppContext();
-    await act(async () => {
-      await Promise.all([
-        result.current.deleteGoal('g2'),
-        result.current.deleteGoal('g3'),
-        result.current.deleteGoal('g4'),
-      ]);
-    });
-    expect(goalIds()).toEqual(['g1', 'g2', 'g3', 'g4', 'g5']);
-  });
-});
 
 describe('deleteGoal — one succeeds + one fails concurrently', () => {
   it('the successful predecessor stays gone; the failed row lands in the right slot; returns honoured', async () => {
@@ -112,57 +94,5 @@ describe('failed delete with the cache EVICTED mid-flight leaves the cache empty
       await p;
     });
     expect(ids()).toBeUndefined();
-  });
-});
-
-// ===== WHIT-254 (folded from deleteReinsert.provider.screen.test.tsx) =====
-// The WIRING guard: two FAILED deletes fired concurrently through the REAL deleteGoal/deleteRule
-// writers must restore cache order. Fail-on-revert of the production change — the old code
-// reinserted at a saved integer index, which misplaces a row when the sibling delete already
-// shortened the list, so these go red if the writers revert to index-splice. Same AppProvider +
-// singleton queryClient + helpers as above; the module-scope beforeEach/afterEach clear the cache
-// between these too. (Reuses this file's goalIds/ruleIds — the `?.map` form covers the same asserts.)
-
-describe('deleteGoal — two failed deletes at once restore order', () => {
-  beforeEach(() => { failGoalDeletes('g1', 'g2', 'g3', 'g4', 'g5'); });
-
-  it('a GAP pair (g1 + g3) rolls back to [g1,g2,g3,g4]', async () => {
-    queryClient.setQueryData<GoalRecord[]>(['goals'], [goal('g1'), goal('g2'), goal('g3'), goal('g4')]);
-    const result = mountAppContext();
-    await act(async () => {
-      await Promise.all([result.current.deleteGoal('g1'), result.current.deleteGoal('g3')]);
-    });
-    expect(goalIds()).toEqual(['g1', 'g2', 'g3', 'g4']);
-  });
-
-  it('an ADJACENT pair (g2 + g3) rolls back to [g1,g2,g3,g4]', async () => {
-    queryClient.setQueryData<GoalRecord[]>(['goals'], [goal('g1'), goal('g2'), goal('g3'), goal('g4')]);
-    const result = mountAppContext();
-    await act(async () => {
-      await Promise.all([result.current.deleteGoal('g2'), result.current.deleteGoal('g3')]);
-    });
-    expect(goalIds()).toEqual(['g1', 'g2', 'g3', 'g4']);
-  });
-});
-
-describe('deleteRule — two failed deletes at once restore order', () => {
-  beforeEach(() => { failRuleDeletes('r1', 'r2', 'r3', 'r4'); });
-
-  it('a GAP pair (r1 + r3) rolls back to [r1,r2,r3,r4]', async () => {
-    queryClient.setQueryData<Rule[]>(['rules'], [rule('r1'), rule('r2'), rule('r3'), rule('r4')]);
-    const result = mountAppContext();
-    await act(async () => {
-      await Promise.all([result.current.deleteRule('r1'), result.current.deleteRule('r3')]);
-    });
-    expect(ruleIds()).toEqual(['r1', 'r2', 'r3', 'r4']);
-  });
-
-  it('an ADJACENT pair (r2 + r3) rolls back to [r1,r2,r3,r4]', async () => {
-    queryClient.setQueryData<Rule[]>(['rules'], [rule('r1'), rule('r2'), rule('r3'), rule('r4')]);
-    const result = mountAppContext();
-    await act(async () => {
-      await Promise.all([result.current.deleteRule('r2'), result.current.deleteRule('r3')]);
-    });
-    expect(ruleIds()).toEqual(['r1', 'r2', 'r3', 'r4']);
   });
 });

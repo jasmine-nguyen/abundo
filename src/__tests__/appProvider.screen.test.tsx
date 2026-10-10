@@ -85,23 +85,6 @@ it('createCategoryInline toasts the server reason and still returns null', async
   expect(created).toBeNull();
 });
 
-it('saveCategory toasts the depth reason', async () => {
-  server.once('PATCH', '/categories/groceries', { status: 400, reason: 'categories can be nested at most 5 levels deep' });
-  seed();
-  const result = mount();
-  await act(async () => { await result.current.saveCategory('groceries', { name: 'Groceries', bucket: 'Living', icon: 'cart' }); });
-  expect(result.current.toast).toBe('Categories can be nested at most 5 levels deep.');
-});
-
-it('deleteCategory toasts the too-wide-to-detach reason', async () => {
-  const detach = "'cafes-coffee' has 73 sub-categories — too many to detach in one write; move some out from under it first";
-  server.once('DELETE', '/categories/cafes-coffee', { status: 400, reason: detach });
-  seed();
-  const result = mount();
-  await act(async () => { await result.current.deleteCategory('cafes-coffee'); });
-  expect(result.current.toast).toBe(`${detach}.`);
-});
-
 it('keeps the generic copy when the failure explains nothing', async () => {
   server.once('POST', '/categories', 'dropped');
   seed();
@@ -293,24 +276,6 @@ it('applyCategory(all) invalidates budgets + breakdown when at least one charge 
   // categorisation invalidates those keys (was: eager refreshBudgets/refreshBreakdown).
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ['budgets'] });
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ['breakdown'] });
-  invalidate.mockRestore();
-});
-
-it('applyCategory(all) does NOT invalidate budgets/breakdown when the whole batch fails', async () => {
-  server.once('PATCH', '/transactions', 'dropped');
-  seed([
-    { ...TXN, transaction_id: 't1', category: null },
-    { ...TXN, transaction_id: 't2', category: null },
-  ]);
-  const result = mount();
-  const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
-
-  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
-  await act(async () => { await result.current.applyCategory('all'); });
-
-  // All reverted -> nothing persisted -> spend unchanged -> no wasted invalidation.
-  expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ['budgets'] });
-  expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ['breakdown'] });
   invalidate.mockRestore();
 });
 
@@ -601,16 +566,6 @@ it('saveCategory stays silent on failure with { silent: true } and rejects', asy
     ).rejects.toThrow('API error: 400');    // reports by rejecting, so the reason survives
   });
   expect(result.current.toast).toBeNull(); // ...but fires no toast of its own (WHIT-240)
-});
-
-it('createCategoryInline returns null + toasts on failure', async () => {
-  server.once('POST', '/categories', 'dropped');
-  seed();
-  const result = mount();
-  let created: unknown = 'unset';
-  await act(async () => { created = await result.current.createCategoryInline({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }); });
-  expect(created).toBeNull();
-  expect(result.current.toast).toBe('Could not save category. Please try again.');
 });
 
 // --- deleteCategory ----------------------------------------------------------

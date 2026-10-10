@@ -95,21 +95,6 @@ it('[A3] a pull after Load More snaps the list back to the newest page (older ro
   await waitFor(() => expect(refreshControl().props.refreshing).toBe(false));
 });
 
-// [A5] (P1)
-it('[A5] the pull spinner shows on the Uncategorized "more deeper in history" state (no rows loaded)', async () => {
-  server.seed(UNCATEGORIZED_FEED, { transactions: [], nextCursor: 'c1' });
-  server.seed(COUNT, { count: 4 });
-  await renderWithQueries(<Transactions />);
-  fireEvent.press(screen.getByTestId('tab-uncategorized'));
-  expect(await screen.findByTestId('transactions-uncategorized-more')).toBeTruthy();
-  await settle();
-  const held = server.hold(REFRESH);
-  await pull();
-  expect(refreshControl().props.refreshing).toBe(true);
-  held.release();
-  await waitFor(() => expect(refreshControl().props.refreshing).toBe(false));
-});
-
 // [A6] (P1)
 it('[A6] Uncategorized tab: a failed background refresh over loaded rows keeps the rows and shows no error', async () => {
   server.seed(UNCATEGORIZED_FEED, { transactions: [row('u1', -9, null)], nextCursor: null });

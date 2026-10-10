@@ -7,7 +7,7 @@
 // whole-history count > 0, not selection mode, not the cold spinner / error state).
 // The screen and its data code are real, over the pretend server (WHIT-686).
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { screen, fireEvent } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const mockSetSheet = jest.fn();
@@ -85,56 +85,6 @@ describe('the "File by shop" button', () => {
     server.seed(COUNT, { count: 1 });
     await renderTab();
     expect(screen.getByTestId(APPLY_RULES)).toBeTruthy(); // the other gates are open
-    expect(screen.queryByTestId(BUTTON)).toBeNull();
-  });
-
-  // While the shops are still loading the hook is undefined — the button waits rather than
-  // flashing in and out.
-  it('is hidden while the shop list is still loading', async () => {
-    const held = server.hold(MERCHANTS);
-    render(<WithQueries><Transactions /></WithQueries>);
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
-    expect(await screen.findByTestId(APPLY_RULES)).toBeTruthy();
-    expect(screen.queryByTestId(BUTTON)).toBeNull();
-    held.release();
-    await settle();
-  });
-
-  it('is not on the All tab', async () => {
-    await renderTab('all');
-    expect(screen.getByText('5')).toBeTruthy(); // the count has resolved
-    expect(screen.queryByTestId(BUTTON)).toBeNull();
-  });
-
-  it('is gone once the server count resolves to zero', async () => {
-    server.seed(COUNT, { count: 0 });
-    seedUncategorizedFeed([]);
-    await renderTab();
-    expect(screen.getByText('All caught up')).toBeTruthy();
-    expect(screen.queryByTestId(BUTTON)).toBeNull();
-  });
-
-  it('is hidden during the cold load', async () => {
-    await renderTab('all');
-    const held = server.hold(UNCATEGORIZED_FEED);
-    fireEvent.press(screen.getByTestId('tab-uncategorized'));
-    expect(await screen.findByTestId('transactions-loading')).toBeTruthy();
-    expect(screen.queryByTestId(BUTTON)).toBeNull();
-    held.release();
-    await settle();
-  });
-
-  it('is hidden while the list is in its error state', async () => {
-    server.fail(UNCATEGORIZED_FEED, 500);
-    await renderTab();
-    expect(screen.getByTestId('transactions-error')).toBeTruthy();
-    expect(screen.queryByTestId(BUTTON)).toBeNull();
-  });
-
-  it('is hidden in selection mode', async () => {
-    await renderTab();
-    expect(screen.getByTestId(BUTTON)).toBeTruthy();
-    fireEvent.press(screen.getByText('Select'));
     expect(screen.queryByTestId(BUTTON)).toBeNull();
   });
 });

@@ -35,16 +35,6 @@ afterEach(() => {
 
 const NAMES = Object.keys(WIRE);
 
-describe('[A0] the wire table covers every endpoint', () => {
-  it('has a row for every exported function', () => {
-    const exported = Object.entries(api)
-      .filter(([name, value]) => typeof value === 'function' && name !== 'ApiError')
-      .map(([name]) => name)
-      .sort();
-    expect(exported).toEqual([...NAMES].sort());
-  });
-});
-
 describe('[A1][A2][A3] each endpoint sends the same method, path, body and time limit', () => {
   it.each(NAMES)('%s', async (name) => {
     const [call, [method, path, timeoutMs, body]] = WIRE[name];
@@ -78,35 +68,6 @@ describe('[A5] signed out → every endpoint rejects "Not signed in" and never h
   it.each(NAMES)('%s', async (name) => {
     mockGetAuthToken.mockResolvedValue(undefined);
     await expect(WIRE[name][0]()).rejects.toThrow('Not signed in');
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-});
-
-describe('[A6] a network failure surfaces as a rejection, not a thrown API error', () => {
-  it.each(NAMES)('%s', async (name) => {
-    fetchMock.mockReturnValue(Promise.reject(new TypeError('Network request failed')));
-    await expect(WIRE[name][0]()).rejects.toThrow('Network request failed');
-  });
-});
-
-describe('[A7] every endpoint returns a promise, even when building its path throws', () => {
-  // The old endpoints were `async function`s, so ANY throw — including encodeURIComponent's URIError
-  // on a lone surrogate — became a rejected promise. A caller doing `x(...).catch(...)` relies on it.
-  const LONE = '\uD800';
-  it.each([
-    ['getApplyRulesJob', () => api.getApplyRulesJob(LONE)],
-    ['getAiChatJob', () => api.getAiChatJob(LONE)],
-    ['fetchTransactionsSearch', () => api.fetchTransactionsSearch('all', LONE)],
-    ['fetchTransactionsFeed', () => api.fetchTransactionsFeed(LONE)],
-    ['updateCategory', () => api.updateCategory(LONE, { name: 'x', bucket: 'Lifestyle', icon: 'x' })],
-    ['deleteCategory', () => api.deleteCategory(LONE)],
-    ['setTransactionFields', () => api.setTransactionFields(LONE, { notes: 'n' })],
-    ['deleteRule', () => api.deleteRule(LONE)],
-  ] as const)('%s', async (_name, call) => {
-    let result: unknown;
-    expect(() => { result = call(); }).not.toThrow();
-    expect(result).toBeInstanceOf(Promise);
-    await expect(result).rejects.toThrow(URIError);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

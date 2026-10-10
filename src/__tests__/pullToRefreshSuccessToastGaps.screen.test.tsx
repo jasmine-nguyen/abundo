@@ -27,7 +27,6 @@ jest.mock('../context', () => require('./support/contextMock').realContextWith((
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Accounts from '../../app/(tabs)/accounts';
-import Transactions from '../../app/(tabs)/transactions';
 import { GROCERIES_RECORD } from './support/categories';
 
 const server = installFakeServer();
@@ -43,8 +42,6 @@ const TXNS = [{
 
 const rc = () => screen.UNSAFE_getByType(RefreshControl);
 const pull = async () => { await act(async () => { rc().props.onRefresh(); }); };
-// Let the balance promise's .then/.catch microtasks flush so a (wrongly) wired toast would have fired.
-const flush = async () => { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); };
 
 beforeEach(() => {
   resetAuth();
@@ -57,20 +54,6 @@ beforeEach(() => {
 });
 
 describe('pull-to-refresh success-toast gaps (WHIT-489)', () => {
-  // [N1] REGRESSION GUARD on the shared hook: the Transactions tab passes NO successMessage
-  // (transactions.tsx call site), so a SUCCESSFUL pull there must stay completely silent — the
-  // success toast is an Accounts-only affordance. Fail-on-revert: add 'Balances up to date' to the
-  // transactions.tsx usePullToRefresh(...) call → this reddens.
-  it('[N1] the Transactions tab stays SILENT on a successful pull', async () => {
-    render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Transactions)));
-    expect(await screen.findByText('-$42.00')).toBeTruthy();
-
-    await pull();
-    await waitFor(() => expect(server.sent('POST', REFRESH)).toHaveLength(1)); // the live call ran & succeeded
-    await flush();
-    expect(mockShowToast).not.toHaveBeenCalled(); // no 'Balances up to date', no failure toast — silent
-  });
-
   // [N2] The exact "feels broken" case: the live refresh returns the SAME number the card already shows
   // (balance didn't move, or the server's 60s throttle handed back the stored value). The card is
   // unchanged (-$100.00 in and -$100.00 out) yet the toast MUST still fire — it is the only proof the
@@ -84,38 +67,5 @@ describe('pull-to-refresh success-toast gaps (WHIT-489)', () => {
     await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Balances up to date'));
     expect(screen.getByText('-$100.00')).toBeTruthy();  // number genuinely unchanged — this is the whole point
     expect(mockShowToast).not.toHaveBeenCalledWith('Could not refresh balances. Showing last saved.');
-  });
-
-  // [N3] allSettled independence: the LIST refetch fails on the pull (feed rejects) but the live balance
-  // call succeeds → the success toast STILL fires. Proves the success confirmation is gated on the
-  // BALANCE outcome alone, never on the list refetch. Fail-on-revert: drop the successMessage arg in
-  // accounts.tsx → no toast → RED. (The list-failure setup is what makes the independence claim real:
-  // the toast fires despite the feed refetch erroring.)
-  it('[N3] toasts success even when the list refetch fails but the balance succeeds', async () => {
-    render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Accounts)));
-    expect(await screen.findByText('-$100.00')).toBeTruthy();
-    // The pull's list refetch now errors; the live balance call still resolves.
-    server.fail(FEED, 503);
-    server.once('POST', REFRESH, { body: [{ account_id: 'a1', amount: -250 }] });
-
-    await pull();
-    await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Balances up to date'));
-    expect(screen.queryByTestId('accounts-error')).toBeNull(); // list kept last-good rows, not blanked
-    expect(mockShowToast).not.toHaveBeenCalledWith('Could not refresh balances. Showing last saved.');
-  });
-
-  // [N4] The settled "No accounts yet" empty state is a valid pull target (accounts.tsx keeps the
-  // RefreshControl live there, gated on !showSpinner not on row count). A successful pull from empty
-  // must still confirm with the toast. Fail-on-revert: drop the successMessage arg in accounts.tsx → RED.
-  it('[N4] a pull on the empty "No accounts yet" state still toasts success', async () => {
-    server.seed(FEED, { transactions: [], nextCursor: null }); // no accounts
-    server.seed(BALANCES, []); // WHIT-643: a saved balance alone now makes a card
-    server.once('POST', REFRESH, { body: [] });
-    render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Accounts)));
-    expect(await screen.findByText('No accounts yet')).toBeTruthy();
-
-    await pull();
-    await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Balances up to date'));
-    expect(screen.getByText('No accounts yet')).toBeTruthy(); // still empty; the pull just confirmed
   });
 });

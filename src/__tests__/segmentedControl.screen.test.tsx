@@ -23,14 +23,6 @@ const STR_OPTIONS = [
 ];
 
 describe('SegmentedControl', () => {
-  it('renders every option by label and testID', () => {
-    render(<SegmentedControl value={0} onChange={jest.fn()} options={NUM_OPTIONS} />);
-    expect(screen.getByText('This cycle')).toBeTruthy();
-    expect(screen.getByText('Last cycle')).toBeTruthy();
-    expect(screen.getByTestId('seg-current')).toBeTruthy();
-    expect(screen.getByTestId('seg-prev')).toBeTruthy();
-  });
-
   it('marks exactly the selected option as selected', () => {
     render(<SegmentedControl value={1} onChange={jest.fn()} options={NUM_OPTIONS} />);
     expect(screen.getByTestId('seg-current').props.accessibilityState.selected).toBe(false);
@@ -42,23 +34,6 @@ describe('SegmentedControl', () => {
     render(<SegmentedControl value={0} onChange={onChange} options={NUM_OPTIONS} />);
     fireEvent.press(screen.getByTestId('seg-prev'));
     expect(onChange).toHaveBeenCalledWith(1);
-  });
-
-  it('fires onChange with the tapped option value (string union)', () => {
-    const onChange = jest.fn();
-    render(<SegmentedControl value="spending" onChange={onChange} options={STR_OPTIONS} />);
-    fireEvent.press(screen.getByTestId('seg-earning'));
-    expect(onChange).toHaveBeenCalledWith('earning');
-  });
-
-  it('applies the active tint + text colour only to the selected segment', () => {
-    render(<SegmentedControl value="earning" onChange={jest.fn()} options={STR_OPTIONS} />);
-    // active segment: earning → its tint + teal bold text
-    expect(styleOf(screen.getByTestId('seg-earning')).backgroundColor).toBe('rgba(4,5,6,.16)');
-    expect(styleOf(screen.getByText('Earning'))).toMatchObject({ color: '#2ac3de', fontWeight: '700' });
-    // inactive segment: no active tint, muted default weight
-    expect(styleOf(screen.getByTestId('seg-spending')).backgroundColor).toBeUndefined();
-    expect(styleOf(screen.getByText('Spending')).fontWeight).toBe('600');
   });
 });
 

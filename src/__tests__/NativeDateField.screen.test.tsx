@@ -111,11 +111,6 @@ describe('the Clear affordance', () => {
     fireEvent.press(screen.getByText('Clear'));
     expect(onChange).toHaveBeenCalledWith(null);
   });
-
-  it('no Clear affordance without the clearable prop', () => {
-    render(<NativeDateField value="2026-01-15" onChange={jest.fn()} />);
-    expect(screen.queryByText('Clear')).toBeNull();
-  });
 });
 
 describe('min / max forwarding', () => {

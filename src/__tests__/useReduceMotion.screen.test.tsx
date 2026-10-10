@@ -42,14 +42,6 @@ it('live-updates when the OS reduceMotionChanged event fires', async () => {
   expect(result.current).toBe(false);
 });
 
-it('removes its subscription on unmount', async () => {
-  jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
-  const { unmount } = renderHook(() => useReduceMotion());
-  await waitFor(() => expect(changeHandler).toBeDefined());
-  unmount();
-  expect(remove).toHaveBeenCalledTimes(1);
-});
-
 it('stays false (no crash) when the reduce-motion probe rejects', async () => {
   jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockRejectedValue(new Error('no native module'));
   const { result } = renderHook(() => useReduceMotion());

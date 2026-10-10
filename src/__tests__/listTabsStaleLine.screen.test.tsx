@@ -3,13 +3,13 @@
 // Real screens + ../queries + ../api over the fake server, inside the real AppProvider. The clock
 // is pinned to 9:40am Melbourne for the first load, then moved on before the failed pull, so the
 // line must name the ORIGINAL load time (not the pull's time).
-import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { pullAndSettle } from './support/pull';
 import { txn } from './factory';
 import { installFakeServer } from './support/fakeServer';
-import { useTestQueryClient } from './support/renderWithQueries';
+import { useTestQueryClient, settle } from './support/renderWithQueries';
 import { renderWithApp } from './support/renderWithApp';
 import { LIST_ROW, resetListTabs } from './support/listTabsScreen';
 
@@ -92,4 +92,82 @@ it('Transactions: always shows "Updated <time>" after a good load, swapped for t
   await pullAndSettle();
   await waitFor(() => expect(screen.getByTestId('transactions-updated')).toHaveTextContent('Updated 10:15am'));
   expect(screen.queryByTestId('transactions-stale')).toBeNull();
+});
+
+// WHIT-713 QA — a focus refetch with no pull, a categories-only failure, a balances-only failure,
+// a failed pull after a failed Load More, the Uncategorized tab, and a cached-but-empty list.
+describe('stale line edges', () => {
+  const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
+
+  beforeEach(() => {
+    server.seed(UNCATEGORIZED_FEED, { transactions: [], nextCursor: null });
+  });
+
+  // [A3] a focus refetch (no pull) that fails over cached cards still shows the line.
+  it('Accounts: a failed background refetch on return to the tab shows the line with no pull', async () => {
+    server.seed(FEED, { transactions: [LIST_ROW], nextCursor: null });
+    const first = await renderWithApp(<Accounts />);
+    first.unmount();
+    jest.setSystemTime(new Date('2026-09-18T10:00:00+10:00')); // past the 45s staleTime
+    server.fail(FEED, 503);
+    await renderWithApp(<Accounts />);
+    await waitFor(() => expect(screen.getByTestId('accounts-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am"));
+    expect(screen.getByText('ANZ')).toBeTruthy();
+  });
+
+  // [A4] the list is the feed plus categories: a categories-only failure is a list refresh failure too.
+  it('Transactions: a pull where only categories fail still shows the line', async () => {
+    server.seed(FEED, { transactions: [LIST_ROW], nextCursor: null });
+    await renderWithApp(<Transactions />);
+    server.once('GET', '/categories', { status: 500 });
+    await pullAndSettle();
+    await waitFor(() => expect(screen.getByTestId('transactions-stale')).toHaveTextContent(/^Couldn't refresh · showing /));
+  });
+
+  // [A5] balances are out: a failed live-balance call alone never claims the list is stale.
+  it('Accounts: a pull where only the live balances fail shows no stale line', async () => {
+    server.seed(FEED, { transactions: [LIST_ROW], nextCursor: null });
+    await renderWithApp(<Accounts />);
+    server.fail('/accounts/balances/refresh', 503);
+    server.fail('/accounts/balances', 503);
+    await pullAndSettle();
+    await settle();
+    expect(screen.queryByTestId('accounts-stale')).toBeNull();
+  });
+
+  // [A6] a failed Load More must not hide a LATER failed pull (the Load More direction resets).
+  it('Transactions: a failed Load More, then a failed pull → the line shows', async () => {
+    server.seed(FEED, { transactions: [LIST_ROW], nextCursor: 'c1' });
+    await renderWithApp(<Transactions />);
+    server.once('GET', FEED, { status: 503 });
+    fireEvent.press(screen.getByTestId('transactions-load-more'));
+    await settle();
+    expect(screen.queryByTestId('transactions-stale')).toBeNull();
+    server.once('GET', FEED, { status: 503 });
+    await pullAndSettle();
+    await waitFor(() => expect(screen.getByTestId('transactions-stale')).toHaveTextContent("Couldn't refresh · showing 9:40am"));
+  });
+
+  // [A7] the line follows the ACTIVE feed: the Uncategorized tab's own feed loaded fine.
+  it('Transactions: after a failed pull on All, switching to Uncategorized hides the line', async () => {
+    server.seed(FEED, { transactions: [LIST_ROW], nextCursor: null });
+    await renderWithApp(<Transactions />);
+    server.once('GET', FEED, { status: 503 });
+    await pullAndSettle();
+    await waitFor(() => expect(screen.getByTestId('transactions-stale')).toBeTruthy());
+    fireEvent.press(screen.getByText('Uncategorised'));
+    await settle();
+    expect(screen.queryByTestId('transactions-stale')).toBeNull();
+  });
+
+  // [A9] a cached EMPTY list that fails to refresh shows the full error card; the quiet line must
+  // not stack on top of it saying the same thing twice.
+  it('Accounts: a cached empty list that fails to refresh shows the error card only, not the stale line too', async () => {
+    server.seed(FEED, { transactions: [], nextCursor: null });
+    await renderWithApp(<Accounts />);
+    server.once('GET', FEED, { status: 503 });
+    await pullAndSettle();
+    await waitFor(() => expect(screen.getByTestId('accounts-error')).toBeTruthy());
+    expect(screen.queryByTestId('accounts-stale')).toBeNull();
+  });
 });

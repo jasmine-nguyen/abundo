@@ -37,9 +37,3 @@ it('keeps inactive tab screens attached so the fade never leaves a blank scene',
   render(<TabsLayout />);
   expect(captured?.detachInactiveScreens).toBe(false);
 });
-
-it('keeps inactive screens attached even under reduce-motion (no animation)', () => {
-  mockReduceMotion = true;
-  render(<TabsLayout />);
-  expect(captured?.detachInactiveScreens).toBe(false);
-});

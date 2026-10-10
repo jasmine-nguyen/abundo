@@ -160,4 +160,49 @@ describe('runOptimisticSave', () => {
     ).rejects.toBe(boom);
     expect(r.events).toEqual(['undo']);
   });
+
+  // [A1] WHIT-628 QA — the server accepted the save, so a broken onSaved must not undo it.
+  it('a throwing onSaved rejects without undoing the saved change or calling onFailed', async () => {
+    const r = recorder();
+    const boom = new Error('onSaved broke');
+    await expect(
+      runOptimisticSave(r.isSameSession, {
+        apply: () => () => r.events.push('undo'),
+        send: async () => 'ok',
+        onSaved: () => {
+          throw boom;
+        },
+        onFailed: () => {
+          r.events.push('failed');
+          return 'failed';
+        },
+        whenSignedOut: 'out',
+      }),
+    ).rejects.toBe(boom);
+    expect(r.events).toEqual([]);
+  });
+
+  // [A6]
+  it('the session is checked only after send settles, never before', async () => {
+    const events: string[] = [];
+    await runOptimisticSave(
+      () => {
+        events.push('check');
+        return true;
+      },
+      {
+        apply: () => {
+          events.push('apply');
+        },
+        send: async () => {
+          events.push('send');
+          return 1;
+        },
+        onSaved: () => events.push('saved'),
+        onFailed: () => events.push('failed'),
+        whenSignedOut: 0,
+      },
+    );
+    expect(events).toEqual(['apply', 'send', 'check', 'saved']);
+  });
 });
