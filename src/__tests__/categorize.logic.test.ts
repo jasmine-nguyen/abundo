@@ -147,6 +147,8 @@ describe('transactionGroups', () => {
     ['an uncategorized charge counts', [{ amount: -9, category: null }], `${MINUS}$9`],
     ['an income-only day has no total', [{ amount: 1000, category: 'income' }], null],
     ['a day that nets to zero has no total', [{ amount: 10 }, { amount: -10 }], null],
+    // [A2] float dust below a cent is zero, not "−$0"
+    ['a day that nets to under a cent has no total', [{ amount: -0.1 }, { amount: -0.2 }, { amount: 0.3 }], null],
   ])('dayTotal: %s', (_name, rows, expected) => {
     const s = makeState({
       categories: [cat(), GROCERIES, SALARY, SAVINGS],
@@ -155,6 +157,19 @@ describe('transactionGroups', () => {
     const groups = transactionGroups(s, 'all');
     expect(groups).toHaveLength(1);
     expect(groups[0].dayTotal ?? null).toBe(expected);
+  });
+
+  // [A3] each heading totals only its own day, not the running list
+  it('dayTotal is per day: each date heading sums only its own rows', () => {
+    const s = makeState({
+      categories: [cat(), GROCERIES],
+      transactions: [
+        day({ transaction_id: '1', amount: -10, date: '2026-05-02' }),
+        day({ transaction_id: '2', amount: -3, date: '2026-05-01' }),
+        day({ transaction_id: '3', amount: 1000, category: 'income', date: '2026-04-30' }),
+      ],
+    });
+    expect(transactionGroups(s, 'all').map((g) => g.dayTotal)).toEqual([`${MINUS}$10`, `${MINUS}$3`, null]);
   });
 
   it('dayTotal on the uncategorized tab totals only the uncategorized rows', () => {

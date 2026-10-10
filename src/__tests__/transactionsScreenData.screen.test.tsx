@@ -373,6 +373,14 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
     expect(await screen.findByText(new RegExp(` · ${MINUS}\\$42$`))).toBeTruthy();
   });
 
+  // [A4] a day with nothing that counts shows the bare date, no " · " suffix
+  it('a date heading with nothing that counts shows just the date (WHIT-847)', async () => {
+    server.seed(FEED, { transactions: [{ ...TXNS[0], amount: 900, category: 'income' }], nextCursor: null });
+    renderTransactions();
+    expect(await screen.findByText('+$900.00')).toBeTruthy();
+    expect(screen.getByText('Wed 1 Jul')).toBeTruthy();
+  });
+
   it('shows a spinner first, then the rows (cache-first)', async () => {
     renderTransactions();
     expect(screen.getByTestId('transactions-loading')).toBeTruthy();
