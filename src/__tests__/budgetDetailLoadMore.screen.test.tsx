@@ -8,9 +8,7 @@ import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
 import { screen, fireEvent } from '@testing-library/react-native';
 
-jest.mock('../context', () =>
-  require('./support/contextMock').realContextWith(() => ({ deleteBudget: jest.fn(), openPicker: jest.fn() })),
-);
+jest.mock('../context', () => require('./support/budgetsSuite').budgetsContextMockModule());
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());

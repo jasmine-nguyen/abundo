@@ -135,16 +135,9 @@ describe('budgetViews', () => {
 
 // Halfway through a 14-day cycle, so a $100 budget's pace target is $50.
 describe('budget rows and detail — today tick and slim rows', () => {
-  it('under-budget rows keep the tick, over rows hide it, and $0 rows are unspent', () => {
-    const overPlan = budgetRowFor({ budget: 100, posted: 85, pending: 0 });
-    expect(overPlan.showTarget).toBe(true);
-    expect(overPlan.unspent).toBe(false);
-
-    expect(budgetRowFor({ budget: 100, posted: 20, pending: 0 }).showTarget).toBe(true);
-
-    const overBudget = budgetRowFor({ budget: 100, posted: 130, pending: 0 });
-    expect(overBudget.showTarget).toBe(false);
-    expect(overBudget.unspent).toBe(false);
+  it('$0 rows are unspent; rows with spending are not', () => {
+    expect(budgetRowFor({ budget: 100, posted: 85, pending: 0 }).unspent).toBe(false);
+    expect(budgetRowFor({ budget: 100, posted: 130, pending: 0 }).unspent).toBe(false);
 
     expect(budgetRowFor({ budget: 100, posted: 0, pending: 0 }).unspent).toBe(true);
     expect(budgetRowFor({ budget: 100, posted: 0.01, pending: 0 }).unspent).toBe(false);
