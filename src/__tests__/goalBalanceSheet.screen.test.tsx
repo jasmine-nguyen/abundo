@@ -91,7 +91,7 @@ it('a $0 balance is valid (a paid-off manual debt)', async () => {
   expect(body).toMatchObject({ manual_balance: 0 });
 });
 
-it.each(['12abc', '-5', ''])('rejects a non-numeric balance with a toast and no save (%p)', async (input) => {
+it.each(['12abc', '-5', ''])('rejects a bad balance (%p) with a toast and no save', async (input) => {
   await openSheet();
   fireEvent.changeText(screen.getByTestId('goal-balance-input'), input);
   await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });

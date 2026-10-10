@@ -574,131 +574,131 @@ describe('WHIT-477 QA gaps: checkpoint editor edges', () => {
   });
 });
 
-  describe('the synced-account picker reads balances + recent transactions from the server', () => {
-    // [A1] (P0) The options are the accounts with a live balance; the transactions only name them.
-    it('lists only accounts with a balance, named from their transactions, with the balance amount', async () => {
-      server.seed('/accounts/balances', [balance('acc-1', 2500)]);
-      server.seed('/transactions', [
-        txn({ transaction_id: 't1', account_id: 'acc-1', account_name: 'Everyday Savings' }),
-        txn({ transaction_id: 't2', account_id: 'acc-9', account_name: 'Old Closed Card' }), // no balance → not offered
-      ]);
-      await renderWithQueries(<GoalEdit />);
-      fireEvent.press(screen.getByTestId('goal-source-synced'));
+describe('the synced-account picker reads balances + recent transactions from the server', () => {
+  // [A1] (P0) The options are the accounts with a live balance; the transactions only name them.
+  it('lists only accounts with a balance, named from their transactions, with the balance amount', async () => {
+    server.seed('/accounts/balances', [balance('acc-1', 2500)]);
+    server.seed('/transactions', [
+      txn({ transaction_id: 't1', account_id: 'acc-1', account_name: 'Everyday Savings' }),
+      txn({ transaction_id: 't2', account_id: 'acc-9', account_name: 'Old Closed Card' }), // no balance → not offered
+    ]);
+    await renderWithQueries(<GoalEdit />);
+    fireEvent.press(screen.getByTestId('goal-source-synced'));
 
-      expect(screen.getByTestId('goal-account-acc-1')).toBeTruthy();
-      expect(screen.getByText('Everyday Savings')).toBeTruthy();
-      expect(screen.getByText('$2,500')).toBeTruthy();
-      expect(screen.queryByTestId('goal-account-acc-9')).toBeNull();
-      expect(screen.queryByText('Old Closed Card')).toBeNull();
-    });
-
-    // [A3] (P0) A failed transactions read still offers every balance account, under its tidied id.
-    it('when GET /transactions fails, still lists the balance accounts under their tidied ids', async () => {
-      jest.spyOn(console, 'error').mockImplementation(() => {});
-      server.seed('/accounts/balances', [balance('acc-1', 2500)]);
-      server.fail('/transactions', 500);
-      await renderWithQueries(<GoalEdit />);
-      fireEvent.press(screen.getByTestId('goal-source-synced'));
-
-      expect(screen.getByTestId('goal-account-acc-1')).toBeTruthy();
-      expect(screen.getByText('Acc 1')).toBeTruthy();
-    });
-
-    // [A5] (P0) Editing a synced goal whose account has no balance this session: the saved account
-    // stays selectable (named from transactions, no amount) and the save keeps its account_id.
-    it('editing a synced goal whose account has no balance keeps that account selected and saves it', async () => {
-      setParams({ id: 'g1' });
-      server.seed('/goals', [RAINY_DAY]);
-      server.seed('/accounts/balances', [balance('acc-2', 50)]);
-      server.seed('/transactions', [txn({ account_id: 'acc-1', account_name: 'Everyday Savings' })]);
-      await renderWithQueries(<GoalEdit />);
-
-      expect(screen.getByTestId('goal-account-acc-1')).toBeTruthy();
-      expect(screen.getByText('✓ Everyday Savings')).toBeTruthy();
-      await press('goal-save');
-      const [editId, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
-      expect(editId).toBe('g1');
-      expect(body).toMatchObject({ account_id: 'acc-1' });
-    });
+    expect(screen.getByTestId('goal-account-acc-1')).toBeTruthy();
+    expect(screen.getByText('Everyday Savings')).toBeTruthy();
+    expect(screen.getByText('$2,500')).toBeTruthy();
+    expect(screen.queryByTestId('goal-account-acc-9')).toBeNull();
+    expect(screen.queryByText('Old Closed Card')).toBeNull();
   });
 
-  describe('editing waits for the real goals read', () => {
-    // [A6] (P0) The goals read FAILS on an edit: Save stays blocked, so the blank form can't be
-    // written over the real goal.
-    it('when GET /goals fails, the edit form never enables Save and never calls the writer', async () => {
-      jest.spyOn(console, 'error').mockImplementation(() => {});
-      setParams({ id: 'g1' });
-      server.fail('/goals', 500);
-      await renderWithQueries(<GoalEdit />);
+  // [A3] (P0) A failed transactions read still offers every balance account, under its tidied id.
+  it('when GET /transactions fails, still lists the balance accounts under their tidied ids', async () => {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    server.seed('/accounts/balances', [balance('acc-1', 2500)]);
+    server.fail('/transactions', 500);
+    await renderWithQueries(<GoalEdit />);
+    fireEvent.press(screen.getByTestId('goal-source-synced'));
 
-      expect(server.sent('GET', '/goals')).toHaveLength(1);
-      expect(saveDisabled()).toBe(true);
-      await press('goal-save');
-      expect(mockSaveGoal).not.toHaveBeenCalled();
-      expect(routerSpies.back).not.toHaveBeenCalled();
-    });
-
-    // [A7] (P1) The edited id isn't in the server's goals (deleted on another device) → Save blocked.
-    it('an edit id missing from GET /goals keeps Save blocked', async () => {
-      setParams({ id: 'gone' });
-      server.seed('/goals', [RAINY_DAY]);
-      await renderWithQueries(<GoalEdit />);
-      expect(saveDisabled()).toBe(true);
-      expect(screen.queryByDisplayValue('Rainy day')).toBeNull();
-    });
-
-    // [A8] (P0) The form fills from the goal matching the route id, not the first goal in the list.
-    it('prefills from the goal whose id matches, among several', async () => {
-      setParams({ id: 'g1' });
-      server.seed('/goals', [{ ...RAINY_DAY, id: 'g0', name: 'Holiday', target_amount: 3000 }, RAINY_DAY]);
-      await renderWithQueries(<GoalEdit />);
-      expect(screen.getByDisplayValue('Rainy day')).toBeTruthy();
-      expect(screen.getByDisplayValue('10000')).toBeTruthy();
-      expect(screen.queryByDisplayValue('Holiday')).toBeNull();
-    });
-
-    // [A9] (P1) A create never waits on the goals read: Save is enabled while /goals is held.
-    it('a create keeps Save enabled while GET /goals is still in flight', async () => {
-      server.seed('/accounts/balances', [balance('acc-1', 2500)]);
-      const held = server.hold('/goals');
-      render(<WithQueries><GoalEdit /></WithQueries>);
-      expect(saveDisabled()).toBe(false);
-      await act(async () => { held.release(); });
-      await settle();
-    });
-
-    // [A10] (P1) The edited goal disappears on a background refetch: Save blocks again, and the
-    // typed values stay on screen (no reset to a blank form).
-    it('a refetch that drops the edited goal blocks Save and keeps the typed values', async () => {
-      setParams({ id: 'g1' });
-      server.seed('/goals', [RAINY_DAY]);
-      await renderWithQueries(<GoalEdit />);
-      expect(saveDisabled()).toBe(false);
-      fireEvent.changeText(screen.getByDisplayValue('Rainy day'), 'Typed');
-
-      server.seed('/goals', []);
-      await refreshInAct(() => queryClient.refetchQueries());
-
-      expect(server.sent('GET', '/goals')).toHaveLength(2);
-      expect(saveDisabled()).toBe(true);
-      expect(screen.getByDisplayValue('Typed')).toBeTruthy();
-      await press('goal-save');
-      expect(mockSaveGoal).not.toHaveBeenCalled();
-    });
-
-    // [A11] (P1) A failed refetch after the goal loaded keeps the cached goal: Save stays enabled.
-    it('a failed GET /goals refetch keeps the loaded goal and Save', async () => {
-      jest.spyOn(console, 'error').mockImplementation(() => {});
-      setParams({ id: 'g1' });
-      server.seed('/goals', [RAINY_DAY]);
-      await renderWithQueries(<GoalEdit />);
-      server.fail('/goals', 500);
-      await refreshInAct(() => queryClient.refetchQueries());
-
-      expect(server.sent('GET', '/goals')).toHaveLength(2);
-      expect(saveDisabled()).toBe(false);
-      await press('goal-save');
-      expect(mockSaveGoal).toHaveBeenCalledTimes(1);
-      expect((mockSaveGoal.mock.calls[0] as [string, unknown])[0]).toBe('g1');
-    });
+    expect(screen.getByTestId('goal-account-acc-1')).toBeTruthy();
+    expect(screen.getByText('Acc 1')).toBeTruthy();
   });
+
+  // [A5] (P0) Editing a synced goal whose account has no balance this session: the saved account
+  // stays selectable (named from transactions, no amount) and the save keeps its account_id.
+  it('editing a synced goal whose account has no balance keeps that account selected and saves it', async () => {
+    setParams({ id: 'g1' });
+    server.seed('/goals', [RAINY_DAY]);
+    server.seed('/accounts/balances', [balance('acc-2', 50)]);
+    server.seed('/transactions', [txn({ account_id: 'acc-1', account_name: 'Everyday Savings' })]);
+    await renderWithQueries(<GoalEdit />);
+
+    expect(screen.getByTestId('goal-account-acc-1')).toBeTruthy();
+    expect(screen.getByText('✓ Everyday Savings')).toBeTruthy();
+    await press('goal-save');
+    const [editId, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
+    expect(editId).toBe('g1');
+    expect(body).toMatchObject({ account_id: 'acc-1' });
+  });
+});
+
+describe('editing waits for the real goals read', () => {
+  // [A6] (P0) The goals read FAILS on an edit: Save stays blocked, so the blank form can't be
+  // written over the real goal.
+  it('when GET /goals fails, the edit form never enables Save and never calls the writer', async () => {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    setParams({ id: 'g1' });
+    server.fail('/goals', 500);
+    await renderWithQueries(<GoalEdit />);
+
+    expect(server.sent('GET', '/goals')).toHaveLength(1);
+    expect(saveDisabled()).toBe(true);
+    await press('goal-save');
+    expect(mockSaveGoal).not.toHaveBeenCalled();
+    expect(routerSpies.back).not.toHaveBeenCalled();
+  });
+
+  // [A7] (P1) The edited id isn't in the server's goals (deleted on another device) → Save blocked.
+  it('an edit id missing from GET /goals keeps Save blocked', async () => {
+    setParams({ id: 'gone' });
+    server.seed('/goals', [RAINY_DAY]);
+    await renderWithQueries(<GoalEdit />);
+    expect(saveDisabled()).toBe(true);
+    expect(screen.queryByDisplayValue('Rainy day')).toBeNull();
+  });
+
+  // [A8] (P0) The form fills from the goal matching the route id, not the first goal in the list.
+  it('prefills from the goal whose id matches, among several', async () => {
+    setParams({ id: 'g1' });
+    server.seed('/goals', [{ ...RAINY_DAY, id: 'g0', name: 'Holiday', target_amount: 3000 }, RAINY_DAY]);
+    await renderWithQueries(<GoalEdit />);
+    expect(screen.getByDisplayValue('Rainy day')).toBeTruthy();
+    expect(screen.getByDisplayValue('10000')).toBeTruthy();
+    expect(screen.queryByDisplayValue('Holiday')).toBeNull();
+  });
+
+  // [A9] (P1) A create never waits on the goals read: Save is enabled while /goals is held.
+  it('a create keeps Save enabled while GET /goals is still in flight', async () => {
+    server.seed('/accounts/balances', [balance('acc-1', 2500)]);
+    const held = server.hold('/goals');
+    render(<WithQueries><GoalEdit /></WithQueries>);
+    expect(saveDisabled()).toBe(false);
+    await act(async () => { held.release(); });
+    await settle();
+  });
+
+  // [A10] (P1) The edited goal disappears on a background refetch: Save blocks again, and the
+  // typed values stay on screen (no reset to a blank form).
+  it('a refetch that drops the edited goal blocks Save and keeps the typed values', async () => {
+    setParams({ id: 'g1' });
+    server.seed('/goals', [RAINY_DAY]);
+    await renderWithQueries(<GoalEdit />);
+    expect(saveDisabled()).toBe(false);
+    fireEvent.changeText(screen.getByDisplayValue('Rainy day'), 'Typed');
+
+    server.seed('/goals', []);
+    await refreshInAct(() => queryClient.refetchQueries());
+
+    expect(server.sent('GET', '/goals')).toHaveLength(2);
+    expect(saveDisabled()).toBe(true);
+    expect(screen.getByDisplayValue('Typed')).toBeTruthy();
+    await press('goal-save');
+    expect(mockSaveGoal).not.toHaveBeenCalled();
+  });
+
+  // [A11] (P1) A failed refetch after the goal loaded keeps the cached goal: Save stays enabled.
+  it('a failed GET /goals refetch keeps the loaded goal and Save', async () => {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    setParams({ id: 'g1' });
+    server.seed('/goals', [RAINY_DAY]);
+    await renderWithQueries(<GoalEdit />);
+    server.fail('/goals', 500);
+    await refreshInAct(() => queryClient.refetchQueries());
+
+    expect(server.sent('GET', '/goals')).toHaveLength(2);
+    expect(saveDisabled()).toBe(false);
+    await press('goal-save');
+    expect(mockSaveGoal).toHaveBeenCalledTimes(1);
+    expect((mockSaveGoal.mock.calls[0] as [string, unknown])[0]).toBe('g1');
+  });
+});

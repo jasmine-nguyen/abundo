@@ -11,10 +11,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCheckpointCelebration } from '../hooks/useCheckpointCelebration';
 import { CHECKPOINT_SNAPSHOT_KEY, GoalSteps, StepSnapshot } from '../checkpointCelebration';
 import { goalSteps, stepSnapshot } from './support/celebrationSteps';
-import { renderCelebrationHook as renderReady, savedCelebrationSnapshot as saved } from './support/celebrationSnapshot';
+import { savedCelebrationSnapshot as saved } from './support/celebrationSnapshot';
 
 const holiday = (reached: boolean[] | null): GoalSteps[] => [goalSteps('g1', reached)];
 const ONE_REACHED = stepSnapshot({ g1: [true, false] });
+
+// The hook, ready from the start, rerenderable with new steps as `{ c }`.
+const renderReady = (initial: GoalSteps[]) =>
+  renderHook(({ c }: { c: GoalSteps[] }) => useCheckpointCelebration(c, true), { initialProps: { c: initial } });
 
 // Render the hook and wait until the saved snapshot has loaded and the first comparison has saved.
 async function renderLoaded(initial: GoalSteps[], expectedSave: StepSnapshot) {

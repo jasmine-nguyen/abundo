@@ -128,6 +128,15 @@ describe('goal cards (real balanceGoalView)', () => {
     expect(card.queryByTestId('goal-checkpoints-g1')).toBeNull(); // dots + count travel together
   });
 
+  // [A22] exactly one payday left -> singular "1 payday left" (no trailing 's'). Guards the
+  // `paydaysLeft === 1 ? '' : 's'` pluralisation the 3-payday happy path can't reach.
+  it('pluralises correctly: exactly one payday reads "1 payday left"', async () => {
+    const goal: GoalRecord = { id: 'one', name: 'Emergency fund', icon: 'wallet', direction: 'grow', target_amount: 10000, target_date: '2026-07-20', account_id: 'up-spending' };
+    seedHub({ goals: [goal] });
+    await renderWithQueries(<Goals />);
+    expect(within(screen.getByTestId('goal-card-one')).getByText('1 payday left')).toBeTruthy();
+  });
+
   // [A23] an unknown icon name must not crash the card (Icon falls back internally); the card
   // still renders its name + %.
   it('a goal with an unknown icon renders without crashing', async () => {
@@ -209,6 +218,16 @@ describe('the mortgage card — rich payoff state', () => {
     const card = within(screen.getByTestId('mortgage-link'));
     expect(card.getByText('$596,642')).toBeTruthy();
     expect(card.queryByText('PAID DOWN SO FAR')).toBeNull();
+  });
+
+  // [G3] "% gone" must ROUND, not floor/truncate. 205,000 / 800,000 = 25.625% → 26%.
+  it('[G3] paidPct that lands on x.625 rounds UP to the next whole percent', async () => {
+    seedHub({ loanFacts: READY_FACTS, homeLoan: { balance: 595000, asOf: '2026-07-04T00:00:00Z' } });
+    await renderWithQueries(<Goals />);
+    const card = within(screen.getByTestId('mortgage-link'));
+    expect(card.getByText('$205,000')).toBeTruthy();       // 800,000 − 595,000
+    expect(card.getByText('26% gone')).toBeTruthy();        // 25.625 → 26 (round, not 25)
+    expect(card.getByText('$595,000 to go')).toBeTruthy();
   });
 
   it('facts ready but balance not loaded yet degrades to the plain "tap to see" line', async () => {

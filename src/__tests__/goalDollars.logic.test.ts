@@ -38,7 +38,9 @@ describe('balanceGoalView — dollars moved, span and ahead-by (WHIT-748)', () =
     expect(unknown.aheadBy).toBeNull();
 
     // grow start 2000 → actual (8000 − 2000)/8000 = 0.75 vs expected 0.5 → ahead by 0.25 × 8000 = 2000.
+    // The bar still counts from $0 (8000 of 10000); ahead-by uses start_balance → target, not × 10000.
     const ahead = view(goal({ start_date: '2026-06-06', start_balance: 2000 }), 8000);
+    expect(ahead.movedAmount).toBeCloseTo(8000, 2);
     expect(ahead.status).toBe('ahead');
     expect(ahead.aheadBy).toBeCloseTo(2000, 2);
 
@@ -75,14 +77,6 @@ describe('balanceGoalView — dollars moved, span and ahead-by (WHIT-748)', () =
       const v = view(goal({ baseline: 1000 }), balance);
       expect(Math.round((v.movedAmount! / v.spanAmount!) * 100)).toBe(Math.round(v.progress! * 100));
     }
-  });
-
-  it('[A9] "ahead by" uses start_balance → target, even when the bar counts from $0', () => {
-    // Bar: 8000 of 10000. Pace: from start 2000 → actual 0.75 vs 0.5 → 0.25 × 8000 = 2000 (not × 10000).
-    const v = view(goal({ ...START, start_balance: 2000 }), 8000);
-    expect(v.movedAmount).toBeCloseTo(8000, 2);
-    expect(v.status).toBe('ahead');
-    expect(v.aheadBy).toBeCloseTo(2000, 2);
   });
 
   it('[A10] ahead-by is always positive and never more than what is left to the target', () => {

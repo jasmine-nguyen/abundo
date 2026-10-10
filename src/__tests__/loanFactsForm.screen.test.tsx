@@ -37,8 +37,12 @@ const OVER = String(LOANFACTS_FIELD_MAX + 1);
 const DEPOSIT_TOAST = `Keep the deposit target to ${fmtCompact(LOANFACTS_FIELD_MAX)} or less.`;
 const AMOUNT_TOAST = `Keep each amount to ${fmtCompact(LOANFACTS_FIELD_MAX)} or less.`;
 
-function state(over: Partial<LoanFormState>): LoanFormState {
-  return { saveLoanFacts: jest.fn() as LoanFormState['saveLoanFacts'], showToast: jest.fn() as AppContext['showToast'], ...over };
+// Installs a resolving save + a toast spy as the screen's context and hands both back.
+function mountSpies() {
+  const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
+  const showToast = jest.fn();
+  mockState = { saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] };
+  return { saveLoanFacts, showToast };
 }
 
 const fillValid = () => fillLoanForm(VALID_LOAN_FORM);
@@ -50,8 +54,7 @@ beforeEach(() => {
 });
 
 it('saves the facts (LVR as a fraction) and navigates back', async () => {
-  const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
-  mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
+  const { saveLoanFacts } = mountSpies();
   await renderLoaded(<Loan />);
   fillValid();
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
@@ -62,8 +65,7 @@ it('saves the facts (LVR as a fraction) and navigates back', async () => {
 });
 
 it('sends the picked target payoff date, and clears it back to null (WHIT-126)', async () => {
-  const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
-  mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
+  const { saveLoanFacts } = mountSpies();
   await renderLoaded(<Loan />);
   fillValid();
 
@@ -82,8 +84,7 @@ it('sends the picked target payoff date, and clears it back to null (WHIT-126)',
 });
 
 it('sends a typed deposit target as a number (WHIT-378)', async () => {
-  const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
-  mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
+  const { saveLoanFacts } = mountSpies();
   await renderLoaded(<Loan />);
   fillValid();
   fillLoanForm({ deposit: '120000' });
@@ -93,9 +94,7 @@ it('sends a typed deposit target as a number (WHIT-378)', async () => {
 });
 
 it('blocks an incomplete save with a toast and no API call', async () => {
-  const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
-  const showToast = jest.fn();
-  mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
+  const { saveLoanFacts, showToast } = mountSpies();
   await renderLoaded(<Loan />);
   // Fill everything except property value → invalid.
   fillLoanForm({ orig: '600000', lvr: '80', rate: '5.74', base: '1240' });
@@ -113,9 +112,7 @@ it('blocks an incomplete save with a toast and no API call', async () => {
 // and the EDIT clear-to-null flow.
 describe('WHIT-378 deposit-target guard + clear (gaps)', () => {
   it('[A6] garbage deposit target (all six fields valid) is blocked by the target toast, no save', async () => {
-    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
-    const showToast = jest.fn();
-    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
+    const { saveLoanFacts, showToast } = mountSpies();
     await renderLoaded(<Loan />);
     fillValid();
     fillLoanForm({ deposit: '12abc' });
@@ -130,9 +127,7 @@ describe('WHIT-378 deposit-target guard + clear (gaps)', () => {
   });
 
   it('[A8] a deposit target over the ceiling is blocked by its own toast, no save', async () => {
-    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
-    const showToast = jest.fn();
-    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
+    const { saveLoanFacts, showToast } = mountSpies();
     await renderLoaded(<Loan />);
     fillValid();
     fillLoanForm({ deposit: OVER });
@@ -145,9 +140,8 @@ describe('WHIT-378 deposit-target guard + clear (gaps)', () => {
   });
 
   it('[A7] EDIT: a seeded target cleared to blank saves depositTarget:null (no stale value)', async () => {
-    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
     server.seed('/loanfacts', { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, depositTarget: 120000 });
-    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
+    const { saveLoanFacts } = mountSpies();
     await renderLoaded(<Loan />);
     expect(screen.getByDisplayValue('120000')).toBeTruthy();   // seeded
     fireEvent.changeText(screen.getByDisplayValue('120000'), '');  // user clears it
@@ -163,8 +157,7 @@ describe('saved facts round trip', () => {
       baseRepay: 1240, extra: 200, payoffGoalDate: null, depositTarget: null,
     };
     server.seed('/loanfacts', SAVED);
-    const saveLoanFacts = jest.fn(async (_facts: LoanFactsInput) => true);
-    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
+    const { saveLoanFacts } = mountSpies();
 
     await renderLoaded(<Loan />);
 
@@ -184,8 +177,7 @@ describe('saved facts round trip', () => {
   // WHIT-126: a stale-seed bug would silently wipe an already-saved payoff goal date.
   it('preserves the saved goal date on a save that never opens the picker', async () => {
     server.seed('/loanfacts', { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, payoffGoalDate: '2035-06-01' });
-    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
-    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
+    const { saveLoanFacts } = mountSpies();
     await renderLoaded(<Loan />);
     await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
     expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ payoffGoalDate: '2035-06-01' }));
@@ -197,8 +189,7 @@ describe('saved facts round trip', () => {
 // lvr == 0 blocked, trailing garbage rejected, and the dollar ceiling (strict >, matching the server).
 describe('client-guard boundaries', () => {
   it('accepts Extra = 0 (optional top-up) and saves', async () => {
-    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
-    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
+    const { saveLoanFacts } = mountSpies();
     await renderLoaded(<Loan />);
     fill({ extra: '0' });
     await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
@@ -207,8 +198,7 @@ describe('client-guard boundaries', () => {
   });
 
   it('accepts the exact upper bounds LVR = 100% and rate = 100', async () => {
-    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
-    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
+    const { saveLoanFacts } = mountSpies();
     await renderLoaded(<Loan />);
     fill({ lvr: '100', rate: '100' });   // client guard is lvr<=1 (fraction) and ratePct<=100
     await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
@@ -216,9 +206,7 @@ describe('client-guard boundaries', () => {
   });
 
   it('blocks LVR = 0 (must be > 0) with a toast and no save', async () => {
-    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
-    const showToast = jest.fn();
-    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
+    const { saveLoanFacts, showToast } = mountSpies();
     await renderLoaded(<Loan />);
     fill({ lvr: '0' });
     await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
@@ -227,9 +215,7 @@ describe('client-guard boundaries', () => {
   });
 
   it('rejects trailing garbage in a number ("80abc") rather than storing 80', async () => {
-    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
-    const showToast = jest.fn();
-    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
+    const { saveLoanFacts, showToast } = mountSpies();
     await renderLoaded(<Loan />);
     fill({ home: '770000abc' });   // paste can slip past the decimal-pad keyboard
     await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
@@ -238,9 +224,7 @@ describe('client-guard boundaries', () => {
   });
 
   it('blocks a dollar field over the ceiling (extra) with a toast and no save', async () => {
-    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
-    const showToast = jest.fn();
-    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
+    const { saveLoanFacts, showToast } = mountSpies();
     await renderLoaded(<Loan />);
     // A non-first field over the ceiling — proves the .some() check catches more than original.
     fill({ extra: OVER });
@@ -250,8 +234,7 @@ describe('client-guard boundaries', () => {
   });
 
   it('accepts exactly the ceiling (strict >, matching the server) and saves', async () => {
-    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
-    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
+    const { saveLoanFacts } = mountSpies();
     await renderLoaded(<Loan />);
     fill({ orig: AT });
     await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
@@ -280,9 +263,7 @@ describe('the ceiling toast tells the truth about the ceiling', () => {
 
   // Trigger the amounts ceiling toast and hand back the exact string the screen passed to showToast.
   async function amountCeilingToast(): Promise<string> {
-    const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
-    const showToast = jest.fn();
-    mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
+    const { saveLoanFacts, showToast } = mountSpies();
     await renderLoaded(<Loan />);
     fill({ deposit: '', home: OVER });
     fireEvent.press(screen.getByText('Save loan details'));

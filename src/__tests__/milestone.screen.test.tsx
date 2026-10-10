@@ -44,7 +44,7 @@ beforeEach(() => {
 // --- the milestone screen ----------------------------------------------------
 
 it('renders the live balance, the sprint plan, and usable equity', async () => {
-  seedGoal(server, { homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
+  seedGoal(server, { homeLoan: { balance: 596642.43, asOf: AS_OF } });
   await renderWithQueries(<Milestone />);
   expect(screen.getByText('$596,642')).toBeTruthy();       // hero balance
   expect(screen.getByText('Your payoff plan')).toBeTruthy();
@@ -102,7 +102,7 @@ it('navigates to /milestone from the mortgage screen Sprint summary', async () =
 // WHIT-378: the deposit target is the user's real number, not a hardcoded $90k.
 it('equity card shows real progress toward the deposit target when one is set', async () => {
   // homeValue 770000 × lvr 0.8 = 616000; balance 566000 → equity 50000; target 100000 → 50%.
-  seedGoal(server, { loanFacts: { ...LOAN_FACTS, depositTarget: 100000 }, homeLoan: { balance: 566000, asOf: '2026-07-04T00:24:37.614Z' } });
+  seedGoal(server, { loanFacts: { ...LOAN_FACTS, depositTarget: 100000 }, homeLoan: { balance: 566000, asOf: AS_OF } });
   await renderWithQueries(<Mortgage />);
   expect(screen.getByText('$50,000 unlocked')).toBeTruthy();
   expect(screen.getByText('of $100,000 needed')).toBeTruthy();   // the user's real target, not $90,000
@@ -110,7 +110,7 @@ it('equity card shows real progress toward the deposit target when one is set', 
 });
 
 it('[A10] (P0) Mortgage "Set deposit target →" still opens the loan form', async () => {
-  seedGoal(server, { homeLoan: { balance: 566000, asOf: '2026-07-04T00:24:37.614Z' } });
+  seedGoal(server, { homeLoan: { balance: 566000, asOf: AS_OF } });
   await renderWithQueries(<Mortgage />);
   fireEvent.press(screen.getByText('Set deposit target →'));
   expect(routerSpies.push).toHaveBeenCalledWith('/loan');
@@ -118,7 +118,7 @@ it('[A10] (P0) Mortgage "Set deposit target →" still opens the loan form', asy
 
 it('equity card degrades cleanly (no %, no bar, no fake "needed") when no deposit target is set', async () => {
   // Equity is known (facts + balance) but the user has set no target → honest prompt, no denominator.
-  seedGoal(server, { homeLoan: { balance: 566000, asOf: '2026-07-04T00:24:37.614Z' } });
+  seedGoal(server, { homeLoan: { balance: 566000, asOf: AS_OF } });
   await renderWithQueries(<Mortgage />);
   expect(screen.getByText('$50,000 unlocked')).toBeTruthy();          // the real figure still shows
   expect(screen.getByText('Set deposit target →')).toBeTruthy();      // nudge instead of a fake bar
@@ -141,7 +141,7 @@ it('The mortgage screen shows a balance error + Retry when the balance read fail
 // --- empty state (loan facts not set) ----------------------------------------
 
 it('The mortgage screen shows a set-up prompt (not fake numbers) when loan facts are unset', async () => {
-  seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
+  seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: AS_OF } });
   await renderWithQueries(<Mortgage />);
   // The real live balance still shows; the fabricated "$67,100 paid down" seed does not.
   expect(screen.getByText('$596,642')).toBeTruthy();
@@ -152,7 +152,7 @@ it('The mortgage screen shows a set-up prompt (not fake numbers) when loan facts
 });
 
 it('milestone screen shows an equity set-up prompt when the property value is unset', async () => {
-  seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
+  seedGoal(server, { loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: AS_OF } });
   await renderWithQueries(<Milestone />);
   // Balance + sprint plan still render (they only need the live balance)...
   expect(screen.getByText('$596,642')).toBeTruthy();
@@ -217,7 +217,7 @@ describe('WHIT-367 milestone read path', () => {
 it('a known (last-good) balance WINS over a refetch error — shows the balance, not the error', async () => {
   // TanStack keeps the last successful `data` when a refetch errors, so homeLoan.balance stays
   // present while the read is in error. hasBalance must take precedence.
-  seedGoal(server, { homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
+  seedGoal(server, { homeLoan: { balance: 596642.43, asOf: AS_OF } });
   await renderWithQueries(<Milestone />);
   server.fail('/homeloan', 500);
   await refreshInAct(() => queryClient.refetchQueries());

@@ -179,10 +179,6 @@ describe('balanceGoalView — edges', () => {
   });
 });
 
-// --- WHIT-252: the immutable start fields are carried through ------------------
-describe('balanceGoalView — start_date / start_balance (WHIT-252)', () => {
-});
-
 // --- WHIT-262: ahead / on-track / behind from the immutable start -------------
 // Start Jun6 -> target Aug15 = 70 days; TODAY Jul11 = 35 elapsed -> expected fill 0.5.
 // Tolerance 0.05 -> on-track band [0.45, 0.55]. All fractions hand-computed so a revert fails.

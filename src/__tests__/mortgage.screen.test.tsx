@@ -94,6 +94,20 @@ it('a truly $0 balance shows "100% gone" — the label matches the "$0 to go" fi
 });
 
 // ===== WHIT-372 (folded from mortgageOwingEdges.screen.test.tsx) =====
+// WHIT-121 #4: each failed read's Retry is a labelled button and its error copy a polite live region.
+it.each([
+  ['/homeloan', 'hero-balance-retry', 'Retry loading your balance', "Couldn't load your balance."],
+  ['/repayment', 'repayment-retry', 'Retry loading your last repayment', "Couldn't load your last repayment."],
+])('a failed %s read shows a screen-reader-labelled Retry', async (route, testID, label, copy) => {
+  seedGoal(server);
+  server.fail(route, 500);
+  await renderWithQueries(<Mortgage />);
+  const retry = screen.getByTestId(testID);
+  expect(retry.props.accessibilityRole).toBe('button');
+  expect(retry.props.accessibilityLabel).toBe(label);
+  expect(screen.getByText(copy).props.accessibilityLiveRegion).toBe('polite');
+});
+
 describe('mortgage hero — WHIT-372 branch-order edges', () => {
   // Facts UNSET but balance at the original. `!factsReady` is checked BEFORE the new balanceKnown
   // owing branch, so this must stay the SET-UP prompt (route to /loan), never the "you're at the

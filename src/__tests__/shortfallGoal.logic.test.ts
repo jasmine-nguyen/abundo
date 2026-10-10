@@ -14,7 +14,7 @@ const STATE = (balance: number, payoffGoalDate: string | null, over: Partial<typ
 
 describe('paydownView shortfall solver (WHIT-126)', () => {
   it('solves the required repayment for a valid future goal date', () => {
-    const pv = paydownView(STATE(900000,'2035-06-01'), TODAY);
+    const pv = paydownView(STATE(900000, '2035-06-01'), TODAY);
     expect(pv.mode).toBe('none');
     expect(pv.goalDateLabel).toBe('Jun 2035');
     expect(pv.requiredRepay).not.toBeNull();
@@ -29,7 +29,7 @@ describe('paydownView shortfall solver (WHIT-126)', () => {
   });
 
   it('leaves the shortfall fields null with no goal date (falls back to static copy)', () => {
-    const pv = paydownView(STATE(900000,null), TODAY);
+    const pv = paydownView(STATE(900000, null), TODAY);
     expect(pv.mode).toBe('none');
     expect(pv.requiredRepay).toBeNull();
     expect(pv.requiredExtra).toBeNull();
@@ -37,15 +37,15 @@ describe('paydownView shortfall solver (WHIT-126)', () => {
   });
 
   it('ignores a past / current-month goal date (no absurd figure from n ≤ 0)', () => {
-    expect(paydownView(STATE(900000,'2020-01-01'), TODAY).requiredRepay).toBeNull(); // past
-    expect(paydownView(STATE(900000,'2026-07-15'), TODAY).requiredRepay).toBeNull(); // this month → n=0
+    expect(paydownView(STATE(900000, '2020-01-01'), TODAY).requiredRepay).toBeNull(); // past
+    expect(paydownView(STATE(900000, '2026-07-15'), TODAY).requiredRepay).toBeNull(); // this month → n=0
   });
 });
 
 describe('aiGoalSignal shortfall variant (WHIT-126)', () => {
   it('emits a shortfall signal carrying the required repayment for a future goal date', () => {
-    const pv = paydownView(STATE(900000,'2035-06-01'), TODAY);
-    const g = asShortfallGoal(aiGoalSignal(STATE(900000,'2035-06-01'), TODAY));
+    const pv = paydownView(STATE(900000, '2035-06-01'), TODAY);
+    const g = asShortfallGoal(aiGoalSignal(STATE(900000, '2035-06-01'), TODAY));
     expect(g.goal_date).toBe('Jun 2035');
     expect(g.required_repayment).toBe(pv.requiredRepay);
     expect(g.required_extra).toBe(pv.requiredExtra);
@@ -63,9 +63,9 @@ describe('aiGoalSignal shortfall variant (WHIT-126)', () => {
 // screen's "try a later date" hint. False for a realistic goal, no date, or a past date.
 describe('paydownView goalTooAggressive flag (WHIT-215)', () => {
   it('does NOT flag with no goal date, or a past / current-month date', () => {
-    expect(paydownView(STATE(900000,null), TODAY).goalTooAggressive).toBe(false);
-    expect(paydownView(STATE(900000,'2020-01-01'), TODAY).goalTooAggressive).toBe(false); // past
-    expect(paydownView(STATE(900000,'2026-07-15'), TODAY).goalTooAggressive).toBe(false); // n=0
+    expect(paydownView(STATE(900000, null), TODAY).goalTooAggressive).toBe(false);
+    expect(paydownView(STATE(900000, '2020-01-01'), TODAY).goalTooAggressive).toBe(false); // past
+    expect(paydownView(STATE(900000, '2026-07-15'), TODAY).goalTooAggressive).toBe(false); // n=0
   });
 
   it('does NOT flag on a $0 current repayment (the multiple guard prevents a false positive)', () => {
