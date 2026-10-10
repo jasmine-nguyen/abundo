@@ -2627,15 +2627,13 @@ export function transactionGroups(s: TransactionListInput, tab: 'all' | 'uncateg
 // netting; income, savings, budget-excluded charges and transfers left out. Null when nothing counts.
 export function daySpend(s: Pick<TransactionListInput, 'category'>, items: Transaction[]): number | null {
   let sum = 0;
-  let counted = false;
   for (const t of items) {
     if (!contributesToBudget(t) || t.category === 'income') continue;
     const bucket = s.category(t.category ?? '')?.bucket;
     if (bucket === 'Income' || bucket === 'Savings') continue;
     sum -= t.amount;
-    counted = true;
   }
-  if (!counted || Math.round(sum * 100) === 0) return null;
+  if (Math.round(sum * 100) === 0) return null;
   return sum;
 }
 
