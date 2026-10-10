@@ -2,7 +2,7 @@
 // per-field operators, a dollar amount, an account picker, a spending/income choice and an AND/OR
 // toggle; saves the conditions+logic payload; edits round-trip; single-condition classic rules keep
 // today's behaviour (covered in AddRuleSheet.screen.test.tsx, plus the backward-compat case here).
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { it, expect, jest, beforeEach } from '@jest/globals';
 import { screen, fireEvent } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 

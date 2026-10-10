@@ -8,7 +8,7 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
-import type { ApplyRulesJob, ApplyRulesResult, FilingResult, FilingTarget } from '../context';
+import type { ApplyRulesResult, FilingResult, FilingTarget } from '../context';
 import { useFilingRun } from '../filingRun';
 import { runOptimisticSave, type SaveSteps } from '../optimisticSave';
 import type { TransactionSearchResult, UncategorizedMerchantGroup } from '../api';
@@ -24,7 +24,7 @@ jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
-import { applyRulesReport, filedReport } from './support/applyRulesReport';
+import { applyRulesJob, applyRulesReport, filedReport } from './support/applyRulesReport';
 import { GROCERIES } from './support/categories';
 import { colesTxn as txn, stevenTxn } from './factory';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
@@ -118,11 +118,6 @@ describe('edges of one filing run', () => {
     ...over,
   });
 
-  const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
-    jobId: 'job-1', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,
-    failed: 0, alreadyFiled: 0, remaining: 0, createdRule: null, error: null,
-    createdAt: 't0', updatedAt: 't0', completedAt: null, ...over,
-  });
 
   function seedRules() { queryClient.setQueryData<Rule[]>(['rules'], [EXISTING_RULE]); }
   function rules() { return queryClient.getQueryData<Rule[]>(['rules']) ?? []; }
@@ -230,7 +225,7 @@ describe('edges of one filing run', () => {
     act(() => { r.current.showToast('hi'); });
     act(() => { r.current.setSheet({ mode: 'applyRules' }); });
     await act(async () => { await r.current.fileCharges(SWEEP, { matched: 999 }); });
-    server.seed(`${JOBS}/job-1`, job({ matched: 10, attempted: 5 }));
+    server.seed(`${JOBS}/job-1`, applyRulesJob({ matched: 10, attempted: 5 }));
     await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
     expect(r.current.applyRulesJob?.matched).toBe(10);
 
@@ -613,11 +608,6 @@ describe('a new rule filed now', () => {
 // runner decides about the session is final. Here the runner says "signed out" while the hook's own
 // session stamp never moves — so only a filing run that really uses the runner drops the result.
 describe('the shared save runner', () => {
-  const runnerReport = (over: Partial<ApplyRulesResult> = {}) => applyRulesReport({
-    dryRun: false, rulesConsidered: 1, unfiled: 1, matched: 1, byCategory: { groceries: 1 },
-    filed: [{ id: 't1', category: 'groceries' }], createdRule: null,
-    ...over,
-  });
   const UNFILED = { transaction_id: 't1', description: 'COLES 1234', amount: -10, category: null } as unknown as Transaction;
 
   it('drops the filing preview and "file now" when the save runner says the user signed out', async () => {
@@ -626,7 +616,7 @@ describe('the shared save runner', () => {
     const sessionEpoch = { current: 0 };
     seedTransactionsCache(queryClient, [UNFILED]);
     const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
-    server.seed('/transactions/uncategorized/apply-rules', runnerReport());
+    server.seed(APPLY_RULES, filedReport());
 
     const { result } = renderHook(() => useFilingRun({
       sessionEpoch, runSave, prependMintedRule: jest.fn(), sheetOpen: true,
@@ -647,7 +637,7 @@ describe('the shared save runner', () => {
     sameSession = true;
     let again: FilingResult | null = null;
     await act(async () => { again = await result.current.fileCharges(SHOP, { now: true }); });
-    expect(again).toEqual({ status: 'filed', report: runnerReport() });
+    expect(again).toEqual({ status: 'filed', report: filedReport() });
     expect(readTransactionsCache(queryClient)[0].category).toBe('groceries');
   });
 });
@@ -663,11 +653,7 @@ describe('search results', () => {
   });
 
   it('[A10] apply-rules patches + invalidates the search result', async () => {
-    server.seed('/transactions/uncategorized/apply-rules', {
-      dryRun: false, rulesConsidered: 1, unfiled: 3, matched: 1, conflicted: 0, conflictedSamples: [],
-      byCategory: { groceries: 1 }, byRule: [], skippedRules: [],
-      filed: [{ id: 'deep1', category: 'groceries' }], vanished: ['deep2'], failed: [],
-    });
+    server.seed(APPLY_RULES, filedReport({ filed: [{ id: 'deep1', category: 'groceries' }], vanished: ['deep2'] }));
     const result = mount();
     const spy = jest.spyOn(queryClient, 'invalidateQueries');
 

@@ -22,7 +22,7 @@ import { installFakeServer } from './support/fakeServer';
 import { GROCERIES_TOP_RECORD } from './support/categories';
 import { useTestQueryClient } from './support/renderWithQueries';
 import { openOverlays } from './support/openOverlays';
-import { applyRulesReport } from './support/applyRulesReport';
+import { applyRulesJob, applyRulesReport } from './support/applyRulesReport';
 
 const server = installFakeServer();
 useTestQueryClient();
@@ -41,12 +41,6 @@ const CATEGORIES = [GROCERIES_TOP_RECORD];
 const report = (over: Partial<ApplyRulesResult> = {}) => applyRulesReport({
   rulesConsidered: 2, unfiled: 639, matched: 512, byCategory: { groceries: 512 }, alreadyFiled: [], remaining: 512,
   ...over,
-});
-
-const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
-  jobId: 'j1', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,
-  failed: 0, alreadyFiled: 0, remaining: 0, createdRule: null, error: null,
-  createdAt: 't0', updatedAt: 't0', completedAt: null, ...over,
 });
 
 /** Mount the apply-rules sheet with a given job state (null = the preview arm). */
@@ -79,7 +73,7 @@ it('promotes the background sweep to primary over the per-run cap', async () => 
 // --- running ------------------------------------------------------------------
 
 it('shows a progress bar keyed on the job matched, and leaves it running on cancel', async () => {
-  await mountWith(job({ status: 'running', matched: 900, filed: 450 }));
+  await mountWith(applyRulesJob({ status: 'running', matched: 900, filed: 450 }));
 
   expect(screen.getByText(/Filed 450 of 900 charges/)).toBeTruthy();
 
@@ -93,7 +87,7 @@ it('shows a progress bar keyed on the job matched, and leaves it running on canc
 // OPTIONAL Try again that runs the same variant-aware retry.
 it('shows the stall hint + Try again on a stalled running job, and Try again runs the retry path', async () => {
   fns.retryApplyRulesJob.mockResolvedValue({ status: 'background' });
-  await mountWith(job({ status: 'running', matched: 0, attempted: 0 }), report(), true);
+  await mountWith(applyRulesJob({ status: 'running', matched: 0, attempted: 0 }), report(), true);
 
   expect(screen.getByTestId('apply-rules-job-stalled')).toBeTruthy();
   expect(screen.queryByTestId('apply-rules-job-running')).toBeNull();
@@ -103,7 +97,7 @@ it('shows the stall hint + Try again on a stalled running job, and Try again run
 
 it('offers retry on failure, re-running the same job variant', async () => {
   fns.retryApplyRulesJob.mockResolvedValue({ status: 'background' });
-  await mountWith(job({ status: 'failed', error: 'network' }));
+  await mountWith(applyRulesJob({ status: 'failed', error: 'network' }));
 
   expect(screen.getByTestId('apply-rules-job-failed')).toBeTruthy();
   fireEvent.press(screen.getByTestId('apply-rules-job-retry'));
@@ -160,7 +154,7 @@ describe('inline variants', () => {
   });
 
   it('[V3] a running job renders the shared job view INSIDE the file-by-shop sheet (not the preview)', async () => {
-    await mountFileByShop(job({ status: 'running', matched: 900, filed: 450 }));
+    await mountFileByShop(applyRulesJob({ status: 'running', matched: 900, filed: 450 }));
 
     expect(screen.getByTestId('apply-rules-job-running')).toBeTruthy();
     expect(screen.getByText(/Filed 450 of 900 charges/)).toBeTruthy();
