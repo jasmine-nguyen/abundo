@@ -22,11 +22,11 @@ const SCAN_DIRS = ['app', 'src'];
 const EXCLUDE = /(^|[\\/])(__tests__|node_modules)([\\/]|$)/;
 
 // Repo-relative, forward-slashed, so keys read the same on any platform.
-export const repoPath = (abs: string): string => relative(ROOT, abs).split(sep).join('/');
+const repoPath =(abs: string): string => relative(ROOT, abs).split(sep).join('/');
 
 // Every .ts/.tsx file that actually ships — tests excluded, since they legitimately contain the
 // literals the guards are hunting for.
-export function shippedSourceFiles(): string[] {
+function shippedSourceFiles(): string[] {
   const out: string[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir)) {
