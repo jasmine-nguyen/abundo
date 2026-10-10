@@ -76,7 +76,6 @@ describe('single-flight (double-tap)', () => {
     await auth.signInWithPassword('me@x.com', 'pw');
     expect(mockAuthenticateUser).toHaveBeenCalledTimes(2);
   });
-
 });
 
 describe('email normalisation', () => {
@@ -119,7 +118,6 @@ describe('SRP InitiateAuth refresh — failure modes', () => {
     const refreshWrites = mockSetItem.mock.calls.filter((c) => c[0] === REFRESH_KEY).map((c) => c[1]);
     expect(refreshWrites[refreshWrites.length - 1]).toBe('ROTATED');
   });
-
 });
 
 describe('provenance is robust to a method-key read failure (QA #2 fix)', () => {

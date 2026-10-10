@@ -28,18 +28,7 @@ jest.mock('expo-secure-store', () =>
 // WHIT-267: auth.ts gates the unlock-time guarded re-store on Platform.OS === 'ios'
 // (via a tolerant lazy require — see isIOS). This node-env suite must mock react-native
 // to exercise that branch; suites that don't mock it simply skip the re-store.
-// WHIT-459: upgraded from the survivor's hardcoded `{ Platform: { OS: 'ios' } }` to the
-// mutable-getter form the folded gaps use — auth.ts reads require('react-native').Platform.OS
-// at CALL time (isIOS), so a getter lets each test pick the platform without re-mocking.
-// The survivor's own tests assume iOS, so every beforeEach re-seeds mockPlatformOS = 'ios'.
-let mockPlatformOS: string = 'ios';
-jest.mock('react-native', () => ({
-  Platform: {
-    get OS() {
-      return mockPlatformOS;
-    },
-  },
-}));
+jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
 
 const DOMAIN = 'https://abundo-auth.auth.ap-southeast-2.amazoncognito.com';
 
@@ -60,7 +49,6 @@ function deletesOf(key: string) {
 
 beforeEach(() => {
   jest.resetModules();
-  mockPlatformOS = 'ios';
   mockPromptAsync.mockReset();
   mockExchange.mockReset();
   mockRefresh.mockReset();

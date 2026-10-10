@@ -328,37 +328,18 @@ describe('WHIT-161 auth gate — biometric lock', () => {
 // ===== WHIT-266 (folded from authGateLockCover.screen.test.tsx) =====
 // The lock keeps the app MOUNTED under an opaque cover (instead of unmounting and replacing
 // it), so scroll/form state survives lock→unlock. gateRedirect stays REAL; auth is driven off
-// the shared live store. This suite uses a MountCounter child (to prove no remount) and its
-// own renderGate; `setStatus` is a local alias onto the shared store notifier.
+// the shared live store. No-remount across lock→unlock is proven by [A9] below.
+// `setStatus` is a local alias onto the shared store notifier.
 describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', () => {
   const setStatus = mockSetStatus;
-
-  // A child that counts its own mounts — the direct probe for "the app is not rebuilt across a
-  // lock". Pre-WHIT-266 the locked branch returned <LockScreen/> instead of the children, so this
-  // unmounted (and a later remount would bump the counter).
-  let childMounts = 0;
-  function MountCounter() {
-    useEffect(() => { childMounts += 1; }, []);
-    return <Text testID="child">app</Text>;
-  }
-
-  function renderGate() {
-    return render(
-      <AuthGate>
-        <MountCounter />
-      </AuthGate>,
-    );
-  }
 
   beforeEach(() => {
     mockRedirectSpy.mockClear();
     mockUnlock.mockReset().mockImplementation(async () => { setStatus('authed'); return true; });
     mockLock.mockClear();
-    mockSignOut.mockReset().mockImplementation(async () => setStatus('anon')); // defensive: keeps parity with the folded [G2] setup (clearMocks already zeroes the count)
     mockListeners.clear();
     mockStatus = 'authed';
     mockSegments = ['(tabs)', 'budgets']; // a deep route — NOT the index
-    childMounts = 0;
     process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED = 'true';
     jest.spyOn(AppState, 'addEventListener').mockImplementation(() => ({ remove: jest.fn() } as never));
   });
@@ -368,7 +349,6 @@ describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', 
   });
 
   describe('WHIT-266 lock cover', () => {
-
     it('lock cover is opaque, absolute-fill, and painted on top', () => {
       renderGate();
       act(() => setStatus('locked'));
@@ -386,14 +366,9 @@ describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', 
       act(() => setStatus('locked'));
       expect(dismiss).toHaveBeenCalledTimes(1);
     });
-
-    // Note: the "no Budgets bounce on unlock" guarantee is locked by [A9] in
-    // authGateTransitions.screen.test.tsx, whose FakeStack resets navigation on (re)mount and so
-    // genuinely distinguishes the mounted-through-lock behaviour from the old unmount-remount.
-    // A version here with a plain child can't tell the two apart, so it lives only in [A9].
   });
 
-  // ===== WHIT-266 adversarial gaps (folded in): index-route mutual exclusion, sign-in-again, 3× cycle =====
+  // ===== WHIT-266 adversarial gaps (folded in): index-route mutual exclusion =====
   describe('WHIT-266 lock cover — adversarial gaps', () => {
     // [G1] locked on the INDEX route: the two covers never co-occur, and unlock releases the
     // legitimate authed+index → budgets redirect. gateRedirect returns null while locked, so even
@@ -422,18 +397,16 @@ describe('WHIT-266 lock cover (folded from authGateLockCover.screen.test.tsx)', 
 });
 
 // ===== WHIT-161 (folded from authGateLockEdges.screen.test.tsx) =====
-// Adversarial GAP tests for AuthGate's resume/lifecycle wiring: the AppState listener is
-// REMOVED on unmount; resume re-lock is suppressed when biometrics are unavailable or the
-// session isn't authed. gateRedirect stays REAL; the shared live store drives status.
+// Adversarial GAP tests for AuthGate's resume wiring: resume re-lock is suppressed when
+// biometrics are unavailable or the session isn't authed. gateRedirect stays REAL; the
+// shared live store drives status.
 describe('WHIT-161 auth gate — resume/lifecycle edges', () => {
   let appStateHandler: (s: string) => void;
-  const removeSpy = jest.fn();
 
   beforeEach(() => {
     mockUnlock.mockClear();
     mockLock.mockClear();
     mockUnlockOrRestore.mockClear();
-    removeSpy.mockClear();
     mockCanBiometric.mockReset().mockReturnValue(true);
     mockListeners.clear();
     mockStatus = 'authed';
@@ -441,7 +414,7 @@ describe('WHIT-161 auth gate — resume/lifecycle edges', () => {
     process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED = 'true';
     jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, cb) => {
       appStateHandler = cb as unknown as (s: string) => void;
-      return { remove: removeSpy } as never;
+      return { remove: jest.fn() } as never;
     });
   });
   afterEach(() => {

@@ -77,8 +77,8 @@ describe('signInWithGoogle (Hosted UI PKCE flow)', () => {
     expect(auth.getStatus()).toBe('authed');
   });
 
-  it('resolves silently (no error) and stores nothing when the user cancels', async () => {
-    mockPromptAsync.mockResolvedValue({ type: 'cancel' });
+  it.each(['cancel', 'dismiss'])('resolves silently (no error) and stores nothing when the prompt returns %s', async (type) => {
+    mockPromptAsync.mockResolvedValue({ type });
     const auth = loadAuth();
 
     await expect(auth.signInWithGoogle()).resolves.toEqual({ ok: false });

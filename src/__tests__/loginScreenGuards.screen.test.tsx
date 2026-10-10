@@ -48,13 +48,11 @@ it('double-tapping Log in only starts ONE password sign-in (busy latch)', async 
 });
 
 it.each([
-  ['Continue with Google', 'login-submit', 'login-google'],
-  ['a password sign-in', 'login-google', 'login-submit'],
-] as const)('%s is ignored while the other sign-in is mid-flight', async (_case, first, second) => {
+  ['Continue with Google', 'login-submit', mockSignInWithPassword, 'login-google', mockSignInWithGoogle],
+  ['a password sign-in', 'login-google', mockSignInWithGoogle, 'login-submit', mockSignInWithPassword],
+] as const)('%s is ignored while the other sign-in is mid-flight', async (_case, first, firstCall, second, secondCall) => {
   mockSignInWithPassword.mockReturnValue(new Promise<never>(() => {}));
   mockSignInWithGoogle.mockReturnValue(new Promise<never>(() => {}));
-  const firstCall = first === 'login-submit' ? mockSignInWithPassword : mockSignInWithGoogle;
-  const secondCall = second === 'login-submit' ? mockSignInWithPassword : mockSignInWithGoogle;
   const { getByTestId } = render(<Login />);
   fill(getByTestId);
   fireEvent.press(getByTestId(first));

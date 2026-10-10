@@ -43,7 +43,6 @@ describe('requestPasswordReset', () => {
     await expect(loadAuth().requestPasswordReset('   ')).resolves.toMatchObject({ ok: false });
     expect(mockForgotPassword).not.toHaveBeenCalled();
   });
-
 });
 
 describe('confirmPasswordReset', () => {
@@ -60,5 +59,4 @@ describe('confirmPasswordReset', () => {
       error: expect.stringMatching(/code isn.t right/i),
     });
   });
-
 });
