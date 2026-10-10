@@ -63,9 +63,10 @@ def transaction_matches_search(transaction: dict, query: str, category_names: di
 
 def search_transactions(
     transactions: list[dict], query: str, category_names: dict[str, str], unfiled_only: bool
-) -> tuple[list[dict], bool]:
+) -> tuple[list[dict], bool, int, float]:
     """The matching transactions, newest first, capped at SEARCH_RESULT_LIMIT, plus whether the
-    cap cut any off. `unfiled_only` narrows to the Uncategorized tab's rows. The sort is stable,
+    cap cut any off, and the count and signed dollar total of EVERY match (summed in whole cents),
+    so a cut-off search still shows exact figures. `unfiled_only` narrows to the Uncategorized tab's rows. The sort is stable,
     so rows on the same date keep the scan's account order — the same order the feed shows."""
     matches = [
         transaction
@@ -74,4 +75,5 @@ def search_transactions(
         and transaction_matches_search(transaction, query, category_names)
     ]
     matches.sort(key=lambda transaction: transaction.get("date") or "", reverse=True)
-    return matches[:SEARCH_RESULT_LIMIT], len(matches) > SEARCH_RESULT_LIMIT
+    total_cents = sum(round(float(transaction.get("amount") or 0) * 100) for transaction in matches)
+    return matches[:SEARCH_RESULT_LIMIT], len(matches) > SEARCH_RESULT_LIMIT, len(matches), total_cents / 100
