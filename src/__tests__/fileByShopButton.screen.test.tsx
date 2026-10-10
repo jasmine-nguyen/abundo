@@ -166,3 +166,21 @@ it('leads with File by shop, keeps Apply my rules as a link, and hides the hint 
   expect(screen.getByTestId(BUTTON)).toBeTruthy();
   expect(screen.queryByText(HINT)).toBeNull();
 });
+
+// [A1] Every confirm step counts as the first filing (one charge, a selection, File by shop); a
+// picker or list that's opened and maybe cancelled doesn't.
+it.each([
+  { mode: 'confirmMany', hintShown: false },
+  { mode: 'fileByShopConfirm', hintShown: false },
+  { mode: 'picker', hintShown: true },
+  { mode: 'pickerMany', hintShown: true },
+  { mode: 'fileByShopList', hintShown: true },
+  { mode: 'applyRules', hintShown: true },
+])('a $mode sheet leaves the hint shown: $hintShown', async ({ mode, hintShown }) => {
+  const view = await renderTab();
+  expect(screen.getByText(HINT)).toBeTruthy();
+  mockSheet = { mode };
+  view.rerender(<WithQueries><Transactions /></WithQueries>);
+  await settle();
+  expect(screen.queryByText(HINT) !== null).toBe(hintShown);
+});

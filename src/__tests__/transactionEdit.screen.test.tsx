@@ -75,6 +75,9 @@ it('Save note only shows once the note is edited', async () => {
   expect(screen.queryByTestId('note-save')).toBeNull();
   fireEvent.changeText(screen.getByTestId('note-input'), 'new note');
   expect(screen.getByTestId('note-save')).toBeTruthy();
+  // [A3] typed back to the saved note (bar stray spaces) → nothing to save, so it hides again
+  fireEvent.changeText(screen.getByTestId('note-input'), ' old note ');
+  expect(screen.queryByTestId('note-save')).toBeNull();
 });
 
 // WHIT-843 (decision A): leaving saves an edited note once with the LATEST text (typed twice, so a
