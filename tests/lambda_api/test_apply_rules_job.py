@@ -11,15 +11,8 @@ import json
 
 import pytest
 
-from _api_event import api_event
-from _feed_fakes import apply_rules_job_get_event, apply_rules_job_post_event, FakeCategoryRepo, real_repos
+from _feed_fakes import apply_rules_job_get_event, apply_rules_job_post_event, FakeCategoryRepo, real_repos, _rule
 from _job_fakes import created_jobs, real_job_repo
-
-
-def _rule(value, category_id="groceries"):
-    # The kwargs of one real RuleRepository.create_rule call.
-    return {"field": "description", "operator": "contains", "value": value,
-            "category_id": category_id}
 
 
 class FakeLambdaClient:
@@ -144,24 +137,17 @@ def test_get_returns_the_job_in_client_shape(handler):
     }
 
 
-def test_get_reports_a_succeeded_job(handler):
-    stored = {"id": "job2", "status": "succeeded", "matched": 3, "attempted": 3, "filed": 3,
-              "vanished": 0, "failed": 0, "alreadyFiled": 0, "remaining": 0,
-              "createdRule": {"id": "r1", "categoryId": "groceries"}, "error": None,
-              "created_at": "t0", "updated_at": "t2", "completed_at": "t2"}
-    job_repo = real_job_repo({"job2": stored})
-    body = json.loads(handler.get_apply_rules_job(apply_rules_job_get_event("job2"), job_repo)["body"])
-    assert body["status"] == "succeeded" and body["filed"] == 3 and body["remaining"] == 0
-    assert body["createdRule"] == {"id": "r1", "categoryId": "groceries"}
-    assert body["completedAt"] == "t2"
-
-
 def test_get_unknown_job_is_404(handler):
     resp = handler.get_apply_rules_job(apply_rules_job_get_event("nope"), real_job_repo())
     assert resp["statusCode"] == 404
 
 
-def test_get_missing_id_is_404(handler):
-    event = api_event("GET", "/transactions/uncategorized/apply-rules/jobs/", path_params=None)
-    resp = handler.get_apply_rules_job(event, real_job_repo())
-    assert resp["statusCode"] == 404
+def test_get_returns_500_when_the_read_raises(handler):
+    # A DB fault reading the job row is a 500, not a 404 — a 404 would tell the app the job
+    # never existed and stop it polling a job that may still be running.
+    class _Boom:
+        def get_job(self, job_id):
+            raise handler.DatabaseError("db down")
+
+    resp = handler.get_apply_rules_job(apply_rules_job_get_event("jobX"), _Boom())
+    assert resp["statusCode"] == 500

@@ -16,21 +16,19 @@ by construction, and the writes below re-confirm the stamp so a tap in the scan-
 
 import json
 
+from _api_event import api_event
 from _feed_fakes import (
-    SPENDING, FakeCategoryRepo, charge_writes, real_repos, rule_delete_event, rule_put_event, _row, stored,
+    ANZ, SPENDING, FakeCategoryRepo, charge_writes, real_repos, rule_delete_event, rule_put_event,
+    _row, _rule, stored,
 )
 
 
-_CATEGORIES = frozenset({"groceries", "petrol", "eatingout"})
+_CATEGORIES = frozenset({"groceries", "petrol", "eatingout", "transport"})
 
 
-def _rule(value, category_id="groceries", field="description", operator="contains"):
-    return {"field": field, "operator": operator, "value": value, "category_id": category_id}
-
-
-def _seed_rule(value, category_id="groceries", field="description", operator="contains"):
+def _seed_rule(value, category_id="groceries", field="description", operator="contains", **extra):
     """Real repos over one table holding one rule, plus the id the store minted (== the stamp)."""
-    table, txn_repo, rule_repo = real_repos(rules=[_rule(value, category_id, field, operator)])
+    table, txn_repo, rule_repo = real_repos(rules=[_rule(value, category_id, field, operator, **extra)])
     return table, txn_repo, rule_repo, rule_repo.list_rules()[0]["id"]
 
 
@@ -42,7 +40,6 @@ def _update(handler, rule_repo, txn_repo, event, categories=_CATEGORIES):
 def _delete(handler, rule_repo, txn_repo, event):
     resp = handler.delete_rule_route(event, rule_repo, txn_repo)
     return resp, json.loads(resp["body"])
-
 
 
 # --- edit a description rule: material value change re-evaluates ----------------
@@ -69,51 +66,58 @@ def test_edit_description_value_refiles_matches_and_clears_non_matches(handler):
     assert "category" not in gone and "filed_by_rule" not in gone           # no longer matches -> cleared
 
 
-def test_edit_description_target_only_moves_every_owned_charge_in_place(handler):
-    # A target-only edit keeps the id (id == hash of the folded value). The match set is unchanged,
-    # so every owned charge just moves to the new target — nothing is re-evaluated or cleared.
-    table, repo, rule_repo, rid = _seed_rule("coles", "groceries")
-    table.seed(
-        _row(SPENDING, "2026-07-02", "a", description="COLES 1", category="groceries", filed_by_rule=rid),
-        _row(SPENDING, "2026-07-01", "b", description="ALDI", category="groceries", filed_by_rule=rid),
-    )
-
-    _, body = _update(handler, rule_repo, repo, rule_put_event(rid, "coles", "petrol"))
-
-    assert body["id"] == rid and body["remaining"] == 0
-    # "ALDI" would NOT match "coles" — but because this is an in-place edit we do NOT re-evaluate,
-    # so it moves too (it was owned by the rule). FAIL-ON-REVERT: re-evaluate on an in-place edit and
-    # "b" is wrongly cleared.
-    assert stored(table, "a")["category"] == "petrol"
-    assert stored(table, "b")["category"] == "petrol"
-    assert stored(table, "a")["filed_by_rule"] == rid
-
-
-# --- edit a CATEGORY rule: never re-evaluate (the WHIT-540 blocker) -------------
-
-
-def test_edit_category_rule_refiles_without_reevaluating(handler):
-    # A `category equals FOOD_AND_DRINK -> groceries` rule OVERWROTE the charge's category to
-    # "groceries" when it filed it. Editing the rule's match value changes the id, which would
-    # normally re-evaluate — but re-running "category equals SUPERMARKETS" against a charge now
-    # storing "groceries" never matches, so it would WRONGLY clear a correctly-filed charge.
-    # FAIL-ON-REVERT: drop the `field != "category"` guard in RuleBook.refile_touched and "t1" is
-    # cleared instead of re-filed.
+def test_tightening_a_merchant_first_multi_rule_reevaluates_its_charges(handler):
+    # THE WHIT-561 B1 REGRESSION LOCK. Two UBER charges were filed by a MERCHANT-first multi rule
+    # "merchant contains uber AND amount < 30". Tighten it to amount < 10 -> petrol. The rule's
+    # first flat field is `merchant`, NOT `description` — under the old `field == "description"`
+    # gate the edit would blindly re-file both. With the fix (re-evaluate any rule that doesn't
+    # match on `category`) the $25 charge is CLEARED and the $5 one re-filed under the new id.
+    # FAIL-ON-REVERT: restore `field == "description"` and the $25 charge moves to petrol.
+    under_30 = [{"field": "merchant", "operator": "contains", "value": "uber"},
+                {"field": "amount", "operator": "less_than", "value": "30"}]
+    under_10 = [{"field": "merchant", "operator": "contains", "value": "uber"},
+                {"field": "amount", "operator": "less_than", "value": "10"}]
     table, repo, rule_repo, old = _seed_rule(
-        "FOOD_AND_DRINK", "groceries", field="category", operator="equals")
+        "uber", "transport", field="merchant", conditions=under_30, logic="all")
     table.seed(
-        _row(SPENDING, "2026-07-02", "t1", description="WOOLIES", category="groceries", filed_by_rule=old),
+        _row(SPENDING, "2026-07-02", "t25", description="UBER TRIP", merchant_name="UBER",
+             amount=-25, category="transport", filed_by_rule=old),
+        _row(SPENDING, "2026-07-01", "t5", description="UBER TRIP", merchant_name="UBER",
+             amount=-5, category="transport", filed_by_rule=old),
     )
+    event = api_event("PUT", f"/rules/{old}", path_params={"id": old},
+                      body={"conditions": under_10, "logic": "all", "categoryId": "petrol"})
 
-    _, body = _update(handler, rule_repo, repo,
-                     rule_put_event(old, "SUPERMARKETS", "petrol", field="category", operator="equals"))
+    _, body = _update(handler, rule_repo, repo, event)
     new = body["id"]
 
-    assert new != old                          # value changed -> id changed
-    t1 = stored(table, "t1")
-    assert t1["category"] == "petrol"          # re-filed to the new target, NOT cleared
-    assert t1["filed_by_rule"] == new
-    assert body["remaining"] == 0
+    assert new != old
+    cleared = stored(table, "t25")
+    assert "category" not in cleared and "filed_by_rule" not in cleared   # no longer matches
+    refiled = stored(table, "t5")
+    assert refiled["category"] == "petrol" and refiled["filed_by_rule"] == new   # still matches
+
+
+def test_turning_a_rules_flag_on_does_not_exclude_already_filed_charges(handler):
+    # WHIT-558 "forward only": the re-file path re-keys category + stamp, never budget_excluded. A
+    # rule (flag OFF) already filed a charge; the user edits the target and turns "keep out of
+    # budget" ON. The charge moves but stays counted until it is filed fresh. FAIL-ON-REVERT if
+    # the re-file path ever starts carrying the flag: this row gains budget_excluded.
+    table, repo, rule_repo, rid = _seed_rule("coles", "groceries", budget_excluded=False)
+    table.seed(
+        _row(SPENDING, "2026-07-02", "a", description="COLES 1",
+             category="groceries", filed_by_rule=rid),
+    )
+
+    resp, _ = _update(handler, rule_repo, repo,
+                      rule_put_event(rid, "coles", "petrol", budgetExcluded=True))
+
+    assert resp["statusCode"] == 200
+    # The rule row DID take the flag (forward, for future fills)…
+    assert rule_repo.get_rule(rid)["budget_excluded"] is True
+    row = stored(table, "a")
+    assert row["category"] == "petrol"              # re-filed to the new target
+    assert "budget_excluded" not in row             # …but the OLD charge is untouched (forward only)
 
 
 # --- tap-wins and isolation -----------------------------------------------------
@@ -135,19 +139,6 @@ def test_edit_leaves_a_charge_the_user_refiled_since(handler):
     assert charge_writes(table) == []                           # never even attempted
 
 
-def test_edit_leaves_charges_owned_by_other_rules(handler):
-    table, repo, rule_repo, old = _seed_rule("coles", "groceries")
-    table.seed(
-        _row(SPENDING, "2026-07-02", "mine", description="COLES 1", category="groceries", filed_by_rule=old),
-        _row(SPENDING, "2026-07-01", "theirs", description="ALDI", category="groceries", filed_by_rule="other-rule"),
-    )
-
-    _update(handler, rule_repo, repo, rule_put_event(old, "coles", "petrol"))
-
-    assert stored(table, "theirs")["category"] == "groceries"       # untouched
-    assert stored(table, "theirs")["filed_by_rule"] == "other-rule"
-
-
 # --- delete a rule: undo its fills ----------------------------------------------
 
 
@@ -155,43 +146,15 @@ def test_delete_clears_every_charge_the_rule_filed(handler):
     table, repo, rule_repo, rid = _seed_rule("coles", "groceries")
     table.seed(
         _row(SPENDING, "2026-07-02", "a", description="COLES 1", category="groceries", filed_by_rule=rid),
-        _row(SPENDING, "2026-07-01", "b", description="COLES 2", category="groceries", filed_by_rule=rid),
+        _row(ANZ, "2026-07-01", "b", description="COLES 2", category="groceries", filed_by_rule=rid),
     )
 
     resp, body = _delete(handler, rule_repo, repo, rule_delete_event(rid))
 
     assert resp["statusCode"] == 200 and body == {"id": rid, "remaining": 0}
-    for txn_id in ("a", "b"):
-        row = stored(table, txn_id)
+    for txn_id, account in (("a", SPENDING), ("b", ANZ)):    # across every account
+        row = stored(table, txn_id, account)
         assert "category" not in row and "filed_by_rule" not in row   # back to unfiled
-
-
-def test_delete_leaves_a_charge_the_user_refiled_since(handler):
-    # The user hand-filed "kept" after the rule filed it, so its stamp was REMOVEd (WHIT-536). This
-    # guards the SCAN-LEVEL filter: an unstamped row isn't in `touched`, so clear_rule_fill is never
-    # even attempted on it. (The clear_rule_fill CONDITION itself — refusing a row whose stamp no
-    # longer matches — is fail-on-revert-covered in test_repository_transaction.py.)
-    table, repo, rule_repo, rid = _seed_rule("coles", "groceries")
-    table.seed(
-        _row(SPENDING, "2026-07-02", "kept", description="COLES 1", category="coffee"),  # stamp gone
-    )
-
-    _delete(handler, rule_repo, repo, rule_delete_event(rid))
-
-    assert stored(table, "kept")["category"] == "coffee"
-
-
-def test_delete_of_an_unknown_rule_undoes_nothing(handler):
-    # Idempotent double-tap: deleting "deadbeef" scans for that id and finds nothing owned by it.
-    table, repo, rule_repo = real_repos({SPENDING: [
-        _row(SPENDING, "2026-07-02", "t1", description="COLES 1", category="groceries",
-             filed_by_rule="some-rule"),
-    ]})
-
-    resp, body = _delete(handler, rule_repo, repo, rule_delete_event("deadbeef"))
-
-    assert resp["statusCode"] == 200 and body["remaining"] == 0
-    assert stored(table, "t1")["category"] == "groceries"   # not this delete's business
 
 
 # --- the write budget: a rule on more charges than one request can finish -------

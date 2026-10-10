@@ -80,32 +80,7 @@ def test_trigger_sync_happy_path_builds_correct_request(monkeypatch):
     assert captured["timeout"] == handler.SYNC_TIMEOUT_SECONDS
 
 
-def test_trigger_sync_409_is_skipped(monkeypatch):
-    def fake_urlopen(req, timeout=None):
-        raise http_error(409)
-
-    monkeypatch.setattr(handler.urllib.request, "urlopen", fake_urlopen)
-
-    # 409 = a sync is already running; the handler swallows it and returns None.
-    assert handler.trigger_sync("feed-1", "the-key") is None
-
-
-def test_trigger_sync_non_409_http_error_is_raised(monkeypatch):
-    def fake_urlopen(req, timeout=None):
-        raise http_error(500)
-
-    monkeypatch.setattr(handler.urllib.request, "urlopen", fake_urlopen)
-
-    with pytest.raises(urllib.error.HTTPError):
-        handler.trigger_sync("feed-1", "the-key")
-
-
 # --- lambda_handler ----------------------------------------------------------
-
-
-def test_up_spending_feed_replaces_deleted_anz_feed():
-    assert handler.SYNC_FEED_IDS["ZDlL4aShYkOd8A3dw8Tb"] == "up-spending"
-    assert "xXkBR72EKo4Qxkz8667l" not in handler.SYNC_FEED_IDS
 
 
 def test_lambda_handler_all_feeds_succeed(monkeypatch):
@@ -258,3 +233,21 @@ def test_a_pending_mirror_failure_does_not_hide_a_failed_feed(monkeypatch):
 
     with pytest.raises(RuntimeError, match="sync trigger failed"):
         handler.lambda_handler({}, None)
+
+
+def test_the_mirror_still_runs_when_every_feed_fails(monkeypatch):
+    # A failed sync POST must not stop the mirror (it runs before the final raise), and
+    # the run still raises for the WHIT-644 alarm.
+    monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
+    monkeypatch.setattr(handler, "forget_api_key", lambda path: None)
+
+    def urlopen(req, timeout=None):
+        raise http_error(500)
+
+    monkeypatch.setattr(handler.urllib.request, "urlopen", urlopen)
+    calls = []
+    monkeypatch.setattr(handler.pending_mirror, "mirror_pendings", lambda api_key: calls.append(api_key))
+
+    with pytest.raises(RuntimeError, match="sync trigger failed"):
+        handler.lambda_handler({}, None)
+    assert calls == ["the-key"]

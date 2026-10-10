@@ -57,19 +57,20 @@ def test_a_zero_dollar_row_from_the_bank_is_dropped_and_real_charges_are_stored(
             _raw("fee-zero", amount=0, description="FOREIGN FEE AUD 5.10"),
             _raw("fee-zero-decimal", amount="0.00", description="FOREIGN FEE AUD 0.74"),
             _raw("fee-zero-pending", amount=0.0, description="FOREIGN FEE AUD 1.20", pending=True),
+            _raw("neg-zero", amount="-0.00"),
+            _raw("long-zero", amount="0.000"),
             _raw("charge", amount=-175.11),
             _raw("tiny", amount=-0.01),
+            _raw("credit", amount=0.01, description="REFUND"),
         ]}, repo)
 
     stored = _txn_rows(repo)
-    assert "TXN#charge" in stored
-    assert "TXN#tiny" in stored
-    assert "TXN#fee-zero" not in stored
-    assert "TXN#fee-zero-decimal" not in stored
-    assert "TXN#fee-zero-pending" not in stored
-    assert seen_by_write == ["charge", "tiny"]
-    assert seen_by_rules == ["charge", "tiny"]
-    assert seen_by_alerts == ["charge", "tiny"]
+    assert {"TXN#charge", "TXN#tiny", "TXN#credit"} <= set(stored)
+    for dropped in ("fee-zero", "fee-zero-decimal", "fee-zero-pending", "neg-zero", "long-zero"):
+        assert f"TXN#{dropped}" not in stored
+    assert seen_by_write == ["charge", "tiny", "credit"]
+    assert seen_by_rules == ["charge", "tiny", "credit"]
+    assert seen_by_alerts == ["charge", "tiny", "credit"]
 
 
 def test_a_dead_lettered_zero_dollar_row_is_cleared_not_stored(lam, repo):

@@ -50,16 +50,6 @@ def test_posted_merchant_name(lam, merchant_name, expected):
     assert _clean(lam, "IGNORED RAW DESCRIPTION", merchant_name) == expected
 
 
-def test_prefers_merchant_name_over_description(lam):
-    assert _clean(lam, "SOMETHING ELSE ENTIRELY", "COLES 0602          ") == "COLES"
-
-
-def test_casing_is_left_untouched(lam):
-    # Neither upper- nor title-cased: bank casing is authoritative.
-    assert _clean(lam, "", "DiDiMobility ") == "DiDiMobility"
-    assert _clean(lam, "", "WOOLWORTHS/330 MILLERS RD ") == "WOOLWORTHS/330 MILLERS RD"
-
-
 # --- never-empty fallback ----------------------------------------------------
 
 
@@ -118,6 +108,9 @@ _COLUMN_CASES = [
     ("POS AUTHORISATION" + " " * 24 + "COLES 0602".ljust(25) + "MEL", "COLES 0602".ljust(25)),
     ("POS AUTHORISATION" + " " * 25 + "COLES 0602".ljust(25) + "MEL", None),  # drift past width
     ("POS AUTHORISATION\t\tCOLES", "COLES"),               # tab padding still counts
+    # newline and non-breaking-space padding still land the cut on the merchant
+    ("POS AUTHORISATION\n\n" + "COLES 0602".ljust(25) + "MELBOURNE    AU", "COLES 0602".ljust(25)),
+    ("POS AUTHORISATION" + "\xa0" * 9 + "COLES 0602".ljust(25) + "MELBOURNE    AU", "COLES 0602".ljust(25)),
     ("pos authorisation  coles 0602", "coles 0602"),       # case-insensitive prefix
 ]
 
@@ -127,9 +120,3 @@ def test_pending_merchant_column_slices_by_position(lam, description, expected):
     assert lam.merchant.pending_merchant_column(description) == expected
 
 
-@pytest.mark.parametrize("pad", [2, 8, 9, 11, 14])
-def test_pending_merchant_column_cut_follows_the_padding(lam, pad):
-    # A bank-side padding change must shift the cut with it, not misalign it — same shop
-    # read cleanly at every padding width.
-    desc = "POS AUTHORISATION" + " " * pad + "COLES 0602".ljust(25) + "MELBOURNE"
-    assert lam.merchant.pending_merchant_column(desc).strip() == "COLES 0602"

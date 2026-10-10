@@ -17,15 +17,10 @@ from functools import partial
 import pytest
 
 from _api_event import api_event
-from _feed_fakes import SPENDING, Repos, _row, inject_rule_routes
+from _feed_fakes import SPENDING, Repos, _row, _rule, inject_rule_routes
 
 
 _CATEGORIES = ("groceries", "subscriptions", "insurance")
-
-
-def _rule(value, category_id="subscriptions", **kw):
-    return {"field": "description", "operator": "contains", "value": value,
-            "category_id": category_id, **kw}
 
 
 _inject = partial(inject_rule_routes, categories=_CATEGORIES)

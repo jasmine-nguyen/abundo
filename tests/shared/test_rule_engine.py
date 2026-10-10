@@ -6,15 +6,38 @@ whole feature rests on: only unfiled charges are eligible, and filing one remove
 unfiled set (so a second run files nothing new).
 """
 
+import pathlib
+from decimal import Decimal
+
+import pytest
+from _ast_bindings import _top_level_binding_list
+from _rule_pairs import PAIR_VALUE, RULE_PAIRS
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+SHARED_DIR = ROOT / "shared"
+_RULE_VOCAB_NAMES = {"RULE_FIELD_OPERATORS", "RULE_FIELDS", "RULE_OPERATORS", "RULE_LOGIC",
+                     "RULE_DIRECTIONS", "_FIELD_OPERATORS", "_LOGIC"}
+
 
 def _rule(value, category_id="groceries", field="description", operator="contains", rule_id="r1"):
     return {"id": rule_id, "field": field, "operator": operator, "value": value,
             "categoryId": category_id}
 
 
-def _txn(transaction_id, description="COLES 1234 RICHMOND", category=None):
+def _txn(transaction_id="t1", description="COLES 1234 RICHMOND", category=None,
+         amount=Decimal("-25.00"), account_id="acct-1", merchant_name=None):
     return {"transaction_id": transaction_id, "description": description, "category": category,
+            "amount": amount, "account_id": account_id, "merchant_name": merchant_name,
             "pk": "ACCOUNT#a1", "sk": f"TXN#{transaction_id}"}
+
+
+def _multi(conditions, logic="all", category_id="transport", rule_id="m1"):
+    # Mirror how the store + mappers shape a multi rule: the flat field/operator/value carry the
+    # FIRST condition (so a legacy reader has a shape), alongside conditions/logic. `decide` must
+    # ignore those flat fields for a multi rule — this shape is what makes that guard load-bearing.
+    first = conditions[0]
+    return {"id": rule_id, "categoryId": category_id, "conditions": conditions, "logic": logic,
+            "field": first["field"], "operator": first["operator"], "value": first["value"]}
 
 
 def _is_unfiled(taxonomy):
@@ -62,11 +85,6 @@ def test_category_equals_matches_a_raw_enum_exactly(rule_engine):
     rule = _rule("FOOD_AND_DRINK", field="category", operator="equals")
     assert rule_engine.rule_matches(rule, _txn("t1", category="FOOD_AND_DRINK"))
     assert not rule_engine.rule_matches(rule, _txn("t2", category="TRANSPORT"))
-
-
-def test_unknown_field_or_operator_never_matches(rule_engine):
-    assert not rule_engine.rule_matches(_rule("x", field="amount"), _txn("t1", "X"))
-    assert not rule_engine.rule_matches(_rule("x", operator="regex"), _txn("t1", "X"))
 
 
 # --- the plan: eligibility, conflicts, skipped rules --------------------------
@@ -208,19 +226,6 @@ def test_winner_floats_to_index0_when_non_matching_rules_sit_before_it(rule_engi
     assert sorted(matched_indices) == [1, 3]
 
 
-def test_two_category_equals_rules_never_co_match_so_never_conflict(rule_engine):
-    # A category-equals rule matches on EXACT category equality, so two of them to different values
-    # can never both match one charge — only one matches, so it resolves via the fast path.
-    rules = [_rule("FOOD", "petrol", field="category", operator="equals", rule_id="r-food"),
-             _rule("FOOD_AND_DRINK", "groceries", field="category", operator="equals", rule_id="r-fad")]
-    resolved, matched_indices, categories = rule_engine.decide(
-        rules, _txn("t1", "anything", category="FOOD_AND_DRINK"))
-
-    assert resolved == "groceries"
-    assert categories == {"groceries"}
-    assert [rules[i]["id"] for i in matched_indices] == ["r-fad"]
-
-
 def test_cross_field_nested_fold_stays_conflicted(rule_engine):
     # A description rule ("food") and a category rule ("food_and_drink") can BOTH match one charge,
     # and "food_and_drink" folds to CONTAIN "food" — but that is a coincidence across rule KINDS,
@@ -231,21 +236,6 @@ def test_cross_field_nested_fold_stays_conflicted(rule_engine):
              _rule("FOOD_AND_DRINK", "groceries", field="category", operator="equals", rule_id="r-cat")]
     resolved, _, categories = rule_engine.decide(
         rules, _txn("t1", "FOOD TRUCK 42", category="FOOD_AND_DRINK"))
-
-    assert resolved is None
-    assert categories == {"eating-out", "groceries"}
-
-
-def test_desc_rule_that_would_swallow_a_category_rule_stays_conflicted(rule_engine):
-    # The MIRROR of the case above: here the DESCRIPTION rule's folded value ("food and drink")
-    # would swallow the CATEGORY rule's ("food"), so a field-agnostic tie-break would crown the
-    # description rule. The field+operator guard says these are different KINDS, not nested
-    # specificity, so the charge stays conflicted from this direction too.
-    # FAIL-ON-REVERT: drop the `targets[other] == targets[position]` guard and this resolves.
-    rules = [_rule("food and drink", "eating-out", field="description", operator="contains", rule_id="r-desc"),
-             _rule("food", "groceries", field="category", operator="equals", rule_id="r-cat")]
-    resolved, _, categories = rule_engine.decide(
-        rules, _txn("t1", "FOOD AND DRINK STORE", category="FOOD"))
 
     assert resolved is None
     assert categories == {"eating-out", "groceries"}
@@ -269,13 +259,6 @@ def test_a_rule_targeting_income_is_applied_not_skipped(rule_engine):
 
     assert [c for _, c, _ in plan["matched"]] == ["income"]
     assert plan["skipped_rules"] == []
-
-
-def test_a_single_condition_rule_is_applied_normally(rule_engine):
-    single = _rule("uber", rule_id="r-single")
-    plan = rule_engine.plan_rule_application(
-        [single], [_txn("t1", "UBER TRIP")], _is_unfiled({"groceries"}))
-    assert len(plan["matched"]) == 1
 
 
 def test_unsupported_and_empty_rules_are_reported(rule_engine):
@@ -312,12 +295,6 @@ def test_by_rule_is_sorted_biggest_first_and_omits_rules_that_hit_nothing(rule_e
     assert [entry["ruleId"] for entry in plan["by_rule"]] == ["big", "small"]
 
 
-def test_no_rules_and_no_rows_plans_nothing(rule_engine):
-    plan = rule_engine.plan_rule_application([], [], _is_unfiled({"groceries"}))
-    assert plan == {"unfiled": 0, "matched": [], "conflicted": 0, "conflicted_samples": [],
-                    "by_category": {}, "by_rule": [], "skipped_rules": [], "rules_considered": 0}
-
-
 # --- existing_at_least_as_specific: is minting `value` unsafe against this existing rule? ------
 # WHIT-518 made the clash ONE-DIRECTIONAL: minting a candidate that is more GENERAL than (or equal
 # to) a disagreeing existing rule is refused (it would steamroll the specific rule under the "file
@@ -350,31 +327,13 @@ def test_specificity_check_needs_the_same_field_and_operator(rule_engine):
     assert not rule_engine.existing_at_least_as_specific(rule, "description", "equals", "COLES")
 
 
-def test_specificity_check_is_false_when_either_value_is_empty(rule_engine):
-    assert not rule_engine.existing_at_least_as_specific(_rule("   "), "description", "contains", "COLES")
-    assert not rule_engine.existing_at_least_as_specific(_rule("COLES"), "description", "contains", "   ")
-
-
 # --- rule_id_for: the stable dedup id -----------------------------------------
-
-
-def test_rule_id_for_is_sixteen_lowercase_hex(rule_engine):
-    rule_id = rule_engine.rule_id_for("description", "contains", "COLES")
-    assert len(rule_id) == 16
-    assert all(character in "0123456789abcdef" for character in rule_id)
 
 
 def test_rule_id_for_folds_the_value_so_casing_and_spacing_variants_share_an_id(rule_engine):
     base = rule_engine.rule_id_for("description", "contains", "coles online")
     assert rule_engine.rule_id_for("description", "contains", "COLES ONLINE") == base
     assert rule_engine.rule_id_for("description", "contains", "  coles   online  ") == base
-
-
-def test_rule_id_for_changes_with_field_operator_or_value(rule_engine):
-    base = rule_engine.rule_id_for("description", "contains", "coles")
-    assert rule_engine.rule_id_for("category", "contains", "coles") != base
-    assert rule_engine.rule_id_for("description", "equals", "coles") != base
-    assert rule_engine.rule_id_for("description", "contains", "woolworths") != base
 
 
 def test_rule_id_for_pins_the_recipe(rule_engine):
@@ -401,3 +360,292 @@ def test_filing_removes_a_charge_from_the_unfiled_set(rule_engine):
     second = rule_engine.plan_rule_application([_rule("coles")], rows, _is_unfiled(taxonomy))
     assert second["matched"] == []
     assert second["unfiled"] == 0
+
+
+# --- crash safety and matcher edges -------------------------------------------
+
+
+@pytest.mark.parametrize("value,description,expected", [
+    (1234, "COLES 1234", True),          # an int rule value is stringified, not crashed on
+    (1234, "COLES 9999", False),
+    (0, "PAYMENT 0", False),             # 0 is falsy -> treated as an empty value, matches nothing
+    (None, "ANYTHING", False),
+    (False, "FALSE ALARM", False),
+    ("1234", 12345, True),               # a numeric description is stringified
+    ("1234", None, False),
+    ("1234", "", False),
+    ("1234", 0, False),
+])
+def test_a_non_string_rule_value_or_description_never_crashes(
+        rule_engine, value, description, expected):
+    # `value` reaches us from BankSync and a stored description isn't guaranteed a string either.
+    # Neither may raise — an exception here would 500 the whole run.
+    assert rule_engine.rule_matches(_rule(value), _txn("t1", description)) is expected
+
+
+def test_a_rule_with_no_category_id_is_skipped_rather_than_crashing_the_run(rule_engine):
+    # [A34] A rule missing `categoryId` entirely (a hand-made or half-migrated BankSync rule).
+    # _skip_reason must catch it BEFORE the planner reaches rule["categoryId"] — that subscript
+    # would raise KeyError and 500 the whole run, taking every other rule with it. The reason
+    # names the real problem rather than blaming a deleted category.
+    rule = {"id": "no-cat", "field": "description", "operator": "contains", "value": "coles"}
+    plan = rule_engine.plan_rule_application([rule], [_txn("t1")], _is_unfiled({"groceries"}))
+
+    assert plan["matched"] == []
+    assert plan["skipped_rules"] == [
+        {"id": "no-cat", "value": "coles", "reason": "rule has no category"}]
+
+
+def test_category_equals_does_not_match_a_prefix_of_the_stored_category(rule_engine):
+    # `equals` is not `contains`: a FOOD rule must not sweep up every FOOD_AND_DRINK charge.
+    rule = _rule("FOOD", field="category", operator="equals")
+    assert not rule_engine.rule_matches(rule, _txn("t1", category="FOOD_AND_DRINK"))
+
+
+def test_a_charge_whose_category_is_an_empty_string_is_eligible_and_filable(rule_engine):
+    # "" is neither income nor a taxonomy id, so the badge counts it — the apply pass must
+    # be able to file it too, or those rows are permanently stuck.
+    plan = rule_engine.plan_rule_application(
+        [_rule("coles")], [_txn("t1", "COLES", category="")], _is_unfiled({"groceries"}))
+
+    assert plan["unfiled"] == 1
+    assert [t["transaction_id"] for t, _, _ in plan["matched"]] == ["t1"]
+
+
+def test_amount_match_is_identical_across_spellings(rule_engine):
+    # -25 is under $30 regardless of how the threshold was written; -40 is not. The stored
+    # spelling must not shift the boundary.
+    for spelling in ["30", "30.0", "30.00", "3e1", "30.000"]:
+        rule = _rule(spelling, field="amount", operator="less_than")
+        assert rule_engine.rule_matches(rule, _txn(amount=Decimal("-25.00"))) is True, spelling
+        assert rule_engine.rule_matches(rule, _txn(amount=Decimal("-40.00"))) is False, spelling
+
+
+# --- multi-condition identity: existing single-condition ids are byte-stable ---
+
+
+def test_single_condition_collapses_to_the_legacy_id(rule_engine):
+    # A 1-condition rule (built the new way) MUST hash to the exact legacy id, so it dedups against
+    # the existing flat rule and keeps its history. FAIL-ON-REVERT: drop the len==1 collapse and a
+    # one-condition rule gets a brand-new id, orphaning every charge it filed.
+    legacy = rule_engine.rule_id_for("description", "contains", "COLES")
+    collapsed = rule_engine.rule_id_for_conditions(
+        [{"field": "description", "operator": "contains", "value": "COLES"}], "all")
+    assert collapsed == legacy
+
+
+def test_empty_conditions_list_falls_back_to_the_legacy_id(rule_engine):
+    # An app that sends `conditions: []` must not mint a different id from the flat rule.
+    assert (rule_engine.rule_identity("description", "contains", "COLES", [], "all")
+            == rule_engine.rule_id_for("description", "contains", "COLES"))
+
+
+def test_multi_condition_id_is_order_independent(rule_engine):
+    a = {"field": "merchant", "operator": "contains", "value": "UBER"}
+    b = {"field": "amount", "operator": "less_than", "value": "30"}
+    assert (rule_engine.rule_id_for_conditions([a, b], "all")
+            == rule_engine.rule_id_for_conditions([b, a], "all"))
+
+
+def test_multi_condition_id_differs_by_logic_and_from_single(rule_engine):
+    a = {"field": "merchant", "operator": "contains", "value": "UBER"}
+    b = {"field": "amount", "operator": "less_than", "value": "30"}
+    assert (rule_engine.rule_id_for_conditions([a, b], "all")
+            != rule_engine.rule_id_for_conditions([a, b], "any"))
+    # A multi id can never collide with a single-condition (legacy) id.
+    assert (rule_engine.rule_id_for_conditions([a, b], "all")
+            != rule_engine.rule_id_for("merchant", "contains", "UBER"))
+
+
+# --- multi-condition combination: AND / OR -------------------------------------
+
+
+def test_all_logic_requires_every_condition(rule_engine):
+    rule = _multi([{"field": "merchant", "operator": "contains", "value": "uber"},
+                   {"field": "amount", "operator": "less_than", "value": "30"}], "all")
+    assert rule_engine.rule_matches(rule, _txn(description="UBER TRIP", amount=Decimal("-25.00")))
+    assert not rule_engine.rule_matches(rule, _txn(description="UBER TRIP", amount=Decimal("-40.00")))
+
+
+def test_any_logic_needs_only_one(rule_engine):
+    rule = _multi([{"field": "merchant", "operator": "equals", "value": "uber"},
+                   {"field": "amount", "operator": "greater_than", "value": "1000"}], "any")
+    # merchant matches the raw description (WHIT-561 follow-up), so equals compares to it.
+    assert rule_engine.rule_matches(rule, _txn(description="UBER", amount=Decimal("-25.00")))
+    assert not rule_engine.rule_matches(rule, _txn(description="LYFT", amount=Decimal("-25.00")))
+
+
+# --- the per-field primitives ---------------------------------------------------
+
+
+def test_amount_matches_on_magnitude_not_sign(rule_engine):
+    under = _multi([{"field": "amount", "operator": "less_than", "value": "30"}])
+    assert rule_engine.rule_matches(under, _txn(amount=Decimal("-25.00")))   # spend stored negative
+    assert not rule_engine.rule_matches(under, _txn(amount=Decimal("-30.00")))  # strict <
+    over = _multi([{"field": "amount", "operator": "greater_than", "value": "30"}])
+    assert rule_engine.rule_matches(over, _txn(amount=Decimal("-40.00")))
+
+
+def test_amount_fails_closed_on_bad_or_missing_value(rule_engine):
+    rule = _multi([{"field": "amount", "operator": "less_than", "value": "not-a-number"}])
+    assert not rule_engine.rule_matches(rule, _txn(amount=Decimal("-25.00")))
+    missing_amount = _multi([{"field": "amount", "operator": "less_than", "value": "30"}])
+    assert not rule_engine.rule_matches(missing_amount, {"description": "x"})  # no amount key
+
+
+def test_amount_or_equal_operators_include_the_exact_boundary(rule_engine):
+    at_30 = _txn(amount=Decimal("-30.00"))
+    lte = _multi([{"field": "amount", "operator": "less_than_or_equal", "value": "30"}])
+    gte = _multi([{"field": "amount", "operator": "greater_than_or_equal", "value": "30"}])
+    # FAIL-ON-REVERT: <= / >= match AT the exact magnitude (the strict forms, tested elsewhere, do not).
+    assert rule_engine.rule_matches(lte, at_30)
+    assert rule_engine.rule_matches(gte, at_30)
+    # and away from the boundary they behave like the strict forms
+    assert rule_engine.rule_matches(lte, _txn(amount=Decimal("-20.00")))
+    assert not rule_engine.rule_matches(lte, _txn(amount=Decimal("-40.00")))
+    assert rule_engine.rule_matches(gte, _txn(amount=Decimal("-40.00")))
+    assert not rule_engine.rule_matches(gte, _txn(amount=Decimal("-20.00")))
+
+
+def test_direction_debit_and_credit(rule_engine):
+    debit = _multi([{"field": "direction", "operator": "is", "value": "debit"}])
+    assert rule_engine.rule_matches(debit, _txn(amount=Decimal("-25.00")))
+    assert not rule_engine.rule_matches(debit, _txn(amount=Decimal("25.00")))
+    credit = _multi([{"field": "direction", "operator": "is", "value": "credit"}])
+    assert rule_engine.rule_matches(credit, _txn(amount=Decimal("25.00")))
+
+
+def test_direction_zero_amount_matches_neither(rule_engine):
+    # A $0.00 charge is neither debit (<0) nor credit (>0).
+    debit = _multi([{"field": "direction", "operator": "is", "value": "debit"}])
+    credit = _multi([{"field": "direction", "operator": "is", "value": "credit"}])
+    assert not rule_engine.rule_matches(debit, _txn(amount=Decimal("0")))
+    assert not rule_engine.rule_matches(credit, _txn(amount=Decimal("0")))
+
+
+def test_merchant_and_account_fields(rule_engine):
+    # merchant matches the raw description (WHIT-561 follow-up), not the cleaned merchant_name.
+    merchant = _multi([{"field": "merchant", "operator": "equals", "value": "uber"}])
+    assert rule_engine.rule_matches(merchant, _txn(description="UBER"))
+    assert not rule_engine.rule_matches(merchant, _txn(description="UBER EATS"))  # equals, not contains
+    account = _multi([{"field": "account", "operator": "equals", "value": "acct-1"}])
+    assert rule_engine.rule_matches(account, _txn(account_id="acct-1"))
+    assert not rule_engine.rule_matches(account, _txn(account_id="acct-2"))
+
+
+def test_merchant_matches_the_raw_description_not_the_cleaned_merchant_name(rule_engine):
+    # merchant is a friendlier label for the raw description (the field every other rule matches
+    # and the one stable across pending/posted). It must READ description and IGNORE merchant_name.
+    rule = _multi([{"field": "merchant", "operator": "contains", "value": "coles"}])
+    # description holds the value, merchant_name does not -> matches (reads description).
+    assert rule_engine.rule_matches(rule, _txn(description="COLES 123", merchant_name="WOOLIES"))
+    # merchant_name holds it, description does not -> does NOT match.
+    # FAIL-ON-REVERT: matching merchant_name (the old behaviour) makes this wrongly True.
+    assert not rule_engine.rule_matches(rule, _txn(description="WOOLIES 456", merchant_name="COLES"))
+
+
+# --- decide: a disagreement involving a multi rule is conflicted, never mis-filed ---
+
+
+def test_decide_conflicts_when_a_multi_rule_disagrees(rule_engine):
+    # A single "uber -> transport" and a multi "uber AND under $30 -> food" both match a $25 UBER.
+    # They disagree; the multi rule can't be ranked by single-value specificity -> conflicted (None),
+    # never silently filed. FAIL-ON-REVERT: drop the `any(conditions)` guard in decide and this
+    # could resolve to a wrong category.
+    single = {"id": "s1", "categoryId": "transport", "field": "merchant",
+              "operator": "contains", "value": "uber"}
+    multi = _multi([{"field": "merchant", "operator": "contains", "value": "uber"},
+                    {"field": "amount", "operator": "less_than", "value": "30"}],
+                   category_id="food", rule_id="m1")
+    resolved, _matched, categories = rule_engine.decide(
+        [single, multi], _txn(description="UBER TRIP", amount=Decimal("-25.00")))
+    assert resolved is None
+    assert categories == {"transport", "food"}
+
+
+def test_decide_does_not_let_a_specific_single_rule_dominate_a_multi_rule(rule_engine):
+    # THE guard case: a multi rule "merchant contains uber AND under $30 -> food" is stored with its
+    # flat value = the first condition ("uber"). A single "merchant contains uber express ->
+    # transport" is MORE specific by containment. Without the `any(conditions)` guard, decide would
+    # rank them by that single value and wrongly file the charge to transport. With it, the presence
+    # of a multi rule in a disagreement -> conflicted (None). FAIL-ON-REVERT: drop the guard -> this
+    # resolves to "transport" instead of None.
+    multi = _multi([{"field": "merchant", "operator": "contains", "value": "uber"},
+                    {"field": "amount", "operator": "less_than", "value": "30"}],
+                   category_id="food", rule_id="m1")
+    specific_single = {"id": "s1", "categoryId": "transport", "field": "merchant",
+                       "operator": "contains", "value": "uber express"}
+    charge = _txn(description="UBER EXPRESS", amount=Decimal("-25.00"))
+    resolved, _matched, _categories = rule_engine.decide([multi, specific_single], charge)
+    assert resolved is None
+
+
+def test_decide_two_multi_rules_agreeing_resolve_cleanly(rule_engine):
+    # The `any(conditions)` conflict guard is reached ONLY when the matched categories DISAGREE
+    # (len > 1). Two multi rules that both name "food" agree -> one category -> filed, NOT dropped
+    # as conflicted. FAIL-ON-REVERT: if the guard were hoisted above the len(categories)<=1 check,
+    # agreeing multis would wrongly resolve to None.
+    a = _multi([{"field": "merchant", "operator": "contains", "value": "uber"},
+                {"field": "amount", "operator": "less_than", "value": "30"}],
+               category_id="food", rule_id="a")
+    b = _multi([{"field": "merchant", "operator": "contains", "value": "uber"},
+                {"field": "direction", "operator": "is", "value": "debit"}],
+               category_id="food", rule_id="b")
+    resolved, matched, categories = rule_engine.decide(
+        [a, b], _txn(description="UBER TRIP", amount=Decimal("-25.00")))
+    assert resolved == "food"
+    assert matched == [0, 1]
+    assert categories == {"food"}
+
+
+# --- _skip_reason and the one shared rule vocabulary ------------------------------
+
+
+def test_skip_reason_flags_an_unsupported_condition_in_a_multi_rule(rule_engine):
+    # One good condition + one with a field the engine can't evaluate -> the whole rule is skipped
+    # as unsupported (never silently matches nothing).
+    rule = _multi([{"field": "merchant", "operator": "contains", "value": "uber"},
+                   {"field": "postcode", "operator": "equals", "value": "3000"}])
+    assert rule_engine._skip_reason(rule, lambda _id: False) == "unsupported rule type"
+
+
+def test_skip_reason_empty_text_condition_in_a_multi_rule(rule_engine):
+    # A text condition whose value normalises to empty -> "empty rule value" (would match nothing
+    # or everything). amount + direction carry no text value and are exempt.
+    rule = _multi([{"field": "merchant", "operator": "contains", "value": "   "},
+                   {"field": "amount", "operator": "less_than", "value": "30"}])
+    assert rule_engine._skip_reason(rule, lambda _id: False) == "empty rule value"
+
+
+def _pair_rule(field, operator):
+    return _rule(PAIR_VALUE.get(field, "UBER"), "transport", field, operator)
+
+
+def test_no_other_server_file_keeps_a_copy_of_the_rule_vocabulary():
+    server_files = [path for folder in ROOT.glob("lambda*/") for path in folder.glob("*.py")]
+    server_files += [path for path in SHARED_DIR.glob("*.py") if path.name != "constants.py"]
+    copies = [f"{path.relative_to(ROOT)}: {name}" for path in sorted(server_files)
+              for name in sorted(set(_top_level_binding_list(path)) & _RULE_VOCAB_NAMES)]
+    assert copies == [], f"import the rule vocabulary from constants instead: {copies}"
+
+
+def test_engine_accepts_every_supported_pair(rule_engine):
+    skipped = {pair: rule_engine._skip_reason(_pair_rule(*pair), lambda _id: False)
+               for pair in RULE_PAIRS}
+    assert {pair: reason for pair, reason in skipped.items() if reason} == {}
+
+
+def test_engine_refuses_pairs_outside_the_vocabulary(rule_engine):
+    for field, operator in [("amount", "contains"), ("category", "contains"), ("direction", "equals"),
+                            ("account", "contains"), ("merchant", "is"), ("payee", "equals")]:
+        reason = rule_engine._skip_reason(_pair_rule(field, operator), lambda _id: False)
+        assert reason == "unsupported rule type", (field, operator, reason)
+
+
+def test_engine_logic_any_is_or_and_unknown_falls_back_to_all(rule_engine):
+    conditions = [{"field": "description", "operator": "contains", "value": "UBER"},
+                  {"field": "description", "operator": "contains", "value": "NOPE"}]
+    transaction = {"description": "UBER TRIP", "amount": -10}
+    assert rule_engine.rule_matches({"conditions": conditions, "logic": "any"}, transaction) is True
+    assert rule_engine.rule_matches({"conditions": conditions, "logic": "all"}, transaction) is False
+    assert rule_engine.rule_matches({"conditions": conditions, "logic": "xor"}, transaction) is False

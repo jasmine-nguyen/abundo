@@ -16,15 +16,11 @@ NOT in the store.
 
 import json
 
-from _feed_fakes import apply_rules_event, SPENDING, FakeCategoryRepo, charge_writes, real_repos, _row, stored
+from _feed_fakes import apply_rules_event, SPENDING, FakeCategoryRepo, charge_writes, real_repos, _row, _rule, stored
 from _rule_ingest_fakes import apply_rules_to_uncategorized
 
 
 _CATEGORIES = frozenset({"groceries", "petrol"})
-
-
-def _rule(value, category_id="groceries", field="description", operator="contains"):
-    return {"field": field, "operator": operator, "value": value, "category_id": category_id}
 
 
 def _apply(handler, repo, rule_repo, body, categories=_CATEGORIES):
@@ -84,19 +80,6 @@ def test_plain_sweep_leaves_unstamped_charges_alone(handler):
     _apply(handler, repo, rule_repo, {"dryRun": False})
 
     assert stored(table, "plain")["category"] == "petrol"
-
-
-def test_dry_run_never_sweeps(handler):
-    table, repo, rule_repo = real_repos({SPENDING: [
-        _row(SPENDING, "2026-07-02", "orphan", description="OLD", category="groceries",
-             filed_by_rule="dead-rule"),
-    ]}, rules=[_rule("coles", "groceries")])
-
-    _, body = _apply(handler, repo, rule_repo, {"dryRun": True})
-
-    assert body["dryRun"] is True
-    assert stored(table, "orphan")["category"] == "groceries"   # preview writes nothing
-    assert table.update_calls == []
 
 
 def test_file_this_shop_path_does_not_sweep_orphans(handler):

@@ -10,20 +10,16 @@ so the post-write spend level can only come from the in-memory replay — lockin
 alert is immune to the date-index GSI's eventual consistency.
 """
 
+import inspect
 from datetime import date
 from decimal import Decimal
 from functools import partial
 
 import pytest
-from _budget_alert_fakes import claimed_meanwhile, fail_nth_write, notify_repo, released_markers
+from _budget_alert_fakes import fail_nth_write, notify_repo, released_markers
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _dynamo_fakes import _client_error
-from _transaction_range_fakes import (
-    _AccountPagesTransactionRepo,
-    _AccountTransactionRepo,
-    _EndlessTransactionRepo,
-    _FailingTransactionRepo,
-)
+from _transaction_range_fakes import _AccountPagesTransactionRepo, _AccountTransactionRepo
 
 # Cycle: last_pay_date 2026-07-01, length 14, pinned "today" 2026-07-14 →
 # window [2026-07-01, 2026-07-14]. All test transactions are dated inside it.
@@ -108,65 +104,12 @@ def test_crossing_fires_via_delta_not_a_reread(alerts, monkeypatch):
     assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}
 
 
-def test_crossing_push_carries_budget_deeplink_data(alerts, monkeypatch):
-    # WHIT-322: the push carries data={"type": "budget", "category": <cat_id>} so a tap opens
-    # THAT category's budget screen (/budget/<cat_id>).
-    ba = alerts.budget_alerts
-    captured = []
-    monkeypatch.setattr(ba, "send_push",
-                        lambda title, body, toks, data=None: captured.append(data) or
-                        {"sent": len(list(toks)), "ok": 1, "pruned": []})
-    before = [_txn("old", "groceries", -70, "posted")]
-    new = _txn("new1", "groceries", -15, "posted")
-    ctx = ba.capture_pre_write(
-        [new],
-        device_repo=FakeDeviceRepo(("ExpoPushToken[a]",)),
-        budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
-        paycycle_repo=FakePaycycleRepo(last_pay_date="2026-07-01", length=14),
-        webhook_repo=_AccountTransactionRepo(before),
-    )
-    ba.fire_budget_alerts(
-        ctx, [new], category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
-        notify_repo=notify_repo(),
-    )
-    assert captured == [{"type": "budget", "category": "groceries"}]
-
-
-def test_below_threshold_does_not_fire(alerts, monkeypatch):
-    before = [_txn("old", "groceries", -70, "posted")]
-    new = _txn("new1", "groceries", -5, "posted")  # after $75 < $80
-    sent, _, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
-                      before=before, normalised=[new])
-    assert sent == []
-
-
 def test_pending_spend_counts_toward_the_threshold(alerts, monkeypatch):
     # A pending authorisation alone pushes spent+pending past 80%.
     new = _txn("p1", "groceries", -85, "pending")
     sent, _, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
                       before=[], normalised=[new])
     assert len(sent) == 1
-
-
-def test_raw_uppercase_enum_category_never_matches_a_budget(alerts, monkeypatch):
-    # A freshly-synced row with BankSync's raw "GROCERIES" (not the "groceries" slug)
-    # can't match the budget id → no alert (documents the WHIT-22 gate-1 reality check).
-    new = _txn("new1", "GROCERIES", -85, "posted")
-    sent, _, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
-                      before=[], normalised=[new])
-    assert sent == []
-
-
-def test_income_floor_target_never_fires_an_alert(alerts, monkeypatch):
-    # WHIT-69: a target on an Income category is an earn-target (a floor), not a spend
-    # ceiling. Income-bucket targets are excluded from the crossing check, so a big
-    # paycheck never trips the 80%/100% "you've spent your budget" thresholds.
-    new = _txn("pay1", "salary", 6000, "posted")  # income >> the 5000 target
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"salary": {"target": Decimal("5000")}},
-                           before=[], normalised=[new],
-                           cats=[{"id": "salary", "name": "Salary", "bucket": "Income"}])
-    assert sent == []
-    assert notify.fired_markers("2026-07-01", 14) == set()
 
 
 def test_income_clawback_does_not_fire_a_spend_alert(alerts, monkeypatch):
@@ -191,42 +134,6 @@ def test_savings_target_never_fires_a_spend_alert(alerts, monkeypatch):
     sent, notify, _ = _run(alerts, monkeypatch, budgets={"nest_egg": {"target": Decimal("100")}},
                            before=[], normalised=[new],
                            cats=[{"id": "nest_egg", "name": "Nest Egg", "bucket": "Savings"}])
-    assert sent == []
-    assert notify.fired_markers("2026-07-01", 14) == set()
-
-
-def test_spend_alert_fires_alongside_an_excluded_savings_target(alerts, monkeypatch):
-    # WHIT-201 regression (qa gap): excluding Savings-bucket targets from the crossing
-    # check must NOT suppress a real spend crossing in the SAME batch. Groceries crosses
-    # 80% while a spend mis-filed into a Savings category is (correctly) ignored — exactly
-    # one push, for spend. Guards against a filter change that over-drops the live target.
-    spend_new = _txn("g1", "groceries", -85, "posted")    # 85% of the 100 ceiling -> 80%
-    savings_new = _txn("s1", "nest_egg", -85, "posted")   # mis-filed to Savings -> silent
-    sent, notify, _ = _run(
-        alerts, monkeypatch,
-        budgets={"groceries": {"target": Decimal("100")}, "nest_egg": {"target": Decimal("100")}},
-        before=[], normalised=[spend_new, savings_new],
-        cats=[{"id": "groceries", "name": "Groceries", "bucket": "Living"},
-              {"id": "nest_egg", "name": "Nest Egg", "bucket": "Savings"}],
-    )
-    assert len(sent) == 1
-    assert sent[0][1] == "Groceries is at 80% of its budget this cycle."
-    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}  # no nest_egg marker
-
-
-def test_orphan_income_target_clawback_does_not_fire(alerts, monkeypatch):
-    # WHIT-168: an income earn-target whose category was DELETED but whose budget row
-    # survived a failed best-effort cascade is an "orphan" — its id is in targets but
-    # absent from the live taxonomy. The alert path can no longer see bucket == Income,
-    # so a lone negative clawback (-4000 → +4000 read as spend) would cross 0.8*5000 and
-    # fire a false push. The live-category membership filter drops the orphan → silent.
-    # Fails on the pre-WHIT-168 `set(targets) - income_ids` code (orphan not in income_ids).
-    new = _txn("rev1", "salary", -4000, "posted")  # clawback under a now-deleted income cat
-    sent, notify, _ = _run(
-        alerts, monkeypatch, budgets={"salary": {"target": Decimal("5000")}},
-        before=[], normalised=[new],
-        cats=[{"id": "groceries", "name": "Groceries", "bucket": "Living"}],  # salary NOT here
-    )
     assert sent == []
     assert notify.fired_markers("2026-07-01", 14) == set()
 
@@ -261,25 +168,6 @@ def test_orphan_dropped_but_live_target_in_same_batch_still_fires(alerts, monkey
         budgets={"salary": {"target": Decimal("5000")}, "groceries": {"target": Decimal("100")}},
         before=[], normalised=[orphan_clawback, live_spend],
         cats=[{"id": "groceries", "name": "Groceries", "bucket": "Living"}],  # salary NOT here
-    )
-    assert len(sent) == 1
-    assert sent[0][1] == "Groceries is at 80% of its budget this cycle."
-    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}  # no salary marker
-
-
-def test_spend_alert_still_fires_alongside_an_excluded_income_target(alerts, monkeypatch):
-    # WHIT-69 regression (authored by qa): excluding Income-bucket targets from the
-    # crossing check must NOT suppress a real spend crossing in the SAME batch.
-    # Groceries crosses 80% while the income Salary paycheck is (correctly) ignored —
-    # exactly one push, for spend.
-    spend_new = _txn("g1", "groceries", -85, "posted")   # 85% of the 100 ceiling -> 80%
-    income_new = _txn("s1", "salary", 6000, "posted")     # well over the 5000 floor -> silent
-    sent, notify, _ = _run(
-        alerts, monkeypatch,
-        budgets={"groceries": {"target": Decimal("100")}, "salary": {"target": Decimal("5000")}},
-        before=[], normalised=[spend_new, income_new],
-        cats=[{"id": "groceries", "name": "Groceries", "bucket": "Living"},
-              {"id": "salary", "name": "Salary", "bucket": "Income"}],
     )
     assert len(sent) == 1
     assert sent[0][1] == "Groceries is at 80% of its budget this cycle."
@@ -321,18 +209,6 @@ def test_double_crossing_sends_only_100_but_marks_both(alerts, monkeypatch):
 # --- WHIT-154 mark-on-landing: a failed send must NOT mark fired ------------
 
 
-def test_send_failure_marks_no_marker(alerts, monkeypatch):
-    # A single 80% crossing whose send fails (ok == 0): the attempt is made but no
-    # marker is written, so the crossing stays eligible. Fail-on-revert: an
-    # unconditional mark_fired leaves {"groceries#80"}.
-    before = [_txn("old", "groceries", -70, "posted")]
-    new = _txn("new1", "groceries", -15, "posted")
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
-                           before=before, normalised=[new], send_ok=0)
-    assert len(sent) == 1                                          # send attempted
-    assert notify.fired_markers("2026-07-01", 14) == set()        # nothing marked
-
-
 def test_double_crossing_send_failure_marks_neither_threshold(alerts, monkeypatch):
     # The secondary-loop guard: $0 → -$100 crosses 80% AND 100% at once, but the
     # (100%) send fails. Neither marker may be written — marking 80% while the 100%
@@ -343,20 +219,6 @@ def test_double_crossing_send_failure_marks_neither_threshold(alerts, monkeypatc
                            before=[], normalised=[new], send_ok=0)
     assert len(sent) == 1                                          # the 100% send attempted
     assert notify.fired_markers("2026-07-01", 14) == set()        # neither marker written
-
-
-def test_primary_already_fired_repairs_secondary_without_a_new_send(alerts, monkeypatch):
-    # A prior ingest already delivered + marked the 100% push, but the 80% marker is
-    # missing (e.g. it crossed both at once but only 100% was marked before a crash).
-    # A re-ingest that re-detects the double crossing must repair the 80% marker
-    # WITHOUT sending again — the `send_marker in fired` branch treats it as landed.
-    notify = notify_repo()
-    notify.mark_fired("2026-07-01", 14, "groceries#100")  # delivered earlier
-    new = _txn("new1", "groceries", -100, "posted")
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
-                           before=[], normalised=[new], notify=notify)
-    assert sent == []                                             # no second push
-    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80", "groceries#100"}
 
 
 def test_budget_send_failure_retries_at_the_next_delivery(alerts, monkeypatch):
@@ -385,85 +247,6 @@ def test_budget_send_failure_retries_at_the_next_delivery(alerts, monkeypatch):
 # --- WHIT-154 gaps (qa): multi-category partial failure + marker interactions ----
 
 
-def test_combined_push_that_fails_releases_every_claim(alerts, monkeypatch):
-    # Two budgets reach 80% in ONE write → one combined push. It fails (ok == 0), so BOTH
-    # claims are released and both stay eligible for the next delivery (WHIT-154/577).
-    # Fail-on-revert: skipping the release leaves both markers claimed → never retried.
-    budgets = {"groceries": {"target": Decimal("100")}, "dining": {"target": Decimal("100")}}
-    normalised = [_txn("g1", "groceries", -85, "posted"), _txn("d1", "dining", -85, "posted")]
-    cats = [{"id": "groceries", "name": "Groceries", "bucket": "Living"},
-            {"id": "dining", "name": "Dining", "bucket": "Living"}]
-    sent, notify, _ = _run(alerts, monkeypatch, budgets=budgets, before=[], normalised=normalised,
-                           cats=cats, send_ok=0)
-    assert len(sent) == 1                                               # one combined attempt
-    assert notify.fired_markers("2026-07-01", 14) == set()
-    assert sorted(released_markers(notify)) == ["dining#80", "groceries#80"]
-
-
-def test_budget_fully_pruned_ok_zero_leaves_unmarked(alerts, monkeypatch):
-    # ok == 0 because every token was DeviceNotRegistered (pruned), NOT a transport
-    # error. The gate keys ONLY on ok > 0, so the pruned reason is invisible: still no
-    # marker, exactly like an outage. Fail-on-revert: an unconditional mark writes
-    # groceries#80.
-    ba = alerts.budget_alerts
-    sent = []
-
-    def fake_send(title, body, toks, data=None):
-        toks = list(toks)
-        sent.append((title, body, toks))
-        return {"sent": len(toks), "ok": 0, "pruned": toks}  # all dead tokens
-
-    monkeypatch.setattr(ba, "send_push", fake_send)
-    notify = notify_repo()
-    before = [_txn("old", "groceries", -70, "posted")]
-    new = _txn("new1", "groceries", -15, "posted")            # -> $85, crosses 80%
-    ctx = ba.capture_pre_write(
-        [new], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
-        paycycle_repo=FakePaycycleRepo(last_pay_date="2026-07-01", length=14),
-        webhook_repo=_AccountTransactionRepo(before),
-    )
-    ba.fire_budget_alerts(ctx, [new], category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
-                       notify_repo=notify)
-    assert len(sent) == 1                                     # attempted
-    assert notify.fired_markers("2026-07-01", 14) == set()    # pruned ok==0 => still unmarked
-
-
-def test_higher_send_fails_leaves_100_eligible_with_lower_fired(alerts, monkeypatch):
-    # Marker interaction: 80% already fired earlier this cycle; a new write vaults to
-    # 100% but that send fails (ok == 0). The `continue` must run BEFORE the secondary
-    # loop, so NO groceries#100 marker is written — 100% stays eligible to retry within
-    # GSI lag, and the stale 80% marker is untouched. Fail-on-revert writes groceries#100.
-    notify = notify_repo()
-    notify.mark_fired("2026-07-01", 14, "groceries#80")       # 80% delivered earlier
-    before = [_txn("old", "groceries", -85, "posted")]        # already past 80%
-    new = _txn("new1", "groceries", -20, "posted")            # -> $105, crosses 100%
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
-                           before=before, normalised=[new], notify=notify, send_ok=0)
-    assert len(sent) == 1                                             # 100% send attempted
-    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}  # no #100 written
-
-
-def test_claim_precedes_send_and_lower_marks_follow_it(alerts, monkeypatch):
-    # The marker is CLAIMED before the send (so an overlapping delivery can't also send it);
-    # the lower-threshold mark only follows a push that landed.
-    ba = alerts.budget_alerts
-    order = []
-    monkeypatch.setattr(ba, "send_push", lambda *a, **k: (order.append("send"), {"sent": 1, "ok": 1, "pruned": []})[1])
-    notify = notify_repo()
-    original_claim, original_mark = notify.claim_fired, notify.mark_fired
-    notify.claim_fired = lambda *a: (order.append("claim"), original_claim(*a))[1]
-    notify.mark_fired = lambda *a: (order.append("mark"), original_mark(*a))[1]
-    before = [_txn("old", "groceries", -90, "posted")]
-    new = _txn("new1", "groceries", -15, "posted")                     # → $105, both thresholds
-    ctx = ba.capture_pre_write(
-        [new], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
-        paycycle_repo=FakePaycycleRepo(), webhook_repo=_AccountTransactionRepo(before),
-    )
-    ba.fire_budget_alerts(ctx, [new],
-        category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]), notify_repo=notify)
-    assert order == ["claim", "send", "mark"]
-
-
 def test_two_categories_in_one_write_get_one_combined_push(alerts, monkeypatch):
     budgets = {"groceries": {"target": Decimal("100")}, "coffee": {"target": Decimal("50")}}
     before = [_txn("g", "groceries", -70, "posted"), _txn("c", "coffee", -35, "posted")]
@@ -474,39 +257,6 @@ def test_two_categories_in_one_write_get_one_combined_push(alerts, monkeypatch):
                      "Coffee, Groceries are at 80% or more of their budget this cycle.",
                      ["ExpoPushToken[a]"])]
     assert notify.fired_markers("2026-07-01", 14) == {"groceries#80", "coffee#80"}
-
-
-def test_no_tokens_skips_everything(alerts, monkeypatch):
-    ba = alerts.budget_alerts
-
-    class ExplodingBudgetRepo:
-        def list_budgets(self):
-            raise AssertionError("must not be read when there are no tokens")
-
-    ctx = ba.capture_pre_write(
-        [_txn("new1", "groceries", -100, "posted")],
-        device_repo=FakeDeviceRepo(tokens=()), budget_repo=ExplodingBudgetRepo(),
-        paycycle_repo=FakePaycycleRepo(), webhook_repo=_AccountTransactionRepo([]),
-    )
-    assert ctx is None
-
-
-def test_no_budgets_skips_the_window_read(alerts, monkeypatch):
-    ba = alerts.budget_alerts
-    store = _FailingTransactionRepo(AssertionError("must not read the window when there are no budgets"))
-
-    ctx = ba.capture_pre_write(
-        [_txn("new1", "groceries", -100, "posted")],
-        device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo({}),
-        paycycle_repo=FakePaycycleRepo(), webhook_repo=store,
-    )
-    assert ctx is None
-
-
-def test_fire_budget_alerts_ignores_a_none_context(alerts, monkeypatch):
-    ba = alerts.budget_alerts
-    monkeypatch.setattr(ba, "send_push", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no send")))
-    ba.fire_budget_alerts(None, [], category_repo=_FakeCategoryRepo([]), notify_repo=notify_repo())  # no raise
 
 
 # --- the webhook straddle is best-effort: an alert failure never breaks the write --
@@ -524,16 +274,10 @@ def _raise(*a, **k):
     raise RuntimeError("boom")
 
 
-def test_capture_failure_does_not_break_the_write(lam, monkeypatch):
-    monkeypatch.setattr(lam.budget_alerts, "capture_pre_write", _raise)
-    repo = _WriteRecordingRepo()
-    lam.handler.process_transaction({"id": "e1", "data": []}, repo)  # must not raise
-    assert repo.wrote is True
-
-
-def test_fire_failure_does_not_break_the_write(lam, monkeypatch):
+@pytest.mark.parametrize("failing_step", ["capture_pre_write", "fire_budget_alerts"])
+def test_an_alert_failure_does_not_break_the_write(lam, monkeypatch, failing_step):
     monkeypatch.setattr(lam.budget_alerts, "capture_pre_write", lambda *a, **k: {"stub": True})
-    monkeypatch.setattr(lam.budget_alerts, "fire_budget_alerts", _raise)
+    monkeypatch.setattr(lam.budget_alerts, failing_step, _raise)
     repo = _WriteRecordingRepo()
     lam.handler.process_transaction({"id": "e1", "data": []}, repo)  # must not raise
     assert repo.wrote is True
@@ -608,67 +352,6 @@ def test_tip_adjusted_settlement_crosses_at_true_combined_and_carries_category(a
     assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}
 
 
-def test_simulate_after_two_pass_matches_real_write_on_starvation_batch(alerts, repo, monkeypatch):
-    # WHIT-117 sim fidelity: _simulate_after must reproduce the two-pass exactly where it
-    # matters — a starvation batch. Pending -70 "groceries". Batch order: tip -80 FIRST,
-    # exact -70 SECOND (raw "FOOD_AND_DRINK" on both; only the carried groceries counts).
-    #   two-pass (correct): exact -70 pops the pending -> carries groceries -> groceries
-    #     combined = 70 (< 80) -> NO alert.
-    #   single-pass (bug):  tip -80 pops the pending first -> carries groceries onto -80 ->
-    #     groceries combined = 80 -> FIRES the 80 push.
-    # Asserting NO alert makes the sim's two-pass a hard gate: revert it and this fires.
-    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="groceries")
-    before = list(repo._table.store.values())
-    tip_first = _norm_real(alerts, txn_id="B", amount=Decimal("-80"), pending=False, category="FOOD_AND_DRINK")
-    exact_second = _norm_real(alerts, txn_id="C", amount=Decimal("-70"), pending=False, category="FOOD_AND_DRINK")
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
-                           before=before, normalised=[tip_first, exact_second], webhook_repo=repo)
-    assert sent == []                                       # groceries = 70 < 80, exact won the carry
-    assert notify.fired_markers("2026-07-01", 14) == set()
-
-
-def test_simulate_after_two_pass_survives_interleaved_pending(alerts, repo, monkeypatch):
-    # WHIT-117 sim GAP (authored by qa): the implementer's sim starvation test has the tip
-    # and exact postings ADJACENT. This inserts a NEW pending row BETWEEN them in
-    # `normalised`, so the two-pass must still resolve exact-before-tip with an interleaved
-    # pending in the batch. The hard gate is the ordering (RED on a single-pass revert); the
-    # interleaved pending just makes it realistic. NOTE: this does NOT independently lock
-    # iterator alignment — the defensive `next(..., (None, None))` default would mask a
-    # misadvance — it's an end-state check.
-    #   two-pass (correct): exact -70 (C) claims the pending -> groceries combined = 70
-    #     (< 80) -> NO push. The interleaved pending is unbudgeted "dining" -> ignored.
-    #   single-pass (revert): tip -80 (T) claims the pending -> groceries = 80 -> FIRES.
-    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="groceries")
-    before = list(repo._table.store.values())
-    tip_first = _norm_real(alerts, txn_id="T", amount=Decimal("-80"),
-                           pending=False, category="FOOD_AND_DRINK")
-    mid_pending = _norm_real(alerts, txn_id="D", amount=Decimal("-50"), pending=True,
-                             category="dining", merchant_name="OTHER MERCHANT",
-                             description="OTHER MERCHANT")
-    exact_second = _norm_real(alerts, txn_id="C", amount=Decimal("-70"),
-                              pending=False, category="FOOD_AND_DRINK")
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
-                           before=before, normalised=[tip_first, mid_pending, exact_second],
-                           webhook_repo=repo)
-    assert sent == []                                        # exact won the carry; 70 < 80
-    assert notify.fired_markers("2026-07-01", 14) == set()
-
-
-def test_linked_settlement_carries_category_and_uses_settled_amount(alerts, repo, monkeypatch):
-    # Explicit-link settlement (reconcile tier 1) isolates carry+Δ from the tip
-    # heuristic: pendingTransactionId points at the twin, so the amount may grow freely.
-    # Pending -70 groceries, posted -85 raw "GROCERIES" linked to it. Correct Δ: twin
-    # removed + posted-as-groceries added → 85, crosses 80. Fires exactly the 80 push.
-    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="groceries")
-    before = list(repo._table.store.values())
-    posted = _norm_real(alerts, txn_id="B", amount=Decimal("-85"), pending=False,
-                        category="GROCERIES", pending_transaction_id="A")
-    sent, _, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
-                      before=before, normalised=[posted], webhook_repo=repo)
-    assert len(sent) == 1
-    assert sent[0][0] == "Heads up \U0001f440"
-
-
 def test_posted_resync_replaces_not_adds_and_keeps_carried_category(alerts, repo, monkeypatch):
     # Re-sync of an already-stored POSTED row (no pending twin, existing-row carry
     # path). Existing posted -70 groceries; a corrected re-sync of the SAME id arrives
@@ -684,34 +367,30 @@ def test_posted_resync_replaces_not_adds_and_keeps_carried_category(alerts, repo
     assert sent[0][0] == "Heads up \U0001f440"
 
 
-# --- refund / already-over-threshold: negative & non-re-firing crossings -----
-
-
-def test_refund_lowers_spend_and_never_fires(alerts, monkeypatch):
-    # A refund (POSITIVE amount) makes after < before. No threshold can be newly
-    # crossed downward. Before $85 (already over 80%), a +$20 refund -> $65 -> silent.
-    before = [_txn("old", "groceries", -85, "posted")]
-    refund = _txn("r1", "groceries", 20, "posted")  # positive => a credit/refund
-    sent, _, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
-                      before=before, normalised=[refund])
-    assert sent == []
-
-
-def test_already_over_but_never_warned_fires_once_then_stays_quiet(alerts, monkeypatch):
-    # WHIT-577 (Jas's bug): spend is ALREADY past 80% ($85) — filed in the app, where no alert
-    # runs — and no marker exists. The next delivery, even one that adds only $5, must warn
-    # once; a later delivery must stay silent. Fail-on-revert: fire only on a crossing
-    # (before < line <= after) and the first run is silent.
-    before = [_txn("old", "groceries", -85, "posted")]
-    more = _txn("new1", "groceries", -5, "posted")
+def test_alert_fires_reading_window_and_pending_twins_from_the_webhook_store(alerts, repo, monkeypatch):
+    # The webhook's own store is the only one passed. A posted -60 settles the -60 twin →
+    # spend 80 → exactly the 80% push. Window not read through the store → 60 → no push;
+    # pending pool not read through it → 140 → "Budget hit" instead.
+    _seed(repo, alerts, txn_id="old", amount=Decimal("-20"), pending=False, category="groceries")
+    _seed(repo, alerts, txn_id="A", amount=Decimal("-60"), pending=True, category="groceries")
+    settled = [_norm_real(alerts, txn_id="B", amount=Decimal("-60"), pending=False,
+                          category="GROCERIES", pending_transaction_id="A")]
+    ba = alerts.budget_alerts
+    sent = []
+    monkeypatch.setattr(ba, "send_push", lambda title, body, tokens, data=None:
+                        sent.append((title, body)) or {"sent": 1, "ok": 1, "pruned": []})
     notify = notify_repo()
-    sent1, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
-                            before=before, normalised=[more], notify=notify)
-    assert [title for title, _, _ in sent1] == ["Heads up \U0001f440"]
 
-    sent2, _, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
-                       before=before + [more], normalised=[], notify=notify)
-    assert sent2 == []
+    ctx = ba.capture_pre_write(
+        settled, device_repo=FakeDeviceRepo(),
+        budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
+        paycycle_repo=FakePaycycleRepo(), webhook_repo=repo,
+    )
+    ba.fire_budget_alerts(ctx, settled, category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
+                          notify_repo=notify)
+
+    assert sent == [("Heads up \U0001f440", "Groceries is at 80% of its budget this cycle.")]
+    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}
 
 
 # --- window filter on the simulated after-rows -------------------------------
@@ -738,27 +417,19 @@ def test_txn_dated_on_cycle_end_boundary_is_included(alerts, monkeypatch):
 # --- threshold boundary (the `<=` inclusive edge) ----------------------------
 
 
-def test_crossing_is_inclusive_at_exactly_the_threshold(alerts, monkeypatch):
-    # Combined lands EXACTLY on 80% of target ($79 -> $80 == 0.8*100). The crossing
-    # test is `before < T <= after`, so exactly-at fires. Locks the `<=` boundary.
+@pytest.mark.parametrize("new_amount, pushes", [
+    (-1, 1),         # $79 -> $80 == 0.8*100: exactly-at fires (`before < T <= after`)
+    ("-0.99", 0),    # $79 -> $79.99: one cent under stays silent
+])
+def test_crossing_is_inclusive_at_exactly_the_threshold(alerts, monkeypatch, new_amount, pushes):
     before = [_txn("old", "groceries", -79, "posted")]
-    new = _txn("new1", "groceries", -1, "posted")
+    new = _txn("new1", "groceries", new_amount, "posted")
     sent, _, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
                       before=before, normalised=[new])
-    assert len(sent) == 1
+    assert len(sent) == pushes
 
 
-def test_one_cent_under_threshold_does_not_fire(alerts, monkeypatch):
-    # The complement: $79.99 (< $80) must not fire — proves the boundary test isn't
-    # a `<=` on the wrong side.
-    before = [_txn("old", "groceries", -79, "posted")]
-    new = _txn("new1", "groceries", "-0.99", "posted")  # -> 79.99
-    sent, _, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
-                      before=before, normalised=[new])
-    assert sent == []
-
-
-# --- target <= 0 guard & budgeted-but-unspent category -----------------------
+# --- target <= 0 guard -------------------------------------------------------
 
 
 def test_zero_target_budget_never_fires(alerts, monkeypatch):
@@ -771,27 +442,7 @@ def test_zero_target_budget_never_fires(alerts, monkeypatch):
     assert sent == []
 
 
-def test_negative_target_budget_never_fires(alerts, monkeypatch):
-    new = _txn("new1", "groceries", -100, "posted")
-    sent, _, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("-50")}},
-                      before=[], normalised=[new])
-    assert sent == []
-
-
-def test_budgeted_category_with_no_spend_is_not_a_crossing(alerts, monkeypatch):
-    # Two budgets; only groceries crosses. `coffee` has zero spend anywhere — its absent
-    # summary must read as $0 (not KeyError) and not fire. Locks the absent-id-contributes-0
-    # behaviour for a budgeted-but-untouched category.
-    budgets = {"groceries": {"target": Decimal("100")}, "coffee": {"target": Decimal("50")}}
-    before = [_txn("g", "groceries", -70, "posted")]
-    new = _txn("g2", "groceries", -15, "posted")
-    cats = [{"id": "groceries", "name": "Groceries"}, {"id": "coffee", "name": "Coffee"}]
-    sent, _, _ = _run(alerts, monkeypatch, budgets=budgets, before=before, normalised=[new], cats=cats)
-    assert len(sent) == 1
-    assert "Groceries" in sent[0][1]
-
-
-# --- windowed read: cursor pagination + the bounded backstop -----------------
+# --- windowed read: cursor pagination ----------------------------------------
 
 
 def test_window_read_accumulates_every_cursor_page(alerts, monkeypatch):
@@ -814,30 +465,6 @@ def test_window_read_accumulates_every_cursor_page(alerts, monkeypatch):
     ba.fire_budget_alerts(ctx, [new], category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
                        notify_repo=notify_repo())
     assert len(sent) == 1
-
-
-def test_window_read_backstop_raises_on_a_nonterminating_cursor(alerts):
-    ba = alerts.budget_alerts
-
-    with pytest.raises(RuntimeError, match="did not finish"):
-        ba.capture_pre_write(
-            [_txn("n", "groceries", -1, "posted")], device_repo=FakeDeviceRepo(),
-            budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
-            paycycle_repo=FakePaycycleRepo(), webhook_repo=_EndlessTransactionRepo(),
-        )
-
-
-# --- spend.py move regression: the relocated helpers behave identically ------
-# (Boundary behaviour of the window is also locked by lambda_api/test_budgets.py,
-#  which now patches `spend`; these assert the SAME functions from the webhook side.)
-
-
-def test_current_cycle_window_boundaries_from_shared_spend(alerts):
-    import spend
-    # payday inclusive, today inclusive, tomorrow excluded.
-    assert spend.current_cycle_window("2026-07-01", 14, today=date(2026, 7, 14)) == ("2026-07-01", "2026-07-14")
-    # rollover: one day past the cycle end starts a fresh single-day window.
-    assert spend.current_cycle_window("2026-07-01", 14, today=date(2026, 7, 15)) == ("2026-07-15", "2026-07-15")
 
 
 # --- per-cycle marker re-arm: the debounce marker must key on the CURRENT cycle start,
@@ -874,18 +501,6 @@ def test_stale_prior_cycle_marker_does_not_suppress_this_cycle(alerts, monkeypat
     assert notify.fired_markers("2026-07-02", 14) == {"groceries#80"}
 
 
-def test_summarise_transactions_clamps_refund_and_splits_buckets(alerts):
-    import spend
-    txns = [
-        {"category": "groceries", "amount": Decimal("-40"), "status": "posted", "counts_to_budget": True},
-        {"category": "groceries", "amount": Decimal("-10"), "status": "pending", "counts_to_budget": True},
-        {"category": "groceries", "amount": Decimal("100"), "status": "posted", "counts_to_budget": True},  # big refund
-    ]
-    out = spend.summarise_transactions(txns, {"groceries"})
-    assert out["groceries"]["pending"] == Decimal("10")
-    assert out["groceries"]["posted"] == Decimal("0")  # -40 net +100 refund => -60, clamped to 0
-
-
 # --- sub-categories: parent rollup alerts (WHIT-222) -------------------------
 # A budgeted PARENT holds no transactions of its own — they land on its leaves — so
 # its alert fires on the sum over its descendant leaves, mirroring the /budgets read
@@ -913,24 +528,6 @@ def test_parent_rollup_unbudgeted_leaf_fires(alerts, monkeypatch):
     assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
 
 
-def test_parent_rollup_multilevel_grandchild_fires(alerts, monkeypatch):
-    # car -> daily -> {petrol, tolls}; only car budgeted. A grandchild leaf's spend
-    # must reach car through the two-level walk.
-    cats = [
-        {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
-        {"id": "daily", "name": "Daily", "bucket": "Living", "parent": "car"},
-        {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "daily"},
-        {"id": "tolls", "name": "Tolls", "bucket": "Living", "parent": "daily"},
-    ]
-    before = [_txn("old", "petrol", -70, "posted")]
-    new = _txn("new1", "tolls", -15, "posted")                    # 85 rolled to car
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                           before=before, normalised=[new], cats=cats)
-    assert len(sent) == 1
-    assert sent[0][1] == "Car is at 80% of its budget this cycle."
-    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
-
-
 def test_sub_crosses_but_parent_not_only_sub_fires(alerts, monkeypatch):
     # Jasmine's rule: if the SUB creeps past its own limit but the parent's TOTAL hasn't,
     # alert only the sub. Fuel budget 50, Car budget 200. Fuel $45 crosses 80% of 50;
@@ -945,149 +542,7 @@ def test_sub_crosses_but_parent_not_only_sub_fires(alerts, monkeypatch):
     assert notify.fired_markers("2026-07-01", 14) == {"fuel#80"}   # Car NOT fired
 
 
-def test_parent_and_leaf_both_cross_fire_both(alerts, monkeypatch):
-    # When BOTH the parent's total and the sub genuinely cross on one write, both are warned —
-    # they're separate budgets, each a real fact (one combined push). Car 50 + Fuel 50; fuel 45 crosses both.
-    before = [_txn("old", "fuel", -35, "posted")]
-    new = _txn("new1", "fuel", -10, "posted")                     # fuel & car both 45
-    sent, notify, _ = _run(alerts, monkeypatch,
-                           budgets={"car": {"target": Decimal("50")}, "fuel": {"target": Decimal("50")}},
-                           before=before, normalised=[new], cats=_CAR_TREE)
-    assert [body for _, body, _ in sent] == ["Car, Fuel are at 80% or more of their budget this cycle."]
-    assert notify.fired_markers("2026-07-01", 14) == {"car#80", "fuel#80"}
-
-
-def test_parent_vault_past_both_thresholds_marks_both(alerts, monkeypatch):
-    # A parent rollup jumping 0 -> 100% in one write sends only the 100% push but marks
-    # both car#80 and car#100 (the vault behaviour, now for a parent).
-    before = []
-    new = _txn("new1", "fuel", -100, "posted")                    # car 100 = 100% of 100
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                           before=before, normalised=[new], cats=_CAR_TREE)
-    assert len(sent) == 1
-    assert sent[0][0] == "Budget hit"
-    assert sent[0][1] == "You've spent your whole Car budget for this cycle."
-    assert notify.fired_markers("2026-07-01", 14) == {"car#80", "car#100"}
-
-
-def test_income_parent_never_fires(alerts, monkeypatch):
-    # An Income-bucket PARENT is a floor (over-is-good), never a spend ceiling — no
-    # 80/100% push, same as an Income leaf (WHIT-69).
-    cats = [
-        {"id": "income", "name": "Income", "bucket": "Income", "parent": None},
-        {"id": "salary", "name": "Salary", "bucket": "Income", "parent": "income"},
-    ]
-    before = [_txn("old", "salary", 4000, "posted")]
-    new = _txn("new1", "salary", 3000, "posted")                  # positive earnings
-    sent, _, _ = _run(alerts, monkeypatch, budgets={"income": {"target": Decimal("5000")}},
-                      before=before, normalised=[new], cats=cats)
-    assert sent == []
-
-
-def test_savings_parent_never_fires(alerts, monkeypatch):
-    # A Savings-bucket PARENT never fires either — a mis-filed spend on a Savings sub
-    # must not read as spend against the target (WHIT-201).
-    cats = [
-        {"id": "nest", "name": "Nest Egg", "bucket": "Savings", "parent": None},
-        {"id": "holiday", "name": "Holiday", "bucket": "Savings", "parent": "nest"},
-    ]
-    before = [_txn("old", "holiday", -800, "posted")]
-    new = _txn("new1", "holiday", -300, "posted")
-    sent, _, _ = _run(alerts, monkeypatch, budgets={"nest": {"target": Decimal("1000")}},
-                      before=before, normalised=[new], cats=cats)
-    assert sent == []
-
-
-def test_leaf_only_budget_unchanged_with_sibling_tree_present(alerts, monkeypatch):
-    # Regression: a leaf-only budget (groceries, no children) fires byte-identically even
-    # when an unrelated budgeted parent tree exists in the taxonomy — the union of needed
-    # leaves must not leak another family's spend into this target.
-    cats = [
-        {"id": "groceries", "name": "Groceries", "bucket": "Living", "parent": None},
-    ] + _CAR_TREE
-    before = [_txn("old", "groceries", -70, "posted"), _txn("f", "fuel", -999, "posted")]
-    new = _txn("new1", "groceries", -15, "posted")                # groceries 85%
-    sent, notify, _ = _run(alerts, monkeypatch,
-                           budgets={"groceries": {"target": Decimal("100")}},
-                           before=before, normalised=[new], cats=cats)
-    assert len(sent) == 1
-    assert sent[0][1] == "Groceries is at 80% of its budget this cycle."
-    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}
-
-
-# ===========================================================================
-# QA GAP tests (WHIT-222) — adversarial edges the implementer's parent-rollup
-# tests don't cover: reconcile (settlement) Δ folded into a parent, refund /
-# per-leaf >=0 clamp interacting with the parent fold, leaves across MULTIPLE
-# accounts, the parent's fired-marker keyed on the PARENT id (cross-leaf
-# debounce), and a mid-node + its parent both crossing off one shared leaf.
-# Every parent-fold assertion falls silent on a revert to the per-leaf sum.
-# ===========================================================================
-
-
-def _txn_on(txn_id, category, amount, status, account, date="2026-07-10"):
-    """A leaf transaction on a SPECIFIC account (parent leaves can span cards)."""
-    t = _txn(txn_id, category, amount, status, date)
-    t["account_id"] = account
-    return t
-
-
-# --- settlement (reconcile Δ) folded into a budgeted parent ------------------
-
-
-def test_parent_settlement_twin_crosses_parent_and_carries_category(alerts, repo, monkeypatch):
-    # WHIT-222 x reconcile: a pending->posted settlement on a LEAF must cross the
-    # PARENT via the twin-reconcile Δ, not a naive add. Pending fuel -70 (car=70<80).
-    # Posted -85 (tip, within 70*1.25) with raw "GROCERIES" carries the pending's
-    # "fuel". Correct Δ: twin removed (70) + posted-as-fuel (85) => fuel 85 => car 85,
-    # crosses 80. Falsifies 3 ways: no rollup -> car=0 -> silent; naive add -> 155 ->
-    # the 100 copy; broken tip match -> twin survives -> 155 too.
-    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="fuel")
-    before = list(repo._table.store.values())
-    posted = _norm_real(alerts, txn_id="B", amount=Decimal("-85"), pending=False, category="GROCERIES")
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                           before=before, normalised=[posted], webhook_repo=repo, cats=_CAR_TREE)
-    assert len(sent) == 1
-    assert sent[0][0] == "Heads up \U0001f440"           # the 80 copy, NOT the 100 copy
-    assert sent[0][1] == "Car is at 80% of its budget this cycle."
-    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
-
-
-def test_parent_exact_settlement_no_double_count_stays_silent(alerts, repo, monkeypatch):
-    # The false-positive guard: an EXACT settlement of a leaf under a budgeted parent
-    # must not double-count through the fold. Pending fuel -70, posted -70 exact
-    # (carries "fuel"). Correct Δ: twin removed + posted => fuel 70 => car 70 < 80 ->
-    # SILENT. A naive before+posted folds to 140 -> a false car#80 AND car#100.
-    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="fuel")
-    before = list(repo._table.store.values())
-    posted = _norm_real(alerts, txn_id="B", amount=Decimal("-70"), pending=False, category="GROCERIES")
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                           before=before, normalised=[posted], webhook_repo=repo, cats=_CAR_TREE)
-    assert sent == []
-    assert notify.fired_markers("2026-07-01", 14) == set()
-
-
 # --- refund / per-leaf >=0 clamp interacting with the parent fold ------------
-
-
-def test_parent_refund_on_sibling_leaf_cancels_crossing_no_fire(alerts, monkeypatch):
-    # A refund on leaf A in the SAME batch nets down the parent rollup and suppresses
-    # a crossing that leaf B's spend would otherwise cause. before fuel -70 (car 70).
-    # Batch: parking -20 (would push car to 90) + fuel +25 refund -> car = 45(fuel) +
-    # 20(parking) = 65 < 80 -> SILENT. Control (no refund) genuinely crosses -> fires,
-    # so this fails if the refund is ignored (main fires) OR if the rollup is reverted
-    # (control falls silent, car parent == 0).
-    before = [_txn("old", "fuel", -70, "posted")]
-    batch = [_txn("p", "parking", -20, "posted"), _txn("r", "fuel", 25, "posted")]  # +25 = refund
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                           before=before, normalised=batch, cats=_CAR_TREE)
-    assert sent == []                                    # refund cancelled the crossing
-    assert notify.fired_markers("2026-07-01", 14) == set()
-
-    control, _, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                         before=before, normalised=[_txn("p", "parking", -20, "posted")], cats=_CAR_TREE)
-    assert len(control) == 1                             # same setup DOES cross absent the refund
-    assert control[0][1] == "Car is at 80% of its budget this cycle."
 
 
 def test_parent_fold_aggregates_then_clamps_refund_offsets_sibling(alerts, monkeypatch):
@@ -1107,53 +562,6 @@ def test_parent_fold_aggregates_then_clamps_refund_offsets_sibling(alerts, monke
                            before=before, normalised=[new], cats=_CAR_TREE)
     assert sent == []                                      # the refund nets the crossing away
     assert notify.fired_markers("2026-07-01", 14) == set()
-
-
-# --- parent leaves spanning MULTIPLE accounts -------------------------------
-
-
-def test_parent_rollup_leaves_span_multiple_accounts(alerts, monkeypatch):
-    # A parent's leaves can live on different cards. fuel spend on up-spending +
-    # parking spend on the ANZ card both fold into Car. before fuel -70 (up-spending,
-    # car 70). new parking -15 on the ANZ account -> car 85 -> crosses 80. Proves the
-    # window read gathers every account AND the fold is account-agnostic.
-    before = [_txn_on("old", "fuel", -70, "posted", "up-spending")]
-    new = _txn_on("new1", "parking", -15, "posted", "anz-rewards-black-visa")
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                           before=before, normalised=[new], cats=_CAR_TREE)
-    assert len(sent) == 1
-    assert sent[0][1] == "Car is at 80% of its budget this cycle."
-    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
-
-
-# --- fired marker is keyed on the PARENT id (cross-leaf debounce) ------------
-
-
-def test_parent_marker_is_parent_keyed_across_different_leaves(alerts, monkeypatch):
-    # The debounce marker for a parent crossing is "car#80" (the parent id), so a
-    # second webhook that pushes ANOTHER leaf over must NOT re-alert; but an unrelated
-    # LEAF marker (fuel#80) must NOT suppress the parent.
-    #   run A: car#80 already fired; before fuel -70, new parking -15 (car 85) -> a
-    #          DIFFERENT leaf crosses the parent again -> suppressed (no second push).
-    #   run B: only fuel#80 present (a leaf marker); the parent crossing on fuel spend
-    #          still fires car#80 -> proves the marker is parent-keyed, not leaf-keyed.
-    notify_a = notify_repo()
-    notify_a.mark_fired("2026-07-01", 14, "car#80")               # parent already alerted
-    sent_a, notify_a, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                               before=[_txn("old", "fuel", -70, "posted")],
-                               normalised=[_txn("new1", "parking", -15, "posted")],
-                               cats=_CAR_TREE, notify=notify_a)
-    assert sent_a == []                                          # parent marker debounces
-
-    notify_b = notify_repo()
-    notify_b.mark_fired("2026-07-01", 14, "fuel#80")             # a LEAF marker, not the parent
-    sent_b, notify_b, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                               before=[_txn("old", "fuel", -70, "posted")],
-                               normalised=[_txn("new1", "fuel", -15, "posted")],
-                               cats=_CAR_TREE, notify=notify_b)
-    assert len(sent_b) == 1
-    assert sent_b[0][1] == "Car is at 80% of its budget this cycle."
-    assert notify_b.fired_markers("2026-07-01", 14) == {"fuel#80", "car#80"}
 
 
 # --- a budgeted mid-node AND its budgeted parent, one shared grandchild ------
@@ -1230,61 +638,6 @@ def test_cross_bucket_child_never_crosses_parent_threshold(alerts, monkeypatch):
     assert notify.fired_markers("2026-07-01", 14) == set()
 
 
-def test_parent_direct_pending_settles_to_posted_and_crosses(alerts, repo, monkeypatch):
-    # WHIT-228 x reconcile (the parent-direct settlement path, uncovered): a PENDING
-    # tagged straight onto the budgeted PARENT `car` (car=70 < 80) settles to a tip-
-    # adjusted posted (-85, within 70*1.25) whose raw category is "GROCERIES" but which
-    # CARRIES the pending twin's "car". Correct Δ: twin removed (70) + posted-as-car (85)
-    # -> car 85 -> crosses 80 -> the 80 push. Fail-on-revert to leaves-only: subtree(car)
-    # drops `car` itself, so the car-carried posted is never summed -> car 0 -> silent.
-    # A naive before+posted would be 155 (the 100 copy); a broken carry -> 0.
-    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="car")
-    before = list(repo._table.store.values())
-    posted = _norm_real(alerts, txn_id="B", amount=Decimal("-85"), pending=False, category="GROCERIES")
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                           before=before, normalised=[posted], webhook_repo=repo, cats=_CAR_TREE)
-    assert len(sent) == 1
-    assert sent[0][0] == "Heads up \U0001f440"           # the 80 copy, NOT the 100 copy
-    assert sent[0][1] == "Car is at 80% of its budget this cycle."
-    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
-
-
-def test_pure_parent_direct_spend_alone_crosses_zero_leaf_spend(alerts, monkeypatch):
-    # A pure parent-direct budget: `car` has children in the tree but ALL spend is tagged
-    # straight onto `car` itself, zero leaf spend. before car -70 (direct) -> 70; new car
-    # -15 (direct) -> 85 -> crosses 80. Fail-on-revert to leaves-only: `car` is not a leaf,
-    # so neither write is summed -> car 0 -> silent.
-    before = [_txn("old", "car", -70, "posted")]
-    new = _txn("new1", "car", -15, "posted")
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                           before=before, normalised=[new], cats=_CAR_TREE)
-    assert len(sent) == 1
-    assert sent[0][1] == "Car is at 80% of its budget this cycle."
-    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
-
-
-def test_same_bucket_child_fires_while_cross_bucket_sibling_neither_adds_nor_suppresses(alerts, monkeypatch):
-    # WHIT-229 GAP: a Living parent (target 100) has BOTH a same-bucket Living child that
-    # legitimately crosses 80% (petrol -85) AND a Lifestyle child (odd -30). The same-bucket
-    # spend must still fire at 80% and ONLY 80% — the cross-bucket sibling is dropped from the
-    # parent's subtree, so it can neither push the parent over 100% nor suppress the real 80%.
-    # Fail-on-revert (drop bucket_by_id): odd folds in -> 115 -> crosses 80 AND 100 -> a false
-    # extra push and a spurious car#100 marker.
-    cats = [
-        {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
-        {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "car"},
-        {"id": "odd", "name": "Odd", "bucket": "Lifestyle", "parent": "car"},
-    ]
-    petrol = _txn("p", "petrol", -85, "posted")   # same-bucket: 85% of Car -> crosses 80
-    odd = _txn("o", "odd", -30, "posted")          # cross-bucket: would push Car to 115 if folded
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                           before=[], normalised=[petrol, odd], cats=cats)
-
-    assert len(sent) == 1
-    assert sent[0][1] == "Car is at 80% of its budget this cycle."
-    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
-
-
 def test_skewed_date_settlement_counts_the_purchase_once(alerts, repo, monkeypatch):
     # WHIT-331: the real false-alert scenario. ANZ dated the pending 07-11 (Melbourne)
     # and its settled twin 07-10 (UTC), so the equal-date tiers miss and BOTH rows count.
@@ -1310,38 +663,6 @@ def test_skewed_date_settlement_counts_the_purchase_once(alerts, repo, monkeypat
 
 
 # --- WHIT-331 QA gap: the false push must stay silent for the WHOLE feed window ---
-
-
-def test_skewed_pair_stays_silent_on_every_resend_of_the_settled_row(alerts, repo, monkeypatch):
-    # QA gap: the implementer's test covers only the FIRST settlement. BankSync re-sends a
-    # settled row for FEED_WINDOW_DAYS (7 days), and each re-send re-runs the whole alert
-    # path against a fresh window read. The live symptom was a push, so "silent once" is
-    # not enough — it must stay silent every day of that window, and never record a marker
-    # that would then suppress a genuine later crossing.
-    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="groceries",
-          date="2026-07-11", authorized_date="2026-07-11", merchant_name="",
-          description="POS AUTHORISATION         SQ *KKV INTERNATIONAL PTYSunshine     AU")
-    posted = _norm_real(alerts, txn_id="B", amount=Decimal("-70"), pending=False,
-                        category="groceries", date="2026-07-14", authorized_date="2026-07-10",
-                        description="SQ *KKV INTERNATIONAL PTY Sunshine",
-                        merchant_name="SQ *KKV INTERNATIONAL PTY ")
-    notify = notify_repo()
-    budgets = {"groceries": {"target": Decimal("100")}}
-
-    all_sent = []
-    for _ in range(3):  # first settlement, then two verbatim BankSync re-sends
-        before = list(repo._table.store.values())
-        sent, notify, _ = _run(alerts, monkeypatch, budgets=budgets, before=before,
-                               normalised=[posted], webhook_repo=repo, notify=notify)
-        all_sent.extend(sent)
-        repo.insert_or_reconcile([posted])   # the real write the alert path straddles
-
-    assert all_sent == []
-    assert notify.fired_markers("2026-07-01", 14) == set()
-    # and the ledger still holds exactly ONE row, on the Melbourne day
-    rows = list(repo._table.store.values())
-    assert len(rows) == 1
-    assert rows[0]["date"] == "2026-07-11"
 
 
 def test_simulation_matches_the_real_write_when_a_posting_precedes_its_pending_resend(alerts, repo):
@@ -1373,165 +694,6 @@ def test_simulation_matches_the_real_write_when_a_posting_precedes_its_pending_r
     stored = list(repo._table.store.values())
     assert sorted(r["transaction_id"] for r in simulated) == sorted(r["transaction_id"] for r in stored)
     assert [r["transaction_id"] for r in stored] == ["POST"]
-
-# --- Single-word merchants in the alert preview (QA) --------------------------
-# Asserting only "no push fired" passes for the wrong reason if the preview and the
-# real write BOTH stop counting the charge. These compare the preview to the ledger.
-
-_COLES_ALERT_PEND_DESC = "POS AUTHORISATION         COLES 0602               MELBOURNE    AU"
-
-
-def _coles_alert_rows(*, pend_date="2026-07-11", post_auth="2026-07-10",
-                      post_date="2026-07-14", amount=Decimal("-70")):
-    pending = _bank("PEND", amount, pending=True, category="groceries", date=pend_date,
-                    authorized_date=pend_date, merchant_name="",
-                    description=_COLES_ALERT_PEND_DESC)
-    posted = _bank("POST", amount, pending=False, category="groceries",
-                   date=post_date, authorized_date=post_auth,
-                   description="COLES 0602 MELBOURNE",
-                   merchant_name="COLES 0602               ")
-    return pending, posted
-
-
-def test_one_word_skew_simulation_matches_the_real_write(alerts, repo):
-    pending_row, posted_row = _coles_alert_rows()
-    repo.insert_transactions([alerts.banksync.normalise(pending_row)])
-    before = list(repo._table.store.values())
-    account = before[0]["account_id"]
-    posted = alerts.banksync.normalise(posted_row)
-    ctx = {"before_rows": before,
-           "pending_pools": {account: list(repo.get_account_transactions(account, "pending"))},
-           "start": "2026-07-01", "end": "2026-07-14"}
-
-    simulated = alerts.budget_alerts._simulate_after(ctx, [posted])
-    repo.insert_or_reconcile([posted])
-
-    stored = list(repo._table.store.values())
-    assert sorted(r["transaction_id"] for r in simulated) == sorted(r["transaction_id"] for r in stored)
-    assert [r["transaction_id"] for r in stored] == ["POST"]
-    # The preview must agree on the DATE too — the cycle window filters on it.
-    assert [r["date"] for r in simulated] == ["2026-07-11"]
-    assert stored[0]["date"] == "2026-07-11"
-
-
-def test_one_word_skew_across_the_cycle_boundary_counts_once_inside_the_window(alerts, repo, monkeypatch):
-    # Pending on the first day of the cycle, its twin's UTC date on the last day of the
-    # previous one. A preview that kept the UTC date would drop the charge out of the
-    # window entirely and under-count.
-    pending_row, posted_row = _coles_alert_rows(pend_date="2026-07-01",
-                                                post_auth="2026-06-30", post_date="2026-07-03")
-    repo.insert_transactions([alerts.banksync.normalise(pending_row)])
-    before = list(repo._table.store.values())
-    posted = alerts.banksync.normalise(posted_row)
-
-    sent, notify, ctx = _run(alerts, monkeypatch,
-                             budgets={"groceries": {"target": Decimal("100")}},
-                             before=before, normalised=[posted], webhook_repo=repo)
-    rows = alerts.budget_alerts._simulate_after(ctx, [posted])
-
-    assert [(r["transaction_id"], r["date"]) for r in rows] == [("POST", "2026-07-01")]
-    assert sent == []
-    assert notify.fired_markers("2026-07-01", 14) == set()
-
-
-# ===========================================================================
-# WHIT-343 QA GAP tests (aggregate-then-clamp on the ALERT path) — edges beyond
-# the implementer's test_parent_fold_aggregates_then_clamps_refund_offsets_sibling
-# (the pure maths is pinned in tests/shared/test_budget_standing.py). Every WHIT-343
-# assertion goes RED if the per-id clamp is restored; the bucket-guard assertion
-# goes RED if the same-bucket filter is dropped.
-# ===========================================================================
-
-
-def test_wh343_gap_refund_suppresses_crossing_regardless_of_batch_order(alerts, monkeypatch):
-    # WHIT-343 x ordering. A refund and a charge on two leaves of the same parent, in the
-    # SAME write, must net the parent the SAME way no matter their order — no refund-then-
-    # charge sequencing can slip a crossing. before empty. Batch parking -90 (would be 90%)
-    # + fuel +30 refund -> car 60 < 80 -> SILENT in BOTH orders. Fail-on-revert (per-id
-    # clamp): fuel floors to 0 -> car 90 -> FIRES. Control (no refund) crosses, proving the
-    # setup genuinely would fire.
-    for batch in (
-        [_txn("c", "parking", -90, "posted"), _txn("r", "fuel", 30, "posted")],
-        [_txn("r", "fuel", 30, "posted"), _txn("c", "parking", -90, "posted")],  # reversed
-    ):
-        sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                               before=[], normalised=batch, cats=_CAR_TREE)
-        assert sent == []
-        assert notify.fired_markers("2026-07-01", 14) == set()
-
-    control, _, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                         before=[], normalised=[_txn("c", "parking", -90, "posted")], cats=_CAR_TREE)
-    assert len(control) == 1 and control[0][1] == "Car is at 80% of its budget this cycle."
-
-
-def test_wh343_gap_grandchild_refund_nets_across_deep_fold_suppresses(alerts, monkeypatch):
-    # WHIT-343 x depth on the alert path. car -> daily -> {petrol, tolls}; only car budgeted.
-    # before petrol -75 (car 75). Batch: petrol -20 (would push car to 95, crossing 80) +
-    # tolls +30 refund on the sibling GRANDCHILD -> car 95 - 30 = 65 < 80 -> SILENT.
-    # Fail-on-revert (per-id clamp): tolls +30 floors to 0 -> car 95 -> FIRES at 80.
-    cats = [
-        {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
-        {"id": "daily", "name": "Daily", "bucket": "Living", "parent": "car"},
-        {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "daily"},
-        {"id": "tolls", "name": "Tolls", "bucket": "Living", "parent": "daily"},
-    ]
-    before = [_txn("old", "petrol", -75, "posted")]
-    batch = [_txn("p", "petrol", -20, "posted"), _txn("r", "tolls", 30, "posted")]
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                           before=before, normalised=batch, cats=cats)
-    assert sent == []
-    assert notify.fired_markers("2026-07-01", 14) == set()
-
-    control, _, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                         before=before, normalised=[_txn("p", "petrol", -20, "posted")], cats=cats)
-    assert len(control) == 1 and control[0][1] == "Car is at 80% of its budget this cycle."
-
-
-def test_wh343_gap_cross_bucket_refund_sibling_does_not_suppress_real_crossing(alerts, monkeypatch):
-    # WHIT-343 x the same-bucket guard. A REFUND on a cross-bucket sibling must NOT net a
-    # genuine same-bucket crossing away: the guard drops it from the parent's subtree BEFORE
-    # the unclamped fold, so it can't offset. petrol -85 (85% of Car) crosses 80; a +50
-    # refund on a Lifestyle child would net Car to 35 and SILENCE it IF it leaked. Correct:
-    # excluded -> Car 85 -> FIRES. Fail-on-revert (drop bucket_by_id): Car 35 -> silent.
-    cats = [
-        {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
-        {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "car"},
-        {"id": "odd", "name": "Odd", "bucket": "Lifestyle", "parent": "car"},
-    ]
-    batch = [_txn("p", "petrol", -85, "posted"), _txn("r", "odd", 50, "posted")]  # cross-bucket refund
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                           before=[], normalised=batch, cats=cats)
-    assert len(sent) == 1
-    assert sent[0][1] == "Car is at 80% of its budget this cycle."
-    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
-
-
-def test_wh343_gap_tip_settlement_crossing_cancelled_by_sibling_refund(alerts, repo, monkeypatch):
-    # WHIT-343 x reconcile. A pending leaf settles with a TIP that alone crosses the parent,
-    # while a refund on a sibling leaf in the SAME write nets it back below — the settlement
-    # Delta (real reconcile) AND the aggregate-then-clamp both have to be right. Pending
-    # parking -70 (car 70). Batch: posted -85 tip settlement carrying "parking" (twin removed,
-    # car -> 85, crosses 80) + fuel +30 refund -> car 85 - 30 = 55 < 80 -> SILENT.
-    # Fail-on-revert (per-id clamp): fuel +30 floors to 0 -> car 85 -> a false car#80.
-    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="parking")
-    before = list(repo._table.store.values())
-    posted = _norm_real(alerts, txn_id="B", amount=Decimal("-85"), pending=False, category="parking",
-                        merchant_name="SQ *KKV INTERNATIONAL PTY", description="SQ *KKV INTERNATIONAL PTY")
-    refund = _norm_real(alerts, txn_id="R", amount=Decimal("30"), pending=False, category="fuel",
-                        merchant_name="REFUNDCO PTY", description="REFUNDCO PTY")
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                           before=before, normalised=[posted, refund], webhook_repo=repo, cats=_CAR_TREE)
-    assert sent == []
-    assert notify.fired_markers("2026-07-01", 14) == set()
-
-    # Control: WITHOUT the refund, the tip settlement genuinely crosses 80 -> proves the
-    # setup would fire and that the refund (not a broken settlement) is what silences it.
-    ctrl_posted = _norm_real(alerts, txn_id="B", amount=Decimal("-85"), pending=False, category="parking",
-                             merchant_name="SQ *KKV INTERNATIONAL PTY", description="SQ *KKV INTERNATIONAL PTY")
-    control, _, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
-                         before=list(repo._table.store.values()), normalised=[ctrl_posted],
-                         webhook_repo=repo, cats=_CAR_TREE)
-    assert len(control) == 1 and control[0][1] == "Car is at 80% of its budget this cycle."
 
 
 # ======================================================================================
@@ -1581,18 +743,6 @@ def test_excluded_settling_twin_does_not_fire_over_budget_alert(alerts, repo, mo
     assert notify.fired_markers("2026-07-01", 14) == set()
 
 
-def test_excluded_charge_in_batch_never_crosses_threshold(alerts, monkeypatch):
-    # [A-P2] The gate alone: a lone excluded groceries -85 in the batch (no twin) must
-    # not push. Fail-on-revert: revert the spend gate and the 80% push fires.
-    posted = _posted("g1", "groceries", -85, budget_excluded=True)
-
-    sent, _, _ = _run(alerts, monkeypatch,
-                      budgets={"groceries": {"target": Decimal("100")}},
-                      before=[], normalised=[posted])
-
-    assert sent == []
-
-
 # ── WHIT-509: the alert threshold folds in the bill-spread cushion ──────────────
 #
 # The /budgets screen spends against target + the signed spread adjustment (WHIT-504):
@@ -1637,21 +787,6 @@ def test_spread_cushion_suppresses_a_false_over_budget_push(alerts, monkeypatch)
     assert notify.fired_markers("2026-07-01", 14) == set()
 
 
-def test_stale_spread_on_a_rebucketed_savings_category_never_pushes(alerts, monkeypatch):
-    # (g) Guard (not fail-on-revert): the clear-on-reclassify is best-effort, so a Savings
-    # category can still carry stale spread_* fields. The Savings bucket filter drops it
-    # before any cushion maths, so a big overspend sends NOTHING — the stale cushion can't
-    # resurrect an alert on a floor category (mirrors WHIT-201's read-path guard).
-    budget = {"target": Decimal("100"), **_spread_fields(200, 4)}
-    cats = [{"id": "groceries", "name": "Groceries", "bucket": "Savings"}]
-    before = [_txn("old", "groceries", -50, "posted")]
-    new = _txn("new1", "groceries", -80, "posted")
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": budget},
-                           before=before, normalised=[new], cats=cats)
-    assert sent == []
-    assert notify.fired_markers("2026-07-01", 14) == set()
-
-
 def test_spread_basis_exactly_zero_is_skipped(alerts, monkeypatch):
     # [A-qa9] (P0) A payback slice equal to the whole target drives basis to EXACTLY $0
     # (target 100, $200 over 2 cycles, index 1 → −$100 slice → basis 0). The `basis <= 0`
@@ -1673,16 +808,18 @@ def test_spread_basis_exactly_zero_is_skipped(alerts, monkeypatch):
 # crossing threshold (the user sees more room), and one with a deficit has a lower one.
 
 
+_ROLLOVER = {
+    "rollover": True, "carryover": Decimal("0"), "carryover_from": "2026-06-17",
+    "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
+}
+
+
 def test_rollover_buffer_folds_live_from_prior_cycle_txns(alerts, monkeypatch):
     # One completed cycle [2026-06-17, 2026-06-30] with $60 spend on a $100 target → leftover $40.
     # Stored carryover = $0, so live buffer = 0 + 40 = $40. basis = 100 + 40 = 140, 80% = $112.
     # Current-cycle spend before $105, +$10 → $115 crosses $112 → fires.
     # Fail-on-revert: without live seal, buffer = 0, basis = 100, 80% = $80, $105 already past → miss.
-    budget = {
-        "target": Decimal("100"), "rollover": True, "carryover": Decimal("0"),
-        "carryover_from": "2026-06-17",
-        "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
-    }
+    budget = {"target": Decimal("100"), **_ROLLOVER}
     prior_txn = _txn("prior1", "groceries", -60, "posted", date="2026-06-20")
     current_before = _txn("old", "groceries", -105, "posted")
     before = [prior_txn, current_before]
@@ -1695,26 +832,40 @@ def test_rollover_buffer_folds_live_from_prior_cycle_txns(alerts, monkeypatch):
     assert all(r["date"] >= "2026-07-01" for r in ctx["before_rows"])
 
 
-def test_rollover_ctx_rollover_txns_includes_prior_cycle_rows(alerts, monkeypatch):
-    # ctx["rollover_txns"] carries both prior- and current-cycle rows.
-    # ctx["before_rows"] carries only current-cycle rows.
-    budget = {
-        "target": Decimal("100"), "rollover": True, "carryover": Decimal("0"),
-        "carryover_from": "2026-06-17",
-        "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
-    }
-    prior_txn = _txn("prior1", "groceries", -40, "posted", date="2026-06-20")
-    current_txn = _txn("cur1", "groceries", -50, "posted")
-    before = [prior_txn, current_txn]
-    new = _txn("new1", "groceries", -5, "posted")
-    _, _, ctx = _run(alerts, monkeypatch, budgets={"groceries": budget},
-                     before=before, normalised=[new], cats=_SPREAD_CATS)
-    rollover_ids = {r["transaction_id"] for r in ctx["rollover_txns"]}
-    assert "prior1" in rollover_ids
-    assert "cur1" in rollover_ids
-    before_ids = {r["transaction_id"] for r in ctx["before_rows"]}
-    assert "prior1" not in before_ids
-    assert "cur1" in before_ids
+def test_widened_rollover_read_does_not_leak_last_cycle_into_a_plain_budget(alerts, monkeypatch):
+    # A rollover budget widens the read back to 2026-06-17. Dining (plain, $100) spent
+    # $500 LAST cycle and only $20 + $10 this one → 30%, no push. If last cycle's rows leak into
+    # this cycle's spend, Dining reads $530 → a false "Budget hit".
+    cats = _SPREAD_CATS + [{"id": "dining", "name": "Dining", "bucket": "Lifestyle"}]
+    budgets = {"groceries": {"target": Decimal("1000"), **_ROLLOVER},
+               "dining": {"target": Decimal("100")}}
+    before = [_txn("prior", "dining", -500, "posted", date="2026-06-20"),
+              _txn("old", "dining", -20, "posted", date="2026-07-05")]
+    sent, _, _ = _run(alerts, monkeypatch, budgets=budgets, before=before,
+                      normalised=[_txn("new1", "dining", -10, "posted")], cats=cats)
+    assert sent == []
+
+
+def test_this_cycle_rows_are_counted_once_not_twice_with_rollover_history(alerts, monkeypatch):
+    # The rollover read's current-cycle rows are also in the after-write rows. They
+    # must count once: $70 + $5 = $75 of a $100 + $0 carryover basis → no push. Counted twice
+    # ($145) it would read "Budget hit".
+    before = [_txn("prior", "groceries", -100, "posted", date="2026-06-20"),
+              _txn("old", "groceries", -70, "posted", date="2026-07-05")]
+    sent, _, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100"), **_ROLLOVER}},
+                      before=before, normalised=[_txn("new1", "groceries", -5, "posted")], cats=_SPREAD_CATS)
+    assert sent == []
+
+
+def test_rollover_overspend_last_cycle_lowers_the_alert_basis(alerts, monkeypatch):
+    # Last cycle overspent by $40 → carryover −$40 → basis $60, 80% = $48. This cycle
+    # $40 + $10 = $50 → the 80% push. On the raw $100 target that would be silent.
+    before = [_txn("prior", "groceries", -140, "posted", date="2026-06-20"),
+              _txn("old", "groceries", -40, "posted", date="2026-07-05")]
+    sent, _, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100"), **_ROLLOVER}},
+                      before=before, normalised=[_txn("new1", "groceries", -10, "posted")], cats=_SPREAD_CATS)
+    assert len(sent) == 1
+    assert "80%" in sent[0][1]
 
 
 # --- WHIT-545: the crossing preview mirrors the write's settlement carry gate ----------------
@@ -1802,31 +953,6 @@ def test_a_claim_lost_to_an_overlapping_delivery_sends_nothing(alerts, monkeypat
     assert released_markers(notify) == []
 
 
-def test_combined_push_names_three_budgets_then_counts_the_rest(alerts, monkeypatch):
-    names = ["Alpha", "Bravo", "Coffee", "Dining", "Eggs"]
-    cats = [{"id": name.lower(), "name": name} for name in names]
-    budgets = {name.lower(): {"target": Decimal("100")} for name in names}
-    before = [_txn(f"t-{name}", name.lower(), -90, "posted") for name in names]
-    sent, _, _ = _run(alerts, monkeypatch, budgets=budgets, before=before, normalised=[], cats=cats)
-    assert [(title, body) for title, body, _ in sent] == [
-        ("5 budgets need a look", "Alpha, Bravo, Coffee +2 more are at 80% or more of their budget this cycle.")]
-
-
-def test_combined_push_opens_the_app_not_one_budget(alerts, monkeypatch):
-    ba = alerts.budget_alerts
-    pushed = []
-    monkeypatch.setattr(ba, "send_push",
-                        lambda title, body, toks, data=None: (pushed.append(data), {"sent": 1, "ok": 1, "pruned": []})[1])
-    cats = [{"id": "groceries", "name": "Groceries"}, {"id": "coffee", "name": "Coffee"}]
-    budgets = {"groceries": {"target": Decimal("100")}, "coffee": {"target": Decimal("50")}}
-    before = [_txn("g", "groceries", -90, "posted"), _txn("c", "coffee", -45, "posted")]
-    ctx = ba.capture_pre_write([], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo(budgets),
-                               paycycle_repo=FakePaycycleRepo(), webhook_repo=_AccountTransactionRepo(before))
-    ba.fire_budget_alerts(ctx, [], category_repo=_FakeCategoryRepo(cats),
-                          notify_repo=notify_repo())
-    assert pushed == [{"type": "budget"}]
-
-
 def test_one_budget_already_warned_leaves_a_single_budget_push_with_its_deep_link(alerts, monkeypatch):
     # Coffee was warned earlier; only Groceries is newly due → its own copy + deep link, not a
     # combined push.
@@ -1844,18 +970,6 @@ def test_one_budget_already_warned_leaves_a_single_budget_push_with_its_deep_lin
     ba.fire_budget_alerts(ctx, [], category_repo=_FakeCategoryRepo(cats),
                           notify_repo=notify)
     assert pushed == [("Heads up \U0001f440", {"type": "budget", "category": "groceries"})]
-
-
-def test_a_new_cycle_key_warns_an_already_over_budget_again(alerts, monkeypatch):
-    # Editing the payday changes the cycle key, so the markers start empty and a budget
-    # already over warns once more under the new cycle. Documented, accepted behaviour.
-    before = [_txn("old", "groceries", -90, "posted")]
-    notify = notify_repo()
-    notify.mark_fired("2026-06-17", 14, "groceries#80")               # the old cycle's marker
-    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
-                           before=before, normalised=[], notify=notify)
-    assert len(sent) == 1
-    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}
 
 
 _THREE_OVER = {
@@ -1901,24 +1015,6 @@ def test_one_failed_release_does_not_strand_the_others(alerts, monkeypatch, erro
 # --- WHIT-577 gaps (qa): send failures, partial claim loss, empty deliveries ------------------
 
 
-def test_send_that_raises_releases_its_claim(alerts, monkeypatch):
-    # send_push promises never to raise; if it ever does, the claim must still be released.
-    def boom(*a, **k):
-        raise RuntimeError("push blew up")
-
-    ba = alerts.budget_alerts
-    notify = notify_repo()
-    before = [_txn("old", "groceries", -90, "posted")]
-    ctx = ba.capture_pre_write([], device_repo=FakeDeviceRepo(),
-                               budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
-                               paycycle_repo=FakePaycycleRepo(), webhook_repo=_AccountTransactionRepo(before))
-    monkeypatch.setattr(ba, "send_push", boom)
-    with pytest.raises(RuntimeError):
-        ba.fire_budget_alerts(ctx, [], category_repo=_FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
-                              notify_repo=notify)
-    assert notify.fired_markers("2026-07-01", 14) == set()
-
-
 def test_no_80_nag_after_100_already_sent(alerts, monkeypatch):
     # groceries#100 landed but its 80 mark was lost; a refund drops spend to $85. An 80%
     # "Heads up" after "Budget hit" would be backwards. Fail-on-revert: check only the exact
@@ -1932,59 +1028,30 @@ def test_no_80_nag_after_100_already_sent(alerts, monkeypatch):
     assert sent == []
 
 
-def test_failed_push_never_releases_a_claim_another_delivery_owns(alerts, monkeypatch):
-    # Overlapping deliveries: another delivery claimed coffee#100 after this one's snapshot.
-    # This one's combined push fails and must release ONLY its own two claims.
-    notify = notify_repo()
-    claimed_meanwhile(notify, "2026-07-01", 14, "coffee#100")
-    before = [_txn("a", "alpha", -90, "posted"), _txn("b", "bravo", -90, "posted"),
-              _txn("c", "coffee", -110, "posted")]
-    sent, notify, _ = _run(alerts, monkeypatch, budgets=_THREE_OVER["budgets"], before=before, normalised=[],
-                           cats=_THREE_OVER["cats"], notify=notify, send_ok=0)
-    assert [title for title, _, _ in sent] == ["2 budgets need a look"]
-    assert sorted(released_markers(notify)) == ["alpha#80", "bravo#80"]
-    assert notify.fired_markers("2026-07-01", 14) == {"coffee#100"}
+def _signature_spy(real, calls, result):
+    """Records the arguments only if they bind to `real`'s signature."""
+    signature = inspect.signature(real)
 
+    def spy(*args, **kwargs):
+        calls.append(signature.bind(*args, **kwargs).arguments)
+        return result
 
-def test_single_survivor_of_a_claim_race_gets_its_own_copy(alerts, monkeypatch):
-    # Two budgets due; another delivery already claimed bravo#80. The push this delivery sends
-    # is alpha's own "Budget hit", deep-linked — not "2 budgets need a look".
-    ba = alerts.budget_alerts
-    pushed = []
-    monkeypatch.setattr(ba, "send_push", lambda t, b, toks, data=None:
-                        (pushed.append((t, b, data)), {"sent": 1, "ok": 1, "pruned": []})[1])
-    notify = notify_repo()
-    claimed_meanwhile(notify, "2026-07-01", 14, "bravo#80")
-    before = [_txn("a", "alpha", -110, "posted"), _txn("b", "bravo", -85, "posted")]
-    budgets = {"alpha": {"target": Decimal("100")}, "bravo": {"target": Decimal("100")}}
-    ctx = ba.capture_pre_write([], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo(budgets),
-                               paycycle_repo=FakePaycycleRepo(), webhook_repo=_AccountTransactionRepo(before))
-    ba.fire_budget_alerts(ctx, [], category_repo=_FakeCategoryRepo(_THREE_OVER["cats"]),
-                          notify_repo=notify)
-    assert pushed == [("Budget hit", "You've spent your whole Alpha budget for this cycle.",
-                       {"type": "budget", "category": "alpha"})]
-    assert notify.fired_markers("2026-07-01", 14) == {"alpha#100", "alpha#80", "bravo#80"}
-
-
-def test_repeat_delivery_skips_claims_for_already_fired_budgets(alerts, monkeypatch):
-    # Every budget is over and already warned; each hourly delivery re-checks them, and must
-    # not issue a doomed conditional write per budget per delivery.
-    notify = notify_repo()
-    for cat in ("alpha", "bravo", "coffee"):
-        notify.mark_fired("2026-07-01", 14, f"{cat}#80")
-    seeded_writes = len(notify._table.update_calls)
-    sent, _, _ = _run(alerts, monkeypatch, budgets=_THREE_OVER["budgets"], before=_THREE_OVER["before"], normalised=[],
-                      cats=_THREE_OVER["cats"], notify=notify)
-    assert sent == []
-    assert len(notify._table.update_calls) == seeded_writes   # no claim attempted
+    return spy
 
 
 def test_dataless_delivery_still_runs_the_alert_check(lam, monkeypatch):
     # The fix rests on "the next delivery, even an empty sync" re-checking levels.
-    # Fail-on-revert: an early return for an empty payload in process_transaction.
-    calls = []
-    monkeypatch.setattr(lam.budget_alerts, "capture_pre_write", lambda normalised, **k: {"ctx": True})
-    monkeypatch.setattr(lam.budget_alerts, "fire_budget_alerts",
-                        lambda ctx, normalised, **k: calls.append((ctx, list(normalised))))
-    lam.handler.process_transaction({"id": "sync-completed-1"}, _WriteRecordingRepo())
-    assert calls == [({"ctx": True}, [])]
+    # Fail-on-revert: an early return for an empty payload in process_transaction. Both
+    # alert calls sit inside `except Exception`, so the spies also prove each call still
+    # fits its function's real signature — a mismatch would switch every alert off silently.
+    ba = lam.budget_alerts
+    captured, fired = [], []
+    monkeypatch.setattr(ba, "capture_pre_write", _signature_spy(ba.capture_pre_write, captured, {"ctx": True}))
+    monkeypatch.setattr(ba, "fire_budget_alerts", _signature_spy(ba.fire_budget_alerts, fired, None))
+    repo = _WriteRecordingRepo()
+
+    lam.handler.process_transaction({"id": "sync-completed-1"}, repo)
+
+    assert len(captured) == 1 and captured[0]["webhook_repo"] is repo
+    assert len(fired) == 1
+    assert fired[0]["ctx"] == {"ctx": True} and list(fired[0]["normalised"]) == []

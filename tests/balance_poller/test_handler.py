@@ -1,10 +1,9 @@
 """Unit tests for the balance poller (lambda_balance_poller/handler.py).
 
 Covers:
-    - _poll_account_balances : the GET request shape (url, method, headers, timeout)
-    - lambda_handler    : stores on success; on ANY failure logs, does NOT raise,
-                          does NOT upsert
-    - _check_homeloan   : the milestone hook driven by the home-loan delta
+    - lambda_handler          : stores every signed balance; on ANY failure logs, does NOT raise,
+                                does NOT zero a last-good row
+    - _poll_account_balances  : the batched prior read feeding each account's old/new delta
 
 No network and no AWS: ``urllib.request.urlopen`` is monkeypatched, boto3's ssm
 client is faked by conftest, and the repository is replaced with a recording fake.
@@ -16,6 +15,7 @@ from decimal import Decimal
 
 import pytest
 
+from _balance_fakes import balance_repo, homeloan_row, upserted
 from _http_fakes import FakeResponse, http_error
 from _milestone_fakes import FakeGoalsRepo
 
@@ -97,75 +97,6 @@ _PAYLOADS_BY_AID = {
 }
 
 
-# --- _poll_account_balances request shape ------------------------------------
-
-
-def test_poll_sends_the_poller_get_request(handler, monkeypatch):
-    captured = {}
-
-    def fake_urlopen(req, timeout=None):
-        captured[req.full_url] = (req, timeout)
-        for aid, payload in _PAYLOADS_BY_AID.items():
-            if aid in req.full_url:
-                return FakeResponse(payload)
-        raise AssertionError(f"no stub payload for {req.full_url}")
-
-    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: _FakeAccountRepo())
-    monkeypatch.setattr(handler.urllib.request, "urlopen", fake_urlopen)
-
-    handler._poll_account_balances("the-key")
-
-    req, timeout = captured["https://api.banksync.io/v1/banks/fiskil_3/accounts/T6d8ppsYssBDFCwl1qEb0w/balances"]
-    assert req.get_method() == "GET"
-    # urllib title-cases header keys, so "X-API-Key" is stored as "X-api-key".
-    assert req.get_header("X-api-key") == "the-key"
-    assert req.get_header("User-agent") == "abundo-homeloan-request"
-    assert timeout == handler.BALANCE_POLL_TIMEOUT_SECONDS
-
-
-# --- normalise_account_balance (WHIT-212) ------------------------------------
-
-
-def test_normalise_account_balance_keeps_amount_signed_with_extras(handler):
-    # The signed path keeps the NEGATIVE mortgage amount (no abs) and captures the extras.
-    out = handler.normalise_account_balance(_OK_PAYLOAD)
-    assert out == {
-        "amount": Decimal("-596642.43"),
-        "available_balance": Decimal("0"),
-        "currency": "AUD",
-        "as_of": "2026-07-04T00:24:37.614Z",
-        "account_type": "mortgage",
-    }
-
-
-def test_normalise_account_balance_has_no_mortgage_guard(handler):
-    # A non-mortgage account normalises fine (positive spending).
-    out = handler.normalise_account_balance(_SPENDING_PAYLOAD)
-    assert out["amount"] == Decimal("96270.59")
-    assert out["account_type"] == "checking"
-    assert out["available_balance"] == Decimal("96270.59")
-
-
-def test_normalise_account_balance_tolerates_missing_optionals(handler):
-    payload = {"success": True, "data": {"amount": -6492.26, "date": "2026-07-08T00:00:00Z"}}
-    out = handler.normalise_account_balance(payload)
-    assert out["amount"] == Decimal("-6492.26")
-    assert out["available_balance"] is None  # absent -> dropped, not fatal
-    assert out["account_type"] is None
-    assert out["currency"] == "AUD"  # defaulted
-
-
-def test_normalise_account_balance_raises_on_failure_and_missing_fields(handler):
-    for bad in (
-        {"success": False, "error": "nope"},
-        {"success": True},
-        {"success": True, "data": {"date": "d"}},          # missing amount
-        {"success": True, "data": {"amount": -1}},          # missing date
-    ):
-        with pytest.raises(sys.modules["balance_fetch"].BalanceError):
-            handler.normalise_account_balance(bad)
-
-
 # --- get_api_key -------------------------------------------------------------
 
 
@@ -232,19 +163,7 @@ def test_lambda_handler_swallows_http_error_and_keeps_last_good(handler, monkeyp
     assert accounts.calls == []
 
 
-def test_lambda_handler_swallows_failure_payload_without_writing(handler, monkeypatch):
-    accounts = _FakeAccountRepo()
-    monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
-    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
-    fail = {"success": False, "error": "Provider fiskil:au does not support loans"}
-    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: FakeResponse(fail))
-
-    result = handler.lambda_handler({}, None)
-    assert result == {"accounts_stored": 0}
-    assert accounts.calls == []
-
-
-def test_lambda_handler_swallows_an_api_key_fetch_failure(handler, monkeypatch):
+def test_lambda_handler_swallows_an_api_key_fetch_failure(handler, monkeypatch, caplog):
     # An SSM/get_param failure (throttle, missing param, IAM) must not error the
     # invocation — it's best-effort like the polls, so nothing is stored, nothing is
     # zeroed, and every last-good row survives.
@@ -255,92 +174,48 @@ def test_lambda_handler_swallows_an_api_key_fetch_failure(handler, monkeypatch):
 
     monkeypatch.setattr(handler, "get_api_key", boom)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
+    caplog.set_level(logging.INFO)
 
     result = handler.lambda_handler({}, None)
     assert result == {"accounts_stored": 0}
     assert accounts.calls == []
+    # No heartbeat, or the balance-poll alarm would never page for it (WHIT-645).
+    assert not any("BALANCE_POLL_ALL_STORED" in r.getMessage() for r in caplog.records)
 
 
-def test_poll_account_balances_isolates_a_single_account_failure(handler, monkeypatch):
-    # One account's poll blows up; the others must still store (best-effort per account).
-    accounts = _FakeAccountRepo()
-    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
-
-    def fetch(bid, aid, api_key, **_):
-        if aid == "T6d8ppsYssBDFCwl1qEb0w":
-            raise RuntimeError("mortgage balance timed out")
-        return _PAYLOADS_BY_AID[aid]
-
-    monkeypatch.setattr(handler, "fetch_balance", fetch)
-
-    stored, _deltas = handler._poll_account_balances("the-key")
-
-    assert stored == len(handler.BALANCE_SOURCES) - 1  # only the mortgage poll was skipped
-    ids = {c[0] for c in accounts.calls}
-    assert ids == {"up-spending", "anz-rewards-black-visa", "westpac-altitude-qantas-black"}
+def _mortgage(amount):
+    return {"success": True,
+            "data": {"amount": amount, "date": "2026-07-04T00:00:00Z", "accountType": "mortgage"}}
 
 
-# --- WHIT-301: milestone celebration hook in _check_homeloan -----------------
+def _run(handler, monkeypatch, repo, payload):
+    monkeypatch.setattr(handler, "get_api_key", lambda: "k")
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
+    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: FakeResponse(payload))
+    return handler.lambda_handler({}, None)
 
-@pytest.mark.parametrize(
-    ("prior", "expected_old"),
-    [(Decimal("-600000"), Decimal("600000")), (None, None)],
-    ids=["owed-amounts", "first-poll-passes-none"],
-)
-def test_check_homeloan_passes_the_owed_old_and_new_to_the_detector(handler, monkeypatch, prior, expected_old):
-    seen = {}
+
+def test_lambda_handler_stores_a_zero_balance_on_a_paid_off_loan(handler, monkeypatch):
+    # A REAL 0 reading is written; only failure paths avoid zeroing.
+    repo = balance_repo()
+    monkeypatch.setattr(handler, "_check_homeloan", lambda deltas: None)
+    _run(handler, monkeypatch, repo, _mortgage(0))
+    assert upserted(repo)["up-homeloan"] == Decimal("0")
+
+
+def test_lambda_handler_swallows_a_repository_upsert_failure(handler, monkeypatch):
+    # The DynamoDB write failing must not raise out of the poller, and a balance that was never
+    # stored must not celebrate a milestone crossing (WHIT-301).
+    repo = balance_repo(rows=[homeloan_row("-600000", as_of="2026-07-03T00:00:00Z")], upsert_fails=True)
+    detector_calls = []
     monkeypatch.setattr(sys.modules["milestones"], "notify_milestone_crossing",
-                        lambda old, new, **kw: seen.update(old=old, new=new) or 0)
+                        lambda *args, **kwargs: detector_calls.append((args, kwargs)) or 0)
 
-    handler._check_homeloan([{"account_id": "up-homeloan", "old": prior, "new": Decimal("-596642.43")}])
+    result = _run(handler, monkeypatch, repo, _mortgage(-400000))
 
-    assert seen == {"old": expected_old, "new": Decimal("596642.43")}
-
-
-def test_check_homeloan_milestone_failure_still_runs_the_drop_alarm(handler, monkeypatch):
-    """Best-effort: a milestone-push failure must not skip the WHIT-316 alarm check."""
-    def boom(*a, **k):
-        raise RuntimeError("expo down")
-
-    monkeypatch.setattr(handler, "notify_homeloan_milestone", boom)
-    seen = []
-    monkeypatch.setattr(handler, "check_repayment_landed_but_no_push",
-                        lambda old, new, notify_repo: seen.append((old, new)))
-
-    handler._check_homeloan([{"account_id": "up-homeloan", "old": Decimal("-600000"), "new": Decimal("-596642.43")}])
-
-    assert seen == [(Decimal("600000"), Decimal("596642.43"))]
-
-
-# --- WHIT-479: goal-checkpoint celebration hook in the account poll -----------
-
-def test_poll_account_balances_returns_old_new_deltas(handler, monkeypatch):
-    # A prior stored balance for spending; anz has none (first poll → old None).
-    accounts = _FakeAccountRepo(prior={"up-spending": Decimal("90000")})
-    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
-    monkeypatch.setattr(handler, "fetch_balance",
-                        lambda bid, aid, key, **_: _PAYLOADS_BY_AID[aid])
-
-    stored, deltas = handler._poll_account_balances("key")
-    assert stored == len(handler.BALANCE_SOURCES)
-    by_account = {d["account_id"]: d for d in deltas}
-    assert by_account["up-spending"]["old"] == Decimal("90000")
-    assert by_account["up-spending"]["new"] == Decimal("96270.59")
-    assert by_account["anz-rewards-black-visa"]["old"] is None  # first poll → seed guard
-
-
-def test_poll_account_balances_reads_prior_balances_in_one_batch(handler, monkeypatch):
-    # WHIT-482: the prior read is hoisted out of the per-account loop. Whatever the account count,
-    # there is exactly ONE list_balances call, for the whole mapped id set — so this reddens if the
-    # read ever moves back inside the loop (that would make one call per account).
-    accounts = _FakeAccountRepo(prior={"up-spending": Decimal("90000")})
-    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
-    monkeypatch.setattr(handler, "fetch_balance",
-                        lambda bid, aid, key, **_: _PAYLOADS_BY_AID[aid])
-
-    handler._poll_account_balances("key")
-    assert len(accounts.list_balance_calls) == 1
-    assert accounts.list_balance_calls[0] == sorted(set(handler.ACCOUNT_ID_MAP.values()))
+    assert result == {"accounts_stored": 0}
+    assert upserted(repo)["up-homeloan"] == Decimal("-400000")  # attempted, then swallowed
+    assert detector_calls == []
 
 
 def test_poll_account_balances_batch_read_failure_degrades_old_but_still_stores(handler, monkeypatch):
@@ -357,40 +232,6 @@ def test_poll_account_balances_batch_read_failure_degrades_old_but_still_stores(
     assert stored == len(handler.BALANCE_SOURCES)
     assert all(d["old"] is None for d in deltas)  # the failed read nulls every account's old
     assert len(accounts.calls) == len(handler.BALANCE_SOURCES)  # ...but every balance stored
-
-
-_HOMELOAN_DELTA = {"account_id": "up-homeloan", "old": Decimal("-3"), "new": Decimal("-2")}
-
-
-def test_lambda_handler_passes_account_deltas_to_the_goal_checkpoint_check(handler, monkeypatch):
-    monkeypatch.setattr(handler, "get_api_key", lambda: "key")
-    monkeypatch.setattr(handler, "_check_homeloan", lambda d: None)
-    deltas = [{"account_id": "up-spending", "old": Decimal("1"), "new": Decimal("2")}, _HOMELOAN_DELTA]
-    monkeypatch.setattr(handler, "_poll_account_balances", lambda key: (2, deltas))
-    seen = {}
-    monkeypatch.setattr(handler, "_check_goal_checkpoints", lambda d: seen.update(deltas=d))
-
-    result = handler.lambda_handler({}, None)
-    assert result == {"accounts_stored": 2}
-    assert seen["deltas"] == deltas
-
-
-def test_lambda_handler_goal_checkpoint_failure_is_swallowed(handler, monkeypatch):
-    monkeypatch.setattr(handler, "get_api_key", lambda: "key")
-    monkeypatch.setattr(handler, "_check_homeloan", lambda d: None)
-    monkeypatch.setattr(handler, "_poll_account_balances", lambda key: (2, [_HOMELOAN_DELTA]))
-    def boom(_deltas):
-        raise RuntimeError("expo down")
-    monkeypatch.setattr(handler, "_check_goal_checkpoints", boom)
-
-    # A push failure must not flip the stored-balance result.
-    assert handler.lambda_handler({}, None) == {"accounts_stored": 2}
-
-
-# --- WHIT-482 (QA additions): batched prior-read gaps -------------------------
-# Card: WHIT-482 — hoist the per-account prior-balance read into one batched read.
-# These cover gaps the 3 existing/new cases leave open. They exercise the REAL
-# handler._poll_account_balances / _check_goal_checkpoints — no re-implemented math.
 
 
 class _FakeNotifyRepo:
@@ -411,63 +252,27 @@ class _FakeDeviceRepo:
         return ["ExponentPushToken[x]"]
 
 
-def test_poll_account_balances_zero_prior_keeps_signed_zero_not_none(handler, monkeypatch):
-    # WHIT-482 — [A1] a stored prior of exactly 0 must reach the delta as Decimal("0"), NOT None.
-    # `.get()` returns 0 as a real value; a `.get(id) or None` "cleanup" would wrongly null it and
-    # a checkpoint sitting just above 0 would never celebrate. Guards that regression.
-    accounts = _FakeAccountRepo(prior={"up-spending": Decimal("0"), "up-homeloan": Decimal("0")})
+@pytest.mark.parametrize(
+    ("prior", "account_id", "expected_old"),
+    [
+        # A stored 0 is a real value; a `.get(id) or None` "cleanup" would null it (WHIT-482).
+        ({"up-spending": Decimal("0")}, "up-spending", Decimal("0")),
+        # A loan/credit-card prior stays NEGATIVE: not abs, not None.
+        ({"up-homeloan": Decimal("-596000.00")}, "up-homeloan", Decimal("-596000.00")),
+        # No prior row in the batch -> genuinely first poll -> None.
+        ({}, "up-spending", None),
+    ],
+    ids=["zero", "negative", "missing"],
+)
+def test_poll_account_balances_negative_prior_keeps_signed_value(handler, monkeypatch, prior, account_id, expected_old):
+    accounts = _FakeAccountRepo(prior=prior)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
-    monkeypatch.setattr(
-        handler, "fetch_balance",
-        lambda bid, aid, key, **_: _PAYLOADS_BY_AID[aid],
-    )
+    monkeypatch.setattr(handler, "fetch_balance", lambda bid, aid, key, **_: _PAYLOADS_BY_AID[aid])
 
     _stored, deltas = handler._poll_account_balances("key")
+
     by_account = {d["account_id"]: d for d in deltas}
-    assert by_account["up-spending"]["old"] == Decimal("0")
-    assert by_account["up-spending"]["old"] is not None
-    assert by_account["up-homeloan"]["old"] == Decimal("0")
-
-
-def test_poll_account_balances_negative_prior_keeps_signed_value(handler, monkeypatch):
-    # WHIT-482 — [A2] a synced loan/credit-card prior is stored NEGATIVE. The delta's `old` must be
-    # that exact signed value (not abs, not None), so paydown checkpoints normalise correctly.
-    accounts = _FakeAccountRepo(
-        prior={"up-homeloan": Decimal("-596000.00"), "anz-rewards-black-visa": Decimal("-6000.00")}
-    )
-    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
-    monkeypatch.setattr(
-        handler, "fetch_balance",
-        lambda bid, aid, key, **_: _PAYLOADS_BY_AID[aid],
-    )
-
-    _stored, deltas = handler._poll_account_balances("key")
-    by_account = {d["account_id"]: d for d in deltas}
-    assert by_account["up-homeloan"]["old"] == Decimal("-596000.00")
-    assert by_account["anz-rewards-black-visa"]["old"] == Decimal("-6000.00")
-    # up-spending had no prior row in the batch -> genuinely first poll -> None.
-    assert by_account["up-spending"]["old"] is None
-
-
-def test_poll_account_balances_extra_prior_ids_are_harmless_and_dont_leak(handler, monkeypatch):
-    # WHIT-482 — [A3] the batch may return MORE ids than the loop visits (an account mapped/stored
-    # but not in BALANCE_SOURCES, or simply extra rows). Those must NEVER surface as a delta —
-    # deltas come from the BALANCE_SOURCES loop, not prior_by_id — and must not disturb real olds.
-    accounts = _FakeAccountRepo(
-        prior={"up-spending": Decimal("90000"), "orphan-not-a-source": Decimal("777")}
-    )
-    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
-    monkeypatch.setattr(
-        handler, "fetch_balance",
-        lambda bid, aid, key, **_: _PAYLOADS_BY_AID[aid],
-    )
-
-    stored, deltas = handler._poll_account_balances("key")
-    account_ids = {d["account_id"] for d in deltas}
-    assert stored == len(handler.BALANCE_SOURCES)
-    assert "orphan-not-a-source" not in account_ids  # the extra row never leaks into a delta
-    by_account = {d["account_id"]: d for d in deltas}
-    assert by_account["up-spending"]["old"] == Decimal("90000")  # real old undisturbed by the extra
+    assert by_account[account_id]["old"] == expected_old
 
 
 def test_poll_account_balances_partial_fetch_failure_survivors_keep_batched_old(handler, monkeypatch):

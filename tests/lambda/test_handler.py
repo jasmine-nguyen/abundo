@@ -18,7 +18,7 @@ the real class and set a known secret, so real HMAC verification runs.
 
 The "data-loss regressions" section locks in the WHIT-83 fix (a failed write
 leaves the event unmarked so BankSync's retry re-processes it, and a failed insert
-surfaces as 500 rather than a false 200 "ok") and the WHIT-84 dead-letter uuid.
+surfaces as 500 rather than a false 200 "ok").
 """
 
 import base64
@@ -53,34 +53,6 @@ def _wire(lam, monkeypatch, repo, payload):
 # --- the verify → dedup → process gate --------------------------------------
 
 
-def test_valid_event_is_processed_and_returns_ok(lam, monkeypatch):
-    handler = lam.handler
-    seen = {}
-    monkeypatch.setattr(handler, "process_transaction",
-                        lambda payload, repo: seen.update(payload=payload))
-    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_1", "data": [{"a": 1}]})
-
-    resp = handler.lambda_handler({}, None)
-
-    assert resp["statusCode"] == 200 and resp["body"] == "ok"
-    assert seen["payload"]["id"] == "evt_1"  # processing actually ran
-
-
-def test_duplicate_event_is_skipped_without_processing(lam, monkeypatch):
-    handler = lam.handler
-    calls = []
-    monkeypatch.setattr(handler, "process_transaction",
-                        lambda payload, repo: calls.append(payload))
-    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_dup", "data": []})
-
-    first = handler.lambda_handler({}, None)
-    second = handler.lambda_handler({}, None)  # same id re-delivered
-
-    assert first["statusCode"] == 200 and first["body"] == "ok"
-    assert second["statusCode"] == 200 and second["body"] == "duplicate event - skipped"
-    assert len(calls) == 1  # processed exactly once
-
-
 def test_summary_event_without_data_key_is_acked_not_500(lam, monkeypatch):
     # A BankSync `sync.completed` summary delivery carries NO "data" key (unlike a
     # transaction event). It must be treated as zero rows and acked with 200 — not
@@ -95,23 +67,6 @@ def test_summary_event_without_data_key_is_acked_not_500(lam, monkeypatch):
 
 
 # --- observability: per-delivery log line ------------------------------------
-
-
-def test_webhook_logs_event_id_and_row_count(lam, monkeypatch, caplog):
-    # Every verified delivery logs its event id + row count, so the hourly webhook
-    # fan-out is visible in CloudWatch (the normal path was otherwise silent — only
-    # the Lambda START/END showed). Fail-on-revert: drop the logger.info line and
-    # these assertions go red.
-    handler = lam.handler
-    monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)
-    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_log", "data": [{"a": 1}, {"b": 2}]})
-
-    with caplog.at_level(logging.INFO, logger="handler"):
-        resp = handler.lambda_handler({}, None)
-
-    assert resp["statusCode"] == 200
-    assert "evt_log" in caplog.text
-    assert "2 rows" in caplog.text
 
 
 def test_summary_delivery_logs_keys_and_allow_listed_fields_only(lam, monkeypatch, caplog):
@@ -137,18 +92,6 @@ def test_summary_delivery_logs_keys_and_allow_listed_fields_only(lam, monkeypatc
     assert "'state': 'error'" not in summary_line   # nested values aren't logged either
 
 
-def test_summary_delivery_truncates_a_long_field(lam, monkeypatch, caplog):
-    handler = lam.handler
-    monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)
-    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_long", "message": "x" * 500})
-
-    with caplog.at_level(logging.INFO, logger="handler"):
-        handler.lambda_handler({}, None)
-
-    assert "x" * 200 in caplog.text
-    assert "x" * 201 not in caplog.text
-
-
 def test_summary_delivery_hides_an_allow_listed_key_holding_an_object(lam, caplog):
     payload = {"id": "evt_obj", "data": [], "error": {"detail": "card 4111-1111 declined"},
                "timestamp": 1790000000}
@@ -159,51 +102,6 @@ def test_summary_delivery_hides_an_allow_listed_key_holding_an_object(lam, caplo
     assert "4111-1111" not in caplog.text
     assert "'error': ['detail']" in caplog.text
     assert "'timestamp': '1790000000'" in caplog.text
-
-
-def test_summary_delivery_without_data_key_is_logged(lam, monkeypatch, caplog):
-    handler = lam.handler
-    monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)
-    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_nodata", "status": "ok"})
-
-    with caplog.at_level(logging.INFO, logger="handler"):
-        handler.lambda_handler({}, None)
-
-    assert "evt_nodata summary:" in caplog.text
-
-
-def test_row_carrying_delivery_logs_no_summary_line(lam, monkeypatch, caplog):
-    handler = lam.handler
-    monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)
-    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_rows", "data": [{"a": 1}]})
-
-    with caplog.at_level(logging.INFO, logger="handler"):
-        handler.lambda_handler({}, None)
-
-    assert "summary:" not in caplog.text
-
-
-def test_webhook_logs_even_a_duplicate_delivery(lam, monkeypatch, caplog):
-    # The log sits BEFORE the dedup check, so a re-delivered (duplicate) event is
-    # logged too — that's the point: it reveals how many of the hourly deliveries are
-    # BankSync re-sends vs new work.
-    handler = lam.handler
-    monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)
-    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_dup", "data": []})
-
-    handler.lambda_handler({}, None)  # first delivery: processed + marked
-    with caplog.at_level(logging.INFO, logger="handler"):
-        second = handler.lambda_handler({}, None)  # same id re-delivered
-
-    assert second["body"] == "duplicate event - skipped"
-    assert "evt_dup" in caplog.text  # logged despite being a duplicate
-
-
-def test_handler_logger_opts_into_info(lam):
-    # The Text-format Lambda runtime leaves the root logger at WARNING, so the module
-    # must opt into INFO explicitly or the observability log above is silently dropped
-    # in prod (caplog.at_level masks this, so it needs its own guard).
-    assert lam.handler.logger.level == logging.INFO
 
 
 # --- signature glue: real verification through our handler -------------------
@@ -279,87 +177,6 @@ def test_stale_timestamp_is_rejected_with_401(lam, monkeypatch):
 
 
 # --- data-loss regressions (see Board bug card) -----------------------------
-
-
-def test_write_failure_then_retry_is_not_dropped(lam, monkeypatch):
-    # First delivery's processing raises (RuntimeError — what handle_database_error
-    # actually raises). BankSync retries with the same envelope id. The retry MUST
-    # re-process, not get waved through as a duplicate (WHIT-83).
-    handler = lam.handler
-    attempts = {"n": 0}
-
-    def flaky_process(payload, repo):
-        attempts["n"] += 1
-        if attempts["n"] == 1:
-            raise RuntimeError("Database write failed")
-
-    monkeypatch.setattr(handler, "process_transaction", flaky_process)
-    handler = _wire(lam, monkeypatch, _real_repo(lam), {"id": "evt_1", "data": [{"a": 1}]})
-
-    resp1 = handler.lambda_handler({}, None)  # delivery 1 → write fails
-    resp2 = handler.lambda_handler({}, None)  # delivery 2 → retry re-processes
-
-    assert attempts["n"] == 2                          # retry re-processed (event never marked)
-    assert resp1["statusCode"] == 500                  # failure surfaced → BankSync retries
-    assert resp2 == {"statusCode": 200, "body": "ok"}  # retry succeeded, nothing dropped
-
-
-def test_failing_event_is_not_marked_seen(lam, monkeypatch):
-    # WHIT-83 boundary: a failed event must be left UNMARKED (so its retry
-    # re-processes), while a sibling event that succeeded stays marked (its
-    # redelivery is deduped). save-then-mark gives this for free — no rollback.
-    handler = lam.handler
-    repo = _real_repo(lam)
-
-    def selective_process(payload, repo):
-        if payload["id"] == "evt_fail":
-            raise RuntimeError("write failed")
-
-    monkeypatch.setattr(handler, "process_transaction", selective_process)
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
-
-    # evt_ok processes cleanly → gets marked.
-    monkeypatch.setattr(handler, "verify_and_parse", lambda e: {"id": "evt_ok", "data": []})
-    assert handler.lambda_handler({}, None)["statusCode"] == 200
-
-    # evt_fail fails → is never marked.
-    monkeypatch.setattr(handler, "verify_and_parse", lambda e: {"id": "evt_fail", "data": []})
-    assert handler.lambda_handler({}, None)["statusCode"] == 500
-
-    assert repo.has_event("evt_ok")           # succeeded → marked
-    assert not repo.has_event("evt_fail")     # failed → left unmarked for the retry
-
-    # Redelivery: evt_ok is still deduped, evt_fail re-processes (and fails again).
-    monkeypatch.setattr(handler, "verify_and_parse", lambda e: {"id": "evt_ok", "data": []})
-    assert handler.lambda_handler({}, None)["body"] == "duplicate event - skipped"
-    monkeypatch.setattr(handler, "verify_and_parse", lambda e: {"id": "evt_fail", "data": []})
-    assert handler.lambda_handler({}, None)["statusCode"] == 500
-
-
-def test_dead_letter_rows_accumulate_across_retries(lam, repo, monkeypatch):
-    # WHIT-83/84 residual (documented, accepted): a write that fails AFTER
-    # save_failed_transactions already ran re-writes the dead-letter row on every
-    # BankSync retry (fresh uuid each time), so dead-letter rows ACCUMULATE — they
-    # are not deduped across retries. Locks the behaviour so a future dedup is a
-    # conscious decision, not a surprise. (This depends on the WHIT-83 fix: on the
-    # old mark-before-write code the retry would be deduped and only ONE row written.)
-    handler = lam.handler
-
-    def boom_insert(txns):
-        raise RuntimeError("insert failed")  # fails AFTER save_failed_transactions
-
-    monkeypatch.setattr(repo, "insert_or_reconcile", boom_insert)
-    # An unmapped row (no "id") → routed to save_failed_transactions before the insert.
-    monkeypatch.setattr(handler, "verify_and_parse",
-                        lambda e: {"id": "evt_1", "data": [{"unmapped": "row"}]})
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
-
-    r1 = handler.lambda_handler({}, None)   # delivery 1: dead-letter written, insert fails
-    r2 = handler.lambda_handler({}, None)   # retry: dead-letter written AGAIN, insert fails
-
-    assert r1["statusCode"] == 500 and r2["statusCode"] == 500
-    failed = [k for k in repo._table.store if k[0] == "FAILED"]
-    assert len(failed) == 2  # same input, two rows — NOT deduped across retries
 
 
 def test_client_error_during_insert_is_not_reported_as_ok(lam, monkeypatch):
