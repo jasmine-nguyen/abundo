@@ -1,7 +1,6 @@
 // WHIT-203 — the shared hooks the second-tier readers moved onto: useCategories (the
-// taxonomy the pickers / category screens / rules label / tab badge read), usePayCycle
-// (the Settings row + pay-cycle sheet), and useBudgetDetailScreenData (the budget-detail
-// screen). Real ../api over the fake server; ../auth mocked; real QueryClientProvider.
+// taxonomy the pickers / category screens / rules label / tab badge read) and
+// useBudgetDetailScreenData (the budget-detail screen). Real ../api over the fake server; ../auth mocked; real QueryClientProvider.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react-native';
@@ -56,9 +55,8 @@ it('useBudgetDetailScreenData assembles the budget list + budgets + categories f
 });
 
 // WHIT-204: the composite routes its status through the shared useCombineScreenQueries helper.
-// These two lock that the budget-transactions query is actually in that array (the array-
-// transcription risk the plan-critic flagged) — a list failure must surface as isError, and
-// refetchStale must re-fire the list read.
+// This locks that the budget-transactions query is actually in that array (the array-
+// transcription risk the plan-critic flagged) — a list failure must surface as isError.
 it('useBudgetDetailScreenData surfaces a budget-transactions read failure as isError (not a stranded spinner)', async () => {
   server.fail(COFFEE_BUDGET_TX, 500);
   const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });

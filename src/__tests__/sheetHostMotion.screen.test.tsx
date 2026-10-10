@@ -54,12 +54,11 @@ afterEach(() => { jest.restoreAllMocks(); });
 
 // ===== WHIT-199 GAP — SheetHost reduce-motion WIRING (Overlays.tsx), the half sheetMotion.screen.test.ts
 // can't reach: springSheetIn is unit-tested, but nothing proves SheetHost wires useReduceMotion →
-// the Modal's animationType AND kicks the open spring (and re-kicks it on every reopen). Native-
-// driver values don't advance in jest, so we assert the BRANCH/WIRING (animationType + that a
-// spring was started / suppressed), never motion frames. Fail-on-revert:
+// the Modal's animationType AND kicks the open spring. Native-driver values don't advance in jest,
+// so we assert the BRANCH/WIRING (animationType + that a spring was started / suppressed), never
+// motion frames. Fail-on-revert:
 //   - revert `animationType={reduceMotion ? 'none' : 'fade'}` to the old 'slide' → both asserts flip
 //   - drop the open-effect's springSheetIn call → "spring on open" flips
-//   - break the effect's `open` re-fire → the reopen count flips
 describe('SheetHost reduce-motion wiring (WHIT-199)', () => {
   function paycycleState(): AppContext {
     return {
@@ -75,6 +74,17 @@ describe('SheetHost reduce-motion wiring (WHIT-199)', () => {
     jest.restoreAllMocks();
     mockReduceMotion = false;
     server.seed('/paycycle', PAY_CYCLE);
+  });
+
+  // The sheet opens on openOverlays' second render, so the spring checks run after mount returns.
+  it('motion on: Modal fades (not slides) and the open spring is started, content mounted', async () => {
+    mockReduceMotion = false;
+    const springSpy = jest.spyOn(Animated, 'spring')
+      .mockReturnValue({ start: jest.fn() } as unknown as Animated.CompositeAnimation);
+    const { UNSAFE_getByType } = await mount(paycycleState());
+    expect(UNSAFE_getByType(Modal).props.animationType).toBe('fade'); // NOT the old 'slide'
+    expect(screen.getByText('Fortnightly')).toBeTruthy();             // sheet content mounted
+    expect(springSpy).toHaveBeenCalledTimes(1);                       // the open spring fired
   });
 
   it('reduce-motion: Modal does not animate and NO spring is started (instant jump)', async () => {
@@ -149,7 +159,7 @@ describe('SheetHost drag-to-dismiss (WHIT-290/WHIT-293)', () => {
 // ===== WHIT-294 — the pop-up SheetHost wraps its sheet in a KeyboardAvoidingView so a focused field's
 // form (incl. its submit button) lifts above the keyboard instead of being hidden under it. The
 // actual keyboard lift is device-only; this locks the structure (the sheet is inside a
-// KeyboardAvoidingView with a real behavior) and that the sheet still renders + closes.
+// KeyboardAvoidingView with a real behavior).
 describe('SheetHost keyboard avoidance (WHIT-294)', () => {
   const fns = { setSheet: jest.fn(), setPayCycleLength: jest.fn(), setPayday: jest.fn() };
   beforeEach(() => {

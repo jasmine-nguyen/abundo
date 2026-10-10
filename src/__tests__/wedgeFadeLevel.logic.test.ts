@@ -1,8 +1,6 @@
 // WHIT-759 — the unselected pie slices fade to fixed, hand-set values instead of a per-colour
-// calculation. Those values must still let every shipped slice colour clear WCAG 1.4.11's 3:1,
-// and keep the look Jas signed off on (option B): a faded category slice CLEARLY steps back, and
-// the faded grey "Other" ends up level with the faded categories, not brighter. Measured with the
-// independent ./support/wcag maths — never with the code under test.
+// calculation. Those values must still let every shipped slice colour clear WCAG 1.4.11's 3:1.
+// Measured with the independent ./support/wcag maths — never with the code under test.
 import { describe, it, expect } from '@jest/globals';
 import { CATEGORY_COLORS, OTHER_COLOR, CHART_BG, wedgeDim } from '../chartColors';
 import { C } from '../theme';

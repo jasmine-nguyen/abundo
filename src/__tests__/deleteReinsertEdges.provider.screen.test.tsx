@@ -1,7 +1,7 @@
 // WHIT-254 — failed deletes through the REAL deleteGoal/deleteRule writers restore cache order
 // (the order maths itself is in reinsert.logic.test.ts). Here: a MIX of one succeeding + one
-// failing (successful one stays gone,
-// failed one lands in the right slot AND the boolean returns are honoured); a failed delete
+// failing (successful one stays gone, failed one lands in the right slot AND the boolean returns
+// are honoured); a failed delete
 // of the only element restores [x]; deleteGoal false-on-failure; a toast surfaces on failure;
 // and a cache evicted mid-flight stays empty for both deleteGoal and deleteRule (WHIT-833).
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';

@@ -7,20 +7,16 @@
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
-import type { Category } from '../types';
 import type { Rule } from '../model';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache } from './support/transactionsCache';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
-import { GROCERIES } from './support/categories';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
 import { colesTxn as txn } from './factory';
 
 const server = installFakeServer();
-
-const CAT: Category = { ...GROCERIES };
 
 beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });

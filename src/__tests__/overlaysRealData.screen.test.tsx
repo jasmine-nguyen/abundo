@@ -3,7 +3,7 @@
 //   - WHIT-268  anon hard-clear + locked hide/keep    (was overlaysAuthClear)
 //   - WHIT-268  gaps: refresh/epoch/loading/reconcile (was overlaysAuthClearGaps)
 //   - WHIT-277  pop-up sheet drafts survive a lock     (was overlaysSheetDraft)
-//   - WHIT-277  gaps: draft halves / key isolation     (was overlaysSheetDraftGaps)
+//   - WHIT-277  gaps: key isolation / lock guard       (was overlaysSheetDraftGaps)
 //   - WHIT-283  picker inline-create draft survives    (was overlaysPickerCreateDraft)
 //   - WHIT-283  gap: restored form RE-SELECTS          (was overlaysPickerCreateDraftRender)
 //   - WHIT-437  categorise sheet quick-create reason   (was categorizeSheetCreateReason)
@@ -264,7 +264,7 @@ describe('WHIT-277 — pop-up sheet drafts survive a Face ID lock', () => {
 //   [A8] distinct draft keys — a NEW-rule draft does not leak into an EDIT sheet, and vice-versa
 //   [A9] WHIT-268 fail-on-revert for the GOAL sheet: while status==='locked', the typed money figure
 //        is not readable by ANY query even though a draft is stashed
-describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock guard', () => {
+describe('WHIT-277 gaps — key isolation and the WHIT-268 lock guard', () => {
   let ctx!: ReturnType<typeof useAppContext>;
   function Probe() { ctx = useAppContext(); return <Text testID="probe">probe</Text>; }
   function renderOverlays() {
@@ -331,8 +331,7 @@ describe('WHIT-277 gaps — draft halves, key isolation, and the WHIT-268 lock g
 // for the add-rule / goal-balance sheets. The whole overlay layer unmounts while locked (Overlays'
 // WHIT-268 shield), destroying PickerSheet's `creating` flag + QuickCreateCategory's fields; both
 // are stashed in the WHIT-277 draft store and restored on unlock. These pin: the form reopens with
-// its fields intact (not the category list); nothing renders while locked; cleared on close /
-// sign-out / cancel.
+// its fields intact (not the category list); cleared on cancel.
 describe('WHIT-283 — picker inline-create draft survives a Face ID lock', () => {
   let ctx!: ReturnType<typeof useAppContext>;
   function Probe() { ctx = useAppContext(); return <Text testID="probe">probe</Text>; }

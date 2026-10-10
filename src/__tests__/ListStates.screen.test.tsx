@@ -46,8 +46,7 @@ describe('StaleDataLine (WHIT-713)', () => {
     expect(screen.queryByTestId('budgets-stale')).toBeNull();
   });
 
-  // WHIT-844: the opt-in success version. Without the opt-in a good load still shows nothing
-  // (the first case above).
+  // WHIT-844: the opt-in success version.
   it('with showUpdated, says when a good load happened', () => {
     render(<StaleDataLine idPrefix="budgets" error={null} updatedAt={loadedAt} showUpdated />);
     expect(screen.getByTestId('budgets-updated')).toHaveTextContent('Updated 9:40am');

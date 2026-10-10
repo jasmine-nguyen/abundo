@@ -2,7 +2,7 @@
 // body shape, url-encoding, JSON return, and the not-OK throw for fetchGoals/saveGoal/
 // deleteGoal. Every /goals route is JWT-gated like the rest of the API, so each call must
 // send the Cognito ID token (Authorization: Bearer <id token>). fetch + getAuthToken mocked;
-// no network. Mirrors apiCore.logic.test.ts.
+// no network. Mirrors api.logic.test.ts.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { fetchGoals, saveGoal, deleteGoal } from '../api';
 import type { GoalWriteBody } from '../api';

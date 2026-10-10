@@ -1,12 +1,7 @@
-// WHIT-489 — adversarial GAPS for the "Balances up to date" success toast. These do NOT duplicate the
-// implementer's three hook tests (usePullToRefresh.screen.test.tsx) or [G2] (pullToRefreshLiveBalances):
-//   [N1] REGRESSION on the shared hook: the Transactions tab wires the hook WITHOUT a successMessage,
-//        so a SUCCESSFUL pull there stays silent. Reddens if someone passes a message at that call site.
+// WHIT-489 — adversarial GAP for the "Balances up to date" success toast, beyond the hook tests
+// (usePullToRefresh.screen.test.tsx) and [G2] (pullToRefreshLiveBalances):
 //   [N2] The exact "feels broken" case: the live number is UNCHANGED (same -$100.00 in and out) — the
 //        toast must STILL fire, because that is the only signal the pull ran.
-//   [N3] allSettled independence: the LIST refetch fails but the balance succeeds → success toast STILL
-//        fires (the toast is gated on the balance call, never the list outcome).
-//   [N4] Empty "No accounts yet" state is a valid pull target → a successful pull still confirms.
 // Real ../api over the fake server; ../auth + expo-router mocked; ../context PARTIALLY mocked.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
@@ -49,7 +44,6 @@ beforeEach(() => {
   server.seed('/categories', mockCategories);
   // The live refresh echoes the stored balances unless a test queues its own reply.
   server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]);
-  server.seed('/transactions/uncategorized/count', { count: 0 });
   mockShowToast.mockReset();
 });
 

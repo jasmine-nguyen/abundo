@@ -2,8 +2,8 @@
 // milestone.screen.test.tsx already locks the real card (amount+date+split, no
 // "9:02am") and the empty-state copy. This file guards the structural change the
 // implementer's tests don't touch: the card was un-gated from g.factsReady — with loan
-// facts UNSET it must still render (real card when a repayment exists, empty state
-// otherwise), i.e. it no longer disappears during the "set up your loan" hero state.
+// facts UNSET it must still render the real card when a repayment exists, i.e. it no
+// longer disappears during the "set up your loan" hero state.
 // WHIT-685: the loanFacts/homeLoan/repayment come from the fake server through the real
 // screen data code.
 import { it, expect, jest, beforeEach } from '@jest/globals';

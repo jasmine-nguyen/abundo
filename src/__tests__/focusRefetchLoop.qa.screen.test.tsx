@@ -1,7 +1,6 @@
-// WHIT-668 qa — the focus refresh (refetchStale) must be a STABLE function that still reads the
-// LATEST query state. Stable → a screen's useFocusEffect doesn't rerun on every redraw (the tight
-// retry loop). Latest → a refetchStale captured on an early render still sees today's
-// staleness / search mode (no old data captured earlier that never updated).
+// WHIT-668 qa — a screen's focus refresh (refetchStale) asks each read once, then stops (no tight
+// retry loop), and a refetchStale captured on an early render still sees today's staleness /
+// search mode (no old data captured earlier that never updated).
 // Real ../queries over the fake server; ../auth mocked; each composite is wired to a focus effect
 // exactly like the screens (and the expo-router test mock) do: useEffect(() => cb(), [cb]).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';

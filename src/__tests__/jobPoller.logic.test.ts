@@ -6,6 +6,8 @@ type Job = { status: 'running' | 'succeeded' | 'failed'; step?: string };
 
 const DELAY = 1000;
 
+const isRunning = (job: Job) => job.status === 'running';
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
@@ -31,7 +33,7 @@ describe('pollJob', () => {
     const cb = callbacks();
 
     const handle = pollJob<Job>({
-      jobId: 'job-1', check, isRunning: (job) => job.status === 'running',
+      jobId: 'job-1', check, isRunning,
       delayMs: DELAY, maxNetErrors: 3, ...cb,
     });
 
@@ -85,7 +87,6 @@ describe('pollJob', () => {
   });
 
   it('gives up when the job is gone, the connection keeps dropping or the time limit passes, and stops cleanly', async () => {
-    const isRunning = (job: Job) => job.status === 'running';
 
     // 404 → the job is gone.
     const gone = callbacks();
@@ -162,7 +163,6 @@ describe('pollJob', () => {
 
 // WHIT-629 QA — 404 vs other errors, a rejected check after stop(), and terminal finality.
 describe('pollJob edges', () => {
-  const isRunning = (job: Job) => job.status === 'running';
 
   it('[A2] a 404 after some dropped connections is "expired", not "network", and ends at once', async () => {
     const cb = callbacks();

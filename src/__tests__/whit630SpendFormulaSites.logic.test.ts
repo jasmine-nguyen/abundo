@@ -6,10 +6,10 @@ import { budgetViews, budgetDetail, budgetSpreadEligibility } from '../context';
 import { makeState, cat, budget } from './factory';
 
 const food = cat({ id: 'food', name: 'Food', bucket: 'Living' });
-const state = (b: object, daysLeft = 7) => makeState({
+const state = (b: object) => makeState({
   categories: [food],
   budgets: [budget({ id: 'food', ...b })],
-  cycleLen: 14, daysLeft,
+  cycleLen: 14, daysLeft: 7,
 });
 
 describe('a server `available` wins at every read site', () => {

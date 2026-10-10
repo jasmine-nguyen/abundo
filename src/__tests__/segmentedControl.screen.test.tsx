@@ -1,7 +1,6 @@
 // WHIT-397 — the shared SegmentedControl (extracted from the two Insights toggles). Locks the
-// contract both call sites depend on: options render by label + testID, exactly one segment reads
-// as selected, a tap fires onChange with that option's value (numeric AND string, to exercise the
-// generic), and the active segment carries its passed-in tint + text colour. The screen suites
+// contract both call sites depend on: exactly one segment reads as selected, a tap fires onChange
+// with that option's value, and the badge bubble draws only when asked. The screen suites
 // (insightsCycleToggle / insightsSideToggle) prove the two real toggles still behave; this proves
 // the component in isolation.
 import { describe, it, expect, jest } from '@jest/globals';
