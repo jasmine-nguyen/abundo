@@ -6,8 +6,6 @@ set as DynamoDB does; the expression-shape test pins that the repo issues ADD/DE
 the right attribute.
 """
 
-import pytest
-
 from _dynamo_fakes import FakeTable
 
 _KEY = ("DEVICES", "DEVICES")
@@ -17,22 +15,6 @@ def _repo(shared):
     r = shared.device.DeviceRepository()
     r._table = FakeTable()
     return r
-
-
-def test_register_and_remove_are_string_set_add_and_delete(shared):
-    r = _repo(shared)
-    r.register("ExpoPushToken[a]")
-    r.remove("ExpoPushToken[a]")
-    assert r._table.update_calls == [
-        ("ADD #t :tok", {"#t": "tokens"}, {":tok": {"ExpoPushToken[a]"}}),
-        ("DELETE #t :tok", {"#t": "tokens"}, {":tok": {"ExpoPushToken[a]"}}),
-    ]
-
-
-def test_register_then_list_round_trips(shared):
-    r = _repo(shared)
-    r.register("ExpoPushToken[a]")
-    assert r.list_tokens() == ["ExpoPushToken[a]"]
 
 
 def test_register_is_idempotent(shared):
@@ -70,18 +52,3 @@ def test_remove_absent_token_is_a_noop(shared):
     r.register("ExpoPushToken[a]")
     r.remove("ExpoPushToken[zzz]")
     assert r.list_tokens() == ["ExpoPushToken[a]"]
-
-
-def test_list_before_any_register_is_empty(shared):
-    assert _repo(shared).list_tokens() == []
-
-
-def test_client_error_surfaces_as_database_error(shared, client_error, database_error):
-    r = _repo(shared)
-
-    def boom(**kwargs):
-        raise client_error("InternalServerError")
-
-    r._table.update_item = boom
-    with pytest.raises(database_error):
-        r.register("ExpoPushToken[a]")

@@ -32,15 +32,13 @@ def test_main_push_skips_only_tooling_and_docs_only_changes(workflow):
         f"{workflow} must still run on every push to main (`branches: [main]` under push:)"
     )
 
+    # GitHub rejects a trigger with both `paths:` and `paths-ignore:`, and then nothing runs at all.
+    assert not re.search(r"^\s*paths:", push_block.group("body"), re.M), (
+        f"{workflow}'s push trigger mixes `paths:` with `paths-ignore:`, which GitHub refuses"
+    )
+
     assert set(push_paths_ignore(text)) == _TOOLING_AND_DOCS, (
         f"{workflow}'s on.push.paths-ignore must be exactly {sorted(_TOOLING_AND_DOCS)}. "
         "Widening it can stop code pushed to main from being tested; narrowing it wastes "
         "Actions minutes on tooling/docs-only pushes."
     )
-
-
-def test_the_pin_adds_no_yaml_dependency():
-    """CI installs only lambda_sync_trigger/requirements-dev.txt, so `import yaml` would
-    ImportError on the runner. Keep this guard hand-parsed."""
-    source = pathlib.Path(__file__).read_text()
-    assert not re.search(r"^\s*(import\s+yaml|from\s+yaml\s+import)\b", source, re.M)

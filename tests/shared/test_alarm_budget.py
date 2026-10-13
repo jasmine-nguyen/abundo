@@ -1,25 +1,38 @@
 """WHIT-655: CloudWatch alarms stay inside the 10-alarm free tier without losing coverage.
 
-The four Up webhook alarms merge into one hourly alarm fed by ONE metric, published by two
-filters: the webhook's own failures and the balance-poller's repayment-missed safety net.
+Every custom alarm watches a metric some log filter publishes (else it can never fire), and every
+filter's metric is watched by an alarm (else a failure is logged and nobody hears about it).
 Metric math is billed per metric it reads, so merging with a formula would save nothing.
 """
+
+import re
 
 from _terraform import MONITORING_TF, TERRAFORM_DIR, alarm_names, tf_attr, tf_block
 
 FREE_TIER_ALARMS = 10
 
 
-def _metric_published_by(text, filter_name):
-    metric_filter = tf_block(text, "aws_cloudwatch_log_metric_filter", filter_name)
-    transformation = metric_filter.split("metric_transformation", 1)[1]
-    return tf_attr(metric_filter, "log_group_name"), tf_attr(transformation, "name"), tf_attr(transformation, "namespace")
+def _filter_metrics(text):
+    """(namespace, metric name) published by every log metric filter."""
+    names = re.findall(r'^resource "aws_cloudwatch_log_metric_filter" "([^"]+)"', text, re.M)
+    published = {}
+    for name in names:
+        transformation = tf_block(text, "aws_cloudwatch_log_metric_filter", name).split("metric_transformation", 1)[1]
+        published[name] = (tf_attr(transformation, "namespace"), tf_attr(transformation, "name"))
+    return published
 
 
-def test_alarms_fit_the_free_tier_and_one_alarm_covers_every_up_webhook_failure():
-    text = MONITORING_TF.read_text()
-    names = alarm_names(text)
-    assert "milestone_row_malformed" in names, "alarm_names reader found nothing — it must not pass by returning []"
+def _alarm_metrics(text):
+    return {
+        name: (tf_attr(block, "namespace"), tf_attr(block, "metric_name"))
+        for name in alarm_names(text)
+        for block in [tf_block(text, "aws_cloudwatch_metric_alarm", name)]
+    }
+
+
+def test_alarms_fit_the_free_tier():
+    names = alarm_names(MONITORING_TF.read_text())
+    assert names, "read no alarms from monitoring.tf: the reader broke, so every check below passes empty"
     assert len(names) <= FREE_TIER_ALARMS, f"{len(names)} alarms, free tier is {FREE_TIER_ALARMS}: {names}"
 
     for tf_file in TERRAFORM_DIR.glob("*.tf"):
@@ -27,34 +40,19 @@ def test_alarms_fit_the_free_tier_and_one_alarm_covers_every_up_webhook_failure(
         if tf_file != MONITORING_TF:
             assert alarm_names(tf_file.read_text()) == [], f"{tf_file.name} declares an alarm outside monitoring.tf"
 
-    for retired in ("up_webhook_errors", "up_webhook_token_rejected",
-                    "up_webhook_no_device_tokens", "up_webhook_repayment_missed"):
-        assert retired not in names
 
-    alarm = tf_block(text, "aws_cloudwatch_metric_alarm", "up_webhook_repayment_push")
-    assert tf_attr(alarm, "alarm_name") == '"${var.project_name}-up-webhook-repayment-push"'
-    assert tf_attr(alarm, "metric_name") == '"UpWebhookRepaymentPushFailures"'
-    assert tf_attr(alarm, "namespace") == '"${var.project_name}/UpWebhook"'
-    assert tf_attr(alarm, "statistic") == '"Sum"'
-    assert tf_attr(alarm, "period") == "3600"
-    assert tf_attr(alarm, "evaluation_periods") == "1"
-    assert tf_attr(alarm, "threshold") == "1"
-    assert tf_attr(alarm, "comparison_operator") == '"GreaterThanOrEqualToThreshold"'
-    assert tf_attr(alarm, "treat_missing_data") == '"notBreaching"'
-    assert tf_attr(alarm, "alarm_actions") == "[aws_sns_topic.alerts.arn]"
+def test_every_custom_alarm_watches_a_metric_some_filter_publishes():
+    text = MONITORING_TF.read_text()
+    published = set(_filter_metrics(text).values())
+    dead = {
+        name: metric for name, metric in _alarm_metrics(text).items()
+        if not metric[0].startswith('"AWS/') and metric not in published
+    }
+    assert dead == {}, f"alarms watching a metric no filter publishes: {dead}"
 
-    description = tf_attr(alarm, "alarm_description")
-    for marker in ("up webhook: processing failed", "UP_WEBHOOK_TOKEN_REJECTED",
-                   "UP_WEBHOOK_NO_DEVICE_TOKENS", "UP_WEBHOOK_REPAYMENT_MISSED"):
-        assert marker in description, f"alarm description doesn't say where to look for {marker}"
 
-    assert _metric_published_by(text, "up_webhook_failures") == (
-        "aws_cloudwatch_log_group.up_webhook.name",
-        '"UpWebhookRepaymentPushFailures"',
-        '"${var.project_name}/UpWebhook"',
-    )
-    assert _metric_published_by(text, "up_webhook_repayment_missed") == (
-        "aws_cloudwatch_log_group.balance_poller.name",
-        '"UpWebhookRepaymentPushFailures"',
-        '"${var.project_name}/UpWebhook"',
-    )
+def test_every_filter_metric_is_watched_by_an_alarm():
+    text = MONITORING_TF.read_text()
+    watched = set(_alarm_metrics(text).values())
+    orphaned = {name: metric for name, metric in _filter_metrics(text).items() if metric not in watched}
+    assert orphaned == {}, f"filters nobody alarms on: {orphaned}"

@@ -6,6 +6,8 @@ reads TWO keys (BankSync + Anthropic) in one process — a single un-keyed slot 
 hand whichever key was fetched first to the other caller.
 """
 
+import sys
+
 import pytest
 
 
@@ -34,15 +36,6 @@ def test_two_paths_are_cached_independently(api_key_module, monkeypatch):
     assert calls == ["/bank/key", "/anthropic/key"]  # each path fetched exactly once
 
 
-def test_a_fetch_failure_propagates(api_key_module, monkeypatch):
-    # No swallowing: a bad/denied SSM param must raise out so callers surface it.
-    monkeypatch.setattr(api_key_module, "get_param",
-                        lambda path: (_ for _ in ()).throw(ValueError("no such param")))
-
-    with pytest.raises(ValueError):
-        api_key_module.get_api_key("/missing")
-
-
 # --- folded from test_api_key_edges.py (WHIT-463) ---
 
 
@@ -66,25 +59,6 @@ def test_a_failed_path_is_not_cached_and_retries(api_key_module, monkeypatch):
     assert calls == ["/bank/key", "/bank/key"]  # fetched twice: failure wasn't cached
 
 
-def test_failure_for_one_path_does_not_poison_another_path(api_key_module, monkeypatch):
-    # [A-K2] Single-process cross-key safety: lambda_api reads BankSync AND Anthropic in
-    # one container. A failing fetch for path A must leave path B fetchable and correct,
-    # and must not have stored A's slot as B's key. Order: A fails first, then B.
-    def selective(path):
-        if path == "/bad":
-            raise ValueError("no such param")
-        return f"key-for::{path}"
-
-    monkeypatch.setattr(api_key_module, "get_param", selective)
-
-    with pytest.raises(ValueError):
-        api_key_module.get_api_key("/bad")
-    assert api_key_module.get_api_key("/good") == "key-for::/good"
-    # B did not inherit A's (absent) slot, and A remains un-cached / re-raisable.
-    assert "/bad" not in api_key_module._cache
-    assert api_key_module._cache["/good"] == "key-for::/good"
-
-
 # --- WHIT-644: forget a rejected key so the next call re-reads SSM ---
 
 
@@ -97,19 +71,34 @@ def test_forget_makes_the_next_call_refetch(api_key_module, monkeypatch):
     assert api_key_module.get_api_key("/bank/key") == "new-key"
 
 
-def test_forgetting_one_path_leaves_another_cached(api_key_module, monkeypatch):
+class _FakeSsmClient:
+    def __init__(self, values, calls):
+        self._values = values
+        self._calls = calls
+
+    def get_parameter(self, **kwargs):
+        self._calls.append(kwargs)
+        name = kwargs["Name"]
+        if name not in self._values:
+            raise sys.modules["botocore.exceptions"].ClientError("ParameterNotFound")
+        return {"Parameter": {"Value": self._values[name]}}
+
+
+def test_get_api_key_fetches_from_the_ssm_client(api_key_module, monkeypatch):
     calls = []
-    monkeypatch.setattr(api_key_module, "get_param", lambda path: calls.append(path) or "secret")
+    services = []
+    client = _FakeSsmClient({"/bank/key": "bank-secret"}, calls)
 
-    api_key_module.get_api_key("/bank/key")
-    api_key_module.get_api_key("/anthropic/key")
-    api_key_module.forget_api_key("/bank/key")
-    api_key_module.get_api_key("/anthropic/key")
+    def fake_client(service, *args, **kwargs):
+        services.append(service)
+        return client
 
-    assert calls == ["/bank/key", "/anthropic/key"]
+    monkeypatch.setattr(sys.modules["boto3"], "client", fake_client, raising=False)
 
+    with pytest.raises(ValueError, match="/missing"):
+        api_key_module.get_api_key("/missing")
 
-def test_forgetting_an_unknown_path_does_nothing(api_key_module):
-    api_key_module.forget_api_key("/never/fetched")
+    assert api_key_module.get_api_key("/bank/key") == "bank-secret"
 
-    assert api_key_module._cache == {}
+    assert set(services) == {"ssm"}
+    assert calls[-1] == {"Name": "/bank/key", "WithDecryption": True}

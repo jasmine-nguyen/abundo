@@ -37,23 +37,22 @@ typo had nothing to disagree with. Not the case here — these are two independe
 literals.)
 """
 
+import re
+
 import pytest
 
-from _chart_ramp import (
-    assignment_order,
-    category_colors,
-    parse_order,
-    parse_ramp,
-    ramp_source_path,
-)
-
-_FABRICATED = (
-    "export const CATEGORY_COLORS = [\n  '#000000', '#ffffff',\n] as const;\n"
-    "export const ASSIGNMENT_ORDER = [\n  1, 0,\n] as const;\n"
-)
-
+from _chart_ramp import assignment_order, category_colors, ramp_source_path
 
 pytestmark = pytest.mark.crosslang
+
+# `export const BUILTIN_CATEGORY_INDEX: Record<string, number> = { ... };` — anchored at
+# the start of a line so the several comment mentions of the name cannot match, and
+# comments are stripped first so a commented-out entry is not counted as live.
+_COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
+_DECLARATION = re.compile(
+    r"^export const BUILTIN_CATEGORY_INDEX[^=]*=\s*\{(.*?)\}", re.MULTILINE | re.DOTALL
+)
+_PAIR = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(\d+)")
 
 
 @pytest.fixture
@@ -68,38 +67,6 @@ def slots(shared):
     import repository_category
 
     return repository_category
-
-
-def test_the_client_ramp_file_is_found_and_parses():
-    """Sanity-guard the reader itself: if the client declarations are renamed or
-    reshaped so nothing matches, fail here with a clear 'update the parser' signal
-    rather than letting the comparisons below pass vacuously on empty lists."""
-    ramp = category_colors()
-    assert len(set(ramp)) == len(ramp), f"the client ramp repeats a colour: {ramp}"
-    assert assignment_order()
-
-
-def test_the_parsers_read_fabricated_source():
-    """A guard's normal state is green, so a reader that quietly stopped reading would
-    look exactly like a healthy run. Drive the parsers against source whose answer is
-    known, so 'it still reads something real' is itself pinned."""
-    assert parse_ramp(_FABRICATED) == ["#000000", "#ffffff"]
-    assert parse_order(_FABRICATED) == [1, 0]
-
-
-@pytest.mark.parametrize(
-    "unreadable",
-    [
-        pytest.param("// export const CATEGORY_COLORS = ['#000000'];", id="commented-out"),
-        pytest.param("export const CATEGORY_COLORS = [] as const;", id="empty"),
-        pytest.param(_FABRICATED * 2, id="declared-twice"),
-    ],
-)
-def test_the_ramp_parser_refuses_source_it_cannot_read(unreadable):
-    """The other half: anything ambiguous must raise, never return a short list that
-    the drift comparison would then treat as the app's real ramp."""
-    with pytest.raises(AssertionError):
-        parse_ramp(unreadable)
 
 
 def test_server_slot_count_matches_the_client_ramp_length(slots):
@@ -145,3 +112,69 @@ def test_every_seed_slot_is_inside_the_server_slot_range(slots):
         "built-in categories permanently."
     )
 
+
+def parse_builtin_index(text: str) -> dict:
+    """{built-in id -> its id-derived ramp position}, out of the client TypeScript.
+
+    Asserts rather than returns short: a silently-empty map would make [B6] vacuous,
+    which is the one failure mode a drift guard cannot afford (green is its normal
+    state, so a reader that stopped reading looks exactly like a healthy run).
+    """
+    bodies = _DECLARATION.findall(_COMMENT.sub("", text))
+    assert len(bodies) == 1, (
+        "expected exactly one `export const BUILTIN_CATEGORY_INDEX = {...}` declaration, "
+        f"found {len(bodies)} — if it was renamed or reshaped, update this parser; if "
+        "there are two, delete the dead one."
+    )
+    index = {name: int(value) for name, value in _PAIR.findall(bodies[0])}
+    assert index, (
+        "parsed zero entries out of BUILTIN_CATEGORY_INDEX — the entry shape changed; "
+        "update the parser in tests/shared/test_color_slot_ramp_drift.py"
+    )
+    return index
+
+
+def test_every_builtin_fallback_equals_its_seed_slots_ramp_position(slots):
+    """[B6] The WHIT-432 contract, checked from the side a server-only change triggers.
+
+    A built-in resolves its colour two ways: CATEGORY_COLORS[ASSIGNMENT_ORDER[stored
+    colorSlot]] when the slot has arrived, and CATEGORY_COLORS[BUILTIN_CATEGORY_INDEX[id]]
+    when it has not. Re-space a seed slot here and only the first moves, so the same
+    category paints two different colours depending on whether that user's row has been
+    backfilled yet — which is precisely the bug WHIT-432 closed for
+    shopping/transport/phonenet."""
+    index = parse_builtin_index(ramp_source_path().read_text())
+    order = assignment_order()
+    ramp = category_colors()
+
+    assert set(index) == set(slots.SEED_CATEGORIES), (
+        "the client fallback table and the server seed no longer know the same category "
+        f"ids: client-only {sorted(set(index) - set(slots.SEED_CATEGORIES))}, "
+        f"server-only {sorted(set(slots.SEED_CATEGORIES) - set(index))}"
+    )
+    assert len(index) == 13
+
+    drift = {
+        category_id: {
+            "seed_slot": category["colorSlot"],
+            "server_paints": ramp[order[category["colorSlot"]]],
+            "client_fallback_paints": ramp[index[category_id]],
+        }
+        for category_id, category in slots.SEED_CATEGORIES.items()
+        if index[category_id] != order[category["colorSlot"]]
+    }
+    assert not drift, (
+        "built-in colour drift: BUILTIN_CATEGORY_INDEX in "
+        f"{ramp_source_path().name} must equal ASSIGNMENT_ORDER[the seed colorSlot] for "
+        f"every built-in, and these disagree: {drift}. A user whose row has been "
+        "backfilled sees one colour and a user whose row has not sees another. If you "
+        "re-spaced a seed slot on purpose, move the client table in the same commit."
+    )
+
+    # Non-vacuity: the loop above proves nothing if the two tables are trivially equal
+    # because ASSIGNMENT_ORDER is the identity. It is a real permutation, so at least one
+    # built-in's seed slot differs from the ramp position it resolves to.
+    assert any(
+        category["colorSlot"] != order[category["colorSlot"]]
+        for category in slots.SEED_CATEGORIES.values()
+    )

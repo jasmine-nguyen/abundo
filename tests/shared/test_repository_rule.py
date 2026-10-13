@@ -17,15 +17,6 @@ def _make(rule_repo, value="COLES", category="groceries", field="description",
 # --- create: dedup + clash ----------------------------------------------------
 
 
-def test_create_returns_the_row_and_created_true(rule_repo):
-    rule, created = _make(rule_repo)
-    assert created is True
-    assert rule["id"] and rule["pk"] == "RULE" and rule["sk"] == f"RULE#{rule['id']}"
-    assert rule["field"] == "description" and rule["value"] == "COLES"
-    assert rule["category_id"] == "groceries" and rule["source"] == "app"
-    assert rule["created_at"] and rule["updated_at"] == rule["created_at"]
-
-
 def test_create_same_text_and_category_twice_is_one_row_created_false(rule_repo):
     first, created_first = _make(rule_repo)
     second, created_second = _make(rule_repo)
@@ -59,41 +50,9 @@ def test_create_dedups_case_and_spacing_variants_onto_one_row(rule_repo):
 # --- get + list ---------------------------------------------------------------
 
 
-def test_get_rule_returns_none_for_a_missing_id(rule_repo):
-    assert rule_repo.get_rule("deadbeefdeadbeef") is None
-
-
 def test_get_rule_round_trips_a_created_rule(rule_repo):
     rule, _ = _make(rule_repo)
     assert rule_repo.get_rule(rule["id"]) == rule
-
-
-def test_list_rules_returns_every_rule(rule_repo):
-    _make(rule_repo, value="COLES")
-    _make(rule_repo, value="WOOLWORTHS")
-    _make(rule_repo, value="ALDI")
-    assert len(rule_repo.list_rules()) == 3
-
-
-def test_list_rules_pages_through_every_partition_page(rule_repo):
-    # The loop that makes "no 100 cap" real: a single Query returns one page, so list_rules must
-    # follow LastEvaluatedKey. A stub table hands back two pages; all rows must come through.
-    class _TwoPageTable:
-        def __init__(self):
-            self.rows = [{"pk": "RULE", "sk": f"RULE#{i}", "id": str(i)} for i in range(3)]
-            self.query_calls = 0
-
-        def query(self, **kwargs):
-            self.query_calls += 1
-            if "ExclusiveStartKey" not in kwargs:
-                return {"Items": self.rows[:2],
-                        "LastEvaluatedKey": {"pk": "RULE", "sk": self.rows[1]["sk"]}}
-            return {"Items": self.rows[2:]}
-
-    rule_repo._table = _TwoPageTable()
-    rules = rule_repo.list_rules()
-    assert [r["id"] for r in rules] == ["0", "1", "2"]
-    assert rule_repo._table.query_calls == 2
 
 
 # --- update -------------------------------------------------------------------
@@ -171,21 +130,6 @@ def test_delete_rule_removes_it_and_is_safe_to_run_twice(rule_repo):
     assert rule_repo.get_rule(rule["id"]) is None
 
 
-def test_delete_calls_delete_item_with_key_only(rule_repo):
-    # The delete is a bare no-op-on-missing call; the recording stub asserts no ConditionExpression
-    # rides along (the pk is a literal "RULE", the value the IAM DeleteItem grant pins).
-    rule, _ = _make(rule_repo)
-    seen = {}
-
-    def record(Key, **kwargs):
-        seen["Key"] = Key
-        seen["kwargs"] = kwargs
-    rule_repo._table.delete_item = record
-    rule_repo.delete_rule(rule["id"])
-    assert seen["Key"] == {"pk": "RULE", "sk": f"RULE#{rule['id']}"}
-    assert seen["kwargs"] == {}
-
-
 # --- spread action (WHIT-559): the second action flag + its captured bill ----------------------
 
 from decimal import Decimal  # noqa: E402
@@ -198,12 +142,6 @@ def test_create_spread_stores_the_flag_and_the_captured_bill(rule_repo):
     assert rule["spread_amount"] == Decimal("42.50")
     assert rule["spread_gap_days"] == 30
     assert rule["spread_seeded"] is False   # armed, not yet seeded
-
-
-def test_create_non_spread_carries_only_the_flag(rule_repo):
-    rule, _ = _make(rule_repo)
-    assert rule["spread"] is False
-    assert "spread_amount" not in rule and "spread_gap_days" not in rule and "spread_seeded" not in rule
 
 
 def test_same_text_different_spread_flag_clashes_never_a_second_row(rule_repo):
@@ -240,15 +178,6 @@ def test_update_in_place_editing_a_seeded_spread_rule_keeps_it_dismissed(rule_re
     assert rule_repo.get_rule(rule["id"])["spread_seeded"] is True   # still dismissed
 
 
-def test_update_in_place_turning_spread_off_sheds_the_captured_bill(rule_repo):
-    rule, _ = _make(rule_repo, spread=True, spread_amount=Decimal("42.50"), spread_gap_days=30)
-    rule_repo.update_rule(rule["id"], "description", "contains", "COLES", "groceries", spread=False)
-    stored = rule_repo.get_rule(rule["id"])
-    assert stored["spread"] is False
-    assert "spread_amount" not in stored and "spread_gap_days" not in stored
-    assert "spread_seeded" not in stored
-
-
 def test_text_edit_moves_a_spread_rule_and_rearms_seeded_false(rule_repo):
     rule, _ = _make(rule_repo, value="COLES", spread=True,
                     spread_amount=Decimal("42.50"), spread_gap_days=30)
@@ -276,15 +205,156 @@ def test_mark_spread_seeded_flips_the_marker_true(rule_repo):
     assert rule_repo.get_rule(rule["id"])["spread_seeded"] is True
 
 
-def test_mark_spread_seeded_is_idempotent(rule_repo):
-    rule, _ = _make(rule_repo, spread=True, spread_amount=Decimal("42.50"), spread_gap_days=30)
-    rule_repo.mark_spread_seeded(rule["id"])
-    rule_repo.mark_spread_seeded(rule["id"])   # re-setting True is a no-op
-    assert rule_repo.get_rule(rule["id"])["spread_seeded"] is True
-
-
 def test_mark_spread_seeded_on_a_missing_rule_is_a_silent_noop(rule_repo):
     # A rule deleted between filing and this write must not crash — the attribute_exists guard fails
     # and it returns cleanly (a plan no rule points at simply won't be re-seeded).
     rule_repo.mark_spread_seeded("deadbeefdeadbeef")   # no raise
     assert rule_repo.get_rule("deadbeefdeadbeef") is None
+
+
+def test_list_rules_reads_only_the_rule_partition_and_reports_failures_as_list_rules(
+        rule_repo, client_error, database_error):
+    rule_repo._table.seed(
+        *({"pk": "RULE", "sk": f"RULE#{number}", "id": str(number)} for number in range(5)),
+        {"pk": "JOB", "sk": "JOB#1", "id": "job"},
+    )
+    rule_repo._table.page_size = 2
+
+    assert sorted(rule["id"] for rule in rule_repo.list_rules()) == ["0", "1", "2", "3", "4"]
+
+    rule_repo._table.fail("query", client_error("InternalServerError", "down"))
+    with pytest.raises(database_error):
+        rule_repo.list_rules()
+
+
+def test_create_persists_budget_excluded_and_round_trips(rule_repo):
+    rule, created = _make(rule_repo, budget_excluded=True)
+    assert created is True
+    assert rule["budget_excluded"] is True
+    assert rule_repo.get_rule(rule["id"])["budget_excluded"] is True
+    assert rule_repo.list_rules()[0]["budget_excluded"] is True
+
+
+def test_same_text_same_category_different_flag_clashes(rule_repo):
+    # FAIL-ON-REVERT for the new clash dimension: drop
+    # `bool(existing.get("budget_excluded")) != budget_excluded` from create_rule's clash test and
+    # the second create returns created=False (silently keeping the first's flag) instead of clashing.
+    from repository_errors import RuleClashError
+    first, _ = _make(rule_repo, budget_excluded=False)
+    with pytest.raises(RuleClashError) as excinfo:
+        _make(rule_repo, budget_excluded=True)
+    assert excinfo.value.existing["id"] == first["id"]
+    assert len(rule_repo.list_rules()) == 1
+
+
+def test_update_in_place_toggles_the_flag(rule_repo):
+    created, _ = _make(rule_repo, budget_excluded=False)
+    # Same text + same category, only the flag changes -> an in-place update.
+    updated = rule_repo.update_rule(created["id"], "description", "contains", "COLES", "groceries",
+                                    budget_excluded=True)
+    assert updated["budget_excluded"] is True
+    assert rule_repo.get_rule(created["id"])["budget_excluded"] is True
+    rule_repo.update_rule(created["id"], "description", "contains", "COLES", "groceries",
+                          budget_excluded=False)
+    assert rule_repo.get_rule(created["id"])["budget_excluded"] is False
+
+
+def test_update_in_place_conditional_check_failed_raises_not_found(rule_repo, client_error):
+    # Row exists at the read, then is deleted before the conditional update_item lands:
+    # attribute_exists(pk) fails -> RuleNotFoundError (not a silent success, not a DB fault).
+    from repository_errors import RuleNotFoundError
+    original, _ = _make(rule_repo, value="COLES", category="groceries")
+
+    def refuse(**kwargs):
+        raise client_error("ConditionalCheckFailedException")
+    rule_repo._table.update_item = refuse
+    with pytest.raises(RuleNotFoundError):
+        rule_repo.update_rule(original["id"], "description", "contains", "COLES", "coffee")
+
+
+def test_update_move_new_put_conditional_check_failed_raises_clash(rule_repo, client_error):
+    # The move path checked get_rule(new_id) is None, then a CONCURRENT create landed the new_id
+    # row before our put. The conditional put fails -> RuleClashError carrying the row that won.
+    from repository_errors import RuleClashError
+    original, _ = _make(rule_repo, value="COLE")
+
+    def racing_put(Item=None, ConditionExpression=None):
+        # simulate the concurrent writer landing between our check and our put
+        rule_repo._table.store[(Item["pk"], Item["sk"])] = {**dict(Item), "category_id": "someone_else"}
+        raise client_error("ConditionalCheckFailedException")
+    rule_repo._table.put_item = racing_put
+
+    with pytest.raises(RuleClashError) as excinfo:
+        rule_repo.update_rule(original["id"], "description", "contains", "COLES", "groceries")
+    assert excinfo.value.existing is not None
+    assert excinfo.value.existing["category_id"] == "someone_else"
+    # The old row was never touched (delete only runs after a successful put).
+    assert rule_repo.get_rule(original["id"]) is not None
+
+
+def _conditions():
+    return [{"field": "merchant", "operator": "contains", "value": "uber"},
+            {"field": "amount", "operator": "less_than", "value": "30"}]
+
+
+def test_create_multi_condition_rule_round_trips(rule_repo):
+    import rule_engine
+    rule, created = rule_repo.create_rule("merchant", "contains", "uber", "transport",
+                                          conditions=_conditions(), logic="all")
+    assert created is True
+    assert rule["conditions"] == _conditions()
+    assert rule["logic"] == "all"
+    assert rule["id"] == rule_engine.rule_id_for_conditions(_conditions(), "all")
+    stored = rule_repo.get_rule(rule["id"])
+    assert stored["conditions"] == _conditions() and stored["logic"] == "all"
+
+
+def test_in_place_edit_of_a_multi_rule_preserves_its_conditions(rule_repo):
+    # An in-place edit (same conditions -> same id, only the target category changes) must RE-WRITE
+    # conditions/logic on the row, not drop them. FAIL-ON-REVERT: if _update_in_place stopped SETting
+    # conditions on a multi rule, the stored row would keep the OLD category but could lose its
+    # conditions, and decide's multi-rule guard would then read a lying (single-shaped) row.
+    created, _ = rule_repo.create_rule("merchant", "contains", "uber", "transport",
+                                       conditions=_conditions(), logic="all")
+    rule_id = created["id"]
+    updated = rule_repo.update_rule(rule_id, "merchant", "contains", "uber", "groceries",
+                                    conditions=_conditions(), logic="all")
+    assert updated["id"] == rule_id                         # in place: id unchanged
+    assert updated["category_id"] == "groceries"
+    assert updated["conditions"] == _conditions() and updated["logic"] == "all"
+    stored = rule_repo.get_rule(rule_id)
+    assert stored["conditions"] == _conditions() and stored["logic"] == "all"
+    assert stored["category_id"] == "groceries"
+    assert len(rule_repo.list_rules()) == 1                 # still one row, not a new id
+
+
+def test_turning_spread_off_removes_a_true_seeded_marker(rule_repo):
+    # FAIL-ON-REVERT: a rule whose plan was already created carries spread_seeded True. Editing it
+    # to spread:false must REMOVE that field (not leave a stale True). Drop spread_seeded from the
+    # REMOVE list in _update_in_place's else-branch and this reddens.
+    rule, _ = _make(rule_repo, spread=True, spread_amount=Decimal("42.50"), spread_gap_days=30)
+    seeded = {**rule_repo.get_rule(rule["id"]), "spread_seeded": True}
+    rule_repo._table.put_item(Item=seeded)   # the apply path created the plan
+
+    rule_repo.update_rule(rule["id"], "description", "contains", "COLES", "groceries", spread=False)
+
+    stored = rule_repo.get_rule(rule["id"])
+    assert stored["spread"] is False
+    assert "spread_seeded" not in stored
+    assert "spread_amount" not in stored and "spread_gap_days" not in stored
+
+
+def test_recreating_an_identical_spread_rule_is_idempotent_and_does_not_rearm(rule_repo):
+    # Same text + category + spread flag -> the existing row, created=False. The store must NOT
+    # re-write (so must NOT re-arm spread_seeded to False) a plan the user already dismissed.
+    rule, created_first = _make(rule_repo, spread=True,
+                                spread_amount=Decimal("42.50"), spread_gap_days=30)
+    seeded = {**rule_repo.get_rule(rule["id"]), "spread_seeded": True}
+    rule_repo._table.put_item(Item=seeded)
+
+    again, created_second = _make(rule_repo, spread=True,
+                                  spread_amount=Decimal("42.50"), spread_gap_days=30)
+
+    assert created_first is True and created_second is False
+    assert len(rule_repo.list_rules()) == 1
+    assert rule_repo.get_rule(rule["id"])["spread_seeded"] is True   # not re-armed

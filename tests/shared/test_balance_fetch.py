@@ -19,6 +19,27 @@ _OK_PAYLOAD = {
     },
 }
 
+# The live Westpac credit-card getBalance response: extra fields no other account sends, and a
+# NEGATIVE amount beside a POSITIVE availableBalance (WHIT-490).
+_WESTPAC_DATA = {
+    "date": "2026-09-05T03:58:13.856Z",
+    "retrievedAt": "2026-09-05T03:58:13.856Z",
+    "balanceAsOf": None,
+    "bank": "Westpac",
+    "account": "0908 (unknown)",
+    "accountName": "Altitude Qantas Black Card",
+    "accountNumber": "0908",
+    "accountType": "unknown",
+    "accountId": "CC6EE20D-4931-4B10-86CA-EADD45A062DC",
+    "bankId": "fiskil_77",
+    "amount": -230,
+    "availableBalance": 5770,
+    "pendingBalance": 0,
+    "creditLimit": 6000,
+    "currency": "AUD",
+}
+_WESTPAC_PAYLOAD = {"success": True, "data": _WESTPAC_DATA}
+
 
 # --- fetch_balance (parameterized) -------------------------------------------
 
@@ -51,17 +72,6 @@ def test_fetch_balance_builds_request_from_params(shared, monkeypatch):
 # --- normalise_account_balance -----------------------------------------------
 
 
-def test_normalise_keeps_amount_signed_with_extras(shared):
-    out = shared.balance_fetch.normalise_account_balance(_OK_PAYLOAD)
-    assert out == {
-        "amount": Decimal("-596642.43"),
-        "available_balance": Decimal("0"),
-        "currency": "AUD",
-        "as_of": "2026-07-04T00:24:37.614Z",
-        "account_type": "mortgage",
-    }
-
-
 def test_normalise_tolerates_missing_optionals(shared):
     payload = {"success": True, "data": {"amount": 96270.59, "date": "2026-07-08T00:00:00Z"}}
     out = shared.balance_fetch.normalise_account_balance(payload)
@@ -87,7 +97,36 @@ def test_normalise_raises_balance_error_on_failure_and_missing_fields(shared):
         {"success": True},
         {"success": True, "data": {"date": "d"}},   # missing amount
         {"success": True, "data": {"amount": -1}},   # missing date
+        {"success": True, "data": {"amount": -1, "date": ""}},   # empty date
         {"success": True, "data": {"amount": "not-a-number", "date": "d"}},
     ):
         with pytest.raises(shared.balance_fetch.BalanceError):
             shared.balance_fetch.normalise_account_balance(bad)
+
+
+def test_real_westpac_payload_normalises_to_exactly_the_five_stored_fields(shared):
+    # The whole row, asserted as an EXACT dict: the negative amount stays negative,
+    # the positive availableBalance stays positive next to it (they are not swapped or
+    # sign-linked), and every extra field the card sends is dropped rather than written
+    # into the balances table under a name the app never reads.
+    out = shared.balance_fetch.normalise_account_balance(_WESTPAC_PAYLOAD)
+
+    assert out == {
+        "amount": Decimal("-230"),
+        "available_balance": Decimal("5770"),
+        "currency": "AUD",
+        "as_of": "2026-09-05T03:58:13.856Z",
+        "account_type": "unknown",
+    }
+
+
+def test_a_card_paid_off_to_zero_keeps_a_signed_zero_amount(shared):
+    # The other boundary: a fully paid card reports amount 0. It must normalise to
+    # Decimal("0") and NOT raise — the `is None` guard exists precisely so a falsy-but-
+    # present amount survives. A truthiness guard would raise BalanceError and the card
+    # would keep showing yesterday's debt forever.
+    zeroed = {"success": True, "data": {**_WESTPAC_DATA, "amount": 0}}
+
+    out = shared.balance_fetch.normalise_account_balance(zeroed)
+
+    assert out["amount"] == Decimal("0")

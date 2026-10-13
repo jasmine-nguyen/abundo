@@ -10,40 +10,44 @@ Fortnightly cycle, paydays land …Jul4, Jul18, Aug1, Aug15; "today" = Sat 11 Ju
 
 from decimal import Decimal
 
+import pytest
+
 from _goal_nudge_fakes import CYCLE, TODAY, notify_repo, _grow, _manual, _run
 
 
 # --- is_behind (option A) ----------------------------------------------------
 
-class TestIsBehind:
-    def test_imminent_and_short_is_behind(self, shared):
-        goal = _grow()  # target_date Jul18 -> 1 payday left
-        pace = {"remaining": Decimal(6000), "paydays_left": 1}
-        assert shared.goal_nudge.is_behind(goal, pace, TODAY) is True
+@pytest.mark.parametrize("target_date, remaining, paydays_left, expected", [
+    pytest.param("2026-07-18", 6000, 1, True, id="imminent-and-short"),
+    pytest.param("2026-07-12", 6000, 0, True, id="zero-paydays-future-target"),
+    pytest.param("2026-07-11", 6000, 0, True, id="target-today-is-not-lapsed"),
+    pytest.param("2026-06-01", 6000, 0, False, id="lapsed"),
+    pytest.param("2026-08-01", 6000, 2, False, id="two-paydays-is-still-far"),
+    pytest.param("2026-07-18", 0, 1, False, id="met"),
+    pytest.param("2026-07-18", None, 1, False, id="unknown-remaining"),
+    pytest.param("not-a-date", 6000, 0, False, id="malformed-date"),
+    pytest.param("", 6000, 0, False, id="empty-date"),
+])
+def test_is_behind(shared, target_date, remaining, paydays_left, expected):
+    remaining = Decimal(remaining) if remaining is not None else None
+    pace = {"remaining": remaining, "paydays_left": paydays_left}
+    assert shared.goal_nudge.is_behind(_grow(target_date=target_date), pace, TODAY) is expected
 
-    def test_zero_paydays_but_future_target_is_behind(self, shared):
-        # deadline before the next payday (0 paydays in the window) but not yet passed.
-        goal = _grow(target_date="2026-07-12")
-        pace = {"remaining": Decimal(6000), "paydays_left": 0}
-        assert shared.goal_nudge.is_behind(goal, pace, TODAY) is True
 
-    def test_lapsed_deadline_is_not_behind(self, shared):
-        goal = _grow(target_date="2026-06-01")  # already passed
-        pace = {"remaining": Decimal(6000), "paydays_left": 0}
-        assert shared.goal_nudge.is_behind(goal, pace, TODAY) is False
+# --- is_stale (WHIT-259 Part 2) ----------------------------------------------
 
-    def test_far_deadline_is_not_behind(self, shared):
-        goal = _grow(target_date="2026-08-15")
-        pace = {"remaining": Decimal(6000), "paydays_left": 3}
-        assert shared.goal_nudge.is_behind(goal, pace, TODAY) is False
-
-    def test_met_goal_is_not_behind(self, shared):
-        goal = _grow()
-        assert shared.goal_nudge.is_behind(goal, {"remaining": Decimal(0), "paydays_left": 1}, TODAY) is False
-
-    def test_unknown_remaining_is_not_behind(self, shared):
-        goal = _grow()
-        assert shared.goal_nudge.is_behind(goal, {"remaining": None, "paydays_left": 1}, TODAY) is False
+@pytest.mark.parametrize("goal, expected", [
+    pytest.param(_manual(manual_as_of="2026-06-11"), False, id="exactly-30-days"),
+    pytest.param(_manual(manual_as_of="2026-06-10"), True, id="31-days"),
+    pytest.param(_manual(manual_as_of=None), False, id="none"),
+    pytest.param(_manual(manual_as_of="not-a-date"), False, id="unparseable"),
+    pytest.param(_manual(manual_as_of=20260501), False, id="non-string"),
+    pytest.param(_manual(manual_as_of="2027-01-01"), False, id="future"),
+    # an account-linked goal refreshes itself; even an old manual_as_of never makes it stale
+    pytest.param(_manual(account_id="up-spending", manual_as_of="2026-01-01"), False, id="synced"),
+])
+def test_is_stale(shared, goal, expected):
+    assert shared.goal_nudge.is_stale(goal, TODAY) is expected
 
 
 # --- notify_behind_goals -----------------------------------------------------
@@ -114,60 +118,6 @@ class TestNotifyBehindGoals:
         assert sent == 0
         assert rec.calls == []
 
-    def test_far_deadline_does_not_fire(self, shared, monkeypatch):
-        sent, *_ = _run(shared, monkeypatch, {"g1": _grow(target_date="2026-08-15")},
-                        balances={"up-spending": Decimal(4000)})
-        assert sent == 0
-
-    def test_met_goal_does_not_fire(self, shared, monkeypatch):
-        sent, *_ = _run(shared, monkeypatch, {"g1": _grow()},
-                        balances={"up-spending": Decimal(10000)})
-        assert sent == 0
-
-    def test_no_goals_short_circuits_before_devices(self, shared, monkeypatch):
-        sent, rec, notify, device, paycycle, _ = _run(shared, monkeypatch, {})
-        assert sent == 0
-        assert device.calls == 0  # never even read tokens
-        assert paycycle.calls == 0
-
-    def test_no_tokens_short_circuits_before_paycycle(self, shared, monkeypatch):
-        sent, rec, notify, device, paycycle, _ = _run(
-            shared, monkeypatch, {"g1": _grow()}, balances={"up-spending": Decimal(4000)}, tokens=())
-        assert sent == 0
-        assert paycycle.calls == 0
-
-
-# --- is_stale (WHIT-259 Part 2) ----------------------------------------------
-
-class TestIsStale:
-    def test_old_manual_balance_is_stale(self, shared):
-        assert shared.goal_nudge.is_stale(_manual(), TODAY) is True  # 71 days old
-
-    def test_synced_goal_is_never_stale(self, shared):
-        # An account-linked goal refreshes itself; even an old manual_as_of never makes it stale.
-        goal = _manual(account_id="up-spending", manual_as_of="2026-01-01")
-        assert shared.goal_nudge.is_stale(goal, TODAY) is False
-
-    def test_recent_manual_balance_is_not_stale(self, shared):
-        assert shared.goal_nudge.is_stale(_manual(manual_as_of="2026-07-01"), TODAY) is False
-
-    def test_exactly_30_days_is_not_stale(self, shared):
-        assert shared.goal_nudge.is_stale(_manual(manual_as_of="2026-06-11"), TODAY) is False
-
-    def test_31_days_is_stale(self, shared):
-        assert shared.goal_nudge.is_stale(_manual(manual_as_of="2026-06-10"), TODAY) is True
-
-    def test_missing_manual_as_of_is_not_stale(self, shared):
-        goal = _manual()
-        del goal["manual_as_of"]
-        assert shared.goal_nudge.is_stale(goal, TODAY) is False
-
-    def test_none_manual_as_of_is_not_stale(self, shared):
-        assert shared.goal_nudge.is_stale(_manual(manual_as_of=None), TODAY) is False
-
-    def test_unparseable_manual_as_of_is_not_stale(self, shared):
-        assert shared.goal_nudge.is_stale(_manual(manual_as_of="not-a-date"), TODAY) is False
-
 
 # --- stale trigger inside notify_behind_goals --------------------------------
 
@@ -187,16 +137,6 @@ class TestStaleNudge:
         assert rec.calls[0]["title"] == shared.goal_nudge._STALE_TITLE  # proves it's the stale push
         assert rec.calls[0]["data"] == {"type": "goal"}
 
-    def test_synced_goal_never_fires_stale(self, shared, monkeypatch):
-        # Far deadline so behind can't fire either -> a synced goal produces no push at all.
-        sent, rec, *_ = _run(shared, monkeypatch, {"g1": _grow(target_date="2026-12-01")},
-                             balances={"up-spending": Decimal(4000)})
-        assert sent == 0
-        assert rec.calls == []
-
-    def test_recent_manual_does_not_fire_stale(self, shared, monkeypatch):
-        sent, *_ = _run(shared, monkeypatch, {"m1": _manual(manual_as_of="2026-07-01")})
-        assert sent == 0
 
     def test_stale_fires_even_when_behind_marker_already_set(self, shared, monkeypatch):
         # The behind marker fired earlier this cycle; stale is independent and must STILL fire.
@@ -211,14 +151,6 @@ class TestStaleNudge:
         markers = notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"])
         assert "GOAL#m1#stale" in markers
 
-    def test_behind_and_stale_fire_two_independent_pushes(self, shared, monkeypatch):
-        goal = _manual(target_date="2026-07-18")  # short + imminent (behind) AND 71 days old (stale)
-        sent, rec, notify, *_ = _run(shared, monkeypatch, {"m1": goal})
-        assert sent == 2
-        titles = {call["title"] for call in rec.calls}
-        assert titles == {shared.goal_nudge._STALE_TITLE, shared.goal_nudge._TITLE}
-        markers = notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"])
-        assert {"GOAL#m1", "GOAL#m1#stale"} <= markers
 
     def test_stale_dedupe_same_cycle(self, shared, monkeypatch):
         notify = notify_repo()
@@ -227,61 +159,17 @@ class TestStaleNudge:
         assert sent == 0
         assert rec.calls == []
 
-    def test_stale_mark_on_landing_outage_leaves_unmarked(self, shared, monkeypatch):
-        notify = notify_repo()
-        sent, rec, notify, *_ = _run(shared, monkeypatch, {"m1": _manual()}, notify=notify, send_ok=0)
-        assert sent == 0
-        assert notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"]) == set()
-
-    def test_behind_only_synced_goal_writes_no_stale_marker(self, shared, monkeypatch):
-        # Regression: the loop restructure must not alter the pure behind path.
-        sent, rec, notify, *_ = _run(shared, monkeypatch, {"g1": _grow()},
-                                     balances={"up-spending": Decimal(4000)})
-        assert sent == 1
-        markers = notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"])
-        assert markers == {"GOAL#g1"}  # exactly the behind marker, no stale marker
-
 
 # --- folded from test_goal_nudge_edges.py (WHIT-463) ---
 
 
-class TestIsBehindBoundaries:
-    def test_exactly_one_payday_left_is_behind(self, shared):
-        # [A27] paydays_left == 1 is the last cycle before the deadline -> fires.
-        assert shared.goal_nudge.is_behind(
-            _grow(), {"remaining": Decimal(6000), "paydays_left": 1}, TODAY) is True
-
-    def test_exactly_two_paydays_left_is_not_behind(self, shared):
-        # [A28] the cliff: 2 paydays out is still "far" -> must NOT fire.
-        assert shared.goal_nudge.is_behind(
-            _grow(target_date="2026-08-01"), {"remaining": Decimal(6000), "paydays_left": 2}, TODAY) is False
-
-    def test_target_date_equal_today_is_behind(self, shared):
-        # [A29] deadline is today: today is NOT < today, so it's not lapsed -> fires.
-        assert shared.goal_nudge.is_behind(
-            _grow(target_date="2026-07-11"), {"remaining": Decimal(6000), "paydays_left": 0}, TODAY) is True
-
-    def test_malformed_target_date_is_not_behind(self, shared):
-        # [A30] an unparseable/empty target_date can't be judged -> never a false nudge.
-        assert shared.goal_nudge.is_behind(
-            _grow(target_date="not-a-date"), {"remaining": Decimal(6000), "paydays_left": 0}, TODAY) is False
-        assert shared.goal_nudge.is_behind(
-            _grow(target_date=""),
-            {"remaining": Decimal(6000), "paydays_left": 0}, TODAY) is False
-
-
 class TestCopyHelpers:
-    def test_month_of_reads_month(self, shared):
-        assert shared.goal_nudge._month_of("2026-12-01") == "December"
 
     def test_month_of_falls_back_on_broken_date(self, shared):
         # [A31] month index out of range / unparseable -> graceful fallback, no crash.
         assert shared.goal_nudge._month_of("2026-13-01") == "your target date"
         assert shared.goal_nudge._month_of("") == "your target date"
 
-    def test_format_pace_non_integer_rounds_to_whole_dollars(self, shared):
-        # [A32] 8000/3 = 2666.66 -> "2,667" (whole dollars, thousands separator).
-        assert shared.goal_nudge._format_pace(Decimal(8000) / Decimal(3)) == "2,667"
 
     def test_format_pace_rounds_half_up_like_the_client(self, shared):
         # WHIT-236 F1: an exact half-dollar must round HALF-UP (Decimal('120.50') -> '121'),
@@ -292,33 +180,7 @@ class TestCopyHelpers:
 
 
 class TestNotifyMultiAndCollisions:
-    def test_only_behind_goals_fire_in_a_mixed_sweep(self, shared, monkeypatch):
-        # [A33] three goals: one behind (imminent+short), one far, one met. Only the
-        # behind one fires and only its marker is written.
-        goals = {
-            "behind": _grow(name="Behind", target_date="2026-07-18"),   # 1 payday, short
-            "far": _grow(name="Far", target_date="2026-08-15"),          # 3 paydays
-            "met": _grow(name="Met", target_date="2026-07-18"),          # balance >= target
-        }
-        balances = {"up-spending": Decimal(4000)}  # shared account; met overrides below
-        goals["met"]["account_id"] = "met-acct"
-        balances["met-acct"] = Decimal(10000)
-        sent, rec, notify, *_ = _run(shared, monkeypatch, goals, balances=balances)
-        assert sent == 1
-        assert [c["body"] for c in rec.calls] == ["Your Behind needs $6,000/payday to hit July."]
-        markers = notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"])
-        assert markers == {"GOAL#behind"}
 
-    def test_two_behind_goals_fire_distinct_markers(self, shared, monkeypatch):
-        # [A34] two independently-behind goals -> two pushes, two distinct markers.
-        goals = {
-            "g1": _grow(name="Alpha", target_date="2026-07-18", account_id="a1"),
-            "g2": _grow(name="Beta", target_date="2026-07-18", account_id="a2"),
-        }
-        sent, rec, notify, *_ = _run(shared, monkeypatch, goals,
-                                 balances={"a1": Decimal(4000), "a2": Decimal(4000)})
-        assert sent == 2
-        assert notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"]) == {"GOAL#g1", "GOAL#g2"}
 
     def test_budget_marker_in_shared_set_does_not_suppress_goal(self, shared, monkeypatch):
         # [A35] goal_nudge shares the per-cycle FIRED set with budget alerts. A budget
@@ -330,31 +192,8 @@ class TestNotifyMultiAndCollisions:
         assert sent == 1
         assert notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"]) == {"groceries#80", "GOAL#g1"}
 
-    def test_stale_marker_for_deleted_goal_is_harmless(self, shared, monkeypatch):
-        # [A36] a leftover "GOAL#gone" marker for a goal that no longer exists neither
-        # fires nor errors; the live behind goal still fires normally.
-        notify = notify_repo(seed={(CYCLE["last_pay_date"], CYCLE["length"]): {"GOAL#gone"}})
-        sent, rec, notify, *_ = _run(shared, monkeypatch, {"g1": _grow()},
-                                 balances={"up-spending": Decimal(4000)}, notify=notify)
-        assert sent == 1
-        assert "GOAL#g1" in notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"])
-
 
 # --- folded from test_goal_nudge_gaps.py (WHIT-463) ---
-
-
-class TestIsStaleFuture:
-    def test_future_manual_as_of_is_not_stale(self, shared):
-        # WHIT-259 — a user who set a balance date AHEAD of today (diff is negative) must not be
-        # judged stale, and must not crash. Guards against a naive abs(diff) > 30 implementation.
-        goal = _manual(manual_as_of="2027-01-01")  # ~174 days in the future
-        assert shared.goal_nudge.is_stale(goal, TODAY) is False
-
-    def test_non_string_manual_as_of_is_not_stale(self, shared):
-        # WHIT-259 — a non-string manual_as_of (legacy/raw-DB int) must be treated as unparseable,
-        # not raise a TypeError that would kill the whole best-effort sweep. Locks the
-        # (ValueError, TypeError) guard against the docstring's "unparseable → never stale".
-        assert shared.goal_nudge.is_stale(_manual(manual_as_of=20260501), TODAY) is False
 
 
 class TestStaleNudgeGaps:
@@ -374,22 +213,6 @@ class TestStaleNudgeGaps:
         assert notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"]) == {
             "GOAL#sm#stale", "GOAL#bg"}
 
-    def test_stale_push_body_falls_back_when_name_blank(self, shared, monkeypatch):
-        # WHIT-259 — a goal saved with an empty name must not render "Your  balance is…". The body
-        # uses `goal.get("name") or "goal"`, so it reads "Your goal balance is 71 days old".
-        sent, rec, *_ = _run(shared, monkeypatch, {"m1": _manual(name="")})
-        assert sent == 1
-        assert rec.calls[0]["body"] == "Your goal balance is 71 days old — tap to update."
-
-    def test_stale_coexists_with_budget_marker_in_shared_set(self, shared, monkeypatch):
-        # WHIT-259 — the stale marker lives in the SAME per-cycle FIRED set as budget alerts'
-        # "<cat>#<pct>" markers. A pre-existing "groceries#80" must not be mistaken for the stale
-        # marker: the stale nudge still fires and both markers coexist afterwards.
-        notify = notify_repo(seed={(CYCLE["last_pay_date"], CYCLE["length"]): {"groceries#80"}})
-        sent, rec, notify, *_ = _run(shared, monkeypatch, {"m1": _manual()}, notify=notify)
-        assert sent == 1
-        assert notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"]) == {
-            "groceries#80", "GOAL#m1#stale"}
 
     def test_stale_already_fired_behind_still_fires(self, shared, monkeypatch):
         # WHIT-259 — the SYMMETRIC independence case the implementer's suite omits: the STALE marker

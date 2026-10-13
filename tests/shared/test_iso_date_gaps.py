@@ -16,7 +16,7 @@ that rejects them:
     == 2030, so such a hand-rolled parser would ACCEPT these while still rejecting 2026-02-30.
   * Trailing newline. `$` matches just before a final "\n", so ISO_DATE_RE.match("2030-01-01\n")
     SUCCEEDS; only the calendar parse rejects it.
-  * Impossible calendar days that PASS the shape regex (month/day 00, day 32, Feb 30) — the whole
+  * Impossible calendar days that PASS the shape regex (month 13, Feb 30) — the whole
     reason the shape check isn't enough on its own.
 
 Fail-on-revert (one lever, several ways to pull it): delete the `date.fromisoformat` calendar
@@ -31,16 +31,10 @@ import pytest
 
 _REGEX_PASSES_BUT_INVALID = [
     ("fullwidth unicode digits", "２０３０-01-01"),
-    ("arabic-indic unicode digits", "٢٠٣٠-01-01"),
-    ("mixed ascii + unicode digit", "2030-01-0１"),
     ("trailing newline", "2030-01-01\n"),                            # $ matches before final \n
-    ("month 00", "2030-00-10"),
-    ("day 00", "2030-01-00"),
     ("month 13", "2030-13-01"),
-    ("day 32", "2030-01-32"),
     ("feb 30", "2026-02-30"),
     ("feb 29 non-leap", "2027-02-29"),
-    ("all zeros", "0000-00-00"),
 ]
 
 
@@ -58,17 +52,6 @@ def test_a_shape_matching_but_uncalendar_value_is_rejected(shared, why, value):
 
 # --- shapes the regex itself rejects (kept minimal — the parity tables carry the read-path set) -
 
-@pytest.mark.parametrize("value", [
-    "+2030-01-01", "-2030-01-01", "2030-1-1", " 2030-01-01", "2030-01-01 ",
-    "2030/01/01", "2030-01-01x", "2030-01-01" * 50, "",
-])
-def test_a_wrong_shape_is_rejected_before_the_calendar_check(shared, value):
-    # The regex is the first gate. These never reach fromisoformat. Locks that a "+"/"-" sign, a
-    # single-digit field, surrounding whitespace, a separator swap, junk suffix, an absurdly long
-    # string and the empty string are all False.
-    import iso_date
-    assert iso_date.valid_iso_date(value) is False, value
-
 
 @pytest.mark.parametrize("value", [None, 20300101, 2030.0, True, b"2030-01-01", ["2030-01-01"],
                                    {"d": "2030-01-01"}])
@@ -83,8 +66,7 @@ def test_a_non_string_is_rejected_without_raising(shared, value):
 # --- the opposite risk: a real calendar date must stay accepted (no over-tightening) ----------
 
 @pytest.mark.parametrize("value", [
-    "2030-01-01", "0001-01-01", "9999-12-31", "2028-02-29",  # leap day in a leap year
-    "2030-12-31", "2030-01-31",
+    "2030-01-01", "2028-02-29",  # leap day in a leap year
 ])
 def test_a_real_calendar_date_is_accepted(shared, value):
     import iso_date

@@ -27,15 +27,6 @@ def released_markers(repo):
     return released
 
 
-def claimed_meanwhile(repo, cycle_start, length, *markers):
-    """Another delivery claims ``markers`` after this one read its snapshot, just before this
-    one's first write lands."""
-    def claim(key, table):
-        for marker in markers:
-            repo.mark_fired(cycle_start, length, marker)
-    repo._table.before_next_write(claim)
-
-
 def fail_nth_write(repo, verb, number, error=None):
     """The ``number``-th write whose UpdateExpression starts with ``verb`` raises ``error`` (default:
     a throttle ClientError, which the repository turns into a DatabaseError). ``"ADD"`` is a claim

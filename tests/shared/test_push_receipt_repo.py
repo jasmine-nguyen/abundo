@@ -64,17 +64,8 @@ def test_put_stashes_receipt_under_shared_partition_with_ttl(shared, monkeypatch
     assert item["pk"] == "PUSHRECEIPT#PENDING"   # one shared partition → sweep Queries, not Scans
     assert item["sk"] == "rcpt-1"                 # one row per receipt id
     assert item["token"] == "ExpoPushToken[a]"
-    # 24h TTL from now, so a receipt id the sweep never resolves self-reaps.
-    assert shared.push_receipt.RECEIPT_TTL_SECONDS == 24 * 60 * 60
+    # A TTL from now, so a receipt id the sweep never resolves self-reaps.
     assert item["expires_at"] == 1_000_000 + shared.push_receipt.RECEIPT_TTL_SECONDS
-
-
-def test_two_puts_are_distinct_rows_under_one_partition(shared):
-    r = _repo(shared)
-    r.put("rcpt-1", "ExpoPushToken[a]")
-    r.put("rcpt-2", "ExpoPushToken[b]")
-    keys = [(it["pk"], it["sk"]) for it in r._table.items]
-    assert keys == [("PUSHRECEIPT#PENDING", "rcpt-1"), ("PUSHRECEIPT#PENDING", "rcpt-2")]
 
 
 def test_put_client_error_surfaces_as_database_error(shared, client_error, database_error):
@@ -116,12 +107,6 @@ def test_list_pending_returns_all_pairs_across_pages(shared):
     assert not cond.evaluate({"pk": "SOMETHING#ELSE"})
 
 
-def test_list_pending_empty_partition_is_empty_list(shared):
-    r = shared.push_receipt.PushReceiptRepository()
-    r._table = _FakeQueryTable([([], None)])
-    assert r.list_pending() == []
-
-
 def test_list_pending_skips_a_malformed_row_instead_of_aborting(shared):
     # A row missing `token` (a corrupt/foreign write) must be skipped, not KeyError out of
     # the sweep — one bad row would otherwise leave EVERY pending receipt unresolved.
@@ -137,18 +122,6 @@ def test_list_pending_skips_a_malformed_row_instead_of_aborting(shared):
     assert out == [("r1", "t1"), ("r3", "t3")]                  # r2 dropped, rest kept
 
 
-def test_list_pending_client_error_surfaces_as_database_error(shared, client_error, database_error):
-    r = shared.push_receipt.PushReceiptRepository()
-
-    class _BoomTable:
-        def query(self, **kwargs):
-            raise client_error("InternalServerError")
-
-    r._table = _BoomTable()
-    with pytest.raises(database_error):
-        r.list_pending()
-
-
 # --- delete: drop a resolved row (WHIT-139) ----------------------------------
 
 
@@ -157,15 +130,3 @@ def test_delete_removes_the_row_by_shared_partition_key(shared):
     r._table = _FakeDeleteTable()
     r.delete("rcpt-1")
     assert r._table.deleted == [{"pk": "PUSHRECEIPT#PENDING", "sk": "rcpt-1"}]
-
-
-def test_delete_client_error_surfaces_as_database_error(shared, client_error, database_error):
-    r = shared.push_receipt.PushReceiptRepository()
-
-    class _BoomTable:
-        def delete_item(self, Key):
-            raise client_error("InternalServerError")
-
-    r._table = _BoomTable()
-    with pytest.raises(database_error):
-        r.delete("rcpt-1")

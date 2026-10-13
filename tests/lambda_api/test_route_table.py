@@ -11,7 +11,7 @@ import pytest
 from _api_event import api_event
 from _feed_fakes import FakeCategoryRepo, real_repos
 from _job_fakes import created_jobs, real_job_repo, throttled_worker
-from _terraform import app_route_keys, exact_route_keys
+from _terraform import app_route_keys, exact_route_keys, route_keys
 
 
 def test_route_table_answers_exactly_the_fixed_paths_api_gateway_declares(handler):
@@ -20,6 +20,12 @@ def test_route_table_answers_exactly_the_fixed_paths_api_gateway_declares(handle
 
     assert "GET /transactions/feed" in gateway_fixed_routes
     assert table_routes == gateway_fixed_routes
+
+
+def test_a_route_commented_out_in_api_gateway_is_switched_off():
+    # Else a route turned off in apigateway.tf but left in the table passes above and 404s live.
+    sample = 'app_route_keys = toset([\n  "GET /a",\n  # "DELETE /b",\n  // "PUT /c",\n  "POST /d", # note\n])'
+    assert route_keys(sample) == {"GET /a", "POST /d"}
 
 
 @pytest.mark.parametrize("key", [

@@ -1,10 +1,4 @@
-"""Shared AST helper for the consolidation / fakes guard suites (WHIT-473).
-
-One copy of the top-level-binding walk that the duplicate-name guards use — [G3]
-(test_fakes_invariants), [C1] (test_milestone_consolidation_invariants), and [G4]
-(test_slice3b_consolidation_invariants). It was copy-pasted into all three, which risked
-twin-drift — the exact failure those guards exist to catch — so it lives here once.
-"""
+"""Shared AST helper: the top-level-binding walk the duplicate-name guards use (WHIT-473)."""
 
 import ast
 import pathlib

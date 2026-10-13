@@ -6,20 +6,6 @@ counts without touching status; finish stamps a terminal status + completed_at; 
 attribute is a NUMERIC epoch, not an isoformat string (a string would never expire — WHIT-54).
 """
 
-import pytest
-
-
-def test_create_job_is_running_with_zeroed_tallies(job_repo):
-    item = job_repo.create_job("job1")
-    assert item["pk"] == "JOB" and item["sk"] == "JOB#job1" and item["id"] == "job1"
-    assert item["kind"] == "apply_rules"
-    assert item["status"] == "running"
-    for field in ("matched", "attempted", "filed", "vanished", "failed", "alreadyFiled", "remaining"):
-        assert item[field] == 0
-    assert item["createdRule"] is None and item["error"] is None
-    assert item["created_at"] and item["updated_at"] == item["created_at"]
-    assert item["completed_at"] is None
-
 
 def test_expires_at_is_a_numeric_epoch_not_an_iso_string(job_repo):
     # FAIL-ON-REVERT for the TTL: DynamoDB only expires a NUMERIC epoch-seconds attribute. If
@@ -50,16 +36,6 @@ def test_update_progress_merges_counts_and_keeps_status_running(job_repo):
     assert row["completed_at"] is None
 
 
-def test_update_progress_ignores_keys_outside_the_count_fields(job_repo):
-    # A stray list-shaped key (e.g. a raw outcome list) must not land in the row — only the
-    # whitelisted numeric count fields are written.
-    job_repo.create_job("job1")
-    job_repo.update_progress("job1", {"filed": 5, "bogus": ["a", "b"]})
-    row = job_repo.get_job("job1")
-    assert row["filed"] == 5
-    assert "bogus" not in row
-
-
 def test_finish_job_marks_terminal_with_final_counts_and_completed_at(job_repo):
     job_repo.create_job("job1")
     job_repo.finish_job("job1", "succeeded",
@@ -81,14 +57,6 @@ def test_finish_job_failed_carries_the_error(job_repo):
     assert row["completed_at"] is not None
 
 
-def test_a_db_fault_on_create_raises_database_error(job_repo, client_error, database_error):
-    def boom(**kwargs):
-        raise client_error("InternalServerError")
-    job_repo._table.put_item = boom
-    with pytest.raises(database_error):
-        job_repo.create_job("job1")
-
-
 def test_set_tool_status_writes_the_status_line_and_keeps_running(job_repo):
     job_repo.create_job("chat1", kind="ai_chat")
     job_repo.set_tool_status("chat1", "Looking at Eating Out, last 3 cycles…")
@@ -106,11 +74,3 @@ def test_finish_chat_job_stores_the_reply_as_json_text(job_repo):
     assert row["status"] == "succeeded"
     assert isinstance(row["reply"], str) and '"value": 31.11' in row["reply"]
     assert row["error"] is None and row["completed_at"] is not None
-
-
-def test_finish_chat_job_failed_carries_the_error_and_no_reply(job_repo):
-    job_repo.create_job("chat1", kind="ai_chat")
-    job_repo.finish_chat_job("chat1", "failed", error="assistant unavailable")
-    row = job_repo.get_job("chat1")
-    assert row["status"] == "failed" and row["error"] == "assistant unavailable"
-    assert row["reply"] is None

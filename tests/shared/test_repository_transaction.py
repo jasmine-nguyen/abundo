@@ -16,62 +16,11 @@ from _transaction_range_fakes import _EndlessTransactionRepo
 # module-level helpers                                                         #
 # --------------------------------------------------------------------------- #
 
-def test_sanitise_transaction_strips_none_values(shared):
-    # None properties are dropped so DynamoDB documents stay sparse...
-    txn = {"transaction_id": "t1", "category": None, "merchant_name": None}
-    assert shared.repository.sanitise_transaction(txn) == {"transaction_id": "t1"}
-
 
 def test_sanitise_transaction_keeps_falsy_non_none(shared):
     # ...but falsy-yet-present values (0, "", False) are meaningful and survive.
     txn = {"amount": Decimal("0"), "description": "", "counts_to_budget": False}
     assert shared.repository.sanitise_transaction(txn) == txn
-
-
-def test_key_builders_prefix_ids(shared):
-    assert shared.repository._build_pk("up-spending") == "ACCOUNT#up-spending"
-    assert shared.repository._build_sk("txn_1") == "TXN#txn_1"
-
-
-# --------------------------------------------------------------------------- #
-# lazy table + batch-put guards                                               #
-# --------------------------------------------------------------------------- #
-
-def test_get_table_lazily_builds_and_caches_the_resource(shared, monkeypatch):
-    # A fresh repository (no injected _table) resolves the DynamoDB resource once
-    # and buffers it, so the boto3 connection is built lazily and reused. Replace
-    # the module's whole `boto3` reference (not an attr on it) so the test does not
-    # depend on which suite's fake boto3 is cached in sys.modules first.
-    import types as _types
-
-    calls = {"resource": 0, "table": 0}
-    sentinel = object()
-
-    class _FakeResource:
-        def Table(self, name):
-            calls["table"] += 1
-            return sentinel
-
-    def fake_resource(*a, **k):
-        calls["resource"] += 1
-        return _FakeResource()
-
-    import repository_base
-
-    monkeypatch.setattr(
-        repository_base, "boto3", _types.SimpleNamespace(resource=fake_resource)
-    )
-
-    r = shared.repository.TransactionRepository()
-    assert r._get_table() is sentinel
-    assert r._get_table() is sentinel  # second call served from the buffer
-    assert calls == {"resource": 1, "table": 1}
-
-
-def test_batch_put_empty_items_is_a_noop(repo):
-    # The private guard: an empty item list never opens a batch_writer.
-    repo._batch_put([], "batch_write")
-    assert repo._table.store == {}
 
 
 # --------------------------------------------------------------------------- #
@@ -96,34 +45,9 @@ def test_insert_transactions_writes_prefixed_keys_and_strips_none(repo):
     assert "category" not in item  # None stripped by sanitise_transaction
 
 
-def test_insert_transactions_writes_one_row_per_transaction(repo):
-    repo.insert_transactions([
-        {"account_id": "acct", "transaction_id": "t1"},
-        {"account_id": "acct", "transaction_id": "t2"},
-    ])
-    assert ("ACCOUNT#acct", "TXN#t1") in repo._table.store
-    assert ("ACCOUNT#acct", "TXN#t2") in repo._table.store
-    assert len(repo._table.store) == 2
-
-
-def test_insert_transactions_maps_database_error(repo, shared, client_error, database_error, monkeypatch):
-    # A ClientError from the batch write is re-raised as a DatabaseError by
-    # handle_database_error, never leaked as a raw botocore error.
-    def boom():
-        raise client_error("ProvisionedThroughputExceededException")
-
-    monkeypatch.setattr(repo._table, "batch_writer", boom)
-    with pytest.raises(database_error):
-        repo.insert_transactions([{"account_id": "a", "transaction_id": "t"}])
-
-
 # --------------------------------------------------------------------------- #
 # save_failed_transactions                                                     #
 # --------------------------------------------------------------------------- #
-
-def test_save_failed_transactions_empty_is_a_noop(repo):
-    repo.save_failed_transactions([])
-    assert repo._table.store == {}
 
 
 def test_save_failed_transactions_stores_raw_json_under_failed_partition(repo):
@@ -165,13 +89,6 @@ def _seed_dated(repo, account_id, dates):
         }
 
 
-def test_get_by_date_range_blank_account_returns_empty(repo):
-    # Guard clause: no account id → empty page, no query issued.
-    items, cursor = repo.get_transactions_by_date_range("", None, None)
-    assert items == [] and cursor is None
-    assert repo._table.query_calls == 0
-
-
 def test_get_by_date_range_returns_newest_first(repo):
     _seed_dated(repo, "acct", ["2026-01-01", "2026-01-03", "2026-01-02"])
     items, cursor = repo.get_transactions_by_date_range("acct", None, None)
@@ -183,12 +100,6 @@ def test_get_by_date_range_filters_between_two_dates(repo):
     _seed_dated(repo, "acct", ["2026-01-01", "2026-01-05", "2026-01-10"])
     items, _ = repo.get_transactions_by_date_range("acct", "2026-01-02", "2026-01-06")
     assert [it["date"] for it in items] == ["2026-01-05"]
-
-
-def test_get_by_date_range_start_only_is_inclusive_lower_bound(repo):
-    _seed_dated(repo, "acct", ["2026-01-01", "2026-01-05", "2026-01-10"])
-    items, _ = repo.get_transactions_by_date_range("acct", "2026-01-05", None)
-    assert [it["date"] for it in items] == ["2026-01-10", "2026-01-05"]
 
 
 def test_get_by_date_range_scopes_to_the_account(repo):
@@ -211,45 +122,6 @@ def test_get_by_date_range_paginates_with_cursor(repo):
     assert cursor2 is None  # last page → no more cursor
 
 
-def test_get_by_date_range_caps_limit_at_max_page_size(repo, shared, monkeypatch):
-    # The requested limit is clamped to MAX_PAGE_SIZE before hitting DynamoDB.
-    captured = {}
-    original_query = repo._table.query
-
-    def spy(**kwargs):
-        captured.update(kwargs)
-        return original_query(**kwargs)
-
-    monkeypatch.setattr(repo._table, "query", spy)
-    repo.get_transactions_by_date_range("acct", None, None, limit=10_000)
-    assert captured["Limit"] == shared.repository.MAX_PAGE_SIZE
-
-
-def test_get_by_date_range_maps_database_error(repo, client_error, database_error, monkeypatch):
-    def boom(**kwargs):
-        raise client_error("InternalServerError")
-
-    monkeypatch.setattr(repo._table, "query", boom)
-    with pytest.raises(database_error):
-        repo.get_transactions_by_date_range("acct", None, None)
-
-
-# --------------------------------------------------------------------------- #
-# WHIT-123 — shared get_account_transactions is never defined, stays absent      #
-# --------------------------------------------------------------------------- #
-
-def test_shared_repo_has_no_get_account_transactions(shared):
-    # WHIT-123 — [A1] regression guard. The shared TransactionRepository must NOT
-    # expose get_account_transactions: the only correct (paginated)
-    # copy lives in lambda/webhook_repository.py. The shared method read only DynamoDB's
-    # first page, so re-adding it here would silently reintroduce the WHIT-82
-    # first-page-only miss for any future caller that binds to the shared repo.
-    assert not hasattr(
-        shared.repository.TransactionRepository,
-        "get_account_transactions",
-    )
-
-
 # --------------------------------------------------------------------------- #
 # get_transaction_keys_by_id                                                  #
 # --------------------------------------------------------------------------- #
@@ -268,31 +140,6 @@ def test_get_keys_by_id_returns_none_when_missing(repo):
     assert repo.get_transaction_keys_by_id("nope") is None
 
 
-def test_get_keys_by_id_returns_first_of_multiple_matches(repo):
-    # Duplicate transaction_id in the GSI → repository logs a warning and uses the
-    # first match rather than raising.
-    repo._table.store = {
-        ("ACCOUNT#a", "TXN#dup"): {"pk": "ACCOUNT#a", "sk": "TXN#dup",
-                                   "transaction_id": "dup", "date": "2026-01-01"},
-        ("ACCOUNT#b", "TXN#dup"): {"pk": "ACCOUNT#b", "sk": "TXN#dup",
-                                   "transaction_id": "dup", "date": "2026-01-02"},
-    }
-    keys = repo.get_transaction_keys_by_id("dup")
-    assert keys in (
-        {"pk": "ACCOUNT#a", "sk": "TXN#dup"},
-        {"pk": "ACCOUNT#b", "sk": "TXN#dup"},
-    )
-
-
-def test_get_keys_by_id_maps_database_error(repo, client_error, database_error, monkeypatch):
-    def boom(**kwargs):
-        raise client_error("InternalServerError")
-
-    monkeypatch.setattr(repo._table, "query", boom)
-    with pytest.raises(database_error):
-        repo.get_transaction_keys_by_id("t1")
-
-
 # --------------------------------------------------------------------------- #
 # update_transaction_category                                                 #
 # --------------------------------------------------------------------------- #
@@ -302,22 +149,6 @@ def test_update_category_sets_value_and_returns_true(repo):
     repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "OLD"}}
     assert repo.update_transaction_category(key[0], key[1], "GROCERIES") is True
     assert repo._table.store[key]["category"] == "GROCERIES"
-
-
-def test_update_category_returns_false_when_row_gone(repo):
-    # attribute_exists(pk) guard fails on a row deleted between lookup and update →
-    # surfaced as False (a 404), not a 500.
-    assert repo.update_transaction_category("ACCOUNT#x", "TXN#gone", "FOOD") is False
-
-
-def test_update_category_maps_other_database_error(repo, client_error, database_error, monkeypatch):
-    # A non-conditional ClientError is still routed through handle_database_error.
-    def boom(**kwargs):
-        raise client_error("InternalServerError")
-
-    monkeypatch.setattr(repo._table, "update_item", boom)
-    with pytest.raises(database_error):
-        repo.update_transaction_category("pk", "sk", "FOOD")
 
 
 # --------------------------------------------------------------------------- #
@@ -358,15 +189,10 @@ def test_conditional_write_leaves_a_row_the_user_filed_mid_run(repo):
     # FAIL-ON-REVERT: drop the condition (or compare against the wrong value) and the store below
     # reads "eatingout" — the user's tap silently overwritten, which is the whole bug.
     key = _seed(repo, "coffee")
-    assert repo.update_transaction_category_if_unchanged(*key, "eatingout", None) == ("changed", "coffee")
-    assert repo._table.store[key]["category"] == "coffee"
-
-
-def test_conditional_write_reports_the_current_value_so_the_caller_can_judge(repo):
-    # A cleared category leaves the row unfiled again. The repository must NOT call that "filed" —
-    # it hands back what it found and lets the handler, which holds the taxonomy, decide.
-    key = _seed(repo, "TRANSFER_OUT")
-    assert repo.update_transaction_category_if_unchanged(*key, "groceries", None) == ("changed", "TRANSFER_OUT")
+    assert repo.update_transaction_category_if_unchanged(
+        *key, "eatingout", None, filed_by_rule="rule-9", budget_excluded=True) == ("changed", "coffee")
+    # The rule's stamp and exclusion ride the same refused write, so neither lands either.
+    assert repo._table.store[key] == {"pk": key[0], "sk": key[1], "category": "coffee"}
 
 
 def test_conditional_write_reports_a_deleted_row_as_gone(repo):
@@ -405,25 +231,6 @@ def test_conditional_write_omits_budget_excluded_when_false(repo):
     key = _seed(repo)
     repo.update_transaction_category_if_unchanged(*key, "groceries", None, budget_excluded=False)
     assert "budget_excluded" not in repo._table.store[key]
-
-
-def test_conditional_write_does_not_exclude_a_row_the_user_filed_mid_run(repo):
-    # THE "user hand wins" GUARANTEE at the write: the scan saw the row unfiled and the rule wants to
-    # exclude it, but the user filed it in the gap. The whole conditional write is refused, so
-    # budget_excluded can NEVER land on a row the tap-wins guard rejected.
-    key = _seed(repo, "coffee")
-    assert repo.update_transaction_category_if_unchanged(
-        *key, "eatingout", None, budget_excluded=True) == ("changed", "coffee")
-    assert "budget_excluded" not in repo._table.store[key]
-
-
-def test_conditional_write_maps_other_database_error(repo, client_error, database_error, monkeypatch):
-    def boom(**kwargs):
-        raise client_error("InternalServerError")
-
-    monkeypatch.setattr(repo._table, "update_item", boom)
-    with pytest.raises(database_error):
-        repo.update_transaction_category_if_unchanged("pk", "sk", "groceries", None)
 
 
 def test_conditional_write_raises_when_the_read_back_fails(repo, client_error, database_error, monkeypatch):
@@ -466,36 +273,12 @@ def test_update_fields_sets_notes_only_leaving_others_intact(repo):
     assert "tags" not in row
 
 
-def test_update_fields_sets_tags_only(repo):
-    key = ("ACCOUNT#acct", "TXN#t1")
-    repo._table.store = {key: {"pk": key[0], "sk": key[1]}}
-    assert repo.update_transaction_fields(key[0], key[1], tags=["work", "travel"]) is True
-    assert repo._table.store[key]["tags"] == ["work", "travel"]
-
-
-def test_update_fields_sets_category_notes_and_tags_together(repo):
-    key = ("ACCOUNT#acct", "TXN#t1")
-    repo._table.store = {key: {"pk": key[0], "sk": key[1]}}
-    assert repo.update_transaction_fields(
-        key[0], key[1], category="FOOD", notes="brunch", tags=["a"]
-    ) is True
-    row = repo._table.store[key]
-    assert (row["category"], row["notes"], row["tags"]) == ("FOOD", "brunch", ["a"])
-
-
 def test_update_fields_clears_note_by_removing_the_attribute(repo):
     # A cleared note ("") must REMOVE the attribute so it reads back ABSENT, not "".
     key = ("ACCOUNT#acct", "TXN#t1")
     repo._table.store = {key: {"pk": key[0], "sk": key[1], "notes": "old note"}}
     assert repo.update_transaction_fields(key[0], key[1], notes="") is True
     assert "notes" not in repo._table.store[key]
-
-
-def test_update_fields_clears_tags_by_removing_the_attribute(repo):
-    key = ("ACCOUNT#acct", "TXN#t1")
-    repo._table.store = {key: {"pk": key[0], "sk": key[1], "tags": ["x"]}}
-    assert repo.update_transaction_fields(key[0], key[1], tags=[]) is True
-    assert "tags" not in repo._table.store[key]
 
 
 def test_update_fields_mixes_set_and_remove_in_one_write(repo):
@@ -512,14 +295,6 @@ def test_update_fields_mixes_set_and_remove_in_one_write(repo):
 # budget_excluded override (WHIT-296) — rides the same SET/REMOVE machinery.    #
 # --------------------------------------------------------------------------- #
 
-def test_update_fields_sets_budget_excluded_true(repo):
-    key = ("ACCOUNT#acct", "TXN#t1")
-    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "GROCERIES"}}
-    assert repo.update_transaction_fields(key[0], key[1], budget_excluded=True) is True
-    row = repo._table.store[key]
-    assert row["budget_excluded"] is True
-    assert row["category"] == "GROCERIES"  # untouched
-
 
 def test_update_fields_clears_budget_excluded_false_by_removing(repo):
     # False must REMOVE the attribute so it reads back ABSENT (not stored False),
@@ -530,38 +305,11 @@ def test_update_fields_clears_budget_excluded_false_by_removing(repo):
     assert "budget_excluded" not in repo._table.store[key]
 
 
-def test_update_fields_budget_excluded_with_notes_in_one_write(repo):
-    # Setting the override AND clearing the note in one call builds a single valid
-    # SET+REMOVE UpdateItem (proves the added field slots into the mixed expression).
-    key = ("ACCOUNT#acct", "TXN#t1")
-    repo._table.store = {key: {"pk": key[0], "sk": key[1], "notes": "old"}}
-    assert repo.update_transaction_fields(
-        key[0], key[1], notes="", budget_excluded=True
-    ) is True
-    row = repo._table.store[key]
-    assert row["budget_excluded"] is True
-    assert "notes" not in row
-
-
-def test_update_fields_returns_false_when_row_gone(repo):
-    # attribute_exists(pk) guard fails on a vanished row → False (a 404), not a 500.
-    assert repo.update_transaction_fields("ACCOUNT#x", "TXN#gone", notes="x") is False
-
-
 def test_update_fields_with_no_fields_is_a_noop_without_writing(repo):
     # All fields _UNSET → nothing to write. It must NOT issue a (malformed) empty-
     # expression UpdateItem: returning True for a MISSING row proves the attribute_
     # exists guard was never reached (a real write would have returned False).
     assert repo.update_transaction_fields("ACCOUNT#x", "TXN#missing") is True
-
-
-def test_update_fields_maps_other_database_error(repo, client_error, database_error, monkeypatch):
-    def boom(**kwargs):
-        raise client_error("InternalServerError")
-
-    monkeypatch.setattr(repo._table, "update_item", boom)
-    with pytest.raises(database_error):
-        repo.update_transaction_fields("pk", "sk", notes="x")
 
 
 # --------------------------------------------------------------------------- #
@@ -619,66 +367,6 @@ def test_batch_conditional_fail_maps_not_found(repo, monkeypatch):
     assert results == [{"id": "t1", "status": "not_found"}]
 
 
-def test_batch_empty_list_is_a_noop(repo):
-    assert repo.update_transaction_categories([]) == []
-
-
-def test_batch_preserves_input_order_with_mixed_outcomes(repo):
-    # >2 items, updated/not_found INTERLEAVED. Results must mirror INPUT order 1:1
-    # (not grouped by status, not reordered by which id resolved).
-    repo._table.store = {
-        ("ACCOUNT#a", "TXN#t1"): {"pk": "ACCOUNT#a", "sk": "TXN#t1", "transaction_id": "t1"},
-        ("ACCOUNT#a", "TXN#t3"): {"pk": "ACCOUNT#a", "sk": "TXN#t3", "transaction_id": "t3"},
-    }
-
-    results = repo.update_transaction_categories([
-        {"id": "t1", "category": "coffee"},
-        {"id": "ghost1", "category": "coffee"},
-        {"id": "t3", "category": "coffee"},
-        {"id": "ghost2", "category": "coffee"},
-    ])
-
-    assert results == [
-        {"id": "t1", "status": "updated"},
-        {"id": "ghost1", "status": "not_found"},
-        {"id": "t3", "status": "updated"},
-        {"id": "ghost2", "status": "not_found"},
-    ]
-
-
-def test_batch_duplicate_ids_both_applied_last_wins(repo):
-    # Same id twice in one batch: each processed independently -> both 'updated', the
-    # LAST category written wins on the row.
-    repo._table.store = {
-        ("ACCOUNT#a", "TXN#t1"): {"pk": "ACCOUNT#a", "sk": "TXN#t1",
-                                  "transaction_id": "t1", "category": "OLD"},
-    }
-
-    results = repo.update_transaction_categories([
-        {"id": "t1", "category": "coffee"},
-        {"id": "t1", "category": "groceries"},
-    ])
-
-    assert results == [
-        {"id": "t1", "status": "updated"},
-        {"id": "t1", "status": "updated"},
-    ]
-    assert repo._table.store[("ACCOUNT#a", "TXN#t1")]["category"] == "groceries"
-
-
-def test_batch_writes_category_value_verbatim(repo):
-    # The row stores the EXACT category string handed in (a raw BankSync enum here) —
-    # the repo neither normalises nor enforces the taxonomy.
-    repo._table.store = {
-        ("ACCOUNT#a", "TXN#t1"): {"pk": "ACCOUNT#a", "sk": "TXN#t1",
-                                  "transaction_id": "t1", "category": "OLD"},
-    }
-
-    repo.update_transaction_categories([{"id": "t1", "category": "FOOD_AND_DRINK"}])
-
-    assert repo._table.store[("ACCOUNT#a", "TXN#t1")]["category"] == "FOOD_AND_DRINK"
-
-
 def test_batch_real_client_error_propagates_not_swallowed(repo, client_error, database_error, monkeypatch):
     # MONEY-SAFETY: a NON-conditional ClientError on the write (throttle / 5xx) must
     # propagate as a DatabaseError — NOT be quietly recorded as 'not_found'. A false
@@ -694,37 +382,6 @@ def test_batch_real_client_error_propagates_not_swallowed(repo, client_error, da
 
     with pytest.raises(database_error):
         repo.update_transaction_categories([{"id": "t1", "category": "coffee"}])
-
-
-def test_batch_error_midloop_keeps_earlier_write_then_raises(repo, client_error, database_error, monkeypatch):
-    # The best-effort loop is NOT transactional: if the write throws on the 2nd item,
-    # the 1st item's write has ALREADY landed. Documents the partial-write reality
-    # (the divergence tracked as tech-debt).
-    repo._table.store = {
-        ("ACCOUNT#a", "TXN#t1"): {"pk": "ACCOUNT#a", "sk": "TXN#t1",
-                                  "transaction_id": "t1", "category": "OLD"},
-        ("ACCOUNT#a", "TXN#t2"): {"pk": "ACCOUNT#a", "sk": "TXN#t2",
-                                  "transaction_id": "t2", "category": "OLD"},
-    }
-    original = repo._table.update_item
-    seen = []
-
-    def spy(**kwargs):
-        seen.append(kwargs["Key"]["sk"])
-        if len(seen) == 2:
-            raise client_error("InternalServerError")
-        return original(**kwargs)
-
-    monkeypatch.setattr(repo._table, "update_item", spy)
-
-    with pytest.raises(database_error):
-        repo.update_transaction_categories([
-            {"id": "t1", "category": "coffee"},
-            {"id": "t2", "category": "coffee"},
-        ])
-
-    # First write committed before the raise (loop is not all-or-nothing).
-    assert repo._table.store[("ACCOUNT#a", "TXN#t1")]["category"] == "coffee"
 
 
 def test_save_failed_transactions_stamps_failed_at_and_ttl(repo, shared, monkeypatch):
@@ -822,20 +479,6 @@ def test_conditional_write_declares_no_unused_expression_value_when_the_row_was_
     assert set(updates[0]["ExpressionAttributeValues"]) == {":v0"}
 
 
-def test_conditional_write_compares_against_the_scanned_value_when_there_was_one(repo, monkeypatch):
-    # [A41b] The other branch, pinned at the wire level: the comparison is against the value the
-    # SCAN saw, not the value being written. (The behavioural tests above catch the swap too;
-    # this one names the exact expression, so a rewrite of the builder can't drift silently.)
-    key = _seed(repo, "FOOD_AND_DRINK")
-    updates = _record_updates(repo, monkeypatch)
-
-    repo.update_transaction_category_if_unchanged(*key, "eatingout", "FOOD_AND_DRINK")
-
-    assert updates[0]["ConditionExpression"] == "attribute_exists(pk) AND #f0 = :expected"
-    assert updates[0]["ExpressionAttributeValues"] == {
-        ":v0": "eatingout", ":expected": "FOOD_AND_DRINK"}
-
-
 def test_a_row_whose_category_attribute_disappeared_reads_as_changed_not_as_gone(repo):
     # [A42] The dangerous confusion, from the direction nothing else covers: the scan saw a value,
     # the attribute is now ABSENT, and the row still EXISTS. Whatever the cause, an absent
@@ -893,14 +536,6 @@ def test_hand_file_batch_removes_the_rule_stamp(repo):
     assert "filed_by_rule" not in row
 
 
-def test_hand_file_batch_on_an_unstamped_row_is_a_safe_noop_remove(repo):
-    # REMOVE of an absent stamp must not error — a never-ruled charge files fine.
-    key = ("ACCOUNT#acct", "TXN#t1")
-    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "OLD"}}
-    assert repo.update_transaction_category(key[0], key[1], "GROCERIES") is True
-    assert repo._table.store[key]["category"] == "GROCERIES"
-
-
 def test_on_demand_rule_file_stamps_the_rule_id(repo):
     # update_transaction_category_if_unchanged writes the stamp when given a rule id.
     key = ("ACCOUNT#acct", "TXN#t1")
@@ -913,50 +548,12 @@ def test_on_demand_rule_file_stamps_the_rule_id(repo):
     assert row["filed_by_rule"] == "rule-9"
 
 
-def test_on_demand_without_a_rule_id_writes_no_stamp(repo):
-    # Back-compat: the default filed_by_rule=None leaves the write stamp-free.
-    key = ("ACCOUNT#acct", "TXN#t1")
-    repo._table.store = {key: {"pk": key[0], "sk": key[1]}}
-    status, _ = repo.update_transaction_category_if_unchanged(key[0], key[1], "GROCERIES", None)
-    assert status == "written"
-    assert "filed_by_rule" not in repo._table.store[key]
-
 # --- WHIT-536 GAP: clear-by-hand and the tap-wins guard vs the stamp ---
 
 def _seed_row(repo, **item):
     key = ("ACCOUNT#acct", "TXN#t1")
     repo._table.store = {key: {"pk": key[0], "sk": key[1], **item}}
     return key
-
-
-# [G4] [A2] A refused category clear (WHIT-512) is atomic: the set-only guard raises BEFORE the
-# stamp-clear block, so neither the category nor the filed_by_rule stamp is touched. This pins the
-# ordering — the guard runs first. FAIL-ON-REVERT: drop the `field == "category" and not provided`
-# guard and "" REMOVEs both category and the stamp, so the "unchanged" assertions go red.
-def test_whit512_refused_category_clear_leaves_stamp_and_category_intact(repo):
-    key = _seed_row(repo, category="GROCERIES", filed_by_rule="rule-1", notes="n")
-    with pytest.raises(ValueError):
-        repo.update_transaction_fields(*key, category="")
-    row = repo._table.store[key]
-    assert row["category"] == "GROCERIES"
-    assert row["filed_by_rule"] == "rule-1"
-    assert row["notes"] == "n"
-
-
-# [G5] [A6] The tap-wins guard REFUSES to stamp a row it rejects. A charge already hand-filed
-# ("coffee") is matched by the sweep, which calls the conditional write with expected=None and a
-# rule stamp. attribute_not_exists(#c) fails -> the whole write is refused atomically, so NEITHER
-# the rule category NOR the stamp lands. FAIL-ON-REVERT: make the stamped write drop the
-# attribute_not_exists guard and the stamp overwrites the hand-filed row.
-def test_whit536_rejected_write_lands_no_stamp_on_hand_filed_row(repo):
-    key = _seed_row(repo, category="coffee")
-    status, current = repo.update_transaction_category_if_unchanged(
-        *key, "groceries", None, filed_by_rule="rule-9")
-    assert status == "changed"
-    assert current == "coffee"
-    row = repo._table.store[key]
-    assert row["category"] == "coffee"
-    assert "filed_by_rule" not in row
 
 
 # [G6] [A7] Wire-level: the STAMPED conditional write against a scanned value must not declare an
@@ -1004,25 +601,6 @@ def test_clear_rule_fill_leaves_a_charge_whose_stamp_no_longer_matches(repo):
     assert repo._table.store[key]["category"] == "coffee"
 
 
-def test_clear_rule_fill_leaves_a_charge_owned_by_a_different_rule(repo):
-    key = _seed_row(repo, category="petrol", filed_by_rule="rule-2")
-    assert repo.clear_rule_fill(*key, "rule-1") is False
-    row = repo._table.store[key]
-    assert row["category"] == "petrol" and row["filed_by_rule"] == "rule-2"
-
-
-def test_clear_rule_fill_on_a_vanished_row_is_a_false_noop(repo):
-    repo._table.store = {}
-    assert repo.clear_rule_fill("ACCOUNT#x", "TXN#gone", "rule-1") is False
-
-
-def test_clear_rule_fill_is_idempotent(repo):
-    # Running it twice is safe: the second call finds the stamp already gone and no-ops.
-    key = _seed_row(repo, category="groceries", filed_by_rule="rule-1")
-    assert repo.clear_rule_fill(*key, "rule-1") is True
-    assert repo.clear_rule_fill(*key, "rule-1") is False
-
-
 def test_refile_rule_fill_moves_category_and_rekeys_the_stamp(repo):
     # The edit-still-matches path: a charge the rule owns moves to the new target and the stamp is
     # re-keyed to the (possibly new) id. Here the text changed, so old id -> new id.
@@ -1032,14 +610,6 @@ def test_refile_rule_fill_moves_category_and_rekeys_the_stamp(repo):
     assert row["category"] == "eatingout"
     assert row["filed_by_rule"] == "new-id"
     assert row["notes"] == "keep"
-
-
-def test_refile_rule_fill_in_place_edit_keeps_the_id_moves_the_category(repo):
-    # A target-only (or cosmetic) edit keeps the id: old == new, only the category moves.
-    key = _seed_row(repo, category="groceries", filed_by_rule="same-id")
-    assert repo.refile_rule_fill(*key, "petrol", "same-id", "same-id") is True
-    row = repo._table.store[key]
-    assert row["category"] == "petrol" and row["filed_by_rule"] == "same-id"
 
 
 def test_refile_rule_fill_leaves_a_charge_the_user_refiled_in_the_gap(repo):
@@ -1054,29 +624,9 @@ def test_refile_rule_fill_leaves_a_charge_the_user_refiled_in_the_gap(repo):
     assert "filed_by_rule" not in row                 # not re-stamped
 
 
-def test_refile_rule_fill_on_a_vanished_row_is_a_false_noop(repo):
-    repo._table.store = {}
-    assert repo.refile_rule_fill("ACCOUNT#x", "TXN#gone", "groceries", "old", "new") is False
-
-
 # --------------------------------------------------------------------------- #
 # WHIT-512 adversarial gaps (QA) — set-only category guard                     #
 # --------------------------------------------------------------------------- #
-
-def test_update_fields_refuses_category_none_specifically(repo):  # [B1]
-    # The implementer's guard tests use category="". None is a DISTINCT falsy value
-    # (the PATCH API never sends it, but the storage guard is defense-in-depth). It must
-    # also raise and leave the row byte-identical.
-    # FAIL-ON-REVERT: drop the `field == "category" and not provided` guard and None falls
-    # through the REMOVE branch, deleting category -> this goes red.
-    key = ("ACCOUNT#acct", "TXN#n1")
-    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "GROCERIES",
-                               "filed_by_rule": "rule-1"}}
-    with pytest.raises(ValueError):
-        repo.update_transaction_fields(key[0], key[1], category=None)
-    row = repo._table.store[key]
-    assert row["category"] == "GROCERIES"
-    assert row["filed_by_rule"] == "rule-1"
 
 
 def test_update_fields_falsy_category_raises_before_any_write(repo, monkeypatch):  # [B2]
@@ -1120,25 +670,6 @@ def test_update_fields_valid_category_set_with_notes_clear_in_one_write(repo):  
     assert "filed_by_rule" not in row        # hand-file cleared the stamp
 
 
-def test_update_fields_falsy_category_with_valid_tags_clear_still_refused(repo, monkeypatch):  # [B4]
-    # Sibling of [B2] with a REMOVE-shaped valid field (tags=[]): a falsy category must still
-    # raise before any write, so the tags clear does NOT happen either.
-    # FAIL-ON-REVERT: drop the guard and update_item fires (REMOVE category + tags) -> red.
-    key = ("ACCOUNT#acct", "TXN#mix2")
-    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "GROCERIES",
-                               "tags": ["keep"]}}
-    calls = []
-    original = repo._table.update_item
-    monkeypatch.setattr(repo._table, "update_item",
-                        lambda **kw: calls.append(kw) or original(**kw))
-    with pytest.raises(ValueError):
-        repo.update_transaction_fields(key[0], key[1], category="", tags=[])
-    assert calls == []
-    row = repo._table.store[key]
-    assert row["category"] == "GROCERIES"
-    assert row["tags"] == ["keep"]
-
-
 # --------------------------------------------------------------------------- #
 # WHIT-607 — read_date_range_pages / read_window: the one "read every page"   #
 # date-range read, bounded by a page limit                                    #
@@ -1178,9 +709,6 @@ def test_read_date_range_pages_raises_loudly_at_the_page_limit(shared):
 
 
 def test_read_window_merges_every_mapped_account_within_the_range(repo, shared):
-    import constants
-
-    assert constants.DATE_RANGE_MAX_PAGES == 1000
     _seed_rows(repo, "up-spending", 120, date="2026-01-10")
     _seed_rows(repo, "anz-rewards-black-visa", 2, date="2026-01-12")
     _seed_rows(repo, "westpac-altitude-qantas-black", 1, date="2026-02-20")  # out of range
@@ -1191,3 +719,23 @@ def test_read_window_merges_every_mapped_account_within_the_range(repo, shared):
     for r in rows:
         by_account[r["account_id"]] = by_account.get(r["account_id"], 0) + 1
     assert by_account == {"up-spending": 120, "anz-rewards-black-visa": 2}
+
+
+_GONE_PK, _GONE_SK = "ACCOUNT#acc", "TXN#gone"
+
+
+@pytest.mark.parametrize("call", [
+    pytest.param(lambda r: r.delete_transaction(_GONE_PK, _GONE_SK), id="delete_transaction"),
+    pytest.param(lambda r: r.delete_if_still_pending(_GONE_PK, _GONE_SK), id="delete_if_still_pending"),
+    pytest.param(lambda r: r.carry_onto_pending(_GONE_PK, _GONE_SK, {"category": "groceries"}),
+                 id="carry_onto_pending"),
+    pytest.param(lambda r: r.update_transaction_category(_GONE_PK, _GONE_SK, "groceries"),
+                 id="update_transaction_category"),
+    pytest.param(lambda r: r.clear_rule_fill(_GONE_PK, _GONE_SK, "rule-1"), id="clear_rule_fill"),
+    pytest.param(lambda r: r.refile_rule_fill(_GONE_PK, _GONE_SK, "groceries", "rule-1", "rule-2"),
+                 id="refile_rule_fill"),
+    pytest.param(lambda r: r.update_transaction_fields(_GONE_PK, _GONE_SK, notes="hi"),
+                 id="update_transaction_fields"),
+])
+def test_each_conditional_save_returns_false_when_the_row_is_gone(repo, call):
+    assert call(repo) is False

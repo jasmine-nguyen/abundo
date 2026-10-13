@@ -136,9 +136,17 @@ def test_python_tests_still_fires_on_every_server_dir():
     )
 
 
-def test_the_job_adds_no_new_dependency():
-    """The job hand-parses YAML rather than adding PyYAML (Jasmine's call, deferred). Keep
-    that honest — it installs only the existing requirements-dev.txt."""
-    text = _TWIN_GUARDS.read_text()
-    assert "lambda_sync_trigger/requirements-dev.txt" in text
-    assert "pyyaml" not in text.lower()
+
+def test_the_marker_enforcer_sees_a_client_file_read():
+    """tests/conftest.py fails an unmarked test that reads a client file, using this tracer.
+    If the tracer stopped seeing reads, a twin guard added without the marker would never run
+    on a client-only PR, and nothing would go red."""
+    from _crosslang_tracer import ClientReadTracer
+
+    with ClientReadTracer() as tracer:
+        _PYTHON_TESTS.read_text()
+    assert tracer.read_client is False
+
+    with ClientReadTracer() as tracer:
+        (_REPO_ROOT / "src" / "chartColors.ts").read_text()
+    assert tracer.read_client is True

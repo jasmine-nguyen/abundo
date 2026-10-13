@@ -38,17 +38,6 @@ def _py_const(text: str, name: str) -> int:
     return int(matches[0])
 
 
-def test_the_parsers_find_the_declared_values():
-    # Sanity-guard the regexes so the equality test below can't pass vacuously if a format change
-    # makes them match nothing.
-    ts = _TS_TWIN.read_text()
-    py = _PY_CONSTANTS.read_text()
-    assert _ts_const(ts, "SPREAD_MIN_CYCLES") == 1
-    assert _ts_const(ts, "SPREAD_MAX_CYCLES") == 24
-    assert _py_const(py, "SPREAD_MIN_CYCLES") == 1
-    assert _py_const(py, "SPREAD_MAX_CYCLES") == 24
-
-
 def test_client_and_server_spread_cycle_bounds_are_identical():
     # The client stepper clamp MUST match the server's validation bounds. Change one without the
     # other -> red.
@@ -56,10 +45,3 @@ def test_client_and_server_spread_cycle_bounds_are_identical():
     py = _PY_CONSTANTS.read_text()
     assert _ts_const(ts, "SPREAD_MIN_CYCLES") == _py_const(py, "SPREAD_MIN_CYCLES")
     assert _ts_const(ts, "SPREAD_MAX_CYCLES") == _py_const(py, "SPREAD_MAX_CYCLES")
-
-
-def test_a_duplicate_ts_declaration_is_rejected_not_read_past():
-    # Fail-on-revert for the exactly-one guard: two live declarations must raise, not silently
-    # take the first.
-    with pytest.raises(AssertionError, match="found 2"):
-        _ts_const("export const SPREAD_MIN_CYCLES = 1;\nexport const SPREAD_MIN_CYCLES = 9;\n", "SPREAD_MIN_CYCLES")

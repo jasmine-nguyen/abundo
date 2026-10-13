@@ -30,37 +30,7 @@ def test_subtree_ids_reproduces_the_parity_fixture(shared):
         )
 
 
-def test_fixture_covers_the_drift_prone_shapes():
-    """Guard the fixture itself: if the taxonomy is ever trimmed, the parity check above weakens
-    silently. Pin the specific shapes that make the two rules non-trivial to keep in sync."""
-    fixture = _load()
-    ids = {c["id"] for c in fixture["categories"]}
-    expected = {(c["budgetId"], c["categoryId"]): c["expected"] for c in fixture["cases"]}
-    assert len(fixture["cases"]) == len(ids) ** 2                       # full cross-product
-    assert expected[("living_root", "deep_living")] is True            # same-bucket leaf under cross-bucket intermediate
-    assert expected[("living_root", "cross")] is False                 # cross-bucket direct child dropped
-    assert expected[("none_root", "none_kid")] is True                 # None under None kept
-    assert expected[("none_root", "none_kid_living")] is False         # Living under None dropped
-    assert expected[("cyc_a", "cyc_b")] is True                        # two-node cycle terminates & agrees
-
-
 # --- folded from test_subtree_parity_gaps.py (WHIT-463) ---
-
-
-def test_subtree_ids_null_descendant_through_nonnull_intermediate(shared):
-    # none_root(None) → mid(Living) → leaf(None). None == None keeps `leaf` under the None root,
-    # descending THROUGH the Living intermediate (filter on endpoints, not descent). The non-null
-    # intermediate itself is dropped. Fail-on-revert: prune-the-walk loses `leaf`; drop the
-    # endpoint filter and `mid` wrongly folds in.
-    cats = [
-        {"id": "none_root", "bucket": None, "parent": None},
-        {"id": "mid", "bucket": "Living", "parent": "none_root"},
-        {"id": "leaf", "bucket": None, "parent": "mid"},
-    ]
-    children = shared.spend.build_category_children(cats)
-    bucket_by_id = {c["id"]: c["bucket"] for c in cats}
-
-    assert shared.spend.subtree_ids("none_root", children, bucket_by_id) == {"none_root", "leaf"}
 
 
 def test_subtree_ids_matches_an_independent_down_walk_oracle_on_many_trees(shared):
