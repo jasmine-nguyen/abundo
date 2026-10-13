@@ -1,8 +1,8 @@
 // WHIT-272 — the transaction detail screen (read-only slice). Reached by the row chevron;
 // the id in the route is the transaction_id. The transaction comes from the SAME cached
 // query the lists use, found by id. WHIT-686: the real screen data code runs over the pretend
-// server. Verifies the fields render, the "not found" state for a stale id, and cache-first
-// error handling.
+// server. Verifies the fields render, the pending label, the "not found" state for a stale id,
+// and cache-first error handling.
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import { routerSpies, setParams, resetRouter } from './support/routerMock';
 import React from 'react';
@@ -39,6 +39,7 @@ import { queryClient } from '../queryClient';
 import { transactionsKey } from '../queryKeys';
 import { removeFromAllCopies } from '../transactionCache';
 import { COFFEE_RECORD } from './support/categories';
+import { pinToday } from './support/clock';
 import { styleOf } from './support/layout';
 import { LARGE_TEXT_MAX_SCALE } from '../hooks/useLargeText';
 
@@ -89,6 +90,17 @@ it('the hero amount fits one line and the tag "×" is not clipped by a fixed lin
   const amount = screen.getByText('-$12.50');
   expect(amount.props).toMatchObject({ numberOfLines: 1, adjustsFontSizeToFit: true, maxFontSizeMultiplier: LARGE_TEXT_MAX_SCALE });
   expect(styleOf(screen.getByText('×')).lineHeight).toBeUndefined();
+});
+
+it('shows Pending with its age for a pending transaction 7 days old', async () => {
+  pinToday(new Date('2026-07-08T08:00:00+10:00'));
+  try {
+    seedFeed([txn({ transaction_id: 't1', category: 'coffee', status: 'pending', date: '2026-07-01' })]);
+    await draw();
+    expect(screen.getByText('Pending · 7 days')).toBeTruthy();
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 it('finds a row that is only in the recent list (not the feed)', async () => {
