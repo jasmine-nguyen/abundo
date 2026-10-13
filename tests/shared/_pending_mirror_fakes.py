@@ -9,7 +9,7 @@ import copy
 from datetime import date
 from decimal import Decimal
 
-WESTPAC_AID = "A3AC9195-9E8D-48B8-86D0-46D130D7F64A"
+WESTPAC_AID = "CC6EE20D-4931-4B10-86CA-EADD45A062DC"
 UP_AID = "3zVQJ8Btz_IRmqp78VrQnQ"
 WESTPAC_SOURCE = {"bid": "fiskil_77", "aid": WESTPAC_AID}
 WESTPAC = "westpac-altitude-qantas-black"
