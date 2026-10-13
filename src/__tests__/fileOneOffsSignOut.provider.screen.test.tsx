@@ -6,7 +6,8 @@ import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals
 import { renderHook, act } from '@testing-library/react-native';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-import { setAuthStatus, resetAuth } from './support/authMock';
+import { resetAuth } from './support/authMock';
+import { signOut } from './support/signOut';
 
 import { useAppContext } from '../context';
 import { queryClient } from '../queryClient';
@@ -14,10 +15,6 @@ import { installFakeServer } from './support/fakeServer';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 installFakeServer();
-
-// Production sign-out order: clear the cache, THEN broadcast anon (which the context subscription
-// turns into the reset). Matches saveMilestonesSignOut.signOut.
-function signOut() { act(() => { queryClient.clear(); setAuthStatus('anon'); }); }
 
 beforeEach(() => { resetAuth(); queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });

@@ -12,7 +12,8 @@ import { SAVED_MILESTONES } from './support/milestonePlan';
 import { queryClient } from '../queryClient';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-import { setAuthStatus, resetAuth } from './support/authMock';
+import { resetAuth } from './support/authMock';
+import { signOut } from './support/signOut';
 import { installFakeServer } from './support/fakeServer';
 import { invalidatedKeys } from './support/queryClient';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
@@ -67,9 +68,6 @@ it('rolls the cache back to the prior plan on a save failure', async () => {
 // cleared cache, toast into the next session, or return true (that would fire the editor's
 // router.back() after the login redirect).
 describe('WHIT-377 — saveMilestones settling AFTER sign-out is a no-op', () => {
-  // Sign out in PRODUCTION order: clear the cache, THEN broadcast anon (which the context
-  // subscription turns into the session epoch bump).
-  const signOut = () => { act(() => { queryClient.clear(); setAuthStatus('anon'); }); };
   const PREV = SAVED_MILESTONES.slice(0, 2);
   const NEXT = SAVED_MILESTONES;
 

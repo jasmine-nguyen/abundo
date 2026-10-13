@@ -9,6 +9,7 @@ import { renderHook, act } from '@testing-library/react-native';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, resetAuth } from './support/authMock';
+import { signOut } from './support/signOut';
 
 import { useAppContext } from '../context';
 import type { Bucket } from '../types';
@@ -19,12 +20,6 @@ import { installFakeServer } from './support/fakeServer';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
-
-// Sign out in PRODUCTION order: clearSession() wipes the cache, THEN broadcasts anon (which the
-// context's subscription turns into the epoch bump).
-function signOut() {
-  act(() => { queryClient.clear(); setAuthStatus('anon'); });
-}
 
 const cat = (id: string, name: string) => ({ id, name, bucket: 'Living', icon: 'tag', color: '#fff' });
 const FORM = { name: 'Gym', bucket: 'Lifestyle' as Bucket, icon: 'dumbbell' };

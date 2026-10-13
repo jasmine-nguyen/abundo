@@ -24,6 +24,7 @@ import { styleOf } from './support/layout';
 // setAuthStatus(getAuthStatus()) (re-notify, no change) or setAuthStatusQuietly (no broadcast).
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
+import { signOut } from './support/signOut';
 
 import { AppProvider, useAppContext } from '../context';
 import { Overlays } from '../components/Overlays';
@@ -183,8 +184,7 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
     expect(queryClient.getQueryData(['rules'])).toHaveLength(1);
     await waitFor(() => expect(server.sent('POST', '/rules')).toHaveLength(1));
 
-    // Sign-out, in production order: clearSession() clears the cache BEFORE broadcasting anon.
-    act(() => { queryClient.clear(); setAuthStatus('anon'); });
+    signOut();
     await act(async () => {
       held.release();
       await pending;

@@ -6,7 +6,8 @@ import { renderHook, act } from '@testing-library/react-native';
 import type { InfiniteData, QueryKey } from '@tanstack/react-query';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
-import { setAuthStatus, resetAuth } from './support/authMock';
+import { resetAuth } from './support/authMock';
+import { signOut } from './support/signOut';
 
 import { useAppContext } from '../context';
 import type { Transaction, Category } from '../types';
@@ -53,11 +54,6 @@ const feedRows = (key: QueryKey) =>
 const listRows = (key: QueryKey) => queryClient.getQueryData<Transaction[]>(key);
 const searchRows = () => queryClient.getQueryData<TransactionSearchResult>(SEARCH_KEY)?.transactions;
 const invalidated = (key: QueryKey) => queryClient.getQueryState(key)?.isInvalidated;
-
-// Production order: clearSession() wipes the cache, THEN broadcasts anon (the epoch bump).
-function signOut() {
-  act(() => { queryClient.clear(); setAuthStatus('anon'); });
-}
 
 // The delete waits on the server until resolve() (it succeeds) or reject(reply) (it gets `reply`).
 async function startDelete(result: { current: ReturnType<typeof useAppContext> }) {

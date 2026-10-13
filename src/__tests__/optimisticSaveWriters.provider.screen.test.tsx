@@ -9,6 +9,7 @@ import * as Crypto from 'expo-crypto';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, resetAuth } from './support/authMock';
+import { signOut } from './support/signOut';
 
 import { useAppContext } from '../context';
 import { queryClient } from '../queryClient';
@@ -16,11 +17,6 @@ import { installFakeServer } from './support/fakeServer';
 import { appProviderWrapper as wrapper } from './support/renderWithApp';
 
 const server = installFakeServer();
-
-// Production order: clearSession() wipes the cache, THEN broadcasts anon (the epoch bump).
-function signOut() {
-  act(() => { queryClient.clear(); setAuthStatus('anon'); });
-}
 
 const cat = (id: string, name: string) => ({ id, name, bucket: 'Living', icon: 'tag', color: '#fff' });
 const rollup = (target: number) => ({ target, spent: 0 });
