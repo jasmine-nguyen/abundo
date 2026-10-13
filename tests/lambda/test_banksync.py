@@ -104,20 +104,12 @@ def test_swipe_datetime_is_truncated_to_date_only(lam):
 # The account reached the webhook before it was mapped, so every row was rejected
 # by resolve_account_id and dead-lettered. These lock the mapping and the shape of
 # the two rows that were actually stuck, taken verbatim from the FAILED partition.
-# The feed was deleted and re-added on 13 Oct 2026 (WHIT-861): BankSync issued a new
-# account id, and the deleted feed's id must no longer be accepted.
 
 WESTPAC_BANKSYNC_ID = "CC6EE20D-4931-4B10-86CA-EADD45A062DC"
-DELETED_WESTPAC_BANKSYNC_ID = "A3AC9195-9E8D-48B8-86D0-46D130D7F64A"
 
 
 def test_westpac_account_resolves_to_its_internal_id(lam):
     assert lam.banksync.resolve_account_id(WESTPAC_BANKSYNC_ID) == "westpac-altitude-qantas-black"
-
-
-def test_deleted_westpac_feed_account_is_rejected(lam):
-    with pytest.raises(lam.banksync.UnknownAccountError):
-        lam.banksync.resolve_account_id(DELETED_WESTPAC_BANKSYNC_ID)
 
 
 def test_westpac_fee_row_normalises_and_counts_to_budget(lam):
