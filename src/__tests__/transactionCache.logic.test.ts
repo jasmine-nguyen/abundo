@@ -8,10 +8,10 @@ import { makeQueryClient, queryClient } from '../queryClient';
 import { readTransactionCopies, findTransaction, refreshAfter } from '../transactionCache';
 import type { Transaction } from '../types';
 import { colesTxn } from './factory';
+import { seedTransactionsCache } from './support/transactionsCache';
 
 const tx = (id: string, over: Partial<Transaction> = {}) => colesTxn({ transaction_id: id, ...over });
 const ids = (list: Transaction[]) => list.map((t) => t.transaction_id);
-const page = (transactions: Transaction[]) => ({ pages: [{ transactions, nextCursor: null }], pageParams: [undefined] });
 
 // Clear the singleton after each case so no 5-minute cleanup timer keeps Jest running.
 afterEach(() => { queryClient.clear(); });
@@ -82,7 +82,7 @@ describe("refreshAfter('rulesApplied')", () => {
       pages: [{ transactions: [tx('p1')], nextCursor: 'c2' }, { transactions: [tx('p2')], nextCursor: null }],
       pageParams: [undefined, 'c2'],
     });
-    queryClient.setQueryData(['transactions'], page([tx('f1')]));
+    seedTransactionsCache(queryClient, [tx('f1')]);
     queryClient.setQueryData(['transactionsRecent'], [tx('r1')]);
     queryClient.setQueryData(['payCycle'], {});
   });

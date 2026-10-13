@@ -7,7 +7,7 @@ import { renderHook, act } from '@testing-library/react-native';
 import { useAppContext } from '../context';
 import type { Transaction } from '../types';
 import { queryClient } from '../queryClient';
-import { seedTransactionsCache, seedTransactionsPages, readTransactionsCache } from './support/transactionsCache';
+import { seedTransactionsCache, seedTransactionsPages, readTransactionsCache, type FeedPage } from './support/transactionsCache';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { installFakeServer } from './support/fakeServer';
@@ -41,7 +41,7 @@ function ids(rows: Transaction[] | undefined) {
   return (rows ?? []).map((row) => row.transaction_id);
 }
 
-type Feed = { pages: { transactions: Transaction[]; nextCursor: string | null }[] };
+type Feed = { pages: FeedPage[] };
 const uncategorizedIds = () => ids(queryClient.getQueryData<Feed>(['uncategorizedFeed'])?.pages.flatMap((p) => p.transactions));
 const recentIds = () => ids(queryClient.getQueryData<Transaction[]>(['transactionsRecent']));
 
