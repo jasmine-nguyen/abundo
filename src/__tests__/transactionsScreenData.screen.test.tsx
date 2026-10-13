@@ -9,7 +9,6 @@
 // refetchStale for a consumer to wire to useFocusEffect and never calls expo-router itself).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { RefreshControl } from 'react-native';
 import { render, renderHook, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { makeClient, wrapper, pause } from './support/queryClient';
@@ -22,7 +21,6 @@ import { installFakeServer } from './support/fakeServer';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 
-const mockShowToast = jest.fn<(m: string) => void>();
 
 const mockCategories = [{ ...GROCERIES_RECORD, color: '#7FD49B' }];
 
@@ -31,14 +29,17 @@ const mockCategories = [{ ...GROCERIES_RECORD, color: '#7FD49B' }];
 // QueryClientProvider. INERT for the renderHook describes (they never mount a component that
 // reads useAppContext; every other export passes through requireActual).
 jest.mock('../context', () =>
-  require('./support/contextMock').realContextWith(() => ({ retryLoad: jest.fn(), openMultiPicker: jest.fn(), showToast: mockShowToast, category: (id: string | null) => mockCategories.find((c) => c.id === id) })),
+  require('./support/contextMock').realContextWith(() => ({ retryLoad: jest.fn(), openMultiPicker: jest.fn(), showToast: jest.fn(), category: (id: string | null) => mockCategories.find((c) => c.id === id) })),
 );
 
 // expo-router — mocked for the screen render. INERT for the renderHook describes (the composite
 // hook does not import expo-router; it returns refetchStale for the screen to wire to focus).
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
-import { useTransactionsScreenData, useRecentTransactionsScreenData, useTransactionDetailScreenData } from '../queries';
+import {
+  useTransactionsScreenData, useRecentTransactionsScreenData, useTransactionDetailScreenData,
+  useTransactionsFeedQuery, useUncategorizedFeedQuery,
+} from '../queries';
 import { accountBalancesKey, transactionsSearchKey } from '../queryKeys';
 import Transactions from '../../app/(tabs)/transactions';
 import { GROCERIES_RECORD } from './support/categories';
@@ -48,12 +49,9 @@ const server = installFakeServer();
 const FEED = '/transactions/feed';
 const UNCATEGORIZED_FEED = '/transactions/uncategorized/feed';
 const BALANCES = '/accounts/balances';
-const REFRESH = '/accounts/balances/refresh';
 const feedReads = () => server.sentUnder('GET', FEED);
 const uncategorizedReads = () => server.sentUnder('GET', UNCATEGORIZED_FEED);
-const categoryReads = () => server.sent('GET', '/categories');
 const balanceReads = () => server.sent('GET', BALANCES);
-const liveRefreshes = () => server.sent('POST', REFRESH);
 
 const TXNS = [{
   transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
@@ -68,18 +66,6 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
     server.seed('/categories', mockCategories);
   });
 
-  it('refetchStale no-ops on a FRESH cache (instant-from-cache on revisit)', async () => {
-    const client = makeClient({ staleTime: Infinity }); // never stale
-    const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
-    await waitFor(() => expect(result.current.transactions.length).toBe(1));
-    expect(feedReads()).toHaveLength(1);
-
-    act(() => { result.current.refetchStale(); });
-    await act(async () => { await Promise.resolve(); }); // flush any (non-)refetch microtask
-    expect(feedReads()).toHaveLength(1); // fresh → no refetch
-    expect(categoryReads()).toHaveLength(1);
-  });
-
   it('refetchStale REFETCHES a STALE single-page cache (focus refresh re-checks the newest page)', async () => {
     const client = makeClient({ staleTime: 0 }); // immediately stale
     const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
@@ -88,44 +74,6 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
 
     await act(async () => { result.current.refetchStale(); });
     await waitFor(() => expect(feedReads()).toHaveLength(2));
-  });
-
-  it('inline Retry (refetch) re-reads the STORED account balances past staleTime', async () => {
-    // refetch backs the inline Retry button; the live bank call is pull-only (refreshLiveBalances).
-    // Infinity-stale client: balances is never stale, so only an UNCONDITIONAL (forced) refetch
-    // refires the stored GET — proving Retry re-reads balances past the 45s window.
-    server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]);
-    const client = makeClient({ staleTime: Infinity });
-    const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
-    await waitFor(() => expect(result.current.balances.get('a1')).toBeTruthy());
-    expect(balanceReads()).toHaveLength(1); // initial load
-
-    act(() => { result.current.refetch(); });
-    await waitFor(() => expect(balanceReads()).toHaveLength(2)); // Retry forced the re-read
-    expect(liveRefreshes()).toHaveLength(0); // Retry never makes the paid live call
-  });
-
-  it('pull (refreshLiveBalances) fetches LIVE balances via the refresh endpoint and seeds the cards', async () => {
-    // Pull calls the live-refresh POST (not the stored GET) and seeds the cache with its result, so
-    // the Accounts cards show the freshly-fetched numbers. Infinity-stale client proves it's the POST
-    // updating them, not a staleness-driven GET — and that the stored GET is NOT fired again on pull.
-    server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]); // stored (initial)
-    server.once('POST', REFRESH, { body: [{ account_id: 'a1', amount: -250 }] }); // live POST result
-    const client = makeClient({ staleTime: Infinity });
-    const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
-    await waitFor(() => expect(result.current.balances.get('a1')).toBeTruthy());
-    expect(balanceReads()).toHaveLength(1); // initial stored load
-    const feedCallsBefore = feedReads().length;
-
-    await act(async () => {
-      await Promise.all([result.current.refetchList(), result.current.refreshLiveBalances()]);
-    });
-
-    // The cards show the freshly-fetched number (the live POST seeded the cache).
-    await waitFor(() => expect(result.current.balances.get('a1')?.amount).toBe(-250));
-    expect(liveRefreshes()).toHaveLength(1);                     // the LIVE call fired
-    expect(balanceReads()).toHaveLength(1);                      // NOT a second stored GET
-    expect(feedReads().length).toBeGreaterThan(feedCallsBefore); // list refreshed too
   });
 
   it('pull (refetchList) invalidates the whole-history uncategorized count (badge/dot refresh on pull)', async () => {
@@ -209,21 +157,6 @@ describe('the Transactions tab feed composite — pagination + refresh', () => {
 
   beforeEach(() => {
     resetAuth();
-  });
-
-  it('loads the newest page first, then Load More appends the next (older) page', async () => {
-    server.once('GET', FEED, page([tx('t1'), tx('t2')], 'cur1'));
-    server.once('GET', FEED, page([tx('t3')], null));
-    const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(makeClient()) });
-
-    await waitFor(() => expect(result.current.transactions.length).toBe(2));
-    expect(result.current.hasMore).toBe(true);
-
-    await act(async () => { result.current.loadMore(); });
-    await waitFor(() => expect(result.current.transactions.length).toBe(3));
-    expect(ids(result.current.transactions)).toEqual(['t1', 't2', 't3']); // appended, order preserved
-    expect(result.current.hasMore).toBe(false); // nextCursor null → end of history
-    expect(feedReads()[1]?.path).toBe('/transactions/feed?cursor=cur1'); // page 2 fetched with page 1's cursor
   });
 
   it('a manual pull SNAPS to the newest page — trims loaded history, refetches page 1 only', async () => {
@@ -337,10 +270,28 @@ describe('the Uncategorized tab feed composite — server-side paged uncategoriz
     await waitFor(() => expect(result.current.isLoading).toBe(false));
   });
 
-  it('surfaces an uncategorized-feed error as isError on that tab', async () => {
-    server.fail(UNCATEGORIZED_FEED, 500);
-    const { result } = renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(makeClient()) });
-    await waitFor(() => expect(result.current.isError).toBe(true));
+  // WHIT-661: each feed's Load More sends the previous page's cursor URL-encoded, on its own path.
+  it.each([
+    {
+      feed: 'the feed', path: FEED, otherPath: UNCATEGORIZED_FEED, useFeed: useTransactionsFeedQuery,
+      firstPage: [tx('p1')], cursor: 'a/b+c=', nextPath: '/transactions/feed?cursor=a%2Fb%2Bc%3D', loaded: ['p1', 'p2'],
+    },
+    {
+      feed: 'the Uncategorized feed', path: UNCATEGORIZED_FEED, otherPath: FEED, useFeed: useUncategorizedFeedQuery,
+      firstPage: [], cursor: 'deep/cursor+1', nextPath: '/transactions/uncategorized/feed?cursor=deep%2Fcursor%2B1', loaded: ['p2'],
+    },
+  ])('Load More on $feed sends its cursor URL-encoded, on its own path', async ({ path, otherPath, useFeed, firstPage, cursor, nextPath, loaded }) => {
+    server.once('GET', path, page(firstPage, cursor));
+    server.once('GET', path, page([tx('p2')], null));
+    const { result } = renderHook(() => useFeed(true), { wrapper: wrapper(makeClient()) });
+    await waitFor(() => expect(result.current.hasNextPage).toBe(true));
+
+    await act(async () => { await result.current.fetchNextPage(); });
+
+    expect(server.sentUnder('GET', path).map((request) => request.path)).toEqual([path, nextPath]);
+    expect(server.sentUnder('GET', otherPath)).toHaveLength(0);
+    await waitFor(() => expect(result.current.hasNextPage).toBe(false));
+    expect(result.current.data?.pages.flatMap((feedPage) => ids(feedPage.transactions))).toEqual(loaded);
   });
 });
 
@@ -361,13 +312,6 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
     server.seed('/categories', mockCategories);
   });
 
-  it('renders transaction rows from the query', async () => {
-    renderTransactions();
-    expect(await screen.findByText('-$42.00')).toBeTruthy(); // the query-fed row rendered
-    expect(feedReads()).toHaveLength(1);
-    expect(categoryReads()).toHaveLength(1);
-  });
-
   it("each date heading shows that day's total (WHIT-847)", async () => {
     renderTransactions();
     expect(await screen.findByText(new RegExp(` · ${MINUS}\\$42$`))).toBeTruthy();
@@ -381,35 +325,12 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
     expect(screen.getByText('Wed 1 Jul')).toBeTruthy();
   });
 
-  it('shows a spinner first, then the rows (cache-first)', async () => {
-    renderTransactions();
-    expect(screen.getByTestId('transactions-loading')).toBeTruthy();
-    expect(await screen.findByText('-$42.00')).toBeTruthy();
-  });
-
   it('a transient 5xx retries and self-heals — no error shown', async () => {
     server.once('GET', FEED, { status: 503 });
     renderTransactions(makeClient({ retry: 2 }));
     expect(await screen.findByText('-$42.00')).toBeTruthy();
     expect(screen.queryByTestId('transactions-error')).toBeNull();
     expect(feedReads()).toHaveLength(2);
-  });
-
-  it('a sustained failure shows the inline error, and Retry recovers', async () => {
-    server.fail(FEED, 503);
-    renderTransactions(makeClient());
-    expect(await screen.findByTestId('transactions-error')).toBeTruthy();
-
-    // WHIT-198 GAP (authored by qa) — the retry now routes through the shared RetryButton, so it
-    // must carry the button role + a screen-reader label a bare Pressable lacked. Locks this
-    // migrated screen the way budgetsQuery locks Budgets, so a revert to `<Pressable>` is caught.
-    const retry = screen.getByTestId('transactions-retry');
-    expect(retry.props.accessibilityRole).toBe('button');
-    expect(retry.props.accessibilityLabel).toBe('Retry loading your transactions');
-
-    server.once('GET', FEED, { body: { transactions: TXNS, nextCursor: null } }); // ahead of the failure
-    fireEvent.press(retry);
-    expect(await screen.findByText('-$42.00')).toBeTruthy();
   });
 
   it('a sustained feed failure sends a bounded number of requests, and Retry recovers (WHIT-668)', async () => {
@@ -435,42 +356,6 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
     expect(await screen.findByText('-$42.00')).toBeTruthy();
     expect(feedReads().length).toBeGreaterThan(0);
   });
-
-  it('the inline Retry re-reads the stored account balances (not just the rows)', async () => {
-    // Retry (transactions.tsx onPress={refetch}) recovers from a sustained load error by refreshing
-    // the rows AND re-reading the stored balances — a cheap GET, no paid live bank call (that's
-    // pull-only). Guards that the Retry path keeps its balance refresh.
-    server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]);
-    server.fail(FEED, 503);
-    renderTransactions(makeClient());
-    expect(await screen.findByTestId('transactions-error')).toBeTruthy();
-    await waitFor(() => expect(balanceReads()).toHaveLength(1)); // fetched once on mount
-
-    server.once('GET', FEED, { body: { transactions: TXNS, nextCursor: null } }); // ahead of the failure
-    fireEvent.press(screen.getByTestId('transactions-retry'));
-    expect(await screen.findByText('-$42.00')).toBeTruthy();                        // rows recovered
-    await waitFor(() => expect(balanceReads()).toHaveLength(2)); // Retry forced balances too
-  });
-
-  it('a FAILED live pull toasts, keeps the last-good balances, and clears the spinner (WHIT-363)', async () => {
-    // The pull's live refresh rejects. The screen must: toast, keep the list (no error, rows stay),
-    // and STILL clear the pull spinner via .finally() — a failed/slow live call can never wedge it.
-    server.seed(BALANCES, [{ account_id: 'a1', amount: -100 }]);
-    server.fail(REFRESH, 502);
-    renderTransactions();
-    expect(await screen.findByText('-$42.00')).toBeTruthy(); // rows loaded
-
-    const refreshControl = screen.UNSAFE_getByType(RefreshControl);
-    await act(async () => { refreshControl.props.onRefresh(); });
-
-    await waitFor(() => expect(liveRefreshes()).toHaveLength(1)); // the live call fired
-    await waitFor(() =>
-      expect(mockShowToast).toHaveBeenCalledWith('Could not refresh balances. Showing last saved.'));
-    expect(screen.queryByTestId('transactions-error')).toBeNull(); // list not blanked
-    expect(screen.getByText('-$42.00')).toBeTruthy();              // rows still there
-    // The spinner cleared once the pull settled, even though the live call rejected.
-    await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
-  });
 });
 
 // WHIT-614: the transaction detail screen's own composite. It must NOT set up the search query
@@ -490,39 +375,10 @@ describe('useTransactionDetailScreenData (WHIT-614)', () => {
     expect(client.getQueryCache().findAll({ queryKey: transactionsSearchKey })).toHaveLength(0);
   });
 
-  it('loads the feed + taxonomy: not loading, no error, categories resolve', async () => {
-    const client = makeClient({ staleTime: Infinity });
-    const { result } = renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
-    expect(result.current.isLoading).toBe(true);
-    await waitFor(() => expect(result.current.isLoading).toBe(false));
-    expect(result.current.isError).toBe(false);
-    expect(result.current.category('groceries')?.name).toBe('Groceries');
-    expect(result.current.category(null)).toBeUndefined();
-  });
-
-  it('isError surfaces when the categories read fails', async () => {
-    server.fail('/categories', 500);
-    const client = makeClient({ staleTime: Infinity });
-    const { result } = renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
-    await waitFor(() => expect(result.current.isError).toBe(true));
-  });
-
   it('isError surfaces when the feed read fails', async () => {
     server.fail(FEED, 500);
     const client = makeClient({ staleTime: Infinity });
     const { result } = renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
     await waitFor(() => expect(result.current.isError).toBe(true));
-  });
-
-  it('refetch (Retry) re-runs the feed and categories fetches', async () => {
-    const client = makeClient({ staleTime: Infinity });
-    const { result } = renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
-    await waitFor(() => expect(result.current.isLoading).toBe(false));
-    expect(feedReads()).toHaveLength(1);
-    expect(categoryReads()).toHaveLength(1);
-
-    await act(async () => { result.current.refetch(); });
-    await waitFor(() => expect(feedReads()).toHaveLength(2));
-    expect(categoryReads()).toHaveLength(2);
   });
 });

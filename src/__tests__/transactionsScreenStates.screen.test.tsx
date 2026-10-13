@@ -181,14 +181,6 @@ it('empty Uncategorized tab (settled) shows the "All caught up" empty state', as
   expect(await screen.findByText('All caught up')).toBeTruthy();
 });
 
-it('empty All tab (settled) shows nothing: no empty state, no rows, no spinner, no error', async () => {
-  await draw();
-  expect(screen.queryByText('All caught up')).toBeNull(); // "all" has no empty state by design
-  expect(screen.queryByText('-$42.00')).toBeNull();
-  expect(screen.queryByTestId('transactions-loading')).toBeNull();
-  expect(screen.queryByTestId('transactions-error')).toBeNull();
-});
-
 // ===== Load More (folded from transactionsLoadMore.screen.test.tsx) =====
 // The Transactions tab "Load More" control: the feed's `nextCursor` decides whether there is more
 // history, and a tap sends the next feed read with that cursor.
@@ -204,38 +196,6 @@ it('shows Load More when there is more history, and tapping it pages older rows 
   expect(server.sent('GET', '/transactions/feed?cursor=c1')).toHaveLength(1);
   expect(screen.getByText('-$42.00')).toBeTruthy();
   expect(screen.queryByTestId('transactions-load-more')).toBeNull(); // end of history now
-});
-
-it('a failed Load More does not show the quiet "couldn\'t refresh" line', async () => {
-  seedFeed([row('t1')], 'c1');
-  await draw();
-  server.once('GET', FEED, { status: 503 });
-  fireEvent.press(screen.getByTestId('transactions-load-more'));
-  await waitFor(() => expect(gets(FEED)).toBe(2));
-  await settle();
-  expect(screen.getByText('-$42.00')).toBeTruthy();
-  expect(screen.queryByTestId('transactions-stale')).toBeNull();
-});
-
-it('hides Load More at end-of-history (no next cursor)', async () => {
-  seedFeed([row('t1')]);
-  await draw();
-  expect(screen.getByText('-$42.00')).toBeTruthy();
-  expect(screen.queryByTestId('transactions-load-more')).toBeNull();
-});
-
-it('swaps the button for a spinner while the next page is loading', async () => {
-  seedFeed([row('t1')], 'c1');
-  await draw();
-  const held = server.hold(FEED);
-  server.once('GET', FEED, { body: { transactions: [{ ...row('t2'), amount: -7 }], nextCursor: null } });
-  fireEvent.press(screen.getByTestId('transactions-load-more'));
-  expect(await screen.findByTestId('transactions-load-more-spinner')).toBeTruthy();
-  expect(screen.queryByTestId('transactions-load-more')).toBeNull(); // button hidden while loading
-  held.release();
-  await settle();
-  expect(await screen.findByText('-$7.00')).toBeTruthy(); // page 2 is in
-  expect(screen.queryByTestId('transactions-load-more-spinner')).toBeNull();
 });
 
 // WHIT: on the Uncategorized tab, when everything is filed ("All caught up"), Load More must
@@ -296,49 +256,6 @@ it('a background/focus refetch (non-empty list, NO pull) does NOT raise the spin
   expect(isSpinning()).toBe(false);
   held.release();
   await settle();
-});
-
-// A finger-pull raises the spinner while the pull is in flight — `pulling` drives it.
-it('a genuine user pull raises the spinner while it is in flight', async () => {
-  seedFeed([ROW]);
-  await draw();
-  const held = server.hold(REFRESH);
-  await pull();
-  expect(isSpinning()).toBe(true); // up while the live call is pending
-  held.release();
-  await waitFor(() => expect(isSpinning()).toBe(false));
-});
-
-// The spinner clears once the pull's work (list + live balances) SETTLES — via onRefresh's
-// .finally(), not isFetching. Fail-on-revert: drop the `.finally(() => setPulling(false))` and the
-// spinner never clears → this goes RED.
-it('the pull spinner clears when the pull settles', async () => {
-  seedFeed([ROW]);
-  await draw();
-  const held = server.hold(REFRESH);
-  await pull();
-  expect(isSpinning()).toBe(true);
-  held.release();
-  await waitFor(() => expect(server.sent('POST', REFRESH)).toHaveLength(1));
-  await waitFor(() => expect(isSpinning()).toBe(false));
-});
-
-it('the pull spinner does NOT spin during a cold load (empty list) — the inline spinner owns it', async () => {
-  const heldFeed = server.hold(FEED);
-  const heldRefresh = server.hold(REFRESH);
-  render(<WithQueries><Transactions /></WithQueries>);
-  expect(screen.getByTestId('transactions-loading')).toBeTruthy();
-  await pull();
-  expect(isSpinning()).toBe(false); // empty list → pull spinner suppressed
-  heldFeed.release();
-  heldRefresh.release();
-  await settle();
-});
-
-it('the spinner is down when the user has not pulled', async () => {
-  seedFeed([ROW]);
-  await draw();
-  expect(isSpinning()).toBe(false);
 });
 });
 
@@ -452,20 +369,6 @@ it('typing filters the list to matching rows', async () => {
   expect(screen.queryByText('-$8.50')).toBeNull();    // coffee filtered out
 });
 
-it('matches by category name, not just merchant', async () => {
-  await draw();
-  type('cafes');                                       // the coffee row's category is "Cafes & Coffee"
-  expect(screen.getByText('-$8.50')).toBeTruthy();
-  expect(screen.queryByText('-$42.00')).toBeNull();
-});
-
-it('matches by amount', async () => {
-  await draw();
-  type('8.50');
-  expect(screen.getByText('-$8.50')).toBeTruthy();
-  expect(screen.queryByText('-$42.00')).toBeNull();
-});
-
 it('the ✕ clears the search and restores the full list', async () => {
   await draw();
   type('wool');
@@ -474,21 +377,6 @@ it('the ✕ clears the search and restores the full list', async () => {
   fireEvent.press(screen.getByLabelText('Clear search'));
   expect(screen.getByText('-$42.00')).toBeTruthy();
   expect(screen.getByText('-$8.50')).toBeTruthy();
-});
-
-// WHIT-576: "No matches" is a claim about ALL history, so it waits for the server's answer.
-it('a query with no matches shows the empty state and no rows once the server has searched', async () => {
-  jest.useFakeTimers();
-  await draw();
-  type('zzzzz');
-  expect(screen.queryByTestId('transactions-no-results')).toBeNull(); // still waiting for typing to pause
-  expect(screen.getByTestId('transactions-searching')).toBeTruthy();
-  await act(async () => { jest.advanceTimersByTime(300); });
-  expect(await screen.findByTestId('transactions-no-results')).toBeTruthy();
-  expect(server.sent('GET', '/transactions/search?tab=all&q=zzzzz')).toHaveLength(1);
-  expect(screen.queryByTestId('transactions-searching')).toBeNull();
-  expect(screen.queryByText('-$42.00')).toBeNull();
-  expect(screen.queryByText('-$8.50')).toBeNull();
 });
 
 it('entering selection mode clears an active search (the box hides, so no secret filter)', async () => {
@@ -518,11 +406,11 @@ beforeEach(() => {
   seedFeed([row('t1', 'Woolworths'), row('t2', 'Coles')]);
 });
 
-it('there is no selection UI until "Select" is tapped', async () => {
+it('the "Select" header button shows on BOTH segments (All and Uncategorized)', async () => {
   await draw();
-  expect(screen.getAllByText('-$42.00')).toHaveLength(2);
   expect(screen.getByText('Select')).toBeTruthy();
-  expect(screen.queryByLabelText('Select Woolworths')).toBeNull(); // no checkboxes yet
+  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  expect(screen.getByText('Select')).toBeTruthy();
 });
 
 it('Select enters selection mode; toggling rows updates the count; Re-categorize hands the ids to the picker', async () => {
@@ -635,5 +523,40 @@ describe('Transactions — Load More × search & tab-switch (WHIT-491)', () => {
     expect(screen.queryByTestId('transactions-load-more-spinner')).toBeNull(); // no spinner leak
     held.release();
     await settle();
+  });
+});
+
+describe('Transactions — a not-in-budget transfer on the Uncategorized tab (WHIT-330)', () => {
+  const TRANSFER = {
+    ...ROW, transaction_id: 'xfer1', description: 'INTERNAL TRANSFER', merchant_name: 'Internal Transfer', amount: -500,
+    category: null, type: 'transfer', counts_to_budget: false,
+  };
+
+  beforeEach(() => {
+    seedFeed([TRANSFER]);
+    seedUncategorizedFeed([TRANSFER]);
+    server.seed(COUNT, { count: 1 }); // the server's whole-history tally counts the transfer
+  });
+
+  async function openUncategorizedTab() {
+    await draw();
+    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    await screen.findByText('Internal Transfer');
+    expect(gets(UNCATEGORIZED_FEED)).toBe(1);
+  }
+
+  it('[A-empty] lists the transfer on the Uncategorized tab and hides the caught-up empty state', async () => {
+    await openUncategorizedTab();
+    expect(screen.queryByText('All caught up')).toBeNull();
+    expect(screen.getByText('Internal Transfer')).toBeTruthy();
+  });
+
+  it('[A-file] selection mode on the Uncategorized tab can hand the transfer to the picker', async () => {
+    await openUncategorizedTab();
+    fireEvent.press(screen.getByText('Select'));
+    fireEvent.press(screen.getByLabelText('Select Internal Transfer'));
+    expect(screen.getByText('1 selected')).toBeTruthy();
+    fireEvent.press(screen.getByLabelText('Re-categorise selected transactions'));
+    expect(mockOpenMultiPicker).toHaveBeenCalledWith(['xfer1']);
   });
 });

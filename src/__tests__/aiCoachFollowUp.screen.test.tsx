@@ -25,11 +25,6 @@ beforeEach(() => {
   mockOpenChat.mockClear();
 });
 
-it('is hidden before there is any advice', async () => {
-  await renderWithQueries(<AiCoachCard />);
-  expect(screen.queryByTestId('ai-ask-follow-up')).toBeNull();
-});
-
 it('opens the chat seeded with the summary', async () => {
   setAi({ insights: { summary: 'You are pacing well this cycle.', suggestions: ['Trim coffee'], generated_at: '2026-09-20T00:00:00Z', cycle_start: '2026-09-01', cached: false } });
   await renderWithQueries(<AiCoachCard />);

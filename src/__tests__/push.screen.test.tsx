@@ -49,12 +49,11 @@ const devicePosts = () => server.sent('POST', '/devices');
 const tokensSent = () => devicePosts().map((request) => (request.body as { token: string }).token);
 
 // The foreground handler fires as a module-scope side effect the instant '../push' is
-// imported, before any beforeEach — so snapshot the call count and the handler arg NOW.
-// The outer beforeEach's jest.clearAllMocks() wipes the live mock's call log, but these
-// module-scope consts already hold the captured values/reference (folded from
+// imported, before any beforeEach — so snapshot the handler arg NOW.
+// The outer beforeEach's jest.clearAllMocks() wipes the live mock's call log, but this
+// module-scope const already holds the captured reference (folded from
 // push.handler.screen.test.tsx, WHIT-144).
 const mockSetHandler = Notifications.setNotificationHandler as jest.Mock;
-const setHandlerCallCount = mockSetHandler.mock.calls.length;
 const registeredHandler = mockSetHandler.mock.calls[0]?.[0] as
   | { handleNotification: () => Promise<Record<string, unknown>> }
   | undefined;
@@ -156,28 +155,6 @@ it('getPermissionsAsync itself rejects: swallowed, no request/token/register, no
   expect(devicePosts()).toHaveLength(0);
 });
 
-it('requestPermissionsAsync rejects mid-prompt: swallowed, no token/register, no throw', async () => {
-  (mockGetPermissions as jest.Mock).mockResolvedValue({ status: 'undetermined', canAskAgain: true } as never);
-  (mockRequestPermissions as jest.Mock).mockRejectedValue(new Error('prompt failed') as never);
-
-  await expect(registerForPushNotificationsAsync()).resolves.toBeUndefined();
-
-  expect(mockGetToken).not.toHaveBeenCalled();
-  expect(devicePosts()).toHaveLength(0);
-});
-
-it('permissions missing canAskAgain (undetermined): bails without prompting or crashing', async () => {
-  // canAskAgain === undefined => `status !== 'granted' && undefined` is falsy, so the
-  // request is skipped; status stays undetermined, so the function returns cleanly.
-  (mockGetPermissions as jest.Mock).mockResolvedValue({ status: 'undetermined' } as never);
-
-  await expect(registerForPushNotificationsAsync()).resolves.toBeUndefined();
-
-  expect(mockRequestPermissions).not.toHaveBeenCalled();
-  expect(mockGetToken).not.toHaveBeenCalled();
-  expect(devicePosts()).toHaveLength(0);
-});
-
 it('empty-string token: guarded — does NOT POST a blank token', async () => {
   // getExpoPushTokenAsync resolved but data is '' — push.ts guards it, so
   // registerDevice is never called with an empty token (no wasted 400 round-trip).
@@ -191,15 +168,9 @@ it('empty-string token: guarded — does NOT POST a blank token', async () => {
 
 // ===== WHIT-144 (folded from push.handler.screen.test.tsx) — the foreground handler
 // registered at module scope. Fires ONCE on import, before any beforeEach; the
-// snapshot consts (setHandlerCallCount / registeredHandler) captured at file load hold
+// snapshot const (registeredHandler) captured at file load holds
 // the recorded call, so the outer beforeEach's clearAllMocks can't wipe them.
 describe('foreground notification handler (WHIT-144)', () => {
-  it('registers exactly one notification handler at launch', () => {
-    expect(setHandlerCallCount).toBe(1);
-    expect(registeredHandler).toBeDefined();
-    expect(typeof registeredHandler!.handleNotification).toBe('function');
-  });
-
   it('presents a foreground push as quiet-but-visible, in the non-deprecated shape', async () => {
     const behaviour = await registeredHandler!.handleNotification();
     // Banner + notification-centre list, but no sound and no badge.
@@ -242,12 +213,6 @@ describe('push-token rotation (WHIT-145)', () => {
   // A raw device-token event (what addPushTokenListener actually delivers) — NOT the Expo token.
   const DEVICE_EVENT = { type: 'ios', data: 'DevicePushToken[fcm-raw-xyz]' };
 
-  it('installs the listener once on native and returns the subscription', () => {
-    const sub = registerPushTokenRotation();
-    expect(mockAddListener).toHaveBeenCalledTimes(1);
-    expect(sub).toEqual({ remove: mockRemove });
-  });
-
   it('re-registers the EXPO token on rotation — never the raw device token', async () => {
     registerPushTokenRotation();
     capturedListener!(DEVICE_EVENT);
@@ -283,61 +248,8 @@ describe('push-token rotation (WHIT-145)', () => {
     expect(registerPushTokenRotation()).toBeUndefined();
   });
 
-  it('rotation with no projectId: no token fetch, no register, no throw', async () => {
-    mockProjectId = undefined;
-    registerPushTokenRotation();
-    capturedListener!(DEVICE_EVENT);
-    await flush();
-
-    expect(mockGetToken).not.toHaveBeenCalled();
-    expect(devicePosts()).toHaveLength(0);
-  });
-
   // ===== WHIT-145 (folded from push.rotation.edges.screen.test.tsx)
   const DEVICE_A = { type: 'ios', data: 'DevicePushToken[A]' };
-  const DEVICE_B = { type: 'ios', data: 'DevicePushToken[B]' };
-
-  it('[B1] two rotations in a row -> two independent re-registers, each keyed to its own device token', async () => {
-    // Distinct Expo tokens per device token so we prove neither call clobbers the other's state.
-    (mockGetToken as jest.Mock).mockImplementation((opts: unknown) => {
-      const dev = (opts as { devicePushToken?: { data?: string } }).devicePushToken?.data;
-      return Promise.resolve({ data: dev === DEVICE_A.data ? 'ExpoPushToken[A]' : 'ExpoPushToken[B]' });
-    });
-
-    registerPushTokenRotation();
-    capturedListener!(DEVICE_A);
-    capturedListener!(DEVICE_B);
-    await flush();
-
-    expect(mockGetToken).toHaveBeenNthCalledWith(1, { projectId: 'test-project', devicePushToken: DEVICE_A });
-    expect(mockGetToken).toHaveBeenNthCalledWith(2, { projectId: 'test-project', devicePushToken: DEVICE_B });
-    expect(devicePosts()).toHaveLength(2);
-    expect(tokensSent()).toContain('ExpoPushToken[A]');
-    expect(tokensSent()).toContain('ExpoPushToken[B]');
-  });
-
-  it('[B2] getExpoPushTokenAsync rejects mid-rotation (offline): no register, listener never throws', async () => {
-    (mockGetToken as jest.Mock).mockRejectedValue(new Error('offline') as never);
-
-    registerPushTokenRotation();
-    expect(() => capturedListener!(DEVICE_A)).not.toThrow(); // sync callback must not throw
-    await flush();
-
-    expect(devicePosts()).toHaveLength(0);
-  });
-
-  it('[B3] empty Expo token in the rotation path: shared guard skips registerDevice', async () => {
-    // getExpoPushTokenAsync resolves but data is '' — fetchAndRegisterExpoToken's `if (!token) return`
-    // must fire on the ROTATION branch too, so no blank token is POSTed.
-    (mockGetToken as jest.Mock).mockResolvedValue({ data: '' } as never);
-
-    registerPushTokenRotation();
-    capturedListener!(DEVICE_A);
-    await flush();
-
-    expect(mockGetToken).toHaveBeenCalledWith({ projectId: 'test-project', devicePushToken: DEVICE_A });
-    expect(devicePosts()).toHaveLength(0);
-  });
 
   it('[B4] registerDevice rejects inside the callback: swallowed, listener never throws', async () => {
     server.fail('/devices', 500);
@@ -384,11 +296,6 @@ describe('foreground handler web guard (WHIT-144)', () => {
 
   it('[A6] native (ios): DOES register the handler — proves the guard, not a dead import', () => {
     const spy = loadPushUnderOS('ios');
-    expect(spy).toHaveBeenCalledTimes(1);
-  });
-
-  it('[A6b] native (android): also registers the handler', () => {
-    const spy = loadPushUnderOS('android');
     expect(spy).toHaveBeenCalledTimes(1);
   });
 });

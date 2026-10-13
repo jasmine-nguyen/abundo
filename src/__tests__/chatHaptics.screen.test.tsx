@@ -55,13 +55,15 @@ describe('Ask Abundo send haptic', () => {
     expect(Haptics.impactAsync).toHaveBeenCalledWith(Haptics.ImpactFeedbackStyle.Light);
   });
 
-  it('pressing the disabled Send button on an empty box gives no buzz', async () => {
+  it('a rejected haptic still sends the message and clears the box', async () => {
+    jest.mocked(Haptics.impactAsync).mockImplementationOnce(() => Promise.reject(new Error('no haptic engine')));
     await mountOpen();
-    expect(screen.getByTestId('chat-send').props.accessibilityState?.disabled).toBe(true);
+    fireEvent.changeText(screen.getByTestId('chat-input'), 'How much on coffee?');
     fireEvent.press(screen.getByTestId('chat-send'));
     await flush();
 
-    expect(server.sent('POST', '/ai/chat')).toHaveLength(0);
-    expect(Haptics.impactAsync).not.toHaveBeenCalled();
+    expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
+    expect(server.sent('POST', '/ai/chat').map((request) => request.body)).toEqual([{ messages: [{ role: 'user', text: 'How much on coffee?' }] }]);
+    expect(screen.getByTestId('chat-input').props.value).toBe('');
   });
 });

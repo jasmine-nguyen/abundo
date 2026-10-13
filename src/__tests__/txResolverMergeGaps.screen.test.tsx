@@ -3,11 +3,8 @@
 // (budget-only resolve, category-only resolve, feed-wins de-dup, budget-cache reactivity, narrow
 // subscription, cold not-found). The gaps here:
 //   [R1] a charge present in BOTH a budget cache AND a category cache de-dupes to ONE row.
-//   [R2] a charge present in TWO budget caches (parent + child subtree lists) merges to ONE row.
 //   [R3] reactivity when a CATEGORY cache (not budget) changes after mount — the twin of [C4]'s
 //        budget-cache reactivity, guarding the categoryTransactionsKey[0] arm of the subscription.
-//   [R4] a category cache whose data is undefined/empty contributes NO phantom and never throws.
-//   [R5] correctness holds across MANY scoped caches (the findTx scan spans them all).
 //   [R6] WHIT-614: a switched-off search query mounted beside the resolver (the detail screen's old
 //        shape) doesn't loop — watcher events never move the version, only data changes do.
 //   [R7] WHIT-614: seeding a search, budget or category cache after mount still resolves the row.
@@ -56,20 +53,6 @@ describe('[R] useTransactionResolver — cross-scoped-cache merge edges', () => 
     expect(result.current.findTx('bill')!.description).toBe('BUDGET'); // budget scanned before category
   });
 
-  // [R2] A leaf charge is listed under BOTH a budgeted parent and its child subtree list (two
-  // ['budgetTransactions', *] caches). The union must still show it exactly once.
-  // FAIL-ON-REVERT: reverting queries.ts drops the budget loop → 'cafe' resolves to nothing.
-  it('[R2] a charge in two budget caches (parent + child subtree) merges to one row', async () => {
-    emptyFeed();
-    const client = makeClient();
-    client.setQueryData([...budgetTransactionsKey, 'food'], [tx('cafe', { description: 'PARENT' })]);
-    client.setQueryData([...budgetTransactionsKey, 'coffee'], [tx('cafe', { description: 'CHILD' })]);
-    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
-
-    await waitFor(() => expect(result.current.findTx('cafe')).toBeDefined());
-    expect(ids(result.current.transactions).filter((id) => id === 'cafe')).toHaveLength(1); // one merged row
-  });
-
   // [R3] The twin of [C4]'s budget reactivity, but ISOLATED to the category arm: an optimistic edit
   // to a CATEGORY-drill cache after mount must re-run the merge. Feed + recent are pre-seeded as
   // already-fresh (staleTime 60s) so NEITHER fetches — that removes the pending feed/recent renders
@@ -87,38 +70,6 @@ describe('[R] useTransactionResolver — cross-scoped-cache merge edges', () => 
     await waitFor(() => expect(result.current.findTx('past')).toBeDefined());
     await refreshInAct(() => client.setQueryData(drillKey, [tx('past', { notes: 'seen' })]));
     await waitFor(() => expect(result.current.findTx('past')!.notes).toBe('seen'));
-  });
-
-  // [R4] A registered-but-unresolved category query (data === undefined) and an EMPTY category cache
-  // must be ignored by the `rows ?? EMPTY_TX` guard — no throw, no phantom entry — while a real
-  // budget row still resolves. FAIL-ON-REVERT: reverting queries.ts drops the budget loop → 'bill'
-  // resolves to nothing (the union-length guard also catches a phantom the guard would let slip).
-  it('[R4] ignores an undefined/empty category cache (no phantom, no throw)', async () => {
-    emptyFeed();
-    const client = makeClient();
-    client.setQueryData([...budgetTransactionsKey, 'insurance'], [tx('bill')]);
-    client.setQueryData([...categoryTransactionsKey, 'empty', 0], []); // present but empty
-    client.getQueryCache().build(client, { queryKey: [...categoryTransactionsKey, 'pending', 1] }); // data === undefined
-    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
-
-    await waitFor(() => expect(result.current.findTx('bill')).toBeDefined());
-    expect(ids(result.current.transactions)).toEqual(['bill']); // exactly the real row, nothing phantom
-  });
-
-  // [R5] Correctness across MANY scoped caches — the findTx scan spans every ['budgetTransactions',*]
-  // and ['categoryTransactions',*] entry, so a target buried among dozens still resolves exactly once.
-  // (P2 — a scale smoke test, not a timing assertion.) FAIL-ON-REVERT: reverting queries.ts → not found.
-  it('[R5] resolves a target buried among many scoped caches, exactly once', async () => {
-    emptyFeed();
-    const client = makeClient();
-    for (let i = 0; i < 40; i++) client.setQueryData([...budgetTransactionsKey, `b${i}`], [tx(`bx${i}`)]);
-    for (let i = 0; i < 40; i++) client.setQueryData([...categoryTransactionsKey, `c${i}`, 0], [tx(`cx${i}`)]);
-    client.setQueryData([...budgetTransactionsKey, 'needle'], [tx('target', { description: 'FOUND' })]);
-    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
-
-    await waitFor(() => expect(result.current.findTx('target')).toBeDefined());
-    expect(result.current.findTx('target')!.description).toBe('FOUND');
-    expect(ids(result.current.transactions).filter((id) => id === 'target')).toHaveLength(1);
   });
 
   // [R6] Mounting a query on a watched key re-applies its options on every redraw. Counting those

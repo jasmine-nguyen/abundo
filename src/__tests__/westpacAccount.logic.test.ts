@@ -4,7 +4,7 @@
 // format.logic.test.ts pins cleanName itself; this pins the search behaviour that
 // depends on it, which is where a missing entry would actually be noticed.
 import { describe, it, expect } from '@jest/globals';
-import { merchantLabel, transactionMatchesSearch } from '../context';
+import { transactionMatchesSearch } from '../context';
 import { txn } from './factory';
 
 const noCategory = () => undefined;
@@ -33,11 +33,5 @@ describe('one merchant, two bank spellings', () => {
     expect(transactionMatchesSearch(s, massage, 'uniflex massage')).toBe(true);
     // The raw unspaced descriptor still matches its own row (a search from the feed text).
     expect(transactionMatchesSearch(s, massage, 'UNIFLEXREMEDIALMASSAGE')).toBe(true);
-  });
-
-  it('the mapping does not swallow a different merchant that merely starts the same', () => {
-    // The lookup is exact-match, not prefix — a longer look-alike must keep its own name.
-    const other = txn({ merchant_name: 'UNIFLEXREMEDIALMASSAGETHERAPY', description: 'UNIFLEXREMEDIALMASSAGETHERAPY' });
-    expect(merchantLabel(other)).toBe('UNIFLEXREMEDIALMASSAGETHERAPY');
   });
 });

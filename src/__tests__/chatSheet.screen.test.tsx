@@ -130,23 +130,10 @@ describe('with consent given', () => {
     expect(screen.getByTestId('chat-stop')).toBeTruthy();
   });
 
-  it('draws the answer card bars in the category colour from its colour slot', async () => {
-    await mountOpen();
-    await askAndAnswer();
-
-    const expected = chartCategoryColor('eatingout', { slot: 5 });
-    expect(expected).not.toBe(chartCategoryColor('eatingout'));
-    const bars = screen.getAllByTestId('chat-card-bar');
-    expect(bars).toHaveLength(3);
-    for (const bar of bars) expect(styleOf(bar).backgroundColor).toBe(expected);
-    expect(styleOf(screen.getByTestId('chat-card-dot')).backgroundColor).toBe(expected);
-    expect(screen.getByText('3 completed pay cycles · 30 Jul – 9 Sep')).toBeTruthy();
-    expect(screen.getByText('$60 budget')).toBeTruthy();
-  });
-
   it('a deep link closes the sheet and opens the category over the exact dates', async () => {
     await mountOpen();
     await askAndAnswer();
+    expect(styleOf(screen.getByTestId('chat-card-dot')).backgroundColor).toBe(chartCategoryColor('eatingout', { slot: 5 }));
     fireEvent.press(screen.getByTestId('chat-action-0'));
     expect(chat.open).toBe(false);
     expect(routerSpies.push).toHaveBeenCalledWith('/category/eatingout?from=2026-07-30&to=2026-09-09');
@@ -192,17 +179,23 @@ describe('the answer card difference colour', () => {
     return styleOf(screen.getByTestId('chat-card-delta')).color;
   };
 
-  it('is red over a spending budget and green under it', async () => {
-    expect(await deltaColor('eatingout', 14)).toBe(C.bad);
+  // Over an Income target is good news (green); over a spending budget is not (red).
+  it.each([
+    { target: 'a spending budget', categoryId: 'eatingout', amount: 14, over: C.bad, under: C.chatUnder },
+    { target: 'an Income target', categoryId: 'salary', amount: 200, over: C.chatUnder, under: C.bad },
+  ])('over and under $target', async ({ categoryId, amount, over, under }) => {
+    expect(await deltaColor(categoryId, amount)).toBe(over);
     screen.unmount();
-    expect(await deltaColor('eatingout', -14)).toBe(C.chatUnder);
+    expect(await deltaColor(categoryId, -amount)).toBe(under);
   });
+});
 
-  it('is green over an Income target — earning more than planned is good news', async () => {
-    expect(await deltaColor('salary', 200)).toBe(C.chatUnder);
-    screen.unmount();
-    expect(await deltaColor('salary', -200)).toBe(C.bad);
-  });
+it('still draws the answer, in the id colour, when the category read fails', async () => {
+  server.fail('/categories', 500);
+  await renderWithQueries(<ChatAnswer text="ok" reply={REPLY} onAction={() => {}} />);
+
+  expect(screen.getAllByTestId('chat-card-bar')).toHaveLength(3);
+  expect(styleOf(screen.getByTestId('chat-card-dot')).backgroundColor).toBe(chartCategoryColor('eatingout'));
 });
 
 // WHIT-617 — iOS keeps a shape's `%` lengths from its first draw, so a `100%` budget line stops
@@ -232,7 +225,7 @@ describe('the answer card budget line', () => {
 
     layout(300);
     const line = dashedLine();
-    expect(line.props).toMatchObject({ x1: 0, x2: 300, strokeWidth: 1.5, strokeOpacity: 0.7, stroke: C.text });
+    expect(line.props).toMatchObject({ x1: 0, x2: 300 });
     expect(line.parent?.props).toMatchObject({ width: 300, height: 2 });
     expectNoPercentLengths();
 

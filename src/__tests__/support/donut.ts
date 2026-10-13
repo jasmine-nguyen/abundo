@@ -1,13 +1,7 @@
 // Shared helpers for the donut screen tests — extracted so a change to the rendered node shape or
 // the react-native-svg jest stub is a one-file edit, not four.
-import { jest } from '@jest/globals';
-import { act, screen } from '@testing-library/react-native';
+import { screen } from '@testing-library/react-native';
 import type { DonutSlice } from '../../components/SpendingDonut';
-
-// Drive the JS-driven spring (useNativeDriver: false) to rest. Fake timers, never a real sleep:
-// react-native's requestAnimationFrame polyfill is a setTimeout, so advancing the clock advances
-// the animation deterministically.
-export const settle = () => act(() => { jest.advanceTimersByTime(4000); });
 
 // The emphasis animation lives on the AnimatedG wrapping each testID'd shape, resolved to a plain
 // number under the jest SVG stub (which renders svg elements as Views). Walk up from the shape to
@@ -31,18 +25,15 @@ export const slice = (id: string, color: string, value: number): DonutSlice => (
 // What a dimmed wedge fades to (WHIT-759). Written as LITERALS on purpose: importing the shipped
 // constants would make every assertion a tautology against the code it pins.
 export const DIM_CATEGORY = 0.55; // every category colour
-export const DIM_OTHER = 0.85;    // OTHER_COLOR — higher because the grey starts far darker
 
 // The painted wedge order as it renders. `donut-slice-<id>` sits on the TAP band, one per painted
 // wedge in painted order; the selection overlay is `donut-top` (not matched by this regex).
 export const paintedOrder = (): string[] =>
   screen.getAllByTestId(/^donut-slice-/).map((n: any) => String(n.props.testID).replace('donut-slice-', ''));
 
-// The PAINTED band of each wedge — the coloured arc, STROKE wide, inset at both ends by half the
+// The PAINTED band of a wedge — the coloured arc, STROKE wide, inset at both ends by half the
 // divider. DISTINCT from `donut-slice-<id>`, which is the wider TRANSPARENT tap band laid over it at
-// its FULL sweep with NO inset: measure a divider on the tap band and you always read zero. Only the
-// base wedges carry a band id, so a selected wedge still has exactly one painted band.
-export const paintedBands = (): any[] => screen.getAllByTestId(/^donut-band-/);
+// its FULL sweep with NO inset: measure a divider on the tap band and you always read zero.
 export const bandPath = (id: string): string => String(screen.getByTestId(`donut-band-${id}`).props.d);
 
 // arcPath emits exactly 11 whitespace-separated tokens: `M x1 y1 A r r 0 <largeArc> 1 x2 y2`.
@@ -66,16 +57,7 @@ export const arcExtentDeg = (d: string): number => {
   return ((degOf(x2, y2) - degOf(x1, y1)) % 360 + 360) % 360;
 };
 
-// The visible divider width in pixels at the ring's mid-line: straight-line distance from where one
-// painted arc ends to where the next begins. Under a degree of gap the chord and the arc agree to
-// ~1e-5 px, so this is the drawn width.
-export const dividerGapPx = (dPrev: string, dNext: string): number => {
-  const prev = arcPoints(dPrev);
-  const next = arcPoints(dNext);
-  return Math.hypot(next.x1 - prev.x2, next.y1 - prev.y2);
-};
-
-// The same divider measured as an ANGLE rather than in pixels. Positive-modulo for the same reason
+// The divider between two painted arcs, measured as an ANGLE. Positive-modulo for the same reason
 // as arcExtentDeg: the ring's angles run -90 → +270 while atan2 returns (-180, 180].
 export const dividerGapDeg = (dPrev: string, dNext: string): number => {
   const prev = arcPoints(dPrev);

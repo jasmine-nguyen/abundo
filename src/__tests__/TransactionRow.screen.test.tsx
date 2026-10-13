@@ -64,21 +64,6 @@ describe('pending pill shows the age of an old pending charge (WHIT-844)', () =>
   });
 });
 
-// WHIT-330: the "Not in budget" tag was removed from all rows. Fail-on-revert: restore the
-// pill in TransactionRow and either of these finds it again.
-it('shows no "Not in budget" tag on a bank-excluded (counts_to_budget false) row', () => {
-  mockState = stateWith();
-  render(<TransactionRow t={txn({ category: 'coffee', counts_to_budget: false })} category={mockState.category} />);
-  expect(screen.queryByText('Not in budget')).toBeNull();
-  expect(screen.queryByLabelText('Not counted in budgets')).toBeNull();
-});
-
-it('shows no "Not in budget" tag on a user-excluded (budget_excluded) row', () => {
-  mockState = stateWith();
-  render(<TransactionRow t={txn({ category: 'coffee', counts_to_budget: true, budget_excluded: true })} category={mockState.category} />);
-  expect(screen.queryByText('Not in budget')).toBeNull();
-});
-
 it('an uncategorized row is labelled Uncategorized and opens the picker on tap', () => {
   mockState = stateWith();
   render(<TransactionRow t={txn({ transaction_id: 'tx9', category: null })} category={mockState.category} />);

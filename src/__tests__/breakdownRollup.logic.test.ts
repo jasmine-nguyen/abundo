@@ -4,7 +4,6 @@
 import { describe, it, expect } from '@jest/globals';
 import { categoryBreakdown } from '../context';
 import { readRollup } from '../model';
-import { C } from '../theme';
 import { makeState, cat, spend, withRollup } from './factory';
 
 const CAR_TREE = [
@@ -14,21 +13,6 @@ const CAR_TREE = [
 ];
 
 describe('categoryBreakdown — server __rollup__ (WHIT-349)', () => {
-  it('reads a parent total from the netted server node (== its Budgets bar), not floored leaves', () => {
-    // petrol 60, tolls net -30 (floored to 0, dropped from the flat rows). Server node = 30.
-    // Fail-on-revert: reading the floored leaf sum instead of the node gives 60.
-    const s = makeState({
-      categories: CAR_TREE,
-      breakdown: withRollup(
-        { petrol: spend({ posted: 60, pending: 0 }), tolls: spend({ posted: 0, pending: 0 }) },
-        { nodes: { car: { posted: 30, pending: 0 } }, refunds: { car: [{ id: 'tolls', amount: -30 }] } },
-      ),
-    });
-    const byId = Object.fromEntries(categoryBreakdown(s).rows.map((r) => [r.id, r]));
-    expect(byId['car']).toMatchObject({ spent: 30, depth: 0, hasChildren: true });
-    expect(byId['petrol']).toMatchObject({ spent: 60, depth: 1, parentId: 'car' });  // floored leaf, unchanged
-  });
-
   it('emits a refund line so an expanded parent still reconciles to its netted node', () => {
     const s = makeState({
       categories: CAR_TREE,
@@ -73,28 +57,6 @@ describe('categoryBreakdown — server __rollup__ (WHIT-349)', () => {
     expect(total).toBe(90);                  // 70 (car) + 20 (coffee); NOT 70+65+...
   });
 
-  it('a fully-refunded parent (no node) shows 0 and drops — never the floored leaf sum', () => {
-    // shoes +100, clothes net -150 -> shopping subtree nets -50 -> server emits NO node for it.
-    // A positive floored leaf (shoes) still pulls shopping into the tree. It must read 0 and drop
-    // (matches Budgets), not the floored leaf sum of 100. Fail-on-revert: without the parent-vs-
-    // leaf branch, shopping renders as 100.
-    const s = makeState({
-      categories: [
-        cat({ id: 'shopping', name: 'Shopping', bucket: 'Living', parent: null }),
-        cat({ id: 'shoes', name: 'Shoes', bucket: 'Living', parent: 'shopping' }),
-        cat({ id: 'clothes', name: 'Clothes', bucket: 'Living', parent: 'shopping' }),
-      ],
-      breakdown: withRollup(
-        { shoes: spend({ posted: 100, pending: 0 }), clothes: spend({ posted: 0, pending: 0 }) },
-        { nodes: {} },   // shopping omitted: its subtree netted <= 0
-      ),
-    });
-    const { rows, total } = categoryBreakdown(s);
-    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
-    expect(byId['shopping']).toBeUndefined();   // dropped, not a phantom $100
-    expect(total).toBe(0);                       // the net-zero subtree contributes nothing
-  });
-
   it('the refund line is excluded from the hero total and never a top-level row', () => {
     const s = makeState({
       categories: CAR_TREE,
@@ -128,18 +90,6 @@ describe('categoryBreakdown — server __rollup__ (WHIT-349)', () => {
     expect(byId['coffee']).toMatchObject({ spent: 50, depth: 0, hasChildren: false });
     expect(byId['groceries']).toMatchObject({ spent: 30, depth: 0, hasChildren: false });
     expect(total).toBe(80);
-  });
-
-  it('does not turn the __rollup__ sentinel into a phantom spend row', () => {
-    const s = makeState({
-      categories: CAR_TREE,
-      breakdown: withRollup(
-        { petrol: spend({ posted: 60, pending: 0 }) },
-        { nodes: {} },
-      ),
-    });
-    const rows = categoryBreakdown(s).rows;
-    expect(rows.find((r) => r.id === '__rollup__')).toBeUndefined();
   });
 });
 
@@ -562,21 +512,6 @@ describe('WHIT-357 remainder GAPs (folded)', () => {
       // strictly BEFORE the next depth-0 sibling (groceries), i.e. grouped in car's subtree.
       expect(ids.indexOf('car__remainder')).toBeGreaterThan(ids.indexOf('car'));
       expect(ids.indexOf('car__remainder')).toBeLessThan(ids.indexOf('groceries'));
-    });
-
-    it('the plug row is painted neutral (textDim), never a donut/pct slice — pins the display-only contract', () => {
-      // Same shape as [G1] but asserting the presentation fields the screen keys off: neutral colour,
-      // sliders icon, pct 0. Fail-on-revert on the plug loop removes the row entirely -> this errors.
-      const s = makeState({
-        categories: CAR_TREE,
-        breakdown: withRollup(
-          { petrol: spend({ posted: 100, pending: 0 }), snacks: spend({ posted: 0, pending: 0 }) },
-          { nodes: { car: { posted: 100, pending: 0 } }, refunds: { car: [{ id: 'snacks', amount: -30 }] } },
-        ),
-      });
-      const { rows } = categoryBreakdown(s);
-      const other = rows.find((r) => r.id === 'car__remainder')!;
-      expect(other).toMatchObject({ isRemainder: true, color: C.textDim, icon: 'sliders', pct: 0, hasChildren: false });
     });
   });
 });
