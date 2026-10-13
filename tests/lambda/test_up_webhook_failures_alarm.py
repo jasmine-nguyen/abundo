@@ -6,9 +6,6 @@ term from the pattern leaves that failure unalarmed and fails here. Healthy traf
 unsigned scanner noise must match nothing, so the alarm stays quiet.
 """
 
-import hashlib
-import hmac
-import json
 import logging
 import re
 import urllib.error
@@ -17,33 +14,9 @@ import pytest
 
 from _dynamo_fakes import FakeTable
 from _http_fakes import UP_API_URL, http_error
+from _milestone_fakes import FakeDeviceRepo
 from _terraform import filter_pattern
-
-MOCK_SECRET = "mock-secret"
-HOMELOAN_UUID = "fbef6cbc-09b3-4b6f-826c-6a178707a178"
-
-
-def _signed_event(signed=True):
-    raw = json.dumps({"data": {"attributes": {"eventType": "TRANSACTION_CREATED"},
-                               "relationships": {"transaction": {"data": {"id": "txn-1"}}}}}).encode("utf-8")
-    signature = "0" * 64
-    if signed:
-        signature = hmac.new(MOCK_SECRET.encode("utf-8"), raw, hashlib.sha256).hexdigest()
-    return {"body": raw.decode("utf-8"), "isBase64Encoded": False,
-            "headers": {"x-up-authenticity-signature": signature}}
-
-
-def _up_transaction(_transaction_id, account_id=HOMELOAN_UUID):
-    return {"id": "txn-1", "attributes": {"amount": {"valueInBaseUnits": 357300}},
-            "relationships": {"account": {"data": {"id": account_id}}}}
-
-
-class _FakeDevice:
-    def __init__(self, tokens):
-        self._tokens = tokens
-
-    def list_tokens(self):
-        return list(self._tokens)
+from _up_webhook_fakes import HOMELOAN_ID, MOCK_SECRET, SIGNATURE_KEY, signed_event, up_transaction, webhook_payload
 
 
 def _or_terms(pattern):
@@ -63,15 +36,15 @@ def up(lam, monkeypatch):
     notify._table = FakeTable()
     monkeypatch.setattr(module, "get_signing_secret", lambda: MOCK_SECRET)
     monkeypatch.setattr(module, "NotifyRepository", lambda: notify)
-    monkeypatch.setattr(module, "DeviceRepository", lambda: _FakeDevice(["ExponentPushToken[abc]"]))
+    monkeypatch.setattr(module, "DeviceRepository", lambda: FakeDeviceRepo(["ExponentPushToken[abc]"]))
     monkeypatch.setattr(module, "send_push", lambda *a, **k: {"sent": 1, "ok": 1, "pruned": []})
-    monkeypatch.setattr(module, "get_homeloan_account_id", lambda: HOMELOAN_UUID)
+    monkeypatch.setattr(module, "get_homeloan_account_id", lambda: HOMELOAN_ID)
     return module
 
 
 def _run(up, caplog, event=None):
     caplog.set_level(logging.INFO)
-    response = up.lambda_handler(event or _signed_event(), None)
+    response = up.lambda_handler(event or signed_event(webhook_payload()), None)
     return response, [record.getMessage() for record in caplog.records]
 
 
@@ -90,12 +63,12 @@ def _urlopen_raises(error):
 
 
 def _no_phone_registered(up, monkeypatch):
-    monkeypatch.setattr(up, "fetch_transaction", _up_transaction)
-    monkeypatch.setattr(up, "DeviceRepository", lambda: _FakeDevice([]))
+    monkeypatch.setattr(up, "fetch_transaction", lambda _id: up_transaction())
+    monkeypatch.setattr(up, "DeviceRepository", lambda: FakeDeviceRepo([]))
 
 
 def _expo_refuses_the_push(up, monkeypatch):
-    monkeypatch.setattr(up, "fetch_transaction", _up_transaction)
+    monkeypatch.setattr(up, "fetch_transaction", lambda _id: up_transaction())
     monkeypatch.setattr(up, "send_push", lambda *a, **k: {"sent": 1, "ok": 0, "pruned": []})
 
 
@@ -129,18 +102,20 @@ def test_healthy_and_scanner_traffic_do_not_match_the_merged_filter(up, monkeypa
     def matched(messages):
         return [message for term in terms for message in _matching(messages, term)]
 
-    monkeypatch.setattr(up, "fetch_transaction", _up_transaction)
+    monkeypatch.setattr(up, "fetch_transaction", lambda _id: up_transaction())
     response, messages = _run(up, caplog)
     assert response["statusCode"] == 200
     assert matched(messages) == [], messages
     caplog.clear()
 
-    monkeypatch.setattr(up, "fetch_transaction", lambda _id: _up_transaction(_id, account_id="someone-else"))
+    monkeypatch.setattr(up, "fetch_transaction", lambda _id: up_transaction(account_id="someone-else"))
     response, messages = _run(up, caplog)
     assert response["statusCode"] == 200
     assert matched(messages) == [], messages
     caplog.clear()
 
-    response, messages = _run(up, caplog, _signed_event(signed=False))
+    unsigned = signed_event(webhook_payload())
+    unsigned["headers"][SIGNATURE_KEY] = "0" * 64
+    response, messages = _run(up, caplog, unsigned)
     assert response["statusCode"] == 401
     assert matched(messages) == [], messages

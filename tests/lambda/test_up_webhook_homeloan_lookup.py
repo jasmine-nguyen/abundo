@@ -4,9 +4,6 @@ Up's HTTP calls (urlopen) are faked at the network boundary; the real
 fetch_transaction and get_homeloan_account_id run.
 """
 
-import hashlib
-import hmac
-import json
 import logging
 import urllib.error
 
@@ -14,16 +11,11 @@ import pytest
 
 from _dynamo_fakes import FakeTable
 from _http_fakes import FakeResponse
+from _milestone_fakes import FakeDeviceRepo
+from _up_webhook_fakes import HOMELOAN_ID as OLD_HOMELOAN_ID
+from _up_webhook_fakes import MOCK_SECRET, signed_event, up_transaction, webhook_payload
 
-MOCK_SECRET = "mock-secret"
-OLD_HOMELOAN_ID = "fbef6cbc-09b3-4b6f-826c-6a178707a178"
 NEW_HOMELOAN_ID = "0a1b2c3d-renumbered-home-loan"
-SIGNATURE_KEY = "x-up-authenticity-signature"
-
-
-class _FakeDevice:
-    def list_tokens(self):
-        return ["ExponentPushToken[abc]"]
 
 
 def _accounts_response(*home_loan_ids):
@@ -33,25 +25,6 @@ def _accounts_response(*home_loan_ids):
               "attributes": {"accountType": "HOME_LOAN", "displayName": "Home Loan"}}
              for account_id in home_loan_ids]
     return {"data": data}
-
-
-def _transaction_response(transaction_id, account_id, cents=357300):
-    return {"data": {
-        "id": transaction_id,
-        "attributes": {"amount": {"valueInBaseUnits": cents}},
-        "relationships": {"account": {"data": {"id": account_id}}},
-    }}
-
-
-def _event(transaction_id):
-    payload = {"data": {
-        "attributes": {"eventType": "TRANSACTION_CREATED"},
-        "relationships": {"transaction": {"data": {"id": transaction_id}}},
-    }}
-    raw = json.dumps(payload).encode("utf-8")
-    signature = hmac.new(MOCK_SECRET.encode("utf-8"), raw, hashlib.sha256).hexdigest()
-    return {"body": raw.decode("utf-8"), "isBase64Encoded": False,
-            "headers": {SIGNATURE_KEY: signature}}
 
 
 def _markers(caplog, marker):
@@ -65,7 +38,7 @@ def test_repayment_on_renumbered_home_loan_still_sends_push(lam, monkeypatch, ca
     notify = up.NotifyRepository()
     notify._table = FakeTable()
     monkeypatch.setattr(up, "NotifyRepository", lambda: notify)
-    monkeypatch.setattr(up, "DeviceRepository", lambda: _FakeDevice())
+    monkeypatch.setattr(up, "DeviceRepository", lambda: FakeDeviceRepo(["ExponentPushToken[abc]"]))
 
     sent = []
 
@@ -76,8 +49,8 @@ def test_repayment_on_renumbered_home_loan_still_sends_push(lam, monkeypatch, ca
     monkeypatch.setattr(up, "send_push", fake_send_push)
 
     transactions = {
-        "txn-new": _transaction_response("txn-new", NEW_HOMELOAN_ID),
-        "txn-old": _transaction_response("txn-old", OLD_HOMELOAN_ID),
+        "txn-new": {"data": up_transaction(account_id=NEW_HOMELOAN_ID, transaction_id="txn-new")},
+        "txn-old": {"data": up_transaction(account_id=OLD_HOMELOAN_ID, transaction_id="txn-old")},
     }
 
     def fake_urlopen(request, timeout=None):
@@ -90,10 +63,10 @@ def test_repayment_on_renumbered_home_loan_still_sends_push(lam, monkeypatch, ca
     monkeypatch.setattr(up.urllib.request, "urlopen", fake_urlopen)
     caplog.set_level(logging.INFO)
 
-    assert up.lambda_handler(_event("txn-new"), None) == up.OK_RESPONSE
+    assert up.lambda_handler(signed_event(webhook_payload(transaction_id="txn-new")), None) == up.OK_RESPONSE
     assert len(sent) == 1
 
-    assert up.lambda_handler(_event("txn-old"), None) == up.OK_RESPONSE
+    assert up.lambda_handler(signed_event(webhook_payload(transaction_id="txn-old")), None) == up.OK_RESPONSE
     assert len(sent) == 1
     assert "reason=not_homeloan_account transaction=txn-old" in caplog.text
 
