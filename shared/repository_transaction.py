@@ -72,6 +72,12 @@ def _build_deleted_pk(account_pk: str) -> str:
     return f"DELETED#{account_pk}"
 
 
+# When BankSync last delivered rows for an account (WHIT-858). Own partition and no
+# `account_id`/`date` attributes, so it stays out of the date-index GSI and ACCOUNT# reads.
+def _bank_sync_key(account_id: str) -> dict:
+    return {"pk": f"BANKSYNC#{account_id}", "sk": "MARKER"}
+
+
 class TransactionRepository(RepositoryBase):
     def insert_transactions(self, transactions: list[Transaction]) -> None:
         """Inserts multiple transactions efficiently using DynamoDB Batch Write."""
@@ -228,6 +234,22 @@ class TransactionRepository(RepositoryBase):
         key = {"pk": _build_deleted_pk(_build_pk(account_id)), "sk": _build_sk(transaction_id)}
         with db_errors("read"):
             return "Item" in self._get_table().get_item(Key=key)
+
+    def mark_bank_synced(self, account_ids, now: int) -> None:
+        """Record epoch seconds `now` as each account's latest bank delivery (plain put)."""
+        with db_errors("write bank sync marker"):
+            for account_id in account_ids:
+                self._get_table().put_item(Item={**_bank_sync_key(account_id), "synced_at": now})
+
+    def get_bank_synced_at(self) -> dict[str, int]:
+        """{account_id: epoch seconds} of each mapped account's latest bank delivery, if any."""
+        synced = {}
+        for account_id in ACCOUNT_ID_MAP.values():
+            with db_errors("read bank sync marker"):
+                item = self._get_table().get_item(Key=_bank_sync_key(account_id)).get("Item")
+            if item is not None:
+                synced[account_id] = int(item["synced_at"])
+        return synced
 
     def update_transaction_category(self, pk: str, sk: str, category: str) -> bool:
         """Sets a transaction's category, leaving all other attributes intact.

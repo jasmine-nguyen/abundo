@@ -207,10 +207,12 @@ export interface RuleWriteInput {
 export const fetchTransactions = endpoint((send): Promise<Transaction[]> =>
   send({ path: "/transactions" }));
 
-/** One page of the all-accounts transaction feed (the Transactions tab's "Load More"). */
+/** One page of a transaction feed (the Transactions tab's "Load More"). Only the all-accounts
+ *  feed sets `bankSyncedAt` (WHIT-858). */
 export interface TransactionFeedPage {
   transactions: Transaction[];
   nextCursor: string | null; // an opaque cursor for the next (older) page; null at end-of-history
+  bankSyncedAt?: Record<string, number>; // account id → epoch ms of its latest bank delivery
 }
 
 /**

@@ -656,8 +656,9 @@ def get_transactions_feed(event: dict, repo: TransactionRepository) -> dict:
 
     Unlike GET /transactions (a fixed 7-day rolling window returning a bare array), this
     merges every account with NO date floor and returns a cursor so the app can walk back
-    to the start of history. Returns {"transactions": [...], "nextCursor": <opaque string|null>};
-    nextCursor is null once every account is exhausted. Bad input → 400.
+    to the start of history. Returns {"transactions": [...], "nextCursor": <opaque string|null>,
+    "bankSyncedAt": {account_id: epoch ms}}; nextCursor is null once every account is exhausted,
+    and bankSyncedAt (first page only) holds each account's latest bank delivery (WHIT-858). Bad input → 400.
     """
     limit, resume_keys, error = _parse_feed_page_params(event)
     if error is not None:
@@ -666,10 +667,15 @@ def get_transactions_feed(event: dict, repo: TransactionRepository) -> dict:
     page, next_resume_keys = _fetch_feed_page(repo, limit, resume_keys)
     _shape_feed_rows(page)
 
-    return _json_response(200, {
-        "transactions": page,
-        "nextCursor": _encode_feed_cursor(next_resume_keys),
-    })
+    body = {"transactions": page, "nextCursor": _encode_feed_cursor(next_resume_keys)}
+    # First page only (the app reads it from there), and best-effort: a failed read drops the
+    # "Bank synced" line, never the list.
+    if not resume_keys:
+        try:
+            body["bankSyncedAt"] = {account_id: synced * 1000 for account_id, synced in repo.get_bank_synced_at().items()}
+        except DatabaseError:
+            logger.exception("bank sync marker read failed (ignored)")
+    return _json_response(200, body)
 
 
 def _fetch_feed_page(

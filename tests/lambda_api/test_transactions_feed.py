@@ -75,6 +75,32 @@ def test_row_shape_strips_keys_and_defaults_category(handler):
     assert txn["transaction_id"] == "s1"
 
 
+def test_feed_returns_each_accounts_bank_sync_time_in_ms(handler):
+    # WHIT-858: each delivered account's time, seconds → ms ({} with none: the empty-history test).
+    _, repo, _ = real_repos({})
+    repo.mark_bank_synced({SPENDING}, 1_760_000_000)
+    repo.mark_bank_synced({WESTPAC}, 1_759_900_000)
+    body = json.loads(handler.get_transactions_feed(_feed_event({}), repo)["body"])
+    assert body["bankSyncedAt"] == {SPENDING: 1_760_000_000_000, WESTPAC: 1_759_900_000_000}
+
+
+def test_bank_sync_time_is_first_page_only_and_its_read_failure_keeps_the_list(handler, monkeypatch):
+    _, repo, _ = real_repos({SPENDING: [_row(SPENDING, "2026-07-02", "s2"), _row(SPENDING, "2026-07-01", "s1")]})
+    repo.mark_bank_synced({SPENDING}, 1_760_000_000)
+    first = json.loads(handler.get_transactions_feed(_feed_event({"limit": "1"}), repo)["body"])
+    second = json.loads(handler.get_transactions_feed(_feed_event({"limit": "1", "cursor": first["nextCursor"]}), repo)["body"])
+    assert "bankSyncedAt" in first and "bankSyncedAt" not in second
+
+    def fail():
+        raise handler.DatabaseError("throttled")
+    monkeypatch.setattr(repo, "get_bank_synced_at", fail)
+    resp = handler.get_transactions_feed(_feed_event({}), repo)
+    assert resp["statusCode"] == 200
+    body = json.loads(resp["body"])
+    assert [t["transaction_id"] for t in body["transactions"]] == ["s2", "s1"]
+    assert "bankSyncedAt" not in body
+
+
 # --- multi-page correctness: no dupes, no gaps, newest-first -----------------
 
 
@@ -120,7 +146,7 @@ def test_empty_history_returns_empty_page_and_null_cursor(handler):
     table, repo, _ = real_repos({})
     resp = handler.get_transactions_feed(_feed_event({}), repo)
     assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == {"transactions": [], "nextCursor": None}
+    assert json.loads(resp["body"]) == {"transactions": [], "nextCursor": None, "bankSyncedAt": {}}
 
 
 def test_last_page_returns_null_cursor_and_a_follow_up_is_empty(handler):

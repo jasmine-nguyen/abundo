@@ -11,6 +11,7 @@ import type { Budget, HomeLoanState, Rule } from './model';
 import type { Category, Transaction } from './types';
 import { categoriesKey, payCycleKey, budgetsKey, budgetTransactionsKey, categoryTransactionsKey, breakdownKey, transactionsKey, uncategorizedFeedKey, transactionsRecentKey, transactionsSearchKey, uncategorizedCountKey, uncategorizedMerchantsKey, filingSuggestionsKey, loanFactsKey, homeLoanKey, repaymentKey, accountBalancesKey, rulesKey, goalsKey, milestonesKey, aiInsightsKey } from './queryKeys';
 import { getStatus, subscribe } from './auth';
+import { accountSummaries } from './context';
 
 // --- auth gating -------------------------------------------------------------
 // Queries must NOT fire before login (the reads throw "Not signed in") and MUST fire
@@ -727,7 +728,12 @@ export interface TransactionsScreenData extends RecentTransactionsScreenData {
   error: unknown; // the failed list read's error (the error card's reason line)
   refreshError: unknown; // WHIT-713: a list refresh failed over rows already showing (see refreshStatus)
   updatedAt: number; // when the showing list last loaded; 0 when nothing has
+  bankSynced: BankSyncedAccount[]; // WHIT-858: each account's latest bank delivery, by name; [] before a load
 }
+
+// One account's latest bank delivery (WHIT-858): `id` is the account id, `at` epoch ms.
+export interface BankSyncedAccount { id: string; name: string; at: number }
+const EMPTY_BANK_SYNCED: BankSyncedAccount[] = [];
 
 // A single frozen empty list for the cold case, so `transactions` keeps a STABLE identity
 // across renders while a query is cold — otherwise every [transactions]-keyed memo/effect on
@@ -776,6 +782,19 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
     () => (feedQuery.data ? feedQuery.data.pages.flatMap((p) => p.transactions) : EMPTY_TX),
     [feedQuery.data],
   );
+
+  // Read from the all-accounts feed on both tabs (it's always loaded), named like the Accounts tab
+  // from its loaded rows, and sorted by name so Load More or a new delivery never reorders them.
+  const bankSynced = useMemo(() => {
+    const pages = allFeedQuery.data?.pages ?? [];
+    const syncedAt = pages[0]?.bankSyncedAt;
+    if (!syncedAt) return EMPTY_BANK_SYNCED;
+    const allFeedTransactions = pages.flatMap((p) => p.transactions);
+    return accountSummaries({ transactions: allFeedTransactions }, Object.keys(syncedAt))
+      .filter((account) => account.id in syncedAt)
+      .map((account) => ({ id: account.id, name: account.name, at: syncedAt[account.id] }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [allFeedQuery.data]);
 
   const isLoading = feedQuery.isLoading || categoriesQuery.isLoading;
   const isError = feedQuery.isError || categoriesQuery.isError;
@@ -874,7 +893,7 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
   const { refreshError, updatedAt } = refreshStatus([feedQuery, categoriesQuery]);
   const error = feedQuery.error ?? categoriesQuery.error;
 
-  return { search, transactions, category, balances, isLoading, isError, error, refreshError, updatedAt, isFetching, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore };
+  return { search, transactions, category, balances, isLoading, isError, error, refreshError, updatedAt, bankSynced, isFetching, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore };
 }
 
 /** The bounded "recent" reads (tab-bar dot, account detail, goal-edit picker): a fixed

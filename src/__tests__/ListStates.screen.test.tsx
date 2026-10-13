@@ -59,6 +59,16 @@ describe('StaleDataLine (WHIT-713)', () => {
     expect(screen.queryByTestId('budgets-updated')).toBeNull();
   });
 
+  // WHIT-858: the bank part follows either lead; an empty list leaves the line as it was.
+  it.each([
+    [null, [{ id: 'up-spending', name: 'Up Spending', at: loadedAt }], 'budgets-updated', 'Updated 9:40am · Bank synced Up Spending 9:40am'],
+    [new Error('API error: 503'), [{ id: 'up-spending', name: 'Up Spending', at: loadedAt }], 'budgets-stale', "Couldn't refresh · showing 9:40am · Bank synced Up Spending 9:40am"],
+    [null, [], 'budgets-updated', 'Updated 9:40am'],
+  ])('with bankSynced, error %p and %j → %s reads %s', (error, bankSynced, testId, text) => {
+    render(<StaleDataLine idPrefix="budgets" error={error} updatedAt={loadedAt} showUpdated bankSynced={bankSynced} />);
+    expect(screen.getByTestId(testId)).toHaveTextContent(text);
+  });
+
   it('with showUpdated, renders nothing when nothing has loaded yet', () => {
     render(<StaleDataLine idPrefix="budgets" error={null} updatedAt={0} showUpdated />);
     expect(screen.queryByTestId('budgets-updated')).toBeNull();

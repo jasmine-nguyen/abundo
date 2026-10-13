@@ -12,6 +12,8 @@ import { installFakeServer } from './support/fakeServer';
 import { useTestQueryClient, settle } from './support/renderWithQueries';
 import { renderWithApp } from './support/renderWithApp';
 import { LIST_ROW, resetListTabs } from './support/listTabsScreen';
+import { styleOf } from './support/layout';
+import { C } from '../theme';
 
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
@@ -92,6 +94,39 @@ it('Transactions: always shows "Updated <time>" after a good load, swapped for t
   await pullAndSettle();
   await waitFor(() => expect(screen.getByTestId('transactions-updated')).toHaveTextContent('Updated 10:15am'));
   expect(screen.queryByTestId('transactions-stale')).toBeNull();
+});
+
+// WHIT-858: the line also says when the bank last sent each account's transactions, one time per
+// account, named like the Accounts tab and ordered by name. Not today → the date is added; over 24h
+// old → that entry turns amber. It reads from the all-accounts feed, so Uncategorised shows it too.
+it('Transactions: shows "Bank synced <account> <time>" per account on both tabs, amber when over a day old (WHIT-858)', async () => {
+  const upRow = txn({ transaction_id: 'u1', amount: -42, account_id: 'up-spending', account_name: 'Up Spending' });
+  server.seed('/transactions/uncategorized/feed', { transactions: [{ ...upRow, category: '' }], nextCursor: null });
+  // [A4] Westpac has more loaded rows than Up, so a busiest-first order would put it first.
+  const westpacRows = ['w1', 'w2'].map((transaction_id) => txn({ transaction_id, amount: -3, account_id: 'westpac-altitude-qantas-black', account_name: 'Westpac Altitude Qantas Black' }));
+  server.seed(FEED, {
+    transactions: [upRow, ...westpacRows],
+    nextCursor: null,
+    bankSyncedAt: {
+      'westpac-altitude-qantas-black': new Date('2026-09-16T07:55:00+10:00').getTime(),
+      'up-spending': new Date('2026-09-18T08:10:00+10:00').getTime(),
+    },
+  });
+  await renderWithApp(<Transactions />);
+  expect(await screen.findByText('-$42.00')).toBeTruthy();
+
+  const expectBankSynced = async () => {
+    await waitFor(() => expect(screen.getByTestId('transactions-updated')).toHaveTextContent(
+      'Updated 9:40am · Bank synced Up Spending 8:10am · Westpac Altitude Qantas Black 16 Sep, 7:55am',
+    ));
+    expect(styleOf(screen.getByTestId('transactions-bank-synced-up-spending')).color).not.toBe(C.warn);
+    expect(styleOf(screen.getByTestId('transactions-bank-synced-westpac-altitude-qantas-black')).color).toBe(C.warn);
+  };
+
+  await expectBankSynced();
+  fireEvent.press(screen.getByText('Uncategorised'));
+  await settle();
+  await expectBankSynced();
 });
 
 // WHIT-713 QA — a focus refetch with no pull, a categories-only failure, a balances-only failure,
