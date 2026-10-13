@@ -19,6 +19,7 @@ import pytest
 from _budget_alert_fakes import fail_nth_write, notify_repo, released_markers
 from _budget_endpoint_fakes import _FakeCategoryRepo, _FakePayCycleRepo
 from _dynamo_fakes import _client_error
+from _milestone_fakes import FakeDeviceRepo
 from _transaction_range_fakes import _AccountPagesTransactionRepo, _AccountTransactionRepo
 
 # Cycle: last_pay_date 2026-07-01, length 14, pinned "today" 2026-07-14 →
@@ -54,15 +55,10 @@ class FakeBudgetRepo:
 FakePaycycleRepo = partial(_FakePayCycleRepo, length=14, last_pay_date="2026-07-01")
 
 
-class FakeDeviceRepo:
-    def __init__(self, tokens=("ExpoPushToken[a]",)):
-        self._t = list(tokens)
-
-    def list_tokens(self):
-        return list(self._t)
+_TOKENS = ("ExpoPushToken[a]",)
 
 
-def _run(alerts, monkeypatch, *, budgets, before, normalised, tokens=("ExpoPushToken[a]",),
+def _run(alerts, monkeypatch, *, budgets, before, normalised, tokens=_TOKENS,
          cats=None, webhook_repo=None, notify=None, paycycle=("2026-07-01", 14), send_ok=1):
     ba = alerts.budget_alerts
     sent = []
@@ -382,7 +378,7 @@ def test_alert_fires_reading_window_and_pending_twins_from_the_webhook_store(ale
     notify = notify_repo()
 
     ctx = ba.capture_pre_write(
-        settled, device_repo=FakeDeviceRepo(),
+        settled, device_repo=FakeDeviceRepo(_TOKENS),
         budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
         paycycle_repo=FakePaycycleRepo(), webhook_repo=repo,
     )
@@ -457,7 +453,7 @@ def test_window_read_accumulates_every_cursor_page(alerts, monkeypatch):
     new = _txn("new1", "groceries", -15, "posted")
     store = _AccountPagesTransactionRepo({_ACCT: [([rows[0]], "c1"), ([rows[1]], None)]})
     ctx = ba.capture_pre_write(
-        [new], device_repo=FakeDeviceRepo(),
+        [new], device_repo=FakeDeviceRepo(_TOKENS),
         budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
         paycycle_repo=FakePaycycleRepo(), webhook_repo=store,
     )
@@ -902,7 +898,7 @@ def test_whit545_preview_buckets_a_settlement_under_the_landed_category(alerts, 
 
     before = [_txn("old", "groceries", -70, "posted")]
     ctx = ba.capture_pre_write(
-        [posted], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
+        [posted], device_repo=FakeDeviceRepo(_TOKENS), budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
         paycycle_repo=FakePaycycleRepo(last_pay_date="2026-07-01", length=14),
             webhook_repo=_AccountTransactionRepo(before, pending_repo=repo))
     ba.fire_budget_alerts(
@@ -965,7 +961,7 @@ def test_one_budget_already_warned_leaves_a_single_budget_push_with_its_deep_lin
     before = [_txn("g", "groceries", -90, "posted"), _txn("c", "coffee", -45, "posted")]
     notify = notify_repo()
     notify.mark_fired("2026-07-01", 14, "coffee#80")
-    ctx = ba.capture_pre_write([], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo(budgets),
+    ctx = ba.capture_pre_write([], device_repo=FakeDeviceRepo(_TOKENS), budget_repo=FakeBudgetRepo(budgets),
                                paycycle_repo=FakePaycycleRepo(), webhook_repo=_AccountTransactionRepo(before))
     ba.fire_budget_alerts(ctx, [], category_repo=_FakeCategoryRepo(cats),
                           notify_repo=notify)

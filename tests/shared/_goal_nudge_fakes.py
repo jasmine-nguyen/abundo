@@ -15,6 +15,7 @@ from datetime import date
 from decimal import Decimal
 
 from _dynamo_fakes import FakeTable
+from _milestone_fakes import FakeDeviceRepo
 
 CYCLE = {"length": 14, "last_pay_date": "2026-06-06"}
 TODAY = date(2026, 7, 11)
@@ -26,16 +27,6 @@ class FakeGoalsRepo:
 
     def list_goals(self):
         return dict(self._goals)
-
-
-class FakeDeviceRepo:
-    def __init__(self, tokens=("tok-1",)):
-        self._tokens = list(tokens)
-        self.calls = 0
-
-    def list_tokens(self):
-        self.calls += 1
-        return list(self._tokens)
 
 
 class FakePayCycleRepo:

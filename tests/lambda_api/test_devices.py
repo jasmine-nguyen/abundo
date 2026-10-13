@@ -9,14 +9,7 @@ import json
 import pytest
 
 from _api_event import api_event
-
-
-class _FakeDeviceRepo:
-    def __init__(self):
-        self.registered = []
-
-    def register(self, token):
-        self.registered.append(token)
+from _milestone_fakes import FakeDeviceRepo
 
 
 def _post(token=None, raw=None):
@@ -32,7 +25,7 @@ def _expo_token_of_length(n):
 
 @pytest.fixture
 def device_repo(handler, monkeypatch):
-    repo = _FakeDeviceRepo()
+    repo = FakeDeviceRepo()
     monkeypatch.setattr(handler, "DeviceRepository", lambda: repo)
     return repo
 

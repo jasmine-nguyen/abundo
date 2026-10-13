@@ -24,7 +24,7 @@ import pytest
 
 from _api_event import api_event
 from _dynamo_fakes import FakeTable
-from _milestone_fakes import milestones_put_event, notify_repo, removed_markers, stored_markers
+from _milestone_fakes import FakeDeviceRepo, milestones_put_event, notify_repo, removed_markers, stored_markers
 
 
 # --- harness ----------------------------------------------------------------
@@ -54,11 +54,6 @@ def poller(handler):
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = mod
-
-
-class FakeDeviceRepo:
-    def list_tokens(self):
-        return ["tok"]
 
 
 class FakeLoanFactsRepo:
