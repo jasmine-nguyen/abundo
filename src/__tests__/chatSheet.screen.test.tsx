@@ -133,6 +133,7 @@ describe('with consent given', () => {
   it('a deep link closes the sheet and opens the category over the exact dates', async () => {
     await mountOpen();
     await askAndAnswer();
+    expect(styleOf(screen.getByTestId('chat-card-dot')).backgroundColor).toBe(chartCategoryColor('eatingout', { slot: 5 }));
     fireEvent.press(screen.getByTestId('chat-action-0'));
     expect(chat.open).toBe(false);
     expect(routerSpies.push).toHaveBeenCalledWith('/category/eatingout?from=2026-07-30&to=2026-09-09');

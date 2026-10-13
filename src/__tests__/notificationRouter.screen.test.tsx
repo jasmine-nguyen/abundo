@@ -37,6 +37,12 @@ describe('NotificationRouter (WHIT-321)', () => {
     expect(routerSpies.push).toHaveBeenCalledTimes(1);
   });
 
+  it('does nothing when there is no tap response', () => {
+    mockLastResponse = null;
+    render(<NotificationRouter />);
+    expect(routerSpies.push).not.toHaveBeenCalled();
+  });
+
   it('waits for the navigator: no nav while root state is null, then navigates once ready', () => {
     mockNavState = null; // navigator not mounted yet
     mockLastResponse = responseWith({ type: 'repayment' });

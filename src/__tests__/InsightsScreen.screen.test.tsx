@@ -571,8 +571,9 @@ describe('Insights remainder/Other plug (WHIT-357/375)', () => {
     expect(other).toBeTruthy();
 
     const card = rowCard(other);
-    // NO bar/track under the plug row.
+    // NO bar/track under the plug row — while a real spend row does have one, so the lookup finds tracks.
     expect(tracksIn(card)).toHaveLength(0);
+    expect(tracksIn(rowCard(screen.getByText('Petrol')))).not.toHaveLength(0);
     // NOT tappable — no button in the row, and pressing it drills nowhere.
     expect(within(card).queryByRole('button')).toBeNull();
     fireEvent.press(other);

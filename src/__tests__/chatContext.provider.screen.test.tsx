@@ -141,8 +141,11 @@ describe('errors and retry', () => {
     act(() => chat.send('Hi'));
     await flush();
     await tick();
+    await tick();
+    await tick();
     expect(chat.messages[1]).toMatchObject({ status: 'error' });
     expect(jobChecks()).toHaveLength(1);
+    expect(chat.inFlight).toBe(false);
   });
 
   it('[A22b] a server error (5xx) on a check is retried like a dropped call, not a hard fail', async () => {

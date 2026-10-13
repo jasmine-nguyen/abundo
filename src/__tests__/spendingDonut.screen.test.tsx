@@ -162,6 +162,3 @@ describe('SpendingDonut — single 100% slice (gaps)', () => {
     expect(screen.queryByTestId('donut-top')).toBeNull();
   });
 });
-
-describe('SpendingDonut — "Other" grouping render count (gap, characterization)', () => {
-});

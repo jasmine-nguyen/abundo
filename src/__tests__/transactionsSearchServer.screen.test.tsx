@@ -244,6 +244,8 @@ describe('when the server search fails', () => {
 });
 
 describe('search transitions', () => {
+  beforeEach(() => server.seed('/categories', [GROCERIES_TOP]));
+
   const refreshControl = () => screen.UNSAFE_getByType(RefreshControl);
 
   it('[A1] the previous query\'s answer never produces "No matches" for newer live text', async () => {
@@ -281,7 +283,6 @@ describe('search transitions', () => {
 
   it('[A3] Uncategorized tab: a re-filed search result drops out, an unfiled one stays', async () => {
     const filed = row('steven-filed', 'Steven Nguyen', -33, '2024-01-01', 'groceries');
-    server.seed('/categories', [GROCERIES_TOP]);
     server.seed('/transactions/uncategorized/feed', { transactions: [], nextCursor: 'c1' });
     server.seed('/transactions/uncategorized/count', { count: 2 });
     seedSearch([STEVEN_DEEP, filed]);
@@ -314,7 +315,6 @@ describe('search transitions', () => {
   // The card's original bug as an invariant. A "$"-only query (the first key of "$42") never asks the
   // server, so it must behave like an empty box — not claim "No matches" above Load More.
   it('[A5] "$" on the Uncategorized tab never claims "No matches" while Load More is showing', async () => {
-    server.seed('/categories', [GROCERIES_TOP]);
     server.seed('/transactions/uncategorized/count', { count: 4 }); // unfiled charges exist deeper in history
     server.seed('/transactions/uncategorized/feed', {
       transactions: [row('filed', 'Coles', -12.5, '2026-07-01', 'groceries')], nextCursor: 'c1',

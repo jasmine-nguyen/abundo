@@ -235,6 +235,13 @@ describe('push-token rotation (WHIT-145)', () => {
     expect(devicePosts()).toHaveLength(1);
   });
 
+  it('is a no-op on web: returns undefined and installs no listener', () => {
+    (Platform as unknown as { OS: string }).OS = 'web';
+    const sub = registerPushTokenRotation();
+    expect(sub).toBeUndefined();
+    expect(mockAddListener).not.toHaveBeenCalled();
+  });
+
   it('never throws if installing the listener fails — returns undefined', () => {
     mockAddListener.mockImplementation(() => { throw new Error('native module unavailable'); });
     expect(() => registerPushTokenRotation()).not.toThrow();

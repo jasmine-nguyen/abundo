@@ -21,7 +21,6 @@ import { installFakeServer } from './support/fakeServer';
 jest.mock('../auth', () => require('./support/authMock').authMockModule());
 import { setAuthStatus, setAuthStatusQuietly, resetAuth } from './support/authMock';
 
-const mockShowToast = jest.fn<(m: string) => void>();
 
 const mockCategories = [{ ...GROCERIES_RECORD, color: '#7FD49B' }];
 
@@ -30,7 +29,7 @@ const mockCategories = [{ ...GROCERIES_RECORD, color: '#7FD49B' }];
 // QueryClientProvider. INERT for the renderHook describes (they never mount a component that
 // reads useAppContext; every other export passes through requireActual).
 jest.mock('../context', () =>
-  require('./support/contextMock').realContextWith(() => ({ retryLoad: jest.fn(), openMultiPicker: jest.fn(), showToast: mockShowToast, category: (id: string | null) => mockCategories.find((c) => c.id === id) })),
+  require('./support/contextMock').realContextWith(() => ({ retryLoad: jest.fn(), openMultiPicker: jest.fn(), showToast: jest.fn(), category: (id: string | null) => mockCategories.find((c) => c.id === id) })),
 );
 
 // expo-router — mocked for the screen render. INERT for the renderHook describes (the composite
