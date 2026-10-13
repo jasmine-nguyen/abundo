@@ -10,8 +10,6 @@ from decimal import Decimal
 
 import pytest
 
-_FIELDS = ("original", "homeValue", "lvr", "ratePct", "baseRepay", "extra")
-
 
 def _save(repo, **over):
     facts = {

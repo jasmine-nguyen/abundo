@@ -134,13 +134,6 @@ class TestGoalPacePaydown:
         assert p["pace_per_payday"] == Decimal(0)
 
 
-# --- folded from test_goal_pace_edges.py (WHIT-463) ---
-
-
-def _pu(shared, length, target, pay="2026-06-06", today=TODAY):
-    return shared.goal_pace.paydays_until(length, pay, target, today)
-
-
 class TestGoalPaceEdges:
     def _grow(self, **over):
         g = {"direction": "grow", "target_amount": Decimal(10000),

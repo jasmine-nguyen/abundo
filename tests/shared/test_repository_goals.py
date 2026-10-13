@@ -245,18 +245,6 @@ def _concurrent_writer(table, goal_id, goal):
     table.before_next_write(commit)
 
 
-def _lose_the_seed_race(table, concurrent_items):
-    """Our seed put finds that a concurrent caller has already seeded AND created goals, so
-    the real conditional put is refused and the re-read must reflect their state."""
-    real_put = table.put_item
-
-    def put_item(**kwargs):
-        table.seed({"pk": "GOALS", "sk": "GOALS", "items": concurrent_items, "version": Decimal(2)})
-        return real_put(**kwargs)
-
-    table.put_item = put_item
-
-
 def test_upsert_converges_and_preserves_a_concurrent_sibling(shared, goals_repo, config_item_table):
     # Race writes a DIFFERENT goal (g2) during the window. The retry must re-read and
     # keep g2 while adding g1 — the sibling-preservation the static-map race can't prove.

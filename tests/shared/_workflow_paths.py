@@ -1,4 +1,4 @@
-"""Readers for a workflow's `on.pull_request.paths` and `on.push.paths-ignore` lists
+"""Reader for a workflow's `on.push.paths-ignore` list
 (WHIT-435 / WHIT-436 / WHIT-634).
 
 Two guard files hand-rolled this parse and DIVERGED: one broke the list on any
@@ -23,11 +23,6 @@ import re
 
 # One list entry: a quoted or bare scalar, stopping before any inline `# comment`.
 _ENTRY = re.compile(r"-\s*(?:\"([^\"]*)\"|'([^']*)'|([^#\s]+))")
-
-
-def pull_request_paths(text: str) -> list:
-    """The live `on.pull_request.paths` entries declared in a workflow's YAML `text`."""
-    return _block_list(text, "pull_request", "paths")
 
 
 def push_paths_ignore(text: str) -> list:
