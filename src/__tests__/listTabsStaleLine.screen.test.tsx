@@ -102,8 +102,10 @@ it('Transactions: always shows "Updated <time>" after a good load, swapped for t
 it('Transactions: shows "Bank synced <account> <time>" per account on both tabs, amber when over a day old (WHIT-858)', async () => {
   const upRow = txn({ transaction_id: 'u1', amount: -42, account_id: 'up-spending', account_name: 'Up Spending' });
   server.seed('/transactions/uncategorized/feed', { transactions: [{ ...upRow, category: '' }], nextCursor: null });
+  // [A4] Westpac has more loaded rows than Up, so a busiest-first order would put it first.
+  const westpacRows = ['w1', 'w2'].map((transaction_id) => txn({ transaction_id, amount: -3, account_id: 'westpac-altitude-qantas-black', account_name: 'Westpac Altitude Qantas Black' }));
   server.seed(FEED, {
-    transactions: [upRow],
+    transactions: [upRow, ...westpacRows],
     nextCursor: null,
     bankSyncedAt: {
       'westpac-altitude-qantas-black': new Date('2026-09-16T07:55:00+10:00').getTime(),

@@ -107,6 +107,21 @@ def test_delivery_records_bank_sync_time_for_its_accounts_only(lam, monkeypatch)
     assert all(before <= synced_at <= after for synced_at in synced.values())
 
 
+def test_a_delivery_of_only_dropped_rows_still_records_bank_sync(lam, monkeypatch):
+    # [A1] WHIT-858: a re-sent row the user deleted and a $0.00 row are never written, but they
+    # still prove the bank delivered for their accounts.
+    repo = _ingest_repo(lam, monkeypatch)
+    repo.delete_transaction("ACCOUNT#up-spending", "TXN#t1")
+    zero_row = {**_delivery_row("t2", "CC6EE20D-4931-4B10-86CA-EADD45A062DC"), "amount": "0.00"}
+    handler = _wire(lam, monkeypatch, repo, {"id": "evt_dropped", "data": [
+        _delivery_row("t1", "3zVQJ8Btz_IRmqp78VrQnQ"), zero_row,
+    ]})
+
+    assert handler.lambda_handler({}, None) == {"statusCode": 200, "body": "ok"}
+    assert ("ACCOUNT#up-spending", "TXN#t1") not in repo._table.store
+    assert set(repo.get_bank_synced_at()) == {"up-spending", "westpac-altitude-qantas-black"}
+
+
 def test_bank_sync_marker_failure_still_writes_rows_and_acks(lam, monkeypatch):
     # WHIT-858: the "bank synced" note is best-effort — failing to write it never fails the delivery.
     repo = _ingest_repo(lam, monkeypatch)
@@ -264,6 +279,8 @@ def test_client_error_during_insert_is_not_reported_as_ok(lam, monkeypatch):
     # A failed write must honestly return 500 (→ BankSync retries), not masquerade
     # as a 200 "ok" that means nothing was written.
     assert resp["statusCode"] == 500
+    # [A2] WHIT-858: no "bank synced" note for a delivery that wasn't written.
+    assert repo.get_bank_synced_at() == {}
 
 
 # --- save-then-mark specifics (WHIT-83) -------------------------------------
